@@ -95,6 +95,14 @@ public interface IJobExecutionContext
 
 Der Scheduler liest das `CroniqJobAttribute`, bildet daraus den `JobKey` und registriert den Typ beim Startup. Consumer-Dokumentation zeigt Beispiele mit vereinfachtem `IJob`, während die technischen Docs tiefer auf `IJobExecutionContext`, Policies und Provider-Hooks eingehen.
 
+**Handler UX Leitplanken**
+
+- Jobs sollen in der Regel nur einen `Handle`-Delegate verwenden; zusätzliche Handler-Formen werden aktuell nicht dokumentiert.
+- Fortschritt wird über `IJobExecutionContext.InitProgress(total)` (einmal pro Ausführungspfad) und `ReportProgress(processed)` kommuniziert. Diese Informationen fließen in Telemetrie, UI und optionale Resume-Strategien.
+- Semantische Statusmeldungen nutzen `CustomState(string detail, JobState state = JobState.Waiting)`. Der Croniq-Core-State (`JobState`) bleibt Pflicht, `detail` beschreibt domänenspezifische Unterteilungen (z. B. `waiting-on-dependency`, `step-1`).
+- Fehler werden im Handler geloggt und erneut geworfen; Policies (Retry, Dead-Letter) reagieren auf die Exception. `CustomState(..., JobState.Error)` ist optional für zusätzliche Sichtbarkeit.
+- Das Quickstart-Beispiel unter `docs/consumer/quickstart.md` fungiert als Referenz für die drei empfohlenen Handler-Patterns (minimal, Progress, CustomState).
+
 ## 5. JobStore & Processing
 
 - **In-Memory JobStore** (Default): Thread-sicher, nutzt Channels/Concurrent Collections; persistiert lediglich laufende Trigger im Speicher.
@@ -179,6 +187,8 @@ Der Scheduler liest das `CroniqJobAttribute`, bildet daraus den `JobKey` und reg
 - Policy-Engine basierend auf Polly oder eigener Implementierung.
 - Konfigurierbare Retry-Strategien (exponential backoff, fixed retry count).
 - Error Routing: Failed Jobs -> Dead-letter Queue (In-Memory oder Persistenz), optional Notification Provider.
+
+Handler signalisieren Fehler stets über Exceptions: zuerst loggen, optional `CustomState(..., JobState.Error)` setzen, anschließend `throw;`, damit Retry- und Dead-Letter-Policies greifen. Semantische Zwischenzustände (Waiting/Running/Finalized) werden nur bei Bedarf über `CustomState` publiziert, während Fortschritt über `InitProgress`/`ReportProgress` läuft. Das konkrete Authoring-Pattern ist in `docs/consumer/quickstart.md` dokumentiert.
 
 ### Entscheidung 6: Policy-Engine & Fehlerbehandlung
 
