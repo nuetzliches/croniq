@@ -228,3 +228,17 @@ croniq/
 - **Empfehlung**: Alle Libraries/SDKs strikt nach SemVer veröffentlichen; Services exponieren `/v1`-Routen, Breaking Changes nur über neue Major-Versionen + 2 Release-Zyklen Deprecation. Datenbankmigrationen laufen via versionierten Skripten (Xtraq) mit Forward+Rollback-Skripten; Releases enthalten automatische Smoke-Tests nach Deployment. GitHub Actions erzeugt für jedes Artefakt (NuGet, OCI) eine attestierte SBOM (Syft) und signiert Images/Packages via Cosign/SignPath. Dependency-Updates laufen durch wöchentliche Renovate-PRs mit Lizenz-Check (OSS Review Toolkit) und verpflichtendem Vulnerability-Scan (Trivy/Snyk) vor Merge.
 - **Begründung**: Strikte Versionierung und Deprecation-Regeln geben Konsumenten Planbarkeit; DB-Hardening mit Rollbacks reduziert Downtime-Risiken. SBOM + Signaturen beantworten Supply-Chain-Compliance-Anforderungen und vereinfachen Incident Response. Automatisierte Scans halten Dependencies aktuell und rechtssicher.
 - **Konsequenzen**: Release-Templates in GitHub Actions müssen Version-Bumping, Changelog-Generierung und SBOM/Signatur-Schritte enthalten; QA betreibt automatische Smoke-Tests (Compose/K8s). Xtraq-Skripte benötigen Rollback-Pendants und werden im Repo versioniert. Compliance-Dokumentation (Third-Party-Notice, Policy für neue Dependencies) wird Teil des Release-Prozesses; fehlende Scans blockieren Merge/Release.
+
+## 18. Multi-Tenancy & Quotas
+
+- Tenant-Namespace fuer Schedules/Jobs/Policies im JobStore; API-Key/Tenant-Zuordnung erzwingt Isolation in Persistenz und Telemetrie.
+- Quotas pro Tenant (z. B. max Trigger/Minute, parallele Executions, Payload-Groesse) abgestimmt auf RateLimiter-Policy.
+- Namespacing in Provider: Persistence-, Dead-Letter- und Telemetry-Daten immer mit TenantId speichern; Admin-APIs brauchen Scope-Grenzen.
+- Optional: Dedicated Connection Strings pro Tenant (Premium) vs. Shared DB; Migrations/Backups muessen beide Topologien abdecken.
+
+## 19. Execution Semantics & Idempotenz
+
+- Delivery-Garantie: Standard at-least-once; Deduplikation via `ExecutionId` + optionale `IdempotencyKey` vom Caller. At-most-once nur fuer spezifische Provider/Policies.
+- Parallelitaet: Concurrency-Grenzen pro Job/Schedule (SingleFlight pro JobKey default), optional konfigurierbar; Queue-Prioritaeten per Policy.
+- Timeouts & Cancellation: Jobs erhalten CancellationToken; Timeout-Policies brechen Lauf ab, markieren Ergebnis und verschieben in Dead-Letter gemaess Policy.
+- Side-Effects: Empfehlung Outbox/Inbox fuer externe Events; Job-Kontrakte sollen idempotent sein oder Deduplikation ueber Provider anbieten.
