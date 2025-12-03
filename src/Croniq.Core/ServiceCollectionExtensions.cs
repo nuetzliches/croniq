@@ -4,6 +4,7 @@ using System.Reflection;
 using Croniq.Core.Execution;
 using Croniq.Core.Jobs;
 using Croniq.Core.Options;
+using Croniq.Core.Policies;
 using Croniq.Sdk;
 using Croniq.Persistence.Abstractions;
 using Microsoft.Extensions.DependencyInjection;
@@ -21,6 +22,10 @@ public static class ServiceCollectionExtensions
             services.Configure(configure);
         }
 
+        services.Configure<MisfirePolicyOptions>(_ => { });
+        services.Configure<PolicyOverrideOptions>(_ => { });
+        services.TryAddSingleton<IMisfirePolicy, DefaultMisfirePolicy>();
+        services.TryAddSingleton<IPolicyResolver, PolicyResolver>();
         services.TryAddSingleton<ActivitySource>(_ => new ActivitySource("Croniq.Core"));
         services.TryAddSingleton<IJobRegistry, JobRegistry>();
         services.TryAddSingleton<IJobExecutionPipeline, DefaultJobExecutionPipeline>();

@@ -17,10 +17,8 @@ public sealed class CronSchedule
             throw new ArgumentException("Cron expression cannot be null or empty.", nameof(expression));
         }
 
-        _expression = new CronExpression(expression.Trim())
-        {
-            TimeZone = timeZone ?? TimeZoneInfo.Utc
-        };
+        _expression = new CronExpression(expression.Trim());
+        _expression.TimeZone = timeZone ?? TimeZoneInfo.Utc;
     }
 
     public string Expression => _expression.CronExpressionString;

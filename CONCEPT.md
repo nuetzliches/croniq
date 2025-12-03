@@ -204,6 +204,12 @@ Handler signalisieren Fehler stets ueber Exceptions: zuerst loggen, optional `Cu
 - **Begruendung**: Polly ist battle-tested, integriert sich nativ in .NET und erlaubt deklarative Konfiguration; eigene Implementierung wuerde mehr Zeit kosten und weniger Community-Support bieten.
 - **Konsequenzen**: Policies werden ueber Konfigurationsobjekte/Options an Jobs gebunden; Telemetrie muss Policy-Events (Retry, Breaker Open, Fallback) erfassen; Dead-Letter-Provider benoetigt Persistenzkonzept (z.B. Xtraq-Tabelle) und Tracing, um manuell zu rehydratisieren.
 
+**Policy Resolution (Resolver)**
+
+- Defaults: `MisfirePolicyOptions` (MaxMisfireDelay 5m, DeadLetterOnMisfire true, RescheduleBackoff 30s) und `QuotaOptions` (60 Trigger/Minute, 5 parallele Executions pro JobKey).
+- Scopes: globale Defaults -> Tenant -> EnvironmentTag -> NamespaceSegment -> JobName. `IPolicyResolver` waehlt immer die spezifischste Misfire-Override (kompletter Ersatz der Werte) und wendet alle passenden Quota-Overrides als Minimum-Regel an (kleinster erlaubter Wert gewinnt).
+- Anwendung: TriggerWorker nutzt den Resolver bereits fuer Misfire-Checks; Quota-Resolution liefert die Limits fuer nachgelagerte Rate-/Concurrency-Guards (in der Execution-Pipeline zu verankern). Dead-Letter-Retention bleibt 30 Tage (policy-gesteuert).
+
 ## 12. Docker & Deployment
 
 - Dockerfiles pro Service (`Croniq.Api`, `Croniq.UI`, optionale Worker Nodes).

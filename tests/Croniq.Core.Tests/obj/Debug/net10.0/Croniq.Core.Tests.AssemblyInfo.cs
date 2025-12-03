@@ -13,7 +13,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("Croniq.Core.Tests")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+ead510e967a79117c6cd9214695911bd4b769fe9")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+91b2e5860ed777c1cfb184eb237a494f03b238ed")]
 [assembly: System.Reflection.AssemblyProductAttribute("Croniq.Core.Tests")]
 [assembly: System.Reflection.AssemblyTitleAttribute("Croniq.Core.Tests")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]

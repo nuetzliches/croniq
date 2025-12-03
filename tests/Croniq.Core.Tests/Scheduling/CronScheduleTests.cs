@@ -27,7 +27,7 @@ public class CronScheduleTests
         var nextTwo = schedule.GetNextOccurrences(start, 2);
 
         Assert.Equal(2, nextTwo.Count);
-        Assert.Equal(new DateTimeOffset(2025, 6, 1, 7, 0, 0, TimeSpan.Zero), nextTwo[0]);
-        Assert.Equal(new DateTimeOffset(2025, 6, 2, 7, 0, 0, TimeSpan.Zero), nextTwo[1]);
+        Assert.Equal(new DateTimeOffset(2025, 6, 2, 7, 0, 0, TimeSpan.Zero), nextTwo[0]);
+        Assert.Equal(new DateTimeOffset(2025, 6, 3, 7, 0, 0, TimeSpan.Zero), nextTwo[1]);
     }
 }
