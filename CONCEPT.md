@@ -54,6 +54,12 @@ croniq/
 - **Technische Docs** (`docs/technical/*`): Architektur- und Provider-Dokumentation, Datenbank-Schemata, Deployment-Handbuecher sowie Operations-Runbooks. Diese Straenge adressieren Maintainer:innen, Platform-Teams und Contributors.
 - Beide Straenge verlinken gegenseitig auf relevante Referenzen (z.B. Consumer Doc verweist auf tiefergehende Architekturpassagen), werden aber separat versioniert und in der CI validiert (Broken-Link-Checks, Samples-Builds). Release-Notes referenzieren beide Perspektiven explizit.
 
+### Diagramme & Nachvollziehbarkeit
+
+- Architektur- und Policy-Diagramme liegen versioniert in `docs/architecture.drawio` (diagrams.net/draw.io XML). Aktuelle Seiten: *Architecture* (Komponenten/Provider) und *PolicyResolver* (Default + Overrides → Resolver → Worker).
+- Bearbeitung/Ansicht lokal: VS Code mit der Extension **hediet.vscode-drawio** (unofficial, de-facto Standard) oder externe diagrams.net Desktop/Web-App. Datei direkt aus dem Repo oeffnen; keine Remote-Speicherung notwendig.
+- Beim Editieren bitte Seitenstruktur beibehalten, keine eingebetteten externen Ressourcen nutzen; Farben/Legende konsistent halten.
+
 ## 4. Scheduler Core
 
 - **Trigger & Schedules**: Unterstuetzung fuer Cron-Ausdruecke (Quartz-Syntax), Intervalle (fixed/flexible), absolute Zeitpunkte; Validierung & Normalisierung zentral.
@@ -208,7 +214,7 @@ Handler signalisieren Fehler stets ueber Exceptions: zuerst loggen, optional `Cu
 
 - Defaults: `MisfirePolicyOptions` (MaxMisfireDelay 5m, DeadLetterOnMisfire true, RescheduleBackoff 30s) und `QuotaOptions` (60 Trigger/Minute, 5 parallele Executions pro JobKey).
 - Scopes: globale Defaults -> Tenant -> EnvironmentTag -> NamespaceSegment -> JobName. `IPolicyResolver` waehlt immer die spezifischste Misfire-Override (kompletter Ersatz der Werte) und wendet alle passenden Quota-Overrides als Minimum-Regel an (kleinster erlaubter Wert gewinnt).
-- Anwendung: TriggerWorker nutzt den Resolver bereits fuer Misfire-Checks; Quota-Resolution liefert die Limits fuer nachgelagerte Rate-/Concurrency-Guards (in der Execution-Pipeline zu verankern). Dead-Letter-Retention bleibt 30 Tage (policy-gesteuert).
+- Anwendung: TriggerWorker nutzt den Resolver bereits fuer Misfire-Checks; Quota-Resolution liefert die Limits fuer nachgelagerte Rate-/Concurrency-Guards (in-memory QuotaGuard pro Worker; spaeter austauschbar fuer verteilte Guards). Dead-Letter-Retention bleibt 30 Tage (policy-gesteuert).
 
 ## 12. Docker & Deployment
 

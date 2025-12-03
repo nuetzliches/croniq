@@ -10,7 +10,7 @@
 - [x] Croniq.Sdk: IJob/IJobExecutionContext Contract finalisieren und Attribute dokumentieren
 - [x] JobStore-Abstraktion: IJobStore/IJobPersistenceProvider Interfaces mit Locking/Partitionierung festziehen
 - [x] Quartz-kompatiblen Cron-Parser auswaehlen oder portieren
-- [ ] Misfire- und Recovery-Policies modellieren (MaxMisfireDelay, Dead-Letter-Markierungen)
+- [x] Misfire-Policies + Resolver modelliert (MaxMisfireDelay, Dead-Letter-Markierungen, Override-Kaskade)
 - [ ] Provider-Vertraege: Logging-, Telemetry- und Secret-Provider Schnittstellen festlegen
 - [ ] Xtraq-Persistenz: Tabellen und Stored Procedures fuer Jobs/Triggers/Heartbeats/Leases skizzieren
 - [ ] API/RPC-Vertraege: Minimal API Endpunkte und gRPC Proto entwerfen
@@ -28,6 +28,7 @@
 - [ ] Build/Test CI Pipelines (GitHub Actions) mit Lint/Coverage Gates einrichten
 - [ ] Docker Compose Dev-Stack (API, Worker, Xtraq, OTel/Grafana) bereitstellen
 - [ ] SBOM/Signierung und Vulnerability Scans in Release-Flow einbauen
+- [x] Quota-Guards im Core verankern (Rate/Concurrency) basierend auf PolicyResolver + Tests
 - [ ] Docs Streams aufsetzen (docs/consumer, docs/technical) inkl. Quickstart
 - [ ] UI-Backlog dokumentieren; Technologie nach API-Stabilisierung entscheiden
 - [ ] Kubernetes Chart (charts/croniq) als Backlog-Platzhalter vorbereiten

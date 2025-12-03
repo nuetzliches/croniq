@@ -25,6 +25,7 @@ public sealed class TriggerWorker
     private readonly ActivitySource _activitySource;
     private readonly IMisfirePolicy _misfirePolicy;
     private readonly IPolicyResolver _policyResolver;
+    private readonly IQuotaGuard _quotaGuard;
 
     public TriggerWorker(
         IJobStore jobStore,
@@ -33,6 +34,7 @@ public sealed class TriggerWorker
         IMisfirePolicy misfirePolicy,
         IPolicyResolver policyResolver,
         IOptions<CroniqOptions> options,
+        IQuotaGuard quotaGuard,
         ILogger<TriggerWorker> logger,
         ActivitySource activitySource)
     {
@@ -41,6 +43,7 @@ public sealed class TriggerWorker
         _pipeline = pipeline ?? throw new ArgumentNullException(nameof(pipeline));
         _misfirePolicy = misfirePolicy ?? throw new ArgumentNullException(nameof(misfirePolicy));
         _policyResolver = policyResolver ?? throw new ArgumentNullException(nameof(policyResolver));
+        _quotaGuard = quotaGuard ?? throw new ArgumentNullException(nameof(quotaGuard));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
         _activitySource = activitySource ?? new ActivitySource("Croniq.Core.TriggerWorker");
@@ -82,6 +85,19 @@ public sealed class TriggerWorker
                 continue;
             }
 
+            var quotaOptions = _policyResolver.ResolveQuota(jobKey);
+            if (!_quotaGuard.TryAcquire(jobKey, quotaOptions, nowUtc, out var retryAt))
+            {
+                _logger.LogWarning("Quota limit reached for {JobKey}; lease {LeaseId} will be rescheduled", lease.JobKey, lease.LeaseId);
+                await ReleaseAsync(
+                    lease,
+                    succeeded: false,
+                    deadLetterReason: "quota-limit",
+                    nextFireTimeUtc: retryAt ?? nowUtc.AddSeconds(5),
+                    cancellationToken).ConfigureAwait(false);
+                continue;
+            }
+
             try
             {
                 var metadata = lease.Payload is null
@@ -98,6 +114,10 @@ public sealed class TriggerWorker
             {
                 _logger.LogError(ex, "Error executing job {JobKey} for lease {LeaseId}", lease.JobKey, lease.LeaseId);
                 await ReleaseAsync(lease, succeeded: false, deadLetterReason: "execution-error", nextFireTimeUtc: null, cancellationToken).ConfigureAwait(false);
+            }
+            finally
+            {
+                _quotaGuard.Release(jobKey);
             }
         }
 
