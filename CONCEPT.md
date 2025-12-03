@@ -45,12 +45,55 @@ croniq/
 	 └─ architecture.md
 ```
 
+### Dokumentationsstränge
+
+- **Consumer Docs** (`docs/consumer/*`): Quickstarts, SDK-Guides, Samples und How-Tos für Teams, die Croniq nutzen oder Jobs implementieren. Enthält Schritt-für-Schritt-Anleitungen (z. B. „Ersten Job schreiben“, „API-Key erzeugen“) und fokussiert auf Developer Experience.
+- **Technische Docs** (`docs/technical/*`): Architektur- und Provider-Dokumentation, Datenbank-Schemata, Deployment-Handbücher sowie Operations-Runbooks. Diese Stränge adressieren Maintainer:innen, Platform-Teams und Contributors.
+- Beide Stränge verlinken gegenseitig auf relevante Referenzen (z. B. Consumer Doc → tiefergehende Architekturpassagen), werden aber separat versioniert und in der CI validiert (Broken-Link-Checks, Samples-Builds). Release-Notes referenzieren beide Perspektiven explizit.
+
 ## 4. Scheduler Core
 
 - **Trigger & Schedules**: Unterstützung für Cron-Ausdrücke (Quartz-Syntax), Intervalle (fixed/flexible), absolute Zeitpunkte; Validierung & Normalisierung zentral.
 - **Execution Pipeline**: Pipeline-Middleware für Policies (Retries, Timeout, Circuit-Breaker, Dead-letter-Queue optional).
-- **Job Contracts**: `IJob`-Interface (à la Quartz) mit Cancellation-Support und Kontextobjekt für Logging/Telemetry.
+- **Job Contracts**: Öffentlich bleibt das einfache `IJob`-Interface (à la Quartz); es erhält Cancellation-Support, ein Execution-Context-Objekt für Logging/Telemetry sowie optionale Attribute (z. B. `[CroniqJob("billing", "InvoiceDispatch")]`) zur Beschreibung der Job-Metadaten.
+- **Job Keys & Partitionierung**: Jeder Job erzeugt deterministisch einen `JobKey` nach dem Schema `TenantId:EnvironmentTag:Namespace:JobName` (optional ergänzt um `:Variant`). Der Scheduler registriert bzw. aktualisiert Job-Definitionen beim Startup über den `IJobPersistenceProvider`; die Persistenz erzwingt `UNIQUE (TenantId, EnvironmentTag, Namespace, JobName)` und nutzt dieselben Spalten als Partition Keys, sodass Dev-Instanzen ihre eigenen Datensätze verwalten können, während Shared-Cluster-Szenarien gezielt über identische Tags laufen.
 - **Dependency Injection**: Verwendung von `IServiceProvider` zur Auflösung von Jobs; erlaubt externe Assemblys.
+
+### API Sketch: `IJob` Contract
+
+```csharp
+namespace Croniq.Sdk;
+
+[AttributeUsage(AttributeTargets.Class, Inherited = false, AllowMultiple = false)]
+public sealed class CroniqJobAttribute : Attribute
+{
+  public CroniqJobAttribute(string namespaceSegment, string jobName, string? variant = null)
+  {
+    NamespaceSegment = namespaceSegment;
+    JobName = jobName;
+    Variant = variant;
+  }
+
+  public string NamespaceSegment { get; }
+  public string JobName { get; }
+  public string? Variant { get; }
+}
+
+public interface IJob
+{
+  Task ExecuteAsync(IJobExecutionContext context, CancellationToken cancellationToken);
+}
+
+public interface IJobExecutionContext
+{
+  string JobKey { get; }
+  IReadOnlyDictionary<string, string> Metadata { get; }
+  ILogger Logger { get; }
+  ActivitySource ActivitySource { get; }
+}
+```
+
+Der Scheduler liest das `CroniqJobAttribute`, bildet daraus den `JobKey` und registriert den Typ beim Startup. Consumer-Dokumentation zeigt Beispiele mit vereinfachtem `IJob`, während die technischen Docs tiefer auf `IJobExecutionContext`, Policies und Provider-Hooks eingehen.
 
 ## 5. JobStore & Processing
 
