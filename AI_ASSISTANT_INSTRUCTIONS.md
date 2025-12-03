@@ -5,7 +5,7 @@ All AI-generated contributions must align with the architectural ground rules do
 ## Core Expectations
 
 1. **Target Stack**
-   - Use .NET `net10.0` for all new projects/libraries.
+   - Use .NET `net10.0` for all new projects/libraries; upgrade existing TFMs to `net10.0` unless explicitly exempted.
    - Prefer modern C# design patterns (records, required members, dependency injection, source generators where appropriate).
 
 2. **Documentation & Comments**
@@ -14,7 +14,7 @@ All AI-generated contributions must align with the architectural ground rules do
 
 3. **Dependencies & Packages**
    - Add NuGet packages in their latest stable version unless the concept mandates a specific range.
-   - Follow each package’s official documentation for configuration and usage patterns.
+   - Follow each package's official documentation for configuration and usage patterns.
 
 4. **General Best Practices**
    - Keep public APIs minimal but well-documented; avoid leaking implementation details.
@@ -28,4 +28,4 @@ All AI-generated contributions must align with the architectural ground rules do
    - When new features impact consumers, update `docs/consumer/*` and refer to deeper explanations in `docs/technical/*`.
    - Record noteworthy architectural decisions in the technical docs or `CONCEPT.md` addenda.
 
-By following these instructions, AI contributions remain compliant with the project’s technical vision and developer experience goals.
+By following these instructions, AI contributions remain compliant with the project's technical vision and developer experience goals.

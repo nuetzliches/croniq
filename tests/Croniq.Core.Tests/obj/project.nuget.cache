@@ -1,0 +1,21 @@
+{
+  "version": 2,
+  "dgSpecHash": "UA0MVsUrJVw=",
+  "success": true,
+  "projectFilePath": "C:\\Projekte\\GitHub\\croniq\\tests\\Croniq.Core.Tests\\Croniq.Core.Tests.csproj",
+  "expectedPackageFiles": [
+    "C:\\Users\\sgies\\.nuget\\packages\\microsoft.extensions.dependencyinjection.abstractions\\8.0.1\\microsoft.extensions.dependencyinjection.abstractions.8.0.1.nupkg.sha512",
+    "C:\\Users\\sgies\\.nuget\\packages\\microsoft.extensions.logging.abstractions\\8.0.1\\microsoft.extensions.logging.abstractions.8.0.1.nupkg.sha512",
+    "C:\\Users\\sgies\\.nuget\\packages\\microsoft.extensions.options\\8.0.1\\microsoft.extensions.options.8.0.1.nupkg.sha512",
+    "C:\\Users\\sgies\\.nuget\\packages\\microsoft.extensions.primitives\\8.0.0\\microsoft.extensions.primitives.8.0.0.nupkg.sha512",
+    "C:\\Users\\sgies\\.nuget\\packages\\xunit\\2.6.6\\xunit.2.6.6.nupkg.sha512",
+    "C:\\Users\\sgies\\.nuget\\packages\\xunit.abstractions\\2.0.3\\xunit.abstractions.2.0.3.nupkg.sha512",
+    "C:\\Users\\sgies\\.nuget\\packages\\xunit.analyzers\\1.10.0\\xunit.analyzers.1.10.0.nupkg.sha512",
+    "C:\\Users\\sgies\\.nuget\\packages\\xunit.assert\\2.6.6\\xunit.assert.2.6.6.nupkg.sha512",
+    "C:\\Users\\sgies\\.nuget\\packages\\xunit.core\\2.6.6\\xunit.core.2.6.6.nupkg.sha512",
+    "C:\\Users\\sgies\\.nuget\\packages\\xunit.extensibility.core\\2.6.6\\xunit.extensibility.core.2.6.6.nupkg.sha512",
+    "C:\\Users\\sgies\\.nuget\\packages\\xunit.extensibility.execution\\2.6.6\\xunit.extensibility.execution.2.6.6.nupkg.sha512",
+    "C:\\Users\\sgies\\.nuget\\packages\\xunit.runner.visualstudio\\2.5.7\\xunit.runner.visualstudio.2.5.7.nupkg.sha512"
+  ],
+  "logs": []
+}

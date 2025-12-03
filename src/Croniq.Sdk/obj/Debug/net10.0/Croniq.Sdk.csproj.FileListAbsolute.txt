@@ -1,0 +1,13 @@
+C:\Projekte\GitHub\croniq\src\Croniq.Sdk\bin\Debug\net10.0\Croniq.Sdk.deps.json
+C:\Projekte\GitHub\croniq\src\Croniq.Sdk\bin\Debug\net10.0\Croniq.Sdk.dll
+C:\Projekte\GitHub\croniq\src\Croniq.Sdk\bin\Debug\net10.0\Croniq.Sdk.pdb
+C:\Projekte\GitHub\croniq\src\Croniq.Sdk\obj\Debug\net10.0\Croniq.Sdk.csproj.AssemblyReference.cache
+C:\Projekte\GitHub\croniq\src\Croniq.Sdk\obj\Debug\net10.0\Croniq.Sdk.GeneratedMSBuildEditorConfig.editorconfig
+C:\Projekte\GitHub\croniq\src\Croniq.Sdk\obj\Debug\net10.0\Croniq.Sdk.AssemblyInfoInputs.cache
+C:\Projekte\GitHub\croniq\src\Croniq.Sdk\obj\Debug\net10.0\Croniq.Sdk.AssemblyInfo.cs
+C:\Projekte\GitHub\croniq\src\Croniq.Sdk\obj\Debug\net10.0\Croniq.Sdk.csproj.CoreCompileInputs.cache
+C:\Projekte\GitHub\croniq\src\Croniq.Sdk\obj\Debug\net10.0\Croniq.Sdk.sourcelink.json
+C:\Projekte\GitHub\croniq\src\Croniq.Sdk\obj\Debug\net10.0\Croniq.Sdk.dll
+C:\Projekte\GitHub\croniq\src\Croniq.Sdk\obj\Debug\net10.0\refint\Croniq.Sdk.dll
+C:\Projekte\GitHub\croniq\src\Croniq.Sdk\obj\Debug\net10.0\Croniq.Sdk.pdb
+C:\Projekte\GitHub\croniq\src\Croniq.Sdk\obj\Debug\net10.0\ref\Croniq.Sdk.dll

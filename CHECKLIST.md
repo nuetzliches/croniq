@@ -6,10 +6,10 @@
 - [x] Priorisierte Entscheidungen zu Scheduling-Syntax, Persistenz und Policies dokumentiert
 
 ## In Arbeit
-- [ ] Croniq.Core: Trigger/Job-Pipeline API entwerfen inkl. JobKey-Schema und DI-Konzept
-- [ ] Croniq.Sdk: IJob/IJobExecutionContext Contract finalisieren und Attribute dokumentieren
-- [ ] JobStore-Abstraktion: IJobStore/IJobPersistenceProvider Interfaces mit Locking/Partitionierung festziehen
-- [ ] Quartz-kompatiblen Cron-Parser auswaehlen oder portieren
+- [x] Croniq.Core: Trigger/Job-Pipeline API entwerfen inkl. JobKey-Schema und DI-Konzept
+- [x] Croniq.Sdk: IJob/IJobExecutionContext Contract finalisieren und Attribute dokumentieren
+- [x] JobStore-Abstraktion: IJobStore/IJobPersistenceProvider Interfaces mit Locking/Partitionierung festziehen
+- [x] Quartz-kompatiblen Cron-Parser auswaehlen oder portieren
 - [ ] Misfire- und Recovery-Policies modellieren (MaxMisfireDelay, Dead-Letter-Markierungen)
 - [ ] Provider-Vertraege: Logging-, Telemetry- und Secret-Provider Schnittstellen festlegen
 - [ ] Xtraq-Persistenz: Tabellen und Stored Procedures fuer Jobs/Triggers/Heartbeats/Leases skizzieren
