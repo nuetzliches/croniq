@@ -1,90 +1,90 @@
-<mxfile host="app.diagrams.net" modified="2025-12-03T21:45:00.000Z" agent="cronq-codex" version="24.7.12" editor="diagramly" type="device">
-  <diagram name="Architecture" id="arch-1">
-    <mxGraphModel dx="1280" dy="720" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1920" pageHeight="1080" background="#ffffff">
-      <root>
-        <mxCell id="0"/>
-        <mxCell id="1" parent="0"/>
-        <mxCell id="core" value="Croniq.Core&#xa;- TriggerWorker&#xa;- PolicyResolver&#xa;- Misfire/Quota Policies&#xa;- Scheduling (Cron)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=12;" vertex="1" parent="1">
-          <mxGeometry x="640" y="340" width="200" height="160" as="geometry"/>
-        </mxCell>
-        <mxCell id="api" value="Croniq.Api&#xa;+ gRPC / REST" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=12;" vertex="1" parent="1">
-          <mxGeometry x="360" y="260" width="180" height="80" as="geometry"/>
-        </mxCell>
-        <mxCell id="sdk" value="Croniq.Sdk&#xa;Jobs &amp; Handlers&#xa;CroniqJobAttribute" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=12;" vertex="1" parent="1">
-          <mxGeometry x="360" y="380" width="180" height="120" as="geometry"/>
-        </mxCell>
-        <mxCell id="registry" value="JobRegistry&#xa;IJobExecutionPipeline" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=12;" vertex="1" parent="1">
-          <mxGeometry x="580" y="520" width="180" height="80" as="geometry"/>
-        </mxCell>
-        <mxCell id="persistence" value="Croniq.Persistence.Abstractions&#xa;IJobStore / IJobPersistenceProvider&#xa;PartitionScope + Leases" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontSize=12;" vertex="1" parent="1">
-          <mxGeometry x="880" y="340" width="230" height="140" as="geometry"/>
-        </mxCell>
-        <mxCell id="providerInMem" value="Croniq.JobStore.InMemory&#xa;(Reference)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;fontSize=12;" vertex="1" parent="1">
-          <mxGeometry x="920" y="520" width="190" height="60" as="geometry"/>
-        </mxCell>
-        <mxCell id="providerXtraq" value="Croniq.Persistence.Xtraq&#xa;Stored Procedures + Locks" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;fontSize=12;" vertex="1" parent="1">
-          <mxGeometry x="920" y="600" width="190" height="60" as="geometry"/>
-        </mxCell>
-        <mxCell id="observability" value="Telemetry / Logging Providers&#xa;OpenTelemetry + Serilog" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#cfe2f3;strokeColor=#6c8ebf;fontSize=12;" vertex="1" parent="1">
-          <mxGeometry x="640" y="200" width="200" height="80" as="geometry"/>
-        </mxCell>
-        <mxCell id="apiToCore" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#82b366;" edge="1" parent="1" source="api" target="core">
-          <mxGeometry relative="1" as="geometry"/>
-        </mxCell>
-        <mxCell id="sdkToCore" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#6c8ebf;" edge="1" parent="1" source="sdk" target="core">
-          <mxGeometry relative="1" as="geometry"/>
-        </mxCell>
-        <mxCell id="coreToRegistry" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#9673a6;" edge="1" parent="1" source="core" target="registry">
-          <mxGeometry relative="1" as="geometry"/>
-        </mxCell>
-        <mxCell id="coreToPersistence" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#b85450;" edge="1" parent="1" source="core" target="persistence">
-          <mxGeometry relative="1" as="geometry"/>
-        </mxCell>
-        <mxCell id="persistenceToInMem" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#d79b00;" edge="1" parent="1" source="persistence" target="providerInMem">
-          <mxGeometry relative="1" as="geometry"/>
-        </mxCell>
-        <mxCell id="persistenceToXtraq" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#666666;" edge="1" parent="1" source="persistence" target="providerXtraq">
-          <mxGeometry relative="1" as="geometry"/>
-        </mxCell>
-        <mxCell id="coreToObservability" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;dashed=1;strokeColor=#6c8ebf;" edge="1" parent="1" source="core" target="observability">
-          <mxGeometry relative="1" as="geometry"/>
-        </mxCell>
-      </root>
-    </mxGraphModel>
-  </diagram>
-  <diagram name="PolicyResolver" id="policy-1">
-    <mxGraphModel dx="1280" dy="720" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1920" pageHeight="1080" background="#ffffff">
-      <root>
-        <mxCell id="p0"/>
-        <mxCell id="p1" parent="p0"/>
-        <mxCell id="defaults" value="Defaults&#xa;- Misfire: 5m, DLQ on&#xa;- Quota: 60/min, 5 parallel" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=12;" vertex="1" parent="p1">
-          <mxGeometry x="280" y="260" width="200" height="100" as="geometry"/>
-        </mxCell>
-        <mxCell id="overrides" value="Overrides&#xa;Tenant / Env / Namespace / Job&#xa;- Misfire: replace values&#xa;- Quota: min of limits" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=12;" vertex="1" parent="p1">
-          <mxGeometry x="540" y="240" width="240" height="140" as="geometry"/>
-        </mxCell>
-        <mxCell id="resolver" value="PolicyResolver&#xa;- pick most specific misfire&#xa;- apply all quota overrides (min)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=12;" vertex="1" parent="p1">
-          <mxGeometry x="820" y="260" width="220" height="120" as="geometry"/>
-        </mxCell>
-        <mxCell id="output" value="Resolved Policies&#xa;- MisfirePolicyOptions&#xa;- QuotaOptions" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=12;" vertex="1" parent="p1">
-          <mxGeometry x="1100" y="270" width="200" height="100" as="geometry"/>
-        </mxCell>
-        <mxCell id="worker" value="TriggerWorker / Pipeline&#xa;- Misfire check&#xa;- Rate/Concurrency guards" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontSize=12;" vertex="1" parent="p1">
-          <mxGeometry x="1100" y="420" width="220" height="110" as="geometry"/>
-        </mxCell>
-        <mxCell id="edgeDefaults" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;" edge="1" parent="p1" source="defaults" target="resolver">
-          <mxGeometry relative="1" as="geometry"/>
-        </mxCell>
-        <mxCell id="edgeOverrides" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;" edge="1" parent="p1" source="overrides" target="resolver">
-          <mxGeometry relative="1" as="geometry"/>
-        </mxCell>
-        <mxCell id="edgeResolverOut" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;" edge="1" parent="p1" source="resolver" target="output">
-          <mxGeometry relative="1" as="geometry"/>
-        </mxCell>
-        <mxCell id="edgePoliciesToWorker" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;dashed=1;strokeColor=#b85450;" edge="1" parent="p1" source="output" target="worker">
-          <mxGeometry relative="1" as="geometry"/>
-        </mxCell>
-      </root>
-    </mxGraphModel>
-  </diagram>
+<mxfile host="65bd71144e">
+    <diagram name="Architecture" id="arch-1">
+        <mxGraphModel dx="844" dy="744" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1920" pageHeight="1080" background="#ffffff" math="0" shadow="0">
+            <root>
+                <mxCell id="0"/>
+                <mxCell id="1" parent="0"/>
+                <mxCell id="core" value="Croniq.Core&#xa;- TriggerWorker&#xa;- PolicyResolver&#xa;- Misfire/Quota Policies&#xa;- Scheduling (Cron)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=12;" parent="1" vertex="1">
+                    <mxGeometry x="640" y="340" width="200" height="160" as="geometry"/>
+                </mxCell>
+                <mxCell id="api" value="Croniq.Api&#xa;+ gRPC / REST" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=12;" parent="1" vertex="1">
+                    <mxGeometry x="360" y="290" width="180" height="80" as="geometry"/>
+                </mxCell>
+                <mxCell id="sdk" value="Croniq.Sdk&#xa;Jobs &amp; Handlers&#xa;CroniqJobAttribute" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=12;" parent="1" vertex="1">
+                    <mxGeometry x="360" y="400" width="180" height="120" as="geometry"/>
+                </mxCell>
+                <mxCell id="registry" value="JobRegistry&#xa;IJobExecutionPipeline" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=12;" parent="1" vertex="1">
+                    <mxGeometry x="470" y="570" width="180" height="80" as="geometry"/>
+                </mxCell>
+                <mxCell id="persistence" value="Croniq.Persistence.Abstractions&#xa;IJobStore / IJobPersistenceProvider&#xa;PartitionScope + Leases" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontSize=12;" parent="1" vertex="1">
+                    <mxGeometry x="880" y="350" width="230" height="140" as="geometry"/>
+                </mxCell>
+                <mxCell id="providerInMem" value="Croniq.JobStore.InMemory&#xa;(Reference)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;fontSize=12;" parent="1" vertex="1">
+                    <mxGeometry x="960" y="660" width="190" height="60" as="geometry"/>
+                </mxCell>
+                <mxCell id="providerXtraq" value="Croniq.Persistence.Xtraq&#xa;Stored Procedures + Locks" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;fontSize=12;" parent="1" vertex="1">
+                    <mxGeometry x="740" y="660" width="190" height="60" as="geometry"/>
+                </mxCell>
+                <mxCell id="observability" value="Telemetry / Logging Providers&#xa;OpenTelemetry + Serilog" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#cfe2f3;strokeColor=#6c8ebf;fontSize=12;" parent="1" vertex="1">
+                    <mxGeometry x="640" y="200" width="200" height="80" as="geometry"/>
+                </mxCell>
+                <mxCell id="apiToCore" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#82b366;" parent="1" source="api" target="core" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="sdkToCore" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#6c8ebf;" parent="1" source="sdk" target="core" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="coreToRegistry" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#9673a6;" parent="1" source="core" target="registry" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="coreToPersistence" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#b85450;" parent="1" source="core" target="persistence" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="persistenceToInMem" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#d79b00;" parent="1" source="persistence" target="providerInMem" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="persistenceToXtraq" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#666666;" parent="1" source="persistence" target="providerXtraq" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="coreToObservability" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;dashed=1;strokeColor=#6c8ebf;" parent="1" source="core" target="observability" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+            </root>
+        </mxGraphModel>
+    </diagram>
+    <diagram name="PolicyResolver" id="policy-1">
+        <mxGraphModel dx="1280" dy="720" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1920" pageHeight="1080" background="#ffffff">
+            <root>
+                <mxCell id="p0"/>
+                <mxCell id="p1" parent="p0"/>
+                <mxCell id="defaults" value="Defaults&#xa;- Misfire: 5m, DLQ on&#xa;- Quota: 60/min, 5 parallel" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=12;" vertex="1" parent="p1">
+                    <mxGeometry x="280" y="260" width="200" height="100" as="geometry"/>
+                </mxCell>
+                <mxCell id="overrides" value="Overrides&#xa;Tenant / Env / Namespace / Job&#xa;- Misfire: replace values&#xa;- Quota: min of limits" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=12;" vertex="1" parent="p1">
+                    <mxGeometry x="540" y="240" width="240" height="140" as="geometry"/>
+                </mxCell>
+                <mxCell id="resolver" value="PolicyResolver&#xa;- pick most specific misfire&#xa;- apply all quota overrides (min)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=12;" vertex="1" parent="p1">
+                    <mxGeometry x="820" y="260" width="220" height="120" as="geometry"/>
+                </mxCell>
+                <mxCell id="output" value="Resolved Policies&#xa;- MisfirePolicyOptions&#xa;- QuotaOptions" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=12;" vertex="1" parent="p1">
+                    <mxGeometry x="1100" y="270" width="200" height="100" as="geometry"/>
+                </mxCell>
+                <mxCell id="worker" value="TriggerWorker / Pipeline&#xa;- Misfire check&#xa;- Rate/Concurrency guards" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontSize=12;" vertex="1" parent="p1">
+                    <mxGeometry x="1100" y="420" width="220" height="110" as="geometry"/>
+                </mxCell>
+                <mxCell id="edgeDefaults" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;" edge="1" parent="p1" source="defaults" target="resolver">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="edgeOverrides" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;" edge="1" parent="p1" source="overrides" target="resolver">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="edgeResolverOut" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;" edge="1" parent="p1" source="resolver" target="output">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="edgePoliciesToWorker" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;dashed=1;strokeColor=#b85450;" edge="1" parent="p1" source="output" target="worker">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+            </root>
+        </mxGraphModel>
+    </diagram>
 </mxfile>
