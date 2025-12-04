@@ -12,6 +12,7 @@ Spezifikation fuer UDTs und Tabellen (CamelCase) nach Schema-Trennung.
 - `croniq/procs.jobs.sql`: Procs fuer Jobs/Triggers (`JobUpsert`, `JobDelete`, `TriggerUpsert`, `TriggerDelete`) mit `ActorRef` + `JobRef`/`TriggerRef`, Guard-/Throw-Nutzung und OUTPUT-Parametern; Reuse von Soft-Deletes via Pflichtparameter `@AllowDeletedReuse`.
 - `croniq/procs.leases.sql`: Procs fuer Trigger-Leases (`TriggerLeaseAcquire`, `TriggerLeaseRelease`, `TriggerLeaseRetention`) mit `ActorRef` + Lease-UDTTs, Guard-/Throw-Nutzung, OUTPUT-Parametern; Unique-Index `UX_croniq_TriggerLeases_Active` verhindert parallele aktive Leases.
 - `croniq/procs.deadletter.sql`: Procs fuer Trigger-Dead-Letter (`TriggerDeadLetterInsert`, `TriggerDeadLetterRetention`) mit `ActorRef` + `TriggerDeadLetterRef`, Guard-/Throw-Nutzung und OUTPUT-Parametern.
+- `infra/atlas`: Lokale SQL Dev-Umgebung per Docker Compose (`mssql/server:2022`) und Apply-Skript (`apply.ps1`) fuer sqlcmd-Deployment und optionales dacpac-Extract via `sqlpackage`; `.env.example` liefert Default-Creds/Port.
 - Helper/Guard: `core.GetActor` + `core.GuardActor` fuer `ActorRef`; `croniq.GetInstanceId|Environment|NodeName|Capabilities|Version` + `croniq.GuardInstanceRef` fuer `InstanceRef`; weitere Guard/Throw-Procs fuer Job/Trigger.
 
 ### Konventionen

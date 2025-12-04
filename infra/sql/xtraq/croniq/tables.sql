@@ -2,6 +2,10 @@
 IF NOT EXISTS (SELECT 1 FROM sys.schemas WHERE name = 'croniq') EXEC ('CREATE SCHEMA [croniq]');
 GO
 
+SET ANSI_NULLS ON;
+SET QUOTED_IDENTIFIER ON;
+GO
+
 CREATE TABLE [croniq].[Instances]
 (
     [InstanceId] [core].[reference] PRIMARY KEY,

@@ -2,6 +2,10 @@
 IF NOT EXISTS (SELECT 1 FROM sys.schemas WHERE name = 'auth') EXEC ('CREATE SCHEMA [auth]');
 GO
 
+SET ANSI_NULLS ON;
+SET QUOTED_IDENTIFIER ON;
+GO
+
 CREATE TABLE [auth].[Tenants]
 (
     [TenantId] [core].[key] IDENTITY(1001,1) PRIMARY KEY,
