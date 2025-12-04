@@ -60,6 +60,27 @@ croniq/
 - Bearbeitung/Ansicht lokal: VS Code mit der Extension **hediet.vscode-drawio** (unofficial, de-facto Standard) oder externe diagrams.net Desktop/Web-App. Datei direkt aus dem Repo oeffnen; keine Remote-Speicherung notwendig.
 - Beim Editieren bitte Seitenstruktur beibehalten, keine eingebetteten externen Ressourcen nutzen; Farben/Legende konsistent halten.
 
+## Persistenz-Basis (Xtraq)
+
+- Alle benutzten SQL-Typen werden als UDTs im Schema `core` gekapselt (siehe `infra/sql/xtraq/01-types.sql`), z.B. `core.key`, `core.keyBig`, `core.utcDateTime`, `core.reference`, `core.tag`, `core.label`, `core.name`, `core.principal`, `core.flag`; Domaintypen liegen in `croniq` (z.B. `croniq.cronExpression`, `croniq.timeZoneId`). Ziel: konsistente Laengen/NotNull und einfachere Migrations-Anpassungen.
+- Nullbarkeit wird nicht im UDT-Namen codiert; UDTs sind standardmaessig NOT NULL definiert, explizit NULL nur fuer Payload/Metadata/Variant/DeadLetterReason (jsonNullable, jobVariant, deadLetterReason, principalNullable, labelNullable). Null/NOT NULL wird auf Spaltenebene festgelegt.
+- Zeitfelder werden immer als UTC (`core.utcDateTime` = `datetime2(3)`) persistiert; Default-Spalten wie `CreatedUtc`/`UpdatedUtc` nutzen `SYSUTCDATETIME()` fuer Server-Zeit, no local time.
+- Partitionierung/Keys: Tenant (FK -> `[auth].[Tenants]` via `core.key`) + Environment (`core.tag`) als Pflichtspalten; Namespace/Name ueber `core.label`/`core.name`, Variant via `croniq.jobVariant`. Zusammengesetzter Key bleibt `TenantId, Environment, Namespace, Name, Variant`.
+
+### SQL-Schema Layout (Entwurf)
+
+```
+infra/sql/xtraq/
+  core/types.sql            # [core] Basis-UDTs (key, keyBig, uid, utcDateTime, reference, tag, label, name, labelNullable, principal, principalNullable, jsonNullable, flag)
+  croniq/types.sql          # [croniq] Domaintypen (cronExpression, timeZoneId, stateCode, jobVariant, deadLetterReason)
+  auth/tables.sql           # Tabelle [auth].[Tenants] (TenantId core.key PK, Reference core.reference UNIQUE, Created/Updated + Principals, IsDeleted)
+  croniq/tables.sql         # Tabellen Jobs/Triggers/Leases/DeadLetter (Tenant FK -> auth.Tenants, Environment, Namespace, Name, Variant, Cron, TimeZoneId, Payload, Metadata, State)
+  04-croniq-seed.sql        # optionale Seeds/Testdaten
+```
+
+- Nicht-basale Typen liegen im Schema `[croniq]`; Auth/Identity-Objekte (Tenant/User/API-Key/OAuth2-Client) liegen im Schema `[auth]` mit numerischem PK (`core.pkInt`). Falls ein sprechender String benoetigt wird, kommt eine Spalte `Reference` (Typ `core.reference`) hinzu.
+- Alle Tabellen sollen PK aus `core.pkInt`/`core.pkBigInt` verwenden und Tenant/Environment als Pflichtfelder fuehren; Foreign Keys auf `[auth].[tenants]`.
+
 ## 4. Scheduler Core
 
 - **Trigger & Schedules**: Unterstuetzung fuer Cron-Ausdruecke (Quartz-Syntax), Intervalle (fixed/flexible), absolute Zeitpunkte; Validierung & Normalisierung zentral.
