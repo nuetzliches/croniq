@@ -1,0 +1,63 @@
+# Build outputs
+bin/
+obj/
+out/
+artifacts/
+TestResults/
+[Rr]elease/
+[Dd]ebug/
+
+# IDE state
+.vs/
+.idea/
+.vscode/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+*.userprefs
+
+# Rider / ReSharper / NCrunch
+_ReSharper*/
+*.DotSettings.user
+*.ncrunch*
+*.nunit*
+
+# Logs & caches
+*.log
+*.tlog
+*.svclog
+*.cache
+*.opendb
+StyleCop.Cache
+
+# Packages & tooling artefacts
+packages/
+*.nupkg
+*.snupkg
+*.localhistory/
+
+# Coverage / analysis
+*.coverage
+*.coveragexml
+coverage*/
+TestResult.xml
+
+# Generated files
+*.g.*
+*.g.cs
+*.Designer.cs
+*.generated.cs
+*.AssemblyAttributes.cs
+*_i.c
+*_p.c
+*.dbmdl
+*.jfm
+
+# Environment & secrets
+.env
+*.pfx
+*.snk
+
+# Local SQL Server container data
+infra/docker/mssql-data/
