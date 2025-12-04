@@ -13,7 +13,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("Croniq.Sdk")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+518f094e74685e6f140327df91ae6489316ee68f")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+e2365de20cd3b5310d91ea47c14f42f029e21909")]
 [assembly: System.Reflection.AssemblyProductAttribute("Croniq.Sdk")]
 [assembly: System.Reflection.AssemblyTitleAttribute("Croniq.Sdk")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]

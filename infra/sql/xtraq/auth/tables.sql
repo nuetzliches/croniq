@@ -8,9 +8,9 @@ CREATE TABLE [auth].[Tenants]
     [Reference] [core].[reference] UNIQUE,
     [Name] [core].[label],
     [CreatedUtc] [core].[utcDateTime] CONSTRAINT DF_auth_Tenants_CreatedUtc DEFAULT SYSUTCDATETIME(),
-    [CreatedBy] [core].[principal],
+    [CreatedBy] [core].[actor],
     [UpdatedUtc] [core].[utcDateTimeNullable],
-    [UpdatedBy] [core].[principalNullable],
+    [UpdatedBy] [core].[actorNullable],
     [IsDeleted] [core].[flag] CONSTRAINT DF_auth_Tenants_IsDeleted DEFAULT (0)
 );
 GO
