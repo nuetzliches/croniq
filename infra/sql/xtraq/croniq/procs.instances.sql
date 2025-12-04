@@ -4,7 +4,7 @@ GO
 CREATE OR ALTER PROCEDURE [croniq].[InstanceRegister]
     @Actor [core].[ActorRef] READONLY,
     @Instance [croniq].[InstanceRef] READONLY,
-    @AllowDeletedReuse [core].[flag] = 1,
+    @AllowDeletedReuse [core].[flag],
     @Generation [core].[count] OUTPUT,
     @LastSeenUtc [core].[utcDateTime] OUTPUT
 AS
@@ -167,7 +167,7 @@ BEGIN
               tl.[LeaseExpiresAtUtc] <= @now
                 OR NOT EXISTS
                    (
-                       SELECT TOP (1) 1
+                       SELECT TOP 1 1
                        FROM [croniq].[Instances] AS i
                        WHERE i.[InstanceId] = tl.[InstanceId]
                          AND i.[IsDeleted] = 0

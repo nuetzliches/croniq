@@ -54,6 +54,15 @@ CREATE NONCLUSTERED INDEX [IX_croniq_Instances_LastSeen]
     INCLUDE ([LastSeenUtc]);
 GO
 
+CREATE UNIQUE NONCLUSTERED INDEX [UX_croniq_TriggerLeases_Active]
+    ON [croniq].[TriggerLeases] ([TriggerId])
+    WHERE [IsDeleted] = 0;
+GO
+
+CREATE NONCLUSTERED INDEX [IX_croniq_TriggerLeases_Retention]
+    ON [croniq].[TriggerLeases] ([IsDeleted], [UpdatedUtc]);
+GO
+
 CREATE TABLE [croniq].[Triggers]
 (
     [TriggerId] [core].[keyBig] IDENTITY(1001,1) PRIMARY KEY,

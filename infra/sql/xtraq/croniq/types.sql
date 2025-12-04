@@ -56,6 +56,43 @@ CREATE TYPE [croniq].[TriggerRef] AS TABLE
 );
 GO
 
+CREATE TYPE [croniq].[TriggerLeaseRef] AS TABLE
+(
+    [TriggerId] [core].[keyBig],
+    [JobId] [core].[keyBig],
+    [TenantId] [core].[key],
+    [Environment] [core].[tag],
+    [Namespace] [core].[label],
+    [Name] [core].[name],
+    [Variant] [croniq].[jobVariant],
+    [InstanceId] [core].[reference],
+    [FireAtUtc] [core].[utcDateTime],
+    [LeaseExpiresAtUtc] [core].[utcDateTime],
+    [Payload] [core].[jsonNullable]
+);
+GO
+
+CREATE TYPE [croniq].[TriggerLeaseReleaseRef] AS TABLE
+(
+    [LeaseId] [core].[keyBig],
+    [InstanceId] [core].[reference]
+);
+GO
+
+CREATE TYPE [croniq].[TriggerDeadLetterRef] AS TABLE
+(
+    [TriggerId] [core].[keyBig],
+    [TenantId] [core].[key],
+    [Environment] [core].[tag],
+    [Namespace] [core].[label],
+    [Name] [core].[name],
+    [Variant] [croniq].[jobVariant],
+    [FireAtUtc] [core].[utcDateTime],
+    [DeadLetterReason] [croniq].[deadLetterReason],
+    [Payload] [core].[jsonNullable]
+);
+GO
+
 CREATE OR ALTER FUNCTION [croniq].[GetInstanceId]
 (
     @Instance [croniq].[InstanceRef] READONLY
@@ -168,6 +205,98 @@ BEGIN
 END
 GO
 
+CREATE OR ALTER PROCEDURE [croniq].[GuardTriggerLeaseRef]
+    @Lease [croniq].[TriggerLeaseRef] READONLY,
+    @TriggerId [core].[keyBig] OUTPUT,
+    @JobId [core].[keyBig] OUTPUT,
+    @TenantId [core].[key] OUTPUT,
+    @Environment [core].[tag] OUTPUT,
+    @Namespace [core].[label] OUTPUT,
+    @Name [core].[name] OUTPUT,
+    @Variant [croniq].[jobVariant] OUTPUT,
+    @InstanceId [core].[reference] OUTPUT,
+    @FireAtUtc [core].[utcDateTime] OUTPUT,
+    @LeaseExpiresAtUtc [core].[utcDateTime] OUTPUT,
+    @Payload [core].[jsonNullable] OUTPUT
+AS
+BEGIN
+    SET NOCOUNT ON;
+
+    SELECT TOP (1)
+        @TriggerId = lr.[TriggerId],
+        @JobId = lr.[JobId],
+        @TenantId = lr.[TenantId],
+        @Environment = lr.[Environment],
+        @Namespace = lr.[Namespace],
+        @Name = lr.[Name],
+        @Variant = lr.[Variant],
+        @InstanceId = lr.[InstanceId],
+        @FireAtUtc = lr.[FireAtUtc],
+        @LeaseExpiresAtUtc = lr.[LeaseExpiresAtUtc],
+        @Payload = lr.[Payload]
+    FROM @Lease AS lr;
+
+    IF @TriggerId IS NULL OR @JobId IS NULL OR @TenantId IS NULL OR @Environment IS NULL OR @Namespace IS NULL OR @Name IS NULL OR @Variant IS NULL OR @InstanceId IS NULL OR @FireAtUtc IS NULL OR @LeaseExpiresAtUtc IS NULL
+    BEGIN;
+        EXEC [croniq].[ThrowTriggerLeaseRefIncomplete];
+    END
+END
+GO
+
+CREATE OR ALTER PROCEDURE [croniq].[GuardTriggerLeaseReleaseRef]
+    @Release [croniq].[TriggerLeaseReleaseRef] READONLY,
+    @LeaseId [core].[keyBig] OUTPUT,
+    @InstanceId [core].[reference] OUTPUT
+AS
+BEGIN
+    SET NOCOUNT ON;
+
+    SELECT TOP (1)
+        @LeaseId = rr.[LeaseId],
+        @InstanceId = rr.[InstanceId]
+    FROM @Release AS rr;
+
+    IF @LeaseId IS NULL OR @InstanceId IS NULL
+    BEGIN;
+        EXEC [croniq].[ThrowTriggerLeaseReleaseRefIncomplete];
+    END
+END
+GO
+
+CREATE OR ALTER PROCEDURE [croniq].[GuardTriggerDeadLetterRef]
+    @DeadLetter [croniq].[TriggerDeadLetterRef] READONLY,
+    @TriggerId [core].[keyBig] OUTPUT,
+    @TenantId [core].[key] OUTPUT,
+    @Environment [core].[tag] OUTPUT,
+    @Namespace [core].[label] OUTPUT,
+    @Name [core].[name] OUTPUT,
+    @Variant [croniq].[jobVariant] OUTPUT,
+    @FireAtUtc [core].[utcDateTime] OUTPUT,
+    @DeadLetterReason [croniq].[deadLetterReason] OUTPUT,
+    @Payload [core].[jsonNullable] OUTPUT
+AS
+BEGIN
+    SET NOCOUNT ON;
+
+    SELECT TOP (1)
+        @TriggerId = dr.[TriggerId],
+        @TenantId = dr.[TenantId],
+        @Environment = dr.[Environment],
+        @Namespace = dr.[Namespace],
+        @Name = dr.[Name],
+        @Variant = dr.[Variant],
+        @FireAtUtc = dr.[FireAtUtc],
+        @DeadLetterReason = dr.[DeadLetterReason],
+        @Payload = dr.[Payload]
+    FROM @DeadLetter AS dr;
+
+    IF @TriggerId IS NULL OR @TenantId IS NULL OR @Environment IS NULL OR @Namespace IS NULL OR @Name IS NULL OR @Variant IS NULL OR @FireAtUtc IS NULL OR @DeadLetterReason IS NULL
+    BEGIN;
+        EXEC [croniq].[ThrowTriggerDeadLetterRefIncomplete];
+    END
+END
+GO
+
 CREATE OR ALTER PROCEDURE [croniq].[ThrowInstanceRefIncomplete]
 AS
 BEGIN
@@ -253,6 +382,62 @@ AS
 BEGIN
     SET NOCOUNT ON;
     THROW 50012, 'Referenced job not found or deleted', 1;
+END
+GO
+
+CREATE OR ALTER PROCEDURE [croniq].[ThrowTriggerLeaseRefIncomplete]
+AS
+BEGIN
+    SET NOCOUNT ON;
+    THROW 50013, 'Trigger lease reference incomplete', 1;
+END
+GO
+
+CREATE OR ALTER PROCEDURE [croniq].[ThrowTriggerLeaseReleaseRefIncomplete]
+AS
+BEGIN
+    SET NOCOUNT ON;
+    THROW 50014, 'Trigger lease release reference incomplete', 1;
+END
+GO
+
+CREATE OR ALTER PROCEDURE [croniq].[ThrowTriggerLeaseActive]
+AS
+BEGIN
+    SET NOCOUNT ON;
+    THROW 50015, 'Trigger lease already active', 1;
+END
+GO
+
+CREATE OR ALTER PROCEDURE [croniq].[ThrowTriggerLeaseNotFound]
+AS
+BEGIN
+    SET NOCOUNT ON;
+    THROW 50016, 'Trigger lease not found', 1;
+END
+GO
+
+CREATE OR ALTER PROCEDURE [croniq].[ThrowTriggerLeaseOwnershipMismatch]
+AS
+BEGIN
+    SET NOCOUNT ON;
+    THROW 50017, 'Trigger lease ownership mismatch', 1;
+END
+GO
+
+CREATE OR ALTER PROCEDURE [croniq].[ThrowTriggerLeaseReuseNotAllowed]
+AS
+BEGIN
+    SET NOCOUNT ON;
+    THROW 50018, 'Trigger lease reuse of soft-deleted entry not allowed', 1;
+END
+GO
+
+CREATE OR ALTER PROCEDURE [croniq].[ThrowTriggerDeadLetterRefIncomplete]
+AS
+BEGIN
+    SET NOCOUNT ON;
+    THROW 50019, 'Trigger dead letter reference incomplete', 1;
 END
 GO
 

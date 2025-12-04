@@ -4,7 +4,7 @@ GO
 CREATE OR ALTER PROCEDURE [croniq].[JobUpsert]
     @Actor [core].[ActorRef] READONLY,
     @Job [croniq].[JobRef] READONLY,
-    @AllowDeletedReuse [core].[flag] = 1,
+    @AllowDeletedReuse [core].[flag],
     @JobId [core].[keyBig] OUTPUT,
     @UpdatedUtc [core].[utcDateTime] OUTPUT
 AS
@@ -142,7 +142,7 @@ GO
 CREATE OR ALTER PROCEDURE [croniq].[TriggerUpsert]
     @Actor [core].[ActorRef] READONLY,
     @Trigger [croniq].[TriggerRef] READONLY,
-    @AllowDeletedReuse [core].[flag] = 1,
+    @AllowDeletedReuse [core].[flag],
     @TriggerId [core].[keyBig] OUTPUT,
     @UpdatedUtc [core].[utcDateTime] OUTPUT
 AS
@@ -169,7 +169,7 @@ BEGIN
     EXEC [core].[GuardActor] @Actor, @ActorValue OUTPUT;
     EXEC [croniq].[GuardTriggerRef] @Trigger, @TenantId OUTPUT, @JobId OUTPUT, @Environment OUTPUT, @Namespace OUTPUT, @Name OUTPUT, @Variant OUTPUT, @CronExpression OUTPUT, @TimeZoneId OUTPUT, @StartAtUtc OUTPUT, @EndAtUtc OUTPUT, @Enabled OUTPUT, @Metadata OUTPUT;
 
-    IF NOT EXISTS (SELECT TOP (1) 1 FROM [croniq].[Jobs] WHERE [JobId] = @JobId AND [IsDeleted] = 0)
+    IF NOT EXISTS (SELECT TOP 1 1 FROM [croniq].[Jobs] WHERE [JobId] = @JobId AND [IsDeleted] = 0)
     BEGIN;
         EXEC [croniq].[ThrowTriggerJobMissing];
     END
