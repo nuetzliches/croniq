@@ -23,7 +23,36 @@ CREATE TYPE [croniq].[InstanceRef] AS TABLE
     [Environment] [core].[tag],
     [NodeName] [core].[label],
     [Capabilities] [core].[jsonNullable],
-    [Version] [core].[labelNullable]
+    [Version] [core].[label]
+);
+GO
+
+CREATE TYPE [croniq].[JobRef] AS TABLE
+(
+    [TenantId] [core].[key],
+    [Environment] [core].[tag],
+    [Namespace] [core].[label],
+    [Name] [core].[name],
+    [Variant] [croniq].[jobVariant],
+    [Description] [core].[labelNullable],
+    [Metadata] [core].[jsonNullable]
+);
+GO
+
+CREATE TYPE [croniq].[TriggerRef] AS TABLE
+(
+    [TenantId] [core].[key],
+    [JobId] [core].[keyBig],
+    [Environment] [core].[tag],
+    [Namespace] [core].[label],
+    [Name] [core].[name],
+    [Variant] [croniq].[jobVariant],
+    [CronExpression] [croniq].[cronExpression],
+    [TimeZoneId] [croniq].[timeZoneId],
+    [StartAtUtc] [core].[utcDateTimeNullable],
+    [EndAtUtc] [core].[utcDateTimeNullable],
+    [Enabled] [core].[flag],
+    [Metadata] [core].[jsonNullable]
 );
 GO
 
@@ -49,7 +78,7 @@ CREATE OR ALTER PROCEDURE [croniq].[GuardInstanceRef]
     @Environment [core].[tag] OUTPUT,
     @NodeName [core].[label] OUTPUT,
     @Capabilities [core].[jsonNullable] OUTPUT,
-    @Version [core].[labelNullable] OUTPUT
+    @Version [core].[label] OUTPUT
 AS
 BEGIN
     SET NOCOUNT ON;
@@ -65,6 +94,76 @@ BEGIN
     IF @InstanceId IS NULL OR @Environment IS NULL OR @NodeName IS NULL
     BEGIN;
         EXEC [croniq].[ThrowInstanceRefIncomplete];
+    END
+END
+GO
+
+CREATE OR ALTER PROCEDURE [croniq].[GuardJobRef]
+    @Job [croniq].[JobRef] READONLY,
+    @TenantId [core].[key] OUTPUT,
+    @Environment [core].[tag] OUTPUT,
+    @Namespace [core].[label] OUTPUT,
+    @Name [core].[name] OUTPUT,
+    @Variant [croniq].[jobVariant] OUTPUT,
+    @Description [core].[labelNullable] OUTPUT,
+    @Metadata [core].[jsonNullable] OUTPUT
+AS
+BEGIN
+    SET NOCOUNT ON;
+
+    SELECT TOP (1)
+        @TenantId = jr.[TenantId],
+        @Environment = jr.[Environment],
+        @Namespace = jr.[Namespace],
+        @Name = jr.[Name],
+        @Variant = jr.[Variant],
+        @Description = jr.[Description],
+        @Metadata = jr.[Metadata]
+    FROM @Job AS jr;
+
+    IF @TenantId IS NULL OR @Environment IS NULL OR @Namespace IS NULL OR @Name IS NULL OR @Variant IS NULL
+    BEGIN;
+        EXEC [croniq].[ThrowJobRefIncomplete];
+    END
+END
+GO
+
+CREATE OR ALTER PROCEDURE [croniq].[GuardTriggerRef]
+    @Trigger [croniq].[TriggerRef] READONLY,
+    @TenantId [core].[key] OUTPUT,
+    @JobId [core].[keyBig] OUTPUT,
+    @Environment [core].[tag] OUTPUT,
+    @Namespace [core].[label] OUTPUT,
+    @Name [core].[name] OUTPUT,
+    @Variant [croniq].[jobVariant] OUTPUT,
+    @CronExpression [croniq].[cronExpression] OUTPUT,
+    @TimeZoneId [croniq].[timeZoneId] OUTPUT,
+    @StartAtUtc [core].[utcDateTimeNullable] OUTPUT,
+    @EndAtUtc [core].[utcDateTimeNullable] OUTPUT,
+    @Enabled [core].[flag] OUTPUT,
+    @Metadata [core].[jsonNullable] OUTPUT
+AS
+BEGIN
+    SET NOCOUNT ON;
+
+    SELECT TOP (1)
+        @TenantId = tr.[TenantId],
+        @JobId = tr.[JobId],
+        @Environment = tr.[Environment],
+        @Namespace = tr.[Namespace],
+        @Name = tr.[Name],
+        @Variant = tr.[Variant],
+        @CronExpression = tr.[CronExpression],
+        @TimeZoneId = tr.[TimeZoneId],
+        @StartAtUtc = tr.[StartAtUtc],
+        @EndAtUtc = tr.[EndAtUtc],
+        @Enabled = tr.[Enabled],
+        @Metadata = tr.[Metadata]
+    FROM @Trigger AS tr;
+
+    IF @TenantId IS NULL OR @JobId IS NULL OR @Environment IS NULL OR @Namespace IS NULL OR @Name IS NULL OR @Variant IS NULL OR @CronExpression IS NULL OR @TimeZoneId IS NULL OR @Enabled IS NULL
+    BEGIN;
+        EXEC [croniq].[ThrowTriggerRefIncomplete];
     END
 END
 GO
@@ -98,6 +197,62 @@ AS
 BEGIN
     SET NOCOUNT ON;
     THROW 50005, 'Instance reuse of soft-deleted entry not allowed', 1;
+END
+GO
+
+CREATE OR ALTER PROCEDURE [croniq].[ThrowJobRefIncomplete]
+AS
+BEGIN
+    SET NOCOUNT ON;
+    THROW 50006, 'Job reference incomplete', 1;
+END
+GO
+
+CREATE OR ALTER PROCEDURE [croniq].[ThrowJobNotFound]
+AS
+BEGIN
+    SET NOCOUNT ON;
+    THROW 50007, 'Job not found', 1;
+END
+GO
+
+CREATE OR ALTER PROCEDURE [croniq].[ThrowJobReuseNotAllowed]
+AS
+BEGIN
+    SET NOCOUNT ON;
+    THROW 50008, 'Job reuse of soft-deleted entry not allowed', 1;
+END
+GO
+
+CREATE OR ALTER PROCEDURE [croniq].[ThrowTriggerRefIncomplete]
+AS
+BEGIN
+    SET NOCOUNT ON;
+    THROW 50009, 'Trigger reference incomplete', 1;
+END
+GO
+
+CREATE OR ALTER PROCEDURE [croniq].[ThrowTriggerNotFound]
+AS
+BEGIN
+    SET NOCOUNT ON;
+    THROW 50010, 'Trigger not found', 1;
+END
+GO
+
+CREATE OR ALTER PROCEDURE [croniq].[ThrowTriggerReuseNotAllowed]
+AS
+BEGIN
+    SET NOCOUNT ON;
+    THROW 50011, 'Trigger reuse of soft-deleted entry not allowed', 1;
+END
+GO
+
+CREATE OR ALTER PROCEDURE [croniq].[ThrowTriggerJobMissing]
+AS
+BEGIN
+    SET NOCOUNT ON;
+    THROW 50012, 'Referenced job not found or deleted', 1;
 END
 GO
 
@@ -156,7 +311,7 @@ CREATE OR ALTER FUNCTION [croniq].[GetInstanceVersion]
 RETURNS [core].[labelNullable]
 AS
 BEGIN
-    DECLARE @Result [core].[labelNullable];
+    DECLARE @Result [core].[label];
 
     SELECT TOP (1) @Result = ir.[Version]
     FROM @Instance AS ir;

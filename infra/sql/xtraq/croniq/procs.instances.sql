@@ -17,7 +17,7 @@ BEGIN
     DECLARE @Environment [core].[tag];
     DECLARE @NodeName [core].[label];
     DECLARE @Capabilities [core].[jsonNullable];
-    DECLARE @Version [core].[labelNullable];
+    DECLARE @Version [core].[label];
     DECLARE @ExistingEnvironment [core].[tag];
     DECLARE @ExistingNodeName [core].[label];
     DECLARE @ExistingIsDeleted [core].[flag];
@@ -110,7 +110,7 @@ BEGIN
     DECLARE @Environment [core].[tag];
     DECLARE @NodeName [core].[label];
     DECLARE @Capabilities [core].[jsonNullable];
-    DECLARE @Version [core].[labelNullable];
+    DECLARE @Version [core].[label];
 
     EXEC [core].[GuardActor] @Actor, @ActorValue OUTPUT;
     EXEC [croniq].[GuardInstanceRef] @Instance, @InstanceId OUTPUT, @Environment OUTPUT, @NodeName OUTPUT, @Capabilities OUTPUT, @Version OUTPUT;

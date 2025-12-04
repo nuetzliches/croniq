@@ -8,7 +8,7 @@ CREATE TABLE [croniq].[Instances]
     [Environment] [core].[tag],
     [NodeName] [core].[label],
     [Capabilities] [core].[jsonNullable],
-    [Version] [core].[labelNullable],
+    [Version] [core].[label],
     [Generation] [core].[count] CONSTRAINT DF_croniq_Instances_Generation DEFAULT (1),
     [StartedUtc] [core].[utcDateTime] CONSTRAINT DF_croniq_Instances_StartedUtc DEFAULT SYSUTCDATETIME(),
     [LastSeenUtc] [core].[utcDateTime] CONSTRAINT DF_croniq_Instances_LastSeenUtc DEFAULT SYSUTCDATETIME(),
@@ -40,23 +40,23 @@ CREATE TABLE [croniq].[Jobs]
 GO
 
 CREATE UNIQUE NONCLUSTERED INDEX [UX_croniq_Jobs_Key]
-ON [croniq].[Jobs] ([TenantId], [Environment], [Namespace], [Name], [Variant])
-WHERE [IsDeleted] = 0;
+    ON [croniq].[Jobs] ([TenantId], [Environment], [Namespace], [Name], [Variant])
+    WHERE [IsDeleted] = 0;
 GO
 
 CREATE NONCLUSTERED INDEX [IX_croniq_TriggerLeases_StaleCheck]
-ON [croniq].[TriggerLeases] ([IsDeleted], [LeaseExpiresAtUtc])
-INCLUDE ([InstanceId]);
+    ON [croniq].[TriggerLeases] ([IsDeleted], [LeaseExpiresAtUtc])
+    INCLUDE ([InstanceId]);
 GO
 
 CREATE NONCLUSTERED INDEX [IX_croniq_Instances_LastSeen]
-ON [croniq].[Instances] ([IsDeleted], [InstanceId])
-INCLUDE ([LastSeenUtc]);
+    ON [croniq].[Instances] ([IsDeleted], [InstanceId])
+    INCLUDE ([LastSeenUtc]);
 GO
 
 CREATE TABLE [croniq].[Triggers]
 (
-    [TriggerId] [core].[uid] CONSTRAINT DF_croniq_Triggers_Id DEFAULT NEWSEQUENTIALID() PRIMARY KEY,
+    [TriggerId] [core].[keyBig] IDENTITY(1001,1) PRIMARY KEY,
     [JobId] [core].[keyBig],
     [TenantId] [core].[key],
     [Environment] [core].[tag],
@@ -86,8 +86,8 @@ GO
 
 CREATE TABLE [croniq].[TriggerLeases]
 (
-    [LeaseId] [core].[uid] CONSTRAINT DF_croniq_TriggerLeases_Id DEFAULT NEWSEQUENTIALID() PRIMARY KEY,
-    [TriggerId] [core].[uid],
+    [LeaseId] [core].[keyBig] IDENTITY(1001,1) PRIMARY KEY,
+    [TriggerId] [core].[keyBig],
     [JobId] [core].[keyBig],
     [TenantId] [core].[key],
     [Environment] [core].[tag],
@@ -113,7 +113,7 @@ GO
 CREATE TABLE [croniq].[TriggerDeadLetter]
 (
     [DeadLetterId] [core].[keyBig] IDENTITY(1001,1) PRIMARY KEY,
-    [TriggerId] [core].[uid],
+    [TriggerId] [core].[keyBig],
     [TenantId] [core].[key],
     [Environment] [core].[tag],
     [Namespace] [core].[label],
