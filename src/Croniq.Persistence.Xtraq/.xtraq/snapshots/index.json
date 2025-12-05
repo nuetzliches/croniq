@@ -1,14 +1,14 @@
 {
   "SchemaVersion": 1,
-  "Fingerprint": "F9A9F6A5886EDD72",
+  "Fingerprint": "A405F82ABFFAF934",
   "Parser": {
     "ToolVersion": "net9.0",
     "ResultSetParserVersion": 8
   },
   "Stats": {
     "ProcedureTotal": 14,
-    "ProcedureSkipped": 7,
-    "ProcedureLoaded": 7,
+    "ProcedureSkipped": 0,
+    "ProcedureLoaded": 14,
     "UdttTotal": 7,
     "TableTotal": 0,
     "ViewTotal": 0,
@@ -1541,13 +1541,13 @@
       "Schema": "croniq",
       "Name": "TriggerLeaseReleaseRef",
       "File": "croniq.TriggerLeaseReleaseRef.json",
-      "Hash": "929F4C857CB18F9F"
+      "Hash": "6DB7340BE8E8879D"
     },
     {
       "Schema": "croniq",
       "Name": "TriggerRef",
       "File": "croniq.TriggerRef.json",
-      "Hash": "70A24127F02D6FF6"
+      "Hash": "0308C728273F6048"
     }
   ],
   "UserDefinedTypes": [

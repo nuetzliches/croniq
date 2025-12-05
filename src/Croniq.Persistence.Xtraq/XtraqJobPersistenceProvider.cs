@@ -78,6 +78,17 @@ public sealed class XtraqJobPersistenceProvider : IJobPersistenceProvider
         return Task.Run(async () =>
         {
             var jobId = await ResolveJobIdAsync(jobKeyParts.JobKey, cancellationToken).ConfigureAwait(false);
+            var nextFireAtUtc = ComputeNextFireUtc(
+                trigger.ScheduleExpression,
+                timeZoneId,
+                trigger.StartAtUtc?.UtcDateTime,
+                trigger.EndAtUtc?.UtcDateTime,
+                DateTimeOffset.UtcNow);
+            if (nextFireAtUtc is null)
+            {
+                throw new InvalidOperationException($"Cron expression '{trigger.ScheduleExpression}' produced no future occurrences.");
+            }
+
             var triggerRef = new TriggerRefRequest
             {
                 TriggerKey = triggerKey,
@@ -92,6 +103,7 @@ public sealed class XtraqJobPersistenceProvider : IJobPersistenceProvider
                 TimeZoneId = timeZoneId,
                 StartAtUtc = trigger.StartAtUtc?.UtcDateTime,
                 EndAtUtc = trigger.EndAtUtc?.UtcDateTime,
+                NextFireAtUtc = nextFireAtUtc.Value,
                 Enabled = trigger.Enabled,
                 Metadata = SerializeMetadata(trigger.Metadata)
             };
@@ -102,6 +114,7 @@ public sealed class XtraqJobPersistenceProvider : IJobPersistenceProvider
                 AllowDeletedReuse = false
             };
 
+            _logger.LogInformation("Upserting trigger {TriggerKey} nextFire={NextFire}", triggerKey, nextFireAtUtc);
             await _db.TriggerUpsertAsync(request, cancellationToken).ConfigureAwait(false);
         }, cancellationToken);
     }
@@ -134,6 +147,7 @@ public sealed class XtraqJobPersistenceProvider : IJobPersistenceProvider
                 TimeZoneId = triggerKeyParts.TimeZoneId ?? "UTC",
                 StartAtUtc = null,
                 EndAtUtc = null,
+                NextFireAtUtc = null,
                 Enabled = true,
                 Metadata = null
             };
@@ -209,10 +223,21 @@ public sealed class XtraqJobPersistenceProvider : IJobPersistenceProvider
                 throw new InvalidOperationException("InstanceId for lease release could not be determined.");
             }
 
+            var nextFire = request.NextFireTimeUtc?.UtcDateTime
+                ?? ComputeNextFireUtc(
+                    schedule.CronExpression,
+                    schedule.TimeZoneId,
+                    schedule.StartAtUtc,
+                    schedule.EndAtUtc,
+                    request.Lease.FireAtUtc);
+
             var releaseRef = new TriggerLeaseReleaseRefRequest
             {
                 LeaseId = leaseId,
-                InstanceId = instanceId
+                InstanceId = instanceId,
+                Succeeded = request.Succeeded,
+                NextFireAtUtc = nextFire,
+                DeadLetterReason = request.DeadLetterReason
             };
 
             var release = new TriggerLeaseReleaseRequest
@@ -220,6 +245,8 @@ public sealed class XtraqJobPersistenceProvider : IJobPersistenceProvider
                 Release = new[] { releaseRef }
             };
 
+            _logger.LogInformation("Releasing lease {LeaseId} succeeded={Succeeded} nextFire={NextFire} deadLetter={DeadLetter}",
+                leaseId, request.Succeeded, nextFire, request.DeadLetterReason);
             await _db.TriggerLeaseReleaseAsync(release, cancellationToken).ConfigureAwait(false);
             _leaseContexts.TryRemove(request.Lease.LeaseId, out _);
         }, cancellationToken);

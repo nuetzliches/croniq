@@ -17,19 +17,28 @@ public sealed record TriggerLeaseReleaseRef : ITableType
 {
     public long LeaseId { get; init; }
     public string InstanceId { get; init; } = string.Empty;
+    public bool Succeeded { get; init; }
+    public DateTime? NextFireAtUtc { get; init; }
+    public string? DeadLetterReason { get; init; }
 
 	[Obsolete("Use the static Create(...) or builder for construction.")]
 	public TriggerLeaseReleaseRef() { }
 
 	public static TriggerLeaseReleaseRef Create(
         long LeaseId,
-        string InstanceId
+        string InstanceId,
+        bool Succeeded,
+        DateTime? NextFireAtUtc,
+        string? DeadLetterReason
     ) =>
 #pragma warning disable CS0612, CS0618 // Suppress obsolete ctor usage in factory
     new TriggerLeaseReleaseRef
     {
         LeaseId = LeaseId,
-        InstanceId = InstanceId
+        InstanceId = InstanceId,
+        Succeeded = Succeeded,
+        NextFireAtUtc = NextFireAtUtc,
+        DeadLetterReason = DeadLetterReason
     };
 #pragma warning restore CS0612, CS0618
 
@@ -39,15 +48,24 @@ public sealed record TriggerLeaseReleaseRef : ITableType
 	{
         private long _LeaseId;
         private string _InstanceId = string.Empty;
+        private bool _Succeeded;
+        private DateTime? _NextFireAtUtc;
+        private string? _DeadLetterReason;
         public TriggerLeaseReleaseRefBuilder WithLeaseId(long value) { _LeaseId = value; return this; }
         public TriggerLeaseReleaseRefBuilder WithInstanceId(string value) { _InstanceId = value; return this; }
+        public TriggerLeaseReleaseRefBuilder WithSucceeded(bool value) { _Succeeded = value; return this; }
+        public TriggerLeaseReleaseRefBuilder WithNextFireAtUtc(DateTime? value) { _NextFireAtUtc = value; return this; }
+        public TriggerLeaseReleaseRefBuilder WithDeadLetterReason(string? value) { _DeadLetterReason = value; return this; }
         public TriggerLeaseReleaseRef Build()
         {
 #pragma warning disable CS0612, CS0618 // Suppress obsolete ctor usage in builder
             var result = new TriggerLeaseReleaseRef
             {
                 LeaseId = _LeaseId,
-                InstanceId = _InstanceId
+                InstanceId = _InstanceId,
+                Succeeded = _Succeeded,
+                NextFireAtUtc = _NextFireAtUtc,
+                DeadLetterReason = _DeadLetterReason
             };
 #pragma warning restore CS0612, CS0618
             return result;
@@ -65,11 +83,18 @@ public sealed record TriggerLeaseReleaseRefRequest
     [System.ComponentModel.DataAnnotations.Required]
     [System.ComponentModel.DataAnnotations.StringLength(64)]
     public string InstanceId { get; init; } = string.Empty;
+    public bool Succeeded { get; init; }
+    public DateTime? NextFireAtUtc { get; init; }
+    [System.ComponentModel.DataAnnotations.StringLength(128)]
+    public string? DeadLetterReason { get; init; }
 
 	internal TriggerLeaseReleaseRef ToTableType()
 		=> TriggerLeaseReleaseRef.Create(
             LeaseId,
-            InstanceId
+            InstanceId,
+            Succeeded,
+            NextFireAtUtc,
+            DeadLetterReason
         );
 
 	internal static System.Collections.Generic.IReadOnlyList<TriggerLeaseReleaseRef>? ToTableTypes(System.Collections.Generic.IReadOnlyList<TriggerLeaseReleaseRefRequest>? source)

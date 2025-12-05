@@ -98,6 +98,148 @@ public class XtraqJobPersistenceProviderTests : IClassFixture<XtraqDatabaseFixtu
         Assert.True(deadLetters > 0, "Expected deadletter entry for failed release.");
     }
 
+    [Fact]
+    public async Task Release_failure_without_nextfire_nullifies_schedule()
+    {
+        if (_fixture.SkipReason is { })
+        {
+            return;
+        }
+
+        var provider = CreateProvider();
+        var scope = new PartitionScope("1", "dev");
+        var jobName = $"job-{Guid.NewGuid():N}";
+        var jobKey = $"1:dev:tests:{jobName}";
+        var triggerKey = $"{jobKey}:nofire";
+        var instanceId = XtraqDatabaseFixture.DefaultInstanceId;
+
+        await provider.UpsertJobAsync(
+            new JobDefinition(jobKey, "tests", jobName, null, "deadletter no next", null),
+            CancellationToken.None);
+
+        await provider.UpsertTriggerAsync(
+            new TriggerDefinition(triggerKey, jobKey, "0/1 * * * * ?", scope),
+            CancellationToken.None);
+
+        var lease = (await provider.AcquireAsync(
+            new TriggerAcquireRequest(scope, instanceId, DateTimeOffset.UtcNow.AddMinutes(1), 5),
+            CancellationToken.None)).First(l => l.TriggerId == triggerKey);
+
+        await provider.ReleaseAsync(
+            new TriggerReleaseRequest(lease, false, null, "fail-no-next"),
+            CancellationToken.None);
+
+        var persisted = await GetNextFireAtAsync(triggerKey);
+        Assert.Null(persisted);
+    }
+
+    [Fact]
+    public async Task Release_updates_next_fire_when_provided()
+    {
+        if (_fixture.SkipReason is { })
+        {
+            return;
+        }
+
+        var provider = CreateProvider();
+        var scope = new PartitionScope("1", "dev");
+        var jobName = $"job-{Guid.NewGuid():N}";
+        var jobKey = $"1:dev:tests:{jobName}";
+        var triggerKey = $"{jobKey}:nextfire";
+        var instanceId = XtraqDatabaseFixture.DefaultInstanceId;
+
+        await provider.UpsertJobAsync(
+            new JobDefinition(jobKey, "tests", jobName, null, "nextfire job", null),
+            CancellationToken.None);
+
+        await provider.UpsertTriggerAsync(
+            new TriggerDefinition(triggerKey, jobKey, "0/1 * * * * ?", scope),
+            CancellationToken.None);
+
+        var lease = (await provider.AcquireAsync(
+            new TriggerAcquireRequest(scope, instanceId, DateTimeOffset.UtcNow.AddMinutes(1), 5),
+            CancellationToken.None)).First(l => l.TriggerId == triggerKey);
+
+        var nextFire = lease.FireAtUtc.AddMinutes(2);
+        await provider.ReleaseAsync(
+            new TriggerReleaseRequest(lease, true, nextFire),
+            CancellationToken.None);
+
+        var persisted = await GetNextFireAtAsync(triggerKey);
+        Assert.Equal(nextFire.UtcDateTime, persisted);
+    }
+
+    [Fact]
+    public async Task Release_success_sets_succeeded_flag()
+    {
+        if (_fixture.SkipReason is { })
+        {
+            return;
+        }
+
+        var provider = CreateProvider();
+        var scope = new PartitionScope("1", "dev");
+        var jobName = $"job-{Guid.NewGuid():N}";
+        var jobKey = $"1:dev:tests:{jobName}";
+        var triggerKey = $"{jobKey}:successflag";
+        var instanceId = XtraqDatabaseFixture.DefaultInstanceId;
+
+        await provider.UpsertJobAsync(
+            new JobDefinition(jobKey, "tests", jobName, null, "success flag job", null),
+            CancellationToken.None);
+
+        await provider.UpsertTriggerAsync(
+            new TriggerDefinition(triggerKey, jobKey, "0/1 * * * * ?", scope),
+            CancellationToken.None);
+
+        var lease = (await provider.AcquireAsync(
+            new TriggerAcquireRequest(scope, instanceId, DateTimeOffset.UtcNow.AddMinutes(1), 5),
+            CancellationToken.None)).First(l => l.TriggerId == triggerKey);
+
+        await provider.ReleaseAsync(
+            new TriggerReleaseRequest(lease, true, lease.FireAtUtc.AddMinutes(1)),
+            CancellationToken.None);
+
+        var succeeded = await GetSucceededFlagAsync(lease.LeaseId);
+        Assert.True(succeeded);
+    }
+
+    [Fact]
+    public async Task Release_failure_sets_deadletter_reason()
+    {
+        if (_fixture.SkipReason is { })
+        {
+            return;
+        }
+
+        var provider = CreateProvider();
+        var scope = new PartitionScope("1", "dev");
+        var jobName = $"job-{Guid.NewGuid():N}";
+        var jobKey = $"1:dev:tests:{jobName}";
+        var triggerKey = $"{jobKey}:deadletterflag";
+        var instanceId = XtraqDatabaseFixture.DefaultInstanceId;
+
+        await provider.UpsertJobAsync(
+            new JobDefinition(jobKey, "tests", jobName, null, "deadletter flag job", null),
+            CancellationToken.None);
+
+        await provider.UpsertTriggerAsync(
+            new TriggerDefinition(triggerKey, jobKey, "0/1 * * * * ?", scope),
+            CancellationToken.None);
+
+        var lease = (await provider.AcquireAsync(
+            new TriggerAcquireRequest(scope, instanceId, DateTimeOffset.UtcNow.AddMinutes(1), 5),
+            CancellationToken.None)).First(l => l.TriggerId == triggerKey);
+
+        const string reason = "flagged-error";
+        await provider.ReleaseAsync(
+            new TriggerReleaseRequest(lease, false, lease.FireAtUtc.AddMinutes(1), reason),
+            CancellationToken.None);
+
+        var deadLetters = await CountDeadLettersAsync(await GetTriggerIdAsync(triggerKey), reason);
+        Assert.True(deadLetters > 0);
+    }
+
     private IJobPersistenceProvider CreateProvider()
     {
         if (_fixture.SkipReason is { } reason)
@@ -143,5 +285,35 @@ public class XtraqJobPersistenceProviderTests : IClassFixture<XtraqDatabaseFixtu
         cmd.Parameters.AddWithValue("@r", reason);
         var result = await cmd.ExecuteScalarAsync();
         return Convert.ToInt32(result, System.Globalization.CultureInfo.InvariantCulture);
+    }
+
+    private async Task<DateTime?> GetNextFireAtAsync(string triggerKey)
+    {
+        if (_fixture.ConnectionString is null)
+        {
+            throw new InvalidOperationException("Connection string is not configured.");
+        }
+
+        await using var conn = new SqlConnection(_fixture.ConnectionString);
+        await conn.OpenAsync();
+        await using var cmd = new SqlCommand("SELECT TOP(1) NextFireAtUtc FROM croniq.Triggers WHERE TriggerKey = @k", conn);
+        cmd.Parameters.AddWithValue("@k", triggerKey);
+        var result = await cmd.ExecuteScalarAsync();
+        return result as DateTime?;
+    }
+
+    private async Task<bool> GetSucceededFlagAsync(string leaseId)
+    {
+        if (_fixture.ConnectionString is null)
+        {
+            throw new InvalidOperationException("Connection string is not configured.");
+        }
+
+        await using var conn = new SqlConnection(_fixture.ConnectionString);
+        await conn.OpenAsync().ConfigureAwait(false);
+        await using var cmd = new SqlCommand("SELECT TOP(1) Succeeded FROM croniq.TriggerLeases WHERE LeaseId = @id ORDER BY LeaseId DESC", conn);
+        cmd.Parameters.AddWithValue("@id", long.Parse(leaseId, System.Globalization.CultureInfo.InvariantCulture));
+        var result = await cmd.ExecuteScalarAsync().ConfigureAwait(false);
+        return result is int i && i == 1;
     }
 }
