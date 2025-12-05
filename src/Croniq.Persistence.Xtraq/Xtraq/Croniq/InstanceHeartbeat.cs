@@ -28,9 +28,7 @@ namespace Croniq.Persistence.Xtraq.Croniq;
 public sealed record class InstanceHeartbeatRequest
 {
     [System.ComponentModel.DataAnnotations.Required]
-    public IReadOnlyList<ActorRef> Actor { get; init; }
-    [System.ComponentModel.DataAnnotations.Required]
-    public IReadOnlyList<InstanceRef> Instance { get; init; }
+    public IReadOnlyList<InstanceRefRequest> Instance { get; init; }
 }
 
 public readonly record struct InstanceHeartbeatInput(
@@ -67,7 +65,7 @@ internal static class InstanceHeartbeatRequestMapper
     public static async ValueTask<InstanceHeartbeatInput> ToInputAsync(InstanceHeartbeatRequest? request, IXtraqParameterBindingProvider? bindingProvider, CancellationToken cancellationToken = default)
     {
         request ??= new InstanceHeartbeatRequest();
-        IReadOnlyList<ActorRef>? Actor = request.Actor;
+        IReadOnlyList<ActorRef>? Actor = default;
         if (!HasValue(Actor))
         {
             Actor = await ResolveTableAsync<ActorRef>(bindingProvider, "[croniq].[InstanceHeartbeat]", "@Actor", Actor, cancellationToken).ConfigureAwait(false);
@@ -76,7 +74,7 @@ internal static class InstanceHeartbeatRequestMapper
         {
             throw new InvalidOperationException("Parameter @Actor must be supplied by the request or a configured binding.");
         }
-        IReadOnlyList<InstanceRef>? Instance = request.Instance;
+        IReadOnlyList<InstanceRef>? Instance = InstanceRefRequest.ToTableTypes(request.Instance);
         if (!HasValue(Instance))
         {
             Instance = await ResolveTableAsync<InstanceRef>(bindingProvider, "[croniq].[InstanceHeartbeat]", "@Instance", Instance, cancellationToken).ConfigureAwait(false);

@@ -28,9 +28,7 @@ namespace Croniq.Persistence.Xtraq.Croniq;
 public sealed record class InstanceRegisterRequest
 {
     [System.ComponentModel.DataAnnotations.Required]
-    public IReadOnlyList<ActorRef> Actor { get; init; }
-    [System.ComponentModel.DataAnnotations.Required]
-    public IReadOnlyList<InstanceRef> Instance { get; init; }
+    public IReadOnlyList<InstanceRefRequest> Instance { get; init; }
     public bool? AllowDeletedReuse { get; init; }
 }
 
@@ -69,7 +67,7 @@ internal static class InstanceRegisterRequestMapper
     public static async ValueTask<InstanceRegisterInput> ToInputAsync(InstanceRegisterRequest? request, IXtraqParameterBindingProvider? bindingProvider, CancellationToken cancellationToken = default)
     {
         request ??= new InstanceRegisterRequest();
-        IReadOnlyList<ActorRef>? Actor = request.Actor;
+        IReadOnlyList<ActorRef>? Actor = default;
         if (!HasValue(Actor))
         {
             Actor = await ResolveTableAsync<ActorRef>(bindingProvider, "[croniq].[InstanceRegister]", "@Actor", Actor, cancellationToken).ConfigureAwait(false);
@@ -78,7 +76,7 @@ internal static class InstanceRegisterRequestMapper
         {
             throw new InvalidOperationException("Parameter @Actor must be supplied by the request or a configured binding.");
         }
-        IReadOnlyList<InstanceRef>? Instance = request.Instance;
+        IReadOnlyList<InstanceRef>? Instance = InstanceRefRequest.ToTableTypes(request.Instance);
         if (!HasValue(Instance))
         {
             Instance = await ResolveTableAsync<InstanceRef>(bindingProvider, "[croniq].[InstanceRegister]", "@Instance", Instance, cancellationToken).ConfigureAwait(false);

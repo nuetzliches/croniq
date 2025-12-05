@@ -22,8 +22,8 @@ BEGIN
     DECLARE @ExistingNodeName [core].[label];
     DECLARE @ExistingIsDeleted [core].[flag];
 
-    EXEC [core].[GuardActor] @Actor, @ActorValue OUTPUT;
-    EXEC [croniq].[GuardInstanceRef] @Instance, @InstanceId OUTPUT, @Environment OUTPUT, @NodeName OUTPUT, @Capabilities OUTPUT, @Version OUTPUT;
+    EXEC [core-internal].[GuardActor] @Actor, @ActorValue OUTPUT;
+    EXEC [croniq-internal].[GuardInstanceRef] @Instance, @InstanceId OUTPUT, @Environment OUTPUT, @NodeName OUTPUT, @Capabilities OUTPUT, @Version OUTPUT;
 
     SELECT @ExistingEnvironment = i.[Environment],
         @ExistingNodeName = i.[NodeName],
@@ -36,11 +36,11 @@ BEGIN
     BEGIN
         IF @ExistingIsDeleted = 0 AND (@ExistingEnvironment != @Environment OR @ExistingNodeName != @NodeName)
         BEGIN;
-            EXEC [croniq].[ThrowInstanceIdentityMismatch];
+            EXEC [croniq-internal].[ThrowInstanceIdentityMismatch];
         END
         ELSE IF @ExistingIsDeleted = 1 AND @AllowDeletedReuse = 0
         BEGIN;
-            EXEC [croniq].[ThrowInstanceReuseNotAllowed];
+            EXEC [croniq-internal].[ThrowInstanceReuseNotAllowed];
         END
 
         UPDATE [croniq].[Instances]
@@ -112,17 +112,17 @@ BEGIN
     DECLARE @Capabilities [core].[jsonNullable];
     DECLARE @Version [core].[label];
 
-    EXEC [core].[GuardActor] @Actor, @ActorValue OUTPUT;
-    EXEC [croniq].[GuardInstanceRef] @Instance, @InstanceId OUTPUT, @Environment OUTPUT, @NodeName OUTPUT, @Capabilities OUTPUT, @Version OUTPUT;
+    EXEC [core-internal].[GuardActor] @Actor, @ActorValue OUTPUT;
+    EXEC [croniq-internal].[GuardInstanceRef] @Instance, @InstanceId OUTPUT, @Environment OUTPUT, @NodeName OUTPUT, @Capabilities OUTPUT, @Version OUTPUT;
 
     IF NOT EXISTS (SELECT TOP 1 1 FROM [croniq].[Instances] WITH (UPDLOCK, HOLDLOCK) WHERE [InstanceId] = @InstanceId AND [IsDeleted] = 0)
     BEGIN;
-        EXEC [croniq].[ThrowInstanceNotRegistered];
+        EXEC [croniq-internal].[ThrowInstanceNotRegistered];
     END
 
     IF NOT EXISTS (SELECT TOP 1 1 FROM [croniq].[Instances] WITH (UPDLOCK, HOLDLOCK) WHERE [InstanceId] = @InstanceId AND [Environment] = @Environment AND [NodeName] = @NodeName AND [IsDeleted] = 0)
     BEGIN;
-        EXEC [croniq].[ThrowInstanceIdentityMismatch];
+        EXEC [croniq-internal].[ThrowInstanceIdentityMismatch];
     END
 
     UPDATE [croniq].[Instances]
@@ -155,7 +155,7 @@ BEGIN
     DECLARE @now [core].[utcDateTime] = SYSUTCDATETIME();
     DECLARE @cutoff [core].[utcDateTime] = DATEADD(SECOND, -@FailoverGraceSeconds, @now);
 
-    EXEC [core].[GuardActor] @Actor, @ActorValue OUTPUT;
+    EXEC [core-internal].[GuardActor] @Actor, @ActorValue OUTPUT;
 
     WITH stale AS
     (

@@ -28,9 +28,7 @@ namespace Croniq.Persistence.Xtraq.Croniq;
 public sealed record class TriggerUpsertRequest
 {
     [System.ComponentModel.DataAnnotations.Required]
-    public IReadOnlyList<ActorRef> Actor { get; init; }
-    [System.ComponentModel.DataAnnotations.Required]
-    public IReadOnlyList<TriggerRef> Trigger { get; init; }
+    public IReadOnlyList<TriggerRefRequest> Trigger { get; init; }
     public bool? AllowDeletedReuse { get; init; }
 }
 
@@ -69,7 +67,7 @@ internal static class TriggerUpsertRequestMapper
     public static async ValueTask<TriggerUpsertInput> ToInputAsync(TriggerUpsertRequest? request, IXtraqParameterBindingProvider? bindingProvider, CancellationToken cancellationToken = default)
     {
         request ??= new TriggerUpsertRequest();
-        IReadOnlyList<ActorRef>? Actor = request.Actor;
+        IReadOnlyList<ActorRef>? Actor = default;
         if (!HasValue(Actor))
         {
             Actor = await ResolveTableAsync<ActorRef>(bindingProvider, "[croniq].[TriggerUpsert]", "@Actor", Actor, cancellationToken).ConfigureAwait(false);
@@ -78,7 +76,7 @@ internal static class TriggerUpsertRequestMapper
         {
             throw new InvalidOperationException("Parameter @Actor must be supplied by the request or a configured binding.");
         }
-        IReadOnlyList<TriggerRef>? Trigger = request.Trigger;
+        IReadOnlyList<TriggerRef>? Trigger = TriggerRefRequest.ToTableTypes(request.Trigger);
         if (!HasValue(Trigger))
         {
             Trigger = await ResolveTableAsync<TriggerRef>(bindingProvider, "[croniq].[TriggerUpsert]", "@Trigger", Trigger, cancellationToken).ConfigureAwait(false);

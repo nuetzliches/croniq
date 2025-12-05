@@ -29,13 +29,13 @@
   ],
   "ResultSets": [
     {
-      "ProcedureRef": "core.GuardActor"
+      "ProcedureRef": "core-internal.GuardActor"
     },
     {
-      "ProcedureRef": "croniq.GuardTriggerRef"
+      "ProcedureRef": "croniq-internal.GuardTriggerRef"
     },
     {
-      "ProcedureRef": "croniq.ThrowTriggerNotFound"
+      "ProcedureRef": "croniq-internal.ThrowTriggerNotFound"
     }
   ]
 }

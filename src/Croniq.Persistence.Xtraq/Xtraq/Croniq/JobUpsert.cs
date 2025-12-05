@@ -28,9 +28,7 @@ namespace Croniq.Persistence.Xtraq.Croniq;
 public sealed record class JobUpsertRequest
 {
     [System.ComponentModel.DataAnnotations.Required]
-    public IReadOnlyList<ActorRef> Actor { get; init; }
-    [System.ComponentModel.DataAnnotations.Required]
-    public IReadOnlyList<JobRef> Job { get; init; }
+    public IReadOnlyList<JobRefRequest> Job { get; init; }
     public bool? AllowDeletedReuse { get; init; }
 }
 
@@ -69,7 +67,7 @@ internal static class JobUpsertRequestMapper
     public static async ValueTask<JobUpsertInput> ToInputAsync(JobUpsertRequest? request, IXtraqParameterBindingProvider? bindingProvider, CancellationToken cancellationToken = default)
     {
         request ??= new JobUpsertRequest();
-        IReadOnlyList<ActorRef>? Actor = request.Actor;
+        IReadOnlyList<ActorRef>? Actor = default;
         if (!HasValue(Actor))
         {
             Actor = await ResolveTableAsync<ActorRef>(bindingProvider, "[croniq].[JobUpsert]", "@Actor", Actor, cancellationToken).ConfigureAwait(false);
@@ -78,7 +76,7 @@ internal static class JobUpsertRequestMapper
         {
             throw new InvalidOperationException("Parameter @Actor must be supplied by the request or a configured binding.");
         }
-        IReadOnlyList<JobRef>? Job = request.Job;
+        IReadOnlyList<JobRef>? Job = JobRefRequest.ToTableTypes(request.Job);
         if (!HasValue(Job))
         {
             Job = await ResolveTableAsync<JobRef>(bindingProvider, "[croniq].[JobUpsert]", "@Job", Job, cancellationToken).ConfigureAwait(false);

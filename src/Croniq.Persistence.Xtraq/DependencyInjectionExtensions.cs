@@ -38,6 +38,13 @@ public static class DependencyInjectionExtensions
                 CommandTimeout = 30
             };
 
+            // Bind the actor table-valued parameter so all procs requiring @Actor get it automatically.
+            dbOptions.ParameterBindings.BindTable(
+                "@Actor",
+                (_, ct) => ValueTask.FromResult<IEnumerable<Core.ActorRef>>(
+                    [Core.ActorRef.Create(opts.Actor)]
+                ));
+
             configureBindings?.Invoke(dbOptions.ParameterBindings);
             return dbOptions;
         });

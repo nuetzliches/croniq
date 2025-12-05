@@ -74,3 +74,50 @@ public sealed record InstanceRef : ITableType
 #pragma warning restore CS0612, CS0618
 }
 
+/// <summary>
+/// HTTP request row mirroring the SQL table type <c>Croniq.InstanceRef</c> with DataAnnotations metadata.
+/// </summary>
+public sealed record InstanceRefRequest
+{
+    [System.ComponentModel.DataAnnotations.Required]
+    [System.ComponentModel.DataAnnotations.StringLength(64)]
+    public string InstanceId { get; init; }
+    [System.ComponentModel.DataAnnotations.Required]
+    [System.ComponentModel.DataAnnotations.StringLength(32)]
+    public string Environment { get; init; }
+    [System.ComponentModel.DataAnnotations.Required]
+    [System.ComponentModel.DataAnnotations.StringLength(64)]
+    public string NodeName { get; init; }
+    public string? Capabilities { get; init; }
+    [System.ComponentModel.DataAnnotations.Required]
+    [System.ComponentModel.DataAnnotations.StringLength(64)]
+    public string Version { get; init; }
+
+	internal InstanceRef ToTableType()
+		=> InstanceRef.Create(
+            InstanceId,
+            Environment,
+            NodeName,
+            Capabilities,
+            Version
+        );
+
+	internal static System.Collections.Generic.IReadOnlyList<InstanceRef>? ToTableTypes(System.Collections.Generic.IReadOnlyList<InstanceRefRequest>? source)
+	{
+		if (source is null) return null;
+		if (source.Count == 0) return System.Array.Empty<InstanceRef>();
+		var buffer = new InstanceRef[source.Count];
+		for (var i = 0; i < source.Count; i++)
+		{
+			var row = source[i];
+			if (row is null)
+			{
+				throw new System.InvalidOperationException("Table type rows cannot contain null entries.");
+			}
+
+			buffer[i] = row.ToTableType();
+		}
+
+		return buffer;
+	}
+}

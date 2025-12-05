@@ -24,8 +24,8 @@ BEGIN
     DECLARE @ExistingIsDeleted [core].[flag];
     DECLARE @now [core].[utcDateTime] = SYSUTCDATETIME();
 
-    EXEC [core].[GuardActor] @Actor, @ActorValue OUTPUT;
-    EXEC [croniq].[GuardJobRef] @Job, @JobKey OUTPUT, @TenantId OUTPUT, @Environment OUTPUT, @Namespace OUTPUT, @Name OUTPUT, @Variant OUTPUT, @Description OUTPUT, @Metadata OUTPUT;
+    EXEC [core-internal].[GuardActor] @Actor, @ActorValue OUTPUT;
+    EXEC [croniq-internal].[GuardJobRef] @Job, @JobKey OUTPUT, @TenantId OUTPUT, @Environment OUTPUT, @Namespace OUTPUT, @Name OUTPUT, @Variant OUTPUT, @Description OUTPUT, @Metadata OUTPUT;
 
     SELECT @ExistingJobId = j.[JobId],
         @ExistingIsDeleted = j.[IsDeleted]
@@ -36,7 +36,7 @@ BEGIN
     BEGIN
         IF @ExistingIsDeleted = 1 AND @AllowDeletedReuse = 0
         BEGIN;
-            EXEC [croniq].[ThrowJobReuseNotAllowed];
+            EXEC [croniq-internal].[ThrowJobReuseNotAllowed];
         END
 
         UPDATE [croniq].[Jobs]
@@ -109,8 +109,8 @@ BEGIN
     DECLARE @Metadata [core].[jsonNullable];
     DECLARE @now [core].[utcDateTime] = SYSUTCDATETIME();
 
-    EXEC [core].[GuardActor] @Actor, @ActorValue OUTPUT;
-    EXEC [croniq].[GuardJobRef] @Job, @JobKey OUTPUT, @TenantId OUTPUT, @Environment OUTPUT, @Namespace OUTPUT, @Name OUTPUT, @Variant OUTPUT, @Description OUTPUT, @Metadata OUTPUT;
+    EXEC [core-internal].[GuardActor] @Actor, @ActorValue OUTPUT;
+    EXEC [croniq-internal].[GuardJobRef] @Job, @JobKey OUTPUT, @TenantId OUTPUT, @Environment OUTPUT, @Namespace OUTPUT, @Name OUTPUT, @Variant OUTPUT, @Description OUTPUT, @Metadata OUTPUT;
 
     SELECT TOP (1)
         @JobId = j.[JobId]
@@ -120,7 +120,7 @@ BEGIN
 
     IF @JobId IS NULL
     BEGIN;
-        EXEC [croniq].[ThrowJobNotFound];
+        EXEC [croniq-internal].[ThrowJobNotFound];
     END
 
     UPDATE [croniq].[Jobs]
@@ -161,8 +161,8 @@ BEGIN
     DECLARE @ExistingIsDeleted [core].[flag];
     DECLARE @now [core].[utcDateTime] = SYSUTCDATETIME();
 
-    EXEC [core].[GuardActor] @Actor, @ActorValue OUTPUT;
-    EXEC [croniq].[GuardTriggerRef] @Trigger, @TriggerKey OUTPUT, @JobKey OUTPUT, @TenantId OUTPUT, @JobId OUTPUT, @Environment OUTPUT, @Namespace OUTPUT, @Name OUTPUT, @Variant OUTPUT, @CronExpression OUTPUT, @TimeZoneId OUTPUT, @StartAtUtc OUTPUT, @EndAtUtc OUTPUT, @Enabled OUTPUT, @Metadata OUTPUT;
+    EXEC [core-internal].[GuardActor] @Actor, @ActorValue OUTPUT;
+    EXEC [croniq-internal].[GuardTriggerRef] @Trigger, @TriggerKey OUTPUT, @JobKey OUTPUT, @TenantId OUTPUT, @JobId OUTPUT, @Environment OUTPUT, @Namespace OUTPUT, @Name OUTPUT, @Variant OUTPUT, @CronExpression OUTPUT, @TimeZoneId OUTPUT, @StartAtUtc OUTPUT, @EndAtUtc OUTPUT, @Enabled OUTPUT, @Metadata OUTPUT;
 
     IF @JobId IS NULL
     BEGIN
@@ -173,7 +173,7 @@ BEGIN
 
     IF NOT EXISTS (SELECT TOP 1 1 FROM [croniq].[Jobs] WHERE [JobId] = @JobId AND [IsDeleted] = 0)
     BEGIN;
-        EXEC [croniq].[ThrowTriggerJobMissing];
+        EXEC [croniq-internal].[ThrowTriggerJobMissing];
     END
 
     SELECT @ExistingTriggerId = t.[TriggerId],
@@ -185,7 +185,7 @@ BEGIN
     BEGIN
         IF @ExistingIsDeleted = 1 AND @AllowDeletedReuse = 0
         BEGIN;
-            EXEC [croniq].[ThrowTriggerReuseNotAllowed];
+            EXEC [croniq-internal].[ThrowTriggerReuseNotAllowed];
         END
 
         UPDATE [croniq].[Triggers]
@@ -283,8 +283,8 @@ BEGIN
     DECLARE @Metadata [core].[jsonNullable];
     DECLARE @now [core].[utcDateTime] = SYSUTCDATETIME();
 
-    EXEC [core].[GuardActor] @Actor, @ActorValue OUTPUT;
-    EXEC [croniq].[GuardTriggerRef] @Trigger, @TriggerKey OUTPUT, @JobKey OUTPUT, @TenantId OUTPUT, @JobId OUTPUT, @Environment OUTPUT, @Namespace OUTPUT, @Name OUTPUT, @Variant OUTPUT, @CronExpression OUTPUT, @TimeZoneId OUTPUT, @StartAtUtc OUTPUT, @EndAtUtc OUTPUT, @Enabled OUTPUT, @Metadata OUTPUT;
+    EXEC [core-internal].[GuardActor] @Actor, @ActorValue OUTPUT;
+    EXEC [croniq-internal].[GuardTriggerRef] @Trigger, @TriggerKey OUTPUT, @JobKey OUTPUT, @TenantId OUTPUT, @JobId OUTPUT, @Environment OUTPUT, @Namespace OUTPUT, @Name OUTPUT, @Variant OUTPUT, @CronExpression OUTPUT, @TimeZoneId OUTPUT, @StartAtUtc OUTPUT, @EndAtUtc OUTPUT, @Enabled OUTPUT, @Metadata OUTPUT;
 
     IF @JobId IS NULL
     BEGIN
@@ -301,7 +301,7 @@ BEGIN
 
     IF @TriggerId IS NULL
     BEGIN;
-        EXEC [croniq].[ThrowTriggerNotFound];
+        EXEC [croniq-internal].[ThrowTriggerNotFound];
     END
 
     UPDATE [croniq].[Triggers]
@@ -313,5 +313,30 @@ BEGIN
     SELECT @UpdatedUtc = t.[UpdatedUtc]
     FROM [croniq].[Triggers] AS t
     WHERE t.[TriggerId] = @TriggerId;
+END
+GO
+
+-- Find job by JobKey and return a JSON payload (single object, no array)
+CREATE OR ALTER PROCEDURE [croniq].[JobFindByKey]
+    @JobKey [core].[reference]
+AS
+BEGIN
+    SET NOCOUNT ON;
+
+    SELECT [JobId],
+        [JobKey],
+        [TenantId],
+        [Environment],
+        [Namespace],
+        [Name],
+        [Variant],
+        [Description],
+        [Metadata],
+        [CreatedUtc],
+        [UpdatedUtc],
+        [IsDeleted]
+    FROM [croniq].[Jobs]
+    WHERE [JobKey] = @JobKey
+    FOR JSON PATH, WITHOUT_ARRAY_WRAPPER;
 END
 GO

@@ -29,12 +29,12 @@ BEGIN
     DECLARE @ExistingIsDeleted [core].[flag];
     DECLARE @now [core].[utcDateTime] = SYSUTCDATETIME();
 
-    EXEC [core].[GuardActor] @Actor, @ActorValue OUTPUT;
-    EXEC [croniq].[GuardTriggerLeaseRef] @Lease, @TriggerId OUTPUT, @JobId OUTPUT, @TenantId OUTPUT, @Environment OUTPUT, @Namespace OUTPUT, @Name OUTPUT, @Variant OUTPUT, @InstanceId OUTPUT, @FireAtUtc OUTPUT, @RequestedLeaseExpiresAtUtc OUTPUT, @Payload OUTPUT;
+    EXEC [core-internal].[GuardActor] @Actor, @ActorValue OUTPUT;
+    EXEC [croniq-internal].[GuardTriggerLeaseRef] @Lease, @TriggerId OUTPUT, @JobId OUTPUT, @TenantId OUTPUT, @Environment OUTPUT, @Namespace OUTPUT, @Name OUTPUT, @Variant OUTPUT, @InstanceId OUTPUT, @FireAtUtc OUTPUT, @RequestedLeaseExpiresAtUtc OUTPUT, @Payload OUTPUT;
 
     IF NOT EXISTS (SELECT TOP 1 1 FROM [croniq].[Triggers] WHERE [TriggerId] = @TriggerId AND [IsDeleted] = 0)
     BEGIN;
-        EXEC [croniq].[ThrowTriggerNotFound];
+        EXEC [croniq-internal].[ThrowTriggerNotFound];
     END
 
     SELECT TOP (1)
@@ -49,12 +49,12 @@ BEGIN
 
     IF @ExistingLeaseId IS NOT NULL AND @ExistingIsDeleted = 0 AND @ExistingExpiresAt > @now
     BEGIN;
-        EXEC [croniq].[ThrowTriggerLeaseActive];
+        EXEC [croniq-internal].[ThrowTriggerLeaseActive];
     END
 
     IF @ExistingLeaseId IS NOT NULL AND @ExistingIsDeleted = 1 AND @AllowDeletedReuse = 0
     BEGIN;
-        EXEC [croniq].[ThrowTriggerLeaseReuseNotAllowed];
+        EXEC [croniq-internal].[ThrowTriggerLeaseReuseNotAllowed];
     END
 
     IF @ExistingLeaseId IS NOT NULL
@@ -133,8 +133,8 @@ BEGIN
     DECLARE @now [core].[utcDateTime] = SYSUTCDATETIME();
     DECLARE @ExistingInstanceId [core].[reference];
 
-    EXEC [core].[GuardActor] @Actor, @ActorValue OUTPUT;
-    EXEC [croniq].[GuardTriggerLeaseReleaseRef] @Release, @LeaseId OUTPUT, @InstanceId OUTPUT;
+    EXEC [core-internal].[GuardActor] @Actor, @ActorValue OUTPUT;
+    EXEC [croniq-internal].[GuardTriggerLeaseReleaseRef] @Release, @LeaseId OUTPUT, @InstanceId OUTPUT;
 
     SELECT TOP (1)
         @ExistingInstanceId = tl.[InstanceId]
@@ -144,12 +144,12 @@ BEGIN
 
     IF @ExistingInstanceId IS NULL
     BEGIN;
-        EXEC [croniq].[ThrowTriggerLeaseNotFound];
+        EXEC [croniq-internal].[ThrowTriggerLeaseNotFound];
     END
 
     IF @ExistingInstanceId != @InstanceId
     BEGIN;
-        EXEC [croniq].[ThrowTriggerLeaseOwnershipMismatch];
+        EXEC [croniq-internal].[ThrowTriggerLeaseOwnershipMismatch];
     END
 
     UPDATE [croniq].[TriggerLeases]
@@ -175,7 +175,7 @@ BEGIN
     DECLARE @now [core].[utcDateTime] = SYSUTCDATETIME();
     DECLARE @cutoff [core].[utcDateTime] = DATEADD(DAY, -@RetentionDays, @now);
 
-    EXEC [core].[GuardActor] @Actor, @ActorValue OUTPUT;
+    EXEC [core-internal].[GuardActor] @Actor, @ActorValue OUTPUT;
 
     DELETE FROM [croniq].[TriggerLeases]
     WHERE [IsDeleted] = 1

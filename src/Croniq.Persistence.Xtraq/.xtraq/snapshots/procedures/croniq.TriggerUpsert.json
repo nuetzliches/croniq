@@ -35,16 +35,16 @@
   ],
   "ResultSets": [
     {
-      "ProcedureRef": "core.GuardActor"
+      "ProcedureRef": "core-internal.GuardActor"
     },
     {
-      "ProcedureRef": "croniq.GuardTriggerRef"
+      "ProcedureRef": "croniq-internal.GuardTriggerRef"
     },
     {
-      "ProcedureRef": "croniq.ThrowTriggerJobMissing"
+      "ProcedureRef": "croniq-internal.ThrowTriggerJobMissing"
     },
     {
-      "ProcedureRef": "croniq.ThrowTriggerReuseNotAllowed"
+      "ProcedureRef": "croniq-internal.ThrowTriggerReuseNotAllowed"
     }
   ]
 }

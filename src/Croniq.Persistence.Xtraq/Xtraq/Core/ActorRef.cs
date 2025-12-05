@@ -50,3 +50,36 @@ public sealed record ActorRef : ITableType
 #pragma warning restore CS0612, CS0618
 }
 
+/// <summary>
+/// HTTP request row mirroring the SQL table type <c>Core.ActorRef</c> with DataAnnotations metadata.
+/// </summary>
+public sealed record ActorRefRequest
+{
+    [System.ComponentModel.DataAnnotations.Required]
+    [System.ComponentModel.DataAnnotations.StringLength(128)]
+    public string Actor { get; init; }
+
+	internal ActorRef ToTableType()
+		=> ActorRef.Create(
+            Actor
+        );
+
+	internal static System.Collections.Generic.IReadOnlyList<ActorRef>? ToTableTypes(System.Collections.Generic.IReadOnlyList<ActorRefRequest>? source)
+	{
+		if (source is null) return null;
+		if (source.Count == 0) return System.Array.Empty<ActorRef>();
+		var buffer = new ActorRef[source.Count];
+		for (var i = 0; i < source.Count; i++)
+		{
+			var row = source[i];
+			if (row is null)
+			{
+				throw new System.InvalidOperationException("Table type rows cannot contain null entries.");
+			}
+
+			buffer[i] = row.ToTableType();
+		}
+
+		return buffer;
+	}
+}

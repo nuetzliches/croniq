@@ -28,9 +28,7 @@ namespace Croniq.Persistence.Xtraq.Croniq;
 public sealed record class TriggerDeleteRequest
 {
     [System.ComponentModel.DataAnnotations.Required]
-    public IReadOnlyList<ActorRef> Actor { get; init; }
-    [System.ComponentModel.DataAnnotations.Required]
-    public IReadOnlyList<TriggerRef> Trigger { get; init; }
+    public IReadOnlyList<TriggerRefRequest> Trigger { get; init; }
 }
 
 public readonly record struct TriggerDeleteInput(
@@ -67,7 +65,7 @@ internal static class TriggerDeleteRequestMapper
     public static async ValueTask<TriggerDeleteInput> ToInputAsync(TriggerDeleteRequest? request, IXtraqParameterBindingProvider? bindingProvider, CancellationToken cancellationToken = default)
     {
         request ??= new TriggerDeleteRequest();
-        IReadOnlyList<ActorRef>? Actor = request.Actor;
+        IReadOnlyList<ActorRef>? Actor = default;
         if (!HasValue(Actor))
         {
             Actor = await ResolveTableAsync<ActorRef>(bindingProvider, "[croniq].[TriggerDelete]", "@Actor", Actor, cancellationToken).ConfigureAwait(false);
@@ -76,7 +74,7 @@ internal static class TriggerDeleteRequestMapper
         {
             throw new InvalidOperationException("Parameter @Actor must be supplied by the request or a configured binding.");
         }
-        IReadOnlyList<TriggerRef>? Trigger = request.Trigger;
+        IReadOnlyList<TriggerRef>? Trigger = TriggerRefRequest.ToTableTypes(request.Trigger);
         if (!HasValue(Trigger))
         {
             Trigger = await ResolveTableAsync<TriggerRef>(bindingProvider, "[croniq].[TriggerDelete]", "@Trigger", Trigger, cancellationToken).ConfigureAwait(false);

@@ -28,9 +28,7 @@ namespace Croniq.Persistence.Xtraq.Croniq;
 public sealed record class JobDeleteRequest
 {
     [System.ComponentModel.DataAnnotations.Required]
-    public IReadOnlyList<ActorRef> Actor { get; init; }
-    [System.ComponentModel.DataAnnotations.Required]
-    public IReadOnlyList<JobRef> Job { get; init; }
+    public IReadOnlyList<JobRefRequest> Job { get; init; }
 }
 
 public readonly record struct JobDeleteInput(
@@ -66,7 +64,7 @@ internal static class JobDeleteRequestMapper
     public static async ValueTask<JobDeleteInput> ToInputAsync(JobDeleteRequest? request, IXtraqParameterBindingProvider? bindingProvider, CancellationToken cancellationToken = default)
     {
         request ??= new JobDeleteRequest();
-        IReadOnlyList<ActorRef>? Actor = request.Actor;
+        IReadOnlyList<ActorRef>? Actor = default;
         if (!HasValue(Actor))
         {
             Actor = await ResolveTableAsync<ActorRef>(bindingProvider, "[croniq].[JobDelete]", "@Actor", Actor, cancellationToken).ConfigureAwait(false);
@@ -75,7 +73,7 @@ internal static class JobDeleteRequestMapper
         {
             throw new InvalidOperationException("Parameter @Actor must be supplied by the request or a configured binding.");
         }
-        IReadOnlyList<JobRef>? Job = request.Job;
+        IReadOnlyList<JobRef>? Job = JobRefRequest.ToTableTypes(request.Job);
         if (!HasValue(Job))
         {
             Job = await ResolveTableAsync<JobRef>(bindingProvider, "[croniq].[JobDelete]", "@Job", Job, cancellationToken).ConfigureAwait(false);

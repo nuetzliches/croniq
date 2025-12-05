@@ -27,8 +27,6 @@ namespace Croniq.Persistence.Xtraq.Croniq;
 /// </summary>
 public sealed record class TriggerLeaseCleanupRequest
 {
-    [System.ComponentModel.DataAnnotations.Required]
-    public IReadOnlyList<ActorRef> Actor { get; init; }
     public int? FailoverGraceSeconds { get; init; }
 }
 
@@ -65,7 +63,7 @@ internal static class TriggerLeaseCleanupRequestMapper
     public static async ValueTask<TriggerLeaseCleanupInput> ToInputAsync(TriggerLeaseCleanupRequest? request, IXtraqParameterBindingProvider? bindingProvider, CancellationToken cancellationToken = default)
     {
         request ??= new TriggerLeaseCleanupRequest();
-        IReadOnlyList<ActorRef>? Actor = request.Actor;
+        IReadOnlyList<ActorRef>? Actor = default;
         if (!HasValue(Actor))
         {
             Actor = await ResolveTableAsync<ActorRef>(bindingProvider, "[croniq].[TriggerLeaseCleanup]", "@Actor", Actor, cancellationToken).ConfigureAwait(false);

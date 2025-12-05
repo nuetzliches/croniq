@@ -110,3 +110,63 @@ public sealed record TriggerLeaseRef : ITableType
 #pragma warning restore CS0612, CS0618
 }
 
+/// <summary>
+/// HTTP request row mirroring the SQL table type <c>Croniq.TriggerLeaseRef</c> with DataAnnotations metadata.
+/// </summary>
+public sealed record TriggerLeaseRefRequest
+{
+    public long TriggerId { get; init; }
+    public long JobId { get; init; }
+    public int TenantId { get; init; }
+    [System.ComponentModel.DataAnnotations.Required]
+    [System.ComponentModel.DataAnnotations.StringLength(32)]
+    public string Environment { get; init; }
+    [System.ComponentModel.DataAnnotations.Required]
+    [System.ComponentModel.DataAnnotations.StringLength(64)]
+    public string Namespace { get; init; }
+    [System.ComponentModel.DataAnnotations.Required]
+    [System.ComponentModel.DataAnnotations.StringLength(128)]
+    public string Name { get; init; }
+    [System.ComponentModel.DataAnnotations.StringLength(64)]
+    public string? Variant { get; init; }
+    [System.ComponentModel.DataAnnotations.Required]
+    [System.ComponentModel.DataAnnotations.StringLength(64)]
+    public string InstanceId { get; init; }
+    public DateTime FireAtUtc { get; init; }
+    public DateTime LeaseExpiresAtUtc { get; init; }
+    public string? Payload { get; init; }
+
+	internal TriggerLeaseRef ToTableType()
+		=> TriggerLeaseRef.Create(
+            TriggerId,
+            JobId,
+            TenantId,
+            Environment,
+            Namespace,
+            Name,
+            Variant,
+            InstanceId,
+            FireAtUtc,
+            LeaseExpiresAtUtc,
+            Payload
+        );
+
+	internal static System.Collections.Generic.IReadOnlyList<TriggerLeaseRef>? ToTableTypes(System.Collections.Generic.IReadOnlyList<TriggerLeaseRefRequest>? source)
+	{
+		if (source is null) return null;
+		if (source.Count == 0) return System.Array.Empty<TriggerLeaseRef>();
+		var buffer = new TriggerLeaseRef[source.Count];
+		for (var i = 0; i < source.Count; i++)
+		{
+			var row = source[i];
+			if (row is null)
+			{
+				throw new System.InvalidOperationException("Table type rows cannot contain null entries.");
+			}
+
+			buffer[i] = row.ToTableType();
+		}
+
+		return buffer;
+	}
+}

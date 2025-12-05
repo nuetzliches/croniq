@@ -92,3 +92,58 @@ public sealed record JobRef : ITableType
 #pragma warning restore CS0612, CS0618
 }
 
+/// <summary>
+/// HTTP request row mirroring the SQL table type <c>Croniq.JobRef</c> with DataAnnotations metadata.
+/// </summary>
+public sealed record JobRefRequest
+{
+    [System.ComponentModel.DataAnnotations.Required]
+    [System.ComponentModel.DataAnnotations.StringLength(64)]
+    public string JobKey { get; init; }
+    public int TenantId { get; init; }
+    [System.ComponentModel.DataAnnotations.Required]
+    [System.ComponentModel.DataAnnotations.StringLength(32)]
+    public string Environment { get; init; }
+    [System.ComponentModel.DataAnnotations.Required]
+    [System.ComponentModel.DataAnnotations.StringLength(64)]
+    public string Namespace { get; init; }
+    [System.ComponentModel.DataAnnotations.Required]
+    [System.ComponentModel.DataAnnotations.StringLength(128)]
+    public string Name { get; init; }
+    [System.ComponentModel.DataAnnotations.StringLength(64)]
+    public string? Variant { get; init; }
+    [System.ComponentModel.DataAnnotations.StringLength(64)]
+    public string? Description { get; init; }
+    public string? Metadata { get; init; }
+
+	internal JobRef ToTableType()
+		=> JobRef.Create(
+            JobKey,
+            TenantId,
+            Environment,
+            Namespace,
+            Name,
+            Variant,
+            Description,
+            Metadata
+        );
+
+	internal static System.Collections.Generic.IReadOnlyList<JobRef>? ToTableTypes(System.Collections.Generic.IReadOnlyList<JobRefRequest>? source)
+	{
+		if (source is null) return null;
+		if (source.Count == 0) return System.Array.Empty<JobRef>();
+		var buffer = new JobRef[source.Count];
+		for (var i = 0; i < source.Count; i++)
+		{
+			var row = source[i];
+			if (row is null)
+			{
+				throw new System.InvalidOperationException("Table type rows cannot contain null entries.");
+			}
+
+			buffer[i] = row.ToTableType();
+		}
+
+		return buffer;
+	}
+}

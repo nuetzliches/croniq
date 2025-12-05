@@ -27,8 +27,6 @@ namespace Croniq.Persistence.Xtraq.Croniq;
 /// </summary>
 public sealed record class TriggerDeadLetterRetentionRequest
 {
-    [System.ComponentModel.DataAnnotations.Required]
-    public IReadOnlyList<ActorRef> Actor { get; init; }
     public int? RetentionDays { get; init; }
 }
 
@@ -65,7 +63,7 @@ internal static class TriggerDeadLetterRetentionRequestMapper
     public static async ValueTask<TriggerDeadLetterRetentionInput> ToInputAsync(TriggerDeadLetterRetentionRequest? request, IXtraqParameterBindingProvider? bindingProvider, CancellationToken cancellationToken = default)
     {
         request ??= new TriggerDeadLetterRetentionRequest();
-        IReadOnlyList<ActorRef>? Actor = request.Actor;
+        IReadOnlyList<ActorRef>? Actor = default;
         if (!HasValue(Actor))
         {
             Actor = await ResolveTableAsync<ActorRef>(bindingProvider, "[croniq].[TriggerDeadLetterRetention]", "@Actor", Actor, cancellationToken).ConfigureAwait(false);

@@ -29,10 +29,10 @@
   ],
   "ResultSets": [
     {
-      "ProcedureRef": "core.GuardActor"
+      "ProcedureRef": "core-internal.GuardActor"
     },
     {
-      "ProcedureRef": "croniq.GuardTriggerDeadLetterRef"
+      "ProcedureRef": "croniq-internal.GuardTriggerDeadLetterRef"
     }
   ]
 }

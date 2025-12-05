@@ -28,9 +28,7 @@ namespace Croniq.Persistence.Xtraq.Croniq;
 public sealed record class TriggerLeaseAcquireRequest
 {
     [System.ComponentModel.DataAnnotations.Required]
-    public IReadOnlyList<ActorRef> Actor { get; init; }
-    [System.ComponentModel.DataAnnotations.Required]
-    public IReadOnlyList<TriggerLeaseRef> Lease { get; init; }
+    public IReadOnlyList<TriggerLeaseRefRequest> Lease { get; init; }
     public bool? AllowDeletedReuse { get; init; }
 }
 
@@ -69,7 +67,7 @@ internal static class TriggerLeaseAcquireRequestMapper
     public static async ValueTask<TriggerLeaseAcquireInput> ToInputAsync(TriggerLeaseAcquireRequest? request, IXtraqParameterBindingProvider? bindingProvider, CancellationToken cancellationToken = default)
     {
         request ??= new TriggerLeaseAcquireRequest();
-        IReadOnlyList<ActorRef>? Actor = request.Actor;
+        IReadOnlyList<ActorRef>? Actor = default;
         if (!HasValue(Actor))
         {
             Actor = await ResolveTableAsync<ActorRef>(bindingProvider, "[croniq].[TriggerLeaseAcquire]", "@Actor", Actor, cancellationToken).ConfigureAwait(false);
@@ -78,7 +76,7 @@ internal static class TriggerLeaseAcquireRequestMapper
         {
             throw new InvalidOperationException("Parameter @Actor must be supplied by the request or a configured binding.");
         }
-        IReadOnlyList<TriggerLeaseRef>? Lease = request.Lease;
+        IReadOnlyList<TriggerLeaseRef>? Lease = TriggerLeaseRefRequest.ToTableTypes(request.Lease);
         if (!HasValue(Lease))
         {
             Lease = await ResolveTableAsync<TriggerLeaseRef>(bindingProvider, "[croniq].[TriggerLeaseAcquire]", "@Lease", Lease, cancellationToken).ConfigureAwait(false);

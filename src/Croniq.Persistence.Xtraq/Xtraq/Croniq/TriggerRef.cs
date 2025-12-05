@@ -128,3 +128,75 @@ public sealed record TriggerRef : ITableType
 #pragma warning restore CS0612, CS0618
 }
 
+/// <summary>
+/// HTTP request row mirroring the SQL table type <c>Croniq.TriggerRef</c> with DataAnnotations metadata.
+/// </summary>
+public sealed record TriggerRefRequest
+{
+    [System.ComponentModel.DataAnnotations.Required]
+    [System.ComponentModel.DataAnnotations.StringLength(64)]
+    public string TriggerKey { get; init; }
+    [System.ComponentModel.DataAnnotations.Required]
+    [System.ComponentModel.DataAnnotations.StringLength(64)]
+    public string JobKey { get; init; }
+    public int TenantId { get; init; }
+    public long JobId { get; init; }
+    [System.ComponentModel.DataAnnotations.Required]
+    [System.ComponentModel.DataAnnotations.StringLength(32)]
+    public string Environment { get; init; }
+    [System.ComponentModel.DataAnnotations.Required]
+    [System.ComponentModel.DataAnnotations.StringLength(64)]
+    public string Namespace { get; init; }
+    [System.ComponentModel.DataAnnotations.Required]
+    [System.ComponentModel.DataAnnotations.StringLength(128)]
+    public string Name { get; init; }
+    [System.ComponentModel.DataAnnotations.StringLength(64)]
+    public string? Variant { get; init; }
+    [System.ComponentModel.DataAnnotations.Required]
+    [System.ComponentModel.DataAnnotations.StringLength(256)]
+    public string CronExpression { get; init; }
+    [System.ComponentModel.DataAnnotations.Required]
+    [System.ComponentModel.DataAnnotations.StringLength(64)]
+    public string TimeZoneId { get; init; }
+    public DateTime? StartAtUtc { get; init; }
+    public DateTime? EndAtUtc { get; init; }
+    public bool Enabled { get; init; }
+    public string? Metadata { get; init; }
+
+	internal TriggerRef ToTableType()
+		=> TriggerRef.Create(
+            TriggerKey,
+            JobKey,
+            TenantId,
+            JobId,
+            Environment,
+            Namespace,
+            Name,
+            Variant,
+            CronExpression,
+            TimeZoneId,
+            StartAtUtc,
+            EndAtUtc,
+            Enabled,
+            Metadata
+        );
+
+	internal static System.Collections.Generic.IReadOnlyList<TriggerRef>? ToTableTypes(System.Collections.Generic.IReadOnlyList<TriggerRefRequest>? source)
+	{
+		if (source is null) return null;
+		if (source.Count == 0) return System.Array.Empty<TriggerRef>();
+		var buffer = new TriggerRef[source.Count];
+		for (var i = 0; i < source.Count; i++)
+		{
+			var row = source[i];
+			if (row is null)
+			{
+				throw new System.InvalidOperationException("Table type rows cannot contain null entries.");
+			}
+
+			buffer[i] = row.ToTableType();
+		}
+
+		return buffer;
+	}
+}

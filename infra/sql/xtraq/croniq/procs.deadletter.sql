@@ -21,8 +21,8 @@ BEGIN
     DECLARE @DeadLetterReason [croniq].[deadLetterReason];
     DECLARE @Payload [core].[jsonNullable];
 
-    EXEC [core].[GuardActor] @Actor, @ActorValue OUTPUT;
-    EXEC [croniq].[GuardTriggerDeadLetterRef] @DeadLetter, @TriggerId OUTPUT, @TenantId OUTPUT, @Environment OUTPUT, @Namespace OUTPUT, @Name OUTPUT, @Variant OUTPUT, @FireAtUtc OUTPUT, @DeadLetterReason OUTPUT, @Payload OUTPUT;
+    EXEC [core-internal].[GuardActor] @Actor, @ActorValue OUTPUT;
+    EXEC [croniq-internal].[GuardTriggerDeadLetterRef] @DeadLetter, @TriggerId OUTPUT, @TenantId OUTPUT, @Environment OUTPUT, @Namespace OUTPUT, @Name OUTPUT, @Variant OUTPUT, @FireAtUtc OUTPUT, @DeadLetterReason OUTPUT, @Payload OUTPUT;
 
     INSERT INTO [croniq].[TriggerDeadLetter]
     (
@@ -72,7 +72,7 @@ BEGIN
     DECLARE @ActorValue [core].[actor];
     DECLARE @cutoff [core].[utcDateTime] = DATEADD(DAY, -@RetentionDays, SYSUTCDATETIME());
 
-    EXEC [core].[GuardActor] @Actor, @ActorValue OUTPUT;
+    EXEC [core-internal].[GuardActor] @Actor, @ActorValue OUTPUT;
 
     DELETE FROM [croniq].[TriggerDeadLetter]
     WHERE [IsDeleted] = 1

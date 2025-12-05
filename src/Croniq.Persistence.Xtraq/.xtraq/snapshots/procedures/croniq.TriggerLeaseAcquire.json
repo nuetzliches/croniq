@@ -35,19 +35,19 @@
   ],
   "ResultSets": [
     {
-      "ProcedureRef": "core.GuardActor"
+      "ProcedureRef": "core-internal.GuardActor"
     },
     {
-      "ProcedureRef": "croniq.GuardTriggerLeaseRef"
+      "ProcedureRef": "croniq-internal.GuardTriggerLeaseRef"
     },
     {
-      "ProcedureRef": "croniq.ThrowTriggerNotFound"
+      "ProcedureRef": "croniq-internal.ThrowTriggerNotFound"
     },
     {
-      "ProcedureRef": "croniq.ThrowTriggerLeaseActive"
+      "ProcedureRef": "croniq-internal.ThrowTriggerLeaseActive"
     },
     {
-      "ProcedureRef": "croniq.ThrowTriggerLeaseReuseNotAllowed"
+      "ProcedureRef": "croniq-internal.ThrowTriggerLeaseReuseNotAllowed"
     }
   ]
 }

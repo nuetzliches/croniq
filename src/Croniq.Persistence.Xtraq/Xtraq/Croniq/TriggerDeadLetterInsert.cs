@@ -28,9 +28,7 @@ namespace Croniq.Persistence.Xtraq.Croniq;
 public sealed record class TriggerDeadLetterInsertRequest
 {
     [System.ComponentModel.DataAnnotations.Required]
-    public IReadOnlyList<ActorRef> Actor { get; init; }
-    [System.ComponentModel.DataAnnotations.Required]
-    public IReadOnlyList<TriggerDeadLetterRef> DeadLetter { get; init; }
+    public IReadOnlyList<TriggerDeadLetterRefRequest> DeadLetter { get; init; }
 }
 
 public readonly record struct TriggerDeadLetterInsertInput(
@@ -67,7 +65,7 @@ internal static class TriggerDeadLetterInsertRequestMapper
     public static async ValueTask<TriggerDeadLetterInsertInput> ToInputAsync(TriggerDeadLetterInsertRequest? request, IXtraqParameterBindingProvider? bindingProvider, CancellationToken cancellationToken = default)
     {
         request ??= new TriggerDeadLetterInsertRequest();
-        IReadOnlyList<ActorRef>? Actor = request.Actor;
+        IReadOnlyList<ActorRef>? Actor = default;
         if (!HasValue(Actor))
         {
             Actor = await ResolveTableAsync<ActorRef>(bindingProvider, "[croniq].[TriggerDeadLetterInsert]", "@Actor", Actor, cancellationToken).ConfigureAwait(false);
@@ -76,7 +74,7 @@ internal static class TriggerDeadLetterInsertRequestMapper
         {
             throw new InvalidOperationException("Parameter @Actor must be supplied by the request or a configured binding.");
         }
-        IReadOnlyList<TriggerDeadLetterRef>? DeadLetter = request.DeadLetter;
+        IReadOnlyList<TriggerDeadLetterRef>? DeadLetter = TriggerDeadLetterRefRequest.ToTableTypes(request.DeadLetter);
         if (!HasValue(DeadLetter))
         {
             DeadLetter = await ResolveTableAsync<TriggerDeadLetterRef>(bindingProvider, "[croniq].[TriggerDeadLetterInsert]", "@DeadLetter", DeadLetter, cancellationToken).ConfigureAwait(false);

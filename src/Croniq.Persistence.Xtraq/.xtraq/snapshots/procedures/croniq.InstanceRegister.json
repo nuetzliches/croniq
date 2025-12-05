@@ -35,16 +35,16 @@
   ],
   "ResultSets": [
     {
-      "ProcedureRef": "core.GuardActor"
+      "ProcedureRef": "core-internal.GuardActor"
     },
     {
-      "ProcedureRef": "croniq.GuardInstanceRef"
+      "ProcedureRef": "croniq-internal.GuardInstanceRef"
     },
     {
-      "ProcedureRef": "croniq.ThrowInstanceIdentityMismatch"
+      "ProcedureRef": "croniq-internal.ThrowInstanceIdentityMismatch"
     },
     {
-      "ProcedureRef": "croniq.ThrowInstanceReuseNotAllowed"
+      "ProcedureRef": "croniq-internal.ThrowInstanceReuseNotAllowed"
     }
   ]
 }

@@ -78,27 +78,3 @@ BEGIN
     RETURN @Result;
 END
 GO
-
-CREATE OR ALTER PROCEDURE [core].[GuardActor]
-    @Actor [core].[ActorRef] READONLY,
-    @ActorValue [core].[actor] OUTPUT
-AS
-BEGIN
-    SET NOCOUNT ON;
-
-    SET @ActorValue = [core].[GetActor](@Actor);
-
-    IF @ActorValue IS NULL
-    BEGIN;
-        EXEC [core].[ThrowActorRequired];
-    END
-END
-GO
-
-CREATE OR ALTER PROCEDURE [core].[ThrowActorRequired]
-AS
-BEGIN
-    SET NOCOUNT ON;
-    THROW 50004, 'Actor reference required', 1;
-END
-GO

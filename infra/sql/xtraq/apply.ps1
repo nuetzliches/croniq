@@ -59,12 +59,13 @@ Write-Host "Ensuring database [$Database] exists on $Server..."
 
 $scripts = @(
     "core/types.sql",
+    "core-internal/types.sql",
     "croniq/types.sql",
+    "croniq-internal/types.sql",
     "auth/tables.sql",
     "croniq/tables.sql",
     "croniq/procs.instances.sql",
     "croniq/procs.jobs.sql",
-    "croniq/procs.jobs.findbykey.sql",
     "croniq/procs.leases.sql",
     "croniq/procs.deadletter.sql"
 )

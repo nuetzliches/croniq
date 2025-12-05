@@ -1,14 +1,14 @@
 {
   "SchemaVersion": 1,
-  "Fingerprint": "361D5F9DDA0CCF06",
+  "Fingerprint": "5C9421568477060D",
   "Parser": {
     "ToolVersion": "net9.0",
     "ResultSetParserVersion": 8
   },
   "Stats": {
-    "ProcedureTotal": 39,
+    "ProcedureTotal": 13,
     "ProcedureSkipped": 0,
-    "ProcedureLoaded": 39,
+    "ProcedureLoaded": 13,
     "UdttTotal": 7,
     "TableTotal": 0,
     "ViewTotal": 0,
@@ -17,136 +17,17 @@
   },
   "Procedures": [
     {
-      "Schema": "core",
-      "Name": "GuardActor",
-      "File": "core.GuardActor.json",
-      "Hash": "9012327DE5E1AE2A",
-      "ResultSets": [
-        {
-          "ReturnsJson": false,
-          "ReturnsJsonArray": false,
-          "JsonRootProperty": null,
-          "HasSelectStar": false,
-          "ProcedureRef": "core.ThrowActorRequired",
-          "Columns": null
-        }
-      ]
-    },
-    {
-      "Schema": "core",
-      "Name": "ThrowActorRequired",
-      "File": "core.ThrowActorRequired.json",
-      "Hash": "F08933A35FEDF9D3",
-      "ResultSets": null
-    },
-    {
-      "Schema": "croniq",
-      "Name": "GuardInstanceRef",
-      "File": "croniq.GuardInstanceRef.json",
-      "Hash": "640A94D5862FDEE0",
-      "ResultSets": [
-        {
-          "ReturnsJson": false,
-          "ReturnsJsonArray": false,
-          "JsonRootProperty": null,
-          "HasSelectStar": false,
-          "ProcedureRef": "croniq.ThrowInstanceRefIncomplete",
-          "Columns": null
-        }
-      ]
-    },
-    {
-      "Schema": "croniq",
-      "Name": "GuardJobRef",
-      "File": "croniq.GuardJobRef.json",
-      "Hash": "40F8EFDA0CEFFF1E",
-      "ResultSets": [
-        {
-          "ReturnsJson": false,
-          "ReturnsJsonArray": false,
-          "JsonRootProperty": null,
-          "HasSelectStar": false,
-          "ProcedureRef": "croniq.ThrowJobRefIncomplete",
-          "Columns": null
-        }
-      ]
-    },
-    {
-      "Schema": "croniq",
-      "Name": "GuardTriggerDeadLetterRef",
-      "File": "croniq.GuardTriggerDeadLetterRef.json",
-      "Hash": "2806DDAD5895B8CB",
-      "ResultSets": [
-        {
-          "ReturnsJson": false,
-          "ReturnsJsonArray": false,
-          "JsonRootProperty": null,
-          "HasSelectStar": false,
-          "ProcedureRef": "croniq.ThrowTriggerDeadLetterRefIncomplete",
-          "Columns": null
-        }
-      ]
-    },
-    {
-      "Schema": "croniq",
-      "Name": "GuardTriggerLeaseRef",
-      "File": "croniq.GuardTriggerLeaseRef.json",
-      "Hash": "F3B4F7ACF8DA78CE",
-      "ResultSets": [
-        {
-          "ReturnsJson": false,
-          "ReturnsJsonArray": false,
-          "JsonRootProperty": null,
-          "HasSelectStar": false,
-          "ProcedureRef": "croniq.ThrowTriggerLeaseRefIncomplete",
-          "Columns": null
-        }
-      ]
-    },
-    {
-      "Schema": "croniq",
-      "Name": "GuardTriggerLeaseReleaseRef",
-      "File": "croniq.GuardTriggerLeaseReleaseRef.json",
-      "Hash": "C248342803F48871",
-      "ResultSets": [
-        {
-          "ReturnsJson": false,
-          "ReturnsJsonArray": false,
-          "JsonRootProperty": null,
-          "HasSelectStar": false,
-          "ProcedureRef": "croniq.ThrowTriggerLeaseReleaseRefIncomplete",
-          "Columns": null
-        }
-      ]
-    },
-    {
-      "Schema": "croniq",
-      "Name": "GuardTriggerRef",
-      "File": "croniq.GuardTriggerRef.json",
-      "Hash": "AAAC6A677125B56D",
-      "ResultSets": [
-        {
-          "ReturnsJson": false,
-          "ReturnsJsonArray": false,
-          "JsonRootProperty": null,
-          "HasSelectStar": false,
-          "ProcedureRef": "croniq.ThrowTriggerRefIncomplete",
-          "Columns": null
-        }
-      ]
-    },
-    {
       "Schema": "croniq",
       "Name": "InstanceHeartbeat",
       "File": "croniq.InstanceHeartbeat.json",
-      "Hash": "10088C88AF53A4F5",
+      "Hash": "192E4883B2FF8CDD",
       "ResultSets": [
         {
           "ReturnsJson": false,
           "ReturnsJsonArray": false,
           "JsonRootProperty": null,
           "HasSelectStar": false,
-          "ProcedureRef": "core.GuardActor",
+          "ProcedureRef": "core-internal.GuardActor",
           "Columns": null
         },
         {
@@ -154,7 +35,7 @@
           "ReturnsJsonArray": false,
           "JsonRootProperty": null,
           "HasSelectStar": false,
-          "ProcedureRef": "croniq.GuardInstanceRef",
+          "ProcedureRef": "croniq-internal.GuardInstanceRef",
           "Columns": null
         },
         {
@@ -162,7 +43,7 @@
           "ReturnsJsonArray": false,
           "JsonRootProperty": null,
           "HasSelectStar": false,
-          "ProcedureRef": "croniq.ThrowInstanceNotRegistered",
+          "ProcedureRef": "croniq-internal.ThrowInstanceNotRegistered",
           "Columns": null
         },
         {
@@ -170,7 +51,7 @@
           "ReturnsJsonArray": false,
           "JsonRootProperty": null,
           "HasSelectStar": false,
-          "ProcedureRef": "croniq.ThrowInstanceIdentityMismatch",
+          "ProcedureRef": "croniq-internal.ThrowInstanceIdentityMismatch",
           "Columns": null
         }
       ]
@@ -179,14 +60,14 @@
       "Schema": "croniq",
       "Name": "InstanceRegister",
       "File": "croniq.InstanceRegister.json",
-      "Hash": "C8ED43894D24681E",
+      "Hash": "4170DC764F645819",
       "ResultSets": [
         {
           "ReturnsJson": false,
           "ReturnsJsonArray": false,
           "JsonRootProperty": null,
           "HasSelectStar": false,
-          "ProcedureRef": "core.GuardActor",
+          "ProcedureRef": "core-internal.GuardActor",
           "Columns": null
         },
         {
@@ -194,7 +75,7 @@
           "ReturnsJsonArray": false,
           "JsonRootProperty": null,
           "HasSelectStar": false,
-          "ProcedureRef": "croniq.GuardInstanceRef",
+          "ProcedureRef": "croniq-internal.GuardInstanceRef",
           "Columns": null
         },
         {
@@ -202,7 +83,7 @@
           "ReturnsJsonArray": false,
           "JsonRootProperty": null,
           "HasSelectStar": false,
-          "ProcedureRef": "croniq.ThrowInstanceIdentityMismatch",
+          "ProcedureRef": "croniq-internal.ThrowInstanceIdentityMismatch",
           "Columns": null
         },
         {
@@ -210,7 +91,7 @@
           "ReturnsJsonArray": false,
           "JsonRootProperty": null,
           "HasSelectStar": false,
-          "ProcedureRef": "croniq.ThrowInstanceReuseNotAllowed",
+          "ProcedureRef": "croniq-internal.ThrowInstanceReuseNotAllowed",
           "Columns": null
         }
       ]
@@ -219,14 +100,14 @@
       "Schema": "croniq",
       "Name": "JobDelete",
       "File": "croniq.JobDelete.json",
-      "Hash": "34859057B411BD7A",
+      "Hash": "BAC3656D6943FD86",
       "ResultSets": [
         {
           "ReturnsJson": false,
           "ReturnsJsonArray": false,
           "JsonRootProperty": null,
           "HasSelectStar": false,
-          "ProcedureRef": "core.GuardActor",
+          "ProcedureRef": "core-internal.GuardActor",
           "Columns": null
         },
         {
@@ -234,7 +115,7 @@
           "ReturnsJsonArray": false,
           "JsonRootProperty": null,
           "HasSelectStar": false,
-          "ProcedureRef": "croniq.GuardJobRef",
+          "ProcedureRef": "croniq-internal.GuardJobRef",
           "Columns": null
         },
         {
@@ -242,7 +123,7 @@
           "ReturnsJsonArray": false,
           "JsonRootProperty": null,
           "HasSelectStar": false,
-          "ProcedureRef": "croniq.ThrowJobNotFound",
+          "ProcedureRef": "croniq-internal.ThrowJobNotFound",
           "Columns": null
         }
       ]
@@ -532,14 +413,14 @@
       "Schema": "croniq",
       "Name": "JobUpsert",
       "File": "croniq.JobUpsert.json",
-      "Hash": "925BCE2E651A58EA",
+      "Hash": "3D663AD65F9996FD",
       "ResultSets": [
         {
           "ReturnsJson": false,
           "ReturnsJsonArray": false,
           "JsonRootProperty": null,
           "HasSelectStar": false,
-          "ProcedureRef": "core.GuardActor",
+          "ProcedureRef": "core-internal.GuardActor",
           "Columns": null
         },
         {
@@ -547,7 +428,7 @@
           "ReturnsJsonArray": false,
           "JsonRootProperty": null,
           "HasSelectStar": false,
-          "ProcedureRef": "croniq.GuardJobRef",
+          "ProcedureRef": "croniq-internal.GuardJobRef",
           "Columns": null
         },
         {
@@ -555,149 +436,23 @@
           "ReturnsJsonArray": false,
           "JsonRootProperty": null,
           "HasSelectStar": false,
-          "ProcedureRef": "croniq.ThrowJobReuseNotAllowed",
+          "ProcedureRef": "croniq-internal.ThrowJobReuseNotAllowed",
           "Columns": null
         }
       ]
     },
     {
       "Schema": "croniq",
-      "Name": "ThrowInstanceIdentityMismatch",
-      "File": "croniq.ThrowInstanceIdentityMismatch.json",
-      "Hash": "393F1E9553A46025",
-      "ResultSets": null
-    },
-    {
-      "Schema": "croniq",
-      "Name": "ThrowInstanceNotRegistered",
-      "File": "croniq.ThrowInstanceNotRegistered.json",
-      "Hash": "9F205C5EF3D8F173",
-      "ResultSets": null
-    },
-    {
-      "Schema": "croniq",
-      "Name": "ThrowInstanceRefIncomplete",
-      "File": "croniq.ThrowInstanceRefIncomplete.json",
-      "Hash": "D4ACDBE2FB41521D",
-      "ResultSets": null
-    },
-    {
-      "Schema": "croniq",
-      "Name": "ThrowInstanceReuseNotAllowed",
-      "File": "croniq.ThrowInstanceReuseNotAllowed.json",
-      "Hash": "6B61E2B019999F76",
-      "ResultSets": null
-    },
-    {
-      "Schema": "croniq",
-      "Name": "ThrowJobNotFound",
-      "File": "croniq.ThrowJobNotFound.json",
-      "Hash": "92D649330CDDCDF4",
-      "ResultSets": null
-    },
-    {
-      "Schema": "croniq",
-      "Name": "ThrowJobRefIncomplete",
-      "File": "croniq.ThrowJobRefIncomplete.json",
-      "Hash": "F3AC68903954DD74",
-      "ResultSets": null
-    },
-    {
-      "Schema": "croniq",
-      "Name": "ThrowJobReuseNotAllowed",
-      "File": "croniq.ThrowJobReuseNotAllowed.json",
-      "Hash": "4E6E7DE1A899C30E",
-      "ResultSets": null
-    },
-    {
-      "Schema": "croniq",
-      "Name": "ThrowTriggerDeadLetterRefIncomplete",
-      "File": "croniq.ThrowTriggerDeadLetterRefIncomplete.json",
-      "Hash": "2AD87B38562C46D6",
-      "ResultSets": null
-    },
-    {
-      "Schema": "croniq",
-      "Name": "ThrowTriggerJobMissing",
-      "File": "croniq.ThrowTriggerJobMissing.json",
-      "Hash": "1EA1A29843A010B7",
-      "ResultSets": null
-    },
-    {
-      "Schema": "croniq",
-      "Name": "ThrowTriggerLeaseActive",
-      "File": "croniq.ThrowTriggerLeaseActive.json",
-      "Hash": "417A4A4848B6A7E8",
-      "ResultSets": null
-    },
-    {
-      "Schema": "croniq",
-      "Name": "ThrowTriggerLeaseNotFound",
-      "File": "croniq.ThrowTriggerLeaseNotFound.json",
-      "Hash": "53ABF3D12636CD15",
-      "ResultSets": null
-    },
-    {
-      "Schema": "croniq",
-      "Name": "ThrowTriggerLeaseOwnershipMismatch",
-      "File": "croniq.ThrowTriggerLeaseOwnershipMismatch.json",
-      "Hash": "96D42BBF78EADEDA",
-      "ResultSets": null
-    },
-    {
-      "Schema": "croniq",
-      "Name": "ThrowTriggerLeaseRefIncomplete",
-      "File": "croniq.ThrowTriggerLeaseRefIncomplete.json",
-      "Hash": "713A68B762D08405",
-      "ResultSets": null
-    },
-    {
-      "Schema": "croniq",
-      "Name": "ThrowTriggerLeaseReleaseRefIncomplete",
-      "File": "croniq.ThrowTriggerLeaseReleaseRefIncomplete.json",
-      "Hash": "75E70BD274F9ACC0",
-      "ResultSets": null
-    },
-    {
-      "Schema": "croniq",
-      "Name": "ThrowTriggerLeaseReuseNotAllowed",
-      "File": "croniq.ThrowTriggerLeaseReuseNotAllowed.json",
-      "Hash": "A0F5D33511FD98C1",
-      "ResultSets": null
-    },
-    {
-      "Schema": "croniq",
-      "Name": "ThrowTriggerNotFound",
-      "File": "croniq.ThrowTriggerNotFound.json",
-      "Hash": "BB9F3D98A3AB5951",
-      "ResultSets": null
-    },
-    {
-      "Schema": "croniq",
-      "Name": "ThrowTriggerRefIncomplete",
-      "File": "croniq.ThrowTriggerRefIncomplete.json",
-      "Hash": "E8505927DB806C92",
-      "ResultSets": null
-    },
-    {
-      "Schema": "croniq",
-      "Name": "ThrowTriggerReuseNotAllowed",
-      "File": "croniq.ThrowTriggerReuseNotAllowed.json",
-      "Hash": "D2EAA48FFB72BDD0",
-      "ResultSets": null
-    },
-    {
-      "Schema": "croniq",
       "Name": "TriggerDeadLetterInsert",
       "File": "croniq.TriggerDeadLetterInsert.json",
-      "Hash": "4375AF4245FA74AF",
+      "Hash": "5BE29AED1AF7522D",
       "ResultSets": [
         {
           "ReturnsJson": false,
           "ReturnsJsonArray": false,
           "JsonRootProperty": null,
           "HasSelectStar": false,
-          "ProcedureRef": "core.GuardActor",
+          "ProcedureRef": "core-internal.GuardActor",
           "Columns": null
         },
         {
@@ -705,7 +460,7 @@
           "ReturnsJsonArray": false,
           "JsonRootProperty": null,
           "HasSelectStar": false,
-          "ProcedureRef": "croniq.GuardTriggerDeadLetterRef",
+          "ProcedureRef": "croniq-internal.GuardTriggerDeadLetterRef",
           "Columns": null
         }
       ]
@@ -714,14 +469,14 @@
       "Schema": "croniq",
       "Name": "TriggerDeadLetterRetention",
       "File": "croniq.TriggerDeadLetterRetention.json",
-      "Hash": "921232FC69408237",
+      "Hash": "AFE0F9F10679CEFA",
       "ResultSets": [
         {
           "ReturnsJson": false,
           "ReturnsJsonArray": false,
           "JsonRootProperty": null,
           "HasSelectStar": false,
-          "ProcedureRef": "core.GuardActor",
+          "ProcedureRef": "core-internal.GuardActor",
           "Columns": null
         }
       ]
@@ -730,14 +485,14 @@
       "Schema": "croniq",
       "Name": "TriggerDelete",
       "File": "croniq.TriggerDelete.json",
-      "Hash": "3FAD656455A9D6FB",
+      "Hash": "962B235FFDD0A072",
       "ResultSets": [
         {
           "ReturnsJson": false,
           "ReturnsJsonArray": false,
           "JsonRootProperty": null,
           "HasSelectStar": false,
-          "ProcedureRef": "core.GuardActor",
+          "ProcedureRef": "core-internal.GuardActor",
           "Columns": null
         },
         {
@@ -745,7 +500,7 @@
           "ReturnsJsonArray": false,
           "JsonRootProperty": null,
           "HasSelectStar": false,
-          "ProcedureRef": "croniq.GuardTriggerRef",
+          "ProcedureRef": "croniq-internal.GuardTriggerRef",
           "Columns": null
         },
         {
@@ -753,7 +508,7 @@
           "ReturnsJsonArray": false,
           "JsonRootProperty": null,
           "HasSelectStar": false,
-          "ProcedureRef": "croniq.ThrowTriggerNotFound",
+          "ProcedureRef": "croniq-internal.ThrowTriggerNotFound",
           "Columns": null
         }
       ]
@@ -762,14 +517,14 @@
       "Schema": "croniq",
       "Name": "TriggerLeaseAcquire",
       "File": "croniq.TriggerLeaseAcquire.json",
-      "Hash": "BBFCBA37EC61CF3F",
+      "Hash": "2BB0E375E88DDDC5",
       "ResultSets": [
         {
           "ReturnsJson": false,
           "ReturnsJsonArray": false,
           "JsonRootProperty": null,
           "HasSelectStar": false,
-          "ProcedureRef": "core.GuardActor",
+          "ProcedureRef": "core-internal.GuardActor",
           "Columns": null
         },
         {
@@ -777,7 +532,7 @@
           "ReturnsJsonArray": false,
           "JsonRootProperty": null,
           "HasSelectStar": false,
-          "ProcedureRef": "croniq.GuardTriggerLeaseRef",
+          "ProcedureRef": "croniq-internal.GuardTriggerLeaseRef",
           "Columns": null
         },
         {
@@ -785,7 +540,7 @@
           "ReturnsJsonArray": false,
           "JsonRootProperty": null,
           "HasSelectStar": false,
-          "ProcedureRef": "croniq.ThrowTriggerNotFound",
+          "ProcedureRef": "croniq-internal.ThrowTriggerNotFound",
           "Columns": null
         },
         {
@@ -793,7 +548,7 @@
           "ReturnsJsonArray": false,
           "JsonRootProperty": null,
           "HasSelectStar": false,
-          "ProcedureRef": "croniq.ThrowTriggerLeaseActive",
+          "ProcedureRef": "croniq-internal.ThrowTriggerLeaseActive",
           "Columns": null
         },
         {
@@ -801,7 +556,7 @@
           "ReturnsJsonArray": false,
           "JsonRootProperty": null,
           "HasSelectStar": false,
-          "ProcedureRef": "croniq.ThrowTriggerLeaseReuseNotAllowed",
+          "ProcedureRef": "croniq-internal.ThrowTriggerLeaseReuseNotAllowed",
           "Columns": null
         }
       ]
@@ -810,14 +565,14 @@
       "Schema": "croniq",
       "Name": "TriggerLeaseCleanup",
       "File": "croniq.TriggerLeaseCleanup.json",
-      "Hash": "5704082E7C24E7CD",
+      "Hash": "97EB22EC8F859559",
       "ResultSets": [
         {
           "ReturnsJson": false,
           "ReturnsJsonArray": false,
           "JsonRootProperty": null,
           "HasSelectStar": false,
-          "ProcedureRef": "core.GuardActor",
+          "ProcedureRef": "core-internal.GuardActor",
           "Columns": null
         }
       ]
@@ -826,14 +581,14 @@
       "Schema": "croniq",
       "Name": "TriggerLeaseRelease",
       "File": "croniq.TriggerLeaseRelease.json",
-      "Hash": "88D9D62334C953F2",
+      "Hash": "3D7D4375152DED70",
       "ResultSets": [
         {
           "ReturnsJson": false,
           "ReturnsJsonArray": false,
           "JsonRootProperty": null,
           "HasSelectStar": false,
-          "ProcedureRef": "core.GuardActor",
+          "ProcedureRef": "core-internal.GuardActor",
           "Columns": null
         },
         {
@@ -841,7 +596,7 @@
           "ReturnsJsonArray": false,
           "JsonRootProperty": null,
           "HasSelectStar": false,
-          "ProcedureRef": "croniq.GuardTriggerLeaseReleaseRef",
+          "ProcedureRef": "croniq-internal.GuardTriggerLeaseReleaseRef",
           "Columns": null
         },
         {
@@ -849,7 +604,7 @@
           "ReturnsJsonArray": false,
           "JsonRootProperty": null,
           "HasSelectStar": false,
-          "ProcedureRef": "croniq.ThrowTriggerLeaseNotFound",
+          "ProcedureRef": "croniq-internal.ThrowTriggerLeaseNotFound",
           "Columns": null
         },
         {
@@ -857,7 +612,7 @@
           "ReturnsJsonArray": false,
           "JsonRootProperty": null,
           "HasSelectStar": false,
-          "ProcedureRef": "croniq.ThrowTriggerLeaseOwnershipMismatch",
+          "ProcedureRef": "croniq-internal.ThrowTriggerLeaseOwnershipMismatch",
           "Columns": null
         }
       ]
@@ -866,14 +621,14 @@
       "Schema": "croniq",
       "Name": "TriggerLeaseRetention",
       "File": "croniq.TriggerLeaseRetention.json",
-      "Hash": "FC052EFD89829FEA",
+      "Hash": "6D08DA292D4A91B2",
       "ResultSets": [
         {
           "ReturnsJson": false,
           "ReturnsJsonArray": false,
           "JsonRootProperty": null,
           "HasSelectStar": false,
-          "ProcedureRef": "core.GuardActor",
+          "ProcedureRef": "core-internal.GuardActor",
           "Columns": null
         }
       ]
@@ -882,14 +637,14 @@
       "Schema": "croniq",
       "Name": "TriggerUpsert",
       "File": "croniq.TriggerUpsert.json",
-      "Hash": "28F0D5BFD92F8225",
+      "Hash": "4A80E7EB3D5D74B3",
       "ResultSets": [
         {
           "ReturnsJson": false,
           "ReturnsJsonArray": false,
           "JsonRootProperty": null,
           "HasSelectStar": false,
-          "ProcedureRef": "core.GuardActor",
+          "ProcedureRef": "core-internal.GuardActor",
           "Columns": null
         },
         {
@@ -897,7 +652,7 @@
           "ReturnsJsonArray": false,
           "JsonRootProperty": null,
           "HasSelectStar": false,
-          "ProcedureRef": "croniq.GuardTriggerRef",
+          "ProcedureRef": "croniq-internal.GuardTriggerRef",
           "Columns": null
         },
         {
@@ -905,7 +660,7 @@
           "ReturnsJsonArray": false,
           "JsonRootProperty": null,
           "HasSelectStar": false,
-          "ProcedureRef": "croniq.ThrowTriggerJobMissing",
+          "ProcedureRef": "croniq-internal.ThrowTriggerJobMissing",
           "Columns": null
         },
         {
@@ -913,7 +668,7 @@
           "ReturnsJsonArray": false,
           "JsonRootProperty": null,
           "HasSelectStar": false,
-          "ProcedureRef": "croniq.ThrowTriggerReuseNotAllowed",
+          "ProcedureRef": "croniq-internal.ThrowTriggerReuseNotAllowed",
           "Columns": null
         }
       ]

@@ -35,13 +35,13 @@
   ],
   "ResultSets": [
     {
-      "ProcedureRef": "core.GuardActor"
+      "ProcedureRef": "core-internal.GuardActor"
     },
     {
-      "ProcedureRef": "croniq.GuardJobRef"
+      "ProcedureRef": "croniq-internal.GuardJobRef"
     },
     {
-      "ProcedureRef": "croniq.ThrowJobReuseNotAllowed"
+      "ProcedureRef": "croniq-internal.ThrowJobReuseNotAllowed"
     }
   ]
 }

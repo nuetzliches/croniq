@@ -28,9 +28,7 @@ namespace Croniq.Persistence.Xtraq.Croniq;
 public sealed record class TriggerLeaseReleaseRequest
 {
     [System.ComponentModel.DataAnnotations.Required]
-    public IReadOnlyList<ActorRef> Actor { get; init; }
-    [System.ComponentModel.DataAnnotations.Required]
-    public IReadOnlyList<TriggerLeaseReleaseRef> Release { get; init; }
+    public IReadOnlyList<TriggerLeaseReleaseRefRequest> Release { get; init; }
 }
 
 public readonly record struct TriggerLeaseReleaseInput(
@@ -66,7 +64,7 @@ internal static class TriggerLeaseReleaseRequestMapper
     public static async ValueTask<TriggerLeaseReleaseInput> ToInputAsync(TriggerLeaseReleaseRequest? request, IXtraqParameterBindingProvider? bindingProvider, CancellationToken cancellationToken = default)
     {
         request ??= new TriggerLeaseReleaseRequest();
-        IReadOnlyList<ActorRef>? Actor = request.Actor;
+        IReadOnlyList<ActorRef>? Actor = default;
         if (!HasValue(Actor))
         {
             Actor = await ResolveTableAsync<ActorRef>(bindingProvider, "[croniq].[TriggerLeaseRelease]", "@Actor", Actor, cancellationToken).ConfigureAwait(false);
@@ -75,7 +73,7 @@ internal static class TriggerLeaseReleaseRequestMapper
         {
             throw new InvalidOperationException("Parameter @Actor must be supplied by the request or a configured binding.");
         }
-        IReadOnlyList<TriggerLeaseReleaseRef>? Release = request.Release;
+        IReadOnlyList<TriggerLeaseReleaseRef>? Release = TriggerLeaseReleaseRefRequest.ToTableTypes(request.Release);
         if (!HasValue(Release))
         {
             Release = await ResolveTableAsync<TriggerLeaseReleaseRef>(bindingProvider, "[croniq].[TriggerLeaseRelease]", "@Release", Release, cancellationToken).ConfigureAwait(false);

@@ -20,16 +20,16 @@
   ],
   "ResultSets": [
     {
-      "ProcedureRef": "core.GuardActor"
+      "ProcedureRef": "core-internal.GuardActor"
     },
     {
-      "ProcedureRef": "croniq.GuardTriggerLeaseReleaseRef"
+      "ProcedureRef": "croniq-internal.GuardTriggerLeaseReleaseRef"
     },
     {
-      "ProcedureRef": "croniq.ThrowTriggerLeaseNotFound"
+      "ProcedureRef": "croniq-internal.ThrowTriggerLeaseNotFound"
     },
     {
-      "ProcedureRef": "croniq.ThrowTriggerLeaseOwnershipMismatch"
+      "ProcedureRef": "croniq-internal.ThrowTriggerLeaseOwnershipMismatch"
     }
   ]
 }
