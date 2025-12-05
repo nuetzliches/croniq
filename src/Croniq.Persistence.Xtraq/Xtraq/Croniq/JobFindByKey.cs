@@ -5,6 +5,7 @@
 #nullable enable
 
 using global::Croniq.Persistence.Xtraq;
+using global::Croniq.Persistence.Xtraq.Core;
 using System;
 using System.Collections.Generic;
 using System.Data;
@@ -31,6 +32,7 @@ public sealed record class JobFindByKeyRequest
 }
 
 public readonly record struct JobFindByKeyInput(
+    IReadOnlyList<ActorRef> Actor,
     string? JobKey
 );
 
@@ -71,12 +73,20 @@ public sealed class JobFindByKeyResult
 	/// </summary>
 	public string? ResultRawJson { get; init; } = null;
 }
-
 internal static class JobFindByKeyRequestMapper
 {
     public static async ValueTask<JobFindByKeyInput> ToInputAsync(JobFindByKeyRequest? request, IXtraqParameterBindingProvider? bindingProvider, CancellationToken cancellationToken = default)
     {
         request ??= new JobFindByKeyRequest();
+        IReadOnlyList<ActorRef>? Actor = default;
+        if (!HasValue(Actor))
+        {
+            Actor = await ResolveTableAsync<ActorRef>(bindingProvider, "[croniq].[JobFindByKey]", "@Actor", Actor, cancellationToken).ConfigureAwait(false);
+        }
+        if (!HasValue(Actor))
+        {
+            throw new InvalidOperationException("Parameter @Actor must be supplied by the request or a configured binding.");
+        }
         string? JobKey = request.JobKey;
         if (!HasValue(JobKey))
         {
@@ -88,6 +98,7 @@ internal static class JobFindByKeyRequestMapper
         }
 
         return new JobFindByKeyInput(
+            Actor!,
             JobKey
         );
     }
@@ -137,6 +148,7 @@ internal static partial class JobFindByKeyPlan
 	{
 		var parameters = new ProcedureParameter[]
 		{
+            new("@Actor", System.Data.DbType.Object, null, false, false, "core.ActorRef"),
             new("@JobKey", System.Data.DbType.String, 64, false, true),
         };
 
@@ -190,6 +202,7 @@ internal static partial class JobFindByKeyPlan
 		void Binder(DbCommand cmd, object? state)
 		{
 			var input = (JobFindByKeyInput)state!;
+			{ var prm = cmd.Parameters["@Actor"]; var source = input.Actor; var tvp = TvpHelper.BuildRecords(source) ?? Array.Empty<Microsoft.Data.SqlClient.Server.SqlDataRecord>(); prm.Value = tvp; if (prm is Microsoft.Data.SqlClient.SqlParameter sp) { sp.SqlDbType = System.Data.SqlDbType.Structured; sp.TypeName ??= "core.ActorRef"; } }
 			cmd.Parameters["@JobKey"].Value = (object?)input.JobKey ?? DBNull.Value;
 		}
 		return new ProcedureExecutionPlan(

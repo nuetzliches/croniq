@@ -54,6 +54,7 @@ CREATE TYPE [croniq].[TriggerRef] AS TABLE
     [TimeZoneId] [croniq].[timeZoneId],
     [StartAtUtc] [core].[utcDateTimeNullable],
     [EndAtUtc] [core].[utcDateTimeNullable],
+    [NextFireAtUtc] [core].[utcDateTimeNullable],
     [Enabled] [core].[flag],
     [Metadata] [core].[jsonNullable]
 );
@@ -78,7 +79,10 @@ GO
 CREATE TYPE [croniq].[TriggerLeaseReleaseRef] AS TABLE
 (
     [LeaseId] [core].[keyBig],
-    [InstanceId] [core].[reference]
+    [InstanceId] [core].[reference],
+    [Succeeded] [core].[flag],
+    [NextFireAtUtc] [core].[utcDateTimeNullable],
+    [DeadLetterReason] [croniq].[deadLetterReason]
 );
 GO
 

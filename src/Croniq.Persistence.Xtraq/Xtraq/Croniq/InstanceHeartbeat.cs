@@ -28,7 +28,7 @@ namespace Croniq.Persistence.Xtraq.Croniq;
 public sealed record class InstanceHeartbeatRequest
 {
     [System.ComponentModel.DataAnnotations.Required]
-    public IReadOnlyList<InstanceRefRequest> Instance { get; init; }
+    public IReadOnlyList<InstanceRefRequest> Instance { get; init; } = default!;
 }
 
 public readonly record struct InstanceHeartbeatInput(
@@ -59,7 +59,6 @@ public sealed class InstanceHeartbeatResult
 	/// </summary>
 	public InstanceHeartbeatOutput? Output { get; init; }
 }
-
 internal static class InstanceHeartbeatRequestMapper
 {
     public static async ValueTask<InstanceHeartbeatInput> ToInputAsync(InstanceHeartbeatRequest? request, IXtraqParameterBindingProvider? bindingProvider, CancellationToken cancellationToken = default)

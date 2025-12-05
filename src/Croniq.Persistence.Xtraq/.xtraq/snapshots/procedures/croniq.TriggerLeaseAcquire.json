@@ -7,47 +7,189 @@
       "TableTypeRef": "core.ActorRef"
     },
     {
-      "Name": "Lease",
-      "TableTypeRef": "croniq.TriggerLeaseRef"
-    },
-    {
-      "Name": "AllowDeletedReuse",
-      "TypeRef": "sys.bit",
-      "UserTypeRef": "core.flag",
+      "Name": "TenantId",
+      "TypeRef": "sys.int",
+      "UserTypeRef": "core.key",
       "IsNullable": true
     },
     {
-      "Name": "LeaseId",
-      "TypeRef": "sys.bigint",
-      "UserTypeRef": "core.keyBig",
+      "Name": "Environment",
+      "TypeRef": "sys.nvarchar",
+      "UserTypeRef": "core.tag",
       "IsNullable": true,
-      "IsOutput": true
+      "MaxLength": 32
     },
     {
-      "Name": "LeaseExpiresAtUtc",
+      "Name": "InstanceId",
+      "TypeRef": "sys.nvarchar",
+      "UserTypeRef": "core.reference",
+      "IsNullable": true,
+      "MaxLength": 64
+    },
+    {
+      "Name": "NowUtc",
       "TypeRef": "sys.datetime2",
       "UserTypeRef": "core.utcDateTime",
       "IsNullable": true,
       "Precision": 23,
-      "Scale": 3,
-      "IsOutput": true
+      "Scale": 3
+    },
+    {
+      "Name": "BatchSize",
+      "TypeRef": "sys.int",
+      "UserTypeRef": "core.count",
+      "IsNullable": true
+    },
+    {
+      "Name": "LeaseDurationSeconds",
+      "TypeRef": "sys.int",
+      "UserTypeRef": "core.number",
+      "IsNullable": true
     }
   ],
   "ResultSets": [
     {
+      "Columns": [
+        {
+          "Name": "LeaseId",
+          "SourceColumn": "LeaseId",
+          "UserTypeRef": "core.keyBig",
+          "SqlTypeName": "bigint",
+          "MaxLength": 8
+        },
+        {
+          "Name": "TriggerId",
+          "SourceColumn": "TriggerId",
+          "UserTypeRef": "core.keyBig",
+          "SqlTypeName": "bigint",
+          "MaxLength": 8
+        },
+        {
+          "Name": "TriggerKey",
+          "SourceColumn": "TriggerKey",
+          "UserTypeRef": "core.reference",
+          "SqlTypeName": "nvarchar(64)",
+          "MaxLength": 64
+        },
+        {
+          "Name": "JobId",
+          "SourceColumn": "JobId",
+          "UserTypeRef": "core.keyBig",
+          "SqlTypeName": "bigint",
+          "MaxLength": 8
+        },
+        {
+          "Name": "JobKey",
+          "SourceColumn": "JobKey",
+          "UserTypeRef": "core.reference",
+          "SqlTypeName": "nvarchar(64)",
+          "MaxLength": 64
+        },
+        {
+          "Name": "TenantId",
+          "SourceColumn": "TenantId",
+          "UserTypeRef": "core.key",
+          "SqlTypeName": "int",
+          "MaxLength": 4
+        },
+        {
+          "Name": "Environment",
+          "SourceColumn": "Environment",
+          "UserTypeRef": "core.tag",
+          "SqlTypeName": "nvarchar(32)",
+          "MaxLength": 32
+        },
+        {
+          "Name": "Namespace",
+          "SourceColumn": "Namespace",
+          "UserTypeRef": "core.label",
+          "SqlTypeName": "nvarchar(64)",
+          "MaxLength": 64
+        },
+        {
+          "Name": "Name",
+          "SourceColumn": "Name",
+          "UserTypeRef": "core.name",
+          "SqlTypeName": "nvarchar(128)",
+          "MaxLength": 128
+        },
+        {
+          "Name": "Variant",
+          "SourceColumn": "Variant",
+          "UserTypeRef": "croniq.jobVariant",
+          "SqlTypeName": "nvarchar(64)",
+          "IsNullable": true,
+          "MaxLength": 64
+        },
+        {
+          "Name": "CronExpression",
+          "SourceColumn": "CronExpression",
+          "UserTypeRef": "croniq.cronExpression",
+          "SqlTypeName": "nvarchar(256)",
+          "MaxLength": 256
+        },
+        {
+          "Name": "TimeZoneId",
+          "SourceColumn": "TimeZoneId",
+          "UserTypeRef": "croniq.timeZoneId",
+          "SqlTypeName": "nvarchar(64)",
+          "MaxLength": 64
+        },
+        {
+          "Name": "StartAtUtc",
+          "SourceColumn": "StartAtUtc",
+          "UserTypeRef": "core.utcDateTimeNullable",
+          "SqlTypeName": "datetime2(3)",
+          "IsNullable": true,
+          "MaxLength": 7
+        },
+        {
+          "Name": "EndAtUtc",
+          "SourceColumn": "EndAtUtc",
+          "UserTypeRef": "core.utcDateTimeNullable",
+          "SqlTypeName": "datetime2(3)",
+          "IsNullable": true,
+          "MaxLength": 7
+        },
+        {
+          "Name": "Metadata",
+          "SourceColumn": "Metadata",
+          "UserTypeRef": "core.jsonNullable",
+          "SqlTypeName": "nvarchar(max)",
+          "IsNullable": true
+        },
+        {
+          "Name": "InstanceId",
+          "SourceColumn": "InstanceId",
+          "UserTypeRef": "core.reference",
+          "SqlTypeName": "nvarchar(64)",
+          "MaxLength": 64
+        },
+        {
+          "Name": "FireAtUtc",
+          "SourceColumn": "FireAtUtc",
+          "UserTypeRef": "core.utcDateTime",
+          "SqlTypeName": "datetime2(3)",
+          "MaxLength": 7
+        },
+        {
+          "Name": "LeaseExpiresAtUtc",
+          "SourceColumn": "LeaseExpiresAtUtc",
+          "UserTypeRef": "core.utcDateTime",
+          "SqlTypeName": "datetime2(3)",
+          "MaxLength": 7
+        },
+        {
+          "Name": "Payload",
+          "SourceColumn": "Payload",
+          "UserTypeRef": "core.jsonNullable",
+          "SqlTypeName": "nvarchar(max)",
+          "IsNullable": true
+        }
+      ]
+    },
+    {
       "ProcedureRef": "core-internal.GuardActor"
-    },
-    {
-      "ProcedureRef": "croniq-internal.GuardTriggerLeaseRef"
-    },
-    {
-      "ProcedureRef": "croniq-internal.ThrowTriggerNotFound"
-    },
-    {
-      "ProcedureRef": "croniq-internal.ThrowTriggerLeaseActive"
-    },
-    {
-      "ProcedureRef": "croniq-internal.ThrowTriggerLeaseReuseNotAllowed"
     }
   ]
 }

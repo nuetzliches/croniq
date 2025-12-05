@@ -1,11 +1,13 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
-using System.Data;
+using System.Globalization;
+using System.Linq;
 using System.Text.Json;
+using Croniq.Core.Scheduling;
 using Croniq.Persistence.Abstractions;
 using Croniq.Persistence.Xtraq.Core;
 using Croniq.Persistence.Xtraq.Croniq;
-using Microsoft.Data.SqlClient;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
@@ -22,6 +24,10 @@ public sealed class XtraqJobPersistenceProvider : IJobPersistenceProvider
     private readonly XtraqOptions _options;
     private readonly XtraqDbContext _db;
     private readonly JsonSerializerOptions _jsonOptions = new(JsonSerializerDefaults.Web);
+    private readonly ConcurrentDictionary<string, LeaseContext> _leaseContexts = new();
+    private string? _currentInstanceId;
+    private readonly int _leaseDurationSeconds;
+    private const int DefaultLeaseDurationSeconds = 60;
 
     public XtraqJobPersistenceProvider(
         XtraqDbContext db,
@@ -31,6 +37,7 @@ public sealed class XtraqJobPersistenceProvider : IJobPersistenceProvider
         _db = db ?? throw new ArgumentNullException(nameof(db));
         _options = options.Value ?? throw new ArgumentNullException(nameof(options));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+        _leaseDurationSeconds = _options.LeaseDurationSeconds > 0 ? _options.LeaseDurationSeconds : DefaultLeaseDurationSeconds;
     }
 
     public Task UpsertJobAsync(JobDefinition job, CancellationToken cancellationToken)
@@ -64,11 +71,24 @@ public sealed class XtraqJobPersistenceProvider : IJobPersistenceProvider
         if (trigger is null) throw new ArgumentNullException(nameof(trigger));
 
         var triggerKey = trigger.TriggerId;
+        var triggerKeyParts = TriggerKeyParts.Parse(triggerKey);
         var jobKeyParts = JobKeyParts.Parse(trigger.JobKey);
+        var timeZoneId = triggerKeyParts.TimeZoneId ?? "UTC";
 
         return Task.Run(async () =>
         {
             var jobId = await ResolveJobIdAsync(jobKeyParts.JobKey, cancellationToken).ConfigureAwait(false);
+            var nextFireAtUtc = ComputeNextFireUtc(
+                trigger.ScheduleExpression,
+                timeZoneId,
+                trigger.StartAtUtc?.UtcDateTime,
+                trigger.EndAtUtc?.UtcDateTime,
+                DateTimeOffset.UtcNow);
+            if (nextFireAtUtc is null)
+            {
+                throw new InvalidOperationException($"Cron expression '{trigger.ScheduleExpression}' produced no future occurrences.");
+            }
+
             var triggerRef = new TriggerRefRequest
             {
                 TriggerKey = triggerKey,
@@ -80,9 +100,10 @@ public sealed class XtraqJobPersistenceProvider : IJobPersistenceProvider
                 Name = jobKeyParts.Name,
                 Variant = jobKeyParts.Variant,
                 CronExpression = trigger.ScheduleExpression,
-                TimeZoneId = "UTC",
+                TimeZoneId = timeZoneId,
                 StartAtUtc = trigger.StartAtUtc?.UtcDateTime,
                 EndAtUtc = trigger.EndAtUtc?.UtcDateTime,
+                NextFireAtUtc = nextFireAtUtc.Value,
                 Enabled = trigger.Enabled,
                 Metadata = SerializeMetadata(trigger.Metadata)
             };
@@ -140,12 +161,91 @@ public sealed class XtraqJobPersistenceProvider : IJobPersistenceProvider
 
     public Task<IReadOnlyCollection<TriggerLease>> AcquireAsync(TriggerAcquireRequest request, CancellationToken cancellationToken)
     {
-        throw new NotSupportedException("Trigger lease acquire is not yet implemented against Xtraq.");
+        if (request is null) throw new ArgumentNullException(nameof(request));
+        if (string.IsNullOrWhiteSpace(request.InstanceId)) throw new InvalidOperationException("InstanceId is required for lease acquisition.");
+
+        _currentInstanceId = request.InstanceId;
+        var leaseDuration = _leaseDurationSeconds > 0 ? _leaseDurationSeconds : DefaultLeaseDurationSeconds;
+        var acquire = new TriggerLeaseAcquireRequest
+        {
+            TenantId = ParseTenantId(request.Scope.TenantId),
+            Environment = request.Scope.EnvironmentTag,
+            InstanceId = request.InstanceId,
+            NowUtc = request.NowUtc.UtcDateTime,
+            BatchSize = request.BatchSize,
+            LeaseDurationSeconds = leaseDuration
+        };
+
+        return Task.Run(async () =>
+        {
+            var result = await _db.TriggerLeaseAcquireAsync(acquire, cancellationToken).ConfigureAwait(false);
+            var leases = new List<TriggerLease>(result.Result.Count);
+            foreach (var row in result.Result)
+            {
+                var leaseId = row.LeaseId.ToString(CultureInfo.InvariantCulture);
+                var scope = new PartitionScope(row.TenantId.ToString(CultureInfo.InvariantCulture), row.Environment);
+                leases.Add(new TriggerLease(
+                    leaseId,
+                    row.TriggerKey,
+                    row.JobKey,
+                    scope,
+                    ToUtc(row.FireAtUtc),
+                    ToUtc(row.LeaseExpiresAtUtc),
+                    row.Payload ?? row.Metadata));
+
+                var ctx = new LeaseContext(
+                    row.TriggerKey,
+                    row.CronExpression,
+                    row.TimeZoneId,
+                    row.StartAtUtc,
+                    row.EndAtUtc,
+                    request.InstanceId);
+                _leaseContexts[leaseId] = ctx;
+            }
+
+            return (IReadOnlyCollection<TriggerLease>)leases;
+        }, cancellationToken);
     }
 
     public Task ReleaseAsync(TriggerReleaseRequest request, CancellationToken cancellationToken)
     {
-        throw new NotSupportedException("Trigger lease release is not yet implemented against Xtraq.");
+        if (request is null) throw new ArgumentNullException(nameof(request));
+
+        return Task.Run(async () =>
+        {
+            var leaseId = ParseLeaseId(request.Lease.LeaseId);
+            var schedule = await ResolveLeaseContextAsync(request.Lease.TriggerId, leaseId, cancellationToken).ConfigureAwait(false);
+            var instanceId = schedule.InstanceId ?? _currentInstanceId;
+            if (string.IsNullOrWhiteSpace(instanceId))
+            {
+                throw new InvalidOperationException("InstanceId for lease release could not be determined.");
+            }
+
+            var nextFire = request.NextFireTimeUtc?.UtcDateTime
+                ?? ComputeNextFireUtc(
+                    schedule.CronExpression,
+                    schedule.TimeZoneId,
+                    schedule.StartAtUtc,
+                    schedule.EndAtUtc,
+                    request.Lease.FireAtUtc);
+
+            var releaseRef = new TriggerLeaseReleaseRefRequest
+            {
+                LeaseId = leaseId,
+                InstanceId = instanceId,
+                Succeeded = request.Succeeded,
+                NextFireAtUtc = nextFire,
+                DeadLetterReason = request.DeadLetterReason
+            };
+
+            var release = new TriggerLeaseReleaseRequest
+            {
+                Release = new[] { releaseRef }
+            };
+
+            await _db.TriggerLeaseReleaseAsync(release, cancellationToken).ConfigureAwait(false);
+            _leaseContexts.TryRemove(request.Lease.LeaseId, out _);
+        }, cancellationToken);
     }
 
     private string? SerializeMetadata(IReadOnlyDictionary<string, string>? metadata)
@@ -163,6 +263,97 @@ public sealed class XtraqJobPersistenceProvider : IJobPersistenceProvider
         }
         return id;
     }
+
+    private static int ParseTenantId(string tenantId)
+    {
+        if (!int.TryParse(tenantId, NumberStyles.Integer, CultureInfo.InvariantCulture, out var value))
+        {
+            throw new InvalidOperationException($"TenantId '{tenantId}' must be numeric.");
+        }
+
+        return value;
+    }
+
+    private static long ParseLeaseId(string leaseId)
+    {
+        if (!long.TryParse(leaseId, NumberStyles.Integer, CultureInfo.InvariantCulture, out var value))
+        {
+            throw new InvalidOperationException($"LeaseId '{leaseId}' is not valid.");
+        }
+
+        return value;
+    }
+
+    private static DateTimeOffset ToUtc(DateTime value) => DateTime.SpecifyKind(value, DateTimeKind.Utc);
+
+    private DateTime? ComputeNextFireUtc(string cronExpression, string timeZoneId, DateTime? startAtUtc, DateTime? endAtUtc, DateTimeOffset referenceUtc)
+    {
+        var tz = ResolveTimeZone(timeZoneId);
+        var schedule = new CronSchedule(cronExpression, tz);
+        var cursor = referenceUtc;
+
+        if (startAtUtc.HasValue)
+        {
+            var start = DateTime.SpecifyKind(startAtUtc.Value, DateTimeKind.Utc);
+            if (start > cursor.UtcDateTime)
+            {
+                cursor = new DateTimeOffset(start, TimeSpan.Zero);
+            }
+        }
+
+        var next = schedule.GetNextOccurrence(cursor);
+        if (next.HasValue && endAtUtc.HasValue)
+        {
+            var end = DateTime.SpecifyKind(endAtUtc.Value, DateTimeKind.Utc);
+            if (next.Value.UtcDateTime > end)
+            {
+                return null;
+            }
+        }
+
+        return next?.UtcDateTime;
+    }
+
+    private static TimeZoneInfo ResolveTimeZone(string timeZoneId)
+    {
+        try
+        {
+            return TimeZoneInfo.FindSystemTimeZoneById(timeZoneId);
+        }
+        catch
+        {
+            return TimeZoneInfo.Utc;
+        }
+    }
+
+    private async Task<LeaseContext> ResolveLeaseContextAsync(string triggerKey, long leaseId, CancellationToken cancellationToken)
+    {
+        var cacheKey = leaseId.ToString(CultureInfo.InvariantCulture);
+        if (_leaseContexts.TryGetValue(cacheKey, out var cached))
+        {
+            return cached;
+        }
+
+        var result = await _db.TriggerFindByKeyAsync(new TriggerFindByKeyRequest { TriggerKey = triggerKey }, cancellationToken).ConfigureAwait(false);
+        var row = result.Result.FirstOrDefault();
+        if (row.TriggerId == 0)
+        {
+            throw new InvalidOperationException($"Trigger '{triggerKey}' not found for lease '{leaseId}'.");
+        }
+
+        var context = new LeaseContext(
+            row.TriggerKey,
+            row.CronExpression,
+            row.TimeZoneId,
+            row.StartAtUtc,
+            row.EndAtUtc,
+            _currentInstanceId);
+
+        _leaseContexts[cacheKey] = context;
+        return context;
+    }
+
+    private sealed record LeaseContext(string TriggerKey, string CronExpression, string TimeZoneId, DateTime? StartAtUtc, DateTime? EndAtUtc, string? InstanceId);
 
     private sealed record JobKeyParts(string JobKey, int TenantId, string Environment, string Namespace, string Name, string? Variant)
     {

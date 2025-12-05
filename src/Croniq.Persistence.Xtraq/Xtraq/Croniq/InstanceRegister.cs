@@ -28,7 +28,7 @@ namespace Croniq.Persistence.Xtraq.Croniq;
 public sealed record class InstanceRegisterRequest
 {
     [System.ComponentModel.DataAnnotations.Required]
-    public IReadOnlyList<InstanceRefRequest> Instance { get; init; }
+    public IReadOnlyList<InstanceRefRequest> Instance { get; init; } = default!;
     public bool? AllowDeletedReuse { get; init; }
 }
 
@@ -61,7 +61,6 @@ public sealed class InstanceRegisterResult
 	/// </summary>
 	public InstanceRegisterOutput? Output { get; init; }
 }
-
 internal static class InstanceRegisterRequestMapper
 {
     public static async ValueTask<InstanceRegisterInput> ToInputAsync(InstanceRegisterRequest? request, IXtraqParameterBindingProvider? bindingProvider, CancellationToken cancellationToken = default)

@@ -19,4 +19,9 @@ public sealed class XtraqOptions
     /// Actor identifier used for auditing in stored procedures (e.g. "system" or the current principal).
     /// </summary>
     public string Actor { get; set; } = "system";
+
+    /// <summary>
+    /// Default lease duration (seconds) when acquiring trigger leases.
+    /// </summary>
+    public int LeaseDurationSeconds { get; set; } = 60;
 }

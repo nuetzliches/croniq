@@ -57,7 +57,6 @@ public sealed class TriggerLeaseRetentionResult
 	/// </summary>
 	public TriggerLeaseRetentionOutput? Output { get; init; }
 }
-
 internal static class TriggerLeaseRetentionRequestMapper
 {
     public static async ValueTask<TriggerLeaseRetentionInput> ToInputAsync(TriggerLeaseRetentionRequest? request, IXtraqParameterBindingProvider? bindingProvider, CancellationToken cancellationToken = default)

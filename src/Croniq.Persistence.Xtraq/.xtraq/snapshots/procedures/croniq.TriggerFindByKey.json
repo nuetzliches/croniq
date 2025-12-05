@@ -1,13 +1,13 @@
 {
   "Schema": "croniq",
-  "Name": "JobFindByKey",
+  "Name": "TriggerFindByKey",
   "Parameters": [
     {
       "Name": "Actor",
       "TableTypeRef": "core.ActorRef"
     },
     {
-      "Name": "JobKey",
+      "Name": "TriggerKey",
       "TypeRef": "sys.nvarchar",
       "UserTypeRef": "core.reference",
       "IsNullable": true,
@@ -16,15 +16,20 @@
   ],
   "ResultSets": [
     {
-      "ReturnsJson": true,
-      "ReturnsJsonArray": false,
       "Columns": [
         {
-          "Name": "JobId",
-          "SourceColumn": "JobId",
+          "Name": "TriggerId",
+          "SourceColumn": "TriggerId",
           "UserTypeRef": "core.keyBig",
           "SqlTypeName": "bigint",
           "MaxLength": 8
+        },
+        {
+          "Name": "TriggerKey",
+          "SourceColumn": "TriggerKey",
+          "UserTypeRef": "core.reference",
+          "SqlTypeName": "nvarchar(64)",
+          "MaxLength": 64
         },
         {
           "Name": "JobKey",
@@ -32,6 +37,13 @@
           "UserTypeRef": "core.reference",
           "SqlTypeName": "nvarchar(64)",
           "MaxLength": 64
+        },
+        {
+          "Name": "JobId",
+          "SourceColumn": "JobId",
+          "UserTypeRef": "core.keyBig",
+          "SqlTypeName": "bigint",
+          "MaxLength": 8
         },
         {
           "Name": "TenantId",
@@ -70,12 +82,57 @@
           "MaxLength": 64
         },
         {
-          "Name": "Description",
-          "SourceColumn": "Description",
-          "UserTypeRef": "core.labelNullable",
+          "Name": "CronExpression",
+          "SourceColumn": "CronExpression",
+          "UserTypeRef": "croniq.cronExpression",
+          "SqlTypeName": "nvarchar(256)",
+          "MaxLength": 256
+        },
+        {
+          "Name": "TimeZoneId",
+          "SourceColumn": "TimeZoneId",
+          "UserTypeRef": "croniq.timeZoneId",
           "SqlTypeName": "nvarchar(64)",
-          "IsNullable": true,
           "MaxLength": 64
+        },
+        {
+          "Name": "StartAtUtc",
+          "SourceColumn": "StartAtUtc",
+          "UserTypeRef": "core.utcDateTimeNullable",
+          "SqlTypeName": "datetime2(3)",
+          "IsNullable": true,
+          "MaxLength": 7
+        },
+        {
+          "Name": "EndAtUtc",
+          "SourceColumn": "EndAtUtc",
+          "UserTypeRef": "core.utcDateTimeNullable",
+          "SqlTypeName": "datetime2(3)",
+          "IsNullable": true,
+          "MaxLength": 7
+        },
+        {
+          "Name": "NextFireAtUtc",
+          "SourceColumn": "NextFireAtUtc",
+          "UserTypeRef": "core.utcDateTimeNullable",
+          "SqlTypeName": "datetime2(3)",
+          "IsNullable": true,
+          "MaxLength": 7
+        },
+        {
+          "Name": "LastFireAtUtc",
+          "SourceColumn": "LastFireAtUtc",
+          "UserTypeRef": "core.utcDateTimeNullable",
+          "SqlTypeName": "datetime2(3)",
+          "IsNullable": true,
+          "MaxLength": 7
+        },
+        {
+          "Name": "Enabled",
+          "SourceColumn": "Enabled",
+          "UserTypeRef": "core.flag",
+          "SqlTypeName": "bit",
+          "MaxLength": 1
         },
         {
           "Name": "Metadata",
@@ -83,21 +140,6 @@
           "UserTypeRef": "core.jsonNullable",
           "SqlTypeName": "nvarchar(max)",
           "IsNullable": true
-        },
-        {
-          "Name": "CreatedUtc",
-          "SourceColumn": "CreatedUtc",
-          "UserTypeRef": "core.utcDateTime",
-          "SqlTypeName": "datetime2(3)",
-          "MaxLength": 7
-        },
-        {
-          "Name": "UpdatedUtc",
-          "SourceColumn": "UpdatedUtc",
-          "UserTypeRef": "core.utcDateTimeNullable",
-          "SqlTypeName": "datetime2(3)",
-          "IsNullable": true,
-          "MaxLength": 7
         },
         {
           "Name": "IsDeleted",

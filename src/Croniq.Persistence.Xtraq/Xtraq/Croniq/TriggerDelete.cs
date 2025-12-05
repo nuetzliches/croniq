@@ -28,7 +28,7 @@ namespace Croniq.Persistence.Xtraq.Croniq;
 public sealed record class TriggerDeleteRequest
 {
     [System.ComponentModel.DataAnnotations.Required]
-    public IReadOnlyList<TriggerRefRequest> Trigger { get; init; }
+    public IReadOnlyList<TriggerRefRequest> Trigger { get; init; } = default!;
 }
 
 public readonly record struct TriggerDeleteInput(
@@ -59,7 +59,6 @@ public sealed class TriggerDeleteResult
 	/// </summary>
 	public TriggerDeleteOutput? Output { get; init; }
 }
-
 internal static class TriggerDeleteRequestMapper
 {
     public static async ValueTask<TriggerDeleteInput> ToInputAsync(TriggerDeleteRequest? request, IXtraqParameterBindingProvider? bindingProvider, CancellationToken cancellationToken = default)

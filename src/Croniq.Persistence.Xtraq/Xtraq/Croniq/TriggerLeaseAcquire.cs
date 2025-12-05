@@ -27,23 +27,49 @@ namespace Croniq.Persistence.Xtraq.Croniq;
 /// </summary>
 public sealed record class TriggerLeaseAcquireRequest
 {
-    [System.ComponentModel.DataAnnotations.Required]
-    public IReadOnlyList<TriggerLeaseRefRequest> Lease { get; init; }
-    public bool? AllowDeletedReuse { get; init; }
+    public int? TenantId { get; init; }
+    [System.ComponentModel.DataAnnotations.StringLength(32)]
+    public string? Environment { get; init; }
+    [System.ComponentModel.DataAnnotations.StringLength(64)]
+    public string? InstanceId { get; init; }
+    public DateTime? NowUtc { get; init; }
+    public int? BatchSize { get; init; }
+    public int? LeaseDurationSeconds { get; init; }
 }
 
 public readonly record struct TriggerLeaseAcquireInput(
     IReadOnlyList<ActorRef> Actor,
-    IReadOnlyList<TriggerLeaseRef> Lease,
-    bool? AllowDeletedReuse
+    int? TenantId,
+    string? Environment,
+    string? InstanceId,
+    DateTime? NowUtc,
+    int? BatchSize,
+    int? LeaseDurationSeconds
 );
 
 /// <summary>
-/// Captures OUTPUT parameter values returned by <c>croniq.TriggerLeaseAcquire</c>.
+/// Represents the result set <c>ResultSet1</c> emitted by <c>croniq.ResultSet1</c>.
 /// </summary>
-public readonly record struct TriggerLeaseAcquireOutput(
-    long? LeaseId,
-    DateTime? LeaseExpiresAtUtc
+public readonly record struct TriggerLeaseAcquireResultSet1Result(
+    long LeaseId,
+    long TriggerId,
+    string TriggerKey,
+    long JobId,
+    string JobKey,
+    int TenantId,
+    string Environment,
+    string Namespace,
+    string Name,
+    string? Variant,
+    string CronExpression,
+    string TimeZoneId,
+    DateTime? StartAtUtc,
+    DateTime? EndAtUtc,
+    string? Metadata,
+    string InstanceId,
+    DateTime FireAtUtc,
+    DateTime LeaseExpiresAtUtc,
+    string? Payload
 );
 
 public sealed class TriggerLeaseAcquireResult
@@ -57,11 +83,10 @@ public sealed class TriggerLeaseAcquireResult
 	/// </summary>
 	public string? Error { get; init; }
 	/// <summary>
-	/// OUTPUT parameter payload returned by the procedure.
+	/// Result set <c>ResultSet1</c> projected as a strongly typed sequence.
 	/// </summary>
-	public TriggerLeaseAcquireOutput? Output { get; init; }
+	public IReadOnlyList<TriggerLeaseAcquireResultSet1Result> Result { get; init; } = Array.Empty<TriggerLeaseAcquireResultSet1Result>();
 }
-
 internal static class TriggerLeaseAcquireRequestMapper
 {
     public static async ValueTask<TriggerLeaseAcquireInput> ToInputAsync(TriggerLeaseAcquireRequest? request, IXtraqParameterBindingProvider? bindingProvider, CancellationToken cancellationToken = default)
@@ -76,29 +101,69 @@ internal static class TriggerLeaseAcquireRequestMapper
         {
             throw new InvalidOperationException("Parameter @Actor must be supplied by the request or a configured binding.");
         }
-        IReadOnlyList<TriggerLeaseRef>? Lease = TriggerLeaseRefRequest.ToTableTypes(request.Lease);
-        if (!HasValue(Lease))
+        int? TenantId = request.TenantId;
+        if (!HasValue(TenantId))
         {
-            Lease = await ResolveTableAsync<TriggerLeaseRef>(bindingProvider, "[croniq].[TriggerLeaseAcquire]", "@Lease", Lease, cancellationToken).ConfigureAwait(false);
+	    TenantId = await ResolveAsync<int?>(bindingProvider, "[croniq].[TriggerLeaseAcquire]", "@TenantId", false, TenantId, cancellationToken).ConfigureAwait(false);
         }
-        if (!HasValue(Lease))
+        if (!HasValue(TenantId))
         {
-            throw new InvalidOperationException("Parameter @Lease must be supplied by the request or a configured binding.");
+            throw new InvalidOperationException("Parameter @TenantId must be supplied by the request or a configured binding.");
         }
-        bool? AllowDeletedReuse = request.AllowDeletedReuse;
-        if (!HasValue(AllowDeletedReuse))
+        string? Environment = request.Environment;
+        if (!HasValue(Environment))
         {
-	    AllowDeletedReuse = await ResolveAsync<bool?>(bindingProvider, "[croniq].[TriggerLeaseAcquire]", "@AllowDeletedReuse", false, AllowDeletedReuse, cancellationToken).ConfigureAwait(false);
+	    Environment = await ResolveAsync<string?>(bindingProvider, "[croniq].[TriggerLeaseAcquire]", "@Environment", false, Environment, cancellationToken).ConfigureAwait(false);
         }
-        if (!HasValue(AllowDeletedReuse))
+        if (!HasValue(Environment))
         {
-            throw new InvalidOperationException("Parameter @AllowDeletedReuse must be supplied by the request or a configured binding.");
+            throw new InvalidOperationException("Parameter @Environment must be supplied by the request or a configured binding.");
+        }
+        string? InstanceId = request.InstanceId;
+        if (!HasValue(InstanceId))
+        {
+	    InstanceId = await ResolveAsync<string?>(bindingProvider, "[croniq].[TriggerLeaseAcquire]", "@InstanceId", false, InstanceId, cancellationToken).ConfigureAwait(false);
+        }
+        if (!HasValue(InstanceId))
+        {
+            throw new InvalidOperationException("Parameter @InstanceId must be supplied by the request or a configured binding.");
+        }
+        DateTime? NowUtc = request.NowUtc;
+        if (!HasValue(NowUtc))
+        {
+	    NowUtc = await ResolveAsync<DateTime?>(bindingProvider, "[croniq].[TriggerLeaseAcquire]", "@NowUtc", false, NowUtc, cancellationToken).ConfigureAwait(false);
+        }
+        if (!HasValue(NowUtc))
+        {
+            throw new InvalidOperationException("Parameter @NowUtc must be supplied by the request or a configured binding.");
+        }
+        int? BatchSize = request.BatchSize;
+        if (!HasValue(BatchSize))
+        {
+	    BatchSize = await ResolveAsync<int?>(bindingProvider, "[croniq].[TriggerLeaseAcquire]", "@BatchSize", false, BatchSize, cancellationToken).ConfigureAwait(false);
+        }
+        if (!HasValue(BatchSize))
+        {
+            throw new InvalidOperationException("Parameter @BatchSize must be supplied by the request or a configured binding.");
+        }
+        int? LeaseDurationSeconds = request.LeaseDurationSeconds;
+        if (!HasValue(LeaseDurationSeconds))
+        {
+	    LeaseDurationSeconds = await ResolveAsync<int?>(bindingProvider, "[croniq].[TriggerLeaseAcquire]", "@LeaseDurationSeconds", false, LeaseDurationSeconds, cancellationToken).ConfigureAwait(false);
+        }
+        if (!HasValue(LeaseDurationSeconds))
+        {
+            throw new InvalidOperationException("Parameter @LeaseDurationSeconds must be supplied by the request or a configured binding.");
         }
 
         return new TriggerLeaseAcquireInput(
             Actor!,
-            Lease!,
-            AllowDeletedReuse
+            TenantId,
+            Environment,
+            InstanceId,
+            NowUtc,
+            BatchSize,
+            LeaseDurationSeconds
         );
     }
 
@@ -148,30 +213,44 @@ internal static partial class TriggerLeaseAcquirePlan
 		var parameters = new ProcedureParameter[]
 		{
             new("@Actor", System.Data.DbType.Object, null, false, false, "core.ActorRef"),
-            new("@Lease", System.Data.DbType.Object, null, false, false, "croniq.TriggerLeaseRef"),
-            new("@AllowDeletedReuse", System.Data.DbType.Boolean, 1, false, true),
-            new("@LeaseId", System.Data.DbType.Int64, 8, true, true),
-            new("@LeaseExpiresAtUtc", System.Data.DbType.DateTime2, 7, true, true),
+            new("@TenantId", System.Data.DbType.Int32, 4, false, true),
+            new("@Environment", System.Data.DbType.String, 32, false, true),
+            new("@InstanceId", System.Data.DbType.String, 64, false, true),
+            new("@NowUtc", System.Data.DbType.DateTime2, 7, false, true),
+            new("@BatchSize", System.Data.DbType.Int32, 4, false, true),
+            new("@LeaseDurationSeconds", System.Data.DbType.Int32, 4, false, true),
         };
 
-		var resultSets = Array.Empty<ResultSetMapping>();
+		var resultSets = new ResultSetMapping[]
+		{
+            new("ResultSet1", async (r, ct) =>
+			{
+                var list = new System.Collections.Generic.List<object>(); int o0=ReaderUtil.TryGetOrdinal(r, "LeaseId"); int o1=ReaderUtil.TryGetOrdinal(r, "TriggerId"); int o2=ReaderUtil.TryGetOrdinal(r, "TriggerKey"); int o3=ReaderUtil.TryGetOrdinal(r, "JobId"); int o4=ReaderUtil.TryGetOrdinal(r, "JobKey"); int o5=ReaderUtil.TryGetOrdinal(r, "TenantId"); int o6=ReaderUtil.TryGetOrdinal(r, "Environment"); int o7=ReaderUtil.TryGetOrdinal(r, "Namespace"); int o8=ReaderUtil.TryGetOrdinal(r, "Name"); int o9=ReaderUtil.TryGetOrdinal(r, "Variant"); int o10=ReaderUtil.TryGetOrdinal(r, "CronExpression"); int o11=ReaderUtil.TryGetOrdinal(r, "TimeZoneId"); int o12=ReaderUtil.TryGetOrdinal(r, "StartAtUtc"); int o13=ReaderUtil.TryGetOrdinal(r, "EndAtUtc"); int o14=ReaderUtil.TryGetOrdinal(r, "Metadata"); int o15=ReaderUtil.TryGetOrdinal(r, "InstanceId"); int o16=ReaderUtil.TryGetOrdinal(r, "FireAtUtc"); int o17=ReaderUtil.TryGetOrdinal(r, "LeaseExpiresAtUtc"); int o18=ReaderUtil.TryGetOrdinal(r, "Payload"); while (await r.ReadAsync(ct).ConfigureAwait(false)) { list.Add(new TriggerLeaseAcquireResultSet1Result(o0 < 0 ? default(long) : r.GetInt64(o0), o1 < 0 ? default(long) : r.GetInt64(o1), o2 < 0 ? string.Empty : (r.IsDBNull(o2) ? string.Empty : r.GetString(o2)), o3 < 0 ? default(long) : r.GetInt64(o3), o4 < 0 ? string.Empty : (r.IsDBNull(o4) ? string.Empty : r.GetString(o4)), o5 < 0 ? default(int) : r.GetInt32(o5), o6 < 0 ? string.Empty : (r.IsDBNull(o6) ? string.Empty : r.GetString(o6)), o7 < 0 ? string.Empty : (r.IsDBNull(o7) ? string.Empty : r.GetString(o7)), o8 < 0 ? string.Empty : (r.IsDBNull(o8) ? string.Empty : r.GetString(o8)), o9 < 0 ? null : (r.IsDBNull(o9) ? null : r.GetString(o9)), o10 < 0 ? string.Empty : (r.IsDBNull(o10) ? string.Empty : r.GetString(o10)), o11 < 0 ? string.Empty : (r.IsDBNull(o11) ? string.Empty : r.GetString(o11)), o12 < 0 ? null : (r.IsDBNull(o12) ? null : (DateTime?)r.GetDateTime(o12)), o13 < 0 ? null : (r.IsDBNull(o13) ? null : (DateTime?)r.GetDateTime(o13)), o14 < 0 ? null : (r.IsDBNull(o14) ? null : r.GetString(o14)), o15 < 0 ? string.Empty : (r.IsDBNull(o15) ? string.Empty : r.GetString(o15)), o16 < 0 ? default(DateTime) : r.GetDateTime(o16), o17 < 0 ? default(DateTime) : r.GetDateTime(o17), o18 < 0 ? null : (r.IsDBNull(o18) ? null : r.GetString(o18)))); } return list;
+			}),
 
-		object? OutputFactory(IReadOnlyDictionary<string, object?> values) => new TriggerLeaseAcquireOutput(values.TryGetValue("LeaseId", out var v_LeaseId) ? (long?)v_LeaseId : default, values.TryGetValue("LeaseExpiresAtUtc", out var v_LeaseExpiresAtUtc) ? (DateTime?)v_LeaseExpiresAtUtc : default);
+        };
+
+		object? OutputFactory(IReadOnlyDictionary<string, object?> values) => null;
 		object AggregateFactory(bool success, string? error, object? output, IReadOnlyDictionary<string, object?> outputs, object[] rs)
 		{
 			return new TriggerLeaseAcquireResult
 			{
 				Success = success,
 				Error = error,
-				Output = (TriggerLeaseAcquireOutput?)output
+				// ResultSet 0 -> Result
+				Result = rs.Length > 0 && rs[0] is object[] rows0 ? Array.ConvertAll(rows0, o => (TriggerLeaseAcquireResultSet1Result)o).ToList() : (rs.Length > 0 && rs[0] is System.Collections.Generic.List<object> list0 ? Array.ConvertAll(list0.ToArray(), o => (TriggerLeaseAcquireResultSet1Result)o).ToList() : Array.Empty<TriggerLeaseAcquireResultSet1Result>())
 			};
 		}
 		void Binder(DbCommand cmd, object? state)
 		{
 			var input = (TriggerLeaseAcquireInput)state!;
 			{ var prm = cmd.Parameters["@Actor"]; var source = input.Actor; var tvp = TvpHelper.BuildRecords(source) ?? Array.Empty<Microsoft.Data.SqlClient.Server.SqlDataRecord>(); prm.Value = tvp; if (prm is Microsoft.Data.SqlClient.SqlParameter sp) { sp.SqlDbType = System.Data.SqlDbType.Structured; sp.TypeName ??= "core.ActorRef"; } }
-			{ var prm = cmd.Parameters["@Lease"]; var source = input.Lease; var tvp = TvpHelper.BuildRecords(source) ?? Array.Empty<Microsoft.Data.SqlClient.Server.SqlDataRecord>(); prm.Value = tvp; if (prm is Microsoft.Data.SqlClient.SqlParameter sp) { sp.SqlDbType = System.Data.SqlDbType.Structured; sp.TypeName ??= "croniq.TriggerLeaseRef"; } }
-			cmd.Parameters["@AllowDeletedReuse"].Value = (object?)input.AllowDeletedReuse ?? DBNull.Value;
+			cmd.Parameters["@TenantId"].Value = (object?)input.TenantId ?? DBNull.Value;
+			cmd.Parameters["@Environment"].Value = (object?)input.Environment ?? DBNull.Value;
+			cmd.Parameters["@InstanceId"].Value = (object?)input.InstanceId ?? DBNull.Value;
+			cmd.Parameters["@NowUtc"].Value = (object?)input.NowUtc ?? DBNull.Value;
+			cmd.Parameters["@BatchSize"].Value = (object?)input.BatchSize ?? DBNull.Value;
+			cmd.Parameters["@LeaseDurationSeconds"].Value = (object?)input.LeaseDurationSeconds ?? DBNull.Value;
 		}
 		return new ProcedureExecutionPlan(
 			"[croniq].[TriggerLeaseAcquire]", parameters, resultSets, OutputFactory, AggregateFactory, Binder);
@@ -194,6 +273,39 @@ public static class TriggerLeaseAcquireExtensions
 		return await TriggerLeaseAcquireProcedure.ExecuteAsync(db as IXtraqProcedureInterceptorProvider, db as IXtraqParameterBindingProvider, conn, input, cancellationToken).ConfigureAwait(false);
 	}
 
+	/// <summary>Streams result set <c>ResultSet1</c> without buffering it into the aggregate payload.</summary>
+	public static async Task StreamResultResultSet1Async(this IXtraqDbContext db, TriggerLeaseAcquireInput input, Func<TriggerLeaseAcquireResultSet1Result, CancellationToken, ValueTask> onRowAsync, CancellationToken cancellationToken = default)
+	{
+		ArgumentNullException.ThrowIfNull(db);
+		ArgumentNullException.ThrowIfNull(onRowAsync);
+		await using var connection = await db.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
+		await TriggerLeaseAcquireProcedure.StreamResultResultSet1Async(db as IXtraqProcedureInterceptorProvider, db as IXtraqParameterBindingProvider, connection, input, onRowAsync, cancellationToken).ConfigureAwait(false);
+	}
+
+	public static Task StreamResultResultSet1Async(this IXtraqDbContext db, TriggerLeaseAcquireInput input, Func<TriggerLeaseAcquireResultSet1Result, ValueTask> onRowAsync, CancellationToken cancellationToken = default)
+	{
+		ArgumentNullException.ThrowIfNull(onRowAsync);
+		return StreamResultResultSet1Async(db, input, (row, ct) => onRowAsync(row), cancellationToken);
+	}
+
+	/// <summary>Streams result set <c>ResultSet1</c> using a request DTO; request is mapped and hydrated before streaming.</summary>
+	public static async Task StreamResultResultSet1Async(this IXtraqDbContext db, TriggerLeaseAcquireRequest request, Func<TriggerLeaseAcquireResultSet1Result, CancellationToken, ValueTask> onRowAsync, CancellationToken cancellationToken = default)
+	{
+		ArgumentNullException.ThrowIfNull(db);
+		ArgumentNullException.ThrowIfNull(onRowAsync);
+		var bindingProvider = db as IXtraqParameterBindingProvider;
+		var input = await TriggerLeaseAcquireRequestMapper.ToInputAsync(request, bindingProvider, cancellationToken).ConfigureAwait(false);
+		await StreamResultResultSet1Async(db, input, onRowAsync, cancellationToken).ConfigureAwait(false);
+		return;
+	}
+
+	/// <summary>Streams result set <c>ResultSet1</c> using a request DTO; request is mapped and hydrated before streaming.</summary>
+	public static Task StreamResultResultSet1Async(this IXtraqDbContext db, TriggerLeaseAcquireRequest request, Func<TriggerLeaseAcquireResultSet1Result, ValueTask> onRowAsync, CancellationToken cancellationToken = default)
+	{
+		ArgumentNullException.ThrowIfNull(onRowAsync);
+		return StreamResultResultSet1Async(db, request, (row, ct) => onRowAsync(row), cancellationToken);
+	}
+
 }
 
 /// <summary>Low-level execution wrapper for a single stored procedure invocation.</summary>
@@ -209,6 +321,61 @@ public static class TriggerLeaseAcquireProcedure
 	public static Task<TriggerLeaseAcquireResult> ExecuteAsync(IXtraqProcedureInterceptorProvider? interceptorProvider, IXtraqParameterBindingProvider? bindingProvider, DbConnection connection, TriggerLeaseAcquireInput input, CancellationToken cancellationToken = default)
 	{
 		return ProcedureExecutor.ExecuteAsync<TriggerLeaseAcquireResult>(interceptorProvider, bindingProvider, connection, TriggerLeaseAcquirePlan.Instance, input, cancellationToken);
+	}
+
+	/// <summary>Streams result set <c>ResultSet1</c> using the supplied row callback.</summary>
+	public static Task StreamResultResultSet1Async(DbConnection connection, TriggerLeaseAcquireInput input, Func<TriggerLeaseAcquireResultSet1Result, CancellationToken, ValueTask> onRowAsync, CancellationToken cancellationToken = default)
+		=> StreamResultResultSet1Async(null, null, connection, input, onRowAsync, cancellationToken);
+
+	public static Task StreamResultResultSet1Async(IXtraqProcedureInterceptorProvider? interceptorProvider, DbConnection connection, TriggerLeaseAcquireInput input, Func<TriggerLeaseAcquireResultSet1Result, CancellationToken, ValueTask> onRowAsync, CancellationToken cancellationToken = default)
+		=> StreamResultResultSet1Async(interceptorProvider, null, connection, input, onRowAsync, cancellationToken);
+
+	public static async Task StreamResultResultSet1Async(IXtraqProcedureInterceptorProvider? interceptorProvider, IXtraqParameterBindingProvider? bindingProvider, DbConnection connection, TriggerLeaseAcquireInput input, Func<TriggerLeaseAcquireResultSet1Result, CancellationToken, ValueTask> onRowAsync, CancellationToken cancellationToken = default)
+	{
+		ArgumentNullException.ThrowIfNull(connection);
+		ArgumentNullException.ThrowIfNull(onRowAsync);
+
+		async Task StreamCoreAsync(DbDataReader reader, CancellationToken ct)
+		{
+            int o0=ReaderUtil.TryGetOrdinal(reader, "LeaseId");
+            int o1=ReaderUtil.TryGetOrdinal(reader, "TriggerId");
+            int o2=ReaderUtil.TryGetOrdinal(reader, "TriggerKey");
+            int o3=ReaderUtil.TryGetOrdinal(reader, "JobId");
+            int o4=ReaderUtil.TryGetOrdinal(reader, "JobKey");
+            int o5=ReaderUtil.TryGetOrdinal(reader, "TenantId");
+            int o6=ReaderUtil.TryGetOrdinal(reader, "Environment");
+            int o7=ReaderUtil.TryGetOrdinal(reader, "Namespace");
+            int o8=ReaderUtil.TryGetOrdinal(reader, "Name");
+            int o9=ReaderUtil.TryGetOrdinal(reader, "Variant");
+            int o10=ReaderUtil.TryGetOrdinal(reader, "CronExpression");
+            int o11=ReaderUtil.TryGetOrdinal(reader, "TimeZoneId");
+            int o12=ReaderUtil.TryGetOrdinal(reader, "StartAtUtc");
+            int o13=ReaderUtil.TryGetOrdinal(reader, "EndAtUtc");
+            int o14=ReaderUtil.TryGetOrdinal(reader, "Metadata");
+            int o15=ReaderUtil.TryGetOrdinal(reader, "InstanceId");
+            int o16=ReaderUtil.TryGetOrdinal(reader, "FireAtUtc");
+            int o17=ReaderUtil.TryGetOrdinal(reader, "LeaseExpiresAtUtc");
+            int o18=ReaderUtil.TryGetOrdinal(reader, "Payload");
+			while (await reader.ReadAsync(ct).ConfigureAwait(false))
+			{
+				var row = new TriggerLeaseAcquireResultSet1Result(o0 < 0 ? default(long) : reader.GetInt64(o0), o1 < 0 ? default(long) : reader.GetInt64(o1), o2 < 0 ? string.Empty : (reader.IsDBNull(o2) ? string.Empty : reader.GetString(o2)), o3 < 0 ? default(long) : reader.GetInt64(o3), o4 < 0 ? string.Empty : (reader.IsDBNull(o4) ? string.Empty : reader.GetString(o4)), o5 < 0 ? default(int) : reader.GetInt32(o5), o6 < 0 ? string.Empty : (reader.IsDBNull(o6) ? string.Empty : reader.GetString(o6)), o7 < 0 ? string.Empty : (reader.IsDBNull(o7) ? string.Empty : reader.GetString(o7)), o8 < 0 ? string.Empty : (reader.IsDBNull(o8) ? string.Empty : reader.GetString(o8)), o9 < 0 ? null : (reader.IsDBNull(o9) ? null : reader.GetString(o9)), o10 < 0 ? string.Empty : (reader.IsDBNull(o10) ? string.Empty : reader.GetString(o10)), o11 < 0 ? string.Empty : (reader.IsDBNull(o11) ? string.Empty : reader.GetString(o11)), o12 < 0 ? null : (reader.IsDBNull(o12) ? null : (DateTime?)reader.GetDateTime(o12)), o13 < 0 ? null : (reader.IsDBNull(o13) ? null : (DateTime?)reader.GetDateTime(o13)), o14 < 0 ? null : (reader.IsDBNull(o14) ? null : reader.GetString(o14)), o15 < 0 ? string.Empty : (reader.IsDBNull(o15) ? string.Empty : reader.GetString(o15)), o16 < 0 ? default(DateTime) : reader.GetDateTime(o16), o17 < 0 ? default(DateTime) : reader.GetDateTime(o17), o18 < 0 ? null : (reader.IsDBNull(o18) ? null : reader.GetString(o18)));
+				await onRowAsync(row, ct).ConfigureAwait(false);
+			}
+		}
+
+		await ProcedureExecutor.StreamResultSetAsync(interceptorProvider, bindingProvider, connection, TriggerLeaseAcquirePlan.Instance, 0, StreamCoreAsync, input, cancellationToken).ConfigureAwait(false);
+	}
+
+	public static Task StreamResultResultSet1Async(DbConnection connection, TriggerLeaseAcquireInput input, Func<TriggerLeaseAcquireResultSet1Result, ValueTask> onRowAsync, CancellationToken cancellationToken = default)
+	{
+		ArgumentNullException.ThrowIfNull(onRowAsync);
+		return StreamResultResultSet1Async(null, null, connection, input, (row, ct) => onRowAsync(row), cancellationToken);
+	}
+
+	public static Task StreamResultResultSet1Async(IXtraqProcedureInterceptorProvider? interceptorProvider, DbConnection connection, TriggerLeaseAcquireInput input, Func<TriggerLeaseAcquireResultSet1Result, ValueTask> onRowAsync, CancellationToken cancellationToken = default)
+	{
+		ArgumentNullException.ThrowIfNull(onRowAsync);
+		return StreamResultResultSet1Async(interceptorProvider, null, connection, input, (row, ct) => onRowAsync(row), cancellationToken);
 	}
 
 }

@@ -58,6 +58,7 @@ Write-Host "Ensuring database [$Database] exists on $Server..."
 & $sqlcmdPath @((Get-SqlcmdArgs -dbName "master" -query "IF DB_ID('$Database') IS NULL CREATE DATABASE [$Database];"))
 
 $scripts = @(
+    "predeploy.sql",
     "core/types.sql",
     "core-internal/types.sql",
     "croniq/types.sql",

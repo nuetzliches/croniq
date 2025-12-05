@@ -57,7 +57,6 @@ public sealed class TriggerDeadLetterRetentionResult
 	/// </summary>
 	public TriggerDeadLetterRetentionOutput? Output { get; init; }
 }
-
 internal static class TriggerDeadLetterRetentionRequestMapper
 {
     public static async ValueTask<TriggerDeadLetterRetentionInput> ToInputAsync(TriggerDeadLetterRetentionRequest? request, IXtraqParameterBindingProvider? bindingProvider, CancellationToken cancellationToken = default)

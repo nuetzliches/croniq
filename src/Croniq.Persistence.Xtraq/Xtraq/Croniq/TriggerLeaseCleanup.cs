@@ -57,7 +57,6 @@ public sealed class TriggerLeaseCleanupResult
 	/// </summary>
 	public TriggerLeaseCleanupOutput? Output { get; init; }
 }
-
 internal static class TriggerLeaseCleanupRequestMapper
 {
     public static async ValueTask<TriggerLeaseCleanupInput> ToInputAsync(TriggerLeaseCleanupRequest? request, IXtraqParameterBindingProvider? bindingProvider, CancellationToken cancellationToken = default)

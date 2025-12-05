@@ -9,6 +9,20 @@
     {
       "Name": "InstanceId",
       "TypeRef": "core.reference"
+    },
+    {
+      "Name": "Succeeded",
+      "TypeRef": "core.flag"
+    },
+    {
+      "Name": "NextFireAtUtc",
+      "TypeRef": "core.utcDateTimeNullable",
+      "IsNullable": true
+    },
+    {
+      "Name": "DeadLetterReason",
+      "TypeRef": "croniq.deadLetterReason",
+      "IsNullable": true
     }
   ]
 }

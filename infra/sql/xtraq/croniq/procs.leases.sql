@@ -1,121 +1,245 @@
+SET QUOTED_IDENTIFIER ON;
+SET ANSI_NULLS ON;
+GO
+
 -- Procedures for trigger lease acquire, release, retention
 GO
 
 CREATE OR ALTER PROCEDURE [croniq].[TriggerLeaseAcquire]
     @Actor [core].[ActorRef] READONLY,
-    @Lease [croniq].[TriggerLeaseRef] READONLY,
-    @AllowDeletedReuse [core].[flag],
-    @LeaseId [core].[keyBig] OUTPUT,
-    @LeaseExpiresAtUtc [core].[utcDateTime] OUTPUT
+    @TenantId [core].[key],
+    @Environment [core].[tag],
+    @InstanceId [core].[reference],
+    @NowUtc [core].[utcDateTime],
+    @BatchSize [core].[count] = 10,
+    @LeaseDurationSeconds [core].[number] = 30
 AS
 BEGIN
-    SET NOCOUNT ON;
 
     DECLARE @ActorValue [core].[actor];
-    DECLARE @TriggerId [core].[keyBig];
-    DECLARE @JobId [core].[keyBig];
-    DECLARE @TenantId [core].[key];
-    DECLARE @Environment [core].[tag];
-    DECLARE @Namespace [core].[label];
-    DECLARE @Name [core].[name];
-    DECLARE @Variant [croniq].[jobVariant];
-    DECLARE @InstanceId [core].[reference];
-    DECLARE @FireAtUtc [core].[utcDateTime];
-    DECLARE @RequestedLeaseExpiresAtUtc [core].[utcDateTime];
-    DECLARE @Payload [core].[jsonNullable];
-    DECLARE @ExistingLeaseId [core].[keyBig];
-    DECLARE @ExistingExpiresAt [core].[utcDateTime];
-    DECLARE @ExistingInstanceId [core].[reference];
-    DECLARE @ExistingIsDeleted [core].[flag];
-    DECLARE @now [core].[utcDateTime] = SYSUTCDATETIME();
+    DECLARE @LeaseExpiresAtUtc [core].[utcDateTime] = DATEADD(SECOND, @LeaseDurationSeconds, @NowUtc);
 
     EXEC [core-internal].[GuardActor] @Actor, @ActorValue OUTPUT;
-    EXEC [croniq-internal].[GuardTriggerLeaseRef] @Lease, @TriggerId OUTPUT, @JobId OUTPUT, @TenantId OUTPUT, @Environment OUTPUT, @Namespace OUTPUT, @Name OUTPUT, @Variant OUTPUT, @InstanceId OUTPUT, @FireAtUtc OUTPUT, @RequestedLeaseExpiresAtUtc OUTPUT, @Payload OUTPUT;
 
-    IF NOT EXISTS (SELECT TOP 1 1 FROM [croniq].[Triggers] WHERE [TriggerId] = @TriggerId AND [IsDeleted] = 0)
-    BEGIN;
-        EXEC [croniq-internal].[ThrowTriggerNotFound];
-    END
+    DECLARE @due TABLE
+    (
+        [RowId] INT IDENTITY(1,1) PRIMARY KEY,
+        [TriggerId] [core].[keyBig],
+        [TriggerKey] [core].[reference],
+        [JobId] [core].[keyBig],
+        [JobKey] [core].[reference],
+        [TenantId] [core].[key],
+        [Environment] [core].[tag],
+        [Namespace] [core].[label],
+        [Name] [core].[name],
+        [Variant] [croniq].[jobVariant],
+        [CronExpression] [croniq].[cronExpression],
+        [TimeZoneId] [croniq].[timeZoneId],
+        [StartAtUtc] [core].[utcDateTimeNullable],
+        [EndAtUtc] [core].[utcDateTimeNullable],
+        [Metadata] [core].[jsonNullable],
+        [FireAtUtc] [core].[utcDateTime],
+        [ExistingLeaseId] [core].[keyBig] NULL,
+        [ExistingIsDeleted] [core].[flag] NULL,
+        [ExistingExpiresAtUtc] [core].[utcDateTimeNullable]
+    );
 
-    SELECT TOP (1)
-        @ExistingLeaseId = tl.[LeaseId],
-        @ExistingExpiresAt = tl.[LeaseExpiresAtUtc],
-        @ExistingInstanceId = tl.[InstanceId],
-        @ExistingIsDeleted = tl.[IsDeleted]
-    FROM [croniq].[TriggerLeases] AS tl WITH (UPDLOCK, HOLDLOCK)
-    WHERE tl.[TriggerId] = @TriggerId
-      AND tl.[IsDeleted] = 0
-    ORDER BY tl.[LeaseExpiresAtUtc] DESC;
-
-    IF @ExistingLeaseId IS NOT NULL AND @ExistingIsDeleted = 0 AND @ExistingExpiresAt > @now
-    BEGIN;
-        EXEC [croniq-internal].[ThrowTriggerLeaseActive];
-    END
-
-    IF @ExistingLeaseId IS NOT NULL AND @ExistingIsDeleted = 1 AND @AllowDeletedReuse = 0
-    BEGIN;
-        EXEC [croniq-internal].[ThrowTriggerLeaseReuseNotAllowed];
-    END
-
-    IF @ExistingLeaseId IS NOT NULL
-    BEGIN
-        UPDATE [croniq].[TriggerLeases]
-        SET [JobId] = @JobId,
-            [TenantId] = @TenantId,
-            [Environment] = @Environment,
-            [Namespace] = @Namespace,
-            [Name] = @Name,
-            [Variant] = @Variant,
-            [InstanceId] = @InstanceId,
-            [FireAtUtc] = @FireAtUtc,
-            [LeaseExpiresAtUtc] = @RequestedLeaseExpiresAtUtc,
-            [Payload] = @Payload,
-            [UpdatedUtc] = @now,
-            [UpdatedBy] = @ActorValue,
-            [IsDeleted] = 0
-        WHERE [LeaseId] = @ExistingLeaseId;
-
-        SET @LeaseId = @ExistingLeaseId;
-        SET @LeaseExpiresAtUtc = @RequestedLeaseExpiresAtUtc;
-    END
-    ELSE
-    BEGIN
-        INSERT INTO [croniq].[TriggerLeases]
+    INSERT INTO @due
+    (
+        [TriggerId],
+        [TriggerKey],
+        [JobId],
+        [JobKey],
+        [TenantId],
+        [Environment],
+        [Namespace],
+        [Name],
+        [Variant],
+        [CronExpression],
+        [TimeZoneId],
+        [StartAtUtc],
+        [EndAtUtc],
+        [Metadata],
+        [FireAtUtc],
+        [ExistingLeaseId],
+        [ExistingIsDeleted],
+        [ExistingExpiresAtUtc]
+    )
+    SELECT TOP (@BatchSize)
+        t.[TriggerId],
+        t.[TriggerKey],
+        t.[JobId],
+        t.[JobKey],
+        t.[TenantId],
+        t.[Environment],
+        t.[Namespace],
+        t.[Name],
+        t.[Variant],
+        t.[CronExpression],
+        t.[TimeZoneId],
+        t.[StartAtUtc],
+        t.[EndAtUtc],
+        t.[Metadata],
+        t.[NextFireAtUtc],
+        l.[LeaseId],
+        l.[IsDeleted],
+        l.[LeaseExpiresAtUtc]
+    FROM [croniq].[Triggers] AS t WITH (UPDLOCK, READPAST, ROWLOCK)
+        OUTER APPLY
         (
-            [TriggerId],
-            [JobId],
-            [TenantId],
-            [Environment],
-            [Namespace],
-            [Name],
-            [Variant],
-            [InstanceId],
-            [FireAtUtc],
-            [LeaseExpiresAtUtc],
-            [Payload],
-            [CreatedBy],
-            [IsDeleted]
-        )
-        VALUES
-        (
-            @TriggerId,
-            @JobId,
-            @TenantId,
-            @Environment,
-            @Namespace,
-            @Name,
-            @Variant,
-            @InstanceId,
-            @FireAtUtc,
-            @RequestedLeaseExpiresAtUtc,
-            @Payload,
-            @ActorValue,
-            0
-        );
+            SELECT TOP (1)
+                tl.[LeaseId],
+                tl.[IsDeleted],
+                tl.[LeaseExpiresAtUtc]
+            FROM [croniq].[TriggerLeases] AS tl WITH (UPDLOCK, READPAST)
+            WHERE tl.[TriggerId] = t.[TriggerId]
+            ORDER BY tl.[LeaseId] DESC
+        ) AS l
+    WHERE t.[TenantId] = @TenantId
+      AND t.[Environment] = @Environment
+      AND t.[IsDeleted] = 0
+      AND t.[Enabled] = 1
+      AND t.[NextFireAtUtc] IS NOT NULL
+      AND t.[NextFireAtUtc] <= @NowUtc
+      AND (l.[LeaseId] IS NULL OR l.[IsDeleted] = 1 OR l.[LeaseExpiresAtUtc] <= @NowUtc)
+    ORDER BY t.[NextFireAtUtc], t.[TriggerId];
 
-        SET @LeaseId = SCOPE_IDENTITY();
-        SET @LeaseExpiresAtUtc = @RequestedLeaseExpiresAtUtc;
-    END
+    DECLARE @acquired TABLE
+    (
+        [LeaseId] [core].[keyBig],
+        [TriggerId] [core].[keyBig],
+        [TriggerKey] [core].[reference] NULL,
+        [JobId] [core].[keyBig],
+        [JobKey] [core].[reference] NULL,
+        [TenantId] [core].[key],
+        [Environment] [core].[tag],
+        [Namespace] [core].[label],
+        [Name] [core].[name],
+        [Variant] [croniq].[jobVariant],
+        [CronExpression] [croniq].[cronExpression] NULL,
+        [TimeZoneId] [croniq].[timeZoneId] NULL,
+        [StartAtUtc] [core].[utcDateTimeNullable],
+        [EndAtUtc] [core].[utcDateTimeNullable],
+        [Metadata] [core].[jsonNullable],
+        [InstanceId] [core].[reference],
+        [FireAtUtc] [core].[utcDateTime],
+        [LeaseExpiresAtUtc] [core].[utcDateTime],
+        [Payload] [core].[jsonNullable]
+    );
+
+    -- Refresh existing lease rows (expired or soft-deleted)
+    UPDATE tl
+    SET [JobId] = d.[JobId],
+        [TenantId] = d.[TenantId],
+        [Environment] = d.[Environment],
+        [Namespace] = d.[Namespace],
+        [Name] = d.[Name],
+        [Variant] = d.[Variant],
+        [InstanceId] = @InstanceId,
+        [FireAtUtc] = d.[FireAtUtc],
+        [LeaseExpiresAtUtc] = @LeaseExpiresAtUtc,
+        [Payload] = d.[Metadata],
+        [UpdatedUtc] = @NowUtc,
+        [UpdatedBy] = @ActorValue,
+        [IsDeleted] = 0
+    OUTPUT inserted.[LeaseId],
+        inserted.[TriggerId],
+        inserted.[JobId],
+        inserted.[TenantId],
+        inserted.[Environment],
+        inserted.[Namespace],
+        inserted.[Name],
+        inserted.[Variant],
+        inserted.[InstanceId],
+        inserted.[FireAtUtc],
+        inserted.[LeaseExpiresAtUtc],
+        inserted.[Payload]
+    INTO @acquired ([LeaseId], [TriggerId], [JobId], [TenantId], [Environment], [Namespace], [Name], [Variant], [InstanceId], [FireAtUtc], [LeaseExpiresAtUtc], [Payload])
+    FROM [croniq].[TriggerLeases] AS tl
+        INNER JOIN @due AS d
+            ON d.[ExistingLeaseId] = tl.[LeaseId];
+
+    -- Insert fresh leases
+    INSERT INTO [croniq].[TriggerLeases]
+    (
+        [TriggerId],
+        [JobId],
+        [TenantId],
+        [Environment],
+        [Namespace],
+        [Name],
+        [Variant],
+        [InstanceId],
+        [FireAtUtc],
+        [LeaseExpiresAtUtc],
+        [Payload],
+        [CreatedBy],
+        [IsDeleted]
+    )
+    OUTPUT inserted.[LeaseId],
+        inserted.[TriggerId],
+        inserted.[JobId],
+        inserted.[TenantId],
+        inserted.[Environment],
+        inserted.[Namespace],
+        inserted.[Name],
+        inserted.[Variant],
+        inserted.[InstanceId],
+        inserted.[FireAtUtc],
+        inserted.[LeaseExpiresAtUtc],
+        inserted.[Payload]
+    INTO @acquired ([LeaseId], [TriggerId], [JobId], [TenantId], [Environment], [Namespace], [Name], [Variant], [InstanceId], [FireAtUtc], [LeaseExpiresAtUtc], [Payload])
+    SELECT
+        d.[TriggerId],
+        d.[JobId],
+        d.[TenantId],
+        d.[Environment],
+        d.[Namespace],
+        d.[Name],
+        d.[Variant],
+        @InstanceId,
+        d.[FireAtUtc],
+        @LeaseExpiresAtUtc,
+        d.[Metadata],
+        @ActorValue,
+        0
+    FROM @due AS d
+    WHERE d.[ExistingLeaseId] IS NULL;
+
+    UPDATE a
+    SET a.[TriggerKey] = d.[TriggerKey],
+        a.[JobKey] = d.[JobKey],
+        a.[CronExpression] = d.[CronExpression],
+        a.[TimeZoneId] = d.[TimeZoneId],
+        a.[StartAtUtc] = d.[StartAtUtc],
+        a.[EndAtUtc] = d.[EndAtUtc],
+        a.[Metadata] = d.[Metadata]
+    FROM @acquired AS a
+        INNER JOIN @due AS d
+            ON a.[TriggerId] = d.[TriggerId];
+
+    SELECT
+        [LeaseId],
+        [TriggerId],
+        [TriggerKey],
+        [JobId],
+        [JobKey],
+        [TenantId],
+        [Environment],
+        [Namespace],
+        [Name],
+        [Variant],
+        [CronExpression],
+        [TimeZoneId],
+        [StartAtUtc],
+        [EndAtUtc],
+        [Metadata],
+        [InstanceId],
+        [FireAtUtc],
+        [LeaseExpiresAtUtc],
+        [Payload]
+    FROM @acquired
+    ORDER BY [FireAtUtc], [LeaseId];
 END
 GO
 
@@ -125,19 +249,37 @@ CREATE OR ALTER PROCEDURE [croniq].[TriggerLeaseRelease]
     @ReleasedCount [core].[count] OUTPUT
 AS
 BEGIN
-    SET NOCOUNT ON;
 
     DECLARE @ActorValue [core].[actor];
     DECLARE @LeaseId [core].[keyBig];
     DECLARE @InstanceId [core].[reference];
+    DECLARE @Succeeded [core].[flag];
+    DECLARE @NextFireAtUtc [core].[utcDateTimeNullable];
+    DECLARE @DeadLetterReason [croniq].[deadLetterReason];
     DECLARE @now [core].[utcDateTime] = SYSUTCDATETIME();
+    DECLARE @TriggerId [core].[keyBig];
+    DECLARE @TenantId [core].[key];
+    DECLARE @Environment [core].[tag];
+    DECLARE @Namespace [core].[label];
+    DECLARE @Name [core].[name];
+    DECLARE @Variant [croniq].[jobVariant];
+    DECLARE @FireAtUtc [core].[utcDateTime];
+    DECLARE @Payload [core].[jsonNullable];
     DECLARE @ExistingInstanceId [core].[reference];
 
     EXEC [core-internal].[GuardActor] @Actor, @ActorValue OUTPUT;
-    EXEC [croniq-internal].[GuardTriggerLeaseReleaseRef] @Release, @LeaseId OUTPUT, @InstanceId OUTPUT;
+    EXEC [croniq-internal].[GuardTriggerLeaseReleaseRef] @Release, @LeaseId OUTPUT, @InstanceId OUTPUT, @Succeeded OUTPUT, @NextFireAtUtc OUTPUT, @DeadLetterReason OUTPUT;
 
     SELECT TOP (1)
-        @ExistingInstanceId = tl.[InstanceId]
+        @ExistingInstanceId = tl.[InstanceId],
+        @TriggerId = tl.[TriggerId],
+        @TenantId = tl.[TenantId],
+        @Environment = tl.[Environment],
+        @Namespace = tl.[Namespace],
+        @Name = tl.[Name],
+        @Variant = tl.[Variant],
+        @FireAtUtc = tl.[FireAtUtc],
+        @Payload = tl.[Payload]
     FROM [croniq].[TriggerLeases] AS tl WITH (UPDLOCK, HOLDLOCK)
     WHERE tl.[LeaseId] = @LeaseId
       AND tl.[IsDeleted] = 0;
@@ -160,6 +302,50 @@ BEGIN
       AND [IsDeleted] = 0;
 
     SET @ReleasedCount = @@ROWCOUNT;
+
+    IF @ReleasedCount = 0
+    BEGIN
+        RETURN;
+    END
+
+    UPDATE [croniq].[Triggers]
+    SET [LastFireAtUtc] = @FireAtUtc,
+        [NextFireAtUtc] = @NextFireAtUtc,
+        [UpdatedUtc] = @now,
+        [UpdatedBy] = @ActorValue
+    WHERE [TriggerId] = @TriggerId;
+
+    IF @Succeeded = 0 AND @DeadLetterReason IS NOT NULL
+    BEGIN
+        INSERT INTO [croniq].[TriggerDeadLetter]
+        (
+            [TriggerId],
+            [TenantId],
+            [Environment],
+            [Namespace],
+            [Name],
+            [Variant],
+            [FireAtUtc],
+            [DeadLetterReason],
+            [Payload],
+            [CreatedBy],
+            [IsDeleted]
+        )
+        VALUES
+        (
+            @TriggerId,
+            @TenantId,
+            @Environment,
+            @Namespace,
+            @Name,
+            @Variant,
+            @FireAtUtc,
+            @DeadLetterReason,
+            @Payload,
+            @ActorValue,
+            0
+        );
+    END
 END
 GO
 
@@ -169,7 +355,6 @@ CREATE OR ALTER PROCEDURE [croniq].[TriggerLeaseRetention]
     @DeletedCount [core].[count] OUTPUT
 AS
 BEGIN
-    SET NOCOUNT ON;
 
     DECLARE @ActorValue [core].[actor];
     DECLARE @now [core].[utcDateTime] = SYSUTCDATETIME();

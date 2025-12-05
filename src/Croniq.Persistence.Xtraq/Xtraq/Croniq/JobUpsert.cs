@@ -28,7 +28,7 @@ namespace Croniq.Persistence.Xtraq.Croniq;
 public sealed record class JobUpsertRequest
 {
     [System.ComponentModel.DataAnnotations.Required]
-    public IReadOnlyList<JobRefRequest> Job { get; init; }
+    public IReadOnlyList<JobRefRequest> Job { get; init; } = default!;
     public bool? AllowDeletedReuse { get; init; }
 }
 
@@ -61,7 +61,6 @@ public sealed class JobUpsertResult
 	/// </summary>
 	public JobUpsertOutput? Output { get; init; }
 }
-
 internal static class JobUpsertRequestMapper
 {
     public static async ValueTask<JobUpsertInput> ToInputAsync(JobUpsertRequest? request, IXtraqParameterBindingProvider? bindingProvider, CancellationToken cancellationToken = default)

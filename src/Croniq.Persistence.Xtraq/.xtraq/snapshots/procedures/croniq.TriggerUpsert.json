@@ -41,6 +41,9 @@
       "ProcedureRef": "croniq-internal.GuardTriggerRef"
     },
     {
+      "ProcedureRef": "croniq-internal.ThrowTriggerRefIncomplete"
+    },
+    {
       "ProcedureRef": "croniq-internal.ThrowTriggerJobMissing"
     },
     {

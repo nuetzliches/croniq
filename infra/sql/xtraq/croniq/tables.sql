@@ -74,6 +74,8 @@ CREATE TABLE [croniq].[Triggers]
     [TimeZoneId] [croniq].[timeZoneId],
     [StartAtUtc] [core].[utcDateTimeNullable],
     [EndAtUtc] [core].[utcDateTimeNullable],
+    [NextFireAtUtc] [core].[utcDateTimeNullable],
+    [LastFireAtUtc] [core].[utcDateTimeNullable],
     [Enabled] [core].[flag] CONSTRAINT DF_croniq_Triggers_Enabled DEFAULT (1),
     [Metadata] [core].[jsonNullable],
     [CreatedUtc] [core].[utcDateTime] CONSTRAINT DF_croniq_Triggers_CreatedUtc DEFAULT SYSUTCDATETIME(),
@@ -94,6 +96,11 @@ GO
 CREATE UNIQUE NONCLUSTERED INDEX [UX_croniq_Triggers_TriggerKey]
     ON [croniq].[Triggers] ([TriggerKey])
     WHERE [IsDeleted] = 0;
+GO
+
+CREATE NONCLUSTERED INDEX [IX_croniq_Triggers_NextFire]
+    ON [croniq].[Triggers] ([TenantId], [Environment], [Enabled], [IsDeleted], [NextFireAtUtc])
+    WHERE [IsDeleted] = 0 AND [Enabled] = 1 AND [NextFireAtUtc] IS NOT NULL;
 GO
 
 CREATE TABLE [croniq].[TriggerLeases]

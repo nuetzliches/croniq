@@ -1,3 +1,7 @@
+SET QUOTED_IDENTIFIER ON;
+SET ANSI_NULLS ON;
+GO
+
 -- Procedures for trigger dead letter insert and retention
 GO
 
@@ -8,7 +12,6 @@ CREATE OR ALTER PROCEDURE [croniq].[TriggerDeadLetterInsert]
     @CreatedUtc [core].[utcDateTime] OUTPUT
 AS
 BEGIN
-    SET NOCOUNT ON;
 
     DECLARE @ActorValue [core].[actor];
     DECLARE @TriggerId [core].[keyBig];
@@ -67,7 +70,6 @@ CREATE OR ALTER PROCEDURE [croniq].[TriggerDeadLetterRetention]
     @DeletedCount [core].[count] OUTPUT
 AS
 BEGIN
-    SET NOCOUNT ON;
 
     DECLARE @ActorValue [core].[actor];
     DECLARE @cutoff [core].[utcDateTime] = DATEADD(DAY, -@RetentionDays, SYSUTCDATETIME());

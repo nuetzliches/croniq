@@ -218,6 +218,7 @@ CREATE OR ALTER PROCEDURE [croniq-internal].[GuardTriggerRef]
     @TimeZoneId [croniq].[timeZoneId] OUTPUT,
     @StartAtUtc [core].[utcDateTimeNullable] OUTPUT,
     @EndAtUtc [core].[utcDateTimeNullable] OUTPUT,
+    @NextFireAtUtc [core].[utcDateTimeNullable] OUTPUT,
     @Enabled [core].[flag] OUTPUT,
     @Metadata [core].[jsonNullable] OUTPUT
 AS
@@ -237,6 +238,7 @@ BEGIN
         @TimeZoneId = tr.[TimeZoneId],
         @StartAtUtc = tr.[StartAtUtc],
         @EndAtUtc = tr.[EndAtUtc],
+        @NextFireAtUtc = tr.[NextFireAtUtc],
         @Enabled = tr.[Enabled],
         @Metadata = tr.[Metadata]
     FROM @Trigger AS tr;
@@ -289,17 +291,23 @@ GO
 CREATE OR ALTER PROCEDURE [croniq-internal].[GuardTriggerLeaseReleaseRef]
     @Release [croniq].[TriggerLeaseReleaseRef] READONLY,
     @LeaseId [core].[keyBig] OUTPUT,
-    @InstanceId [core].[reference] OUTPUT
+    @InstanceId [core].[reference] OUTPUT,
+    @Succeeded [core].[flag] OUTPUT,
+    @NextFireAtUtc [core].[utcDateTimeNullable] OUTPUT,
+    @DeadLetterReason [croniq].[deadLetterReason] OUTPUT
 AS
 BEGIN
     SET NOCOUNT ON;
 
     SELECT TOP (1)
         @LeaseId = rr.[LeaseId],
-        @InstanceId = rr.[InstanceId]
+        @InstanceId = rr.[InstanceId],
+        @Succeeded = rr.[Succeeded],
+        @NextFireAtUtc = rr.[NextFireAtUtc],
+        @DeadLetterReason = rr.[DeadLetterReason]
     FROM @Release AS rr;
 
-    IF @LeaseId IS NULL OR @InstanceId IS NULL
+    IF @LeaseId IS NULL OR @InstanceId IS NULL OR @Succeeded IS NULL
     BEGIN;
         EXEC [croniq-internal].[ThrowTriggerLeaseReleaseRefIncomplete];
     END

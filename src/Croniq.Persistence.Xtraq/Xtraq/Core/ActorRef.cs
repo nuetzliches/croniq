@@ -57,7 +57,7 @@ public sealed record ActorRefRequest
 {
     [System.ComponentModel.DataAnnotations.Required]
     [System.ComponentModel.DataAnnotations.StringLength(128)]
-    public string Actor { get; init; }
+    public string Actor { get; init; } = string.Empty;
 
 	internal ActorRef ToTableType()
 		=> ActorRef.Create(

@@ -81,17 +81,17 @@ public sealed record InstanceRefRequest
 {
     [System.ComponentModel.DataAnnotations.Required]
     [System.ComponentModel.DataAnnotations.StringLength(64)]
-    public string InstanceId { get; init; }
+    public string InstanceId { get; init; } = string.Empty;
     [System.ComponentModel.DataAnnotations.Required]
     [System.ComponentModel.DataAnnotations.StringLength(32)]
-    public string Environment { get; init; }
+    public string Environment { get; init; } = string.Empty;
     [System.ComponentModel.DataAnnotations.Required]
     [System.ComponentModel.DataAnnotations.StringLength(64)]
-    public string NodeName { get; init; }
+    public string NodeName { get; init; } = string.Empty;
     public string? Capabilities { get; init; }
     [System.ComponentModel.DataAnnotations.Required]
     [System.ComponentModel.DataAnnotations.StringLength(64)]
-    public string Version { get; init; }
+    public string Version { get; init; } = string.Empty;
 
 	internal InstanceRef ToTableType()
 		=> InstanceRef.Create(

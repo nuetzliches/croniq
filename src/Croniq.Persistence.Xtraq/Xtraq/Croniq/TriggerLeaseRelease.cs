@@ -28,7 +28,7 @@ namespace Croniq.Persistence.Xtraq.Croniq;
 public sealed record class TriggerLeaseReleaseRequest
 {
     [System.ComponentModel.DataAnnotations.Required]
-    public IReadOnlyList<TriggerLeaseReleaseRefRequest> Release { get; init; }
+    public IReadOnlyList<TriggerLeaseReleaseRefRequest> Release { get; init; } = default!;
 }
 
 public readonly record struct TriggerLeaseReleaseInput(
@@ -58,7 +58,6 @@ public sealed class TriggerLeaseReleaseResult
 	/// </summary>
 	public TriggerLeaseReleaseOutput? Output { get; init; }
 }
-
 internal static class TriggerLeaseReleaseRequestMapper
 {
     public static async ValueTask<TriggerLeaseReleaseInput> ToInputAsync(TriggerLeaseReleaseRequest? request, IXtraqParameterBindingProvider? bindingProvider, CancellationToken cancellationToken = default)

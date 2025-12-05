@@ -14,6 +14,7 @@ Konventionen (Auszug):
 - Alle Zugriffe laufen ueber die Prozeduren; keine direkte SQL im Provider.
 - UDTs/TVPs definieren Pflichtfelder; Guard-Procs werfen 5000x Fehlercodes bei fehlenden/ungueltigen Eingaben.
 - Zeit/Defaults: UTC mit `SYSUTCDATETIME()`, Soft-Delete ueber `IsDeleted` (core.flag), Identity-Start 1001.
+- Session-Settings: Jede Prozedur setzt zu Beginn `SET QUOTED_IDENTIFIER ON; SET ANSI_NULLS ON;`. Weitere SET-Optionen (inkl. NOCOUNT) werden zentral im SessionSettings-Helper der Anwendung gesetzt (nicht mehr in den Procs duplizieren).
 
 Migration/Tests:
 - Fuer sauberen Stand DB droppen oder leere DB anlegen, dann `apply.ps1` laufen lassen.

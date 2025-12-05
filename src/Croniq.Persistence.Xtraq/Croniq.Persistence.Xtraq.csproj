@@ -7,6 +7,7 @@
   <ItemGroup>
     <ProjectReference Include="..\Croniq.Persistence.Abstractions\Croniq.Persistence.Abstractions.csproj" />
     <ProjectReference Include="..\Croniq.Sdk\Croniq.Sdk.csproj" />
+    <ProjectReference Include="..\Croniq.Core\Croniq.Core.csproj" />
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="Microsoft.Extensions.Configuration.Binder" Version="10.0.0" />

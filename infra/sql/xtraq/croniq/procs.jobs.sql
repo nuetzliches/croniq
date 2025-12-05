@@ -1,3 +1,7 @@
+SET QUOTED_IDENTIFIER ON;
+SET ANSI_NULLS ON;
+GO
+
 -- Procedures for Croniq jobs and triggers
 GO
 
@@ -9,7 +13,6 @@ CREATE OR ALTER PROCEDURE [croniq].[JobUpsert]
     @UpdatedUtc [core].[utcDateTime] OUTPUT
 AS
 BEGIN
-    SET NOCOUNT ON;
 
     DECLARE @ActorValue [core].[actor];
     DECLARE @JobKey [core].[reference];
@@ -96,7 +99,6 @@ CREATE OR ALTER PROCEDURE [croniq].[JobDelete]
     @JobId [core].[keyBig] OUTPUT
 AS
 BEGIN
-    SET NOCOUNT ON;
 
     DECLARE @ActorValue [core].[actor];
     DECLARE @JobKey [core].[reference];
@@ -140,7 +142,6 @@ CREATE OR ALTER PROCEDURE [croniq].[TriggerUpsert]
     @UpdatedUtc [core].[utcDateTime] OUTPUT
 AS
 BEGIN
-    SET NOCOUNT ON;
 
     DECLARE @ActorValue [core].[actor];
     DECLARE @TriggerKey [core].[reference];
@@ -155,6 +156,7 @@ BEGIN
     DECLARE @TimeZoneId [croniq].[timeZoneId];
     DECLARE @StartAtUtc [core].[utcDateTimeNullable];
     DECLARE @EndAtUtc [core].[utcDateTimeNullable];
+    DECLARE @NextFireAtUtc [core].[utcDateTimeNullable];
     DECLARE @Enabled [core].[flag];
     DECLARE @Metadata [core].[jsonNullable];
     DECLARE @ExistingTriggerId [core].[keyBig];
@@ -162,7 +164,12 @@ BEGIN
     DECLARE @now [core].[utcDateTime] = SYSUTCDATETIME();
 
     EXEC [core-internal].[GuardActor] @Actor, @ActorValue OUTPUT;
-    EXEC [croniq-internal].[GuardTriggerRef] @Trigger, @TriggerKey OUTPUT, @JobKey OUTPUT, @TenantId OUTPUT, @JobId OUTPUT, @Environment OUTPUT, @Namespace OUTPUT, @Name OUTPUT, @Variant OUTPUT, @CronExpression OUTPUT, @TimeZoneId OUTPUT, @StartAtUtc OUTPUT, @EndAtUtc OUTPUT, @Enabled OUTPUT, @Metadata OUTPUT;
+    EXEC [croniq-internal].[GuardTriggerRef] @Trigger, @TriggerKey OUTPUT, @JobKey OUTPUT, @TenantId OUTPUT, @JobId OUTPUT, @Environment OUTPUT, @Namespace OUTPUT, @Name OUTPUT, @Variant OUTPUT, @CronExpression OUTPUT, @TimeZoneId OUTPUT, @StartAtUtc OUTPUT, @EndAtUtc OUTPUT, @NextFireAtUtc OUTPUT, @Enabled OUTPUT, @Metadata OUTPUT;
+
+    IF @NextFireAtUtc IS NULL
+    BEGIN;
+        EXEC [croniq-internal].[ThrowTriggerRefIncomplete];
+    END
 
     IF @JobId IS NULL
     BEGIN
@@ -196,6 +203,7 @@ BEGIN
             [TimeZoneId] = @TimeZoneId,
             [StartAtUtc] = @StartAtUtc,
             [EndAtUtc] = @EndAtUtc,
+            [NextFireAtUtc] = @NextFireAtUtc,
             [Enabled] = @Enabled,
             [Metadata] = @Metadata,
             [UpdatedUtc] = @now,
@@ -221,6 +229,7 @@ BEGIN
             [TimeZoneId],
             [StartAtUtc],
             [EndAtUtc],
+            [NextFireAtUtc],
             [Enabled],
             [Metadata],
             [CreatedBy],
@@ -240,6 +249,7 @@ BEGIN
             @TimeZoneId,
             @StartAtUtc,
             @EndAtUtc,
+            @NextFireAtUtc,
             @Enabled,
             @Metadata,
             @ActorValue,
@@ -264,8 +274,6 @@ CREATE OR ALTER PROCEDURE [croniq].[TriggerDelete]
     @UpdatedUtc [core].[utcDateTime] OUTPUT
 AS
 BEGIN
-    SET NOCOUNT ON;
-
     DECLARE @ActorValue [core].[actor];
     DECLARE @TriggerKey [core].[reference];
     DECLARE @JobKey [core].[reference];
@@ -318,10 +326,13 @@ GO
 
 -- Find job by JobKey and return a JSON payload (single object, no array)
 CREATE OR ALTER PROCEDURE [croniq].[JobFindByKey]
+    @Actor [core].[ActorRef] READONLY,
     @JobKey [core].[reference]
 AS
 BEGIN
-    SET NOCOUNT ON;
+
+    DECLARE @ActorValue [core].[actor];
+    EXEC [core-internal].[GuardActor] @Actor, @ActorValue OUTPUT;
 
     SELECT [JobId],
         [JobKey],
@@ -338,5 +349,38 @@ BEGIN
     FROM [croniq].[Jobs]
     WHERE [JobKey] = @JobKey
     FOR JSON PATH, WITHOUT_ARRAY_WRAPPER;
+END
+GO
+
+CREATE OR ALTER PROCEDURE [croniq].[TriggerFindByKey]
+    @Actor [core].[ActorRef] READONLY,
+    @TriggerKey [core].[reference]
+AS
+BEGIN
+
+    DECLARE @ActorValue [core].[actor];
+    EXEC [core-internal].[GuardActor] @Actor, @ActorValue OUTPUT;
+
+    SELECT [TriggerId],
+        [TriggerKey],
+        [JobKey],
+        [JobId],
+        [TenantId],
+        [Environment],
+        [Namespace],
+        [Name],
+        [Variant],
+        [CronExpression],
+        [TimeZoneId],
+        [StartAtUtc],
+        [EndAtUtc],
+        [NextFireAtUtc],
+        [LastFireAtUtc],
+        [Enabled],
+        [Metadata],
+        [IsDeleted]
+    FROM [croniq].[Triggers]
+    WHERE [TriggerKey] = @TriggerKey
+      AND [IsDeleted] = 0;
 END
 GO

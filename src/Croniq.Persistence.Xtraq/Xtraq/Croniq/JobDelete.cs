@@ -28,7 +28,7 @@ namespace Croniq.Persistence.Xtraq.Croniq;
 public sealed record class JobDeleteRequest
 {
     [System.ComponentModel.DataAnnotations.Required]
-    public IReadOnlyList<JobRefRequest> Job { get; init; }
+    public IReadOnlyList<JobRefRequest> Job { get; init; } = default!;
 }
 
 public readonly record struct JobDeleteInput(
@@ -58,7 +58,6 @@ public sealed class JobDeleteResult
 	/// </summary>
 	public JobDeleteOutput? Output { get; init; }
 }
-
 internal static class JobDeleteRequestMapper
 {
     public static async ValueTask<JobDeleteInput> ToInputAsync(JobDeleteRequest? request, IXtraqParameterBindingProvider? bindingProvider, CancellationToken cancellationToken = default)

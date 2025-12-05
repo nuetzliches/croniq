@@ -120,18 +120,18 @@ public sealed record TriggerLeaseRefRequest
     public int TenantId { get; init; }
     [System.ComponentModel.DataAnnotations.Required]
     [System.ComponentModel.DataAnnotations.StringLength(32)]
-    public string Environment { get; init; }
+    public string Environment { get; init; } = string.Empty;
     [System.ComponentModel.DataAnnotations.Required]
     [System.ComponentModel.DataAnnotations.StringLength(64)]
-    public string Namespace { get; init; }
+    public string Namespace { get; init; } = string.Empty;
     [System.ComponentModel.DataAnnotations.Required]
     [System.ComponentModel.DataAnnotations.StringLength(128)]
-    public string Name { get; init; }
+    public string Name { get; init; } = string.Empty;
     [System.ComponentModel.DataAnnotations.StringLength(64)]
     public string? Variant { get; init; }
     [System.ComponentModel.DataAnnotations.Required]
     [System.ComponentModel.DataAnnotations.StringLength(64)]
-    public string InstanceId { get; init; }
+    public string InstanceId { get; init; } = string.Empty;
     public DateTime FireAtUtc { get; init; }
     public DateTime LeaseExpiresAtUtc { get; init; }
     public string? Payload { get; init; }

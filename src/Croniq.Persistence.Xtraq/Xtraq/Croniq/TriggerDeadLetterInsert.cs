@@ -28,7 +28,7 @@ namespace Croniq.Persistence.Xtraq.Croniq;
 public sealed record class TriggerDeadLetterInsertRequest
 {
     [System.ComponentModel.DataAnnotations.Required]
-    public IReadOnlyList<TriggerDeadLetterRefRequest> DeadLetter { get; init; }
+    public IReadOnlyList<TriggerDeadLetterRefRequest> DeadLetter { get; init; } = default!;
 }
 
 public readonly record struct TriggerDeadLetterInsertInput(
@@ -59,7 +59,6 @@ public sealed class TriggerDeadLetterInsertResult
 	/// </summary>
 	public TriggerDeadLetterInsertOutput? Output { get; init; }
 }
-
 internal static class TriggerDeadLetterInsertRequestMapper
 {
     public static async ValueTask<TriggerDeadLetterInsertInput> ToInputAsync(TriggerDeadLetterInsertRequest? request, IXtraqParameterBindingProvider? bindingProvider, CancellationToken cancellationToken = default)

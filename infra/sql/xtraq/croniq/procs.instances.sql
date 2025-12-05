@@ -1,3 +1,7 @@
+SET QUOTED_IDENTIFIER ON;
+SET ANSI_NULLS ON;
+GO
+
 -- Procedures for cluster instances: registration, heartbeat, lease cleanup
 GO
 
@@ -9,7 +13,6 @@ CREATE OR ALTER PROCEDURE [croniq].[InstanceRegister]
     @LastSeenUtc [core].[utcDateTime] OUTPUT
 AS
 BEGIN
-    SET NOCOUNT ON;
 
     DECLARE @ActorValue [core].[actor];
     DECLARE @now [core].[utcDateTime] = SYSUTCDATETIME();
@@ -102,7 +105,6 @@ CREATE OR ALTER PROCEDURE [croniq].[InstanceHeartbeat]
     @LastSeenUtc [core].[utcDateTime] OUTPUT
 AS
 BEGIN
-    SET NOCOUNT ON;
 
     DECLARE @ActorValue [core].[actor];
     DECLARE @now [core].[utcDateTime] = SYSUTCDATETIME();
@@ -149,7 +151,6 @@ CREATE OR ALTER PROCEDURE [croniq].[TriggerLeaseCleanup]
     @ReleasedCount [core].[count] OUTPUT
 AS
 BEGIN
-    SET NOCOUNT ON;
 
     DECLARE @ActorValue [core].[actor];
     DECLARE @now [core].[utcDateTime] = SYSUTCDATETIME();

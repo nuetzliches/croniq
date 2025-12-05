@@ -28,7 +28,7 @@ namespace Croniq.Persistence.Xtraq.Croniq;
 public sealed record class TriggerUpsertRequest
 {
     [System.ComponentModel.DataAnnotations.Required]
-    public IReadOnlyList<TriggerRefRequest> Trigger { get; init; }
+    public IReadOnlyList<TriggerRefRequest> Trigger { get; init; } = default!;
     public bool? AllowDeletedReuse { get; init; }
 }
 
@@ -61,7 +61,6 @@ public sealed class TriggerUpsertResult
 	/// </summary>
 	public TriggerUpsertOutput? Output { get; init; }
 }
-
 internal static class TriggerUpsertRequestMapper
 {
     public static async ValueTask<TriggerUpsertInput> ToInputAsync(TriggerUpsertRequest? request, IXtraqParameterBindingProvider? bindingProvider, CancellationToken cancellationToken = default)
