@@ -1,7 +1,7 @@
 {
   "$schema": "https://nuetzliches.github.io/xtraq/xtraqconfig.schema.json",
   "Namespace": "Croniq.Persistence.Xtraq",
-  "BuildSchemas": ["croniq"],
+  "BuildSchemas": ["core", "croniq"],
   "Api": {
     "Requests": {
       "AutoBind": ["@Actor [core].[Actor]"]

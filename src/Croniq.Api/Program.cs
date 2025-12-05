@@ -22,29 +22,35 @@ builder.Services.AddCroniqCore();
 builder.Services.AddCroniqDefaultProviders();
 builder.Services.AddCroniqInMemoryJobStore();
 
-// Register Rate Limiter
-builder.Services.AddRateLimiter(options =>
+var apiOpts = builder.Configuration.GetSection("Croniq:Api").Get<CroniqApiOptions>() ?? new CroniqApiOptions();
+if (apiOpts.RequestsPerMinute > 0)
 {
-    options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
-    options.GlobalLimiter = PartitionedRateLimiter.Create<HttpContext, string>(context =>
+    builder.Services.AddRateLimiter(options =>
     {
-        var apiOptions = context.RequestServices.GetRequiredService<IOptions<CroniqApiOptions>>().Value;
-        var key = context.Request.Headers["X-Croniq-Key"].FirstOrDefault() ?? "anonymous";
-        var permits = Math.Max(1, apiOptions.RequestsPerMinute);
-
-        return RateLimitPartition.GetFixedWindowLimiter(key, _ => new FixedWindowRateLimiterOptions
+        options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+        options.GlobalLimiter = PartitionedRateLimiter.Create<HttpContext, string>(context =>
         {
-            PermitLimit = permits,
-            Window = TimeSpan.FromMinutes(1),
-            QueueLimit = permits,
-            QueueProcessingOrder = QueueProcessingOrder.OldestFirst
+            var configured = context.RequestServices.GetRequiredService<IOptions<CroniqApiOptions>>().Value;
+            var key = context.Request.Headers["X-Croniq-Key"].FirstOrDefault() ?? "anonymous";
+            var permits = Math.Max(1, configured.RequestsPerMinute);
+
+            return RateLimitPartition.GetFixedWindowLimiter(key, _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = permits,
+                Window = TimeSpan.FromMinutes(1),
+                QueueLimit = permits,
+                QueueProcessingOrder = QueueProcessingOrder.OldestFirst
+            });
         });
     });
-});
+}
 
 var app = builder.Build();
 
-app.UseRateLimiter();
+if (apiOpts.RequestsPerMinute > 0)
+{
+    app.UseRateLimiter();
+}
 app.Use(async (context, next) =>
 {
     var apiOptions = context.RequestServices.GetRequiredService<IOptions<CroniqApiOptions>>().Value;
@@ -63,12 +69,43 @@ app.Use(async (context, next) =>
 });
 
 app.MapGet("/health", () => Results.Ok(new { status = "ok" }));
+app.MapGet("/health/persistence", async (IServiceProvider sp, CancellationToken ct) =>
+{
+    var provider = sp.GetService<IJobPersistenceProvider>();
+    var providerName = provider?.GetType().FullName ?? "unknown";
+
+    var health = sp.GetService<IPersistenceHealth>();
+    if (health is null)
+    {
+        return Results.Ok(new { status = "ok", provider = providerName, note = "no-db-provider-configured" });
+    }
+
+    try
+    {
+        var result = await health.CheckAsync(ct).ConfigureAwait(false);
+        if (result.IsHealthy)
+        {
+            return Results.Ok(new { status = "ok", provider = providerName, db = "reachable" });
+        }
+
+        return Results.Problem(statusCode: StatusCodes.Status503ServiceUnavailable, title: "db-unhealthy", detail: result.Detail);
+    }
+    catch (Exception ex)
+    {
+        return Results.Problem(statusCode: StatusCodes.Status503ServiceUnavailable, title: "db-unreachable", detail: ex.Message);
+    }
+});
 
 app.MapPost("/schedules", async (
     UpsertScheduleRequest request,
     IJobPersistenceProvider store,
     CancellationToken cancellationToken) =>
 {
+    if (string.IsNullOrWhiteSpace(request.JobKey) || string.IsNullOrWhiteSpace(request.CronExpression))
+    {
+        return Results.BadRequest(new { error = "invalid-request", message = "JobKey and CronExpression are required." });
+    }
+
     var parts = ParseJobKey(request.JobKey);
     var triggerId = string.IsNullOrWhiteSpace(request.TriggerId)
         ? $"{request.JobKey}:{request.CronExpression}"

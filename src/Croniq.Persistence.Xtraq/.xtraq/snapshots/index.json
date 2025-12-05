@@ -1,14 +1,14 @@
 {
   "SchemaVersion": 1,
-  "Fingerprint": "A405F82ABFFAF934",
+  "Fingerprint": "3EC38646B12F65AC",
   "Parser": {
     "ToolVersion": "net9.0",
     "ResultSetParserVersion": 8
   },
   "Stats": {
-    "ProcedureTotal": 14,
+    "ProcedureTotal": 15,
     "ProcedureSkipped": 0,
-    "ProcedureLoaded": 14,
+    "ProcedureLoaded": 15,
     "UdttTotal": 7,
     "TableTotal": 0,
     "ViewTotal": 0,
@@ -16,6 +16,45 @@
     "FunctionTotal": 0
   },
   "Procedures": [
+    {
+      "Schema": "core",
+      "Name": "HealthPing",
+      "File": "core.HealthPing.json",
+      "Hash": "6C0DB46757750168",
+      "ResultSets": [
+        {
+          "ReturnsJson": false,
+          "ReturnsJsonArray": false,
+          "JsonRootProperty": null,
+          "HasSelectStar": false,
+          "ProcedureRef": null,
+          "Columns": [
+            {
+              "Name": "Status",
+              "Alias": "Status",
+              "SqlTypeName": "int",
+              "IsNullable": false,
+              "ForcedNullable": false,
+              "MaxLength": null,
+              "Precision": null,
+              "Scale": null,
+              "SourceSchema": null,
+              "SourceTable": null,
+              "SourceColumn": null,
+              "ReturnsJson": false,
+              "ReturnsJsonArray": false,
+              "IsNestedJson": false,
+              "JsonRootProperty": null,
+              "JsonElementClrType": null,
+              "JsonElementSqlType": null,
+              "FunctionRef": null,
+              "UserTypeRef": null,
+              "Columns": null
+            }
+          ]
+        }
+      ]
+    },
     {
       "Schema": "croniq",
       "Name": "InstanceHeartbeat",

@@ -1,0 +1,16 @@
+{
+  "Schema": "core",
+  "Name": "HealthPing",
+  "Parameters": [],
+  "ResultSets": [
+    {
+      "Columns": [
+        {
+          "Name": "Status",
+          "Alias": "Status",
+          "TypeRef": "sys.int"
+        }
+      ]
+    }
+  ]
+}

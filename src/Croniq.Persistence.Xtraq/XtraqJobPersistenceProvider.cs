@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Globalization;
 using System.Linq;
 using System.Text.Json;
@@ -23,6 +24,7 @@ public sealed class XtraqJobPersistenceProvider : IJobPersistenceProvider
     private readonly ILogger<XtraqJobPersistenceProvider> _logger;
     private readonly XtraqOptions _options;
     private readonly XtraqDbContext _db;
+    private readonly ActivitySource _activitySource = new("Croniq.Persistence.Xtraq");
     private readonly JsonSerializerOptions _jsonOptions = new(JsonSerializerDefaults.Web);
     private readonly ConcurrentDictionary<string, LeaseContext> _leaseContexts = new();
     private string? _currentInstanceId;
@@ -77,6 +79,8 @@ public sealed class XtraqJobPersistenceProvider : IJobPersistenceProvider
 
         return Task.Run(async () =>
         {
+            using var activity = _activitySource.StartActivity("TriggerUpsert");
+            activity?.SetTag("croniq.trigger", triggerKey);
             var jobId = await ResolveJobIdAsync(jobKeyParts.JobKey, cancellationToken).ConfigureAwait(false);
             var nextFireAtUtc = ComputeNextFireUtc(
                 trigger.ScheduleExpression,
@@ -215,6 +219,9 @@ public sealed class XtraqJobPersistenceProvider : IJobPersistenceProvider
 
         return Task.Run(async () =>
         {
+            using var activity = _activitySource.StartActivity("TriggerRelease");
+            activity?.SetTag("croniq.trigger", request.Lease.TriggerId);
+            activity?.SetTag("croniq.lease", request.Lease.LeaseId);
             var leaseId = ParseLeaseId(request.Lease.LeaseId);
             var schedule = await ResolveLeaseContextAsync(request.Lease.TriggerId, leaseId, cancellationToken).ConfigureAwait(false);
             var instanceId = schedule.InstanceId ?? _currentInstanceId;

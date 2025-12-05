@@ -2,6 +2,7 @@ using Croniq.Persistence.Abstractions;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
+using Croniq.Persistence.Xtraq.Health;
 
 namespace Croniq.Persistence.Xtraq;
 
@@ -52,6 +53,7 @@ public static class DependencyInjectionExtensions
         services.AddSingleton<XtraqDbContext>();
         services.AddSingleton<IXtraqDbContext>(sp => sp.GetRequiredService<XtraqDbContext>());
         services.AddSingleton<IJobPersistenceProvider, XtraqJobPersistenceProvider>();
+        services.AddSingleton<IPersistenceHealth, XtraqPersistenceHealth>();
 
         return services;
     }

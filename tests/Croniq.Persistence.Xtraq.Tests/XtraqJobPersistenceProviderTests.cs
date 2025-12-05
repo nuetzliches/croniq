@@ -238,6 +238,8 @@ public class XtraqJobPersistenceProviderTests : IClassFixture<XtraqDatabaseFixtu
 
         var deadLetters = await CountDeadLettersAsync(await GetTriggerIdAsync(triggerKey), reason);
         Assert.True(deadLetters > 0);
+        var releasedCount = await GetReleasedCountAsync(triggerKey);
+        Assert.Equal(1, releasedCount);
     }
 
     private IJobPersistenceProvider CreateProvider()
@@ -315,5 +317,20 @@ public class XtraqJobPersistenceProviderTests : IClassFixture<XtraqDatabaseFixtu
         cmd.Parameters.AddWithValue("@id", long.Parse(leaseId, System.Globalization.CultureInfo.InvariantCulture));
         var result = await cmd.ExecuteScalarAsync().ConfigureAwait(false);
         return result is int i && i == 1;
+    }
+
+    private async Task<int> GetReleasedCountAsync(string triggerKey)
+    {
+        if (_fixture.ConnectionString is null)
+        {
+            throw new InvalidOperationException("Connection string is not configured.");
+        }
+
+        await using var conn = new SqlConnection(_fixture.ConnectionString);
+        await conn.OpenAsync().ConfigureAwait(false);
+        await using var cmd = new SqlCommand("SELECT COUNT(*) FROM croniq.TriggerLeases WHERE TriggerKey = @k AND ReleasedAtUtc IS NOT NULL", conn);
+        cmd.Parameters.AddWithValue("@k", triggerKey);
+        var result = await cmd.ExecuteScalarAsync().ConfigureAwait(false);
+        return Convert.ToInt32(result, System.Globalization.CultureInfo.InvariantCulture);
     }
 }

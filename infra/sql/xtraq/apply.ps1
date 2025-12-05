@@ -60,6 +60,7 @@ Write-Host "Ensuring database [$Database] exists on $Server..."
 $scripts = @(
     "predeploy.sql",
     "core/types.sql",
+    "core/procs.health.sql",
     "core-internal/types.sql",
     "croniq/types.sql",
     "croniq-internal/types.sql",
