@@ -1,0 +1,41 @@
+{
+  "Schema": "croniq",
+  "Name": "JobRef",
+  "Columns": [
+    {
+      "Name": "JobKey",
+      "TypeRef": "core.reference"
+    },
+    {
+      "Name": "TenantId",
+      "TypeRef": "core.key"
+    },
+    {
+      "Name": "Environment",
+      "TypeRef": "core.tag"
+    },
+    {
+      "Name": "Namespace",
+      "TypeRef": "core.label"
+    },
+    {
+      "Name": "Name",
+      "TypeRef": "core.name"
+    },
+    {
+      "Name": "Variant",
+      "TypeRef": "croniq.jobVariant",
+      "IsNullable": true
+    },
+    {
+      "Name": "Description",
+      "TypeRef": "core.labelNullable",
+      "IsNullable": true
+    },
+    {
+      "Name": "Metadata",
+      "TypeRef": "core.jsonNullable",
+      "IsNullable": true
+    }
+  ]
+}

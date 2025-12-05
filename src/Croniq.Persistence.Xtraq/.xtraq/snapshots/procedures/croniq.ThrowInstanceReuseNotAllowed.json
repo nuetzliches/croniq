@@ -1,0 +1,6 @@
+{
+  "Schema": "croniq",
+  "Name": "ThrowInstanceReuseNotAllowed",
+  "Parameters": [],
+  "ResultSets": []
+}

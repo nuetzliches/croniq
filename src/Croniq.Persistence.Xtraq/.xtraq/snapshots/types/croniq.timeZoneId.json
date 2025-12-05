@@ -1,0 +1,7 @@
+{
+  "Schema": "croniq",
+  "Name": "timeZoneId",
+  "BaseSqlTypeName": "nvarchar",
+  "MaxLength": 64,
+  "IsNullable": false
+}

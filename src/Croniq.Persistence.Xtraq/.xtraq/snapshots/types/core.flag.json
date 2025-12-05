@@ -1,0 +1,8 @@
+{
+  "Schema": "core",
+  "Name": "flag",
+  "BaseSqlTypeName": "bit",
+  "MaxLength": 1,
+  "Precision": 1,
+  "IsNullable": false
+}

@@ -1,0 +1,7 @@
+{
+  "Schema": "croniq",
+  "Name": "stateCode",
+  "BaseSqlTypeName": "nvarchar",
+  "MaxLength": 32,
+  "IsNullable": false
+}

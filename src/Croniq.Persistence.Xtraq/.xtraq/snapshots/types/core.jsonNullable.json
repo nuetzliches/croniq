@@ -1,0 +1,6 @@
+{
+  "Schema": "core",
+  "Name": "jsonNullable",
+  "BaseSqlTypeName": "nvarchar",
+  "IsNullable": true
+}

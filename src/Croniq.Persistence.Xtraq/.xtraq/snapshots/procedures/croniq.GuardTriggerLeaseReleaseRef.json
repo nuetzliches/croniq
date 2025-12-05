@@ -1,0 +1,30 @@
+{
+  "Schema": "croniq",
+  "Name": "GuardTriggerLeaseReleaseRef",
+  "Parameters": [
+    {
+      "Name": "Release",
+      "TableTypeRef": "croniq.TriggerLeaseReleaseRef"
+    },
+    {
+      "Name": "LeaseId",
+      "TypeRef": "sys.bigint",
+      "UserTypeRef": "core.keyBig",
+      "IsNullable": true,
+      "IsOutput": true
+    },
+    {
+      "Name": "InstanceId",
+      "TypeRef": "sys.nvarchar",
+      "UserTypeRef": "core.reference",
+      "IsNullable": true,
+      "MaxLength": 64,
+      "IsOutput": true
+    }
+  ],
+  "ResultSets": [
+    {
+      "ProcedureRef": "croniq.ThrowTriggerLeaseReleaseRefIncomplete"
+    }
+  ]
+}

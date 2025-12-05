@@ -1,0 +1,53 @@
+{
+  "Schema": "croniq",
+  "Name": "TriggerLeaseAcquire",
+  "Parameters": [
+    {
+      "Name": "Actor",
+      "TableTypeRef": "core.ActorRef"
+    },
+    {
+      "Name": "Lease",
+      "TableTypeRef": "croniq.TriggerLeaseRef"
+    },
+    {
+      "Name": "AllowDeletedReuse",
+      "TypeRef": "sys.bit",
+      "UserTypeRef": "core.flag",
+      "IsNullable": true
+    },
+    {
+      "Name": "LeaseId",
+      "TypeRef": "sys.bigint",
+      "UserTypeRef": "core.keyBig",
+      "IsNullable": true,
+      "IsOutput": true
+    },
+    {
+      "Name": "LeaseExpiresAtUtc",
+      "TypeRef": "sys.datetime2",
+      "UserTypeRef": "core.utcDateTime",
+      "IsNullable": true,
+      "Precision": 23,
+      "Scale": 3,
+      "IsOutput": true
+    }
+  ],
+  "ResultSets": [
+    {
+      "ProcedureRef": "core.GuardActor"
+    },
+    {
+      "ProcedureRef": "croniq.GuardTriggerLeaseRef"
+    },
+    {
+      "ProcedureRef": "croniq.ThrowTriggerNotFound"
+    },
+    {
+      "ProcedureRef": "croniq.ThrowTriggerLeaseActive"
+    },
+    {
+      "ProcedureRef": "croniq.ThrowTriggerLeaseReuseNotAllowed"
+    }
+  ]
+}

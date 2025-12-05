@@ -1,0 +1,6 @@
+{
+  "Schema": "croniq",
+  "Name": "ThrowTriggerLeaseOwnershipMismatch",
+  "Parameters": [],
+  "ResultSets": []
+}

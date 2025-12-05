@@ -1,0 +1,14 @@
+{
+  "Schema": "croniq",
+  "Name": "TriggerLeaseReleaseRef",
+  "Columns": [
+    {
+      "Name": "LeaseId",
+      "TypeRef": "core.keyBig"
+    },
+    {
+      "Name": "InstanceId",
+      "TypeRef": "core.reference"
+    }
+  ]
+}

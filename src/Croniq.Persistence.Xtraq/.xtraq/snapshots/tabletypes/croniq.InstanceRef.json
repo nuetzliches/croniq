@@ -1,0 +1,27 @@
+{
+  "Schema": "croniq",
+  "Name": "InstanceRef",
+  "Columns": [
+    {
+      "Name": "InstanceId",
+      "TypeRef": "core.reference"
+    },
+    {
+      "Name": "Environment",
+      "TypeRef": "core.tag"
+    },
+    {
+      "Name": "NodeName",
+      "TypeRef": "core.label"
+    },
+    {
+      "Name": "Capabilities",
+      "TypeRef": "core.jsonNullable",
+      "IsNullable": true
+    },
+    {
+      "Name": "Version",
+      "TypeRef": "core.label"
+    }
+  ]
+}

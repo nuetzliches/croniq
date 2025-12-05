@@ -1,0 +1,7 @@
+{
+  "Schema": "core",
+  "Name": "labelNullable",
+  "BaseSqlTypeName": "nvarchar",
+  "MaxLength": 64,
+  "IsNullable": true
+}

@@ -1,0 +1,6 @@
+{
+  "Schema": "croniq",
+  "Name": "ThrowTriggerDeadLetterRefIncomplete",
+  "Parameters": [],
+  "ResultSets": []
+}

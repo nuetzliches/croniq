@@ -1,0 +1,8 @@
+{
+  "Schema": "core",
+  "Name": "intervalMs",
+  "BaseSqlTypeName": "int",
+  "MaxLength": 4,
+  "Precision": 10,
+  "IsNullable": false
+}

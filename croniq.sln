@@ -8,6 +8,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Croniq.Core", "src\Croniq.C
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Croniq.Sdk", "src\Croniq.Sdk\Croniq.Sdk.csproj", "{4F92E66A-B56A-6EAB-998D-6DDA06EC3E93}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Croniq.Persistence.Xtraq", "src\Croniq.Persistence.Xtraq\Croniq.Persistence.Xtraq.csproj", "{59A26A4E-3D74-4E2C-9E0D-5D2B1C5E3E0A}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -22,6 +24,10 @@ Global
 		{4F92E66A-B56A-6EAB-998D-6DDA06EC3E93}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{4F92E66A-B56A-6EAB-998D-6DDA06EC3E93}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{4F92E66A-B56A-6EAB-998D-6DDA06EC3E93}.Release|Any CPU.Build.0 = Release|Any CPU
+		{59A26A4E-3D74-4E2C-9E0D-5D2B1C5E3E0A}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{59A26A4E-3D74-4E2C-9E0D-5D2B1C5E3E0A}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{59A26A4E-3D74-4E2C-9E0D-5D2B1C5E3E0A}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{59A26A4E-3D74-4E2C-9E0D-5D2B1C5E3E0A}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
@@ -29,6 +35,7 @@ Global
 	GlobalSection(NestedProjects) = preSolution
 		{7120913E-9E7B-6BB4-0F5A-35D149AD7A91} = {827E0CD3-B72D-47B6-A68D-7590B98EB39B}
 		{4F92E66A-B56A-6EAB-998D-6DDA06EC3E93} = {827E0CD3-B72D-47B6-A68D-7590B98EB39B}
+		{59A26A4E-3D74-4E2C-9E0D-5D2B1C5E3E0A} = {827E0CD3-B72D-47B6-A68D-7590B98EB39B}
 	EndGlobalSection
 	GlobalSection(ExtensibilityGlobals) = postSolution
 		SolutionGuid = {C7C79EEC-9CBF-407E-A9F8-231629560950}

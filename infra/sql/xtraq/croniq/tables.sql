@@ -27,6 +27,7 @@ GO
 CREATE TABLE [croniq].[Jobs]
 (
     [JobId] [core].[keyBig] IDENTITY(1001,1) PRIMARY KEY,
+    [JobKey] [core].[reference],
     [TenantId] [core].[key],
     [Environment] [core].[tag],
     [Namespace] [core].[label],
@@ -48,9 +49,9 @@ CREATE UNIQUE NONCLUSTERED INDEX [UX_croniq_Jobs_Key]
     WHERE [IsDeleted] = 0;
 GO
 
-CREATE NONCLUSTERED INDEX [IX_croniq_TriggerLeases_StaleCheck]
-    ON [croniq].[TriggerLeases] ([IsDeleted], [LeaseExpiresAtUtc])
-    INCLUDE ([InstanceId]);
+CREATE UNIQUE NONCLUSTERED INDEX [UX_croniq_Jobs_JobKey]
+    ON [croniq].[Jobs] ([JobKey])
+    WHERE [IsDeleted] = 0;
 GO
 
 CREATE NONCLUSTERED INDEX [IX_croniq_Instances_LastSeen]
@@ -58,18 +59,11 @@ CREATE NONCLUSTERED INDEX [IX_croniq_Instances_LastSeen]
     INCLUDE ([LastSeenUtc]);
 GO
 
-CREATE UNIQUE NONCLUSTERED INDEX [UX_croniq_TriggerLeases_Active]
-    ON [croniq].[TriggerLeases] ([TriggerId])
-    WHERE [IsDeleted] = 0;
-GO
-
-CREATE NONCLUSTERED INDEX [IX_croniq_TriggerLeases_Retention]
-    ON [croniq].[TriggerLeases] ([IsDeleted], [UpdatedUtc]);
-GO
-
 CREATE TABLE [croniq].[Triggers]
 (
     [TriggerId] [core].[keyBig] IDENTITY(1001,1) PRIMARY KEY,
+    [TriggerKey] [core].[reference],
+    [JobKey] [core].[reference],
     [JobId] [core].[keyBig],
     [TenantId] [core].[key],
     [Environment] [core].[tag],
@@ -97,6 +91,11 @@ CREATE UNIQUE NONCLUSTERED INDEX [UX_croniq_Triggers_Key]
     WHERE [IsDeleted] = 0;
 GO
 
+CREATE UNIQUE NONCLUSTERED INDEX [UX_croniq_Triggers_TriggerKey]
+    ON [croniq].[Triggers] ([TriggerKey])
+    WHERE [IsDeleted] = 0;
+GO
+
 CREATE TABLE [croniq].[TriggerLeases]
 (
     [LeaseId] [core].[keyBig] IDENTITY(1001,1) PRIMARY KEY,
@@ -121,6 +120,20 @@ CREATE TABLE [croniq].[TriggerLeases]
     CONSTRAINT FK_croniq_TriggerLeases_auth_Tenants FOREIGN KEY ([TenantId]) REFERENCES [auth].[Tenants]([TenantId]),
     CONSTRAINT FK_croniq_TriggerLeases_croniq_Instances FOREIGN KEY ([InstanceId]) REFERENCES [croniq].[Instances]([InstanceId])
 );
+GO
+
+CREATE NONCLUSTERED INDEX [IX_croniq_TriggerLeases_StaleCheck]
+    ON [croniq].[TriggerLeases] ([IsDeleted], [LeaseExpiresAtUtc])
+    INCLUDE ([InstanceId]);
+GO
+
+CREATE UNIQUE NONCLUSTERED INDEX [UX_croniq_TriggerLeases_Active]
+    ON [croniq].[TriggerLeases] ([TriggerId])
+    WHERE [IsDeleted] = 0;
+GO
+
+CREATE NONCLUSTERED INDEX [IX_croniq_TriggerLeases_Retention]
+    ON [croniq].[TriggerLeases] ([IsDeleted], [UpdatedUtc]);
 GO
 
 CREATE TABLE [croniq].[TriggerDeadLetter]

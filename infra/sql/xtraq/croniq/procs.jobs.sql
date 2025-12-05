@@ -12,6 +12,7 @@ BEGIN
     SET NOCOUNT ON;
 
     DECLARE @ActorValue [core].[actor];
+    DECLARE @JobKey [core].[reference];
     DECLARE @TenantId [core].[key];
     DECLARE @Environment [core].[tag];
     DECLARE @Namespace [core].[label];
@@ -24,16 +25,12 @@ BEGIN
     DECLARE @now [core].[utcDateTime] = SYSUTCDATETIME();
 
     EXEC [core].[GuardActor] @Actor, @ActorValue OUTPUT;
-    EXEC [croniq].[GuardJobRef] @Job, @TenantId OUTPUT, @Environment OUTPUT, @Namespace OUTPUT, @Name OUTPUT, @Variant OUTPUT, @Description OUTPUT, @Metadata OUTPUT;
+    EXEC [croniq].[GuardJobRef] @Job, @JobKey OUTPUT, @TenantId OUTPUT, @Environment OUTPUT, @Namespace OUTPUT, @Name OUTPUT, @Variant OUTPUT, @Description OUTPUT, @Metadata OUTPUT;
 
     SELECT @ExistingJobId = j.[JobId],
         @ExistingIsDeleted = j.[IsDeleted]
     FROM [croniq].[Jobs] AS j WITH (UPDLOCK, HOLDLOCK)
-    WHERE j.[TenantId] = @TenantId
-        AND j.[Environment] = @Environment
-        AND j.[Namespace] = @Namespace
-        AND j.[Name] = @Name
-        AND j.[Variant] = @Variant;
+    WHERE j.[JobKey] = @JobKey;
 
     IF @ExistingJobId IS NOT NULL
     BEGIN
@@ -47,6 +44,7 @@ BEGIN
             [Metadata] = @Metadata,
             [UpdatedUtc] = @now,
             [UpdatedBy] = @ActorValue,
+            [JobKey] = @JobKey,
             [IsDeleted] = 0
         WHERE [JobId] = @ExistingJobId;
 
@@ -56,6 +54,7 @@ BEGIN
     BEGIN
         INSERT INTO [croniq].[Jobs]
         (
+            [JobKey],
             [TenantId],
             [Environment],
             [Namespace],
@@ -68,6 +67,7 @@ BEGIN
         )
         VALUES
         (
+            @JobKey,
             @TenantId,
             @Environment,
             @Namespace,
@@ -86,11 +86,7 @@ BEGIN
         @JobId = j.[JobId],
         @UpdatedUtc = COALESCE(j.[UpdatedUtc], j.[CreatedUtc])
     FROM [croniq].[Jobs] AS j
-    WHERE j.[TenantId] = @TenantId
-        AND j.[Environment] = @Environment
-        AND j.[Namespace] = @Namespace
-        AND j.[Name] = @Name
-        AND j.[Variant] = @Variant;
+    WHERE j.[JobKey] = @JobKey;
 END
 GO
 
@@ -103,6 +99,7 @@ BEGIN
     SET NOCOUNT ON;
 
     DECLARE @ActorValue [core].[actor];
+    DECLARE @JobKey [core].[reference];
     DECLARE @TenantId [core].[key];
     DECLARE @Environment [core].[tag];
     DECLARE @Namespace [core].[label];
@@ -113,16 +110,12 @@ BEGIN
     DECLARE @now [core].[utcDateTime] = SYSUTCDATETIME();
 
     EXEC [core].[GuardActor] @Actor, @ActorValue OUTPUT;
-    EXEC [croniq].[GuardJobRef] @Job, @TenantId OUTPUT, @Environment OUTPUT, @Namespace OUTPUT, @Name OUTPUT, @Variant OUTPUT, @Description OUTPUT, @Metadata OUTPUT;
+    EXEC [croniq].[GuardJobRef] @Job, @JobKey OUTPUT, @TenantId OUTPUT, @Environment OUTPUT, @Namespace OUTPUT, @Name OUTPUT, @Variant OUTPUT, @Description OUTPUT, @Metadata OUTPUT;
 
     SELECT TOP (1)
         @JobId = j.[JobId]
     FROM [croniq].[Jobs] AS j WITH (UPDLOCK, HOLDLOCK)
-    WHERE j.[TenantId] = @TenantId
-        AND j.[Environment] = @Environment
-        AND j.[Namespace] = @Namespace
-        AND j.[Name] = @Name
-        AND j.[Variant] = @Variant
+    WHERE j.[JobKey] = @JobKey
         AND j.[IsDeleted] = 0;
 
     IF @JobId IS NULL
@@ -150,6 +143,8 @@ BEGIN
     SET NOCOUNT ON;
 
     DECLARE @ActorValue [core].[actor];
+    DECLARE @TriggerKey [core].[reference];
+    DECLARE @JobKey [core].[reference];
     DECLARE @TenantId [core].[key];
     DECLARE @JobId [core].[keyBig];
     DECLARE @Environment [core].[tag];
@@ -167,7 +162,14 @@ BEGIN
     DECLARE @now [core].[utcDateTime] = SYSUTCDATETIME();
 
     EXEC [core].[GuardActor] @Actor, @ActorValue OUTPUT;
-    EXEC [croniq].[GuardTriggerRef] @Trigger, @TenantId OUTPUT, @JobId OUTPUT, @Environment OUTPUT, @Namespace OUTPUT, @Name OUTPUT, @Variant OUTPUT, @CronExpression OUTPUT, @TimeZoneId OUTPUT, @StartAtUtc OUTPUT, @EndAtUtc OUTPUT, @Enabled OUTPUT, @Metadata OUTPUT;
+    EXEC [croniq].[GuardTriggerRef] @Trigger, @TriggerKey OUTPUT, @JobKey OUTPUT, @TenantId OUTPUT, @JobId OUTPUT, @Environment OUTPUT, @Namespace OUTPUT, @Name OUTPUT, @Variant OUTPUT, @CronExpression OUTPUT, @TimeZoneId OUTPUT, @StartAtUtc OUTPUT, @EndAtUtc OUTPUT, @Enabled OUTPUT, @Metadata OUTPUT;
+
+    IF @JobId IS NULL
+    BEGIN
+        SELECT TOP (1) @JobId = j.[JobId]
+        FROM [croniq].[Jobs] AS j
+        WHERE j.[JobKey] = @JobKey AND j.[IsDeleted] = 0;
+    END
 
     IF NOT EXISTS (SELECT TOP 1 1 FROM [croniq].[Jobs] WHERE [JobId] = @JobId AND [IsDeleted] = 0)
     BEGIN;
@@ -177,11 +179,7 @@ BEGIN
     SELECT @ExistingTriggerId = t.[TriggerId],
         @ExistingIsDeleted = t.[IsDeleted]
     FROM [croniq].[Triggers] AS t WITH (UPDLOCK, HOLDLOCK)
-    WHERE t.[TenantId] = @TenantId
-        AND t.[Environment] = @Environment
-        AND t.[Namespace] = @Namespace
-        AND t.[Name] = @Name
-        AND t.[Variant] = @Variant;
+    WHERE t.[TriggerKey] = @TriggerKey;
 
     IF @ExistingTriggerId IS NOT NULL
     BEGIN
@@ -192,6 +190,8 @@ BEGIN
 
         UPDATE [croniq].[Triggers]
         SET [JobId] = @JobId,
+            [JobKey] = @JobKey,
+            [TriggerKey] = @TriggerKey,
             [CronExpression] = @CronExpression,
             [TimeZoneId] = @TimeZoneId,
             [StartAtUtc] = @StartAtUtc,
@@ -210,6 +210,8 @@ BEGIN
         INSERT INTO [croniq].[Triggers]
         (
             [JobId],
+            [JobKey],
+            [TriggerKey],
             [TenantId],
             [Environment],
             [Namespace],
@@ -227,6 +229,8 @@ BEGIN
         VALUES
         (
             @JobId,
+            @JobKey,
+            @TriggerKey,
             @TenantId,
             @Environment,
             @Namespace,
@@ -249,11 +253,7 @@ BEGIN
         @TriggerId = t.[TriggerId],
         @UpdatedUtc = COALESCE(t.[UpdatedUtc], t.[CreatedUtc])
     FROM [croniq].[Triggers] AS t
-    WHERE t.[TenantId] = @TenantId
-        AND t.[Environment] = @Environment
-        AND t.[Namespace] = @Namespace
-        AND t.[Name] = @Name
-        AND t.[Variant] = @Variant;
+    WHERE t.[TriggerKey] = @TriggerKey;
 END
 GO
 
@@ -267,6 +267,8 @@ BEGIN
     SET NOCOUNT ON;
 
     DECLARE @ActorValue [core].[actor];
+    DECLARE @TriggerKey [core].[reference];
+    DECLARE @JobKey [core].[reference];
     DECLARE @TenantId [core].[key];
     DECLARE @JobId [core].[keyBig];
     DECLARE @Environment [core].[tag];
@@ -282,16 +284,19 @@ BEGIN
     DECLARE @now [core].[utcDateTime] = SYSUTCDATETIME();
 
     EXEC [core].[GuardActor] @Actor, @ActorValue OUTPUT;
-    EXEC [croniq].[GuardTriggerRef] @Trigger, @TenantId OUTPUT, @JobId OUTPUT, @Environment OUTPUT, @Namespace OUTPUT, @Name OUTPUT, @Variant OUTPUT, @CronExpression OUTPUT, @TimeZoneId OUTPUT, @StartAtUtc OUTPUT, @EndAtUtc OUTPUT, @Enabled OUTPUT, @Metadata OUTPUT;
+    EXEC [croniq].[GuardTriggerRef] @Trigger, @TriggerKey OUTPUT, @JobKey OUTPUT, @TenantId OUTPUT, @JobId OUTPUT, @Environment OUTPUT, @Namespace OUTPUT, @Name OUTPUT, @Variant OUTPUT, @CronExpression OUTPUT, @TimeZoneId OUTPUT, @StartAtUtc OUTPUT, @EndAtUtc OUTPUT, @Enabled OUTPUT, @Metadata OUTPUT;
+
+    IF @JobId IS NULL
+    BEGIN
+        SELECT TOP (1) @JobId = j.[JobId]
+        FROM [croniq].[Jobs] AS j
+        WHERE j.[JobKey] = @JobKey AND j.[IsDeleted] = 0;
+    END
 
     SELECT TOP (1)
         @TriggerId = t.[TriggerId]
     FROM [croniq].[Triggers] AS t WITH (UPDLOCK, HOLDLOCK)
-    WHERE t.[TenantId] = @TenantId
-        AND t.[Environment] = @Environment
-        AND t.[Namespace] = @Namespace
-        AND t.[Name] = @Name
-        AND t.[Variant] = @Variant
+    WHERE t.[TriggerKey] = @TriggerKey
         AND t.[IsDeleted] = 0;
 
     IF @TriggerId IS NULL

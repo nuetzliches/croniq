@@ -1,0 +1,23 @@
+{
+  "Schema": "core",
+  "Name": "GuardActor",
+  "Parameters": [
+    {
+      "Name": "Actor",
+      "TableTypeRef": "core.ActorRef"
+    },
+    {
+      "Name": "ActorValue",
+      "TypeRef": "sys.nvarchar",
+      "UserTypeRef": "core.actor",
+      "IsNullable": true,
+      "MaxLength": 128,
+      "IsOutput": true
+    }
+  ],
+  "ResultSets": [
+    {
+      "ProcedureRef": "core.ThrowActorRequired"
+    }
+  ]
+}

@@ -29,6 +29,7 @@ GO
 
 CREATE TYPE [croniq].[JobRef] AS TABLE
 (
+    [JobKey] [core].[reference],
     [TenantId] [core].[key],
     [Environment] [core].[tag],
     [Namespace] [core].[label],
@@ -41,6 +42,8 @@ GO
 
 CREATE TYPE [croniq].[TriggerRef] AS TABLE
 (
+    [TriggerKey] [core].[reference],
+    [JobKey] [core].[reference],
     [TenantId] [core].[key],
     [JobId] [core].[keyBig],
     [Environment] [core].[tag],
@@ -137,6 +140,7 @@ GO
 
 CREATE OR ALTER PROCEDURE [croniq].[GuardJobRef]
     @Job [croniq].[JobRef] READONLY,
+    @JobKey [core].[reference] OUTPUT,
     @TenantId [core].[key] OUTPUT,
     @Environment [core].[tag] OUTPUT,
     @Namespace [core].[label] OUTPUT,
@@ -149,6 +153,7 @@ BEGIN
     SET NOCOUNT ON;
 
     SELECT TOP (1)
+        @JobKey = jr.[JobKey],
         @TenantId = jr.[TenantId],
         @Environment = jr.[Environment],
         @Namespace = jr.[Namespace],
@@ -158,7 +163,7 @@ BEGIN
         @Metadata = jr.[Metadata]
     FROM @Job AS jr;
 
-    IF @TenantId IS NULL OR @Environment IS NULL OR @Namespace IS NULL OR @Name IS NULL OR @Variant IS NULL
+    IF @JobKey IS NULL OR @TenantId IS NULL OR @Environment IS NULL OR @Namespace IS NULL OR @Name IS NULL OR @Variant IS NULL
     BEGIN;
         EXEC [croniq].[ThrowJobRefIncomplete];
     END
@@ -167,6 +172,8 @@ GO
 
 CREATE OR ALTER PROCEDURE [croniq].[GuardTriggerRef]
     @Trigger [croniq].[TriggerRef] READONLY,
+    @TriggerKey [core].[reference] OUTPUT,
+    @JobKey [core].[reference] OUTPUT,
     @TenantId [core].[key] OUTPUT,
     @JobId [core].[keyBig] OUTPUT,
     @Environment [core].[tag] OUTPUT,
@@ -184,6 +191,8 @@ BEGIN
     SET NOCOUNT ON;
 
     SELECT TOP (1)
+        @TriggerKey = tr.[TriggerKey],
+        @JobKey = tr.[JobKey],
         @TenantId = tr.[TenantId],
         @JobId = tr.[JobId],
         @Environment = tr.[Environment],
@@ -198,7 +207,7 @@ BEGIN
         @Metadata = tr.[Metadata]
     FROM @Trigger AS tr;
 
-    IF @TenantId IS NULL OR @JobId IS NULL OR @Environment IS NULL OR @Namespace IS NULL OR @Name IS NULL OR @Variant IS NULL OR @CronExpression IS NULL OR @TimeZoneId IS NULL OR @Enabled IS NULL
+    IF @TriggerKey IS NULL OR @JobKey IS NULL OR @TenantId IS NULL OR @Environment IS NULL OR @Namespace IS NULL OR @Name IS NULL OR @Variant IS NULL OR @CronExpression IS NULL OR @TimeZoneId IS NULL OR @Enabled IS NULL
     BEGIN;
         EXEC [croniq].[ThrowTriggerRefIncomplete];
     END

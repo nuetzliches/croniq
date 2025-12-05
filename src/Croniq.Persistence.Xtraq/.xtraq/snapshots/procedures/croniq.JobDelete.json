@@ -1,0 +1,32 @@
+{
+  "Schema": "croniq",
+  "Name": "JobDelete",
+  "Parameters": [
+    {
+      "Name": "Actor",
+      "TableTypeRef": "core.ActorRef"
+    },
+    {
+      "Name": "Job",
+      "TableTypeRef": "croniq.JobRef"
+    },
+    {
+      "Name": "JobId",
+      "TypeRef": "sys.bigint",
+      "UserTypeRef": "core.keyBig",
+      "IsNullable": true,
+      "IsOutput": true
+    }
+  ],
+  "ResultSets": [
+    {
+      "ProcedureRef": "core.GuardActor"
+    },
+    {
+      "ProcedureRef": "croniq.GuardJobRef"
+    },
+    {
+      "ProcedureRef": "croniq.ThrowJobNotFound"
+    }
+  ]
+}

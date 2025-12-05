@@ -1,0 +1,7 @@
+{
+  "Schema": "croniq",
+  "Name": "jobVariant",
+  "BaseSqlTypeName": "nvarchar",
+  "MaxLength": 64,
+  "IsNullable": true
+}

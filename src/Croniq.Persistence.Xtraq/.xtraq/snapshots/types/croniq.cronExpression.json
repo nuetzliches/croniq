@@ -1,0 +1,7 @@
+{
+  "Schema": "croniq",
+  "Name": "cronExpression",
+  "BaseSqlTypeName": "nvarchar",
+  "MaxLength": 256,
+  "IsNullable": false
+}

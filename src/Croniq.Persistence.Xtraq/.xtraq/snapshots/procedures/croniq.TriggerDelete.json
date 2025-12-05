@@ -1,0 +1,41 @@
+{
+  "Schema": "croniq",
+  "Name": "TriggerDelete",
+  "Parameters": [
+    {
+      "Name": "Actor",
+      "TableTypeRef": "core.ActorRef"
+    },
+    {
+      "Name": "Trigger",
+      "TableTypeRef": "croniq.TriggerRef"
+    },
+    {
+      "Name": "TriggerId",
+      "TypeRef": "sys.bigint",
+      "UserTypeRef": "core.keyBig",
+      "IsNullable": true,
+      "IsOutput": true
+    },
+    {
+      "Name": "UpdatedUtc",
+      "TypeRef": "sys.datetime2",
+      "UserTypeRef": "core.utcDateTime",
+      "IsNullable": true,
+      "Precision": 23,
+      "Scale": 3,
+      "IsOutput": true
+    }
+  ],
+  "ResultSets": [
+    {
+      "ProcedureRef": "core.GuardActor"
+    },
+    {
+      "ProcedureRef": "croniq.GuardTriggerRef"
+    },
+    {
+      "ProcedureRef": "croniq.ThrowTriggerNotFound"
+    }
+  ]
+}

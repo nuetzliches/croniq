@@ -1,0 +1,35 @@
+{
+  "Schema": "croniq",
+  "Name": "TriggerLeaseRelease",
+  "Parameters": [
+    {
+      "Name": "Actor",
+      "TableTypeRef": "core.ActorRef"
+    },
+    {
+      "Name": "Release",
+      "TableTypeRef": "croniq.TriggerLeaseReleaseRef"
+    },
+    {
+      "Name": "ReleasedCount",
+      "TypeRef": "sys.int",
+      "UserTypeRef": "core.count",
+      "IsNullable": true,
+      "IsOutput": true
+    }
+  ],
+  "ResultSets": [
+    {
+      "ProcedureRef": "core.GuardActor"
+    },
+    {
+      "ProcedureRef": "croniq.GuardTriggerLeaseReleaseRef"
+    },
+    {
+      "ProcedureRef": "croniq.ThrowTriggerLeaseNotFound"
+    },
+    {
+      "ProcedureRef": "croniq.ThrowTriggerLeaseOwnershipMismatch"
+    }
+  ]
+}

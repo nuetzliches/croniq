@@ -1,0 +1,28 @@
+version: "3.9"
+
+services:
+  mssql-22:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    container_name: croniq-mssql
+    restart: unless-stopped
+    environment:
+      - ACCEPT_EULA=Y
+      - MSSQL_SA_PASSWORD=${MSSQL_SA_PASSWORD:-YourStrong!Passw0rd}
+      - MSSQL_PID=Developer
+    ports:
+      - "${HOST_MSSQL_PORT:-11433}:1433"
+    volumes:
+      - croniq-mssql-data:/var/opt/mssql
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          '/opt/mssql-tools/bin/sqlcmd -S localhost -U sa -P "$${MSSQL_SA_PASSWORD}" -Q "SELECT 1"',
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+
+volumes:
+  croniq-mssql-data:

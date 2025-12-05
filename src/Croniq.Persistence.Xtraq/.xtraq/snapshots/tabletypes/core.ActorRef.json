@@ -1,0 +1,10 @@
+{
+  "Schema": "core",
+  "Name": "ActorRef",
+  "Columns": [
+    {
+      "Name": "Actor",
+      "TypeRef": "core.actor"
+    }
+  ]
+}

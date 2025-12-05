@@ -1,0 +1,38 @@
+{
+  "Schema": "croniq",
+  "Name": "TriggerDeadLetterInsert",
+  "Parameters": [
+    {
+      "Name": "Actor",
+      "TableTypeRef": "core.ActorRef"
+    },
+    {
+      "Name": "DeadLetter",
+      "TableTypeRef": "croniq.TriggerDeadLetterRef"
+    },
+    {
+      "Name": "DeadLetterId",
+      "TypeRef": "sys.bigint",
+      "UserTypeRef": "core.keyBig",
+      "IsNullable": true,
+      "IsOutput": true
+    },
+    {
+      "Name": "CreatedUtc",
+      "TypeRef": "sys.datetime2",
+      "UserTypeRef": "core.utcDateTime",
+      "IsNullable": true,
+      "Precision": 23,
+      "Scale": 3,
+      "IsOutput": true
+    }
+  ],
+  "ResultSets": [
+    {
+      "ProcedureRef": "core.GuardActor"
+    },
+    {
+      "ProcedureRef": "croniq.GuardTriggerDeadLetterRef"
+    }
+  ]
+}

@@ -1,0 +1,9 @@
+{
+  "Schema": "core",
+  "Name": "utcDateTime",
+  "BaseSqlTypeName": "datetime2",
+  "MaxLength": 7,
+  "Precision": 23,
+  "Scale": 3,
+  "IsNullable": false
+}

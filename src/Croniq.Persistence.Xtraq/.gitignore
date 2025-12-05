@@ -1,0 +1,4 @@
+# Xtraq
+.xtraq/cache/
+.xtraq/telemetry/
+.xtraqconfig.local

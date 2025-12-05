@@ -1,0 +1,4 @@
+{
+  "$schema": "https://nuetzliches.github.io/xtraq/xtraqconfig.schema.json",
+  "Namespace": "Croniq.Persistence.Xtraq"
+}

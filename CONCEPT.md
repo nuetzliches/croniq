@@ -16,7 +16,7 @@
 - **Provider Layer**: Schnittstellen + Default Provider (Xtraq-basiert) fuer Persistenz, Logging, Telemetrie etc.
 - **Service Layer**: Minimal API zum Verwalten/Triggern von Jobs und Schedules; RPC-Kanal (z.B. gRPC oder JSON-RPC) fuer entfernten Zugriff.
 - **Jobs Layer**: Eigenstaendige Projekte/Assemblies, die Job-Contracts implementieren und per DI registriert werden.
-- **Infrastructure**: SQL-Skripte fuer Xtraq, Docker-Compose fuer alle Services, optionale UI zur Administration.
+- **Infrastructure**: SQL-Skripte fuer den Xtraq-Provider (SQL Server), Docker-Compose fuer alle Services, optionale UI zur Administration.
 
 ## 3. Repository-Struktur (Vorschlag)
 
@@ -56,16 +56,13 @@ croniq/
 
 ### Diagramme & Nachvollziehbarkeit
 
-- Architektur- und Policy-Diagramme liegen versioniert in `docs/architecture.drawio` (diagrams.net/draw.io XML). Aktuelle Seiten: *Architecture* (Komponenten/Provider) und *PolicyResolver* (Default + Overrides → Resolver → Worker).
+- Architektur- und Policy-Diagramme liegen versioniert in `docs/architecture.drawio` (diagrams.net/draw.io XML). Aktuelle Seiten: _Architecture_ (Komponenten/Provider) und _PolicyResolver_ (Default + Overrides → Resolver → Worker).
 - Bearbeitung/Ansicht lokal: VS Code mit der Extension **hediet.vscode-drawio** (unofficial, de-facto Standard) oder externe diagrams.net Desktop/Web-App. Datei direkt aus dem Repo oeffnen; keine Remote-Speicherung notwendig.
 - Beim Editieren bitte Seitenstruktur beibehalten, keine eingebetteten externen Ressourcen nutzen; Farben/Legende konsistent halten.
 
 ## Persistenz-Basis (Xtraq)
 
-- Alle benutzten SQL-Typen werden als UDTs im Schema `core` gekapselt (siehe `infra/sql/xtraq/01-types.sql`), z.B. `core.key`, `core.keyBig`, `core.utcDateTime`, `core.reference`, `core.tag`, `core.label`, `core.name`, `core.principal`, `core.flag`; Domaintypen liegen in `croniq` (z.B. `croniq.cronExpression`, `croniq.timeZoneId`). Ziel: konsistente Laengen/NotNull und einfachere Migrations-Anpassungen.
-- Nullbarkeit wird nicht im UDT-Namen codiert; UDTs sind standardmaessig NOT NULL definiert, explizit NULL nur fuer Payload/Metadata/Variant/DeadLetterReason (jsonNullable, jobVariant, deadLetterReason, principalNullable, labelNullable). Null/NOT NULL wird auf Spaltenebene festgelegt.
-- Zeitfelder werden immer als UTC (`core.utcDateTime` = `datetime2(3)`) persistiert; Default-Spalten wie `CreatedUtc`/`UpdatedUtc` nutzen `SYSUTCDATETIME()` fuer Server-Zeit, no local time.
-- Partitionierung/Keys: Tenant (FK -> `[auth].[Tenants]` via `core.key`) + Environment (`core.tag`) als Pflichtspalten; Namespace/Name ueber `core.label`/`core.name`, Variant via `croniq.jobVariant`. Zusammengesetzter Key bleibt `TenantId, Environment, Namespace, Name, Variant`.
+- Xtraq ist keine eigenstaendige Datenbank, sondern eine Stored-Procedure-/Typ-Schicht auf SQL Server, deren CLI aus Prozeduren stark typisierte C#-Bibliotheken generiert (Snapshot + Build). Dev-Ziel: `mssql/server:2022`, DB-Name `CroniqDev`. Die UDTs/TVPs und Prozeduren in `infra/sql/xtraq` sind Grundlage fuer die Xtraq-Extraktion; ausschliesslich diese Procs werden aufgerufen (keine Ad-hoc-Queries). Aus einer bereitgestellten DB kann jederzeit ein aktueller Snapshot generiert werden.
 
 ### SQL-Schema Layout (Entwurf)
 
@@ -167,9 +164,9 @@ Der Scheduler liest das `CroniqJobAttribute`, bildet daraus den `JobKey` und reg
 
 ## 7. Xtraq-Persistenz
 
-- Nutzung des nuetzliches/xtraq-Projekts als Basis.
-- SQL-Skripte unter `infra/sql/xtraq` fuer: Tabellen (Jobs, Triggers, Calendars, Executions), Stored Procedures (Upsert, AcquireTrigger), Seed-Daten.
-- Optionaler Migrations-Layer (EF Core oder Dapper-Skripte) zur einfachen Bereitstellung.
+- Xtraq automatisiert Stored Procedures auf SQL Server und generiert stark typisierte, produktionsreife C#-Artefakte (CLI: `xtraq snapshot`/`build`, default net10, optional net8). Wir nutzen das nuetzliches/xtraq-Projekt als Generator fuer unseren Persistenz-Provider; Ziel-Engine ist SQL Server (lokal `mssql/server:2022`).
+- SQL-Skripte unter `infra/sql/xtraq` fuer: Tabellen (Jobs, Triggers, Calendars, Executions), Stored Procedures (Upsert, AcquireTrigger), Seed-Daten. Deployment per `sqlcmd`/`sqlpackage` gegen die CroniqDev-DB im Container.
+- Xtraq CLI generiert C#-Artefakte (UDT/TVP/Proc-Wrappers) aus dem Schema; `Croniq.Persistence.Xtraq` bindet diese Artefakte statt Ad-hoc-SQL ein. Optionaler Migrations-Layer (EF Core oder Dapper-Skripte) erleichtert das Einspielen in CI/CD und lokale Dev-Container.
 
 ## 8. Scheduling-Faehigkeiten
 
@@ -240,12 +237,12 @@ Handler signalisieren Fehler stets ueber Exceptions: zuerst loggen, optional `Cu
 ## 12. Docker & Deployment
 
 - Dockerfiles pro Service (`Croniq.Api`, `Croniq.UI`, optionale Worker Nodes).
-- Docker-Compose zum lokalen Start: API, UI, Xtraq-Datenbank (z.B. PostgreSQL), Telemetry Stack (Jaeger/Prometheus).
+- Docker-Compose zum lokalen Start: API, UI, SQL Server 2022 Container (`mssql-22`/`CroniqDev`) mit Xtraq-Schema, Telemetry Stack (Jaeger/Prometheus).
 - CI/CD-Pipeline (GitHub Actions) zum Bauen, Testen, Publish der Images und NuGet-Packages.
 
 ### Entscheidung 8: Container- & Deployment-Strategie
 
-- **Empfehlung**: Multi-Stage Dockerfiles mit .NET 10 SDK/ASP.NET Runtime verwenden, Images auf Slim/Distroless-Basis fuer Produktion bauen. Lokales Dev-Setup via `docker-compose` (API, Worker, Xtraq, OTel, Grafana). GitHub Actions erzeugt signierte OCI-Images + Paket-Releases.
+- **Empfehlung**: Multi-Stage Dockerfiles mit .NET 10 SDK/ASP.NET Runtime verwenden, Images auf Slim/Distroless-Basis fuer Produktion bauen. Lokales Dev-Setup via `docker-compose` (API, Worker, SQL Server mit Xtraq-Schema, OTel, Grafana). GitHub Actions erzeugt signierte OCI-Images + Paket-Releases.
 - **Begruendung**: Multi-Stage reduziert Image-Groesse und Angriffsflaeche; Compose beschleunigt lokales Onboarding; GitHub Actions integriert gut mit GitHub Container Registry + Code Signing.
 - **Konsequenzen**: Einheitliche `Dockerfile`-Templates je Service; `.devcontainer` optional; CI-Pipeline benoetigt Buildx/Cache + Cosign/SBOM; Deployment-Envs (dev/stage/prod) nutzen identische Images, Konfigurationsunterschiede kommen ueber ENV/Secrets.
 
@@ -264,7 +261,7 @@ Handler signalisieren Fehler stets ueber Exceptions: zuerst loggen, optional `Cu
 
 ### Entscheidung 12: Test- & Quality-Strategie
 
-- **Empfehlung**: Drei Teststufen verbindlich etablieren: (1) Unit-Tests mit xUnit + FluentAssertions fuer Core/Policies/SDK; (2) Contract-Tests gegen Provider ueber `Croniq.TestKit` (Shared Fixtures, Golden Files) inklusive Testcontainers fuer Xtraq/Postgres; (3) End-to-End-Integration via Docker Compose Smoke-Suite, die API, Worker und Observability Stack hochzieht. Jede PR muss alle Unit- und Contract-Tests bestehen; E2E laeuft nightly und vor Release. Zusaetzlich erzwingen wir Coverage-Gates (min. 80% Core, 70% Gesamt) per Coverlet/ReportGenerator und statische Analyse (dotnet analyzers + SonarQube optional).
+- **Empfehlung**: Drei Teststufen verbindlich etablieren: (1) Unit-Tests mit xUnit + FluentAssertions fuer Core/Policies/SDK; (2) Contract-Tests gegen Provider ueber `Croniq.TestKit` (Shared Fixtures, Golden Files) inklusive Testcontainers fuer Xtraq/MSSQL; (3) End-to-End-Integration via Docker Compose Smoke-Suite, die API, Worker und Observability Stack hochzieht. Jede PR muss alle Unit- und Contract-Tests bestehen; E2E laeuft nightly und vor Release. Zusaetzlich erzwingen wir Coverage-Gates (min. 80% Core, 70% Gesamt) per Coverlet/ReportGenerator und statische Analyse (dotnet analyzers + SonarQube optional).
 - **Begruendung**: Die Kombination deckt Logikfehler, Provider-Regressions und Deployability ab; Testcontainers haelt Feedback-Zeit niedrig, Compose-E2E spuert Interop-Bugs auf. Coverage-Gates und statische Analyse verhindern Qualitaetsabfall bei wachsender Codebasis.
 - **Konsequenzen**: Repo benoetigt `Croniq.TestKit`-Projekt, gemeinsame Fixtures und Docker-Compose-Testdefinition. GitHub Actions erhaelt gestufte Jobs (Unit/Contract parallel, E2E separat) mit Pflicht-Gates. Entwickler brauchen lokale Testcontainer-Setup, Doku muss beschreiben, wie Tests gebootstrapped werden. Anforderungen an Hardware/CI (Docker Support) steigen.
 
@@ -286,14 +283,14 @@ Handler signalisieren Fehler stets ueber Exceptions: zuerst loggen, optional `Cu
 - Startup-Recovery: Persistente Trigger/Jobs nach Neustart laden, verwaiste Locks/Executions bereinigen.
 - Zeitquellen: Clock-Drift Monitoring (NTP), Zeitzonen pro Schedule, Sicherstellung von UTC-first in allen Services.
 - Data Retention: Aufbewahrung und automatische Bereinigung fuer Execution-Historie, Dead-Letter-Queue, Audit-Logs.
-- Backup/Restore: Strategien fuer Xtraq-Datenbank, Konfigurationen und Secrets.
+- Backup/Restore: Strategien fuer die CroniqDev SQL Server DB (Xtraq-Schema), Konfigurationen und Secrets.
 
 ### Entscheidung 10: Reliability & Recovery
 
 - **Empfehlung**: Misfires grundsaetzlich nachholen, solange sie innerhalb eines konfigurierbaren `MaxMisfireDelay` (Default 5 Minuten) liegen; Werte lassen sich global, pro Tenant und pro Trigger via `IMisfirePolicy` ueberschreiben. Policies unterstuetzen logarithmisch/exponentiell gedrosselte Catch-up-Strategien (z.B. nur jede n-te verpasste Ausfuehrung nachholen), um Fluten zu vermeiden; jenseits der Policy-Grenzen werden Events verworfen und als Dead-Letter markiert.
 - **Startup-Recovery Ablauf (Default)**: Boot -> Connection zu Persistenz -> Persistente Trigger in Batches laden -> Verwaiste Locks via `sp_Croniq_CleanupLocks` loesen -> Recovery-Worker verarbeitet Dead-Letter/Reschedules -> Scheduler gibt neue Ausfuehrungen frei -> Healthcheck meldet "ready". Tests spiegeln diesen Ablauf (inkl. Failover-Case mit zwei Instanzen).
 - **Zeitquelle**: `DateTimeOffset` mit NTP-validierter Systemzeit; kritische Komponenten ueberwachen Drift via `ITimeProvider` (Warnung ab 50 ms).
-- **Retention & Backup**: Retention-Defaults: Dead-Letter 30 Tage (policy-gesteuert), Execution-Historie 90 Tage, Audit-Logs 365 Tage (alle konfigurierbar). Backups der Xtraq-DB nightly per Dump/Snapshot; Wiederherstellungs-Playbook ist Teil der Ops-Doku.
+- **Retention & Backup**: Retention-Defaults: Dead-Letter 30 Tage (policy-gesteuert), Execution-Historie 90 Tage, Audit-Logs 365 Tage (alle konfigurierbar). Backups der CroniqDev-DB (SQL Server, Xtraq-Schema) nightly per Dump/Snapshot; Wiederherstellungs-Playbook ist Teil der Ops-Doku.
 - **Begruendung**: Nachholen innerhalb kurzer Zeitfenster stellt SLA-Verlaesslichkeit sicher, ohne nach langen Downtimes Jobs zu fluten. Expliziter Recovery-Worker verhindert Race Conditions beim Rehydrieren. Einheitliche Zeitquelle vermeidet Zeitzonenbugs, Retention haelt Datenbank schlank. Dokumentierte Backup-/Restore-Pfade erfuellen Compliance-Anforderungen.
 - **Konsequenzen**: `Croniq.Core` benoetigt Misfire-Policy pro Trigger und Dead-Letter-Markierungen; Persistence-Skripte brauchen Cleanup-Prozeduren und Retention-Jobs. Startup-Sequenz blockt Scheduling bis Recovery abgeschlossen ist und Telemetrie meldet Status. Ops-Team muss NTP-Monitoring und Backup-Pipeline (inkl. Test-Restore) betreiben; Konfigurationswerte (`MaxMisfireDelay`, Retention) werden als Options exponiert und versioniert.
 
@@ -303,13 +300,13 @@ Handler signalisieren Fehler stets ueber Exceptions: zuerst loggen, optional `Cu
 - Deployment-Form: Helm-Chart oder Kustomize-Basis mit Values fuer dev/stage/prod; Secrets/ConfigMaps klar getrennt.
 - Probes & Readiness: Liveness/Readiness/Startup-Probes fuer API, Scheduler/Worker; Health-Endpoint festlegen.
 - Ressourcen & SLOs: Requests/Limits, HPA (CPU/RAM/Queue-Length), PodDisruptionBudget, Anti-Affinity fuer Datenbank.
-- Storage: Persistente Volumes fuer Xtraq-DB, Backup-Jobs, Migrations-Job als initContainer/Job.
+- Storage: Persistente Volumes fuer die CroniqDev SQL Server DB (Xtraq-Schema), Backup-Jobs, Migrations-Job als initContainer/Job.
 - Netzwerk & Security: NetworkPolicies, Ingress/TLS, RBAC/ServiceAccount, Leader-Election falls mehrere Scheduler-Instanzen.
 
 ### Entscheidung 13: Kubernetes-Basisstrategie (Backlog)
 
-- **Empfehlung**: Wenn Kubernetes priorisiert wird, liefern wir ein einziges Helm-Chart (`charts/croniq`) mit Values-Overlays fuer dev/stage/prod; die Compose-Umgebung bleibt massgeblich fuer lokale Entwicklung. Das Chart provisioniert Deployment + HPA fuer API/Worker, StatefulSet fuer Xtraq samt PVC-Templates und `CronJob`/Job fuer Migrationen. Secrets werden ueber ExternalSecrets (Vault/KeyVault) eingebunden, ConfigMaps erhalten nur nicht-sensitive Defaults. Readiness/Liveness-Probes spiegeln die Minimal-API-/gRPC-Healthchecks wider, Autoscaling basiert auf CPU und Queue-Depth-Metriken. Zusaetzliche Komponenten (Ingress-Controller, Service Mesh, UI) bleiben optional/backlog und werden erst aktiviert, wenn die jeweiligen Streams starten.
-- **Begruendung**: Ein zentrales Chart reduziert Drift zwischen Stages, laesst sich aber per Values flexibel anpassen; Compose bleibt der schnellste Dev-Pfad. StatefulSet + PVC garantiert Datenpersistenz fuer Xtraq, Migration-Jobs verhindern Race Conditions beim Rollout. ExternalSecrets und Health-Probes adressieren Security/Availability ohne uebermaessigen Tooling-Aufwand.
+- **Empfehlung**: Wenn Kubernetes priorisiert wird, liefern wir ein einziges Helm-Chart (`charts/croniq`) mit Values-Overlays fuer dev/stage/prod; die Compose-Umgebung bleibt massgeblich fuer lokale Entwicklung. Das Chart provisioniert Deployment + HPA fuer API/Worker, StatefulSet fuer SQL Server (Xtraq-Schema) samt PVC-Templates und `CronJob`/Job fuer Migrationen. Secrets werden ueber ExternalSecrets (Vault/KeyVault) eingebunden, ConfigMaps erhalten nur nicht-sensitive Defaults. Readiness/Liveness-Probes spiegeln die Minimal-API-/gRPC-Healthchecks wider, Autoscaling basiert auf CPU und Queue-Depth-Metriken. Zusaetzliche Komponenten (Ingress-Controller, Service Mesh, UI) bleiben optional/backlog und werden erst aktiviert, wenn die jeweiligen Streams starten.
+- **Begruendung**: Ein zentrales Chart reduziert Drift zwischen Stages, laesst sich aber per Values flexibel anpassen; Compose bleibt der schnellste Dev-Pfad. StatefulSet + PVC garantiert Datenpersistenz fuer SQL Server (Xtraq-Schema), Migration-Jobs verhindern Race Conditions beim Rollout. ExternalSecrets und Health-Probes adressieren Security/Availability ohne uebermaessigen Tooling-Aufwand.
 - **Konsequenzen**: Repo benoetigt `infra/k8s/charts/croniq` inkl. README und Standard-Values; CI/CD muss Helm-Pakete linten/testen (z.B. `helm template` + `kubeconform`). Observability-Stack (OTel/Grafana) wird als optionales Subchart referenziert. UI bleibt weiterhin im Backlog - Chart enthaelt nur Platzhalter-Werte, bis Technologie gewaehlt ist. Team braucht Basis-Kubernetes-Richtlinien (Namespaces, RBAC), die parallel dokumentiert werden.
 
 ## 17. Release & Compliance
