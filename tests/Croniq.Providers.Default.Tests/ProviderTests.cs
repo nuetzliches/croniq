@@ -1,0 +1,67 @@
+using System;
+using System.Diagnostics;
+using Croniq.Providers.Default;
+using Croniq.Providers.Default.Secrets;
+using Croniq.Providers.Logging;
+using Croniq.Providers.Secrets;
+using Croniq.Providers.Telemetry;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
+using Xunit;
+
+namespace Croniq.Providers.Default.Tests;
+
+public class ProviderTests
+{
+    [Fact]
+    public void Logging_provider_creates_logger()
+    {
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddCroniqDefaultProviders();
+        var sp = services.BuildServiceProvider();
+
+        var provider = sp.GetRequiredService<ILoggingProvider>();
+        var logger = provider.CreateLogger("test-category");
+
+        Assert.NotNull(logger);
+    }
+
+    [Fact]
+    public void Telemetry_provider_caches_instances()
+    {
+        var telemetry = new Default.Telemetry.DefaultTelemetryProvider();
+        var s1 = telemetry.GetActivitySource("Croniq", "1.0");
+        var s2 = telemetry.GetActivitySource("Croniq", "1.0");
+        var m1 = telemetry.GetMeter("Croniq", "1.0");
+        var m2 = telemetry.GetMeter("Croniq", "1.0");
+
+        Assert.Same(s1, s2);
+        Assert.Same(m1, m2);
+    }
+
+    [Fact]
+    public async Task Secret_provider_returns_seed_and_env()
+    {
+        var services = new ServiceCollection();
+        services.AddCroniqInMemorySecrets(opts => opts.Secrets["api-key"] = "123");
+        var sp = services.BuildServiceProvider();
+
+        var provider = sp.GetRequiredService<ISecretProvider>();
+
+        var seeded = await provider.GetSecretAsync(new SecretRequest("api-key"));
+        Assert.NotNull(seeded);
+        Assert.Equal("123", seeded!.Value);
+
+        try
+        {
+            Environment.SetEnvironmentVariable("TEST_SECRET", "env-value");
+            var fromEnv = await provider.GetSecretAsync(new SecretRequest("secret", Scope: "test"));
+            Assert.Equal("env-value", fromEnv!.Value);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("TEST_SECRET", null);
+        }
+    }
+}

@@ -54,11 +54,6 @@
       "IsNullable": true
     },
     {
-      "Name": "NextFireAtUtc",
-      "TypeRef": "core.utcDateTimeNullable",
-      "IsNullable": true
-    },
-    {
       "Name": "Enabled",
       "TypeRef": "core.flag"
     },

@@ -27,7 +27,6 @@ public sealed record TriggerRef : ITableType
     public string TimeZoneId { get; init; } = string.Empty;
     public DateTime? StartAtUtc { get; init; }
     public DateTime? EndAtUtc { get; init; }
-    public DateTime? NextFireAtUtc { get; init; }
     public bool Enabled { get; init; }
     public string? Metadata { get; init; }
 
@@ -47,7 +46,6 @@ public sealed record TriggerRef : ITableType
         string TimeZoneId,
         DateTime? StartAtUtc,
         DateTime? EndAtUtc,
-        DateTime? NextFireAtUtc,
         bool Enabled,
         string? Metadata
     ) =>
@@ -66,7 +64,6 @@ public sealed record TriggerRef : ITableType
         TimeZoneId = TimeZoneId,
         StartAtUtc = StartAtUtc,
         EndAtUtc = EndAtUtc,
-        NextFireAtUtc = NextFireAtUtc,
         Enabled = Enabled,
         Metadata = Metadata
     };
@@ -88,7 +85,6 @@ public sealed record TriggerRef : ITableType
         private string _TimeZoneId = string.Empty;
         private DateTime? _StartAtUtc;
         private DateTime? _EndAtUtc;
-        private DateTime? _NextFireAtUtc;
         private bool _Enabled;
         private string? _Metadata;
         public TriggerRefBuilder WithTriggerKey(string value) { _TriggerKey = value; return this; }
@@ -103,7 +99,6 @@ public sealed record TriggerRef : ITableType
         public TriggerRefBuilder WithTimeZoneId(string value) { _TimeZoneId = value; return this; }
         public TriggerRefBuilder WithStartAtUtc(DateTime? value) { _StartAtUtc = value; return this; }
         public TriggerRefBuilder WithEndAtUtc(DateTime? value) { _EndAtUtc = value; return this; }
-        public TriggerRefBuilder WithNextFireAtUtc(DateTime? value) { _NextFireAtUtc = value; return this; }
         public TriggerRefBuilder WithEnabled(bool value) { _Enabled = value; return this; }
         public TriggerRefBuilder WithMetadata(string? value) { _Metadata = value; return this; }
         public TriggerRef Build()
@@ -123,7 +118,6 @@ public sealed record TriggerRef : ITableType
                 TimeZoneId = _TimeZoneId,
                 StartAtUtc = _StartAtUtc,
                 EndAtUtc = _EndAtUtc,
-                NextFireAtUtc = _NextFireAtUtc,
                 Enabled = _Enabled,
                 Metadata = _Metadata
             };
@@ -166,7 +160,6 @@ public sealed record TriggerRefRequest
     public string TimeZoneId { get; init; } = string.Empty;
     public DateTime? StartAtUtc { get; init; }
     public DateTime? EndAtUtc { get; init; }
-    public DateTime? NextFireAtUtc { get; init; }
     public bool Enabled { get; init; }
     public string? Metadata { get; init; }
 
@@ -184,7 +177,6 @@ public sealed record TriggerRefRequest
             TimeZoneId,
             StartAtUtc,
             EndAtUtc,
-            NextFireAtUtc,
             Enabled,
             Metadata
         );

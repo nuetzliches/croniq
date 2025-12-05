@@ -1,0 +1,51 @@
+syntax = "proto3";
+
+package croniq.rpc;
+
+option csharp_namespace = "Croniq.Rpc";
+
+service Scheduler {
+  rpc Health (HealthRequest) returns (HealthResponse);
+  rpc TriggerJob (TriggerJobRequest) returns (TriggerJobResponse);
+  rpc UpsertSchedule (UpsertScheduleRequest) returns (UpsertScheduleResponse);
+  rpc DeleteSchedule (DeleteScheduleRequest) returns (DeleteScheduleResponse);
+}
+
+message HealthRequest {}
+
+message HealthResponse {
+  string status = 1;
+}
+
+message TriggerJobRequest {
+  string job_key = 1;
+  map<string, string> metadata = 2;
+}
+
+message TriggerJobResponse {
+  string status = 1;
+}
+
+message UpsertScheduleRequest {
+  string job_key = 1;
+  string trigger_id = 2;
+  string cron_expression = 3;
+  string start_at_utc = 4;
+  string end_at_utc = 5;
+  bool enabled = 6;
+  map<string, string> metadata = 7;
+}
+
+message UpsertScheduleResponse {
+  string trigger_id = 1;
+  string job_key = 2;
+  string schedule_expression = 3;
+}
+
+message DeleteScheduleRequest {
+  string trigger_id = 1;
+}
+
+message DeleteScheduleResponse {
+  string status = 1;
+}

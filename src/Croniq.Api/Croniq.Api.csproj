@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\Croniq.Core\Croniq.Core.csproj" />
+    <ProjectReference Include="..\Croniq.JobStore.InMemory\Croniq.JobStore.InMemory.csproj" />
+    <ProjectReference Include="..\Croniq.Providers.Default\Croniq.Providers.Default.csproj" />
+    <ProjectReference Include="..\Croniq.Providers.Abstractions\Croniq.Providers.Abstractions.csproj" />
+    <ProjectReference Include="..\Croniq.Persistence.Abstractions\Croniq.Persistence.Abstractions.csproj" />
+  </ItemGroup>
+</Project>
