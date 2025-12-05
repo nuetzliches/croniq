@@ -71,6 +71,7 @@ $scripts = @(
     "croniq-internal/procs.guards.sql",
     "auth/types.sql",
     "auth/tables.sql",
+    "auth/procs.keys.sql",
     "croniq/tables.sql",
     "croniq/procs.instances.sql",
     "croniq/procs.jobs.sql",

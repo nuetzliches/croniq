@@ -27,6 +27,10 @@ croniq/
 |   |-- Croniq.JobStore.InMemory/   # Referenz-In-Memory-JobStore
 |   |-- Croniq.Persistence.Abstractions/
 |   |-- Croniq.Persistence.Xtraq/   # Default Persistenz-Provider
+|   |-- Croniq.Data.Xtraq/          # Gemeinsamer DbContext + SessionSettings fuer Xtraq (shared infra)
+|   |-- Croniq.Auth.Abstractions/   # Contracts fuer Tenants/Users/API-Clients/CallerContext
+|   |-- Croniq.Auth.Core/           # In-Memory/Auth-Services + Middleware (dev/edge)
+|   |-- Croniq.Auth.Xtraq/          # Xtraq-basierter Auth-Provider (SaaS, shared DB)
 |   |-- Croniq.Providers.Logging/   # Logging-Provider (z.B. Serilog)
 |   |-- Croniq.Providers.Telemetry/ # OpenTelemetry-Integration
 |   |-- Croniq.Api/                 # Minimal API + RPC-Endpunkte
@@ -71,12 +75,55 @@ infra/sql/xtraq/
   core/types.sql            # [core] Basis-UDTs (key, keyBig, uid, utcDateTime, reference, tag, label, name, labelNullable, principal, principalNullable, jsonNullable, flag)
   croniq/types.sql          # [croniq] Domaintypen (cronExpression, timeZoneId, stateCode, jobVariant, deadLetterReason)
   auth/tables.sql           # Tabelle [auth].[Tenants] (TenantId core.key PK, Reference core.reference UNIQUE, Created/Updated + Principals, IsDeleted)
+  auth/users.sql            # Tabellen [auth].[Users], [auth].[UserRoles], [auth].[UserLogins] (federated OIDC), FK -> Tenants
+  auth/apiClients.sql       # Tabellen [auth].[ApiClients], [auth].[ApiKeys] (KeyPrefix, KeyHash, ExpiresAt, Scopes/EnvTag), FK -> Tenants
   croniq/tables.sql         # Tabellen Jobs/Triggers/Leases/DeadLetter (Tenant FK -> auth.Tenants, Environment, Namespace, Name, Variant, Cron, TimeZoneId, Payload, Metadata, State)
   04-croniq-seed.sql        # optionale Seeds/Testdaten
 ```
 
 - Nicht-basale Typen liegen im Schema `[croniq]`; Auth/Identity-Objekte (Tenant/User/API-Key/OAuth2-Client) liegen im Schema `[auth]` mit numerischem PK (`core.pkInt`). Falls ein sprechender String benoetigt wird, kommt eine Spalte `Reference` (Typ `core.reference`) hinzu.
-- Alle Tabellen sollen PK aus `core.pkInt`/`core.pkBigInt` verwenden und Tenant/Environment als Pflichtfelder fuehren; Foreign Keys auf `[auth].[tenants]`.
+- Alle Tabellen sollen PK aus `core.pkInt`/`core.pkBigInt` verwenden und Tenant/Environment als Pflichtfelder fuehren; Foreign Keys auf `[auth].[tenants]`. API-Keys werden nur gehasht gespeichert (KeyId/Prefix im Klartext, Hash = HMAC/SHA-256 mit Salt), Rotation ueber Stored Procedures (`sp_auth_issue_api_key`, `sp_auth_revoke_api_key`, `sp_auth_rotate_api_key`).
+
+## 3a. Auth & Identity Modell (SaaS)
+
+- **Ziele**: Multi-Tenant SaaS mit isolierten Jobs/Policies pro Tenant, verwaltbare Nutzer (OIDC-first), API-Clients/Keys fuer Automatisierung, zentrale Quotas/RateLimits pro Tenant/API-Key. Eine gemeinsame SQL-DB (Xtraq) fuer Persistenz + Auth.
+- **Domain-Objekte**:
+  - Tenant: Basisobjekt, enthaelt Reference/Name/Plan/CreatedBy. Jede Croniq-Entity referenziert TenantId (FK).
+  - User: Entweder federated (OIDC Subject + Issuer) oder optional lokal (nur fuer dev). Rollen pro Tenant (`TenantAdmin`, `SchedulerAdmin`, `Reader`). Tabelle `auth.Users`, Join `auth.UserRoles`.
+  - ApiClient/ApiKey: Maschinenidentitaet mit `KeyId` (prefix), `KeyHash`, optional `EnvTag`/`Scopes` (z.B. `schedules:write`, `jobs:trigger`). Tabelle `auth.ApiClients`, `auth.ApiKeys`.
+  - CallerContext: HTTP/gRPC Middleware erzeugt einen `ICallerContext` (TenantId, EnvironmentTag, CallerType=User|ApiKey, Scopes, RateLimitKey) aus Header `X-Croniq-Key` oder Bearer Token (OIDC Access Token).
+- **AuthN/AutZ**:
+  - Default: API-Key Flow (Header `X-Croniq-Key`) fuer Maschinen; OIDC Access Token (Bearer) fuer User. Beide Pfade mappen auf `ICallerContext`.
+  - AuthZ: Scope-basiert (Claim `scope` oder ApiKey-Scopes) und Tenant-Enforcement (TenantId wird aus ApiKey oder Token-Claim gelesen und in `PartitionScope` injiziert). Optional EnvTag-Restriktion pro ApiKey.
+  - Rate Limiting: ASP.NET RateLimiter nutzt `RateLimitKey = TenantId + ':' + ApiKeyId` (oder UserId) statt global. Konfig in `Croniq:Api:RequestsPerMinute` + Tenant-Overrides.
+- **Services/Abstraktionen**:
+  - `Croniq.Auth.Abstractions`: `ITenantStore`, `IUserStore`, `IApiKeyStore`, `ICallerContextAccessor`, `ICallerContextFactory`, Contracts fuer Scopes/Claims/ApiClientMetadata.
+  - `Croniq.Auth.Core`: In-Memory Implementation fuer lokale Dev/Tests, Middleware fuer API-Key + JWT Bearer Validation (ohne konkrete IdP-Details).
+  - `Croniq.Auth.Xtraq`: Xtraq-basierte Implementierung der Stores (ruft nur Stored Procedures), nutzt gemeinsamen `XtraqDbContext` aus `Croniq.Data.Xtraq`.
+- **DB-Konzept & Shared DbContext**:
+  - `Croniq.Data.Xtraq` enthaelt nur generierte Xtraq-Infrastruktur (`XtraqDbContext`, SessionSettings, TransactionOrchestrator) fuer alle Schemas (core/auth/croniq). Keine Domain-Logik, keine Provider-spezifischen Services.
+  - `Croniq.Persistence.Xtraq` und `Croniq.Auth.Xtraq` referenzieren `Croniq.Data.Xtraq`, bringen eigene, getrennte Prozedur-Wrappers/Repositories mit (kein Domain-Mixing). `Croniq.Data.Xtraq` bleibt der alleinige Ort fuer Snapshots/Artefakte.
+  - Auth-Procs: `sp_auth_issue_api_key`, `sp_auth_revoke_api_key`, `sp_auth_rotate_api_key`, `sp_auth_get_caller_context` (liefert TenantId, EnvTag, Scopes, Status) sowie `sp_auth_upsert_user`, `sp_auth_add_role`, `sp_auth_list_tenants`.
+- **API-Erweiterungen**:
+  - Admin-Routen (geschuetzt, Scope `tenants:admin`): `POST /tenants`, `POST /tenants/{id}/api-keys`, `POST /tenants/{id}/api-keys/{keyId}/rotate`, `DELETE /tenants/{id}/api-keys/{keyId}`, `GET /tenants/{id}/users`.
+  - Developer-Routen: `GET /me` (aus CallerContext), optional `GET /quota` (aktuelle Limits).
+  - Abwarten bis UI-Backlog startet, dann Wiederverwendung derselben Auth-Backends.
+- **Security**:
+  - ApiKey Speicherung gehasht (HMAC/SHA-256 + per-key salt), Ausgabe nur einmal beim Issue/Rotate.
+  - Key Prefix (z.B. `crq_dev_`) + zufaellige 32 Bytes; zusammengesetzt als `crq_dev_<keyId>_<secret>`, Secret nie gespeichert. Validation: Prefix -> DB lookup -> Hashvergleich.
+  - Audit: `auth.AuditLog` optional fuer Issuance/Revocation/FailedAuth.
+- **Migration & Kompatibilitaet**:
+  - V1 minimal: globaler ApiKey bleibt konfigurierbar (Fallback), aber sobald `Croniq.Auth` aktiviert ist, wird er deaktiviert.
+  - In-Memory Auth bleibt fuer Samples/Unit-Tests. Xtraq-Auth wird Integrations-Testcontainers nutzen (gemeinsame DB mit Persistenz).
+
+### Rollout-Checklist (Auth + Shared Xtraq)
+
+- [ ] SQL erweitern: `infra/sql/xtraq/auth/*.sql` fuer Tenants, Users (federated), ApiClients/ApiKeys (+ Procs Issue/Revoke/Rotate/GetCallerContext), Seeds fuer dev.
+- [ ] `Croniq.Data.Xtraq` anlegen: Snapshots/Artefakte aller Schemas generiert einchecken, DbContext/SessionSettings/TransactionOrchestrator hierher ziehen (keine Domain-Logik).
+- [ ] `Croniq.Persistence.Xtraq` auf `Croniq.Data.Xtraq` referenzieren, generierte Procs fuer Jobs/Triggers belassen; Health/Provider nutzen Shared DbContext.
+- [ ] `Croniq.Auth.Abstractions` definieren (`ICallerContext`, Stores, Scopes, CallerType), `Croniq.Auth.Core` (InMemory + Middleware), `Croniq.Auth.Xtraq` (Store-Implementierung via Procs).
+- [ ] `Croniq.Api` erweitern: CallerContext-Middleware (ApiKey + JWT/OIDC), Tenant/Env-Enforcement, Admin-Routen fuer Tenant/ApiKey Management; RateLimiter Key = TenantId:CallerId.
+- [ ] Tests/Docs: Contract-Tests fuer Auth-Stores (Testcontainers SQL), Docs ergaenzen (Key-Issuance, Rotation, OIDC Setup).
 
 ## 4. Scheduler Core
 

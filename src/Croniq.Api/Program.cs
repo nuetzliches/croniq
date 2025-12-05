@@ -2,12 +2,16 @@ using System.Diagnostics;
 using System.Threading.RateLimiting;
 using Croniq.Api;
 using Croniq.Api.Models;
+using Croniq.Auth.Abstractions;
+using Croniq.Auth.Core;
+using Croniq.Auth.Xtraq;
 using Croniq.Core;
 using Croniq.Core.Execution;
 using Croniq.Core.Jobs;
 using Croniq.Core.Options;
 using Croniq.JobStore.InMemory;
 using Croniq.Persistence.Abstractions;
+using Croniq.Persistence.Xtraq;
 using Croniq.Providers.Default;
 using Croniq.Sdk;
 using Microsoft.AspNetCore.RateLimiting;
@@ -23,6 +27,27 @@ builder.Services.AddCroniqDefaultProviders();
 builder.Services.AddCroniqInMemoryJobStore();
 
 var apiOpts = builder.Configuration.GetSection("Croniq:Api").Get<CroniqApiOptions>() ?? new CroniqApiOptions();
+var coreOpts = builder.Configuration.GetSection("Croniq:Core").Get<CroniqOptions>() ?? new CroniqOptions();
+
+var authConnectionString =
+    builder.Configuration.GetSection("Croniq:Auth:ConnectionString").Value ??
+    builder.Configuration.GetConnectionString("CroniqAuth") ??
+    builder.Configuration.GetConnectionString("Croniq") ??
+    builder.Configuration.GetConnectionString("DefaultConnection");
+
+if (string.IsNullOrWhiteSpace(authConnectionString))
+{
+    throw new InvalidOperationException("Croniq Auth connection string is required (Croniq:Auth:ConnectionString or connection string CroniqAuth/Croniq/DefaultConnection).");
+}
+
+builder.Services.AddXtraqDbContext(options =>
+{
+    options.ConnectionString = authConnectionString;
+});
+builder.Services.AddCroniqAuthXtraq();
+builder.Services.AddSingleton<ICallerContextAccessor, CallerContextAccessor>();
+builder.Services.AddSingleton<ICallerContextFactory, CallerContextFactory>();
+
 if (apiOpts.RequestsPerMinute > 0)
 {
     builder.Services.AddRateLimiter(options =>
@@ -54,15 +79,28 @@ if (apiOpts.RequestsPerMinute > 0)
 app.Use(async (context, next) =>
 {
     var apiOptions = context.RequestServices.GetRequiredService<IOptions<CroniqApiOptions>>().Value;
+    var callerAccessor = context.RequestServices.GetRequiredService<ICallerContextAccessor>();
+    var callerFactory = context.RequestServices.GetRequiredService<ICallerContextFactory>();
+
     if (!string.IsNullOrWhiteSpace(apiOptions.ApiKey))
     {
         var provided = context.Request.Headers["X-Croniq-Key"].FirstOrDefault();
-        if (!string.Equals(apiOptions.ApiKey, provided, StringComparison.Ordinal))
+        if (string.IsNullOrWhiteSpace(provided))
+        {
+            context.Response.StatusCode = StatusCodes.Status401Unauthorized;
+            await context.Response.WriteAsync("missing api key");
+            return;
+        }
+
+        var caller = await callerFactory.FromApiKeyAsync(provided, context.RequestAborted).ConfigureAwait(false);
+        if (caller is null || !caller.IsActive)
         {
             context.Response.StatusCode = StatusCodes.Status401Unauthorized;
             await context.Response.WriteAsync("invalid api key");
             return;
         }
+
+        callerAccessor.Current = caller;
     }
 
     await next().ConfigureAwait(false);

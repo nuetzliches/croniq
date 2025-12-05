@@ -1,0 +1,7 @@
+{
+  "Schema": "auth",
+  "Name": "apiKeySalt",
+  "BaseSqlTypeName": "varbinary",
+  "MaxLength": 32,
+  "IsNullable": false
+}

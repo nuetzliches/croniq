@@ -1,0 +1,41 @@
+{
+  "Schema": "auth",
+  "Name": "ApiKeyRevoke",
+  "Parameters": [
+    {
+      "Name": "TenantId",
+      "TypeRef": "sys.int",
+      "UserTypeRef": "core.key",
+      "IsNullable": true
+    },
+    {
+      "Name": "KeyRef",
+      "TypeRef": "sys.nvarchar",
+      "UserTypeRef": "auth.apiKeyRef",
+      "IsNullable": true,
+      "MaxLength": 64
+    },
+    {
+      "Name": "Actor",
+      "TypeRef": "sys.nvarchar",
+      "UserTypeRef": "core.actor",
+      "IsNullable": true,
+      "MaxLength": 128
+    },
+    {
+      "Name": "Reason",
+      "TypeRef": "sys.nvarchar",
+      "UserTypeRef": "core.labelNullable",
+      "IsNullable": true,
+      "MaxLength": 64
+    },
+    {
+      "Name": "Affected",
+      "TypeRef": "sys.int",
+      "UserTypeRef": "core.number",
+      "IsNullable": true,
+      "IsOutput": true
+    }
+  ],
+  "ResultSets": []
+}

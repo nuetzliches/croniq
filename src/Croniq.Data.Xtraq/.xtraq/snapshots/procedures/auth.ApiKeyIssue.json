@@ -1,0 +1,85 @@
+{
+  "Schema": "auth",
+  "Name": "ApiKeyIssue",
+  "Parameters": [
+    {
+      "Name": "TenantId",
+      "TypeRef": "sys.int",
+      "UserTypeRef": "core.key",
+      "IsNullable": true
+    },
+    {
+      "Name": "ClientId",
+      "TypeRef": "sys.int",
+      "UserTypeRef": "core.key",
+      "IsNullable": true
+    },
+    {
+      "Name": "Environment",
+      "TypeRef": "sys.nvarchar",
+      "UserTypeRef": "core.tagNullable",
+      "IsNullable": true,
+      "MaxLength": 32
+    },
+    {
+      "Name": "Scopes",
+      "TypeRef": "sys.nvarchar",
+      "UserTypeRef": "auth.scopes",
+      "IsNullable": true
+    },
+    {
+      "Name": "TtlMinutes",
+      "TypeRef": "sys.int",
+      "UserTypeRef": "core.numberNullable",
+      "IsNullable": true
+    },
+    {
+      "Name": "CreatedBy",
+      "TypeRef": "sys.nvarchar",
+      "UserTypeRef": "core.actor",
+      "IsNullable": true,
+      "MaxLength": 128
+    },
+    {
+      "Name": "KeyId",
+      "TypeRef": "sys.int",
+      "UserTypeRef": "core.key",
+      "IsNullable": true,
+      "IsOutput": true
+    },
+    {
+      "Name": "KeyRef",
+      "TypeRef": "sys.nvarchar",
+      "UserTypeRef": "auth.apiKeyRef",
+      "IsNullable": true,
+      "MaxLength": 64,
+      "IsOutput": true
+    },
+    {
+      "Name": "PlaintextKey",
+      "TypeRef": "sys.nvarchar",
+      "UserTypeRef": "auth.presentedKey",
+      "IsNullable": true,
+      "MaxLength": 512,
+      "IsOutput": true
+    },
+    {
+      "Name": "SecretPreview",
+      "TypeRef": "sys.nvarchar",
+      "UserTypeRef": "auth.secretPreview",
+      "IsNullable": true,
+      "MaxLength": 16,
+      "IsOutput": true
+    },
+    {
+      "Name": "ExpiresUtc",
+      "TypeRef": "sys.datetime2",
+      "UserTypeRef": "core.utcDateTimeNullable",
+      "IsNullable": true,
+      "Precision": 23,
+      "Scale": 3,
+      "IsOutput": true
+    }
+  ],
+  "ResultSets": []
+}

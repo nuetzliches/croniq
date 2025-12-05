@@ -1,27 +1,17 @@
 namespace Croniq.Persistence.Xtraq;
 
-/// <summary>
-/// Connection and schema settings for the Xtraq-backed provider.
-/// </summary>
+/// <summary>Options for configuring the Xtraq persistence provider.</summary>
 public sealed class XtraqOptions
 {
-    /// <summary>
-    /// Connection string for the CroniqDev (or target) database.
-    /// </summary>
-    public string ConnectionString { get; set; } = string.Empty;
+    /// <summary>Connection string to the Xtraq-backed SQL database.</summary>
+    public string? ConnectionString { get; set; }
 
-    /// <summary>
-    /// Optional schema name if it differs from defaults.
-    /// </summary>
-    public string? Schema { get; set; }
+    /// <summary>Schema name for Croniq objects (default: 'croniq').</summary>
+    public string Schema { get; set; } = "croniq";
 
-    /// <summary>
-    /// Actor identifier used for auditing in stored procedures (e.g. "system" or the current principal).
-    /// </summary>
-    public string Actor { get; set; } = "system";
+    /// <summary>Actor used for audit columns and procedure bindings.</summary>
+    public string Actor { get; set; } = "croniq-api";
 
-    /// <summary>
-    /// Default lease duration (seconds) when acquiring trigger leases.
-    /// </summary>
+    /// <summary>Lease duration for trigger acquisition (seconds).</summary>
     public int LeaseDurationSeconds { get; set; } = 60;
 }

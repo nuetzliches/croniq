@@ -1,11 +1,13 @@
 -- Croniq tables
-IF NOT EXISTS (SELECT 1 FROM sys.schemas WHERE name = 'croniq') EXEC ('CREATE SCHEMA [croniq]');
+IF NOT EXISTS (SELECT 1 FROM sys.schemas WHERE name = 'croniq') 
+    EXEC ('CREATE SCHEMA [croniq]');
 GO
 
 SET ANSI_NULLS ON;
 SET QUOTED_IDENTIFIER ON;
 GO
 
+IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'Instances' AND SCHEMA_NAME(schema_id) = 'croniq')
 CREATE TABLE [croniq].[Instances]
 (
     [InstanceId] [core].[reference] PRIMARY KEY,
@@ -24,6 +26,7 @@ CREATE TABLE [croniq].[Instances]
 );
 GO
 
+IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'Jobs' AND SCHEMA_NAME(schema_id) = 'croniq')
 CREATE TABLE [croniq].[Jobs]
 (
     [JobId] [core].[keyBig] IDENTITY(1001,1) PRIMARY KEY,
@@ -44,21 +47,25 @@ CREATE TABLE [croniq].[Jobs]
 );
 GO
 
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'UX_croniq_Jobs_Key' AND object_id = OBJECT_ID('[croniq].[Jobs]'))
 CREATE UNIQUE NONCLUSTERED INDEX [UX_croniq_Jobs_Key]
     ON [croniq].[Jobs] ([TenantId], [Environment], [Namespace], [Name], [Variant])
     WHERE [IsDeleted] = 0;
 GO
 
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'UX_croniq_Jobs_JobKey' AND object_id = OBJECT_ID('[croniq].[Jobs]'))
 CREATE UNIQUE NONCLUSTERED INDEX [UX_croniq_Jobs_JobKey]
     ON [croniq].[Jobs] ([JobKey])
     WHERE [IsDeleted] = 0;
 GO
 
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_croniq_Instances_LastSeen' AND object_id = OBJECT_ID('[croniq].[Instances]'))
 CREATE NONCLUSTERED INDEX [IX_croniq_Instances_LastSeen]
     ON [croniq].[Instances] ([IsDeleted], [InstanceId])
     INCLUDE ([LastSeenUtc]);
 GO
 
+IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'Triggers' AND SCHEMA_NAME(schema_id) = 'croniq')
 CREATE TABLE [croniq].[Triggers]
 (
     [TriggerId] [core].[keyBig] IDENTITY(1001,1) PRIMARY KEY,
@@ -88,21 +95,25 @@ CREATE TABLE [croniq].[Triggers]
 );
 GO
 
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'UX_croniq_Triggers_Key' AND object_id = OBJECT_ID('[croniq].[Triggers]'))
 CREATE UNIQUE NONCLUSTERED INDEX [UX_croniq_Triggers_Key]
     ON [croniq].[Triggers] ([TenantId], [Environment], [Namespace], [Name], [Variant])
     WHERE [IsDeleted] = 0;
 GO
 
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'UX_croniq_Triggers_TriggerKey' AND object_id = OBJECT_ID('[croniq].[Triggers]'))
 CREATE UNIQUE NONCLUSTERED INDEX [UX_croniq_Triggers_TriggerKey]
     ON [croniq].[Triggers] ([TriggerKey])
     WHERE [IsDeleted] = 0;
 GO
 
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_croniq_Triggers_NextFire' AND object_id = OBJECT_ID('[croniq].[Triggers]'))
 CREATE NONCLUSTERED INDEX [IX_croniq_Triggers_NextFire]
     ON [croniq].[Triggers] ([TenantId], [Environment], [Enabled], [IsDeleted], [NextFireAtUtc])
     WHERE [IsDeleted] = 0 AND [Enabled] = 1 AND [NextFireAtUtc] IS NOT NULL;
 GO
 
+IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'TriggerLeases' AND SCHEMA_NAME(schema_id) = 'croniq')
 CREATE TABLE [croniq].[TriggerLeases]
 (
     [LeaseId] [core].[keyBig] IDENTITY(1001,1) PRIMARY KEY,
@@ -129,20 +140,24 @@ CREATE TABLE [croniq].[TriggerLeases]
 );
 GO
 
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_croniq_TriggerLeases_StaleCheck' AND object_id = OBJECT_ID('[croniq].[TriggerLeases]'))
 CREATE NONCLUSTERED INDEX [IX_croniq_TriggerLeases_StaleCheck]
     ON [croniq].[TriggerLeases] ([IsDeleted], [LeaseExpiresAtUtc])
     INCLUDE ([InstanceId]);
 GO
 
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'UX_croniq_TriggerLeases_Active' AND object_id = OBJECT_ID('[croniq].[TriggerLeases]'))
 CREATE UNIQUE NONCLUSTERED INDEX [UX_croniq_TriggerLeases_Active]
     ON [croniq].[TriggerLeases] ([TriggerId])
     WHERE [IsDeleted] = 0;
 GO
 
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_croniq_TriggerLeases_Retention' AND object_id = OBJECT_ID('[croniq].[TriggerLeases]'))
 CREATE NONCLUSTERED INDEX [IX_croniq_TriggerLeases_Retention]
     ON [croniq].[TriggerLeases] ([IsDeleted], [UpdatedUtc]);
 GO
 
+IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'TriggerDeadLetter' AND SCHEMA_NAME(schema_id) = 'croniq')
 CREATE TABLE [croniq].[TriggerDeadLetter]
 (
     [DeadLetterId] [core].[keyBig] IDENTITY(1001,1) PRIMARY KEY,
