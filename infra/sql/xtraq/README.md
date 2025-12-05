@@ -8,7 +8,8 @@ Quickstart (lokal):
 Wichtige Punkte:
 - Vertrag fuer Keys: Jobs und Trigger haben string-basierte Keys (`JobKey`, `TriggerKey`); FKs bleiben numerisch. Procs/TVPs transportieren die Keys, Provider nutzt ausschliesslich Stored Procedures.
 - Neue Lookup-Procs: `croniq.JobFindByKey` liefert Job-Daten als JSON; `croniq.JobIdGetOrCreate` dient als Upsert-freier Lookup/Create.
-- Ordnung der Skripte: `core/types.sql` -> `croniq/types.sql` -> `auth/tables.sql` -> `croniq/tables.sql` -> Procs (`instances`, `jobs`, `jobs.findbykey`, `jobs.idgetorcreate`, `leases`, `deadletter`).
+- Ordnung der Skripte (siehe apply.ps1): `predeploy.sql` -> `core/types.sql` -> `core/procs.health.sql` -> `core/procs.errors.sql` -> `core/procs.guards.sql` -> `core-internal/types.sql` -> `core-internal/procs.actors.sql` -> `croniq/types.sql` -> `croniq/functions.sql` -> `croniq-internal/types.sql` -> `croniq-internal/procs.errors.sql` -> `croniq-internal/procs.guards.sql` -> `auth/tables.sql` -> `croniq/tables.sql` -> Procs (`instances`, `jobs`, `leases`, `deadletter`).
+- Health: `[core].[HealthPing]` liegt in `core/procs.health.sql` und wird automatisch von `apply.ps1` mit ausgefuehrt. Xtraq erzeugt dafuer `Core/HealthPing.cs`; nach SQL-Aenderungen immer `xtraq snapshot`/`build` fahren.
 
 Konventionen (Auszug):
 - Alle Zugriffe laufen ueber die Prozeduren; keine direkte SQL im Provider.
@@ -19,3 +20,4 @@ Konventionen (Auszug):
 Migration/Tests:
 - Fuer sauberen Stand DB droppen oder leere DB anlegen, dann `apply.ps1` laufen lassen.
 - Nach SQL-Aenderungen stets `xtraq snapshot`/`build` neu ausfuehren, damit die C#-Artefakte aktualisiert werden.
+- `apply.ps1` ist der einzige Weg, die Schema-/Proc-Aenderungen einzuspielen. Die generierten Artefakte haengen daran: erst SQL aendern, dann `apply.ps1`, dann `xtraq snapshot`/`build`.

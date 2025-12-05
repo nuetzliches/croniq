@@ -113,13 +113,14 @@ app.MapPost("/schedules", async (
 
     var scope = new PartitionScope(parts.TenantId, parts.EnvironmentTag);
 
+    var metadata = ToReadOnly(request.Metadata);
     var job = new JobDefinition(
         request.JobKey,
         parts.NamespaceSegment,
         parts.JobName,
         parts.Variant,
         request.Description,
-        request.Metadata);
+        metadata);
 
     var trigger = new TriggerDefinition(
         triggerId,
@@ -129,7 +130,7 @@ app.MapPost("/schedules", async (
         request.StartAtUtc,
         request.EndAtUtc,
         request.Enabled,
-        request.Metadata);
+        metadata);
 
     await store.UpsertJobAsync(job, cancellationToken).ConfigureAwait(false);
     await store.UpsertTriggerAsync(trigger, cancellationToken).ConfigureAwait(false);
@@ -148,7 +149,7 @@ app.MapPost("/jobs/trigger", async (
         return Results.NotFound(new { error = "job-not-registered", request.JobKey });
     }
 
-    var metadata = request.Metadata ?? new Dictionary<string, string>();
+    var metadata = ToReadOnly(request.Metadata) ?? new Dictionary<string, string>();
     var activitySource = new ActivitySource("Croniq.Api.Trigger");
     var execRequest = new JobExecutionRequest(jobKey, descriptor, metadata, activitySource);
 
@@ -166,4 +167,11 @@ static (string TenantId, string EnvironmentTag, string NamespaceSegment, string 
     }
 
     return (parsed.TenantId, parsed.EnvironmentTag, parsed.NamespaceSegment, parsed.JobName, parsed.Variant);
+}
+
+static IReadOnlyDictionary<string, string>? ToReadOnly(IDictionary<string, string>? source)
+{
+    if (source is null) return null;
+    if (source is IReadOnlyDictionary<string, string> ro) return ro;
+    return new Dictionary<string, string>(source);
 }

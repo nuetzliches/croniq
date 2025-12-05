@@ -1,7 +1,3 @@
--- Auth schema tables
-IF NOT EXISTS (SELECT 1 FROM sys.schemas WHERE name = 'auth') EXEC ('CREATE SCHEMA [auth]');
-GO
-
 SET ANSI_NULLS ON;
 SET QUOTED_IDENTIFIER ON;
 GO
