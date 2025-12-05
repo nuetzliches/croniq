@@ -38,20 +38,20 @@ public sealed class XtraqJobPersistenceProvider : IJobPersistenceProvider
         if (job is null) throw new ArgumentNullException(nameof(job));
 
         var keyParts = JobKeyParts.Parse(job.JobKey);
-        var actor = BuildActor();
-        var jobRef = JobRef.Create(
-            JobKey: job.JobKey,
-            TenantId: keyParts.TenantId,
-            Environment: keyParts.Environment,
-            Namespace: keyParts.Namespace,
-            Name: keyParts.Name,
-            Variant: keyParts.Variant,
-            Description: job.Description,
-            Metadata: SerializeMetadata(job.Metadata));
+        var jobRef = new JobRefRequest
+        {
+            JobKey = job.JobKey,
+            TenantId = keyParts.TenantId,
+            Environment = keyParts.Environment,
+            Namespace = keyParts.Namespace,
+            Name = keyParts.Name,
+            Variant = keyParts.Variant,
+            Description = job.Description,
+            Metadata = SerializeMetadata(job.Metadata)
+        };
 
         var request = new JobUpsertRequest
         {
-            Actor = new[] { actor },
             Job = new[] { jobRef },
             AllowDeletedReuse = false
         };
@@ -65,30 +65,30 @@ public sealed class XtraqJobPersistenceProvider : IJobPersistenceProvider
 
         var triggerKey = trigger.TriggerId;
         var jobKeyParts = JobKeyParts.Parse(trigger.JobKey);
-        var actor = BuildActor();
 
         return Task.Run(async () =>
         {
             var jobId = await ResolveJobIdAsync(jobKeyParts.JobKey, cancellationToken).ConfigureAwait(false);
-            var triggerRef = TriggerRef.Create(
-                TriggerKey: triggerKey,
-                JobKey: jobKeyParts.JobKey,
-                TenantId: jobKeyParts.TenantId,
-                JobId: jobId,
-                Environment: jobKeyParts.Environment,
-                Namespace: jobKeyParts.Namespace,
-                Name: jobKeyParts.Name,
-                Variant: jobKeyParts.Variant,
-                CronExpression: trigger.ScheduleExpression,
-                TimeZoneId: "UTC",
-                StartAtUtc: trigger.StartAtUtc?.UtcDateTime,
-                EndAtUtc: trigger.EndAtUtc?.UtcDateTime,
-                Enabled: trigger.Enabled,
-                Metadata: SerializeMetadata(trigger.Metadata));
+            var triggerRef = new TriggerRefRequest
+            {
+                TriggerKey = triggerKey,
+                JobKey = jobKeyParts.JobKey,
+                TenantId = jobKeyParts.TenantId,
+                JobId = jobId,
+                Environment = jobKeyParts.Environment,
+                Namespace = jobKeyParts.Namespace,
+                Name = jobKeyParts.Name,
+                Variant = jobKeyParts.Variant,
+                CronExpression = trigger.ScheduleExpression,
+                TimeZoneId = "UTC",
+                StartAtUtc = trigger.StartAtUtc?.UtcDateTime,
+                EndAtUtc = trigger.EndAtUtc?.UtcDateTime,
+                Enabled = trigger.Enabled,
+                Metadata = SerializeMetadata(trigger.Metadata)
+            };
 
             var request = new TriggerUpsertRequest
             {
-                Actor = new[] { actor },
                 Trigger = new[] { triggerRef },
                 AllowDeletedReuse = false
             };
@@ -108,29 +108,29 @@ public sealed class XtraqJobPersistenceProvider : IJobPersistenceProvider
 
         return Task.Run(async () =>
         {
-            var actor = BuildActor();
             var triggerKeyParts = TriggerKeyParts.Parse(triggerId);
             var jobId = await ResolveJobIdAsync(triggerKeyParts.JobKey, cancellationToken).ConfigureAwait(false);
 
-            var triggerRef = TriggerRef.Create(
-                TriggerKey: triggerKeyParts.TriggerKey,
-                JobKey: triggerKeyParts.JobKey,
-                TenantId: triggerKeyParts.TenantId,
-                JobId: jobId,
-                Environment: triggerKeyParts.Environment,
-                Namespace: triggerKeyParts.Namespace,
-                Name: triggerKeyParts.Name,
-                Variant: triggerKeyParts.Variant,
-                CronExpression: triggerKeyParts.CronExpression ?? string.Empty,
-                TimeZoneId: triggerKeyParts.TimeZoneId ?? "UTC",
-                StartAtUtc: null,
-                EndAtUtc: null,
-                Enabled: true,
-                Metadata: null);
+            var triggerRef = new TriggerRefRequest
+            {
+                TriggerKey = triggerKeyParts.TriggerKey,
+                JobKey = triggerKeyParts.JobKey,
+                TenantId = triggerKeyParts.TenantId,
+                JobId = jobId,
+                Environment = triggerKeyParts.Environment,
+                Namespace = triggerKeyParts.Namespace,
+                Name = triggerKeyParts.Name,
+                Variant = triggerKeyParts.Variant,
+                CronExpression = triggerKeyParts.CronExpression ?? string.Empty,
+                TimeZoneId = triggerKeyParts.TimeZoneId ?? "UTC",
+                StartAtUtc = null,
+                EndAtUtc = null,
+                Enabled = true,
+                Metadata = null
+            };
 
             var request = new TriggerDeleteRequest
             {
-                Actor = new[] { actor },
                 Trigger = new[] { triggerRef }
             };
 
@@ -146,15 +146,6 @@ public sealed class XtraqJobPersistenceProvider : IJobPersistenceProvider
     public Task ReleaseAsync(TriggerReleaseRequest request, CancellationToken cancellationToken)
     {
         throw new NotSupportedException("Trigger lease release is not yet implemented against Xtraq.");
-    }
-
-    private ActorRef BuildActor()
-    {
-        if (string.IsNullOrWhiteSpace(_options.Actor))
-        {
-            throw new InvalidOperationException("XtraqOptions.Actor must be configured.");
-        }
-        return ActorRef.Create(_options.Actor);
     }
 
     private string? SerializeMetadata(IReadOnlyDictionary<string, string>? metadata)
