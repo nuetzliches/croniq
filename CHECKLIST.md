@@ -20,7 +20,7 @@
 - [x] Referenz-In-Memory-JobStore implementieren
 - [x] Xtraq-Persistence-Provider prototypen inkl. Acquire/Release Trigger Procs (Croniq.Persistence.Xtraq + SQL-Skripte)
 - [x] Auth-Provider-Umschaltung (InMemory/Xtraq) per Options integriert und SampleHost auf Xtraq verdrahtet
-- [ ] Policy-Engine auf Polly-Basis implementieren (Retry/Timeout/Circuit-Breaker) – Polly-Ausfuehrungspipeline (Timeout→CircuitBreaker→Retry) und Dead-Letter-Persistenz sind fertig; Telemetrie laut `docs/technical/policies.md` offen
+- [x] Policy-Engine auf Polly-Basis implementieren (Retry/Timeout/Circuit-Breaker) – Polly-Ausfuehrungspipeline (Timeout→CircuitBreaker→Retry), Dead-Letter-Persistenz sowie Telemetrie (PolicyMetrics + strukturierte Logs) per `docs/technical/policies.md` verdrahtet
 - [x] Minimal API Skeleton mit Healthcheck, Schedule CRUD und Trigger Endpoint erstellen
 - [x] gRPC SchedulerService Proto und Client SDK (Croniq.Rpc.Client) generieren
 - [ ] Build/Test CI Pipelines (GitHub Actions) mit Lint/Coverage Gates einrichten – Plan siehe `docs/technical/ci.md`
@@ -30,3 +30,8 @@
 - [ ] Docs Streams aufsetzen (docs/consumer, docs/technical) inkl. Quickstart – Plan siehe `docs/technical/docstreams.md`
 - [ ] UI-Backlog dokumentieren; Technologie nach API-Stabilisierung entscheiden – Plan siehe `docs/technical/ui.md`
 - [ ] Kubernetes Chart (charts/croniq) als Backlog-Platzhalter vorbereiten – Plan siehe `docs/technical/kubernetes.md`
+
+## Next Focus
+
+1. Teststrategie-Dokument (`docs/technical/testing.md`) detaillieren, damit CI/E2E-Planung auf einer klaren Grundlage steht.
+2. GitHub-Actions-Pipeline laut `docs/technical/ci.md` aufsetzen (Build + Tests + Coverage), sobald der Testplan final ist.
