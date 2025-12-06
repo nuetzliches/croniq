@@ -12,6 +12,12 @@ This section is intended for maintainers, platform engineers, and contributors w
 - Release, compliance, and security checklists
 - Testing strategy & tooling (`testing.md`)
 - Security baseline & auth flows (`security.md`)
+- Observability plan (`observability.md`)
+- Policy engine rollout (`policies.md`)
+- CI/CD pipelines (`ci.md`)
+- Docker dev stack (`devstack.md`)
+- Documentation streams (`docstreams.md`)
+- Supply chain & release security (`supplychain.md`)
 
 ## Provider contracts (draft)
 

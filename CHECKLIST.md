@@ -20,7 +20,7 @@
 - [x] API/RPC-Vertraege: Minimal API Endpunkte und gRPC Proto entwerfen
 - [ ] Teststrategie: Unit/Contract/E2E Testplan mit Tools (xUnit, Testcontainers, Compose) detaillieren (`docs/technical/testing.md` enthaelt den Plan + Backlog)
 - [ ] Security-Basis: API-Key/OAuth2 Flow und Rate Limiter Design ausarbeiten (Plan siehe `docs/technical/security.md`; Umsetzung OIDC/JWT + RateLimiter-Refactor steht aus)
-- [ ] Observability: OTel/Serilog Setup und Dashboard-Kennzahlen festlegen
+- [ ] Observability: OTel/Serilog Setup und Dashboard-Kennzahlen festlegen (Plan siehe `docs/technical/observability.md`)
 
 ## Naechste Schritte
 
@@ -28,13 +28,13 @@
 - [x] Referenz-In-Memory-JobStore implementieren
 - [x] Xtraq-Persistence-Provider prototypen inkl. Acquire/Release Trigger Procs (Croniq.Persistence.Xtraq + SQL-Skripte)
 - [x] Auth-Provider-Umschaltung (InMemory/Xtraq) per Options integriert und SampleHost auf Xtraq verdrahtet
-- [ ] Policy-Engine auf Polly-Basis implementieren (Retry/Timeout/Circuit-Breaker)
+- [ ] Policy-Engine auf Polly-Basis implementieren (Retry/Timeout/Circuit-Breaker) – Plan siehe `docs/technical/policies.md`
 - [x] Minimal API Skeleton mit Healthcheck, Schedule CRUD und Trigger Endpoint erstellen
 - [x] gRPC SchedulerService Proto und Client SDK (Croniq.Rpc.Client) generieren
-- [ ] Build/Test CI Pipelines (GitHub Actions) mit Lint/Coverage Gates einrichten
-- [ ] Docker Compose Dev-Stack (API, Worker, Xtraq, OTel/Grafana) bereitstellen
-- [ ] SBOM/Signierung und Vulnerability Scans in Release-Flow einbauen
+- [ ] Build/Test CI Pipelines (GitHub Actions) mit Lint/Coverage Gates einrichten – Plan siehe `docs/technical/ci.md`
+- [ ] Docker Compose Dev-Stack (API, Worker, Xtraq, OTel/Grafana) bereitstellen – Plan siehe `docs/technical/devstack.md`
+- [ ] SBOM/Signierung und Vulnerability Scans in Release-Flow einbauen – Plan siehe `docs/technical/supplychain.md`
 - [x] Quota-Guards im Core verankern (Rate/Concurrency) basierend auf PolicyResolver + Tests
-- [ ] Docs Streams aufsetzen (docs/consumer, docs/technical) inkl. Quickstart
+- [ ] Docs Streams aufsetzen (docs/consumer, docs/technical) inkl. Quickstart – Plan siehe `docs/technical/docstreams.md`
 - [ ] UI-Backlog dokumentieren; Technologie nach API-Stabilisierung entscheiden
 - [ ] Kubernetes Chart (charts/croniq) als Backlog-Platzhalter vorbereiten
