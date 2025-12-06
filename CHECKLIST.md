@@ -36,5 +36,5 @@
 - [ ] SBOM/Signierung und Vulnerability Scans in Release-Flow einbauen – Plan siehe `docs/technical/supplychain.md`
 - [x] Quota-Guards im Core verankern (Rate/Concurrency) basierend auf PolicyResolver + Tests
 - [ ] Docs Streams aufsetzen (docs/consumer, docs/technical) inkl. Quickstart – Plan siehe `docs/technical/docstreams.md`
-- [ ] UI-Backlog dokumentieren; Technologie nach API-Stabilisierung entscheiden
+- [ ] UI-Backlog dokumentieren; Technologie nach API-Stabilisierung entscheiden – Plan siehe `docs/technical/ui.md`
 - [ ] Kubernetes Chart (charts/croniq) als Backlog-Platzhalter vorbereiten

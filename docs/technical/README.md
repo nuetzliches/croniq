@@ -18,6 +18,7 @@ This section is intended for maintainers, platform engineers, and contributors w
 - Docker dev stack (`devstack.md`)
 - Documentation streams (`docstreams.md`)
 - Supply chain & release security (`supplychain.md`)
+- UI backlog & strategy (`ui.md`)
 
 ## Provider contracts (draft)
 
