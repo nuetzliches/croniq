@@ -10,6 +10,8 @@ This section is intended for maintainers, platform engineers, and contributors w
 - Deployment playbooks (Docker Compose, Kubernetes, CI/CD)
 - Observability standards (Serilog + OpenTelemetry)
 - Release, compliance, and security checklists
+- Testing strategy & tooling (`testing.md`)
+- Security baseline & auth flows (`security.md`)
 
 ## Provider contracts (draft)
 
