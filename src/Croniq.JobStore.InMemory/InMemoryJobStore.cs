@@ -180,6 +180,29 @@ public sealed class InMemoryJobStore : IJobPersistenceProvider
         return Task.CompletedTask;
     }
 
+    public Task MoveToDeadLetterAsync(DeadLetterRequest request, CancellationToken cancellationToken)
+    {
+        if (request is null) throw new ArgumentNullException(nameof(request));
+        cancellationToken.ThrowIfCancellationRequested();
+
+        lock (_lock)
+        {
+            if (!_triggers.TryGetValue(request.Lease.TriggerId, out var entry))
+            {
+                throw new InvalidOperationException($"Trigger '{request.Lease.TriggerId}' not found.");
+            }
+
+            entry.DeadLetters.Add(new DeadLetterEntry(
+                request.Reason,
+                request.Payload,
+                request.Metadata is null ? null : new Dictionary<string, string>(request.Metadata, StringComparer.OrdinalIgnoreCase),
+                request.OccurredAtUtc,
+                request.Retention));
+        }
+
+        return Task.CompletedTask;
+    }
+
     private DateTimeOffset UtcNow() => (_options.UtcNowProvider ?? InMemoryJobStoreOptions.DefaultUtcNow)();
 
     private static bool MatchesScope(PartitionScope a, PartitionScope b)
@@ -230,5 +253,10 @@ public sealed class InMemoryJobStore : IJobPersistenceProvider
 
     private sealed record LeaseInfo(string LeaseId, string InstanceId, DateTimeOffset ExpiresAtUtc, DateTimeOffset FireAtUtc);
 
-    private sealed record DeadLetterEntry(string Reason, DateTimeOffset CreatedAtUtc);
+    private sealed record DeadLetterEntry(
+        string Reason,
+        string? Payload,
+        IReadOnlyDictionary<string, string>? Metadata,
+        DateTimeOffset CreatedAtUtc,
+        TimeSpan Retention);
 }

@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Croniq.Core.Jobs;
@@ -26,6 +27,7 @@ public sealed class TriggerWorker
     private readonly IMisfirePolicy _misfirePolicy;
     private readonly IPolicyResolver _policyResolver;
     private readonly IQuotaGuard _quotaGuard;
+    private readonly JsonSerializerOptions _jsonOptions = new(JsonSerializerDefaults.Web);
 
     public TriggerWorker(
         IJobStore jobStore,
@@ -98,13 +100,14 @@ public sealed class TriggerWorker
                 continue;
             }
 
+            var executionOptions = _policyResolver.ResolveExecution(jobKey);
+            var metadata = lease.Payload is null
+                ? null
+                : new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) { { "payload", lease.Payload } };
+
             try
             {
-                var metadata = lease.Payload is null
-                    ? null
-                    : new Dictionary<string, string> { { "payload", lease.Payload } };
-
-                var request = new JobExecutionRequest(jobKey, descriptor, metadata, _activitySource);
+                var request = new JobExecutionRequest(jobKey, descriptor, executionOptions, metadata, _activitySource);
                 await _pipeline.ExecuteAsync(request, cancellationToken).ConfigureAwait(false);
 
                 await ReleaseAsync(lease, succeeded: true, deadLetterReason: null, nextFireTimeUtc: null, cancellationToken).ConfigureAwait(false);
@@ -113,7 +116,35 @@ public sealed class TriggerWorker
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error executing job {JobKey} for lease {LeaseId}", lease.JobKey, lease.LeaseId);
-                await ReleaseAsync(lease, succeeded: false, deadLetterReason: "execution-error", nextFireTimeUtc: null, cancellationToken).ConfigureAwait(false);
+                var releaseReason = "execution-error";
+
+                if (executionOptions.DeadLetter.Enabled && !IsCancellation(ex, cancellationToken))
+                {
+                    var occurredAtUtc = DateTimeOffset.UtcNow;
+                    var metadataSnapshot = CloneMetadata(metadata);
+                    metadataSnapshot["exception.type"] = ex.GetType().FullName ?? ex.GetType().Name;
+                    metadataSnapshot["exception.message"] = ex.Message;
+                    metadataSnapshot["execution.reason"] = "policy-deadletter";
+                    if (!string.IsNullOrWhiteSpace(executionOptions.DeadLetter.OperatorHint))
+                    {
+                        metadataSnapshot["deadletter.hint"] = executionOptions.DeadLetter.OperatorHint!;
+                    }
+
+                    var deadLetterPayload = BuildDeadLetterPayload(lease, metadataSnapshot, executionOptions, ex, occurredAtUtc);
+                    var metadataView = metadataSnapshot.Count == 0 ? null : metadataSnapshot;
+                    var deadLetter = new DeadLetterRequest(
+                        lease,
+                        releaseReason,
+                        occurredAtUtc,
+                        executionOptions.DeadLetter.Retention,
+                        deadLetterPayload,
+                        metadataView);
+
+                    await TryDeadLetterAsync(deadLetter, cancellationToken).ConfigureAwait(false);
+                    releaseReason = null;
+                }
+
+                await ReleaseAsync(lease, succeeded: false, deadLetterReason: releaseReason, nextFireTimeUtc: null, cancellationToken).ConfigureAwait(false);
             }
             finally
             {
@@ -129,4 +160,121 @@ public sealed class TriggerWorker
         var release = new TriggerReleaseRequest(lease, succeeded, nextFireTimeUtc, deadLetterReason);
         return _jobStore.ReleaseAsync(release, cancellationToken);
     }
+
+    private async Task TryDeadLetterAsync(DeadLetterRequest request, CancellationToken cancellationToken)
+    {
+        try
+        {
+            await _jobStore.MoveToDeadLetterAsync(request, cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to persist dead-letter for lease {LeaseId}", request.Lease.LeaseId);
+        }
+    }
+
+    private string BuildDeadLetterPayload(
+        TriggerLease lease,
+        IReadOnlyDictionary<string, string>? metadata,
+        ExecutionPolicyOptions executionOptions,
+        Exception exception,
+        DateTimeOffset occurredAtUtc)
+    {
+        var envelope = new DeadLetterEnvelope(
+            lease.JobKey,
+            lease.TriggerId,
+            lease.LeaseId,
+            lease.Scope.TenantId,
+            lease.Scope.EnvironmentTag,
+            _options.InstanceId,
+            lease.FireAtUtc,
+            occurredAtUtc,
+            lease.Payload,
+            metadata,
+            new DeadLetterExceptionSnapshot(
+                exception.GetType().FullName ?? exception.GetType().Name,
+                exception.Message,
+                exception.ToString()),
+            BuildPolicySnapshot(executionOptions));
+
+        return JsonSerializer.Serialize(envelope, _jsonOptions);
+    }
+
+    private static DeadLetterPolicySnapshot BuildPolicySnapshot(ExecutionPolicyOptions options)
+    {
+        var retryExceptions = options.Retry.RetryableExceptions ?? Array.Empty<string>();
+        return new DeadLetterPolicySnapshot(
+            new DeadLetterRetrySnapshot(
+                options.Retry.Enabled,
+                options.Retry.MaxAttempts,
+                options.Retry.BackoffStrategy,
+                options.Retry.InitialDelay,
+                options.Retry.MaxDelay,
+                options.Retry.JitterFactor,
+                retryExceptions),
+            new DeadLetterTimeoutSnapshot(
+                options.Timeout.Enabled,
+                options.Timeout.Timeout,
+                options.Timeout.CancelExecutionOnTimeout),
+            new DeadLetterCircuitBreakerSnapshot(
+                options.CircuitBreaker.Enabled,
+                options.CircuitBreaker.FailureThreshold,
+                options.CircuitBreaker.SamplingWindow,
+                options.CircuitBreaker.BreakDuration,
+                options.CircuitBreaker.MinimumThroughput),
+            new DeadLetterDeadLetterOptionsSnapshot(
+                options.DeadLetter.Enabled,
+                options.DeadLetter.Retention,
+                options.DeadLetter.OperatorHint));
+    }
+
+    private static Dictionary<string, string> CloneMetadata(IReadOnlyDictionary<string, string>? metadata)
+    {
+        if (metadata is null || metadata.Count == 0)
+        {
+            return new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        }
+
+        return new Dictionary<string, string>(metadata, StringComparer.OrdinalIgnoreCase);
+    }
+
+    private static bool IsCancellation(Exception exception, CancellationToken cancellationToken)
+        => cancellationToken.IsCancellationRequested && exception is OperationCanceledException;
+
+    private sealed record DeadLetterEnvelope(
+        string JobKey,
+        string TriggerKey,
+        string LeaseId,
+        string TenantId,
+        string Environment,
+        string? InstanceId,
+        DateTimeOffset FireAtUtc,
+        DateTimeOffset OccurredAtUtc,
+        string? TriggerPayload,
+        IReadOnlyDictionary<string, string>? Metadata,
+        DeadLetterExceptionSnapshot Exception,
+        DeadLetterPolicySnapshot Policy);
+
+    private sealed record DeadLetterExceptionSnapshot(string Type, string Message, string Details);
+
+    private sealed record DeadLetterPolicySnapshot(
+        DeadLetterRetrySnapshot Retry,
+        DeadLetterTimeoutSnapshot Timeout,
+        DeadLetterCircuitBreakerSnapshot CircuitBreaker,
+        DeadLetterDeadLetterOptionsSnapshot DeadLetter);
+
+    private sealed record DeadLetterRetrySnapshot(
+        bool Enabled,
+        int MaxAttempts,
+        RetryBackoffStrategy BackoffStrategy,
+        TimeSpan InitialDelay,
+        TimeSpan MaxDelay,
+        double JitterFactor,
+        IReadOnlyCollection<string> RetryableExceptions);
+
+    private sealed record DeadLetterTimeoutSnapshot(bool Enabled, TimeSpan Timeout, bool CancelExecutionOnTimeout);
+
+    private sealed record DeadLetterCircuitBreakerSnapshot(bool Enabled, int FailureThreshold, TimeSpan SamplingWindow, TimeSpan BreakDuration, int MinimumThroughput);
+
+    private sealed record DeadLetterDeadLetterOptionsSnapshot(bool Enabled, TimeSpan Retention, string? OperatorHint);
 }

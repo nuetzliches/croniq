@@ -12,4 +12,6 @@ public interface IJobStore
     Task<IReadOnlyCollection<TriggerLease>> AcquireAsync(TriggerAcquireRequest request, CancellationToken cancellationToken);
 
     Task ReleaseAsync(TriggerReleaseRequest request, CancellationToken cancellationToken);
+
+    Task MoveToDeadLetterAsync(DeadLetterRequest request, CancellationToken cancellationToken);
 }

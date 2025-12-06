@@ -200,12 +200,18 @@ public sealed class XtraqJobPersistenceProvider : IJobPersistenceProvider
                     row.Payload ?? row.Metadata));
 
                 var ctx = new LeaseContext(
+                    row.TriggerId,
                     row.TriggerKey,
                     row.CronExpression,
                     row.TimeZoneId,
                     row.StartAtUtc,
                     row.EndAtUtc,
-                    request.InstanceId);
+                    request.InstanceId,
+                    row.TenantId,
+                    row.Environment,
+                    row.Namespace,
+                    row.Name,
+                    row.Variant);
                 _leaseContexts[leaseId] = ctx;
             }
 
@@ -257,6 +263,91 @@ public sealed class XtraqJobPersistenceProvider : IJobPersistenceProvider
             await _db.TriggerLeaseReleaseAsync(release, cancellationToken).ConfigureAwait(false);
             _leaseContexts.TryRemove(request.Lease.LeaseId, out _);
         }, cancellationToken);
+    }
+
+    public Task MoveToDeadLetterAsync(DeadLetterRequest request, CancellationToken cancellationToken)
+    {
+        if (request is null) throw new ArgumentNullException(nameof(request));
+
+        return Task.Run(async () =>
+        {
+            using var activity = _activitySource.StartActivity("TriggerDeadLetter");
+            activity?.SetTag("croniq.trigger", request.Lease.TriggerId);
+            activity?.SetTag("croniq.lease", request.Lease.LeaseId);
+
+            var leaseId = ParseLeaseId(request.Lease.LeaseId);
+            var context = await ResolveLeaseContextAsync(request.Lease.TriggerId, leaseId, cancellationToken).ConfigureAwait(false);
+            var reason = TruncateReason(request.Reason);
+            var retentionDays = NormalizeRetentionDays(request.Retention);
+            var payload = BuildDeadLetterPayload(request, context, retentionDays);
+
+            var deadLetter = new TriggerDeadLetterRefRequest
+            {
+                TriggerId = context.TriggerId,
+                TenantId = context.TenantId,
+                Environment = context.Environment,
+                Namespace = context.Namespace,
+                Name = context.Name,
+                Variant = context.Variant,
+                FireAtUtc = request.Lease.FireAtUtc.UtcDateTime,
+                DeadLetterReason = reason,
+                Payload = payload
+            };
+
+            var insert = new TriggerDeadLetterInsertRequest
+            {
+                DeadLetter = new[] { deadLetter }
+            };
+
+            _logger.LogWarning("Dead-lettering trigger {TriggerKey} lease {LeaseId} reason {Reason}", request.Lease.TriggerId, request.Lease.LeaseId, reason);
+            await _db.TriggerDeadLetterInsertAsync(insert, cancellationToken).ConfigureAwait(false);
+
+            var retention = new TriggerDeadLetterRetentionRequest
+            {
+                RetentionDays = retentionDays
+            };
+
+            await _db.TriggerDeadLetterRetentionAsync(retention, cancellationToken).ConfigureAwait(false);
+        }, cancellationToken);
+    }
+
+    private string BuildDeadLetterPayload(DeadLetterRequest request, LeaseContext context, int retentionDays)
+    {
+        var envelope = new DeadLetterEnvelope(
+            request.Lease.JobKey,
+            request.Lease.TriggerId,
+            request.Lease.LeaseId,
+            context.InstanceId ?? _currentInstanceId,
+            request.Lease.FireAtUtc,
+            request.OccurredAtUtc,
+            request.Lease.Payload,
+            request.Payload,
+            request.Metadata,
+            retentionDays,
+            request.Reason);
+
+        return JsonSerializer.Serialize(envelope, _jsonOptions);
+    }
+
+    private static string TruncateReason(string reason)
+    {
+        if (string.IsNullOrWhiteSpace(reason))
+        {
+            return "unknown";
+        }
+
+        return reason.Length <= 128 ? reason : reason[..128];
+    }
+
+    private static int NormalizeRetentionDays(TimeSpan retention)
+    {
+        if (retention <= TimeSpan.Zero)
+        {
+            return 1;
+        }
+
+        var days = (int)Math.Ceiling(retention.TotalDays);
+        return Math.Clamp(days, 1, 3650); // cap at ~10 years to keep cleanup bounded
     }
 
     private string? SerializeMetadata(IReadOnlyDictionary<string, string>? metadata)
@@ -353,18 +444,49 @@ public sealed class XtraqJobPersistenceProvider : IJobPersistenceProvider
         }
 
         var context = new LeaseContext(
+            row.TriggerId,
             row.TriggerKey,
             row.CronExpression,
             row.TimeZoneId,
             row.StartAtUtc,
             row.EndAtUtc,
-            _currentInstanceId);
+            _currentInstanceId,
+            row.TenantId,
+            row.Environment,
+            row.Namespace,
+            row.Name,
+            row.Variant);
 
         _leaseContexts[cacheKey] = context;
         return context;
     }
 
-    private sealed record LeaseContext(string TriggerKey, string CronExpression, string TimeZoneId, DateTime? StartAtUtc, DateTime? EndAtUtc, string? InstanceId);
+    private sealed record LeaseContext(
+        long TriggerId,
+        string TriggerKey,
+        string CronExpression,
+        string TimeZoneId,
+        DateTime? StartAtUtc,
+        DateTime? EndAtUtc,
+        string? InstanceId,
+        int TenantId,
+        string Environment,
+        string Namespace,
+        string Name,
+        string? Variant);
+
+    private sealed record DeadLetterEnvelope(
+        string JobKey,
+        string TriggerKey,
+        string LeaseId,
+        string? InstanceId,
+        DateTimeOffset FireAtUtc,
+        DateTimeOffset OccurredAtUtc,
+        string? TriggerPayload,
+        string? Payload,
+        IReadOnlyDictionary<string, string>? Metadata,
+        int RetentionDays,
+        string Reason);
 
     private sealed record JobKeyParts(string JobKey, int TenantId, string Environment, string Namespace, string Name, string? Variant)
     {

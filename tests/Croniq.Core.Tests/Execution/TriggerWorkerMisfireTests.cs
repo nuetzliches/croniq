@@ -33,10 +33,24 @@ public class TriggerWorkerMisfireTests
         }
     }
 
+    private sealed class FailingPipeline : IJobExecutionPipeline
+    {
+        private readonly Exception _exception;
+
+        public FailingPipeline(Exception exception)
+        {
+            _exception = exception;
+        }
+
+        public Task ExecuteAsync(JobExecutionRequest request, CancellationToken cancellationToken)
+            => Task.FromException(_exception);
+    }
+
     private sealed class StubJobStore : IJobStore
     {
         private readonly IReadOnlyCollection<TriggerLease> _leases;
         public List<TriggerReleaseRequest> Releases { get; } = new();
+        public List<DeadLetterRequest> DeadLetters { get; } = new();
 
         public StubJobStore(IReadOnlyCollection<TriggerLease> leases)
         {
@@ -51,6 +65,12 @@ public class TriggerWorkerMisfireTests
         public Task ReleaseAsync(TriggerReleaseRequest request, CancellationToken cancellationToken)
         {
             Releases.Add(request);
+            return Task.CompletedTask;
+        }
+
+        public Task MoveToDeadLetterAsync(DeadLetterRequest request, CancellationToken cancellationToken)
+        {
+            DeadLetters.Add(request);
             return Task.CompletedTask;
         }
     }
@@ -171,5 +191,63 @@ public class TriggerWorkerMisfireTests
         Assert.False(rescheduled!.Succeeded);
         Assert.NotNull(rescheduled.NextFireTimeUtc);
         Assert.InRange(rescheduled.NextFireTimeUtc!.Value, now.AddMinutes(1).AddSeconds(-1), now.AddMinutes(1).AddSeconds(2));
+    }
+
+    [Fact]
+    public async Task Deadletters_when_execution_pipeline_fails()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var lease = new TriggerLease("l-fail", "t:dev:test:job", "t:dev:test:job", new PartitionScope("t", "dev"), now.AddSeconds(-5), now, "{\"input\":true}");
+        var store = new StubJobStore(new[] { lease });
+        var pipeline = new FailingPipeline(new InvalidOperationException("boom"));
+
+        var overrides = new PolicyOverrideOptions
+        {
+            Execution =
+            {
+                new ExecutionPolicyOverride
+                {
+                    TenantId = "t",
+                    EnvironmentTag = "dev",
+                    NamespaceSegment = "test",
+                    JobName = "job",
+                    Options = new ExecutionPolicyOptions
+                    {
+                        DeadLetter = new DeadLetterPolicyOptions
+                        {
+                            Enabled = true,
+                            Retention = TimeSpan.FromDays(7),
+                            OperatorHint = "check job payload"
+                        }
+                    }
+                }
+            }
+        };
+
+        var worker = new TriggerWorker(
+            store,
+            BuildRegistry(),
+            pipeline,
+            new DefaultMisfirePolicy(Microsoft.Extensions.Options.Options.Create(new MisfirePolicyOptions { MaxMisfireDelay = TimeSpan.FromMinutes(5) })),
+            new PolicyResolver(
+                Microsoft.Extensions.Options.Options.Create(new MisfirePolicyOptions { MaxMisfireDelay = TimeSpan.FromMinutes(5) }),
+                Microsoft.Extensions.Options.Options.Create(new ExecutionPolicyOptions { DeadLetter = new DeadLetterPolicyOptions { Enabled = true } }),
+                Microsoft.Extensions.Options.Options.Create(overrides)),
+            Microsoft.Extensions.Options.Options.Create(new CroniqOptions { TenantId = "t", EnvironmentTag = "dev", InstanceId = "i1" }),
+            new InMemoryQuotaGuard(),
+            NullLogger<TriggerWorker>.Instance,
+            new ActivitySource("test"));
+
+        var processed = await worker.ProcessBatchAsync(now, 1, CancellationToken.None);
+
+        Assert.Equal(0, processed);
+        Assert.Single(store.DeadLetters);
+        var deadLetter = store.DeadLetters[0];
+        Assert.Equal("execution-error", deadLetter.Reason);
+        Assert.NotNull(deadLetter.Payload);
+        Assert.NotNull(deadLetter.Metadata);
+        Assert.True(deadLetter.Metadata!.ContainsKey("deadletter.hint"));
+        Assert.Single(store.Releases);
+        Assert.Null(store.Releases[0].DeadLetterReason);
     }
 }

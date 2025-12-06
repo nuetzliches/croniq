@@ -47,7 +47,7 @@ public sealed class DefaultJobExecutionPipeline : IJobExecutionPipeline
         using var activity = activitySource.StartActivity("Croniq.Job.Execute");
         jobLogger.LogDebug("Starting job {JobKey}", request.JobKey.Value);
 
-        var executionOptions = _policyResolver.ResolveExecution(request.JobKey);
+        var executionOptions = request.ExecutionOptions ?? _policyResolver.ResolveExecution(request.JobKey);
         var pipeline = _pipelineProvider.Get(request.JobKey, executionOptions);
 
         var context = new JobExecutionContext(request.JobKey.ToString(), metadata, jobLogger, activitySource);

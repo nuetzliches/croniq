@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -240,6 +241,56 @@ public class XtraqJobPersistenceProviderTests : IClassFixture<XtraqDatabaseFixtu
         Assert.True(deadLetters > 0);
         var releasedCount = await GetReleasedCountAsync(triggerKey);
         Assert.Equal(1, releasedCount);
+    }
+
+    [Fact]
+    public async Task Move_to_deadletter_persists_payload()
+    {
+        if (_fixture.SkipReason is { })
+        {
+            return;
+        }
+
+        var provider = CreateProvider();
+        var scope = new PartitionScope("1", "dev");
+        var jobName = $"job-{Guid.NewGuid():N}";
+        var jobKey = $"1:dev:tests:{jobName}";
+        var triggerKey = $"{jobKey}:dlq";
+        var instanceId = XtraqDatabaseFixture.DefaultInstanceId;
+
+        await provider.UpsertJobAsync(
+            new JobDefinition(jobKey, "tests", jobName, null, "deadletter api job", null),
+            CancellationToken.None);
+
+        await provider.UpsertTriggerAsync(
+            new TriggerDefinition(triggerKey, jobKey, "0/1 * * * * ?", scope),
+            CancellationToken.None);
+
+        var lease = (await provider.AcquireAsync(
+            new TriggerAcquireRequest(scope, instanceId, DateTimeOffset.UtcNow.AddMinutes(1), 5),
+            CancellationToken.None)).First(l => l.TriggerId == triggerKey);
+
+        var metadata = new Dictionary<string, string>
+        {
+            ["exception.type"] = typeof(InvalidOperationException).FullName!,
+            ["policy.retryAttempts"] = "3"
+        };
+
+        var request = new DeadLetterRequest(
+            lease,
+            "policy-deadletter",
+            DateTimeOffset.UtcNow,
+            TimeSpan.FromDays(5),
+            payload: "{\"custom\":\"payload\"}",
+            metadata);
+
+        await provider.MoveToDeadLetterAsync(request, CancellationToken.None);
+
+        var triggerId = await GetTriggerIdAsync(triggerKey);
+        var deadLetters = await CountDeadLettersAsync(triggerId, "policy-deadletter");
+        Assert.True(deadLetters > 0);
+
+        await provider.ReleaseAsync(new TriggerReleaseRequest(lease, false, null), CancellationToken.None);
     }
 
     private IJobPersistenceProvider CreateProvider()

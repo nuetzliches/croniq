@@ -8,6 +8,7 @@ using Croniq.Core;
 using Croniq.Core.Execution;
 using Croniq.Core.Jobs;
 using Croniq.Core.Options;
+using Croniq.Core.Policies;
 using Croniq.JobStore.InMemory;
 using Croniq.Persistence.Abstractions;
 using Croniq.Persistence.Xtraq;
@@ -212,6 +213,7 @@ public static class ApiHostingExtensions
             TriggerJobRequest request,
             IJobRegistry registry,
             IJobExecutionPipeline pipeline,
+            IPolicyResolver policyResolver,
             CancellationToken cancellationToken) =>
         {
             if (!JobKey.TryParse(request.JobKey, out var jobKey) || !registry.TryGet(jobKey, out var descriptor))
@@ -221,7 +223,8 @@ public static class ApiHostingExtensions
 
             var metadata = ToReadOnly(request.Metadata) ?? new Dictionary<string, string>();
             var activitySource = new ActivitySource("Croniq.Api.Trigger");
-            var execRequest = new JobExecutionRequest(jobKey, descriptor, metadata, activitySource);
+            var executionOptions = policyResolver.ResolveExecution(jobKey);
+            var execRequest = new JobExecutionRequest(jobKey, descriptor, executionOptions, metadata, activitySource);
 
             await pipeline.ExecuteAsync(execRequest, cancellationToken).ConfigureAwait(false);
             return Results.Accepted(value: new { status = "triggered", request.JobKey });
