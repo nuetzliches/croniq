@@ -37,8 +37,8 @@ This document explains how Croniq will implement the Polly-based policy engine p
 
 ### Telemetry Integration
 
-- Metrics: `cronipolicy.retry_attempts`, `cronipolicy.deadletter_total`, `cronipolicy.circuit_open` counters.
-- Logs: structured entries for each policy transition with `JobKey`, `Attempt`, `Policy`, `Reason`.
+- Metrics: `cronipolicy.retry_attempts`, `cronipolicy.deadletter_total`, `cronipolicy.circuit_open` counters. Implemented via `PolicyMetrics` in `Croniq.Core.Execution`, emitted by the resilience provider / dead-letter flow so operators see transitions without extra wiring.
+- Logs: structured entries for each policy transition with `Policy` (`timeout`, `retry`, `circuit-breaker`, `dead-letter`), `JobKey`, `Attempt`/`Delay` (for retries), and `Reason` (exception type/message). `ExecutionPolicyPipelineProvider` and `TriggerWorker` already emit these warnings/information entries, so dashboards and alerts can consume them immediately.
 
 ## Backlog to Complete the Policy Engine Milestone
 

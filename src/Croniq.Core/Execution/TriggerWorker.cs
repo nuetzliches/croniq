@@ -140,7 +140,7 @@ public sealed class TriggerWorker
                         deadLetterPayload,
                         metadataView);
 
-                    await TryDeadLetterAsync(deadLetter, cancellationToken).ConfigureAwait(false);
+                    await TryDeadLetterAsync(jobKey, deadLetter, cancellationToken).ConfigureAwait(false);
                     releaseReason = null;
                 }
 
@@ -161,11 +161,19 @@ public sealed class TriggerWorker
         return _jobStore.ReleaseAsync(release, cancellationToken);
     }
 
-    private async Task TryDeadLetterAsync(DeadLetterRequest request, CancellationToken cancellationToken)
+    private async Task TryDeadLetterAsync(JobKey jobKey, DeadLetterRequest request, CancellationToken cancellationToken)
     {
         try
         {
             await _jobStore.MoveToDeadLetterAsync(request, cancellationToken).ConfigureAwait(false);
+            var reason = string.IsNullOrWhiteSpace(request.Reason) ? "unknown" : request.Reason;
+            _logger.LogWarning(
+                "Policy transition {Policy} for job {JobKey}: routed lease {LeaseId} to dead-letter (reason: {Reason})",
+                "dead-letter",
+                jobKey.Value,
+                request.Lease.LeaseId,
+                reason);
+            PolicyMetrics.RecordDeadLetter(jobKey, reason);
         }
         catch (Exception ex)
         {

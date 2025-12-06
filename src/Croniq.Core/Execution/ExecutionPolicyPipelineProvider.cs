@@ -34,16 +34,17 @@ public sealed class ExecutionPolicyPipelineProvider : IExecutionPolicyPipelinePr
 
         var cached = _pipelines.AddOrUpdate(
             cacheKey,
-            _ => new CachedPipeline(BuildPipeline(cacheKey, options), fingerprint),
+            _ => new CachedPipeline(BuildPipeline(jobKey, options), fingerprint),
             (_, existing) => existing.Fingerprint == fingerprint
                 ? existing
-                : new CachedPipeline(BuildPipeline(cacheKey, options), fingerprint));
+                : new CachedPipeline(BuildPipeline(jobKey, options), fingerprint));
 
         return cached.Pipeline;
     }
 
-    private ResiliencePipeline BuildPipeline(string cacheKey, ExecutionPolicyOptions options)
+    private ResiliencePipeline BuildPipeline(JobKey jobKey, ExecutionPolicyOptions options)
     {
+        var cacheKey = jobKey.Value;
         var builder = new ResiliencePipelineBuilder();
 
         if (options.Timeout.Enabled && options.Timeout.Timeout > TimeSpan.Zero)
@@ -51,9 +52,13 @@ public sealed class ExecutionPolicyPipelineProvider : IExecutionPolicyPipelinePr
             builder.AddTimeout(new TimeoutStrategyOptions
             {
                 Timeout = options.Timeout.Timeout,
-                OnTimeout = args =>
+                OnTimeout = _ =>
                 {
-                    _logger.LogWarning("Job {JobKey} timed out after {Timeout}", cacheKey, args.Timeout);
+                    _logger.LogWarning(
+                        "Policy transition {Policy} for job {JobKey}: timeout after {Timeout}",
+                        "timeout",
+                        cacheKey,
+                        options.Timeout.Timeout);
                     return default;
                 }
             });
@@ -67,7 +72,17 @@ public sealed class ExecutionPolicyPipelineProvider : IExecutionPolicyPipelinePr
                 SamplingDuration = options.CircuitBreaker.SamplingWindow,
                 BreakDuration = options.CircuitBreaker.BreakDuration,
                 MinimumThroughput = Math.Max(2, options.CircuitBreaker.MinimumThroughput),
-                ShouldHandle = BuildCircuitBreakerPredicate(options.Retry.RetryableExceptions)
+                ShouldHandle = BuildCircuitBreakerPredicate(options.Retry.RetryableExceptions),
+                OnOpened = _ =>
+                {
+                    _logger.LogWarning(
+                        "Policy transition {Policy} for job {JobKey}: circuit opened for {BreakDuration}",
+                        "circuit-breaker",
+                        cacheKey,
+                        options.CircuitBreaker.BreakDuration);
+                    PolicyMetrics.RecordCircuitOpened(jobKey);
+                    return default;
+                }
             });
         }
 
@@ -80,7 +95,19 @@ public sealed class ExecutionPolicyPipelineProvider : IExecutionPolicyPipelinePr
                 MaxDelay = options.Retry.MaxDelay,
                 BackoffType = MapBackoff(options.Retry.BackoffStrategy),
                 UseJitter = options.Retry.JitterFactor > 0,
-                ShouldHandle = BuildRetryPredicate(options.Retry.RetryableExceptions)
+                ShouldHandle = BuildRetryPredicate(options.Retry.RetryableExceptions),
+                OnRetry = args =>
+                {
+                    var exceptionType = args.Outcome.Exception?.GetType().FullName ?? "unknown";
+                    _logger.LogInformation(
+                        "Policy transition {Policy} for job {JobKey}: retry attempt {Attempt} (exception: {ExceptionType})",
+                        "retry",
+                        cacheKey,
+                        args.AttemptNumber,
+                        exceptionType);
+                    PolicyMetrics.RecordRetry(jobKey);
+                    return default;
+                }
             });
         }
 

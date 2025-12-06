@@ -1,15 +1,10 @@
 # CHECKLIST
 
-## Status jetzt
-
 - [x] Zielbild und Scope fuer Croniq skizziert
 - [x] High-level Architektur (Core, Provider, Service Layer) definiert
 - [x] Priorisierte Entscheidungen zu Scheduling-Syntax, Persistenz und Policies dokumentiert
 - [x] Croniq.Api Hosting-Extensions (Add/UseCroniqApi) inkl. RateLimiter und konfigurierbare Auth/Persistenz-Modi (InMemory|Xtraq) fertiggestellt
 - [x] Croniq.Data.Xtraq als shared Artefakte/DbContext eingebunden; ConnectionString als `Croniq:Xtraq` geteilt (Auth + Persistence)
-
-## In Arbeit
-
 - [x] Croniq.Core: Trigger/Job-Pipeline API entwerfen inkl. JobKey-Schema und DI-Konzept
 - [x] Croniq.Sdk: IJob/IJobExecutionContext Contract finalisieren und Attribute dokumentieren
 - [x] JobStore-Abstraktion: IJobStore/IJobPersistenceProvider Interfaces mit Locking/Partitionierung festziehen
@@ -21,9 +16,6 @@
 - [ ] Teststrategie: Unit/Contract/E2E Testplan mit Tools (xUnit, Testcontainers, Compose) detaillieren (`docs/technical/testing.md` enthaelt den Plan + Backlog)
 - [ ] Security-Basis: API-Key/OAuth2 Flow und Rate Limiter Design ausarbeiten (Plan siehe `docs/technical/security.md`; Umsetzung OIDC/JWT + RateLimiter-Refactor steht aus)
 - [ ] Observability: OTel/Serilog Setup und Dashboard-Kennzahlen festlegen (Plan siehe `docs/technical/observability.md`)
-
-## Naechste Schritte
-
 - [x] Repository-Struktur anlegen (src/, jobs/, infra/sql/xtraq, docs/)
 - [x] Referenz-In-Memory-JobStore implementieren
 - [x] Xtraq-Persistence-Provider prototypen inkl. Acquire/Release Trigger Procs (Croniq.Persistence.Xtraq + SQL-Skripte)
