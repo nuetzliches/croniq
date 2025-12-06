@@ -76,7 +76,8 @@ $scripts = @(
     "croniq/procs.instances.sql",
     "croniq/procs.jobs.sql",
     "croniq/procs.leases.sql",
-    "croniq/procs.deadletter.sql"
+    "croniq/procs.deadletter.sql",
+    "seed.dev.sql"
 )
 
 foreach ($relative in $scripts) {

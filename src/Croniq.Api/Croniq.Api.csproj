@@ -10,6 +10,7 @@
     <ProjectReference Include="..\Croniq.Providers.Default\Croniq.Providers.Default.csproj" />
     <ProjectReference Include="..\Croniq.Providers.Abstractions\Croniq.Providers.Abstractions.csproj" />
     <ProjectReference Include="..\Croniq.Persistence.Abstractions\Croniq.Persistence.Abstractions.csproj" />
+    <ProjectReference Include="..\Croniq.Persistence.Xtraq\Croniq.Persistence.Xtraq.csproj" />
     <ProjectReference Include="..\Croniq.Auth.Abstractions\Croniq.Auth.Abstractions.csproj" />
     <ProjectReference Include="..\Croniq.Auth.Core\Croniq.Auth.Core.csproj" />
     <ProjectReference Include="..\Croniq.Auth.Xtraq\Croniq.Auth.Xtraq.csproj" />

@@ -17,6 +17,7 @@
 - **Service Layer**: Minimal API zum Verwalten/Triggern von Jobs und Schedules; RPC-Kanal (z.B. gRPC oder JSON-RPC) fuer entfernten Zugriff.
 - **Jobs Layer**: Eigenstaendige Projekte/Assemblies, die Job-Contracts implementieren und per DI registriert werden.
 - **Infrastructure**: SQL-Skripte fuer den Xtraq-Provider (SQL Server), Docker-Compose fuer alle Services, optionale UI zur Administration.
+- **Hosting Extensions**: `Croniq.Api` bietet `AddCroniqApiServices`/`AddCroniqApiRateLimiter`/`UseCroniqApi` fuer Konsumenten. Auth/Persistenz sind per Konfig schaltbar (InMemory vs. Xtraq) mit einem gemeinsamen ConnectionString unter `Croniq:Xtraq`.
 
 ## 3. Repository-Struktur (Vorschlag)
 
@@ -113,8 +114,11 @@ infra/sql/xtraq/
   - Key Prefix (z.B. `crq_dev_`) + zufaellige 32 Bytes; zusammengesetzt als `crq_dev_<keyId>_<secret>`, Secret nie gespeichert. Validation: Prefix -> DB lookup -> Hashvergleich.
   - Audit: `auth.AuditLog` optional fuer Issuance/Revocation/FailedAuth.
 - **Migration & Kompatibilitaet**:
-  - V1 minimal: globaler ApiKey bleibt konfigurierbar (Fallback), aber sobald `Croniq.Auth` aktiviert ist, wird er deaktiviert.
+  - V1 minimal: kein globaler ApiKey mehr; Auth-Modus ist konfigurierbar (InMemory|Xtraq). InMemory benoetigt `Croniq:Auth:InMemory:ApiKey`, Xtraq nutzt DB-Procs (`ApiKeyIssue/Validate`).
   - In-Memory Auth bleibt fuer Samples/Unit-Tests. Xtraq-Auth wird Integrations-Testcontainers nutzen (gemeinsame DB mit Persistenz).
+- **Konfiguration**:
+  - Auth: `Croniq:Auth:Mode = Xtraq|InMemory`; Xtraq nutzt `Croniq:Auth:Xtraq:ConnectionString` oder den gemeinsamen `Croniq:Xtraq:ConnectionString`, InMemory nutzt `Croniq:Auth:InMemory:ApiKey`.
+  - Persistence: `Croniq:Persistence:Mode = Xtraq|InMemory`; Xtraq nutzt `Croniq:Persistence:Xtraq:ConnectionString` oder den gemeinsamen `Croniq:Xtraq:ConnectionString`. Runtime-JobStore bleibt immer InMemory; Xtraq ergaenzt Recovery/Sync/Leases.
 
 ### Rollout-Checklist (Auth + Shared Xtraq)
 
@@ -199,6 +203,7 @@ Der Scheduler liest das `CroniqJobAttribute`, bildet daraus den `JobKey` und reg
 
 - Gemeinsame `IProvider`/`IPlugin`-Abstraktionen mit Registrierung ueber DI.
 - **Persistenz**: `IJobPersistenceProvider` (CRUD fuer Trigger, Kalender, Job-Metadaten). Default-Implementierung nutzt Xtraq.
+- **Konfig-Modi**: Per Host konfigurierbar zwischen InMemory und Xtraq (Auth getrennt von Persistence). Gemeinsamer ConnectionString unter `Croniq:Xtraq` kann fuer beide Domänen genutzt werden; domänenspezifische Overrides moeglich.
 - **Logging**: Schnittstelle an `ILogger` anbinden, aber erweiterbarer Provider fuer zentrale Audit-Logs.
 - **Telemetry**: OpenTelemetry-Exporter oder eigener Provider.
 - Erweiterbarkeit fuer weitere Domaenen (z.B. Secrets, Notifications).
@@ -234,6 +239,7 @@ Der Scheduler liest das `CroniqJobAttribute`, bildet daraus den `JobKey` und reg
 - **Minimal API** (`Croniq.Api`):
   - Endpunkte: `POST /jobs/trigger`, `POST /schedules`, `GET /schedules/{id}`, `DELETE /schedules/{id}`, `GET /health`.
   - AuthN/AuthZ via API Keys oder OAuth2 (extension point).
+- **Hosting**: Konsumenten hosten die API ueber Extensions `AddCroniqApiServices` + `AddCroniqApiRateLimiter` + `UseCroniqApi`; Auth/Persistence-Mode werden per Konfig (InMemory/Xtraq) geschaltet.
 - **RPC**:
   - gRPC-Service `SchedulerService` mit Methoden `TriggerJob`, `GetSchedules`, `RegisterSchedule`.
   - Alternativ JSON-RPC fuer leichtere Clients; Client-SDK in `Croniq.Rpc.Client`.
@@ -391,3 +397,5 @@ Handler signalisieren Fehler stets ueber Exceptions: zuerst loggen, optional `Cu
   - Cluster-GA-Kriterien und Zeitpunkt (wann Xtraq-Provider als produktionsreif gilt).
   - Dead-Letter manuelle Rehydrate-Flows (Standard 30 Tage, API/CLI-Flow definieren).
   - JSON-RPC Support-Level (Community-only oder voller Support).
+
+Nächste sinnvolle Schritte: OIDC/JWT-Pfad ergänzen (CallerContext aus Bearer), Security-/Test-Strategie ausarbeiten und die Admin-Routen (Tenant/API-Key Management) auf die neue Auth-Schicht aufsetzen.
