@@ -23,6 +23,7 @@ public static class ServiceCollectionExtensions
         }
 
         services.Configure<MisfirePolicyOptions>(_ => { });
+        services.Configure<ExecutionPolicyOptions>(_ => { });
         services.Configure<PolicyOverrideOptions>(_ => { });
         services.TryAddSingleton<IMisfirePolicy, DefaultMisfirePolicy>();
         services.TryAddSingleton<IPolicyResolver, PolicyResolver>();

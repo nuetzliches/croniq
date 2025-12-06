@@ -7,4 +7,6 @@ public interface IPolicyResolver
     MisfirePolicyOptions ResolveMisfire(JobKey jobKey);
 
     QuotaOptions ResolveQuota(JobKey jobKey);
+
+    ExecutionPolicyOptions ResolveExecution(JobKey jobKey);
 }

@@ -19,6 +19,7 @@ This section is intended for maintainers, platform engineers, and contributors w
 - Documentation streams (`docstreams.md`)
 - Supply chain & release security (`supplychain.md`)
 - UI backlog & strategy (`ui.md`)
+- Kubernetes chart plan (`kubernetes.md`)
 
 ## Provider contracts (draft)
 

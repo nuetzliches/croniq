@@ -76,6 +76,7 @@ public class TriggerWorkerMisfireTests
             new DefaultMisfirePolicy(Microsoft.Extensions.Options.Options.Create(new MisfirePolicyOptions { MaxMisfireDelay = TimeSpan.FromMinutes(5) })),
             new PolicyResolver(
                 Microsoft.Extensions.Options.Options.Create(new MisfirePolicyOptions { MaxMisfireDelay = TimeSpan.FromMinutes(5), DeadLetterOnMisfire = true }),
+                Microsoft.Extensions.Options.Options.Create(new ExecutionPolicyOptions()),
                 Microsoft.Extensions.Options.Options.Create(new PolicyOverrideOptions())),
             Microsoft.Extensions.Options.Options.Create(new CroniqOptions { TenantId = "t", EnvironmentTag = "dev", InstanceId = "i1" }),
             new InMemoryQuotaGuard(),
@@ -105,6 +106,7 @@ public class TriggerWorkerMisfireTests
             new DefaultMisfirePolicy(Microsoft.Extensions.Options.Options.Create(new MisfirePolicyOptions { MaxMisfireDelay = TimeSpan.FromMinutes(5) })),
             new PolicyResolver(
                 Microsoft.Extensions.Options.Options.Create(new MisfirePolicyOptions { MaxMisfireDelay = TimeSpan.FromMinutes(5) }),
+                Microsoft.Extensions.Options.Options.Create(new ExecutionPolicyOptions()),
                 Microsoft.Extensions.Options.Options.Create(new PolicyOverrideOptions())),
             Microsoft.Extensions.Options.Options.Create(new CroniqOptions { TenantId = "t", EnvironmentTag = "dev", InstanceId = "i1" }),
             new InMemoryQuotaGuard(),
@@ -151,6 +153,7 @@ public class TriggerWorkerMisfireTests
             new DefaultMisfirePolicy(Microsoft.Extensions.Options.Options.Create(new MisfirePolicyOptions { MaxMisfireDelay = TimeSpan.FromMinutes(5) })),
             new PolicyResolver(
                 Microsoft.Extensions.Options.Options.Create(new MisfirePolicyOptions { MaxMisfireDelay = TimeSpan.FromMinutes(5) }),
+                Microsoft.Extensions.Options.Options.Create(new ExecutionPolicyOptions()),
                 Microsoft.Extensions.Options.Options.Create(quotaOverrides)),
             Microsoft.Extensions.Options.Options.Create(new CroniqOptions { TenantId = "t", EnvironmentTag = "dev", InstanceId = "i1" }),
             new InMemoryQuotaGuard(),
