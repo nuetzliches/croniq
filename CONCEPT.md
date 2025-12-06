@@ -283,10 +283,6 @@ Handler signalisieren Fehler stets ueber Exceptions: zuerst loggen, optional `Cu
 
 **Policy Resolution (Resolver)**
 
-- Defaults: `MisfirePolicyOptions` (MaxMisfireDelay 5m, DeadLetterOnMisfire true, RescheduleBackoff 30s) und `QuotaOptions` (60 Trigger/Minute, 5 parallele Executions pro JobKey).
-- Scopes: globale Defaults -> Tenant -> EnvironmentTag -> NamespaceSegment -> JobName. `IPolicyResolver` waehlt immer die spezifischste Misfire-Override (kompletter Ersatz der Werte) und wendet alle passenden Quota-Overrides als Minimum-Regel an (kleinster erlaubter Wert gewinnt).
-- Anwendung: TriggerWorker nutzt den Resolver bereits fuer Misfire-Checks; Quota-Resolution liefert die Limits fuer nachgelagerte Rate-/Concurrency-Guards (in-memory QuotaGuard pro Worker; spaeter austauschbar fuer verteilte Guards). Dead-Letter-Retention bleibt 30 Tage (policy-gesteuert).
-
 ## 12. Docker & Deployment
 
 - Dockerfiles pro Service (`Croniq.Api`, `Croniq.UI`, optionale Worker Nodes).

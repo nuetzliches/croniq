@@ -28,7 +28,7 @@
 - [x] Referenz-In-Memory-JobStore implementieren
 - [x] Xtraq-Persistence-Provider prototypen inkl. Acquire/Release Trigger Procs (Croniq.Persistence.Xtraq + SQL-Skripte)
 - [x] Auth-Provider-Umschaltung (InMemory/Xtraq) per Options integriert und SampleHost auf Xtraq verdrahtet
-- [ ] Policy-Engine auf Polly-Basis implementieren (Retry/Timeout/Circuit-Breaker) – Plan siehe `docs/technical/policies.md`
+- [ ] Policy-Engine auf Polly-Basis implementieren (Retry/Timeout/Circuit-Breaker) – Polly-Ausfuehrungspipeline (Timeout→CircuitBreaker→Retry) ist fertig; Dead-Letter-Persistenz + Telemetrie laut `docs/technical/policies.md` offen
 - [x] Minimal API Skeleton mit Healthcheck, Schedule CRUD und Trigger Endpoint erstellen
 - [x] gRPC SchedulerService Proto und Client SDK (Croniq.Rpc.Client) generieren
 - [ ] Build/Test CI Pipelines (GitHub Actions) mit Lint/Coverage Gates einrichten – Plan siehe `docs/technical/ci.md`

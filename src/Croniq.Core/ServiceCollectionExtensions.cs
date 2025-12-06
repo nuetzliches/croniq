@@ -27,6 +27,7 @@ public static class ServiceCollectionExtensions
         services.Configure<PolicyOverrideOptions>(_ => { });
         services.TryAddSingleton<IMisfirePolicy, DefaultMisfirePolicy>();
         services.TryAddSingleton<IPolicyResolver, PolicyResolver>();
+        services.TryAddSingleton<IExecutionPolicyPipelineProvider, ExecutionPolicyPipelineProvider>();
         services.TryAddSingleton<IQuotaGuard, InMemoryQuotaGuard>();
         services.TryAddSingleton<ActivitySource>(_ => new ActivitySource("Croniq.Core"));
         services.TryAddSingleton<IJobRegistry, JobRegistry>();

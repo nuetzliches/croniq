@@ -22,13 +22,13 @@ This document explains how Croniq will implement the Polly-based policy engine p
 
 ### Builder
 
-- Create `IPolicyPipelineBuilder` producing `ResiliencePipeline<JobExecutionContext>` instances (Polly v8). Builder composes handlers in deterministic order: `Timeout` → `CircuitBreaker` → `Retry` → `DeadLetterFallback`.
-- Pipelines cached per `JobKey` to avoid rebuild overhead; invalidated when options change (tie into `IOptionsMonitor`).
+- Implement `IExecutionPolicyPipelineProvider` that turns resolved `ExecutionPolicyOptions` into Polly v8 resilience pipelines. The provider composes strategies in deterministic Reihenfolge `Timeout` → `CircuitBreaker` → `Retry` (Dead-Letter folgt spaeter) und cached das Resultat je `JobKey` + Fingerprint der Optionen.
+- Pipelines werden bei Options-Aenderungen automatisch erneuert (Fingerprint basiert auf allen Optionseigenschaften, inkl. Exception-Filter). Logging auf `ILogger<ExecutionPolicyPipelineProvider>` meldet ignorierte Exception-Typen oder Zeitueberschreitungen.
 
 ### Execution Pipeline
 
-- `DefaultJobExecutionPipeline` injects `IPolicyPipelineProvider` and wraps handler invocation: `await pipeline.ExecuteAsync(async token => await descriptor.Handler.ExecuteAsync(ctx, token), cancellationToken);`
-- On failure, pipeline emits structured events (log + meter) including policy outcome (`retry`, `breaker-open`, `dead-letter`), storing context via `JobExecutionTelemetry` helper.
+- `DefaultJobExecutionPipeline` injiziert jetzt `IPolicyResolver` + `IExecutionPolicyPipelineProvider`, resolved pro JobKey die aktuellen `ExecutionPolicyOptions` und fuehrt den Handler konsequent durch den Polly-Pipeline-Wrapper.
+- Bei aktivem Timeout uebergibt der Pipeline-Token das Abbruchsignal an den Job (konfigurierbar via `CancelExecutionOnTimeout`), sonst bleibt das aufruferseitige Token massgeblich. Telemetrie-/Dead-Letter-Hooks folgen, sobald Persistenz und Metriken erweitert sind.
 
 ### Dead Letter Strategy
 
@@ -42,10 +42,11 @@ This document explains how Croniq will implement the Polly-based policy engine p
 
 ## Backlog to Complete the Policy Engine Milestone
 
-- [ ] Define `ExecutionPolicyOptions` + override binding in `Croniq.Core` (`Options/Policies`).
-- [ ] Implement `PolicyOverrideOptions.Execution` hierarchy (mirroring Misfire/Quota) and extend `IPolicyResolver` to supply execution policies per job.
-- [ ] Add `PolicyPipelineBuilder` (Polly v8) with retry/timeout/circuit/dead-letter support, caching pipelines per job.
-- [ ] Update `DefaultJobExecutionPipeline` to run handlers through the resilience pipeline and surface telemetry signals.
+- [x] Define `ExecutionPolicyOptions` + override binding in `Croniq.Core` (`Options/Policies`).
+- [x] Implement `PolicyOverrideOptions.Execution` hierarchy (mirroring Misfire/Quota) and extend `IPolicyResolver` to supply execution policies per job.
+- [x] Add `ExecutionPolicyPipelineProvider` (Polly v8) with retry/timeout/circuit support, caching pipelines per job, und verdrahte `DefaultJobExecutionPipeline` damit.
+- [ ] Extend resilience pipeline with a Dead-Letter fallback once persistence contracts und SQL-Skripte bereitstehen.
+- [ ] Update `DefaultJobExecutionPipeline` telemetry hooks to emit policy outcome counters/metrics.
 - [ ] Extend persistence contracts for dead-letter writes/reads and update Xtraq SQL scripts accordingly.
 - [ ] Provide integration tests in `Croniq.Core.Tests` + contract tests for persistence to validate dead-letter storage.
 - [ ] Document policy configuration knobs in `docs/consumer/policies.md` and add examples to samples.
