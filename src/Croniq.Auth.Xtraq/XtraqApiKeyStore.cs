@@ -1,9 +1,8 @@
-using System.Data;
 using System.Globalization;
 using System.Text.Json;
 using Croniq.Auth.Abstractions;
 using Croniq.Persistence.Xtraq;
-using Microsoft.Data.SqlClient;
+using XtraqAuth = Croniq.Persistence.Xtraq.Auth;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace Croniq.Auth.Xtraq;
@@ -20,33 +19,27 @@ public sealed class XtraqApiKeyStore : IApiKeyStore
 
     public async Task<ApiKeyIssueResult> IssueAsync(ApiKeyIssueRequest request, CancellationToken cancellationToken = default)
     {
-        await using var connection = await _dbContext.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
-        await using var cmd = connection.CreateCommand();
-        cmd.CommandType = CommandType.StoredProcedure;
-        cmd.CommandText = "[auth].[ApiKeyIssue]";
-        cmd.Parameters.Add(new SqlParameter("@TenantId", SqlDbType.Int) { Value = int.Parse(request.TenantId) });
-        cmd.Parameters.Add(new SqlParameter("@ClientId", SqlDbType.Int) { Value = int.Parse(request.ClientId) });
         var ttlMinutes = request.Ttl.HasValue ? (int?)Math.Ceiling(request.Ttl.Value.TotalMinutes) : null;
-        cmd.Parameters.Add(new SqlParameter("@Environment", SqlDbType.NVarChar, 32) { Value = (object?)request.EnvironmentTag ?? DBNull.Value });
-        cmd.Parameters.Add(new SqlParameter("@Scopes", SqlDbType.NVarChar, -1) { Value = (object?)SerializeScopes(request.Scopes) ?? DBNull.Value });
-        cmd.Parameters.Add(new SqlParameter("@TtlMinutes", SqlDbType.Int) { Value = (object?)ttlMinutes ?? DBNull.Value });
-        cmd.Parameters.Add(new SqlParameter("@CreatedBy", SqlDbType.NVarChar, 128) { Value = "system" });
-        var keyIdParam = new SqlParameter("@KeyId", SqlDbType.Int) { Direction = ParameterDirection.Output };
-        var keyRefParam = new SqlParameter("@KeyRef", SqlDbType.NVarChar, 64) { Direction = ParameterDirection.Output };
-        var plaintextParam = new SqlParameter("@PlaintextKey", SqlDbType.NVarChar, 512) { Direction = ParameterDirection.Output };
-        var previewParam = new SqlParameter("@SecretPreview", SqlDbType.NVarChar, 16) { Direction = ParameterDirection.Output };
-        var expiresParam = new SqlParameter("@ExpiresAtUtc", SqlDbType.DateTime2) { Direction = ParameterDirection.Output, IsNullable = true };
-        cmd.Parameters.Add(keyIdParam);
-        cmd.Parameters.Add(keyRefParam);
-        cmd.Parameters.Add(plaintextParam);
-        cmd.Parameters.Add(previewParam);
-        cmd.Parameters.Add(expiresParam);
+        var dbResult = await XtraqAuth.ApiKeyIssueExtensions.ApiKeyIssueAsync(
+            _dbContext,
+            new XtraqAuth.ApiKeyIssueInput(
+                TenantId: ParseId(request.TenantId),
+                ClientId: ParseId(request.ClientId),
+                Environment: request.EnvironmentTag,
+                Scopes: SerializeScopes(request.Scopes),
+                TtlMinutes: ttlMinutes,
+                CreatedBy: "system"),
+            cancellationToken).ConfigureAwait(false);
 
-        await cmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
-
-        var keyId = Convert.ToInt32(keyIdParam.Value, CultureInfo.InvariantCulture).ToString(CultureInfo.InvariantCulture);
-        var plaintextKey = plaintextParam.Value as string ?? throw new InvalidOperationException("ApiKeyIssue did not return plaintext key.");
-        var expiresAt = expiresParam.Value is DBNull ? (DateTimeOffset?)null : DateTime.SpecifyKind((DateTime)expiresParam.Value, DateTimeKind.Utc);
+        var output = dbResult.Output ?? throw new InvalidOperationException("ApiKeyIssue did not produce an output payload.");
+        var keyId = (output.KeyId ?? throw new InvalidOperationException("ApiKeyIssue did not return a key id.")).ToString(CultureInfo.InvariantCulture);
+        var plaintextKey = output.PlaintextKey ?? throw new InvalidOperationException("ApiKeyIssue did not return plaintext key.");
+        DateTimeOffset? expiresAt = null;
+        if (output.ExpiresUtc.HasValue)
+        {
+            var utc = DateTime.SpecifyKind(output.ExpiresUtc.Value, DateTimeKind.Utc);
+            expiresAt = new DateTimeOffset(utc);
+        }
 
         return new ApiKeyIssueResult(
             request.ClientId,
@@ -58,88 +51,75 @@ public sealed class XtraqApiKeyStore : IApiKeyStore
 
     public async Task<bool> RevokeAsync(string tenantId, string keyId, CancellationToken cancellationToken = default)
     {
-        await using var connection = await _dbContext.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
-        await using var cmd = connection.CreateCommand();
-        cmd.CommandType = CommandType.StoredProcedure;
-        cmd.CommandText = "[auth].[ApiKeyRevoke]";
-        cmd.Parameters.Add(new SqlParameter("@TenantId", SqlDbType.Int) { Value = int.Parse(tenantId) });
-        cmd.Parameters.Add(new SqlParameter("@KeyRef", SqlDbType.NVarChar, 64) { Value = keyId });
-        cmd.Parameters.Add(new SqlParameter("@Actor", SqlDbType.NVarChar, 128) { Value = "system" });
-        cmd.Parameters.Add(new SqlParameter("@Reason", SqlDbType.NVarChar, 64) { Value = DBNull.Value });
-        var affectedParam = new SqlParameter("@Affected", SqlDbType.Int) { Direction = ParameterDirection.Output };
-        cmd.Parameters.Add(affectedParam);
+        var result = await XtraqAuth.ApiKeyRevokeExtensions.ApiKeyRevokeAsync(
+            _dbContext,
+            new XtraqAuth.ApiKeyRevokeInput(
+                TenantId: ParseId(tenantId),
+                KeyRef: keyId,
+                Actor: "system",
+                Reason: null),
+            cancellationToken).ConfigureAwait(false);
 
-        await cmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
-        return Convert.ToInt32(affectedParam.Value ?? 0, CultureInfo.InvariantCulture) > 0;
+        var affected = result.Output?.Affected ?? 0;
+        return affected > 0;
     }
 
     public async Task<bool> RotateAsync(string tenantId, string keyId, CancellationToken cancellationToken = default)
     {
-        await using var connection = await _dbContext.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
-        await using var cmd = connection.CreateCommand();
-        cmd.CommandType = CommandType.StoredProcedure;
-        cmd.CommandText = "[auth].[ApiKeyRotate]";
-        cmd.Parameters.Add(new SqlParameter("@TenantId", SqlDbType.Int) { Value = int.Parse(tenantId) });
-        cmd.Parameters.Add(new SqlParameter("@KeyRef", SqlDbType.NVarChar, 64) { Value = keyId });
-        cmd.Parameters.Add(new SqlParameter("@Actor", SqlDbType.NVarChar, 128) { Value = "system" });
-        var plaintextParam = new SqlParameter("@PlaintextKey", SqlDbType.NVarChar, 512) { Direction = ParameterDirection.Output };
-        var previewParam = new SqlParameter("@SecretPreview", SqlDbType.NVarChar, 16) { Direction = ParameterDirection.Output };
-        cmd.Parameters.Add(plaintextParam);
-        cmd.Parameters.Add(previewParam);
+        var result = await XtraqAuth.ApiKeyRotateExtensions.ApiKeyRotateAsync(
+            _dbContext,
+            new XtraqAuth.ApiKeyRotateInput(
+                TenantId: ParseId(tenantId),
+                KeyRef: keyId,
+                Actor: "system"),
+            cancellationToken).ConfigureAwait(false);
 
-        await cmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
-        return plaintextParam.Value is not null && plaintextParam.Value != DBNull.Value;
+        return result.Output?.PlaintextKey is { Length: > 0 };
     }
 
     public async Task<ApiKeyValidationResult> ValidateAsync(string presentedKey, CancellationToken cancellationToken = default)
     {
-        await using var connection = await _dbContext.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
-        await using var cmd = connection.CreateCommand();
-        cmd.CommandType = CommandType.StoredProcedure;
-        cmd.CommandText = "[auth].[ApiKeyValidate]";
-        cmd.Parameters.Add(new SqlParameter("@Presented", SqlDbType.NVarChar, 512) { Value = presentedKey });
+        var result = await XtraqAuth.ApiKeyValidateExtensions.ApiKeyValidateAsync(
+            _dbContext,
+            new XtraqAuth.ApiKeyValidateInput(presentedKey),
+            cancellationToken).ConfigureAwait(false);
 
-        await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
-        if (!await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+        if (result.Result.Count == 0)
         {
             return new ApiKeyValidationResult(false, null, null, null, Array.Empty<string>(), "not-found");
         }
 
-        var isValid = reader.GetBoolean(reader.GetOrdinal("IsValid"));
-        var tenantId = reader.IsDBNull(reader.GetOrdinal("TenantId")) ? null : reader.GetInt32(reader.GetOrdinal("TenantId")).ToString(CultureInfo.InvariantCulture);
-        var env = reader.IsDBNull(reader.GetOrdinal("Environment")) ? null : reader.GetString(reader.GetOrdinal("Environment"));
-        var callerId = reader.IsDBNull(reader.GetOrdinal("CallerId")) ? null : reader.GetString(reader.GetOrdinal("CallerId"));
-        var scopes = ParseScopes(reader.IsDBNull(reader.GetOrdinal("Scopes")) ? null : reader.GetString(reader.GetOrdinal("Scopes")));
-        var failure = reader.IsDBNull(reader.GetOrdinal("Failure")) ? null : reader.GetString(reader.GetOrdinal("Failure"));
+        var first = result.Result[0];
+        var tenantId = first.TenantId.ToString(CultureInfo.InvariantCulture);
+        var scopes = ParseScopes(first.Scopes);
 
-        return new ApiKeyValidationResult(isValid, tenantId, env, callerId, scopes, failure);
+        return new ApiKeyValidationResult(first.IsValid, tenantId, first.Environment, first.CallerId, scopes, first.Failure);
     }
 
     public async Task<ApiClientDescriptor?> GetClientAsync(string tenantId, string clientId, CancellationToken cancellationToken = default)
     {
-        await using var connection = await _dbContext.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
-        await using var cmd = connection.CreateCommand();
-        cmd.CommandType = CommandType.StoredProcedure;
-        cmd.CommandText = "[auth].[ApiClientGet]";
-        cmd.Parameters.Add(new SqlParameter("@TenantId", SqlDbType.Int) { Value = int.Parse(tenantId) });
-        cmd.Parameters.Add(new SqlParameter("@ClientId", SqlDbType.Int) { Value = int.Parse(clientId) });
+        var result = await XtraqAuth.ApiClientGetExtensions.ApiClientGetAsync(
+            _dbContext,
+            new XtraqAuth.ApiClientGetInput(
+                TenantId: ParseId(tenantId),
+                ClientId: ParseId(clientId)),
+            cancellationToken).ConfigureAwait(false);
 
-        await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
-        if (!await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+        if (result.Result.Count == 0)
         {
             return null;
         }
 
-        var env = reader.IsDBNull(reader.GetOrdinal("Environment")) ? null : reader.GetString(reader.GetOrdinal("Environment"));
-        var scopes = ParseScopes(reader.IsDBNull(reader.GetOrdinal("Scopes")) ? null : reader.GetString(reader.GetOrdinal("Scopes")));
-        var isDeleted = reader.IsDBNull(reader.GetOrdinal("IsDeleted")) ? false : reader.GetBoolean(reader.GetOrdinal("IsDeleted"));
+        var row = result.Result[0];
+        var scopes = ParseScopes(row.Scopes);
+
         return new ApiClientDescriptor(
             clientId,
             tenantId,
-            reader.IsDBNull(reader.GetOrdinal("Name")) ? null : reader.GetString(reader.GetOrdinal("Name")),
-            env,
+            row.Name,
+            row.Environment,
             scopes,
-            !isDeleted,
+            !row.IsDeleted,
             null);
     }
 
@@ -149,9 +129,14 @@ public sealed class XtraqApiKeyStore : IApiKeyStore
         return JsonSerializer.Deserialize<string[]>(scopesJson, _jsonOptions) ?? Array.Empty<string>();
     }
 
-    private static string? SerializeScopes(IReadOnlyCollection<string>? scopes)
+    private string? SerializeScopes(IReadOnlyCollection<string>? scopes)
     {
-        return scopes is null || scopes.Count == 0 ? null : JsonSerializer.Serialize(scopes);
+        return scopes is null || scopes.Count == 0 ? null : JsonSerializer.Serialize(scopes, _jsonOptions);
+    }
+
+    private static int ParseId(string value)
+    {
+        return int.Parse(value, CultureInfo.InvariantCulture);
     }
 }
 

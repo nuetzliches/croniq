@@ -38,6 +38,6 @@
 
 # Nachbesserungen
 
-- [ ] Suche im gesamten Repository nach "OpenConnectionAsync" (skip Xtraq-Artefakte). Prüfe ob dort custom Prozedur calls mit "CommandText" vorgenommen werden? Ersetze diese durch die Xtraq-Artefakte.
-- [ ] `docs\consumer\configuration.md` hier besteht ein Dokumentationsfehler oder gap: builder.Services.AddCroniq() gibt es nicht. Consumer Docs generell auf aktuellsten Stand bringen.
-- [ ] Ist es korrekt, dass `Croniq.Auth.Xtraq` einen Verweis auf `Croniq.Persistence.Xtraq` hat? Sollte die XtraqDbContext Registrierung nicht eher in `Croniq.Data.Xtraq` stattfinden (bitte verifizieren, Empfehlungen aussprechen)?
+- [x] Suche im gesamten Repository nach "OpenConnectionAsync" (skip Xtraq-Artefakte). Prüfe ob dort custom Prozedur calls mit "CommandText" vorgenommen werden? Ersetze diese durch die Xtraq-Artefakte.
+- [x] `docs\consumer\configuration.md` hier besteht ein Dokumentationsfehler oder gap: builder.Services.AddCroniq() gibt es nicht. Consumer Docs generell auf aktuellsten Stand bringen.
+- [x] Ist es korrekt, dass `Croniq.Auth.Xtraq` einen Verweis auf `Croniq.Persistence.Xtraq` hat? Sollte die XtraqDbContext Registrierung nicht eher in `Croniq.Data.Xtraq` stattfinden (bitte verifizieren, Empfehlungen aussprechen)? (Verifiziert: `Croniq.Auth.Xtraq` referenziert nur `Croniq.Data.Xtraq`, alle XtraqDbContext-DI-Erweiterungen leben bereits dort; Recommendation: Hosts rufen `AddXtraqDbContext` aus `Croniq.Data.Xtraq` auf, bevor sie `AddCroniqAuthXtraq` verkabeln.)
