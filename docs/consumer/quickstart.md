@@ -9,21 +9,8 @@ This guide walks you through creating your first Croniq job, registering it with
 > - Docker (optional) for running the reference environment
 >
 > All commands are shown for Windows PowerShell / CMD; adapt paths for your OS if needed.
-
-## Optional: Start the Croniq Dev Stack
-
-Use the provided Compose scripts when you want to run the reference API/worker locally.
-
-```cmd
-cd <path-to-croniq-repo>
-copy .env.example .env  # first run only, then adjust secrets
-scripts\devstack-up.cmd [--profile obs]
-```
-
-- API and worker profiles are enabled by default; pass `--profile obs` when you also want OTel Collector, Prometheus, Tempo, and Grafana.
-- `scripts\devstack-restart.cmd [--profile obs]` performs a down/up cycle (with `--remove-orphans`) using the same profile list when Docker resources get stuck.
-- Tear everything down with `scripts\devstack-down.cmd [--profile obs] --volumes` when you are done.
-- The API listens on `http://localhost:5080`; Grafana lives at `http://localhost:5601` with the credentials from `.env` (defaults to `admin/admin`).
+>
+> Need the full Croniq reference environment? Follow [`docs/technical/devstack.md`](../technical/devstack.md) for compose profiles and helper scripts.
 
 ## 1. Create a Single Project
 
@@ -189,12 +176,9 @@ Refer to `docs/technical/persistence.md` (to be added) for the exact schedule pa
 # Terminal 1
 cd HelloCroniq.Api
  dotnet run
-
-# Terminal 2 (optional, reference stack)
-scripts\devstack-up.cmd --profile api --profile worker --profile obs
 ```
 
-Stop the stack afterwards via `scripts\devstack-down.cmd --volumes`.
+If you need the Croniq dev stack instead of a local SDK host, start it via the instructions in [`docs/technical/devstack.md`](../technical/devstack.md).
 
 Trigger the job manually:
 

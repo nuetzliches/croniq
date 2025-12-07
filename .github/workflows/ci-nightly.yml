@@ -1,0 +1,66 @@
+name: Croniq Nightly
+
+on:
+  schedule:
+    - cron: "0 2 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  DOTNET_NOLOGO: true
+  COMPOSE_ARGS: -f infra/docker/docker-compose.yml -f infra/docker/docker-compose.dev.yml -f infra/docker/docker-compose.observability.yml
+  COMPOSE_PROFILES: --profile api --profile worker --profile obs
+
+jobs:
+  smoke:
+    name: Compose Smoke Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Copy environment defaults
+        run: cp .env.example .env
+
+      - name: Start Croniq dev stack
+        run: docker compose ${{ env.COMPOSE_ARGS }} ${{ env.COMPOSE_PROFILES }} up --build -d
+
+      - name: Wait for API health
+        run: |
+          for i in {1..60}; do
+            if curl -fsS http://localhost:5080/health > /dev/null; then
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "Croniq API did not become healthy" >&2
+          docker compose ${{ env.COMPOSE_ARGS }} logs --timestamps || true
+          exit 1
+
+      - name: Run Croniq.Api.Smoke tests
+        run: dotnet test tests/Croniq.Api.Smoke/Croniq.Api.Smoke.csproj --configuration Release
+
+      - name: Collect docker logs
+        if: always()
+        run: |
+          mkdir -p artifacts
+          docker compose ${{ env.COMPOSE_ARGS }} ${{ env.COMPOSE_PROFILES }} logs --timestamps > artifacts/devstack.log || true
+
+      - name: Upload docker logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: devstack-logs
+          path: artifacts/devstack.log
+
+      - name: Shut down stack
+        if: always()
+        run: docker compose ${{ env.COMPOSE_ARGS }} ${{ env.COMPOSE_PROFILES }} down -v --remove-orphans

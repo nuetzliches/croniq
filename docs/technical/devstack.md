@@ -27,7 +27,7 @@ All services share a `croniq-net` bridge network. Ports are exposed via `.env` d
 
 ## Compose Files & Profiles
 
-- `infra/docker/docker-compose.yml`: base SQL container.
+- `infra/docker/docker-compose.yml`: base SQL container plus the `croniq-db-migrator` helper that auto-applies EF migrations once SQL is healthy.
 - `infra/docker/docker-compose.dev.yml`: adds API + worker hosts (profiles `api` / `worker`) and optional RPC sample/helper containers.
 - `infra/docker/docker-compose.observability.yml`: overlay enabling the observability toolchain (OTel Collector, Prometheus, Tempo, Grafana) behind the `obs` profile.
 - The helper scripts always load all three files, so adding `--profile obs` is enough to wire up Grafana/Tempo/Prometheus without custom compose commands.
@@ -37,13 +37,13 @@ All services share a `croniq-net` bridge network. Ports are exposed via `.env` d
 
 - `.env.example` (root) now lists the required ports, database credentials, and Croniq defaults. Copy it to `.env`, adjust secrets, and Compose will pick the variables up automatically. `.env` stays ignored via `.gitignore`.
 - `Croniq.Sample.ApiHost` reads configuration from `appsettings.Development.json` + environment variables injected via Compose (`Croniq__SqlServer__ConnectionString`, `Croniq__Auth__Mode`, etc.). Keep sensitive overrides in `.env.local` or user secrets when running locally.
-- Provide helper script `infra/docker/init-db.ps1` (or `.sh`) that invokes `dotnet run --project tools/Croniq.DbMigrator -- --connection <conn>` inside the container to apply EF Core migrations automatically.
+- The `croniq-db-migrator` service (defined in the base compose file) waits for `mssql-22` to report healthy status and then applies EF Core migrations using `CRONIQ_SQL_CONNECTION`. When troubleshooting, you can still run `docker compose run --rm croniq-db-migrator` or `dotnet run --project tools/Croniq.DbMigrator -- --connection <conn>` manually.
 
 ## Developer Workflow
 
 1. `cd <repo-root>`
 2. `copy .env.example .env` (first run) and adjust secrets/ports as needed.
-3. `scripts\devstack-up.cmd [--profile obs]` ensures `.env` exists, loads all compose files, and polls `/health`. The API/worker profiles are implied; pass extra profiles (e.g., `obs`) explicitly.
+3. `scripts\devstack-up.cmd [--profile obs]` ensures `.env` exists, loads all compose files, and polls `/health`. As soon as `mssql-22` is ready, `croniq-db-migrator` runs automatically so the schema is ready before the API/worker start. The API/worker profiles are implied; pass extra profiles (e.g., `obs`) explicitly.
 4. `scripts\devstack-restart.cmd [--profile ...]` first calls `devstack-down --remove-orphans` with the same profiles, then replays `devstack-up`—useful when Docker networks/containers get stuck.
 5. API available at `http://localhost:5080`, Grafana at `http://localhost:5601` (login `admin/admin`) once the `obs` profile is enabled.
 6. To tear down and remove volumes: `scripts\devstack-down.cmd [--profile ...] --volumes` (or call `docker compose ... down -v`).
@@ -61,8 +61,7 @@ All services share a `croniq-net` bridge network. Ports are exposed via `.env` d
 - [x] Create `docker-compose.dev.yml` defining API, worker, RPC sample, and referencing shared build context or published images.
 - [x] Add observability overlay compose file + Grafana dashboards + Tempo/Prometheus volumes, aligning with `observability.md`.
 - [x] Provide helper scripts (`scripts/devstack-up.cmd`, `scripts/devstack-down.cmd`) wrapping the compose commands and health checks.
-- [ ] Document workflow in `docs/consumer/quickstart.md` (how to run the dev stack) and link from `README.md`.
-- [ ] Update CI workflow (`ci-nightly.yml`) to call the same compose stack for smoke tests.
-- [ ] Ensure SQL initialization script runs automatically on first boot (entrypoint or helper container) so developers don't run manual apply steps.
+- [x] Update CI workflow (`ci-nightly.yml`) to call the same compose stack for smoke tests.
+- [x] Ensure SQL initialization script runs automatically on first boot (entrypoint or helper container) so developers don't run manual apply steps.
 
 Completing these tasks enables a reproducible dev/test environment and closes the checklist item.

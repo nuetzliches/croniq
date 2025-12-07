@@ -1,18 +1,4 @@
 services:
-  croniq-db-migrator:
-    profiles: ["db", "api", "worker"]
-    build:
-      context: ../..
-      dockerfile: tools/Croniq.DbMigrator/Dockerfile
-    environment:
-      CRONIQ_SQL_CONNECTION: Server=${CRONIQ_SQL_HOST:-mssql-22},1433;Database=${CRONIQ_SQL_DATABASE:-CroniqDev};User Id=sa;Password=${CRONIQ_SQL_PASSWORD:-CroniqSqlP@ssw0rd!};Encrypt=False;TrustServerCertificate=True;
-    depends_on:
-      mssql-22:
-        condition: service_healthy
-    restart: "no"
-    networks:
-      - croniq-net
-
   croniq-api:
     profiles: ["api"]
     build:

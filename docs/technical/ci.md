@@ -14,8 +14,10 @@ This document describes the continuous integration and delivery strategy require
 | Workflow         | Trigger                            | Purpose                                                                                                                          |
 | ---------------- | ---------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
 | `ci-pr.yml`      | Pull request to `main`             | Lint, build, unit + contract tests with coverage, basic security checks.                                                         |
-| `ci-nightly.yml` | Scheduled (UTC 02:00)              | Full stack validation: PR steps + Compose E2E tests, Docker image build, integration smoke, dependency scanning.                 |
+| `ci-nightly.yml` | Scheduled (UTC 02:00) + manual run | Full stack validation: PR steps + Compose E2E tests (dev stack), Docker image build, integration smoke, dependency scanning.     |
 | `release.yml`    | Tag `v*` pushes or manual dispatch | Build/publish NuGet packages & container images, run smoke tests against staging environment, generate SBOMs and sign artifacts. |
+
+`ci-nightly.yml` already lives in `.github/workflows/` and can be triggered manually while the remaining workflows are still pending.
 
 ## ci-pr.yml (Validation)
 
@@ -40,7 +42,7 @@ This document describes the continuous integration and delivery strategy require
 - Additional jobs:
   1. **Docker build + compose E2E**
      - Build images (`Croniq.Api`, worker) with BuildKit cache.
-     - Run `docker compose -f infra/docker/docker-compose.tests.yml up --build -d`.
+     - Run `docker compose -f infra/docker/docker-compose.yml -f infra/docker/docker-compose.dev.yml -f infra/docker/docker-compose.observability.yml --profile api --profile worker --profile obs up --build -d` (aligned with `scripts/devstack-up.cmd`).
      - Execute `tests/Croniq.Api.Smoke` suite against the stack.
      - Collect logs from containers, upload as artifacts.
   2. **Observability verification**
@@ -87,7 +89,7 @@ This document describes the continuous integration and delivery strategy require
 
 ## Backlog to Complete CI/CD Milestone
 
-- [ ] Create `.github/workflows/ci-pr.yml`, `ci-nightly.yml`, `release.yml` implementing the described stages.
+- [ ] Create `.github/workflows/ci-pr.yml`, `release.yml` implementing the described stages. (Nightly workflow added.)
 - [ ] Add reusable composite actions or scripts for test execution, coverage aggregation, and Compose orchestration.
 - [ ] Check in `Directory.Build.props`, `.config/dotnet-tools.json`, and `eng/` helpers referenced by the workflows.
 - [ ] Document local reproduction steps (`docs/technical/ci.md` + `README`) so developers can mimic CI commands.

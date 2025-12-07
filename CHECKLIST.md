@@ -13,13 +13,7 @@
 - [x] Provider-Vertraege: Logging-, Telemetry- und Secret-Provider Schnittstellen festlegen
 - [x] SqlServer-Persistenz: EF-Core-Modelle + Migrationen fuer Jobs/Trigger/DeadLetter erstellt und `Croniq.DbMigrator` fuer Deployments verdrahtet
 - [x] API/RPC-Vertraege: Minimal API Endpunkte und gRPC Proto entwerfen
-- [ ] Teststrategie: Unit/Contract/E2E Testplan mit Tools (xUnit, Testcontainers, Compose) detaillieren (`docs/technical/testing.md` enthaelt den Plan + Backlog)
-- [ ] Security-Basis: API-Key/OAuth2 Flow und Rate Limiter Design ausarbeiten (Plan siehe `docs/technical/security.md`; Umsetzung OIDC/JWT + RateLimiter-Refactor steht aus)
-- [ ] Observability: OTel/Serilog Setup und Dashboard-Kennzahlen festlegen (Plan siehe `docs/technical/observability.md`)
-- [x] Repository-Struktur anlegen (src/, jobs/, infra/docker, docs/)
-- [x] Referenz-In-Memory-JobStore implementieren
-- [x] SqlServer-Persistence-Provider implementieren (`Croniq.Persistence.SqlServer`) inkl. Trigger-Leases/Dead-Letters
-- [x] Auth-Provider-Umschaltung (InMemory/SqlServer) per Options integriert und `Croniq.Sample.ApiHost` auf SqlServer verdrahtet
+- [x] devstack gehört nicht in die consumer docs, sondern in die technical docs (quickstart.md anpassen)
 - [x] Policy-Engine auf Polly-Basis implementieren (Retry/Timeout/Circuit-Breaker) – Polly-Ausfuehrungspipeline (Timeout→CircuitBreaker→Retry), Dead-Letter-Persistenz sowie Telemetrie (PolicyMetrics + strukturierte Logs) per `docs/technical/policies.md` verdrahtet
 - [x] Minimal API Skeleton mit Healthcheck, Schedule CRUD und Trigger Endpoint erstellen
 - [x] gRPC SchedulerService Proto und Client SDK (Croniq.Rpc.Client) generieren
