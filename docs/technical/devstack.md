@@ -1,27 +1,27 @@
 # Croniq Docker Dev Stack Plan
 
-This document describes the local Docker Compose environment required to satisfy the checklist item "Docker Compose Dev-Stack (API, Worker, Xtraq, OTel/Grafana) bereitstellen". It ties together the API, scheduler workers, SQL/Xtraq database, and observability components for day-to-day development and smoke tests.
+This document describes the local Docker Compose environment required to satisfy the checklist item "Docker Compose Dev-Stack (API, Worker, SqlServer, OTel/Grafana) bereitstellen". It ties together the API, scheduler workers, SQL Server database, and observability components for day-to-day development and smoke tests.
 
 ## Objectives
 
 - Offer a one-command environment (`docker compose up`) that mirrors the production topology (API + worker + SQL + observability) for developers and CI smoke tests.
 - Keep configuration discoverable via `.env` and `appsettings.Development.json`, with secrets injected through `.env.local` or user secrets.
 - Reuse the same Compose definitions in nightly CI workflows and local troubleshooting to minimize drift.
-- Provide helpers for seeding Xtraq schema/data and exposing dashboards/logs for debugging.
+- Provide helpers for running EF Core migrations (via `Croniq.DbMigrator`) and exposing dashboards/logs for debugging.
 
 ## Target Services
 
-| Service                   | Purpose                                                     | Notes                                                             |
-| ------------------------- | ----------------------------------------------------------- | ----------------------------------------------------------------- |
-| `api`                     | Hosts `Croniq.Api.SampleHost` (Minimal API + gRPC).         | Mounted source, hot reload via `dotnet watch` or pre-built image. |
-| `worker`                  | Runs scheduler worker host (future `Croniq.Worker`).        | Shares code with API; processes triggers/jobs.                    |
-| `rpc-sample`              | Optional sample RPC client (demonstrates SDK usage).        | Can be toggled via profile.                                       |
-| `mssql-22`                | SQL Server 2022 with Xtraq schema + auth/persistence procs. | Uses persisted volume `croniq-mssql-data`.                        |
-| `otel-collector`          | OpenTelemetry collector for logs/metrics/traces.            | Exports to Tempo/Prometheus/Grafana.                              |
-| `grafana`                 | Observability dashboard with baked JSON dashboards.         | Depends on `prometheus` + `tempo`.                                |
-| `prometheus`              | Scrapes metrics from API/worker and OTel collector.         | Stores TSDB in `prom-data` volume.                                |
-| `tempo`                   | Stores traces from collector.                               | Local filesystem volume.                                          |
-| `seq` / `loki` (optional) | Log aggregation for JSON logs.                              | Future toggle once log volume grows.                              |
+| Service                   | Purpose                                              | Notes                                                             |
+| ------------------------- | ---------------------------------------------------- | ----------------------------------------------------------------- |
+| `api`                     | Hosts `Croniq.Api.SampleHost` (Minimal API + gRPC).  | Mounted source, hot reload via `dotnet watch` or pre-built image. |
+| `worker`                  | Runs scheduler worker host (future `Croniq.Worker`). | Shares code with API; processes triggers/jobs.                    |
+| `rpc-sample`              | Optional sample RPC client (demonstrates SDK usage). | Can be toggled via profile.                                       |
+| `mssql-22`                | SQL Server 2022 with Croniq schema + EF migrations.  | Uses persisted volume `croniq-mssql-data`.                        |
+| `otel-collector`          | OpenTelemetry collector for logs/metrics/traces.     | Exports to Tempo/Prometheus/Grafana.                              |
+| `grafana`                 | Observability dashboard with baked JSON dashboards.  | Depends on `prometheus` + `tempo`.                                |
+| `prometheus`              | Scrapes metrics from API/worker and OTel collector.  | Stores TSDB in `prom-data` volume.                                |
+| `tempo`                   | Stores traces from collector.                        | Local filesystem volume.                                          |
+| `seq` / `loki` (optional) | Log aggregation for JSON logs.                       | Future toggle once log volume grows.                              |
 
 All services share a `croniq-net` bridge network. Ports are exposed via `.env` defaults (e.g., API 5080/5081, Grafana 5601, Prometheus 9000, Tempo 3100).
 
@@ -35,8 +35,8 @@ All services share a `croniq-net` bridge network. Ports are exposed via `.env` d
 ## Configuration & Secrets
 
 - `.env.example` documents required variables (ports, SA password, API keys). Developers copy to `.env` and override sensitive entries in `.env.local` ignored by git.
-- `Croniq.Api.SampleHost` reads configuration from `appsettings.Development.json` + environment variables injected via Compose (`CRONIQ__XTRAQ__CONNECTIONSTRING`, `CRONIQ__AUTH__MODE`, etc.).
-- Provide helper script `infra/docker/init-xtraq.ps1` (or `.sh`) to apply SQL scripts via `sqlcmd` inside the container, wrapping `infra/sql/xtraq/apply.ps1`.
+- `Croniq.Api.SampleHost` reads configuration from `appsettings.Development.json` + environment variables injected via Compose (`CRONIQ__SQLSERVER__CONNECTIONSTRING`, `CRONIQ__AUTH__MODE`, etc.).
+- Provide helper script `infra/docker/init-db.ps1` (or `.sh`) that invokes `dotnet run --project tools/Croniq.DbMigrator -- --connection <conn>` inside the container to apply EF Core migrations automatically.
 
 ## Developer Workflow
 

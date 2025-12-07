@@ -3,7 +3,7 @@ using System.Threading.RateLimiting;
 using Croniq.Api.Models;
 using Croniq.Auth.Abstractions;
 using Croniq.Auth.Core;
-using Croniq.Auth.Xtraq;
+using Croniq.Auth.SqlServer;
 using Croniq.Core;
 using Croniq.Core.Execution;
 using Croniq.Core.Jobs;
@@ -13,7 +13,6 @@ using Croniq.Data.SqlServer;
 using Croniq.JobStore.InMemory;
 using Croniq.Persistence.Abstractions;
 using Croniq.Persistence.SqlServer;
-using Croniq.Persistence.Xtraq;
 using Croniq.Providers.Default;
 using Croniq.Sdk;
 using Microsoft.AspNetCore.RateLimiting;
@@ -31,7 +30,6 @@ public static class ApiHostingExtensions
         services.Configure<CroniqAuthOptions>(configuration.GetSection("Croniq:Auth"));
         services.Configure<CroniqPersistenceOptions>(configuration.GetSection("Croniq:Persistence"));
         services.Configure<SqlServerOptions>(configuration.GetSection("Croniq:SqlServer"));
-        services.Configure<XtraqSharedOptions>(configuration.GetSection("Croniq:Xtraq"));
 
         services.AddCroniqCore();
         services.AddCroniqDefaultProviders();
@@ -39,11 +37,6 @@ public static class ApiHostingExtensions
         var authOpts = configuration.GetSection("Croniq:Auth").Get<CroniqAuthOptions>() ?? new CroniqAuthOptions();
         var persistenceOpts = configuration.GetSection("Croniq:Persistence").Get<CroniqPersistenceOptions>() ?? new CroniqPersistenceOptions();
         var sharedSqlServer = configuration.GetSection("Croniq:SqlServer").Get<SqlServerOptions>() ?? new SqlServerOptions();
-        var sharedXtraq = configuration.GetSection("Croniq:Xtraq").Get<XtraqSharedOptions>() ?? new XtraqSharedOptions();
-        if (string.IsNullOrWhiteSpace(sharedXtraq.ConnectionString))
-        {
-            sharedXtraq.ConnectionString = sharedSqlServer.ConnectionString;
-        }
 
         // Always register InMemory JobStore
         services.AddCroniqInMemoryJobStore();
@@ -85,23 +78,25 @@ public static class ApiHostingExtensions
             });
         }
 
-        if (string.Equals(authOpts.Mode, "Xtraq", StringComparison.OrdinalIgnoreCase))
+        if (string.Equals(authOpts.Mode, "SqlServer", StringComparison.OrdinalIgnoreCase))
         {
             var conn = ResolveConnectionString(
-                authOpts.Xtraq.ConnectionString,
-                sharedXtraq.ConnectionString,
+                authOpts.SqlServer.ConnectionString,
+                sharedSqlServer.ConnectionString,
                 configuration);
 
             if (string.IsNullOrWhiteSpace(conn))
             {
-                throw new InvalidOperationException("Croniq:Auth:Xtraq:ConnectionString or Croniq:Xtraq:ConnectionString is required when Auth.Mode = Xtraq.");
+                throw new InvalidOperationException("Croniq:Auth:SqlServer:ConnectionString or Croniq:SqlServer:ConnectionString is required when Auth.Mode = SqlServer.");
             }
 
-            services.AddXtraqDbContext(options =>
+            services.AddCroniqAuthSqlServer(sqlOptions =>
             {
-                options.ConnectionString = conn;
+                sqlOptions.ConnectionString = conn;
+                sqlOptions.MigrationsAssembly = authOpts.SqlServer.MigrationsAssembly ?? sharedSqlServer.MigrationsAssembly;
+                sqlOptions.EnableDetailedErrors = authOpts.SqlServer.EnableDetailedErrors ?? sharedSqlServer.EnableDetailedErrors;
+                sqlOptions.EnableSensitiveDataLogging = authOpts.SqlServer.EnableSensitiveDataLogging ?? sharedSqlServer.EnableSensitiveDataLogging;
             });
-            services.AddCroniqAuthXtraq();
         }
         else
         {
@@ -312,7 +307,6 @@ public static class ApiHostingExtensions
         return domainSpecific
             ?? shared
             ?? configuration.GetConnectionString("CroniqSqlServer")
-            ?? configuration.GetConnectionString("CroniqXtraq")
             ?? configuration.GetConnectionString("Croniq")
             ?? configuration.GetConnectionString("DefaultConnection");
     }

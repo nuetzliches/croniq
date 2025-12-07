@@ -22,7 +22,7 @@
                 <mxCell id="providerInMem" value="Croniq.JobStore.InMemory&#xa;(Reference)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;fontSize=12;" parent="1" vertex="1">
                     <mxGeometry x="960" y="660" width="190" height="60" as="geometry"/>
                 </mxCell>
-                <mxCell id="providerXtraq" value="Croniq.Persistence.Xtraq&#xa;Stored Procedures + Locks" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;fontSize=12;" parent="1" vertex="1">
+                <mxCell id="providerSqlServer" value="Croniq.Persistence.SqlServer&#xa;EF Core + Leases" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;fontSize=12;" parent="1" vertex="1">
                     <mxGeometry x="740" y="660" width="190" height="60" as="geometry"/>
                 </mxCell>
                 <mxCell id="observability" value="Telemetry / Logging Providers&#xa;OpenTelemetry + Serilog" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#cfe2f3;strokeColor=#6c8ebf;fontSize=12;" parent="1" vertex="1">
@@ -43,7 +43,7 @@
                 <mxCell id="persistenceToInMem" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#d79b00;" parent="1" source="persistence" target="providerInMem" edge="1">
                     <mxGeometry relative="1" as="geometry"/>
                 </mxCell>
-                <mxCell id="persistenceToXtraq" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#666666;" parent="1" source="persistence" target="providerXtraq" edge="1">
+                <mxCell id="persistenceToSqlServer" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#666666;" parent="1" source="persistence" target="providerSqlServer" edge="1">
                     <mxGeometry relative="1" as="geometry"/>
                 </mxCell>
                 <mxCell id="coreToObservability" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;dashed=1;strokeColor=#6c8ebf;" parent="1" source="core" target="observability" edge="1">

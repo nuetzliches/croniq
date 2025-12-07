@@ -1,8 +1,0 @@
-{
-  "Schema": "core",
-  "Name": "count",
-  "BaseSqlTypeName": "int",
-  "MaxLength": 4,
-  "Precision": 10,
-  "IsNullable": false
-}

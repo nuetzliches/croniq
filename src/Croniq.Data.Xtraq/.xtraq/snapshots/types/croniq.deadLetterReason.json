@@ -1,7 +1,0 @@
-{
-  "Schema": "croniq",
-  "Name": "deadLetterReason",
-  "BaseSqlTypeName": "nvarchar",
-  "MaxLength": 128,
-  "IsNullable": true
-}

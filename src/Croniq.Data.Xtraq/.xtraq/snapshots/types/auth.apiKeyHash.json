@@ -1,7 +1,0 @@
-{
-  "Schema": "auth",
-  "Name": "apiKeyHash",
-  "BaseSqlTypeName": "varbinary",
-  "MaxLength": 64,
-  "IsNullable": false
-}

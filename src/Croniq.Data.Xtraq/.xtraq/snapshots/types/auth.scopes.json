@@ -1,6 +1,0 @@
-{
-  "Schema": "auth",
-  "Name": "scopes",
-  "BaseSqlTypeName": "nvarchar",
-  "IsNullable": true
-}

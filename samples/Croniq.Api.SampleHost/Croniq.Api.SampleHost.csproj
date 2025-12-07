@@ -11,8 +11,6 @@
     <ProjectReference Include="..\..\src\Croniq.Persistence.Abstractions\Croniq.Persistence.Abstractions.csproj" />
     <ProjectReference Include="..\..\src\Croniq.Auth.Abstractions\Croniq.Auth.Abstractions.csproj" />
     <ProjectReference Include="..\..\src\Croniq.Auth.Core\Croniq.Auth.Core.csproj" />
-    <ProjectReference Include="..\..\src\Croniq.Auth.Xtraq\Croniq.Auth.Xtraq.csproj" />
-    <ProjectReference Include="..\..\src\Croniq.Data.Xtraq\Croniq.Data.Xtraq.csproj" />
     <ProjectReference Include="..\..\src\Croniq.Api\Croniq.Api.csproj" />
     <ProjectReference Include="..\Croniq.SampleJobs\Croniq.SampleJobs.csproj" />
   </ItemGroup>

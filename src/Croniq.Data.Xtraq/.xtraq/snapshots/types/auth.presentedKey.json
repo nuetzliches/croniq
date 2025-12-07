@@ -1,7 +1,0 @@
-{
-  "Schema": "auth",
-  "Name": "presentedKey",
-  "BaseSqlTypeName": "nvarchar",
-  "MaxLength": 512,
-  "IsNullable": false
-}

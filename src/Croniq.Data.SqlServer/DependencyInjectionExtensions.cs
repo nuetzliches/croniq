@@ -41,8 +41,11 @@ public static class DependencyInjectionExtensions
             builder.EnableSensitiveDataLogging(options.EnableSensitiveDataLogging);
         }
 
-        services.AddDbContext<SqlServerDbContext>(ConfigureContext);
-        services.AddDbContextFactory<SqlServerDbContext>(ConfigureContext);
+        services.AddDbContext<SqlServerDbContext>(
+            ConfigureContext,
+            contextLifetime: ServiceLifetime.Scoped,
+            optionsLifetime: ServiceLifetime.Singleton);
+        services.AddDbContextFactory<SqlServerDbContext>(ConfigureContext, ServiceLifetime.Singleton);
 
         return services;
     }

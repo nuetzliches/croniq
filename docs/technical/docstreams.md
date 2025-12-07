@@ -31,7 +31,7 @@ This plan explains how we will establish the consumer and technical documentatio
 ### Technical Stream (`docs/technical`)
 
 - Already contains architecture/detailed plans. Remaining additions:
-  - `persistence.md` (Xtraq schema, stored procedures, migration process).
+  - `persistence.md` (SqlServer schema, EF migrations, DbContext model).
   - `job-registration.md` (core startup flow, DI, metadata sync).
   - `auth.md` (provider contracts, API endpoints) referencing the security baseline.
   - `release.md` or expand `ci.md` with release governance.

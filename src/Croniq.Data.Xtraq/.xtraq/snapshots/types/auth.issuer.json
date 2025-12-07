@@ -1,7 +1,0 @@
-{
-  "Schema": "auth",
-  "Name": "issuer",
-  "BaseSqlTypeName": "nvarchar",
-  "MaxLength": 256,
-  "IsNullable": false
-}

@@ -1,8 +1,0 @@
-{
-  "Schema": "core",
-  "Name": "keyBig",
-  "BaseSqlTypeName": "bigint",
-  "MaxLength": 8,
-  "Precision": 19,
-  "IsNullable": false
-}

@@ -70,9 +70,12 @@ public sealed class SqlServerDbContext(DbContextOptions<SqlServerDbContext> opti
     {
         builder.ToTable("ApiKeys", "croniq");
         builder.HasIndex(x => x.KeyId).IsUnique();
+        builder.HasIndex(x => new { x.IsActive, x.ExpiresAtUtc });
         builder.HasOne(x => x.Client)
             .WithMany(c => c.ApiKeys)
             .HasForeignKey(x => x.ApiClientId)
             .OnDelete(DeleteBehavior.Cascade);
+        builder.Property(x => x.CreatedAtUtc).HasDefaultValueSql("sysutcdatetime()");
+        builder.Property(x => x.UpdatedAtUtc).HasDefaultValueSql("sysutcdatetime()");
     }
 }

@@ -1,7 +1,0 @@
-{
-  "Schema": "auth",
-  "Name": "apiKeyRef",
-  "BaseSqlTypeName": "nvarchar",
-  "MaxLength": 64,
-  "IsNullable": false
-}

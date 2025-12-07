@@ -4,7 +4,7 @@ This guide explains how the Croniq API host (`Croniq.Api`) resolves configuratio
 
 ## 1. Configuration Sources & Priority
 
-`builder.Services.AddCroniqApiServices(builder.Configuration)` binds the following option objects from the provided `IConfiguration` instance: `CroniqApiOptions`, `CroniqOptions`, `CroniqAuthOptions`, `CroniqPersistenceOptions`, and `XtraqSharedOptions`. The usual ASP.NET Core precedence applies (later providers win):
+`builder.Services.AddCroniqApiServices(builder.Configuration)` binds the following option objects from the provided `IConfiguration` instance: `CroniqApiOptions`, `CroniqOptions`, `CroniqAuthOptions`, `CroniqPersistenceOptions`, and `SqlServerOptions`. The usual ASP.NET Core precedence applies (later providers win):
 
 1. `appsettings.json` and other JSON files.
 2. Environment-specific JSON (e.g., `appsettings.Development.json`).
@@ -31,24 +31,24 @@ Need to override something programmatically? Use the regular options APIs before
 ```csharp
 builder.Services.PostConfigure<CroniqAuthOptions>(options =>
 {
-    options.Mode = "Xtraq";
-    options.Xtraq.ConnectionString = builder.Configuration.GetConnectionString("CroniqAuth")!;
+    options.Mode = "SqlServer";
+    options.SqlServer.ConnectionString = builder.Configuration.GetConnectionString("CroniqAuth")!;
 });
 ```
 
 ## 3. Key Environment Variables
 
-| Variable                                       | Required                                                      | Description                                                                                | Example                                            |
-| ---------------------------------------------- | ------------------------------------------------------------- | ------------------------------------------------------------------------------------------ | -------------------------------------------------- |
-| `Croniq__Auth__Mode`                           | Yes                                                           | Selects `InMemory` (single API key) or `Xtraq` (database-backed) authentication.           | `Xtraq`                                            |
-| `Croniq__Auth__InMemory__ApiKey`               | When `Auth.Mode = InMemory`                                   | API key issued to callers when using the in-memory store.                                  | `crq_dev_local_sample`                             |
-| `Croniq__Auth__Xtraq__ConnectionString`        | When `Auth.Mode = Xtraq` and no shared connection is provided | Database connection used for issuing/validating API keys.                                  | `Server=.;Database=Croniq;Trusted_Connection=True` |
-| `Croniq__Persistence__Mode`                    | Yes                                                           | `InMemory` for demo workloads or `Xtraq` for durable persistence.                          | `InMemory`                                         |
-| `Croniq__Persistence__Xtraq__ConnectionString` | When `Persistence.Mode = Xtraq`                               | Connection string for the scheduler persistence schema.                                    | `Server=.;Database=Croniq;Trusted_Connection=True` |
-| `Croniq__Xtraq__ConnectionString`              | Optional                                                      | Shared fallback connection string used when specific auth/persistence strings are omitted. | `Server=.;Database=Croniq;...`                     |
-| `Croniq__Core__TenantId`                       | Optional                                                      | Overrides the default tenant id baked into job keys.                                       | `dev-sandbox`                                      |
-| `Croniq__Core__EnvironmentTag`                 | Optional                                                      | Distinguishes environments/instances (helps multi-dev setups).                             | `dev-alice`                                        |
-| `Croniq__Api__RequestsPerMinute`               | Optional                                                      | Per-key fixed-window rate limit enforced by `AddCroniqApiRateLimiter`.                     | `120`                                              |
+| Variable                                           | Required                                                          | Description                                                                                | Example                                            |
+| -------------------------------------------------- | ----------------------------------------------------------------- | ------------------------------------------------------------------------------------------ | -------------------------------------------------- |
+| `Croniq__Auth__Mode`                               | Yes                                                               | Selects `InMemory` (single API key) or `SqlServer` (database-backed) authentication.       | `SqlServer`                                        |
+| `Croniq__Auth__InMemory__ApiKey`                   | When `Auth.Mode = InMemory`                                       | API key issued to callers when using the in-memory store.                                  | `crq_dev_local_sample`                             |
+| `Croniq__Auth__SqlServer__ConnectionString`        | When `Auth.Mode = SqlServer` and no shared connection is provided | Database connection used for issuing/validating API keys.                                  | `Server=.;Database=Croniq;Trusted_Connection=True` |
+| `Croniq__Persistence__Mode`                        | Yes                                                               | `InMemory` for demo workloads or `SqlServer` for durable persistence.                      | `SqlServer`                                        |
+| `Croniq__Persistence__SqlServer__ConnectionString` | When `Persistence.Mode = SqlServer`                               | Connection string for the scheduler persistence schema.                                    | `Server=.;Database=Croniq;Trusted_Connection=True` |
+| `Croniq__SqlServer__ConnectionString`              | Optional                                                          | Shared fallback connection string used when specific auth/persistence strings are omitted. | `Server=.;Database=Croniq;...`                     |
+| `Croniq__Core__TenantId`                           | Optional                                                          | Overrides the default tenant id baked into job keys.                                       | `dev-sandbox`                                      |
+| `Croniq__Core__EnvironmentTag`                     | Optional                                                          | Distinguishes environments/instances (helps multi-dev setups).                             | `dev-alice`                                        |
+| `Croniq__Api__RequestsPerMinute`                   | Optional                                                          | Per-key fixed-window rate limit enforced by `AddCroniqApiRateLimiter`.                     | `120`                                              |
 
 > **Tip:** Keep secrets (API keys, connection strings) outside source control. Prefer user-secrets for local development and a managed vault for hosted environments.
 
@@ -62,12 +62,12 @@ set Croniq__Core__EnvironmentTag=dev-alice
 set Croniq__Api__RequestsPerMinute=60
 ```
 
-To point both persistence and auth at the same SQL Server via Xtraq:
+To point both persistence and auth at the same SQL Server via the shared settings:
 
 ```powershell
-$Env:Croniq__Auth__Mode = "Xtraq"
-$Env:Croniq__Persistence__Mode = "Xtraq"
-$Env:Croniq__Xtraq__ConnectionString = "Server=localhost;Database=Croniq;User Id=sa;Password=Secret123!"
+$Env:Croniq__Auth__Mode = "SqlServer"
+$Env:Croniq__Persistence__Mode = "SqlServer"
+$Env:Croniq__SqlServer__ConnectionString = "Server=localhost;Database=Croniq;User Id=sa;Password=Secret123!"
 ```
 
 ## 5. Programmatic Overrides
@@ -85,9 +85,9 @@ builder.Services.PostConfigure<CroniqOptions>(options =>
 
 builder.Services.PostConfigure<CroniqPersistenceOptions>(options =>
 {
-    if (options.Mode.Equals("Xtraq", StringComparison.OrdinalIgnoreCase))
+    if (options.Mode.Equals("SqlServer", StringComparison.OrdinalIgnoreCase))
     {
-        options.Xtraq.ConnectionString = secretProvider.GetConnectionString("CroniqPersistence");
+        options.SqlServer.ConnectionString = secretProvider.GetConnectionString("CroniqPersistence");
     }
 });
 ```
@@ -96,7 +96,7 @@ Only override the values you truly need—everything else continues to flow from
 
 ## 6. Troubleshooting
 
-- **Missing connection string:** When either `Auth.Mode` or `Persistence.Mode` is `Xtraq`, the extension throws if it cannot find a connection string on the domain-specific section or the shared `Croniq__Xtraq__ConnectionString` key.
+- **Missing connection string:** When either `Auth.Mode` or `Persistence.Mode` is `SqlServer`, the extension throws if it cannot find a connection string on the domain-specific section or the shared `Croniq__SqlServer__ConnectionString` key.
 - **Missing API key:** When `Auth.Mode = InMemory`, you must provide `Croniq__Auth__InMemory__ApiKey`. Otherwise startup throws `InvalidOperationException`.
 - **Unexpected tenant scope:** Verify `Croniq__Core__TenantId`/`EnvironmentTag` when multiple developers work on the same database to avoid job collisions.
 - **Rate limiter rejecting calls:** Increase `Croniq__Api__RequestsPerMinute` or tailor the limiter via `AddCroniqApiRateLimiter` options.

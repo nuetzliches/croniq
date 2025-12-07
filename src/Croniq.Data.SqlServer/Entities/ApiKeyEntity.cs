@@ -29,6 +29,11 @@ public sealed class ApiKeyEntity
     [MaxLength(128)]
     public string SecretSalt { get; set; } = string.Empty;
 
+    [MaxLength(64)]
+    public string? EnvironmentTag { get; set; }
+
+    public string? ScopesJson { get; set; }
+
     public DateTime? ExpiresAtUtc { get; set; }
 
     public bool IsActive { get; set; } = true;

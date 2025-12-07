@@ -1,7 +1,0 @@
-{
-  "Schema": "core",
-  "Name": "tag",
-  "BaseSqlTypeName": "nvarchar",
-  "MaxLength": 32,
-  "IsNullable": false
-}

@@ -45,12 +45,12 @@ services:
       Croniq__Auth__InMemory__ApiKey: ${CRONIQ_SMOKE_API_KEY:-smoke-key}
       Croniq__Auth__InMemory__TenantId: "1"
       Croniq__Auth__InMemory__EnvironmentTag: dev
-      Croniq__Persistence__Mode: Xtraq
+      Croniq__Persistence__Mode: SqlServer
       Croniq__Api__RequestsPerMinute: "240"
       Croniq__Core__TenantId: "1"
       Croniq__Core__EnvironmentTag: dev
       Croniq__Core__InstanceId: api-smoke
-      Croniq__Xtraq__ConnectionString: Server=croniq-sql,1433;Database=CroniqSmoke;User Id=sa;Password=${CRONIQ_SQL_PASSWORD:-CroniqSqlP@ssw0rd!};Encrypt=False;TrustServerCertificate=True;
+      Croniq__SqlServer__ConnectionString: Server=croniq-sql,1433;Database=CroniqSmoke;User Id=sa;Password=${CRONIQ_SQL_PASSWORD:-CroniqSqlP@ssw0rd!};Encrypt=False;TrustServerCertificate=True;
     depends_on:
       croniq-db-migrator:
         condition: service_completed_successfully
@@ -72,8 +72,8 @@ services:
       Croniq__Core__TenantId: "1"
       Croniq__Core__EnvironmentTag: dev
       Croniq__Core__InstanceId: worker-smoke
-      Croniq__Persistence__Mode: Xtraq
-      Croniq__Xtraq__ConnectionString: Server=croniq-sql,1433;Database=CroniqSmoke;User Id=sa;Password=${CRONIQ_SQL_PASSWORD:-CroniqSqlP@ssw0rd!};Encrypt=False;TrustServerCertificate=True;
+      Croniq__Persistence__Mode: SqlServer
+      Croniq__SqlServer__ConnectionString: Server=croniq-sql,1433;Database=CroniqSmoke;User Id=sa;Password=${CRONIQ_SQL_PASSWORD:-CroniqSqlP@ssw0rd!};Encrypt=False;TrustServerCertificate=True;
     depends_on:
       croniq-db-migrator:
         condition: service_completed_successfully

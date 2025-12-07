@@ -1,7 +1,0 @@
-{
-  "Schema": "core",
-  "Name": "uid",
-  "BaseSqlTypeName": "uniqueidentifier",
-  "MaxLength": 16,
-  "IsNullable": false
-}

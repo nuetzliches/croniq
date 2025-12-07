@@ -2,7 +2,7 @@ using Croniq.Core;
 using Croniq.Core.Options;
 using Croniq.JobStore.InMemory;
 using Croniq.Providers.Default;
-using Croniq.Persistence.Xtraq;
+using Croniq.Persistence.SqlServer;
 using Croniq.SampleJobs;
 using Croniq.Worker.SampleHost;
 using Microsoft.Extensions.Configuration;
@@ -17,7 +17,6 @@ builder.Configuration
     .AddEnvironmentVariables();
 
 builder.Services.Configure<CroniqOptions>(builder.Configuration.GetSection("Croniq:Core"));
-builder.Services.Configure<XtraqSharedOptions>(builder.Configuration.GetSection("Croniq:Xtraq"));
 
 builder.Services.AddCroniqDefaultProviders();
 builder.Services.AddCroniqCore();
@@ -41,19 +40,23 @@ await builder.Build().RunAsync();
 static void ConfigurePersistence(HostApplicationBuilder builder)
 {
     var mode = builder.Configuration["Croniq:Persistence:Mode"] ?? "InMemory";
-    if (string.Equals(mode, "Xtraq", StringComparison.OrdinalIgnoreCase))
+    if (string.Equals(mode, "SqlServer", StringComparison.OrdinalIgnoreCase))
     {
-        var connection = builder.Configuration["Croniq:Persistence:Xtraq:ConnectionString"]
-            ?? builder.Configuration["Croniq:Xtraq:ConnectionString"];
+        var sqlSection = builder.Configuration.GetSection("Croniq:SqlServer");
+        var connection = sqlSection["ConnectionString"]
+            ?? builder.Configuration.GetConnectionString("CroniqSqlServer")
+            ?? builder.Configuration.GetConnectionString("Croniq");
         if (string.IsNullOrWhiteSpace(connection))
         {
-            throw new InvalidOperationException("Croniq:Xtraq:ConnectionString is required when Persistence.Mode = Xtraq.");
+            throw new InvalidOperationException("Croniq:SqlServer:ConnectionString is required when Persistence.Mode = SqlServer.");
         }
 
-        builder.Services.AddCroniqXtraqPersistence(opts =>
+        var persistenceSection = builder.Configuration.GetSection("Croniq:Persistence:SqlServer");
+        builder.Services.AddCroniqSqlServerPersistence(options =>
         {
-            opts.ConnectionString = connection;
-        });
+            sqlSection.Bind(options);
+            options.ConnectionString = connection;
+        }, persistenceSection.Exists() ? persistence => persistenceSection.Bind(persistence) : null);
     }
     else
     {

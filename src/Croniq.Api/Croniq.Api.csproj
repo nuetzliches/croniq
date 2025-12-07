@@ -13,8 +13,7 @@
     <ProjectReference Include="..\Croniq.Persistence.SqlServer\Croniq.Persistence.SqlServer.csproj" />
     <ProjectReference Include="..\Croniq.Auth.Abstractions\Croniq.Auth.Abstractions.csproj" />
     <ProjectReference Include="..\Croniq.Auth.Core\Croniq.Auth.Core.csproj" />
-    <ProjectReference Include="..\Croniq.Auth.Xtraq\Croniq.Auth.Xtraq.csproj" />
+    <ProjectReference Include="..\Croniq.Auth.SqlServer\Croniq.Auth.SqlServer.csproj" />
     <ProjectReference Include="..\Croniq.Data.SqlServer\Croniq.Data.SqlServer.csproj" />
-    <ProjectReference Include="..\Croniq.Data.Xtraq\Croniq.Data.Xtraq.csproj" />
   </ItemGroup>
 </Project>

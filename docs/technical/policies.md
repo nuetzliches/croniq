@@ -47,7 +47,7 @@ This document explains how Croniq will implement the Polly-based policy engine p
 - [x] Add `ExecutionPolicyPipelineProvider` (Polly v8) with retry/timeout/circuit support, caching pipelines per job, und verdrahte `DefaultJobExecutionPipeline` damit.
 - [x] Extend resilience pipeline with a Dead-Letter fallback once persistence contracts und SQL-Skripte bereitstehen (TriggerWorker now routes exhausted leases via `DeadLetterRequest`).
 - [x] Emit policy outcome counters/metrics via the `ExecutionPolicyPipelineProvider` + `TriggerWorker` instrumentation (replaces earlier plan to wire it inside `DefaultJobExecutionPipeline`).
-- [x] Extend persistence contracts for dead-letter writes/reads and update Xtraq SQL scripts accordingly.
+- [x] Extend persistence contracts for dead-letter writes/reads and update SqlServer EF migrations accordingly.
 - [x] Provide integration tests in `Croniq.Core.Tests` + contract tests for persistence to validate dead-letter storage.
 - [ ] Document policy configuration knobs in `docs/consumer/policies.md` and add examples to samples.
 - [ ] Wire dashboards/alerts from the observability plan to include policy counters (ensure exporters emit them).

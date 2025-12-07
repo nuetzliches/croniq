@@ -5,7 +5,7 @@ This section is intended for maintainers, platform engineers, and contributors w
 ## Contents (Planned)
 
 - Architecture deep dive (extends `CONCEPT.md`)
-- Persistence model & Xtraq schema references
+- Persistence model & SqlServer schema references
 - Provider extension guides (logging, telemetry, secrets, etc.)
 - Deployment playbooks (Docker Compose, Kubernetes, CI/CD)
 - Observability standards (Serilog + OpenTelemetry)

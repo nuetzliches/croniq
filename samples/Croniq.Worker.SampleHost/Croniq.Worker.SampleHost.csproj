@@ -9,7 +9,7 @@
     <PackageReference Include="Microsoft.Extensions.Hosting" Version="10.0.0" />
     <ProjectReference Include="..\..\samples\Croniq.SampleJobs\Croniq.SampleJobs.csproj" />
     <ProjectReference Include="..\..\src\Croniq.Core\Croniq.Core.csproj" />
-    <ProjectReference Include="..\..\src\Croniq.Persistence.Xtraq\Croniq.Persistence.Xtraq.csproj" />
+    <ProjectReference Include="..\..\src\Croniq.Persistence.SqlServer\Croniq.Persistence.SqlServer.csproj" />
     <ProjectReference Include="..\..\src\Croniq.JobStore.InMemory\Croniq.JobStore.InMemory.csproj" />
     <ProjectReference Include="..\..\src\Croniq.Providers.Default\Croniq.Providers.Default.csproj" />
   </ItemGroup>

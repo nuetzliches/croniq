@@ -4,7 +4,7 @@ This document expands `CONCEPT.md` section 16 and captures the backlog required 
 
 ## Objectives
 
-- Provide a single Helm chart (or Kustomize base) that deploys Croniq API, worker(s), optional UI, and dependencies (SQL/Xtraq, observability sidecars) across dev/stage/prod clusters.
+- Provide a single Helm chart (or Kustomize base) that deploys Croniq API, worker(s), optional UI, and dependencies (SQL Server, observability sidecars) across dev/stage/prod clusters.
 - Keep the chart in sync with the Docker dev stack and CI pipelines to minimize configuration drift.
 - Ship secure-by-default manifests (least privilege, TLS, resource limits) while remaining customizable via `values.yaml` overlays.
 
@@ -15,15 +15,15 @@ This document expands `CONCEPT.md` section 16 and captures the backlog required 
    - Horizontal Pod Autoscaler (CPU + queue-length metric hook) optional.
 2. **Croniq Worker Deployment**
    - Same image as API or dedicated worker image; uses leader election configmap if clustering is enabled.
-3. **SQL Server / Xtraq**
-   - For dev: StatefulSet with persistent volume + init job running `infra/sql/xtraq/apply.ps1` equivalent.
+3. **SQL Server**
+   - For dev: StatefulSet with persistent volume + init job running `tools/Croniq.DbMigrator` (dotnet container) to apply EF Core migrations.
    - For production: support external SQL via connection string secret.
 4. **Observability Stack (optional subchart)**
    - OTel Collector Deployment + ConfigMap, optional Grafana/Tempo via dependencies (can be toggled per environment).
 5. **Ingress**
    - NGINX/Traefik ingress definitions with TLS; gRPC endpoint support.
 6. **Secrets & Config**
-   - `Croniq:Auth:Xtraq`, `Croniq:Persistence:Xtraq`, API key seeds, rate limiter config stored in Kubernetes Secrets (sealed-secrets/external secrets optional).
+   - `Croniq:Auth:SqlServer`, `Croniq:Persistence:SqlServer`, `Croniq:SqlServer`, API key seeds, rate limiter config stored in Kubernetes Secrets (sealed-secrets/external secrets optional).
 7. **Jobs/CronJobs**
    - Database migrations, policy cleanup, dead-letter sweeps.
 

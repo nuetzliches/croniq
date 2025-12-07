@@ -185,49 +185,54 @@ public sealed class SqlServerJobPersistenceProvider : IJobPersistenceProvider
     {
         if (request is null) throw new ArgumentNullException(nameof(request));
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
-        await using var tx = await db.Database.BeginTransactionAsync(IsolationLevel.Serializable, cancellationToken).ConfigureAwait(false);
+        var strategy = db.Database.CreateExecutionStrategy();
 
-        var nowUtc = request.NowUtc.UtcDateTime;
-        var expiresAt = nowUtc.AddSeconds(_options.LeaseDurationSeconds);
-
-        var due = await db.Triggers
-            .Include(t => t.Job)
-            .Where(t => !t.IsDeleted && t.Enabled)
-            .Where(t => t.Job.TenantId == request.Scope.TenantId && t.Job.EnvironmentTag == request.Scope.EnvironmentTag)
-            .Where(t => t.NextFireAtUtc != null && t.NextFireAtUtc <= nowUtc)
-            .Where(t => t.LeaseExpiresAtUtc == null || t.LeaseExpiresAtUtc <= nowUtc)
-            .OrderBy(t => t.NextFireAtUtc)
-            .ThenBy(t => t.Id)
-            .Take(request.BatchSize)
-            .ToListAsync(cancellationToken).ConfigureAwait(false);
-
-        var leases = new List<TriggerLease>(due.Count);
-        foreach (var trigger in due)
+        return await strategy.ExecuteAsync(async () =>
         {
-            var leaseId = Guid.NewGuid().ToString("N");
-            trigger.LeaseId = leaseId;
-            trigger.LeaseInstanceId = request.InstanceId;
-            trigger.LeaseExpiresAtUtc = expiresAt;
-            trigger.LastFiredAtUtc = trigger.NextFireAtUtc;
-            trigger.UpdatedAtUtc = nowUtc;
+            await using var tx = await db.Database.BeginTransactionAsync(IsolationLevel.Serializable, cancellationToken).ConfigureAwait(false);
 
-            var scope = new PartitionScope(trigger.Job.TenantId, trigger.Job.EnvironmentTag);
-            var fireAt = trigger.NextFireAtUtc ?? nowUtc;
+            var nowUtc = request.NowUtc.UtcDateTime;
+            var expiresAt = nowUtc.AddSeconds(_options.LeaseDurationSeconds);
 
-            leases.Add(new TriggerLease(
-                leaseId,
-                trigger.TriggerKey,
-                trigger.JobKey,
-                scope,
-                new DateTimeOffset(DateTime.SpecifyKind(fireAt, DateTimeKind.Utc)),
-                new DateTimeOffset(DateTime.SpecifyKind(trigger.LeaseExpiresAtUtc!.Value, DateTimeKind.Utc)),
-                trigger.MetadataJson));
-        }
+            var due = await db.Triggers
+                .Include(t => t.Job)
+                .Where(t => !t.IsDeleted && t.Enabled)
+                .Where(t => t.Job.TenantId == request.Scope.TenantId && t.Job.EnvironmentTag == request.Scope.EnvironmentTag)
+                .Where(t => t.NextFireAtUtc != null && t.NextFireAtUtc <= nowUtc)
+                .Where(t => t.LeaseExpiresAtUtc == null || t.LeaseExpiresAtUtc <= nowUtc)
+                .OrderBy(t => t.NextFireAtUtc)
+                .ThenBy(t => t.Id)
+                .Take(request.BatchSize)
+                .ToListAsync(cancellationToken).ConfigureAwait(false);
 
-        await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
-        await tx.CommitAsync(cancellationToken).ConfigureAwait(false);
+            var leases = new List<TriggerLease>(due.Count);
+            foreach (var trigger in due)
+            {
+                var leaseId = Guid.NewGuid().ToString("N");
+                trigger.LeaseId = leaseId;
+                trigger.LeaseInstanceId = request.InstanceId;
+                trigger.LeaseExpiresAtUtc = expiresAt;
+                trigger.LastFiredAtUtc = trigger.NextFireAtUtc;
+                trigger.UpdatedAtUtc = nowUtc;
 
-        return leases;
+                var scope = new PartitionScope(trigger.Job.TenantId, trigger.Job.EnvironmentTag);
+                var fireAt = trigger.NextFireAtUtc ?? nowUtc;
+
+                leases.Add(new TriggerLease(
+                    leaseId,
+                    trigger.TriggerKey,
+                    trigger.JobKey,
+                    scope,
+                    new DateTimeOffset(DateTime.SpecifyKind(fireAt, DateTimeKind.Utc)),
+                    new DateTimeOffset(DateTime.SpecifyKind(trigger.LeaseExpiresAtUtc!.Value, DateTimeKind.Utc)),
+                    trigger.MetadataJson));
+            }
+
+            await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+            await tx.CommitAsync(cancellationToken).ConfigureAwait(false);
+
+            return (IReadOnlyCollection<TriggerLease>)leases;
+        }).ConfigureAwait(false);
     }
 
     public async Task ReleaseAsync(TriggerReleaseRequest request, CancellationToken cancellationToken)

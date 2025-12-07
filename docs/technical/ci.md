@@ -26,7 +26,7 @@ This document describes the continuous integration and delivery strategy require
    - `dotnet format --verify-no-changes`.
    - `dotnet build -warnaserror` to enforce analyzers.
 3. **Unit + contract tests**
-   - Matrix per test project (`Croniq.Core.Tests`, `Croniq.JobStore.InMemory.Tests`, `Croniq.Persistence.Xtraq.Tests`, `Croniq.Providers.Default.Tests`).
+   - Matrix per test project (`Croniq.Core.Tests`, `Croniq.JobStore.InMemory.Tests`, `Croniq.Persistence.SqlServer.Tests`, `Croniq.Providers.Default.Tests`).
    - Use `dotnet test <proj> /p:CollectCoverage=true /p:CoverletOutputFormat=cobertura`.
    - Upload coverage report aggregate + test results (TRX) as artifacts.
    - Fail if coverage <80% Core / <70% overall (use `coverlet.msbuild` thresholds).

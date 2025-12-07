@@ -1,7 +1,0 @@
-{
-  "Schema": "core",
-  "Name": "actor",
-  "BaseSqlTypeName": "nvarchar",
-  "MaxLength": 128,
-  "IsNullable": false
-}

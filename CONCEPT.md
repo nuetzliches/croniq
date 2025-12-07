@@ -7,17 +7,17 @@
 - Fokus auf In-Memory-JobStore fuer schnelle Verarbeitung, optionale Persistenz und Integrationen ueber Provider.
 - Nichtfunktionale Zielwerte (Defaults, best practice):
   - Trigger-Lookup und Schedule-Evaluation: <100 ms p50, <250 ms p95 bei bis zu 10k aktiven Triggern pro Node.
-  - End-to-end Job-Start (Trigger bis ExecuteAsync aufgerufen): <500 ms p95 ohne Persistenz; <750 ms p95 mit Xtraq-Provider.
+  - End-to-end Job-Start (Trigger bis ExecuteAsync aufgerufen): <500 ms p95 ohne Persistenz; <750 ms p95 mit SqlServer-Provider.
   - Verfuegbarkeit: 99.9% Monats-SLO fuer Scheduler/API; gRPC/API-Fehlerquote <0.1% pro Tag; Clock-Drift <50 ms zwischen Nodes.
 
 ## 2. Loesungsarchitektur (High-Level)
 
 - **Scheduler Core**: Bibliothek, die Trigger, Jobs, Policies und Execution-Pipeline kapselt.
-- **Provider Layer**: Schnittstellen + Default Provider (Xtraq-basiert) fuer Persistenz, Logging, Telemetrie etc.
+- **Provider Layer**: Schnittstellen + Default Provider (SqlServer-basiert) fuer Persistenz, Logging, Telemetrie etc.
 - **Service Layer**: Minimal API zum Verwalten/Triggern von Jobs und Schedules; RPC-Kanal (z.B. gRPC oder JSON-RPC) fuer entfernten Zugriff.
 - **Jobs Layer**: Eigenstaendige Projekte/Assemblies, die Job-Contracts implementieren und per DI registriert werden.
-- **Infrastructure**: SQL-Skripte fuer den Xtraq-Provider (SQL Server), Docker-Compose fuer alle Services, optionale UI zur Administration.
-- **Hosting Extensions**: `Croniq.Api` bietet `AddCroniqApiServices`/`AddCroniqApiRateLimiter`/`UseCroniqApi` fuer Konsumenten. Auth/Persistenz sind per Konfig schaltbar (InMemory vs. Xtraq) mit einem gemeinsamen ConnectionString unter `Croniq:Xtraq`.
+- **Infrastructure**: EF-Core-Migrationen fuer den SqlServer-Provider, Docker-Compose fuer alle Services, optionale UI zur Administration.
+- **Hosting Extensions**: `Croniq.Api` bietet `AddCroniqApiServices`/`AddCroniqApiRateLimiter`/`UseCroniqApi` fuer Konsumenten. Auth/Persistenz sind per Konfig schaltbar (InMemory vs. SqlServer) mit einem gemeinsamen ConnectionString unter `Croniq:SqlServer`.
 
 ## 3. Repository-Struktur (Vorschlag)
 
@@ -27,11 +27,11 @@ croniq/
 |   |-- Croniq.Core/                # Scheduler-Engine, Trigger, Policies
 |   |-- Croniq.JobStore.InMemory/   # Referenz-In-Memory-JobStore
 |   |-- Croniq.Persistence.Abstractions/
-|   |-- Croniq.Persistence.Xtraq/   # Default Persistenz-Provider
-|   |-- Croniq.Data.Xtraq/          # Gemeinsamer DbContext + SessionSettings fuer Xtraq (shared infra)
+|   |-- Croniq.Persistence.SqlServer/   # Default Persistenz-Provider
 |   |-- Croniq.Auth.Abstractions/   # Contracts fuer Tenants/Users/API-Clients/CallerContext
 |   |-- Croniq.Auth.Core/           # In-Memory/Auth-Services + Middleware (dev/edge)
-|   |-- Croniq.Auth.Xtraq/          # Xtraq-basierter Auth-Provider (SaaS, shared DB)
+|   |-- Croniq.Data.SqlServer/      # Gemeinsamer DbContext + EF-Core-Entities fuer Croniq
+|   |-- Croniq.Auth.SqlServer/      # SqlServer-basierter Auth-Provider (SaaS, shared DB)
 |   |-- Croniq.Providers.Logging/   # Logging-Provider (z.B. Serilog)
 |   |-- Croniq.Providers.Telemetry/ # OpenTelemetry-Integration
 |   |-- Croniq.Api/                 # Minimal API + RPC-Endpunkte
@@ -41,10 +41,11 @@ croniq/
 |-- jobs/
 |   `-- Sample.Job.Project/
 |-- infra/
-|   |-- sql/xtraq/*.sql
 |   `-- docker/
 |       |-- docker-compose.yml
 |       `-- */Dockerfile
+|-- tools/
+|   `-- Croniq.DbMigrator/
 |-- tests/
 |   |-- Croniq.Core.Tests/
 |   |-- Croniq.Api.Tests/
@@ -65,29 +66,41 @@ croniq/
 - Bearbeitung/Ansicht lokal: VS Code mit der Extension **hediet.vscode-drawio** (unofficial, de-facto Standard) oder externe diagrams.net Desktop/Web-App. Datei direkt aus dem Repo oeffnen; keine Remote-Speicherung notwendig.
 - Beim Editieren bitte Seitenstruktur beibehalten, keine eingebetteten externen Ressourcen nutzen; Farben/Legende konsistent halten.
 
-## Persistenz-Basis (Xtraq)
+## Persistenz-Basis (SqlServer)
 
-- Xtraq ist keine eigenstaendige Datenbank, sondern eine Stored-Procedure-/Typ-Schicht auf SQL Server, deren CLI aus Prozeduren stark typisierte C#-Bibliotheken generiert (Snapshot + Build). Dev-Ziel: `mssql/server:2022`, DB-Name `CroniqDev`. Die UDTs/TVPs und Prozeduren in `infra/sql/xtraq` sind Grundlage fuer die Xtraq-Extraktion; ausschliesslich diese Procs werden aufgerufen (keine Ad-hoc-Queries). Aus einer bereitgestellten DB kann jederzeit ein aktueller Snapshot generiert werden.
+- Croniq persistiert ausschliesslich via EF Core (SqlServer Provider). `src/Croniq.Data.SqlServer` enthaelt den gemeinsamen `SqlServerDbContext`, Entity-Mappings sowie `SqlServerOptions`. Schema-Name ist `croniq`; alle Entities erzwingen `TenantId`, `EnvironmentTag` und RowMetadata (Created/Updated/Concurrency).
+- `Croniq.Persistence.SqlServer` implementiert den `IJobPersistenceProvider` und kapselt Migrations-/DbContextFactory-Setup fuer Scheduler, API und Worker Hosts. `Croniq.Auth.SqlServer` teilt dasselbe DbContext-Modell fuer ApiClients/ApiKeys.
+- Connection Strings und EF-Optionen liegen zentral unter `Croniq:SqlServer:*` (z.B. `ConnectionString`, `EnableDetailedErrors`, `EnableSensitiveDataLogging`). Samples/CI nutzen `Croniq:SqlServer:ConnectionString` mit einem lokalen SQL Server 2022 Container (`infra/docker/docker-compose.yml`).
+- Migrations & Seeding laufen ueber `tools/Croniq.DbMigrator` (CLI). Tests verwenden denselben Codepfad via Testcontainers.
 
 ### SQL-Schema Layout (Entwurf)
 
 ```
-infra/sql/xtraq/
-  core/types.sql            # [core] Basis-UDTs (key, keyBig, uid, utcDateTime, reference, tag, label, name, labelNullable, principal, principalNullable, jsonNullable, flag)
-  croniq/types.sql          # [croniq] Domaintypen (cronExpression, timeZoneId, stateCode, jobVariant, deadLetterReason)
-  auth/tables.sql           # Tabelle [auth].[Tenants] (TenantId core.key PK, Reference core.reference UNIQUE, Created/Updated + Principals, IsDeleted)
-  auth/users.sql            # Tabellen [auth].[Users], [auth].[UserRoles], [auth].[UserLogins] (federated OIDC), FK -> Tenants
-  auth/apiClients.sql       # Tabellen [auth].[ApiClients], [auth].[ApiKeys] (KeyPrefix, KeyHash, ExpiresAt, Scopes/EnvTag), FK -> Tenants
-  croniq/tables.sql         # Tabellen Jobs/Triggers/Leases/DeadLetter (Tenant FK -> auth.Tenants, Environment, Namespace, Name, Variant, Cron, TimeZoneId, Payload, Metadata, State)
-  04-croniq-seed.sql        # optionale Seeds/Testdaten
+src/Croniq.Data.SqlServer/
+  Entities/
+    ApiClientEntity.cs      # Mandanten-spezifische API-Clients (TenantId, ClientId, DefaultScopes, EnvTag)
+    ApiKeyEntity.cs         # Gehashte Secrets + Ablauf + Aktiv-Flag
+    DeadLetterEntity.cs     # Fehlerhafte Ausfuehrungen inkl. Payload/Reason
+    JobEntity.cs            # Definitionen inkl. JobKey, Namespace, Metadata
+    TriggerEntity.cs        # Trigger inkl. NextFireAtUtc, RowVersion
+  SqlServerDbContext.cs     # Konsolidierter DbContext fuer Persistence + Auth
+  SqlServerOptions.cs       # Gemeinsame Konfiguration (Connection, Logging)
+src/Croniq.Persistence.SqlServer/
+  SqlServerJobPersistenceProvider.cs
+  ServiceCollectionExtensions.cs
+src/Croniq.Auth.SqlServer/
+  SqlServerApiKeyStore.cs
+  ServiceCollectionExtensions.cs
+tools/Croniq.DbMigrator/
+  Program.cs                # CLI zum Ausfuehren von EF-Core-Migrationen
 ```
 
-- Nicht-basale Typen liegen im Schema `[croniq]`; Auth/Identity-Objekte (Tenant/User/API-Key/OAuth2-Client) liegen im Schema `[auth]` mit numerischem PK (`core.pkInt`). Falls ein sprechender String benoetigt wird, kommt eine Spalte `Reference` (Typ `core.reference`) hinzu.
-- Alle Tabellen sollen PK aus `core.pkInt`/`core.pkBigInt` verwenden und Tenant/Environment als Pflichtfelder fuehren; Foreign Keys auf `[auth].[tenants]`. API-Keys werden nur gehasht gespeichert (KeyId/Prefix im Klartext, Hash = HMAC/SHA-256 mit Salt), Rotation ueber Stored Procedures (`sp_auth_issue_api_key`, `sp_auth_revoke_api_key`, `sp_auth_rotate_api_key`).
+- Multi-Tenancy wird ausschliesslich ueber das Schema `croniq` modelliert: Tabellen verwenden Identity-Keys (`Id` BIGINT) fuer interne Relationen, waehrend `TenantId` und `EnvironmentTag` als Pflichtfelder dienen und gemeinsam partitionieren; Indizes decken sowohl Partition als auch Lookup-Schluessel (z.B. `JobKey`, `TriggerKey`).
+- API-Keys werden gehasht gespeichert (KeyId+Prefix im Klartext, Secret nie persisted). Rotation erfolgt ueber Application Services; keine Stored Procedures erforderlich.
 
 ## 3a. Auth & Identity Modell (SaaS)
 
-- **Ziele**: Multi-Tenant SaaS mit isolierten Jobs/Policies pro Tenant, verwaltbare Nutzer (OIDC-first), API-Clients/Keys fuer Automatisierung, zentrale Quotas/RateLimits pro Tenant/API-Key. Eine gemeinsame SQL-DB (Xtraq) fuer Persistenz + Auth.
+- **Ziele**: Multi-Tenant SaaS mit isolierten Jobs/Policies pro Tenant, verwaltbare Nutzer (OIDC-first), API-Clients/Keys fuer Automatisierung, zentrale Quotas/RateLimits pro Tenant/API-Key. Eine gemeinsame SQL Server Datenbank fuer Persistenz + Auth.
 - **Domain-Objekte**:
   - Tenant: Basisobjekt, enthaelt Reference/Name/Plan/CreatedBy. Jede Croniq-Entity referenziert TenantId (FK).
   - User: Entweder federated (OIDC Subject + Issuer) oder optional lokal (nur fuer dev). Rollen pro Tenant (`TenantAdmin`, `SchedulerAdmin`, `Reader`). Tabelle `auth.Users`, Join `auth.UserRoles`.
@@ -100,11 +113,11 @@ infra/sql/xtraq/
 - **Services/Abstraktionen**:
   - `Croniq.Auth.Abstractions`: `ITenantStore`, `IUserStore`, `IApiKeyStore`, `ICallerContextAccessor`, `ICallerContextFactory`, Contracts fuer Scopes/Claims/ApiClientMetadata.
   - `Croniq.Auth.Core`: In-Memory Implementation fuer lokale Dev/Tests, Middleware fuer API-Key + JWT Bearer Validation (ohne konkrete IdP-Details).
-  - `Croniq.Auth.Xtraq`: Xtraq-basierte Implementierung der Stores (ruft nur Stored Procedures), nutzt gemeinsamen `XtraqDbContext` aus `Croniq.Data.Xtraq`.
+  - `Croniq.Auth.SqlServer`: EF-Core-basierte Implementierung der Stores auf Basis des gemeinsamen `SqlServerDbContext` inkl. Hash-Storage fuer Secrets.
 - **DB-Konzept & Shared DbContext**:
-  - `Croniq.Data.Xtraq` enthaelt nur generierte Xtraq-Infrastruktur (`XtraqDbContext`, SessionSettings, TransactionOrchestrator) fuer alle Schemas (core/auth/croniq). Keine Domain-Logik, keine Provider-spezifischen Services.
-  - `Croniq.Persistence.Xtraq` und `Croniq.Auth.Xtraq` referenzieren `Croniq.Data.Xtraq`, bringen eigene, getrennte Prozedur-Wrappers/Repositories mit (kein Domain-Mixing). `Croniq.Data.Xtraq` bleibt der alleinige Ort fuer Snapshots/Artefakte.
-  - Auth-Procs: `sp_auth_issue_api_key`, `sp_auth_revoke_api_key`, `sp_auth_rotate_api_key`, `sp_auth_get_caller_context` (liefert TenantId, EnvTag, Scopes, Status) sowie `sp_auth_upsert_user`, `sp_auth_add_role`, `sp_auth_list_tenants`.
+  - `Croniq.Data.SqlServer` enthaelt den EF-Core-`SqlServerDbContext` inkl. Entities fuer Jobs, Trigger, DeadLetters sowie Auth (`ApiClients`, `ApiKeys`). Keine Domain-Logik, nur Mappings + Options.
+  - `Croniq.Persistence.SqlServer` und `Croniq.Auth.SqlServer` referenzieren `Croniq.Data.SqlServer`, nutzen ein gemeinsames DbContextFactory-Setup und teilen ConnectionStrings/Migrations.
+  - Auth-Datenmodell: `[croniq].[ApiClients]` verwaltet Mandanten-Clients (TenantId, EnvTag, DefaultScopes), `[croniq].[ApiKeys]` speichert gehashte Secrets + Scopes + Ablaufdaten.
 - **API-Erweiterungen**:
   - Admin-Routen (geschuetzt, Scope `tenants:admin`): `POST /tenants`, `POST /tenants/{id}/api-keys`, `POST /tenants/{id}/api-keys/{keyId}/rotate`, `DELETE /tenants/{id}/api-keys/{keyId}`, `GET /tenants/{id}/users`.
   - Developer-Routen: `GET /me` (aus CallerContext), optional `GET /quota` (aktuelle Limits).
@@ -114,20 +127,19 @@ infra/sql/xtraq/
   - Key Prefix (z.B. `crq_dev_`) + zufaellige 32 Bytes; zusammengesetzt als `crq_dev_<keyId>_<secret>`, Secret nie gespeichert. Validation: Prefix -> DB lookup -> Hashvergleich.
   - Audit: `auth.AuditLog` optional fuer Issuance/Revocation/FailedAuth.
 - **Migration & Kompatibilitaet**:
-  - V1 minimal: kein globaler ApiKey mehr; Auth-Modus ist konfigurierbar (InMemory|Xtraq). InMemory benoetigt `Croniq:Auth:InMemory:ApiKey`, Xtraq nutzt DB-Procs (`ApiKeyIssue/Validate`).
-  - In-Memory Auth bleibt fuer Samples/Unit-Tests. Xtraq-Auth wird Integrations-Testcontainers nutzen (gemeinsame DB mit Persistenz).
+  - V1 minimal: kein globaler ApiKey mehr; Auth-Modus ist konfigurierbar (InMemory|SqlServer). InMemory benoetigt `Croniq:Auth:InMemory:ApiKey`, SqlServer nutzt EF Core (`SqlServerApiKeyStore`).
+  - In-Memory Auth bleibt fuer Samples/Unit-Tests. SqlServer-Auth laeuft gegen denselben SQL Server wie die Persistenz (oder optional eigene Connection) und nutzt dieselben Testcontainer.
 - **Konfiguration**:
-  - Auth: `Croniq:Auth:Mode = Xtraq|InMemory`; Xtraq nutzt `Croniq:Auth:Xtraq:ConnectionString` oder den gemeinsamen `Croniq:Xtraq:ConnectionString`, InMemory nutzt `Croniq:Auth:InMemory:ApiKey`.
-  - Persistence: `Croniq:Persistence:Mode = Xtraq|InMemory`; Xtraq nutzt `Croniq:Persistence:Xtraq:ConnectionString` oder den gemeinsamen `Croniq:Xtraq:ConnectionString`. Runtime-JobStore bleibt immer InMemory; Xtraq ergaenzt Recovery/Sync/Leases.
+  - Auth: `Croniq:Auth:Mode = SqlServer|InMemory`; SqlServer nutzt per Default `Croniq:SqlServer:ConnectionString` (optional Override `Croniq:Auth:SqlServer:*`), InMemory nutzt `Croniq:Auth:InMemory:ApiKey`.
+  - Persistence: `Croniq:Persistence:Mode = SqlServer|InMemory`; SqlServer verwendet denselben Connection String (oder `Croniq:Persistence:SqlServer:*` Override). Runtime-JobStore bleibt InMemory; der SqlServer-Provider liefert Recovery/Sync/Leases.
 
-### Rollout-Checklist (Auth + Shared Xtraq)
+### Rollout-Checklist (Auth + SqlServer)
 
-- [ ] SQL erweitern: `infra/sql/xtraq/auth/*.sql` fuer Tenants, Users (federated), ApiClients/ApiKeys (+ Procs Issue/Revoke/Rotate/GetCallerContext), Seeds fuer dev.
-- [ ] `Croniq.Data.Xtraq` anlegen: Snapshots/Artefakte aller Schemas generiert einchecken, DbContext/SessionSettings/TransactionOrchestrator hierher ziehen (keine Domain-Logik).
-- [ ] `Croniq.Persistence.Xtraq` auf `Croniq.Data.Xtraq` referenzieren, generierte Procs fuer Jobs/Triggers belassen; Health/Provider nutzen Shared DbContext.
-- [ ] `Croniq.Auth.Abstractions` definieren (`ICallerContext`, Stores, Scopes, CallerType), `Croniq.Auth.Core` (InMemory + Middleware), `Croniq.Auth.Xtraq` (Store-Implementierung via Procs).
+- [ ] EF-Core-Migrationen fuer Auth/Persistenz-Schema in `Croniq.Data.SqlServer` pflegen (Jobs, Trigger, ApiClients, ApiKeys) + Seeds fuer Dev/Testcontainer.
+- [ ] `Croniq.Persistence.SqlServer` finalisieren: Provider, Health Checks, Optionen fuer Dead-Letter/Lease.
+- [ ] `Croniq.Auth.Abstractions` + `Croniq.Auth.Core` pflegen (CallerContext, InMemory), `Croniq.Auth.SqlServer` mit hashed Secret Storage + Rotation.
 - [ ] `Croniq.Api` erweitern: CallerContext-Middleware (ApiKey + JWT/OIDC), Tenant/Env-Enforcement, Admin-Routen fuer Tenant/ApiKey Management; RateLimiter Key = TenantId:CallerId.
-- [ ] Tests/Docs: Contract-Tests fuer Auth-Stores (Testcontainers SQL), Docs ergaenzen (Key-Issuance, Rotation, OIDC Setup).
+- [ ] Tests/Docs: Contract-Tests fuer SQL-Auth-Store (Testcontainers SQL), Docs ergaenzen (Key-Issuance, Rotation, OIDC Setup).
 
 ## 4. Scheduler Core
 
@@ -189,36 +201,41 @@ Der Scheduler liest das `CroniqJobAttribute`, bildet daraus den `JobKey` und reg
 
 ### Entscheidung 14: Clustering & Verteiltes Scheduling
 
-- **Empfehlung**: Clustering erst aktivieren, wenn der Xtraq-Persistenz-Provider produktionsreif ist. Wir betreiben mehrere Scheduler-Instanzen im Active/Active-Modus, koordinieren Trigger ueber pessimistische Locks in Xtraq (`sp_Croniq_AcquireTrigger`) plus eine optionale Leader-Election (z.B. `Croniq.Cluster.Leader`, basierend auf verteilten Leases). Jeder Node besitzt eine eindeutige `InstanceId`, Heartbeats werden alle 10s persisted; ein Health-Monitor raeumt verwaiste Leases nach `FailoverGrace` (30s default) auf. Locking geschieht immer ueber die Persistenz-Ebene, nicht via in-memory gossip. Cluster-spezifische Einstellungen (Batch-Groesse, prefetch, fairness) werden via `ClusterOptions` je Tenant konfigurierbar.
-- **Begruendung**: Xtraq liefert ACID-Locks und ist bereits die Quelle fuer Trigger, daher laesst sich Clustering ohne weiteren Distributed Cache umsetzen; Heartbeat + Grace-Period verhindern Doppel-Executes. Active/Active erhoeht Durchsatz, ohne eine dedizierte Master-Node vorauszusetzen, dennoch ermoeglicht Leader-Election koordinierte Aufgaben (Cleanup, Metrics Aggregation).
-- **Konsequenzen**: `Croniq.JobStore.InMemory` bleibt Single-Node; clusterfaehiger Betrieb setzt `Croniq.Persistence.Xtraq` voraus. Neue Tabellen/Prozeduren (Instances, Heartbeats, Leases) muessen in `infra/sql/xtraq` ergaenzt werden. Telemetrie und Admin-API muessen Cluster-Health exponieren (`GET /cluster/nodes`). Tests benoetigen Integration-Szenarien mit mehreren Scheduler-Prozessen (Testcontainers). Ops-Team muss sicherstellen, dass NTP/clock-drift zwischen Nodes minimal bleibt und Heartbeat-Intervalle mit Infrastruktur abgestimmt sind.
+- **Empfehlung**: Clustering erst aktivieren, wenn der SqlServer-Persistenz-Provider einen stabilen Lease-/Locking-Satz besitzt. Mehrere Scheduler-Instanzen laufen Active/Active, koordinieren Trigger ueber dedizierte Tabellen (`croniq.TriggerLeases`, `croniq.WorkerInstances`) und nutzen RowVersion/`FOR UPDATE`-Semantik statt Stored Procedures. Eine optionale Leader-Election (z.B. `Croniq.Cluster.Leader`) basiert auf den gleichen Tabellen.
+- **Begruendung**: SQL Server bietet ACID-Transaktionen und Zeilenlocks, womit wir ohne zusaetzliche Distributed-Cache-Systeme auskommen. Heartbeats + Grace-Period verhindern Doppel-Executions; dieselben Tabellen liefern Telemetrie fuer Admin-UIs.
+- **Konsequenzen**: `Croniq.JobStore.InMemory` bleibt Single-Node; clusterfaehiger Betrieb setzt `Croniq.Persistence.SqlServer` voraus. Neue Tabellen/Entity-Mappings fuer Instances, Heartbeats und Leases leben in `Croniq.Data.SqlServer` und werden ueber EF-Migrationen ausgeliefert. Telemetrie/API exponiert Cluster-Health (`GET /cluster/nodes`). Tests muessen Mehrprozess-Szenarien mit SqlServer-Testcontainers fahren; Ops stellt NTP/Clock-Sync sicher.
 
 ### Entscheidung 2: JobStore-Strategie
 
-- **Empfehlung**: In-Memory-JobStore als Default behalten, aber alle Zugriffe strikt ueber `IJobStore`/`IJobPersistenceProvider` abstrahieren und frueh einen Xtraq-basierten Provider prototypisieren.
-- **Begruendung**: In-Memory liefert niedrigste Latenz und minimalen Footprint fuer lokale Entwicklung; durch die Abstraktion koennen persistente Stores (Xtraq, spaeter ggf. Redis/SQL) ohne API-Bruch ergaenzt werden, sobald Clusterbetrieb oder Recovery noetig wird.
-- **Konsequenzen**: Concurrency- und Locking-Konzepte muessen in der Abstraktion modelliert sein (z.B. `AcquireTrigger`, `ReleaseTrigger`); Integrationstests muessen beide Varianten (In-Memory, Xtraq) abdecken; zusaetzliche Dev-Kosten fuer Provider-Schnittstellen jetzt, weniger Rework spaeter.
+- **Empfehlung**: In-Memory-JobStore als Default behalten, aber alle Zugriffe strikt ueber `IJobStore`/`IJobPersistenceProvider` abstrahieren. `Croniq.Persistence.SqlServer` ist der erste produktive Provider; weitere Stores (z.B. Postgres, Cosmos) muessen sich an dieselben Contracts halten.
+- **Begruendung**: In-Memory liefert niedrigste Latenz fuer Dev/Test, waehrend SqlServer Durability, Recovery und Clustering bereitstellt. Die Abstraktion ermoeglicht spaetere Provider ohne API-Bruch.
+- **Konsequenzen**: Interfaces modellieren Locking (`AcquireTriggerAsync`, `ReleaseTriggerAsync`), Dead-Letter, Lease- und Recovery-Operationen. Integrationstests muessen InMemory + SqlServer (Testcontainers) abdecken, damit Provider-Gleichheit gewaehrleistet bleibt.
 
 ## 6. Provider-Modell
 
 - Gemeinsame `IProvider`/`IPlugin`-Abstraktionen mit Registrierung ueber DI.
-- **Persistenz**: `IJobPersistenceProvider` (CRUD fuer Trigger, Kalender, Job-Metadaten). Default-Implementierung nutzt Xtraq.
-- **Konfig-Modi**: Per Host konfigurierbar zwischen InMemory und Xtraq (Auth getrennt von Persistence). Gemeinsamer ConnectionString unter `Croniq:Xtraq` kann fuer beide Domänen genutzt werden; domänenspezifische Overrides moeglich.
+- **Persistenz**: `IJobPersistenceProvider` (CRUD fuer Trigger, Kalender, Job-Metadaten). Default-Implementierung ist `Croniq.Persistence.SqlServer`.
+- **Konfig-Modi**: Per Host konfigurierbar zwischen InMemory und SqlServer (Auth getrennt von Persistence). Gemeinsamer ConnectionString unter `Croniq:SqlServer:ConnectionString` kann fuer beide Domänen genutzt werden; domänenspezifische Overrides moeglich (`Croniq:Auth:SqlServer`, `Croniq:Persistence:SqlServer`).
 - **Logging**: Schnittstelle an `ILogger` anbinden, aber erweiterbarer Provider fuer zentrale Audit-Logs.
 - **Telemetry**: OpenTelemetry-Exporter oder eigener Provider.
 - Erweiterbarkeit fuer weitere Domaenen (z.B. Secrets, Notifications).
 
 ### Entscheidung 3: Persistenz-Stack
 
-- **Empfehlung**: Ausschliesslich custom SQL-Skripte verwenden; saemtliche Datenzugriffe laufen ueber die Xtraq-Prozedur-Schicht (Stored Procedures) plus klar versionierte Init-/Migrationsskripte. Keine ORMs oder Ad-hoc-SQL aus dem Code.
-- **Begruendung**: Volle Kontrolle ueber Schema, Optimierungen und Sicherheitsaspekte; Stored Procedures kapseln Geschaeftslogik, erlauben DB-First-Workflow und minimieren Risiken durch dynamische Statements.
-- **Konsequenzen**: Dedizierte SQL-Projekte/Ordner (z.B. `infra/sql/xtraq`) muessen gepflegt werden; Code ruft nur definierte Prozeduren ueber Xtraq auf; Versionierung und Deployment der Skripte sind Teil der CI/CD-Pipeline.
+- **Empfehlung**: EF Core als einzige Abstraktion verwenden. `Croniq.Data.SqlServer` definiert Entities/DbContext, Migrationen werden versioniert im Code und ueber `tools/Croniq.DbMigrator` ausgerollt. Keine Generatoren/Stored-Procedure-Schichten.
+- **Begruendung**: Gemeinsames Modell fuer Auth + Persistence reduziert Drift, erleichtert Unit-/Integrationstests (Testcontainers) und erlaubt uns, Schema-Aenderungen via C#-Migrations zu reviewen. EF Core deckt Concurrency, RowVersioning und Default-Werte bereits ab.
+- **Konsequenzen**: Der fruehere SQL-Skript-Ordner entfaellt; Schema-Aenderungen entstehen durch `dotnet ef migrations add`. CI muss Migrationsdrift testen (`Croniq.DbMigrator --apply --connection <ci-connection>`). Provider muessen auf `SqlServerDbContext` basieren.
 
-## 7. Xtraq-Persistenz
+## 7. SqlServer-Persistenz
 
-- Xtraq automatisiert Stored Procedures auf SQL Server und generiert stark typisierte, produktionsreife C#-Artefakte (CLI: `xtraq snapshot`/`build`, default net10, optional net8). Wir nutzen das nuetzliches/xtraq-Projekt als Generator fuer unseren Persistenz-Provider; Ziel-Engine ist SQL Server (lokal `mssql/server:2022`).
-- SQL-Skripte unter `infra/sql/xtraq` fuer: Tabellen (Jobs, Triggers, Calendars, Executions), Stored Procedures (Upsert, AcquireTrigger), Seed-Daten. Deployment per `sqlcmd`/`sqlpackage` gegen die CroniqDev-DB im Container.
-- Xtraq CLI generiert C#-Artefakte (UDT/TVP/Proc-Wrappers) aus dem Schema; `Croniq.Persistence.Xtraq` bindet diese Artefakte statt Ad-hoc-SQL ein. Optionaler Migrations-Layer (EF Core oder Dapper-Skripte) erleichtert das Einspielen in CI/CD und lokale Dev-Container.
+- Default-Persistenz ist `Croniq.Persistence.SqlServer`. Der Provider registriert den gemeinsamen `SqlServerDbContext`, wendet Migrations an und implementiert `IJobPersistenceProvider` (Jobs, Trigger, DeadLetters) inkl. Dead-Letter- und Lease-APIs.
+- Auth- und Persistence-Stores teilen sich dieselbe Datenbank. `Croniq.Auth.SqlServer` implementiert `IApiKeyStore` auf Basis der Tabellen `croniq.ApiClients` und `croniq.ApiKeys`; Secrets werden nur gehasht abgelegt.
+- Lokale Entwicklung: `infra/docker/docker-compose.yml` startet SQL Server 2022 + Admin UI. Connection String steht in `Croniq:SqlServer:ConnectionString`. Samples/Worker/API nutzen denselben Key.
+- CI/CD Workflow:
+  1. Schema-Aenderung durch `dotnet ef migrations add <Name> --project src/Croniq.Data.SqlServer --output-dir Migrations` erstellen.
+  2. `dotnet run --project tools/Croniq.DbMigrator -- --connection "${CRONIQ_SQL_CONNECTION}" --apply` fuehrt Migrationen aus.
+  3. Integrationstests starten einen SQL Server Testcontainer und rufen `Croniq.DbMigrator` vor den Tests auf.
+- Backups/Drift: `Croniq.DbMigrator --verify` prueft, ob lokale Migrations dem DB-Status entsprechen. Kein separates Skript-Repo mehr notwendig.
 
 ## 8. Scheduling-Faehigkeiten
 
@@ -226,7 +243,7 @@ Der Scheduler liest das `CroniqJobAttribute`, bildet daraus den `JobKey` und reg
 - Intervalle: `FixedInterval`, `SlidingInterval`, `DailyTimeInterval`.
 - Kalender-Ausnahmen (Holiday Calendars) optional.
 - Zeitliche Praezision: Nutzung von `DateTimeOffset` (UTC-first) plus Zeitzonen-Konverter.
-- Schedule-Quelle: Primaer persisted im Persistence-Provider (z.B. Xtraq). Ohne Persistenz wird ein In-Memory-Store genutzt; Schedules koennen optional beim Startup registriert werden (z.B. via `AddCroniqJob` + Seed-Schedules).
+- Schedule-Quelle: Primaer persisted im Persistence-Provider (z.B. SqlServer). Ohne Persistenz wird ein In-Memory-Store genutzt; Schedules koennen optional beim Startup registriert werden (z.B. via `AddCroniqJob` + Seed-Schedules).
 
 ### Entscheidung 1: Scheduling-Syntax
 
@@ -239,7 +256,7 @@ Der Scheduler liest das `CroniqJobAttribute`, bildet daraus den `JobKey` und reg
 - **Minimal API** (`Croniq.Api`):
   - Endpunkte: `POST /jobs/trigger`, `POST /schedules`, `GET /schedules/{id}`, `DELETE /schedules/{id}`, `GET /health`.
   - AuthN/AuthZ via API Keys oder OAuth2 (extension point).
-- **Hosting**: Konsumenten hosten die API ueber Extensions `AddCroniqApiServices` + `AddCroniqApiRateLimiter` + `UseCroniqApi`; Auth/Persistence-Mode werden per Konfig (InMemory/Xtraq) geschaltet.
+- **Hosting**: Konsumenten hosten die API ueber Extensions `AddCroniqApiServices` + `AddCroniqApiRateLimiter` + `UseCroniqApi`; Auth/Persistence-Mode werden per Konfig (InMemory/SqlServer) geschaltet.
 - **RPC**:
   - gRPC-Service `SchedulerService` mit Methoden `TriggerJob`, `GetSchedules`, `RegisterSchedule`.
   - Alternativ JSON-RPC fuer leichtere Clients; Client-SDK in `Croniq.Rpc.Client`.
@@ -279,19 +296,19 @@ Handler signalisieren Fehler stets ueber Exceptions: zuerst loggen, optional `Cu
 
 - **Empfehlung**: Auf Polly als Grundlage setzen und eigene Policy-Pipelines drumherum bauen (Retry, Circuit-Breaker, Timeout, Fallback). Dead-Letter-Handling wird als separater Provider implementiert, der Policies Ereignisse liefert.
 - **Begruendung**: Polly ist battle-tested, integriert sich nativ in .NET und erlaubt deklarative Konfiguration; eigene Implementierung wuerde mehr Zeit kosten und weniger Community-Support bieten.
-- **Konsequenzen**: Policies werden ueber Konfigurationsobjekte/Options an Jobs gebunden; Telemetrie muss Policy-Events (Retry, Breaker Open, Fallback) erfassen; Dead-Letter-Provider benoetigt Persistenzkonzept (z.B. Xtraq-Tabelle) und Tracing, um manuell zu rehydratisieren.
+- **Konsequenzen**: Policies werden ueber Konfigurationsobjekte/Options an Jobs gebunden; Telemetrie muss Policy-Events (Retry, Breaker Open, Fallback) erfassen; Dead-Letter-Provider benoetigt Persistenzkonzept (z.B. SqlServer-Tabelle) und Tracing, um manuell zu rehydratisieren.
 
 **Policy Resolution (Resolver)**
 
 ## 12. Docker & Deployment
 
 - Dockerfiles pro Service (`Croniq.Api`, `Croniq.UI`, optionale Worker Nodes).
-- Docker-Compose zum lokalen Start: API, UI, SQL Server 2022 Container (`mssql-22`/`CroniqDev`) mit Xtraq-Schema, Telemetry Stack (Jaeger/Prometheus).
+- Docker-Compose zum lokalen Start: API, UI, SQL Server 2022 Container (`mssql-22`/`CroniqDev`) mit Croniq-Schema (EF Core), Telemetry Stack (Jaeger/Prometheus).
 - CI/CD-Pipeline (GitHub Actions) zum Bauen, Testen, Publish der Images und NuGet-Packages.
 
 ### Entscheidung 8: Container- & Deployment-Strategie
 
-- **Empfehlung**: Multi-Stage Dockerfiles mit .NET 10 SDK/ASP.NET Runtime verwenden, Images auf Slim/Distroless-Basis fuer Produktion bauen. Lokales Dev-Setup via `docker-compose` (API, Worker, SQL Server mit Xtraq-Schema, OTel, Grafana). GitHub Actions erzeugt signierte OCI-Images + Paket-Releases.
+- **Empfehlung**: Multi-Stage Dockerfiles mit .NET 10 SDK/ASP.NET Runtime verwenden, Images auf Slim/Distroless-Basis fuer Produktion bauen. Lokales Dev-Setup via `docker-compose` (API, Worker, SQL Server mit Croniq-Schema, OTel, Grafana). GitHub Actions erzeugt signierte OCI-Images + Paket-Releases.
 - **Begruendung**: Multi-Stage reduziert Image-Groesse und Angriffsflaeche; Compose beschleunigt lokales Onboarding; GitHub Actions integriert gut mit GitHub Container Registry + Code Signing.
 - **Konsequenzen**: Einheitliche `Dockerfile`-Templates je Service; `.devcontainer` optional; CI-Pipeline benoetigt Buildx/Cache + Cosign/SBOM; Deployment-Envs (dev/stage/prod) nutzen identische Images, Konfigurationsunterschiede kommen ueber ENV/Secrets.
 
@@ -310,7 +327,7 @@ Handler signalisieren Fehler stets ueber Exceptions: zuerst loggen, optional `Cu
 
 ### Entscheidung 12: Test- & Quality-Strategie
 
-- **Empfehlung**: Drei Teststufen verbindlich etablieren: (1) Unit-Tests mit xUnit + FluentAssertions fuer Core/Policies/SDK; (2) Contract-Tests gegen Provider ueber `Croniq.TestKit` (Shared Fixtures, Golden Files) inklusive Testcontainers fuer Xtraq/MSSQL; (3) End-to-End-Integration via Docker Compose Smoke-Suite, die API, Worker und Observability Stack hochzieht. Jede PR muss alle Unit- und Contract-Tests bestehen; E2E laeuft nightly und vor Release. Zusaetzlich erzwingen wir Coverage-Gates (min. 80% Core, 70% Gesamt) per Coverlet/ReportGenerator und statische Analyse (dotnet analyzers + SonarQube optional).
+- **Empfehlung**: Drei Teststufen verbindlich etablieren: (1) Unit-Tests mit xUnit + FluentAssertions fuer Core/Policies/SDK; (2) Contract-Tests gegen Provider ueber `Croniq.TestKit` (Shared Fixtures, Golden Files) inklusive Testcontainers fuer SqlServer; (3) End-to-End-Integration via Docker Compose Smoke-Suite, die API, Worker und Observability Stack hochzieht. Jede PR muss alle Unit- und Contract-Tests bestehen; E2E laeuft nightly und vor Release. Zusaetzlich erzwingen wir Coverage-Gates (min. 80% Core, 70% Gesamt) per Coverlet/ReportGenerator und statische Analyse (dotnet analyzers + SonarQube optional).
 - **Begruendung**: Die Kombination deckt Logikfehler, Provider-Regressions und Deployability ab; Testcontainers haelt Feedback-Zeit niedrig, Compose-E2E spuert Interop-Bugs auf. Coverage-Gates und statische Analyse verhindern Qualitaetsabfall bei wachsender Codebasis.
 - **Konsequenzen**: Repo benoetigt `Croniq.TestKit`-Projekt, gemeinsame Fixtures und Docker-Compose-Testdefinition. GitHub Actions erhaelt gestufte Jobs (Unit/Contract parallel, E2E separat) mit Pflicht-Gates. Entwickler brauchen lokale Testcontainer-Setup, Doku muss beschreiben, wie Tests gebootstrapped werden. Anforderungen an Hardware/CI (Docker Support) steigen.
 
@@ -332,14 +349,14 @@ Handler signalisieren Fehler stets ueber Exceptions: zuerst loggen, optional `Cu
 - Startup-Recovery: Persistente Trigger/Jobs nach Neustart laden, verwaiste Locks/Executions bereinigen.
 - Zeitquellen: Clock-Drift Monitoring (NTP), Zeitzonen pro Schedule, Sicherstellung von UTC-first in allen Services.
 - Data Retention: Aufbewahrung und automatische Bereinigung fuer Execution-Historie, Dead-Letter-Queue, Audit-Logs.
-- Backup/Restore: Strategien fuer die CroniqDev SQL Server DB (Xtraq-Schema), Konfigurationen und Secrets.
+- Backup/Restore: Strategien fuer die CroniqDev SQL Server DB (Croniq-Schema), Konfigurationen und Secrets.
 
 ### Entscheidung 10: Reliability & Recovery
 
 - **Empfehlung**: Misfires grundsaetzlich nachholen, solange sie innerhalb eines konfigurierbaren `MaxMisfireDelay` (Default 5 Minuten) liegen; Werte lassen sich global, pro Tenant und pro Trigger via `IMisfirePolicy` ueberschreiben. Policies unterstuetzen logarithmisch/exponentiell gedrosselte Catch-up-Strategien (z.B. nur jede n-te verpasste Ausfuehrung nachholen), um Fluten zu vermeiden; jenseits der Policy-Grenzen werden Events verworfen und als Dead-Letter markiert.
 - **Startup-Recovery Ablauf (Default)**: Boot -> Connection zu Persistenz -> Persistente Trigger in Batches laden -> Verwaiste Locks via `sp_Croniq_CleanupLocks` loesen -> Recovery-Worker verarbeitet Dead-Letter/Reschedules -> Scheduler gibt neue Ausfuehrungen frei -> Healthcheck meldet "ready". Tests spiegeln diesen Ablauf (inkl. Failover-Case mit zwei Instanzen).
 - **Zeitquelle**: `DateTimeOffset` mit NTP-validierter Systemzeit; kritische Komponenten ueberwachen Drift via `ITimeProvider` (Warnung ab 50 ms).
-- **Retention & Backup**: Retention-Defaults: Dead-Letter 30 Tage (policy-gesteuert), Execution-Historie 90 Tage, Audit-Logs 365 Tage (alle konfigurierbar). Backups der CroniqDev-DB (SQL Server, Xtraq-Schema) nightly per Dump/Snapshot; Wiederherstellungs-Playbook ist Teil der Ops-Doku.
+- **Retention & Backup**: Retention-Defaults: Dead-Letter 30 Tage (policy-gesteuert), Execution-Historie 90 Tage, Audit-Logs 365 Tage (alle konfigurierbar). Backups der CroniqDev-DB (SQL Server, Croniq-Schema) nightly per Dump/Snapshot; Wiederherstellungs-Playbook ist Teil der Ops-Doku.
 - **Begruendung**: Nachholen innerhalb kurzer Zeitfenster stellt SLA-Verlaesslichkeit sicher, ohne nach langen Downtimes Jobs zu fluten. Expliziter Recovery-Worker verhindert Race Conditions beim Rehydrieren. Einheitliche Zeitquelle vermeidet Zeitzonenbugs, Retention haelt Datenbank schlank. Dokumentierte Backup-/Restore-Pfade erfuellen Compliance-Anforderungen.
 - **Konsequenzen**: `Croniq.Core` benoetigt Misfire-Policy pro Trigger und Dead-Letter-Markierungen; Persistence-Skripte brauchen Cleanup-Prozeduren und Retention-Jobs. Startup-Sequenz blockt Scheduling bis Recovery abgeschlossen ist und Telemetrie meldet Status. Ops-Team muss NTP-Monitoring und Backup-Pipeline (inkl. Test-Restore) betreiben; Konfigurationswerte (`MaxMisfireDelay`, Retention) werden als Options exponiert und versioniert.
 
@@ -349,13 +366,13 @@ Handler signalisieren Fehler stets ueber Exceptions: zuerst loggen, optional `Cu
 - Deployment-Form: Helm-Chart oder Kustomize-Basis mit Values fuer dev/stage/prod; Secrets/ConfigMaps klar getrennt.
 - Probes & Readiness: Liveness/Readiness/Startup-Probes fuer API, Scheduler/Worker; Health-Endpoint festlegen.
 - Ressourcen & SLOs: Requests/Limits, HPA (CPU/RAM/Queue-Length), PodDisruptionBudget, Anti-Affinity fuer Datenbank.
-- Storage: Persistente Volumes fuer die CroniqDev SQL Server DB (Xtraq-Schema), Backup-Jobs, Migrations-Job als initContainer/Job.
+- Storage: Persistente Volumes fuer die CroniqDev SQL Server DB (Croniq-Schema), Backup-Jobs, Migrations-Job als initContainer/Job.
 - Netzwerk & Security: NetworkPolicies, Ingress/TLS, RBAC/ServiceAccount, Leader-Election falls mehrere Scheduler-Instanzen.
 
 ### Entscheidung 13: Kubernetes-Basisstrategie (Backlog)
 
-- **Empfehlung**: Wenn Kubernetes priorisiert wird, liefern wir ein einziges Helm-Chart (`charts/croniq`) mit Values-Overlays fuer dev/stage/prod; die Compose-Umgebung bleibt massgeblich fuer lokale Entwicklung. Das Chart provisioniert Deployment + HPA fuer API/Worker, StatefulSet fuer SQL Server (Xtraq-Schema) samt PVC-Templates und `CronJob`/Job fuer Migrationen. Secrets werden ueber ExternalSecrets (Vault/KeyVault) eingebunden, ConfigMaps erhalten nur nicht-sensitive Defaults. Readiness/Liveness-Probes spiegeln die Minimal-API-/gRPC-Healthchecks wider, Autoscaling basiert auf CPU und Queue-Depth-Metriken. Zusaetzliche Komponenten (Ingress-Controller, Service Mesh, UI) bleiben optional/backlog und werden erst aktiviert, wenn die jeweiligen Streams starten.
-- **Begruendung**: Ein zentrales Chart reduziert Drift zwischen Stages, laesst sich aber per Values flexibel anpassen; Compose bleibt der schnellste Dev-Pfad. StatefulSet + PVC garantiert Datenpersistenz fuer SQL Server (Xtraq-Schema), Migration-Jobs verhindern Race Conditions beim Rollout. ExternalSecrets und Health-Probes adressieren Security/Availability ohne uebermaessigen Tooling-Aufwand.
+- **Empfehlung**: Wenn Kubernetes priorisiert wird, liefern wir ein einziges Helm-Chart (`charts/croniq`) mit Values-Overlays fuer dev/stage/prod; die Compose-Umgebung bleibt massgeblich fuer lokale Entwicklung. Das Chart provisioniert Deployment + HPA fuer API/Worker, StatefulSet fuer SQL Server (Croniq-Schema) samt PVC-Templates und `CronJob`/Job fuer Migrationen. Secrets werden ueber ExternalSecrets (Vault/KeyVault) eingebunden, ConfigMaps erhalten nur nicht-sensitive Defaults. Readiness/Liveness-Probes spiegeln die Minimal-API-/gRPC-Healthchecks wider, Autoscaling basiert auf CPU und Queue-Depth-Metriken. Zusaetzliche Komponenten (Ingress-Controller, Service Mesh, UI) bleiben optional/backlog und werden erst aktiviert, wenn die jeweiligen Streams starten.
+- **Begruendung**: Ein zentrales Chart reduziert Drift zwischen Stages, laesst sich aber per Values flexibel anpassen; Compose bleibt der schnellste Dev-Pfad. StatefulSet + PVC garantiert Datenpersistenz fuer SQL Server (Croniq-Schema), Migration-Jobs verhindern Race Conditions beim Rollout. ExternalSecrets und Health-Probes adressieren Security/Availability ohne uebermaessigen Tooling-Aufwand.
 - **Konsequenzen**: Repo benoetigt `infra/k8s/charts/croniq` inkl. README und Standard-Values; CI/CD muss Helm-Pakete linten/testen (z.B. `helm template` + `kubeconform`). Observability-Stack (OTel/Grafana) wird als optionales Subchart referenziert. UI bleibt weiterhin im Backlog - Chart enthaelt nur Platzhalter-Werte, bis Technologie gewaehlt ist. Team braucht Basis-Kubernetes-Richtlinien (Namespaces, RBAC), die parallel dokumentiert werden.
 
 ## 17. Release & Compliance
@@ -367,9 +384,9 @@ Handler signalisieren Fehler stets ueber Exceptions: zuerst loggen, optional `Cu
 
 ### Entscheidung 11: Release-, Compliance- & Supply-Chain-Strategie
 
-- **Empfehlung**: Alle Libraries/SDKs strikt nach SemVer veroeffentlichen; Services exponieren `/v1`-Routen, Breaking Changes nur ueber neue Major-Versionen + 2 Release-Zyklen Deprecation. Datenbankmigrationen laufen via versionierten Skripten (Xtraq) mit Forward+Rollback-Skripten; Releases enthalten automatische Smoke-Tests nach Deployment. GitHub Actions erzeugt fuer jedes Artefakt (NuGet, OCI) eine attestierte SBOM (Syft) und signiert Images/Packages via Cosign/SignPath. Dependency-Updates laufen durch woechentliche Renovate-PRs mit Lizenz-Check (OSS Review Toolkit) und verpflichtendem Vulnerability-Scan (Trivy/Snyk) vor Merge.
+- **Empfehlung**: Alle Libraries/SDKs strikt nach SemVer veroeffentlichen; Services exponieren `/v1`-Routen, Breaking Changes nur ueber neue Major-Versionen + 2 Release-Zyklen Deprecation. Datenbankmigrationen laufen via EF Core Migrations (`Croniq.Data.SqlServer`) mit Forward-only-Strategie (Rollback via Restore). Releases enthalten automatische Smoke-Tests nach Deployment. GitHub Actions erzeugt fuer jedes Artefakt (NuGet, OCI) eine attestierte SBOM (Syft) und signiert Images/Packages via Cosign/SignPath. Dependency-Updates laufen durch woechentliche Renovate-PRs mit Lizenz-Check (OSS Review Toolkit) und verpflichtendem Vulnerability-Scan (Trivy/Snyk) vor Merge.
 - **Begruendung**: Strikte Versionierung und Deprecation-Regeln geben Konsumenten Planbarkeit; DB-Hardening mit Rollbacks reduziert Downtime-Risiken. SBOM + Signaturen beantworten Supply-Chain-Compliance-Anforderungen und vereinfachen Incident Response. Automatisierte Scans halten Dependencies aktuell und rechtssicher.
-- **Konsequenzen**: Release-Templates in GitHub Actions muessen Version-Bumping, Changelog-Generierung und SBOM/Signatur-Schritte enthalten; QA betreibt automatische Smoke-Tests (Compose/K8s). Xtraq-Skripte benoetigen Rollback-Pendants und werden im Repo versioniert. Compliance-Dokumentation (Third-Party-Notice, Policy fuer neue Dependencies) wird Teil des Release-Prozesses; fehlende Scans blockieren Merge/Release.
+- **Konsequenzen**: Release-Templates in GitHub Actions muessen Version-Bumping, Changelog-Generierung und SBOM/Signatur-Schritte enthalten; QA betreibt automatische Smoke-Tests (Compose/K8s). EF-Migrationen werden als Teil des Release-Prozesses geprueft (`Croniq.DbMigrator --verify`). Compliance-Dokumentation (Third-Party-Notice, Policy fuer neue Dependencies) wird Teil des Release-Prozesses; fehlende Scans blockieren Merge/Release.
 
 ## 18. Multi-Tenancy & Quotas
 
@@ -387,10 +404,10 @@ Handler signalisieren Fehler stets ueber Exceptions: zuerst loggen, optional `Cu
 
 ## 20. Decision Tracking & Offene Fragen
 
-- **Gefestigt**: Scheduling-Syntax (Quartz-kompatibel), In-Memory-JobStore als Default + Xtraq-Provider, Policy-Engine auf Polly-Basis, API-Key/OAuth2 + Rate Limiting, Observability via OTel/Serilog, Release-Flow mit SBOM/Signierung, Quota-Default (60 Trigger/Minute, 5 parallele Executions/JobKey), Dead-Letter-Retention 30 Tage (policy-gesteuert).
+- **Gefestigt**: Scheduling-Syntax (Quartz-kompatibel), In-Memory-JobStore als Default + SqlServer-Provider, Policy-Engine auf Polly-Basis, API-Key/OAuth2 + Rate Limiting, Observability via OTel/Serilog, Release-Flow mit SBOM/Signierung, Quota-Default (60 Trigger/Minute, 5 parallele Executions/JobKey), Dead-Letter-Retention 30 Tage (policy-gesteuert).
 - **Offen / zu konkretisieren**:
   - UI-Technologie (wird nach API-Stabilisierung entschieden).
-  - Cluster-GA-Kriterien und Zeitpunkt (wann Xtraq-Provider als produktionsreif gilt).
+  - Cluster-GA-Kriterien und Zeitpunkt (wann SqlServer-Provider als produktionsreif gilt).
   - Dead-Letter manuelle Rehydrate-Flows (Standard 30 Tage, API/CLI-Flow definieren).
   - JSON-RPC Support-Level (Community-only oder voller Support).
 
