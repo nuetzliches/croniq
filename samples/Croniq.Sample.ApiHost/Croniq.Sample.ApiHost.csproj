@@ -12,6 +12,6 @@
     <ProjectReference Include="..\..\src\Croniq.Auth.Abstractions\Croniq.Auth.Abstractions.csproj" />
     <ProjectReference Include="..\..\src\Croniq.Auth.Core\Croniq.Auth.Core.csproj" />
     <ProjectReference Include="..\..\src\Croniq.Api\Croniq.Api.csproj" />
-    <ProjectReference Include="..\Croniq.SampleJobs\Croniq.SampleJobs.csproj" />
+    <ProjectReference Include="..\Croniq.Sample.Jobs\Croniq.Sample.Jobs.csproj" />
   </ItemGroup>
 </Project>

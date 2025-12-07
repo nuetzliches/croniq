@@ -11,13 +11,13 @@ This document expands on the quality strategy outlined in `CONCEPT.md` (section 
 
 ## Test Matrix (living reference)
 
-| Suite                                    | Primary scope                                                                                | Trigger/Cadence             | Tooling / Infra                                               | Blocking rule                     |
-| ---------------------------------------- | -------------------------------------------------------------------------------------------- | --------------------------- | ------------------------------------------------------------- | --------------------------------- |
-| `Unit` (`tests/Croniq.*.Tests`)          | Pure logic, options, schedulers, API surface guards                                          | Every PR + local pre-push   | `xUnit`, `FluentAssertions`, `dotnet test`                    | Fail block merge                  |
-| `Contract` (`*.ContractTests`)           | Provider contracts (SqlServer persistence/auth, secrets) via Testcontainers                  | Every PR (parallel)         | `Testcontainers`, seeded SQL, `Croniq.TestKit`                | Fail block merge                  |
-| `Smoke`/`E2E` (`tests/Croniq.Api.Smoke`) | Croniq API + Worker SampleHosts via Compose (InMemory auth, SqlServer persistence, migrator) | Nightly + release candidate | `scripts/test-e2e.cmd` (wraps Docker Compose + `dotnet test`) | Fail blocks release/nightly badge |
-| `Compliance`                             | SBOM, Trivy scan, dependency audit                                                           | Nightly + release           | `Syft`, `Trivy`, GH Actions reusable workflows                | Fail blocks release               |
-| `Perf/Burn-in` (future)                  | Long-running stress on scheduler leases + quotas                                             | On-demand / before GA       | Testcontainers + perf harness (to be defined)                 | Informational                     |
+| Suite                                    | Primary scope                                                                                                     | Trigger/Cadence             | Tooling / Infra                                               | Blocking rule                     |
+| ---------------------------------------- | ----------------------------------------------------------------------------------------------------------------- | --------------------------- | ------------------------------------------------------------- | --------------------------------- |
+| `Unit` (`tests/Croniq.*.Tests`)          | Pure logic, options, schedulers, API surface guards                                                               | Every PR + local pre-push   | `xUnit`, `FluentAssertions`, `dotnet test`                    | Fail block merge                  |
+| `Contract` (`*.ContractTests`)           | Provider contracts (SqlServer persistence/auth, secrets) via Testcontainers                                       | Every PR (parallel)         | `Testcontainers`, seeded SQL, `Croniq.TestKit`                | Fail block merge                  |
+| `Smoke`/`E2E` (`tests/Croniq.Api.Smoke`) | `Croniq.Sample.ApiHost` + `Croniq.Sample.WorkerHost` via Compose (InMemory auth, SqlServer persistence, migrator) | Nightly + release candidate | `scripts/test-e2e.cmd` (wraps Docker Compose + `dotnet test`) | Fail blocks release/nightly badge |
+| `Compliance`                             | SBOM, Trivy scan, dependency audit                                                                                | Nightly + release           | `Syft`, `Trivy`, GH Actions reusable workflows                | Fail blocks release               |
+| `Perf/Burn-in` (future)                  | Long-running stress on scheduler leases + quotas                                                                  | On-demand / before GA       | Testcontainers + perf harness (to be defined)                 | Informational                     |
 
 ## Test Levels
 
@@ -44,8 +44,8 @@ This document expands on the quality strategy outlined in `CONCEPT.md` (section 
 
 ### 3. End-to-End & Smoke Tests
 
-- **Scope**: The Compose harness (`infra/docker/docker-compose.tests.yml`) now stands up SQL Server 2022, the `Croniq.DbMigrator` job, `Croniq.Api.SampleHost`, and `Croniq.Worker.SampleHost`. Auth bleibt InMemory für deterministische Keys, während Persistenz über denselben SqlServer-Provider/Migrationsstand läuft wie in Produktion. Dadurch validieren Smoke-Runs Health-Probes, Schedule-Erstellung und Trigger-Leases end-to-end.
-- **Frameworks**: `xUnit` + `FluentAssertions` HTTP harness located in `tests/Croniq.Api.Smoke`. Tests talk to the API over `HttpClient`, covering `/health` and `/schedules` flows. The worker host processes sample jobs from `Croniq.SampleJobs`, so trigger leases are exercised while tests run.
+- **Scope**: The Compose harness (`infra/docker/docker-compose.tests.yml`) now stands up SQL Server 2022, the `Croniq.DbMigrator` job, `Croniq.Sample.ApiHost`, and `Croniq.Sample.WorkerHost`. Auth bleibt InMemory für deterministische Keys, während Persistenz über denselben SqlServer-Provider/Migrationsstand läuft wie in Produktion. Dadurch validieren Smoke-Runs Health-Probes, Schedule-Erstellung und Trigger-Leases end-to-end.
+- **Frameworks**: `xUnit` + `FluentAssertions` HTTP harness located in `tests/Croniq.Api.Smoke`. Tests talk to the API over `HttpClient`, covering `/health` and `/schedules` flows. The worker host processes sample jobs from `Croniq.Sample.Jobs`, so trigger leases are exercised while tests run.
 - **Execution**: Use `scripts\test-e2e.cmd` (requires Docker Desktop + .NET SDK). The script:
   1. Builds/starts the Compose stack, including SQL + migrator + API + worker.
   2. Polls `http://localhost:5080/health` (or the overridden `CRONIQ_API_BASEURL`) until healthy.

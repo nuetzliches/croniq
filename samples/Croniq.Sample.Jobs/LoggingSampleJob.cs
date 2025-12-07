@@ -1,7 +1,7 @@
 using Croniq.Sdk;
 using Microsoft.Extensions.Logging;
 
-namespace Croniq.SampleJobs;
+namespace Croniq.Sample.Jobs;
 
 [CroniqJob("samples", "smoke")]
 public sealed class LoggingSampleJob : IJob

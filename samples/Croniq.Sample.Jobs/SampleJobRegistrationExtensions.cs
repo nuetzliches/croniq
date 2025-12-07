@@ -1,7 +1,7 @@
 using Croniq.Core;
 using Microsoft.Extensions.DependencyInjection;
 
-namespace Croniq.SampleJobs;
+namespace Croniq.Sample.Jobs;
 
 public static class SampleJobRegistrationExtensions
 {

@@ -13,7 +13,7 @@ This document describes the local Docker Compose environment required to satisfy
 
 | Service                   | Purpose                                              | Notes                                                             |
 | ------------------------- | ---------------------------------------------------- | ----------------------------------------------------------------- |
-| `api`                     | Hosts `Croniq.Api.SampleHost` (Minimal API + gRPC).  | Mounted source, hot reload via `dotnet watch` or pre-built image. |
+| `api`                     | Hosts `Croniq.Sample.ApiHost` (Minimal API + gRPC).  | Mounted source, hot reload via `dotnet watch` or pre-built image. |
 | `worker`                  | Runs scheduler worker host (future `Croniq.Worker`). | Shares code with API; processes triggers/jobs.                    |
 | `rpc-sample`              | Optional sample RPC client (demonstrates SDK usage). | Can be toggled via profile.                                       |
 | `mssql-22`                | SQL Server 2022 with Croniq schema + EF migrations.  | Uses persisted volume `croniq-mssql-data`.                        |
@@ -35,7 +35,7 @@ All services share a `croniq-net` bridge network. Ports are exposed via `.env` d
 ## Configuration & Secrets
 
 - `.env.example` documents required variables (ports, SA password, API keys). Developers copy to `.env` and override sensitive entries in `.env.local` ignored by git.
-- `Croniq.Api.SampleHost` reads configuration from `appsettings.Development.json` + environment variables injected via Compose (`CRONIQ__SQLSERVER__CONNECTIONSTRING`, `CRONIQ__AUTH__MODE`, etc.).
+- `Croniq.Sample.ApiHost` reads configuration from `appsettings.Development.json` + environment variables injected via Compose (`CRONIQ__SQLSERVER__CONNECTIONSTRING`, `CRONIQ__AUTH__MODE`, etc.).
 - Provide helper script `infra/docker/init-db.ps1` (or `.sh`) that invokes `dotnet run --project tools/Croniq.DbMigrator -- --connection <conn>` inside the container to apply EF Core migrations automatically.
 
 ## Developer Workflow

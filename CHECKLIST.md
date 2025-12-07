@@ -19,7 +19,7 @@
 - [x] Repository-Struktur anlegen (src/, jobs/, infra/docker, docs/)
 - [x] Referenz-In-Memory-JobStore implementieren
 - [x] SqlServer-Persistence-Provider implementieren (`Croniq.Persistence.SqlServer`) inkl. Trigger-Leases/Dead-Letters
-- [x] Auth-Provider-Umschaltung (InMemory/SqlServer) per Options integriert und SampleHost auf SqlServer verdrahtet
+- [x] Auth-Provider-Umschaltung (InMemory/SqlServer) per Options integriert und `Croniq.Sample.ApiHost` auf SqlServer verdrahtet
 - [x] Policy-Engine auf Polly-Basis implementieren (Retry/Timeout/Circuit-Breaker) – Polly-Ausfuehrungspipeline (Timeout→CircuitBreaker→Retry), Dead-Letter-Persistenz sowie Telemetrie (PolicyMetrics + strukturierte Logs) per `docs/technical/policies.md` verdrahtet
 - [x] Minimal API Skeleton mit Healthcheck, Schedule CRUD und Trigger Endpoint erstellen
 - [x] gRPC SchedulerService Proto und Client SDK (Croniq.Rpc.Client) generieren

@@ -4,7 +4,7 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
-namespace Croniq.Worker.SampleHost;
+namespace Croniq.Sample.WorkerHost;
 
 public sealed class CroniqWorkerHostedService : BackgroundService
 {

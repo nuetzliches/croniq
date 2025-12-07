@@ -3,8 +3,8 @@ using Croniq.Core.Options;
 using Croniq.JobStore.InMemory;
 using Croniq.Providers.Default;
 using Croniq.Persistence.SqlServer;
-using Croniq.SampleJobs;
-using Croniq.Worker.SampleHost;
+using Croniq.Sample.Jobs;
+using Croniq.Sample.WorkerHost;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -43,9 +43,7 @@ static void ConfigurePersistence(HostApplicationBuilder builder)
     if (string.Equals(mode, "SqlServer", StringComparison.OrdinalIgnoreCase))
     {
         var sqlSection = builder.Configuration.GetSection("Croniq:SqlServer");
-        var connection = sqlSection["ConnectionString"]
-            ?? builder.Configuration.GetConnectionString("CroniqSqlServer")
-            ?? builder.Configuration.GetConnectionString("Croniq");
+        var connection = sqlSection["ConnectionString"];
         if (string.IsNullOrWhiteSpace(connection))
         {
             throw new InvalidOperationException("Croniq:SqlServer:ConnectionString is required when Persistence.Mode = SqlServer.");

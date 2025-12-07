@@ -1,5 +1,5 @@
 using Croniq.Api;
-using Croniq.SampleJobs;
+using Croniq.Sample.Jobs;
 
 var builder = WebApplication.CreateBuilder(args);
 
