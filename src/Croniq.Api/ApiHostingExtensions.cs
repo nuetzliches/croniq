@@ -9,8 +9,10 @@ using Croniq.Core.Execution;
 using Croniq.Core.Jobs;
 using Croniq.Core.Options;
 using Croniq.Core.Policies;
+using Croniq.Data.SqlServer;
 using Croniq.JobStore.InMemory;
 using Croniq.Persistence.Abstractions;
+using Croniq.Persistence.SqlServer;
 using Croniq.Persistence.Xtraq;
 using Croniq.Providers.Default;
 using Croniq.Sdk;
@@ -28,6 +30,7 @@ public static class ApiHostingExtensions
         services.Configure<CroniqOptions>(configuration.GetSection("Croniq:Core"));
         services.Configure<CroniqAuthOptions>(configuration.GetSection("Croniq:Auth"));
         services.Configure<CroniqPersistenceOptions>(configuration.GetSection("Croniq:Persistence"));
+        services.Configure<SqlServerOptions>(configuration.GetSection("Croniq:SqlServer"));
         services.Configure<XtraqSharedOptions>(configuration.GetSection("Croniq:Xtraq"));
 
         services.AddCroniqCore();
@@ -35,26 +38,50 @@ public static class ApiHostingExtensions
 
         var authOpts = configuration.GetSection("Croniq:Auth").Get<CroniqAuthOptions>() ?? new CroniqAuthOptions();
         var persistenceOpts = configuration.GetSection("Croniq:Persistence").Get<CroniqPersistenceOptions>() ?? new CroniqPersistenceOptions();
+        var sharedSqlServer = configuration.GetSection("Croniq:SqlServer").Get<SqlServerOptions>() ?? new SqlServerOptions();
         var sharedXtraq = configuration.GetSection("Croniq:Xtraq").Get<XtraqSharedOptions>() ?? new XtraqSharedOptions();
+        if (string.IsNullOrWhiteSpace(sharedXtraq.ConnectionString))
+        {
+            sharedXtraq.ConnectionString = sharedSqlServer.ConnectionString;
+        }
 
         // Always register InMemory JobStore
         services.AddCroniqInMemoryJobStore();
 
-        if (string.Equals(persistenceOpts.Mode, "Xtraq", StringComparison.OrdinalIgnoreCase))
+        if (string.Equals(persistenceOpts.Mode, "SqlServer", StringComparison.OrdinalIgnoreCase))
         {
             var conn = ResolveConnectionString(
-                persistenceOpts.Xtraq.ConnectionString,
-                sharedXtraq.ConnectionString,
+                persistenceOpts.SqlServer.ConnectionString,
+                sharedSqlServer.ConnectionString,
                 configuration);
 
             if (string.IsNullOrWhiteSpace(conn))
             {
-                throw new InvalidOperationException("Croniq:Persistence:Xtraq:ConnectionString or Croniq:Xtraq:ConnectionString is required when Persistence.Mode = Xtraq.");
+                throw new InvalidOperationException("Croniq:Persistence:SqlServer:ConnectionString or Croniq:SqlServer:ConnectionString is required when Persistence.Mode = SqlServer.");
             }
 
-            services.AddCroniqXtraqPersistence(opts =>
+            services.AddCroniqSqlServerPersistence(sqlOptions =>
             {
-                opts.ConnectionString = conn;
+                sqlOptions.ConnectionString = conn;
+                sqlOptions.MigrationsAssembly = persistenceOpts.SqlServer.MigrationsAssembly ?? sharedSqlServer.MigrationsAssembly;
+                sqlOptions.EnableDetailedErrors = persistenceOpts.SqlServer.EnableDetailedErrors ?? sharedSqlServer.EnableDetailedErrors;
+                sqlOptions.EnableSensitiveDataLogging = persistenceOpts.SqlServer.EnableSensitiveDataLogging ?? sharedSqlServer.EnableSensitiveDataLogging;
+            }, persistenceOptions =>
+            {
+                if (persistenceOpts.SqlServer.LeaseDurationSeconds.HasValue)
+                {
+                    persistenceOptions.LeaseDurationSeconds = persistenceOpts.SqlServer.LeaseDurationSeconds.Value;
+                }
+
+                if (persistenceOpts.SqlServer.DeadLetterRetentionDays.HasValue)
+                {
+                    persistenceOptions.DeadLetterRetentionDays = persistenceOpts.SqlServer.DeadLetterRetentionDays.Value;
+                }
+
+                if (persistenceOpts.SqlServer.DeadLetterReasonMaxLength.HasValue)
+                {
+                    persistenceOptions.DeadLetterReasonMaxLength = persistenceOpts.SqlServer.DeadLetterReasonMaxLength.Value;
+                }
             });
         }
 
@@ -283,9 +310,10 @@ public static class ApiHostingExtensions
     private static string? ResolveConnectionString(string? domainSpecific, string? shared, IConfiguration configuration)
     {
         return domainSpecific
-               ?? shared
-               ?? configuration.GetConnectionString("CroniqXtraq")
-               ?? configuration.GetConnectionString("Croniq")
-               ?? configuration.GetConnectionString("DefaultConnection");
+            ?? shared
+            ?? configuration.GetConnectionString("CroniqSqlServer")
+            ?? configuration.GetConnectionString("CroniqXtraq")
+            ?? configuration.GetConnectionString("Croniq")
+            ?? configuration.GetConnectionString("DefaultConnection");
     }
 }

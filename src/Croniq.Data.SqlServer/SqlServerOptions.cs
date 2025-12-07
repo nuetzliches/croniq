@@ -1,0 +1,19 @@
+namespace Croniq.Data.SqlServer;
+
+/// <summary>
+/// Shared configuration for Croniq's EF Core SQL Server contexts.
+/// </summary>
+public sealed class SqlServerOptions
+{
+    /// <summary>Connection string pointing at the Croniq SQL Server database.</summary>
+    public string? ConnectionString { get; set; }
+
+    /// <summary>Optional assembly name for EF Core migrations.</summary>
+    public string? MigrationsAssembly { get; set; }
+
+    /// <summary>Enable EF Core detailed errors (defaults to false).</summary>
+    public bool EnableDetailedErrors { get; set; }
+
+    /// <summary>Enable EF Core sensitive data logging (defaults to false).</summary>
+    public bool EnableSensitiveDataLogging { get; set; }
+}

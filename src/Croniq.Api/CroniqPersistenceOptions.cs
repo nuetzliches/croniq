@@ -2,12 +2,24 @@ namespace Croniq.Api;
 
 public sealed class CroniqPersistenceOptions
 {
-    public string Mode { get; set; } = "InMemory"; // Xtraq | InMemory
+    public string Mode { get; set; } = "InMemory"; // SqlServer | InMemory
 
-    public XtraqPersistenceOptions Xtraq { get; set; } = new();
+    public SqlServerPersistenceNode SqlServer { get; set; } = new();
 }
 
-public sealed class XtraqPersistenceOptions
+public sealed class SqlServerPersistenceNode
 {
     public string? ConnectionString { get; set; }
+
+    public string? MigrationsAssembly { get; set; }
+
+    public bool? EnableDetailedErrors { get; set; }
+
+    public bool? EnableSensitiveDataLogging { get; set; }
+
+    public int? LeaseDurationSeconds { get; set; }
+
+    public int? DeadLetterRetentionDays { get; set; }
+
+    public int? DeadLetterReasonMaxLength { get; set; }
 }
