@@ -9,9 +9,9 @@
     {
       "Name": "TriggerKey",
       "TypeRef": "sys.nvarchar",
-      "UserTypeRef": "core.reference",
+      "UserTypeRef": "croniq.triggerKey",
       "IsNullable": true,
-      "MaxLength": 64
+      "MaxLength": 256
     }
   ],
   "ResultSets": [

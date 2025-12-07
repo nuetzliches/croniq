@@ -144,7 +144,7 @@ AS
 BEGIN
 
     DECLARE @ActorValue [core].[actor];
-    DECLARE @TriggerKey [core].[reference];
+    DECLARE @TriggerKey [croniq].[triggerKey];
     DECLARE @JobKey [core].[reference];
     DECLARE @TenantId [core].[key];
     DECLARE @JobId [core].[keyBig];
@@ -275,7 +275,7 @@ CREATE OR ALTER PROCEDURE [croniq].[TriggerDelete]
 AS
 BEGIN
     DECLARE @ActorValue [core].[actor];
-    DECLARE @TriggerKey [core].[reference];
+    DECLARE @TriggerKey [croniq].[triggerKey];
     DECLARE @JobKey [core].[reference];
     DECLARE @TenantId [core].[key];
     DECLARE @JobId [core].[keyBig];
@@ -354,7 +354,7 @@ GO
 
 CREATE OR ALTER PROCEDURE [croniq].[TriggerFindByKey]
     @Actor [core].[ActorRef] READONLY,
-    @TriggerKey [core].[reference]
+    @TriggerKey [croniq].[triggerKey]
 AS
 BEGIN
 

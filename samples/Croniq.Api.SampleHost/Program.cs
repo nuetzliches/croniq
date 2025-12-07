@@ -1,10 +1,14 @@
 using Croniq.Api;
+using Croniq.SampleJobs;
 
 var builder = WebApplication.CreateBuilder(args);
 
-builder.Configuration.AddJsonFile("appsettings.Development.json", optional: true, reloadOnChange: true);
+builder.Configuration
+    .AddJsonFile("appsettings.Development.json", optional: true, reloadOnChange: true)
+    .AddEnvironmentVariables();
 
 builder.Services.AddCroniqApiServices(builder.Configuration);
+builder.Services.AddCroniqSampleJobs();
 builder.Services.AddCroniqApiRateLimiter();
 
 var app = builder.Build();

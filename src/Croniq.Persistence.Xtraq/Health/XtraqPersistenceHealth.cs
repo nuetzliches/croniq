@@ -8,9 +8,9 @@ namespace Croniq.Persistence.Xtraq.Health;
 
 public sealed class XtraqPersistenceHealth : IPersistenceHealth
 {
-    private readonly IXtraqDbContext _dbContext;
+    private readonly XtraqDbContext _dbContext;
 
-    public XtraqPersistenceHealth(IXtraqDbContext dbContext)
+    public XtraqPersistenceHealth(XtraqDbContext dbContext)
     {
         _dbContext = dbContext ?? throw new ArgumentNullException(nameof(dbContext));
     }

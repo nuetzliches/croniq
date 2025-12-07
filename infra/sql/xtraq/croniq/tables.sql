@@ -69,7 +69,7 @@ IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'Triggers' AND SCHEMA_NAME(
 CREATE TABLE [croniq].[Triggers]
 (
     [TriggerId] [core].[keyBig] IDENTITY(1001,1) PRIMARY KEY,
-    [TriggerKey] [core].[reference],
+    [TriggerKey] [croniq].[triggerKey],
     [JobKey] [core].[reference],
     [JobId] [core].[keyBig],
     [TenantId] [core].[key],

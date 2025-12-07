@@ -7,6 +7,10 @@ IF TYPE_ID(N'croniq.jobVariant') IS NULL
     CREATE TYPE [croniq].[jobVariant] FROM NVARCHAR(64) NULL;
 GO
 
+IF TYPE_ID(N'croniq.triggerKey') IS NULL
+    CREATE TYPE [croniq].[triggerKey] FROM NVARCHAR(256) NOT NULL;
+GO
+
 IF TYPE_ID(N'croniq.deadLetterReason') IS NULL
     CREATE TYPE [croniq].[deadLetterReason] FROM NVARCHAR(128) NULL;
 GO
@@ -51,7 +55,7 @@ GO
 IF TYPE_ID(N'croniq.TriggerRef') IS NULL
     CREATE TYPE [croniq].[TriggerRef] AS TABLE
     (
-        [TriggerKey] [core].[reference],
+        [TriggerKey] [croniq].[triggerKey],
         [JobKey] [core].[reference],
         [TenantId] [core].[key],
         [JobId] [core].[keyBig],

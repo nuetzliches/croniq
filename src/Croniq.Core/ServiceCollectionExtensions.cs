@@ -47,7 +47,7 @@ public static class ServiceCollectionExtensions
         }
 
         services.AddTransient<TJob>();
-        services.TryAddEnumerable(ServiceDescriptor.Singleton(new JobRegistration(typeof(TJob))));
+        services.TryAddEnumerable(ServiceDescriptor.Singleton<JobRegistration, JobRegistration<TJob>>());
         return services;
     }
 }

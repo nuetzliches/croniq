@@ -1,8 +1,9 @@
 using System;
+using Croniq.Sdk;
 
 namespace Croniq.Core.Jobs;
 
-public sealed class JobRegistration
+public class JobRegistration
 {
     public JobRegistration(Type jobType)
     {
@@ -10,4 +11,11 @@ public sealed class JobRegistration
     }
 
     public Type JobType { get; }
+}
+
+public sealed class JobRegistration<TJob> : JobRegistration where TJob : class, IJob
+{
+    public JobRegistration() : base(typeof(TJob))
+    {
+    }
 }

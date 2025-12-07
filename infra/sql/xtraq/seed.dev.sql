@@ -3,18 +3,43 @@
 
 DECLARE @TenantRef NVARCHAR(64) = N'dev-seed';
 DECLARE @TenantName NVARCHAR(64) = N'Dev Seed Tenant';
+DECLARE @DesiredTenantId INT = 1;
 DECLARE @TenantId INT;
+DECLARE @ExistingTenantId INT;
 
-IF EXISTS (SELECT 1 FROM [auth].[Tenants] WHERE [Reference] = @TenantRef AND [IsDeleted] = 0)
+SELECT @ExistingTenantId = [TenantId]
+FROM [auth].[Tenants]
+WHERE [Reference] = @TenantRef AND [IsDeleted] = 0;
+
+IF @ExistingTenantId IS NOT NULL AND @ExistingTenantId <> @DesiredTenantId
 BEGIN
-    SELECT @TenantId = [TenantId] FROM [auth].[Tenants] WHERE [Reference] = @TenantRef AND [IsDeleted] = 0;
+    DELETE FROM [auth].[ApiKeys] WHERE [TenantId] = @ExistingTenantId;
+    DELETE FROM [auth].[ApiClients] WHERE [TenantId] = @ExistingTenantId;
+    DELETE FROM [auth].[Tenants] WHERE [TenantId] = @ExistingTenantId;
+    SET @ExistingTenantId = NULL;
+END
+
+IF NOT EXISTS (SELECT 1 FROM [auth].[Tenants] WHERE [TenantId] = @DesiredTenantId AND [IsDeleted] = 0)
+BEGIN
+    SET IDENTITY_INSERT [auth].[Tenants] ON;
+    INSERT INTO [auth].[Tenants] ([TenantId], [Reference], [Name], [CreatedUtc], [CreatedBy], [IsDeleted])
+    VALUES (@DesiredTenantId, @TenantRef, @TenantName, SYSUTCDATETIME(), N'seed', 0);
+    SET IDENTITY_INSERT [auth].[Tenants] OFF;
 END
 ELSE
 BEGIN
-    INSERT INTO [auth].[Tenants] ([Reference], [Name], [CreatedUtc], [CreatedBy])
-    VALUES (@TenantRef, @TenantName, SYSUTCDATETIME(), N'seed');
-    SET @TenantId = SCOPE_IDENTITY();
+    UPDATE [auth].[Tenants]
+    SET [Reference] = @TenantRef,
+        [Name] = @TenantName,
+        [IsDeleted] = 0,
+        [UpdatedUtc] = SYSUTCDATETIME(),
+        [UpdatedBy] = N'seed'
+    WHERE [TenantId] = @DesiredTenantId;
 END
+
+SELECT @TenantId = [TenantId]
+FROM [auth].[Tenants]
+WHERE [TenantId] = @DesiredTenantId AND [IsDeleted] = 0;
 
 DECLARE @ClientName NVARCHAR(64) = N'default';
 DECLARE @ClientId INT;

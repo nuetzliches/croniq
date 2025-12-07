@@ -257,9 +257,9 @@ public static class AuthCoreServiceCollectionExtensions
         var options = new InMemoryApiKeyStoreOptions();
         configure?.Invoke(options);
 
-        services.AddSingleton<ICallerContextAccessor, CallerContextAccessor>();
+        services.AddScoped<ICallerContextAccessor, CallerContextAccessor>();
         services.AddSingleton<IApiKeyStore>(_ => new InMemoryApiKeyStore(options.ApiKeys));
-        services.AddSingleton<ICallerContextFactory, CallerContextFactory>();
+        services.AddScoped<ICallerContextFactory, CallerContextFactory>();
         return services;
     }
 }

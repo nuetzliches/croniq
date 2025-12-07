@@ -25,7 +25,7 @@ BEGIN
     (
         [RowId] INT IDENTITY(1,1) PRIMARY KEY,
         [TriggerId] [core].[keyBig],
-        [TriggerKey] [core].[reference],
+        [TriggerKey] [croniq].[triggerKey],
         [JobId] [core].[keyBig],
         [JobKey] [core].[reference],
         [TenantId] [core].[key],
@@ -108,7 +108,7 @@ BEGIN
     (
         [LeaseId] [core].[keyBig],
         [TriggerId] [core].[keyBig],
-        [TriggerKey] [core].[reference] NULL,
+        [TriggerKey] [croniq].[triggerKey] NULL,
         [JobId] [core].[keyBig],
         [JobKey] [core].[reference] NULL,
         [TenantId] [core].[key],

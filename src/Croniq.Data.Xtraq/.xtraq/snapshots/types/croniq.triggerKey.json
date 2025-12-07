@@ -1,0 +1,7 @@
+{
+  "Schema": "croniq",
+  "Name": "triggerKey",
+  "BaseSqlTypeName": "nvarchar",
+  "MaxLength": 256,
+  "IsNullable": false
+}

@@ -1,6 +1,6 @@
 {
   "SchemaVersion": 1,
-  "Fingerprint": "C476BE8B4052695C",
+  "Fingerprint": "6CC934A21A80B6BA",
   "Parser": {
     "ToolVersion": "net9.0",
     "ResultSetParserVersion": 8
@@ -12,7 +12,7 @@
     "UdttTotal": 7,
     "TableTotal": 0,
     "ViewTotal": 0,
-    "UserDefinedTypeTotal": 33,
+    "UserDefinedTypeTotal": 34,
     "FunctionTotal": 0
   },
   "Procedures": [
@@ -900,7 +900,7 @@
       "Schema": "croniq",
       "Name": "TriggerFindByKey",
       "File": "croniq.TriggerFindByKey.json",
-      "Hash": "E150E98575584F52",
+      "Hash": "E4D30931938BD032",
       "ResultSets": [
         {
           "ReturnsJson": false,
@@ -1321,7 +1321,7 @@
       "Schema": "croniq",
       "Name": "TriggerLeaseAcquire",
       "File": "croniq.TriggerLeaseAcquire.json",
-      "Hash": "FEB6F9110E1ACA45",
+      "Hash": "48DA92D7B2F1BF61",
       "ResultSets": [
         {
           "ReturnsJson": false,
@@ -1393,7 +1393,7 @@
               "JsonElementClrType": null,
               "JsonElementSqlType": null,
               "FunctionRef": null,
-              "UserTypeRef": "core.reference",
+              "UserTypeRef": "croniq.triggerKey",
               "Columns": null
             },
             {
@@ -2156,6 +2156,13 @@
       "Name": "timeZoneId",
       "File": "croniq.timeZoneId.json",
       "Hash": "3CDA7D3A35AF5907"
+    },
+    {
+      "Catalog": null,
+      "Schema": "croniq",
+      "Name": "triggerKey",
+      "File": "croniq.triggerKey.json",
+      "Hash": "3E67066F448707E0"
     }
   ],
   "FunctionsVersion": 2,

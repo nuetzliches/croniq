@@ -51,7 +51,6 @@ public static class DependencyInjectionExtensions
         });
 
         services.AddSingleton<XtraqDbContext>();
-        services.AddSingleton<IXtraqDbContext>(sp => sp.GetRequiredService<XtraqDbContext>());
         services.AddSingleton<IJobPersistenceProvider, XtraqJobPersistenceProvider>();
         services.AddSingleton<IPersistenceHealth, XtraqPersistenceHealth>();
 

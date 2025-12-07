@@ -67,7 +67,7 @@
         {
           "Name": "TriggerKey",
           "SourceColumn": "TriggerKey",
-          "UserTypeRef": "core.reference",
+          "UserTypeRef": "croniq.triggerKey",
           "SqlTypeName": "nvarchar(64)",
           "MaxLength": 64
         },

@@ -53,7 +53,7 @@ BEGIN
         @Metadata = jr.[Metadata]
     FROM @Job AS jr;
 
-    IF @JobKey IS NULL OR @TenantId IS NULL OR @Environment IS NULL OR @Namespace IS NULL OR @Name IS NULL OR @Variant IS NULL
+    IF @JobKey IS NULL OR @TenantId IS NULL OR @Environment IS NULL OR @Namespace IS NULL OR @Name IS NULL
     BEGIN;
         EXEC [croniq-internal].[ThrowJobRefIncomplete];
     END
@@ -62,7 +62,7 @@ GO
 
 CREATE OR ALTER PROCEDURE [croniq-internal].[GuardTriggerRef]
     @Trigger [croniq].[TriggerRef] READONLY,
-    @TriggerKey [core].[reference] OUTPUT,
+    @TriggerKey [croniq].[triggerKey] OUTPUT,
     @JobKey [core].[reference] OUTPUT,
     @TenantId [core].[key] OUTPUT,
     @JobId [core].[keyBig] OUTPUT,
@@ -99,7 +99,7 @@ BEGIN
         @Metadata = tr.[Metadata]
     FROM @Trigger AS tr;
 
-    IF @TriggerKey IS NULL OR @JobKey IS NULL OR @TenantId IS NULL OR @Environment IS NULL OR @Namespace IS NULL OR @Name IS NULL OR @Variant IS NULL OR @CronExpression IS NULL OR @TimeZoneId IS NULL OR @Enabled IS NULL
+    IF @TriggerKey IS NULL OR @JobKey IS NULL OR @TenantId IS NULL OR @Environment IS NULL OR @Namespace IS NULL OR @Name IS NULL OR @CronExpression IS NULL OR @TimeZoneId IS NULL OR @Enabled IS NULL
     BEGIN;
         EXEC [croniq-internal].[ThrowTriggerRefIncomplete];
     END
@@ -137,7 +137,7 @@ BEGIN
         @Payload = lr.[Payload]
     FROM @Lease AS lr;
 
-    IF @TriggerId IS NULL OR @JobId IS NULL OR @TenantId IS NULL OR @Environment IS NULL OR @Namespace IS NULL OR @Name IS NULL OR @Variant IS NULL OR @InstanceId IS NULL OR @FireAtUtc IS NULL OR @LeaseExpiresAtUtc IS NULL
+    IF @TriggerId IS NULL OR @JobId IS NULL OR @TenantId IS NULL OR @Environment IS NULL OR @Namespace IS NULL OR @Name IS NULL OR @InstanceId IS NULL OR @FireAtUtc IS NULL OR @LeaseExpiresAtUtc IS NULL
     BEGIN;
         EXEC [croniq-internal].[ThrowTriggerLeaseRefIncomplete];
     END
@@ -197,7 +197,7 @@ BEGIN
         @Payload = dr.[Payload]
     FROM @DeadLetter AS dr;
 
-    IF @TriggerId IS NULL OR @TenantId IS NULL OR @Environment IS NULL OR @Namespace IS NULL OR @Name IS NULL OR @Variant IS NULL OR @FireAtUtc IS NULL OR @DeadLetterReason IS NULL
+    IF @TriggerId IS NULL OR @TenantId IS NULL OR @Environment IS NULL OR @Namespace IS NULL OR @Name IS NULL OR @FireAtUtc IS NULL OR @DeadLetterReason IS NULL
     BEGIN;
         EXEC [croniq-internal].[ThrowTriggerDeadLetterRefIncomplete];
     END

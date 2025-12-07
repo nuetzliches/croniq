@@ -15,6 +15,7 @@ using Croniq.Persistence.Xtraq;
 using Croniq.Providers.Default;
 using Croniq.Sdk;
 using Microsoft.AspNetCore.RateLimiting;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Options;
 
 namespace Croniq.Api;
@@ -95,8 +96,8 @@ public static class ApiHostingExtensions
             });
         }
 
-        services.AddSingleton<ICallerContextAccessor, CallerContextAccessor>();
-        services.AddSingleton<ICallerContextFactory, CallerContextFactory>();
+        services.TryAddScoped<ICallerContextAccessor, CallerContextAccessor>();
+        services.TryAddScoped<ICallerContextFactory, CallerContextFactory>();
 
         return services;
     }
@@ -112,6 +113,12 @@ public static class ApiHostingExtensions
 
         app.Use(async (context, next) =>
         {
+            if (context.Request.Path.StartsWithSegments("/health", StringComparison.OrdinalIgnoreCase))
+            {
+                await next().ConfigureAwait(false);
+                return;
+            }
+
             var options = context.RequestServices.GetRequiredService<IOptions<CroniqApiOptions>>().Value;
             var callerAccessor = context.RequestServices.GetRequiredService<ICallerContextAccessor>();
             var callerFactory = context.RequestServices.GetRequiredService<ICallerContextFactory>();

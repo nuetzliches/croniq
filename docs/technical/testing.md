@@ -11,13 +11,13 @@ This document expands on the quality strategy outlined in `CONCEPT.md` (section 
 
 ## Test Matrix (living reference)
 
-| Suite                              | Primary scope                                                    | Trigger/Cadence             | Tooling / Infra                                    | Blocking rule                     |
-| ---------------------------------- | ---------------------------------------------------------------- | --------------------------- | -------------------------------------------------- | --------------------------------- |
-| `Unit` (`tests/Croniq.*.Tests`)    | Pure logic, options, schedulers, API surface guards              | Every PR + local pre-push   | `xUnit`, `FluentAssertions`, `dotnet test`         | Fail block merge                  |
-| `Contract` (`*.ContractTests`)     | Provider contracts (Xtraq SQL, Auth, Secrets) via Testcontainers | Every PR (parallel)         | `Testcontainers`, seeded SQL, `Croniq.TestKit`     | Fail block merge                  |
-| `Smoke`/`E2E` (`Croniq.Api.Smoke`) | Full stack via Compose (API+Worker+SQL+OTel)                     | Nightly + release candidate | `docker compose`, `dotnet test`, future Playwright | Fail blocks release/nightly badge |
-| `Compliance`                       | SBOM, Trivy scan, dependency audit                               | Nightly + release           | `Syft`, `Trivy`, GH Actions reusable workflows     | Fail blocks release               |
-| `Perf/Burn-in` (future)            | Long-running stress on scheduler leases + quotas                 | On-demand / before GA       | Testcontainers + perf harness (to be defined)      | Informational                     |
+| Suite                                    | Primary scope                                                                                | Trigger/Cadence             | Tooling / Infra                                               | Blocking rule                     |
+| ---------------------------------------- | -------------------------------------------------------------------------------------------- | --------------------------- | ------------------------------------------------------------- | --------------------------------- |
+| `Unit` (`tests/Croniq.*.Tests`)          | Pure logic, options, schedulers, API surface guards                                          | Every PR + local pre-push   | `xUnit`, `FluentAssertions`, `dotnet test`                    | Fail block merge                  |
+| `Contract` (`*.ContractTests`)           | Provider contracts (Xtraq SQL, Auth, Secrets) via Testcontainers                             | Every PR (parallel)         | `Testcontainers`, seeded SQL, `Croniq.TestKit`                | Fail block merge                  |
+| `Smoke`/`E2E` (`tests/Croniq.Api.Smoke`) | Croniq API + Worker SampleHosts via Compose (InMemory auth, SQL/Xtraq persistence, migrator) | Nightly + release candidate | `scripts/test-e2e.cmd` (wraps Docker Compose + `dotnet test`) | Fail blocks release/nightly badge |
+| `Compliance`                             | SBOM, Trivy scan, dependency audit                                                           | Nightly + release           | `Syft`, `Trivy`, GH Actions reusable workflows                | Fail blocks release               |
+| `Perf/Burn-in` (future)                  | Long-running stress on scheduler leases + quotas                                             | On-demand / before GA       | Testcontainers + perf harness (to be defined)                 | Informational                     |
 
 ## Test Levels
 
@@ -44,10 +44,14 @@ This document expands on the quality strategy outlined in `CONCEPT.md` (section 
 
 ### 3. End-to-End & Smoke Tests
 
-- **Scope**: Full Croniq stack—Scheduler worker + API + SQL + supporting services—running via Docker Compose under `infra/docker`. Validate real user flows: registering jobs, scheduling triggers, misfire recovery, Auth + RateLimiter enforcement.
-- **Frameworks**: `Playwright` or `REST-assured`-style HTTP clients in `tests/Croniq.Api.Smoke` (to be created). Compose definition `infra/docker/docker-compose.tests.yml` boots the stack; tests run against `http://localhost:5080` (API) and gRPC endpoint `https://localhost:5081`.
-- **Execution**: `docker compose -f infra/docker/docker-compose.tests.yml up --build -d`, wait for health checks, then `dotnet test tests/Croniq.Api.Smoke/Croniq.Api.Smoke.csproj`. Tear down via `docker compose ... down -v`.
-- **Cadence**: Nightly + release candidates. Optional manual trigger before large refactors. Failures block release until resolved.
+- **Scope**: The Compose harness (`infra/docker/docker-compose.tests.yml`) now stands up SQL Server 2022, the `Croniq.DbMigrator` job, `Croniq.Api.SampleHost`, and `Croniq.Worker.SampleHost`. Auth still uses the in-memory provider for deterministic API keys, while persistence runs against the same Xtraq schema/lifetime that production uses. This ensures smoke runs validate health probes, schedule creation, and that the worker can lease and execute triggers end-to-end.
+- **Frameworks**: `xUnit` + `FluentAssertions` HTTP harness located in `tests/Croniq.Api.Smoke`. Tests talk to the API over `HttpClient`, covering `/health` and `/schedules` flows. The worker host processes sample jobs from `Croniq.SampleJobs`, so trigger leases are exercised while tests run.
+- **Execution**: Use `scripts\test-e2e.cmd` (requires Docker Desktop + .NET SDK). The script:
+  1. Builds/starts the Compose stack, including SQL + migrator + API + worker.
+  2. Polls `http://localhost:5080/health` (or the overridden `CRONIQ_API_BASEURL`) until healthy.
+  3. Runs `dotnet test tests/Croniq.Api.Smoke/Croniq.Api.Smoke.csproj --nologo` with `CRONIQ_API_BASEURL`/`CRONIQ_API_KEY` defaults (`http://localhost:5080`, `smoke-key`).
+  4. Tears the stack down with `docker compose ... down -v`, regardless of success/failure.
+- **Cadence**: Manual before large API refactors and nightly/regression once CI automation lands. Failures block release readiness because they represent real entry-point regressions.
 
 ## Tooling & Infrastructure
 
@@ -66,8 +70,10 @@ This document expands on the quality strategy outlined in `CONCEPT.md` (section 
    - Gates: enforce per-project coverage (≥80% `Croniq.Core`, ≥70% repo) using `reportgenerator` or `coverlet merge` + `coverlet report` script.
 2. **Nightly pipeline**:
    - Reuse PR template (matrix build) + add `docker-build` (push to GHCR `nuetzliches/croniq-nightly` with `:sha` tag).
-   - Stage `e2e-compose`: `docker compose -f infra/docker/docker-compose.tests.yml up --build -d`, run `dotnet test tests/Croniq.Api.Smoke/Croniq.Api.Smoke.csproj`, tear down with `down -v`. Collect Grafana/OTel traces and container logs as artifacts.
-   - Stage `security`: run `syft packages . -o json` (upload SBOM) + `trivy fs --exit-code 1 --severity HIGH,CRITICAL .`.
+
+- Stage `e2e-compose`: invoke `scripts/test-e2e.cmd` (or replicate its steps) to build the stack, wait for `/health`, run the smoke project, and tear down. Collect Grafana/OTel traces and container logs as artifacts.
+- Stage `security`: run `syft packages . -o json` (upload SBOM) + `trivy fs --exit-code 1 --severity HIGH,CRITICAL .`.
+
 3. **Release pipeline**:
    - Triggered on tags `v*`.
    - Stage `full-test`: matrix of unit, contract, E2E (same as nightly but blocking).
@@ -79,7 +85,7 @@ This document expands on the quality strategy outlined in `CONCEPT.md` (section 
 - Use `dotnet test` locally with `--filter Category=Unit` or `=Contract` to target suites.
 - For contract tests, ensure Docker Desktop (or another Docker runtime) is running. By default `XtraqDatabaseFixture` launches SQL Server 2022 in a container and reapplies `infra/sql/xtraq` for a clean slate each run. Set `CRONIQ_SQL` to reuse an existing database (the fixture will still ensure schema + seeds) and only run `infra/sql/xtraq/apply.ps1` manually when preparing that long-lived instance. Call `CaptureContainerLogsAsync()` after failures to persist SQL logs locally (CI automation follows).
 - Use `TestClock` when policy or scheduling logic relies on deterministic timestamps and the builders in `Croniq.TestKit.Builders` to create jobs/triggers without repeating boilerplate.
-- For E2E, reuse the same Compose files as CI; provide a helper script `./scripts/test-e2e.cmd` (future work) to orchestrate up/down flows and log aggregation.
+- For smoke tests, run `scripts\test-e2e.cmd`. It builds the Compose stack, waits for `/health`, runs `dotnet test tests/Croniq.Api.Smoke/Croniq.Api.Smoke.csproj --nologo`, and tears everything down. Override `CRONIQ_API_BASEURL`/`CRONIQ_API_KEY` before invoking the script when targeting remote environments (defaults remain `http://localhost:5080` and `smoke-key`).
 - Document flaky scenarios immediately in `tests/README.md` (to be added) and open tracking issues.
 
 ## Backlog for the Testing Stream
@@ -94,8 +100,8 @@ This document expands on the quality strategy outlined in `CONCEPT.md` (section 
   - Status: `Croniq.Persistence.Xtraq.Tests`, `Croniq.Core.Tests`, `Croniq.JobStore.InMemory.Tests`, and `Croniq.Providers.Default.Tests` migrated; extend to remaining suites.
 - [x] Introduce `[Category]` traits and update `Directory.Build.props` to enforce Coverlet instrumentation.
   - Delivered: `TestCategories` helper + `[Trait]` annotations in contract suites and repository-level `Directory.Build.props` enabling automatic Coverlet output for every `*.Tests` project.
-- [ ] Create `Croniq.Api.Smoke` project + Compose file for automated end-to-end runs.
-  - Deliverables: `tests/Croniq.Api.Smoke/` (HTTP/grpc client harness), `infra/docker/docker-compose.tests.yml`, helper script `scripts/test-e2e.cmd`.
+- [x] Create `Croniq.Api.Smoke` project + Compose file for automated end-to-end runs.
+  - Delivered: `tests/Croniq.Api.Smoke/` HTTP harness exercising `/health` + `/schedules`, `infra/docker/docker-compose.tests.yml` wiring SQL + migrator + API + worker containers, `scripts/test-e2e.cmd` automation, and containerized sample hosts.
 - [ ] Publish developer guide (`docs/technical/testing.md` + `tests/README.md`) describing local setup, troubleshooting, and log collection.
   - Deliverables: new `tests/README.md` with quickstart + troubleshooting tree; update this doc after each milestone.
 - [ ] Wire GitHub Actions workflows (`.github/workflows/tests.yml`, `nightly.yml`) to run the described stages.

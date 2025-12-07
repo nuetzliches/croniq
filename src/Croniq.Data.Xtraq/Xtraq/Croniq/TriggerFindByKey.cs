@@ -27,7 +27,7 @@ namespace Croniq.Persistence.Xtraq.Croniq;
 /// </summary>
 public sealed record class TriggerFindByKeyRequest
 {
-    [System.ComponentModel.DataAnnotations.StringLength(64)]
+    [System.ComponentModel.DataAnnotations.StringLength(256)]
     public string? TriggerKey { get; init; }
 }
 
@@ -151,7 +151,7 @@ internal static partial class TriggerFindByKeyPlan
 		var parameters = new ProcedureParameter[]
 		{
             new("@Actor", System.Data.DbType.Object, null, false, false, "core.ActorRef"),
-            new("@TriggerKey", System.Data.DbType.String, 64, false, true),
+            new("@TriggerKey", System.Data.DbType.String, 256, false, true),
         };
 
 		var resultSets = new ResultSetMapping[]
