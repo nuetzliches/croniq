@@ -10,6 +10,21 @@ This guide walks you through creating your first Croniq job, registering it with
 >
 > All commands are shown for Windows PowerShell / CMD; adapt paths for your OS if needed.
 
+## Optional: Start the Croniq Dev Stack
+
+Use the provided Compose scripts when you want to run the reference API/worker locally.
+
+```cmd
+cd <path-to-croniq-repo>
+copy .env.example .env  # first run only, then adjust secrets
+scripts\devstack-up.cmd [--profile obs]
+```
+
+- API and worker profiles are enabled by default; pass `--profile obs` when you also want OTel Collector, Prometheus, Tempo, and Grafana.
+- `scripts\devstack-restart.cmd [--profile obs]` performs a down/up cycle (with `--remove-orphans`) using the same profile list when Docker resources get stuck.
+- Tear everything down with `scripts\devstack-down.cmd [--profile obs] --volumes` when you are done.
+- The API listens on `http://localhost:5080`; Grafana lives at `http://localhost:5601` with the credentials from `.env` (defaults to `admin/admin`).
+
 ## 1. Create a Single Project
 
 ```cmd
@@ -126,7 +141,7 @@ builder.Services.AddCroniqJob(helloWorldKey, job =>
 
 If you prefer a testable class or need constructor injection, implement `IJob` like this (in the same project) and register it via `AddCroniqJob<TJob>()`:
 
-````csharp
+```csharp
 using Croniq.Sdk;
 using Microsoft.Extensions.Logging;
 
@@ -144,7 +159,8 @@ public sealed class HelloWorldJob : IJob
 
 // Program.cs (additional registration)
 builder.Services.AddCroniqJob<HelloWorldJob>();
-````
+```
+
 ```cmd
 # Terminal 1
 cd HelloCroniq
@@ -152,7 +168,7 @@ cd HelloCroniq
 
 # Terminal 2 (optional)
 
-````
+```
 
 ```cmd
 curl -X POST https://localhost:5001/schedules \
@@ -174,9 +190,11 @@ Refer to `docs/technical/persistence.md` (to be added) for the exact schedule pa
 cd HelloCroniq.Api
  dotnet run
 
-# Terminal 2 (optional)
-docker compose up # if you use the reference stack
+# Terminal 2 (optional, reference stack)
+scripts\devstack-up.cmd --profile api --profile worker --profile obs
 ```
+
+Stop the stack afterwards via `scripts\devstack-down.cmd --volumes`.
 
 Trigger the job manually:
 

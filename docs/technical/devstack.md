@@ -27,25 +27,27 @@ All services share a `croniq-net` bridge network. Ports are exposed via `.env` d
 
 ## Compose Files & Profiles
 
-- `infra/docker/docker-compose.yml`: base SQL container (already present).
-- `infra/docker/docker-compose.dev.yml`: adds API, worker, RPC sample, OTel stack, default volumes, health checks.
-- `infra/docker/docker-compose.observability.yml`: optional overlay enabling Grafana dashboards + Tempo/Prometheus/Seq (referenced by `observability.md`).
+- `infra/docker/docker-compose.yml`: base SQL container.
+- `infra/docker/docker-compose.dev.yml`: adds API + worker hosts (profiles `api` / `worker`) and optional RPC sample/helper containers.
+- `infra/docker/docker-compose.observability.yml`: overlay enabling the observability toolchain (OTel Collector, Prometheus, Tempo, Grafana) behind the `obs` profile.
+- The helper scripts always load all three files, so adding `--profile obs` is enough to wire up Grafana/Tempo/Prometheus without custom compose commands.
 - Use Compose profiles (`api`, `worker`, `obs`) to allow lightweight setups (`docker compose --profile api up`). Nightly CI runs all profiles.
 
 ## Configuration & Secrets
 
-- `.env.example` documents required variables (ports, SA password, API keys). Developers copy to `.env` and override sensitive entries in `.env.local` ignored by git.
-- `Croniq.Sample.ApiHost` reads configuration from `appsettings.Development.json` + environment variables injected via Compose (`CRONIQ__SQLSERVER__CONNECTIONSTRING`, `CRONIQ__AUTH__MODE`, etc.).
+- `.env.example` (root) now lists the required ports, database credentials, and Croniq defaults. Copy it to `.env`, adjust secrets, and Compose will pick the variables up automatically. `.env` stays ignored via `.gitignore`.
+- `Croniq.Sample.ApiHost` reads configuration from `appsettings.Development.json` + environment variables injected via Compose (`Croniq__SqlServer__ConnectionString`, `Croniq__Auth__Mode`, etc.). Keep sensitive overrides in `.env.local` or user secrets when running locally.
 - Provide helper script `infra/docker/init-db.ps1` (or `.sh`) that invokes `dotnet run --project tools/Croniq.DbMigrator -- --connection <conn>` inside the container to apply EF Core migrations automatically.
 
 ## Developer Workflow
 
-1. `cd infra/docker`
-2. `cp .env.example .env` (first run) and set secrets.
-3. `docker compose -f docker-compose.yml -f docker-compose.dev.yml --profile api --profile worker up --build`
-4. API available at `https://localhost:5081`, Grafana at `http://localhost:5601` (login `admin/admin`).
-5. To tear down and remove volumes: `docker compose ... down -v`.
-6. For hot reload, developers can mount source directories and run `dotnet watch` from within the container or locally against the services.
+1. `cd <repo-root>`
+2. `copy .env.example .env` (first run) and adjust secrets/ports as needed.
+3. `scripts\devstack-up.cmd [--profile obs]` ensures `.env` exists, loads all compose files, and polls `/health`. The API/worker profiles are implied; pass extra profiles (e.g., `obs`) explicitly.
+4. `scripts\devstack-restart.cmd [--profile ...]` first calls `devstack-down --remove-orphans` with the same profiles, then replays `devstack-up`—useful when Docker networks/containers get stuck.
+5. API available at `http://localhost:5080`, Grafana at `http://localhost:5601` (login `admin/admin`) once the `obs` profile is enabled.
+6. To tear down and remove volumes: `scripts\devstack-down.cmd [--profile ...] --volumes` (or call `docker compose ... down -v`).
+7. For hot reload, developers can mount source directories and run `dotnet watch` from within the container or locally against the services.
 
 ## CI Integration
 
@@ -55,10 +57,10 @@ All services share a `croniq-net` bridge network. Ports are exposed via `.env` d
 
 ## Backlog to Finish the Dev Stack Milestone
 
-- [ ] Expand `.env.example` with ports, credentials, and docstrings; add `.env` to `.gitignore` if not already.
-- [ ] Create `docker-compose.dev.yml` defining API, worker, RPC sample, and referencing shared build context or published images.
-- [ ] Add observability overlay compose file + Grafana dashboards + Tempo/Prometheus volumes, aligning with `observability.md`.
-- [ ] Provide helper scripts (`scripts/devstack-up.cmd`, `scripts/devstack-down.cmd`) wrapping the compose commands and health checks.
+- [x] Expand `.env.example` with ports, credentials, and docstrings; add `.env` to `.gitignore` if not already.
+- [x] Create `docker-compose.dev.yml` defining API, worker, RPC sample, and referencing shared build context or published images.
+- [x] Add observability overlay compose file + Grafana dashboards + Tempo/Prometheus volumes, aligning with `observability.md`.
+- [x] Provide helper scripts (`scripts/devstack-up.cmd`, `scripts/devstack-down.cmd`) wrapping the compose commands and health checks.
 - [ ] Document workflow in `docs/consumer/quickstart.md` (how to run the dev stack) and link from `README.md`.
 - [ ] Update CI workflow (`ci-nightly.yml`) to call the same compose stack for smoke tests.
 - [ ] Ensure SQL initialization script runs automatically on first boot (entrypoint or helper container) so developers don't run manual apply steps.

@@ -1,0 +1,72 @@
+services:
+  croniq-db-migrator:
+    profiles: ["db", "api", "worker"]
+    build:
+      context: ../..
+      dockerfile: tools/Croniq.DbMigrator/Dockerfile
+    environment:
+      CRONIQ_SQL_CONNECTION: Server=${CRONIQ_SQL_HOST:-mssql-22},1433;Database=${CRONIQ_SQL_DATABASE:-CroniqDev};User Id=sa;Password=${CRONIQ_SQL_PASSWORD:-CroniqSqlP@ssw0rd!};Encrypt=False;TrustServerCertificate=True;
+    depends_on:
+      mssql-22:
+        condition: service_healthy
+    restart: "no"
+    networks:
+      - croniq-net
+
+  croniq-api:
+    profiles: ["api"]
+    build:
+      context: ../..
+      dockerfile: samples/Croniq.Sample.ApiHost/Dockerfile
+    environment:
+      ASPNETCORE_URLS: http://0.0.0.0:${CRONIQ_API_INTERNAL_PORT:-5080}
+      DOTNET_ENVIRONMENT: ${CRONIQ_DOTNET_ENVIRONMENT:-Development}
+      Croniq__Auth__Mode: ${CRONIQ_AUTH_MODE:-InMemory}
+      Croniq__Auth__InMemory__ApiKey: ${CRONIQ_SMOKE_API_KEY:-smoke-key}
+      Croniq__Auth__InMemory__TenantId: ${CRONIQ_CORE_TENANT_ID:-1}
+      Croniq__Auth__InMemory__EnvironmentTag: ${CRONIQ_CORE_ENVIRONMENT:-dev}
+      Croniq__Persistence__Mode: SqlServer
+      Croniq__Api__RequestsPerMinute: ${CRONIQ_API_REQUESTS_PER_MINUTE:-240}
+      Croniq__Core__TenantId: ${CRONIQ_CORE_TENANT_ID:-1}
+      Croniq__Core__EnvironmentTag: ${CRONIQ_CORE_ENVIRONMENT:-dev}
+      Croniq__Core__InstanceId: ${CRONIQ_API_INSTANCE_ID:-api-dev}
+      Croniq__SqlServer__ConnectionString: Server=${CRONIQ_SQL_HOST:-mssql-22},1433;Database=${CRONIQ_SQL_DATABASE:-CroniqDev};User Id=sa;Password=${CRONIQ_SQL_PASSWORD:-CroniqSqlP@ssw0rd!};Encrypt=False;TrustServerCertificate=True;
+    depends_on:
+      mssql-22:
+        condition: service_healthy
+      croniq-db-migrator:
+        condition: service_completed_successfully
+    ports:
+      - "${CRONIQ_API_HTTP_PORT:-5080}:${CRONIQ_API_INTERNAL_PORT:-5080}"
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "curl --fail http://localhost:${CRONIQ_API_INTERNAL_PORT:-5080}/health || exit 1",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 15
+      start_period: 15s
+    networks:
+      - croniq-net
+
+  croniq-worker:
+    profiles: ["worker"]
+    build:
+      context: ../..
+      dockerfile: samples/Croniq.Sample.WorkerHost/Dockerfile
+    environment:
+      DOTNET_ENVIRONMENT: ${CRONIQ_DOTNET_ENVIRONMENT:-Development}
+      Croniq__Core__TenantId: ${CRONIQ_CORE_TENANT_ID:-1}
+      Croniq__Core__EnvironmentTag: ${CRONIQ_CORE_ENVIRONMENT:-dev}
+      Croniq__Core__InstanceId: ${CRONIQ_WORKER_INSTANCE_ID:-worker-dev}
+      Croniq__Persistence__Mode: SqlServer
+      Croniq__SqlServer__ConnectionString: Server=${CRONIQ_SQL_HOST:-mssql-22},1433;Database=${CRONIQ_SQL_DATABASE:-CroniqDev};User Id=sa;Password=${CRONIQ_SQL_PASSWORD:-CroniqSqlP@ssw0rd!};Encrypt=False;TrustServerCertificate=True;
+    depends_on:
+      mssql-22:
+        condition: service_healthy
+      croniq-db-migrator:
+        condition: service_completed_successfully
+    networks:
+      - croniq-net
