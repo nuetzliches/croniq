@@ -1,5 +1,6 @@
 using System;
 using Croniq.Core.Scheduling;
+using FluentAssertions;
 using Xunit;
 
 namespace Croniq.Core.Tests.Scheduling;
@@ -14,7 +15,7 @@ public class CronScheduleTests
 
         var next = schedule.GetNextOccurrence(start);
 
-        Assert.Equal(new DateTimeOffset(2025, 1, 1, 12, 1, 0, TimeSpan.Zero), next);
+        next.Should().Be(new DateTimeOffset(2025, 1, 1, 12, 1, 0, TimeSpan.Zero));
     }
 
     [Fact]
@@ -26,8 +27,8 @@ public class CronScheduleTests
 
         var nextTwo = schedule.GetNextOccurrences(start, 2);
 
-        Assert.Equal(2, nextTwo.Count);
-        Assert.Equal(new DateTimeOffset(2025, 6, 2, 7, 0, 0, TimeSpan.Zero), nextTwo[0]);
-        Assert.Equal(new DateTimeOffset(2025, 6, 3, 7, 0, 0, TimeSpan.Zero), nextTwo[1]);
+        nextTwo.Should().HaveCount(2);
+        nextTwo[0].Should().Be(new DateTimeOffset(2025, 6, 2, 7, 0, 0, TimeSpan.Zero));
+        nextTwo[1].Should().Be(new DateTimeOffset(2025, 6, 3, 7, 0, 0, TimeSpan.Zero));
     }
 }

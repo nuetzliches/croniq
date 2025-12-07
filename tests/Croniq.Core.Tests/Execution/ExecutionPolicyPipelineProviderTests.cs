@@ -4,6 +4,7 @@ using System.Threading.Tasks;
 using Croniq.Core.Execution;
 using Croniq.Core.Jobs;
 using Croniq.Core.Policies;
+using FluentAssertions;
 using Microsoft.Extensions.Logging.Abstractions;
 using Polly.Timeout;
 using Xunit;
@@ -34,16 +35,17 @@ public class ExecutionPolicyPipelineProviderTests
         var pipeline = provider.Get(SampleJob, options);
         var attempts = 0;
 
-        await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+        var act = async () =>
         {
             await pipeline.ExecuteAsync(token =>
             {
                 attempts++;
                 return ValueTask.FromException(new InvalidOperationException("boom"));
             }, CancellationToken.None);
-        });
+        };
 
-        Assert.Equal(3, attempts);
+        await act.Should().ThrowAsync<InvalidOperationException>();
+        attempts.Should().Be(3);
     }
 
     [Fact]
@@ -55,7 +57,7 @@ public class ExecutionPolicyPipelineProviderTests
         var first = provider.Get(SampleJob, baseline);
         var second = provider.Get(SampleJob, baseline);
 
-        Assert.Same(first, second);
+        first.Should().BeSameAs(second);
 
         var mutated = new ExecutionPolicyOptions
         {
@@ -64,7 +66,7 @@ public class ExecutionPolicyPipelineProviderTests
         };
 
         var third = provider.Get(SampleJob, mutated);
-        Assert.NotSame(first, third);
+        first.Should().NotBeSameAs(third);
     }
 
     [Fact]
@@ -83,12 +85,14 @@ public class ExecutionPolicyPipelineProviderTests
 
         var pipeline = provider.Get(SampleJob, options);
 
-        await Assert.ThrowsAsync<TimeoutRejectedException>(async () =>
+        var timeoutAct = async () =>
         {
             await pipeline.ExecuteAsync(async token =>
             {
                 await Task.Delay(TimeSpan.FromSeconds(1), token);
             }, CancellationToken.None);
-        });
+        };
+
+        await timeoutAct.Should().ThrowAsync<TimeoutRejectedException>();
     }
 }

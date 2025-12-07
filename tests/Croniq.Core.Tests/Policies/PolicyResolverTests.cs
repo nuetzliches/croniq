@@ -1,6 +1,7 @@
 using System;
 using Croniq.Core.Jobs;
 using Croniq.Core.Policies;
+using FluentAssertions;
 using Xunit;
 
 namespace Croniq.Core.Tests.Policies;
@@ -45,9 +46,9 @@ public class PolicyResolverTests
         var jobKey = new JobKey("t1", "dev", "billing", "invoice");
         var resolved = resolver.ResolveMisfire(jobKey);
 
-        Assert.Equal(TimeSpan.FromMinutes(1), resolved.MaxMisfireDelay);
-        Assert.True(resolved.DeadLetterOnMisfire);
-        Assert.Equal(TimeSpan.FromSeconds(5), resolved.RescheduleBackoff);
+        resolved.MaxMisfireDelay.Should().Be(TimeSpan.FromMinutes(1));
+        resolved.DeadLetterOnMisfire.Should().BeTrue();
+        resolved.RescheduleBackoff.Should().Be(TimeSpan.FromSeconds(5));
     }
 
     [Fact]
@@ -78,8 +79,8 @@ public class PolicyResolverTests
         var jobKey = new JobKey("t1", "dev", "billing", "invoice");
         var resolved = resolver.ResolveQuota(jobKey);
 
-        Assert.Equal(50, resolved.MaxTriggersPerMinute);
-        Assert.Equal(3, resolved.MaxParallelExecutionsPerJob);
+        resolved.MaxTriggersPerMinute.Should().Be(50);
+        resolved.MaxParallelExecutionsPerJob.Should().Be(3);
     }
 
     [Fact]
@@ -168,17 +169,17 @@ public class PolicyResolverTests
         var jobKey = new JobKey("t1", "prod", "billing", "invoice");
         var resolved = resolver.ResolveExecution(jobKey);
 
-        Assert.Equal(6, resolved.Retry.MaxAttempts);
-        Assert.Equal(RetryBackoffStrategy.Exponential, resolved.Retry.BackoffStrategy);
-        Assert.Equal(TimeSpan.FromSeconds(1), resolved.Retry.InitialDelay);
-        Assert.Equal(TimeSpan.FromSeconds(30), resolved.Retry.MaxDelay);
-        Assert.Equal(0.2d, resolved.Retry.JitterFactor);
-        Assert.Equal(TimeSpan.FromSeconds(45), resolved.Timeout.Timeout);
-        Assert.False(resolved.Timeout.CancelExecutionOnTimeout);
-        Assert.True(resolved.CircuitBreaker.Enabled);
-        Assert.Equal(TimeSpan.FromMinutes(5), resolved.CircuitBreaker.BreakDuration);
-        Assert.Equal(4, resolved.CircuitBreaker.MinimumThroughput);
-        Assert.Equal(TimeSpan.FromDays(7), resolved.DeadLetter.Retention);
-        Assert.Equal("investigate", resolved.DeadLetter.OperatorHint);
+        resolved.Retry.MaxAttempts.Should().Be(6);
+        resolved.Retry.BackoffStrategy.Should().Be(RetryBackoffStrategy.Exponential);
+        resolved.Retry.InitialDelay.Should().Be(TimeSpan.FromSeconds(1));
+        resolved.Retry.MaxDelay.Should().Be(TimeSpan.FromSeconds(30));
+        resolved.Retry.JitterFactor.Should().Be(0.2d);
+        resolved.Timeout.Timeout.Should().Be(TimeSpan.FromSeconds(45));
+        resolved.Timeout.CancelExecutionOnTimeout.Should().BeFalse();
+        resolved.CircuitBreaker.Enabled.Should().BeTrue();
+        resolved.CircuitBreaker.BreakDuration.Should().Be(TimeSpan.FromMinutes(5));
+        resolved.CircuitBreaker.MinimumThroughput.Should().Be(4);
+        resolved.DeadLetter.Retention.Should().Be(TimeSpan.FromDays(7));
+        resolved.DeadLetter.OperatorHint.Should().Be("investigate");
     }
 }

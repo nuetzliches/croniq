@@ -9,6 +9,7 @@ using Croniq.Core.Options;
 using Croniq.Core.Policies;
 using Croniq.Persistence.Abstractions;
 using Croniq.Sdk;
+using FluentAssertions;
 using Microsoft.Extensions.Logging.Abstractions;
 using Xunit;
 
@@ -105,11 +106,11 @@ public class TriggerWorkerMisfireTests
 
         var processed = await worker.ProcessBatchAsync(now, 10, CancellationToken.None);
 
-        Assert.Equal(0, processed);
-        Assert.Empty(store.Releases.FindAll(r => r.Succeeded));
-        Assert.Single(store.Releases);
-        Assert.Equal("misfire-max-delay", store.Releases[0].DeadLetterReason);
-        Assert.Equal(0, pipeline.Executions);
+        processed.Should().Be(0);
+        store.Releases.FindAll(r => r.Succeeded).Should().BeEmpty();
+        store.Releases.Should().ContainSingle();
+        store.Releases[0].DeadLetterReason.Should().Be("misfire-max-delay");
+        pipeline.Executions.Should().Be(0);
     }
 
     [Fact]
@@ -135,11 +136,11 @@ public class TriggerWorkerMisfireTests
 
         var processed = await worker.ProcessBatchAsync(now, 10, CancellationToken.None);
 
-        Assert.Equal(1, processed);
-        Assert.Single(store.Releases);
-        Assert.True(store.Releases[0].Succeeded);
-        Assert.Null(store.Releases[0].DeadLetterReason);
-        Assert.Equal(1, pipeline.Executions);
+        processed.Should().Be(1);
+        store.Releases.Should().ContainSingle();
+        store.Releases[0].Succeeded.Should().BeTrue();
+        store.Releases[0].DeadLetterReason.Should().BeNull();
+        pipeline.Executions.Should().Be(1);
     }
 
     [Fact]
@@ -182,15 +183,17 @@ public class TriggerWorkerMisfireTests
 
         var processed = await worker.ProcessBatchAsync(now, 10, CancellationToken.None);
 
-        Assert.Equal(1, processed);
-        Assert.Equal(2, store.Releases.Count);
-        Assert.Equal(1, pipeline.Executions);
+        processed.Should().Be(1);
+        store.Releases.Should().HaveCount(2);
+        pipeline.Executions.Should().Be(1);
 
         var rescheduled = store.Releases.Find(r => r.DeadLetterReason == "quota-limit");
-        Assert.NotNull(rescheduled);
-        Assert.False(rescheduled!.Succeeded);
-        Assert.NotNull(rescheduled.NextFireTimeUtc);
-        Assert.InRange(rescheduled.NextFireTimeUtc!.Value, now.AddMinutes(1).AddSeconds(-1), now.AddMinutes(1).AddSeconds(2));
+        rescheduled.Should().NotBeNull();
+        rescheduled!.Succeeded.Should().BeFalse();
+        rescheduled.NextFireTimeUtc.Should().NotBeNull();
+        rescheduled.NextFireTimeUtc!.Value.Should()
+            .BeOnOrAfter(now.AddMinutes(1).AddSeconds(-1))
+            .And.BeOnOrBefore(now.AddMinutes(1).AddSeconds(2));
     }
 
     [Fact]
@@ -240,14 +243,14 @@ public class TriggerWorkerMisfireTests
 
         var processed = await worker.ProcessBatchAsync(now, 1, CancellationToken.None);
 
-        Assert.Equal(0, processed);
-        Assert.Single(store.DeadLetters);
+        processed.Should().Be(0);
+        store.DeadLetters.Should().ContainSingle();
         var deadLetter = store.DeadLetters[0];
-        Assert.Equal("execution-error", deadLetter.Reason);
-        Assert.NotNull(deadLetter.Payload);
-        Assert.NotNull(deadLetter.Metadata);
-        Assert.True(deadLetter.Metadata!.ContainsKey("deadletter.hint"));
-        Assert.Single(store.Releases);
-        Assert.Null(store.Releases[0].DeadLetterReason);
+        deadLetter.Reason.Should().Be("execution-error");
+        deadLetter.Payload.Should().NotBeNull();
+        deadLetter.Metadata.Should().NotBeNull();
+        deadLetter.Metadata!.Should().ContainKey("deadletter.hint");
+        store.Releases.Should().ContainSingle();
+        store.Releases[0].DeadLetterReason.Should().BeNull();
     }
 }

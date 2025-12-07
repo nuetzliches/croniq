@@ -5,12 +5,15 @@ using System.Threading;
 using System.Threading.Tasks;
 using Croniq.Persistence.Abstractions;
 using Croniq.Persistence.Xtraq;
+using Croniq.TestKit;
+using FluentAssertions;
 using Microsoft.Data.SqlClient;
 using Microsoft.Extensions.DependencyInjection;
 using Xunit;
 
 namespace Croniq.Persistence.Xtraq.Tests;
 
+[Trait(TestCategories.Category, TestCategories.Contract)]
 public class XtraqJobPersistenceProviderTests : IClassFixture<XtraqDatabaseFixture>
 {
     private readonly XtraqDatabaseFixture _fixture;
@@ -48,7 +51,7 @@ public class XtraqJobPersistenceProviderTests : IClassFixture<XtraqDatabaseFixtu
         var leases = await provider.AcquireAsync(acquire, CancellationToken.None);
         var lease = leases.FirstOrDefault(l => l.TriggerId == triggerKey);
 
-        Assert.NotNull(lease);
+        lease.Should().NotBeNull();
         var firstFire = lease!.FireAtUtc;
 
         await provider.ReleaseAsync(new TriggerReleaseRequest(lease, true, null), CancellationToken.None);
@@ -57,8 +60,8 @@ public class XtraqJobPersistenceProviderTests : IClassFixture<XtraqDatabaseFixtu
         var leases2 = await provider.AcquireAsync(reacquire, CancellationToken.None);
         var lease2 = leases2.FirstOrDefault(l => l.TriggerId == triggerKey);
 
-        Assert.NotNull(lease2);
-        Assert.True(lease2!.FireAtUtc > firstFire);
+        lease2.Should().NotBeNull();
+        lease2!.FireAtUtc.Should().BeAfter(firstFire);
     }
 
     [Fact]
@@ -96,7 +99,7 @@ public class XtraqJobPersistenceProviderTests : IClassFixture<XtraqDatabaseFixtu
         var triggerId = await GetTriggerIdAsync(triggerKey);
         var deadLetters = await CountDeadLettersAsync(triggerId, "boom");
 
-        Assert.True(deadLetters > 0, "Expected deadletter entry for failed release.");
+        deadLetters.Should().BeGreaterThan(0, "a failed release should dead-letter the trigger");
     }
 
     [Fact]
@@ -131,7 +134,7 @@ public class XtraqJobPersistenceProviderTests : IClassFixture<XtraqDatabaseFixtu
             CancellationToken.None);
 
         var persisted = await GetNextFireAtAsync(triggerKey);
-        Assert.Null(persisted);
+        persisted.Should().BeNull();
     }
 
     [Fact]
@@ -167,7 +170,7 @@ public class XtraqJobPersistenceProviderTests : IClassFixture<XtraqDatabaseFixtu
             CancellationToken.None);
 
         var persisted = await GetNextFireAtAsync(triggerKey);
-        Assert.Equal(nextFire.UtcDateTime, persisted);
+        persisted.Should().Be(nextFire.UtcDateTime);
     }
 
     [Fact]
@@ -202,7 +205,7 @@ public class XtraqJobPersistenceProviderTests : IClassFixture<XtraqDatabaseFixtu
             CancellationToken.None);
 
         var succeeded = await GetSucceededFlagAsync(lease.LeaseId);
-        Assert.True(succeeded);
+        succeeded.Should().BeTrue();
     }
 
     [Fact]
@@ -238,9 +241,9 @@ public class XtraqJobPersistenceProviderTests : IClassFixture<XtraqDatabaseFixtu
             CancellationToken.None);
 
         var deadLetters = await CountDeadLettersAsync(await GetTriggerIdAsync(triggerKey), reason);
-        Assert.True(deadLetters > 0);
+        deadLetters.Should().BeGreaterThan(0);
         var releasedCount = await GetReleasedCountAsync(triggerKey);
-        Assert.Equal(1, releasedCount);
+        releasedCount.Should().Be(1);
     }
 
     [Fact]
@@ -281,14 +284,14 @@ public class XtraqJobPersistenceProviderTests : IClassFixture<XtraqDatabaseFixtu
             "policy-deadletter",
             DateTimeOffset.UtcNow,
             TimeSpan.FromDays(5),
-            payload: "{\"custom\":\"payload\"}",
+            "{\"custom\":\"payload\"}",
             metadata);
 
         await provider.MoveToDeadLetterAsync(request, CancellationToken.None);
 
         var triggerId = await GetTriggerIdAsync(triggerKey);
         var deadLetters = await CountDeadLettersAsync(triggerId, "policy-deadletter");
-        Assert.True(deadLetters > 0);
+        deadLetters.Should().BeGreaterThan(0);
 
         await provider.ReleaseAsync(new TriggerReleaseRequest(lease, false, null), CancellationToken.None);
     }

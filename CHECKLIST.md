@@ -35,3 +35,8 @@
 
 1. Teststrategie-Dokument (`docs/technical/testing.md`) detaillieren, damit CI/E2E-Planung auf einer klaren Grundlage steht.
 2. GitHub-Actions-Pipeline laut `docs/technical/ci.md` aufsetzen (Build + Tests + Coverage), sobald der Testplan final ist.
+
+# Nachbesserungen
+
+- [ ] Suche im gesamten Repository nach "OpenConnectionAsync" (skipe Xtraq-Artefakte). Prüfe ob dort custom Prozedur calls mit "CommandText" vorgenommen werden? Ersetze diese durch die Xtraq-Artefakte.
+- [ ] `docs\consumer\configuration.md` hier besteht ein Dokumentationsfehler oder gap: builder.Services.AddCroniq() gibt es nicht. Consumer Docs generell auf aktuellsten Stand bringen.

@@ -1,6 +1,7 @@
 using System;
 using Croniq.Core.Jobs;
 using Croniq.Core.Policies;
+using FluentAssertions;
 using Xunit;
 
 namespace Croniq.Core.Tests.Policies;
@@ -16,15 +17,17 @@ public class QuotaGuardTests
         var options = new QuotaOptions { MaxTriggersPerMinute = 2, MaxParallelExecutionsPerJob = 5 };
         var now = DateTimeOffset.UtcNow;
 
-        Assert.True(guard.TryAcquire(Job, options, now, out var retry1));
-        Assert.Null(retry1);
+        guard.TryAcquire(Job, options, now, out var retry1).Should().BeTrue();
+        retry1.Should().BeNull();
 
-        Assert.True(guard.TryAcquire(Job, options, now.AddSeconds(1), out var retry2));
-        Assert.Null(retry2);
+        guard.TryAcquire(Job, options, now.AddSeconds(1), out var retry2).Should().BeTrue();
+        retry2.Should().BeNull();
 
-        Assert.False(guard.TryAcquire(Job, options, now.AddSeconds(2), out var retry3));
-        Assert.NotNull(retry3);
-        Assert.InRange(retry3!.Value, now.AddMinutes(1).AddSeconds(-1), now.AddMinutes(1).AddSeconds(1));
+        guard.TryAcquire(Job, options, now.AddSeconds(2), out var retry3).Should().BeFalse();
+        retry3.Should().NotBeNull();
+        retry3!.Value.Should()
+            .BeOnOrAfter(now.AddMinutes(1).AddSeconds(-1))
+            .And.BeOnOrBefore(now.AddMinutes(1).AddSeconds(1));
     }
 
     [Fact]
@@ -34,15 +37,15 @@ public class QuotaGuardTests
         var options = new QuotaOptions { MaxTriggersPerMinute = 10, MaxParallelExecutionsPerJob = 1 };
         var now = DateTimeOffset.UtcNow;
 
-        Assert.True(guard.TryAcquire(Job, options, now, out var retry1));
-        Assert.Null(retry1);
+        guard.TryAcquire(Job, options, now, out var retry1).Should().BeTrue();
+        retry1.Should().BeNull();
 
-        Assert.False(guard.TryAcquire(Job, options, now.AddMilliseconds(10), out var retry2));
-        Assert.NotNull(retry2);
+        guard.TryAcquire(Job, options, now.AddMilliseconds(10), out var retry2).Should().BeFalse();
+        retry2.Should().NotBeNull();
 
         guard.Release(Job);
 
-        Assert.True(guard.TryAcquire(Job, options, now.AddMilliseconds(20), out var retry3));
-        Assert.Null(retry3);
+        guard.TryAcquire(Job, options, now.AddMilliseconds(20), out var retry3).Should().BeTrue();
+        retry3.Should().BeNull();
     }
 }

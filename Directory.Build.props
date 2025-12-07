@@ -1,0 +1,14 @@
+<Project>
+  <PropertyGroup Condition="'$(MSBuildProjectName)' == 'Croniq.TestKit'">
+    <!-- Suppress NU1903 until DotNet.Testcontainers publishes a build without Newtonsoft.Json 12.0.3 -->
+    <NoWarn>$(NoWarn);NU1903</NoWarn>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="$([System.String]::Copy('$(MSBuildProjectName)').Contains('.Tests'))">
+    <IsTestProject>true</IsTestProject>
+    <CollectCoverage>true</CollectCoverage>
+    <CoverletOutputFormat>cobertura</CoverletOutputFormat>
+    <CoverletOutput>$(MSBuildProjectDirectory)\TestResults\coverage\$(MSBuildProjectName)</CoverletOutput>
+    <ExcludeByFile>$(ExcludeByFile);**\bin\**;**\obj\**</ExcludeByFile>
+  </PropertyGroup>
+</Project>

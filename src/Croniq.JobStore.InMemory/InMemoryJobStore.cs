@@ -163,7 +163,12 @@ public sealed class InMemoryJobStore : IJobPersistenceProvider
 
             if (!string.IsNullOrWhiteSpace(request.DeadLetterReason))
             {
-                entry.DeadLetters.Add(new DeadLetterEntry(request.DeadLetterReason!, UtcNow()));
+                entry.DeadLetters.Add(new DeadLetterEntry(
+                    request.DeadLetterReason!,
+                    Payload: null,
+                    Metadata: null,
+                    UtcNow(),
+                    TimeSpan.Zero));
             }
 
             entry.Lease = null;

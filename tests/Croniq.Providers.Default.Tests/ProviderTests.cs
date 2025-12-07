@@ -5,6 +5,7 @@ using Croniq.Providers.Default.Secrets;
 using Croniq.Providers.Logging;
 using Croniq.Providers.Secrets;
 using Croniq.Providers.Telemetry;
+using FluentAssertions;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Xunit;
@@ -24,7 +25,7 @@ public class ProviderTests
         var provider = sp.GetRequiredService<ILoggingProvider>();
         var logger = provider.CreateLogger("test-category");
 
-        Assert.NotNull(logger);
+        logger.Should().NotBeNull();
     }
 
     [Fact]
@@ -36,8 +37,8 @@ public class ProviderTests
         var m1 = telemetry.GetMeter("Croniq", "1.0");
         var m2 = telemetry.GetMeter("Croniq", "1.0");
 
-        Assert.Same(s1, s2);
-        Assert.Same(m1, m2);
+        s1.Should().BeSameAs(s2);
+        m1.Should().BeSameAs(m2);
     }
 
     [Fact]
@@ -50,14 +51,14 @@ public class ProviderTests
         var provider = sp.GetRequiredService<ISecretProvider>();
 
         var seeded = await provider.GetSecretAsync(new SecretRequest("api-key"));
-        Assert.NotNull(seeded);
-        Assert.Equal("123", seeded!.Value);
+        seeded.Should().NotBeNull();
+        seeded!.Value.Should().Be("123");
 
         try
         {
             Environment.SetEnvironmentVariable("TEST_SECRET", "env-value");
             var fromEnv = await provider.GetSecretAsync(new SecretRequest("secret", Scope: "test"));
-            Assert.Equal("env-value", fromEnv!.Value);
+            fromEnv!.Value.Should().Be("env-value");
         }
         finally
         {
