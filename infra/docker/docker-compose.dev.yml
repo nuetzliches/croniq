@@ -16,6 +16,8 @@ services:
       Croniq__Core__TenantId: ${CRONIQ_CORE_TENANT_ID:-1}
       Croniq__Core__EnvironmentTag: ${CRONIQ_CORE_ENVIRONMENT:-dev}
       Croniq__Core__InstanceId: ${CRONIQ_API_INSTANCE_ID:-api-dev}
+      Croniq__Observability__OtlpEndpoint: ${CRONIQ_OBS_OTLP_ENDPOINT:-http://otel-collector:4317}
+      Croniq__Observability__OtlpProtocol: ${CRONIQ_OBS_OTLP_PROTOCOL:-grpc}
       Croniq__SqlServer__ConnectionString: Server=${CRONIQ_SQL_HOST:-mssql-22},1433;Database=${CRONIQ_SQL_DATABASE:-CroniqDev};User Id=sa;Password=${CRONIQ_SQL_PASSWORD:-CroniqSqlP@ssw0rd!};Encrypt=False;TrustServerCertificate=True;
     depends_on:
       mssql-22:
@@ -48,6 +50,8 @@ services:
       Croniq__Core__EnvironmentTag: ${CRONIQ_CORE_ENVIRONMENT:-dev}
       Croniq__Core__InstanceId: ${CRONIQ_WORKER_INSTANCE_ID:-worker-dev}
       Croniq__Persistence__Mode: SqlServer
+      Croniq__Observability__OtlpEndpoint: ${CRONIQ_OBS_OTLP_ENDPOINT:-http://otel-collector:4317}
+      Croniq__Observability__OtlpProtocol: ${CRONIQ_OBS_OTLP_PROTOCOL:-grpc}
       Croniq__SqlServer__ConnectionString: Server=${CRONIQ_SQL_HOST:-mssql-22},1433;Database=${CRONIQ_SQL_DATABASE:-CroniqDev};User Id=sa;Password=${CRONIQ_SQL_PASSWORD:-CroniqSqlP@ssw0rd!};Encrypt=False;TrustServerCertificate=True;
     depends_on:
       mssql-22:

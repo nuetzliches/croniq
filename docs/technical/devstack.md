@@ -45,9 +45,11 @@ All services share a `croniq-net` bridge network. Ports are exposed via `.env` d
 2. `copy .env.example .env` (first run) and adjust secrets/ports as needed.
 3. `scripts\devstack-up.cmd [--profile obs]` ensures `.env` exists, loads all compose files, and polls `/health`. As soon as `mssql-22` is ready, `croniq-db-migrator` runs automatically so the schema is ready before the API/worker start. The API/worker profiles are implied; pass extra profiles (e.g., `obs`) explicitly.
 4. `scripts\devstack-restart.cmd [--profile ...]` first calls `devstack-down --remove-orphans` with the same profiles, then replays `devstack-up`—useful when Docker networks/containers get stuck.
-5. API available at `http://localhost:5080`, Grafana at `http://localhost:5601` (login `admin/admin`) once the `obs` profile is enabled.
-6. To tear down and remove volumes: `scripts\devstack-down.cmd [--profile ...] --volumes` (or call `docker compose ... down -v`).
-7. For hot reload, developers can mount source directories and run `dotnet watch` from within the container or locally against the services.
+5. Send smoke traffic with `scripts\devstack-trigger-job.cmd [jobKey [initiatorTag]]`, which defaults to `1:dev:samples:smoke` and tags the metadata `initiator` (default `devstack-script`) while posting to `/jobs/trigger` using `CRONIQ_SMOKE_API_KEY`.
+6. The default OTLP target `http://otel-collector:4317` (gRPC) can be overridden via `CRONIQ_OBS_OTLP_ENDPOINT`; set `CRONIQ_OBS_OTLP_PROTOCOL=http` if you need to switch the sample hosts over to OTLP/HTTP. Both API and worker containers read these values via `Croniq:Observability:*` so telemetry can be pointed at alternative collectors.
+7. API available at `http://localhost:5080`, Grafana at `http://localhost:5601` (login `admin/admin`) once the `obs` profile is enabled.
+8. To tear down and remove volumes: `scripts\devstack-down.cmd [--profile ...] --volumes` (or call `docker compose ... down -v`).
+9. For hot reload, developers can mount source directories and run `dotnet watch` from within the container or locally against the services.
 
 ## CI Integration
 

@@ -36,11 +36,24 @@ This document captures the logging, metrics, and tracing strategy for Croniq ser
 
 ## Collector & Local Stack
 
-- Compose file `infra/docker/docker-compose.dev-observability.yml` (to be added) spins up:
+- Compose overlay `infra/docker/docker-compose.observability.yml` (loaded automatically by the devstack helper scripts) spins up:
   - `otel-collector` with pipelines for traces/logs/metrics → Prometheus, Tempo, Loki (optional).
-  - `grafana` with preloaded dashboards (`infra/docker/grafana/dashboards/*.json`).
+  - `grafana` with preloaded dashboards (`infra/docker/observability/grafana/dashboards/*.json`).
   - `tempo` (traces) and `prometheus` (metrics). Loki is optional for logs if not using OpenTelemetry logs.
-- Developer workflow: `docker compose -f infra/docker/docker-compose.dev-observability.yml up -d`, set `OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317`. Provide script `scripts/obs-up.cmd`.
+- Developer workflow: `scripts\devstack-up.cmd --profile obs` (or manual `docker compose` with all three files) and set `OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317` (default gRPC) for local SDK processes that emit telemetry outside of Docker; swap to `http://localhost:4318` + `OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf` only when an HTTP collector is required.
+
+## Verification Checklist (Local)
+
+1. `scripts\devstack-up.cmd --profile obs` ensures the base services (API, worker, SQL) plus `otel-collector`, `prometheus`, `tempo`, and `grafana` are up. Expose the OTLP gRPC endpoint via `CRONIQ_OTLP_GRPC_PORT` when you need to point external processes at the collector.
+2. Tail `docker compose -f infra/docker/docker-compose.yml -f infra/docker/docker-compose.dev.yml -f infra/docker/docker-compose.observability.yml logs otel-collector -f` and confirm the pipelines report `Exporter started` with no errors.
+3. Generate telemetry:
+
+- Hit the API health endpoint: `curl http://localhost:5080/health` repeatedly to produce request traces/metrics.
+- Trigger sample jobs via `scripts\devstack-trigger-job.cmd` (defaults to `1:dev:samples:smoke`) so the worker emits spans and Serilog logs.
+
+4. Check Grafana at `http://localhost:5601` (defaults `admin/admin`). The provisioned data sources (`Prometheus`, `Tempo`) should show as healthy; open the Scheduler dashboard to verify `cronijob.executions_total` increments.
+5. Validate traces in Tempo via the Grafana Explore tab (select Tempo data source, search for `service.name="Croniq.Api"`).
+6. Optional: `curl http://localhost:9090/api/v1/targets` should list the OTel collector scrape target as `up == 1`. Use this to ensure Prometheus continues to ingest metrics even before Grafana visualizes them.
 
 ## Dashboards & Alerts
 
@@ -55,13 +68,14 @@ This document captures the logging, metrics, and tracing strategy for Croniq ser
 - All Croniq services call `services.AddOpenTelemetry()` with instrumentation for ASP.NET Core, gRPC, and HttpClient. Libraries expose `ActivitySource`/`Meter` instances but avoid auto registration to keep host control.
 - Jobs can inject `IJobExecutionContext.ActivitySource` for custom spans; document best practices in consumer docs.
 - Provide helper extension `CroniqObservabilityExtensions.AddCroniqTelemetry(this OpenTelemetryBuilder builder)` that registers the default instrumentation, exporters, and resource attributes (service.name, service.version, deployment.environment, tenant when relevant).
+- Sample hosts (`Croniq.Sample.ApiHost`, `Croniq.Sample.WorkerHost`) now ship with baseline OpenTelemetry wiring (ASP.NET Core/HttpClient/runtime instrumentation, `Croniq.Core` ActivitySource, Serilog log export) and respect `Croniq:Observability:OtlpEndpoint` (injected via `CRONIQ_OBS_OTLP_ENDPOINT`, defaulting to `http://otel-collector:4317`) plus `Croniq:Observability:OtlpProtocol` (`CRONIQ_OBS_OTLP_PROTOCOL`, default `grpc`).
 
 ## Backlog to finish Observability Milestone
 
 - [ ] Introduce `CroniqObservabilityOptions` (logs, metrics, traces toggles, exporters) + `AddCroniqObservability` service extension.
 - [ ] Wire Serilog (JSON console + OTel sink) into `Croniq.Api` and sample hosts; ensure `Croniq.Providers.Default` exposes enrichment hooks.
 - [ ] Add `ActivitySource`/`Meter` usage in `Croniq.Core` (trigger worker, policy resolver, job pipeline) and `Croniq.Api` endpoints.
-- [ ] Create Docker Compose observability stack with collector + Grafana + Tempo + Prometheus, plus helper scripts.
+- [x] Create Docker Compose observability stack with collector + Grafana + Tempo + Prometheus, plus helper scripts.
 - [ ] Author Grafana dashboards (JSON) and Prometheus alert rules committed under `infra/monitoring`.
 - [ ] Update `docs/consumer` quickstart/configuration with instructions for enabling telemetry exports and viewing dashboards.
 - [ ] Add automated smoke tests verifying OTLP export (e.g., assert metrics appear in a test collector during CI).
