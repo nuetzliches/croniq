@@ -19,6 +19,7 @@ This document captures the logging, metrics, and tracing strategy for Croniq ser
 - **Correlation**: include `TraceId`/`SpanId` in every entry (Serilog `ActivityEnricher`). This aligns with gRPC/REST tracing.
 - **Hosts**: `AddCroniqObservability` wires the Serilog pipeline + OTLP sink automatically for `Croniq.Api`, the worker, and the sample hosts so no service needs bespoke logging bootstrap code.
 - **Hosts**: call `services.AddCroniqObservability(configuration, loggingBuilder, "<service>")` to provision Serilog (JSON console + OTLP sink) together with the shared OpenTelemetry exporters; `Croniq.Api` and both sample hosts already use this helper.
+- **Structured job scope**: `DefaultJobExecutionPipeline` wraps every job execution with Serilog scopes that emit `croniq.job.key`, `.namespace`, `.name`, optional `.variant`, as well as `croniq.tenant_id`, `croniq.environment`, `croniq.trigger.id`, and `croniq.trigger.initiator`. Loki and Grafana queries (Log Pulse dashboard) rely on these fields for tenant-safe filtering and INFO/ERROR panels.
 
 ## Metrics
 
@@ -55,8 +56,9 @@ This document captures the logging, metrics, and tracing strategy for Croniq ser
 - Trigger sample jobs via `scripts\devstack-trigger-job.cmd` (defaults to `1:dev:samples:smoke`) so the worker emits spans and Serilog logs.
 
 4. Check Grafana at `http://localhost:5610` (defaults `admin/admin`). The provisioned data sources (`Prometheus`, `Tempo`) should show as healthy; open the Scheduler dashboard to verify `cronijob.executions_total` increments.
-5. Validate traces in Tempo via the Grafana Explore tab (select Tempo data source, search for `service.name="Croniq.Api"`).
-6. Optional: `curl http://localhost:9090/api/v1/targets` should list the OTel collector scrape target as `up == 1`. Use this to ensure Prometheus continues to ingest metrics even before Grafana visualizes them.
+5. Switch to the "Croniq Log Pulse" dashboard (from `infra/docker/observability/grafana/dashboards/logs-overview.json`), select tenant `croniq-devstack`, and confirm INFO lines arrive for the triggered jobs while the "Failed Job Errors" panel stays quiet unless you provoke failures.
+6. Validate traces in Tempo via the Grafana Explore tab (select Tempo data source, search for `service.name="Croniq.Api"`).
+7. Optional: `curl http://localhost:9090/api/v1/targets` should list the OTel collector scrape target as `up == 1`. Use this to ensure Prometheus continues to ingest metrics even before Grafana visualizes them.
 
 ### Automated Smoke Tests
 
@@ -64,10 +66,11 @@ This document captures the logging, metrics, and tracing strategy for Croniq ser
 
 ## Dashboards & Alerts
 
-- **Dashboards**: Grafana auto-loads JSON from `infra/docker/observability/grafana/dashboards/` via `grafana/provisioning/dashboards/dashboards.yml`. Dashboards refresh every 30s and point at the provisioned `prometheus`/`tempo` data sources.
-  1. `scheduler.json` visualizes execution throughput, p50/p95 latency, queue depth, and trigger anomalies. Use it to confirm scheduler health before promoting releases.
-  2. `api-gateway.json` surfaces schedule upserts, manual triggers, and policy outcomes split by tenant so customer usage patterns are obvious.
-  3. To enable them outside the devstack, mount the dashboards + provisioning folders into your Grafana deployment and keep the datasource UIDs (`prometheus`, `tempo`) consistent or update the JSON accordingly.
+- **Dashboards**: Grafana auto-loads JSON from `infra/docker/observability/grafana/dashboards/` via `grafana/provisioning/dashboards/dashboards.yml`. Dashboards refresh every 30s and point at the provisioned `prometheus`, `tempo`, and `loki` data sources.
+  1. `logs-overview.json` (Croniq Log Pulse) visualizes Loki logs per tenant: trigger INFO lines, long-running jobs, and the dedicated "Failed Job Errors" panel that highlights `LogError` events emitted by the job pipeline.
+  2. `scheduler.json` visualizes execution throughput, p50/p95 latency, queue depth, and trigger anomalies. Use it to confirm scheduler health before promoting releases.
+  3. `api-gateway.json` surfaces schedule upserts, manual triggers, and policy outcomes split by tenant so customer usage patterns are obvious.
+  4. To enable them outside the devstack, mount the dashboards + provisioning folders into your Grafana deployment and keep the datasource UIDs (`prometheus`, `tempo`, `loki`) consistent or update the JSON accordingly.
 - **Alerts**: Prometheus loads rules from `infra/monitoring/rules/scheduler-alerts.yaml` (mounted via docker-compose). The rule file defines:
   - `CroniqDeadLettersHigh`: warning when dead letters are emitted for 2m.
   - `CroniqMisfireBurst`: warning when misfires exceed 5/min.

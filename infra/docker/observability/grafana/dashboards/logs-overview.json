@@ -184,6 +184,33 @@
         "showCommonLabels": true,
         "wrapLogMessage": true
       }
+    },
+    {
+      "type": "logs",
+      "title": "Failed Job Errors",
+      "id": 5,
+      "gridPos": {
+        "h": 10,
+        "w": 24,
+        "x": 0,
+        "y": 30
+      },
+      "datasource": {
+        "type": "loki",
+        "uid": "loki"
+      },
+      "targets": [
+        {
+          "expr": "{tenant=\"$tenant\", environment=~\"$environment\", service_name=~\".+\", level=\"ERROR\"} |= \"Trigger\"",
+          "refId": "A"
+        }
+      ],
+      "options": {
+        "dedupStrategy": "none",
+        "showLabels": true,
+        "showCommonLabels": true,
+        "wrapLogMessage": true
+      }
     }
   ]
 }

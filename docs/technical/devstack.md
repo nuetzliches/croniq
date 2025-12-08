@@ -34,7 +34,8 @@ All services share a `croniq-net` bridge network. Ports are exposed via `.env` d
 - Typical Explore query using the new labels:
 	- `{tenant="croniq-devstack", environment="dev", service_name="Croniq.Api"}` for API-only logs.
 	- `{tenant="croniq-devstack"} |= "ERROR"` for a quick severity filter.
-	- Use the templated **Croniq Log Pulse** dashboard (`infra/docker/observability/grafana/dashboards/logs-overview.json`) for prebuilt panels (per-service volume, level mix, latest WARN/ERROR stream).
+	- Use the templated **Croniq Log Pulse** dashboard (`infra/docker/observability/grafana/dashboards/logs-overview.json`) for prebuilt panels (per-service volume, level mix, latest WARN/ERROR stream, trigger INFO feed, and failed job errors at a glance).
+	- The job execution pipeline now emits structured log scopes (`croniq.job.*`, `croniq.trigger.*`) and Info/Error entries like `Trigger <JobKey> started/completed/failed`, so Loki queries can filter by tenant/environment, namespace/name, trigger id or initiator without string parsing.
 - Grafana Explore defaults to the last hour. When onboarding or after restarts, increase the time range (e.g., _Last 6 hours_) to include previously ingested chunks.
 
 ## Compose Files & Profiles

@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Threading;
 using System.Threading.Tasks;
+using Croniq.Core.Jobs;
 using Croniq.Core.Policies;
 using Croniq.Sdk;
 using Microsoft.Extensions.DependencyInjection;
@@ -12,6 +13,9 @@ namespace Croniq.Core.Execution;
 
 public sealed class DefaultJobExecutionPipeline : IJobExecutionPipeline
 {
+    private const string TriggerIdMetadataKey = "trigger_id";
+    private const string InitiatorMetadataKey = "initiator";
+
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly ActivitySource _activitySource;
     private readonly ILogger<DefaultJobExecutionPipeline> _logger;
@@ -43,6 +47,7 @@ public sealed class DefaultJobExecutionPipeline : IJobExecutionPipeline
         var jobLogger = loggerFactory?.CreateLogger(request.Descriptor.JobType) ?? _logger;
         var metadata = request.Metadata ?? new Dictionary<string, string>();
         var activitySource = request.ActivitySource ?? _activitySource;
+        using var logScope = jobLogger.BeginScope(BuildLogScope(request.JobKey, metadata));
 
         using var activity = activitySource.StartActivity("Croniq.Job.Execute");
         activity?.SetTag("croniq.job.key", request.JobKey.Value);
@@ -54,7 +59,8 @@ public sealed class DefaultJobExecutionPipeline : IJobExecutionPipeline
         }
         activity?.SetTag("croniq.tenant_id", request.JobKey.TenantId);
         activity?.SetTag("croniq.environment", request.JobKey.EnvironmentTag);
-        jobLogger.LogDebug("Starting job {JobKey}", request.JobKey.Value);
+        var stopwatch = Stopwatch.StartNew();
+        jobLogger.LogInformation("Trigger {JobKey} started", request.JobKey.Value);
 
         var executionOptions = request.ExecutionOptions ?? _policyResolver.ResolveExecution(request.JobKey);
         var pipeline = _pipelineProvider.Get(request.JobKey, executionOptions);
@@ -68,14 +74,45 @@ public sealed class DefaultJobExecutionPipeline : IJobExecutionPipeline
                 var effectiveToken = executionOptions.Timeout.CancelExecutionOnTimeout ? token : cancellationToken;
                 await job.ExecuteAsync(context, effectiveToken).ConfigureAwait(false);
             }, cancellationToken).ConfigureAwait(false);
+            stopwatch.Stop();
             activity?.SetStatus(ActivityStatusCode.Ok);
+            jobLogger.LogInformation("Trigger {JobKey} completed in {ElapsedMilliseconds} ms", request.JobKey.Value, stopwatch.ElapsedMilliseconds);
         }
-        catch
+        catch (Exception ex)
         {
+            stopwatch.Stop();
             activity?.SetStatus(ActivityStatusCode.Error);
+            jobLogger.LogError(ex, "Trigger {JobKey} failed after {ElapsedMilliseconds} ms", request.JobKey.Value, stopwatch.ElapsedMilliseconds);
             throw;
         }
+    }
 
-        jobLogger.LogDebug("Completed job {JobKey}", request.JobKey.Value);
+    private static IReadOnlyCollection<KeyValuePair<string, object?>> BuildLogScope(JobKey jobKey, IReadOnlyDictionary<string, string> metadata)
+    {
+        var scope = new List<KeyValuePair<string, object?>>
+        {
+            new("croniq.job.key", jobKey.Value),
+            new("croniq.job.namespace", jobKey.NamespaceSegment),
+            new("croniq.job.name", jobKey.JobName),
+            new("croniq.tenant_id", jobKey.TenantId),
+            new("croniq.environment", jobKey.EnvironmentTag)
+        };
+
+        if (!string.IsNullOrWhiteSpace(jobKey.Variant))
+        {
+            scope.Add(new KeyValuePair<string, object?>("croniq.job.variant", jobKey.Variant));
+        }
+
+        if (metadata.TryGetValue(TriggerIdMetadataKey, out var triggerId) && !string.IsNullOrWhiteSpace(triggerId))
+        {
+            scope.Add(new KeyValuePair<string, object?>("croniq.trigger.id", triggerId));
+        }
+
+        if (metadata.TryGetValue(InitiatorMetadataKey, out var initiator) && !string.IsNullOrWhiteSpace(initiator))
+        {
+            scope.Add(new KeyValuePair<string, object?>("croniq.trigger.initiator", initiator));
+        }
+
+        return scope;
     }
 }

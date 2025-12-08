@@ -19,6 +19,7 @@
 - [x] gRPC SchedulerService Proto und Client SDK (Croniq.Rpc.Client) generieren
 - [x] Build/Test CI Pipelines (GitHub Actions) mit Lint/Coverage Gates einrichten – Plan siehe `docs/technical/ci.md`
 - [x] Docker Compose Dev-Stack (API, Worker, SqlServer, OTel/Grafana) bereitstellen – Plan siehe `docs/technical/devstack.md`
+- [x] Observability/Grafana abgeschlossen (Loki Tenant + Croniq Log Pulse Dashboard) – Plan siehe `docs/technical/observability.md`
 - [x] Loki-Tenant (`croniq-devstack`) und Explore-Hinweise in `docs/technical/devstack.md` dokumentiert
 - [ ] SBOM/Signierung und Vulnerability Scans in Release-Flow einbauen – Plan siehe `docs/technical/supplychain.md`
 - [x] Quota-Guards im Core verankern (Rate/Concurrency) basierend auf PolicyResolver + Tests
