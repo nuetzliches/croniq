@@ -1,6 +1,6 @@
 # Croniq Security Baseline
 
-This document specifies the authentication, authorization, and rate limiting design for Croniq. It extends the guidance in `CONCEPT.md` (sections 3a, 9, 14, 18) and describes what remains to reach the "Security-Basis" milestone from `CHECKLIST.md`.
+This document specifies the authentication, authorization, and rate limiting design for Croniq. It extends the guidance captured in `architecture.md` and describes what remains to reach the "Security-Basis" milestone from `CHECKLIST.md`.
 
 ## Objectives
 
@@ -27,7 +27,7 @@ This document specifies the authentication, authorization, and rate limiting des
    - Environment tag derived from `env` claim or default per tenant.
    - Scopes come from the `scope`/`scp` claim; missing required scopes reject the request.
 3. **Route Protection**: Minimal API endpoints specify `[Authorize(AuthenticationSchemes = JwtBearerDefaults.AuthenticationScheme)]` for user flows while keeping API-key auth as the default. A dual-auth middleware chooses caller context based on the presence of `Authorization: Bearer` vs `X-Croniq-Key`.
-4. **Samples & Docs**: Provide configuration examples for Entra ID and Auth0 in `docs/consumer/configuration.md` once the implementation lands.
+4. **Samples & Docs**: Provide configuration examples for Entra ID and Auth0 in `docs/configuration.md` once the implementation lands.
 
 ### Mixed Mode & Future Providers
 
@@ -61,7 +61,7 @@ This document specifies the authentication, authorization, and rate limiting des
 - [ ] Update rate limiter to partition on `TenantId:CallerId` (fallback to key header when context missing) and expose per-tenant overrides.
 - [ ] Add gRPC interceptor mirroring the HTTP rate limiter.
 - [ ] Create admin endpoints + docs for API key issuance/rotation (ties into `Croniq.Auth.Abstractions` stores).
-- [ ] Extend `docs/consumer/configuration.md` with an "Authentication" section (API key vs OIDC) and examples.
+- [ ] Extend `docs/configuration.md` with an "Authentication" section (API key vs OIDC) and examples.
 - [ ] Add automated security regression tests (invalid key, expired key, revoked key, missing scope) under `Croniq.Api.Tests` or the future smoke suite.
 
 Delivering the checklist item means these backlog bullets are implemented and documented, ensuring both API key and OIDC callers share the same enforcement and observability experience.

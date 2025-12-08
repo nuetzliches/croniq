@@ -1,0 +1,53 @@
+# Croniq Troubleshooting
+
+Use this checklist to diagnose the most common issues developers hit while working with Croniq. Each section links to deeper guidance under `/deep-dive` when you need the full background.
+
+## 1. Authentication & Authorization
+
+| Symptom                                           | Likely Cause                                     | Fix                                                                                                                                                                                                    |
+| ------------------------------------------------- | ------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `401 Unauthorized` with API keys                  | Missing `X-Croniq-Key` header or wrong auth mode | Confirm `Croniq__Auth__Mode` and ensure the header is present. For InMemory mode, restart the host after changing `Croniq__Auth__InMemory__ApiKey`. See [`auth.md`](/guides/auth.md) for issuing keys. |
+| `401 Unauthorized` with OIDC                      | Token audience or issuer mismatch                | Set `Croniq:Auth:Oidc:Authority` and `Audience` to match the identity provider app. Use `jwt.ms` or `jwt.io` to inspect the failing token.                                                             |
+| `403 Forbidden` even though the token looks valid | Missing scopes or tenant claim                   | Update `Croniq:Auth:Oidc:RequiredScopes` and verify the IdP is issuing the expected `scope/scp` values. For tenant-aware enforcement, ensure the configured `TenantClaim` exists.                      |
+| Requests rate-limited immediately                 | Tenant/caller resolved to `anonymous`            | Inspect logs for `RateLimitPartition` messages. Provide either a valid key or bearer token so Croniq can derive the caller context before rate limiting.                                               |
+
+## 2. Dev Stack (Docker) Issues
+
+| Symptom                                        | Likely Cause                               | Fix                                                                                                                                                                        |
+| ---------------------------------------------- | ------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `mssql-22` container never becomes healthy     | Port already in use or volume corruption   | Stop other SQL instances on port 1433, then rerun `scripts\devstack-down.cmd --volumes` (wipes local DB). Reference `/deep-dive/devstack.md` for port overrides in `.env`. |
+| `croniq-db-migrator` exits with "login failed" | Wrong SQL credentials in `.env`            | Update `CRONIQ_SQL_CONNECTION` or `Croniq__SqlServer__ConnectionString`. Recreate `.env` from `.env.example` if unsure.                                                    |
+| API container restarts constantly              | Missing auth or persistence config         | Check `docker compose logs api -f`. Ensure the env file includes `Croniq__Auth__Mode` and persistence settings.                                                            |
+| Observability profile fails (`loki` issues)    | Overlapping port bindings or stale volumes | Run `scripts\devstack-down.cmd --profile obs --volumes` to reset observability containers before starting again.                                                           |
+
+## 3. Jobs Do Not Run
+
+| Symptom                    | Likely Cause                          | Fix                                                                                                                                                                     |
+| -------------------------- | ------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Manual triggers return 404 | Wrong `jobKey` namespace or tenant    | Ensure the job registration uses the same tenant/environment as the trigger payload. Use `JobKey.From("namespace", "name")` in code and align with the trigger request. |
+| Job stuck in waiting state | Custom prerequisites never satisfied  | Log additional detail within the job handler and watch the Croniq Log Pulse dashboard. Validate external dependencies (queues, APIs) before requeuing.                  |
+| Schedules never fire       | Worker host offline or policy blocked | Confirm the worker container/service is running. Check scheduler logs for policy rejections (quota, concurrency).                                                       |
+| Dead-lettered executions   | Exceptions bubble from handler        | Review Serilog logs or Grafana panels for the job. Add retries/policies as needed.                                                                                      |
+
+## 4. Observability & Telemetry
+
+| Symptom                              | Likely Cause                         | Fix                                                                                                                                                                               |
+| ------------------------------------ | ------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Grafana dashboards empty             | Collector not receiving OTLP traffic | Verify `Croniq__Observability__OtlpEndpoint` and protocol. When running outside Docker, point to `http://localhost:4317`. `/deep-dive/observability.md` lists the full checklist. |
+| Loki log panels missing data         | Tenant headers out of sync           | Ensure both the OTEL collector and Grafana Datasource use the same tenant ID (`croniq-devstack` by default). Update `infra/docker/observability/*` together.                      |
+| Prometheus alerts firing immediately | Dev stack running without workload   | Silence alerts or disable the rules when using a tiny dev stack. When investigating actual problems, read `infra/monitoring/rules/` annotations for runbooks.                     |
+
+## 5. Scripts & CLI Helpers
+
+| Symptom                                             | Likely Cause          | Fix                                                                                                         |
+| --------------------------------------------------- | --------------------- | ----------------------------------------------------------------------------------------------------------- |
+| `scripts\devstack-up.cmd` fails with ".env missing" | `.env` not created    | Copy `.env.example` to `.env` and edit the secrets. The script checks for the file before launching Docker. |
+| `scripts\devstack-trigger-job.cmd` returns `401`    | Missing smoke API key | Populate `CRONIQ_SMOKE_API_KEY` in `.env`. The script forwards it as `X-Croniq-Key`.                        |
+
+## Still Stuck?
+
+1. Capture `docker compose ps` and `docker compose logs <service> --tail=200` outputs.
+2. Note the Croniq version/commit you are running.
+3. Share the details in your team channel or file an issue with the steps to reproduce.
+
+Additional background lives in `/deep-dive/devstack.md`, `/deep-dive/security.md`, and `/deep-dive/observability.md`.

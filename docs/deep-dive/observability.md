@@ -1,6 +1,6 @@
 # Croniq Observability Plan
 
-This document captures the logging, metrics, and tracing strategy for Croniq services and libraries. It operationalizes `CONCEPT.md` sections 7, 9, and 15 and defines the work required to close the "Observability" item in `CHECKLIST.md`.
+This document captures the logging, metrics, and tracing strategy for Croniq services and libraries. It operationalizes the guidance recorded in `architecture.md` and defines the work required to close the "Observability" item in `CHECKLIST.md`.
 
 ## Objectives
 

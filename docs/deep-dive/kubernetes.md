@@ -1,6 +1,6 @@
 # Croniq Kubernetes Plan
 
-This document expands `CONCEPT.md` section 16 and captures the backlog required to satisfy the checklist item "Kubernetes Chart (charts/croniq) als Backlog-Platzhalter vorbereiten".
+This document expands the backlog captured in `architecture.md` and describes the work required to satisfy the checklist item "Kubernetes Chart (charts/croniq) als Backlog-Platzhalter vorbereiten".
 
 ## Objectives
 
@@ -51,7 +51,7 @@ This document expands `CONCEPT.md` section 16 and captures the backlog required 
 - [ ] Provide ServiceAccount/RBAC + PodDisruptionBudget + HPA defaults.
 - [ ] Implement Ingress templates with TLS annotations and gRPC support.
 - [ ] Add optional OTel collector subchart values and Grafana dashboards configmaps.
-- [ ] Document configuration examples (`docs/technical/kubernetes.md` linking to `values.*.yaml`).
+- [ ] Document configuration examples (`docs/deep-dive/kubernetes.md` linking to `values.*.yaml`).
 - [ ] Integrate helm lint/render tests into CI (nightly) and document release flow for chart packaging.
 
 Completing this backlog will allow the checklist item to be marked done once the chart exists and passes CI validation.

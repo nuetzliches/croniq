@@ -1,6 +1,6 @@
 # Croniq Test Harness
 
-This folder contains all automated test suites that back the Croniq quality strategy described in `docs/technical/testing.md`. Use this guide as a quick reference for running the suites locally and diagnosing failures.
+This folder contains all automated test suites that back the Croniq quality strategy described in `docs/deep-dive/testing.md`. Use this guide as a quick reference for running the suites locally and diagnosing failures.
 
 ## Prerequisites
 
@@ -49,4 +49,4 @@ All suites are regular `dotnet test` projects, so you can target any subset via 
 - **SQL container reuse**: If contract tests complain about schema drift, run `docker compose -f infra/docker/docker-compose.tests.yml down -v` to wipe old volumes, then rerun the suite.
 - **Verbose logs**: Pass `--logger:"console;verbosity=detailed"` to `dotnet test` for more context, or run `docker compose -f infra/docker/docker-compose.tests.yml logs -f` in another terminal while the smoke tests execute.
 
-Need more detail? See `docs/technical/testing.md` for the full strategy and CI wiring.
+Need more detail? See `docs/deep-dive/testing.md` for the full strategy and CI wiring.

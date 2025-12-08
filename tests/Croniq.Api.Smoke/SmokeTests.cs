@@ -65,7 +65,7 @@ public sealed class SmokeTests
         catch (HttpRequestException ex)
         {
             throw new InvalidOperationException(
-                "Croniq.Api smoke endpoint is unreachable. Ensure docker compose up --build is running (see docs/technical/testing.md).",
+                "Croniq.Api smoke endpoint is unreachable. Ensure docker compose up --build is running (see docs/deep-dive/testing.md).",
                 ex);
         }
     }

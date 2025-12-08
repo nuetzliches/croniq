@@ -60,7 +60,7 @@ This document defines the scope, technology evaluation, and backlog required to 
 ## Backlog to Complete Checklist Item
 
 - [ ] Finalize technology choice & document decision (React vs alternative) with design guidelines (typography, color, layout).
-- [ ] Draft IA/wireframes and attach to `docs/technical/ui.md` (link to design artifacts).
+- [ ] Draft IA/wireframes and attach to `docs/deep-dive/ui.md` (link to design artifacts).
 - [ ] Scaffold UI project (Angular 21 + TypeScript + Storybook/Chromatic + Playwright tests) under `src/Croniq.Ui` with CI build, once upstream layers are finished.
 - [ ] Define API client layer (reuse `Croniq.Rpc.Client` or generate OpenAPI client) and auth integration plan.
 - [ ] Implement MVP dashboard + schedules read-only views using mocked data, then wire to API once ready.

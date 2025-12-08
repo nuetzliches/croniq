@@ -62,5 +62,5 @@ Even when using the fluent API, Croniq materializes an internal `IJob` implement
 
 ## 6. Next Steps
 
-- Configure concurrency, retries, and timeout policies via [`policies.md`](policies.md).
-- Learn how to attach different trigger types (cron, interval, ad-hoc) via [`triggers.md`](triggers.md).
+- Configure concurrency, retries, and timeout policies via [`policies.md`](./policies.md).
+- Learn how to attach different trigger types (cron, interval, ad-hoc) via [`triggers.md`](./triggers.md).

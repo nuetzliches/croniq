@@ -1,6 +1,6 @@
 # Croniq Configuration Guide
 
-This guide explains how the Croniq API host (`Croniq.Api`) resolves configuration when you call `AddCroniqApiServices(...)` and `UseCroniqApi(...)`. It also lists the environment variables you typically need during local development or deployments.
+This guide explains how the Croniq API host (`Croniq.Api`) resolves configuration when you call `AddCroniqApiServices(...)` and `UseCroniqApi(...)`. It also lists the environment variables you typically need during local development or deployments. If you still need to pick an auth mode or understand how callers authenticate, start with the consumer guide in [`auth.md`](/guides/auth.md).
 
 ## 1. Configuration Sources & Priority
 
@@ -37,6 +37,8 @@ builder.Services.PostConfigure<CroniqAuthOptions>(options =>
 ```
 
 ## 3. Key Environment Variables
+
+See [`auth.md`](/guides/auth.md) for the end-to-end authentication story and when to prefer API keys vs OAuth2/OIDC.
 
 | Variable                                           | Required                                                          | Description                                                                                | Example                                            |
 | -------------------------------------------------- | ----------------------------------------------------------------- | ------------------------------------------------------------------------------------------ | -------------------------------------------------- |
@@ -101,7 +103,11 @@ Only override the values you truly need—everything else continues to flow from
 - **Unexpected tenant scope:** Verify `Croniq__Core__TenantId`/`EnvironmentTag` when multiple developers work on the same database to avoid job collisions.
 - **Rate limiter rejecting calls:** Increase `Croniq__Api__RequestsPerMinute` or tailor the limiter via `AddCroniqApiRateLimiter` options.
 
+Need a bigger checklist? Jump to [`troubleshooting.md`](/ops/troubleshooting.md) for Docker/dev-stack, observability, and CLI-specific fixes.
+
 ## 7. Next Steps
 
-- Return to the [Quickstart](quickstart.md) to continue the walkthrough.
-- Consult `docs/technical/job-registration.md` (upcoming) for the in-depth view on how the runtime persists job metadata during startup.
+- Return to the [Quickstart](/introduction/quickstart.md) to continue the walkthrough.
+- Consult `docs/deep-dive/job-registration.md` (upcoming) for the in-depth view on how the runtime persists job metadata during startup.
+- Switch to [`auth.md`](/guides/auth.md) when you need detailed guidance on caller flows and secret rotation.
+- Keep [`troubleshooting.md`](/ops/troubleshooting.md) handy when startup or dev stack issues block you.

@@ -56,8 +56,8 @@ croniq/
 
 ### Dokumentationsstraenge
 
-- **Consumer Docs** (`docs/consumer/*`): Quickstarts, SDK-Guides, Samples und How-Tos fuer Teams, die Croniq nutzen oder Jobs implementieren. Enthalten Schritt-fuer-Schritt-Anleitungen (z.B. "Ersten Job schreiben", "API-Key erzeugen") und fokussieren auf Developer Experience.
-- **Technische Docs** (`docs/technical/*`): Architektur- und Provider-Dokumentation, Datenbank-Schemata, Deployment-Handbuecher sowie Operations-Runbooks. Diese Straenge adressieren Maintainer:innen, Platform-Teams und Contributors.
+- **Consumer Docs** (Top-Level in `docs/*.md`, exkl. `docs/deep-dive/`): Quickstarts, SDK-Guides, Samples und How-Tos fuer Teams, die Croniq nutzen oder Jobs implementieren. Enthalten Schritt-fuer-Schritt-Anleitungen (z.B. "Ersten Job schreiben", "API-Key erzeugen") und fokussieren auf Developer Experience mit minimalem Setup-Aufwand.
+- **Technische Docs** (`docs/deep-dive/*`): Architektur- und Provider-Dokumentation, Datenbank-Schemata, Deployment-Handbuecher sowie Operations-Runbooks. Diese Straenge adressieren Maintainer:innen, Platform-Teams und Contributors.
 - Beide Straenge verlinken gegenseitig auf relevante Referenzen (z.B. Consumer Doc verweist auf tiefergehende Architekturpassagen), werden aber separat versioniert und in der CI validiert (Broken-Link-Checks, Samples-Builds). Release-Notes referenzieren beide Perspektiven explizit.
 
 ### Diagramme & Nachvollziehbarkeit
@@ -191,7 +191,7 @@ Der Scheduler liest das `CroniqJobAttribute`, bildet daraus den `JobKey` und reg
 - Fortschritt wird ueber `IJobExecutionContext.InitProgress(total)` (einmal pro Ausfuehrungspfad) und `ReportProgress(processed)` kommuniziert. Diese Informationen fliessen in Telemetrie, UI und optionale Resume-Strategien.
 - Semantische Statusmeldungen nutzen `CustomState(string detail, JobState state = JobState.Waiting)`. Der Croniq-Core-State (`JobState`) bleibt Pflicht, `detail` beschreibt domaenenspezifische Unterteilungen (z.B. `waiting-on-dependency`, `step-1`).
 - Fehler werden im Handler geloggt und erneut geworfen; Policies (Retry, Dead-Letter) reagieren auf die Exception. `CustomState(..., JobState.Error)` ist optional fuer zusaetzliche Sichtbarkeit.
-- Das Quickstart-Beispiel unter `docs/consumer/quickstart.md` fungiert als Referenz fuer die drei empfohlenen Handler-Patterns (minimal, Progress, CustomState).
+- Das Quickstart-Beispiel unter `docs/quickstart.md` fungiert als Referenz fuer die drei empfohlenen Handler-Patterns (minimal, Progress, CustomState).
 
 ## 5. JobStore & Processing
 
@@ -290,7 +290,7 @@ Der Scheduler liest das `CroniqJobAttribute`, bildet daraus den `JobKey` und reg
 - Konfigurierbare Retry-Strategien (exponential backoff, fixed retry count).
 - Error Routing: Failed Jobs -> Dead-letter Queue (In-Memory oder Persistenz), optional Notification Provider.
 
-Handler signalisieren Fehler stets ueber Exceptions: zuerst loggen, optional `CustomState(..., JobState.Error)` setzen, anschliessend `throw;`, damit Retry- und Dead-Letter-Policies greifen. Semantische Zwischenzustaende (Waiting/Running/Finalized) werden nur bei Bedarf ueber `CustomState` publiziert, waehrend Fortschritt ueber `InitProgress`/`ReportProgress` laeuft. Das konkrete Authoring-Pattern ist in `docs/consumer/quickstart.md` dokumentiert.
+Handler signalisieren Fehler stets ueber Exceptions: zuerst loggen, optional `CustomState(..., JobState.Error)` setzen, anschliessend `throw;`, damit Retry- und Dead-Letter-Policies greifen. Semantische Zwischenzustaende (Waiting/Running/Finalized) werden nur bei Bedarf ueber `CustomState` publiziert, waehrend Fortschritt ueber `InitProgress`/`ReportProgress` laeuft. Das konkrete Authoring-Pattern ist in `docs/quickstart.md` dokumentiert.
 
 ### Entscheidung 6: Policy-Engine & Fehlerbehandlung
 

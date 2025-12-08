@@ -1,6 +1,6 @@
 # Croniq Testing Strategy
 
-This document extends the quality vision captured in `CONCEPT.md` (§12) and describes how every Croniq change is validated—from fast unit tests to release-day compliance checks. It is the single source of truth for contributors, QA, and release managers.
+This document extends the quality vision captured in `architecture.md` and describes how every Croniq change is validated—from fast unit tests to release-day compliance checks. It is the single source of truth for contributors, QA, and release managers.
 
 ## Guiding Principles
 

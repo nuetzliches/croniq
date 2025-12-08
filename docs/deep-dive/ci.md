@@ -11,13 +11,13 @@ This document describes the continuous integration and delivery strategy require
 
 ## Pipeline Topology
 
-| Workflow         | Trigger                            | Purpose                                                                                                                          |
-| ---------------- | ---------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
-| `ci-pr.yml`      | Pull request to `main`             | Lint, build, unit + contract tests with coverage, basic security checks.                                                         |
-| `ci-nightly.yml` | Scheduled (UTC 02:00) + manual run | Full stack validation: PR steps + Compose E2E tests (dev stack), Docker image build, integration smoke, dependency scanning.     |
-| `release.yml`    | Tag `v*` pushes or manual dispatch | Build/publish NuGet packages & container images, run smoke tests against staging environment, generate SBOMs and sign artifacts. |
+| Workflow         | Trigger                            | Purpose                                                                                                                                                        |
+| ---------------- | ---------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ci-pr.yml`      | Pull request to `main`             | Lint, build, unit + contract tests with coverage, basic security checks.                                                                                       |
+| `ci-nightly.yml` | Scheduled (UTC 02:00) + manual run | Full stack validation: PR steps + Compose E2E tests (dev stack), Docker image build, integration smoke, dependency scanning.                                   |
+| `release.yml`    | Tag `v*` pushes or manual dispatch | Build & test release artifacts, publish NuGet packages and container images, gate on SBOM/vulnerability checks, sign assets, attach reports to GitHub Release. |
 
-`ci-nightly.yml` already lives in `.github/workflows/` and can be triggered manually while the remaining workflows are still pending.
+`ci-nightly.yml` and `release.yml` already live in `.github/workflows/` and can be triggered manually. The PR workflow (`ci-pr.yml`) remains outstanding (current PR validation runs via `tests.yml`).
 
 ## ci-pr.yml (Validation)
 
@@ -55,23 +55,17 @@ This document describes the continuous integration and delivery strategy require
 ## release.yml (Artifacts & Deploy)
 
 1. **Versioning**
-   - Uses tag (`vMAJOR.MINOR.PATCH`). Update `Directory.Build.props` or `dotnet pack` version accordingly.
+   - Uses the pushed git tag (`vMAJOR.MINOR.PATCH`) by default; manual dispatch can override via the `version` input. Tags feed directly into NuGet package metadata and GHCR image tags.
 2. **Build & Test**
-   - Reuse `ci-nightly` steps.
+   - `tests` job restores, builds (Release config), and runs the full solution test suite once more for release traceability. TRX logs upload as artifacts for auditing.
 3. **Package Publishing**
-   - `dotnet pack` for NuGet projects (Core, SDK, Persistence, Auth, Providers).
-   - Publish to GitHub Packages or NuGet.org (controlled by `NUGET_API_KEY`).
+   - `packages` job executes `dotnet pack`, generates SBOMs with `syft dir:artifacts/nuget -o spdx-json`, runs `dotnet list package --vulnerable --include-transitive`, signs `.nupkg` files when signing secrets exist, and optionally pushes to NuGet.org via `NUGET_API_KEY`.
 4. **Container Images**
-   - Build multi-arch images (linux/amd64, linux/arm64) using `docker buildx`. Push to GHCR `ghcr.io/nuetzliches/croniq-api:<tag>`.
+   - `images` job builds the API + Worker sample hosts using the Dockerfiles under `samples/`, tags/pushes them to `ghcr.io/<owner>/croniq-{api|worker}:<tag>` plus `:latest`, and creates SBOMs directly from the pushed images.
 5. **Security & Compliance**
-   - Generate SBOM via `syft packages dir:. -o spdx-json=sbom.json`.
-   - Sign container images with `cosign sign --key env://COSIGN_KEY`.
-   - Run `trivy image` scan; fail on HIGH/CRITICAL.
-6. **Smoke Deploy**
-   - If Compose: run `docker compose -f infra/docker/docker-compose.release.yml up` and run smoke tests.
-   - If Kubernetes staging available, run Helm upgrade + `kubectl` smoke tests.
-7. **Release Notes**
-   - Auto-generate changelog (e.g., `git-cliff`), attach artifacts to GitHub Release.
+   - `trivy fs` runs before packaging to gate dependency vulnerabilities, `trivy image` scans each GHCR image, and SBOMs + SARIF reports upload as workflow artifacts. Cosign signing is executed when `COSIGN_KEY`/`COSIGN_PASSWORD` secrets are available.
+6. **Release Publishing**
+   - The `publish` job downloads all artifacts, collates SBOMs/scan results, and attaches them to the GitHub Release produced by the tag (manual dispatch reuses the same mechanism). Smoke deploys remain a backlog item once staging infrastructure is ready.
 
 ## Tooling & Repo Layout
 
@@ -89,12 +83,12 @@ This document describes the continuous integration and delivery strategy require
 
 ## Backlog to Complete CI/CD Milestone
 
-- [ ] Create `.github/workflows/ci-pr.yml`, `release.yml` implementing the described stages. (Nightly workflow added.)
+- [ ] Create `.github/workflows/ci-pr.yml` implementing the described validation stages (nightly + release workflows already added).
 - [ ] Add reusable composite actions or scripts for test execution, coverage aggregation, and Compose orchestration.
 - [ ] Check in `Directory.Build.props`, `.config/dotnet-tools.json`, and `eng/` helpers referenced by the workflows.
-- [ ] Document local reproduction steps (`docs/technical/ci.md` + `README`) so developers can mimic CI commands.
+- [ ] Document local reproduction steps (`docs/deep-dive/ci.md` + `README`) so developers can mimic CI commands.
 - [ ] Configure required secrets/environments in GitHub with least privilege and document them in an internal runbook.
 - [ ] Hook coverage & test results into PR status (e.g., Codecov or built-in summary comment).
-- [ ] Integrate SBOM + signing steps into the release workflow once cosign keys are provisioned.
+- [x] Integrate SBOM + signing steps into the release workflow (cosign execution becomes active once secrets are provided).
 
 Once these backlog items land, the "Build/Test CI Pipelines" checklist entry can move to done.

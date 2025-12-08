@@ -1,6 +1,6 @@
 # Croniq Policy Engine Plan
 
-This document explains how Croniq will implement the Polly-based policy engine promised in `CONCEPT.md` sections 5, 11, and 14. The goal is to close the "Policy-Engine auf Polly-Basis" item in `CHECKLIST.md` by defining retry/timeout/circuit and dead-letter behavior across Scheduler and API workloads.
+This document explains how Croniq implements the Polly-based policy engine outlined in `architecture.md`. The goal is to close the "Policy-Engine auf Polly-Basis" item in `CHECKLIST.md` by defining retry/timeout/circuit and dead-letter behavior across Scheduler and API workloads.
 
 ## Goals
 
@@ -49,7 +49,7 @@ This document explains how Croniq will implement the Polly-based policy engine p
 - [x] Emit policy outcome counters/metrics via the `ExecutionPolicyPipelineProvider` + `TriggerWorker` instrumentation (replaces earlier plan to wire it inside `DefaultJobExecutionPipeline`).
 - [x] Extend persistence contracts for dead-letter writes/reads and update SqlServer EF migrations accordingly.
 - [x] Provide integration tests in `Croniq.Core.Tests` + contract tests for persistence to validate dead-letter storage.
-- [ ] Document policy configuration knobs in `docs/consumer/policies.md` and add examples to samples.
+- [ ] Document policy configuration knobs in `docs/policies.md` and add examples to samples.
 - [ ] Wire dashboards/alerts from the observability plan to include policy counters (ensure exporters emit them).
 
 Deliverables include code, tests, docs, and dashboard updates. When the backlog is complete, mark the checklist item as done.

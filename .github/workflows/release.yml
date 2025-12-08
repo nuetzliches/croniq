@@ -1,0 +1,270 @@
+name: Croniq Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Override artifact version (defaults to git tag)"
+        required: false
+        type: string
+
+permissions:
+  contents: write
+  packages: write
+  security-events: write
+  id-token: write
+
+env:
+  DOTNET_NOLOGO: true
+  REGISTRY: ghcr.io
+
+jobs:
+  tests:
+    name: Build & Test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Restore
+        run: dotnet restore croniq.sln
+
+      - name: Build (Release)
+        run: dotnet build croniq.sln --configuration Release --no-restore
+
+      - name: Run full test suite
+        run: dotnet test croniq.sln --configuration Release --no-build --logger "trx;LogFileName=release-tests.trx"
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-test-results
+          path: "**/TestResults/*.trx"
+
+  packages:
+    name: Pack, Scan & Sign NuGet Artifacts
+    needs: tests
+    runs-on: ubuntu-latest
+    env:
+      NUGET_SIGNING_CERT_BASE64: ${{ secrets.NUGET_SIGNING_CERT_BASE64 }}
+      NUGET_SIGNING_CERT_PASSWORD: ${{ secrets.NUGET_SIGNING_CERT_PASSWORD }}
+      NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Prepare artifact folders
+        run: |
+          mkdir -p artifacts/nuget
+          mkdir -p artifacts/sbom
+          mkdir -p artifacts/trivy
+
+      - name: Pack libraries
+        run: dotnet pack croniq.sln --configuration Release --output artifacts/nuget
+
+      - name: Dependency vulnerability check
+        run: dotnet list package --vulnerable --include-transitive
+
+      - name: Install Syft
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | sh -s -- -b ./bin
+          echo "${{ github.workspace }}/bin" >> $GITHUB_PATH
+
+      - name: Generate NuGet SBOM (Syft)
+        run: syft dir:artifacts/nuget -o spdx-json=artifacts/sbom/nuget.spdx.json
+
+      - name: Run Trivy filesystem scan
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: fs
+          scan-ref: .
+          severity: HIGH,CRITICAL
+          format: sarif
+          output: artifacts/trivy/source.sarif
+          exit-code: 1
+          ignore-unfixed: true
+
+      - name: Decode signing certificate
+        if: env.NUGET_SIGNING_CERT_BASE64 != ''
+        run: |
+          echo "$NUGET_SIGNING_CERT_BASE64" | base64 -d > signingCert.pfx
+        shell: bash
+
+      - name: Sign NuGet packages
+        if: env.NUGET_SIGNING_CERT_BASE64 != ''
+        run: dotnet nuget sign artifacts/nuget/*.nupkg --certificate-path signingCert.pfx --certificate-password "$NUGET_SIGNING_CERT_PASSWORD" --timestamper http://timestamp.digicert.com
+        shell: bash
+
+      - name: Publish NuGet packages
+        if: env.NUGET_API_KEY != ''
+        run: |
+          for pkg in artifacts/nuget/*.nupkg; do
+            dotnet nuget push "$pkg" --api-key "$NUGET_API_KEY" --source https://api.nuget.org/v3/index.json --skip-duplicate
+          done
+        shell: bash
+
+      - name: Upload package artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-packages
+          path: artifacts
+
+  images:
+    name: Build, Scan & Sign Container Images
+    needs: tests
+    runs-on: ubuntu-latest
+    env:
+      COSIGN_KEY: ${{ secrets.COSIGN_KEY }}
+      COSIGN_PASSWORD: ${{ secrets.COSIGN_PASSWORD }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Resolve version
+        id: version
+        run: |
+          VERSION="${{ github.event.inputs.version }}"
+          if [ -z "$VERSION" ]; then
+            VERSION="${GITHUB_REF_NAME}"
+          fi
+          if [ -z "$VERSION" ]; then
+            VERSION="manual-${GITHUB_RUN_ID}"
+          fi
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "api_image=${{ env.REGISTRY }}/${{ github.repository_owner }}/croniq-api:$VERSION" >> $GITHUB_OUTPUT
+          echo "api_latest=${{ env.REGISTRY }}/${{ github.repository_owner }}/croniq-api:latest" >> $GITHUB_OUTPUT
+          echo "worker_image=${{ env.REGISTRY }}/${{ github.repository_owner }}/croniq-worker:$VERSION" >> $GITHUB_OUTPUT
+          echo "worker_latest=${{ env.REGISTRY }}/${{ github.repository_owner }}/croniq-worker:latest" >> $GITHUB_OUTPUT
+
+      - name: Build Croniq API image
+        run: |
+          docker build -f samples/Croniq.Sample.ApiHost/Dockerfile -t ${{ steps.version.outputs.api_image }} -t ${{ steps.version.outputs.api_latest }} .
+          docker push ${{ steps.version.outputs.api_image }}
+          docker push ${{ steps.version.outputs.api_latest }}
+
+      - name: Build Croniq Worker image
+        run: |
+          docker build -f samples/Croniq.Sample.WorkerHost/Dockerfile -t ${{ steps.version.outputs.worker_image }} -t ${{ steps.version.outputs.worker_latest }} .
+          docker push ${{ steps.version.outputs.worker_image }}
+          docker push ${{ steps.version.outputs.worker_latest }}
+
+      - name: Install Syft & Cosign
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | sh -s -- -b ./bin
+          curl -sSfL https://github.com/sigstore/cosign/releases/latest/download/cosign-linux-amd64 > cosign
+          chmod +x cosign
+          mv cosign ./bin/cosign
+          echo "${{ github.workspace }}/bin" >> $GITHUB_PATH
+
+      - name: Prepare artifact folders
+        run: |
+          mkdir -p artifacts/images/sbom
+          mkdir -p artifacts/images/trivy
+
+      - name: Generate container SBOMs
+        run: |
+          syft ${{ steps.version.outputs.api_image }} -o spdx-json=artifacts/images/sbom/api-${{ steps.version.outputs.version }}.spdx.json
+          syft ${{ steps.version.outputs.worker_image }} -o spdx-json=artifacts/images/sbom/worker-${{ steps.version.outputs.version }}.spdx.json
+
+      - name: Trivy scan (API image)
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: image
+          image-ref: ${{ steps.version.outputs.api_image }}
+          severity: HIGH,CRITICAL
+          format: sarif
+          output: artifacts/images/trivy/api.sarif
+          exit-code: 1
+          ignore-unfixed: true
+
+      - name: Trivy scan (Worker image)
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: image
+          image-ref: ${{ steps.version.outputs.worker_image }}
+          severity: HIGH,CRITICAL
+          format: sarif
+          output: artifacts/images/trivy/worker.sarif
+          exit-code: 1
+          ignore-unfixed: true
+
+      - name: Sign container images (cosign)
+        if: env.COSIGN_KEY != ''
+        env:
+          COSIGN_EXPERIMENTAL: "true"
+        run: |
+          ./bin/cosign sign --yes --key env://COSIGN_KEY ${{ steps.version.outputs.api_image }}
+          ./bin/cosign sign --yes --key env://COSIGN_KEY ${{ steps.version.outputs.worker_image }}
+        shell: bash
+
+      - name: Upload container artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-images
+          path: artifacts/images
+
+  publish:
+    name: Publish Release Artifacts
+    needs:
+      - packages
+      - images
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download package artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: release-packages
+          path: release/packages
+
+      - name: Download container artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: release-images
+          path: release/images
+
+      - name: Assemble release payload
+        run: |
+          ls -R release
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          draft: false
+          files: |
+            release/packages/**/*.nupkg
+            release/packages/sbom/*.json
+            release/packages/trivy/*.sarif
+            release/images/sbom/*.json
+            release/images/trivy/*.sarif
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

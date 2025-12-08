@@ -61,3 +61,8 @@ TestResult.xml
 
 # Local SQL Server container data
 infra/docker/mssql-data/
+
+# docs / vitepress
+docs/node_modules/
+docs/.vitepress/dist/
+docs/.vitepress/cache/

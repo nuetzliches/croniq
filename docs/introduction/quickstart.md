@@ -1,6 +1,6 @@
 # Croniq Quickstart: Hello Croniq Job
 
-This guide walks you through creating your first Croniq job, registering it with the Scheduler, and triggering it via the Minimal API. It assumes you already reviewed the architectural context in `CONCEPT.md` (sections 4–11).
+This guide walks you through creating your first Croniq job, registering it with the Scheduler, and triggering it via the Minimal API. It assumes you already reviewed the architectural context in [`/deep-dive/architecture.md`](/deep-dive/architecture.md).
 
 > **Prerequisites**
 >
@@ -10,7 +10,9 @@ This guide walks you through creating your first Croniq job, registering it with
 >
 > All commands are shown for Windows PowerShell / CMD; adapt paths for your OS if needed.
 >
-> Need the full Croniq reference environment? Follow [`docs/technical/devstack.md`](../technical/devstack.md) for compose profiles and helper scripts.
+> Need the full Croniq reference environment? Follow [`docs/deep-dive/devstack.md`](/deep-dive/devstack.md) for compose profiles and helper scripts.
+>
+> Still deciding how to secure the API? Read [`auth.md`](/guides/auth.md) for the consumer-facing guide to API keys vs OAuth2 before exposing your endpoints.
 
 ## 1. Create a Single Project
 
@@ -72,7 +74,7 @@ app.Run();
 - The fluent API surfaces multiple `Handle*` overloads if you need them, but Croniq expects most jobs to rely on a single `Handle` delegate and to report progress/state through the execution context (examples below).
 - `builder.Services.AddCroniq()` reads every `CRONIQ_*` environment variable by default (e.g., `CRONIQ_ENDPOINT`, `CRONIQ_API_KEY`, optional `CRONIQ_TENANT`, `CRONIQ_ENV`), so you do not have to duplicate endpoint or key configuration in code.
 - Configuration precedence and advanced scenarios are described in [`configuration.md`](configuration.md).
-- API surface will evolve. Always check the latest signatures in `docs/technical` or `CONCEPT.md`.
+- API surface will evolve. Always check the latest signatures in `/deep-dive/` (start with `architecture.md`).
 
 ### Report progress from a single handler
 
@@ -168,7 +170,7 @@ curl -X POST https://localhost:5001/schedules \
          }"
 ```
 
-Refer to `docs/technical/persistence.md` (to be added) for the exact schedule payload and validation rules.
+Refer to `/deep-dive/persistence.md` (to be added) for the exact schedule payload and validation rules.
 
 ## 6. Run Everything
 
@@ -178,7 +180,7 @@ cd HelloCroniq.Api
  dotnet run
 ```
 
-If you need the Croniq dev stack instead of a local SDK host, start it via the instructions in [`docs/technical/devstack.md`](../technical/devstack.md).
+If you need the Croniq dev stack instead of a local SDK host, start it via the instructions in [`docs/deep-dive/devstack.md`](/deep-dive/devstack.md).
 
 Trigger the job manually:
 
@@ -224,15 +226,17 @@ Restart the application so the new environment variables take effect. The defaul
 - Inspect traces under Grafana ▸ Explore ▸ Tempo, filtering by `service.name="Croniq.Api"`.
 - Check Prometheus ▸ Alerts to see the built-in alerts from `infra/monitoring/rules/scheduler-alerts.yaml`. Alerts fire when dead letters, misfires, queue depth, or latency breach their thresholds (`CroniqDeadLettersHigh`, `CroniqMisfireBurst`, `CroniqQueueDepthHigh`, `CroniqLatencyP95High`, `CroniqJobFailures`).
 
-4. Deploying to your own observability stack? Copy the dashboard JSON + rule file into your Grafana/Prometheus setup and keep the datasource UIDs (`prometheus`, `tempo`) consistent. See [`docs/technical/observability.md`](../technical/observability.md#dashboards--alerts) for detailed instructions.
+4. Deploying to your own observability stack? Copy the dashboard JSON + rule file into your Grafana/Prometheus setup and keep the datasource UIDs (`prometheus`, `tempo`) consistent. See [`docs/deep-dive/observability.md`](/deep-dive/observability.md#dashboards--alerts) for detailed instructions.
 
 ## 7. Clean Up & Next Steps
 
 - Stop the API, tear down Docker resources (`docker compose down`) if used.
 - Extend the job to read secrets via `ISecretProvider`, add retry policies, or push telemetry to your observability stack.
 - Continue with:
-  - [`configuration.md`](configuration.md) for tenant/environment options
-  - [`policies.md`](policies.md) and [`triggers.md`](triggers.md) to tune job behavior
-  - `docs/technical/job-registration.md` for internal startup flow and persistence sync details
+  - [`configuration.md`](/introduction/configuration.md) for tenant/environment options
+  - [`auth.md`](/guides/auth.md) to switch between API key and OIDC caller flows
+  - [`policies.md`](/guides/policies.md) and [`triggers.md`](/guides/triggers.md) to tune job behavior
+  - `/deep-dive/job-registration.md` for internal startup flow and persistence sync details
+- Hit [`troubleshooting.md`](/ops/troubleshooting.md) if any of the steps above fail or you suspect dev stack issues
 
 Happy scheduling! Translate findings back into the documentation as you refine the workflow.

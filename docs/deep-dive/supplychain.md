@@ -13,7 +13,7 @@ This plan details how we will fulfill the checklist item "SBOM/Signierung und Vu
 
 - **Tooling**: Use `syft` for SBOM generation (SPDX JSON) across source + built artifacts. Pin version via `.config/dotnet-tools.json` or wrapper script.
 - **NuGet packages**: After `dotnet pack`, run `syft packages ./artifacts/nuget -o spdx-json=sbom-nuget.json`.
-- **Container images**: After `docker buildx build`, run `syft docker-archive cron iq-api.tar -o spdx-json=sbom-api.json` before pushing.
+- **Container images**: After Docker builds finish, run `syft ghcr.io/<owner>/croniq-<api|worker>:<tag> -o spdx-json=sbom-api.json` (the release workflow already emits `api-<version>.spdx.json` and `worker-<version>.spdx.json`).
 - **Storage**: Attach SBOM files to GitHub Releases and upload as workflow artifacts. Keep a copy under `artifacts/sbom/` in build output.
 
 ## Vulnerability Scanning
@@ -29,7 +29,7 @@ This plan details how we will fulfill the checklist item "SBOM/Signierung und Vu
 - **NuGet**: Use `dotnet nuget sign` (or `nuget sign`) with an Azure Key Vault or local certificate; store certificate thumbprint in GitHub secret. Optional alternative: integrate with SignPath if available.
 - **Containers**: Sign images using `cosign sign --key env://COSIGN_KEY ghcr.io/nuetzliches/croniq-api:<tag>`. Store public key in repo (`infra/signing/cosign.pub`).
 - **Attestations**: Use `cosign attest` with predicate type `https://slsa.dev/provenance/v1` to link SBOM hash + build metadata.
-- **Verification docs**: Provide `docs/technical/release-verification.md` (future) showing `cosign verify --key cosign.pub ...` steps.
+- **Verification docs**: Provide `docs/deep-dive/release-verification.md` (future) showing `cosign verify --key cosign.pub ...` steps.
 
 ## Workflow Integration
 
@@ -41,12 +41,11 @@ This plan details how we will fulfill the checklist item "SBOM/Signierung und Vu
    - Full `trivy fs` with `--exit-code 1` for CRITICAL/HIGH.
    - Generate SBOM for current main branch; upload artifact.
 3. **Release (`release.yml`)**
-   - Build packages/images.
-   - Generate SBOMs for each artifact.
-   - Run `trivy image` + `trivy fs` + `dotnet list package --vulnerable` (fail on HIGH/CRITICAL unless waiver label present).
-   - Sign NuGet packages and container images.
-   - Create cosign attestation referencing SBOM digest.
-   - Attach SBOMs + scan reports + signatures to GitHub Release.
+   - Build packages/images, run the full test suite once more, and reuse the dependency vulnerability gate.
+   - Generate SBOMs for NuGet artifacts (`syft dir:artifacts/nuget`) and GHCR images (direct image mode).
+   - Execute `trivy fs` + `trivy image` with `exit-code 1` to block HIGH/CRITICAL exposures.
+   - Sign NuGet packages (`dotnet nuget sign`) and container images (`cosign sign --key env://COSIGN_KEY`) whenever the secrets exist.
+   - Attach SBOMs, SARIF scan reports, and signed artifacts to the GitHub Release (implemented in `.github/workflows/release.yml`). Attestations remain backlog work.
 
 ## Governance & Documentation
 
@@ -58,10 +57,10 @@ This plan details how we will fulfill the checklist item "SBOM/Signierung und Vu
 ## Backlog to Complete the Checklist Item
 
 - [ ] Add `syft` and `trivy` to toolchain (`.config/dotnet-tools.json` or scripts) and document local usage.
-- [ ] Implement PR/nightly/release workflow steps for scans + SBOMs per the pipeline plan.
+- [x] Implement PR/nightly/release workflow steps for scans + SBOMs per the pipeline plan (see `.github/workflows/nightly.yml` + `.github/workflows/release.yml`).
 - [ ] Provision signing keys (NuGet cert, cosign) and store public verification artifacts in the repo.
-- [ ] Add documentation (`docs/technical/release-verification.md` + `SECURITY.md`) showing verification commands for consumers.
+- [ ] Add documentation (`docs/deep-dive/release-verification.md` + `SECURITY.md`) showing verification commands for consumers.
 - [ ] Create waiver process (template + file) for temporary vulnerability exceptions.
-- [ ] Ensure release workflow attaches SBOMs, scans, and signatures to GitHub Releases automatically.
+- [x] Ensure release workflow attaches SBOMs, scans, and signatures to GitHub Releases automatically.
 
 Once this backlog is done, the checklist entry "SBOM/Signierung und Vulnerability Scans" can be marked complete.
