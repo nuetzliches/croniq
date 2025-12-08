@@ -202,7 +202,7 @@ Watch the API logs; you should see the `HelloWorldJob` message. Logs, metrics, a
 scripts\devstack-up.cmd --profile obs
 ```
 
-This launches Prometheus (`http://localhost:9090`), Tempo, and Grafana (`http://localhost:5601`, default credentials `admin/admin`).
+This launches Prometheus (`http://localhost:9090`), Tempo, and Grafana (`http://localhost:5610`, default credentials `admin/admin`).
 
 2. Configure your quickstart host to export telemetry. The `AddCroniqObservability` helper reads `Croniq:Observability` settings, so either add them to `appsettings.Development.json` or export environment variables before running `dotnet run`:
 

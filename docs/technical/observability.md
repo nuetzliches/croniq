@@ -54,7 +54,7 @@ This document captures the logging, metrics, and tracing strategy for Croniq ser
 - Hit the API health endpoint: `curl http://localhost:5080/health` repeatedly to produce request traces/metrics.
 - Trigger sample jobs via `scripts\devstack-trigger-job.cmd` (defaults to `1:dev:samples:smoke`) so the worker emits spans and Serilog logs.
 
-4. Check Grafana at `http://localhost:5601` (defaults `admin/admin`). The provisioned data sources (`Prometheus`, `Tempo`) should show as healthy; open the Scheduler dashboard to verify `cronijob.executions_total` increments.
+4. Check Grafana at `http://localhost:5610` (defaults `admin/admin`). The provisioned data sources (`Prometheus`, `Tempo`) should show as healthy; open the Scheduler dashboard to verify `cronijob.executions_total` increments.
 5. Validate traces in Tempo via the Grafana Explore tab (select Tempo data source, search for `service.name="Croniq.Api"`).
 6. Optional: `curl http://localhost:9090/api/v1/targets` should list the OTel collector scrape target as `up == 1`. Use this to ensure Prometheus continues to ingest metrics even before Grafana visualizes them.
 

@@ -12,6 +12,8 @@ services:
     depends_on:
       tempo:
         condition: service_started
+      loki:
+        condition: service_started
     networks:
       - croniq-net
 
@@ -41,11 +43,13 @@ services:
       - ./observability/grafana/provisioning/dashboards:/etc/grafana/provisioning/dashboards:ro
       - ./observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
     ports:
-      - "${CRONIQ_GRAFANA_PORT:-5601}:3000"
+      - "${CRONIQ_GRAFANA_PORT:-5610}:3000"
     depends_on:
       prometheus:
         condition: service_started
       tempo:
+        condition: service_started
+      loki:
         condition: service_started
     networks:
       - croniq-net
@@ -62,7 +66,20 @@ services:
     networks:
       - croniq-net
 
+  loki:
+    profiles: ["obs"]
+    image: grafana/loki:3.1.1
+    command: ["-config.file=/etc/loki/local-config.yaml"]
+    volumes:
+      - ./observability/loki-config.yaml:/etc/loki/local-config.yaml:ro
+      - loki-data:/loki
+    ports:
+      - "${CRONIQ_LOKI_HTTP_PORT:-3100}:3100"
+    networks:
+      - croniq-net
+
 volumes:
   prom-data:
   grafana-data:
   tempo-data:
+  loki-data:

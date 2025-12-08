@@ -14,3 +14,13 @@ datasources:
     url: http://tempo:3200
     jsonData:
       httpMethod: GET
+  - name: Loki
+    uid: loki
+    type: loki
+    access: proxy
+    url: http://loki:3100
+    jsonData:
+      maxLines: 1000
+      httpHeaderName1: X-Scope-OrgID
+    secureJsonData:
+      httpHeaderValue1: croniq-devstack
