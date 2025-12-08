@@ -45,6 +45,15 @@ public sealed class DefaultJobExecutionPipeline : IJobExecutionPipeline
         var activitySource = request.ActivitySource ?? _activitySource;
 
         using var activity = activitySource.StartActivity("Croniq.Job.Execute");
+        activity?.SetTag("croniq.job.key", request.JobKey.Value);
+        activity?.SetTag("croniq.job.namespace", request.JobKey.NamespaceSegment);
+        activity?.SetTag("croniq.job.name", request.JobKey.JobName);
+        if (!string.IsNullOrWhiteSpace(request.JobKey.Variant))
+        {
+            activity?.SetTag("croniq.job.variant", request.JobKey.Variant);
+        }
+        activity?.SetTag("croniq.tenant_id", request.JobKey.TenantId);
+        activity?.SetTag("croniq.environment", request.JobKey.EnvironmentTag);
         jobLogger.LogDebug("Starting job {JobKey}", request.JobKey.Value);
 
         var executionOptions = request.ExecutionOptions ?? _policyResolver.ResolveExecution(request.JobKey);
@@ -52,11 +61,20 @@ public sealed class DefaultJobExecutionPipeline : IJobExecutionPipeline
 
         var context = new JobExecutionContext(request.JobKey.ToString(), metadata, jobLogger, activitySource);
 
-        await pipeline.ExecuteAsync(async token =>
+        try
         {
-            var effectiveToken = executionOptions.Timeout.CancelExecutionOnTimeout ? token : cancellationToken;
-            await job.ExecuteAsync(context, effectiveToken).ConfigureAwait(false);
-        }, cancellationToken).ConfigureAwait(false);
+            await pipeline.ExecuteAsync(async token =>
+            {
+                var effectiveToken = executionOptions.Timeout.CancelExecutionOnTimeout ? token : cancellationToken;
+                await job.ExecuteAsync(context, effectiveToken).ConfigureAwait(false);
+            }, cancellationToken).ConfigureAwait(false);
+            activity?.SetStatus(ActivityStatusCode.Ok);
+        }
+        catch
+        {
+            activity?.SetStatus(ActivityStatusCode.Error);
+            throw;
+        }
 
         jobLogger.LogDebug("Completed job {JobKey}", request.JobKey.Value);
     }

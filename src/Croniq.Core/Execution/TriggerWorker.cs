@@ -59,7 +59,14 @@ public sealed class TriggerWorker
             nowUtc,
             batchSize);
 
+        using var acquireActivity = _activitySource.StartActivity("Croniq.Trigger.Acquire", ActivityKind.Internal);
+        acquireActivity?.SetTag("croniq.tenant_id", _options.TenantId);
+        acquireActivity?.SetTag("croniq.environment", _options.EnvironmentTag);
+        acquireActivity?.SetTag("croniq.batch.size", batchSize);
+
         var leases = await _jobStore.AcquireAsync(acquireRequest, cancellationToken).ConfigureAwait(false);
+        acquireActivity?.SetTag("croniq.trigger.leases", leases.Count);
+        acquireActivity?.SetStatus(ActivityStatusCode.Ok);
         var processed = 0;
 
         foreach (var lease in leases)
@@ -73,82 +80,109 @@ public sealed class TriggerWorker
                 continue;
             }
 
-            var misfireOptions = _policyResolver.ResolveMisfire(jobKey);
-            var misfire = _misfirePolicy.Evaluate(lease, misfireOptions, nowUtc);
-            if (misfire.IsMisfire)
-            {
-                _logger.LogWarning("Misfire detected for lease {LeaseId} at {FireAt}, reason {Reason}", lease.LeaseId, lease.FireAtUtc, misfire.Reason);
-                await ReleaseAsync(
-                    lease,
-                    succeeded: false,
-                    deadLetterReason: misfireOptions.DeadLetterOnMisfire ? misfire.Reason : null,
-                    nextFireTimeUtc: misfireOptions.DeadLetterOnMisfire ? null : nowUtc.Add(misfireOptions.RescheduleBackoff ?? TimeSpan.FromSeconds(30)),
-                    cancellationToken).ConfigureAwait(false);
-                continue;
-            }
-
-            var quotaOptions = _policyResolver.ResolveQuota(jobKey);
-            if (!_quotaGuard.TryAcquire(jobKey, quotaOptions, nowUtc, out var retryAt))
-            {
-                _logger.LogWarning("Quota limit reached for {JobKey}; lease {LeaseId} will be rescheduled", lease.JobKey, lease.LeaseId);
-                await ReleaseAsync(
-                    lease,
-                    succeeded: false,
-                    deadLetterReason: "quota-limit",
-                    nextFireTimeUtc: retryAt ?? nowUtc.AddSeconds(5),
-                    cancellationToken).ConfigureAwait(false);
-                continue;
-            }
-
-            var executionOptions = _policyResolver.ResolveExecution(jobKey);
-            var metadata = lease.Payload is null
-                ? null
-                : new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) { { "payload", lease.Payload } };
+            SchedulerMetrics.AdjustQueueDepth(jobKey, 1);
+            using var leaseActivity = _activitySource.StartActivity("Croniq.Trigger.Dispatch", ActivityKind.Internal);
+            leaseActivity?.SetTag("croniq.job.key", jobKey.Value);
+            leaseActivity?.SetTag("croniq.trigger.lease_id", lease.LeaseId);
+            leaseActivity?.SetTag("croniq.trigger.fire_at", lease.FireAtUtc.ToUnixTimeMilliseconds());
 
             try
             {
-                var request = new JobExecutionRequest(jobKey, descriptor, executionOptions, metadata, _activitySource);
-                await _pipeline.ExecuteAsync(request, cancellationToken).ConfigureAwait(false);
-
-                await ReleaseAsync(lease, succeeded: true, deadLetterReason: null, nextFireTimeUtc: null, cancellationToken).ConfigureAwait(false);
-                processed++;
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Error executing job {JobKey} for lease {LeaseId}", lease.JobKey, lease.LeaseId);
-                var releaseReason = "execution-error";
-
-                if (executionOptions.DeadLetter.Enabled && !IsCancellation(ex, cancellationToken))
+                var misfireOptions = _policyResolver.ResolveMisfire(jobKey);
+                var misfire = _misfirePolicy.Evaluate(lease, misfireOptions, nowUtc);
+                if (misfire.IsMisfire)
                 {
-                    var occurredAtUtc = DateTimeOffset.UtcNow;
-                    var metadataSnapshot = CloneMetadata(metadata);
-                    metadataSnapshot["exception.type"] = ex.GetType().FullName ?? ex.GetType().Name;
-                    metadataSnapshot["exception.message"] = ex.Message;
-                    metadataSnapshot["execution.reason"] = "policy-deadletter";
-                    if (!string.IsNullOrWhiteSpace(executionOptions.DeadLetter.OperatorHint))
-                    {
-                        metadataSnapshot["deadletter.hint"] = executionOptions.DeadLetter.OperatorHint!;
-                    }
-
-                    var deadLetterPayload = BuildDeadLetterPayload(lease, metadataSnapshot, executionOptions, ex, occurredAtUtc);
-                    var metadataView = metadataSnapshot.Count == 0 ? null : metadataSnapshot;
-                    var deadLetter = new DeadLetterRequest(
+                    _logger.LogWarning("Misfire detected for lease {LeaseId} at {FireAt}, reason {Reason}", lease.LeaseId, lease.FireAtUtc, misfire.Reason);
+                    SchedulerMetrics.RecordMisfire(jobKey, misfire.Reason ?? "unknown");
+                    leaseActivity?.SetStatus(ActivityStatusCode.Error, "misfire");
+                    await ReleaseAsync(
                         lease,
-                        releaseReason,
-                        occurredAtUtc,
-                        executionOptions.DeadLetter.Retention,
-                        deadLetterPayload,
-                        metadataView);
-
-                    await TryDeadLetterAsync(jobKey, deadLetter, cancellationToken).ConfigureAwait(false);
-                    releaseReason = null;
+                        succeeded: false,
+                        deadLetterReason: misfireOptions.DeadLetterOnMisfire ? misfire.Reason : null,
+                        nextFireTimeUtc: misfireOptions.DeadLetterOnMisfire ? null : nowUtc.Add(misfireOptions.RescheduleBackoff ?? TimeSpan.FromSeconds(30)),
+                        cancellationToken).ConfigureAwait(false);
+                    continue;
                 }
 
-                await ReleaseAsync(lease, succeeded: false, deadLetterReason: releaseReason, nextFireTimeUtc: null, cancellationToken).ConfigureAwait(false);
+                var quotaOptions = _policyResolver.ResolveQuota(jobKey);
+                if (!_quotaGuard.TryAcquire(jobKey, quotaOptions, nowUtc, out var retryAt))
+                {
+                    _logger.LogWarning("Quota limit reached for {JobKey}; lease {LeaseId} will be rescheduled", lease.JobKey, lease.LeaseId);
+                    SchedulerMetrics.RecordQuotaReschedule(jobKey);
+                    leaseActivity?.SetStatus(ActivityStatusCode.Error, "quota-limit");
+                    await ReleaseAsync(
+                        lease,
+                        succeeded: false,
+                        deadLetterReason: "quota-limit",
+                        nextFireTimeUtc: retryAt ?? nowUtc.AddSeconds(5),
+                        cancellationToken).ConfigureAwait(false);
+                    continue;
+                }
+
+                var executionOptions = _policyResolver.ResolveExecution(jobKey);
+                var metadata = lease.Payload is null
+                    ? null
+                    : new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) { { "payload", lease.Payload } };
+
+                Stopwatch? executionTimer = null;
+
+                try
+                {
+                    var request = new JobExecutionRequest(jobKey, descriptor, executionOptions, metadata, _activitySource);
+                    executionTimer = Stopwatch.StartNew();
+                    await _pipeline.ExecuteAsync(request, cancellationToken).ConfigureAwait(false);
+
+                    var elapsedMs = executionTimer.Elapsed.TotalMilliseconds;
+                    SchedulerMetrics.RecordJobExecution(jobKey, succeeded: true, elapsedMs);
+                    leaseActivity?.SetStatus(ActivityStatusCode.Ok);
+
+                    await ReleaseAsync(lease, succeeded: true, deadLetterReason: null, nextFireTimeUtc: null, cancellationToken).ConfigureAwait(false);
+                    processed++;
+                }
+                catch (Exception ex)
+                {
+                    var elapsedMs = executionTimer?.Elapsed.TotalMilliseconds ?? 0d;
+                    SchedulerMetrics.RecordJobExecution(jobKey, succeeded: false, elapsedMs);
+                    leaseActivity?.SetStatus(ActivityStatusCode.Error, ex.Message);
+                    _logger.LogError(ex, "Error executing job {JobKey} for lease {LeaseId}", lease.JobKey, lease.LeaseId);
+                    var releaseReason = "execution-error";
+
+                    if (executionOptions.DeadLetter.Enabled && !IsCancellation(ex, cancellationToken))
+                    {
+                        var occurredAtUtc = DateTimeOffset.UtcNow;
+                        var metadataSnapshot = CloneMetadata(metadata);
+                        metadataSnapshot["exception.type"] = ex.GetType().FullName ?? ex.GetType().Name;
+                        metadataSnapshot["exception.message"] = ex.Message;
+                        metadataSnapshot["execution.reason"] = "policy-deadletter";
+                        if (!string.IsNullOrWhiteSpace(executionOptions.DeadLetter.OperatorHint))
+                        {
+                            metadataSnapshot["deadletter.hint"] = executionOptions.DeadLetter.OperatorHint!;
+                        }
+
+                        var deadLetterPayload = BuildDeadLetterPayload(lease, metadataSnapshot, executionOptions, ex, occurredAtUtc);
+                        var metadataView = metadataSnapshot.Count == 0 ? null : metadataSnapshot;
+                        var deadLetter = new DeadLetterRequest(
+                            lease,
+                            releaseReason,
+                            occurredAtUtc,
+                            executionOptions.DeadLetter.Retention,
+                            deadLetterPayload,
+                            metadataView);
+
+                        await TryDeadLetterAsync(jobKey, deadLetter, cancellationToken).ConfigureAwait(false);
+                        releaseReason = null;
+                    }
+
+                    await ReleaseAsync(lease, succeeded: false, deadLetterReason: releaseReason, nextFireTimeUtc: null, cancellationToken).ConfigureAwait(false);
+                }
+                finally
+                {
+                    _quotaGuard.Release(jobKey);
+                }
             }
             finally
             {
-                _quotaGuard.Release(jobKey);
+                SchedulerMetrics.AdjustQueueDepth(jobKey, -1);
             }
         }
 

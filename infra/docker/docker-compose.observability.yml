@@ -21,6 +21,7 @@ services:
     command: ["--config.file=/etc/prometheus/prometheus.yml"]
     volumes:
       - ./observability/prometheus.yaml:/etc/prometheus/prometheus.yml:ro
+      - ../monitoring/rules:/etc/prometheus/rules:ro
       - prom-data:/prometheus
     ports:
       - "${CRONIQ_PROMETHEUS_PORT:-9090}:9090"
@@ -37,6 +38,7 @@ services:
     volumes:
       - grafana-data:/var/lib/grafana
       - ./observability/grafana/datasources:/etc/grafana/provisioning/datasources:ro
+      - ./observability/grafana/provisioning/dashboards:/etc/grafana/provisioning/dashboards:ro
       - ./observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
     ports:
       - "${CRONIQ_GRAFANA_PORT:-5601}:3000"

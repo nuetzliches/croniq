@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Threading.RateLimiting;
 using Croniq.Api.Models;
+using Croniq.Api.Telemetry;
 using Croniq.Auth.Abstractions;
 using Croniq.Auth.Core;
 using Croniq.Auth.SqlServer;
@@ -23,6 +24,8 @@ namespace Croniq.Api;
 
 public static class ApiHostingExtensions
 {
+    private static readonly ActivitySource TriggerActivitySource = new("Croniq.Api.Trigger");
+
     public static IServiceCollection AddCroniqApiServices(this IServiceCollection services, IConfiguration configuration)
     {
         services.Configure<CroniqApiOptions>(configuration.GetSection("Croniq:Api"));
@@ -234,6 +237,7 @@ public static class ApiHostingExtensions
 
             await store.UpsertJobAsync(job, cancellationToken).ConfigureAwait(false);
             await store.UpsertTriggerAsync(trigger, cancellationToken).ConfigureAwait(false);
+            ApiMetrics.RecordScheduleUpsert(parts.TenantId, parts.EnvironmentTag, request.JobKey);
 
             return Results.Created($"/schedules/{trigger.TriggerId}", new { trigger.TriggerId, trigger.JobKey, trigger.ScheduleExpression });
         });
@@ -251,12 +255,32 @@ public static class ApiHostingExtensions
             }
 
             var metadata = ToReadOnly(request.Metadata) ?? new Dictionary<string, string>();
-            var activitySource = new ActivitySource("Croniq.Api.Trigger");
             var executionOptions = policyResolver.ResolveExecution(jobKey);
-            var execRequest = new JobExecutionRequest(jobKey, descriptor, executionOptions, metadata, activitySource);
+            var execRequest = new JobExecutionRequest(jobKey, descriptor, executionOptions, metadata, TriggerActivitySource);
 
-            await pipeline.ExecuteAsync(execRequest, cancellationToken).ConfigureAwait(false);
-            return Results.Accepted(value: new { status = "triggered", request.JobKey });
+            using var triggerActivity = TriggerActivitySource.StartActivity("Croniq.Api.TriggerJob", ActivityKind.Server);
+            triggerActivity?.SetTag("croniq.job.key", jobKey.Value);
+            triggerActivity?.SetTag("croniq.tenant_id", jobKey.TenantId);
+            triggerActivity?.SetTag("croniq.environment", jobKey.EnvironmentTag);
+            triggerActivity?.SetTag("croniq.job.namespace", jobKey.NamespaceSegment);
+            triggerActivity?.SetTag("croniq.job.name", jobKey.JobName);
+            if (!string.IsNullOrWhiteSpace(jobKey.Variant))
+            {
+                triggerActivity?.SetTag("croniq.job.variant", jobKey.Variant);
+            }
+
+            try
+            {
+                await pipeline.ExecuteAsync(execRequest, cancellationToken).ConfigureAwait(false);
+                ApiMetrics.RecordManualTrigger(jobKey);
+                triggerActivity?.SetStatus(ActivityStatusCode.Ok);
+                return Results.Accepted(value: new { status = "triggered", request.JobKey });
+            }
+            catch
+            {
+                triggerActivity?.SetStatus(ActivityStatusCode.Error);
+                throw;
+            }
         });
 
         return app;

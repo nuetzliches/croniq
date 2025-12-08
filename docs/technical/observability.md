@@ -17,14 +17,17 @@ This document captures the logging, metrics, and tracing strategy for Croniq ser
   - Optional file sink for legacy deployments.
 - **Enrichment**: add `TenantId`, `EnvironmentTag`, `JobKey`, and `CallerId` to the log scope when available. Sensitive fields (payloads, API keys) are redacted or hashed.
 - **Correlation**: include `TraceId`/`SpanId` in every entry (Serilog `ActivityEnricher`). This aligns with gRPC/REST tracing.
+- **Hosts**: `AddCroniqObservability` wires the Serilog pipeline + OTLP sink automatically for `Croniq.Api`, the worker, and the sample hosts so no service needs bespoke logging bootstrap code.
+- **Hosts**: call `services.AddCroniqObservability(configuration, loggingBuilder, "<service>")` to provision Serilog (JSON console + OTLP sink) together with the shared OpenTelemetry exporters; `Croniq.Api` and both sample hosts already use this helper.
 
 ## Metrics
 
 - `Croniq.Core` exposes `Meter Croniq.Core` with instruments:
-  - `counter cronijob.executions_total` (labels: tenant, jobKey, result).
-  - `histogram cronijob.execution_duration_ms`.
-  - `counter cronitrigger.misfires_total`.
-  - `updowncounter cronijob.queue_depth` for scheduler backlog.
+  - `counter cronijob_executions_total` (labels: tenant, job, result).
+  - `histogram cronijob_execution_duration_ms`.
+  - `counter cronitrigger_misfires_total` and `counter cronitrigger_quota_reschedules_total`.
+  - `updowncounter cronijob_queue_depth` for scheduler backlog.
+- `Croniq.Api` publishes `cronigateway_schedule_upserts_total` and `cronigateway_manual_triggers_total` so we can observe consumer activity.
 - API/gRPC layers provide HTTP request duration, active callers, and rate limit rejections via `Croniq.Api` meter.
 - Export via OpenTelemetry Metrics (OTLP). Collector relays to Prometheus/Tempo/Grafana stack in dev; production can send to Azure Monitor, Datadog, etc.
 
@@ -55,29 +58,39 @@ This document captures the logging, metrics, and tracing strategy for Croniq ser
 5. Validate traces in Tempo via the Grafana Explore tab (select Tempo data source, search for `service.name="Croniq.Api"`).
 6. Optional: `curl http://localhost:9090/api/v1/targets` should list the OTel collector scrape target as `up == 1`. Use this to ensure Prometheus continues to ingest metrics even before Grafana visualizes them.
 
+### Automated Smoke Tests
+
+- `dotnet test tests/Croniq.Observability.Tests/Croniq.Observability.Tests.csproj` spins up an in-memory OTLP HTTP collector and exercises `AddCroniqObservability`. The test emits a span, metric, and log and fails if any signal fails to reach the collector, catching exporter wiring regressions early. Add it to CI whenever you touch `CroniqObservabilityOptions`/`CroniqObservabilityExtensions`.
+
 ## Dashboards & Alerts
 
-- **Dashboards** (Grafana JSON stored in repo):
-  1. Scheduler Health: queue depth, trigger throughput, execution latency p50/p95/p99.
-  2. API Gateway: request rate, latency, rate-limit rejections per tenant.
-  3. Policy Events: retries, misfires, dead-letter count.
-- **Alerts**: Document Prometheus rules (e.g., `cronijob_queue_depth > threshold for 5m`, `rate_limit_rejections > 0`). Include as YAML under `infra/monitoring/rules/`.
+- **Dashboards**: Grafana auto-loads JSON from `infra/docker/observability/grafana/dashboards/` via `grafana/provisioning/dashboards/dashboards.yml`. Dashboards refresh every 30s and point at the provisioned `prometheus`/`tempo` data sources.
+  1. `scheduler.json` visualizes execution throughput, p50/p95 latency, queue depth, and trigger anomalies. Use it to confirm scheduler health before promoting releases.
+  2. `api-gateway.json` surfaces schedule upserts, manual triggers, and policy outcomes split by tenant so customer usage patterns are obvious.
+  3. To enable them outside the devstack, mount the dashboards + provisioning folders into your Grafana deployment and keep the datasource UIDs (`prometheus`, `tempo`) consistent or update the JSON accordingly.
+- **Alerts**: Prometheus loads rules from `infra/monitoring/rules/scheduler-alerts.yaml` (mounted via docker-compose). The rule file defines:
+  - `CroniqDeadLettersHigh`: warning when dead letters are emitted for 2m.
+  - `CroniqMisfireBurst`: warning when misfires exceed 5/min.
+  - `CroniqJobFailures`: critical for any job failures.
+  - `CroniqQueueDepthHigh`: warning when the queue depth average stays above 100 for 5m.
+  - `CroniqLatencyP95High`: warning when job execution p95 is higher than 2s for 5m.
+    Point Prometheus at `/etc/prometheus/rules/*.yml` (already set in `observability/prometheus.yaml`) or copy the rule file into your existing Prometheus deployment. Alerts include runbook context in the annotations so on-call engineers know how to react.
 
 ## Instrumentation Guidelines
 
-- All Croniq services call `services.AddOpenTelemetry()` with instrumentation for ASP.NET Core, gRPC, and HttpClient. Libraries expose `ActivitySource`/`Meter` instances but avoid auto registration to keep host control.
+- All Croniq services call the shared `AddCroniqObservability` helper (wrapping `AddOpenTelemetry`) with instrumentation for ASP.NET Core, gRPC, and HttpClient. Libraries expose `ActivitySource`/`Meter` instances but avoid auto registration to keep host control.
 - Jobs can inject `IJobExecutionContext.ActivitySource` for custom spans; document best practices in consumer docs.
-- Provide helper extension `CroniqObservabilityExtensions.AddCroniqTelemetry(this OpenTelemetryBuilder builder)` that registers the default instrumentation, exporters, and resource attributes (service.name, service.version, deployment.environment, tenant when relevant).
-- Sample hosts (`Croniq.Sample.ApiHost`, `Croniq.Sample.WorkerHost`) now ship with baseline OpenTelemetry wiring (ASP.NET Core/HttpClient/runtime instrumentation, `Croniq.Core` ActivitySource, Serilog log export) and respect `Croniq:Observability:OtlpEndpoint` (injected via `CRONIQ_OBS_OTLP_ENDPOINT`, defaulting to `http://otel-collector:4317`) plus `Croniq:Observability:OtlpProtocol` (`CRONIQ_OBS_OTLP_PROTOCOL`, default `grpc`).
+- `CroniqObservabilityExtensions.AddCroniqObservability(...)` registers the default instrumentation, Serilog exporters, and resource attributes (service.name, version, deployment.environment, tenant) so hosts only add their signal-specific instrumentation.
+- Sample hosts (`Croniq.Sample.ApiHost`, `Croniq.Sample.WorkerHost`) and `Croniq.Api` already call the helper and respect `Croniq:Observability:*` env overrides (defaulting to the collector at `http://otel-collector:4317`).
 
 ## Backlog to finish Observability Milestone
 
-- [ ] Introduce `CroniqObservabilityOptions` (logs, metrics, traces toggles, exporters) + `AddCroniqObservability` service extension.
-- [ ] Wire Serilog (JSON console + OTel sink) into `Croniq.Api` and sample hosts; ensure `Croniq.Providers.Default` exposes enrichment hooks.
-- [ ] Add `ActivitySource`/`Meter` usage in `Croniq.Core` (trigger worker, policy resolver, job pipeline) and `Croniq.Api` endpoints.
+- [x] Introduce `CroniqObservabilityOptions` (logs, metrics, traces toggles, exporters) + `AddCroniqObservability` service extension.
+- [x] Wire Serilog (JSON console + OTel sink) into `Croniq.Api` and sample hosts; ensure `Croniq.Providers.Default` exposes enrichment hooks.
+- [x] Add `ActivitySource`/`Meter` usage in `Croniq.Core` (trigger worker, policy resolver, job pipeline) and `Croniq.Api` endpoints.
 - [x] Create Docker Compose observability stack with collector + Grafana + Tempo + Prometheus, plus helper scripts.
-- [ ] Author Grafana dashboards (JSON) and Prometheus alert rules committed under `infra/monitoring`.
-- [ ] Update `docs/consumer` quickstart/configuration with instructions for enabling telemetry exports and viewing dashboards.
-- [ ] Add automated smoke tests verifying OTLP export (e.g., assert metrics appear in a test collector during CI).
+- [x] Author Grafana dashboards (JSON) and Prometheus alert rules committed under `infra/monitoring`.
+- [x] Update this document with instructions for enabling telemetry exports and viewing dashboards.
+- [x] Add automated smoke tests verifying OTLP export (e.g., assert metrics appear in a test collector during CI).
 
 When this backlog is complete, the "Observability" entry in `CHECKLIST.md` can be marked done.

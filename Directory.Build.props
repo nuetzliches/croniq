@@ -6,4 +6,10 @@
     <CoverletOutput>$(MSBuildProjectDirectory)\TestResults\coverage\$(MSBuildProjectName)</CoverletOutput>
     <ExcludeByFile>$(ExcludeByFile);**\bin\**;**\obj\**</ExcludeByFile>
   </PropertyGroup>
+  <ItemGroup Condition="$([System.String]::Copy('$(MSBuildProjectName)').Contains('.Tests'))">
+    <PackageReference Include="coverlet.msbuild" Version="6.0.4">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
+  </ItemGroup>
 </Project>

@@ -7,9 +7,9 @@ namespace Croniq.Core.Execution;
 internal static class PolicyMetrics
 {
     private static readonly Meter Meter = new("Croniq.Core.Policy", "1.0.0");
-    private static readonly Counter<long> RetryAttempts = Meter.CreateCounter<long>("cronipolicy.retry_attempts", description: "Number of retry attempts executed by the resilience pipeline.");
-    private static readonly Counter<long> CircuitOpened = Meter.CreateCounter<long>("cronipolicy.circuit_open", description: "Number of times the execution circuit breaker entered the open state.");
-    private static readonly Counter<long> DeadLetterTotal = Meter.CreateCounter<long>("cronipolicy.deadletter_total", description: "Number of executions routed to the dead-letter store.");
+    private static readonly Counter<long> RetryAttempts = Meter.CreateCounter<long>("cronipolicy_retry_attempts", description: "Number of retry attempts executed by the resilience pipeline.");
+    private static readonly Counter<long> CircuitOpened = Meter.CreateCounter<long>("cronipolicy_circuit_open", description: "Number of times the execution circuit breaker entered the open state.");
+    private static readonly Counter<long> DeadLetterTotal = Meter.CreateCounter<long>("cronipolicy_deadletter_total", description: "Number of executions routed to the dead-letter store.");
 
     public static void RecordRetry(JobKey jobKey)
     {

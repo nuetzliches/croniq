@@ -16,4 +16,9 @@
     <ProjectReference Include="..\Croniq.Auth.SqlServer\Croniq.Auth.SqlServer.csproj" />
     <ProjectReference Include="..\Croniq.Data.SqlServer\Croniq.Data.SqlServer.csproj" />
   </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="OpenTelemetry.Instrumentation.AspNetCore" Version="1.14.0" />
+    <PackageReference Include="OpenTelemetry.Instrumentation.Http" Version="1.14.0" />
+    <PackageReference Include="OpenTelemetry.Instrumentation.Runtime" Version="1.14.0" />
+  </ItemGroup>
 </Project>

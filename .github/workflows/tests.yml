@@ -1,0 +1,109 @@
+name: Croniq PR Tests
+
+on:
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  DOTNET_NOLOGO: true
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Verify formatting
+        run: dotnet format croniq.sln --verify-no-changes
+
+      - name: Restore
+        run: dotnet restore croniq.sln
+
+      - name: Build
+        run: dotnet build croniq.sln --configuration Release --no-restore
+
+      - name: Prepare coverage folder
+        run: mkdir -p coverage
+
+      - name: Run Croniq.Core.Tests
+        run: dotnet test tests/Croniq.Core.Tests/Croniq.Core.Tests.csproj --configuration Release --no-build --logger "trx;LogFileName=Croniq.Core.Tests.trx" --results-directory TestResults -p:CollectCoverage=true -p:CoverletOutput=../../coverage/Croniq.Core.Tests/ -p:CoverletOutputFormat=cobertura
+
+      - name: Run Croniq.JobStore.InMemory.Tests
+        run: dotnet test tests/Croniq.JobStore.InMemory.Tests/Croniq.JobStore.InMemory.Tests.csproj --configuration Release --no-build --logger "trx;LogFileName=Croniq.JobStore.InMemory.Tests.trx" --results-directory TestResults -p:CollectCoverage=true -p:CoverletOutput=../../coverage/Croniq.JobStore.InMemory.Tests/ -p:CoverletOutputFormat=cobertura
+
+      - name: Run Croniq.Providers.Default.Tests
+        run: dotnet test tests/Croniq.Providers.Default.Tests/Croniq.Providers.Default.Tests.csproj --configuration Release --no-build --logger "trx;LogFileName=Croniq.Providers.Default.Tests.trx" --results-directory TestResults -p:CollectCoverage=true -p:CoverletOutput=../../coverage/Croniq.Providers.Default.Tests/ -p:CoverletOutputFormat=cobertura
+
+      - name: Run Croniq.Observability.Tests
+        run: dotnet test tests/Croniq.Observability.Tests/Croniq.Observability.Tests.csproj --configuration Release --no-build --logger "trx;LogFileName=Croniq.Observability.Tests.trx" --results-directory TestResults -p:CollectCoverage=true -p:CoverletOutput=../../coverage/Croniq.Observability.Tests/ -p:CoverletOutputFormat=cobertura
+
+      - name: Install ReportGenerator
+        run: |
+          dotnet tool install --global dotnet-reportgenerator-globaltool --version 5.5.1
+          echo "$HOME/.dotnet/tools" >> $GITHUB_PATH
+
+      - name: Build coverage summary
+        run: reportgenerator "-reports:coverage/**/coverage.cobertura.xml" "-targetdir:coverage/report" -reporttypes:JsonSummary
+
+      - name: Enforce coverage gates
+        run: |
+          python <<'PY'
+          import json
+          import pathlib
+          import sys
+
+          summary_path = pathlib.Path("coverage/report/Summary.json")
+          if not summary_path.exists():
+            print(f"Missing coverage summary at {summary_path}", file=sys.stderr)
+            sys.exit(1)
+
+          with summary_path.open() as summary_file:
+            data = json.load(summary_file)
+
+          overall = float(data["summary"]["linecoverage"])
+          assemblies = {asm["name"]: float(asm["coverage"]) for asm in data.get("coverage", {}).get("assemblies", [])}
+          core = assemblies.get("Croniq.Core")
+
+          if core is None:
+            print("Croniq.Core coverage entry not found in summary", file=sys.stderr)
+            sys.exit(1)
+
+          print(f"Croniq.Core line coverage: {core:.2f}%")
+          print(f"Repository line coverage: {overall:.2f}%")
+
+          errors = []
+          if core < 80:
+            errors.append(f"Croniq.Core coverage {core:.2f}% fell below the 80% gate.")
+          if overall < 70:
+            errors.append(f"Repository coverage {overall:.2f}% fell below the 70% gate.")
+
+          if errors:
+            for message in errors:
+              print(message, file=sys.stderr)
+            sys.exit(1)
+          PY
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pr-tests
+          path: TestResults
+
+      - name: Upload coverage reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pr-coverage
+          path: coverage

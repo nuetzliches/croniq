@@ -1,0 +1,159 @@
+{
+    "id": null,
+    "uid": "croniq-scheduler",
+    "title": "Croniq Scheduler Health",
+    "timezone": "browser",
+    "schemaVersion": 39,
+    "version": 1,
+    "style": "dark",
+    "editable": true,
+    "refresh": "30s",
+    "time": {
+        "from": "now-1h",
+        "to": "now"
+    },
+    "templating": {
+        "list": []
+    },
+    "panels": [
+        {
+            "type": "timeseries",
+            "title": "Job Executions per Result",
+            "id": 1,
+            "gridPos": {
+                "h": 8,
+                "w": 12,
+                "x": 0,
+                "y": 0
+            },
+            "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+            },
+            "targets": [
+                {
+                    "expr": "sum(rate(cronijob_executions_total[5m])) by (result)",
+                    "legendFormat": "{{result}}",
+                    "refId": "A"
+                }
+            ],
+            "fieldConfig": {
+                "defaults": {
+                    "unit": "ops",
+                    "color": {
+                        "mode": "palette-classic"
+                    }
+                },
+                "overrides": []
+            }
+        },
+        {
+            "type": "timeseries",
+            "title": "Job Duration p50/p95",
+            "id": 2,
+            "gridPos": {
+                "h": 8,
+                "w": 12,
+                "x": 12,
+                "y": 0
+            },
+            "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+            },
+            "targets": [
+                {
+                    "expr": "histogram_quantile(0.50, sum(rate(cronijob_execution_duration_ms_bucket[5m])) by (le))",
+                    "legendFormat": "p50",
+                    "refId": "A"
+                },
+                {
+                    "expr": "histogram_quantile(0.95, sum(rate(cronijob_execution_duration_ms_bucket[5m])) by (le))",
+                    "legendFormat": "p95",
+                    "refId": "B"
+                }
+            ],
+            "fieldConfig": {
+                "defaults": {
+                    "unit": "ms",
+                    "color": {
+                        "mode": "palette-classic"
+                    }
+                },
+                "overrides": []
+            }
+        },
+        {
+            "type": "timeseries",
+            "title": "Active Queue Depth",
+            "id": 3,
+            "gridPos": {
+                "h": 8,
+                "w": 12,
+                "x": 0,
+                "y": 8
+            },
+            "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+            },
+            "targets": [
+                {
+                    "expr": "sum(cronijob_queue_depth)",
+                    "legendFormat": "queue depth",
+                    "refId": "A"
+                }
+            ],
+            "fieldConfig": {
+                "defaults": {
+                    "unit": "none",
+                    "color": {
+                        "mode": "palette-classic"
+                    }
+                },
+                "overrides": []
+            }
+        },
+        {
+            "type": "timeseries",
+            "title": "Trigger Exceptions",
+            "id": 4,
+            "gridPos": {
+                "h": 8,
+                "w": 12,
+                "x": 12,
+                "y": 8
+            },
+            "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+            },
+            "targets": [
+                {
+                    "expr": "sum(rate(cronitrigger_misfires_total[5m]))",
+                    "legendFormat": "misfires",
+                    "refId": "A"
+                },
+                {
+                    "expr": "sum(rate(cronitrigger_quota_reschedules_total[5m]))",
+                    "legendFormat": "quota reschedules",
+                    "refId": "B"
+                },
+                {
+                    "expr": "sum(rate(cronipolicy_deadletter_total[5m]))",
+                    "legendFormat": "dead letters",
+                    "refId": "C"
+                }
+            ],
+            "fieldConfig": {
+                "defaults": {
+                    "unit": "ops",
+                    "color": {
+                        "mode": "palette-classic"
+                    }
+                },
+                "overrides": []
+            }
+        }
+    ]
+}
