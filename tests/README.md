@@ -29,6 +29,7 @@ scripts\test-e2e.cmd
 | `tests/Croniq.JobStore.InMemory.Tests`            | Unit tests covering the in-memory job store implementation.                                        | Run on every PR                  |
 | `tests/Croniq.Providers.Default.Tests`            | Unit/contract tests validating provider defaults and DI wiring.                                    | Run on every PR                  |
 | `tests/Croniq.Observability.Tests`                | Spins up an in-memory OTLP collector and verifies logs/metrics/traces reach it.                    | Nightly workflow + before merges |
+| `tests/Croniq.Persistence.SqlServer.Tests`        | Contract tests using Croniq.TestKit + Testcontainers to validate the SqlServer persistence layer.  | Run on every PR (Docker needed)  |
 | `tests/Croniq.Api.Smoke` + `scripts/test-e2e.cmd` | Docker Compose stack (API + Worker + SQL) plus HTTP smoke tests exercising `/health`/`/schedules`. | Nightly + release readiness      |
 
 All suites are regular `dotnet test` projects, so you can target any subset via `dotnet test <path> --filter ...`.

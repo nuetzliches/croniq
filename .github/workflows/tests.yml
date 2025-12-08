@@ -48,6 +48,11 @@ jobs:
       - name: Run Croniq.Observability.Tests
         run: dotnet test tests/Croniq.Observability.Tests/Croniq.Observability.Tests.csproj --configuration Release --no-build --logger "trx;LogFileName=Croniq.Observability.Tests.trx" --results-directory TestResults -p:CollectCoverage=true -p:CoverletOutput=../../coverage/Croniq.Observability.Tests/ -p:CoverletOutputFormat=cobertura
 
+      - name: Run Croniq.Persistence.SqlServer.Tests
+        env:
+          DOTNET_SKIP_FIRST_TIME_EXPERIENCE: true
+        run: dotnet test tests/Croniq.Persistence.SqlServer.Tests/Croniq.Persistence.SqlServer.Tests.csproj --configuration Release --no-build --logger "trx;LogFileName=Croniq.Persistence.SqlServer.Tests.trx" --results-directory TestResults -p:CollectCoverage=true -p:CoverletOutput=../../coverage/Croniq.Persistence.SqlServer.Tests/ -p:CoverletOutputFormat=cobertura
+
       - name: Install ReportGenerator
         run: |
           dotnet tool install --global dotnet-reportgenerator-globaltool --version 5.5.1
@@ -107,3 +112,11 @@ jobs:
         with:
           name: pr-coverage
           path: coverage
+
+      - name: Upload container logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: contract-container-logs
+          path: artifacts/containers
+          if-no-files-found: ignore

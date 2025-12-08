@@ -67,3 +67,41 @@ jobs:
       - name: Shut down stack
         if: always()
         run: docker compose ${{ env.COMPOSE_ARGS }} ${{ env.COMPOSE_PROFILES }} down -v --remove-orphans
+
+  compliance:
+    name: SBOM & Vulnerability Scan
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Prepare directories
+        run: |
+          mkdir -p artifacts
+          mkdir -p bin
+
+      - name: Install Syft
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | sh -s -- -b ./bin
+          echo "${{ github.workspace }}/bin" >> $GITHUB_PATH
+
+      - name: Generate SBOM (Syft)
+        run: syft dir:. -o json > artifacts/sbom.json
+
+      - name: Run Trivy filesystem scan
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: fs
+          scan-ref: .
+          severity: HIGH,CRITICAL
+          exit-code: 1
+          ignore-unfixed: true
+          format: sarif
+          output: artifacts/trivy.sarif
+
+      - name: Upload compliance artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nightly-compliance
+          path: artifacts
