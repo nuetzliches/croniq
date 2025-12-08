@@ -27,6 +27,16 @@ All services share a `croniq-net` bridge network. Ports are exposed via `.env` d
 
 > **Logs in Grafana**: With Loki now part of the `obs` profile, the OpenTelemetry Collector's log pipeline exports directly to `loki:3100`. Grafana auto-loads a Loki datasource so the `Croniq Logs` dashboard (or ad hoc Explore views) can show `Croniq.Sample.ApiHost` / worker logs alongside traces and metrics. If Loki is disabled, Serilog still writes to the console, but Grafana will no longer list the datasource.
 
+## Loki Tenant & Labels
+
+- The observability overlay pins all log traffic to the Loki tenant `croniq-devstack`. The OTEL collector sends the tenant via `X-Scope-OrgID`, and Grafana's datasource is provisioned with the same header. If you change the tenant, update **both** `infra/docker/observability/otel-collector-config.yaml` and `infra/docker/observability/grafana/datasources/datasource.yml` (or override via environment variables) to keep Explore queries working.
+- The collector now forwards key resource attributes as Loki labels: `service_name`, `service_instance`, `environment`, and `tenant`. They originate from `Croniq:Core` settings (environment, tenant ID, instance IDs) so containerized and host-based runs share the same taxonomy.
+- Typical Explore query using the new labels:
+	- `{tenant="croniq-devstack", environment="dev", service_name="Croniq.Api"}` for API-only logs.
+	- `{tenant="croniq-devstack"} |= "ERROR"` for a quick severity filter.
+	- Use the templated **Croniq Log Pulse** dashboard (`infra/docker/observability/grafana/dashboards/logs-overview.json`) for prebuilt panels (per-service volume, level mix, latest WARN/ERROR stream).
+- Grafana Explore defaults to the last hour. When onboarding or after restarts, increase the time range (e.g., _Last 6 hours_) to include previously ingested chunks.
+
 ## Compose Files & Profiles
 
 - `infra/docker/docker-compose.yml`: base SQL container plus the `croniq-db-migrator` helper that auto-applies EF migrations once SQL is healthy.
