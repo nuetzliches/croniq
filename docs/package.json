@@ -7,7 +7,8 @@
     "test": "echo \"No root tests configured\"",
     "docs:dev": "vitepress dev .",
     "docs:build": "vitepress build .",
-    "docs:preview": "vitepress preview ."
+    "docs:preview": "vitepress preview .",
+    "docs:lint": "markdownlint-cli2 \"**/*.md\" \"!.vitepress/dist/**\" \"!node_modules/**\""
   },
   "repository": {
     "type": "git",
@@ -22,7 +23,9 @@
   },
   "homepage": "https://github.com/nuetzliches/croniq#readme",
   "devDependencies": {
+    "markdownlint-cli2": "^0.17.0",
     "mermaid": "^11.12.2",
-    "vitepress": "^1.6.4"
+    "vitepress": "^1.6.4",
+    "vitepress-plugin-mermaid": "^2.0.17"
   }
 }

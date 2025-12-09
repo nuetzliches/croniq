@@ -14,7 +14,7 @@ You can switch between modes (or enable both) by changing configuration—no cod
 
 ## API Keys
 
-### When to Use
+### When to Use API Keys
 
 - Service-to-service calls (CI pipelines, platform schedulers).
 - Croniq SDK clients that run outside your identity provider.
@@ -57,7 +57,7 @@ set Croniq__Core__EnvironmentTag=dev-jane
 
 ## OAuth2 / OIDC
 
-### When to Use
+### When to Use OAuth2/OIDC
 
 - Human users interact with Croniq dashboards or management APIs.
 - You already have an IdP and prefer centralized lifecycle management.

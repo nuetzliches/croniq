@@ -1,6 +1,7 @@
 import { defineConfig } from 'vitepress';
+import { withMermaid } from 'vitepress-plugin-mermaid';
 
-export default defineConfig({
+export default withMermaid(defineConfig({
     lang: 'en-US',
     title: 'Croniq Docs',
     description: 'Croniq consumer + deep-dive documentation',
@@ -9,7 +10,8 @@ export default defineConfig({
     cleanUrls: true,
     lastUpdated: true,
     head: [
-        ['meta', { name: 'theme-color', content: '#0f172a' }]
+        ['meta', { name: 'theme-color', content: '#0f172a' }],
+        ['link', { rel: 'icon', type: 'image/svg+xml', href: '/favicon.svg' }]
     ],
     markdown: {
         theme: {
@@ -17,9 +19,12 @@ export default defineConfig({
             dark: 'github-dark'
         }
     },
-    mermaid: true,
+    mermaid: {
+        theme: 'dark'
+    },
     themeConfig: {
         siteTitle: 'Croniq Docs',
+        logo: '/favicon.svg',
         nav: [
             { text: 'Introduction', link: '/introduction/' },
             { text: 'Quickstart', link: '/introduction/quickstart' },
@@ -57,9 +62,14 @@ export default defineConfig({
                     text: 'Deep Dive',
                     items: [
                         { text: 'Overview', link: '/deep-dive/' },
+                        { text: 'Architecture', link: '/deep-dive/architecture' },
                         { text: 'Doc Streams Plan', link: '/deep-dive/docstreams' },
                         { text: 'CI / Release', link: '/deep-dive/ci' },
+                        { text: 'Release Playbook', link: '/deep-dive/release' },
                         { text: 'Dev Stack', link: '/deep-dive/devstack' },
+                        { text: 'Persistence', link: '/deep-dive/persistence' },
+                        { text: 'Job Registration', link: '/deep-dive/job-registration' },
+                        { text: 'Auth Internals', link: '/deep-dive/auth' },
                         { text: 'Testing', link: '/deep-dive/testing' },
                         { text: 'Observability', link: '/deep-dive/observability' },
                         { text: 'Policies', link: '/deep-dive/policies' },
@@ -75,4 +85,4 @@ export default defineConfig({
             { icon: 'github', link: 'https://github.com/nuetzliches/croniq' }
         ]
     }
-});
+}));

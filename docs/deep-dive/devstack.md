@@ -11,17 +11,17 @@ This document describes the local Docker Compose environment required to satisfy
 
 ## Target Services
 
-| Service                   | Purpose                                              | Notes                                                             |
-| ------------------------- | ---------------------------------------------------- | ----------------------------------------------------------------- |
-| `api`                     | Hosts `Croniq.Sample.ApiHost` (Minimal API + gRPC).  | Mounted source, hot reload via `dotnet watch` or pre-built image. |
-| `worker`                  | Runs scheduler worker host (future `Croniq.Worker`). | Shares code with API; processes triggers/jobs.                    |
-| `rpc-sample`              | Optional sample RPC client (demonstrates SDK usage). | Can be toggled via profile.                                       |
-| `mssql-22`                | SQL Server 2022 with Croniq schema + EF migrations.  | Uses persisted volume `croniq-mssql-data`.                        |
-| `otel-collector`          | OpenTelemetry collector for logs/metrics/traces.     | Exports to Tempo/Prometheus/Grafana.                              |
-| `grafana`                 | Observability dashboard with baked JSON dashboards.  | Depends on `prometheus` + `tempo`.                                |
-| `prometheus`              | Scrapes metrics from API/worker and OTel collector.  | Stores TSDB in `prom-data` volume.                                |
-| `tempo`                   | Stores traces from collector.                        | Local filesystem volume.                                          |
-| `loki`                    | Log aggregation for OTLP logs routed via collector.  | Enabled with the `obs` profile; Grafana ships a Loki datasource.  |
+| Service          | Purpose                                              | Notes                                                             |
+| ---------------- | ---------------------------------------------------- | ----------------------------------------------------------------- |
+| `api`            | Hosts `Croniq.Sample.ApiHost` (Minimal API + gRPC).  | Mounted source, hot reload via `dotnet watch` or pre-built image. |
+| `worker`         | Runs scheduler worker host (future `Croniq.Worker`). | Shares code with API; processes triggers/jobs.                    |
+| `rpc-sample`     | Optional sample RPC client (demonstrates SDK usage). | Can be toggled via profile.                                       |
+| `mssql-22`       | SQL Server 2022 with Croniq schema + EF migrations.  | Uses persisted volume `croniq-mssql-data`.                        |
+| `otel-collector` | OpenTelemetry collector for logs/metrics/traces.     | Exports to Tempo/Prometheus/Grafana.                              |
+| `grafana`        | Observability dashboard with baked JSON dashboards.  | Depends on `prometheus` + `tempo`.                                |
+| `prometheus`     | Scrapes metrics from API/worker and OTel collector.  | Stores TSDB in `prom-data` volume.                                |
+| `tempo`          | Stores traces from collector.                        | Local filesystem volume.                                          |
+| `loki`           | Log aggregation for OTLP logs routed via collector.  | Enabled with the `obs` profile; Grafana ships a Loki datasource.  |
 
 All services share a `croniq-net` bridge network. Ports are exposed via `.env` defaults (e.g., API 5080/5081, Grafana 5610, Prometheus 9000, Tempo 3100).
 
@@ -32,10 +32,10 @@ All services share a `croniq-net` bridge network. Ports are exposed via `.env` d
 - The observability overlay pins all log traffic to the Loki tenant `croniq-devstack`. The OTEL collector sends the tenant via `X-Scope-OrgID`, and Grafana's datasource is provisioned with the same header. If you change the tenant, update **both** `infra/docker/observability/otel-collector-config.yaml` and `infra/docker/observability/grafana/datasources/datasource.yml` (or override via environment variables) to keep Explore queries working.
 - The collector now forwards key resource attributes as Loki labels: `service_name`, `service_instance`, `environment`, and `tenant`. They originate from `Croniq:Core` settings (environment, tenant ID, instance IDs) so containerized and host-based runs share the same taxonomy.
 - Typical Explore query using the new labels:
-	- `{tenant="croniq-devstack", environment="dev", service_name="Croniq.Api"}` for API-only logs.
-	- `{tenant="croniq-devstack"} |= "ERROR"` for a quick severity filter.
-	- Use the templated **Croniq Log Pulse** dashboard (`infra/docker/observability/grafana/dashboards/logs-overview.json`) for prebuilt panels (per-service volume, level mix, latest WARN/ERROR stream, trigger INFO feed, and failed job errors at a glance).
-	- The job execution pipeline now emits structured log scopes (`croniq.job.*`, `croniq.trigger.*`) and Info/Error entries like `Trigger <JobKey> started/completed/failed`, so Loki queries can filter by tenant/environment, namespace/name, trigger id or initiator without string parsing.
+  - `{tenant="croniq-devstack", environment="dev", service_name="Croniq.Api"}` for API-only logs.
+  - `{tenant="croniq-devstack"} |= "ERROR"` for a quick severity filter.
+  - Use the templated **Croniq Log Pulse** dashboard (`infra/docker/observability/grafana/dashboards/logs-overview.json`) for prebuilt panels (per-service volume, level mix, latest WARN/ERROR stream, trigger INFO feed, and failed job errors at a glance).
+  - The job execution pipeline now emits structured log scopes (`croniq.job.*`, `croniq.trigger.*`) and Info/Error entries like `Trigger <JobKey> started/completed/failed`, so Loki queries can filter by tenant/environment, namespace/name, trigger id or initiator without string parsing.
 - Grafana Explore defaults to the last hour. When onboarding or after restarts, increase the time range (e.g., _Last 6 hours_) to include previously ingested chunks.
 
 ## Compose Files & Profiles

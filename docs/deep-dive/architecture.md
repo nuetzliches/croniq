@@ -23,9 +23,41 @@ This document captures the current architecture of Croniq and replaces the earli
 
 Hosting extensions (`AddCroniqApiServices`, `AddCroniqApiRateLimiter`, `UseCroniqApi`) wire the pieces together. Auth and persistence can run in `InMemory` or `SqlServer` modes via configuration (`Croniq:*`).
 
+## System Diagram
+
+```mermaid
+graph LR
+  subgraph "Callers"
+    ApiClients["REST / gRPC Clients"]
+    JobAuthors["Croniq.Sdk Hosts"]
+  end
+
+  ApiHost["API Host (Croniq.Api)"]
+  RateLimiter["Auth + Rate Limiter"]
+  SchedulerCore["Scheduler Core"]
+  ProviderBus["Provider Abstractions"]
+  Persistence["Persistence Provider (InMemory / SqlServer)"]
+  AuthProvider["Auth Provider (InMemory / SqlServer)"]
+  Sql[("SqlServer")]
+  WorkerHosts["Croniq Worker Hosts"]
+  Jobs["Job Assemblies"]
+
+  ApiClients --> ApiHost
+  JobAuthors --> ApiHost
+  ApiHost --> RateLimiter
+  RateLimiter --> SchedulerCore
+  SchedulerCore --> ProviderBus
+  ProviderBus --> Persistence
+  ProviderBus --> AuthProvider
+  Persistence --> Sql
+  AuthProvider --> Sql
+  SchedulerCore --> WorkerHosts
+  WorkerHosts --> Jobs
+```
+
 ## Repository & Documentation Layout
 
-```
+```text
 src/
   Croniq.Core/
   Croniq.JobStore.InMemory/
@@ -48,7 +80,7 @@ docs/
 
 - `Croniq.Data.SqlServer` centralises EF Core entities, DbContext, and migrations for both persistence and auth.
 - `docs` is split into consumer-focused introductions/guides and the deep-dive stream (this document, security, observability, etc.).
-- Architecture diagrams live in `docs/architecture.drawio`; edit via VS Code (hediet.drawio extension) or diagrams.net.
+- Architecture diagrams now live inline as Mermaid blocks inside this document so they render everywhere without external tooling.
 
 ## Persistence & Auth
 
