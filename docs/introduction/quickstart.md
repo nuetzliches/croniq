@@ -233,6 +233,21 @@ Invoke-WebRequest -Uri "https://localhost:5001/webhooks/hello-world" `
 
 `Croniq.Webhooks` recomputes the signature, enforces the rate limit, and invokes the job pipeline. You should see the same log output as the manual trigger, plus webhook-specific metadata (e.g., `payload:invoiceId=INV-42`).
 
+### Rotate webhook secrets from the CLI
+
+Persisted hooks should rotate their secrets regularly. Instead of crafting raw HTTP calls, run the helper under `scripts/webhook-rotate-secret.ps1` (PowerShell or VS Code terminal):
+
+```powershell
+scripts/webhook-rotate-secret.ps1 `
+  -TenantId tenant-samples `
+  -Environment dev `
+  -HookKey hello-world `
+  -GracePeriodSeconds 3600 `
+  -Notes "rotated during quickstart"
+```
+
+Pass `-ActivateInSeconds <seconds>` (up to seven days) when you need to stage the new secret before callers switch over. The script prints the activation window plus the plaintext secret—capture it immediately because Croniq never stores or returns it again.
+
 ## 6. Run Everything
 
 ```cmd

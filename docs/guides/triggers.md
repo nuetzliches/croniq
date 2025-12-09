@@ -127,7 +127,21 @@ PY
    DEV stacks can still fall back to `Croniq:Webhooks` config, but production tenants should rely on the API so secrets are persisted in SqlServer.
 
 2. **List existing hooks** with `GET /tenants/{tenantId}/webhooks?environment=<tag>` to verify rate limits, metadata, and enablement before routing callers to the endpoint.
-3. **Rotate secrets** with `POST /tenants/{tenantId}/webhooks/{hookKey}/rotate-secret?environment=<tag>`. Provide optional `gracePeriodSeconds` (default 24h) so the previous secret remains valid while upstream systems roll out the new key. The rotation response is the only time you see the plaintext secret—stash it in your secret manager immediately.
+3. **Rotate secrets** with `POST /tenants/{tenantId}/webhooks/{hookKey}/rotate-secret?environment=<tag>`. Provide optional `gracePeriodSeconds` (default 24h) so the previous secret remains valid while upstream systems roll out the new key, and set `activateInSeconds` (up to seven days in the future) when you need a delayed cutover. The rotation response is the only time you see the plaintext secret—stash it in your secret manager immediately or pipe it into your vault automation.
+
+   PowerShell helper (`scripts/webhook-rotate-secret.ps1`) for local workflows:
+
+   ```powershell
+   scripts/webhook-rotate-secret.ps1 `
+     -TenantId tenant-a `
+     -Environment dev `
+     -HookKey invoice-paid `
+     -ActivateInSeconds 900 `
+     -GracePeriodSeconds 86400 `
+     -Notes "rotated via devstack"
+   ```
+
+   The script prints the activation/expires timestamps and the new secret so you can capture it immediately.
 4. **Disable or delete hooks** via `POST` (set `enabled:false`) for temporary pauses or `DELETE /tenants/{tenantId}/webhooks/{hookKey}?environment=<tag>` for permanent removal. Disabled hooks still show up in diagnostics; deleted hooks return `404` immediately.
 5. **Audit usage** through telemetry (`Croniq.Webhooks.Ingress` spans) and, once wired up, the `WebhookIngressDeadLetter` table. Until then, structured logs remain the source of truth for per-hook activity.
 

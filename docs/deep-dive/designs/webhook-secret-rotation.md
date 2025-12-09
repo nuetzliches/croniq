@@ -27,9 +27,9 @@
   - Internal helpers to append history row + update `WebhookEndpointEntity.Secret`/`SecretHash`.
 - `WebhookEndpointEntity` continues to hold current secret for backward compatibility but setter only triggered via rotation path.
 - When rotating:
-  1. Validate optional `activateIn` delay + `gracePeriod` (default immediate + 24h grace).
+  1. Validate optional `activateIn` delay + `gracePeriod` (default immediate + 24h grace). Activation delays are capped at seven days to avoid indefinite future secrets.
   2. Insert new history row with future `ActivatedAtUtc` if delay specified.
-  3. Update previous active row's `ExpiresAtUtc` to `ActivatedAtUtc + gracePeriod`.
+  3. Update the current active row's `ExpiresAtUtc` to `ActivatedAtUtc + gracePeriod` and trim any other pending rows so only the primary + grace window remain active at a time.
   4. Return plaintext secret to caller exactly once.
 - Signature validation queries `WebhookSecretHistory` for active rows and accepts any whose window contains `UtcNow`.
 - Maintenance job (future) can purge expired history based on retention.
@@ -56,6 +56,29 @@ curl -s -X POST "https://api.croniq.dev/tenants/{tenantId}/webhooks/{hookKey}/ro
 The API returns the plaintext secret exactly once. Persist it in your secret manager immediately; Croniq only stores the hash + metadata. `RotatedBy` derives from the authenticated caller (`ICallerContextAccessor`) so CI/service principals show up as `apiKey:{clientId}`.
 
 You can wrap the call inside a script (PowerShell, Bash, etc.) to mask the new secret before printing it or to push it downstream (Azure Key Vault, AWS Secrets Manager). A future helper script will live under `scripts/webhook-rotate-secret.ps1`, but until then the raw HTTP call above is the reference flow.
+
+### Helper script
+
+`scripts/webhook-rotate-secret.ps1` automates the HTTP call for local operators and CI pipelines. Parameters:
+
+- `-TenantId`, `-Environment`, `-HookKey`: scope and webhook identifier.
+- Optional `-ActivateInSeconds` (0–604800) to stage a future activation window.
+- Optional `-GracePeriodSeconds` (defaults to server-side 24h) to keep the previous secret alive while callers switch.
+- Optional `-Notes` to capture runbooks or ticket IDs in the audit trail.
+
+Example:
+
+```powershell
+scripts/webhook-rotate-secret.ps1 `
+  -TenantId tenant-a `
+  -Environment dev `
+  -HookKey deploy-trigger `
+  -ActivateInSeconds 1800 `
+  -GracePeriodSeconds 86400 `
+  -Notes "rotated before blue/green cutover"
+```
+
+The script prints the activation/grace window plus the plaintext secret, making it straightforward to pipe into vault tooling or clipboard managers.
 
 ## Signature Opt-Out Controls
 

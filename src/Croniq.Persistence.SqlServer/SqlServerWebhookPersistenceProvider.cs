@@ -17,6 +17,7 @@ public sealed class SqlServerWebhookPersistenceProvider : IWebhookPersistencePro
 {
     private const int SecretByteLength = 32;
     private static readonly TimeSpan DefaultGracePeriod = TimeSpan.FromHours(24);
+    private static readonly TimeSpan MaxActivationDelay = TimeSpan.FromDays(7);
     private readonly IDbContextFactory<SqlServerDbContext> _dbFactory;
     private readonly JsonSerializerOptions _jsonOptions = new(JsonSerializerDefaults.Web);
 
@@ -182,19 +183,24 @@ public sealed class SqlServerWebhookPersistenceProvider : IWebhookPersistencePro
             throw new InvalidOperationException("Webhook scope mismatch.");
         }
 
-        if (request.ActivateInSeconds.HasValue && request.ActivateInSeconds.Value > 0)
+        var now = DateTime.UtcNow;
+        var activationDelaySeconds = request.ActivateInSeconds.HasValue
+            ? Math.Max(0, request.ActivateInSeconds.Value)
+            : 0;
+
+        if (activationDelaySeconds > MaxActivationDelay.TotalSeconds)
         {
-            throw new InvalidOperationException("Delayed secret activation is not supported yet.");
+            throw new InvalidOperationException($"ActivateInSeconds cannot exceed {(int)MaxActivationDelay.TotalSeconds} seconds.");
         }
 
-        var now = DateTime.UtcNow;
+        var activatedAtUtc = now.AddSeconds(activationDelaySeconds);
         var graceSeconds = request.GracePeriodSeconds.HasValue
             ? Math.Max(60, request.GracePeriodSeconds.Value)
             : (int)DefaultGracePeriod.TotalSeconds;
         var gracePeriod = TimeSpan.FromSeconds(graceSeconds);
         var secret = GenerateSecret();
 
-        await ApplySecretAsync(db, entity, secret, now, gracePeriod, request.RotatedBy ?? "system:rotate", request.Notes, cancellationToken).ConfigureAwait(false);
+        await ApplySecretAsync(db, entity, secret, activatedAtUtc, gracePeriod, request.RotatedBy ?? "system:rotate", request.Notes, cancellationToken).ConfigureAwait(false);
         entity.UpdatedAtUtc = now;
         await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
 
@@ -202,7 +208,7 @@ public sealed class SqlServerWebhookPersistenceProvider : IWebhookPersistencePro
             entity.HookKey,
             secret,
             entity.SecretHash,
-            DateTime.SpecifyKind(now, DateTimeKind.Utc),
+            DateTime.SpecifyKind(activatedAtUtc, DateTimeKind.Utc),
             null);
     }
 
@@ -214,7 +220,9 @@ public sealed class SqlServerWebhookPersistenceProvider : IWebhookPersistencePro
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
         var rows = await db.WebhookSecretHistory
             .AsNoTracking()
-            .Where(x => x.HookKey == hookKey && (x.ExpiresAtUtc == null || x.ExpiresAtUtc > now))
+            .Where(x => x.HookKey == hookKey
+                        && x.ActivatedAtUtc <= now
+                        && (x.ExpiresAtUtc == null || x.ExpiresAtUtc > now))
             .OrderBy(x => x.ActivatedAtUtc)
             .ToListAsync(cancellationToken)
             .ConfigureAwait(false);
@@ -253,19 +261,31 @@ public sealed class SqlServerWebhookPersistenceProvider : IWebhookPersistencePro
             .OrderByDescending(x => x.ActivatedAtUtc)
             .ToListAsync(cancellationToken)
             .ConfigureAwait(false);
+        var graceExpiry = gracePeriod <= TimeSpan.Zero
+            ? activatedAtUtc
+            : activatedAtUtc.Add(gracePeriod);
 
         if (activeRows.Count > 0)
         {
-            var graceExpiry = gracePeriod <= TimeSpan.Zero
-                ? activatedAtUtc
-                : activatedAtUtc.Add(gracePeriod);
-
-            var mostRecent = activeRows[0];
-            mostRecent.ExpiresAtUtc = graceExpiry;
-
-            foreach (var extra in activeRows.Skip(1))
+            WebhookSecretHistoryEntity? graceTarget = null;
+            foreach (var row in activeRows)
             {
-                extra.ExpiresAtUtc = activatedAtUtc;
+                if (row.ActivatedAtUtc <= activatedAtUtc)
+                {
+                    if (graceTarget is null)
+                    {
+                        graceTarget = row;
+                        row.ExpiresAtUtc = graceExpiry;
+                    }
+                    else
+                    {
+                        row.ExpiresAtUtc = activatedAtUtc;
+                    }
+                }
+                else
+                {
+                    row.ExpiresAtUtc = activatedAtUtc;
+                }
             }
         }
 

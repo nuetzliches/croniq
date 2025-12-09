@@ -6,6 +6,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Croniq.Core.Jobs;
 using Croniq.Data.SqlServer;
+using Croniq.Data.SqlServer.Entities;
 using Croniq.Persistence.Abstractions;
 using Croniq.Persistence.SqlServer.Tests.Collections;
 using Croniq.TestKit.SqlServer;
@@ -209,6 +210,114 @@ public sealed class SqlServerWebhookPersistenceProviderTests : IAsyncLifetime
         history.Should().HaveCount(2);
         history.Last().Secret.Should().Be(result.Secret);
         history.First().ExpiresAtUtc.Should().NotBeNull();
+    }
+
+    [Fact]
+    [Trait(TestCategories.Category, TestCategories.Contract)]
+    public async Task RotateSecretAsync_WithDelayedActivation_LeavesCurrentSecretActive()
+    {
+        var scope = new PartitionScope("tenant-rotate-delay", "dev");
+        var jobKey = JobKey.Create(scope.TenantId, scope.EnvironmentTag, "ops", "hook");
+        var hookKey = "tenant-rotate-delay-dev-hook";
+        await UpsertEndpointAsync(hookKey, scope, jobKey);
+
+        var delaySeconds = 600;
+        var graceSeconds = 900;
+        var rotateResult = await _persistence!.RotateSecretAsync(
+            new WebhookSecretRotate(
+                hookKey,
+                scope.TenantId,
+                scope.EnvironmentTag,
+                ActivateInSeconds: delaySeconds,
+                GracePeriodSeconds: graceSeconds,
+                RotatedBy: "tests",
+                Notes: "delayed"),
+            CancellationToken.None);
+
+        rotateResult.HookKey.Should().Be(hookKey);
+        rotateResult.ActivatedAtUtc.Should().BeAfter(DateTime.UtcNow);
+
+        var activeSecrets = await _persistence.GetActiveSecretsAsync(hookKey, CancellationToken.None);
+        activeSecrets.Should().HaveCount(1);
+        var remainingSecret = activeSecrets.Single();
+        remainingSecret.ExpiresAtUtc.Should().NotBeNull();
+        remainingSecret.ExpiresAtUtc.Should().BeAfter(rotateResult.ActivatedAtUtc);
+
+        await using var context = await _dbFactory!.CreateDbContextAsync();
+        var history = await context.WebhookSecretHistory
+            .Where(x => x.HookKey == hookKey)
+            .OrderBy(x => x.ActivatedAtUtc)
+            .ToListAsync();
+
+        history.Should().HaveCount(2);
+        var futureSecret = history.Last();
+        futureSecret.ActivatedAtUtc.Should().BeCloseTo(rotateResult.ActivatedAtUtc, TimeSpan.FromSeconds(1));
+        futureSecret.ExpiresAtUtc.Should().BeNull();
+        var previousSecret = history.First();
+        previousSecret.ExpiresAtUtc.Should().NotBeNull();
+        previousSecret.ExpiresAtUtc.Should().BeAfter(rotateResult.ActivatedAtUtc);
+    }
+
+    [Fact]
+    [Trait(TestCategories.Category, TestCategories.Contract)]
+    public async Task RotateSecretAsync_WithActivationDelayBeyondLimit_Throws()
+    {
+        var scope = new PartitionScope("tenant-rotate-limit", "dev");
+        var jobKey = JobKey.Create(scope.TenantId, scope.EnvironmentTag, "ops", "hook");
+        var hookKey = "tenant-rotate-limit-dev-hook";
+        await UpsertEndpointAsync(hookKey, scope, jobKey);
+
+        var excessiveDelaySeconds = (int)TimeSpan.FromDays(8).TotalSeconds;
+
+        var action = () => _persistence!.RotateSecretAsync(
+            new WebhookSecretRotate(
+                hookKey,
+                scope.TenantId,
+                scope.EnvironmentTag,
+                ActivateInSeconds: excessiveDelaySeconds,
+                GracePeriodSeconds: null,
+                RotatedBy: "tests",
+                Notes: "limit"),
+            CancellationToken.None);
+
+        await action.Should().ThrowAsync<InvalidOperationException>()
+            .WithMessage("*ActivateInSeconds*");
+    }
+
+    [Fact]
+    [Trait(TestCategories.Category, TestCategories.Contract)]
+    public async Task GetActiveSecretsAsync_WhenOnlyFutureSecretsExist_ReturnsEmpty()
+    {
+        var scope = new PartitionScope("tenant-future-only", "dev");
+        var jobKey = JobKey.Create(scope.TenantId, scope.EnvironmentTag, "ops", "hook");
+        var hookKey = "tenant-future-only-dev-hook";
+        await UpsertEndpointAsync(hookKey, scope, jobKey);
+
+        await using (var context = await _dbFactory!.CreateDbContextAsync())
+        {
+            var existing = await context.WebhookSecretHistory
+                .Where(x => x.HookKey == hookKey)
+                .SingleAsync();
+
+            existing.ExpiresAtUtc = DateTime.UtcNow.AddMinutes(-5);
+
+            context.WebhookSecretHistory.Add(new WebhookSecretHistoryEntity
+            {
+                HookKey = hookKey,
+                TenantId = scope.TenantId,
+                EnvironmentTag = scope.EnvironmentTag,
+                Secret = "future-secret",
+                SecretHash = ComputeSecretHash("future-secret"),
+                ActivatedAtUtc = DateTime.UtcNow.AddMinutes(10),
+                ExpiresAtUtc = null,
+                RotatedBy = "tests"
+            });
+
+            await context.SaveChangesAsync();
+        }
+
+        var secrets = await _persistence!.GetActiveSecretsAsync(hookKey, CancellationToken.None);
+        secrets.Should().BeEmpty();
     }
 
     [Fact]
