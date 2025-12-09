@@ -78,7 +78,7 @@ set Croniq__Core__EnvironmentTag=dev-jane
 
 ### Claim Mapping
 
-| Croniq Concept  | Default Claim             | Notes                                                                      |
+| Croniq Field    | Default Claim             | Notes                                                                      |
 | --------------- | ------------------------- | -------------------------------------------------------------------------- |
 | Tenant Id       | `tenant` (fallback `tid`) | Override via `Croniq:Auth:Oidc:TenantClaim` when you use custom naming.    |
 | Environment Tag | `env`                     | Missing value falls back to the configured default per tenant/environment. |
