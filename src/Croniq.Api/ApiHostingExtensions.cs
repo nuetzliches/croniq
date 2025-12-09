@@ -16,7 +16,9 @@ using Croniq.Persistence.Abstractions;
 using Croniq.Persistence.SqlServer;
 using Croniq.Providers.Default;
 using Croniq.Sdk;
+using Croniq.Hosting;
 using Microsoft.AspNetCore.RateLimiting;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Options;
 
@@ -29,101 +31,7 @@ public static class ApiHostingExtensions
     public static IServiceCollection AddCroniqApiServices(this IServiceCollection services, IConfiguration configuration)
     {
         services.Configure<CroniqApiOptions>(configuration.GetSection("Croniq:Api"));
-        services.Configure<CroniqOptions>(configuration.GetSection("Croniq:Core"));
-        services.Configure<CroniqAuthOptions>(configuration.GetSection("Croniq:Auth"));
-        services.Configure<CroniqPersistenceOptions>(configuration.GetSection("Croniq:Persistence"));
-        services.Configure<SqlServerOptions>(configuration.GetSection("Croniq:SqlServer"));
-
-        services.AddCroniqCore();
-        services.AddCroniqDefaultProviders();
-
-        var authOpts = configuration.GetSection("Croniq:Auth").Get<CroniqAuthOptions>() ?? new CroniqAuthOptions();
-        var persistenceOpts = configuration.GetSection("Croniq:Persistence").Get<CroniqPersistenceOptions>() ?? new CroniqPersistenceOptions();
-        var sharedSqlServer = configuration.GetSection("Croniq:SqlServer").Get<SqlServerOptions>() ?? new SqlServerOptions();
-
-        // Always register InMemory JobStore
-        services.AddCroniqInMemoryJobStore();
-
-        if (string.Equals(persistenceOpts.Mode, "SqlServer", StringComparison.OrdinalIgnoreCase))
-        {
-            var conn = ResolveConnectionString(
-                persistenceOpts.SqlServer.ConnectionString,
-                sharedSqlServer.ConnectionString,
-                configuration);
-
-            if (string.IsNullOrWhiteSpace(conn))
-            {
-                throw new InvalidOperationException("Croniq:Persistence:SqlServer:ConnectionString or Croniq:SqlServer:ConnectionString is required when Persistence.Mode = SqlServer.");
-            }
-
-            services.AddCroniqSqlServerPersistence(sqlOptions =>
-            {
-                sqlOptions.ConnectionString = conn;
-                sqlOptions.MigrationsAssembly = persistenceOpts.SqlServer.MigrationsAssembly ?? sharedSqlServer.MigrationsAssembly;
-                sqlOptions.EnableDetailedErrors = persistenceOpts.SqlServer.EnableDetailedErrors ?? sharedSqlServer.EnableDetailedErrors;
-                sqlOptions.EnableSensitiveDataLogging = persistenceOpts.SqlServer.EnableSensitiveDataLogging ?? sharedSqlServer.EnableSensitiveDataLogging;
-            }, persistenceOptions =>
-            {
-                if (persistenceOpts.SqlServer.LeaseDurationSeconds.HasValue)
-                {
-                    persistenceOptions.LeaseDurationSeconds = persistenceOpts.SqlServer.LeaseDurationSeconds.Value;
-                }
-
-                if (persistenceOpts.SqlServer.DeadLetterRetentionDays.HasValue)
-                {
-                    persistenceOptions.DeadLetterRetentionDays = persistenceOpts.SqlServer.DeadLetterRetentionDays.Value;
-                }
-
-                if (persistenceOpts.SqlServer.DeadLetterReasonMaxLength.HasValue)
-                {
-                    persistenceOptions.DeadLetterReasonMaxLength = persistenceOpts.SqlServer.DeadLetterReasonMaxLength.Value;
-                }
-            });
-        }
-
-        if (string.Equals(authOpts.Mode, "SqlServer", StringComparison.OrdinalIgnoreCase))
-        {
-            var conn = ResolveConnectionString(
-                authOpts.SqlServer.ConnectionString,
-                sharedSqlServer.ConnectionString,
-                configuration);
-
-            if (string.IsNullOrWhiteSpace(conn))
-            {
-                throw new InvalidOperationException("Croniq:Auth:SqlServer:ConnectionString or Croniq:SqlServer:ConnectionString is required when Auth.Mode = SqlServer.");
-            }
-
-            services.AddCroniqAuthSqlServer(sqlOptions =>
-            {
-                sqlOptions.ConnectionString = conn;
-                sqlOptions.MigrationsAssembly = authOpts.SqlServer.MigrationsAssembly ?? sharedSqlServer.MigrationsAssembly;
-                sqlOptions.EnableDetailedErrors = authOpts.SqlServer.EnableDetailedErrors ?? sharedSqlServer.EnableDetailedErrors;
-                sqlOptions.EnableSensitiveDataLogging = authOpts.SqlServer.EnableSensitiveDataLogging ?? sharedSqlServer.EnableSensitiveDataLogging;
-            });
-        }
-        else
-        {
-            var apiKey = authOpts.InMemory.ApiKey;
-            if (string.IsNullOrWhiteSpace(apiKey))
-            {
-                throw new InvalidOperationException("Croniq:Auth:InMemory:ApiKey must be set when Auth.Mode = InMemory.");
-            }
-
-            services.AddCroniqAuthCore(options =>
-            {
-                options.ApiKeys.Add(new ApiKeySeed(
-                    KeyId: "default",
-                    Secret: apiKey,
-                    TenantId: authOpts.InMemory.TenantId,
-                    EnvironmentTag: authOpts.InMemory.EnvironmentTag,
-                    Scopes: new[] { "schedules:write", "jobs:trigger" },
-                    ClientId: "default"));
-            });
-        }
-
-        services.TryAddScoped<ICallerContextAccessor, CallerContextAccessor>();
-        services.TryAddScoped<ICallerContextFactory, CallerContextFactory>();
-
+        services.AddCroniqPlatformServices(configuration);
         return services;
     }
 
@@ -242,6 +150,123 @@ public static class ApiHostingExtensions
             return Results.Created($"/schedules/{trigger.TriggerId}", new { trigger.TriggerId, trigger.JobKey, trigger.ScheduleExpression });
         });
 
+        app.MapGet("/tenants/{tenantId}/webhooks", async (
+            string tenantId,
+            string environment,
+            IWebhookPersistenceProvider? webhookStore,
+            CancellationToken cancellationToken) =>
+        {
+            if (string.IsNullOrWhiteSpace(environment))
+            {
+                return Results.BadRequest(new { error = "missing-environment", message = "Query parameter 'environment' is required." });
+            }
+
+            if (webhookStore is null)
+            {
+                return Results.Problem(statusCode: StatusCodes.Status503ServiceUnavailable, title: "webhooks-unavailable", detail: "Webhook persistence provider not configured.");
+            }
+
+            var scope = new PartitionScope(tenantId, environment);
+            var endpoints = await webhookStore.ListAsync(scope, cancellationToken).ConfigureAwait(false);
+            var response = endpoints.Select(def => ToWebhookResponse(def)).ToList();
+            return Results.Ok(response);
+        });
+
+        app.MapPost("/tenants/{tenantId}/webhooks", async (
+            string tenantId,
+            string environment,
+            UpsertWebhookEndpointRequest request,
+            IWebhookPersistenceProvider? webhookStore,
+            IConfiguration configuration,
+            ILogger<WebhookEndpointApiMarker> logger,
+            CancellationToken cancellationToken) =>
+        {
+            if (string.IsNullOrWhiteSpace(environment))
+            {
+                return Results.BadRequest(new { error = "missing-environment", message = "Query parameter 'environment' is required." });
+            }
+
+            if (webhookStore is null)
+            {
+                return Results.Problem(statusCode: StatusCodes.Status503ServiceUnavailable, title: "webhooks-unavailable", detail: "Webhook persistence provider not configured.");
+            }
+
+            if (!JobKey.TryParse(request.JobKey, out var jobKey))
+            {
+                return Results.BadRequest(new { error = "invalid-job-key", message = "JobKey must follow the Croniq format." });
+            }
+
+            if (!string.Equals(jobKey.TenantId, tenantId, StringComparison.OrdinalIgnoreCase)
+                || !string.Equals(jobKey.EnvironmentTag, environment, StringComparison.OrdinalIgnoreCase))
+            {
+                return Results.BadRequest(new { error = "scope-mismatch", message = "JobKey tenant/environment must match the request scope." });
+            }
+
+            var defaultLimit = configuration.GetValue<int?>("Croniq:Webhooks:RequestsPerMinute") ?? 60;
+            var rpm = request.RequestsPerMinute ?? defaultLimit;
+            if (rpm <= 0)
+            {
+                return Results.BadRequest(new { error = "invalid-rate-limit", message = "RequestsPerMinute must be greater than zero." });
+            }
+
+            var metadata = request.Metadata is null
+                ? null
+                : new Dictionary<string, string>(request.Metadata, StringComparer.OrdinalIgnoreCase);
+
+            var upsert = new WebhookEndpointUpsert(
+                request.HookKey,
+                request.JobKey,
+                tenantId,
+                environment,
+                request.Enabled,
+                request.RequireSignature,
+                rpm,
+                request.Secret,
+                request.SignatureVersion,
+                metadata);
+
+            try
+            {
+                await webhookStore.UpsertAsync(upsert, cancellationToken).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                logger.LogError(ex, "failed to upsert webhook {HookKey}", request.HookKey);
+                return Results.Problem(statusCode: StatusCodes.Status500InternalServerError, title: "webhook-upsert-failed", detail: ex.Message);
+            }
+
+            var persisted = await webhookStore.FindByHookKeyAsync(request.HookKey, cancellationToken).ConfigureAwait(false);
+            if (persisted is null)
+            {
+                return Results.Problem(statusCode: StatusCodes.Status500InternalServerError, title: "webhook-not-persisted", detail: "Webhook endpoint could not be read after upsert.");
+            }
+
+            var response = ToWebhookResponse(persisted, request.Secret);
+            return Results.Ok(response);
+        });
+
+        app.MapDelete("/tenants/{tenantId}/webhooks/{hookKey}", async (
+            string tenantId,
+            string hookKey,
+            string environment,
+            IWebhookPersistenceProvider? webhookStore,
+            CancellationToken cancellationToken) =>
+        {
+            if (string.IsNullOrWhiteSpace(environment))
+            {
+                return Results.BadRequest(new { error = "missing-environment", message = "Query parameter 'environment' is required." });
+            }
+
+            if (webhookStore is null)
+            {
+                return Results.Problem(statusCode: StatusCodes.Status503ServiceUnavailable, title: "webhooks-unavailable", detail: "Webhook persistence provider not configured.");
+            }
+
+            var scope = new PartitionScope(tenantId, environment);
+            await webhookStore.DeleteAsync(hookKey, scope, cancellationToken).ConfigureAwait(false);
+            return Results.NoContent();
+        });
+
         app.MapPost("/jobs/trigger", async (
             TriggerJobRequest request,
             IJobRegistry registry,
@@ -326,12 +351,25 @@ public static class ApiHostingExtensions
         return new Dictionary<string, string>(source);
     }
 
-    private static string? ResolveConnectionString(string? domainSpecific, string? shared, IConfiguration configuration)
+    private static WebhookEndpointResponse ToWebhookResponse(WebhookEndpointDefinition definition, string? secretOverride = null)
     {
-        return domainSpecific
-            ?? shared
-            ?? configuration.GetConnectionString("CroniqSqlServer")
-            ?? configuration.GetConnectionString("Croniq")
-            ?? configuration.GetConnectionString("DefaultConnection");
+        IDictionary<string, string>? metadata = definition.Metadata is null
+            ? null
+            : new Dictionary<string, string>(definition.Metadata, StringComparer.OrdinalIgnoreCase);
+
+        return new WebhookEndpointResponse(
+            definition.HookKey,
+            definition.JobKey,
+            definition.Enabled,
+            definition.RequireSignature,
+            definition.RequestsPerMinute,
+            metadata,
+            definition.CreatedAtUtc,
+            definition.UpdatedAtUtc,
+            secretOverride);
+    }
+
+    private sealed class WebhookEndpointApiMarker
+    {
     }
 }

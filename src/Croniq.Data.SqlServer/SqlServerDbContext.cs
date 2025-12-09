@@ -14,6 +14,7 @@ public sealed class SqlServerDbContext(DbContextOptions<SqlServerDbContext> opti
     public DbSet<DeadLetterEntity> DeadLetters => Set<DeadLetterEntity>();
     public DbSet<ApiClientEntity> ApiClients => Set<ApiClientEntity>();
     public DbSet<ApiKeyEntity> ApiKeys => Set<ApiKeyEntity>();
+    public DbSet<WebhookEndpointEntity> WebhookEndpoints => Set<WebhookEndpointEntity>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -22,6 +23,7 @@ public sealed class SqlServerDbContext(DbContextOptions<SqlServerDbContext> opti
         ConfigureDeadLetters(modelBuilder.Entity<DeadLetterEntity>());
         ConfigureApiClients(modelBuilder.Entity<ApiClientEntity>());
         ConfigureApiKeys(modelBuilder.Entity<ApiKeyEntity>());
+        ConfigureWebhookEndpoints(modelBuilder.Entity<WebhookEndpointEntity>());
     }
 
     private static void ConfigureJobs(EntityTypeBuilder<JobEntity> builder)
@@ -75,6 +77,15 @@ public sealed class SqlServerDbContext(DbContextOptions<SqlServerDbContext> opti
             .WithMany(c => c.ApiKeys)
             .HasForeignKey(x => x.ApiClientId)
             .OnDelete(DeleteBehavior.Cascade);
+        builder.Property(x => x.CreatedAtUtc).HasDefaultValueSql("sysutcdatetime()");
+        builder.Property(x => x.UpdatedAtUtc).HasDefaultValueSql("sysutcdatetime()");
+    }
+
+    private static void ConfigureWebhookEndpoints(EntityTypeBuilder<WebhookEndpointEntity> builder)
+    {
+        builder.ToTable("WebhookEndpoints", "croniq");
+        builder.HasIndex(x => x.HookKey).IsUnique();
+        builder.HasIndex(x => new { x.TenantId, x.EnvironmentTag, x.Enabled });
         builder.Property(x => x.CreatedAtUtc).HasDefaultValueSql("sysutcdatetime()");
         builder.Property(x => x.UpdatedAtUtc).HasDefaultValueSql("sysutcdatetime()");
     }

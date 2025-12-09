@@ -42,6 +42,7 @@ public static class ServiceCollectionExtensions
 
         services.AddSingleton<IJobPersistenceProvider, SqlServerJobPersistenceProvider>();
         services.AddSingleton<IJobStore>(sp => (IJobStore)sp.GetRequiredService<IJobPersistenceProvider>());
+        services.AddSingleton<IWebhookPersistenceProvider, SqlServerWebhookPersistenceProvider>();
 
         return services;
     }

@@ -172,6 +172,67 @@ curl -X POST https://localhost:5001/schedules \
 
 Refer to `/deep-dive/persistence.md` (to be added) for the exact schedule payload and validation rules.
 
+## 5. Trigger Jobs via Webhooks (Optional)
+
+Inbound webhooks let external systems trigger the job you just registered without touching the management API. For local development you can co-host the webhook ingress alongside the API by adding the `Croniq.Webhooks` package:
+
+```cmd
+ dotnet add package Croniq.Webhooks --version <latest>
+```
+
+Register the services in `Program.cs` right after the existing Croniq calls:
+
+```csharp
+builder.Services.AddCroniqWebhookServices(builder.Configuration);
+builder.Services.AddCroniqWebhookRateLimiter();
+
+var app = builder.Build();
+
+app.MapCroniqManagementEndpoints();
+app.UseCroniqWebhooks(); // exposes POST /webhooks/{hookKey}
+```
+
+Add a matching configuration block (e.g., in `appsettings.Development.json`). Point the `JobKey` at the handler you registered above so the webhook reuses the same job key used by manual triggers:
+
+```json
+{
+  "Croniq": {
+    "Webhooks": {
+      "RequestsPerMinute": 30,
+      "Endpoints": [
+        {
+          "HookKey": "hello-world",
+          "JobKey": "dev-sandbox:dev-local:samples:HelloWorld",
+          "Secret": "dev-webhook-secret",
+          "Metadata": {
+            "source": "quickstart"
+          }
+        }
+      ]
+    }
+  }
+}
+```
+
+Send a test request with an HMAC signature. PowerShell example (works in Windows Terminal or VS Code):
+
+```powershell
+$Payload = '{"invoiceId":"INV-42","amount":199.0}'
+$Secret = 'dev-webhook-secret'
+$KeyBytes = [System.Text.Encoding]::UTF8.GetBytes($Secret)
+$BodyBytes = [System.Text.Encoding]::UTF8.GetBytes($Payload)
+$Hmac = [System.Security.Cryptography.HMACSHA256]::new($KeyBytes)
+$Signature = 'sha256=' + ([BitConverter]::ToString($Hmac.ComputeHash($BodyBytes)).Replace('-', '').ToLower())
+
+Invoke-WebRequest -Uri "https://localhost:5001/webhooks/hello-world" `
+  -Method Post `
+  -ContentType "application/json" `
+  -Headers @{ "X-Croniq-Signature" = $Signature } `
+  -Body $Payload
+```
+
+`Croniq.Webhooks` recomputes the signature, enforces the rate limit, and invokes the job pipeline. You should see the same log output as the manual trigger, plus webhook-specific metadata (e.g., `payload:invoiceId=INV-42`).
+
 ## 6. Run Everything
 
 ```cmd
@@ -200,31 +261,31 @@ Watch the API logs; you should see the `HelloWorldJob` message. Logs, metrics, a
 
 1. Start the observability stack that ships with Croniq:
 
-    ```cmd
-    scripts\devstack-up.cmd --profile obs
-    ```
+   ```cmd
+   scripts\devstack-up.cmd --profile obs
+   ```
 
-    This launches Prometheus (`http://localhost:9090`), Tempo, and Grafana (`http://localhost:5610`, default credentials `admin/admin`).
+   This launches Prometheus (`http://localhost:9090`), Tempo, and Grafana (`http://localhost:5610`, default credentials `admin/admin`).
 
-    > **Tenant reminder**: Loki and Grafana share the tenant `croniq-devstack`. If you fork the stack, keep the `X-Scope-OrgID` header (in `infra/docker/observability/grafana/datasources/datasource.yml`) and the OTEL collector header (`infra/docker/observability/otel-collector-config.yaml`) in sync so Explore always queries the tenant that actually receives your logs. Labels exposed by the collector (`service_name`, `service_instance`, `environment`, `tenant`) make it easy to scope queries such as `{tenant="croniq-devstack", environment="dev"}`.
+   > **Tenant reminder**: Loki and Grafana share the tenant `croniq-devstack`. If you fork the stack, keep the `X-Scope-OrgID` header (in `infra/docker/observability/grafana/datasources/datasource.yml`) and the OTEL collector header (`infra/docker/observability/otel-collector-config.yaml`) in sync so Explore always queries the tenant that actually receives your logs. Labels exposed by the collector (`service_name`, `service_instance`, `environment`, `tenant`) make it easy to scope queries such as `{tenant="croniq-devstack", environment="dev"}`.
 
 2. Configure your quickstart host to export telemetry. The `AddCroniqObservability` helper reads `Croniq:Observability` settings, so either add them to `appsettings.Development.json` or export environment variables before running `dotnet run`:
 
-    ```cmd
-    setx Croniq__Observability__OtlpEndpoint http://localhost:4317
-    setx Croniq__Observability__OtlpProtocol grpc
-    rem optional overrides
-    setx Croniq__Core__EnvironmentTag dev
-    setx Croniq__Core__TenantId samples
-    ```
+   ```cmd
+   setx Croniq__Observability__OtlpEndpoint http://localhost:4317
+   setx Croniq__Observability__OtlpProtocol grpc
+   rem optional overrides
+   setx Croniq__Core__EnvironmentTag dev
+   setx Croniq__Core__TenantId samples
+   ```
 
-    Restart the application so the new environment variables take effect. The defaults already point at `otel-collector:4317` inside Docker, so these overrides are only needed when you run the app on your host machine.
+   Restart the application so the new environment variables take effect. The defaults already point at `otel-collector:4317` inside Docker, so these overrides are only needed when you run the app on your host machine.
 
 3. Trigger your job again. Within a few seconds you can:
 
-    - Open Grafana ▸ Dashboards ▸ _Croniq Scheduler Health_ or _Croniq API Gateway_ to view the panels provisioned from `infra/docker/observability/grafana/dashboards/` (they refresh every 30s).
-    - Inspect traces under Grafana ▸ Explore ▸ Tempo, filtering by `service.name="Croniq.Api"`.
-    - Check Prometheus ▸ Alerts to see the built-in alerts from `infra/monitoring/rules/scheduler-alerts.yaml`. Alerts fire when dead letters, misfires, queue depth, or latency breach their thresholds (`CroniqDeadLettersHigh`, `CroniqMisfireBurst`, `CroniqQueueDepthHigh`, `CroniqLatencyP95High`, `CroniqJobFailures`).
+   - Open Grafana ▸ Dashboards ▸ _Croniq Scheduler Health_ or _Croniq API Gateway_ to view the panels provisioned from `infra/docker/observability/grafana/dashboards/` (they refresh every 30s).
+   - Inspect traces under Grafana ▸ Explore ▸ Tempo, filtering by `service.name="Croniq.Api"`.
+   - Check Prometheus ▸ Alerts to see the built-in alerts from `infra/monitoring/rules/scheduler-alerts.yaml`. Alerts fire when dead letters, misfires, queue depth, or latency breach their thresholds (`CroniqDeadLettersHigh`, `CroniqMisfireBurst`, `CroniqQueueDepthHigh`, `CroniqLatencyP95High`, `CroniqJobFailures`).
 
 4. Deploying to your own observability stack? Copy the dashboard JSON + rule file into your Grafana/Prometheus setup and keep the datasource UIDs (`prometheus`, `tempo`) consistent. See [`docs/deep-dive/observability.md`](/deep-dive/observability.md#dashboards--alerts) for detailed instructions.
 

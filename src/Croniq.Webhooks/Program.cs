@@ -1,7 +1,5 @@
 using System.Reflection;
-using Croniq.Api;
 using Croniq.Core;
-using Croniq.Sample.Jobs;
 using Croniq.Webhooks;
 using OpenTelemetry.Metrics;
 using OpenTelemetry.Trace;
@@ -12,16 +10,13 @@ builder.Configuration
     .AddJsonFile("appsettings.Development.json", optional: true, reloadOnChange: true)
     .AddEnvironmentVariables();
 
-builder.Services.AddCroniqApiServices(builder.Configuration);
-builder.Services.AddCroniqApiRateLimiter();
 builder.Services.AddCroniqWebhookServices(builder.Configuration);
 builder.Services.AddCroniqWebhookRateLimiter();
-builder.Services.AddCroniqSampleJobs();
 
 var otelBuilder = builder.Services.AddCroniqObservability(
     builder.Configuration,
     builder.Logging,
-    "Croniq.Api",
+    "Croniq.Webhooks",
     options => options.ServiceVersion = Assembly.GetExecutingAssembly().GetName().Version?.ToString() ?? "dev");
 
 otelBuilder.WithTracing(tracing =>
@@ -30,7 +25,7 @@ otelBuilder.WithTracing(tracing =>
         .AddAspNetCoreInstrumentation(options => options.RecordException = true)
         .AddHttpClientInstrumentation()
         .AddSource("Croniq.Core")
-        .AddSource("Croniq.Api.Trigger");
+        .AddSource("Croniq.Webhooks.Ingress");
 });
 
 otelBuilder.WithMetrics(metrics =>
@@ -44,7 +39,6 @@ otelBuilder.WithMetrics(metrics =>
 
 var app = builder.Build();
 
-app.UseCroniqApi();
 app.UseCroniqWebhooks();
 
 app.Run();

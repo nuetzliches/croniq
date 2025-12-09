@@ -5,13 +5,14 @@
     <ImplicitUsings>enable</ImplicitUsings>
   </PropertyGroup>
   <ItemGroup>
-    <ProjectReference Include="..\..\src\Croniq.Core\Croniq.Core.csproj" />
-    <ProjectReference Include="..\..\src\Croniq.JobStore.InMemory\Croniq.JobStore.InMemory.csproj" />
-    <ProjectReference Include="..\..\src\Croniq.Providers.Default\Croniq.Providers.Default.csproj" />
-    <ProjectReference Include="..\..\src\Croniq.Persistence.Abstractions\Croniq.Persistence.Abstractions.csproj" />
+    <ProjectReference Include="..\..\src\Croniq.Api\Croniq.Api.csproj" />
     <ProjectReference Include="..\..\src\Croniq.Auth.Abstractions\Croniq.Auth.Abstractions.csproj" />
     <ProjectReference Include="..\..\src\Croniq.Auth.Core\Croniq.Auth.Core.csproj" />
-    <ProjectReference Include="..\..\src\Croniq.Api\Croniq.Api.csproj" />
+    <ProjectReference Include="..\..\src\Croniq.Core\Croniq.Core.csproj" />
+    <ProjectReference Include="..\..\src\Croniq.JobStore.InMemory\Croniq.JobStore.InMemory.csproj" />
+    <ProjectReference Include="..\..\src\Croniq.Persistence.Abstractions\Croniq.Persistence.Abstractions.csproj" />
+    <ProjectReference Include="..\..\src\Croniq.Providers.Default\Croniq.Providers.Default.csproj" />
+    <ProjectReference Include="..\..\src\Croniq.Webhooks\Croniq.Webhooks.csproj" />
     <ProjectReference Include="..\Croniq.Sample.Jobs\Croniq.Sample.Jobs.csproj" />
   </ItemGroup>
   <ItemGroup>

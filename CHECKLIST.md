@@ -26,11 +26,13 @@
 - [ ] Docs Streams aufsetzen (docs root, docs/deep-dive) inkl. Quickstart & Mermaid policy – Plan siehe `docs/deep-dive/docstreams.md`
 - [ ] (deferred) UI-Backlog dokumentieren; Technologie nach API-Stabilisierung entscheiden – Plan siehe `docs/deep-dive/ui.md`
 - [ ] (deferred) Kubernetes Chart (charts/croniq) als Backlog-Platzhalter vorbereiten – Plan siehe `docs/deep-dive/kubernetes.md`
-- [ ] Webhook-Trigger (Croniq.Webhooks Projekt) planen und in `docs/deep-dive/architecture.md` verankern
+- [x] Webhook-Trigger (Croniq.Webhooks Projekt) planen, host implementieren und in `docs/deep-dive/architecture.md` verankern (inkl. CRUD-API + persistente Hooks)
 
 ## Next Focus
 
 1. Docstreams-Prozess etablieren (`docs/deep-dive/docstreams.md`), Quickstart synchronisieren und Consumer/Technical Docs laufend spiegeln.
+2. Webhook-Persistenz hardenen: Migration für `croniq.WebhookEndpoints` generieren, `Croniq.DbMigrator` updaten, Tests für CRUD + Resolver schreiben.
+3. Webhook-Operations ausbauen: Cache-Invalidierung/Changefeed, Dead-Letter-Tabelle + Replay-API, Dual-Secret-Rotation (WebhookSecretHistory) und CLI/SDK-Helfer dokumentieren.
 
 ## Webhook-Trigger-Konzept (Backlog)
 
@@ -46,3 +48,4 @@
 - [x] Suche im gesamten Repository nach "OpenConnectionAsync" (Provider-Artefakte ausklammern). Prüfe ob dort custom Prozedur calls mit "CommandText" vorgenommen werden? Ersetze diese durch die bereitgestellten Provider-Abstraktionen.
 - [x] `docs\consumer\configuration.md` hier besteht ein Dokumentationsfehler oder gap: builder.Services.AddCroniq() gibt es nicht. Consumer Docs generell auf aktuellsten Stand bringen.
 - [x] Ist es korrekt, dass `Croniq.Auth.SqlServer` einen Verweis auf `Croniq.Persistence.SqlServer` hat? Sollte die DbContext-Registrierung nicht eher in `Croniq.Data.SqlServer` stattfinden (bitte verifizieren, Empfehlungen aussprechen)? (Verifiziert: `Croniq.Auth.SqlServer` referenziert nur `Croniq.Data.SqlServer`, alle DbContext-DI-Erweiterungen leben bereits dort; Recommendation: Hosts rufen `AddCroniqSqlServerDbContext` aus `Croniq.Data.SqlServer` auf, bevor sie `AddCroniqAuthSqlServer` verkabeln.)
+- [ ] Der `otelBuilder` in `samples\Croniq.Sample.ApiHost` ist optional oder obsolet (da bereits in src\Croniq.Api definiert)?

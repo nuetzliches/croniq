@@ -20,7 +20,7 @@ public static class RepositoryLocator
         var segment = string.IsNullOrWhiteSpace(relativeSegment)
             ? Array.Empty<string>()
             : relativeSegment!
-                .Split(new[] { '/', '\' }, StringSplitOptions.RemoveEmptyEntries)
+                .Split(new[] { "/", "\\" }, StringSplitOptions.RemoveEmptyEntries)
                 .ToArray();
 
         var path = Path.Combine(new[] { Root, "artifacts" }.Concat(segment).ToArray());

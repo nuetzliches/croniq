@@ -1,0 +1,24 @@
+using System.ComponentModel.DataAnnotations;
+
+namespace Croniq.Api.Models;
+
+public sealed record UpsertWebhookEndpointRequest(
+    [property: Required] string HookKey,
+    [property: Required] string JobKey,
+    bool Enabled = true,
+    bool RequireSignature = true,
+    int? RequestsPerMinute = null,
+    string? Secret = null,
+    IDictionary<string, string>? Metadata = null,
+    int SignatureVersion = 1);
+
+public sealed record WebhookEndpointResponse(
+    string HookKey,
+    string JobKey,
+    bool Enabled,
+    bool RequireSignature,
+    int RequestsPerMinute,
+    IDictionary<string, string>? Metadata,
+    DateTimeOffset CreatedAtUtc,
+    DateTimeOffset UpdatedAtUtc,
+    string? Secret = null);
