@@ -115,6 +115,16 @@ docs/
 - Hosting packages expose opinionated extensions so consumers can bootstrap Croniq quickly. Auth, persistence mode, and rate limits are all configuration-driven.
 - Rate limiting uses ASP.NET Core RateLimiter with per-tenant partitions; gRPC interceptors reuse the same policy.
 
+## Webhook Trigger Surface (Planned)
+
+- **Goal**: Allow external SaaS systems or internal apps to push HTTP events into Croniq without custom glue code. Each tenant can mint webhook receivers that immediately trigger jobs, making Webhooks a first-class trigger source alongside Cron/interval/event streams.
+- **Service Layout**: A dedicated host (`Croniq.Webhooks`) provides the ingress endpoints so Croniq.Api stays focused on management APIs. Samples can co-host the Webhook server, but production deployments may run it as a separate service for independent scaling.
+- **Endpoints**: `Croniq.Webhooks` exposes authenticated routes such as `POST /webhooks/{hookKey}` that accept JSON or CloudEvent payloads. Hooks map to an existing job/trigger definition and may project payload metadata into `IJobExecutionContext`.
+- **Configuration**: Hooks live in SqlServer metadata (`Croniq.Persistence.SqlServer`) with fields like `HookKey`, `JobKey`, `Secret`, `RateLimit`, optional filters (namespace, env tag) and payload schema hints. InMemory mode provides a simplified list for samples/tests. Admin APIs (`POST /tenants/{id}/webhooks`) manage lifecycle.
+- **Processing Pipeline**: Request enters Webhook host → caller authenticated (API key/OIDC) or signature validated → per-hook rate limiter enforced → payload normalized → dispatcher enqueues a job trigger. Failures are retried with exponential backoff and logged into a dedicated `WebhookIngressDeadLetter` table for inspection.
+- **Security**: Every hook requires TLS, includes an HMAC signature header (e.g., `X-Croniq-Signature`) derived from a per-hook secret, and may optionally enforce IP allow lists. Rate limits default to conservative values but can be overridden per tenant.
+- **Docs Impact**: `docs/guides/triggers.md` gains a walkthrough + sample payload; `docs/deep-dive/architecture.md` (this section) tracks the roadmap until implementation lands. Quickstart mentions webhooks once GA.
+
 ## Job Authoring Model
 
 - `Croniq.Sdk` defines `[CroniqJob]` attribute, `IJob`, DI helpers (`AddCroniqJob<T>` / `AddCroniqJob(key, builder => ...)`).

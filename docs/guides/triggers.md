@@ -46,6 +46,46 @@ job.WithEventTrigger(trigger =>
 
 Push notifications or webhooks can enqueue context payloads into the named source.
 
+### Incoming Webhook Trigger (planned)
+
+The upcoming `Croniq.Webhooks` host exposes tenant-scoped endpoints such as `POST /webhooks/{hookKey}`. Each hook references a job key and forwards request metadata into the event trigger shown above.
+
+```http
+POST /webhooks/invoice-paid HTTP/1.1
+Host: hooks.croniq.local
+X-Croniq-Key: crq_dev_local_sample
+X-Croniq-Signature: sha256=...
+Content-Type: application/json
+
+{
+    "invoiceId": "INV-2024-991",
+    "tenant": "eu-shared",
+    "amount": 349.0
+}
+```
+
+The webhook host validates the signature, enforces a per-hook rate limit, then enqueues a trigger with metadata (e.g., `metadata["invoiceId"] = ...`). Until GA, you can simulate the flow via custom controllers that call `WithEventTrigger` sources directly.
+
+### Incoming Webhook Trigger (planned)
+
+Croniq.Api will expose tenant-scoped endpoints such as `POST /webhooks/{hookKey}`. Each hook references a job key and forwards request metadata into the event trigger above.
+
+```http
+POST /webhooks/invoice-paid HTTP/1.1
+Host: api.croniq.local
+X-Croniq-Key: crq_dev_local_sample
+X-Croniq-Signature: sha256=...
+Content-Type: application/json
+
+{
+    "invoiceId": "INV-2024-991",
+    "tenant": "eu-shared",
+    "amount": 349.0
+}
+```
+
+Croniq validates the signature, enforces a per-hook rate limit, then enqueues a trigger with metadata (e.g., `metadata["invoiceId"] = ...`). Until the feature is GA, the same flow can be simulated via the `WithEventTrigger` source and a small proxy controller.
+
 ## Pausing & Resuming
 
 ```csharp

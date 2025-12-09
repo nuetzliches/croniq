@@ -26,14 +26,23 @@
 - [ ] Docs Streams aufsetzen (docs root, docs/deep-dive) inkl. Quickstart & Mermaid policy – Plan siehe `docs/deep-dive/docstreams.md`
 - [ ] (deferred) UI-Backlog dokumentieren; Technologie nach API-Stabilisierung entscheiden – Plan siehe `docs/deep-dive/ui.md`
 - [ ] (deferred) Kubernetes Chart (charts/croniq) als Backlog-Platzhalter vorbereiten – Plan siehe `docs/deep-dive/kubernetes.md`
+- [ ] Webhook-Trigger (Croniq.Webhooks Projekt) planen und in `docs/deep-dive/architecture.md` verankern
 
 ## Next Focus
 
 1. Docstreams-Prozess etablieren (`docs/deep-dive/docstreams.md`), Quickstart synchronisieren und Consumer/Technical Docs laufend spiegeln.
+
+## Webhook-Trigger-Konzept (Backlog)
+
+- **Use Cases**: Eingehende HTTP-Events (z.B. external Systeme, SaaS Hooks, Custom Apps) sollen Croniq-Jobs auslösen – etwa wenn Payment eingetroffen ist oder Deployments Jobs anstoßen. Webhooks agieren damit als Trigger-Quelle neben Cron, Intervallen und RPC.
+- **Croniq.Webhooks Service**: Eigenes ASP.NET-Hostprojekt stellt pro Tenant konfigurierbare Routen `/webhooks/{hookKey}` bereit. Samples (`Croniq.Sample.ApiHost`) binden es optional ein, Services können es separat deployen und skalieren. Jeder Hook verweist auf ein Job/Trigger-Mapping und kann optional Payload-Transformationen definieren.
+- **Konfiguration**: `Croniq:Webhooks:Mode = InMemory|SqlServer`. SqlServer speichert Hooks samt Secrets, RateLimits, Payload-Schema. InMemory bietet minimale Konfiguration für Samples. Admin-API bietet CRUD (`POST /tenants/{id}/webhooks`).
+- **Processing Pipeline**: Eingehender Request → Auth/Signature-Check → RateLimiter → Payload Normalizer → Job Dispatch (`TriggerJobAsync`). Fehlschläge landen in einer `WebhookIngressDeadLetter`-Queue; Retry-Policy getrennt von regulären Job-Policies.
+- **Security & Governance**: Jeder Hook besitzt Secret + optional IP-Allowlist. Signatur-Header (z.B. `X-Croniq-Signature`) unterstützt HMAC-SHA256. Hooks können dedizierte rate limits (`RequestsPerMinute`, Burst) erhalten, Logging/Observability taggt Events mit `hookKey`.
+- **Dokumentation**: `docs/deep-dive/architecture.md` ergänzt um Trigger-Flussdiagramm, `docs/guides/triggers.md` erhält Beispiel (cURL + Payload). Quickstart listet Webhook als zusätzliche Trigger-Option sobald GA.
 
 # Nachbesserungen
 
 - [x] Suche im gesamten Repository nach "OpenConnectionAsync" (Provider-Artefakte ausklammern). Prüfe ob dort custom Prozedur calls mit "CommandText" vorgenommen werden? Ersetze diese durch die bereitgestellten Provider-Abstraktionen.
 - [x] `docs\consumer\configuration.md` hier besteht ein Dokumentationsfehler oder gap: builder.Services.AddCroniq() gibt es nicht. Consumer Docs generell auf aktuellsten Stand bringen.
 - [x] Ist es korrekt, dass `Croniq.Auth.SqlServer` einen Verweis auf `Croniq.Persistence.SqlServer` hat? Sollte die DbContext-Registrierung nicht eher in `Croniq.Data.SqlServer` stattfinden (bitte verifizieren, Empfehlungen aussprechen)? (Verifiziert: `Croniq.Auth.SqlServer` referenziert nur `Croniq.Data.SqlServer`, alle DbContext-DI-Erweiterungen leben bereits dort; Recommendation: Hosts rufen `AddCroniqSqlServerDbContext` aus `Croniq.Data.SqlServer` auf, bevor sie `AddCroniqAuthSqlServer` verkabeln.)
-- [ ] Haben wir Webhooks bereits geplant? Wenn nein, bitte in `docs/deep-dive/architecture.md` und `CHECKLIST.md` aufnehmen.
