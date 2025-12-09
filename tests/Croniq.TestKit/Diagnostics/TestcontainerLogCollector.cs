@@ -1,6 +1,7 @@
 using System;
 using System.IO;
 using System.Linq;
+using System.Reflection;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -26,10 +27,63 @@ public static class TestcontainerLogCollector
         var directory = RepositoryLocator.GetArtifactsDirectory(Path.Combine("containers", sanitized));
         var filePath = Path.Combine(directory, $"{sanitized}.log");
 
-        var logs = await container.GetLogsAsync(cancellationToken).ConfigureAwait(false);
+        var logs = await TryGetLogsAsync(container, cancellationToken).ConfigureAwait(false)
+            ?? $"[{DateTime.UtcNow:O}] Container log capture is not available for the current Testcontainers version.";
+
         await File.WriteAllTextAsync(filePath, logs, cancellationToken).ConfigureAwait(false);
 
         return filePath;
+    }
+
+    private static async Task<string?> TryGetLogsAsync(ITestcontainersContainer container, CancellationToken cancellationToken)
+    {
+        var method = container.GetType()
+            .GetMethods(BindingFlags.Instance | BindingFlags.Public)
+            .FirstOrDefault(m => string.Equals(m.Name, "GetLogsAsync", StringComparison.Ordinal));
+
+        if (method is null)
+        {
+            return null;
+        }
+
+        var parameters = method.GetParameters();
+        var arguments = new object?[parameters.Length];
+        for (var i = 0; i < parameters.Length; i++)
+        {
+            var parameter = parameters[i];
+            if (parameter.ParameterType == typeof(CancellationToken))
+            {
+                arguments[i] = cancellationToken;
+            }
+            else if (parameter.HasDefaultValue)
+            {
+                arguments[i] = parameter.DefaultValue;
+            }
+            else if (parameter.ParameterType == typeof(bool))
+            {
+                arguments[i] = true;
+            }
+            else
+            {
+                arguments[i] = parameter.ParameterType.IsValueType
+                    ? Activator.CreateInstance(parameter.ParameterType)
+                    : null;
+            }
+        }
+
+        var invocation = method.Invoke(container, arguments);
+        switch (invocation)
+        {
+            case Task<string> stringTask:
+                return await stringTask.ConfigureAwait(false);
+            case Task task:
+                await task.ConfigureAwait(false);
+                return null;
+            case string text:
+                return text;
+            default:
+                return invocation?.ToString();
+        }
     }
 
     private static string Sanitize(string value)

@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Globalization;
 using System.Threading.RateLimiting;
 using Croniq.Api.Models;
 using Croniq.Api.Telemetry;
@@ -267,6 +268,105 @@ public static class ApiHostingExtensions
             return Results.NoContent();
         });
 
+        app.MapGet("/tenants/{tenantId}/webhooks/deadletters", async (
+            string tenantId,
+            string environment,
+            IWebhookDeadLetterStore? deadLetterStore,
+            CancellationToken cancellationToken) =>
+        {
+            if (string.IsNullOrWhiteSpace(environment))
+            {
+                return Results.BadRequest(new { error = "missing-environment", message = "Query parameter 'environment' is required." });
+            }
+
+            if (deadLetterStore is null)
+            {
+                return Results.Problem(statusCode: StatusCodes.Status503ServiceUnavailable, title: "webhook-deadletter-unavailable", detail: "Webhook dead-letter store not configured.");
+            }
+
+            var scope = new PartitionScope(tenantId, environment);
+            var entries = await deadLetterStore.ListAsync(scope, cancellationToken).ConfigureAwait(false);
+            var response = entries.Select(ToWebhookDeadLetterResponse).ToList();
+            return Results.Ok(response);
+        });
+
+        app.MapPost("/tenants/{tenantId}/webhooks/deadletters/{deadLetterId}/replay", async (
+            string tenantId,
+            long deadLetterId,
+            string environment,
+            IWebhookDeadLetterStore? deadLetterStore,
+            IJobRegistry registry,
+            IJobExecutionPipeline pipeline,
+            IPolicyResolver policyResolver,
+            ILogger<WebhookDeadLetterApiMarker> logger,
+            CancellationToken cancellationToken) =>
+        {
+            if (string.IsNullOrWhiteSpace(environment))
+            {
+                return Results.BadRequest(new { error = "missing-environment", message = "Query parameter 'environment' is required." });
+            }
+
+            if (deadLetterStore is null)
+            {
+                return Results.Problem(statusCode: StatusCodes.Status503ServiceUnavailable, title: "webhook-deadletter-unavailable", detail: "Webhook dead-letter store not configured.");
+            }
+
+            var scope = new PartitionScope(tenantId, environment);
+            var entry = await deadLetterStore.FindAsync(deadLetterId, scope, cancellationToken).ConfigureAwait(false);
+            if (entry is null)
+            {
+                return Results.NotFound(new { error = "deadletter-not-found", id = deadLetterId });
+            }
+
+            if (!JobKey.TryParse(entry.JobKey, out var jobKey))
+            {
+                await deadLetterStore.RecordFailureAsync(deadLetterId, scope, new WebhookDeadLetterFailure("invalid-job-key", StatusCodes.Status500InternalServerError, "Stored job key is invalid.", null), cancellationToken).ConfigureAwait(false);
+                return Results.Problem(statusCode: StatusCodes.Status500InternalServerError, title: "invalid-job-key", detail: "Stored job key is invalid.");
+            }
+
+            if (!registry.TryGet(jobKey, out var descriptor))
+            {
+                await deadLetterStore.RecordFailureAsync(deadLetterId, scope, new WebhookDeadLetterFailure("job-not-registered", StatusCodes.Status404NotFound, "Job not registered", null), cancellationToken).ConfigureAwait(false);
+                return Results.Problem(statusCode: StatusCodes.Status404NotFound, title: "job-not-registered", detail: "Job not registered for this webhook.");
+            }
+
+            var metadata = entry.Metadata is null
+                ? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                : new Dictionary<string, string>(entry.Metadata, StringComparer.OrdinalIgnoreCase);
+
+            if (!string.IsNullOrWhiteSpace(entry.Payload) && !metadata.ContainsKey("webhook:payload"))
+            {
+                metadata["webhook:payload"] = entry.Payload;
+            }
+
+            metadata["webhook:deadletter:id"] = entry.Id.ToString(CultureInfo.InvariantCulture);
+            metadata["webhook:deadletter:attempts"] = entry.Attempts.ToString(CultureInfo.InvariantCulture);
+            metadata["webhook:deadletter:replay_at"] = DateTimeOffset.UtcNow.ToString("O", CultureInfo.InvariantCulture);
+
+            var executionOptions = policyResolver.ResolveExecution(jobKey);
+            var execRequest = new JobExecutionRequest(jobKey, descriptor, executionOptions, metadata, TriggerActivitySource);
+
+            using var replayActivity = TriggerActivitySource.StartActivity("Croniq.Api.WebhookReplay", ActivityKind.Server);
+            replayActivity?.SetTag("croniq.webhook.deadletter", entry.Id);
+            replayActivity?.SetTag("croniq.webhook.key", entry.HookKey);
+            replayActivity?.SetTag("croniq.job.key", jobKey.Value);
+
+            try
+            {
+                await pipeline.ExecuteAsync(execRequest, cancellationToken).ConfigureAwait(false);
+                await deadLetterStore.ResolveAsync(deadLetterId, scope, cancellationToken).ConfigureAwait(false);
+                replayActivity?.SetStatus(ActivityStatusCode.Ok);
+                return Results.Ok(new { status = "replayed", hook = entry.HookKey, job = entry.JobKey });
+            }
+            catch (Exception ex)
+            {
+                replayActivity?.SetStatus(ActivityStatusCode.Error, ex.Message);
+                logger.LogError(ex, "failed to replay webhook deadletter {DeadLetterId}", deadLetterId);
+                await deadLetterStore.RecordFailureAsync(deadLetterId, scope, new WebhookDeadLetterFailure("execution-error", StatusCodes.Status500InternalServerError, ex.Message, null), cancellationToken).ConfigureAwait(false);
+                return Results.Problem(statusCode: StatusCodes.Status500InternalServerError, title: "replay-failed", detail: ex.Message);
+            }
+        });
+
         app.MapPost("/jobs/trigger", async (
             TriggerJobRequest request,
             IJobRegistry registry,
@@ -369,7 +469,40 @@ public static class ApiHostingExtensions
             secretOverride);
     }
 
+    private static WebhookDeadLetterResponse ToWebhookDeadLetterResponse(WebhookDeadLetterEntry entry)
+    {
+        IDictionary<string, string>? headers = entry.Headers is null
+            ? null
+            : new Dictionary<string, string>(entry.Headers, StringComparer.OrdinalIgnoreCase);
+
+        IDictionary<string, string>? metadata = entry.Metadata is null
+            ? null
+            : new Dictionary<string, string>(entry.Metadata, StringComparer.OrdinalIgnoreCase);
+
+        return new WebhookDeadLetterResponse(
+            entry.Id,
+            entry.HookKey,
+            entry.JobKey,
+            entry.TenantId,
+            entry.EnvironmentTag,
+            entry.Payload,
+            headers,
+            metadata,
+            entry.FailureReason,
+            entry.Attempts,
+            entry.StatusCode,
+            entry.ErrorDetails,
+            entry.CreatedAtUtc,
+            entry.LastAttemptAtUtc,
+            entry.NextAttemptAtUtc,
+            entry.ExpiresAtUtc);
+    }
+
     private sealed class WebhookEndpointApiMarker
+    {
+    }
+
+    private sealed class WebhookDeadLetterApiMarker
     {
     }
 }

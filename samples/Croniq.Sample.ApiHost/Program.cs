@@ -45,6 +45,6 @@ otelBuilder.WithMetrics(metrics =>
 var app = builder.Build();
 
 app.UseCroniqApi();
-app.UseCroniqWebhooks();
+app.UseCroniqWebhooks(mapHealthEndpoints: false);
 
 app.Run();

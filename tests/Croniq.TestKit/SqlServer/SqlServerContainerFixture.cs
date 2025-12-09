@@ -35,14 +35,15 @@ public sealed class SqlServerContainerFixture : IAsyncLifetime
             return;
         }
 
+        var image = Environment.GetEnvironmentVariable("CRONIQ_SQL_IMAGE") ?? "mcr.microsoft.com/mssql/server:2022-latest";
         var configuration = new MsSqlTestcontainerConfiguration
         {
-            Image = Environment.GetEnvironmentVariable("CRONIQ_SQL_IMAGE") ?? "mcr.microsoft.com/mssql/server:2022-latest",
             Password = Environment.GetEnvironmentVariable("CRONIQ_SQL_PASSWORD") ?? "YourStrong(!)Password1"
         };
 
         _container = new TestcontainersBuilder<MsSqlTestcontainer>()
             .WithName($"croniq-sql-{Guid.NewGuid():N}")
+            .WithImage(image)
             .WithDatabase(configuration)
             .WithCleanUp(true)
             .Build();

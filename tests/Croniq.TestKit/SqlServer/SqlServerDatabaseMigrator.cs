@@ -32,12 +32,14 @@ public static class SqlServerDatabaseMigrator
         await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
 
         const string sql = """
-DELETE FROM [croniq].[DeadLetters];
-DELETE FROM [croniq].[Triggers];
-DELETE FROM [croniq].[Jobs];
-DELETE FROM [croniq].[ApiKeys];
-DELETE FROM [croniq].[ApiClients];
-""";
+        DELETE FROM [croniq].[WebhookDeadLetters];
+        DELETE FROM [croniq].[WebhookEndpoints];
+        DELETE FROM [croniq].[DeadLetters];
+        DELETE FROM [croniq].[Triggers];
+        DELETE FROM [croniq].[Jobs];
+        DELETE FROM [croniq].[ApiKeys];
+        DELETE FROM [croniq].[ApiClients];
+        """;
 
         await using var command = connection.CreateCommand();
         command.CommandText = sql;

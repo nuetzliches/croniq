@@ -119,7 +119,7 @@ docs/
 
 - **Goal**: Allow external SaaS systems or internal apps to push HTTP events into Croniq without custom glue code. Each tenant mints webhook receivers that immediately trigger jobs, making Webhooks a first-class trigger source alongside cron, interval, and event streams.
 - **Host Composition**: `Croniq.Webhooks` is a Minimal API host that reuses `Croniq.Hosting` for DI (auth, persistence, policies). Only ingress-specific pieces live here: signature validation, rate limiting, payload inspection, and dispatch into the execution pipeline. `AddCroniqWebhookServices` wires everything up for both the standalone host and co-hosted samples.
-- **Deployment Guidance**: Run `Croniq.Webhooks` as an independent deployment whenever you expect bursty ingress traffic or need separate autoscaling from `Croniq.Api`. Samples (and very small tenants) can co-host both surfaces in a single process by calling `UseCroniqWebhooks()` inside the API host, but production topologies typically expose two pods / services so management calls stay isolated from webhook storms.
+- **Deployment Guidance**: Run `Croniq.Webhooks` as an independent deployment whenever you expect bursty ingress traffic or need separate autoscaling from `Croniq.Api`. Samples (and very small tenants) can co-host both surfaces in a single process by calling `UseCroniqWebhooks(mapHealthEndpoints: false)` inside the API host, but production topologies typically expose two pods / services so management calls stay isolated from webhook storms.
 - **Endpoints & Protocols**: Authenticated routes such as `POST /webhooks/{hookKey}` accept JSON payloads today, with CloudEvents planned. Each hook maps to a registered `JobKey`. Payload metadata is projected into `IJobExecutionContext` with `webhook:*` and `payload:*` prefixes so downstream jobs can branch without re-parsing JSON.
 - **Configuration Source**: Hooks are defined under `Croniq:Webhooks` (in-memory for dev) or persisted via `Croniq.Persistence.SqlServer` once the admin API lands. The shape includes `HookKey`, `JobKey`, `Secret`, per-hook `RequestsPerMinute`, and arbitrary metadata. The host falls back to global defaults when per-hook values are omitted.
 - **Processing Stages**: Request enters `Croniq.Webhooks` → optional caller auth (API key/OIDC) → HMAC signature validation (`X-Croniq-Signature`) → named ASP.NET Core rate limiter partitioned per hook → payload normalization/metadata enrichment → dispatcher enqueues the execution via `IJobExecutionPipeline`. Failures bubble into policy-based retries, logging, and (later) a `WebhookIngressDeadLetter` store for diagnostics.
@@ -128,19 +128,19 @@ docs/
 
 ### Webhook Persistence & Admin Lifecycle (Preview)
 
-- **Schema**: `Croniq.Persistence.SqlServer` now persists hooks in `croniq.WebhookEndpoints`, capturing tenant/environment scope, `HookKey`, `JobKey`, secret material (plus hash), signature version, rate limit, metadata JSON, and audit timestamps. Upcoming work will add `WebhookSecretHistory` (for rotation trails) and `WebhookIngressDeadLetter` (for failed payloads).
-- **Migrations**: Entity configuration lives beside the other SqlServer entities, so `Croniq.DbMigrator` can emit the table via the standard EF Core migrations. Dev/test environments can still rely on `Croniq:Webhooks` configuration when SqlServer isn’t available.
+- **Schema**: `Croniq.Persistence.SqlServer` persists hooks in `croniq.WebhookEndpoints`, capturing tenant/environment scope, `HookKey`, `JobKey`, secret material (plus hash), signature version, rate limit, metadata JSON, and audit timestamps. Upcoming work will add `WebhookSecretHistory` (for rotation trails) and `WebhookIngressDeadLetter` (for failed payloads).
+- **Migrations**: The `20251209095431_AddWebhookEndpoints` EF migration (under `src/Croniq.Data.SqlServer/Migrations`) ships the schema through `Croniq.DbMigrator`, so Compose/test stacks no longer rely on `EnsureCreated`. Dev/test environments can still fall back to `Croniq:Webhooks` configuration when SqlServer isn’t available.
+- **Contract tests**: `SqlServerWebhookPersistenceProviderTests` (in `tests/Croniq.Persistence.SqlServer.Tests`) exercises CRUD + scope enforcement so providers stay consistent with the admin API.
 - **Admin API**: `Croniq.Api` now exposes tenant-scoped CRUD endpoints (`POST/GET/DELETE /tenants/{tenantId}/webhooks?environment=<tag>`). Each request validates the job key scope, enforces per-hook rate limits, and returns the freshest secret (only when you explicitly send a new one) so automation pipelines can bootstrap callers.
 - **Host Bootstrapping**: `Croniq.Webhooks` prefers the persistence provider, caching lookups per hook and falling back to configuration entries only when no stored definition exists. Future work will add push notifications or polling so cache invalidation does not rely solely on TTL.
 - **Secret Rotation**: A simple “replace secret” flow ships today (call `POST` again with a new `secret`). Dual-secret windows plus history tables remain on the roadmap; until then, rotate during a maintenance window or stage two hooks with the same job key.
 - **Operational Insights**: Use OpenTelemetry spans (`Croniq.Webhooks.Ingress`) and API audit logs for the moment. The dedicated dead-letter table and replay endpoints stay planned so operators can rehydrate failed webhook deliveries without digging through raw logs.
 - **Open Tasks**:
-  1. Ship an EF Core migration for `croniq.WebhookEndpoints` and hook it into `Croniq.DbMigrator` (without the migration the table only exists locally).
-  2. Implement cache invalidation/change notifications so `Croniq.Webhooks` refreshes hook definitions immediately after CRUD operations (today it relies on 30–60s TTLs).
-  3. Add webhook-specific dead letters (table + replay endpoint) so failed ingress payloads can be inspected and retried.
-  4. Extend secret rotation with dual-secret windows and `WebhookSecretHistory` persistence so rotations become zero-downtime and auditable.
-  5. Harden the CRUD endpoints with authentication/authorization scopes plus integration tests (currently only happy-path smoke coverage exists).
-  6. Provide CLI/SDK helpers (or scripted samples) for provisioning hooks, including secret export masking rules.
+  1. Implement cache invalidation/change notifications so `Croniq.Webhooks` refreshes hook definitions immediately after CRUD operations (today it relies on 30–60s TTLs).
+  2. Add webhook-specific dead letters (table + replay endpoint) so failed ingress payloads can be inspected and retried.
+  3. Extend secret rotation with dual-secret windows and `WebhookSecretHistory` persistence so rotations become zero-downtime and auditable.
+  4. Harden the CRUD endpoints with authentication/authorization scopes plus integration tests (currently only happy-path smoke coverage exists).
+  5. Provide CLI/SDK helpers (or scripted samples) for provisioning hooks, including secret export masking rules.
 
 ## Job Authoring Model
 

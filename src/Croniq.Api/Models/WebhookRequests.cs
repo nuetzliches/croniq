@@ -22,3 +22,21 @@ public sealed record WebhookEndpointResponse(
     DateTimeOffset CreatedAtUtc,
     DateTimeOffset UpdatedAtUtc,
     string? Secret = null);
+
+public sealed record WebhookDeadLetterResponse(
+    long Id,
+    string HookKey,
+    string JobKey,
+    string TenantId,
+    string EnvironmentTag,
+    string Payload,
+    IDictionary<string, string>? Headers,
+    IDictionary<string, string>? Metadata,
+    string FailureReason,
+    int Attempts,
+    int? StatusCode,
+    string? ErrorDetails,
+    DateTimeOffset CreatedAtUtc,
+    DateTimeOffset? LastAttemptAtUtc,
+    DateTimeOffset? NextAttemptAtUtc,
+    DateTimeOffset? ExpiresAtUtc);

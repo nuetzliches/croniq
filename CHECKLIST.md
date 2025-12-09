@@ -23,16 +23,16 @@
 - [x] Loki-Tenant (`croniq-devstack`) und Explore-Hinweise in `docs/deep-dive/devstack.md` dokumentiert
 - [x] SBOM/Signierung und Vulnerability Scans in Release-Flow einbauen – Plan siehe `docs/deep-dive/supplychain.md`
 - [x] Quota-Guards im Core verankern (Rate/Concurrency) basierend auf PolicyResolver + Tests
-- [ ] Docs Streams aufsetzen (docs root, docs/deep-dive) inkl. Quickstart & Mermaid policy – Plan siehe `docs/deep-dive/docstreams.md`
+- [x] Webhook-Persistenz hardenen (EF-Migration `AddWebhookEndpoints`, DbMigrator, CRUD-Tests) – Plan siehe `docs/deep-dive/architecture.md`
+- [ ] (blocked bis Repo public) Docs Streams aufsetzen (docs root, docs/deep-dive) inkl. Quickstart & Mermaid policy – Plan siehe `docs/deep-dive/docstreams.md`
 - [ ] (deferred) UI-Backlog dokumentieren; Technologie nach API-Stabilisierung entscheiden – Plan siehe `docs/deep-dive/ui.md`
 - [ ] (deferred) Kubernetes Chart (charts/croniq) als Backlog-Platzhalter vorbereiten – Plan siehe `docs/deep-dive/kubernetes.md`
 - [x] Webhook-Trigger (Croniq.Webhooks Projekt) planen, host implementieren und in `docs/deep-dive/architecture.md` verankern (inkl. CRUD-API + persistente Hooks)
 
 ## Next Focus
 
-1. Docstreams-Prozess etablieren (`docs/deep-dive/docstreams.md`), Quickstart synchronisieren und Consumer/Technical Docs laufend spiegeln.
-2. Webhook-Persistenz hardenen: Migration für `croniq.WebhookEndpoints` generieren, `Croniq.DbMigrator` updaten, Tests für CRUD + Resolver schreiben.
-3. Webhook-Operations ausbauen: Cache-Invalidierung/Changefeed, Dead-Letter-Tabelle + Replay-API, Dual-Secret-Rotation (WebhookSecretHistory) und CLI/SDK-Helfer dokumentieren.
+1. Webhook-Operations ausbauen: Cache-Invalidierung/Changefeed und Dual-Secret-Rotation (WebhookSecretHistory) plus CLI/SDK-Helfer dokumentieren (Dead-Letter-Tabelle + Replay-API umgesetzt).
+2. (Deferred) Docstreams-Prozess etablieren (`docs/deep-dive/docstreams.md`), Quickstart synchronisieren und Consumer/Technical Docs laufend spiegeln – sobald das Repo public ist.
 
 ## Webhook-Trigger-Konzept (Backlog)
 
@@ -49,3 +49,7 @@
 - [x] `docs\consumer\configuration.md` hier besteht ein Dokumentationsfehler oder gap: builder.Services.AddCroniq() gibt es nicht. Consumer Docs generell auf aktuellsten Stand bringen.
 - [x] Ist es korrekt, dass `Croniq.Auth.SqlServer` einen Verweis auf `Croniq.Persistence.SqlServer` hat? Sollte die DbContext-Registrierung nicht eher in `Croniq.Data.SqlServer` stattfinden (bitte verifizieren, Empfehlungen aussprechen)? (Verifiziert: `Croniq.Auth.SqlServer` referenziert nur `Croniq.Data.SqlServer`, alle DbContext-DI-Erweiterungen leben bereits dort; Recommendation: Hosts rufen `AddCroniqSqlServerDbContext` aus `Croniq.Data.SqlServer` auf, bevor sie `AddCroniqAuthSqlServer` verkabeln.)
 - [ ] Der `otelBuilder` in `samples\Croniq.Sample.ApiHost` ist optional oder obsolet (da bereits in src\Croniq.Api definiert)?
+- [ ] Convenience-Hook bauen, der aus der Konfiguration das passende Provider-Modul zieht; momentan muss man `AddCroniqWebhooksSqlServer` im Startup explizit aufrufen.
+- [ ] Sollte man `Croniq.Webhooks` in `Croniq.Hosting.Webhooks` umbenennen - oder gehört das nicht zusammen?
+- [ ] `CONTRIBUTING.md` aktualisieren (veraltete Inhalte z.B. `Consumer docs` -> `Croniq docs`)
+- [ ] Signaturen für Webhooks per Opt-Out deaktivierbar machen (env, config, fluent)?

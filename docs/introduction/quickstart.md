@@ -189,7 +189,7 @@ builder.Services.AddCroniqWebhookRateLimiter();
 var app = builder.Build();
 
 app.MapCroniqManagementEndpoints();
-app.UseCroniqWebhooks(); // exposes POST /webhooks/{hookKey}
+app.UseCroniqWebhooks(mapHealthEndpoints: false); // skip duplicate /health when co-hosted
 ```
 
 Add a matching configuration block (e.g., in `appsettings.Development.json`). Point the `JobKey` at the handler you registered above so the webhook reuses the same job key used by manual triggers:

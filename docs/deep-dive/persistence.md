@@ -110,7 +110,7 @@ tools/Croniq.DbMigrator/
 ## Migration Workflow
 
 1. **Create/Update entities** in `src/Croniq.Data.SqlServer/Entities`.
-2. **Add a migration** from the repository root:
+2. **Add a migration** from the repository root (run `dotnet tool restore` once to install the local `dotnet-ef` tool):
 
    ```cmd
    dotnet ef migrations add <Name> --project src/Croniq.Data.SqlServer --startup-project tools/Croniq.DbMigrator --output-dir Migrations

@@ -31,7 +31,7 @@ public sealed class SqlServerJobPersistenceProviderTests : IAsyncLifetime
 
     public async Task InitializeAsync()
     {
-        await _sql.ResetDatabaseAsync().ConfigureAwait(false);
+        await _sql.ResetDatabaseAsync();
         _provider = BuildServiceProvider(_sql.ConnectionString);
         _persistence = _provider.GetRequiredService<IJobPersistenceProvider>();
         _dbFactory = _provider.GetRequiredService<IDbContextFactory<SqlServerDbContext>>();
@@ -41,7 +41,7 @@ public sealed class SqlServerJobPersistenceProviderTests : IAsyncLifetime
     {
         if (_provider is IAsyncDisposable asyncDisposable)
         {
-            await asyncDisposable.DisposeAsync().ConfigureAwait(false);
+            await asyncDisposable.DisposeAsync();
         }
         else
         {
@@ -62,11 +62,11 @@ public sealed class SqlServerJobPersistenceProviderTests : IAsyncLifetime
 
         await _persistence!.UpsertJobAsync(
             new JobDefinition(jobKey.Value, jobKey.NamespaceSegment, "DemoJob", jobKey.Variant, "original", metadata),
-            CancellationToken.None).ConfigureAwait(false);
+            CancellationToken.None);
 
-        await using (var context = await _dbFactory!.CreateDbContextAsync().ConfigureAwait(false))
+        await using (var context = await _dbFactory!.CreateDbContextAsync())
         {
-            var entity = await context.Jobs.SingleAsync(j => j.JobKey == jobKey.Value).ConfigureAwait(false);
+            var entity = await context.Jobs.SingleAsync(j => j.JobKey == jobKey.Value);
             entity.NamespaceSegment.Should().Be(jobKey.NamespaceSegment);
             entity.Description.Should().Be("original");
             JsonDocument.Parse(entity.MetadataJson!).RootElement.GetProperty("owner").GetString().Should().Be("platform");
@@ -75,10 +75,10 @@ public sealed class SqlServerJobPersistenceProviderTests : IAsyncLifetime
         var updatedMetadata = new Dictionary<string, string> { ["owner"] = "sre" };
         await _persistence.UpsertJobAsync(
             new JobDefinition(jobKey.Value, jobKey.NamespaceSegment, "DemoJob", jobKey.Variant, "updated", updatedMetadata),
-            CancellationToken.None).ConfigureAwait(false);
+            CancellationToken.None);
 
-        await using var reloaded = await _dbFactory.CreateDbContextAsync().ConfigureAwait(false);
-        var row = await reloaded.Jobs.SingleAsync(j => j.JobKey == jobKey.Value).ConfigureAwait(false);
+        await using var reloaded = await _dbFactory.CreateDbContextAsync();
+        var row = await reloaded.Jobs.SingleAsync(j => j.JobKey == jobKey.Value);
         row.Description.Should().Be("updated");
         JsonDocument.Parse(row.MetadataJson!).RootElement.GetProperty("owner").GetString().Should().Be("sre");
     }
@@ -92,7 +92,7 @@ public sealed class SqlServerJobPersistenceProviderTests : IAsyncLifetime
 
         await _persistence!.UpsertJobAsync(
             new JobDefinition(jobKey.Value, jobKey.NamespaceSegment, "Invoicing", jobKey.Variant, null, null),
-            CancellationToken.None).ConfigureAwait(false);
+            CancellationToken.None);
 
         var trigger = new TriggerDefinition(
             TriggerId: $"{jobKey.Value}:trigger",
@@ -102,18 +102,18 @@ public sealed class SqlServerJobPersistenceProviderTests : IAsyncLifetime
             Enabled: true,
             Metadata: new Dictionary<string, string> { ["kind"] = "cron" });
 
-        await _persistence.UpsertTriggerAsync(trigger, CancellationToken.None).ConfigureAwait(false);
+        await _persistence.UpsertTriggerAsync(trigger, CancellationToken.None);
 
-        await using (var context = await _dbFactory!.CreateDbContextAsync().ConfigureAwait(false))
+        await using (var context = await _dbFactory!.CreateDbContextAsync())
         {
-            var entity = await context.Triggers.SingleAsync(t => t.TriggerKey == trigger.TriggerId).ConfigureAwait(false);
+            var entity = await context.Triggers.SingleAsync(t => t.TriggerKey == trigger.TriggerId);
             entity.NextFireAtUtc = DateTime.UtcNow.AddSeconds(-30);
             entity.Enabled = true;
-            await context.SaveChangesAsync().ConfigureAwait(false);
+            await context.SaveChangesAsync();
         }
 
-        var request = new TriggerAcquireRequest(scope, "instance-1", DateTimeOffset.UtcNow, batchSize: 5);
-        var leases = await _persistence.AcquireAsync(request, CancellationToken.None).ConfigureAwait(false);
+        var request = new TriggerAcquireRequest(scope, "instance-1", DateTimeOffset.UtcNow, BatchSize: 5);
+        var leases = await _persistence.AcquireAsync(request, CancellationToken.None);
 
         leases.Should().ContainSingle();
         var lease = leases.Single();
@@ -122,8 +122,8 @@ public sealed class SqlServerJobPersistenceProviderTests : IAsyncLifetime
         lease.Scope.Should().Be(scope);
         lease.LeaseExpiresAtUtc.Should().BeAfter(lease.FireAtUtc);
 
-        await using var verification = await _dbFactory.CreateDbContextAsync().ConfigureAwait(false);
-        var row = await verification.Triggers.SingleAsync(t => t.TriggerKey == trigger.TriggerId).ConfigureAwait(false);
+        await using var verification = await _dbFactory.CreateDbContextAsync();
+        var row = await verification.Triggers.SingleAsync(t => t.TriggerKey == trigger.TriggerId);
         row.LeaseId.Should().Be(lease.LeaseId);
         row.LeaseInstanceId.Should().Be("instance-1");
         row.LeaseExpiresAtUtc.Should().BeAfter(DateTime.UtcNow);
@@ -144,3 +144,4 @@ public sealed class SqlServerJobPersistenceProviderTests : IAsyncLifetime
         return services.BuildServiceProvider();
     }
 }
+

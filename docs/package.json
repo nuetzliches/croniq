@@ -23,7 +23,7 @@
   },
   "homepage": "https://github.com/nuetzliches/croniq#readme",
   "devDependencies": {
-    "markdownlint-cli2": "^0.17.0",
+    "markdownlint-cli2": "^0.20.0",
     "mermaid": "^11.12.2",
     "vitepress": "^1.6.4",
     "vitepress-plugin-mermaid": "^2.0.17"

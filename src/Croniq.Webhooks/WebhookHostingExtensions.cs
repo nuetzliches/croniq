@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Globalization;
+using System.Linq;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -31,6 +32,7 @@ public static class WebhookHostingExtensions
         services.AddMemoryCache();
         services.TryAddSingleton<WebhookMetadataFactory>();
         services.TryAddSingleton<WebhookEndpointResolver>();
+        services.TryAddSingleton<WebhookDeadLetterRecorder>();
         return services;
     }
 
@@ -67,35 +69,38 @@ public static class WebhookHostingExtensions
         return services;
     }
 
-    public static WebApplication UseCroniqWebhooks(this WebApplication app)
+    public static WebApplication UseCroniqWebhooks(this WebApplication app, bool mapHealthEndpoints = true)
     {
-        app.MapGet("/health", () => Results.Ok(new { status = "ok" }));
-        app.MapGet("/health/persistence", async (IServiceProvider sp, CancellationToken ct) =>
+        if (mapHealthEndpoints)
         {
-            var provider = sp.GetService<IJobPersistenceProvider>();
-            var providerName = provider?.GetType().FullName ?? "unknown";
-
-            var health = sp.GetService<IPersistenceHealth>();
-            if (health is null)
+            app.MapGet("/health", () => Results.Ok(new { status = "ok" }));
+            app.MapGet("/health/persistence", async (IServiceProvider sp, CancellationToken ct) =>
             {
-                return Results.Ok(new { status = "ok", provider = providerName, note = "no-db-provider-configured" });
-            }
+                var provider = sp.GetService<IJobPersistenceProvider>();
+                var providerName = provider?.GetType().FullName ?? "unknown";
 
-            try
-            {
-                var result = await health.CheckAsync(ct).ConfigureAwait(false);
-                if (result.IsHealthy)
+                var health = sp.GetService<IPersistenceHealth>();
+                if (health is null)
                 {
-                    return Results.Ok(new { status = "ok", provider = providerName, db = "reachable" });
+                    return Results.Ok(new { status = "ok", provider = providerName, note = "no-db-provider-configured" });
                 }
 
-                return Results.Problem(statusCode: StatusCodes.Status503ServiceUnavailable, title: "db-unhealthy", detail: result.Detail);
-            }
-            catch (Exception ex)
-            {
-                return Results.Problem(statusCode: StatusCodes.Status503ServiceUnavailable, title: "db-unreachable", detail: ex.Message);
-            }
-        });
+                try
+                {
+                    var result = await health.CheckAsync(ct).ConfigureAwait(false);
+                    if (result.IsHealthy)
+                    {
+                        return Results.Ok(new { status = "ok", provider = providerName, db = "reachable" });
+                    }
+
+                    return Results.Problem(statusCode: StatusCodes.Status503ServiceUnavailable, title: "db-unhealthy", detail: result.Detail);
+                }
+                catch (Exception ex)
+                {
+                    return Results.Problem(statusCode: StatusCodes.Status503ServiceUnavailable, title: "db-unreachable", detail: ex.Message);
+                }
+            });
+        }
 
         app.MapPost("/webhooks/{hookKey}", async (
             string hookKey,
@@ -105,6 +110,7 @@ public static class WebhookHostingExtensions
             IPolicyResolver policyResolver,
             WebhookMetadataFactory metadataFactory,
             WebhookEndpointResolver endpointResolver,
+            WebhookDeadLetterRecorder deadLetterRecorder,
             ILogger<WebhookRequestHandlerMarker> logger,
             CancellationToken cancellationToken) =>
         {
@@ -121,13 +127,15 @@ public static class WebhookHostingExtensions
                 return Results.Problem(statusCode: StatusCodes.Status500InternalServerError, title: "invalid-job-key", detail: "Configured job key is invalid.");
             }
 
+            var headers = deadLetterRecorder.CaptureHeaders(request.Headers);
+            var payload = await ReadPayloadAsync(request).ConfigureAwait(false);
+
             if (!registry.TryGet(jobKey, out var descriptor))
             {
                 logger.LogWarning("job {JobKey} not registered for webhook {HookKey}", endpoint.JobKey, hookKey);
+                await deadLetterRecorder.TryRecordAsync(jobKey, endpoint, payload, headers, metadata: null, failureReason: "job-not-registered", statusCode: StatusCodes.Status404NotFound, errorDetails: "job not registered", cancellationToken).ConfigureAwait(false);
                 return Results.NotFound(new { error = "job-not-registered", endpoint.JobKey });
             }
-
-            var payload = await ReadPayloadAsync(request).ConfigureAwait(false);
 
             if (endpoint.RequireSignature)
             {
@@ -140,6 +148,7 @@ public static class WebhookHostingExtensions
                 var provided = request.Headers["X-Croniq-Signature"].FirstOrDefault();
                 if (string.IsNullOrWhiteSpace(provided))
                 {
+                    await deadLetterRecorder.TryRecordAsync(jobKey, endpoint, payload, headers, metadata: null, failureReason: "signature-missing", statusCode: StatusCodes.Status401Unauthorized, errorDetails: "missing signature header", cancellationToken).ConfigureAwait(false);
                     return Results.StatusCode(StatusCodes.Status401Unauthorized);
                 }
 
@@ -147,6 +156,7 @@ public static class WebhookHostingExtensions
                 if (!FixedTimeEquals(expected, provided))
                 {
                     logger.LogWarning("signature mismatch for webhook {HookKey}", hookKey);
+                    await deadLetterRecorder.TryRecordAsync(jobKey, endpoint, payload, headers, metadata: null, failureReason: "signature-invalid", statusCode: StatusCodes.Status401Unauthorized, errorDetails: "signature mismatch", cancellationToken).ConfigureAwait(false);
                     return Results.StatusCode(StatusCodes.Status401Unauthorized);
                 }
             }
@@ -171,6 +181,7 @@ public static class WebhookHostingExtensions
             {
                 activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
                 logger.LogError(ex, "error executing job {JobKey} for webhook {HookKey}", endpoint.JobKey, endpoint.HookKey);
+                await deadLetterRecorder.TryRecordAsync(jobKey, endpoint, payload, headers, metadata, failureReason: "execution-error", statusCode: StatusCodes.Status500InternalServerError, errorDetails: ex.Message, cancellationToken).ConfigureAwait(false);
                 throw;
             }
         }).RequireRateLimiting("cronq-webhooks");
@@ -271,6 +282,96 @@ public static class WebhookHostingExtensions
 
     private sealed class WebhookRequestHandlerMarker
     {
+    }
+
+    private sealed class WebhookDeadLetterRecorder
+    {
+        private const int HeaderSnapshotLimit = 32;
+        private static readonly IReadOnlyDictionary<string, string> EmptyHeaders = new Dictionary<string, string>();
+        private readonly IWebhookDeadLetterStore? _store;
+        private readonly IOptionsMonitor<CroniqWebhookOptions> _options;
+        private readonly ILogger<WebhookDeadLetterRecorder> _logger;
+
+        public WebhookDeadLetterRecorder(
+            IServiceProvider services,
+            IOptionsMonitor<CroniqWebhookOptions> options,
+            ILogger<WebhookDeadLetterRecorder> logger)
+        {
+            _store = services.GetService<IWebhookDeadLetterStore>();
+            _options = options;
+            _logger = logger;
+        }
+
+        public IReadOnlyDictionary<string, string> CaptureHeaders(IHeaderDictionary headers)
+        {
+            if (headers is null || headers.Count == 0)
+            {
+                return EmptyHeaders;
+            }
+
+            var snapshot = new Dictionary<string, string>(Math.Min(HeaderSnapshotLimit, headers.Count), StringComparer.OrdinalIgnoreCase);
+            var count = 0;
+            foreach (var header in headers)
+            {
+                if (count++ >= HeaderSnapshotLimit)
+                {
+                    break;
+                }
+
+                snapshot[header.Key] = string.Join(',', header.Value.ToArray());
+            }
+
+            return snapshot;
+        }
+
+        public async Task TryRecordAsync(
+            JobKey jobKey,
+            WebhookEndpointDescriptor endpoint,
+            string payload,
+            IReadOnlyDictionary<string, string> headers,
+            IReadOnlyDictionary<string, string>? metadata,
+            string failureReason,
+            int statusCode,
+            string? errorDetails,
+            CancellationToken cancellationToken)
+        {
+            if (_store is null)
+            {
+                return;
+            }
+
+            var options = _options.CurrentValue;
+            if (!options.DeadLetter.Enabled)
+            {
+                return;
+            }
+
+            try
+            {
+                DateTimeOffset? expiry = options.DeadLetter.RetentionDays > 0
+                    ? DateTimeOffset.UtcNow.AddDays(options.DeadLetter.RetentionDays)
+                    : (DateTimeOffset?)null;
+
+                var create = new WebhookDeadLetterCreate(
+                    endpoint.HookKey,
+                    jobKey.Value,
+                    jobKey.TenantId,
+                    jobKey.EnvironmentTag,
+                    payload ?? string.Empty,
+                    headers,
+                    metadata,
+                    failureReason,
+                    statusCode,
+                    errorDetails,
+                    expiry);
+
+                await _store.CreateAsync(create, cancellationToken).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "failed to record webhook dead letter for {HookKey}", endpoint.HookKey);
+            }
+        }
     }
 
     private sealed class WebhookEndpointResolver
