@@ -7,14 +7,12 @@ using System.Threading.Tasks;
 using Croniq.Core.Jobs;
 using Croniq.Data.SqlServer;
 using Croniq.Persistence.Abstractions;
-using Croniq.Persistence.SqlServer;
 using Croniq.Persistence.SqlServer.Tests.Collections;
 using Croniq.TestKit.SqlServer;
 using Croniq.TestKit.Testing;
 using FluentAssertions;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Logging;
 using Xunit;
 
 namespace Croniq.Persistence.SqlServer.Tests;
@@ -35,7 +33,7 @@ public sealed class SqlServerWebhookPersistenceProviderTests : IAsyncLifetime
     public async Task InitializeAsync()
     {
         await _sql.ResetDatabaseAsync();
-        _provider = BuildServiceProvider(_sql.ConnectionString);
+        _provider = SqlServerTestServiceProviderFactory.Create(_sql.ConnectionString);
         _persistence = _provider.GetRequiredService<IWebhookPersistenceProvider>();
         _dbFactory = _provider.GetRequiredService<IDbContextFactory<SqlServerDbContext>>();
     }
@@ -125,6 +123,12 @@ public sealed class SqlServerWebhookPersistenceProviderTests : IAsyncLifetime
         finalEntity.Secret.Should().Be("secret-two");
         finalEntity.SecretHash.Should().Be(ComputeSecretHash("secret-two"));
         finalEntity.SignatureVersion.Should().Be(4);
+
+        var history = await verification.WebhookSecretHistory
+            .Where(x => x.HookKey == hookKey)
+            .OrderBy(x => x.ActivatedAtUtc)
+            .ToListAsync();
+        history.Should().HaveCount(3);
     }
 
     [Fact]
@@ -172,6 +176,121 @@ public sealed class SqlServerWebhookPersistenceProviderTests : IAsyncLifetime
             .Should().ThrowAsync<InvalidOperationException>();
     }
 
+    [Fact]
+    [Trait(TestCategories.Category, TestCategories.Contract)]
+    public async Task RotateSecretAsync_AppendsHistoryAndKeepsPreviousActive()
+    {
+        var scope = new PartitionScope("tenant-rotate", "dev");
+        var jobKey = JobKey.Create(scope.TenantId, scope.EnvironmentTag, "ops", "hook");
+        var hookKey = "tenant-rotate-dev-hook";
+        await UpsertEndpointAsync(hookKey, scope, jobKey);
+
+        var result = await _persistence!.RotateSecretAsync(
+            new WebhookSecretRotate(
+                hookKey,
+                scope.TenantId,
+                scope.EnvironmentTag,
+                ActivateInSeconds: null,
+                GracePeriodSeconds: 300,
+                RotatedBy: "tests",
+                Notes: "rotate"),
+            CancellationToken.None);
+
+        result.HookKey.Should().Be(hookKey);
+        result.Secret.Should().NotBeNullOrWhiteSpace();
+        result.ExpiresAtUtc.Should().BeNull();
+
+        await using var context = await _dbFactory!.CreateDbContextAsync();
+        var history = await context.WebhookSecretHistory
+            .Where(x => x.HookKey == hookKey)
+            .OrderBy(x => x.ActivatedAtUtc)
+            .ToListAsync();
+
+        history.Should().HaveCount(2);
+        history.Last().Secret.Should().Be(result.Secret);
+        history.First().ExpiresAtUtc.Should().NotBeNull();
+    }
+
+    [Fact]
+    [Trait(TestCategories.Category, TestCategories.Contract)]
+    public async Task GetActiveSecretsAsync_ReturnsCurrentAndPreviousWithinGrace()
+    {
+        var scope = new PartitionScope("tenant-active-secrets", "dev");
+        var jobKey = JobKey.Create(scope.TenantId, scope.EnvironmentTag, "ops", "hook");
+        var hookKey = "tenant-active-dev-hook";
+        await UpsertEndpointAsync(hookKey, scope, jobKey);
+
+        await _persistence!.RotateSecretAsync(
+            new WebhookSecretRotate(
+                hookKey,
+                scope.TenantId,
+                scope.EnvironmentTag,
+                ActivateInSeconds: null,
+                GracePeriodSeconds: 120,
+                RotatedBy: "tests",
+                Notes: null),
+            CancellationToken.None);
+
+        var secrets = await _persistence.GetActiveSecretsAsync(hookKey, CancellationToken.None);
+        secrets.Should().HaveCount(2);
+        secrets.Last().ExpiresAtUtc.Should().BeNull();
+        secrets.First().ExpiresAtUtc.Should().NotBeNull();
+    }
+
+    [Fact]
+    [Trait(TestCategories.Category, TestCategories.Contract)]
+    public async Task UpsertAsync_WritesChangefeedEvents()
+    {
+        var scope = new PartitionScope("tenant-changefeed", "dev");
+        var jobKey = JobKey.Create(scope.TenantId, scope.EnvironmentTag, "ops", "delta");
+        var hookKey = "tenant-changefeed-dev-delta";
+
+        await UpsertEndpointAsync(hookKey, scope, jobKey);
+        await _persistence!.UpsertAsync(
+            new WebhookEndpointUpsert(
+                hookKey,
+                jobKey.Value,
+                scope.TenantId,
+                scope.EnvironmentTag,
+                Enabled: false,
+                RequireSignature: true,
+                RequestsPerMinute: 45,
+                Secret: null,
+                SignatureVersion: 2,
+                Metadata: null),
+            CancellationToken.None);
+
+        await using var context = await _dbFactory!.CreateDbContextAsync();
+        var events = await context.WebhookEndpointEvents
+            .Where(x => x.HookKey == hookKey)
+            .OrderBy(x => x.Id)
+            .ToListAsync();
+
+        events.Should().HaveCount(2);
+        events[0].EventType.Should().Be(WebhookEndpointEventTypes.Created);
+        events[1].EventType.Should().Be(WebhookEndpointEventTypes.Updated);
+    }
+
+    [Fact]
+    [Trait(TestCategories.Category, TestCategories.Contract)]
+    public async Task DeleteAsync_WritesChangefeedEvent()
+    {
+        var scope = new PartitionScope("tenant-changefeed-delete", "dev");
+        var jobKey = JobKey.Create(scope.TenantId, scope.EnvironmentTag, "ops", "omega");
+        var hookKey = "tenant-changefeed-delete-dev";
+
+        await UpsertEndpointAsync(hookKey, scope, jobKey);
+        await _persistence!.DeleteAsync(hookKey, scope, CancellationToken.None);
+
+        await using var context = await _dbFactory!.CreateDbContextAsync();
+        var evt = await context.WebhookEndpointEvents
+            .Where(x => x.HookKey == hookKey)
+            .OrderBy(x => x.Id)
+            .LastAsync();
+
+        evt.EventType.Should().Be(WebhookEndpointEventTypes.Deleted);
+    }
+
     private async Task UpsertEndpointAsync(string hookKey, PartitionScope scope, JobKey jobKey)
     {
         await _persistence!.UpsertAsync(
@@ -187,21 +306,6 @@ public sealed class SqlServerWebhookPersistenceProviderTests : IAsyncLifetime
                 SignatureVersion: 1,
                 Metadata: null),
             CancellationToken.None);
-    }
-
-    private static ServiceProvider BuildServiceProvider(string connectionString)
-    {
-        var services = new ServiceCollection();
-        services.AddLogging(builder => builder.AddSimpleConsole());
-        services.AddCroniqSqlServerPersistence(
-            sql =>
-            {
-                sql.ConnectionString = connectionString;
-                sql.EnableDetailedErrors = true;
-                sql.EnableSensitiveDataLogging = true;
-            });
-
-        return services.BuildServiceProvider();
     }
 
     private static string ComputeSecretHash(string secret)

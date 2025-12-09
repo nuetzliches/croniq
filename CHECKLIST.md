@@ -52,4 +52,6 @@
 - [ ] Convenience-Hook bauen, der aus der Konfiguration das passende Provider-Modul zieht; momentan muss man `AddCroniqWebhooksSqlServer` im Startup explizit aufrufen.
 - [ ] Sollte man `Croniq.Webhooks` in `Croniq.Hosting.Webhooks` umbenennen - oder gehört das nicht zusammen?
 - [ ] `CONTRIBUTING.md` aktualisieren (veraltete Inhalte z.B. `Consumer docs` -> `Croniq docs`)
-- [ ] Signaturen für Webhooks per Opt-Out deaktivierbar machen (env, config, fluent)?
+- [x] Signaturen für Webhooks per Opt-Out deaktivierbar machen (env, config, fluent)?
+- [ ] `Quartz.NET` Erwähnungen aus Projekt entfernen
+- [ ] Suche nach `- [ ]` und prüfe, was wir noch zu erledigen haben bzw. ob es veraltete Tasks sind.

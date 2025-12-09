@@ -40,3 +40,15 @@ public sealed record WebhookDeadLetterResponse(
     DateTimeOffset? LastAttemptAtUtc,
     DateTimeOffset? NextAttemptAtUtc,
     DateTimeOffset? ExpiresAtUtc);
+
+public sealed record RotateWebhookSecretRequest(
+    int? ActivateInSeconds = null,
+    int? GracePeriodSeconds = null,
+    string? Notes = null);
+
+public sealed record RotateWebhookSecretResponse(
+    string HookKey,
+    DateTime ActivatedAtUtc,
+    DateTime? ExpiresAtUtc,
+    string Secret,
+    string SecretHash);

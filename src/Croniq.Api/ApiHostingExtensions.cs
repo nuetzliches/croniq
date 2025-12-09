@@ -176,6 +176,7 @@ public static class ApiHostingExtensions
         app.MapPost("/tenants/{tenantId}/webhooks", async (
             string tenantId,
             string environment,
+            bool allowUnsigned,
             UpsertWebhookEndpointRequest request,
             IWebhookPersistenceProvider? webhookStore,
             IConfiguration configuration,
@@ -213,6 +214,12 @@ public static class ApiHostingExtensions
             var metadata = request.Metadata is null
                 ? null
                 : new Dictionary<string, string>(request.Metadata, StringComparer.OrdinalIgnoreCase);
+
+            var unsignedAllowedGlobally = configuration.GetValue<bool?>("Croniq:Webhooks:Security:AllowUnsignedHooks") ?? false;
+            if (!request.RequireSignature && (!unsignedAllowedGlobally || !allowUnsigned))
+            {
+                return Results.BadRequest(new { error = "unsigned-hooks-disallowed", message = "Signature validation can only be disabled when Croniq:Webhooks:Security:AllowUnsignedHooks=true and the allowUnsigned query flag is set." });
+            }
 
             var upsert = new WebhookEndpointUpsert(
                 request.HookKey,
@@ -266,6 +273,56 @@ public static class ApiHostingExtensions
             var scope = new PartitionScope(tenantId, environment);
             await webhookStore.DeleteAsync(hookKey, scope, cancellationToken).ConfigureAwait(false);
             return Results.NoContent();
+        });
+
+        app.MapPost("/tenants/{tenantId}/webhooks/{hookKey}/rotate-secret", async (
+            string tenantId,
+            string hookKey,
+            string environment,
+            RotateWebhookSecretRequest request,
+            IWebhookPersistenceProvider? webhookStore,
+            ICallerContextAccessor callerContextAccessor,
+            CancellationToken cancellationToken) =>
+        {
+            if (string.IsNullOrWhiteSpace(environment))
+            {
+                return Results.BadRequest(new { error = "missing-environment", message = "Query parameter 'environment' is required." });
+            }
+
+            if (webhookStore is null)
+            {
+                return Results.Problem(statusCode: StatusCodes.Status503ServiceUnavailable, title: "webhooks-unavailable", detail: "Webhook persistence provider not configured." );
+            }
+
+            var caller = callerContextAccessor.Current;
+            var rotatedBy = caller is null
+                ? "cronq.api"
+                : $"{caller.CallerType}:{caller.CallerId}";
+
+            var rotate = new WebhookSecretRotate(
+                hookKey,
+                tenantId,
+                environment,
+                request.ActivateInSeconds,
+                request.GracePeriodSeconds,
+                rotatedBy,
+                request.Notes);
+
+            try
+            {
+                var result = await webhookStore.RotateSecretAsync(rotate, cancellationToken).ConfigureAwait(false);
+                var response = new RotateWebhookSecretResponse(
+                    result.HookKey,
+                    result.ActivatedAtUtc,
+                    result.ExpiresAtUtc,
+                    result.Secret,
+                    result.SecretHash);
+                return Results.Ok(response);
+            }
+            catch (Exception ex)
+            {
+                return Results.Problem(statusCode: StatusCodes.Status500InternalServerError, title: "secret-rotation-failed", detail: ex.Message);
+            }
         });
 
         app.MapGet("/tenants/{tenantId}/webhooks/deadletters", async (

@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Globalization;
 using System.Linq;
@@ -16,6 +17,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Options;
 using System.Threading.RateLimiting;
 
@@ -24,15 +26,36 @@ namespace Croniq.Webhooks;
 public static class WebhookHostingExtensions
 {
     private static readonly ActivitySource ActivitySource = new("Croniq.Webhooks.Ingress");
+    private static readonly ConcurrentDictionary<string, byte> UnsignedWarningCache = new(StringComparer.OrdinalIgnoreCase);
 
     public static IServiceCollection AddCroniqWebhookServices(this IServiceCollection services, IConfiguration configuration)
     {
         services.AddCroniqPlatformServices(configuration);
         services.Configure<CroniqWebhookOptions>(configuration.GetSection("Croniq:Webhooks"));
+        services.PostConfigure<CroniqWebhookOptions>(options =>
+        {
+            if (options is null || options.Security.AllowUnsignedHooks)
+            {
+                return;
+            }
+
+            var unsignedHooks = options.Endpoints
+                .Where(endpoint => endpoint.Enabled && !endpoint.RequireSignature)
+                .Select(endpoint => endpoint.HookKey)
+                .Where(hookKey => !string.IsNullOrWhiteSpace(hookKey))
+                .ToArray();
+
+            if (unsignedHooks.Length > 0)
+            {
+                var joined = string.Join(", ", unsignedHooks);
+                throw new InvalidOperationException($"Unsigned webhooks ({joined}) are configured but Croniq:Webhooks:Security:AllowUnsignedHooks is disabled.");
+            }
+        });
         services.AddMemoryCache();
         services.TryAddSingleton<WebhookMetadataFactory>();
         services.TryAddSingleton<WebhookEndpointResolver>();
         services.TryAddSingleton<WebhookDeadLetterRecorder>();
+        services.AddHostedService<WebhookEndpointCacheInvalidationService>();
         return services;
     }
 
@@ -111,6 +134,7 @@ public static class WebhookHostingExtensions
             WebhookMetadataFactory metadataFactory,
             WebhookEndpointResolver endpointResolver,
             WebhookDeadLetterRecorder deadLetterRecorder,
+            IOptionsMonitor<CroniqWebhookOptions> webhookOptions,
             ILogger<WebhookRequestHandlerMarker> logger,
             CancellationToken cancellationToken) =>
         {
@@ -137,11 +161,14 @@ public static class WebhookHostingExtensions
                 return Results.NotFound(new { error = "job-not-registered", endpoint.JobKey });
             }
 
-            if (endpoint.RequireSignature)
+            var security = webhookOptions.CurrentValue.Security;
+            var shouldValidateSignature = endpoint.RequireSignature || !security.AllowUnsignedHooks;
+
+            if (shouldValidateSignature)
             {
-                if (string.IsNullOrWhiteSpace(endpoint.Secret))
+                if (endpoint.ActiveSecrets.Count == 0)
                 {
-                    logger.LogWarning("webhook {HookKey} requires signature but no secret configured", hookKey);
+                    logger.LogWarning("webhook {HookKey} requires signature but no active secrets are available", hookKey);
                     return Results.Problem(statusCode: StatusCodes.Status500InternalServerError, title: "missing-secret", detail: "Webhook requires a secret for signature validation.");
                 }
 
@@ -152,12 +179,29 @@ public static class WebhookHostingExtensions
                     return Results.StatusCode(StatusCodes.Status401Unauthorized);
                 }
 
-                var expected = ComputeSignature(endpoint.Secret, payload);
-                if (!FixedTimeEquals(expected, provided))
+                var accepted = false;
+                foreach (var secret in endpoint.ActiveSecrets)
+                {
+                    var expected = ComputeSignature(secret, payload);
+                    if (FixedTimeEquals(expected, provided))
+                    {
+                        accepted = true;
+                        break;
+                    }
+                }
+
+                if (!accepted)
                 {
                     logger.LogWarning("signature mismatch for webhook {HookKey}", hookKey);
                     await deadLetterRecorder.TryRecordAsync(jobKey, endpoint, payload, headers, metadata: null, failureReason: "signature-invalid", statusCode: StatusCodes.Status401Unauthorized, errorDetails: "signature mismatch", cancellationToken).ConfigureAwait(false);
                     return Results.StatusCode(StatusCodes.Status401Unauthorized);
+                }
+            }
+            else
+            {
+                if (UnsignedWarningCache.TryAdd(endpoint.HookKey, 0))
+                {
+                    logger.LogWarning("webhook {HookKey} accepts unsigned payloads because AllowUnsignedHooks=true", endpoint.HookKey);
                 }
             }
 
@@ -374,6 +418,83 @@ public static class WebhookHostingExtensions
         }
     }
 
+    private sealed class WebhookEndpointCacheInvalidationService : BackgroundService
+    {
+        private readonly WebhookEndpointResolver _resolver;
+        private readonly IOptionsMonitor<CroniqWebhookOptions> _options;
+        private readonly ILogger<WebhookEndpointCacheInvalidationService> _logger;
+        private readonly IWebhookEndpointChangefeed? _changefeed;
+        private long _cursor;
+
+        public WebhookEndpointCacheInvalidationService(
+            WebhookEndpointResolver resolver,
+            IOptionsMonitor<CroniqWebhookOptions> options,
+            ILogger<WebhookEndpointCacheInvalidationService> logger,
+            IWebhookEndpointChangefeed? changefeed = null)
+        {
+            _resolver = resolver;
+            _options = options;
+            _logger = logger;
+            _changefeed = changefeed;
+        }
+
+        protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+        {
+            if (_changefeed is null)
+            {
+                _logger.LogInformation("Webhook changefeed not configured; cache invalidation disabled.");
+                return;
+            }
+
+            _logger.LogInformation("Webhook changefeed cache invalidation started.");
+
+            while (!stoppingToken.IsCancellationRequested)
+            {
+                try
+                {
+                    var cacheOptions = _options.CurrentValue.Cache;
+                    if (!cacheOptions.ChangefeedEnabled)
+                    {
+                        await DelayAsync(cacheOptions.PollingIntervalSeconds, stoppingToken).ConfigureAwait(false);
+                        continue;
+                    }
+
+                    var batchSize = Math.Max(1, cacheOptions.BatchSize);
+                    var batch = await _changefeed.FetchAsync(_cursor, batchSize, stoppingToken).ConfigureAwait(false);
+                    if (batch.Count == 0)
+                    {
+                        await DelayAsync(cacheOptions.PollingIntervalSeconds, stoppingToken).ConfigureAwait(false);
+                        continue;
+                    }
+
+                    foreach (var evt in batch)
+                    {
+                        _resolver.Invalidate(evt.HookKey);
+                        _cursor = Math.Max(_cursor, evt.Id);
+                        _logger.LogDebug("Invalidated webhook cache for {HookKey} due to {EventType}", evt.HookKey, evt.EventType);
+                    }
+                }
+                catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+                {
+                    break;
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Webhook cache invalidation loop failed; backing off.");
+                    await DelayAsync(5, stoppingToken).ConfigureAwait(false);
+                }
+            }
+
+            _logger.LogInformation("Webhook changefeed cache invalidation stopped.");
+        }
+
+        private static Task DelayAsync(int seconds, CancellationToken cancellationToken)
+        {
+            var delay = TimeSpan.FromSeconds(Math.Max(1, seconds));
+            return Task.Delay(delay, cancellationToken);
+        }
+    }
+
     private sealed class WebhookEndpointResolver
     {
         private readonly IWebhookPersistenceProvider? _store;
@@ -428,7 +549,8 @@ public static class WebhookHostingExtensions
                 var persisted = await _store.FindByHookKeyAsync(hookKey, cancellationToken).ConfigureAwait(false);
                 if (persisted is not null)
                 {
-                    descriptor = WebhookEndpointDescriptor.FromDefinition(persisted);
+                    var secrets = await ResolveActiveSecretsAsync(persisted, cancellationToken).ConfigureAwait(false);
+                    descriptor = WebhookEndpointDescriptor.FromDefinition(persisted, secrets);
                     _cache.Set(GetCacheKey(hookKey), descriptor, TimeSpan.FromMinutes(1));
                     return descriptor;
                 }
@@ -438,7 +560,7 @@ public static class WebhookHostingExtensions
             var config = options.Endpoints.FirstOrDefault(e => e.Enabled && string.Equals(e.HookKey, hookKey, StringComparison.OrdinalIgnoreCase));
             if (config is not null)
             {
-                descriptor = WebhookEndpointDescriptor.FromOptions(config, options.RequestsPerMinute);
+                descriptor = WebhookEndpointDescriptor.FromOptions(config, options.RequestsPerMinute, options.Security);
                 _cache.Set(GetCacheKey(hookKey), descriptor, TimeSpan.FromSeconds(30));
                 return descriptor;
             }
@@ -446,7 +568,71 @@ public static class WebhookHostingExtensions
             return null;
         }
 
+        public void Invalidate(string hookKey)
+        {
+            if (string.IsNullOrWhiteSpace(hookKey))
+            {
+                return;
+            }
+
+            _cache.Remove(GetCacheKey(hookKey));
+        }
+
         private static string GetCacheKey(string hookKey) => $"webhook:endpoint:{hookKey.ToLowerInvariant()}";
+
+        private async Task<IReadOnlyList<string>> ResolveActiveSecretsAsync(WebhookEndpointDefinition definition, CancellationToken cancellationToken)
+        {
+            if (_store is null)
+            {
+                return NormalizeSecrets(null, definition.Secret);
+            }
+
+            var materials = await _store.GetActiveSecretsAsync(definition.HookKey, cancellationToken).ConfigureAwait(false);
+            if (materials.Count == 0)
+            {
+                return NormalizeSecrets(null, definition.Secret);
+            }
+
+            var activeSecrets = materials
+                .Select(material => material.Secret)
+                .Where(secret => !string.IsNullOrWhiteSpace(secret));
+
+            return NormalizeSecrets(activeSecrets, definition.Secret);
+        }
+
+        private static IReadOnlyList<string> NormalizeSecrets(IEnumerable<string>? secrets, string? fallback)
+        {
+            var ordered = new List<string>();
+            var unique = new HashSet<string>(StringComparer.Ordinal);
+
+            void TryAdd(string? candidate)
+            {
+                if (string.IsNullOrWhiteSpace(candidate))
+                {
+                    return;
+                }
+
+                if (unique.Add(candidate))
+                {
+                    ordered.Add(candidate);
+                }
+            }
+
+            if (secrets is not null)
+            {
+                foreach (var secret in secrets)
+                {
+                    TryAdd(secret);
+                }
+            }
+
+            if (ordered.Count == 0)
+            {
+                TryAdd(fallback);
+            }
+
+            return ordered.Count == 0 ? Array.Empty<string>() : ordered;
+        }
     }
 
     private sealed class WebhookEndpointDescriptor
@@ -454,30 +640,30 @@ public static class WebhookHostingExtensions
         private WebhookEndpointDescriptor(
             string hookKey,
             string jobKey,
-            string secret,
             bool requireSignature,
             bool enabled,
             int requestsPerMinute,
-            IReadOnlyDictionary<string, string>? metadata)
+            IReadOnlyDictionary<string, string>? metadata,
+            IReadOnlyList<string> activeSecrets)
         {
             HookKey = hookKey;
             JobKey = jobKey;
-            Secret = secret;
             RequireSignature = requireSignature;
             Enabled = enabled;
             RequestsPerMinute = Math.Max(1, requestsPerMinute);
             Metadata = metadata;
+            ActiveSecrets = activeSecrets;
         }
 
         public string HookKey { get; }
         public string JobKey { get; }
-        public string Secret { get; }
         public bool RequireSignature { get; }
         public bool Enabled { get; }
         public int RequestsPerMinute { get; }
         public IReadOnlyDictionary<string, string>? Metadata { get; }
+        public IReadOnlyList<string> ActiveSecrets { get; }
 
-        public static WebhookEndpointDescriptor FromDefinition(WebhookEndpointDefinition definition)
+        public static WebhookEndpointDescriptor FromDefinition(WebhookEndpointDefinition definition, IReadOnlyList<string> activeSecrets)
         {
             var metadata = definition.Metadata is null
                 ? null
@@ -486,18 +672,23 @@ public static class WebhookHostingExtensions
             return new WebhookEndpointDescriptor(
                 definition.HookKey,
                 definition.JobKey,
-                definition.Secret,
                 definition.RequireSignature,
                 definition.Enabled,
                 definition.RequestsPerMinute,
-                metadata);
+                metadata,
+                activeSecrets);
         }
 
-        public static WebhookEndpointDescriptor FromOptions(WebhookEndpointOptions options, int defaultLimit)
+        public static WebhookEndpointDescriptor FromOptions(WebhookEndpointOptions options, int defaultLimit, WebhookSecurityOptions security)
         {
             if (string.IsNullOrWhiteSpace(options.Secret))
             {
                 throw new InvalidOperationException($"Webhook {options.HookKey} requires a secret to process requests.");
+            }
+
+            if (!options.RequireSignature && !(security?.AllowUnsignedHooks ?? false))
+            {
+                throw new InvalidOperationException($"Webhook {options.HookKey} disables signature validation, but unsigned hooks are not permitted.");
             }
 
             var limit = options.RequestsPerMinute ?? defaultLimit;
@@ -508,11 +699,11 @@ public static class WebhookHostingExtensions
             return new WebhookEndpointDescriptor(
                 options.HookKey,
                 options.JobKey,
-                options.Secret,
                 options.RequireSignature,
                 options.Enabled,
                 limit,
-                metadata);
+                metadata,
+                new List<string> { options.Secret });
         }
     }
 }

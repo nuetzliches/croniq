@@ -128,19 +128,19 @@ docs/
 
 ### Webhook Persistence & Admin Lifecycle (Preview)
 
-- **Schema**: `Croniq.Persistence.SqlServer` persists hooks in `croniq.WebhookEndpoints`, capturing tenant/environment scope, `HookKey`, `JobKey`, secret material (plus hash), signature version, rate limit, metadata JSON, and audit timestamps. Upcoming work will add `WebhookSecretHistory` (for rotation trails) and `WebhookIngressDeadLetter` (for failed payloads).
-- **Migrations**: The `20251209095431_AddWebhookEndpoints` EF migration (under `src/Croniq.Data.SqlServer/Migrations`) ships the schema through `Croniq.DbMigrator`, so Compose/test stacks no longer rely on `EnsureCreated`. Dev/test environments can still fall back to `Croniq:Webhooks` configuration when SqlServer isn’t available.
+- **Schema**: `Croniq.Persistence.SqlServer` persists hooks in `croniq.WebhookEndpoints`, records cache-invalidation events inside `croniq.WebhookEndpointEvents`, captures failed payloads in `croniq.WebhookDeadLetters`, and stores rotation trails inside `croniq.WebhookSecretHistory`. Each record keeps tenant/environment scope, `HookKey`, `JobKey`, secret material (plus hash), signature version, rate limit, metadata JSON, and audit timestamps.
+- **Migrations**: The `20251209095431_AddWebhookEndpoints`, `20251209121500_AddWebhookDeadLetters`, and `20251209133000_AddWebhookEndpointEvents` EF migrations ship through `Croniq.DbMigrator`, so Compose/test stacks no longer rely on `EnsureCreated`. Dev/test environments can still fall back to `Croniq:Webhooks` configuration when SqlServer isn’t available.
 - **Contract tests**: `SqlServerWebhookPersistenceProviderTests` (in `tests/Croniq.Persistence.SqlServer.Tests`) exercises CRUD + scope enforcement so providers stay consistent with the admin API.
 - **Admin API**: `Croniq.Api` now exposes tenant-scoped CRUD endpoints (`POST/GET/DELETE /tenants/{tenantId}/webhooks?environment=<tag>`). Each request validates the job key scope, enforces per-hook rate limits, and returns the freshest secret (only when you explicitly send a new one) so automation pipelines can bootstrap callers.
-- **Host Bootstrapping**: `Croniq.Webhooks` prefers the persistence provider, caching lookups per hook and falling back to configuration entries only when no stored definition exists. Future work will add push notifications or polling so cache invalidation does not rely solely on TTL.
-- **Secret Rotation**: A simple “replace secret” flow ships today (call `POST` again with a new `secret`). Dual-secret windows plus history tables remain on the roadmap; until then, rotate during a maintenance window or stage two hooks with the same job key.
-- **Operational Insights**: Use OpenTelemetry spans (`Croniq.Webhooks.Ingress`) and API audit logs for the moment. The dedicated dead-letter table and replay endpoints stay planned so operators can rehydrate failed webhook deliveries without digging through raw logs.
+- **Host Bootstrapping**: `Croniq.Webhooks` prefers the persistence provider, caching lookups per hook and falling back to configuration entries only when no stored definition exists. A hosted `WebhookEndpointCacheInvalidationService` now drains the SqlServer changefeed and evicts cache entries immediately after CRUD operations; remaining fallback TTLs keep config-defined hooks responsive.
+- **Changefeed & Cache Invalidation**: Every upsert/delete emits a row into `croniq.WebhookEndpointEvents`. `SqlServerWebhookEndpointChangefeed` exposes those rows as an ordered stream, and the hosted invalidation service polls in lightweight batches (configurable interval + batch size under `Croniq:Webhooks:Cache`). This keeps rate limiter metadata and secrets hot without relying on 30–60s cache expirations.
+- **Secret Rotation**: The admin API exposes `POST /tenants/{tenantId}/webhooks/{hookKey}/rotate-secret?environment=<tag>` which appends to `WebhookSecretHistory`, returns a fresh secret once, and keeps the previous secret alive for a configurable grace window (default 24h). `Croniq.Webhooks` automatically validates signatures against all active secrets so upstream callers can cut over without downtime.
+- **Unsigned Hooks Guardrails**: Signature validation stays enabled by default. Operators must set `Croniq:Webhooks:Security:AllowUnsignedHooks=true` and pass `?allowUnsigned=true` when creating an unsigned hook; ingress warns the first time an unsigned payload is accepted so there is an audit breadcrumb.
+- **Operational Insights**: Use OpenTelemetry spans (`Croniq.Webhooks.Ingress`), API audit logs, and the Webhook dead-letter table + replay endpoint to rehydrate failed webhook deliveries without digging through raw logs.
 - **Open Tasks**:
-  1. Implement cache invalidation/change notifications so `Croniq.Webhooks` refreshes hook definitions immediately after CRUD operations (today it relies on 30–60s TTLs).
-  2. Add webhook-specific dead letters (table + replay endpoint) so failed ingress payloads can be inspected and retried.
-  3. Extend secret rotation with dual-secret windows and `WebhookSecretHistory` persistence so rotations become zero-downtime and auditable.
-  4. Harden the CRUD endpoints with authentication/authorization scopes plus integration tests (currently only happy-path smoke coverage exists).
-  5. Provide CLI/SDK helpers (or scripted samples) for provisioning hooks, including secret export masking rules.
+  1. Extend secret rotation with dual-secret windows and `WebhookSecretHistory` persistence so rotations become zero-downtime and auditable.
+  2. Harden the CRUD endpoints with authentication/authorization scopes plus integration tests (currently only happy-path smoke coverage exists).
+  3. Provide CLI/SDK helpers (or scripted samples) for provisioning hooks, including secret export masking rules.
 
 ## Job Authoring Model
 

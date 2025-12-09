@@ -13,4 +13,8 @@ public interface IWebhookPersistenceProvider
     Task UpsertAsync(WebhookEndpointUpsert request, CancellationToken cancellationToken);
 
     Task DeleteAsync(string hookKey, PartitionScope scope, CancellationToken cancellationToken);
+
+    Task<WebhookSecretRotationResult> RotateSecretAsync(WebhookSecretRotate request, CancellationToken cancellationToken);
+
+    Task<IReadOnlyCollection<WebhookSecretMaterial>> GetActiveSecretsAsync(string hookKey, CancellationToken cancellationToken);
 }

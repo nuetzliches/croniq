@@ -1,9 +1,12 @@
 using System;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Croniq.Data.SqlServer;
 using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 
@@ -20,7 +23,32 @@ public static class SqlServerDatabaseMigrator
 
         await using var provider = BuildProvider(connectionString);
         await using var scope = provider.CreateAsyncScope();
-        var context = scope.ServiceProvider.GetRequiredService<SqlServerDbContext>();
+        var services = scope.ServiceProvider;
+        var context = services.GetRequiredService<SqlServerDbContext>();
+        var logger = services
+            .GetRequiredService<ILoggerFactory>()
+            .CreateLogger("Croniq.TestKit.SqlServer.SqlServerDatabaseMigrator");
+        var migrationsAssembly = context.GetService<IMigrationsAssembly>();
+        if (migrationsAssembly.Migrations.Count == 0)
+        {
+            throw new InvalidOperationException($"No EF Core migrations were discovered for '{migrationsAssembly.Assembly.GetName().Name}'.");
+        }
+        if (logger.IsEnabled(LogLevel.Debug))
+        {
+            logger.LogDebug("Migrator loaded migrations: {MigrationNames}", string.Join(", ", migrationsAssembly.Migrations.Keys));
+        }
+        var allMigrations = context.Database.GetMigrations();
+        var appliedMigrations = context.Database.GetAppliedMigrations();
+        var pendingMigrations = context.Database.GetPendingMigrations();
+        if (logger.IsEnabled(LogLevel.Debug))
+        {
+            logger.LogDebug(
+                "Discovered {AllCount} migrations. Applied: {AppliedCount}. Pending: {PendingCount}. First pending: {FirstPending}",
+                allMigrations.Count(),
+                appliedMigrations.Count(),
+                pendingMigrations.Count(),
+                pendingMigrations.FirstOrDefault() ?? "<none>");
+        }
         await context.Database.MigrateAsync(cancellationToken).ConfigureAwait(false);
     }
 
@@ -28,10 +56,14 @@ public static class SqlServerDatabaseMigrator
     {
         if (string.IsNullOrWhiteSpace(connectionString)) throw new ArgumentException("Connection string is required.", nameof(connectionString));
 
+        await ApplyMigrationsAsync(connectionString, cancellationToken).ConfigureAwait(false);
+
         await using var connection = new SqlConnection(connectionString);
         await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
 
         const string sql = """
+        DELETE FROM [croniq].[WebhookSecretHistory];
+        DELETE FROM [croniq].[WebhookEndpointEvents];
         DELETE FROM [croniq].[WebhookDeadLetters];
         DELETE FROM [croniq].[WebhookEndpoints];
         DELETE FROM [croniq].[DeadLetters];
@@ -49,12 +81,15 @@ public static class SqlServerDatabaseMigrator
     private static ServiceProvider BuildProvider(string connectionString)
     {
         var services = new ServiceCollection();
-        services.AddLogging(builder => builder.AddSimpleConsole());
+        services.AddLogging(builder =>
+        {
+            builder.AddSimpleConsole(options => options.SingleLine = true);
+            builder.SetMinimumLevel(LogLevel.Warning);
+        });
         services.AddCroniqSqlServerDbContext(options =>
         {
             options.ConnectionString = connectionString;
-            options.EnableDetailedErrors = true;
-            options.EnableSensitiveDataLogging = true;
+            options.MigrationsAssembly ??= typeof(SqlServerDbContext).Assembly.GetName().Name;
         });
 
         return services.BuildServiceProvider();

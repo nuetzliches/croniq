@@ -1,4 +1,6 @@
 using System;
+using Croniq.Data.SqlServer;
+using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Migrations;
 
 #nullable disable
@@ -6,6 +8,8 @@ using Microsoft.EntityFrameworkCore.Migrations;
 namespace Croniq.Data.SqlServer.Migrations
 {
     /// <inheritdoc />
+    [DbContext(typeof(SqlServerDbContext))]
+    [Migration("20251209121500_AddWebhookDeadLetters")]
     public partial class AddWebhookDeadLetters : Migration
     {
         /// <inheritdoc />

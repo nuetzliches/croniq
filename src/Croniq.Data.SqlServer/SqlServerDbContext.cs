@@ -15,7 +15,9 @@ public sealed class SqlServerDbContext(DbContextOptions<SqlServerDbContext> opti
     public DbSet<ApiClientEntity> ApiClients => Set<ApiClientEntity>();
     public DbSet<ApiKeyEntity> ApiKeys => Set<ApiKeyEntity>();
     public DbSet<WebhookEndpointEntity> WebhookEndpoints => Set<WebhookEndpointEntity>();
+    public DbSet<WebhookEndpointEventEntity> WebhookEndpointEvents => Set<WebhookEndpointEventEntity>();
     public DbSet<WebhookDeadLetterEntity> WebhookDeadLetters => Set<WebhookDeadLetterEntity>();
+    public DbSet<WebhookSecretHistoryEntity> WebhookSecretHistory => Set<WebhookSecretHistoryEntity>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -26,6 +28,8 @@ public sealed class SqlServerDbContext(DbContextOptions<SqlServerDbContext> opti
         ConfigureApiKeys(modelBuilder.Entity<ApiKeyEntity>());
         ConfigureWebhookEndpoints(modelBuilder.Entity<WebhookEndpointEntity>());
         ConfigureWebhookDeadLetters(modelBuilder.Entity<WebhookDeadLetterEntity>());
+        ConfigureWebhookEndpointEvents(modelBuilder.Entity<WebhookEndpointEventEntity>());
+        ConfigureWebhookSecretHistory(modelBuilder.Entity<WebhookSecretHistoryEntity>());
     }
 
     private static void ConfigureJobs(EntityTypeBuilder<JobEntity> builder)
@@ -99,5 +103,21 @@ public sealed class SqlServerDbContext(DbContextOptions<SqlServerDbContext> opti
         builder.HasIndex(x => x.HookKey);
         builder.HasIndex(x => x.NextAttemptAtUtc);
         builder.Property(x => x.CreatedAtUtc).HasDefaultValueSql("sysutcdatetime()");
+    }
+
+    private static void ConfigureWebhookEndpointEvents(EntityTypeBuilder<WebhookEndpointEventEntity> builder)
+    {
+        builder.ToTable("WebhookEndpointEvents", "croniq");
+        builder.HasIndex(x => x.OccurredAtUtc);
+        builder.HasIndex(x => x.HookKey);
+        builder.Property(x => x.OccurredAtUtc).HasDefaultValueSql("sysutcdatetime()");
+    }
+
+    private static void ConfigureWebhookSecretHistory(EntityTypeBuilder<WebhookSecretHistoryEntity> builder)
+    {
+        builder.ToTable("WebhookSecretHistory", "croniq");
+        builder.HasIndex(x => new { x.HookKey, x.TenantId, x.EnvironmentTag, x.ActivatedAtUtc });
+        builder.HasIndex(x => new { x.HookKey, x.ExpiresAtUtc });
+        builder.Property(x => x.ActivatedAtUtc).HasDefaultValueSql("sysutcdatetime()");
     }
 }

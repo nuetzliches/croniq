@@ -7,6 +7,10 @@ public sealed class CroniqWebhookOptions
     public IList<WebhookEndpointOptions> Endpoints { get; } = new List<WebhookEndpointOptions>();
 
     public WebhookDeadLetterOptions DeadLetter { get; set; } = new();
+
+    public WebhookCacheOptions Cache { get; set; } = new();
+
+    public WebhookSecurityOptions Security { get; set; } = new();
 }
 
 public sealed class WebhookEndpointOptions
@@ -31,4 +35,18 @@ public sealed class WebhookDeadLetterOptions
     public bool Enabled { get; set; } = true;
 
     public int RetentionDays { get; set; } = 14;
+}
+
+public sealed class WebhookCacheOptions
+{
+    public bool ChangefeedEnabled { get; set; } = true;
+
+    public int PollingIntervalSeconds { get; set; } = 3;
+
+    public int BatchSize { get; set; } = 128;
+}
+
+public sealed class WebhookSecurityOptions
+{
+    public bool AllowUnsignedHooks { get; set; } = false;
 }

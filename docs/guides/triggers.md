@@ -46,9 +46,9 @@ job.WithEventTrigger(trigger =>
 
 Push notifications or webhooks can enqueue context payloads into the named source.
 
-### Incoming Webhook Trigger (planned)
+### Incoming Webhook Trigger
 
-The upcoming `Croniq.Webhooks` host exposes tenant-scoped endpoints such as `POST /webhooks/{hookKey}`. Each hook references a job key and forwards request metadata into the event trigger shown above.
+The `Croniq.Webhooks` host exposes tenant-scoped endpoints such as `POST /webhooks/{hookKey}`. Each hook references a job key and forwards request metadata into the event trigger shown above.
 
 ```http
 POST /webhooks/invoice-paid HTTP/1.1
@@ -78,6 +78,7 @@ Sample configuration (`appsettings.Development.json`) wired up in `Croniq.Sample
           "HookKey": "invoice-paid",
           "JobKey": "dev:local:samples:smoke",
           "Secret": "dev-webhook-secret",
+          "RequireSignature": true,
           "Metadata": {
             "source": "sample",
             "type": "invoice"
@@ -126,9 +127,11 @@ PY
    DEV stacks can still fall back to `Croniq:Webhooks` config, but production tenants should rely on the API so secrets are persisted in SqlServer.
 
 2. **List existing hooks** with `GET /tenants/{tenantId}/webhooks?environment=<tag>` to verify rate limits, metadata, and enablement before routing callers to the endpoint.
-3. **Rotate secrets** by calling the same `POST` endpoint with `secret` set to the new value. The response echoes the latest secret so you can update upstream systems before discarding the old key.
+3. **Rotate secrets** with `POST /tenants/{tenantId}/webhooks/{hookKey}/rotate-secret?environment=<tag>`. Provide optional `gracePeriodSeconds` (default 24h) so the previous secret remains valid while upstream systems roll out the new key. The rotation response is the only time you see the plaintext secret—stash it in your secret manager immediately.
 4. **Disable or delete hooks** via `POST` (set `enabled:false`) for temporary pauses or `DELETE /tenants/{tenantId}/webhooks/{hookKey}?environment=<tag>` for permanent removal. Disabled hooks still show up in diagnostics; deleted hooks return `404` immediately.
 5. **Audit usage** through telemetry (`Croniq.Webhooks.Ingress` spans) and, once wired up, the `WebhookIngressDeadLetter` table. Until then, structured logs remain the source of truth for per-hook activity.
+
+> ⚠️ Signatures stay mandatory by default. To disable them for controlled scenarios, set `Croniq:Webhooks:Security:AllowUnsignedHooks=true` in configuration **and** pass `allowUnsigned=true` when calling the management API. `Croniq.Webhooks` logs a warning the first time an unsigned payload is accepted so you have an audit trail.
 
 ## Pausing & Resuming
 
