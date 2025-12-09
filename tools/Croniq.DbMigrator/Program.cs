@@ -42,7 +42,6 @@ static async Task ApplyMigrationsAsync(IServiceProvider provider, CancellationTo
 {
     using var scope = provider.CreateScope();
     var context = scope.ServiceProvider.GetRequiredService<SqlServerDbContext>();
-    await EnsureDatabaseCreatedAsync(context, token).ConfigureAwait(false);
 
     var pendingMigrations = await context.Database.GetPendingMigrationsAsync(token).ConfigureAwait(false);
     if (!pendingMigrations.Any())
@@ -52,20 +51,4 @@ static async Task ApplyMigrationsAsync(IServiceProvider provider, CancellationTo
     }
 
     await context.Database.MigrateAsync(token).ConfigureAwait(false);
-}
-
-static async Task EnsureDatabaseCreatedAsync(SqlServerDbContext context, CancellationToken token)
-{
-    try
-    {
-        var created = await context.Database.EnsureCreatedAsync(token).ConfigureAwait(false);
-        if (created)
-        {
-            Console.WriteLine("Croniq SQL Server database created.");
-        }
-    }
-    catch (SqlException ex) when (ex.Number == 1801)
-    {
-        Console.WriteLine("Croniq SQL Server database already exists. Skipping creation.");
-    }
 }
