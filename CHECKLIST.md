@@ -32,8 +32,9 @@
 
 ## Next Focus
 
-1. Webhook-CRUD/API absichern: Authz-Scopes, Hardening und zusätzliche Integrationstests für Admin-Endpunkte.
+1. (abgeschlossen 2025-12-09) Webhook-CRUD/API abgesichert: Authz-Scopes vereinheitlicht, Integrationstests für CRUD/Rotate/Dead-Letter-Endpunkte laufen über den neuen TestHost.
 2. (Deferred) Docstreams-Prozess etablieren (`docs/deep-dive/docstreams.md`), Quickstart synchronisieren und Consumer/Technical Docs laufend spiegeln – sobald das Repo public ist.
+3. Convenience-Webhooks (Provider-Autokonfiguration) + Sample-otelBuilder aufräumen, sobald offene Nachbesserungen adressiert sind.
 
 ## Webhook-Trigger-Konzept (Backlog)
 
@@ -56,3 +57,11 @@
 - [x] Signaturen für Webhooks per Opt-Out deaktivierbar machen (env, config, fluent)?
 - [ ] `Quartz.NET` Erwähnungen aus Projekt entfernen
 - [ ] Suche nach `- [ ]` und prüfe, was wir noch zu erledigen haben bzw. ob es veraltete Tasks sind.
+
+## Zwischenstand 2025-12-09
+
+- Webhook-Verwaltung: Admin-API vollständig durchgetestet (CRUD, Secret-Rotation, Dead-Letter Replay) via neuem `WebhookApiTestHost` + In-Memory-Doubles; sichert vorherige Hardening-Arbeit.
+- Offene Punkte:
+	- Docs/Comms: Docstreams-Aufbau (blocked bis Repo public), CONTRIBUTING-Refresh, offene Quickstart/Consumer-Divergenzen.
+	- Platform Fit & Naming: Convenience-Hook für Webhooks, evtl. Umbenennung `Croniq.Webhooks` → `Croniq.Hosting.Webhooks`, Klarstellung otelBuilder in Samples.
+	- Delivery Backlog: UI-Dokumentation, Kubernetes-Chart-Platzhalter, Entfernen alter `Quartz.NET`-Referenzen, globales Audit der verbleibenden `- [ ]` Items.

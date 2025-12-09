@@ -104,7 +104,15 @@ public static class PlatformHostingExtensions
                     Secret: apiKey,
                     TenantId: authOpts.InMemory.TenantId,
                     EnvironmentTag: authOpts.InMemory.EnvironmentTag,
-                    Scopes: new[] { "schedules:write", "jobs:trigger" },
+                    Scopes: new[]
+                    {
+                        CroniqScopes.SchedulesWrite,
+                        CroniqScopes.JobsTrigger,
+                        CroniqScopes.WebhooksRead,
+                        CroniqScopes.WebhooksWrite,
+                        CroniqScopes.WebhooksRotate,
+                        CroniqScopes.WebhooksDeadLetter
+                    },
                     ClientId: "default"));
             });
         }

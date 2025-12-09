@@ -154,12 +154,19 @@ public static class ApiHostingExtensions
         app.MapGet("/tenants/{tenantId}/webhooks", async (
             string tenantId,
             string environment,
+            ICallerContextAccessor callerContextAccessor,
             IWebhookPersistenceProvider? webhookStore,
             CancellationToken cancellationToken) =>
         {
             if (string.IsNullOrWhiteSpace(environment))
             {
                 return Results.BadRequest(new { error = "missing-environment", message = "Query parameter 'environment' is required." });
+            }
+
+            var authFailure = WebhookAuthorization.Ensure(callerContextAccessor, tenantId, environment, CroniqScopes.WebhooksRead);
+            if (authFailure is not null)
+            {
+                return authFailure;
             }
 
             if (webhookStore is null)
@@ -178,6 +185,7 @@ public static class ApiHostingExtensions
             string environment,
             bool allowUnsigned,
             UpsertWebhookEndpointRequest request,
+            ICallerContextAccessor callerContextAccessor,
             IWebhookPersistenceProvider? webhookStore,
             IConfiguration configuration,
             ILogger<WebhookEndpointApiMarker> logger,
@@ -186,6 +194,12 @@ public static class ApiHostingExtensions
             if (string.IsNullOrWhiteSpace(environment))
             {
                 return Results.BadRequest(new { error = "missing-environment", message = "Query parameter 'environment' is required." });
+            }
+
+            var authFailure = WebhookAuthorization.Ensure(callerContextAccessor, tenantId, environment, CroniqScopes.WebhooksWrite);
+            if (authFailure is not null)
+            {
+                return authFailure;
             }
 
             if (webhookStore is null)
@@ -257,12 +271,19 @@ public static class ApiHostingExtensions
             string tenantId,
             string hookKey,
             string environment,
+            ICallerContextAccessor callerContextAccessor,
             IWebhookPersistenceProvider? webhookStore,
             CancellationToken cancellationToken) =>
         {
             if (string.IsNullOrWhiteSpace(environment))
             {
                 return Results.BadRequest(new { error = "missing-environment", message = "Query parameter 'environment' is required." });
+            }
+
+            var authFailure = WebhookAuthorization.Ensure(callerContextAccessor, tenantId, environment, CroniqScopes.WebhooksWrite);
+            if (authFailure is not null)
+            {
+                return authFailure;
             }
 
             if (webhookStore is null)
@@ -287,6 +308,12 @@ public static class ApiHostingExtensions
             if (string.IsNullOrWhiteSpace(environment))
             {
                 return Results.BadRequest(new { error = "missing-environment", message = "Query parameter 'environment' is required." });
+            }
+
+            var authFailure = WebhookAuthorization.Ensure(callerContextAccessor, tenantId, environment, CroniqScopes.WebhooksRotate);
+            if (authFailure is not null)
+            {
+                return authFailure;
             }
 
             if (webhookStore is null)
@@ -328,12 +355,19 @@ public static class ApiHostingExtensions
         app.MapGet("/tenants/{tenantId}/webhooks/deadletters", async (
             string tenantId,
             string environment,
+            ICallerContextAccessor callerContextAccessor,
             IWebhookDeadLetterStore? deadLetterStore,
             CancellationToken cancellationToken) =>
         {
             if (string.IsNullOrWhiteSpace(environment))
             {
                 return Results.BadRequest(new { error = "missing-environment", message = "Query parameter 'environment' is required." });
+            }
+
+            var authFailure = WebhookAuthorization.Ensure(callerContextAccessor, tenantId, environment, CroniqScopes.WebhooksDeadLetter);
+            if (authFailure is not null)
+            {
+                return authFailure;
             }
 
             if (deadLetterStore is null)
@@ -351,6 +385,7 @@ public static class ApiHostingExtensions
             string tenantId,
             long deadLetterId,
             string environment,
+            ICallerContextAccessor callerContextAccessor,
             IWebhookDeadLetterStore? deadLetterStore,
             IJobRegistry registry,
             IJobExecutionPipeline pipeline,
@@ -361,6 +396,12 @@ public static class ApiHostingExtensions
             if (string.IsNullOrWhiteSpace(environment))
             {
                 return Results.BadRequest(new { error = "missing-environment", message = "Query parameter 'environment' is required." });
+            }
+
+            var authFailure = WebhookAuthorization.Ensure(callerContextAccessor, tenantId, environment, CroniqScopes.WebhooksDeadLetter);
+            if (authFailure is not null)
+            {
+                return authFailure;
             }
 
             if (deadLetterStore is null)
