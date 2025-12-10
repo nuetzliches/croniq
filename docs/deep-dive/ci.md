@@ -17,7 +17,7 @@ This document describes the continuous integration and delivery strategy require
 | `ci-nightly.yml` | Scheduled (UTC 02:00) + manual run | Full stack validation: PR steps + Compose E2E tests (dev stack), Docker image build, integration smoke, dependency scanning.                                   |
 | `release.yml`    | Tag `v*` pushes or manual dispatch | Build & test release artifacts, publish NuGet packages and container images, gate on SBOM/vulnerability checks, sign assets, attach reports to GitHub Release. |
 
-`ci-nightly.yml` and `release.yml` already live in `.github/workflows/` and can be triggered manually. The PR workflow (`ci-pr.yml`) remains outstanding (current PR validation runs via `tests.yml`).
+`ci-nightly.yml`, `ci-pr.yml`, and `release.yml` already live in `.github/workflows/` and can be triggered manually (the former `tests.yml` workflow has been retired).
 
 ## ci-pr.yml (Validation)
 
@@ -35,6 +35,9 @@ This document describes the continuous integration and delivery strategy require
 4. **Security quick checks**
    - `dotnet list package --vulnerable --include-transitive`.
    - `trivy fs --exit-code 0 --severity HIGH,CRITICAL .` (informational in PR until release gating is ready).
+5. **Status reporting**
+   - `scripts/ci/enforce_coverage_thresholds.py` enforces ≥80%/≥70%.
+   - The workflow posts an auto-updating PR comment summarizing overall + Croniq.Core coverage plus per-assembly breakdown.
 
 ## ci-nightly.yml (Full Suite)
 
@@ -42,7 +45,7 @@ This document describes the continuous integration and delivery strategy require
 - Additional jobs:
   1. **Docker build + compose E2E**
      - Build images (`Croniq.Api`, worker) with BuildKit cache.
-     - Run `docker compose -f infra/docker/docker-compose.yml -f infra/docker/docker-compose.dev.yml -f infra/docker/docker-compose.observability.yml --profile api --profile worker --profile obs up --build -d` (aligned with `scripts/devstack-up.cmd`).
+     - Use `scripts/ci/compose-devstack.ps1 -Action Up` to start the stack (wraps the `docker compose -f ... --profile api|worker|obs up --build -d` invocation shared with `scripts/devstack-up.cmd`).
      - Execute `tests/Croniq.Api.Smoke` suite against the stack.
      - Collect logs from containers, upload as artifacts.
   2. **Observability verification**
@@ -62,18 +65,48 @@ This document describes the continuous integration and delivery strategy require
    - `packages` job executes `dotnet pack`, generates SBOMs with `syft dir:artifacts/nuget -o spdx-json`, runs `dotnet list package --vulnerable --include-transitive`, signs `.nupkg` files when signing secrets exist, and optionally pushes to NuGet.org via `NUGET_API_KEY`.
 4. **Container Images**
    - `images` job builds the API + Worker sample hosts using the Dockerfiles under `samples/`, tags/pushes them to `ghcr.io/<owner>/croniq-{api|worker}:<tag>` plus `:latest`, and creates SBOMs directly from the pushed images.
+5. **Compose Smoke Verification**
+   - `smoke` job uses `scripts/ci/compose-devstack.ps1` to spin up the API/worker/observability stack, waits for `/health`, runs `tests/Croniq.Api.Smoke`, and uploads collected logs before teardown.
 5. **Security & Compliance**
    - `trivy fs` runs before packaging to gate dependency vulnerabilities, `trivy image` scans each GHCR image, and SBOMs + SARIF reports upload as workflow artifacts. Cosign signing is executed when `COSIGN_KEY`/`COSIGN_PASSWORD` secrets are available.
 6. **Release Publishing**
    - The `publish` job downloads all artifacts, collates SBOMs/scan results, and attaches them to the GitHub Release produced by the tag (manual dispatch reuses the same mechanism). Smoke deploys remain a backlog item once staging infrastructure is ready.
 
+### Staging & Helm Deployment (Planned)
+
+Once the Kubernetes chart in `docs/deep-dive/kubernetes.md` stabilizes, we will introduce `deploy-staging.yml` that:
+
+1. Reuses the `images` job outputs (or rebuilds with the staging tag) and pushes to GHCR with `-staging` tags.
+2. Authenticates against the staging cluster via a GitHub environment (`env: staging`) with required reviewers and secrets (`STAGING_KUBECONFIG`, `STAGING_REGISTRY_TOKEN`).
+3. Runs `helm upgrade --install croniq charts/croniq -f charts/environments/staging-values.yaml` with image tags from step 1.
+4. Executes platform readiness checks:
+   - `pwsh ./scripts/ci/wait-for-http.ps1 -Uri https://staging.croniq.local/health` (and persistence-specific endpoints where available).
+   - `dotnet test tests/Croniq.Api.Smoke/Croniq.Api.Smoke.csproj --configuration Release -- TestRunParameters.Parameter(name="BaseUrl", value="https://staging.croniq.local")`.
+5. Captures Kubernetes diagnostics (`kubectl logs`, `kubectl describe`) and uploads them alongside the smoke artifacts.
+
+Every staging/stable workflow must keep using `scripts/ci/wait-for-http.ps1` (or a future cross-platform equivalent) so health probes stay uniform between Compose dev stack runs and Helm deployments.
+
 ## Tooling & Repo Layout
 
 - Add `.github/workflows/` with the three YAML workflows.
-- Define composite actions or scripts under `scripts/ci/` for reuse (e.g., `scripts/ci/run-tests.ps1`).
+- Define reusable helpers in `scripts/ci/` (e.g., `scripts/ci/run-tests.ps1` for dotnet suites, `scripts/ci/compose-devstack.ps1` for Compose orchestration).
 - Provide `Directory.Build.props` enabling analyzers and coverlet instrumentation defaults.
 - Use `.config/dotnet-tools.json` to pin CLI tools (dotnet-format, coverlet, gitversion, etc.).
 - Add `eng/` directory for common pipelines assets (templates, env files).
+
+## Local Reproduction Quickstart
+
+1. **PR test matrix locally**
+   - `pwsh ./scripts/ci/run-tests.ps1 -Project tests/Croniq.Core.Tests/Croniq.Core.Tests.csproj -DisplayName "Croniq.Core.Tests"`
+   - Repeat per suite; artifacts land under `TestResults/` + `coverage/` just like CI.
+2. **Coverage summary + gates**
+   - Run `reportgenerator "-reports:coverage/**/coverage.cobertura.xml" "-targetdir:coverage/report" -reporttypes:JsonSummary`.
+   - Enforce thresholds with `python scripts/ci/enforce_coverage_thresholds.py coverage/report/Summary.json` (same logic as CI).
+3. **Compose-driven dev stack**
+   - `pwsh ./scripts/ci/compose-devstack.ps1 -Action Up` starts the API/worker/observability profiles.
+   - `pwsh ./scripts/ci/compose-devstack.ps1 -Action Down -CaptureLogs` stops the stack and collects logs to `artifacts/ci-compose/`.
+4. **HTTP health probes**
+   - `pwsh ./scripts/ci/wait-for-http.ps1 -Uri http://localhost:5080/health` blocks until the endpoint returns 200 (mirrors the nightly/release workflows).
 
 ## Secrets & Environment
 
@@ -83,12 +116,13 @@ This document describes the continuous integration and delivery strategy require
 
 ## Backlog to Complete CI/CD Milestone
 
-- [ ] Create `.github/workflows/ci-pr.yml` implementing the described validation stages (nightly + release workflows already added).
-- [ ] Add reusable composite actions or scripts for test execution, coverage aggregation, and Compose orchestration.
+- [x] Create `.github/workflows/ci-pr.yml` implementing the described validation stages (nightly + release workflows already added).
+- [x] Add reusable composite actions or scripts for test execution, coverage aggregation, and Compose orchestration (`scripts/ci/run-tests.ps1`, `scripts/ci/enforce_coverage_thresholds.py`, `scripts/ci/compose-devstack.ps1`).
 - [ ] Check in `Directory.Build.props`, `.config/dotnet-tools.json`, and `eng/` helpers referenced by the workflows.
 - [ ] Document local reproduction steps (`docs/deep-dive/ci.md` + `README`) so developers can mimic CI commands.
 - [ ] Configure required secrets/environments in GitHub with least privilege and document them in an internal runbook.
-- [ ] Hook coverage & test results into PR status (e.g., Codecov or built-in summary comment).
+- [x] Hook coverage & test results into PR status (auto-updating coverage summary comment in `ci-pr.yml`).
 - [x] Integrate SBOM + signing steps into the release workflow (cosign execution becomes active once secrets are provided).
+- [ ] Stand up `deploy-staging.yml` Helm workflow (see "Staging & Helm Deployment" section) once the chart + staging cluster are ready.
 
 Once these backlog items land, the "Build/Test CI Pipelines" checklist entry can move to done.

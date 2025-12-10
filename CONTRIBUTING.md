@@ -20,6 +20,24 @@ Run these commands from the `docs/` folder before pushing:
 
 If you touch workflows or automation, also run `npm run docs:preview` to inspect the production build and re-run any affected GitHub Actions locally via [`act`](https://github.com/nektos/act) if possible.
 
+## CI Workflow Quickstart
+
+The canonical reference for Croniq CI/CD lives in [`docs/deep-dive/ci.md`](docs/deep-dive/ci.md). For fast local validation, reuse the same helper scripts the workflows call:
+
+```pwsh
+# Run individual suites (mirrors ci-pr.yml matrix)
+pwsh ./scripts/ci/run-tests.ps1 -Project tests/Croniq.Core.Tests/Croniq.Core.Tests.csproj -DisplayName "Croniq.Core.Tests"
+
+# Aggregate coverage + enforce gates
+reportgenerator "-reports:coverage/**/coverage.cobertura.xml" "-targetdir:coverage/report" -reporttypes:JsonSummary
+python scripts/ci/enforce_coverage_thresholds.py coverage/report/Summary.json
+
+# Bring up the dev stack like nightly/release smoke
+pwsh ./scripts/ci/compose-devstack.ps1 -Action Up
+```
+
+Terminate the stack via `pwsh ./scripts/ci/compose-devstack.ps1 -Action Down -CaptureLogs` when you are done. Always include relevant CI output (coverage summary, smoke logs) in PR descriptions when touching workflows or automation.
+
 ## Documentation Ownership & Review
 
 Always request a reviewer from the stream that owns the files you touched:

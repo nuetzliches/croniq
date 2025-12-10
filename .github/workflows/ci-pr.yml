@@ -1,0 +1,210 @@
+name: CI Pull Request Validation
+
+on:
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  DOTNET_NOLOGO: true
+  DOTNET_SKIP_FIRST_TIME_EXPERIENCE: true
+
+jobs:
+  validate:
+    name: Format, Build & Quick Checks
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Restore
+        run: dotnet restore croniq.sln
+
+      - name: Verify formatting
+        run: dotnet format croniq.sln --verify-no-changes
+
+      - name: Build with analyzers
+        run: dotnet build croniq.sln --configuration Release --no-restore -warnaserror
+
+      - name: Dependency vulnerability scan (informational)
+        run: |
+          set +e
+          dotnet list package --vulnerable --include-transitive
+          exit 0
+
+      - name: Trivy filesystem scan (informational)
+        uses: aquasecurity/trivy-action@0.24.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: 0
+
+  tests:
+    name: Test Matrix
+    needs: validate
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - displayName: Croniq.Core.Tests
+            project: tests/Croniq.Core.Tests/Croniq.Core.Tests.csproj
+          - displayName: Croniq.JobStore.InMemory.Tests
+            project: tests/Croniq.JobStore.InMemory.Tests/Croniq.JobStore.InMemory.Tests.csproj
+          - displayName: Croniq.Providers.Default.Tests
+            project: tests/Croniq.Providers.Default.Tests/Croniq.Providers.Default.Tests.csproj
+          - displayName: Croniq.Observability.Tests
+            project: tests/Croniq.Observability.Tests/Croniq.Observability.Tests.csproj
+          - displayName: Croniq.Persistence.SqlServer.Tests
+            project: tests/Croniq.Persistence.SqlServer.Tests/Croniq.Persistence.SqlServer.Tests.csproj
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Restore
+        run: dotnet restore croniq.sln
+
+      - name: Build
+        run: dotnet build croniq.sln --configuration Release --no-restore
+
+      - name: Prepare coverage folder
+        run: mkdir -p coverage
+
+      - name: Run ${{ matrix.displayName }}
+        shell: pwsh
+        run: >-
+          ./scripts/ci/run-tests.ps1
+          -Project "${{ matrix.project }}"
+          -DisplayName "${{ matrix.displayName }}"
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tests-${{ matrix.displayName }}
+          path: TestResults
+
+      - name: Upload coverage artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-${{ matrix.displayName }}
+          path: coverage
+
+  coverage-summary:
+    name: Coverage Summary & Gates
+    needs: tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download coverage artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: coverage-*
+          path: coverage
+          merge-multiple: true
+
+      - name: Install ReportGenerator
+        run: |
+          dotnet tool install --global dotnet-reportgenerator-globaltool --version 5.5.1
+          echo "$HOME/.dotnet/tools" >> $GITHUB_PATH
+
+      - name: Build coverage summary
+        run: >-
+          reportgenerator
+          "-reports:coverage/**/coverage.cobertura.xml"
+          "-targetdir:coverage/report"
+          -reporttypes:JsonSummary
+
+      - name: Enforce coverage gates
+        run: |
+          python scripts/ci/enforce_coverage_thresholds.py \
+            coverage/report/Summary.json \
+            --core-assembly Croniq.Core \
+            --core-threshold 80 \
+            --overall-threshold 70
+
+      - name: Comment coverage summary on PR
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const fs = require('fs');
+            const path = 'coverage/report/Summary.json';
+            if (!fs.existsSync(path)) {
+              core.setFailed(`Missing coverage summary at ${path}`);
+            }
+            const marker = '<!-- croniq-ci-coverage -->';
+            const summary = JSON.parse(fs.readFileSync(path, 'utf8'));
+            const overall = Number(summary?.summary?.linecoverage ?? 0).toFixed(2);
+            const assemblies = summary?.coverage?.assemblies ?? [];
+            const coreAssembly = assemblies.find(a => a.name === 'Croniq.Core');
+            const assemblyRows = assemblies
+              .map(a => `| ${a.name} | ${Number(a.coverage).toFixed(2)}% |`)
+              .join('\n');
+            const body = [
+              marker,
+              '### Coverage Summary',
+              '',
+              `- Overall: **${overall}%**`,
+              coreAssembly
+                ? `- Croniq.Core: **${Number(coreAssembly.coverage).toFixed(2)}%**`
+                : '- Croniq.Core: _keine Daten_',
+              '',
+              '<details><summary>Assemblies</summary>',
+              '',
+              '| Assembly | Coverage |',
+              '| --- | ---: |',
+              assemblyRows,
+              '',
+              '</details>'
+            ].filter(Boolean).join('\n');
+
+            const { owner, repo } = context.repo;
+            const issue_number = context.issue.number;
+            const existingComments = await github.paginate(
+              github.rest.issues.listComments,
+              { owner, repo, issue_number }
+            );
+            const previous = existingComments.find(comment => comment.body?.includes(marker));
+            if (previous) {
+              await github.rest.issues.updateComment({
+                owner,
+                repo,
+                comment_id: previous.id,
+                body
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner,
+                repo,
+                issue_number,
+                body
+              });
+            }
+
+      - name: Upload aggregated coverage
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pr-coverage-summary
+          path: coverage/report

@@ -114,7 +114,7 @@ This document extends the quality vision captured in `architecture.md` and descr
 
 ## CI Integration
 
-### PR Workflow (`.github/workflows/tests.yml`)
+### PR Workflow (`.github/workflows/ci-pr.yml`)
 
 - **Lint**: `dotnet format croniq.sln --verify-no-changes`.
 - **Build**: `dotnet restore` + `dotnet build -warnaserror`.
@@ -159,11 +159,11 @@ This document extends the quality vision captured in `architecture.md` and descr
 | Status | Item                                                         | Evidence / Next Step                                                                                                      |
 | ------ | ------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------- |
 | ✅     | Coverlet instrumentation enabled for every `*.Tests` project | `Directory.Build.props` sets `CollectCoverage=true` and wires `coverlet.msbuild`.                                         |
-| ✅     | PR workflow runs lint/build/unit suites with coverage gates  | `.github/workflows/tests.yml` executes all current unit suites, aggregates coverage, and enforces ≥80%/≥70% thresholds.   |
-| ✅     | Observability suite covered in CI                            | `Run Croniq.Observability.Tests` step in `tests.yml` validates OTLP wiring on every PR.                                   |
+| ✅     | PR workflow runs lint/build/unit suites with coverage gates  | `.github/workflows/ci-pr.yml` executes all current unit suites, aggregates coverage, and enforces ≥80%/≥70% thresholds.   |
+| ✅     | Observability suite covered in CI                            | `Run Croniq.Observability.Tests` step in `ci-pr.yml` validates OTLP wiring on every PR.                                   |
 | ✅     | Smoke harness available for manual/Nightly use               | `scripts/test-e2e.cmd` orchestrates Docker Compose + `tests/Croniq.Api.Smoke`.                                            |
 | ✅     | Croniq.TestKit shared fixtures committed                     | `tests/Croniq.TestKit/` now ships SQL Server fixtures, log collectors, and canonical trait constants.                     |
-| ✅     | Contract suites for SqlServer providers run in CI            | `tests/Croniq.Persistence.SqlServer.Tests` exercises the EF provider and is wired into `.github/workflows/tests.yml`.     |
+| ✅     | Contract suites for SqlServer providers run in CI            | `tests/Croniq.Persistence.SqlServer.Tests` exercises the EF provider and is wired into `.github/workflows/ci-pr.yml`.     |
 | ✅     | Nightly workflow with Compose E2E + SBOM/Trivy               | `.github/workflows/nightly.yml` now runs the dev stack and a compliance job (Syft SBOM + Trivy scan) with blocking gates. |
 | ❌     | Release workflow for packaging, signing, compliance          | `.github/workflows/release.yml` is absent; add the tag-triggered workflow with NuGet/container publishing and scans.      |
 

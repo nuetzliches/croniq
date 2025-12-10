@@ -233,11 +233,69 @@ jobs:
           name: release-images
           path: artifacts/images
 
+  smoke:
+    name: Compose Smoke Verification
+    needs: tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Copy environment defaults
+        shell: bash
+        run: cp .env.example .env
+
+      - name: Start Croniq dev stack
+        shell: pwsh
+        run: >-
+          ./scripts/ci/compose-devstack.ps1
+          -Action Up
+          -OutputDirectory "artifacts/release-devstack"
+
+      - name: Wait for API health
+        shell: pwsh
+        run: |
+          try {
+            ./scripts/ci/wait-for-http.ps1 -Uri "http://localhost:5080/health"
+          } catch {
+            ./scripts/ci/compose-devstack.ps1 -Action Logs -OutputDirectory "artifacts/release-devstack"
+            throw
+          }
+
+      - name: Run Croniq.Api.Smoke tests
+        run: dotnet test tests/Croniq.Api.Smoke/Croniq.Api.Smoke.csproj --configuration Release
+
+      - name: Collect docker logs
+        if: always()
+        shell: pwsh
+        run: ./scripts/ci/compose-devstack.ps1 -Action Logs -OutputDirectory "artifacts/release-devstack"
+
+      - name: Shut down stack
+        if: always()
+        shell: pwsh
+        run: ./scripts/ci/compose-devstack.ps1 -Action Down -OutputDirectory "artifacts/release-devstack" -CaptureLogs
+
+      - name: Upload smoke logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-devstack-logs
+          path: artifacts/release-devstack
+
   publish:
     name: Publish Release Artifacts
     needs:
       - packages
       - images
+      - smoke
     runs-on: ubuntu-latest
     steps:
       - name: Download package artifacts
