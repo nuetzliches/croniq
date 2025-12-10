@@ -28,7 +28,7 @@
 - [ ] (blocked bis Repo public) Docs Streams aufsetzen (docs root, docs/deep-dive) inkl. Quickstart & Mermaid policy – Plan siehe `docs/deep-dive/docstreams.md`
 - [ ] (deferred) UI-Backlog dokumentieren; Technologie nach API-Stabilisierung entscheiden – Plan siehe `docs/deep-dive/ui.md`
 - [ ] (deferred) Kubernetes Chart (charts/croniq) als Backlog-Platzhalter vorbereiten – Plan siehe `docs/deep-dive/kubernetes.md`
-- [ ] CI/CD Validation Backlog abschließen (`docs/deep-dive/ci.md`): `ci-pr.yml`, reusable Scripts/Tools (`scripts/ci`, `.config/dotnet-tools.json`, `Directory.Build.props`, `eng/`), Local-Repro-Doku, Secrets-Runbook und Coverage-Status-Integration umsetzen.
+- [x] CI/CD Validation Backlog abschließen (`docs/deep-dive/ci.md`): `ci-pr.yml`, reusable Scripts, Coverage-Kommentar, automatisches Staging-Deploy sowie Toolchain-Pinning + Secrets-Runbook sind stand 2025-12-10 umgesetzt.
 - [ ] Policy-Dokumentation & Observability vervollständigen (`docs/deep-dive/policies.md`): Konfigurationsbeispiele dokumentieren sowie Dashboards/Alerts gemäß Observability-Plan verdrahten.
 - [ ] Security/OIDC-Basis liefern (`docs/deep-dive/security.md`): OIDC-Options + Dual-Auth-Middleware, CallerContext + RateLimiter-Partitionierung, gRPC-Interceptor, Admin-APIs, Doku und Regressionstests implementieren.
 - [ ] Supply-Chain-Nacharbeiten (`docs/deep-dive/supplychain.md`): `syft`/`trivy` Toolchain pinnen + lokal dokumentieren, Signing Keys bereitstellen, Verification-Doku + Waiver-Prozess ergänzen.
@@ -44,7 +44,7 @@
 ## Outstanding Backlog (Audit 2025-12-10)
 
 - **Docstreams & Docs Hygiene**: `docs/deep-dive/docstreams.md` + Quickstart spiegeln weiterhin Consumer/Technical-Divergenzen; Stream-Owner-Workflow erst nach Repo-Öffnung aktivierbar (siehe offenes Checklist-Item "Docs Streams").
-- **CI & Supplychain**: `docs/deep-dive/ci.md` und `docs/deep-dive/supplychain.md` listen ungelöste Tasks (Coverage-Gates, Toolchain, Signing/Waiver-Prozess) – nun als separate Checklist-Items erfasst.
+- **CI & Supplychain**: `docs/deep-dive/ci.md` und `docs/deep-dive/supplychain.md` listen ungelöste Tasks (Toolchain-Pinning, `eng/`-Assets, Secrets-Runbook, Waiver-Prozess); das automatische Staging-Deploy via `deploy-staging.yml`/`release.yml` ist erledigt.
 - **Security & Auth/OIDC**: `docs/deep-dive/security.md` markiert offene Arbeiten an OIDC-Flows, Secrets-Governance sowie Hardenings; entsprechendes Checklist-Item "Security/OIDC-Basis" hinzugefügt.
 - **Kubernetes & UI Scaffolding**: Platzhalter in `docs/deep-dive/kubernetes.md` und `docs/deep-dive/ui.md` beschreiben fehlende Chart-Baseline, UI-Tech-Entscheid und Content-Aufbereitung (Checklist-Items "UI-Backlog" und "Kubernetes Chart").
 - **Policy Observability**: `docs/deep-dive/policies.md` fordert noch Konfig-Beispiele und Dashboard-Wiring; wird durch das neue Checklist-Item "Policy-Dokumentation & Observability" verfolgt.

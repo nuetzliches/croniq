@@ -16,6 +16,8 @@ This document describes the continuous integration and delivery strategy require
 | `ci-pr.yml`      | Pull request to `main`             | Lint, build, unit + contract tests with coverage, basic security checks.                                                                                       |
 | `ci-nightly.yml` | Scheduled (UTC 02:00) + manual run | Full stack validation: PR steps + Compose E2E tests (dev stack), Docker image build, integration smoke, dependency scanning.                                   |
 | `release.yml`    | Tag `v*` pushes or manual dispatch | Build & test release artifacts, publish NuGet packages and container images, gate on SBOM/vulnerability checks, sign assets, attach reports to GitHub Release. |
+| `deploy-staging.yml` | Manual (`workflow_dispatch`) with staging env | Helm deploy Croniq to the staging cluster, run HTTPS health probes, execute smoke tests against the staging ingress, and collect Kubernetes diagnostics. |
+| `dacpac.yml` | Manual (`workflow_dispatch`) with guard input | Provision Azure SQL Edge locally and publish a DACPAC for schema validation; jobs stay skipped until `run_workflow` is set to true. |
 
 `ci-nightly.yml`, `ci-pr.yml`, and `release.yml` already live in `.github/workflows/` and can be triggered manually (the former `tests.yml` workflow has been retired).
 
@@ -67,24 +69,41 @@ This document describes the continuous integration and delivery strategy require
    - `images` job builds the API + Worker sample hosts using the Dockerfiles under `samples/`, tags/pushes them to `ghcr.io/<owner>/croniq-{api|worker}:<tag>` plus `:latest`, and creates SBOMs directly from the pushed images.
 5. **Compose Smoke Verification**
    - `smoke` job uses `scripts/ci/compose-devstack.ps1` to spin up the API/worker/observability stack, waits for `/health`, runs `tests/Croniq.Api.Smoke`, and uploads collected logs before teardown.
-5. **Security & Compliance**
+6. **Security & Compliance**
    - `trivy fs` runs before packaging to gate dependency vulnerabilities, `trivy image` scans each GHCR image, and SBOMs + SARIF reports upload as workflow artifacts. Cosign signing is executed when `COSIGN_KEY`/`COSIGN_PASSWORD` secrets are available.
-6. **Release Publishing**
-   - The `publish` job downloads all artifacts, collates SBOMs/scan results, and attaches them to the GitHub Release produced by the tag (manual dispatch reuses the same mechanism). Smoke deploys remain a backlog item once staging infrastructure is ready.
+7. **Release Publishing**
+   - The `publish` job downloads all artifacts, collates SBOMs/scan results, and attaches them to the GitHub Release produced by the tag (manual dispatch reuses the same mechanism).
+8. **Staging Deployment (workflow_call)**
+   - After `smoke` succeeds, `release.yml` reuses `deploy-staging.yml` via `workflow_call` (passing the release tag) to push the Helm chart to the staging cluster automatically. `publish` depends on this job so GA artifacts are only published after staging health + smoke verification pass.
 
-### Staging & Helm Deployment (Planned)
+### deploy-staging.yml (Helm Deploy)
 
-Once the Kubernetes chart in `docs/deep-dive/kubernetes.md` stabilizes, we will introduce `deploy-staging.yml` that:
+- Trigger: manual `workflow_dispatch` guarded by the `staging` environment **and** `workflow_call` from `release.yml`.
+- Prereqs: `charts/croniq` + `charts/environments/staging-values.yaml`, secrets `STAGING_KUBECONFIG` (base64), optional `image-tag` input (release passes the git tag).
+- Steps:
+   1. Resolve image tag (defaults to current ref, workflow input, or `staging-<run>`).
+   2. Configure kubectl/Helm with the staging kubeconfig and install/upgrade the chart with staged API/worker tags.
+   3. Run layered health probes via `scripts/ci/wait-for-http.ps1` against `/health`, `/health/persistence`, and `/webhooks/health`; on failure, capture `kubectl get/describe/logs` before exiting.
+   4. Execute `dotnet test tests/Croniq.Api.Smoke/... -- TestRunParameters.Parameter(BaseUrl, https://staging.croniq.local)` to validate ingress + APIs.
+   5. Collect diagnostics (pods, describe output, API/worker logs) as artifacts for traceability.
 
-1. Reuses the `images` job outputs (or rebuilds with the staging tag) and pushes to GHCR with `-staging` tags.
-2. Authenticates against the staging cluster via a GitHub environment (`env: staging`) with required reviewers and secrets (`STAGING_KUBECONFIG`, `STAGING_REGISTRY_TOKEN`).
-3. Runs `helm upgrade --install croniq charts/croniq -f charts/environments/staging-values.yaml` with image tags from step 1.
-4. Executes platform readiness checks:
-   - `pwsh ./scripts/ci/wait-for-http.ps1 -Uri https://staging.croniq.local/health` (and persistence-specific endpoints where available).
-   - `dotnet test tests/Croniq.Api.Smoke/Croniq.Api.Smoke.csproj --configuration Release -- TestRunParameters.Parameter(name="BaseUrl", value="https://staging.croniq.local")`.
-5. Captures Kubernetes diagnostics (`kubectl logs`, `kubectl describe`) and uploads them alongside the smoke artifacts.
+Release builds automatically call this workflow; you can still dispatch it manually for ad-hoc staging refreshes.
 
-Every staging/stable workflow must keep using `scripts/ci/wait-for-http.ps1` (or a future cross-platform equivalent) so health probes stay uniform between Compose dev stack runs and Helm deployments.
+### dacpac.yml (Manual SQL Deploy, Disabled by Default)
+
+- Triggered only via `workflow_dispatch` and gated by the `run_workflow` boolean input (defaults to `false`). Unless you explicitly toggle it to `true`, the job is a no-op—this keeps the workflow checked in but effectively disabled.
+- Installs `sqlpackage` via a .NET global tool, provisions Azure SQL Edge through `scripts/ci/setup-sql.ps1`, and immediately executes `scripts/ci/deploy-dacpac.ps1` with the provided DACPAC/database inputs.
+- Accepts inputs for container name, host port, database, DACPAC path, and Compose vs. single-container provisioning so you can mirror local layouts. Update the defaults if artifacts move.
+- Optionally set the `SQL_EDGE_SA_PASSWORD` repository secret to override the default `sa` password when running the workflow; the script falls back to `P@ssw0rd1234` otherwise.
+- Use this workflow when you need a manual, audit-friendly way to prove DACPAC compatibility (e.g., before enabling the SQL-dependent test suites in CI) without turning on Azure SQL resources.
+
+### Rollback & Recovery
+
+1. Inspect deployment history: `helm history croniq -n croniq-staging`.
+2. Roll back to a prior revision: `helm rollback croniq <REVISION> -n croniq-staging` (the workflow artifacts include the revision deployed for each release run).
+3. Alternatively, rerun `deploy-staging.yml` with `image-tag` set to the previous release tag.
+4. After rollback, re-run `scripts/ci/wait-for-http.ps1` (both `/health` and `/health/persistence`) and `dotnet test tests/Croniq.Api.Smoke` with the staging BaseUrl to confirm stability.
+5. Capture fresh diagnostics and attach them to the incident ticket/runbook for auditability.
 
 ## Tooling & Repo Layout
 
@@ -110,19 +129,30 @@ Every staging/stable workflow must keep using `scripts/ci/wait-for-http.ps1` (or
 
 ## Secrets & Environment
 
-- Store secrets (NuGet API key, registry tokens, cosign key, staging kubeconfig) in GitHub Actions secrets.
-- Use environments for release deployments with required reviewers.
-- Provide `scripts/ci/setup-sql.ps1` invoked by workflows needing SQL Server (e.g., contract tests) — use Azure SQL Edge container for Linux runners.
+| Workflow | Environment | Required Secrets | Notes |
+| --- | --- | --- | --- |
+| `ci-pr.yml` | _none_ | (optional) `CODECOV_TOKEN` once coverage uploads are enabled | Uses repo-level permissions only. |
+| `ci-nightly.yml` | `nightly` (optional) | `GITHUB_TOKEN` (default) | Additional secrets only needed for experimental scans. |
+| `release.yml` | `release` | `NUGET_API_KEY`, `NUGET_SIGNING_CERT_BASE64`, `NUGET_SIGNING_CERT_PASSWORD`, `COSIGN_KEY`, `COSIGN_PASSWORD`, `STAGING_KUBECONFIG` | `STAGING_KUBECONFIG` is forwarded to `deploy-staging.yml` via `workflow_call`. |
+| `deploy-staging.yml` | `staging` (requires reviewers) | `STAGING_KUBECONFIG` | kubeconfig is base64-encoded; workflow decodes to `kubeconfig`. |
+| `dacpac.yml` | _none_ | (optional) `SQL_EDGE_SA_PASSWORD` | Manual workflow remains disabled until the `run_workflow` input is set to `true`. |
+
+Reference `eng/pipelines/secrets.template.md` when provisioning secrets so the internal runbook stays in sync.
+
+- Store secrets (NuGet API key, registry tokens, cosign key, staging kubeconfig) in GitHub Actions secrets and rotate them regularly.
+- Use environments for release/staging so deployments require manual approval.
+- Use `scripts/ci/setup-sql.ps1` when CI or local dev needs an Azure SQL Edge instance for contract tests (defaults to a docker container on port 1433, can switch to compose via `-UseDockerCompose`).
+- Provide a DACPAC when you need schema deployment: `pwsh ./scripts/ci/setup-sql.ps1 -DacpacPath artifacts/db/Croniq.dacpac -Database CroniqLocal -HostPort 14330`. The script forwards parameters to `scripts/ci/deploy-dacpac.ps1`, so the DACPAC publish happens immediately after the container is healthy. Add `-AllowDataLoss` when intentionally running destructive migrations.
 
 ## Backlog to Complete CI/CD Milestone
 
 - [x] Create `.github/workflows/ci-pr.yml` implementing the described validation stages (nightly + release workflows already added).
 - [x] Add reusable composite actions or scripts for test execution, coverage aggregation, and Compose orchestration (`scripts/ci/run-tests.ps1`, `scripts/ci/enforce_coverage_thresholds.py`, `scripts/ci/compose-devstack.ps1`).
-- [ ] Check in `Directory.Build.props`, `.config/dotnet-tools.json`, and `eng/` helpers referenced by the workflows.
-- [ ] Document local reproduction steps (`docs/deep-dive/ci.md` + `README`) so developers can mimic CI commands.
-- [ ] Configure required secrets/environments in GitHub with least privilege and document them in an internal runbook.
+- [x] Check in `Directory.Build.props`, `.config/dotnet-tools.json`, and `eng/` helpers referenced by the workflows.
+- [x] Document local reproduction steps (`docs/deep-dive/ci.md` + contributor guidance) so developers can mimic CI commands.
+- [x] Configure required secrets/environments in GitHub with least privilege and document them in an internal runbook (`eng/pipelines/secrets.template.md`).
 - [x] Hook coverage & test results into PR status (auto-updating coverage summary comment in `ci-pr.yml`).
 - [x] Integrate SBOM + signing steps into the release workflow (cosign execution becomes active once secrets are provided).
-- [ ] Stand up `deploy-staging.yml` Helm workflow (see "Staging & Helm Deployment" section) once the chart + staging cluster are ready.
+- [x] Stand up `deploy-staging.yml` Helm workflow (see "deploy-staging.yml" section) to deploy the staging cluster via Helm.
 
 Once these backlog items land, the "Build/Test CI Pipelines" checklist entry can move to done.

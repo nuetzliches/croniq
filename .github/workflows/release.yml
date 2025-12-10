@@ -296,6 +296,7 @@ jobs:
       - packages
       - images
       - smoke
+      - deploy-staging
     runs-on: ubuntu-latest
     steps:
       - name: Download package artifacts
@@ -326,3 +327,14 @@ jobs:
             release/images/trivy/*.sarif
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  deploy-staging:
+    name: Deploy to Staging
+    needs:
+      - images
+      - smoke
+    uses: ./.github/workflows/deploy-staging.yml
+    with:
+      image-tag: ${{ github.ref_name }}
+    secrets:
+      STAGING_KUBECONFIG: ${{ secrets.STAGING_KUBECONFIG }}

@@ -1,0 +1,82 @@
+name: SQL DACPAC Publish (manual)
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_workflow:
+        type: boolean
+        default: false
+        description: "Set to true to actually run; default keeps the workflow disabled."
+      dacpac_path:
+        description: "Relative path to the .dacpac artifact to deploy."
+        required: true
+        default: "artifacts/db/Croniq.dacpac"
+      database_name:
+        description: "Target database name inside SQL Edge."
+        required: true
+        default: "CroniqLocal"
+      host_port:
+        description: "Host port to expose SQL Edge on."
+        required: true
+        default: "14333"
+      container_name:
+        description: "Docker container name for SQL Edge."
+        required: true
+        default: "gha-sql-edge"
+      use_compose:
+        type: boolean
+        default: false
+        description: "Use infra/docker/docker-compose.sql.yml instead of docker run."
+      allow_data_loss:
+        type: boolean
+        default: false
+        description: "Forward -AllowDataLoss to deploy-dacpac."
+
+permissions:
+  contents: read
+
+env:
+  DOTNET_NOLOGO: true
+  DOTNET_SKIP_FIRST_TIME_EXPERIENCE: true
+
+jobs:
+  dacpac-publish:
+    if: ${{ inputs.run_workflow }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Install sqlpackage CLI
+        run: |
+          dotnet tool install --global microsoft.sqlpackage --version 162.2.98
+          echo "$HOME/.dotnet/tools" >> $GITHUB_PATH
+
+      - name: Provision SQL Edge + publish DACPAC
+        shell: pwsh
+        env:
+          SQL_SA_PASSWORD: ${{ secrets.SQL_EDGE_SA_PASSWORD }}
+        run: |
+          $saPassword = if ($env:SQL_SA_PASSWORD) { $env:SQL_SA_PASSWORD } else { "P@ssw0rd1234" }
+          ./scripts/ci/setup-sql.ps1 `
+            -ContainerName "${{ inputs.container_name }}" `
+            -HostPort ${{ inputs.host_port }} `
+            -Database "${{ inputs.database_name }}" `
+            -DacpacPath "${{ inputs.dacpac_path }}" `
+            -SaPassword $saPassword `
+            -UseDockerCompose:${{ inputs.use_compose }} `
+            -AllowDataLoss:${{ inputs.allow_data_loss }}
+
+      - name: Dump SQL Edge logs on failure
+        if: failure()
+        run: docker logs "${{ inputs.container_name }}" || true
+
+      - name: Cleanup SQL Edge container
+        if: always()
+        run: docker rm -f "${{ inputs.container_name }}" || true
