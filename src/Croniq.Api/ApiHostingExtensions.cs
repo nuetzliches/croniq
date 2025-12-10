@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Globalization;
 using System.Threading.RateLimiting;
 using Croniq.Api.Models;
+using Croniq.Api.Security;
 using Croniq.Api.Telemetry;
 using Croniq.Auth.Abstractions;
 using Croniq.Auth.Core;
@@ -33,6 +34,8 @@ public static class ApiHostingExtensions
     {
         services.Configure<CroniqApiOptions>(configuration.GetSection("Croniq:Api"));
         services.AddCroniqPlatformServices(configuration);
+        services.AddSingleton<TenantRateLimitDecider>();
+        services.AddGrpc(options => options.Interceptors.Add<TenantRateLimitInterceptor>());
         return services;
     }
 
@@ -53,30 +56,43 @@ public static class ApiHostingExtensions
                 return;
             }
 
-            var options = context.RequestServices.GetRequiredService<IOptions<CroniqApiOptions>>().Value;
             var callerAccessor = context.RequestServices.GetRequiredService<ICallerContextAccessor>();
             var callerFactory = context.RequestServices.GetRequiredService<ICallerContextFactory>();
+            var rateLimitDecider = context.RequestServices.GetRequiredService<TenantRateLimitDecider>();
+
+            var authHeader = context.Request.Headers.Authorization.FirstOrDefault();
+            if (!string.IsNullOrWhiteSpace(authHeader))
+            {
+                var bearerCaller = await callerFactory.FromBearerTokenAsync(authHeader, context.RequestAborted).ConfigureAwait(false);
+                if (bearerCaller is null || !bearerCaller.IsActive)
+                {
+                    context.Response.StatusCode = StatusCodes.Status401Unauthorized;
+                    await context.Response.WriteAsync("invalid bearer token");
+                    return;
+                }
+
+                callerAccessor.Current = bearerCaller;
+                await next().ConfigureAwait(false);
+                return;
+            }
 
             var provided = context.Request.Headers["X-Croniq-Key"].FirstOrDefault();
             if (string.IsNullOrWhiteSpace(provided))
             {
                 context.Response.StatusCode = StatusCodes.Status401Unauthorized;
-                await context.Response.WriteAsync("missing api key");
+                await context.Response.WriteAsync("missing credentials");
                 return;
             }
 
-            if (!string.IsNullOrWhiteSpace(provided))
+            var caller = await callerFactory.FromApiKeyAsync(provided, context.RequestAborted).ConfigureAwait(false);
+            if (caller is null || !caller.IsActive)
             {
-                var caller = await callerFactory.FromApiKeyAsync(provided, context.RequestAborted).ConfigureAwait(false);
-                if (caller is null || !caller.IsActive)
-                {
-                    context.Response.StatusCode = StatusCodes.Status401Unauthorized;
-                    await context.Response.WriteAsync("invalid api key");
-                    return;
-                }
-                callerAccessor.Current = caller;
+                context.Response.StatusCode = StatusCodes.Status401Unauthorized;
+                await context.Response.WriteAsync("invalid api key");
+                return;
             }
 
+            callerAccessor.Current = caller;
             await next().ConfigureAwait(false);
         });
 
@@ -517,8 +533,11 @@ public static class ApiHostingExtensions
             options.GlobalLimiter = PartitionedRateLimiter.Create<HttpContext, string>(context =>
             {
                 var configured = context.RequestServices.GetRequiredService<IOptions<CroniqApiOptions>>().Value;
-                var key = context.Request.Headers["X-Croniq-Key"].FirstOrDefault() ?? "anonymous";
-                var permits = Math.Max(1, configured.RequestsPerMinute);
+                var decider = context.RequestServices.GetRequiredService<TenantRateLimitDecider>();
+                var callerAccessor = context.RequestServices.GetRequiredService<ICallerContextAccessor>();
+                var caller = callerAccessor.Current;
+                var key = decider.GetPartitionId(caller, context.Request.Headers["X-Croniq-Key"].FirstOrDefault() ?? "anonymous");
+                var permits = decider.GetPermitLimit(caller);
 
                 return RateLimitPartition.GetFixedWindowLimiter(key, _ => new FixedWindowRateLimiterOptions
                 {
@@ -531,6 +550,7 @@ public static class ApiHostingExtensions
         });
         return services;
     }
+
 
     private static (string TenantId, string EnvironmentTag, string NamespaceSegment, string JobName, string? Variant) ParseJobKey(string jobKey)
     {

@@ -1,9 +1,15 @@
 using System.Collections.Concurrent;
 using System.Linq;
+using System.Security.Claims;
 using System.Security.Cryptography;
 using Croniq.Auth.Abstractions;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
+using Microsoft.IdentityModel.JsonWebTokens;
+using Microsoft.IdentityModel.Protocols;
+using Microsoft.IdentityModel.Protocols.OpenIdConnect;
+using Microsoft.IdentityModel.Tokens;
 
 namespace Croniq.Auth.Core;
 
@@ -23,11 +29,20 @@ public sealed record CallerContext(
 public sealed class CallerContextFactory : ICallerContextFactory
 {
     private readonly IApiKeyStore _apiKeyStore;
+    private readonly IOptionsMonitor<CroniqOidcOptions> _oidcOptions;
     private readonly ILogger<CallerContextFactory> _logger;
+    private readonly JsonWebTokenHandler _tokenHandler = new();
+    private readonly object _oidcConfigurationLock = new();
+    private ConfigurationManager<OpenIdConnectConfiguration>? _configurationManager;
+    private string? _configuredAuthority;
 
-    public CallerContextFactory(IApiKeyStore apiKeyStore, ILogger<CallerContextFactory> logger)
+    public CallerContextFactory(
+        IApiKeyStore apiKeyStore,
+        IOptionsMonitor<CroniqOidcOptions> oidcOptions,
+        ILogger<CallerContextFactory> logger)
     {
         _apiKeyStore = apiKeyStore ?? throw new ArgumentNullException(nameof(apiKeyStore));
+        _oidcOptions = oidcOptions ?? throw new ArgumentNullException(nameof(oidcOptions));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
     }
 
@@ -50,11 +65,219 @@ public sealed class CallerContextFactory : ICallerContextFactory
             validation.Scopes);
     }
 
-    public Task<ICallerContext?> FromBearerTokenAsync(string bearerToken, CancellationToken cancellationToken = default)
+    public async Task<ICallerContext?> FromBearerTokenAsync(string bearerToken, CancellationToken cancellationToken = default)
     {
-        // OIDC/JWT support will be added later; return null for now.
-        _logger.LogDebug("Bearer token authentication not implemented yet");
-        return Task.FromResult<ICallerContext?>(null);
+        var token = ExtractBearerToken(bearerToken);
+        if (string.IsNullOrWhiteSpace(token))
+        {
+            return null;
+        }
+
+        var options = _oidcOptions.CurrentValue ?? new CroniqOidcOptions();
+        if (!options.Enabled || string.IsNullOrWhiteSpace(options.Authority))
+        {
+            _logger.LogDebug("OIDC bearer auth disabled or authority missing");
+            return null;
+        }
+
+        try
+        {
+            var validationParameters = await BuildValidationParametersAsync(options, cancellationToken).ConfigureAwait(false);
+            var result = await _tokenHandler.ValidateTokenAsync(token, validationParameters).ConfigureAwait(false);
+            if (!result.IsValid || result.ClaimsIdentity is null)
+            {
+                _logger.LogWarning("Bearer token validation failed: {Reason}", result.Exception?.Message ?? "invalid");
+                return null;
+            }
+
+            var principal = new ClaimsPrincipal(result.ClaimsIdentity);
+            var tenantId = ResolveTenant(principal, options);
+            if (string.IsNullOrWhiteSpace(tenantId))
+            {
+                _logger.LogWarning("Bearer token missing tenant claim '{Claim}'", options.TenantClaim);
+                return null;
+            }
+
+            var environment = ResolveEnvironment(principal, options);
+            var callerId = ResolveCallerId(principal, options);
+            var scopes = ResolveScopes(principal, options);
+
+            if (options.RequiredScopes?.Length > 0 && !HasAllScopes(scopes, options.RequiredScopes))
+            {
+                _logger.LogWarning("Bearer token missing required scopes: {Scopes}", string.Join(", ", options.RequiredScopes));
+                return null;
+            }
+
+            return new CallerContext(
+                tenantId,
+                environment,
+                CallerType.User,
+                callerId,
+                scopes);
+        }
+        catch (SecurityTokenException ex)
+        {
+            _logger.LogWarning(ex, "Bearer token rejected");
+            return null;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Unexpected failure while validating bearer token");
+            return null;
+        }
+    }
+
+    private static string? ExtractBearerToken(string headerValue)
+    {
+        if (string.IsNullOrWhiteSpace(headerValue))
+        {
+            return null;
+        }
+
+        const string prefix = "Bearer ";
+        return headerValue.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)
+            ? headerValue.Substring(prefix.Length).Trim()
+            : headerValue.Trim();
+    }
+
+    private async Task<TokenValidationParameters> BuildValidationParametersAsync(CroniqOidcOptions options, CancellationToken cancellationToken)
+    {
+        var configuration = await GetOidcConfigurationAsync(options, cancellationToken).ConfigureAwait(false);
+        var clockSkew = options.ClockSkewSeconds < 0 ? 0 : options.ClockSkewSeconds;
+
+        return new TokenValidationParameters
+        {
+            ValidateIssuer = true,
+            ValidIssuer = options.Authority,
+            IssuerSigningKeys = configuration.SigningKeys,
+            ValidateAudience = !string.IsNullOrWhiteSpace(options.Audience),
+            ValidAudience = options.Audience,
+            RequireExpirationTime = true,
+            ValidateLifetime = true,
+            ClockSkew = TimeSpan.FromSeconds(clockSkew),
+            RequireSignedTokens = true,
+            NameClaimType = options.CallerIdClaim,
+            ValidateIssuerSigningKey = true
+        };
+    }
+
+    private Task<OpenIdConnectConfiguration> GetOidcConfigurationAsync(CroniqOidcOptions options, CancellationToken cancellationToken)
+    {
+        var authority = options.Authority?.TrimEnd('/');
+        if (string.IsNullOrWhiteSpace(authority))
+        {
+            throw new InvalidOperationException("Croniq:Auth:Oidc:Authority is required when OIDC authentication is enabled.");
+        }
+
+        lock (_oidcConfigurationLock)
+        {
+            if (_configurationManager is null || !string.Equals(_configuredAuthority, authority, StringComparison.OrdinalIgnoreCase))
+            {
+                var metadataAddress = string.IsNullOrWhiteSpace(options.MetadataAddress)
+                    ? $"{authority}/.well-known/openid-configuration"
+                    : options.MetadataAddress;
+
+                var documentRetriever = new HttpDocumentRetriever
+                {
+                    RequireHttps = options.RequireHttpsMetadata
+                };
+
+                _configurationManager = new ConfigurationManager<OpenIdConnectConfiguration>(
+                    metadataAddress!,
+                    new OpenIdConnectConfigurationRetriever(),
+                    documentRetriever)
+                {
+                    AutomaticRefreshInterval = options.MetadataRefreshInterval,
+                    RefreshInterval = options.MetadataRefreshInterval
+                };
+                _configuredAuthority = authority;
+            }
+        }
+
+        return _configurationManager!.GetConfigurationAsync(cancellationToken);
+    }
+
+    private static string? ResolveTenant(ClaimsPrincipal principal, CroniqOidcOptions options)
+    {
+        return FindFirst(principal, options.TenantClaim, options.TenantFallbackClaims);
+    }
+
+    private static string? ResolveEnvironment(ClaimsPrincipal principal, CroniqOidcOptions options)
+    {
+        return FindFirst(principal, options.EnvironmentClaim, options.EnvironmentFallbackClaims) ?? options.DefaultEnvironment;
+    }
+
+    private static string ResolveCallerId(ClaimsPrincipal principal, CroniqOidcOptions options)
+    {
+        return FindFirst(principal, options.CallerIdClaim, options.CallerIdFallbackClaims)
+            ?? principal.Identity?.Name
+            ?? "oidc-user";
+    }
+
+    private static IReadOnlyCollection<string> ResolveScopes(ClaimsPrincipal principal, CroniqOidcOptions options)
+    {
+        var claims = options.ScopeClaims?.Length > 0 ? options.ScopeClaims : new[] { "scope", "scp" };
+        var comparer = options.NormalizeScopesToLowercase ? StringComparer.Ordinal : StringComparer.OrdinalIgnoreCase;
+        var result = new HashSet<string>(comparer);
+
+        foreach (var claimName in claims)
+        {
+            foreach (var claim in principal.FindAll(claimName))
+            {
+                if (string.IsNullOrWhiteSpace(claim.Value))
+                {
+                    continue;
+                }
+
+                var parts = claim.Value.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+                foreach (var part in parts)
+                {
+                    var formatted = options.NormalizeScopesToLowercase ? part.ToLowerInvariant() : part;
+                    result.Add(formatted);
+                }
+            }
+        }
+
+        return result.Count == 0 ? Array.Empty<string>() : result.ToArray();
+    }
+
+    private static bool HasAllScopes(IReadOnlyCollection<string> granted, IReadOnlyCollection<string> required)
+    {
+        if (required.Count == 0)
+        {
+            return true;
+        }
+
+        var comparer = StringComparer.OrdinalIgnoreCase;
+        return required.All(scope => granted.Any(grantedScope => comparer.Equals(grantedScope, scope)));
+    }
+
+    private static string? FindFirst(ClaimsPrincipal principal, string? primary, IReadOnlyCollection<string>? fallbacks)
+    {
+        if (!string.IsNullOrWhiteSpace(primary))
+        {
+            var match = principal.FindFirst(primary);
+            if (!string.IsNullOrWhiteSpace(match?.Value))
+            {
+                return match.Value;
+            }
+        }
+
+        if (fallbacks is null)
+        {
+            return null;
+        }
+
+        foreach (var claimName in fallbacks)
+        {
+            var match = principal.FindFirst(claimName);
+            if (!string.IsNullOrWhiteSpace(match?.Value))
+            {
+                return match.Value;
+            }
+        }
+
+        return null;
     }
 }
 
@@ -257,6 +480,7 @@ public static class AuthCoreServiceCollectionExtensions
         var options = new InMemoryApiKeyStoreOptions();
         configure?.Invoke(options);
 
+        services.AddOptions<CroniqOidcOptions>();
         services.AddScoped<ICallerContextAccessor, CallerContextAccessor>();
         services.AddSingleton<IApiKeyStore>(_ => new InMemoryApiKeyStore(options.ApiKeys));
         services.AddScoped<ICallerContextFactory, CallerContextFactory>();

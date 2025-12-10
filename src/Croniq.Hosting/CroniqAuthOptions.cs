@@ -1,3 +1,5 @@
+using Croniq.Auth.Core;
+
 namespace Croniq.Hosting;
 
 public sealed class CroniqAuthOptions
@@ -7,6 +9,8 @@ public sealed class CroniqAuthOptions
     public SqlServerAuthOptions SqlServer { get; set; } = new();
 
     public InMemoryAuthOptions InMemory { get; set; } = new();
+
+    public CroniqOidcOptions Oidc { get; set; } = new();
 }
 
 public sealed class SqlServerAuthOptions

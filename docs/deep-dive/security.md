@@ -21,12 +21,29 @@ This document specifies the authentication, authorization, and rate limiting des
 
 ### OAuth2 / OIDC (Users)
 
-1. **Support**: Add `Croniq:Auth:Oidc` options (Authority, Audience, RequiredScopes, TenantClaim). The API host enables `JwtBearerDefaults.AuthenticationScheme` and `AddAuthorization()`.
-2. **Caller Context**: Implement `ICallerContextFactory.FromBearerTokenAsync` to parse JWTs, validate signatures with the authority JWKS, and map tenant/environment scopes:
-   - Tenant ID resolved from `tenant`, `tid`, or a custom claim configured via options.
-   - Environment tag derived from `env` claim or default per tenant.
-   - Scopes come from the `scope`/`scp` claim; missing required scopes reject the request.
-3. **Route Protection**: Minimal API endpoints specify `[Authorize(AuthenticationSchemes = JwtBearerDefaults.AuthenticationScheme)]` for user flows while keeping API-key auth as the default. A dual-auth middleware chooses caller context based on the presence of `Authorization: Bearer` vs `X-Croniq-Key`.
+1. **Support**: `Croniq:Auth:Oidc` options (Authority, Audience, TenantClaim, EnvironmentClaim, ScopeClaims, RequiredScopes, `RequireHttpsMetadata`, etc.) now configure Croniq's built-in OIDC validator. Example:
+
+    ```json
+    "Croniq": {
+       "Auth": {
+          "Mode": "SqlServer",
+          "Oidc": {
+             "Enabled": true,
+             "Authority": "https://login.microsoftonline.com/<tenant>",
+             "Audience": "api://cronq",
+             "TenantClaim": "tid",
+             "EnvironmentClaim": "env",
+             "RequiredScopes": [ "cronq.api" ]
+          }
+       }
+    }
+    ```
+
+2. **Caller Context**: `ICallerContextFactory.FromBearerTokenAsync` now validates JWTs via the issuer's JWKS metadata, caches the configuration, and maps Croniq-specific fields:
+    - Tenant ID resolved from `TenantClaim` (default `tenant`) falling back to `tid` or other configured claims.
+    - Environment tag derived from `EnvironmentClaim` with optional fallbacks/defaults.
+    - Scopes gathered from `scope`/`scp` style claims, normalized to lowercase when configured; required scopes are enforced before a caller context is emitted.
+3. **Route Protection**: The API middleware now inspects `Authorization: Bearer` before falling back to `X-Croniq-Key`. A valid bearer token seeds `ICallerContext` as `CallerType.User`, while API keys remain the default for automation. This keeps both flows consistent without duplicating route attributes yet.
 4. **Samples & Docs**: Provide configuration examples for Entra ID and Auth0 in `docs/configuration.md` once the implementation lands.
 
 ### Mixed Mode & Future Providers
@@ -43,9 +60,23 @@ This document specifies the authentication, authorization, and rate limiting des
 ## Rate Limiting & Quotas
 
 - ASP.NET rate limiting (`AddCroniqApiRateLimiter`) will resolve the caller context first and partition on `TenantId:CallerId`. Anonymous requests use `anonymous`.
-- Default policy: fixed window, 60 req/min. Options allow tenants to override via `Croniq:Api:RateLimits:<TenantId>` or environment tag filters.
+- Default policy: fixed window, 60 req/min. Configure overrides via `Croniq:Api:TenantRateLimits:<TenantId>:RequestsPerMinute`.
 - Scheduler-level quotas (concurrency, trigger throughput) stay inside `Croniq.Core` using `IPolicyResolver`; HTTP/gRPC rate limiting just protects the ingress.
-- gRPC clients receive the same guard via an interceptor that shares the limiter partition storage (e.g., `PartitionedRateLimiter.Create` with a distributed store if required later).
+- gRPC services in `Croniq.Api` register `TenantRateLimitInterceptor`, which acquires the same tenant-aware partitions before any RPC handler runs. Future Croniq gRPC endpoints inherit the HTTP quotas automatically, and retries see `resource-exhausted` with an optional `retry-after` trailer.
+
+Minimal configuration example:
+
+```json
+"Croniq": {
+   "Api": {
+      "RequestsPerMinute": 60,
+      "TenantRateLimits": {
+         "tenant-a": { "RequestsPerMinute": 200 },
+         "tenant-b": { "RequestsPerMinute": 30 }
+      }
+   }
+}
+```
 
 ## Secrets & Transport
 
@@ -55,11 +86,11 @@ This document specifies the authentication, authorization, and rate limiting des
 
 ## Backlog to Reach "Security-Basis"
 
-- [ ] Introduce `Croniq:Auth:Oidc` options and wire `JwtBearer` authentication into `Croniq.Api`.
-- [ ] Implement `ICallerContextFactory.FromBearerTokenAsync` with tenant/environment/scopes mapping + caching of JWKS metadata.
-- [ ] Refactor the auth middleware to choose between Bearer and API key flows, and expose `ICallerContext` downstream via features.
-- [ ] Update rate limiter to partition on `TenantId:CallerId` (fallback to key header when context missing) and expose per-tenant overrides.
-- [ ] Add gRPC interceptor mirroring the HTTP rate limiter.
+- [x] Introduce `Croniq:Auth:Oidc` options and wire bearer authentication into `Croniq.Api`.
+- [x] Implement `ICallerContextFactory.FromBearerTokenAsync` with tenant/environment/scopes mapping + caching of JWKS metadata.
+- [x] Refactor the auth middleware to choose between Bearer and API key flows, and expose `ICallerContext` downstream via features.
+- [x] Update rate limiter to partition on `TenantId:CallerId` (fallback to key header when context missing) and expose per-tenant overrides.
+- [x] Add gRPC interceptor mirroring the HTTP rate limiter.
 - [ ] Create admin endpoints + docs for API key issuance/rotation (ties into `Croniq.Auth.Abstractions` stores).
 - [ ] Extend `docs/configuration.md` with an "Authentication" section (API key vs OIDC) and examples.
 - [ ] Add automated security regression tests (invalid key, expired key, revoked key, missing scope) under `Croniq.Api.Tests` or the future smoke suite.

@@ -104,19 +104,21 @@ public sealed class SqlServerContainerFixture : IAsyncLifetime
         return SqlServerDatabaseMigrator.ResetDatabaseAsync(ConnectionString, cancellationToken);
     }
 
-    public Task<string?> CaptureLogsAsync(string artifactName = "sqlserver", CancellationToken cancellationToken = default)
+    public async Task<string?> CaptureLogsAsync(string artifactName = "sqlserver", CancellationToken cancellationToken = default)
     {
         if (_container is not null)
         {
-            return TestcontainerLogCollector.CaptureContainerLogsAsync(_container, artifactName, cancellationToken);
+            return await TestcontainerLogCollector
+                .CaptureContainerLogsAsync(_container, artifactName, cancellationToken)
+                .ConfigureAwait(false);
         }
 
         if (_cliContainerId is not null)
         {
-            return CaptureCliLogsAsync(_cliContainerId, artifactName, cancellationToken);
+            return await CaptureCliLogsAsync(_cliContainerId, artifactName, cancellationToken).ConfigureAwait(false);
         }
 
-        return Task.FromResult<string?>(null);
+        return null;
     }
 
     private void EnsureInitialized()

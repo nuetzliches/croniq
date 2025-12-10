@@ -20,6 +20,7 @@ public static class PlatformHostingExtensions
     {
         services.Configure<CroniqOptions>(configuration.GetSection("Croniq:Core"));
         services.Configure<CroniqAuthOptions>(configuration.GetSection("Croniq:Auth"));
+        services.Configure<CroniqOidcOptions>(configuration.GetSection("Croniq:Auth:Oidc"));
         services.Configure<CroniqPersistenceOptions>(configuration.GetSection("Croniq:Persistence"));
         services.Configure<SqlServerOptions>(configuration.GetSection("Croniq:SqlServer"));
 
