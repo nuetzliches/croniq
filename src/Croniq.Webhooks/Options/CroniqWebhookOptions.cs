@@ -2,6 +2,8 @@ namespace Croniq.Webhooks.Options;
 
 public sealed class CroniqWebhookOptions
 {
+    public WebhookPersistenceMode Mode { get; set; } = WebhookPersistenceMode.InMemory;
+
     public int RequestsPerMinute { get; set; } = 60;
 
     public IList<WebhookEndpointOptions> Endpoints { get; } = new List<WebhookEndpointOptions>();
@@ -11,6 +13,8 @@ public sealed class CroniqWebhookOptions
     public WebhookCacheOptions Cache { get; set; } = new();
 
     public WebhookSecurityOptions Security { get; set; } = new();
+
+    public WebhookSqlServerOptions SqlServer { get; set; } = new();
 }
 
 public sealed class WebhookEndpointOptions
@@ -49,4 +53,21 @@ public sealed class WebhookCacheOptions
 public sealed class WebhookSecurityOptions
 {
     public bool AllowUnsignedHooks { get; set; } = false;
+}
+
+public enum WebhookPersistenceMode
+{
+    InMemory,
+    SqlServer
+}
+
+public sealed class WebhookSqlServerOptions
+{
+    public string? ConnectionString { get; set; }
+
+    public string? MigrationsAssembly { get; set; }
+
+    public bool? EnableDetailedErrors { get; set; }
+
+    public bool? EnableSensitiveDataLogging { get; set; }
 }

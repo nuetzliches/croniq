@@ -17,8 +17,8 @@ This document captures the logging, metrics, and tracing strategy for Croniq ser
   - Optional file sink for legacy deployments.
 - **Enrichment**: add `TenantId`, `EnvironmentTag`, `JobKey`, and `CallerId` to the log scope when available. Sensitive fields (payloads, API keys) are redacted or hashed.
 - **Correlation**: include `TraceId`/`SpanId` in every entry (Serilog `ActivityEnricher`). This aligns with gRPC/REST tracing.
-- **Hosts**: `AddCroniqObservability` wires the Serilog pipeline + OTLP sink automatically for `Croniq.Api`, the worker, and the sample hosts so no service needs bespoke logging bootstrap code.
-- **Hosts**: call `services.AddCroniqObservability(configuration, loggingBuilder, "<service>")` to provision Serilog (JSON console + OTLP sink) together with the shared OpenTelemetry exporters; `Croniq.Api` and both sample hosts already use this helper.
+- **Hosts**: `AddCroniqObservability` wires the Serilog pipeline + OTLP sink automatically for `Croniq.Api`, the worker, and the sample hosts so no service needs bespoke logging bootstrap code. `Croniq.Api` and `Croniq.Webhooks` now ship convenience wrappers (`AddCroniqApiObservability`, `AddCroniqWebhookObservability`) that call the shared helper with their default tracing/meter wiring.
+- **Hosts**: call `services.AddCroniqObservability(configuration, loggingBuilder, "<service>")` (or the new service-specific wrappers) to provision Serilog (JSON console + OTLP sink) together with the shared OpenTelemetry exporters; `Croniq.Api` and both sample hosts already use these helpers.
 - **Structured job scope**: `DefaultJobExecutionPipeline` wraps every job execution with Serilog scopes that emit `croniq.job.key`, `.namespace`, `.name`, optional `.variant`, as well as `croniq.tenant_id`, `croniq.environment`, `croniq.trigger.id`, and `croniq.trigger.initiator`. Loki and Grafana queries (Log Pulse dashboard) rely on these fields for tenant-safe filtering and INFO/ERROR panels.
 
 ## Metrics
@@ -81,7 +81,7 @@ This document captures the logging, metrics, and tracing strategy for Croniq ser
 
 ## Instrumentation Guidelines
 
-- All Croniq services call the shared `AddCroniqObservability` helper (wrapping `AddOpenTelemetry`) with instrumentation for ASP.NET Core, gRPC, and HttpClient. Libraries expose `ActivitySource`/`Meter` instances but avoid auto registration to keep host control.
+- All Croniq services call the shared `AddCroniqObservability` helper (wrapping `AddOpenTelemetry`) with instrumentation for ASP.NET Core, gRPC, and HttpClient. Libraries expose `ActivitySource`/`Meter` instances but avoid auto registration to keep host control. When you host specific surfaces, prefer the package helpers (`AddCroniqApiObservability`, `AddCroniqWebhookObservability`) so Croniq sources/meters (`Croniq.Api.Trigger`, `Croniq.Webhooks.Ingress`, etc.) are registered automatically; both helpers accept an existing `OpenTelemetryBuilder` so mixed hosts (API + Webhooks) reuse a single exporter pipeline.
 - Jobs can inject `IJobExecutionContext.ActivitySource` for custom spans; document best practices in consumer docs.
 - `CroniqObservabilityExtensions.AddCroniqObservability(...)` registers the default instrumentation, Serilog exporters, and resource attributes (service.name, version, deployment.environment, tenant) so hosts only add their signal-specific instrumentation.
 - Sample hosts (`Croniq.Sample.ApiHost`, `Croniq.Sample.WorkerHost`) and `Croniq.Api` already call the helper and respect `Croniq:Observability:*` env overrides (defaulting to the collector at `http://otel-collector:4317`).

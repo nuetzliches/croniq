@@ -8,8 +8,11 @@ using System.Text.Json;
 using Croniq.Core.Execution;
 using Croniq.Core.Jobs;
 using Croniq.Core.Policies;
+using Croniq.Data.SqlServer;
 using Croniq.Hosting;
 using Croniq.Persistence.Abstractions;
+using Croniq.Persistence.SqlServer;
+using Croniq.Webhooks.InMemory;
 using Croniq.Webhooks.Options;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.Extensions.Caching.Memory;
@@ -27,6 +30,62 @@ public static class WebhookHostingExtensions
 {
     private static readonly ActivitySource ActivitySource = new("Croniq.Webhooks.Ingress");
     private static readonly ConcurrentDictionary<string, byte> UnsignedWarningCache = new(StringComparer.OrdinalIgnoreCase);
+    private const string WebhookOptionsSectionName = "Croniq:Webhooks";
+
+    public static IServiceCollection AddCroniqWebhookPersistence(this IServiceCollection services, IConfiguration configuration, string sectionName = WebhookOptionsSectionName)
+    {
+        if (services is null) throw new ArgumentNullException(nameof(services));
+        if (configuration is null) throw new ArgumentNullException(nameof(configuration));
+
+        var options = configuration.GetSection(sectionName).Get<CroniqWebhookOptions>() ?? new CroniqWebhookOptions();
+
+        return options.Mode switch
+        {
+            WebhookPersistenceMode.SqlServer => ConfigureWebhookSqlServerPersistence(services, configuration, options),
+            WebhookPersistenceMode.InMemory => ConfigureWebhookInMemoryPersistence(services),
+            _ => throw new InvalidOperationException($"Unsupported Croniq:Webhooks:Mode '{options.Mode}'. Supported values: InMemory, SqlServer."),
+        };
+    }
+
+    private static IServiceCollection ConfigureWebhookInMemoryPersistence(IServiceCollection services)
+    {
+        services.TryAddSingleton<InMemoryWebhookPersistenceProvider>();
+        services.TryAddSingleton<IWebhookPersistenceProvider>(sp => sp.GetRequiredService<InMemoryWebhookPersistenceProvider>());
+        services.TryAddSingleton<InMemoryWebhookDeadLetterStore>();
+        services.TryAddSingleton<IWebhookDeadLetterStore>(sp => sp.GetRequiredService<InMemoryWebhookDeadLetterStore>());
+        return services;
+    }
+
+    private static IServiceCollection ConfigureWebhookSqlServerPersistence(IServiceCollection services, IConfiguration configuration, CroniqWebhookOptions options)
+    {
+        var sharedSql = configuration.GetSection("Croniq:SqlServer").Get<SqlServerOptions>() ?? new SqlServerOptions();
+        var connectionString = options.SqlServer.ConnectionString ?? sharedSql.ConnectionString ?? ResolveConnectionString(configuration);
+
+        if (string.IsNullOrWhiteSpace(connectionString))
+        {
+            throw new InvalidOperationException("Croniq:Webhooks:SqlServer:ConnectionString or Croniq:SqlServer:ConnectionString must be provided when Croniq:Webhooks:Mode = SqlServer.");
+        }
+
+        services.AddCroniqSqlServerDbContext(sqlOptions =>
+        {
+            sqlOptions.ConnectionString = connectionString;
+            sqlOptions.MigrationsAssembly = options.SqlServer.MigrationsAssembly ?? sharedSql.MigrationsAssembly;
+            sqlOptions.EnableDetailedErrors = options.SqlServer.EnableDetailedErrors ?? sharedSql.EnableDetailedErrors;
+            sqlOptions.EnableSensitiveDataLogging = options.SqlServer.EnableSensitiveDataLogging ?? sharedSql.EnableSensitiveDataLogging;
+        });
+
+        services.TryAddSingleton<IWebhookPersistenceProvider, SqlServerWebhookPersistenceProvider>();
+        services.TryAddSingleton<IWebhookDeadLetterStore, SqlServerWebhookDeadLetterStore>();
+        services.TryAddSingleton<IWebhookEndpointChangefeed, SqlServerWebhookEndpointChangefeed>();
+        return services;
+    }
+
+    private static string? ResolveConnectionString(IConfiguration configuration)
+    {
+        return configuration.GetConnectionString("CroniqSqlServer")
+            ?? configuration.GetConnectionString("Croniq")
+            ?? configuration.GetConnectionString("DefaultConnection");
+    }
 
     public static IServiceCollection AddCroniqWebhookServices(this IServiceCollection services, IConfiguration configuration)
     {
