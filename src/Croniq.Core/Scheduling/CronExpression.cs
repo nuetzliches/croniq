@@ -2139,7 +2139,7 @@ public class CronExpression : IDeserializationCallback, ISerializable
     /// <returns></returns>
     protected static DateTimeOffset SetCalendarHour(DateTimeOffset date, int hour)
     {
-        // Java version of Quartz uses lenient calendar
+        // The upstream Java reference implementation uses a lenient calendar
         // so hour 24 creates day increment and zeroes hour
         int hourToSet = hour;
         if (hourToSet == 24)
@@ -2173,7 +2173,7 @@ public class CronExpression : IDeserializationCallback, ISerializable
     /// <returns></returns>
     public virtual DateTimeOffset? GetFinalFireTime()
     {
-        // TODO: implement QUARTZ-423
+        // TODO: implement the upstream lenient day-of-week handling (issue 423 equivalent)
         return null;
     }
 

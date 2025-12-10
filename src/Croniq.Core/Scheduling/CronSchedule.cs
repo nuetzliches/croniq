@@ -4,7 +4,7 @@ using System.Collections.Generic;
 namespace Croniq.Core.Scheduling;
 
 /// <summary>
-/// Thin wrapper around CronExpression for Quartz-compatible cron schedules.
+/// Thin wrapper around CronExpression for 7-field cron schedules.
 /// </summary>
 public sealed class CronSchedule
 {

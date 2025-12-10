@@ -50,12 +50,9 @@
 - [x] Suche im gesamten Repository nach "OpenConnectionAsync" (Provider-Artefakte ausklammern). Prüfe ob dort custom Prozedur calls mit "CommandText" vorgenommen werden? Ersetze diese durch die bereitgestellten Provider-Abstraktionen.
 - [x] `docs\consumer\configuration.md` hier besteht ein Dokumentationsfehler oder gap: builder.Services.AddCroniq() gibt es nicht. Consumer Docs generell auf aktuellsten Stand bringen.
 - [x] Ist es korrekt, dass `Croniq.Auth.SqlServer` einen Verweis auf `Croniq.Persistence.SqlServer` hat? Sollte die DbContext-Registrierung nicht eher in `Croniq.Data.SqlServer` stattfinden (bitte verifizieren, Empfehlungen aussprechen)? (Verifiziert: `Croniq.Auth.SqlServer` referenziert nur `Croniq.Data.SqlServer`, alle DbContext-DI-Erweiterungen leben bereits dort; Recommendation: Hosts rufen `AddCroniqSqlServerDbContext` aus `Croniq.Data.SqlServer` auf, bevor sie `AddCroniqAuthSqlServer` verkabeln.)
-- [ ] Der `otelBuilder` in `samples\Croniq.Sample.ApiHost` ist optional oder obsolet (da bereits in src\Croniq.Api definiert)?
 - [x] Convenience-Hook bauen, der aus der Konfiguration das passende Provider-Modul zieht; momentan muss man `AddCroniqWebhooksSqlServer` im Startup explizit aufrufen.
-- [ ] Sollte man `Croniq.Webhooks` in `Croniq.Hosting.Webhooks` umbenennen - oder gehört das nicht zusammen?
 - [ ] `CONTRIBUTING.md` aktualisieren (veraltete Inhalte z.B. `Consumer docs` -> `Croniq docs`)
 - [x] Signaturen für Webhooks per Opt-Out deaktivierbar machen (env, config, fluent)?
-- [ ] `Quartz.NET` Erwähnungen aus Projekt entfernen
 - [ ] Suche nach `- [ ]` und prüfe, was wir noch zu erledigen haben bzw. ob es veraltete Tasks sind.
 
 ## Zwischenstand 2025-12-09
@@ -64,4 +61,4 @@
 - Offene Punkte:
 	- Docs/Comms: Docstreams-Aufbau (blocked bis Repo public), CONTRIBUTING-Refresh, offene Quickstart/Consumer-Divergenzen.
 	- Platform Fit & Naming: Convenience-Hook für Webhooks, evtl. Umbenennung `Croniq.Webhooks` → `Croniq.Hosting.Webhooks`, Klarstellung otelBuilder in Samples.
-	- Delivery Backlog: UI-Dokumentation, Kubernetes-Chart-Platzhalter, Entfernen alter `Quartz.NET`-Referenzen, globales Audit der verbleibenden `- [ ]` Items.
+	- Delivery Backlog: UI-Dokumentation, Kubernetes-Chart-Platzhalter, globales Audit der verbleibenden `- [ ]` Items.

@@ -5,7 +5,7 @@ This document captures the current architecture of Croniq and replaces the earli
 ## Product Goals & SLOs
 
 - Provide a modular .NET 10 scheduling platform with a light in-memory execution path, extensible providers, and durable persistence when required.
-- Match the feature coverage of established schedulers (Quartz.NET) while lowering boot time and simplifying auth/policy setup.
+- Match the feature coverage of established schedulers while lowering boot time and simplifying auth/policy setup.
 - Default SLOs:
   - Trigger lookup + schedule evaluation: < 100 ms p50 / < 250 ms p95 for up to 10k active triggers per node.
   - End-to-end job start (trigger to `ExecuteAsync`): < 500 ms p95 (in-memory), < 750 ms p95 (SqlServer persistence).
@@ -95,7 +95,7 @@ docs/
 
 ## Scheduler & Execution Semantics
 
-- Trigger types: Quartz-compatible cron (7 fields), fixed/sliding intervals, calendar windows, ad-hoc/event driven.
+- Trigger types: Cron-compatible expressions (7 fields), fixed/sliding intervals, calendar windows, ad-hoc/event driven.
 - Every job key follows `TenantId:EnvironmentTag:Namespace:JobName[:Variant]`, ensuring partitioning across tenants/environments.
 - `IJobExecutionContext` exposes metadata, logger, telemetry hooks, and helpers (`InitProgress`, `ReportProgress`, `CustomState`). Jobs log and rethrow exceptions so policies can respond.
 - Misfires are retried while `MaxMisfireDelay` (default 5 minutes) is respected. Beyond that the execution is marked as dead letter.
