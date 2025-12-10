@@ -154,7 +154,8 @@ public sealed class TestCallerContextFactory : ICallerContextFactory
                 CroniqScopes.WebhooksRead,
                 CroniqScopes.WebhooksWrite,
                 CroniqScopes.WebhooksRotate,
-                CroniqScopes.WebhooksDeadLetter
+                CroniqScopes.WebhooksDeadLetter,
+                CroniqScopes.ApiKeysManage
             });
 
         _contexts = new Dictionary<string, ICallerContext>(StringComparer.Ordinal)
@@ -168,4 +169,205 @@ public sealed class TestCallerContextFactory : ICallerContextFactory
         if (string.IsNullOrWhiteSpace(apiKey)) throw new ArgumentNullException(nameof(apiKey));
         _contexts[apiKey] = context ?? throw new ArgumentNullException(nameof(context));
     }
+}
+
+public sealed class FakeApiKeyStore : IApiKeyStore
+{
+    private readonly object _sync = new();
+    private readonly Dictionary<string, ApiKeyRecord> _keys = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<(string TenantId, string ClientId), ClientRecord> _clients = new();
+
+    public Task<ApiKeyIssueResult> IssueAsync(ApiKeyIssueRequest request, CancellationToken cancellationToken = default)
+    {
+        if (request is null)
+        {
+            throw new ArgumentNullException(nameof(request));
+        }
+
+        var keyId = $"ak_{Guid.NewGuid():N}";
+        var secret = Guid.NewGuid().ToString("N");
+        var expiresAt = request.Ttl.HasValue ? DateTimeOffset.UtcNow.Add(request.Ttl.Value) : (DateTimeOffset?)null;
+        var scopes = request.Scopes?.ToArray() ?? Array.Empty<string>();
+
+        lock (_sync)
+        {
+            _keys[keyId] = new ApiKeyRecord(
+                keyId,
+                request.TenantId,
+                request.ClientId,
+                request.EnvironmentTag,
+                scopes,
+                expiresAt,
+                secret,
+                IsActive: true);
+
+            _clients[(request.TenantId, request.ClientId)] = new ClientRecord(
+                request.TenantId,
+                request.ClientId,
+                request.EnvironmentTag,
+                scopes);
+        }
+
+        return Task.FromResult(new ApiKeyIssueResult(
+            request.ClientId,
+            request.TenantId,
+            keyId,
+            $"{keyId}.{secret}",
+            request.EnvironmentTag,
+            expiresAt));
+    }
+
+    public Task<bool> RevokeAsync(string tenantId, string keyId, CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(tenantId)) throw new ArgumentNullException(nameof(tenantId));
+        if (string.IsNullOrWhiteSpace(keyId)) throw new ArgumentNullException(nameof(keyId));
+
+        lock (_sync)
+        {
+            if (!_keys.TryGetValue(keyId, out var record) || !string.Equals(record.TenantId, tenantId, StringComparison.OrdinalIgnoreCase))
+            {
+                return Task.FromResult(false);
+            }
+
+            if (!record.IsActive)
+            {
+                return Task.FromResult(true);
+            }
+
+            _keys[keyId] = record with { IsActive = false };
+            return Task.FromResult(true);
+        }
+    }
+
+    public async Task<ApiKeyIssueResult?> RotateAsync(string tenantId, string keyId, CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(tenantId)) throw new ArgumentNullException(nameof(tenantId));
+        if (string.IsNullOrWhiteSpace(keyId)) throw new ArgumentNullException(nameof(keyId));
+
+        ApiKeyRecord record;
+        lock (_sync)
+        {
+            if (!_keys.TryGetValue(keyId, out var current) || !string.Equals(current.TenantId, tenantId, StringComparison.OrdinalIgnoreCase) || !current.IsActive)
+            {
+                return null;
+            }
+
+            _keys[keyId] = current with { IsActive = false };
+            record = current;
+        }
+
+        TimeSpan? ttl = null;
+        if (record.ExpiresAtUtc.HasValue)
+        {
+            var remaining = record.ExpiresAtUtc.Value - DateTimeOffset.UtcNow;
+            if (remaining > TimeSpan.Zero)
+            {
+                ttl = remaining;
+            }
+        }
+
+        var issueRequest = new ApiKeyIssueRequest(
+            tenantId,
+            record.ClientId,
+            record.EnvironmentTag,
+            record.Scopes,
+            ttl);
+        var result = await IssueAsync(issueRequest, cancellationToken).ConfigureAwait(false);
+        return result;
+    }
+
+    public Task<ApiKeyValidationResult> ValidateAsync(string presentedKey, CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(presentedKey))
+        {
+            return Task.FromResult(new ApiKeyValidationResult(false, null, null, null, Array.Empty<string>(), "missing"));
+        }
+
+        var (keyId, secret) = Split(presentedKey);
+        if (keyId is null || secret is null)
+        {
+            return Task.FromResult(new ApiKeyValidationResult(false, null, null, null, Array.Empty<string>(), "invalid"));
+        }
+
+        lock (_sync)
+        {
+            if (!_keys.TryGetValue(keyId, out var record) || !record.IsActive)
+            {
+                return Task.FromResult(new ApiKeyValidationResult(false, null, null, null, Array.Empty<string>(), "revoked"));
+            }
+
+            if (!string.Equals(record.Secret, secret, StringComparison.Ordinal))
+            {
+                return Task.FromResult(new ApiKeyValidationResult(false, null, null, null, Array.Empty<string>(), "invalid-secret"));
+            }
+
+            return Task.FromResult(new ApiKeyValidationResult(true, record.TenantId, record.EnvironmentTag, keyId, record.Scopes, null));
+        }
+    }
+
+    public Task<ApiClientDescriptor?> GetClientAsync(string tenantId, string clientId, CancellationToken cancellationToken = default)
+    {
+        lock (_sync)
+        {
+            if (!_clients.TryGetValue((tenantId, clientId), out var record))
+            {
+                return Task.FromResult<ApiClientDescriptor?>(null);
+            }
+
+            var activeKey = _keys.Values
+                .Where(k => string.Equals(k.TenantId, tenantId, StringComparison.OrdinalIgnoreCase)
+                    && string.Equals(k.ClientId, clientId, StringComparison.OrdinalIgnoreCase)
+                    && k.IsActive)
+                .OrderBy(k => k.ExpiresAtUtc ?? DateTimeOffset.MaxValue)
+                .FirstOrDefault();
+
+            var isActive = activeKey is not null;
+            var expires = activeKey?.ExpiresAtUtc;
+
+            return Task.FromResult<ApiClientDescriptor?>(new ApiClientDescriptor(
+                clientId,
+                tenantId,
+                clientId,
+                record.EnvironmentTag,
+                record.Scopes,
+                isActive,
+                expires));
+        }
+    }
+
+    public void Reset()
+    {
+        lock (_sync)
+        {
+            _keys.Clear();
+            _clients.Clear();
+        }
+    }
+
+    private static (string? KeyId, string? Secret) Split(string presented)
+    {
+        var idx = presented.IndexOf('.');
+        if (idx <= 0 || idx == presented.Length - 1)
+        {
+            return (null, null);
+        }
+
+        return (presented[..idx], presented[(idx + 1)..]);
+    }
+
+    private sealed record ApiKeyRecord(
+        string KeyId,
+        string TenantId,
+        string ClientId,
+        string? EnvironmentTag,
+        IReadOnlyCollection<string> Scopes,
+        DateTimeOffset? ExpiresAtUtc,
+        string Secret,
+        bool IsActive);
+
+    private sealed record ClientRecord(
+        string TenantId,
+        string ClientId,
+        string? EnvironmentTag,
+        IReadOnlyCollection<string> Scopes);
 }

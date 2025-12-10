@@ -30,7 +30,7 @@
 - [ ] (deferred) Kubernetes Chart (charts/croniq) als Backlog-Platzhalter vorbereiten – Plan siehe `docs/deep-dive/kubernetes.md`
 - [x] CI/CD Validation Backlog abschließen (`docs/deep-dive/ci.md`): `ci-pr.yml`, reusable Scripts, Coverage-Kommentar, automatisches Staging-Deploy sowie Toolchain-Pinning + Secrets-Runbook sind stand 2025-12-10 umgesetzt.
 - [ ] Policy-Dokumentation & Observability vervollständigen (`docs/deep-dive/policies.md`): Konfigurationsbeispiele dokumentieren sowie Dashboards/Alerts gemäß Observability-Plan verdrahten.
-- [ ] Security/OIDC-Basis liefern (`docs/deep-dive/security.md`): OIDC-Options + Dual-Auth-Middleware, CallerContext + RateLimiter-Partitionierung, gRPC-Interceptor, Admin-APIs, Doku und Regressionstests implementieren.
+- [x] Security/OIDC-Basis liefern (`docs/deep-dive/security.md`): OIDC-Options + Dual-Auth-Middleware, CallerContext + RateLimiter-Partitionierung, gRPC-Interceptor, Admin-APIs, Doku und Regressionstests implementieren.
 - [ ] Supply-Chain-Nacharbeiten (`docs/deep-dive/supplychain.md`): `syft`/`trivy` Toolchain pinnen + lokal dokumentieren, Signing Keys bereitstellen, Verification-Doku + Waiver-Prozess ergänzen.
 - [x] Webhook-Trigger (Croniq.Webhooks Projekt) planen, host implementieren und in `docs/deep-dive/architecture.md` verankern (inkl. CRUD-API + persistente Hooks)
 
@@ -72,6 +72,12 @@
 
 - Webhook-Verwaltung: Admin-API vollständig durchgetestet (CRUD, Secret-Rotation, Dead-Letter Replay) via neuem `WebhookApiTestHost` + In-Memory-Doubles; sichert vorherige Hardening-Arbeit.
 - Offene Punkte:
-	- Docs/Comms: Docstreams-Aufbau (blocked bis Repo public), CONTRIBUTING-Refresh, offene Quickstart/Consumer-Divergenzen.
-	- Platform Fit & Naming: Convenience-Hook für Webhooks, evtl. Umbenennung `Croniq.Webhooks` → `Croniq.Hosting.Webhooks`, Klarstellung otelBuilder in Samples.
-	- Delivery Backlog: UI-Dokumentation, Kubernetes-Chart-Platzhalter, globales Audit der verbleibenden `- [ ]` Items.
+  - Docs/Comms: Docstreams-Aufbau (blocked bis Repo public), CONTRIBUTING-Refresh, offene Quickstart/Consumer-Divergenzen.
+  - Delivery Backlog: UI-Dokumentation, Kubernetes-Chart-Platzhalter, globales Audit der verbleibenden `- [ ]` Items.
+
+# Prüfen / Nachbessern
+
+- [ ] `MapCroniqManagementEndpoints` im Quickstart ist korrekt? Müsste das nicht `UseCroniqApi` heissen?
+- [ ] Wie sollten wir das Schema der API bzw. gRPC-Dienste bekannt geben? Swagger vs andere Tools? Best Practices in .NET 10 für Minimal APIs?
+- [ ] `samples\Croniq.Sample.ApiHost\Program.cs`: Wird `AddCroniqWebhookPersistence` benötigt, wenn ich SqlServer-Persistenz für Webhooks nutzen will? Bitte mit Api Registrierung abgleichen / normalisieren.
+- [ ] global usings? cleanup in den Projekten? durch warnings sicherstellen?

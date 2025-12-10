@@ -19,12 +19,15 @@ public sealed class SqlServerWebhookPersistenceProvider : IWebhookPersistencePro
     private static readonly TimeSpan DefaultGracePeriod = TimeSpan.FromHours(24);
     private static readonly TimeSpan MaxActivationDelay = TimeSpan.FromDays(7);
     private readonly IDbContextFactory<SqlServerDbContext> _dbFactory;
+    private readonly IReadOnlyList<IWebhookEndpointChangeNotifier> _changeNotifiers;
     private readonly JsonSerializerOptions _jsonOptions = new(JsonSerializerDefaults.Web);
 
     public SqlServerWebhookPersistenceProvider(
-        IDbContextFactory<SqlServerDbContext> dbFactory)
+        IDbContextFactory<SqlServerDbContext> dbFactory,
+        IEnumerable<IWebhookEndpointChangeNotifier>? changeNotifiers = null)
     {
         _dbFactory = dbFactory ?? throw new ArgumentNullException(nameof(dbFactory));
+        _changeNotifiers = changeNotifiers?.ToArray() ?? Array.Empty<IWebhookEndpointChangeNotifier>();
     }
 
     public async Task<WebhookEndpointDefinition?> FindByHookKeyAsync(string hookKey, CancellationToken cancellationToken)
@@ -37,7 +40,19 @@ public sealed class SqlServerWebhookPersistenceProvider : IWebhookPersistencePro
             .FirstOrDefaultAsync(x => x.HookKey == hookKey, cancellationToken)
             .ConfigureAwait(false);
 
-        return entity is null ? null : Map(entity);
+        if (entity is null)
+        {
+            return null;
+        }
+
+        var rules = await db.WebhookEndpointIpRules
+            .AsNoTracking()
+            .Where(x => x.HookKey == hookKey && !x.IsDeleted)
+            .OrderBy(x => x.Cidr)
+            .ToListAsync(cancellationToken)
+            .ConfigureAwait(false);
+
+        return Map(entity, rules.Select(MapIpRule).ToList());
     }
 
     public async Task<IReadOnlyCollection<WebhookEndpointDefinition>> ListAsync(PartitionScope scope, CancellationToken cancellationToken)
@@ -50,7 +65,38 @@ public sealed class SqlServerWebhookPersistenceProvider : IWebhookPersistencePro
             .ToListAsync(cancellationToken)
             .ConfigureAwait(false);
 
-        return rows.Select(Map).ToList();
+        if (rows.Count == 0)
+        {
+            return Array.Empty<WebhookEndpointDefinition>();
+        }
+
+        var hookKeys = rows.Select(x => x.HookKey).ToArray();
+        var ruleRows = await db.WebhookEndpointIpRules
+            .AsNoTracking()
+            .Where(x => !x.IsDeleted
+                        && x.TenantId == scope.TenantId
+                        && x.EnvironmentTag == scope.EnvironmentTag
+                        && hookKeys.Contains(x.HookKey))
+            .OrderBy(x => x.Cidr)
+            .ToListAsync(cancellationToken)
+            .ConfigureAwait(false);
+
+        var ruleLookup = ruleRows
+            .GroupBy(x => x.HookKey, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(
+                g => g.Key,
+                g => (IReadOnlyCollection<WebhookIpRuleDefinition>)g.Select(MapIpRule).ToList(),
+                StringComparer.OrdinalIgnoreCase);
+
+        return rows
+            .Select(row =>
+            {
+                var rules = ruleLookup.TryGetValue(row.HookKey, out var mappedRules)
+                    ? mappedRules
+                    : Array.Empty<WebhookIpRuleDefinition>();
+                return Map(row, rules);
+            })
+            .ToList();
     }
 
     public async Task UpsertAsync(WebhookEndpointUpsert request, CancellationToken cancellationToken)
@@ -96,7 +142,7 @@ public sealed class SqlServerWebhookPersistenceProvider : IWebhookPersistencePro
             };
             db.WebhookEndpoints.Add(entity);
             await ApplySecretAsync(db, entity, request.Secret, now, TimeSpan.Zero, "system:create", null, cancellationToken).ConfigureAwait(false);
-            db.WebhookEndpointEvents.Add(CreateEvent(entity, WebhookEndpointEventTypes.Created, now));
+            db.WebhookEndpointEvents.Add(CreateEvent(entity.HookKey, entity.TenantId, entity.EnvironmentTag, WebhookEndpointEventTypes.Created, now));
         }
         else
         {
@@ -127,10 +173,11 @@ public sealed class SqlServerWebhookPersistenceProvider : IWebhookPersistencePro
                 throw new InvalidOperationException($"Webhook {request.HookKey} does not have an existing secret to snapshot.");
             }
 
-            db.WebhookEndpointEvents.Add(CreateEvent(entity, WebhookEndpointEventTypes.Updated, now));
+            db.WebhookEndpointEvents.Add(CreateEvent(entity.HookKey, entity.TenantId, entity.EnvironmentTag, WebhookEndpointEventTypes.Updated, now));
         }
 
         await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+        NotifyEndpointChanged(request.HookKey);
     }
 
     public async Task DeleteAsync(string hookKey, PartitionScope scope, CancellationToken cancellationToken)
@@ -155,8 +202,9 @@ public sealed class SqlServerWebhookPersistenceProvider : IWebhookPersistencePro
 
         var now = DateTime.UtcNow;
         db.WebhookEndpoints.Remove(entity);
-        db.WebhookEndpointEvents.Add(CreateEvent(entity, WebhookEndpointEventTypes.Deleted, now));
+        db.WebhookEndpointEvents.Add(CreateEvent(entity.HookKey, entity.TenantId, entity.EnvironmentTag, WebhookEndpointEventTypes.Deleted, now));
         await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+        NotifyEndpointChanged(hookKey);
     }
 
     public async Task<WebhookSecretRotationResult> RotateSecretAsync(WebhookSecretRotate request, CancellationToken cancellationToken)
@@ -203,6 +251,7 @@ public sealed class SqlServerWebhookPersistenceProvider : IWebhookPersistencePro
         await ApplySecretAsync(db, entity, secret, activatedAtUtc, gracePeriod, request.RotatedBy ?? "system:rotate", request.Notes, cancellationToken).ConfigureAwait(false);
         entity.UpdatedAtUtc = now;
         await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+        NotifyEndpointChanged(request.HookKey);
 
         return new WebhookSecretRotationResult(
             entity.HookKey,
@@ -232,6 +281,120 @@ public sealed class SqlServerWebhookPersistenceProvider : IWebhookPersistencePro
             x.SecretHash,
             DateTime.SpecifyKind(x.ActivatedAtUtc, DateTimeKind.Utc),
             x.ExpiresAtUtc.HasValue ? DateTime.SpecifyKind(x.ExpiresAtUtc.Value, DateTimeKind.Utc) : null)).ToList();
+    }
+
+    public async Task<IReadOnlyCollection<WebhookIpRuleDefinition>> ListIpRulesAsync(string hookKey, PartitionScope scope, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(hookKey)) throw new ArgumentNullException(nameof(hookKey));
+
+        await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
+        var endpoint = await db.WebhookEndpoints
+            .AsNoTracking()
+            .FirstOrDefaultAsync(x => x.HookKey == hookKey, cancellationToken)
+            .ConfigureAwait(false);
+
+        if (endpoint is null)
+        {
+            return Array.Empty<WebhookIpRuleDefinition>();
+        }
+
+        EnsureScope(endpoint.TenantId, endpoint.EnvironmentTag, scope);
+
+        var rows = await db.WebhookEndpointIpRules
+            .AsNoTracking()
+            .Where(x => x.HookKey == hookKey && !x.IsDeleted)
+            .OrderBy(x => x.Cidr)
+            .ToListAsync(cancellationToken)
+            .ConfigureAwait(false);
+
+        return rows.Select(MapIpRule).ToList();
+    }
+
+    public async Task<WebhookIpRuleDefinition> AddIpRuleAsync(WebhookIpRuleCreate request, CancellationToken cancellationToken)
+    {
+        if (request is null) throw new ArgumentNullException(nameof(request));
+        if (string.IsNullOrWhiteSpace(request.Cidr)) throw new ArgumentNullException(nameof(request.Cidr));
+
+        await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
+        var endpoint = await db.WebhookEndpoints
+            .FirstOrDefaultAsync(x => x.HookKey == request.HookKey, cancellationToken)
+            .ConfigureAwait(false);
+
+        if (endpoint is null)
+        {
+            throw new InvalidOperationException($"Webhook {request.HookKey} not found.");
+        }
+
+        EnsureScope(endpoint.TenantId, endpoint.EnvironmentTag, new PartitionScope(request.TenantId, request.EnvironmentTag));
+
+        var duplicate = await db.WebhookEndpointIpRules
+            .AnyAsync(x => x.HookKey == request.HookKey && x.Cidr == request.Cidr && !x.IsDeleted, cancellationToken)
+            .ConfigureAwait(false);
+
+        if (duplicate)
+        {
+            throw new InvalidOperationException($"CIDR {request.Cidr} already exists for webhook {request.HookKey}.");
+        }
+
+        var now = DateTime.UtcNow;
+        var entity = new WebhookEndpointIpRuleEntity
+        {
+            HookKey = request.HookKey,
+            TenantId = request.TenantId,
+            EnvironmentTag = request.EnvironmentTag,
+            Cidr = request.Cidr,
+            Description = request.Description,
+            CreatedBy = request.CreatedBy,
+            CreatedAtUtc = now,
+            UpdatedAtUtc = now,
+            IsDeleted = false
+        };
+
+        db.WebhookEndpointIpRules.Add(entity);
+        db.WebhookEndpointEvents.Add(CreateEvent(
+            endpoint.HookKey,
+            endpoint.TenantId,
+            endpoint.EnvironmentTag,
+            WebhookEndpointEventTypes.Updated,
+            now));
+        await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+        NotifyEndpointChanged(request.HookKey);
+
+        return MapIpRule(entity);
+    }
+
+    public async Task DeleteIpRuleAsync(long ruleId, PartitionScope scope, CancellationToken cancellationToken)
+    {
+        await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
+        var entity = await db.WebhookEndpointIpRules
+            .FirstOrDefaultAsync(x => x.Id == ruleId, cancellationToken)
+            .ConfigureAwait(false);
+
+        if (entity is null)
+        {
+            return;
+        }
+
+        EnsureScope(entity.TenantId, entity.EnvironmentTag, scope);
+        var now = DateTime.UtcNow;
+        db.WebhookEndpointIpRules.Remove(entity);
+        db.WebhookEndpointEvents.Add(CreateEvent(
+            entity.HookKey,
+            entity.TenantId,
+            entity.EnvironmentTag,
+            WebhookEndpointEventTypes.Updated,
+            now));
+        await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+        NotifyEndpointChanged(entity.HookKey);
+    }
+
+    private static void EnsureScope(string tenantId, string environmentTag, PartitionScope scope)
+    {
+        if (!string.Equals(tenantId, scope.TenantId, StringComparison.OrdinalIgnoreCase)
+            || !string.Equals(environmentTag, scope.EnvironmentTag, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException("Webhook scope mismatch.");
+        }
     }
 
     private async Task ApplySecretAsync(
@@ -303,6 +466,19 @@ public sealed class SqlServerWebhookPersistenceProvider : IWebhookPersistencePro
         });
     }
 
+    private void NotifyEndpointChanged(string hookKey)
+    {
+        if (_changeNotifiers.Count == 0 || string.IsNullOrWhiteSpace(hookKey))
+        {
+            return;
+        }
+
+        foreach (var notifier in _changeNotifiers)
+        {
+            notifier.NotifyChanged(hookKey);
+        }
+    }
+
     private static string GenerateSecret()
     {
         Span<byte> buffer = stackalloc byte[SecretByteLength];
@@ -310,20 +486,26 @@ public sealed class SqlServerWebhookPersistenceProvider : IWebhookPersistencePro
         return Convert.ToHexString(buffer).ToLowerInvariant();
     }
 
-    private static WebhookEndpointEventEntity CreateEvent(WebhookEndpointEntity entity, string eventType, DateTime occurredAtUtc)
+    private static WebhookEndpointEventEntity CreateEvent(
+        string hookKey,
+        string tenantId,
+        string environmentTag,
+        string eventType,
+        DateTime occurredAtUtc)
     {
         return new WebhookEndpointEventEntity
         {
-            HookKey = entity.HookKey,
-            TenantId = entity.TenantId,
-            EnvironmentTag = entity.EnvironmentTag,
+            HookKey = hookKey,
+            TenantId = tenantId,
+            EnvironmentTag = environmentTag,
             EventType = eventType,
             OccurredAtUtc = DateTime.SpecifyKind(occurredAtUtc, DateTimeKind.Utc)
         };
     }
 
-    private WebhookEndpointDefinition Map(WebhookEndpointEntity entity)
+    private WebhookEndpointDefinition Map(WebhookEndpointEntity entity, IReadOnlyCollection<WebhookIpRuleDefinition>? ipRules = null)
     {
+        var metadata = DeserializeMetadata(entity.MetadataJson);
         return new WebhookEndpointDefinition(
             entity.HookKey,
             entity.JobKey,
@@ -333,8 +515,23 @@ public sealed class SqlServerWebhookPersistenceProvider : IWebhookPersistencePro
             entity.RequestsPerMinute,
             entity.TenantId,
             entity.EnvironmentTag,
-            DeserializeMetadata(entity.MetadataJson),
+            metadata,
+            ipRules ?? Array.Empty<WebhookIpRuleDefinition>(),
             entity.SignatureVersion,
+            new DateTimeOffset(DateTime.SpecifyKind(entity.CreatedAtUtc, DateTimeKind.Utc)),
+            new DateTimeOffset(DateTime.SpecifyKind(entity.UpdatedAtUtc, DateTimeKind.Utc)));
+    }
+
+    private static WebhookIpRuleDefinition MapIpRule(WebhookEndpointIpRuleEntity entity)
+    {
+        return new WebhookIpRuleDefinition(
+            entity.Id,
+            entity.HookKey,
+            entity.TenantId,
+            entity.EnvironmentTag,
+            entity.Cidr,
+            entity.Description,
+            entity.CreatedBy,
             new DateTimeOffset(DateTime.SpecifyKind(entity.CreatedAtUtc, DateTimeKind.Utc)),
             new DateTimeOffset(DateTime.SpecifyKind(entity.UpdatedAtUtc, DateTimeKind.Utc)));
     }

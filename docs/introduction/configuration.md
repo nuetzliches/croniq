@@ -54,7 +54,57 @@ See [`auth.md`](/guides/auth.md) for the end-to-end authentication story and whe
 
 > **Tip:** Keep secrets (API keys, connection strings) outside source control. Prefer user-secrets for local development and a managed vault for hosted environments.
 
-## 4. Sample Local Setup
+## 4. Authentication Modes
+
+Croniq keeps authentication pluggable so you can start with a single API key and grow into OAuth2/OIDC without touching application code. Pick the mode that matches your caller profile, then set the corresponding configuration keys.
+
+### API Keys (machines / automation)
+
+- `Croniq__Auth__Mode=InMemory` issues a single shared key defined by `Croniq__Auth__InMemory__ApiKey`. Best for local dev and tests.
+- `Croniq__Auth__Mode=SqlServer` stores hashed keys via `Croniq.Auth.SqlServer`. Provide either `Croniq__Auth__SqlServer__ConnectionString` or the shared `Croniq__SqlServer__ConnectionString`.
+- Issue, rotate, and revoke keys through the admin HTTP endpoints (`/tenants/{tenantId}/api-keys/**`) or by calling `IApiKeyStore` from a bootstrap script. Croniq only shows the plaintext secret on creation/rotation, so capture it immediately.
+- Callers send `X-Croniq-Key: <plaintext-secret>`; the middleware turns it into an `ICallerContext` enriched with TenantId, EnvironmentTag, and scopes.
+
+Quick sample (PowerShell):
+
+```powershell
+$Env:Croniq__Auth__Mode = "SqlServer"
+$Env:Croniq__Auth__SqlServer__ConnectionString = "Server=.;Database=CroniqAuth;Trusted_Connection=True"
+$Env:Croniq__Core__TenantId = "prod"
+$Env:Croniq__Core__EnvironmentTag = "prod-cluster"
+```
+
+### OAuth2 / OIDC (interactive callers)
+
+- Enable by setting `Croniq__Auth__Oidc__Enabled=true` in addition to `Croniq__Auth__Mode=SqlServer` (API keys can stay on for hybrid setups).
+- Required fields: `Authority`, `Audience`, `TenantClaim`, optional `EnvironmentClaim`, and `RequiredScopes`.
+- Croniq validates bearer tokens using the issuer's JWKS metadata and enforces the configured scopes **before** routing the request.
+
+Sample JSON snippet:
+
+```json
+"Croniq": {
+    "Auth": {
+        "Mode": "SqlServer",
+        "Oidc": {
+            "Enabled": true,
+            "Authority": "https://login.microsoftonline.com/<tenant>",
+            "Audience": "api://cronq",
+            "TenantClaim": "tid",
+            "EnvironmentClaim": "env",
+            "RequiredScopes": [ "cronq.api" ]
+        }
+    }
+}
+```
+
+### Mixed Mode & Scope Mapping
+
+- You can keep both modes enabled: Croniq checks `Authorization: Bearer ...` first, then falls back to `X-Croniq-Key`. Only one caller context is created per request.
+- Map scopes to REST permissions (e.g., `schedules:write`, `jobs:trigger`, `api-keys:manage`). When callers lack a scope, Croniq returns `403 insufficient-scope`.
+- For a deeper walkthrough (including sample IdP setups), jump to [`guides/auth.md`](/guides/auth.md) or the security deep dive.
+
+## 5. Sample Local Setup
 
 ```cmd
 set Croniq__Auth__Mode=InMemory
@@ -72,7 +122,7 @@ $Env:Croniq__Persistence__Mode = "SqlServer"
 $Env:Croniq__SqlServer__ConnectionString = "Server=localhost;Database=Croniq;User Id=sa;Password=Secret123!"
 ```
 
-## 5. Programmatic Overrides
+## 6. Programmatic Overrides
 
 When you need per-tenant or per-cluster customization, hook into the options pipeline instead of inventing new configuration entry points:
 
@@ -96,7 +146,7 @@ builder.Services.PostConfigure<CroniqPersistenceOptions>(options =>
 
 Only override the values you truly need—everything else continues to flow from configuration files or environment variables.
 
-## 6. Troubleshooting
+## 7. Troubleshooting
 
 - **Missing connection string:** When either `Auth.Mode` or `Persistence.Mode` is `SqlServer`, the extension throws if it cannot find a connection string on the domain-specific section or the shared `Croniq__SqlServer__ConnectionString` key.
 - **Missing API key:** When `Auth.Mode = InMemory`, you must provide `Croniq__Auth__InMemory__ApiKey`. Otherwise startup throws `InvalidOperationException`.
@@ -105,7 +155,7 @@ Only override the values you truly need—everything else continues to flow from
 
 Need a bigger checklist? Jump to [`troubleshooting.md`](/ops/troubleshooting.md) for Docker/dev-stack, observability, and CLI-specific fixes.
 
-## 7. Next Steps
+## 8. Next Steps
 
 - Return to the [Quickstart](/introduction/quickstart.md) to continue the walkthrough.
 - Consult `docs/deep-dive/job-registration.md` (upcoming) for the in-depth view on how the runtime persists job metadata during startup.

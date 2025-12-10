@@ -112,7 +112,8 @@ public static class PlatformHostingExtensions
                         CroniqScopes.WebhooksRead,
                         CroniqScopes.WebhooksWrite,
                         CroniqScopes.WebhooksRotate,
-                        CroniqScopes.WebhooksDeadLetter
+                        CroniqScopes.WebhooksDeadLetter,
+                        CroniqScopes.ApiKeysManage
                     },
                     ClientId: "default"));
             });

@@ -11,10 +11,10 @@ builder.Configuration
 
 builder.Services.AddCroniqApiServices(builder.Configuration);
 builder.Services.AddCroniqApiRateLimiter();
+
 builder.Services.AddCroniqWebhookPersistence(builder.Configuration);
 builder.Services.AddCroniqWebhookServices(builder.Configuration);
 builder.Services.AddCroniqWebhookRateLimiter();
-builder.Services.AddCroniqSampleJobs();
 
 var otelBuilder = builder.Services.AddCroniqApiObservability(
     builder.Configuration,
@@ -24,6 +24,8 @@ builder.Services.AddCroniqWebhookObservability(
     builder.Configuration,
     builder.Logging,
     builder: otelBuilder);
+
+builder.Services.AddCroniqSampleJobs();
 
 var app = builder.Build();
 

@@ -98,8 +98,41 @@ This document specifies the authentication, authorization, and rate limiting des
 - **Rate Limiting**: ASP.NET rate limiter partitions per hook key (falling back to the global default). Limits are configurable through persistence or `Croniq:Webhooks:RequestsPerMinute`. Burst protection keeps individual tenants from exhausting dispatcher capacity.
 - **Tenant Scoping**: Persisted hooks include `TenantId` and `EnvironmentTag`. The webhook resolver enforces that the mapped `JobKey` belongs to the same partition before invoking the execution pipeline, preventing cross-tenant spoofing even when secrets leak.
 - **Metadata Sanitization**: Incoming JSON payloads are stored as metadata with `payload:*` prefixes. The factory performs best-effort extraction (strings/numbers/bools) and never stores raw headers. Operators can disable metadata enrichment per hook at configuration time if data minimization is required.
-- **Secret Rotation Flow**: `POST /tenants/{tenantId}/webhooks` accepts updated secrets and returns them once. Automation can perform staged rotations by creating a temporary hook with the same job key or by coordinating clients to pick up the new secret immediately. Dual-secret windows remain on the roadmap (see backlog below).
+- **Secret Rotation Flow**: `POST /tenants/{tenantId}/webhooks` accepts updated secrets and returns them once. Automation can perform staged rotations by creating a temporary hook with the same job key or by coordinating clients to pick up the new secret immediately. Every rotation writes to `croniq.WebhookSecretHistory`, so the previous secret stays valid until the configured grace window expires; the ingress host resolves all active secrets via `GetActiveSecretsAsync` and validates payloads against each value.
 - **Recommended Hardening**: Front webhook hosts with IP allow lists or API Gateway auth, configure OWASP rules for JSON bodies, and send telemetry (`Croniq.Webhooks.Ingress`) to your SIEM for anomaly detection (e.g., spikes in 401/429).
+
+### Per-Hook IP Allow Lists
+
+- **Schema & rollout**: The `WebhookEndpointIpRules` table stores CIDR blocks per hook/tenant/environment. Apply the `20251212104500_AddWebhookEndpointIpRules` migration via `Croniq.DbMigrator` before enabling the feature (runbook in `docs/deep-dive/persistence.md`). The schema addition is backward compatible, so existing hooks stay open until rules are created.
+- **Ingress enforcement**: `Croniq.Webhooks` compiles the stored CIDRs into `IpNetwork` instances during endpoint hydration. Requests are rejected with `403 ip-rule-denied` when the remote address falls outside every configured network. Empty rule sets keep endpoints open, letting operators stage the rollout hook-by-hook.
+- **Admin APIs**: Tenant-scoped management APIs expose CRUD operations guarded by `webhooks:read`/`webhooks:write`:
+
+  - `GET /tenants/{tenantId}/webhooks/{hookKey}/ip-rules?environment=prod`
+  - `POST /tenants/{tenantId}/webhooks/{hookKey}/ip-rules?environment=prod`
+  - `DELETE /tenants/{tenantId}/webhooks/{hookKey}/ip-rules/{ruleId}?environment=prod`
+
+  `POST` validates CIDR syntax server-side and normalizes the stored network. Duplicate CIDRs return `409 conflict`. Responses echo audit metadata (`CreatedBy`, timestamps) so operators can compare the deployed allow list with their CMDB.
+
+  ```http
+  POST /tenants/tenant-a/webhooks/hook_123/ip-rules?environment=prod
+  Content-Type: application/json
+
+  {
+      "cidr": "203.0.113.0/28",
+      "description": "Core banking outbound"
+  }
+  ```
+
+- **Operations**:
+  1.  Decide the default posture (open vs closed). For closed-by-default, seed a catch-all rule (`0.0.0.0/0`) before tightening to explicit CIDRs.
+  2.  Script creation/deletion via the API (or upcoming SDK helper) to keep Croniq in sync with your source-of-truth IP inventory.
+  3.  Monitor `Croniq.Webhooks.Ingress` metrics/logs for the `ip-rule-denied` counter; alert when the rate exceeds baseline to catch accidental lockouts.
+
+### Broader Ingress Tests & Visibility
+
+- **E2E coverage**: `tests/Croniq.Api.Smoke` now runs both the management scenario (`Webhook_ip_rule_crud_roundtrip`) and the ingress exercise (`Webhook_ingress_respects_ip_rules`), which hits `Croniq.Webhooks` to assert `403 ip-blocked` followed by `202 accepted` after adding a catch-all rule.
+- **UI/SDK surfacing**: Expose list/create/delete IP rule helpers inside the Operator UI and `Croniq.Sdk` so operators do not handcraft HTTP calls. This also centralizes validation/error translations.
+- **Telemetry dashboards**: Extend the observability pack to chart `ip-rule-denied`, `signature-invalid`, and rate-limit signals together. Distinguishing between denied IPs and failed signatures shortens incident triage.
 
 ## Rate Limiting & Quotas
 
@@ -136,9 +169,11 @@ Minimal configuration example:
 - [x] Update rate limiter to partition on `TenantId:CallerId` (fallback to key header when context missing) and expose per-tenant overrides.
 - [x] Add gRPC interceptor mirroring the HTTP rate limiter.
 - [x] Create admin endpoints + docs for API key issuance/rotation (ties into `Croniq.Auth.Abstractions` stores).
-- [ ] Extend `docs/configuration.md` with an "Authentication" section (API key vs OIDC) and examples.
-- [ ] Add automated security regression tests (invalid key, expired key, revoked key, missing scope) under `Croniq.Api.Tests` or the future smoke suite.
-- [ ] Harden webhook ingress: dual-secret rotation windows, optional IP allow lists per hook, and guardrails for payload size/content-type.
+- [x] Extend `docs/configuration.md` with an "Authentication" section (API key vs OIDC) and examples.
+- [x] Add automated security regression tests (invalid key, expired key, revoked key, missing scope) under `Croniq.Api.Tests` or the future smoke suite.
+- [x] Harden webhook ingress: per-hook IP allow lists and guardrails for payload size/content-type.
+- [ ] Build webhook allow-list smoke tests (allow + deny paths) and payload size guardrail coverage under `tests/Croniq.Api.Smoke`.
+- [ ] Expose allow-list CRUD in the Operator UI / `Croniq.Sdk` to replace ad-hoc HTTP calls.
 - [ ] Add webhook-specific security docs for consumers (`guides/triggers.md`) covering signature generation, replay protection, and recommended HTTP headers.
 
 Delivering the checklist item means these backlog bullets are implemented and documented, ensuring both API key and OIDC callers share the same enforcement and observability experience.

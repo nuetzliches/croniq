@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using System.ComponentModel.DataAnnotations;
 
 namespace Croniq.Api.Models;
@@ -19,6 +20,7 @@ public sealed record WebhookEndpointResponse(
     bool RequireSignature,
     int RequestsPerMinute,
     IDictionary<string, string>? Metadata,
+    IReadOnlyCollection<WebhookIpRuleResponse> IpRules,
     DateTimeOffset CreatedAtUtc,
     DateTimeOffset UpdatedAtUtc,
     string? Secret = null);
@@ -52,3 +54,15 @@ public sealed record RotateWebhookSecretResponse(
     DateTime? ExpiresAtUtc,
     string Secret,
     string SecretHash);
+
+public sealed record CreateWebhookIpRuleRequest(
+    [property: Required] string Cidr,
+    string? Description = null);
+
+public sealed record WebhookIpRuleResponse(
+    long Id,
+    string Cidr,
+    string? Description,
+    string? CreatedBy,
+    DateTimeOffset CreatedAtUtc,
+    DateTimeOffset UpdatedAtUtc);

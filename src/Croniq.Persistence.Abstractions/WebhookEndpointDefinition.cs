@@ -13,6 +13,7 @@ public sealed record WebhookEndpointDefinition(
     string TenantId,
     string EnvironmentTag,
     IReadOnlyDictionary<string, string>? Metadata,
+    IReadOnlyCollection<WebhookIpRuleDefinition> IpRules,
     int SignatureVersion,
     DateTimeOffset CreatedAtUtc,
     DateTimeOffset UpdatedAtUtc);

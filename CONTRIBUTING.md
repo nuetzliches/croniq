@@ -7,7 +7,7 @@ Thanks for helping evolve Croniq. This document captures the expectations for do
 1. Fork or clone the repository and create a topic branch.
 2. Install the documentation toolchain once: `cd docs && npm install`.
 3. Run the docs site locally via `npm run docs:dev` while you edit. The VitePress project already lives in `docs/`.
-4. Keep Croniq docs (`docs/*.md`, `docs/guides/**`) short and task-oriented. Link to `docs/deep-dive/*` rather than duplicating architecture decisions.
+4. Keep Croniq docs (`docs/introduction/**`, `docs/guides/**`, `docs/ops/**`) short and task-oriented. Link to `docs/deep-dive/*` rather than duplicating architecture decisions.
 5. Capture deeper explanations, diagrams, and backlog notes in `docs/deep-dive/`.
 
 ## Required Checks for Documentation PRs
@@ -42,12 +42,12 @@ Terminate the stack via `pwsh ./scripts/ci/compose-devstack.ps1 -Action Down -Ca
 
 Always request a reviewer from the stream that owns the files you touched:
 
-| Scope        | Paths                                                           | Reviewers                                             |
-| ------------ | --------------------------------------------------------------- | ----------------------------------------------------- |
-| Croniq docs  | `docs/*.md`, `docs/guides/**`, `docs/consumer/**`                | Tag the Docs crew (`@nuetzliches/docs`)               |
-| Deep-dive    | `docs/deep-dive/**`, `docs/technical/**`                        | Tag the Core maintainers (`@nuetzliches/maintainers`) |
-| Site chrome    | `docs/.vitepress/**`                                            | Docs crew + Core maintainers                          |
-| Automation     | `.github/workflows/docs-*.yml`, `.github/workflows/nightly.yml` | Core maintainers                                      |
+| Scope       | Paths                                                           | Reviewers                                             |
+| ----------- | --------------------------------------------------------------- | ----------------------------------------------------- |
+| Croniq docs | `docs/introduction/**`, `docs/guides/**`, `docs/ops/**`         | Tag the Docs crew (`@nuetzliches/docs`)               |
+| Deep-dive   | `docs/deep-dive/**`                                             | Tag the Core maintainers (`@nuetzliches/maintainers`) |
+| Site chrome | `docs/.vitepress/**`                                            | Docs crew + Core maintainers                          |
+| Automation  | `.github/workflows/docs-*.yml`, `.github/workflows/nightly.yml` | Core maintainers                                      |
 
 If a GitHub team does not exist yet, call it out in the PR and assign the relevant maintainers manually. Documentation PRs should not merge without an approval from the owning stream.
 

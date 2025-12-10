@@ -12,6 +12,7 @@ using Croniq.Core.Execution;
 using Croniq.Core.Jobs;
 using Croniq.Core.Options;
 using Croniq.Core.Policies;
+using Croniq.Core.Security;
 using Croniq.Data.SqlServer;
 using Croniq.JobStore.InMemory;
 using Croniq.Persistence.Abstractions;
@@ -50,7 +51,9 @@ public static class ApiHostingExtensions
 
         app.Use(async (context, next) =>
         {
-            if (context.Request.Path.StartsWithSegments("/health", StringComparison.OrdinalIgnoreCase))
+            var path = context.Request.Path;
+            if (path.StartsWithSegments("/health", StringComparison.OrdinalIgnoreCase)
+                || path.StartsWithSegments("/webhooks", StringComparison.OrdinalIgnoreCase))
             {
                 await next().ConfigureAwait(false);
                 return;
@@ -366,6 +369,122 @@ public static class ApiHostingExtensions
             {
                 return Results.Problem(statusCode: StatusCodes.Status500InternalServerError, title: "secret-rotation-failed", detail: ex.Message);
             }
+        });
+
+        app.MapGet("/tenants/{tenantId}/webhooks/{hookKey}/ip-rules", async (
+            string tenantId,
+            string hookKey,
+            string environment,
+            ICallerContextAccessor callerContextAccessor,
+            IWebhookPersistenceProvider? webhookStore,
+            CancellationToken cancellationToken) =>
+        {
+            if (string.IsNullOrWhiteSpace(environment))
+            {
+                return Results.BadRequest(new { error = "missing-environment", message = "Query parameter 'environment' is required." });
+            }
+
+            var authFailure = WebhookAuthorization.Ensure(callerContextAccessor, tenantId, environment, CroniqScopes.WebhooksRead);
+            if (authFailure is not null)
+            {
+                return authFailure;
+            }
+
+            if (webhookStore is null)
+            {
+                return Results.Problem(statusCode: StatusCodes.Status503ServiceUnavailable, title: "webhooks-unavailable", detail: "Webhook persistence provider not configured.");
+            }
+
+            var scope = new PartitionScope(tenantId, environment);
+            var rules = await webhookStore.ListIpRulesAsync(hookKey, scope, cancellationToken).ConfigureAwait(false);
+            var payload = rules.Select(ToWebhookIpRuleResponse).ToList();
+            return Results.Ok(payload);
+        });
+
+        app.MapPost("/tenants/{tenantId}/webhooks/{hookKey}/ip-rules", async (
+            string tenantId,
+            string hookKey,
+            string environment,
+            CreateWebhookIpRuleRequest request,
+            ICallerContextAccessor callerContextAccessor,
+            IWebhookPersistenceProvider? webhookStore,
+            CancellationToken cancellationToken) =>
+        {
+            if (string.IsNullOrWhiteSpace(environment))
+            {
+                return Results.BadRequest(new { error = "missing-environment", message = "Query parameter 'environment' is required." });
+            }
+
+            var authFailure = WebhookAuthorization.Ensure(callerContextAccessor, tenantId, environment, CroniqScopes.WebhooksWrite);
+            if (authFailure is not null)
+            {
+                return authFailure;
+            }
+
+            if (webhookStore is null)
+            {
+                return Results.Problem(statusCode: StatusCodes.Status503ServiceUnavailable, title: "webhooks-unavailable", detail: "Webhook persistence provider not configured.");
+            }
+
+            if (!IpNetwork.TryParse(request.Cidr, out var network, out var error))
+            {
+                return Results.BadRequest(new { error = "invalid-cidr", message = $"CIDR '{request.Cidr}' is invalid ({error})." });
+            }
+
+            var caller = callerContextAccessor.Current;
+            var createdBy = caller is null
+                ? "cronq.api"
+                : $"{caller.CallerType}:{caller.CallerId}";
+
+            var create = new WebhookIpRuleCreate(
+                hookKey,
+                tenantId,
+                environment,
+                network!.ToString(),
+                request.Description,
+                createdBy);
+
+            try
+            {
+                var result = await webhookStore.AddIpRuleAsync(create, cancellationToken).ConfigureAwait(false);
+                return Results.Ok(ToWebhookIpRuleResponse(result));
+            }
+            catch (Exception ex)
+            {
+                return Results.Problem(statusCode: StatusCodes.Status500InternalServerError, title: "ip-rule-create-failed", detail: ex.Message);
+            }
+        });
+
+        app.MapDelete("/tenants/{tenantId}/webhooks/{hookKey}/ip-rules/{ruleId:long}", async (
+            string tenantId,
+            string hookKey,
+            long ruleId,
+            string environment,
+            ICallerContextAccessor callerContextAccessor,
+            IWebhookPersistenceProvider? webhookStore,
+            CancellationToken cancellationToken) =>
+        {
+            _ = hookKey ?? throw new ArgumentNullException(nameof(hookKey));
+
+            if (string.IsNullOrWhiteSpace(environment))
+            {
+                return Results.BadRequest(new { error = "missing-environment", message = "Query parameter 'environment' is required." });
+            }
+
+            var authFailure = WebhookAuthorization.Ensure(callerContextAccessor, tenantId, environment, CroniqScopes.WebhooksWrite);
+            if (authFailure is not null)
+            {
+                return authFailure;
+            }
+
+            if (webhookStore is null)
+            {
+                return Results.Problem(statusCode: StatusCodes.Status503ServiceUnavailable, title: "webhooks-unavailable", detail: "Webhook persistence provider not configured.");
+            }
+
+            var scope = new PartitionScope(tenantId, environment);
+            await webhookStore.DeleteIpRuleAsync(ruleId, scope, cancellationToken).ConfigureAwait(false);
+            return Results.NoContent();
         });
 
         app.MapGet("/tenants/{tenantId}/webhooks/deadletters", async (
@@ -729,6 +848,10 @@ public static class ApiHostingExtensions
             ? null
             : new Dictionary<string, string>(definition.Metadata, StringComparer.OrdinalIgnoreCase);
 
+        var ipRules = definition.IpRules.Count == 0
+            ? Array.Empty<WebhookIpRuleResponse>()
+            : definition.IpRules.Select(ToWebhookIpRuleResponse).ToArray();
+
         return new WebhookEndpointResponse(
             definition.HookKey,
             definition.JobKey,
@@ -736,9 +859,21 @@ public static class ApiHostingExtensions
             definition.RequireSignature,
             definition.RequestsPerMinute,
             metadata,
+            ipRules,
             definition.CreatedAtUtc,
             definition.UpdatedAtUtc,
             secretOverride);
+    }
+
+    private static WebhookIpRuleResponse ToWebhookIpRuleResponse(WebhookIpRuleDefinition definition)
+    {
+        return new WebhookIpRuleResponse(
+            definition.Id,
+            definition.Cidr,
+            definition.Description,
+            definition.CreatedBy,
+            definition.CreatedAtUtc,
+            definition.UpdatedAtUtc);
     }
 
     private static WebhookDeadLetterResponse ToWebhookDeadLetterResponse(WebhookDeadLetterEntry entry)

@@ -1,5 +1,7 @@
 using System.Collections.Concurrent;
+using System.Linq;
 using System.Text;
+using System.Threading;
 using Croniq.Persistence.Abstractions;
 using Microsoft.AspNetCore.Http;
 
@@ -11,6 +13,8 @@ namespace Croniq.Webhooks.InMemory;
 public sealed class InMemoryWebhookPersistenceProvider : IWebhookPersistenceProvider
 {
     private readonly ConcurrentDictionary<string, WebhookEndpointDefinition> _store = new(StringComparer.OrdinalIgnoreCase);
+    private long _ipRuleIdentity;
+    private readonly object _ipRuleLock = new();
 
     public WebhookEndpointDefinition? Find(string hookKey)
     {
@@ -45,6 +49,7 @@ public sealed class InMemoryWebhookPersistenceProvider : IWebhookPersistenceProv
             scope.TenantId,
             scope.EnvironmentTag,
             materializedMetadata,
+            Array.Empty<WebhookIpRuleDefinition>(),
             signatureVersion,
             now,
             now);
@@ -85,6 +90,7 @@ public sealed class InMemoryWebhookPersistenceProvider : IWebhookPersistenceProv
                 request.TenantId,
                 request.EnvironmentTag,
                 metadata,
+                Array.Empty<WebhookIpRuleDefinition>(),
                 request.SignatureVersion,
                 now,
                 now),
@@ -156,7 +162,100 @@ public sealed class InMemoryWebhookPersistenceProvider : IWebhookPersistenceProv
         return Task.FromResult(secrets);
     }
 
-    public void Clear() => _store.Clear();
+    public Task<IReadOnlyCollection<WebhookIpRuleDefinition>> ListIpRulesAsync(string hookKey, PartitionScope scope, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(hookKey)) throw new ArgumentNullException(nameof(hookKey));
+
+        if (!_store.TryGetValue(hookKey, out var definition))
+        {
+            return Task.FromResult<IReadOnlyCollection<WebhookIpRuleDefinition>>(Array.Empty<WebhookIpRuleDefinition>());
+        }
+
+        if (!MatchesScope(definition, scope))
+        {
+            throw new InvalidOperationException("Webhook scope mismatch.");
+        }
+
+        return Task.FromResult(definition.IpRules);
+    }
+
+    public Task<WebhookIpRuleDefinition> AddIpRuleAsync(WebhookIpRuleCreate request, CancellationToken cancellationToken)
+    {
+        if (request is null) throw new ArgumentNullException(nameof(request));
+        if (!_store.TryGetValue(request.HookKey, out var definition))
+        {
+            throw new InvalidOperationException($"webhook {request.HookKey} not found");
+        }
+
+        if (!string.Equals(definition.TenantId, request.TenantId, StringComparison.OrdinalIgnoreCase)
+            || !string.Equals(definition.EnvironmentTag, request.EnvironmentTag, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException("Webhook scope mismatch.");
+        }
+
+        lock (_ipRuleLock)
+        {
+            if (definition.IpRules.Any(rule => string.Equals(rule.Cidr, request.Cidr, StringComparison.OrdinalIgnoreCase)))
+            {
+                throw new InvalidOperationException($"CIDR {request.Cidr} already exists for webhook {request.HookKey}");
+            }
+
+            var id = Interlocked.Increment(ref _ipRuleIdentity);
+            var now = DateTimeOffset.UtcNow;
+            var rule = new WebhookIpRuleDefinition(
+                id,
+                request.HookKey,
+                request.TenantId,
+                request.EnvironmentTag,
+                request.Cidr,
+                request.Description,
+                request.CreatedBy,
+                now,
+                now);
+
+            var updated = definition.IpRules
+                .Concat(new[] { rule })
+                .OrderBy(r => r.Cidr, StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+
+            _store[request.HookKey] = definition with { IpRules = updated };
+            return Task.FromResult(rule);
+        }
+    }
+
+    public Task DeleteIpRuleAsync(long ruleId, PartitionScope scope, CancellationToken cancellationToken)
+    {
+        lock (_ipRuleLock)
+        {
+            foreach (var kvp in _store)
+            {
+                var definition = kvp.Value;
+                if (!MatchesScope(definition, scope))
+                {
+                    continue;
+                }
+
+                if (!definition.IpRules.Any(rule => rule.Id == ruleId))
+                {
+                    continue;
+                }
+
+                var updated = definition.IpRules
+                    .Where(rule => rule.Id != ruleId)
+                    .ToArray();
+                _store[kvp.Key] = definition with { IpRules = updated };
+                break;
+            }
+        }
+
+        return Task.CompletedTask;
+    }
+
+    public void Clear()
+    {
+        _store.Clear();
+        Interlocked.Exchange(ref _ipRuleIdentity, 0);
+    }
 
     private static bool MatchesScope(WebhookEndpointDefinition definition, PartitionScope scope)
     {

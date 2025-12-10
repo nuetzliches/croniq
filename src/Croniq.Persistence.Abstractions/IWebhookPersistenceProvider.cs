@@ -17,4 +17,10 @@ public interface IWebhookPersistenceProvider
     Task<WebhookSecretRotationResult> RotateSecretAsync(WebhookSecretRotate request, CancellationToken cancellationToken);
 
     Task<IReadOnlyCollection<WebhookSecretMaterial>> GetActiveSecretsAsync(string hookKey, CancellationToken cancellationToken);
+
+    Task<IReadOnlyCollection<WebhookIpRuleDefinition>> ListIpRulesAsync(string hookKey, PartitionScope scope, CancellationToken cancellationToken);
+
+    Task<WebhookIpRuleDefinition> AddIpRuleAsync(WebhookIpRuleCreate request, CancellationToken cancellationToken);
+
+    Task DeleteIpRuleAsync(long ruleId, PartitionScope scope, CancellationToken cancellationToken);
 }

@@ -33,6 +33,7 @@ public sealed class WebhookEndpointIntegrationTests : IClassFixture<WebhookApiTe
         body.Should().NotBeNull().And.HaveCount(1);
         body![0].HookKey.Should().Be("hook-order-created");
         body[0].Metadata.Should().NotBeNull().And.ContainKey("source");
+        body[0].IpRules.Should().NotBeNull().And.BeEmpty();
     }
 
     [Fact]
@@ -100,6 +101,40 @@ public sealed class WebhookEndpointIntegrationTests : IClassFixture<WebhookApiTe
         var current = _host.Webhooks.Find(seeded.HookKey);
         current.Should().NotBeNull();
         current!.Secret.Should().Be(payload.Secret);
+    }
+
+    [Fact]
+    public async Task WebhookIpRuleCrudFlowWorks()
+    {
+        _host.Reset();
+        var jobKey = BuildJobKey("ops", "ip-allow");
+        _host.Webhooks.Seed("hook-ip-guard", jobKey, _host.DefaultScope, secret: "whsec_guard");
+
+        var createRequest = new CreateWebhookIpRuleRequest("10.10.0.0/24", "corp");
+        var createResponse = await _host.Client.PostAsJsonAsync(
+            $"/tenants/{WebhookApiTestHost.TenantId}/webhooks/hook-ip-guard/ip-rules?environment={WebhookApiTestHost.Environment}",
+            createRequest);
+
+        createResponse.StatusCode.Should().Be(HttpStatusCode.OK);
+        var created = await createResponse.Content.ReadFromJsonAsync<WebhookIpRuleResponse>();
+        created.Should().NotBeNull();
+        created!.Cidr.Should().Be("10.10.0.0/24");
+        created.Description.Should().Be("corp");
+
+        var listResponse = await _host.Client.GetAsync($"/tenants/{WebhookApiTestHost.TenantId}/webhooks/hook-ip-guard/ip-rules?environment={WebhookApiTestHost.Environment}");
+        listResponse.StatusCode.Should().Be(HttpStatusCode.OK);
+        var rules = await listResponse.Content.ReadFromJsonAsync<List<WebhookIpRuleResponse>>();
+        rules.Should().NotBeNull();
+        rules!.Should().ContainSingle(r => r.Id == created.Id && r.Cidr == "10.10.0.0/24");
+
+        var deleteResponse = await _host.Client.DeleteAsync($"/tenants/{WebhookApiTestHost.TenantId}/webhooks/hook-ip-guard/ip-rules/{created.Id}?environment={WebhookApiTestHost.Environment}");
+        deleteResponse.StatusCode.Should().Be(HttpStatusCode.NoContent);
+
+        var finalList = await _host.Client.GetAsync($"/tenants/{WebhookApiTestHost.TenantId}/webhooks/hook-ip-guard/ip-rules?environment={WebhookApiTestHost.Environment}");
+        finalList.StatusCode.Should().Be(HttpStatusCode.OK);
+        var empty = await finalList.Content.ReadFromJsonAsync<List<WebhookIpRuleResponse>>();
+        empty.Should().NotBeNull();
+        empty!.Should().BeEmpty();
     }
 
     [Fact]

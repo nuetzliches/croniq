@@ -2,12 +2,14 @@ using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Globalization;
 using System.Linq;
+using System.Net;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using Croniq.Core.Execution;
 using Croniq.Core.Jobs;
 using Croniq.Core.Policies;
+using Croniq.Core.Security;
 using Croniq.Data.SqlServer;
 using Croniq.Hosting;
 using Croniq.Persistence.Abstractions;
@@ -31,6 +33,7 @@ public static class WebhookHostingExtensions
     private static readonly ActivitySource ActivitySource = new("Croniq.Webhooks.Ingress");
     private static readonly ConcurrentDictionary<string, byte> UnsignedWarningCache = new(StringComparer.OrdinalIgnoreCase);
     private const string WebhookOptionsSectionName = "Croniq:Webhooks";
+    private static string BuildEndpointCacheKey(string hookKey) => $"webhook:endpoint:{hookKey.ToLowerInvariant()}";
 
     public static IServiceCollection AddCroniqWebhookPersistence(this IServiceCollection services, IConfiguration configuration, string sectionName = WebhookOptionsSectionName)
     {
@@ -113,6 +116,7 @@ public static class WebhookHostingExtensions
         services.AddMemoryCache();
         services.TryAddSingleton<WebhookMetadataFactory>();
         services.TryAddSingleton<WebhookEndpointResolver>();
+        services.TryAddEnumerable(ServiceDescriptor.Singleton<IWebhookEndpointChangeNotifier, WebhookEndpointCacheNotifier>());
         services.TryAddSingleton<WebhookDeadLetterRecorder>();
         services.AddHostedService<WebhookEndpointCacheInvalidationService>();
         return services;
@@ -208,6 +212,14 @@ public static class WebhookHostingExtensions
             {
                 logger.LogWarning("webhook {HookKey} has invalid job key {JobKey}", hookKey, endpoint.JobKey);
                 return Results.Problem(statusCode: StatusCodes.Status500InternalServerError, title: "invalid-job-key", detail: "Configured job key is invalid.");
+            }
+
+            var remoteIp = request.HttpContext.Connection.RemoteIpAddress;
+            if (!endpoint.IsIpAllowed(remoteIp))
+            {
+                var remoteText = remoteIp?.ToString() ?? "unknown";
+                logger.LogWarning("webhook {HookKey} rejected due to remote IP {RemoteIp}", hookKey, remoteText);
+                return Results.Problem(statusCode: StatusCodes.Status403Forbidden, title: "ip-blocked", detail: "Remote IP address is not permitted for this webhook.");
             }
 
             var headers = deadLetterRecorder.CaptureHeaders(request.Headers);
@@ -583,7 +595,7 @@ public static class WebhookHostingExtensions
                 return null;
             }
 
-            if (_cache.TryGetValue(GetCacheKey(hookKey), out var cached) && cached is WebhookEndpointDescriptor descriptor)
+            if (_cache.TryGetValue(BuildEndpointCacheKey(hookKey), out var cached) && cached is WebhookEndpointDescriptor descriptor)
             {
                 return descriptor;
             }
@@ -598,7 +610,7 @@ public static class WebhookHostingExtensions
                 return null;
             }
 
-            if (_cache.TryGetValue(GetCacheKey(hookKey), out var cached) && cached is WebhookEndpointDescriptor descriptor)
+            if (_cache.TryGetValue(BuildEndpointCacheKey(hookKey), out var cached) && cached is WebhookEndpointDescriptor descriptor)
             {
                 return descriptor;
             }
@@ -610,7 +622,7 @@ public static class WebhookHostingExtensions
                 {
                     var secrets = await ResolveActiveSecretsAsync(persisted, cancellationToken).ConfigureAwait(false);
                     descriptor = WebhookEndpointDescriptor.FromDefinition(persisted, secrets);
-                    _cache.Set(GetCacheKey(hookKey), descriptor, TimeSpan.FromMinutes(1));
+                    _cache.Set(BuildEndpointCacheKey(hookKey), descriptor, TimeSpan.FromMinutes(1));
                     return descriptor;
                 }
             }
@@ -620,7 +632,7 @@ public static class WebhookHostingExtensions
             if (config is not null)
             {
                 descriptor = WebhookEndpointDescriptor.FromOptions(config, options.RequestsPerMinute, options.Security);
-                _cache.Set(GetCacheKey(hookKey), descriptor, TimeSpan.FromSeconds(30));
+                _cache.Set(BuildEndpointCacheKey(hookKey), descriptor, TimeSpan.FromSeconds(30));
                 return descriptor;
             }
 
@@ -634,10 +646,8 @@ public static class WebhookHostingExtensions
                 return;
             }
 
-            _cache.Remove(GetCacheKey(hookKey));
+            _cache.Remove(BuildEndpointCacheKey(hookKey));
         }
-
-        private static string GetCacheKey(string hookKey) => $"webhook:endpoint:{hookKey.ToLowerInvariant()}";
 
         private async Task<IReadOnlyList<string>> ResolveActiveSecretsAsync(WebhookEndpointDefinition definition, CancellationToken cancellationToken)
         {
@@ -694,6 +704,26 @@ public static class WebhookHostingExtensions
         }
     }
 
+    private sealed class WebhookEndpointCacheNotifier : IWebhookEndpointChangeNotifier
+    {
+        private readonly IMemoryCache _cache;
+
+        public WebhookEndpointCacheNotifier(IMemoryCache cache)
+        {
+            _cache = cache;
+        }
+
+        public void NotifyChanged(string hookKey)
+        {
+            if (string.IsNullOrWhiteSpace(hookKey))
+            {
+                return;
+            }
+
+            _cache.Remove(BuildEndpointCacheKey(hookKey));
+        }
+    }
+
     private sealed class WebhookEndpointDescriptor
     {
         private WebhookEndpointDescriptor(
@@ -703,7 +733,8 @@ public static class WebhookHostingExtensions
             bool enabled,
             int requestsPerMinute,
             IReadOnlyDictionary<string, string>? metadata,
-            IReadOnlyList<string> activeSecrets)
+            IReadOnlyList<string> activeSecrets,
+            IReadOnlyList<IpNetwork> allowedNetworks)
         {
             HookKey = hookKey;
             JobKey = jobKey;
@@ -712,6 +743,7 @@ public static class WebhookHostingExtensions
             RequestsPerMinute = Math.Max(1, requestsPerMinute);
             Metadata = metadata;
             ActiveSecrets = activeSecrets;
+            AllowedNetworks = allowedNetworks;
         }
 
         public string HookKey { get; }
@@ -721,6 +753,30 @@ public static class WebhookHostingExtensions
         public int RequestsPerMinute { get; }
         public IReadOnlyDictionary<string, string>? Metadata { get; }
         public IReadOnlyList<string> ActiveSecrets { get; }
+        public IReadOnlyList<IpNetwork> AllowedNetworks { get; }
+
+        public bool IsIpAllowed(IPAddress? address)
+        {
+            if (AllowedNetworks.Count == 0)
+            {
+                return true;
+            }
+
+            if (address is null)
+            {
+                return false;
+            }
+
+            foreach (var network in AllowedNetworks)
+            {
+                if (network.Contains(address))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
 
         public static WebhookEndpointDescriptor FromDefinition(WebhookEndpointDefinition definition, IReadOnlyList<string> activeSecrets)
         {
@@ -728,6 +784,7 @@ public static class WebhookHostingExtensions
                 ? null
                 : new Dictionary<string, string>(definition.Metadata, StringComparer.OrdinalIgnoreCase);
 
+            var networks = BuildNetworks(definition.IpRules);
             return new WebhookEndpointDescriptor(
                 definition.HookKey,
                 definition.JobKey,
@@ -735,7 +792,8 @@ public static class WebhookHostingExtensions
                 definition.Enabled,
                 definition.RequestsPerMinute,
                 metadata,
-                activeSecrets);
+                activeSecrets,
+                networks);
         }
 
         public static WebhookEndpointDescriptor FromOptions(WebhookEndpointOptions options, int defaultLimit, WebhookSecurityOptions security)
@@ -762,7 +820,28 @@ public static class WebhookHostingExtensions
                 options.Enabled,
                 limit,
                 metadata,
-                new List<string> { options.Secret });
+                new List<string> { options.Secret },
+                Array.Empty<IpNetwork>());
+        }
+
+        private static IReadOnlyList<IpNetwork> BuildNetworks(IReadOnlyCollection<WebhookIpRuleDefinition> ipRules)
+        {
+            if (ipRules is null || ipRules.Count == 0)
+            {
+                return Array.Empty<IpNetwork>();
+            }
+
+            var networks = new List<IpNetwork>(ipRules.Count);
+            foreach (var rule in ipRules)
+            {
+                if (IpNetwork.TryParse(rule.Cidr, out var network, out _)
+                    && network is not null)
+                {
+                    networks.Add(network);
+                }
+            }
+
+            return networks.Count == 0 ? Array.Empty<IpNetwork>() : networks;
         }
     }
 }

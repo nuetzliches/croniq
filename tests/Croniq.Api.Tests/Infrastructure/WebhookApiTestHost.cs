@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using System.Net.Http;
 using Croniq.Api;
+using Croniq.Api.Security;
 using Croniq.Auth.Abstractions;
 using Croniq.Auth.Core;
 using Croniq.Core.Execution;
@@ -46,6 +47,8 @@ public sealed class WebhookApiTestHost : IAsyncLifetime
 
     public NoopJobPersistenceProvider JobStore { get; } = new();
 
+    public FakeApiKeyStore ApiKeys { get; } = new();
+
     public PartitionScope DefaultScope => new(TenantId, Environment);
 
     public async Task InitializeAsync()
@@ -68,6 +71,7 @@ public sealed class WebhookApiTestHost : IAsyncLifetime
         builder.Services.AddOptions();
         builder.Services.Configure<CroniqApiOptions>(builder.Configuration.GetSection("Croniq:Api"));
         builder.Services.AddCroniqApiRateLimiter();
+        builder.Services.AddSingleton<TenantRateLimitDecider>();
 
         builder.WebHost.UseTestServer();
 
@@ -93,6 +97,9 @@ public sealed class WebhookApiTestHost : IAsyncLifetime
         builder.Services.AddSingleton(JobStore);
         builder.Services.AddSingleton<IJobPersistenceProvider>(sp => sp.GetRequiredService<NoopJobPersistenceProvider>());
         builder.Services.AddSingleton<IPersistenceHealth>(sp => sp.GetRequiredService<NoopJobPersistenceProvider>());
+
+        builder.Services.AddSingleton(ApiKeys);
+        builder.Services.AddSingleton<IApiKeyStore>(sp => sp.GetRequiredService<FakeApiKeyStore>());
 
         _app = builder.Build();
         _app.UseCroniqApi();
@@ -123,6 +130,13 @@ public sealed class WebhookApiTestHost : IAsyncLifetime
         Pipeline.Clear();
         Registry.Clear();
         Policies.Reset();
+        ApiKeys.Reset();
+
+        if (Client is not null)
+        {
+            Client.DefaultRequestHeaders.Remove("X-Croniq-Key");
+            Client.DefaultRequestHeaders.Add("X-Croniq-Key", TestCallerContextFactory.ApiKey);
+        }
     }
 
     public JobDescriptor EnsureJob(string jobKey) => Registry.EnsureJob(jobKey);

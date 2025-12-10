@@ -41,6 +41,14 @@ This document defines the scope, technology evaluation, and backlog required to 
 - Auth: API keys stored in browser? Avoid; prefer user tokens (OIDC). For admin flows, run UI behind an internal gateway injecting tokens or use PKCE auth code flow.
 - Feature flags: integrate with existing configuration (headers or query) to toggle advanced features.
 
+## Webhook IP Allow-List Surface
+
+- Add a tenant-scoped grid for webhook endpoints showing the current CIDR list from `GET /tenants/{tenantId}/webhooks/{hookKey}/ip-rules`.
+- Support inline create/delete actions with optimistic updates so operators can reconcile their CMDB inventory quickly.
+- Display audit metadata (`CreatedBy`, timestamps) and expose CSV/JSON export to simplify reviews with security teams.
+- Highlight enforcement state per hook (open vs locked down) and warn when production hooks lack any CIDRs.
+- Reuse the same helper layer that the SDK will expose so UI + automation stay aligned.
+
 ## Delivery Phases
 
 1. **Design & Wireframes**: define IA, layout, color scheme, navigation. Produce Figma or equivalent.
@@ -64,6 +72,7 @@ This document defines the scope, technology evaluation, and backlog required to 
 - [ ] Scaffold UI project (Angular 21 + TypeScript + Storybook/Chromatic + Playwright tests) under `src/Croniq.Ui` with CI build, once upstream layers are finished.
 - [ ] Define API client layer (reuse `Croniq.Rpc.Client` or generate OpenAPI client) and auth integration plan.
 - [ ] Implement MVP dashboard + schedules read-only views using mocked data, then wire to API once ready.
+- [ ] Add webhook IP allow-list management UI (list/create/delete, diff/export) once the SDK helper ships.
 - [ ] Document contribution guidelines (coding standards, CSS strategy, design tokens) and add to docstreams plan.
 - [ ] Provide deployment strategy (static hosting + Dockerfile) and integrate into release pipeline.
 

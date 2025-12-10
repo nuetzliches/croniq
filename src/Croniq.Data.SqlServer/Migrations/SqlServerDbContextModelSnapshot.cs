@@ -593,6 +593,67 @@ namespace Croniq.Data.SqlServer.Migrations
                     b.ToTable("WebhookSecretHistory", "croniq");
                 });
 
+            modelBuilder.Entity("Croniq.Data.SqlServer.Entities.WebhookEndpointIpRuleEntity", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("Id"));
+
+                    b.Property<string>("Cidr")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("datetime2")
+                        .HasDefaultValueSql("sysutcdatetime()");
+
+                    b.Property<string>("CreatedBy")
+                        .HasMaxLength(128)
+                        .HasColumnType("nvarchar(128)");
+
+                    b.Property<string>("Description")
+                        .HasMaxLength(256)
+                        .HasColumnType("nvarchar(256)");
+
+                    b.Property<string>("EnvironmentTag")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
+                    b.Property<string>("HookKey")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("nvarchar(128)");
+
+                    b.Property<bool>("IsDeleted")
+                        .HasColumnType("bit");
+
+                    b.Property<string>("TenantId")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
+                    b.Property<DateTime>("UpdatedAtUtc")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("datetime2")
+                        .HasDefaultValueSql("sysutcdatetime()");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("HookKey", "Cidr")
+                        .IsUnique();
+
+                    b.HasIndex("HookKey", "TenantId", "EnvironmentTag");
+
+                    b.HasIndex("TenantId", "EnvironmentTag");
+
+                    b.ToTable("WebhookEndpointIpRules", "croniq");
+                });
+
             modelBuilder.Entity("Croniq.Data.SqlServer.Entities.ApiKeyEntity", b =>
                 {
                     b.HasOne("Croniq.Data.SqlServer.Entities.ApiClientEntity", "Client")

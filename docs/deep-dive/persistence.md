@@ -125,6 +125,34 @@ tools/Croniq.DbMigrator/
 4. **Verify CI**: `Croniq.DbMigrator --verify` runs in nightly workflows to detect drift.
 5. **Docs**: Update this file (and any consumer references) whenever connection options or defaults change.
 
+### Applying `WebhookEndpointIpRules` (2025-12)
+
+The `WebhookEndpointIpRules` migration ships with Croniq `main` (Dec 2025) and must be applied before enabling webhook IP allow lists in production:
+
+1. **Set the connection string** for the migrator container/CLI:
+
+```cmd
+set CRONIQ_SQL_CONNECTION=Server=<sql-host>;Database=Croniq;User Id=cronq_admin;Password=<secret>;
+```
+
+2. **Run the migrator once per environment** (dev/test/prod). The tool is idempotent, so reruns are safe:
+
+```cmd
+dotnet run --project tools/Croniq.DbMigrator -- --apply
+```
+
+> Containerized clusters can execute the same step with `docker compose run --rm croniq-db-migrator` as long as `CRONIQ_SQL_CONNECTION` is injected.
+
+3. **Verify the table exists** before exposing the new API endpoints:
+
+```sql
+SELECT TOP (5) HookKey, TenantId, EnvironmentTag, Cidr
+FROM croniq.WebhookEndpointIpRules
+ORDER BY CreatedAtUtc DESC;
+```
+
+4. **Rollback plan**: restore from backup if the migration fails. The schema change is additive (new table + indexes), so no data loss occurs when rolling forward again.
+
 ## Local Development & Dev Stack
 
 - The Docker dev stack (`infra/docker/docker-compose.yml`) launches SQL Server 2022 with the Croniq schema. Connection values originate in `.env` via `CRONIQ_SQL_CONNECTION`.

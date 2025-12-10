@@ -18,6 +18,7 @@ public sealed class SqlServerDbContext(DbContextOptions<SqlServerDbContext> opti
     public DbSet<WebhookEndpointEventEntity> WebhookEndpointEvents => Set<WebhookEndpointEventEntity>();
     public DbSet<WebhookDeadLetterEntity> WebhookDeadLetters => Set<WebhookDeadLetterEntity>();
     public DbSet<WebhookSecretHistoryEntity> WebhookSecretHistory => Set<WebhookSecretHistoryEntity>();
+    public DbSet<WebhookEndpointIpRuleEntity> WebhookEndpointIpRules => Set<WebhookEndpointIpRuleEntity>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -30,6 +31,7 @@ public sealed class SqlServerDbContext(DbContextOptions<SqlServerDbContext> opti
         ConfigureWebhookDeadLetters(modelBuilder.Entity<WebhookDeadLetterEntity>());
         ConfigureWebhookEndpointEvents(modelBuilder.Entity<WebhookEndpointEventEntity>());
         ConfigureWebhookSecretHistory(modelBuilder.Entity<WebhookSecretHistoryEntity>());
+        ConfigureWebhookEndpointIpRules(modelBuilder.Entity<WebhookEndpointIpRuleEntity>());
     }
 
     private static void ConfigureJobs(EntityTypeBuilder<JobEntity> builder)
@@ -119,5 +121,15 @@ public sealed class SqlServerDbContext(DbContextOptions<SqlServerDbContext> opti
         builder.HasIndex(x => new { x.HookKey, x.TenantId, x.EnvironmentTag, x.ActivatedAtUtc });
         builder.HasIndex(x => new { x.HookKey, x.ExpiresAtUtc });
         builder.Property(x => x.ActivatedAtUtc).HasDefaultValueSql("sysutcdatetime()");
+    }
+
+    private static void ConfigureWebhookEndpointIpRules(EntityTypeBuilder<WebhookEndpointIpRuleEntity> builder)
+    {
+        builder.ToTable("WebhookEndpointIpRules", "croniq");
+        builder.HasIndex(x => new { x.HookKey, x.TenantId, x.EnvironmentTag });
+        builder.HasIndex(x => new { x.TenantId, x.EnvironmentTag });
+        builder.HasIndex(x => new { x.HookKey, x.Cidr }).IsUnique();
+        builder.Property(x => x.CreatedAtUtc).HasDefaultValueSql("sysutcdatetime()");
+        builder.Property(x => x.UpdatedAtUtc).HasDefaultValueSql("sysutcdatetime()");
     }
 }
