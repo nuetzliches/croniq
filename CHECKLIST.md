@@ -28,13 +28,26 @@
 - [ ] (blocked bis Repo public) Docs Streams aufsetzen (docs root, docs/deep-dive) inkl. Quickstart & Mermaid policy – Plan siehe `docs/deep-dive/docstreams.md`
 - [ ] (deferred) UI-Backlog dokumentieren; Technologie nach API-Stabilisierung entscheiden – Plan siehe `docs/deep-dive/ui.md`
 - [ ] (deferred) Kubernetes Chart (charts/croniq) als Backlog-Platzhalter vorbereiten – Plan siehe `docs/deep-dive/kubernetes.md`
+- [ ] CI/CD Validation Backlog abschließen (`docs/deep-dive/ci.md`): `ci-pr.yml`, reusable Scripts/Tools (`scripts/ci`, `.config/dotnet-tools.json`, `Directory.Build.props`, `eng/`), Local-Repro-Doku, Secrets-Runbook und Coverage-Status-Integration umsetzen.
+- [ ] Policy-Dokumentation & Observability vervollständigen (`docs/deep-dive/policies.md`): Konfigurationsbeispiele dokumentieren sowie Dashboards/Alerts gemäß Observability-Plan verdrahten.
+- [ ] Security/OIDC-Basis liefern (`docs/deep-dive/security.md`): OIDC-Options + Dual-Auth-Middleware, CallerContext + RateLimiter-Partitionierung, gRPC-Interceptor, Admin-APIs, Doku und Regressionstests implementieren.
+- [ ] Supply-Chain-Nacharbeiten (`docs/deep-dive/supplychain.md`): `syft`/`trivy` Toolchain pinnen + lokal dokumentieren, Signing Keys bereitstellen, Verification-Doku + Waiver-Prozess ergänzen.
 - [x] Webhook-Trigger (Croniq.Webhooks Projekt) planen, host implementieren und in `docs/deep-dive/architecture.md` verankern (inkl. CRUD-API + persistente Hooks)
 
 ## Next Focus
 
-1. (abgeschlossen 2025-12-09) Webhook-CRUD/API abgesichert: Authz-Scopes vereinheitlicht, Integrationstests für CRUD/Rotate/Dead-Letter-Endpunkte laufen über den neuen TestHost.
-2. (Deferred) Docstreams-Prozess etablieren (`docs/deep-dive/docstreams.md`), Quickstart synchronisieren und Consumer/Technical Docs laufend spiegeln – sobald das Repo public ist.
-3. Convenience-Webhooks (Provider-Autokonfiguration) + Sample-otelBuilder aufräumen, sobald offene Nachbesserungen adressiert sind.
+1. (Done 2025-12-09) Webhook-CRUD/API abgesichert: Authz-Scopes vereinheitlicht, Integrationstests für CRUD/Rotate/Dead-Letter-Endpunkte laufen über den neuen TestHost.
+2. (Blocked bis Repo public) Docstreams-Prozess etablieren (`docs/deep-dive/docstreams.md`), Quickstart synchronisieren und Consumer/Technical Docs laufend spiegeln.
+3. CI + Supplychain Hardening fortsetzen (`docs/deep-dive/ci.md`, `docs/deep-dive/supplychain.md`): Coverage-Gates automatisieren, SBOM/Signierung in Release-Pipeline finalisieren.
+4. Security/OIDC + Plattform-Scaffolding adressieren (`docs/deep-dive/security.md`, `docs/deep-dive/kubernetes.md`, `docs/deep-dive/ui.md`): Auth-Flows und Secrets-Governance präzisieren, Kubernetes-Chart + UI-Backlog grobplanen.
+
+## Outstanding Backlog (Audit 2025-12-10)
+
+- **Docstreams & Docs Hygiene**: `docs/deep-dive/docstreams.md` + Quickstart spiegeln weiterhin Consumer/Technical-Divergenzen; Stream-Owner-Workflow erst nach Repo-Öffnung aktivierbar (siehe offenes Checklist-Item "Docs Streams").
+- **CI & Supplychain**: `docs/deep-dive/ci.md` und `docs/deep-dive/supplychain.md` listen ungelöste Tasks (Coverage-Gates, Toolchain, Signing/Waiver-Prozess) – nun als separate Checklist-Items erfasst.
+- **Security & Auth/OIDC**: `docs/deep-dive/security.md` markiert offene Arbeiten an OIDC-Flows, Secrets-Governance sowie Hardenings; entsprechendes Checklist-Item "Security/OIDC-Basis" hinzugefügt.
+- **Kubernetes & UI Scaffolding**: Platzhalter in `docs/deep-dive/kubernetes.md` und `docs/deep-dive/ui.md` beschreiben fehlende Chart-Baseline, UI-Tech-Entscheid und Content-Aufbereitung (Checklist-Items "UI-Backlog" und "Kubernetes Chart").
+- **Policy Observability**: `docs/deep-dive/policies.md` fordert noch Konfig-Beispiele und Dashboard-Wiring; wird durch das neue Checklist-Item "Policy-Dokumentation & Observability" verfolgt.
 
 ## Webhook-Trigger-Konzept (Backlog)
 
@@ -51,9 +64,9 @@
 - [x] `docs\consumer\configuration.md` hier besteht ein Dokumentationsfehler oder gap: builder.Services.AddCroniq() gibt es nicht. Consumer Docs generell auf aktuellsten Stand bringen.
 - [x] Ist es korrekt, dass `Croniq.Auth.SqlServer` einen Verweis auf `Croniq.Persistence.SqlServer` hat? Sollte die DbContext-Registrierung nicht eher in `Croniq.Data.SqlServer` stattfinden (bitte verifizieren, Empfehlungen aussprechen)? (Verifiziert: `Croniq.Auth.SqlServer` referenziert nur `Croniq.Data.SqlServer`, alle DbContext-DI-Erweiterungen leben bereits dort; Recommendation: Hosts rufen `AddCroniqSqlServerDbContext` aus `Croniq.Data.SqlServer` auf, bevor sie `AddCroniqAuthSqlServer` verkabeln.)
 - [x] Convenience-Hook bauen, der aus der Konfiguration das passende Provider-Modul zieht; momentan muss man `AddCroniqWebhooksSqlServer` im Startup explizit aufrufen.
-- [ ] `CONTRIBUTING.md` aktualisieren (veraltete Inhalte z.B. `Consumer docs` -> `Croniq docs`)
+- [x] `CONTRIBUTING.md` aktualisieren (veraltete Inhalte z.B. `Consumer docs` -> `Croniq docs`) – Stand 2025-12-10 mit Docstreams-Hinweisen synchronisiert
 - [x] Signaturen für Webhooks per Opt-Out deaktivierbar machen (env, config, fluent)?
-- [ ] Suche nach `- [ ]` und prüfe, was wir noch zu erledigen haben bzw. ob es veraltete Tasks sind.
+- [x] Suche nach `- [ ]` und prüfe, was wir noch zu erledigen haben bzw. ob es veraltete Tasks sind (2025-12-10). Ergebnis siehe Abschnitt "Outstanding Backlog".
 
 ## Zwischenstand 2025-12-09
 
