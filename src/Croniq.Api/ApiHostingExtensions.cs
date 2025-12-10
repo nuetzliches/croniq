@@ -334,7 +334,7 @@ public static class ApiHostingExtensions
 
             if (webhookStore is null)
             {
-                return Results.Problem(statusCode: StatusCodes.Status503ServiceUnavailable, title: "webhooks-unavailable", detail: "Webhook persistence provider not configured." );
+                return Results.Problem(statusCode: StatusCodes.Status503ServiceUnavailable, title: "webhooks-unavailable", detail: "Webhook persistence provider not configured.");
             }
 
             var caller = callerContextAccessor.Current;
@@ -481,6 +481,133 @@ public static class ApiHostingExtensions
             }
         });
 
+        app.MapGet("/tenants/{tenantId}/api-clients/{clientId}", async (
+            string tenantId,
+            string clientId,
+            string? environment,
+            ICallerContextAccessor callerContextAccessor,
+            IApiKeyStore apiKeyStore,
+            CancellationToken cancellationToken) =>
+        {
+            var authFailure = WebhookAuthorization.Ensure(callerContextAccessor, tenantId, environment, CroniqScopes.ApiKeysManage);
+            if (authFailure is not null)
+            {
+                return authFailure;
+            }
+
+            var client = await apiKeyStore.GetClientAsync(tenantId, clientId, cancellationToken).ConfigureAwait(false);
+            if (client is null)
+            {
+                return Results.NotFound(new { error = "api-client-not-found", clientId });
+            }
+
+            var response = new ApiClientResponse(
+                client.ClientId,
+                client.TenantId,
+                client.Name,
+                client.EnvironmentTag,
+                client.Scopes,
+                client.IsActive,
+                client.ExpiresAt);
+
+            return Results.Ok(response);
+        });
+
+        app.MapPost("/tenants/{tenantId}/api-keys", async (
+            string tenantId,
+            IssueApiKeyRequest request,
+            ICallerContextAccessor callerContextAccessor,
+            IApiKeyStore apiKeyStore,
+            ILogger<ApiKeyAdminApiMarker> logger,
+            CancellationToken cancellationToken) =>
+        {
+            var authFailure = WebhookAuthorization.Ensure(callerContextAccessor, tenantId, request.EnvironmentTag, CroniqScopes.ApiKeysManage);
+            if (authFailure is not null)
+            {
+                return authFailure;
+            }
+
+            if (string.IsNullOrWhiteSpace(request.ClientId))
+            {
+                return Results.BadRequest(new { error = "client-required", message = "ClientId is required." });
+            }
+
+            if (request.TtlHours.HasValue && request.TtlHours.Value <= 0)
+            {
+                return Results.BadRequest(new { error = "invalid-ttl", message = "TtlHours must be greater than zero." });
+            }
+
+            var scopes = NormalizeScopes(request.Scopes);
+            TimeSpan? ttl = request.TtlHours.HasValue ? TimeSpan.FromHours(request.TtlHours.Value) : null;
+            var issueRequest = new ApiKeyIssueRequest(tenantId, request.ClientId, request.EnvironmentTag, scopes, ttl);
+
+            try
+            {
+                var result = await apiKeyStore.IssueAsync(issueRequest, cancellationToken).ConfigureAwait(false);
+                return Results.Ok(ToIssueApiKeyResponse(result));
+            }
+            catch (Exception ex)
+            {
+                logger.LogError(ex, "failed to issue api key for tenant {TenantId} client {ClientId}", tenantId, request.ClientId);
+                return Results.Problem(statusCode: StatusCodes.Status500InternalServerError, title: "api-key-issue-failed", detail: ex.Message);
+            }
+        });
+
+        app.MapPost("/tenants/{tenantId}/api-keys/{keyId}/rotate", async (
+            string tenantId,
+            string keyId,
+            string? environment,
+            ICallerContextAccessor callerContextAccessor,
+            IApiKeyStore apiKeyStore,
+            ILogger<ApiKeyAdminApiMarker> logger,
+            CancellationToken cancellationToken) =>
+        {
+            var authFailure = WebhookAuthorization.Ensure(callerContextAccessor, tenantId, environment, CroniqScopes.ApiKeysManage);
+            if (authFailure is not null)
+            {
+                return authFailure;
+            }
+
+            try
+            {
+                var result = await apiKeyStore.RotateAsync(tenantId, keyId, cancellationToken).ConfigureAwait(false);
+                if (result is null)
+                {
+                    return Results.NotFound(new { error = "api-key-not-found", keyId });
+                }
+
+                return Results.Ok(ToIssueApiKeyResponse(result));
+            }
+            catch (Exception ex)
+            {
+                logger.LogError(ex, "failed to rotate api key {KeyId} for tenant {TenantId}", keyId, tenantId);
+                return Results.Problem(statusCode: StatusCodes.Status500InternalServerError, title: "api-key-rotation-failed", detail: ex.Message);
+            }
+        });
+
+        app.MapDelete("/tenants/{tenantId}/api-keys/{keyId}", async (
+            string tenantId,
+            string keyId,
+            string? environment,
+            ICallerContextAccessor callerContextAccessor,
+            IApiKeyStore apiKeyStore,
+            CancellationToken cancellationToken) =>
+        {
+            var authFailure = WebhookAuthorization.Ensure(callerContextAccessor, tenantId, environment, CroniqScopes.ApiKeysManage);
+            if (authFailure is not null)
+            {
+                return authFailure;
+            }
+
+            var revoked = await apiKeyStore.RevokeAsync(tenantId, keyId, cancellationToken).ConfigureAwait(false);
+            if (!revoked)
+            {
+                return Results.NotFound(new { error = "api-key-not-found", keyId });
+            }
+
+            return Results.NoContent();
+        });
+
         app.MapPost("/jobs/trigger", async (
             TriggerJobRequest request,
             IJobRegistry registry,
@@ -569,6 +696,33 @@ public static class ApiHostingExtensions
         return new Dictionary<string, string>(source);
     }
 
+    private static IssueApiKeyResponse ToIssueApiKeyResponse(ApiKeyIssueResult result)
+    {
+        return new IssueApiKeyResponse(
+            result.ClientId,
+            result.TenantId,
+            result.KeyId,
+            result.PlaintextSecret,
+            result.ExpiresAt,
+            result.EnvironmentTag);
+    }
+
+    private static IReadOnlyCollection<string> NormalizeScopes(IReadOnlyCollection<string>? requestedScopes)
+    {
+        if (requestedScopes is null || requestedScopes.Count == 0)
+        {
+            return Array.Empty<string>();
+        }
+
+        var normalized = requestedScopes
+            .Where(scope => !string.IsNullOrWhiteSpace(scope))
+            .Select(scope => scope.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
+        return normalized.Length == 0 ? Array.Empty<string>() : normalized;
+    }
+
     private static WebhookEndpointResponse ToWebhookResponse(WebhookEndpointDefinition definition, string? secretOverride = null)
     {
         IDictionary<string, string>? metadata = definition.Metadata is null
@@ -621,6 +775,10 @@ public static class ApiHostingExtensions
     }
 
     private sealed class WebhookDeadLetterApiMarker
+    {
+    }
+
+    private sealed class ApiKeyAdminApiMarker
     {
     }
 }

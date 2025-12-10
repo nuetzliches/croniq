@@ -106,6 +106,7 @@ public sealed class SqlServerApiKeyStore : IApiKeyStore
             request.TenantId,
             keyId,
             $"{keyId}.{secret}",
+            environment,
             expires.HasValue ? new DateTimeOffset(DateTime.SpecifyKind(expires.Value, DateTimeKind.Utc)) : null);
     }
 
@@ -136,8 +137,11 @@ public sealed class SqlServerApiKeyStore : IApiKeyStore
         return true;
     }
 
-    public async Task<bool> RotateAsync(string tenantId, string keyId, CancellationToken cancellationToken = default)
+    public async Task<ApiKeyIssueResult?> RotateAsync(string tenantId, string keyId, CancellationToken cancellationToken = default)
     {
+        if (string.IsNullOrWhiteSpace(tenantId)) throw new ArgumentNullException(nameof(tenantId));
+        if (string.IsNullOrWhiteSpace(keyId)) throw new ArgumentNullException(nameof(keyId));
+
         await using var db = await _dbContextFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
         var entity = await db.ApiKeys
             .Include(k => k.Client)
@@ -146,7 +150,7 @@ public sealed class SqlServerApiKeyStore : IApiKeyStore
 
         if (entity is null)
         {
-            return false;
+            return null;
         }
 
         var now = _timeProvider.GetUtcNow().UtcDateTime;
@@ -171,8 +175,8 @@ public sealed class SqlServerApiKeyStore : IApiKeyStore
             entity.EnvironmentTag ?? entity.Client.EnvironmentTag,
             scopes,
             ttl);
-        await IssueAsync(issueRequest, cancellationToken).ConfigureAwait(false);
-        return true;
+        var issued = await IssueAsync(issueRequest, cancellationToken).ConfigureAwait(false);
+        return issued;
     }
 
     public async Task<ApiKeyValidationResult> ValidateAsync(string presentedKey, CancellationToken cancellationToken = default)

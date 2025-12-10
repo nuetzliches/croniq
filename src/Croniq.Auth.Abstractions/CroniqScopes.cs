@@ -9,4 +9,5 @@ public static class CroniqScopes
     public const string WebhooksWrite = "webhooks:write";
     public const string WebhooksRotate = "webhooks:rotate";
     public const string WebhooksDeadLetter = "webhooks:deadletter";
+    public const string ApiKeysManage = "api-keys:manage";
 }

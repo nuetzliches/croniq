@@ -30,6 +30,31 @@ This living note tracks how we keep the consumer-facing docs in sync with the de
 | Operations         | `devstack.md`, `observability.md`, `security.md`, `kubernetes.md`, `ui.md`      | Docker dev stack, telemetry stack, security posture, future Kubernetes/UI plans.                      |
 | Governance         | `docstreams.md` (this file)                                                     | Tracks ownership, tooling, and outstanding backlog.                                                   |
 
+## Sync Cadence & Owners
+
+| Cadence | Task                                                                     | Owner(s)                                            | Tooling                                                   |
+| ------- | ------------------------------------------------------------------------ | --------------------------------------------------- | --------------------------------------------------------- |
+| Weekly  | Review merged consumer docs, mirror technical references (or vice versa) | Docs Crew (consumer) + Core Maintainers (deep dive) | `gh issue list --label docs`, VitePress preview artifact  |
+| Release | Run full docs CI (lint, lychee, SBOM, accessibility) before tagging      | Release Captain                                     | `.github/workflows/docs-preview.yml`, `npm run docs:lint` |
+| Nightly | Scheduled link check + Mermaid rendering validation                      | Automation Bot                                      | `.github/workflows/nightly.yml`                           |
+
+Every PR touching `docs/**` must tag at least one representative from each stream. If a change only exists in one stream, open a follow-up issue tagged `docs-sync` so we never ship stale onboarding steps.
+
+## End-to-End Workflow
+
+1. **Open/triage** a `docs-sync` issue describing the source of truth (consumer vs deep dive) and the affected files.
+2. **Edit in pairs**: mirror the change in both locations (e.g., update `guides/triggers.md` _and_ `deep-dive/architecture.md`). Reuse shared snippets from `docs/_templates/` when possible.
+3. **Run local quality gates**: `npm run docs:lint`, `lychee --config docs/.lychee.toml docs`, optional `npm run docs:build` to confirm Mermaid diagrams render.
+4. **Request cross-stream review** so both the Docs crew and Core maintainers sign off.
+5. **Ship + log**: mention the `docs-sync` issue in the PR description so the weekly triage board stays accurate.
+
+## Templates, Mermaid & Callouts
+
+- All diagrams must be written as inline Mermaid blocks so GitHub + VitePress have identical output.
+- Use `_templates/callout-learn-more.md` (consumer → deep dive) and `_templates/callout-back-to-quickstart.md` (deep dive → consumer) for consistent tone.
+- Keep frontmatter minimal; every page should declare `title` and `description` to power search.
+- Reference `docs/_templates/glossary.md` when introducing new terminology to avoid drift between streams.
+
 ## Cross-Linking Guardrails
 
 - Consumer pages stay lean: each section ends with a "Learn more" callout pointing at the matching deep-dive page (templates live under `docs/_templates/`).

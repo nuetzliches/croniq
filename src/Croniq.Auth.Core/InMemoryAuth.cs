@@ -342,6 +342,7 @@ public sealed class InMemoryApiKeyStore : IApiKeyStore
             request.TenantId,
             keyId,
             $"{keyId}.{secret}",
+            record.EnvironmentTag,
             record.ExpiresAtUtc));
     }
 
@@ -359,11 +360,11 @@ public sealed class InMemoryApiKeyStore : IApiKeyStore
         return Task.FromResult(false);
     }
 
-    public async Task<bool> RotateAsync(string tenantId, string keyId, CancellationToken cancellationToken = default)
+    public async Task<ApiKeyIssueResult?> RotateAsync(string tenantId, string keyId, CancellationToken cancellationToken = default)
     {
         if (!_store.TryGetValue(keyId, out var record) || record.TenantId != tenantId)
         {
-            return false;
+            return null;
         }
 
         await RevokeAsync(tenantId, keyId, cancellationToken).ConfigureAwait(false);
@@ -373,8 +374,8 @@ public sealed class InMemoryApiKeyStore : IApiKeyStore
             record.EnvironmentTag,
             record.Scopes,
             record.ExpiresAtUtc.HasValue ? record.ExpiresAtUtc.Value - DateTimeOffset.UtcNow : null);
-        await IssueAsync(issueRequest, cancellationToken).ConfigureAwait(false);
-        return true;
+        var issued = await IssueAsync(issueRequest, cancellationToken).ConfigureAwait(false);
+        return issued;
     }
 
     public Task<ApiKeyValidationResult> ValidateAsync(string presentedKey, CancellationToken cancellationToken = default)

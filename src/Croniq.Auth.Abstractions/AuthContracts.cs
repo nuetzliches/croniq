@@ -68,6 +68,7 @@ public sealed record ApiKeyIssueResult(
     string TenantId,
     string KeyId,
     string PlaintextSecret,
+    string? EnvironmentTag,
     DateTimeOffset? ExpiresAt);
 
 public sealed record ApiKeyValidationResult(
@@ -93,7 +94,7 @@ public interface IApiKeyStore
 {
     Task<ApiKeyIssueResult> IssueAsync(ApiKeyIssueRequest request, CancellationToken cancellationToken = default);
     Task<bool> RevokeAsync(string tenantId, string keyId, CancellationToken cancellationToken = default);
-    Task<bool> RotateAsync(string tenantId, string keyId, CancellationToken cancellationToken = default);
+    Task<ApiKeyIssueResult?> RotateAsync(string tenantId, string keyId, CancellationToken cancellationToken = default);
     Task<ApiKeyValidationResult> ValidateAsync(string presentedKey, CancellationToken cancellationToken = default);
     Task<ApiClientDescriptor?> GetClientAsync(string tenantId, string clientId, CancellationToken cancellationToken = default);
 }
