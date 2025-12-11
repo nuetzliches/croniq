@@ -7,7 +7,6 @@ builder.Configuration
     .AddJsonFile("appsettings.Development.json", optional: true, reloadOnChange: true)
     .AddEnvironmentVariables();
 
-builder.Services.AddCroniqWebhookPersistence(builder.Configuration);
 builder.Services.AddCroniqWebhookServices(builder.Configuration);
 builder.Services.AddCroniqWebhookRateLimiter();
 

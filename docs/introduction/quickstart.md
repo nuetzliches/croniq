@@ -65,7 +65,7 @@ builder.Services.AddCroniqJob(helloWorldKey, job =>
 
 var app = builder.Build();
 
-app.MapCroniqManagementEndpoints(); // exposes /jobs/trigger, etc.
+app.UseCroniqApi(); // wires the Croniq management endpoints + auth middleware
 
 app.Run();
 ```
@@ -188,9 +188,11 @@ builder.Services.AddCroniqWebhookRateLimiter();
 
 var app = builder.Build();
 
-app.MapCroniqManagementEndpoints();
+app.UseCroniqApi();
 app.UseCroniqWebhooks(mapHealthEndpoints: false); // skip duplicate /health when co-hosted
 ```
+
+`AddCroniqWebhookServices` automatically wires the persistence provider based on `Croniq:Webhooks:Mode` (InMemory for samples, SqlServer when you reuse `Croniq:SqlServer`). Set `Croniq:Webhooks:ConfigurePersistence=false` when you need to register a custom `IWebhookPersistenceProvider` before calling `AddCroniqWebhookServices`.
 
 Add a matching configuration block (e.g., in `appsettings.Development.json`). Point the `JobKey` at the handler you registered above so the webhook reuses the same job key used by manual triggers:
 
@@ -249,6 +251,46 @@ scripts/webhook-rotate-secret.ps1 `
 ```
 
 Pass `-ActivateInSeconds <seconds>` (up to seven days) when you need to stage the new secret before callers switch over. The script prints the activation window plus the plaintext secret—capture it immediately because Croniq never stores or returns it again.
+
+## 5.1 Publish API & gRPC Schemas
+
+Croniq hosts both Minimal API endpoints (`/schedules`, `/jobs/trigger`, `/tenants/*/webhooks`) and the Scheduler gRPC surface defined in [src/Croniq.Rpc.Client/Protos/scheduler.proto](src/Croniq.Rpc.Client/Protos/scheduler.proto). Expose their schemas so downstream teams can generate clients without reverse engineering requests.
+
+Add the recommended tooling to your host:
+
+```cmd
+dotnet add package Swashbuckle.AspNetCore
+dotnet add package Grpc.AspNetCore.Server.Reflection
+```
+
+Then light up OpenAPI + Swagger UI for the Minimal API layer and gRPC reflection for SDK consumers:
+
+```csharp
+builder.Services.AddEndpointsApiExplorer();
+builder.Services.AddSwaggerGen();
+builder.Services.AddGrpcReflection();
+
+var app = builder.Build();
+
+if (app.Environment.IsDevelopment()
+    || builder.Configuration.GetValue<bool>("Croniq:Api:ExposeSchemas"))
+{
+  app.UseSwagger();
+  app.UseSwaggerUI(options =>
+  {
+    options.SwaggerEndpoint("/swagger/v1/swagger.json", "Croniq Scheduler API v1");
+    options.DisplayRequestDuration();
+  });
+
+  app.MapGrpcReflectionService();
+}
+
+app.UseCroniqApi();
+```
+
+- Default the exposure to local/dev environments and gate it in production via `Croniq:Api:ExposeSchemas` so the management plane stays private.
+- When you need a signed artifact for consumers, install the Swashbuckle CLI (`dotnet tool install --global Swashbuckle.AspNetCore.Cli`) and run `dotnet swagger tofile --output docs/public/api/croniq-api-v1.json <YourApp>.dll v1` as part of CI.
+- Check the `.proto` file into your docs (or push it to a Buf registry) whenever the gRPC contract changes so language-specific clients can regenerate strongly typed stubs without hitting your environment.
 
 ## 6. Run Everything
 

@@ -19,6 +19,7 @@ using Xunit;
 namespace Croniq.Persistence.SqlServer.Tests;
 
 [Collection(SqlServerContractTestCollection.Name)]
+[Trait(TestTraits.Component, TestTraits.Components.SqlPersistenceWebhooks)]
 public sealed class SqlServerWebhookPersistenceProviderTests : IAsyncLifetime
 {
     private readonly SqlServerContainerFixture _sql;

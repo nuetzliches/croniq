@@ -17,6 +17,7 @@ using Xunit;
 namespace Croniq.Persistence.SqlServer.Tests;
 
 [Collection(SqlServerContractTestCollection.Name)]
+[Trait(TestTraits.Component, TestTraits.Components.SqlPersistenceJobs)]
 public sealed class SqlServerJobPersistenceProviderTests : IAsyncLifetime
 {
     private readonly SqlServerContainerFixture _sql;

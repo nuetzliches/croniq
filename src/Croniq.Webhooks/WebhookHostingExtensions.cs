@@ -92,8 +92,17 @@ public static class WebhookHostingExtensions
 
     public static IServiceCollection AddCroniqWebhookServices(this IServiceCollection services, IConfiguration configuration)
     {
+        var optionsSection = configuration.GetSection("Croniq:Webhooks");
+        var hostingOptions = optionsSection.Get<CroniqWebhookOptions>() ?? new CroniqWebhookOptions();
+        var shouldConfigurePersistence = hostingOptions.ConfigurePersistence;
+
+        if (shouldConfigurePersistence)
+        {
+            services.AddCroniqWebhookPersistence(configuration);
+        }
+
         services.AddCroniqPlatformServices(configuration);
-        services.Configure<CroniqWebhookOptions>(configuration.GetSection("Croniq:Webhooks"));
+        services.Configure<CroniqWebhookOptions>(optionsSection);
         services.PostConfigure<CroniqWebhookOptions>(options =>
         {
             if (options is null || options.Security.AllowUnsignedHooks)

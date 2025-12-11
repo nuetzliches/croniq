@@ -18,6 +18,7 @@ using Xunit;
 namespace Croniq.Persistence.SqlServer.Tests;
 
 [Collection(SqlServerContractTestCollection.Name)]
+[Trait(TestTraits.Component, TestTraits.Components.SqlPersistenceDeadLetters)]
 public sealed class SqlServerWebhookDeadLetterStoreTests : IAsyncLifetime
 {
     private readonly SqlServerContainerFixture _sql;

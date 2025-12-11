@@ -1,9 +1,13 @@
+using Croniq.Data.SqlServer;
+using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Migrations;
 
 #nullable disable
 
 namespace Croniq.Data.SqlServer.Migrations;
 
+[DbContext(typeof(SqlServerDbContext))]
+[Migration("20251212132000_AddWebhookEventActorCorrelation")]
 public partial class AddWebhookEventActorCorrelation : Migration
 {
     protected override void Up(MigrationBuilder migrationBuilder)

@@ -15,6 +15,8 @@ public sealed class CroniqWebhookOptions
     public WebhookSecurityOptions Security { get; set; } = new();
 
     public WebhookSqlServerOptions SqlServer { get; set; } = new();
+
+    public bool ConfigurePersistence { get; set; } = true;
 }
 
 public sealed class WebhookEndpointOptions

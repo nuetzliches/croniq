@@ -74,10 +74,4 @@
 - Offene Punkte:
   - Docs/Comms: Docstreams-Aufbau (blocked bis Repo public), CONTRIBUTING-Refresh, offene Quickstart/Consumer-Divergenzen.
   - Delivery Backlog: UI-Dokumentation, Kubernetes-Chart-Platzhalter, globales Audit der verbleibenden `- [ ]` Items.
-
-# Prüfen / Nachbessern
-
-- [ ] `MapCroniqManagementEndpoints` im Quickstart ist korrekt? Müsste das nicht `UseCroniqApi` heissen?
-- [ ] Wie sollten wir das Schema der API bzw. gRPC-Dienste bekannt geben? Swagger vs andere Tools? Best Practices in .NET 10 für Minimal APIs?
-- [ ] `samples\Croniq.Sample.ApiHost\Program.cs`: Wird `AddCroniqWebhookPersistence` benötigt, wenn ich SqlServer-Persistenz für Webhooks nutzen will? Bitte mit Api Registrierung abgleichen / normalisieren.
-- [ ] global usings? cleanup in den Projekten? durch warnings sicherstellen?
+  

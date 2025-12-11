@@ -34,6 +34,7 @@ public sealed class SqlServerContainerFixture : IAsyncLifetime
     private string? _cliContainerId;
     private string? _cliContainerName;
     private int _cliHostPort;
+    private static readonly TimeSpan ContainerStartupTimeout = TimeSpan.FromSeconds(90);
 
     public string ConnectionString { get; private set; } = string.Empty;
 
@@ -54,13 +55,27 @@ public sealed class SqlServerContainerFixture : IAsyncLifetime
             return;
         }
 
+        var dockerTransportDetected = IsDockerTransportAvailable();
+        if (!dockerTransportDetected)
+        {
+            var dockerMissing = new InvalidOperationException("Docker engine pipe/socket not detected. Start Docker Desktop or set CRONIQ_SQL.");
+            Console.WriteLine("[SqlServerContainerFixture] Docker pipe/socket not found. Falling back to LocalDB/CRONIQ_SQL overrides.");
+            if (await TryInitializeLocalDbFallbackAsync(dockerMissing).ConfigureAwait(false))
+            {
+                return;
+            }
+
+            ThrowDockerUnavailableSkip(dockerMissing);
+        }
+
         try
         {
             await StartTestcontainerAsync(runtime).ConfigureAwait(false);
         }
-        catch (InvalidOperationException ex) when (IsDockerHijackFailure(ex))
+        catch (Exception ex) when (IsDockerAvailabilityIssue(ex))
         {
-            if (await TryStartDockerCliContainerAsync(runtime).ConfigureAwait(false))
+            Console.WriteLine($"[SqlServerContainerFixture] Testcontainers start failed: {ex.Message}");
+            if (dockerTransportDetected && await TryStartDockerCliContainerAsync(runtime).ConfigureAwait(false))
             {
                 return;
             }
@@ -70,8 +85,18 @@ public sealed class SqlServerContainerFixture : IAsyncLifetime
                 return;
             }
 
-            throw;
+            ThrowDockerUnavailableSkip(ex);
         }
+    }
+
+    private static bool IsDockerTransportAvailable()
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            return File.Exists(@"\\.\pipe\docker_engine") || File.Exists(@"\\.\pipe\docker_engine_linux");
+        }
+
+        return File.Exists("/var/run/docker.sock");
     }
 
     public async Task DisposeAsync()
@@ -145,7 +170,9 @@ public sealed class SqlServerContainerFixture : IAsyncLifetime
             .WithCleanUp(true)
             .Build();
 
-        await _container.StartAsync().ConfigureAwait(false);
+        Console.WriteLine($"[SqlServerContainerFixture] Starting SQL container via Testcontainers (image={runtime.Image})...");
+        await StartContainerWithTimeoutAsync(_container, ContainerStartupTimeout).ConfigureAwait(false);
+        Console.WriteLine("[SqlServerContainerFixture] SQL container started. Waiting for readiness...");
         var builder = new SqlConnectionStringBuilder(_container.ConnectionString)
         {
             InitialCatalog = runtime.DatabaseName
@@ -158,6 +185,45 @@ public sealed class SqlServerContainerFixture : IAsyncLifetime
     private static bool IsDockerHijackFailure(Exception exception)
     {
         return exception.Message.Contains("cannot hijack chunked or content length stream", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsDockerAvailabilityIssue(Exception exception)
+    {
+        if (exception is TimeoutException || exception is Win32Exception || exception is SocketException)
+        {
+            return true;
+        }
+
+        if (exception is AggregateException aggregate)
+        {
+            foreach (var inner in aggregate.InnerExceptions)
+            {
+                if (IsDockerAvailabilityIssue(inner))
+                {
+                    return true;
+                }
+            }
+        }
+
+        if (IsDockerHijackFailure(exception))
+        {
+            return true;
+        }
+
+        if (exception.InnerException is not null)
+        {
+            return IsDockerAvailabilityIssue(exception.InnerException);
+        }
+
+        return exception.Message.Contains("Docker", StringComparison.OrdinalIgnoreCase)
+               || exception.Message.Contains("named pipe", StringComparison.OrdinalIgnoreCase)
+               || exception.Message.Contains("pipe busy", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static void ThrowDockerUnavailableSkip(Exception exception)
+    {
+        Console.WriteLine($"[SqlServerContainerFixture] Docker unavailable: {exception.Message}");
+        throw new InvalidOperationException("Croniq SQL Server contract tests require Docker Desktop, LocalDB, or a CRONIQ_SQL connection string. Install Docker or set CRONIQ_SQL to reuse an existing database.", exception);
     }
 
     private async Task<bool> TryInitializeLocalDbFallbackAsync(Exception dockerException)
@@ -230,6 +296,7 @@ public sealed class SqlServerContainerFixture : IAsyncLifetime
                 InitialCatalog = "master"
             };
 
+            Console.WriteLine($"[SqlServerContainerFixture] Waiting for docker CLI SQL container (port {hostPort}) to become ready...");
             await WaitForSqlServerAsync(readinessBuilder.ConnectionString, TimeSpan.FromSeconds(90)).ConfigureAwait(false);
 
             ConnectionString = connectionString;
@@ -326,6 +393,19 @@ public sealed class SqlServerContainerFixture : IAsyncLifetime
         }
 
         throw new TimeoutException("SQL Server container did not become ready in time.");
+    }
+
+    private static async Task StartContainerWithTimeoutAsync(ITestcontainersContainer container, TimeSpan timeout)
+    {
+        using var cts = new CancellationTokenSource(timeout);
+        try
+        {
+            await container.StartAsync(cts.Token).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            throw new TimeoutException($"Testcontainer start exceeded timeout of {timeout.TotalSeconds} seconds.");
+        }
     }
 
     private static int GetAvailableTcpPort()
