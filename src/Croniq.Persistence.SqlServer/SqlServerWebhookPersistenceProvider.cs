@@ -356,14 +356,16 @@ public sealed class SqlServerWebhookPersistenceProvider : IWebhookPersistencePro
             endpoint.TenantId,
             endpoint.EnvironmentTag,
             WebhookEndpointEventTypes.Updated,
-            now));
+            now,
+            request.CreatedBy,
+            request.CorrelationId));
         await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
         NotifyEndpointChanged(request.HookKey);
 
         return MapIpRule(entity);
     }
 
-    public async Task DeleteIpRuleAsync(long ruleId, PartitionScope scope, CancellationToken cancellationToken)
+    public async Task DeleteIpRuleAsync(long ruleId, PartitionScope scope, string? deletedBy, string? correlationId, CancellationToken cancellationToken)
     {
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
         var entity = await db.WebhookEndpointIpRules
@@ -383,7 +385,9 @@ public sealed class SqlServerWebhookPersistenceProvider : IWebhookPersistencePro
             entity.TenantId,
             entity.EnvironmentTag,
             WebhookEndpointEventTypes.Updated,
-            now));
+            now,
+            deletedBy,
+            correlationId));
         await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
         NotifyEndpointChanged(entity.HookKey);
     }
@@ -491,7 +495,9 @@ public sealed class SqlServerWebhookPersistenceProvider : IWebhookPersistencePro
         string tenantId,
         string environmentTag,
         string eventType,
-        DateTime occurredAtUtc)
+        DateTime occurredAtUtc,
+        string? actor = null,
+        string? correlationId = null)
     {
         return new WebhookEndpointEventEntity
         {
@@ -499,7 +505,9 @@ public sealed class SqlServerWebhookPersistenceProvider : IWebhookPersistencePro
             TenantId = tenantId,
             EnvironmentTag = environmentTag,
             EventType = eventType,
-            OccurredAtUtc = DateTime.SpecifyKind(occurredAtUtc, DateTimeKind.Utc)
+            OccurredAtUtc = DateTime.SpecifyKind(occurredAtUtc, DateTimeKind.Utc),
+            Actor = string.IsNullOrWhiteSpace(actor) ? null : actor,
+            CorrelationId = string.IsNullOrWhiteSpace(correlationId) ? null : correlationId
         };
     }
 

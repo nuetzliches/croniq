@@ -29,4 +29,10 @@ public sealed class WebhookEndpointEventEntity
     public string EventType { get; set; } = string.Empty;
 
     public DateTime OccurredAtUtc { get; set; }
+
+    [MaxLength(128)]
+    public string? Actor { get; set; }
+
+    [MaxLength(64)]
+    public string? CorrelationId { get; set; }
 }

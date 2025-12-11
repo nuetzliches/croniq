@@ -223,7 +223,7 @@ public sealed class InMemoryWebhookPersistenceProvider : IWebhookPersistenceProv
         }
     }
 
-    public Task DeleteIpRuleAsync(long ruleId, PartitionScope scope, CancellationToken cancellationToken)
+    public Task DeleteIpRuleAsync(long ruleId, PartitionScope scope, string? deletedBy, string? correlationId, CancellationToken cancellationToken)
     {
         lock (_ipRuleLock)
         {

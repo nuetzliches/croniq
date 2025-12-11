@@ -19,4 +19,5 @@ public sealed record WebhookIpRuleCreate(
     string EnvironmentTag,
     string Cidr,
     string? Description,
-    string? CreatedBy);
+    string? CreatedBy,
+    string? CorrelationId);

@@ -36,7 +36,9 @@ public sealed class SqlServerWebhookEndpointChangefeed : IWebhookEndpointChangef
                 x.TenantId,
                 x.EnvironmentTag,
                 x.EventType,
-                DateTime.SpecifyKind(x.OccurredAtUtc, DateTimeKind.Utc)))
+                DateTime.SpecifyKind(x.OccurredAtUtc, DateTimeKind.Utc),
+                x.Actor,
+                x.CorrelationId))
             .ToListAsync(cancellationToken)
             .ConfigureAwait(false);
 

@@ -21,6 +21,7 @@ using Croniq.Providers.Default;
 using Croniq.Sdk;
 using Croniq.Hosting;
 using Microsoft.AspNetCore.RateLimiting;
+using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Options;
@@ -30,6 +31,7 @@ namespace Croniq.Api;
 public static class ApiHostingExtensions
 {
     private static readonly ActivitySource TriggerActivitySource = new("Croniq.Api.Trigger");
+    private const string CorrelationHeaderName = "X-Croniq-CorrelationId";
 
     public static IServiceCollection AddCroniqApiServices(this IServiceCollection services, IConfiguration configuration)
     {
@@ -408,6 +410,7 @@ public static class ApiHostingExtensions
             CreateWebhookIpRuleRequest request,
             ICallerContextAccessor callerContextAccessor,
             IWebhookPersistenceProvider? webhookStore,
+            HttpContext httpContext,
             CancellationToken cancellationToken) =>
         {
             if (string.IsNullOrWhiteSpace(environment))
@@ -431,10 +434,8 @@ public static class ApiHostingExtensions
                 return Results.BadRequest(new { error = "invalid-cidr", message = $"CIDR '{request.Cidr}' is invalid ({error})." });
             }
 
-            var caller = callerContextAccessor.Current;
-            var createdBy = caller is null
-                ? "cronq.api"
-                : $"{caller.CallerType}:{caller.CallerId}";
+            var createdBy = ResolveCallerIdentity(callerContextAccessor);
+            var correlationId = ResolveCorrelationId(httpContext);
 
             var create = new WebhookIpRuleCreate(
                 hookKey,
@@ -442,7 +443,8 @@ public static class ApiHostingExtensions
                 environment,
                 network!.ToString(),
                 request.Description,
-                createdBy);
+                createdBy,
+                correlationId);
 
             try
             {
@@ -462,6 +464,7 @@ public static class ApiHostingExtensions
             string environment,
             ICallerContextAccessor callerContextAccessor,
             IWebhookPersistenceProvider? webhookStore,
+            HttpContext httpContext,
             CancellationToken cancellationToken) =>
         {
             _ = hookKey ?? throw new ArgumentNullException(nameof(hookKey));
@@ -483,7 +486,9 @@ public static class ApiHostingExtensions
             }
 
             var scope = new PartitionScope(tenantId, environment);
-            await webhookStore.DeleteIpRuleAsync(ruleId, scope, cancellationToken).ConfigureAwait(false);
+            var deletedBy = ResolveCallerIdentity(callerContextAccessor);
+            var correlationId = ResolveCorrelationId(httpContext);
+            await webhookStore.DeleteIpRuleAsync(ruleId, scope, deletedBy, correlationId, cancellationToken).ConfigureAwait(false);
             return Results.NoContent();
         });
 
@@ -769,6 +774,36 @@ public static class ApiHostingExtensions
         });
 
         return app;
+    }
+
+    private static string ResolveCallerIdentity(ICallerContextAccessor accessor)
+    {
+        var caller = accessor?.Current;
+        return caller is null ? "cronq.api" : $"{caller.CallerType}:{caller.CallerId}";
+    }
+
+    private static string ResolveCorrelationId(HttpContext httpContext)
+    {
+        if (httpContext is null)
+        {
+            return Guid.NewGuid().ToString("N");
+        }
+
+        if (httpContext.Request.Headers.TryGetValue(CorrelationHeaderName, out var values))
+        {
+            var candidate = values.Count > 0 ? values[0] : null;
+            if (!string.IsNullOrWhiteSpace(candidate))
+            {
+                return candidate!;
+            }
+        }
+
+        if (!string.IsNullOrWhiteSpace(httpContext.TraceIdentifier))
+        {
+            return httpContext.TraceIdentifier!;
+        }
+
+        return Guid.NewGuid().ToString("N");
     }
 
     public static IServiceCollection AddCroniqApiRateLimiter(this IServiceCollection services)

@@ -22,5 +22,5 @@ public interface IWebhookPersistenceProvider
 
     Task<WebhookIpRuleDefinition> AddIpRuleAsync(WebhookIpRuleCreate request, CancellationToken cancellationToken);
 
-    Task DeleteIpRuleAsync(long ruleId, PartitionScope scope, CancellationToken cancellationToken);
+    Task DeleteIpRuleAsync(long ruleId, PartitionScope scope, string? deletedBy, string? correlationId, CancellationToken cancellationToken);
 }

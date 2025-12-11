@@ -400,6 +400,43 @@ public sealed class SqlServerWebhookPersistenceProviderTests : IAsyncLifetime
         evt.EventType.Should().Be(WebhookEndpointEventTypes.Deleted);
     }
 
+    [Fact]
+    [Trait(TestCategories.Category, TestCategories.Contract)]
+    public async Task IpRuleMutations_RecordActorAndCorrelation()
+    {
+        var scope = new PartitionScope("tenant-iprules-audit", "dev");
+        var jobKey = JobKey.Create(scope.TenantId, scope.EnvironmentTag, "ops", "audit");
+        var hookKey = "tenant-iprules-audit-dev";
+        await UpsertEndpointAsync(hookKey, scope, jobKey);
+
+        var createdRule = await _persistence!.AddIpRuleAsync(
+            new WebhookIpRuleCreate(
+                hookKey,
+                scope.TenantId,
+                scope.EnvironmentTag,
+                "198.51.100.0/24",
+                "audit",
+                "sdk:tests",
+                "corr-create"),
+            CancellationToken.None);
+
+        await _persistence.DeleteIpRuleAsync(
+            createdRule.Id,
+            scope,
+            "ui:tests",
+            "corr-delete",
+            CancellationToken.None);
+
+        await using var context = await _dbFactory!.CreateDbContextAsync();
+        var auditEvents = await context.WebhookEndpointEvents
+            .Where(x => x.HookKey == hookKey && x.CorrelationId != null)
+            .OrderBy(x => x.Id)
+            .ToListAsync();
+
+        auditEvents.Should().ContainSingle(evt => evt.CorrelationId == "corr-create" && evt.Actor == "sdk:tests");
+        auditEvents.Should().ContainSingle(evt => evt.CorrelationId == "corr-delete" && evt.Actor == "ui:tests");
+    }
+
     private async Task UpsertEndpointAsync(string hookKey, PartitionScope scope, JobKey jobKey)
     {
         await _persistence!.UpsertAsync(

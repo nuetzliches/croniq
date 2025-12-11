@@ -142,10 +142,74 @@ PY
    ```
 
    The script prints the activation/expires timestamps and the new secret so you can capture it immediately.
+
 4. **Disable or delete hooks** via `POST` (set `enabled:false`) for temporary pauses or `DELETE /tenants/{tenantId}/webhooks/{hookKey}?environment=<tag>` for permanent removal. Disabled hooks still show up in diagnostics; deleted hooks return `404` immediately.
 5. **Audit usage** through telemetry (`Croniq.Webhooks.Ingress` spans) and, once wired up, the `WebhookIngressDeadLetter` table. Until then, structured logs remain the source of truth for per-hook activity.
 
 > ⚠️ Signatures stay mandatory by default. To disable them for controlled scenarios, set `Croniq:Webhooks:Security:AllowUnsignedHooks=true` in configuration **and** pass `allowUnsigned=true` when calling the management API. `Croniq.Webhooks` logs a warning the first time an unsigned payload is accepted so you have an audit trail.
+
+### Webhook Security Guidance
+
+Consumers that call Croniq's webhook ingress should implement the following safeguards so every trigger remains tamper-proof and traceable.
+
+#### Signature generation
+
+`X-Croniq-Signature` is `sha256=<hex>` where `<hex>` is the lowercase HMAC-SHA256 digest of the UTF-8 request body using the shared webhook secret. Example implementations:
+
+```csharp
+// .NET 8 / C#
+using var hmac = new HMACSHA256(Encoding.UTF8.GetBytes(secret));
+var payload = JsonSerializer.Serialize(body);
+var signature = "sha256=" + Convert.ToHexString(hmac.ComputeHash(Encoding.UTF8.GetBytes(payload))).ToLowerInvariant();
+request.Headers.Add("X-Croniq-Signature", signature);
+```
+
+```ts
+// Node.js / TypeScript
+import crypto from "node:crypto";
+
+const payload = JSON.stringify(body);
+const digest = crypto
+  .createHmac("sha256", secret)
+  .update(payload, "utf8")
+  .digest("hex");
+request.set("X-Croniq-Signature", `sha256=${digest}`);
+```
+
+```go
+// Go 1.22+
+h := hmac.New(sha256.New, []byte(secret))
+h.Write(bodyBytes)
+signature := fmt.Sprintf("sha256=%x", h.Sum(nil))
+req.Header.Set("X-Croniq-Signature", signature)
+```
+
+Treat secrets as credentials: read them from your secret manager at runtime, never check them into source control, and rotate them via the management API runbook above.
+
+#### Replay protection
+
+- Send `X-Croniq-Timestamp` with the Unix epoch seconds when the payload was created. Croniq rejects timestamps outside the default ±5-minute window once strict mode is enabled; callers should also refuse to retry a payload once that window has elapsed.
+- Add `X-Croniq-Delivery-Id` (a UUID) and store it in your system of record. Croniq logs duplicate IDs, giving you a breadcrumb trail during audits.
+- When re-sending after failures, prefer a fresh payload with a new timestamp/id instead of replaying stale data.
+
+#### Recommended headers
+
+- `Content-Type: application/json` (or the actual MIME type) so Croniq enforces payload size/shape.
+- `User-Agent` identifying the workload (`sap-billing-forwarder/2.4`).
+- `Idempotency-Key` when you orchestrate multiple retries for the same business event; Croniq stores the key inside metadata for downstream jobs.
+- `X-Croniq-Tenant` / `X-Croniq-Environment` are **not** required—the hook already maps to a tenant/environment—but you may add informational metadata via `payload:*` fields if you need extra routing context.
+
+#### Backoff and error handling
+
+- `429 ip-rule-denied`: your source IP is not listed. Cross-check the allow list and update it via the API or `WebhookIpRuleClient` before retrying.
+- `401 signature-invalid`: regenerate the signature using the newest secret, confirm there is no whitespace/double encoding, and check whether a rotation just occurred (see `WebhookEndpointEvents`).
+- `429 rate-limit`: respect the `Retry-After` header. Croniq's fixed window allows short bursts but will throttle noisy callers.
+
+#### Secret rotation
+
+- Subscribe to your CMDB/secret manager so rotations propagate to caller workloads within the grace window returned by `POST .../rotate-secret`.
+- After rotating, send health-check payloads using both the old and new secrets to confirm Croniq accepts them until the grace period expires.
+- Keep rotation notes (`notes` field) descriptive—Croniq surfaces them in `WebhookEndpointEvents` to speed up incident reviews.
 
 ## Pausing & Resuming
 

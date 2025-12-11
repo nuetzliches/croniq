@@ -11,4 +11,6 @@ public sealed record WebhookEndpointEvent(
     string TenantId,
     string EnvironmentTag,
     string EventType,
-    DateTime OccurredAtUtc);
+    DateTime OccurredAtUtc,
+    string? Actor,
+    string? CorrelationId);
