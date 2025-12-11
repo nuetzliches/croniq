@@ -1,3 +1,8 @@
+## Testing Guidance
+
+- Run the full solution suite via `pwsh ./scripts/run-tests.ps1 -Configuration Debug` from the repo root. The script wires required env vars (`CRONIQ_SQL`, coverage reporting, binlogs) and executes `dotnet test croniq.sln` outside of the VS Code extension host.
+- If you need to run `dotnet test croniq.sln` manually, do so from an external (preferably elevated) terminal instead of the VS Code Test Explorer. This avoids the GitHub Copilot Chat log-rotation issue that can freeze the editor when large test outputs are streamed inside VS Code.
+
 # Croniq Test Harness
 
 This folder contains all automated test suites that back the Croniq quality strategy described in `docs/deep-dive/testing.md`. Use this guide as a quick reference for running the suites locally and diagnosing failures.
