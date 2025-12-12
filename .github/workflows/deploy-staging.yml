@@ -23,6 +23,7 @@ permissions:
 
 env:
   DOTNET_NOLOGO: true
+  DOTNET_ROLL_FORWARD: LatestMajor
   REGISTRY: ghcr.io
   STAGING_NAMESPACE: croniq-staging
 
@@ -42,9 +43,9 @@ jobs:
       - name: Resolve version
         id: version
         run: |
-          VERSION="${{ inputs.image-tag }}"
+          VERSION="${{ inputs['image-tag'] }}"
           if [ -z "$VERSION" ]; then
-            VERSION="${{ github.event.inputs["image-tag"] }}"
+            VERSION="${{ github.event.inputs['image-tag'] }}"
           fi
           if [ -z "$VERSION" ]; then
             VERSION="${GITHUB_REF_NAME}"

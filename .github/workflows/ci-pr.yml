@@ -11,6 +11,7 @@ permissions:
 
 env:
   DOTNET_NOLOGO: true
+  DOTNET_ROLL_FORWARD: LatestMajor
   DOTNET_SKIP_FIRST_TIME_EXPERIENCE: true
 
 jobs:
