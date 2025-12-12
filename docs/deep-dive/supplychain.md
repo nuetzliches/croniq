@@ -22,7 +22,7 @@ This plan details how we will fulfill the checklist item "SBOM/Signierung und Vu
 - **Containers**: `trivy image ghcr.io/nuetzliches/croniq-api:<tag>` in release workflow; block on HIGH/CRITICAL. Trivy is installed through `scripts/ci/install-supplychain-tool.ps1 -Tool trivy`, sharing the same version manifest as Syft.
 - **Source/FS**: `trivy fs --scanners vuln,secret .` nightly; fail on CRITICAL secrets/vulns.
 - **Reports**: Upload SARIF to GitHub Security tab (`trivy ... -f sarif -o trivy.sarif`). Provide summary comment in PRs.
-- **Waivers**: Maintain `SECURITY_NOTES.md` (future) documenting accepted risks, expiry dates, and references.
+- **Waivers**: Maintain `docs/deep-dive/supplychain-waivers.md` documenting accepted risks, expiry dates, and references.
 
 ## License Compliance
 
@@ -31,6 +31,11 @@ This plan details how we will fulfill the checklist item "SBOM/Signierung und Vu
 - **Execution**: PR validation (`ci-pr.yml`), nightly compliance (`nightly.yml`) and the release workflow (`release.yml`) all run `dotnet tool run dotnet-project-licenses --include-transitive --use-project-assets-json` against `croniq.sln`. PR builds upload the generated `artifacts/licenses/license-scan.json` as evidence; nightly/release builds publish it with other compliance artifacts.
 - **Fail-Fast Behavior**: Any package emitting a license identifier that is not on the allow list causes the job to fail. Contributors must either replace the dependency or document why it is still MIT-compatible and update the overrides.
 - **Auditing**: The JSON output is diff-friendly and stored with build artifacts, enabling release reviewers to confirm the dependency set for each build.
+
+## Waivers & Exceptions
+
+- Temporary vulnerability waivers must follow `docs/deep-dive/supplychain-waivers.md` (expiry, mitigation, tracking issue). Reference waiver IDs in CI ignore lists where needed.
+- Expired waivers cause CI/release to fail until resolved or renewed with security review.
 
 ## Toolchain Pinning & Local Usage
 
@@ -44,9 +49,27 @@ This plan details how we will fulfill the checklist item "SBOM/Signierung und Vu
 ## Signing & Provenance
 
 - **NuGet**: Use `dotnet nuget sign` (or `nuget sign`) with an Azure Key Vault or local certificate; store certificate thumbprint in GitHub secret. Optional alternative: integrate with SignPath if available.
-- **Containers**: Sign images using `cosign sign --key env://COSIGN_KEY ghcr.io/nuetzliches/croniq-api:<tag>`. Store public key in repo (`infra/signing/cosign.pub`).
+- **Containers**: Sign images using `cosign sign --key env://COSIGN_KEY ghcr.io/nuetzliches/croniq-api:<tag>`. Commit the public key at `infra/signing/cosign.pub` once generated so consumers can verify.
+- **Public certs/keys**: Export the NuGet signing certificate as `infra/signing/nuget-signing.cer` and document its thumbprint (also referenced from `docs/SECURITY.md`).
 - **Attestations**: Use `cosign attest` with predicate type `https://slsa.dev/provenance/v1` to link SBOM hash + build metadata.
-- **Verification docs**: Provide `docs/deep-dive/release-verification.md` (future) showing `cosign verify --key cosign.pub ...` steps.
+- **Verification docs**: `docs/deep-dive/release-verification.md` contains consumer commands; `docs/SECURITY.md` summarizes guarantees.
+- **Secrets in CI**: The release workflow looks for `COSIGN_KEY`, `NUGET_SIGNING_CERT_BASE64`, and `NUGET_SIGNING_CERT_PASSWORD` to enable signing steps.
+
+### Provisioning runbook (manual, once per rotation)
+
+1. **cosign key pair**
+   - Generate locally: `cosign generate-key-pair --output-key cosign.key --output-pub cosign.pub`.
+   - Store `cosign.key` as GitHub secret `COSIGN_KEY` (base64 contents), commit `infra/signing/cosign.pub`.
+   - Optional: use `cosign generate-key-pair --kms <provider://key>` when moving to an HSM/KMS.
+2. **NuGet signing cert**
+   - For initial bootstrap, create a time-bounded code-signing cert (PowerShell):  
+     `New-SelfSignedCertificate -Type CodeSigning -Subject "CN=Croniq NuGet Signing" -CertStoreLocation Cert:\CurrentUser\My -NotAfter (Get-Date).AddYears(1)`
+   - Export to PFX (with password) and base64-encode to feed into GitHub secrets `NUGET_SIGNING_CERT_BASE64` and `NUGET_SIGNING_CERT_PASSWORD`.
+   - Export the public CER and commit as `infra/signing/nuget-signing.cer`; note the thumbprint in `docs/SECURITY.md`.
+   - When migrating to a managed CA/Key Vault, point `dotnet nuget sign` to the cert in the vault instead of the PFX workflow.
+3. **Update docs**
+   - Add new fingerprints/rotation notes to `docs/SECURITY.md`.
+   - Keep `infra/signing/README.md` in sync with the current public artifacts.
 
 ## Workflow Integration
 
@@ -66,7 +89,7 @@ This plan details how we will fulfill the checklist item "SBOM/Signierung und Vu
 
 ## Governance & Documentation
 
-- Maintain `docs/SECURITY.md` (future) summarizing the guarantees and how users verify artifacts.
+- Maintain `docs/SECURITY.md` summarizing the guarantees and how users verify artifacts.
 - Document secret provisioning (NuGet cert, cosign key) in an internal runbook referenced from this plan.
 - Use GitHub environments with required reviewers for release workflow steps that access signing secrets.
 - Track vulnerabilities via GitHub Security tab; triage SLA: CRITICAL <48h, HIGH <7d.
@@ -76,8 +99,8 @@ This plan details how we will fulfill the checklist item "SBOM/Signierung und Vu
 - [x] Add `syft` and `trivy` to toolchain (`scripts/ci/install-supplychain-tool.ps1` + `eng/versions/supplychain-tools.json`) and document local usage. (2025-12-12)
 - [x] Implement PR/nightly/release workflow steps for scans + SBOMs per the pipeline plan (see `.github/workflows/nightly.yml` + `.github/workflows/release.yml`).
 - [ ] Provision signing keys (NuGet cert, cosign) and store public verification artifacts in the repo.
-- [ ] Add documentation (`docs/deep-dive/release-verification.md` + `SECURITY.md`) showing verification commands for consumers.
-- [ ] Create waiver process (template + file) for temporary vulnerability exceptions.
+- [x] Add documentation (`docs/deep-dive/release-verification.md` + `SECURITY.md`) showing verification commands for consumers.
+- [x] Create waiver process (template + file) for temporary vulnerability exceptions.
 - [x] Ensure release workflow attaches SBOMs, scans, and signatures to GitHub Releases automatically.
 
 Once this backlog is done, the checklist entry "SBOM/Signierung und Vulnerability Scans" can be marked complete.

@@ -4,5 +4,8 @@
     },
     "trivy": {
         "version": "0.68.1"
+    },
+    "cosign": {
+        "version": "2.2.3"
     }
 }

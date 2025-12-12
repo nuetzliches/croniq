@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)]
-    [ValidateSet("syft", "trivy")]
+    [ValidateSet("syft", "trivy", "cosign")]
     [string]$Tool,
 
     [string]$Version,
@@ -146,6 +146,38 @@ function Get-TrivyAssetInfo {
     }
 }
 
+function Get-CosignAssetInfo {
+    param(
+        [string]$Version,
+        [pscustomobject]$Platform
+    )
+
+    $key = "{0}-{1}" -f $Platform.Os, $Platform.Arch
+    $assetMap = @{
+        'linux-amd64'   = @{ File = 'cosign-linux-amd64'; Archive = 'file' }
+        'linux-arm64'   = @{ File = 'cosign-linux-arm64'; Archive = 'file' }
+        'darwin-amd64'  = @{ File = 'cosign-darwin-amd64'; Archive = 'file' }
+        'darwin-arm64'  = @{ File = 'cosign-darwin-arm64'; Archive = 'file' }
+        'windows-amd64' = @{ File = 'cosign-windows-amd64.exe'; Archive = 'file' }
+        'windows-arm64' = @{ File = 'cosign-windows-arm64.exe'; Archive = 'file' }
+    }
+
+    if (-not $assetMap.ContainsKey($key)) {
+        throw "Cosign does not publish binaries for '$key' yet"
+    }
+
+    $selected = $assetMap[$key]
+    $uri = "https://github.com/sigstore/cosign/releases/download/v$Version/$($selected.File)"
+    $binaryName = if ($Platform.Os -eq 'windows') { 'cosign.exe' } else { 'cosign' }
+
+    return [PSCustomObject]@{
+        FileName   = $selected.File
+        Uri        = $uri
+        BinaryName = $binaryName
+        Archive    = $selected.Archive
+    }
+}
+
 function Resolve-InstallDir {
     param([string]$Path)
     if ([System.IO.Path]::IsPathRooted($Path)) {
@@ -173,18 +205,27 @@ function Install-Tool {
         Write-Host "Downloading $Tool $Version from $($AssetInfo.Uri)"
         Invoke-WebRequest -Uri $AssetInfo.Uri -OutFile $downloadPath -UseBasicParsing
 
+        $binary = $null
+
         if ($AssetInfo.Archive -eq 'zip') {
             Expand-Archive -Path $downloadPath -DestinationPath $tempDir -Force
-        } else {
+        } elseif ($AssetInfo.Archive -eq 'tar') {
             & tar -xzf $downloadPath -C $tempDir
+        } elseif ($AssetInfo.Archive -eq 'file') {
+            $binary = Get-Item -Path $downloadPath
+        } else {
+            throw "Unsupported archive type '$($AssetInfo.Archive)' for $Tool"
         }
 
-        $binary = Get-ChildItem -Path $tempDir -Recurse -File -Filter $AssetInfo.BinaryName | Select-Object -First 1
+        if (-not $binary) {
+            $binary = Get-ChildItem -Path $tempDir -Recurse -File -Filter $AssetInfo.BinaryName | Select-Object -First 1
+        }
         if (-not $binary) {
             throw "Failed to locate $($AssetInfo.BinaryName) in archive"
         }
 
-        $destination = Join-Path -Path $InstallDir -ChildPath $AssetInfo.BinaryName
+        $destinationName = $AssetInfo.BinaryName
+        $destination = Join-Path -Path $InstallDir -ChildPath $destinationName
         Copy-Item -Path $binary.FullName -Destination $destination -Force
 
         if ($Platform.Os -ne 'windows') {
@@ -219,6 +260,7 @@ if (-not $Version) {
 $assetInfo = switch ($Tool) {
     'syft' { Get-SyftAssetInfo -Version $Version -Platform $platformInfo }
     'trivy' { Get-TrivyAssetInfo -Version $Version -Platform $platformInfo }
+    'cosign' { Get-CosignAssetInfo -Version $Version -Platform $platformInfo }
 }
 
 Install-Tool -Tool $Tool -Version $Version -AssetInfo $assetInfo -Platform $platformInfo -InstallDir $resolvedInstallDir
