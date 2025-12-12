@@ -80,6 +80,14 @@ public static class SqlServerDatabaseMigrator
 
     private static ServiceProvider BuildProvider(string connectionString)
     {
+        var builder = new SqlConnectionStringBuilder(connectionString)
+        {
+            TrustServerCertificate = true,
+            Encrypt = false,
+            MultipleActiveResultSets = true,
+            ApplicationName = "Croniq.TestKit.SqlServerMigrator"
+        };
+
         var services = new ServiceCollection();
         services.AddLogging(builder =>
         {
@@ -88,7 +96,7 @@ public static class SqlServerDatabaseMigrator
         });
         services.AddCroniqSqlServerDbContext(options =>
         {
-            options.ConnectionString = connectionString;
+            options.ConnectionString = builder.ConnectionString;
             options.MigrationsAssembly ??= typeof(SqlServerDbContext).Assembly.GetName().Name;
         });
 
