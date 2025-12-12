@@ -38,6 +38,10 @@
 - [x] Security/OIDC-Basis liefern (`docs/deep-dive/security.md`): OIDC-Options + Dual-Auth-Middleware, CallerContext + RateLimiter-Partitionierung, gRPC-Interceptor, Admin-APIs, Doku und Regressionstests implementieren.
 - [x] Supply-Chain-Nacharbeiten (`docs/deep-dive/supplychain.md`): Signing Keys bereitstellen, Verification-Doku + Waiver-Prozess ergänzt (`docs/deep-dive/release-verification.md`, `docs/deep-dive/supplychain-waivers.md`, `docs/SECURITY.md`). (`syft`/`trivy` Toolchain + lokale Anleitung erledigt 2025-12-12.)
 - [x] Webhook-Trigger (Croniq.Webhooks Projekt) planen, host implementieren und in `docs/deep-dive/architecture.md` verankern (inkl. CRUD-API + persistente Hooks)
+- [ ] Job-Log-Persistenz (Plan siehe `docs/deep-dive/designs/job-log-persistence.md`)
+  - [ ] ExecutionId/Correlation im Scheduler-Pipeline-Scope propagieren; `JobLogScope` + Provider opt-in (`IJobLogStore`/`IJobLogReader`) anlegen
+  - [ ] EF-Core-Schema (JobExecutionRecord, JobExecutionLogEntry, JobExecutionLogChunk) inkl. Optionen/Retention + Structured/NDJSON-Modus umsetzen; Filesystem/Object-Store-Modus (NDJSON pro Execution) verdrahten
+  - [ ] Tests + Retention-Job + Failure-Handling (Drop/Buffer) absichern; API/CLI-Reader bereitstellen
 - [ ] Coverage-Ziel: Core/Overall ≥ 80 % erreichen (Gates nachziehen, wenn stabil)
 
 ## Deferred: Remote Persistence (SaaS)
