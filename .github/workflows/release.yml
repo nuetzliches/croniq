@@ -19,6 +19,7 @@ permissions:
 
 env:
   DOTNET_NOLOGO: true
+  DOTNET_ROLL_FORWARD: LatestMajor
   REGISTRY: ghcr.io
 
 jobs:
