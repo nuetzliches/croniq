@@ -124,21 +124,20 @@ jobs:
             --exit-code 0 \
             --no-progress
 
-      - name: Upload Trivy SARIF
+      - name: Upload Trivy SARIF to GitHub Security
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: github/codeql-action/upload-sarif@v3
         with:
-          name: trivy-fs-report
-          path: artifacts/trivy/source.sarif
+          sarif_file: artifacts/trivy/source.sarif
 
-      - name: Decode signing certificate
-        if: env.NUGET_SIGNING_CERT_BASE64 != ''
+      - name: Decode signing certificate (disabled)
+        if: ${{ false }} # Temporarily disable signing until public CA cert is available
         run: |
           echo "$NUGET_SIGNING_CERT_BASE64" | base64 -d > signingCert.pfx
         shell: bash
 
-      - name: Sign NuGet packages
-        if: env.NUGET_SIGNING_CERT_BASE64 != ''
+      - name: Sign NuGet packages (disabled)
+        if: ${{ false }} # Temporarily disable signing until public CA cert is available
         run: dotnet nuget sign artifacts/nuget/*.nupkg --certificate-path signingCert.pfx --certificate-password "$NUGET_SIGNING_CERT_PASSWORD" --timestamper http://timestamp.digicert.com
         shell: bash
 

@@ -66,6 +66,3 @@ infra/docker/mssql-data/
 docs/node_modules/
 docs/.vitepress/dist/
 docs/.vitepress/cache/
-
-# Temporary files
-.trivy-bin
