@@ -175,7 +175,9 @@ public sealed class SqlServerContainerFixture : IAsyncLifetime
         Console.WriteLine("[SqlServerContainerFixture] SQL container started. Waiting for readiness...");
         var builder = new SqlConnectionStringBuilder(_container.ConnectionString)
         {
-            InitialCatalog = runtime.DatabaseName
+            InitialCatalog = runtime.DatabaseName,
+            Encrypt = false,
+            TrustServerCertificate = true
         };
         ConnectionString = builder.ConnectionString;
 
@@ -238,6 +240,7 @@ public sealed class SqlServerContainerFixture : IAsyncLifetime
             DataSource = @"(localdb)\\MSSQLLocalDB",
             InitialCatalog = $"CroniqTests_{Environment.ProcessId}_{Guid.NewGuid():N}",
             IntegratedSecurity = true,
+            Encrypt = false,
             TrustServerCertificate = true,
             ConnectTimeout = 30
         };
@@ -293,7 +296,9 @@ public sealed class SqlServerContainerFixture : IAsyncLifetime
             var connectionString = BuildCliConnectionString(hostPort, runtime);
             var readinessBuilder = new SqlConnectionStringBuilder(connectionString)
             {
-                InitialCatalog = "master"
+                InitialCatalog = "master",
+                Encrypt = false,
+                TrustServerCertificate = true
             };
 
             Console.WriteLine($"[SqlServerContainerFixture] Waiting for docker CLI SQL container (port {hostPort}) to become ready...");
