@@ -4,7 +4,16 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
     <AnalysisLevel>latest</AnalysisLevel>
+    <MinVerTagPrefix>v</MinVerTagPrefix>
+    <MinVerDefaultPreReleasePhase>preview</MinVerDefaultPreReleasePhase>
+    <MinVerAutoIncrement>minor</MinVerAutoIncrement>
   </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="MinVer" Version="6.0.0">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
+  </ItemGroup>
   <PropertyGroup Condition="$([System.String]::Copy('$(MSBuildProjectName)').Contains('.Tests'))">
     <IsTestProject>true</IsTestProject>
     <CollectCoverage>true</CollectCoverage>
