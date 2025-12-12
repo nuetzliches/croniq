@@ -142,6 +142,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       COSIGN_KEY: ${{ secrets.COSIGN_KEY }}
+      COSIGN_KEY_B64: ${{ secrets.COSIGN_KEY_B64 }}
       COSIGN_PASSWORD: ${{ secrets.COSIGN_PASSWORD }}
     steps:
       - name: Checkout
@@ -191,6 +192,10 @@ jobs:
           curl -sSfL https://github.com/sigstore/cosign/releases/latest/download/cosign-linux-amd64 > cosign
           chmod +x cosign
           mv cosign ./bin/cosign
+      - name: Decode base64 cosign key (optional)
+        if: env.COSIGN_KEY_B64 != ''
+        run: echo "$COSIGN_KEY_B64" | base64 -d > cosign.key
+        shell: bash
 
       - name: Build Croniq API image
         run: |
@@ -235,12 +240,16 @@ jobs:
             --no-progress
 
       - name: Sign container images (cosign)
-        if: env.COSIGN_KEY != ''
+        if: env.COSIGN_KEY != '' || env.COSIGN_KEY_B64 != ''
         env:
           COSIGN_EXPERIMENTAL: "true"
         run: |
-          ./bin/cosign sign --yes --key env://COSIGN_KEY ${{ steps.version.outputs.api_image }}
-          ./bin/cosign sign --yes --key env://COSIGN_KEY ${{ steps.version.outputs.worker_image }}
+          KEYFLAG="--key env://COSIGN_KEY"
+          if [ -n "$COSIGN_KEY_B64" ]; then
+            KEYFLAG="--key cosign.key"
+          fi
+          ./bin/cosign sign --yes $KEYFLAG ${{ steps.version.outputs.api_image }}
+          ./bin/cosign sign --yes $KEYFLAG ${{ steps.version.outputs.worker_image }}
         shell: bash
 
       - name: Upload container artifacts

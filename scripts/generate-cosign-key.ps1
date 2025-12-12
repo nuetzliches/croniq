@@ -73,10 +73,12 @@ $artifactsDir = Resolve-OrCreateDirectory -Path $ArtifactsDir
 $signingDir = Resolve-OrCreateDirectory -Path $SigningDir
 
 $keyPath = Join-Path $artifactsDir "cosign.key"
+$keyBase64Path = Join-Path $artifactsDir "cosign.key.b64"
 $pubPath = Join-Path $signingDir "cosign.pub"
 
 if (-not $Force) {
     if (Test-Path $keyPath) { throw "Key file already exists at $keyPath. Use -Force to overwrite." }
+    if (Test-Path $keyBase64Path) { throw "Base64 key file already exists at $keyBase64Path. Use -Force to overwrite." }
     if (Test-Path $pubPath) { throw "Public key already exists at $pubPath. Use -Force to overwrite." }
 }
 
@@ -111,8 +113,14 @@ try {
     Copy-Item -Path $tempKey -Destination $keyPath -Force
     Copy-Item -Path $tempPub -Destination $pubPath -Force
 
+    # Emit a base64-encoded variant for CI secrets (keeps newlines intact)
+    $keyBytes = [System.IO.File]::ReadAllBytes($keyPath)
+    $keyBase64 = [System.Convert]::ToBase64String($keyBytes)
+    Set-Content -Path $keyBase64Path -Value $keyBase64 -Encoding ascii -Force
+
     Write-Host "cosign key pair generated."
     Write-Host "Private key: $keyPath"
+    Write-Host "Private key (base64 for secrets): $keyBase64Path"
     Write-Host "Public key : $pubPath (commit this file; keep the private key secret)"
 }
 finally {
