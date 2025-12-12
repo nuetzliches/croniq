@@ -1,0 +1,25 @@
+using System.Collections.Generic;
+using System.Diagnostics;
+using Croniq.Core.Execution;
+using Microsoft.Extensions.Logging.Abstractions;
+using Shouldly;
+using Xunit;
+
+namespace Croniq.Core.Tests.Execution;
+
+public class JobExecutionContextTests
+{
+    [Fact]
+    public void Uses_defaults_when_metadata_or_logger_missing()
+    {
+        var ctx = new JobExecutionContext("tenant:env:ns:job", null, null!, null!);
+        ctx.JobKey.ShouldBe("tenant:env:ns:job");
+        ctx.Metadata.ShouldBeEmpty();
+        ctx.Logger.ShouldBe(NullLogger.Instance);
+        ctx.ActivitySource.ShouldNotBeNull();
+
+        var metadata = new Dictionary<string, string> { { "foo", "bar" } };
+        var ctxWithValues = new JobExecutionContext("a:b:c:d", metadata, NullLogger.Instance, new ActivitySource("test"));
+        ctxWithValues.Metadata.ShouldContainKey("foo");
+    }
+}

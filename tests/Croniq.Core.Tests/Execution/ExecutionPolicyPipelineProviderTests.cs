@@ -95,4 +95,83 @@ public class ExecutionPolicyPipelineProviderTests
 
         await Should.ThrowAsync<TimeoutRejectedException>(timeoutAct);
     }
+
+    [Fact]
+    public async Task Retries_only_retryable_exceptions()
+    {
+        var provider = new ExecutionPolicyPipelineProvider(NullLogger<ExecutionPolicyPipelineProvider>.Instance);
+        var options = new ExecutionPolicyOptions
+        {
+            Timeout = { Enabled = false },
+            Retry =
+            {
+                Enabled = true,
+                MaxAttempts = 2,
+                InitialDelay = TimeSpan.Zero,
+                MaxDelay = TimeSpan.Zero,
+                BackoffStrategy = RetryBackoffStrategy.Fixed,
+                RetryableExceptions = new[] { typeof(InvalidOperationException).FullName! }
+            }
+        };
+
+        var pipeline = provider.Get(SampleJob, options);
+        var attempts = 0;
+
+        await Should.ThrowAsync<InvalidOperationException>(async () =>
+        {
+            await pipeline.ExecuteAsync(_ =>
+            {
+                attempts++;
+                return ValueTask.FromException(new InvalidOperationException("retryable"));
+            }, CancellationToken.None);
+        });
+        attempts.ShouldBe(2); // first try + one retry
+
+        attempts = 0;
+        await Should.ThrowAsync<ArgumentException>(async () =>
+        {
+            await pipeline.ExecuteAsync(_ =>
+            {
+                attempts++;
+                return ValueTask.FromException(new ArgumentException("non-retryable"));
+            }, CancellationToken.None);
+        });
+        attempts.ShouldBe(1); // no retries because not in allow-list
+    }
+
+    [Fact]
+    public async Task Opens_circuit_after_failures()
+    {
+        var provider = new ExecutionPolicyPipelineProvider(NullLogger<ExecutionPolicyPipelineProvider>.Instance);
+        var options = new ExecutionPolicyOptions
+        {
+            Timeout = { Enabled = false },
+            Retry = { Enabled = false },
+            CircuitBreaker =
+            {
+                Enabled = true,
+                FailureThreshold = 50, // 50%
+                SamplingWindow = TimeSpan.FromSeconds(5),
+                BreakDuration = TimeSpan.FromSeconds(30),
+                MinimumThroughput = 2
+            }
+        };
+
+        var pipeline = provider.Get(SampleJob, options);
+
+        // two failures should open the circuit (failure ratio 100% > 50% with throughput 2)
+        await Should.ThrowAsync<InvalidOperationException>(async () =>
+        {
+            await pipeline.ExecuteAsync(_ => ValueTask.FromException(new InvalidOperationException("boom1")), CancellationToken.None);
+        });
+        await Should.ThrowAsync<InvalidOperationException>(async () =>
+        {
+            await pipeline.ExecuteAsync(_ => ValueTask.FromException(new InvalidOperationException("boom2")), CancellationToken.None);
+        });
+
+        await Should.ThrowAsync<Polly.CircuitBreaker.BrokenCircuitException>(async () =>
+        {
+            await pipeline.ExecuteAsync(_ => ValueTask.FromResult(true), CancellationToken.None);
+        });
+    }
 }

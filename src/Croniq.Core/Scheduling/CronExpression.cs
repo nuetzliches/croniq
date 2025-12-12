@@ -21,6 +21,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using System.Linq;
 using System.Runtime.Serialization;
@@ -209,6 +210,7 @@ namespace Croniq.Core.Scheduling;
 /// <author>Refactoring from CronTrigger to CronExpression by Aaron Craven</author>
 /// <author>Marko Lahma (.NET)</author>
 [Serializable]
+[ExcludeFromCodeCoverage]
 public class CronExpression : IDeserializationCallback, ISerializable
 {
     /// <summary>

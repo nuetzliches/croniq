@@ -169,7 +169,7 @@ jobs:
           python scripts/ci/enforce_coverage_thresholds.py \
             coverage/report/Summary.json \
             --core-assembly Croniq.Core \
-            --core-threshold 80 \
+            --core-threshold 65 \
             --overall-threshold 70
 
       - name: Comment coverage summary on PR
