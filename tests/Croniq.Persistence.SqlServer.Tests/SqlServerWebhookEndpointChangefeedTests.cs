@@ -6,7 +6,7 @@ using Croniq.Persistence.Abstractions;
 using Croniq.Persistence.SqlServer.Tests.Collections;
 using Croniq.TestKit.SqlServer;
 using Croniq.TestKit.Testing;
-using FluentAssertions;
+using Shouldly;
 using Microsoft.Extensions.DependencyInjection;
 using Xunit;
 
@@ -83,12 +83,12 @@ public sealed class SqlServerWebhookEndpointChangefeedTests : IAsyncLifetime
             CancellationToken.None);
 
         var batch = await _changefeed!.FetchAsync(0, 10, CancellationToken.None);
-        batch.Should().HaveCount(2);
-        batch.First().EventType.Should().Be(WebhookEndpointEventTypes.Created);
-        batch.Last().EventType.Should().Be(WebhookEndpointEventTypes.Updated);
+        batch.Count.ShouldBe(2);
+        batch.First().EventType.ShouldBe(WebhookEndpointEventTypes.Created);
+        batch.Last().EventType.ShouldBe(WebhookEndpointEventTypes.Updated);
 
         var cursor = batch.Last().Id;
         var next = await _changefeed.FetchAsync(cursor, 10, CancellationToken.None);
-        next.Should().BeEmpty();
+        next.ShouldBeEmpty();
     }
 }

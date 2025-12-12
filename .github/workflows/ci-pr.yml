@@ -29,6 +29,15 @@ jobs:
       - name: Restore
         run: dotnet restore croniq.sln
 
+      - name: Prepare tooling directories
+        run: mkdir -p bin
+
+      - name: Install Trivy (pinned)
+        shell: pwsh
+        run: |
+          ./scripts/ci/install-supplychain-tool.ps1 -Tool trivy -InstallDir "$PWD/bin"
+          "$PWD/bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
       - name: Verify formatting
         run: dotnet format croniq.sln --verify-no-changes
 
@@ -41,14 +50,34 @@ jobs:
           dotnet list package --vulnerable --include-transitive
           exit 0
 
-      - name: Trivy filesystem scan (informational)
-        uses: aquasecurity/trivy-action@0.24.0
+      - name: License compatibility scan
+        run: |
+          dotnet tool restore
+          mkdir -p artifacts/licenses
+          dotnet tool run dotnet-project-licenses \
+            --input croniq.sln \
+            --include-transitive \
+            --use-project-assets-json \
+            --allowed-license-types eng/licenses/allowed-licenses.json \
+            --licenseurl-to-license-mappings eng/licenses/license-url-overrides.json \
+            --json \
+            --outfile artifacts/licenses/license-scan.json
+
+      - name: Upload license report (informational)
+        if: always()
+        uses: actions/upload-artifact@v4
         with:
-          scan-type: fs
-          scan-ref: .
-          severity: HIGH,CRITICAL
-          ignore-unfixed: true
-          exit-code: 0
+          name: license-report
+          path: artifacts/licenses/license-scan.json
+          if-no-files-found: ignore
+
+      - name: Trivy filesystem scan (informational)
+        run: |
+          trivy fs . \
+            --severity HIGH,CRITICAL \
+            --ignore-unfixed \
+            --no-progress \
+            --exit-code 0
 
   tests:
     name: Test Matrix

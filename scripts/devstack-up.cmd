@@ -20,22 +20,41 @@ set HEALTH_URL=%HEALTH_URL%health
 
 set USER_PROFILES=%*
 
-echo [devstack] Starting Croniq services (%DEFAULT_PROFILES% %USER_PROFILES%)...
-docker compose %COMPOSE_ARGS% %DEFAULT_PROFILES% %USER_PROFILES% up --build -d
+if not "%CRONIQ_DEVSTACK_PROFILES%"=="" (
+    set PROFILE_ARGS=%CRONIQ_DEVSTACK_PROFILES%
+) else (
+    set PROFILE_ARGS=%DEFAULT_PROFILES% %USER_PROFILES%
+)
+
+echo [devstack] Starting Croniq services (%PROFILE_ARGS%)...
+docker compose %COMPOSE_ARGS% %PROFILE_ARGS% up --build -d
 if errorlevel 1 (
     echo [devstack] docker compose up failed.
     exit /b 1
 )
 
+call :maybe_wait_for_api "%PROFILE_ARGS%" "%HEALTH_URL%"
+if errorlevel 1 exit /b 1
+
+echo [devstack] Croniq dev stack is ready.
+exit /b 0
+
+:maybe_wait_for_api
+setlocal
+set PROFILE_ARGS=%~1
+set HEALTH_URL=%~2
+echo %PROFILE_ARGS% | findstr /I "--profile api" >nul
+if errorlevel 1 (
+    echo [devstack] API profile disabled. Skipping health probe.
+    endlocal & exit /b 0
+)
 echo [devstack] Waiting for API at %HEALTH_URL% ...
 call :wait_for_health "%HEALTH_URL%"
 if errorlevel 1 (
     echo [devstack] API did not become healthy in time.
-    exit /b 1
+    endlocal & exit /b 1
 )
-
-echo [devstack] Croniq dev stack is ready.
-exit /b 0
+endlocal & exit /b 0
 
 :wait_for_health
 setlocal

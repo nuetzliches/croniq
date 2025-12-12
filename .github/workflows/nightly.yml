@@ -114,29 +114,51 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Restore solution
+        run: dotnet restore croniq.sln
+
       - name: Prepare directories
         run: |
           mkdir -p artifacts
           mkdir -p bin
 
-      - name: Install Syft
+      - name: Install Syft & Trivy (pinned)
+        shell: pwsh
         run: |
-          curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | sh -s -- -b ./bin
-          echo "${{ github.workspace }}/bin" >> $GITHUB_PATH
+          ./scripts/ci/install-supplychain-tool.ps1 -Tool syft -InstallDir "$PWD/bin"
+          ./scripts/ci/install-supplychain-tool.ps1 -Tool trivy -InstallDir "$PWD/bin"
+          "$PWD/bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
 
       - name: Generate SBOM (Syft)
         run: syft dir:. -o json > artifacts/sbom.json
 
+      - name: License compatibility scan
+        run: |
+          dotnet tool restore
+          mkdir -p artifacts/licenses
+          dotnet tool run dotnet-project-licenses \
+            --input croniq.sln \
+            --include-transitive \
+            --use-project-assets-json \
+            --allowed-license-types eng/licenses/allowed-licenses.json \
+            --licenseurl-to-license-mappings eng/licenses/license-url-overrides.json \
+            --json \
+            --outfile artifacts/licenses/license-scan.json
+
       - name: Run Trivy filesystem scan
-        uses: aquasecurity/trivy-action@master
-        with:
-          scan-type: fs
-          scan-ref: .
-          severity: HIGH,CRITICAL
-          exit-code: 1
-          ignore-unfixed: true
-          format: sarif
-          output: artifacts/trivy.sarif
+        run: |
+          trivy fs . \
+            --severity HIGH,CRITICAL \
+            --ignore-unfixed \
+            --format sarif \
+            --output artifacts/trivy.sarif \
+            --exit-code 1 \
+            --no-progress
 
       - name: Upload compliance artifacts
         if: always()

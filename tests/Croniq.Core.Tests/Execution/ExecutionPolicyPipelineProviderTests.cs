@@ -4,7 +4,7 @@ using System.Threading.Tasks;
 using Croniq.Core.Execution;
 using Croniq.Core.Jobs;
 using Croniq.Core.Policies;
-using FluentAssertions;
+using Shouldly;
 using Microsoft.Extensions.Logging.Abstractions;
 using Polly.Timeout;
 using Xunit;
@@ -44,8 +44,8 @@ public class ExecutionPolicyPipelineProviderTests
             }, CancellationToken.None);
         };
 
-        await act.Should().ThrowAsync<InvalidOperationException>();
-        attempts.Should().Be(3);
+        await Should.ThrowAsync<InvalidOperationException>(act);
+        attempts.ShouldBe(3);
     }
 
     [Fact]
@@ -57,7 +57,7 @@ public class ExecutionPolicyPipelineProviderTests
         var first = provider.Get(SampleJob, baseline);
         var second = provider.Get(SampleJob, baseline);
 
-        first.Should().BeSameAs(second);
+        first.ShouldBeSameAs(second);
 
         var mutated = new ExecutionPolicyOptions
         {
@@ -66,7 +66,7 @@ public class ExecutionPolicyPipelineProviderTests
         };
 
         var third = provider.Get(SampleJob, mutated);
-        first.Should().NotBeSameAs(third);
+        first.ShouldNotBeSameAs(third);
     }
 
     [Fact]
@@ -93,6 +93,6 @@ public class ExecutionPolicyPipelineProviderTests
             }, CancellationToken.None);
         };
 
-        await timeoutAct.Should().ThrowAsync<TimeoutRejectedException>();
+        await Should.ThrowAsync<TimeoutRejectedException>(timeoutAct);
     }
 }

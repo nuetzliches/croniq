@@ -4,7 +4,7 @@ using Croniq.Api.Models;
 using Croniq.Api.Tests.Infrastructure;
 using Croniq.Auth.Abstractions;
 using Croniq.Auth.Core;
-using FluentAssertions;
+using Shouldly;
 using Xunit;
 
 namespace Croniq.Api.Tests;
@@ -30,21 +30,22 @@ public sealed class ApiKeyAdminIntegrationTests : IClassFixture<WebhookApiTestHo
             TtlHours: 6);
 
         var response = await _host.Client.PostAsJsonAsync($"/tenants/{WebhookApiTestHost.TenantId}/api-keys", request);
-        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        response.StatusCode.ShouldBe(HttpStatusCode.OK);
 
         var issued = await response.Content.ReadFromJsonAsync<IssueApiKeyResponse>();
-        issued.Should().NotBeNull();
-        issued!.PlaintextSecret.Should().Contain(issued.KeyId);
-        issued.EnvironmentTag.Should().Be(WebhookApiTestHost.Environment);
+        issued.ShouldNotBeNull();
+        issued!.PlaintextSecret.ShouldContain(issued.KeyId);
+        issued.EnvironmentTag.ShouldBe(WebhookApiTestHost.Environment);
 
         var clientResponse = await _host.Client.GetAsync($"/tenants/{WebhookApiTestHost.TenantId}/api-clients/{request.ClientId}?environment={WebhookApiTestHost.Environment}");
-        clientResponse.StatusCode.Should().Be(HttpStatusCode.OK);
+        clientResponse.StatusCode.ShouldBe(HttpStatusCode.OK);
 
         var client = await clientResponse.Content.ReadFromJsonAsync<ApiClientResponse>();
-        client.Should().NotBeNull();
-        client!.ClientId.Should().Be(request.ClientId);
-        client.EnvironmentTag.Should().Be(WebhookApiTestHost.Environment);
-        client.Scopes.Should().Contain(new[] { CroniqScopes.WebhooksRead, CroniqScopes.WebhooksWrite });
+        client.ShouldNotBeNull();
+        client!.ClientId.ShouldBe(request.ClientId);
+        client.EnvironmentTag.ShouldBe(WebhookApiTestHost.Environment);
+        client.Scopes.ShouldContain(CroniqScopes.WebhooksRead);
+        client.Scopes.ShouldContain(CroniqScopes.WebhooksWrite);
     }
 
     [Fact]
@@ -57,12 +58,12 @@ public sealed class ApiKeyAdminIntegrationTests : IClassFixture<WebhookApiTestHo
             $"/tenants/{WebhookApiTestHost.TenantId}/api-keys/{issued.KeyId}/rotate?environment={WebhookApiTestHost.Environment}",
             JsonContent.Create(new { }));
 
-        rotateResponse.StatusCode.Should().Be(HttpStatusCode.OK);
+        rotateResponse.StatusCode.ShouldBe(HttpStatusCode.OK);
         var rotated = await rotateResponse.Content.ReadFromJsonAsync<IssueApiKeyResponse>();
-        rotated.Should().NotBeNull();
-        rotated!.KeyId.Should().NotBe(issued.KeyId);
-        rotated.PlaintextSecret.Should().NotBe(issued.PlaintextSecret);
-        rotated.EnvironmentTag.Should().Be(WebhookApiTestHost.Environment);
+        rotated.ShouldNotBeNull();
+        rotated!.KeyId.ShouldNotBe(issued.KeyId);
+        rotated.PlaintextSecret.ShouldNotBe(issued.PlaintextSecret);
+        rotated.EnvironmentTag.ShouldBe(WebhookApiTestHost.Environment);
     }
 
     [Fact]
@@ -72,10 +73,10 @@ public sealed class ApiKeyAdminIntegrationTests : IClassFixture<WebhookApiTestHo
         var issued = await IssueKeyAsync(clientId: "revoker");
 
         var firstDelete = await _host.Client.DeleteAsync($"/tenants/{WebhookApiTestHost.TenantId}/api-keys/{issued.KeyId}?environment={WebhookApiTestHost.Environment}");
-        firstDelete.StatusCode.Should().Be(HttpStatusCode.NoContent);
+        firstDelete.StatusCode.ShouldBe(HttpStatusCode.NoContent);
 
         var secondDelete = await _host.Client.DeleteAsync($"/tenants/{WebhookApiTestHost.TenantId}/api-keys/{issued.KeyId}?environment={WebhookApiTestHost.Environment}");
-        secondDelete.StatusCode.Should().Be(HttpStatusCode.NoContent);
+        secondDelete.StatusCode.ShouldBe(HttpStatusCode.NoContent);
     }
 
     [Fact]
@@ -98,7 +99,7 @@ public sealed class ApiKeyAdminIntegrationTests : IClassFixture<WebhookApiTestHo
                 $"/tenants/{WebhookApiTestHost.TenantId}/api-keys",
                 new IssueApiKeyRequest("ops-client", WebhookApiTestHost.Environment, null, null));
 
-            response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+            response.StatusCode.ShouldBe(HttpStatusCode.Forbidden);
         }
         finally
         {
@@ -115,9 +116,9 @@ public sealed class ApiKeyAdminIntegrationTests : IClassFixture<WebhookApiTestHo
             TtlHours: 12);
 
         var response = await _host.Client.PostAsJsonAsync($"/tenants/{WebhookApiTestHost.TenantId}/api-keys", request);
-        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        response.StatusCode.ShouldBe(HttpStatusCode.OK);
         var payload = await response.Content.ReadFromJsonAsync<IssueApiKeyResponse>();
-        payload.Should().NotBeNull();
+        payload.ShouldNotBeNull();
         return payload!;
     }
 

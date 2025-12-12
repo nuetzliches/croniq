@@ -76,6 +76,15 @@ jobs:
           mkdir -p artifacts/nuget
           mkdir -p artifacts/sbom
           mkdir -p artifacts/trivy
+          mkdir -p artifacts/licenses
+          mkdir -p bin
+
+      - name: Install Syft & Trivy (pinned)
+        shell: pwsh
+        run: |
+          ./scripts/ci/install-supplychain-tool.ps1 -Tool syft -InstallDir "$PWD/bin"
+          ./scripts/ci/install-supplychain-tool.ps1 -Tool trivy -InstallDir "$PWD/bin"
+          "$PWD/bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
 
       - name: Pack libraries
         run: dotnet pack croniq.sln --configuration Release --output artifacts/nuget
@@ -83,24 +92,30 @@ jobs:
       - name: Dependency vulnerability check
         run: dotnet list package --vulnerable --include-transitive
 
-      - name: Install Syft
+      - name: License compatibility scan
         run: |
-          curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | sh -s -- -b ./bin
-          echo "${{ github.workspace }}/bin" >> $GITHUB_PATH
+          dotnet tool restore
+          dotnet tool run dotnet-project-licenses \
+            --input croniq.sln \
+            --include-transitive \
+            --use-project-assets-json \
+            --allowed-license-types eng/licenses/allowed-licenses.json \
+            --licenseurl-to-license-mappings eng/licenses/license-url-overrides.json \
+            --json \
+            --outfile artifacts/licenses/license-scan.json
 
       - name: Generate NuGet SBOM (Syft)
         run: syft dir:artifacts/nuget -o spdx-json=artifacts/sbom/nuget.spdx.json
 
       - name: Run Trivy filesystem scan
-        uses: aquasecurity/trivy-action@master
-        with:
-          scan-type: fs
-          scan-ref: .
-          severity: HIGH,CRITICAL
-          format: sarif
-          output: artifacts/trivy/source.sarif
-          exit-code: 1
-          ignore-unfixed: true
+        run: |
+          trivy fs . \
+            --severity HIGH,CRITICAL \
+            --ignore-unfixed \
+            --format sarif \
+            --output artifacts/trivy/source.sarif \
+            --exit-code 1 \
+            --no-progress
 
       - name: Decode signing certificate
         if: env.NUGET_SIGNING_CERT_BASE64 != ''
@@ -166,6 +181,23 @@ jobs:
           echo "worker_image=${{ env.REGISTRY }}/${{ github.repository_owner }}/croniq-worker:$VERSION" >> $GITHUB_OUTPUT
           echo "worker_latest=${{ env.REGISTRY }}/${{ github.repository_owner }}/croniq-worker:latest" >> $GITHUB_OUTPUT
 
+      - name: Prepare tooling directories
+        run: |
+          mkdir -p bin
+          echo "${{ github.workspace }}/bin" >> $GITHUB_PATH
+
+      - name: Install Syft & Trivy (pinned)
+        shell: pwsh
+        run: |
+          ./scripts/ci/install-supplychain-tool.ps1 -Tool syft -InstallDir "$PWD/bin"
+          ./scripts/ci/install-supplychain-tool.ps1 -Tool trivy -InstallDir "$PWD/bin"
+
+      - name: Install Cosign
+        run: |
+          curl -sSfL https://github.com/sigstore/cosign/releases/latest/download/cosign-linux-amd64 > cosign
+          chmod +x cosign
+          mv cosign ./bin/cosign
+
       - name: Build Croniq API image
         run: |
           docker build -f samples/Croniq.Sample.ApiHost/Dockerfile -t ${{ steps.version.outputs.api_image }} -t ${{ steps.version.outputs.api_latest }} .
@@ -178,14 +210,6 @@ jobs:
           docker push ${{ steps.version.outputs.worker_image }}
           docker push ${{ steps.version.outputs.worker_latest }}
 
-      - name: Install Syft & Cosign
-        run: |
-          curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | sh -s -- -b ./bin
-          curl -sSfL https://github.com/sigstore/cosign/releases/latest/download/cosign-linux-amd64 > cosign
-          chmod +x cosign
-          mv cosign ./bin/cosign
-          echo "${{ github.workspace }}/bin" >> $GITHUB_PATH
-
       - name: Prepare artifact folders
         run: |
           mkdir -p artifacts/images/sbom
@@ -197,26 +221,24 @@ jobs:
           syft ${{ steps.version.outputs.worker_image }} -o spdx-json=artifacts/images/sbom/worker-${{ steps.version.outputs.version }}.spdx.json
 
       - name: Trivy scan (API image)
-        uses: aquasecurity/trivy-action@master
-        with:
-          scan-type: image
-          image-ref: ${{ steps.version.outputs.api_image }}
-          severity: HIGH,CRITICAL
-          format: sarif
-          output: artifacts/images/trivy/api.sarif
-          exit-code: 1
-          ignore-unfixed: true
+        run: |
+          trivy image ${{ steps.version.outputs.api_image }} \
+            --severity HIGH,CRITICAL \
+            --ignore-unfixed \
+            --format sarif \
+            --output artifacts/images/trivy/api.sarif \
+            --exit-code 1 \
+            --no-progress
 
       - name: Trivy scan (Worker image)
-        uses: aquasecurity/trivy-action@master
-        with:
-          scan-type: image
-          image-ref: ${{ steps.version.outputs.worker_image }}
-          severity: HIGH,CRITICAL
-          format: sarif
-          output: artifacts/images/trivy/worker.sarif
-          exit-code: 1
-          ignore-unfixed: true
+        run: |
+          trivy image ${{ steps.version.outputs.worker_image }} \
+            --severity HIGH,CRITICAL \
+            --ignore-unfixed \
+            --format sarif \
+            --output artifacts/images/trivy/worker.sarif \
+            --exit-code 1 \
+            --no-progress
 
       - name: Sign container images (cosign)
         if: env.COSIGN_KEY != ''

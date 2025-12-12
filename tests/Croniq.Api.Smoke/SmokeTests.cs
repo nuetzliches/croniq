@@ -7,7 +7,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Threading.Tasks;
-using FluentAssertions;
+using Shouldly;
 using Xunit;
 
 namespace Croniq.Api.Smoke;
@@ -39,10 +39,10 @@ public sealed class SmokeTests
         using var client = CreateClient();
         using var response = await SendAsync(() => client.GetAsync("health"));
 
-        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        response.StatusCode.ShouldBe(HttpStatusCode.OK);
         var body = await response.Content.ReadFromJsonAsync<HealthResponse>();
-        body.Should().NotBeNull();
-        body!.Status.Should().Be("ok");
+        body.ShouldNotBeNull();
+        body!.Status.ShouldBe("ok");
     }
 
     [Fact]
@@ -65,12 +65,12 @@ public sealed class SmokeTests
 
         using var response = await SendAsync(() => client.PostAsJsonAsync("schedules", payload));
 
-        response.StatusCode.Should().Be(HttpStatusCode.Created);
+        response.StatusCode.ShouldBe(HttpStatusCode.Created);
         var body = await response.Content.ReadFromJsonAsync<ScheduleResponse>();
-        body.Should().NotBeNull();
-        body!.TriggerId.Should().NotBeNullOrWhiteSpace();
-        body.JobKey.Should().Be(jobKey);
-        body.ScheduleExpression.Should().Be(payload.CronExpression);
+        body.ShouldNotBeNull();
+        body!.TriggerId.ShouldNotBeNullOrWhiteSpace();
+        body.JobKey.ShouldBe(jobKey);
+        body.ScheduleExpression.ShouldBe(payload.CronExpression);
     }
 
     [Fact]
@@ -95,7 +95,7 @@ public sealed class SmokeTests
         var hookKey = $"hook-smoke-{Guid.NewGuid():N}";
         var secret = $"whsec_{Guid.NewGuid():N}";
         var webhook = await UpsertWebhookAsync(client, hookKey, jobKey, secret);
-        webhook.IpRules.Should().BeEmpty();
+        webhook.IpRules.ShouldBeEmpty();
 
         try
         {
@@ -103,16 +103,18 @@ public sealed class SmokeTests
             var rule = await CreateIpRuleAsync(client, hookKey, cidr, "smoke-allow");
 
             using var listResponse = await SendAsync(() => client.GetAsync(GetWebhookIpRulesUrl(hookKey)));
-            listResponse.StatusCode.Should().Be(HttpStatusCode.OK);
+            listResponse.StatusCode.ShouldBe(HttpStatusCode.OK);
             var rules = await listResponse.Content.ReadFromJsonAsync<List<WebhookIpRuleResponse>>() ?? new List<WebhookIpRuleResponse>();
-            rules.Should().ContainSingle(r => r.Id == rule.Id && r.Cidr == cidr);
+            var singleRule = rules.ShouldHaveSingleItem();
+            singleRule.Id.ShouldBe(rule.Id);
+            singleRule.Cidr.ShouldBe(cidr);
 
             await DeleteIpRuleAsync(client, hookKey, rule.Id);
 
             using var finalListResponse = await SendAsync(() => client.GetAsync(GetWebhookIpRulesUrl(hookKey)));
-            finalListResponse.StatusCode.Should().Be(HttpStatusCode.OK);
+            finalListResponse.StatusCode.ShouldBe(HttpStatusCode.OK);
             var finalRules = await finalListResponse.Content.ReadFromJsonAsync<List<WebhookIpRuleResponse>>() ?? new List<WebhookIpRuleResponse>();
-            finalRules.Should().BeEmpty();
+            finalRules.ShouldBeEmpty();
         }
         finally
         {
@@ -150,7 +152,7 @@ public sealed class SmokeTests
             {
                 var payload = new { requestId = Guid.NewGuid().ToString("N"), scope = "blocked" };
                 using var blockedResponse = await SendWebhookAsync(webhookClient, hookKey, secret, payload);
-                blockedResponse.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+                blockedResponse.StatusCode.ShouldBe(HttpStatusCode.Forbidden);
             }
 
             await DeleteIpRuleAsync(client, hookKey, denyRule.Id);
@@ -161,12 +163,12 @@ public sealed class SmokeTests
             {
                 var payload = new { requestId = Guid.NewGuid().ToString("N"), scope = "allowed" };
                 using var allowedResponse = await SendWebhookAsync(webhookClient, hookKey, secret, payload);
-                allowedResponse.StatusCode.Should().Be(HttpStatusCode.Accepted);
+                allowedResponse.StatusCode.ShouldBe(HttpStatusCode.Accepted);
                 var body = await allowedResponse.Content.ReadFromJsonAsync<WebhookTriggerResponse>();
-                body.Should().NotBeNull();
-                body!.Status.Should().Be("triggered");
-                body.Hook.Should().Be(hookKey);
-                body.Job.Should().Be(jobKey);
+                body.ShouldNotBeNull();
+                body!.Status.ShouldBe("triggered");
+                body.Hook.ShouldBe(hookKey);
+                body.Job.ShouldBe(jobKey);
             }
         }
         finally
@@ -269,9 +271,9 @@ public sealed class SmokeTests
 
         using var response = await SendAsync(() => client.PostAsJsonAsync(GetWebhookCollectionUrl(), upsert));
         var content = await response.Content.ReadAsStringAsync();
-        response.StatusCode.Should().Be(HttpStatusCode.OK, "response: {0}", content);
+        response.StatusCode.ShouldBe(HttpStatusCode.OK, $"response: {content}");
         var body = JsonSerializer.Deserialize<WebhookEndpointResponse>(content, JsonOptions);
-        body.Should().NotBeNull("response: {0}", content);
+        body.ShouldNotBeNull($"response: {content}");
         return body!;
     }
 
@@ -280,16 +282,16 @@ public sealed class SmokeTests
         var ruleRequest = new CreateWebhookIpRuleRequest(cidr, description);
         using var response = await SendAsync(() => client.PostAsJsonAsync(GetWebhookIpRulesUrl(hookKey), ruleRequest));
         var content = await response.Content.ReadAsStringAsync();
-        response.StatusCode.Should().Be(HttpStatusCode.OK, "response: {0}", content);
+        response.StatusCode.ShouldBe(HttpStatusCode.OK, $"response: {content}");
         var rule = JsonSerializer.Deserialize<WebhookIpRuleResponse>(content, JsonOptions);
-        rule.Should().NotBeNull("response: {0}", content);
+        rule.ShouldNotBeNull($"response: {content}");
         return rule!;
     }
 
     private static async Task DeleteIpRuleAsync(HttpClient client, string hookKey, long ruleId)
     {
         using var response = await SendAsync(() => client.DeleteAsync(GetWebhookIpRuleDeleteUrl(hookKey, ruleId)));
-        response.StatusCode.Should().Be(HttpStatusCode.NoContent);
+        response.StatusCode.ShouldBe(HttpStatusCode.NoContent);
     }
 
     private static async Task CleanupWebhookAsync(HttpClient client, string hookKey)

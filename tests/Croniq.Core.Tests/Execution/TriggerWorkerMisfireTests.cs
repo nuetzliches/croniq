@@ -9,7 +9,7 @@ using Croniq.Core.Options;
 using Croniq.Core.Policies;
 using Croniq.Persistence.Abstractions;
 using Croniq.Sdk;
-using FluentAssertions;
+using Shouldly;
 using Microsoft.Extensions.Logging.Abstractions;
 using Xunit;
 
@@ -106,11 +106,11 @@ public class TriggerWorkerMisfireTests
 
         var processed = await worker.ProcessBatchAsync(now, 10, CancellationToken.None);
 
-        processed.Should().Be(0);
-        store.Releases.FindAll(r => r.Succeeded).Should().BeEmpty();
-        store.Releases.Should().ContainSingle();
-        store.Releases[0].DeadLetterReason.Should().Be("misfire-max-delay");
-        pipeline.Executions.Should().Be(0);
+        processed.ShouldBe(0);
+        store.Releases.FindAll(r => r.Succeeded).ShouldBeEmpty();
+        store.Releases.ShouldHaveSingleItem();
+        store.Releases[0].DeadLetterReason.ShouldBe("misfire-max-delay");
+        pipeline.Executions.ShouldBe(0);
     }
 
     [Fact]
@@ -136,11 +136,11 @@ public class TriggerWorkerMisfireTests
 
         var processed = await worker.ProcessBatchAsync(now, 10, CancellationToken.None);
 
-        processed.Should().Be(1);
-        store.Releases.Should().ContainSingle();
-        store.Releases[0].Succeeded.Should().BeTrue();
-        store.Releases[0].DeadLetterReason.Should().BeNull();
-        pipeline.Executions.Should().Be(1);
+        processed.ShouldBe(1);
+        store.Releases.ShouldHaveSingleItem();
+        store.Releases[0].Succeeded.ShouldBeTrue();
+        store.Releases[0].DeadLetterReason.ShouldBeNull();
+        pipeline.Executions.ShouldBe(1);
     }
 
     [Fact]
@@ -183,17 +183,17 @@ public class TriggerWorkerMisfireTests
 
         var processed = await worker.ProcessBatchAsync(now, 10, CancellationToken.None);
 
-        processed.Should().Be(1);
-        store.Releases.Should().HaveCount(2);
-        pipeline.Executions.Should().Be(1);
+        processed.ShouldBe(1);
+        store.Releases.Count.ShouldBe(2);
+        pipeline.Executions.ShouldBe(1);
 
         var rescheduled = store.Releases.Find(r => r.DeadLetterReason == "quota-limit");
-        rescheduled.Should().NotBeNull();
-        rescheduled!.Succeeded.Should().BeFalse();
-        rescheduled.NextFireTimeUtc.Should().NotBeNull();
-        rescheduled.NextFireTimeUtc!.Value.Should()
-            .BeOnOrAfter(now.AddMinutes(1).AddSeconds(-1))
-            .And.BeOnOrBefore(now.AddMinutes(1).AddSeconds(2));
+        rescheduled.ShouldNotBeNull();
+        rescheduled!.Succeeded.ShouldBeFalse();
+        rescheduled.NextFireTimeUtc.ShouldNotBeNull();
+        rescheduled.NextFireTimeUtc!.Value.ShouldBeInRange(
+            now.AddMinutes(1).AddSeconds(-1),
+            now.AddMinutes(1).AddSeconds(2));
     }
 
     [Fact]
@@ -243,14 +243,14 @@ public class TriggerWorkerMisfireTests
 
         var processed = await worker.ProcessBatchAsync(now, 1, CancellationToken.None);
 
-        processed.Should().Be(0);
-        store.DeadLetters.Should().ContainSingle();
+        processed.ShouldBe(0);
+        store.DeadLetters.ShouldHaveSingleItem();
         var deadLetter = store.DeadLetters[0];
-        deadLetter.Reason.Should().Be("execution-error");
-        deadLetter.Payload.Should().NotBeNull();
-        deadLetter.Metadata.Should().NotBeNull();
-        deadLetter.Metadata!.Should().ContainKey("deadletter.hint");
-        store.Releases.Should().ContainSingle();
-        store.Releases[0].DeadLetterReason.Should().BeNull();
+        deadLetter.Reason.ShouldBe("execution-error");
+        deadLetter.Payload.ShouldNotBeNull();
+        deadLetter.Metadata.ShouldNotBeNull();
+        deadLetter.Metadata!.ContainsKey("deadletter.hint").ShouldBeTrue();
+        store.Releases.ShouldHaveSingleItem();
+        store.Releases[0].DeadLetterReason.ShouldBeNull();
     }
 }

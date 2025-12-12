@@ -3,7 +3,7 @@ using System.Net;
 using Croniq.Api.Tests.Infrastructure;
 using Croniq.Auth.Abstractions;
 using Croniq.Auth.Core;
-using FluentAssertions;
+using Shouldly;
 using Xunit;
 
 namespace Croniq.Api.Tests;
@@ -24,7 +24,7 @@ public sealed class SecurityRegressionTests : IClassFixture<WebhookApiTestHost>
         SetCallerApiKey("ak_unknown");
 
         var response = await _host.Client.GetAsync($"/tenants/{WebhookApiTestHost.TenantId}/webhooks?environment={WebhookApiTestHost.Environment}");
-        response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+        response.StatusCode.ShouldBe(HttpStatusCode.Unauthorized);
     }
 
     [Fact]
@@ -43,7 +43,7 @@ public sealed class SecurityRegressionTests : IClassFixture<WebhookApiTestHost>
         SetCallerApiKey(expiredKey);
 
         var response = await _host.Client.GetAsync($"/tenants/{WebhookApiTestHost.TenantId}/webhooks?environment={WebhookApiTestHost.Environment}");
-        response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+        response.StatusCode.ShouldBe(HttpStatusCode.Unauthorized);
     }
 
     [Fact]
@@ -62,13 +62,13 @@ public sealed class SecurityRegressionTests : IClassFixture<WebhookApiTestHost>
         SetCallerApiKey(revokableKey);
 
         var initial = await _host.Client.GetAsync($"/tenants/{WebhookApiTestHost.TenantId}/webhooks?environment={WebhookApiTestHost.Environment}");
-        initial.StatusCode.Should().Be(HttpStatusCode.OK);
+        initial.StatusCode.ShouldBe(HttpStatusCode.OK);
 
         var revokedContext = activeContext with { IsActive = false };
         _host.CallerFactory.AddContext(revokableKey, revokedContext);
 
         var afterRevoke = await _host.Client.GetAsync($"/tenants/{WebhookApiTestHost.TenantId}/webhooks?environment={WebhookApiTestHost.Environment}");
-        afterRevoke.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+        afterRevoke.StatusCode.ShouldBe(HttpStatusCode.Unauthorized);
     }
 
     [Fact]
@@ -86,7 +86,7 @@ public sealed class SecurityRegressionTests : IClassFixture<WebhookApiTestHost>
         SetCallerApiKey(limitedKey);
 
         var response = await _host.Client.GetAsync($"/tenants/{WebhookApiTestHost.TenantId}/webhooks?environment={WebhookApiTestHost.Environment}");
-        response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+        response.StatusCode.ShouldBe(HttpStatusCode.Forbidden);
     }
 
     private void SetCallerApiKey(string apiKey)

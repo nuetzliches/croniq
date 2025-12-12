@@ -11,7 +11,7 @@ using Croniq.Persistence.Abstractions;
 using Croniq.Persistence.SqlServer.Tests.Collections;
 using Croniq.TestKit.SqlServer;
 using Croniq.TestKit.Testing;
-using FluentAssertions;
+using Shouldly;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Xunit;
@@ -77,9 +77,10 @@ public sealed class SqlServerWebhookPersistenceProviderTests : IAsyncLifetime
         await using (var context = await _dbFactory!.CreateDbContextAsync())
         {
             var entity = await context.WebhookEndpoints.SingleAsync(x => x.HookKey == hookKey);
-            entity.JobKey.Should().Be(jobKey.Value);
-            entity.SecretHash.Should().Be(ComputeSecretHash("secret-one"));
-            entity.MetadataJson.Should().Contain("billing");
+            entity.JobKey.ShouldBe(jobKey.Value);
+            entity.SecretHash.ShouldBe(ComputeSecretHash("secret-one"));
+            entity.MetadataJson.ShouldNotBeNull();
+            entity.MetadataJson!.ShouldContain("billing");
         }
 
         var updateMetadata = new Dictionary<string, string> { ["source"] = "ops" };
@@ -100,10 +101,10 @@ public sealed class SqlServerWebhookPersistenceProviderTests : IAsyncLifetime
         await using (var updatedContext = await _dbFactory.CreateDbContextAsync())
         {
             var updated = await updatedContext.WebhookEndpoints.SingleAsync(x => x.HookKey == hookKey);
-            updated.Enabled.Should().BeFalse();
-            updated.RequireSignature.Should().BeFalse();
-            updated.Secret.Should().Be("secret-one");
-            updated.SecretHash.Should().Be(ComputeSecretHash("secret-one"));
+            updated.Enabled.ShouldBeFalse();
+            updated.RequireSignature.ShouldBeFalse();
+            updated.Secret.ShouldBe("secret-one");
+            updated.SecretHash.ShouldBe(ComputeSecretHash("secret-one"));
         }
 
         await _persistence.UpsertAsync(
@@ -122,15 +123,15 @@ public sealed class SqlServerWebhookPersistenceProviderTests : IAsyncLifetime
 
         await using var verification = await _dbFactory.CreateDbContextAsync();
         var finalEntity = await verification.WebhookEndpoints.SingleAsync(x => x.HookKey == hookKey);
-        finalEntity.Secret.Should().Be("secret-two");
-        finalEntity.SecretHash.Should().Be(ComputeSecretHash("secret-two"));
-        finalEntity.SignatureVersion.Should().Be(4);
+        finalEntity.Secret.ShouldBe("secret-two");
+        finalEntity.SecretHash.ShouldBe(ComputeSecretHash("secret-two"));
+        finalEntity.SignatureVersion.ShouldBe(4);
 
         var history = await verification.WebhookSecretHistory
             .Where(x => x.HookKey == hookKey)
             .OrderBy(x => x.ActivatedAtUtc)
             .ToListAsync();
-        history.Should().HaveCount(3);
+        history.Count.ShouldBe(3);
     }
 
     [Fact]
@@ -149,8 +150,11 @@ public sealed class SqlServerWebhookPersistenceProviderTests : IAsyncLifetime
 
         var results = await _persistence!.ListAsync(tenantScope, CancellationToken.None);
 
-        results.Should().HaveCount(2);
-        results.Select(x => x.HookKey).Should().BeEquivalentTo(new[] { hookA, hookB });
+        results.Count.ShouldBe(2);
+        results.Select(x => x.HookKey)
+            .OrderBy(x => x, StringComparer.Ordinal)
+            .ToArray()
+            .ShouldBe(new[] { hookA, hookB }.OrderBy(x => x, StringComparer.Ordinal).ToArray());
     }
 
     [Fact]
@@ -168,14 +172,14 @@ public sealed class SqlServerWebhookPersistenceProviderTests : IAsyncLifetime
         await using (var context = await _dbFactory!.CreateDbContextAsync())
         {
             var exists = await context.WebhookEndpoints.AnyAsync(x => x.HookKey == hookKey);
-            exists.Should().BeFalse();
+            exists.ShouldBeFalse();
         }
 
         await UpsertEndpointAsync("tenant-delete-dev-hook-2", scope, jobKey);
 
         var wrongScope = new PartitionScope("tenant-delete", "qa");
-        await FluentActions.Awaiting(() => _persistence.DeleteAsync("tenant-delete-dev-hook-2", wrongScope, CancellationToken.None))
-            .Should().ThrowAsync<InvalidOperationException>();
+        await Should.ThrowAsync<InvalidOperationException>(() =>
+            _persistence.DeleteAsync("tenant-delete-dev-hook-2", wrongScope, CancellationToken.None));
     }
 
     [Fact]
@@ -198,9 +202,9 @@ public sealed class SqlServerWebhookPersistenceProviderTests : IAsyncLifetime
                 Notes: "rotate"),
             CancellationToken.None);
 
-        result.HookKey.Should().Be(hookKey);
-        result.Secret.Should().NotBeNullOrWhiteSpace();
-        result.ExpiresAtUtc.Should().BeNull();
+        result.HookKey.ShouldBe(hookKey);
+        result.Secret.ShouldNotBeNullOrWhiteSpace();
+        result.ExpiresAtUtc.ShouldBeNull();
 
         await using var context = await _dbFactory!.CreateDbContextAsync();
         var history = await context.WebhookSecretHistory
@@ -208,9 +212,9 @@ public sealed class SqlServerWebhookPersistenceProviderTests : IAsyncLifetime
             .OrderBy(x => x.ActivatedAtUtc)
             .ToListAsync();
 
-        history.Should().HaveCount(2);
-        history.Last().Secret.Should().Be(result.Secret);
-        history.First().ExpiresAtUtc.Should().NotBeNull();
+        history.Count.ShouldBe(2);
+        history.Last().Secret.ShouldBe(result.Secret);
+        history.First().ExpiresAtUtc.ShouldNotBeNull();
     }
 
     [Fact]
@@ -235,14 +239,14 @@ public sealed class SqlServerWebhookPersistenceProviderTests : IAsyncLifetime
                 Notes: "delayed"),
             CancellationToken.None);
 
-        rotateResult.HookKey.Should().Be(hookKey);
-        rotateResult.ActivatedAtUtc.Should().BeAfter(DateTime.UtcNow);
+        rotateResult.HookKey.ShouldBe(hookKey);
+        rotateResult.ActivatedAtUtc.ShouldBeGreaterThan(DateTime.UtcNow);
 
         var activeSecrets = await _persistence.GetActiveSecretsAsync(hookKey, CancellationToken.None);
-        activeSecrets.Should().HaveCount(1);
+        activeSecrets.Count().ShouldBe(1);
         var remainingSecret = activeSecrets.Single();
-        remainingSecret.ExpiresAtUtc.Should().NotBeNull();
-        remainingSecret.ExpiresAtUtc.Should().BeAfter(rotateResult.ActivatedAtUtc);
+        remainingSecret.ExpiresAtUtc.ShouldNotBeNull();
+        remainingSecret.ExpiresAtUtc!.Value.ShouldBeGreaterThan(rotateResult.ActivatedAtUtc);
 
         await using var context = await _dbFactory!.CreateDbContextAsync();
         var history = await context.WebhookSecretHistory
@@ -250,13 +254,13 @@ public sealed class SqlServerWebhookPersistenceProviderTests : IAsyncLifetime
             .OrderBy(x => x.ActivatedAtUtc)
             .ToListAsync();
 
-        history.Should().HaveCount(2);
+        history.Count.ShouldBe(2);
         var futureSecret = history.Last();
-        futureSecret.ActivatedAtUtc.Should().BeCloseTo(rotateResult.ActivatedAtUtc, TimeSpan.FromSeconds(1));
-        futureSecret.ExpiresAtUtc.Should().BeNull();
+        futureSecret.ActivatedAtUtc.ShouldBe(rotateResult.ActivatedAtUtc, TimeSpan.FromSeconds(1));
+        futureSecret.ExpiresAtUtc.ShouldBeNull();
         var previousSecret = history.First();
-        previousSecret.ExpiresAtUtc.Should().NotBeNull();
-        previousSecret.ExpiresAtUtc.Should().BeAfter(rotateResult.ActivatedAtUtc);
+        previousSecret.ExpiresAtUtc.ShouldNotBeNull();
+        previousSecret.ExpiresAtUtc!.Value.ShouldBeGreaterThan(rotateResult.ActivatedAtUtc);
     }
 
     [Fact]
@@ -281,8 +285,8 @@ public sealed class SqlServerWebhookPersistenceProviderTests : IAsyncLifetime
                 Notes: "limit"),
             CancellationToken.None);
 
-        await action.Should().ThrowAsync<InvalidOperationException>()
-            .WithMessage("*ActivateInSeconds*");
+        var ex = await Should.ThrowAsync<InvalidOperationException>(action);
+        ex.Message.ShouldContain("ActivateInSeconds");
     }
 
     [Fact]
@@ -318,7 +322,7 @@ public sealed class SqlServerWebhookPersistenceProviderTests : IAsyncLifetime
         }
 
         var secrets = await _persistence!.GetActiveSecretsAsync(hookKey, CancellationToken.None);
-        secrets.Should().BeEmpty();
+        secrets.ShouldBeEmpty();
     }
 
     [Fact]
@@ -342,9 +346,9 @@ public sealed class SqlServerWebhookPersistenceProviderTests : IAsyncLifetime
             CancellationToken.None);
 
         var secrets = await _persistence.GetActiveSecretsAsync(hookKey, CancellationToken.None);
-        secrets.Should().HaveCount(2);
-        secrets.Last().ExpiresAtUtc.Should().BeNull();
-        secrets.First().ExpiresAtUtc.Should().NotBeNull();
+        secrets.Count().ShouldBe(2);
+        secrets.Last().ExpiresAtUtc.ShouldBeNull();
+        secrets.First().ExpiresAtUtc.ShouldNotBeNull();
     }
 
     [Fact]
@@ -376,9 +380,9 @@ public sealed class SqlServerWebhookPersistenceProviderTests : IAsyncLifetime
             .OrderBy(x => x.Id)
             .ToListAsync();
 
-        events.Should().HaveCount(2);
-        events[0].EventType.Should().Be(WebhookEndpointEventTypes.Created);
-        events[1].EventType.Should().Be(WebhookEndpointEventTypes.Updated);
+        events.Count.ShouldBe(2);
+        events[0].EventType.ShouldBe(WebhookEndpointEventTypes.Created);
+        events[1].EventType.ShouldBe(WebhookEndpointEventTypes.Updated);
     }
 
     [Fact]
@@ -398,7 +402,7 @@ public sealed class SqlServerWebhookPersistenceProviderTests : IAsyncLifetime
             .OrderBy(x => x.Id)
             .LastAsync();
 
-        evt.EventType.Should().Be(WebhookEndpointEventTypes.Deleted);
+        evt.EventType.ShouldBe(WebhookEndpointEventTypes.Deleted);
     }
 
     [Fact]
@@ -434,8 +438,8 @@ public sealed class SqlServerWebhookPersistenceProviderTests : IAsyncLifetime
             .OrderBy(x => x.Id)
             .ToListAsync();
 
-        auditEvents.Should().ContainSingle(evt => evt.CorrelationId == "corr-create" && evt.Actor == "sdk:tests");
-        auditEvents.Should().ContainSingle(evt => evt.CorrelationId == "corr-delete" && evt.Actor == "ui:tests");
+        auditEvents.Count(evt => evt.CorrelationId == "corr-create" && evt.Actor == "sdk:tests").ShouldBe(1);
+        auditEvents.Count(evt => evt.CorrelationId == "corr-delete" && evt.Actor == "ui:tests").ShouldBe(1);
     }
 
     private async Task UpsertEndpointAsync(string hookKey, PartitionScope scope, JobKey jobKey)

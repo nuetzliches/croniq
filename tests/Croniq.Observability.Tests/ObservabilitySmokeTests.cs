@@ -6,7 +6,7 @@ using System.Net.Sockets;
 using System.Threading;
 using System.Threading.Tasks;
 using Croniq.Core;
-using FluentAssertions;
+using Shouldly;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
@@ -71,13 +71,13 @@ public sealed class ObservabilitySmokeTests : IAsyncLifetime
 
         await provider.DisposeAsync();
 
-        (await _collector.WaitForTracesAsync(TimeSpan.FromSeconds(5))).Should().BeTrue("span export should reach collector");
-        (await _collector.WaitForMetricsAsync(TimeSpan.FromSeconds(5))).Should().BeTrue("metric export should reach collector");
-        (await _collector.WaitForLogsAsync(TimeSpan.FromSeconds(5))).Should().BeTrue("log export should reach collector");
+        (await _collector.WaitForTracesAsync(TimeSpan.FromSeconds(5))).ShouldBeTrue("span export should reach collector");
+        (await _collector.WaitForMetricsAsync(TimeSpan.FromSeconds(5))).ShouldBeTrue("metric export should reach collector");
+        (await _collector.WaitForLogsAsync(TimeSpan.FromSeconds(5))).ShouldBeTrue("log export should reach collector");
 
-        _collector.LastTracePayloadLength.Should().BeGreaterThan(0);
-        _collector.LastMetricPayloadLength.Should().BeGreaterThan(0);
-        _collector.LastLogPayloadLength.Should().BeGreaterThan(0);
+        _collector.LastTracePayloadLength.ShouldBeGreaterThan(0);
+        _collector.LastMetricPayloadLength.ShouldBeGreaterThan(0);
+        _collector.LastLogPayloadLength.ShouldBeGreaterThan(0);
     }
 
     private static void EmitTestSpan(TracerProvider tracerProvider)

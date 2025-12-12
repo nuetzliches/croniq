@@ -25,13 +25,18 @@
 - [x] Quota-Guards im Core verankern (Rate/Concurrency) basierend auf PolicyResolver + Tests
 - [x] Webhook-Persistenz hardenen (EF-Migration `AddWebhookEndpoints`, DbMigrator, CRUD-Tests) – Plan siehe `docs/deep-dive/architecture.md`
 - [x] Webhook-Operations ausbauen: Changefeed-basierte Cache-Invalidierung, Dual-Secret-Rotation (WebhookSecretHistory) plus CLI/SDK-Helfer dokumentieren (Dead-Letter-Tabelle + Replay-API umgesetzt)
+- [x] FluentAssertions -> Shouldly Migration (MIT-only policy)
+  - [x] MIT-kompatible Lizenzvorgabe in AI_ASSISTANT_INSTRUCTIONS.md dokumentiert (2025-12-11)
+  - [x] Croniq.Sdk.Tests auf Shouldly portiert und FluentAssertions-Paket entfernt
+  - [x] Restliche Testprojekte iterativ migrieren (Croniq.Api.Smoke, Providers.Default, JobStore.InMemory, Observability, Persistence.SqlServer, Api.Tests, Core – abgeschlossen 2025-12-12)
+  - [x] CI-License-Scan (dotnet-project-licenses + nightly/release gating) hinzufügen und in docs/deep-dive/supplychain.md beschreiben (2025-12-12)
 - [ ] (blocked bis Repo public) Docs Streams aufsetzen (docs root, docs/deep-dive) inkl. Quickstart & Mermaid policy – Plan siehe `docs/deep-dive/docstreams.md`
 - [ ] (deferred) UI-Backlog dokumentieren; Technologie nach API-Stabilisierung entscheiden – Plan siehe `docs/deep-dive/ui.md`
 - [ ] (deferred) Kubernetes Chart (charts/croniq) als Backlog-Platzhalter vorbereiten – Plan siehe `docs/deep-dive/kubernetes.md`
 - [x] CI/CD Validation Backlog abschließen (`docs/deep-dive/ci.md`): `ci-pr.yml`, reusable Scripts, Coverage-Kommentar, automatisches Staging-Deploy sowie Toolchain-Pinning + Secrets-Runbook sind stand 2025-12-10 umgesetzt.
 - [ ] Policy-Dokumentation & Observability vervollständigen (`docs/deep-dive/policies.md`): Konfigurationsbeispiele dokumentieren sowie Dashboards/Alerts gemäß Observability-Plan verdrahten.
 - [x] Security/OIDC-Basis liefern (`docs/deep-dive/security.md`): OIDC-Options + Dual-Auth-Middleware, CallerContext + RateLimiter-Partitionierung, gRPC-Interceptor, Admin-APIs, Doku und Regressionstests implementieren.
-- [ ] Supply-Chain-Nacharbeiten (`docs/deep-dive/supplychain.md`): `syft`/`trivy` Toolchain pinnen + lokal dokumentieren, Signing Keys bereitstellen, Verification-Doku + Waiver-Prozess ergänzen.
+- [ ] Supply-Chain-Nacharbeiten (`docs/deep-dive/supplychain.md`): Signing Keys bereitstellen, Verification-Doku + Waiver-Prozess ergänzen. (`syft`/`trivy` Toolchain + lokale Anleitung erledigt 2025-12-12.)
 - [x] Webhook-Trigger (Croniq.Webhooks Projekt) planen, host implementieren und in `docs/deep-dive/architecture.md` verankern (inkl. CRUD-API + persistente Hooks)
 
 ## Next Focus
@@ -74,4 +79,3 @@
 - Offene Punkte:
   - Docs/Comms: Docstreams-Aufbau (blocked bis Repo public), CONTRIBUTING-Refresh, offene Quickstart/Consumer-Divergenzen.
   - Delivery Backlog: UI-Dokumentation, Kubernetes-Chart-Platzhalter, globales Audit der verbleibenden `- [ ]` Items.
-  

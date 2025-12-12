@@ -8,7 +8,7 @@ using Croniq.Persistence.SqlServer;
 using Croniq.Persistence.SqlServer.Tests.Collections;
 using Croniq.TestKit.SqlServer;
 using Croniq.TestKit.Testing;
-using FluentAssertions;
+using Shouldly;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
@@ -68,9 +68,9 @@ public sealed class SqlServerJobPersistenceProviderTests : IAsyncLifetime
         await using (var context = await _dbFactory!.CreateDbContextAsync())
         {
             var entity = await context.Jobs.SingleAsync(j => j.JobKey == jobKey.Value);
-            entity.NamespaceSegment.Should().Be(jobKey.NamespaceSegment);
-            entity.Description.Should().Be("original");
-            JsonDocument.Parse(entity.MetadataJson!).RootElement.GetProperty("owner").GetString().Should().Be("platform");
+            entity.NamespaceSegment.ShouldBe(jobKey.NamespaceSegment);
+            entity.Description.ShouldBe("original");
+            JsonDocument.Parse(entity.MetadataJson!).RootElement.GetProperty("owner").GetString().ShouldBe("platform");
         }
 
         var updatedMetadata = new Dictionary<string, string> { ["owner"] = "sre" };
@@ -80,8 +80,8 @@ public sealed class SqlServerJobPersistenceProviderTests : IAsyncLifetime
 
         await using var reloaded = await _dbFactory.CreateDbContextAsync();
         var row = await reloaded.Jobs.SingleAsync(j => j.JobKey == jobKey.Value);
-        row.Description.Should().Be("updated");
-        JsonDocument.Parse(row.MetadataJson!).RootElement.GetProperty("owner").GetString().Should().Be("sre");
+        row.Description.ShouldBe("updated");
+        JsonDocument.Parse(row.MetadataJson!).RootElement.GetProperty("owner").GetString().ShouldBe("sre");
     }
 
     [Fact]
@@ -116,30 +116,32 @@ public sealed class SqlServerJobPersistenceProviderTests : IAsyncLifetime
         var request = new TriggerAcquireRequest(scope, "instance-1", DateTimeOffset.UtcNow, BatchSize: 5);
         var leases = await _persistence.AcquireAsync(request, CancellationToken.None);
 
-        leases.Should().ContainSingle();
+        leases.Count().ShouldBe(1);
         var lease = leases.Single();
-        lease.JobKey.Should().Be(jobKey.Value);
-        lease.TriggerId.Should().Be(trigger.TriggerId);
-        lease.Scope.Should().Be(scope);
-        lease.LeaseExpiresAtUtc.Should().BeAfter(lease.FireAtUtc);
+        lease.JobKey.ShouldBe(jobKey.Value);
+        lease.TriggerId.ShouldBe(trigger.TriggerId);
+        lease.Scope.ShouldBe(scope);
+        lease.LeaseExpiresAtUtc.ShouldBeGreaterThan(lease.FireAtUtc);
 
         await using var verification = await _dbFactory.CreateDbContextAsync();
         var row = await verification.Triggers.SingleAsync(t => t.TriggerKey == trigger.TriggerId);
-        row.LeaseId.Should().Be(lease.LeaseId);
-        row.LeaseInstanceId.Should().Be("instance-1");
-        row.LeaseExpiresAtUtc.Should().BeAfter(DateTime.UtcNow);
+        row.LeaseId.ShouldBe(lease.LeaseId);
+        row.LeaseInstanceId.ShouldBe("instance-1");
+        row.LeaseExpiresAtUtc.ShouldNotBeNull();
+        row.LeaseExpiresAtUtc!.Value.ShouldBeGreaterThan(DateTime.UtcNow);
     }
 
     private static ServiceProvider BuildServiceProvider(string connectionString)
     {
         var services = new ServiceCollection();
-        services.AddLogging(builder => builder.AddSimpleConsole());
+        services.AddLogging(TestLogging.Configure);
         services.AddCroniqSqlServerPersistence(
             sql =>
             {
                 sql.ConnectionString = connectionString;
-                sql.EnableDetailedErrors = true;
-                sql.EnableSensitiveDataLogging = true;
+                var verboseEf = TestLogging.EnableVerboseEfDiagnostics();
+                sql.EnableDetailedErrors = verboseEf;
+                sql.EnableSensitiveDataLogging = verboseEf;
             });
 
         return services.BuildServiceProvider();

@@ -9,7 +9,7 @@ using Croniq.Persistence.SqlServer;
 using Croniq.Persistence.SqlServer.Tests.Collections;
 using Croniq.TestKit.SqlServer;
 using Croniq.TestKit.Testing;
-using FluentAssertions;
+using Shouldly;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
@@ -74,15 +74,17 @@ public sealed class SqlServerWebhookDeadLetterStoreTests : IAsyncLifetime
                 ExpiresAtUtc: DateTimeOffset.UtcNow.AddDays(7)),
             CancellationToken.None);
 
-        id.Should().BeGreaterThan(0);
+        id.ShouldBeGreaterThan(0);
 
         await using var context = await _dbFactory!.CreateDbContextAsync();
         var entity = await context.WebhookDeadLetters.SingleAsync(x => x.Id == id);
-        entity.HookKey.Should().Be("tenant-deadletters-dev-alpha");
-        entity.HeadersJson.Should().Contain("X-Test");
-        entity.MetadataJson.Should().Contain("payload");
-        entity.Attempts.Should().Be(0);
-        entity.StatusCode.Should().Be(401);
+        entity.HookKey.ShouldBe("tenant-deadletters-dev-alpha");
+        entity.HeadersJson.ShouldNotBeNull();
+        entity.HeadersJson!.ShouldContain("X-Test");
+        entity.MetadataJson.ShouldNotBeNull();
+        entity.MetadataJson!.ShouldContain("payload");
+        entity.Attempts.ShouldBe(0);
+        entity.StatusCode.ShouldBe(401);
     }
 
     [Fact]
@@ -97,8 +99,11 @@ public sealed class SqlServerWebhookDeadLetterStoreTests : IAsyncLifetime
 
         var entries = await _store!.ListAsync(scope, CancellationToken.None);
 
-        entries.Should().HaveCount(2);
-        entries.Select(x => x.HookKey).Should().Contain(new[] { "hook-dev-1", "hook-dev-2" });
+        entries.Count().ShouldBe(2);
+        entries.Select(x => x.HookKey)
+            .OrderBy(x => x, StringComparer.Ordinal)
+            .ToArray()
+            .ShouldBe(new[] { "hook-dev-1", "hook-dev-2" }.OrderBy(x => x, StringComparer.Ordinal).ToArray());
     }
 
     [Fact]
@@ -115,12 +120,12 @@ public sealed class SqlServerWebhookDeadLetterStoreTests : IAsyncLifetime
             CancellationToken.None);
 
         var entry = await _store.FindAsync(id, scope, CancellationToken.None);
-        entry.Should().NotBeNull();
-        entry!.FailureReason.Should().Be("execution-error");
-        entry.Attempts.Should().Be(1);
-        entry.StatusCode.Should().Be(500);
-        entry.ErrorDetails.Should().Be("job failed");
-        entry.NextAttemptAtUtc.Should().NotBeNull();
+        entry.ShouldNotBeNull();
+        entry!.FailureReason.ShouldBe("execution-error");
+        entry.Attempts.ShouldBe(1);
+        entry.StatusCode.ShouldBe(500);
+        entry.ErrorDetails.ShouldBe("job failed");
+        entry.NextAttemptAtUtc.ShouldNotBeNull();
     }
 
     [Fact]
@@ -133,7 +138,7 @@ public sealed class SqlServerWebhookDeadLetterStoreTests : IAsyncLifetime
         await _store!.ResolveAsync(id, scope, CancellationToken.None);
 
         var entries = await _store.ListAsync(scope, CancellationToken.None);
-        entries.Should().BeEmpty();
+        entries.ShouldBeEmpty();
     }
 
     private async Task<long> SeedAsync(PartitionScope scope, string hookKey)
@@ -157,13 +162,14 @@ public sealed class SqlServerWebhookDeadLetterStoreTests : IAsyncLifetime
     private static ServiceProvider BuildServiceProvider(string connectionString)
     {
         var services = new ServiceCollection();
-        services.AddLogging(builder => builder.AddSimpleConsole());
+        services.AddLogging(TestLogging.Configure);
         services.AddCroniqSqlServerPersistence(
             sql =>
             {
                 sql.ConnectionString = connectionString;
-                sql.EnableDetailedErrors = true;
-                sql.EnableSensitiveDataLogging = true;
+                var verboseEf = TestLogging.EnableVerboseEfDiagnostics();
+                sql.EnableDetailedErrors = verboseEf;
+                sql.EnableSensitiveDataLogging = verboseEf;
             });
 
         return services.BuildServiceProvider();

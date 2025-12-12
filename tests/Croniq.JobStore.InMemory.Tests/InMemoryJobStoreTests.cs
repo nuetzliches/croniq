@@ -4,7 +4,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Croniq.JobStore.InMemory;
 using Croniq.Persistence.Abstractions;
-using FluentAssertions;
+using Shouldly;
 using Xunit;
 
 namespace Croniq.JobStore.InMemory.Tests;
@@ -25,17 +25,17 @@ public class InMemoryJobStoreTests
 
         var acquire = new TriggerAcquireRequest(DefaultScope, "instance-1", now.AddMinutes(1), 5);
         var leases = await store.AcquireAsync(acquire, CancellationToken.None);
-        var lease = leases.Should().ContainSingle().Subject;
+        var lease = leases.ShouldHaveSingleItem();
 
-        lease.FireAtUtc.Should().Be(now.AddMinutes(1));
-        lease.LeaseExpiresAtUtc.Should().Be(now.AddMinutes(1).AddSeconds(45));
+        lease.FireAtUtc.ShouldBe(now.AddMinutes(1));
+        lease.LeaseExpiresAtUtc.ShouldBe(now.AddMinutes(1).AddSeconds(45));
 
         await store.ReleaseAsync(new TriggerReleaseRequest(lease, true, null), CancellationToken.None);
 
         var reacquire = new TriggerAcquireRequest(DefaultScope, acquire.InstanceId, now.AddMinutes(2), 5);
         var leases2 = await store.AcquireAsync(reacquire, CancellationToken.None);
-        var lease2 = leases2.Should().ContainSingle().Subject;
-        lease2.FireAtUtc.Should().BeAfter(lease.FireAtUtc);
+        var lease2 = leases2.ShouldHaveSingleItem();
+        lease2.FireAtUtc.ShouldBeGreaterThan(lease.FireAtUtc);
     }
 
     [Fact]
@@ -56,9 +56,9 @@ public class InMemoryJobStoreTests
         await store.ReleaseAsync(new TriggerReleaseRequest(lease, false, retryAt, "boom"), CancellationToken.None);
 
         var reacquired = await store.AcquireAsync(new TriggerAcquireRequest(DefaultScope, "instance-1", retryAt.AddSeconds(1), 5), CancellationToken.None);
-        var nextLease = reacquired.Should().ContainSingle().Subject;
-        nextLease.TriggerId.Should().Be(triggerKey);
-        nextLease.FireAtUtc.Should().Be(retryAt);
+        var nextLease = reacquired.ShouldHaveSingleItem();
+        nextLease.TriggerId.ShouldBe(triggerKey);
+        nextLease.FireAtUtc.ShouldBe(retryAt);
     }
 
     [Fact]
@@ -79,13 +79,13 @@ public class InMemoryJobStoreTests
         var leaseA = (await store.AcquireAsync(new TriggerAcquireRequest(DefaultScope, "i1", now.AddMinutes(1), 5), CancellationToken.None)).Single();
         var leaseB = (await store.AcquireAsync(new TriggerAcquireRequest(new PartitionScope("2", "dev"), "i2", now.AddMinutes(1), 5), CancellationToken.None)).Single();
 
-        leaseA.TriggerId.Should().Be(jobA);
-        leaseB.TriggerId.Should().Be(jobB);
+        leaseA.TriggerId.ShouldBe(jobA);
+        leaseB.TriggerId.ShouldBe(jobB);
 
         // Wait out the lease; the trigger should be available again even without an explicit release.
         var reacquire = await store.AcquireAsync(new TriggerAcquireRequest(DefaultScope, "i3", leaseA.FireAtUtc.AddSeconds(11), 5), CancellationToken.None);
-        var leaseAfterExpiry = reacquire.Should().ContainSingle().Subject;
-        leaseAfterExpiry.TriggerId.Should().Be(leaseA.TriggerId);
+        var leaseAfterExpiry = reacquire.ShouldHaveSingleItem();
+        leaseAfterExpiry.TriggerId.ShouldBe(leaseA.TriggerId);
     }
 
     private static InMemoryJobStore CreateStore(DateTimeOffset? now, int leaseDurationSeconds)

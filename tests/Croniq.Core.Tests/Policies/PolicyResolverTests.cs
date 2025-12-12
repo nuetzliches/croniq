@@ -1,7 +1,7 @@
 using System;
 using Croniq.Core.Jobs;
 using Croniq.Core.Policies;
-using FluentAssertions;
+using Shouldly;
 using Xunit;
 
 namespace Croniq.Core.Tests.Policies;
@@ -46,9 +46,9 @@ public class PolicyResolverTests
         var jobKey = new JobKey("t1", "dev", "billing", "invoice");
         var resolved = resolver.ResolveMisfire(jobKey);
 
-        resolved.MaxMisfireDelay.Should().Be(TimeSpan.FromMinutes(1));
-        resolved.DeadLetterOnMisfire.Should().BeTrue();
-        resolved.RescheduleBackoff.Should().Be(TimeSpan.FromSeconds(5));
+        resolved.MaxMisfireDelay.ShouldBe(TimeSpan.FromMinutes(1));
+        resolved.DeadLetterOnMisfire.ShouldBeTrue();
+        resolved.RescheduleBackoff.ShouldBe(TimeSpan.FromSeconds(5));
     }
 
     [Fact]
@@ -79,8 +79,8 @@ public class PolicyResolverTests
         var jobKey = new JobKey("t1", "dev", "billing", "invoice");
         var resolved = resolver.ResolveQuota(jobKey);
 
-        resolved.MaxTriggersPerMinute.Should().Be(50);
-        resolved.MaxParallelExecutionsPerJob.Should().Be(3);
+        resolved.MaxTriggersPerMinute.ShouldBe(50);
+        resolved.MaxParallelExecutionsPerJob.ShouldBe(3);
     }
 
     [Fact]
@@ -169,17 +169,17 @@ public class PolicyResolverTests
         var jobKey = new JobKey("t1", "prod", "billing", "invoice");
         var resolved = resolver.ResolveExecution(jobKey);
 
-        resolved.Retry.MaxAttempts.Should().Be(6);
-        resolved.Retry.BackoffStrategy.Should().Be(RetryBackoffStrategy.Exponential);
-        resolved.Retry.InitialDelay.Should().Be(TimeSpan.FromSeconds(1));
-        resolved.Retry.MaxDelay.Should().Be(TimeSpan.FromSeconds(30));
-        resolved.Retry.JitterFactor.Should().Be(0.2d);
-        resolved.Timeout.Timeout.Should().Be(TimeSpan.FromSeconds(45));
-        resolved.Timeout.CancelExecutionOnTimeout.Should().BeFalse();
-        resolved.CircuitBreaker.Enabled.Should().BeTrue();
-        resolved.CircuitBreaker.BreakDuration.Should().Be(TimeSpan.FromMinutes(5));
-        resolved.CircuitBreaker.MinimumThroughput.Should().Be(4);
-        resolved.DeadLetter.Retention.Should().Be(TimeSpan.FromDays(7));
-        resolved.DeadLetter.OperatorHint.Should().Be("investigate");
+        resolved.Retry.MaxAttempts.ShouldBe(6);
+        resolved.Retry.BackoffStrategy.ShouldBe(RetryBackoffStrategy.Exponential);
+        resolved.Retry.InitialDelay.ShouldBe(TimeSpan.FromSeconds(1));
+        resolved.Retry.MaxDelay.ShouldBe(TimeSpan.FromSeconds(30));
+        resolved.Retry.JitterFactor.ShouldBe(0.2d);
+        resolved.Timeout.Timeout.ShouldBe(TimeSpan.FromSeconds(45));
+        resolved.Timeout.CancelExecutionOnTimeout.ShouldBeFalse();
+        resolved.CircuitBreaker.Enabled.ShouldBeTrue();
+        resolved.CircuitBreaker.BreakDuration.ShouldBe(TimeSpan.FromMinutes(5));
+        resolved.CircuitBreaker.MinimumThroughput.ShouldBe(4);
+        resolved.DeadLetter.Retention.ShouldBe(TimeSpan.FromDays(7));
+        resolved.DeadLetter.OperatorHint.ShouldBe("investigate");
     }
 }

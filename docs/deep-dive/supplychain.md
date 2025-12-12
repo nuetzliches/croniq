@@ -11,7 +11,7 @@ This plan details how we will fulfill the checklist item "SBOM/Signierung und Vu
 
 ## SBOM Strategy
 
-- **Tooling**: Use `syft` for SBOM generation (SPDX JSON) across source + built artifacts. Pin version via `.config/dotnet-tools.json` or wrapper script.
+- **Tooling**: Use `syft` for SBOM generation (SPDX JSON) across source + built artifacts. Versions are defined in `eng/versions/supplychain-tools.json` and installed locally/CI via `scripts/ci/install-supplychain-tool.ps1 -Tool syft`, which places the binary in `bin/` and appends it to `PATH`.
 - **NuGet packages**: After `dotnet pack`, run `syft packages ./artifacts/nuget -o spdx-json=sbom-nuget.json`.
 - **Container images**: After Docker builds finish, run `syft ghcr.io/<owner>/croniq-<api|worker>:<tag> -o spdx-json=sbom-api.json` (the release workflow already emits `api-<version>.spdx.json` and `worker-<version>.spdx.json`).
 - **Storage**: Attach SBOM files to GitHub Releases and upload as workflow artifacts. Keep a copy under `artifacts/sbom/` in build output.
@@ -19,10 +19,27 @@ This plan details how we will fulfill the checklist item "SBOM/Signierung und Vu
 ## Vulnerability Scanning
 
 - **Dependencies**: `dotnet list package --vulnerable --include-transitive` in PR builds (warning) and release builds (fail on HIGH/CRITICAL unless waived).
-- **Containers**: `trivy image ghcr.io/nuetzliches/croniq-api:<tag>` in release workflow; block on HIGH/CRITICAL.
+- **Containers**: `trivy image ghcr.io/nuetzliches/croniq-api:<tag>` in release workflow; block on HIGH/CRITICAL. Trivy is installed through `scripts/ci/install-supplychain-tool.ps1 -Tool trivy`, sharing the same version manifest as Syft.
 - **Source/FS**: `trivy fs --scanners vuln,secret .` nightly; fail on CRITICAL secrets/vulns.
 - **Reports**: Upload SARIF to GitHub Security tab (`trivy ... -f sarif -o trivy.sarif`). Provide summary comment in PRs.
 - **Waivers**: Maintain `SECURITY_NOTES.md` (future) documenting accepted risks, expiry dates, and references.
+
+## License Compliance
+
+- **Tooling**: `dotnet-project-licenses` is pinned in `.config/dotnet-tools.json` (version 2.7.1). Allowed SPDX identifiers live in `eng/licenses/allowed-licenses.json`, and URL overrides for legacy feeds live in `eng/licenses/license-url-overrides.json` (e.g., `https://aka.ms/deprecateLicenseUrl` → `MIT`).
+- **Policy**: The allow-list contains MIT and MIT-compatible SPDX IDs (MIT, MIT-0, Apache-2.0, BSD-2/3-Clause, ISC, CC0-1.0). `MS-EULA`, `LICENSE`, and `LICENSE.txt` are explicitly whitelisted because we manually reviewed the referenced packages (legacy .NET facades and Microsoft-provided shims) and verified they are redistributable within our policy scope. Additional exceptions require PRs that update the JSON files plus justification in `docs/deep-dive/supplychain.md`.
+- **Execution**: PR validation (`ci-pr.yml`), nightly compliance (`nightly.yml`) and the release workflow (`release.yml`) all run `dotnet tool run dotnet-project-licenses --include-transitive --use-project-assets-json` against `croniq.sln`. PR builds upload the generated `artifacts/licenses/license-scan.json` as evidence; nightly/release builds publish it with other compliance artifacts.
+- **Fail-Fast Behavior**: Any package emitting a license identifier that is not on the allow list causes the job to fail. Contributors must either replace the dependency or document why it is still MIT-compatible and update the overrides.
+- **Auditing**: The JSON output is diff-friendly and stored with build artifacts, enabling release reviewers to confirm the dependency set for each build.
+
+## Toolchain Pinning & Local Usage
+
+- Run `pwsh ./scripts/ci/install-supplychain-tool.ps1 -Tool syft` (or `-Tool trivy`) to download the pinned release declared in `eng/versions/supplychain-tools.json`. By default, binaries land in `./bin`; pass `-InstallDir` to override.
+- After installation, prepend the resolved directory to `PATH` for the current shell (PowerShell example: `$env:Path = "$PWD/bin;$env:Path"`).
+- Confirm the pinned versions with `./bin/syft --version` and `./bin/trivy --version` before running SBOM/scan commands locally.
+- Mirror the CI experience when testing changes: `./bin/syft packages . -o cyclonedx-json` for SBOM validation and `./bin/trivy fs . --severity HIGH,CRITICAL --ignore-unfixed --exit-code 0` for informational vulnerability sweeps.
+- CI jobs reuse the same script to ensure developers and automation execute identical bits. Updating either tool is a single-line version bump in the JSON manifest plus a follow-up validation run.
+- The script supports Windows (zip) and Linux/macOS (tar.gz) archives and enforces amd64/arm64 builds. If another architecture is required later, extend the internal asset map.
 
 ## Signing & Provenance
 
@@ -56,7 +73,7 @@ This plan details how we will fulfill the checklist item "SBOM/Signierung und Vu
 
 ## Backlog to Complete the Checklist Item
 
-- [ ] Add `syft` and `trivy` to toolchain (`.config/dotnet-tools.json` or scripts) and document local usage.
+- [x] Add `syft` and `trivy` to toolchain (`scripts/ci/install-supplychain-tool.ps1` + `eng/versions/supplychain-tools.json`) and document local usage. (2025-12-12)
 - [x] Implement PR/nightly/release workflow steps for scans + SBOMs per the pipeline plan (see `.github/workflows/nightly.yml` + `.github/workflows/release.yml`).
 - [ ] Provision signing keys (NuGet cert, cosign) and store public verification artifacts in the repo.
 - [ ] Add documentation (`docs/deep-dive/release-verification.md` + `SECURITY.md`) showing verification commands for consumers.

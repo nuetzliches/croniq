@@ -1,7 +1,7 @@
 using Croniq.Api;
 using Croniq.Auth.Abstractions;
 using Croniq.Auth.Core;
-using FluentAssertions;
+using Shouldly;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Http.HttpResults;
 using Xunit;
@@ -20,7 +20,7 @@ public sealed class WebhookAuthorizationTests
 
         var result = WebhookAuthorization.Ensure(accessor, "tenant-a", "dev", WebhookAuthorization.WebhookScopes.Read);
 
-        result.Should().BeNull();
+        result.ShouldBeNull();
     }
 
     [Fact]
@@ -33,8 +33,8 @@ public sealed class WebhookAuthorizationTests
 
         var result = WebhookAuthorization.Ensure(accessor, "tenant-b", "dev", WebhookAuthorization.WebhookScopes.Read);
 
-        result.Should().BeOfType<ProblemHttpResult>()
-            .Which.StatusCode.Should().Be(StatusCodes.Status403Forbidden);
+        result.ShouldBeOfType<ProblemHttpResult>()
+            .StatusCode.ShouldBe(StatusCodes.Status403Forbidden);
     }
 
     [Fact]
@@ -47,8 +47,8 @@ public sealed class WebhookAuthorizationTests
 
         var result = WebhookAuthorization.Ensure(accessor, "tenant-a", "qa", WebhookAuthorization.WebhookScopes.Read);
 
-        result.Should().BeOfType<ProblemHttpResult>()
-            .Which.StatusCode.Should().Be(StatusCodes.Status403Forbidden);
+        result.ShouldBeOfType<ProblemHttpResult>()
+            .StatusCode.ShouldBe(StatusCodes.Status403Forbidden);
     }
 
     [Fact]
@@ -61,8 +61,8 @@ public sealed class WebhookAuthorizationTests
 
         var result = WebhookAuthorization.Ensure(accessor, "tenant-a", "dev", WebhookAuthorization.WebhookScopes.Write);
 
-        result.Should().BeOfType<ProblemHttpResult>()
-            .Which.StatusCode.Should().Be(StatusCodes.Status403Forbidden);
+        result.ShouldBeOfType<ProblemHttpResult>()
+            .StatusCode.ShouldBe(StatusCodes.Status403Forbidden);
     }
 
     [Fact]
@@ -72,8 +72,8 @@ public sealed class WebhookAuthorizationTests
 
         var result = WebhookAuthorization.Ensure(accessor, "tenant-a", "dev", WebhookAuthorization.WebhookScopes.Read);
 
-        result.Should().BeOfType<ProblemHttpResult>()
-            .Which.StatusCode.Should().Be(StatusCodes.Status401Unauthorized);
+        result.ShouldBeOfType<ProblemHttpResult>()
+            .StatusCode.ShouldBe(StatusCodes.Status401Unauthorized);
     }
 
     private static CallerContextAccessor CreateAccessor(string tenantId, string environment, IReadOnlyCollection<string> scopes)

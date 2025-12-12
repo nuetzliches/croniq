@@ -16,6 +16,7 @@ All AI-generated contributions must align with the architectural ground rules do
 
 3. **Dependencies & Packages**
 
+   - Add only dependencies with MIT-compatible licenses (MIT, Apache 2.0, BSD); flag any package that introduces stronger restrictions before it lands.
    - Add NuGet packages in their latest stable version unless the concept mandates a specific range.
    - Follow each package's official documentation for configuration and usage patterns.
 
@@ -25,7 +26,7 @@ All AI-generated contributions must align with the architectural ground rules do
    - Favor async APIs (`Task`/`ValueTask`) and cancellation tokens for long-running or I/O-bound operations.
    - Ensure telemetry hooks (logging, tracing, metrics) align with the OpenTelemetry-first approach captured in `docs/deep-dive/architecture.md`.
    - Validate input aggressively; prefer `ArgumentException`/`Guard` helpers over silent failures.
-   - Write unit tests (xUnit + FluentAssertions) for new logic; update integration tests when touching provider or persistence layers.
+   - Write unit tests (xUnit + Shouldly) for new logic; update integration tests when touching provider or persistence layers.
    - Keep secrets/config values outside source control; rely on the `ISecretProvider` abstractions instead of inline secrets.
 
 5. **Documentation Cross-Links**

@@ -10,12 +10,13 @@ internal static class SqlServerTestServiceProviderFactory
     public static ServiceProvider Create(string connectionString)
     {
         var services = new ServiceCollection();
-        services.AddLogging(builder => builder.AddSimpleConsole());
+        services.AddLogging(TestLogging.Configure);
         services.AddCroniqSqlServerPersistence(sql =>
         {
             sql.ConnectionString = connectionString;
-            sql.EnableDetailedErrors = true;
-            sql.EnableSensitiveDataLogging = true;
+            var verboseEf = TestLogging.EnableVerboseEfDiagnostics();
+            sql.EnableDetailedErrors = verboseEf;
+            sql.EnableSensitiveDataLogging = verboseEf;
         });
 
         return services.BuildServiceProvider();

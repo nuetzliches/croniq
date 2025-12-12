@@ -5,7 +5,7 @@ using System.Net.Http;
 using System.Net.Http.Json;
 using System.Text.Json;
 using Croniq.Sdk.Operator.Webhooks;
-using FluentAssertions;
+using Shouldly;
 using Xunit;
 
 namespace Croniq.Sdk.Tests;
@@ -35,10 +35,17 @@ public sealed class WebhookIpRuleClientTests
 
         var result = await client.SyncAsync("tenant-a", "hook_1", "prod", desired);
 
-        result.Created.Should().HaveCount(2);
-        result.DeletedRuleIds.Should().Equal(1);
-        result.FinalState.Select(rule => rule.Cidr).Should().BeEquivalentTo("0.0.0.0/0", "::/0");
-        handler.SeenCorrelationIds.Where(id => !string.IsNullOrWhiteSpace(id)).Distinct().Should().ContainSingle();
+        result.Created.Count().ShouldBe(2);
+        result.DeletedRuleIds.ShouldBe(new[] { 1L });
+        result.FinalState
+            .Select(rule => rule.Cidr)
+            .OrderBy(cidr => cidr, StringComparer.Ordinal)
+            .ToArray()
+            .ShouldBe(new[] { "0.0.0.0/0", "::/0" }.OrderBy(cidr => cidr, StringComparer.Ordinal).ToArray());
+        handler.SeenCorrelationIds
+            .Where(id => !string.IsNullOrWhiteSpace(id))
+            .Distinct(StringComparer.Ordinal)
+            .ShouldHaveSingleItem();
     }
 
     [Fact]
@@ -57,9 +64,10 @@ public sealed class WebhookIpRuleClientTests
 
         var result = await client.SyncAsync("tenant-a", "hook_1", "prod", desired);
 
-        result.Created.Should().HaveCount(1);
-        result.DeletedRuleIds.Should().BeEmpty();
-        result.FinalState.Should().ContainSingle().Which.Cidr.Should().Be("0.0.0.0/0");
+        result.Created.Count().ShouldBe(1);
+        result.DeletedRuleIds.ShouldBeEmpty();
+        var finalRule = result.FinalState.ShouldHaveSingleItem();
+        finalRule.Cidr.ShouldBe("0.0.0.0/0");
     }
 
     [Fact]
@@ -84,8 +92,12 @@ public sealed class WebhookIpRuleClientTests
             new[] { new WebhookIpRuleDesired("10.0.0.0/24", "legacy") },
             correlationId: "correlate-123");
 
-        result.Created.Should().BeEmpty();
-        handler.SeenCorrelationIds.Where(id => !string.IsNullOrWhiteSpace(id)).Distinct().Should().ContainSingle().Which.Should().Be("correlate-123");
+        result.Created.ShouldBeEmpty();
+        var correlation = handler.SeenCorrelationIds
+            .Where(id => !string.IsNullOrWhiteSpace(id))
+            .Distinct(StringComparer.Ordinal)
+            .ShouldHaveSingleItem();
+        correlation.ShouldBe("correlate-123");
     }
 
     private sealed class FakeWebhookIpRuleHandler : HttpMessageHandler
