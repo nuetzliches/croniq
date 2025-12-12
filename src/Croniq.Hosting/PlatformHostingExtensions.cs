@@ -3,6 +3,7 @@ using Croniq.Auth.Core;
 using Croniq.Auth.SqlServer;
 using Croniq.Core;
 using Croniq.Core.Options;
+using Croniq.Core.Policies;
 using Croniq.Data.SqlServer;
 using Croniq.JobStore.InMemory;
 using Croniq.Persistence.Abstractions;
@@ -23,6 +24,9 @@ public static class PlatformHostingExtensions
         services.Configure<CroniqOidcOptions>(configuration.GetSection("Croniq:Auth:Oidc"));
         services.Configure<CroniqPersistenceOptions>(configuration.GetSection("Croniq:Persistence"));
         services.Configure<SqlServerOptions>(configuration.GetSection("Croniq:SqlServer"));
+        services.Configure<MisfirePolicyOptions>(configuration.GetSection("Croniq:Policies:Misfire"));
+        services.Configure<ExecutionPolicyOptions>(configuration.GetSection("Croniq:Policies:Execution"));
+        services.Configure<PolicyOverrideOptions>(configuration.GetSection("Croniq:Policies:Overrides"));
 
         services.AddCroniqCore();
         services.AddCroniqDefaultProviders();

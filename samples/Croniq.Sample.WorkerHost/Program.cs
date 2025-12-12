@@ -1,6 +1,7 @@
 using System.Reflection;
 using Croniq.Core;
 using Croniq.Core.Options;
+using Croniq.Core.Policies;
 using Croniq.JobStore.InMemory;
 using Croniq.Providers.Default;
 using Croniq.Persistence.SqlServer;
@@ -20,6 +21,9 @@ builder.Configuration
     .AddEnvironmentVariables();
 
 builder.Services.Configure<CroniqOptions>(builder.Configuration.GetSection("Croniq:Core"));
+builder.Services.Configure<MisfirePolicyOptions>(builder.Configuration.GetSection("Croniq:Policies:Misfire"));
+builder.Services.Configure<ExecutionPolicyOptions>(builder.Configuration.GetSection("Croniq:Policies:Execution"));
+builder.Services.Configure<PolicyOverrideOptions>(builder.Configuration.GetSection("Croniq:Policies:Overrides"));
 
 builder.Services.AddCroniqDefaultProviders();
 builder.Services.AddCroniqCore();

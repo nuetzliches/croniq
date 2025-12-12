@@ -40,6 +40,118 @@ This document explains how Croniq implements the Polly-based policy engine outli
 - Metrics: `cronipolicy.retry_attempts`, `cronipolicy.deadletter_total`, `cronipolicy.circuit_open` counters. Implemented via `PolicyMetrics` in `Croniq.Core.Execution`, emitted by the resilience provider / dead-letter flow so operators see transitions without extra wiring.
 - Logs: structured entries for each policy transition with `Policy` (`timeout`, `retry`, `circuit-breaker`, `dead-letter`), `JobKey`, `Attempt`/`Delay` (for retries), and `Reason` (exception type/message). `ExecutionPolicyPipelineProvider` and `TriggerWorker` already emit these warnings/information entries, so dashboards and alerts can consume them immediately.
 
+## Configuration & Overrides
+
+Croniq binds policy options via `IOptions<T>` so hosts can drive behavior from `appsettings.*` or environment variables.
+
+- **Default sections**: `Croniq:Policies:Misfire` → `MisfirePolicyOptions`, `Croniq:Policies:Execution` → `ExecutionPolicyOptions`, `Croniq:Policies:Overrides` → `PolicyOverrideOptions`.
+- **Override resolution**: `PolicyOverrideOptions.Execution`/`Misfire` picks the most specific match (tenant > environment > namespace > job). `PolicyOverrideOptions.Quotas` applies every matching entry and chooses the most restrictive values (minimums).
+- **Units & meaning**:
+  - `Retry.MaxAttempts` counts the initial try; `InitialDelay`/`MaxDelay` are `TimeSpan` strings (`00:00:02`).
+  - `Retry.RetryableExceptions` expects fully qualified type names; empty list means "retry everything except cancellations".
+  - `CircuitBreaker.FailureThreshold` is a percentage (5 → 5%); `MinimumThroughput` is the minimum samples before evaluation.
+  - `Timeout.Timeout` is a `TimeSpan`; `CancelExecutionOnTimeout` controls cooperative cancellation of the job handler.
+  - `DeadLetter.Retention` is a `TimeSpan`; `OperatorHint` is surfaced on dead-letter entries.
+
+### AppSettings example
+
+```json
+{
+  "Croniq": {
+    "Policies": {
+      "Misfire": {
+        "MaxMisfireDelay": "00:05:00",
+        "DeadLetterOnMisfire": true,
+        "RescheduleBackoff": "00:00:30"
+      },
+      "Execution": {
+        "Retry": {
+          "Enabled": true,
+          "MaxAttempts": 4,
+          "BackoffStrategy": "Exponential",
+          "InitialDelay": "00:00:02",
+          "MaxDelay": "00:00:30",
+          "JitterFactor": 0.25,
+          "RetryableExceptions": [ "System.TimeoutException", "System.IO.IOException" ]
+        },
+        "Timeout": { "Enabled": true, "Timeout": "00:02:00", "CancelExecutionOnTimeout": true },
+        "CircuitBreaker": {
+          "Enabled": true,
+          "FailureThreshold": 10,
+          "SamplingWindow": "00:01:00",
+          "BreakDuration": "00:00:30",
+          "MinimumThroughput": 20
+        },
+        "DeadLetter": { "Enabled": true, "Retention": "30.00:00:00", "OperatorHint": "check downstream API" }
+      },
+      "Overrides": {
+        "Execution": [
+          {
+            "TenantId": "1",
+            "NamespaceSegment": "payments",
+            "Options": {
+              "Retry": { "MaxAttempts": 2, "RetryableExceptions": [ "System.InvalidOperationException" ] },
+              "CircuitBreaker": { "Enabled": true, "FailureThreshold": 25, "SamplingWindow": "00:00:30", "BreakDuration": "00:00:20" }
+            }
+          },
+          {
+            "TenantId": "1",
+            "EnvironmentTag": "prod",
+            "JobName": "invoice",
+            "Options": {
+              "Timeout": { "Timeout": "00:00:30" },
+              "DeadLetter": { "OperatorHint": "review invoice payload before replay" }
+            }
+          }
+        ],
+        "Quotas": [
+          { "TenantId": "1", "NamespaceSegment": "payments", "Options": { "MaxTriggersPerMinute": 30, "MaxParallelExecutionsPerJob": 2 } }
+        ],
+        "Misfire": [
+          { "TenantId": "1", "NamespaceSegment": "billing", "Options": { "MaxMisfireDelay": "00:02:00", "DeadLetterOnMisfire": false, "RescheduleBackoff": "00:00:10" } }
+        ]
+      }
+    }
+  }
+}
+```
+
+### Environment variables
+
+The same configuration can be expressed for containers:
+
+```
+CRONIQ__POLICIES__EXECUTION__TIMEOUT__TIMEOUT=00:02:00
+CRONIQ__POLICIES__EXECUTION__RETRY__MAXATTEMPTS=4
+CRONIQ__POLICIES__OVERRIDES__EXECUTION__0__TENANTID=1
+CRONIQ__POLICIES__OVERRIDES__EXECUTION__0__NAMESPACESEGMENT=payments
+CRONIQ__POLICIES__OVERRIDES__EXECUTION__0__OPTIONS__CIRCUITBREAKER__FAILURETHRESHOLD=25
+CRONIQ__POLICIES__OVERRIDES__QUOTAS__0__OPTIONS__MAXTRIGGERSPERMINUTE=30
+```
+
+### Host wiring
+
+Add the bindings once per host so defaults and overrides flow into the `IPolicyResolver`:
+
+```csharp
+services.Configure<MisfirePolicyOptions>(configuration.GetSection("Croniq:Policies:Misfire"));
+services.Configure<ExecutionPolicyOptions>(configuration.GetSection("Croniq:Policies:Execution"));
+services.Configure<PolicyOverrideOptions>(configuration.GetSection("Croniq:Policies:Overrides"));
+```
+
+`AddCroniqObservability` already registers the `Croniq.Core.Policy` meter; keep it in your OpenTelemetry configuration when customizing instrumentation:
+
+```csharp
+builder.WithMetrics(metrics => metrics.AddMeter("Croniq.Core.Policy", "Croniq.Core"));
+```
+
+## Dashboards & Alerts
+
+- **Metrics**: `cronipolicy_retry_attempts`, `cronipolicy_circuit_open`, `cronipolicy_deadletter_total` are emitted from the execution pipeline. Ensure your OTel collector forwards them to Prometheus (devstack does this by default).
+- **Grafana**: `infra/docker/observability/grafana/dashboards/api-gateway.json` and `scheduler.json` surface the policy counters (retry/circuit/dead-letter) per tenant/environment. Load them via the devstack overlay or by mounting the JSON into your Grafana deployment.
+- **Alerts**: `infra/monitoring/rules/scheduler-alerts.yaml` ships alert rules that watch `cronipolicy_deadletter_total` and related scheduler signals. Mount the rule file into Prometheus (already done in the devstack compose) to trigger `CroniqDeadLettersHigh` when DLQs rise.
+- **Runbook hints**: Dead-letter entries store the `OperatorHint` alongside policy snapshots; include actionable text there to shorten triage when alerts fire.
+
 ## Backlog to Complete the Policy Engine Milestone
 
 - [x] Define `ExecutionPolicyOptions` + override binding in `Croniq.Core` (`Options/Policies`).
@@ -49,7 +161,7 @@ This document explains how Croniq implements the Polly-based policy engine outli
 - [x] Emit policy outcome counters/metrics via the `ExecutionPolicyPipelineProvider` + `TriggerWorker` instrumentation (replaces earlier plan to wire it inside `DefaultJobExecutionPipeline`).
 - [x] Extend persistence contracts for dead-letter writes/reads and update SqlServer EF migrations accordingly.
 - [x] Provide integration tests in `Croniq.Core.Tests` + contract tests for persistence to validate dead-letter storage.
-- [ ] Document policy configuration knobs in `docs/policies.md` and add examples to samples.
-- [ ] Wire dashboards/alerts from the observability plan to include policy counters (ensure exporters emit them).
+- [x] Document policy configuration knobs in `docs/policies.md` and add examples to samples.
+- [x] Wire dashboards/alerts from the observability plan to include policy counters (ensure exporters emit them).
 
 Deliverables include code, tests, docs, and dashboard updates. When the backlog is complete, mark the checklist item as done.

@@ -34,7 +34,7 @@
 - [ ] (deferred) UI-Backlog dokumentieren; Technologie nach API-Stabilisierung entscheiden – Plan siehe `docs/deep-dive/ui.md`
 - [ ] (deferred) Kubernetes Chart (charts/croniq) als Backlog-Platzhalter vorbereiten – Plan siehe `docs/deep-dive/kubernetes.md`
 - [x] CI/CD Validation Backlog abschließen (`docs/deep-dive/ci.md`): `ci-pr.yml`, reusable Scripts, Coverage-Kommentar, automatisches Staging-Deploy sowie Toolchain-Pinning + Secrets-Runbook sind stand 2025-12-10 umgesetzt.
-- [ ] Policy-Dokumentation & Observability vervollständigen (`docs/deep-dive/policies.md`): Konfigurationsbeispiele dokumentieren sowie Dashboards/Alerts gemäß Observability-Plan verdrahten.
+- [x] Policy-Dokumentation & Observability vervollständigen (`docs/deep-dive/policies.md`): Konfigurationsbeispiele dokumentieren sowie Dashboards/Alerts gemäß Observability-Plan verdrahten.
 - [x] Security/OIDC-Basis liefern (`docs/deep-dive/security.md`): OIDC-Options + Dual-Auth-Middleware, CallerContext + RateLimiter-Partitionierung, gRPC-Interceptor, Admin-APIs, Doku und Regressionstests implementieren.
 - [ ] Supply-Chain-Nacharbeiten (`docs/deep-dive/supplychain.md`): Signing Keys bereitstellen, Verification-Doku + Waiver-Prozess ergänzen. (`syft`/`trivy` Toolchain + lokale Anleitung erledigt 2025-12-12.)
 - [x] Webhook-Trigger (Croniq.Webhooks Projekt) planen, host implementieren und in `docs/deep-dive/architecture.md` verankern (inkl. CRUD-API + persistente Hooks)
@@ -52,7 +52,6 @@
 - **CI & Supplychain**: `docs/deep-dive/ci.md` und `docs/deep-dive/supplychain.md` listen ungelöste Tasks (Toolchain-Pinning, `eng/`-Assets, Secrets-Runbook, Waiver-Prozess); das automatische Staging-Deploy via `deploy-staging.yml`/`release.yml` ist erledigt.
 - **Security & Auth/OIDC**: `docs/deep-dive/security.md` markiert offene Arbeiten an OIDC-Flows, Secrets-Governance sowie Hardenings; entsprechendes Checklist-Item "Security/OIDC-Basis" hinzugefügt.
 - **Kubernetes & UI Scaffolding**: Platzhalter in `docs/deep-dive/kubernetes.md` und `docs/deep-dive/ui.md` beschreiben fehlende Chart-Baseline, UI-Tech-Entscheid und Content-Aufbereitung (Checklist-Items "UI-Backlog" und "Kubernetes Chart").
-- **Policy Observability**: `docs/deep-dive/policies.md` fordert noch Konfig-Beispiele und Dashboard-Wiring; wird durch das neue Checklist-Item "Policy-Dokumentation & Observability" verfolgt.
 
 ## Webhook-Trigger-Konzept (Backlog)
 
