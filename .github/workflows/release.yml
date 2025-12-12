@@ -126,7 +126,7 @@ jobs:
             --no-progress
 
       - name: Upload Trivy SARIF to GitHub Security
-        if: always()
+        if: ${{ always() && env.GHAS_ENABLED == 'true' }}
         uses: github/codeql-action/upload-sarif@v4
         with:
           sarif_file: artifacts/trivy/source.sarif
