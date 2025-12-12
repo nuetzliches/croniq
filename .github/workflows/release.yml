@@ -37,12 +37,6 @@ jobs:
         with:
           dotnet-version: 10.0.x
 
-      - name: Install .NET 7 runtime (for dotnet-project-licenses)
-        uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: 7.0.x
-          include-prerelease: false
-
       - name: Restore
         run: dotnet restore croniq.sln
 
@@ -99,17 +93,10 @@ jobs:
       - name: Dependency vulnerability check
         run: dotnet list package --vulnerable --include-transitive
 
-      - name: License compatibility scan
+      - name: License compatibility scan (Syft + allowlist)
         run: |
-          dotnet tool restore
-          dotnet tool run dotnet-project-licenses \
-            --input croniq.sln \
-            --include-transitive \
-            --use-project-assets-json \
-            --allowed-license-types eng/licenses/allowed-licenses.json \
-            --licenseurl-to-license-mappings eng/licenses/license-url-overrides.json \
-            --json \
-            --outfile artifacts/licenses/license-scan.json
+          syft dir:. -o spdx-json=artifacts/licenses/sbom.json
+          python scripts/ci/check-licenses.py artifacts/licenses/sbom.json eng/licenses/allowed-licenses.json
 
       - name: Generate NuGet SBOM (Syft)
         run: syft dir:artifacts/nuget -o spdx-json=artifacts/sbom/nuget.spdx.json

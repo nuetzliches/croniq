@@ -26,11 +26,11 @@ This plan details how we will fulfill the checklist item "SBOM/Signierung und Vu
 
 ## License Compliance
 
-- **Tooling**: `dotnet-project-licenses` is pinned in `.config/dotnet-tools.json` (version 2.7.1). Allowed SPDX identifiers live in `eng/licenses/allowed-licenses.json`, and URL overrides for legacy feeds live in `eng/licenses/license-url-overrides.json` (e.g., `https://aka.ms/deprecateLicenseUrl` → `MIT`).
-- **Policy**: The allow-list contains MIT and MIT-compatible SPDX IDs (MIT, MIT-0, Apache-2.0, BSD-2/3-Clause, ISC, CC0-1.0). `MS-EULA`, `LICENSE`, and `LICENSE.txt` are explicitly whitelisted because we manually reviewed the referenced packages (legacy .NET facades and Microsoft-provided shims) and verified they are redistributable within our policy scope. Additional exceptions require PRs that update the JSON files plus justification in `docs/deep-dive/supplychain.md`.
-- **Execution**: PR validation (`ci-pr.yml`), nightly compliance (`nightly.yml`) and the release workflow (`release.yml`) all run `dotnet tool run dotnet-project-licenses --include-transitive --use-project-assets-json` against `croniq.sln`. PR builds upload the generated `artifacts/licenses/license-scan.json` as evidence; nightly/release builds publish it with other compliance artifacts.
-- **Fail-Fast Behavior**: Any package emitting a license identifier that is not on the allow list causes the job to fail. Contributors must either replace the dependency or document why it is still MIT-compatible and update the overrides.
-- **Auditing**: The JSON output is diff-friendly and stored with build artifacts, enabling release reviewers to confirm the dependency set for each build.
+- **Tooling**: Syft (SPDX JSON) plus `scripts/ci/check-licenses.py`. Allowed SPDX identifiers live in `eng/licenses/allowed-licenses.json`.
+- **Policy**: The allow-list contains MIT and MIT-compatible SPDX IDs (MIT, MIT-0, Apache-2.0, BSD-2/3-Clause, ISC, CC0-1.0). `MS-EULA`, `LICENSE`, and `LICENSE.txt` are explicitly whitelisted because we manually reviewed the referenced packages (legacy .NET facades and Microsoft-provided shims) and verified they are redistributable within our policy scope. Additional exceptions require PRs that update the JSON files plus justification in this document.
+- **Execution**: PR validation (`ci-pr.yml`), nightly compliance (`nightly.yml`) and the release workflow (`release.yml`) run `syft dir:. -o spdx-json=artifacts/licenses/sbom.json` followed by `python scripts/ci/check-licenses.py artifacts/licenses/sbom.json eng/licenses/allowed-licenses.json`. The SBOM and checker output are uploaded as evidence.
+- **Fail-Fast Behavior**: Any package emitting a license identifier that is not on the allow list causes the job to fail. Contributors must either replace the dependency or document why it is still MIT-compatible and update the allow list.
+- **Auditing**: The SBOM is diff-friendly and stored with build artifacts, enabling release reviewers to confirm the dependency set for each build.
 
 ## Waivers & Exceptions
 

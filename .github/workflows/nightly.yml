@@ -137,18 +137,11 @@ jobs:
       - name: Generate SBOM (Syft)
         run: syft dir:. -o json > artifacts/sbom.json
 
-      - name: License compatibility scan
+      - name: License compatibility scan (Syft + allowlist)
         run: |
-          dotnet tool restore
           mkdir -p artifacts/licenses
-          dotnet tool run dotnet-project-licenses \
-            --input croniq.sln \
-            --include-transitive \
-            --use-project-assets-json \
-            --allowed-license-types eng/licenses/allowed-licenses.json \
-            --licenseurl-to-license-mappings eng/licenses/license-url-overrides.json \
-            --json \
-            --outfile artifacts/licenses/license-scan.json
+          syft dir:. -o spdx-json=artifacts/licenses/sbom.json
+          python scripts/ci/check-licenses.py artifacts/licenses/sbom.json eng/licenses/allowed-licenses.json
 
       - name: Run Trivy filesystem scan
         run: |

@@ -254,7 +254,7 @@ Pass `-ActivateInSeconds <seconds>` (up to seven days) when you need to stage th
 
 ## 5.1 Publish API & gRPC Schemas
 
-Croniq hosts both Minimal API endpoints (`/schedules`, `/jobs/trigger`, `/tenants/*/webhooks`) and the Scheduler gRPC surface defined in [src/Croniq.Rpc.Client/Protos/scheduler.proto](src/Croniq.Rpc.Client/Protos/scheduler.proto). Expose their schemas so downstream teams can generate clients without reverse engineering requests.
+Croniq hosts both Minimal API endpoints (`/schedules`, `/jobs/trigger`, `/tenants/*/webhooks`) and the Scheduler gRPC surface defined in [src/Croniq.Rpc.Client/Protos/scheduler.proto](../../src/Croniq.Rpc.Client/Protos/scheduler.proto). Expose their schemas so downstream teams can generate clients without reverse engineering requests.
 
 Add the recommended tooling to your host:
 
