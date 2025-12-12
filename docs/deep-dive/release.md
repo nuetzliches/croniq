@@ -12,7 +12,7 @@ This document extends `ci.md` with the steps every Croniq release must follow: v
 
 - The solution uses [MinVer](https://github.com/adamralph/minver) (configured in `Directory.Build.props`) to derive `Version/PackageVersion` from Git tags.
 - Tag prefix is `v` (e.g., `v1.2.3`). Release builds must be tagged; otherwise CI produces prereleases.
-- Default prerelease phase is `preview` and `AutoIncrement` is `minor`, so commits after `v1.2.0` become `1.3.0-preview.<height>`.
+- Default prerelease identifiers are `preview.0` and `AutoIncrement` is `minor`, so commits after `v1.2.0` become `1.3.0-preview.<height>`.
 - CI fetches full history (`fetch-depth: 0`) to ensure tags are available; local builds do the same automatically.
 - Override only when necessary (e.g., hotfix branches): `dotnet build /p:MinVerVersionOverride=1.2.3`.
 
