@@ -61,7 +61,12 @@ def extract_licenses(package: dict) -> List[str]:
         part = part.strip()
         if part:
             tokens.append(part)
-    return tokens
+
+    # Treat NOASSERTION / NONE as "missing" so we can ignore them unless the caller
+    # explicitly opts into --fail-on-missing.
+    ignore_tokens = {"NOASSERTION", "NONE", "NONEFOUND", "UNKNOWN"}
+    filtered = [t for t in tokens if t.upper() not in ignore_tokens]
+    return filtered
 
 
 def find_violations(packages: Iterable[dict], allowlist: Set[str], fail_on_missing: bool) -> List[dict]:
