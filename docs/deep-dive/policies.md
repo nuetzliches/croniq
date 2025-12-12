@@ -120,7 +120,7 @@ Croniq binds policy options via `IOptions<T>` so hosts can drive behavior from `
 
 The same configuration can be expressed for containers:
 
-```
+```bash
 CRONIQ__POLICIES__EXECUTION__TIMEOUT__TIMEOUT=00:02:00
 CRONIQ__POLICIES__EXECUTION__RETRY__MAXATTEMPTS=4
 CRONIQ__POLICIES__OVERRIDES__EXECUTION__0__TENANTID=1

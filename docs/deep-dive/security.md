@@ -124,11 +124,12 @@ This document specifies the authentication, authorization, and rate limiting des
   ```
 
 - **Operations**:
-  1.  Decide the default posture (open vs closed). For closed-by-default, seed a catch-all rule (`0.0.0.0/0`) before tightening to explicit CIDRs.
-  2.  Script creation/deletion via the API or the `Croniq.Sdk.Operator.Webhooks.WebhookIpRuleClient` helper to keep Croniq in sync with your source-of-truth IP inventory.
-  3.  Monitor `Croniq.Webhooks.Ingress` metrics/logs for the `ip-rule-denied` counter; alert when the rate exceeds baseline to catch accidental lockouts.
-  4.  Every CRUD/rotation call writes to `WebhookEndpointEvents`; the API publishes cache-invalidating notifications so the ingress host refreshes CIDRs within seconds (no manual restarts required).
-  5.  Include `X-Croniq-CorrelationId` on every management request (UI + SDK do this automatically) so `WebhookEndpointEvents` can stitch a full audit trail; the table now captures both `Actor` (e.g., `ui:operator-1`) and the supplied correlation ID.
+
+1. Decide the default posture (open vs closed). For closed-by-default, seed a catch-all rule (`0.0.0.0/0`) before tightening to explicit CIDRs.
+2. Script creation/deletion via the API or the `Croniq.Sdk.Operator.Webhooks.WebhookIpRuleClient` helper to keep Croniq in sync with your source-of-truth IP inventory.
+3. Monitor `Croniq.Webhooks.Ingress` metrics/logs for the `ip-rule-denied` counter; alert when the rate exceeds baseline to catch accidental lockouts.
+4. Every CRUD/rotation call writes to `WebhookEndpointEvents`; the API publishes cache-invalidating notifications so the ingress host refreshes CIDRs within seconds (no manual restarts required).
+5. Include `X-Croniq-CorrelationId` on every management request (UI + SDK do this automatically) so `WebhookEndpointEvents` can stitch a full audit trail; the table now captures both `Actor` (e.g., `ui:operator-1`) and the supplied correlation ID.
 
 ### Broader Ingress Tests & Visibility
 

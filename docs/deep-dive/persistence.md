@@ -135,7 +135,7 @@ The `WebhookEndpointIpRules` migration ships with Croniq `main` (Dec 2025) and 
 set CRONIQ_SQL_CONNECTION=Server=<sql-host>;Database=Croniq;User Id=cronq_admin;Password=<secret>;
 ```
 
-2. **Run the migrator once per environment** (dev/test/prod). The tool is idempotent, so reruns are safe:
+1. **Run the migrator once per environment** (dev/test/prod). The tool is idempotent, so reruns are safe:
 
 ```cmd
 dotnet run --project tools/Croniq.DbMigrator -- --apply
@@ -143,7 +143,7 @@ dotnet run --project tools/Croniq.DbMigrator -- --apply
 
 > Containerized clusters can execute the same step with `docker compose run --rm croniq-db-migrator` as long as `CRONIQ_SQL_CONNECTION` is injected.
 
-3. **Verify the table exists** before exposing the new API endpoints:
+1. **Verify the table exists** before exposing the new API endpoints:
 
 ```sql
 SELECT TOP (5) HookKey, TenantId, EnvironmentTag, Cidr
@@ -151,7 +151,7 @@ FROM croniq.WebhookEndpointIpRules
 ORDER BY CreatedAtUtc DESC;
 ```
 
-4. **Rollback plan**: restore from backup if the migration fails. The schema change is additive (new table + indexes), so no data loss occurs when rolling forward again.
+1. **Rollback plan**: restore from backup if the migration fails. The schema change is additive (new table + indexes), so no data loss occurs when rolling forward again.
 
 ## Local Development & Dev Stack
 

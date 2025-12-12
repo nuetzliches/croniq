@@ -11,13 +11,13 @@ This document describes the continuous integration and delivery strategy require
 
 ## Pipeline Topology
 
-| Workflow         | Trigger                            | Purpose                                                                                                                                                        |
-| ---------------- | ---------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `ci-pr.yml`      | Pull request to `main`             | Lint, build, unit + contract tests with coverage, basic security checks.                                                                                       |
-| `ci-nightly.yml` | Scheduled (UTC 02:00) + manual run | Full stack validation: PR steps + Compose E2E tests (dev stack), Docker image build, integration smoke, dependency scanning.                                   |
-| `release.yml`    | Tag `v*` pushes or manual dispatch | Build & test release artifacts, publish NuGet packages and container images, gate on SBOM/vulnerability checks, sign assets, attach reports to GitHub Release. |
-| `deploy-staging.yml` | Manual (`workflow_dispatch`) with staging env | Helm deploy Croniq to the staging cluster, run HTTPS health probes, execute smoke tests against the staging ingress, and collect Kubernetes diagnostics. |
-| `dacpac.yml` | Manual (`workflow_dispatch`) with guard input | Provision Azure SQL Edge locally and publish a DACPAC for schema validation; jobs stay skipped until `run_workflow` is set to true. |
+| Workflow             | Trigger                                | Purpose                                                                                                                                                        |
+| -------------------- | -------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ci-pr.yml`          | Pull request to `main`                 | Lint, build, unit + contract tests with coverage, basic security checks.                                                                                       |
+| `ci-nightly.yml`     | Scheduled (UTC 02:00) + manual run     | Full stack validation: PR steps + Compose E2E tests (dev stack), Docker image build, integration smoke, dependency scanning.                                   |
+| `release.yml`        | Tag `v*` pushes or manual dispatch     | Build & test release artifacts, publish NuGet packages and container images, gate on SBOM/vulnerability checks, sign assets, attach reports to GitHub Release. |
+| `deploy-staging.yml` | Manual (`workflow_dispatch`) + staging | Helm deploy Croniq to the staging cluster, run HTTPS health probes, execute smoke tests against the staging ingress, and collect Kubernetes diagnostics.       |
+| `dacpac.yml`         | Manual (`workflow_dispatch`) + guard   | Provision Azure SQL Edge locally and publish a DACPAC for schema validation; jobs stay skipped until `run_workflow` is set to true.                            |
 
 `ci-nightly.yml`, `ci-pr.yml`, and `release.yml` already live in `.github/workflows/` and can be triggered manually (the former `tests.yml` workflow has been retired).
 

@@ -27,6 +27,12 @@ jobs:
         with:
           dotnet-version: 10.0.x
 
+      - name: Install .NET 7 runtime (for dotnet-project-licenses)
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 7.0.x
+          include-prerelease: false
+
       - name: Restore
         run: dotnet restore croniq.sln
 

@@ -28,6 +28,7 @@ cosign verify \
 ```
 
 Notes:
+
 - If the key is not yet published, verification will fail; do not deploy unsigned images.
 - The release assets include SBOMs (`api-<tag>.spdx.json`, `worker-<tag>.spdx.json`) and Trivy reports. Compare `cosign verify` output with the image digests listed on the Release page.
 
