@@ -16,6 +16,7 @@ permissions:
   packages: write
   security-events: write
   id-token: write
+  actions: read
 
 env:
   DOTNET_NOLOGO: true
