@@ -48,13 +48,14 @@ public class DefaultJobExecutionPipelineTests
             { "trigger_id", "t-1" },
             { "initiator", "user" }
         };
-        var request = new JobExecutionRequest(jobKey, descriptor, null, metadata, new ActivitySource("job"));
+        var request = new JobExecutionRequest("exec-123", jobKey, descriptor, null, metadata, new ActivitySource("job"));
 
         await pipeline.ExecuteAsync(request, CancellationToken.None);
 
         var job = provider.GetRequiredService<TestJob>();
         job.Executions.ShouldBe(1);
         job.LastContext.ShouldNotBeNull();
+        job.LastContext.ExecutionId.ShouldBe("exec-123");
         job.LastContext.JobKey.ShouldBe(jobKey.ToString());
         job.LastContext.Metadata["trigger_id"].ShouldBe("t-1");
         job.LastContext.Metadata["initiator"].ShouldBe("user");
@@ -85,7 +86,7 @@ public class DefaultJobExecutionPipelineTests
 
         var jobKey = JobKey.Create("tenant", "env", "ns", "faulty");
         var descriptor = new JobDescriptor(typeof(FaultyJob), new CroniqJobAttribute("ns", "faulty"), jobKey);
-        var request = new JobExecutionRequest(jobKey, descriptor, null, new Dictionary<string, string>(), new ActivitySource("job"));
+        var request = new JobExecutionRequest("exec-faulty", jobKey, descriptor, null, new Dictionary<string, string>(), new ActivitySource("job"));
 
         await Should.ThrowAsync<InvalidOperationException>(() => pipeline.ExecuteAsync(request, CancellationToken.None));
     }

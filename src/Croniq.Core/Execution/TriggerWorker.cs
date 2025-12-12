@@ -120,15 +120,23 @@ public sealed class TriggerWorker
                 }
 
                 var executionOptions = _policyResolver.ResolveExecution(jobKey);
-                var metadata = lease.Payload is null
-                    ? null
-                    : new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) { { "payload", lease.Payload } };
+                var metadata = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                {
+                    { "trigger_id", lease.TriggerId }
+                };
+                if (lease.Payload is not null)
+                {
+                    metadata["payload"] = lease.Payload;
+                }
+
+                var executionId = Guid.NewGuid().ToString("N");
+                leaseActivity?.SetTag("croniq.execution_id", executionId);
 
                 Stopwatch? executionTimer = null;
 
                 try
                 {
-                    var request = new JobExecutionRequest(jobKey, descriptor, executionOptions, metadata, _activitySource);
+                    var request = new JobExecutionRequest(executionId, jobKey, descriptor, executionOptions, metadata, _activitySource);
                     executionTimer = Stopwatch.StartNew();
                     await _pipeline.ExecuteAsync(request, cancellationToken).ConfigureAwait(false);
 

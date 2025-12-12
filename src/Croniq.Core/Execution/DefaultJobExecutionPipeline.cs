@@ -15,6 +15,7 @@ public sealed class DefaultJobExecutionPipeline : IJobExecutionPipeline
 {
     private const string TriggerIdMetadataKey = "trigger_id";
     private const string InitiatorMetadataKey = "initiator";
+    private const string CorrelationIdMetadataKey = "correlation_id";
 
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly ActivitySource _activitySource;
@@ -47,9 +48,10 @@ public sealed class DefaultJobExecutionPipeline : IJobExecutionPipeline
         var jobLogger = loggerFactory?.CreateLogger(request.Descriptor.JobType) ?? _logger;
         var metadata = request.Metadata ?? new Dictionary<string, string>();
         var activitySource = request.ActivitySource ?? _activitySource;
-        using var logScope = jobLogger.BeginScope(BuildLogScope(request.JobKey, metadata));
+        using var logScope = jobLogger.BeginScope(BuildLogScope(request.JobKey, request.ExecutionId, metadata));
 
         using var activity = activitySource.StartActivity("Croniq.Job.Execute");
+        activity?.SetTag("croniq.execution_id", request.ExecutionId);
         activity?.SetTag("croniq.job.key", request.JobKey.Value);
         activity?.SetTag("croniq.job.namespace", request.JobKey.NamespaceSegment);
         activity?.SetTag("croniq.job.name", request.JobKey.JobName);
@@ -65,7 +67,7 @@ public sealed class DefaultJobExecutionPipeline : IJobExecutionPipeline
         var executionOptions = request.ExecutionOptions ?? _policyResolver.ResolveExecution(request.JobKey);
         var pipeline = _pipelineProvider.Get(request.JobKey, executionOptions);
 
-        var context = new JobExecutionContext(request.JobKey.ToString(), metadata, jobLogger, activitySource);
+        var context = new JobExecutionContext(request.ExecutionId, request.JobKey.ToString(), metadata, jobLogger, activitySource);
 
         try
         {
@@ -87,10 +89,11 @@ public sealed class DefaultJobExecutionPipeline : IJobExecutionPipeline
         }
     }
 
-    private static IReadOnlyCollection<KeyValuePair<string, object?>> BuildLogScope(JobKey jobKey, IReadOnlyDictionary<string, string> metadata)
+    private static IReadOnlyCollection<KeyValuePair<string, object?>> BuildLogScope(JobKey jobKey, string executionId, IReadOnlyDictionary<string, string> metadata)
     {
         var scope = new List<KeyValuePair<string, object?>>
         {
+            new("croniq.execution_id", executionId),
             new("croniq.job.key", jobKey.Value),
             new("croniq.job.namespace", jobKey.NamespaceSegment),
             new("croniq.job.name", jobKey.JobName),
@@ -111,6 +114,11 @@ public sealed class DefaultJobExecutionPipeline : IJobExecutionPipeline
         if (metadata.TryGetValue(InitiatorMetadataKey, out var initiator) && !string.IsNullOrWhiteSpace(initiator))
         {
             scope.Add(new KeyValuePair<string, object?>("croniq.trigger.initiator", initiator));
+        }
+
+        if (metadata.TryGetValue(CorrelationIdMetadataKey, out var correlationId) && !string.IsNullOrWhiteSpace(correlationId))
+        {
+            scope.Add(new KeyValuePair<string, object?>("croniq.correlation_id", correlationId));
         }
 
         return scope;

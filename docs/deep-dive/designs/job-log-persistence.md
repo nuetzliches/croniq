@@ -11,6 +11,7 @@
 - Jobs already receive an `ILogger` via `IJobExecutionContext`. The execution pipeline enriches scopes with `croniq.job.*`, `croniq.tenant_id`, `croniq.environment`, and optional trigger metadata, but nothing is persisted.
 - EF Core persists jobs, triggers, and dead letters via `Croniq.Data.SqlServer`; there is no execution/log table yet. Correlation IDs exist only on webhook events (`WebhookEndpointEventEntity`); scheduler entities do not capture correlation today.
 - Serilog/OpenTelemetry emit logs to external sinks, but there is no first-party query API for per-job execution logs.
+- UX: Job authors should log via `context.Logger` so scopes (`JobKey`, `ExecutionId`, `CorrelationId`, tenant/env) stay intact. Samples should demonstrate structured logging with the provided logger rather than constructing new loggers.
 
 ## Proposed Design
 

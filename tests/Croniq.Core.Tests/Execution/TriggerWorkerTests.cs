@@ -109,7 +109,8 @@ public class TriggerWorkerTests
             .Returns(true);
 
         var pipeline = Substitute.For<IJobExecutionPipeline>();
-        pipeline.ExecuteAsync(Arg.Any<JobExecutionRequest>(), Arg.Any<CancellationToken>())
+        JobExecutionRequest? capturedRequest = null;
+        pipeline.ExecuteAsync(Arg.Do<JobExecutionRequest>(r => capturedRequest = r), Arg.Any<CancellationToken>())
             .Returns(Task.CompletedTask);
 
         var worker = CreateWorker(store, registry, policyResolver, misfirePolicy, quotaGuard, pipeline);
@@ -120,6 +121,9 @@ public class TriggerWorkerTests
         await pipeline.Received(1).ExecuteAsync(Arg.Any<JobExecutionRequest>(), Arg.Any<CancellationToken>());
         store.Releases.ShouldHaveSingleItem();
         store.Releases[0].Succeeded.ShouldBeTrue();
+        capturedRequest.ShouldNotBeNull();
+        capturedRequest!.ExecutionId.ShouldNotBeNullOrWhiteSpace();
+        capturedRequest.Metadata.ShouldContainKeyAndValue("trigger_id", lease.TriggerId);
     }
 
     private static TriggerLease NewLease(string jobKey)

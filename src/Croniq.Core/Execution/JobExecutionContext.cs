@@ -13,13 +13,16 @@ public sealed class JobExecutionContext : IJobExecutionContext
     private static readonly IReadOnlyDictionary<string, string> EmptyMetadata =
         new ReadOnlyDictionary<string, string>(new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase));
 
-    public JobExecutionContext(string jobKey, IReadOnlyDictionary<string, string>? metadata, ILogger logger, ActivitySource activitySource)
+    public JobExecutionContext(string executionId, string jobKey, IReadOnlyDictionary<string, string>? metadata, ILogger logger, ActivitySource activitySource)
     {
+        ExecutionId = executionId ?? throw new ArgumentNullException(nameof(executionId));
         JobKey = jobKey ?? throw new ArgumentNullException(nameof(jobKey));
         Metadata = metadata ?? EmptyMetadata;
         Logger = logger ?? NullLogger.Instance;
         ActivitySource = activitySource ?? new ActivitySource("Croniq.Core.Job");
     }
+
+    public string ExecutionId { get; }
 
     public string JobKey { get; }
 
