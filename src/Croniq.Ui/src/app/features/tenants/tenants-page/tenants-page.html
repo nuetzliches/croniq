@@ -1,32 +1,227 @@
 <section class="space-y-8">
-  <header class="space-y-2">
-    <h1 class="text-3xl font-semibold text-text">Tenants & API keys</h1>
+  <header class="space-y-3">
+    <p class="text-sm uppercase tracking-[0.35em] text-text-muted">Tenants</p>
+    <h1 class="text-3xl font-semibold text-text">API key control room</h1>
     <p class="text-base text-text-muted">
-      Centralize onboarding, quota controls, and key rotation workflows. This page will soon host
-      the unified admin tools for operators.
+      Centralize onboarding, quota controls, and rotation workflows. These forms already call the
+      Croniq API client, so we can validate flows before layering the final UX shell.
+    </p>
+    <p class="text-xs text-text-muted">
+      @if (busy()) {
+        <span class="text-amber-100">Processing request…</span>
+      } @else {
+        Standing by
+      }
+      @if (lastError()) {
+        · <span class="text-rose-200">{{ lastError() }}</span>
+      }
     </p>
   </header>
 
-  <div class="grid gap-4 md:grid-cols-2">
+  <div class="grid gap-6 lg:grid-cols-2">
     <article class="rounded-2xl border border-white/10 bg-white/5 p-5">
       <h2 class="text-sm uppercase tracking-[0.3em] text-text-muted">Quota dashboard</h2>
-      <p class="mt-3 text-lg font-medium text-text">Density preview in development</p>
+      <p class="mt-3 text-lg font-semibold text-text">Density preview in development</p>
       <p class="text-sm text-text-muted">
         We are modeling quota bands and alerts so platform ops can see saturation at a glance.
+        Tenant inputs on the right stay hot so we can dovetail telemetry once the backend broadcast
+        is ready.
+      </p>
+      <p class="mt-4 text-xs text-text-muted">
+        Current tenant: <span class="font-semibold text-text">{{ tenantId() }}</span> · Env:
+        <span class="font-semibold text-text">{{ environment() || '—' }}</span>
       </p>
     </article>
-    <article class="rounded-2xl border border-dashed border-white/15 bg-white/5 p-5">
-      <h2 class="text-sm uppercase tracking-[0.3em] text-text-muted">Key rotation</h2>
-      <p class="mt-3 text-lg font-medium text-text">Guided rotation flow queued</p>
-      <p class="text-sm text-text-muted">
-        Expect bulk rotation helpers, downloadable manifests, and webhook reminders.
-      </p>
-      <button
-        type="button"
-        class="mt-4 inline-flex items-center rounded-lg border border-accent/40 bg-accent/10 px-4 py-2 text-sm font-semibold text-accent transition hover:bg-accent/20"
-      >
-        View UX spec
-      </button>
+
+    <article class="rounded-2xl border border-dashed border-white/20 bg-white/5 p-5">
+      <h2 class="text-sm uppercase tracking-[0.3em] text-text-muted">Key automation</h2>
+      <form class="mt-4 space-y-4 text-sm text-text" (submit)="$event.preventDefault(); issueApiKey();">
+        <div class="grid gap-4 sm:grid-cols-2">
+          <label class="space-y-1">
+            <span class="text-text-muted">Tenant ID</span>
+            <input
+              #tenantInput
+              type="text"
+              class="w-full rounded-xl border border-white/15 bg-white/5 px-3 py-2 focus:border-accent focus:outline-none"
+              [value]="tenantId()"
+              (input)="setTenantId(tenantInput.value)"
+            />
+          </label>
+          <label class="space-y-1">
+            <span class="text-text-muted">Environment tag</span>
+            <input
+              #environmentInput
+              type="text"
+              class="w-full rounded-xl border border-white/15 bg-white/5 px-3 py-2 focus:border-accent focus:outline-none"
+              [value]="environment()"
+              (input)="setEnvironment(environmentInput.value)"
+              placeholder="production"
+            />
+          </label>
+          <label class="space-y-1">
+            <span class="text-text-muted">Client ID</span>
+            <input
+              #clientInput
+              type="text"
+              class="w-full rounded-xl border border-white/15 bg-white/5 px-3 py-2 focus:border-accent focus:outline-none"
+              [value]="clientId()"
+              (input)="setClientId(clientInput.value)"
+            />
+          </label>
+          <label class="space-y-1">
+            <span class="text-text-muted">TTL (hours)</span>
+            <input
+              #ttlInput
+              type="number"
+              min="1"
+              class="w-full rounded-xl border border-white/15 bg-white/5 px-3 py-2 focus:border-accent focus:outline-none"
+              [value]="ttlHoursInput()"
+              (input)="setTtlHours(ttlInput.value)"
+            />
+          </label>
+        </div>
+        <label class="space-y-1">
+          <span class="text-text-muted">Scopes (comma separated)</span>
+          <textarea
+            #scopesField
+            rows="3"
+            class="w-full rounded-xl border border-white/15 bg-white/5 px-3 py-2 font-mono text-xs leading-relaxed focus:border-accent focus:outline-none"
+            [value]="scopesInput()"
+            (input)="setScopes(scopesField.value)"
+          ></textarea>
+        </label>
+        <p class="text-xs text-text-muted">Parsed scopes: {{ scopesPreview() || '—' }}</p>
+        <div class="flex flex-wrap gap-3">
+          <button
+            type="submit"
+            class="rounded-full border border-accent/50 bg-accent/15 px-5 py-2 text-sm font-semibold text-accent transition hover:bg-accent/25 disabled:opacity-60"
+            [disabled]="busy()"
+          >
+            Issue API key
+          </button>
+          <button
+            type="button"
+            class="rounded-full border border-white/15 px-4 py-2 text-xs font-semibold uppercase tracking-wider text-text-muted"
+            (click)="lookupApiClient()"
+            [disabled]="busy()"
+          >
+            Lookup API client
+          </button>
+        </div>
+      </form>
+      <div class="mt-6 grid gap-3 text-xs text-text">
+        <label class="space-y-1">
+          <span class="text-text-muted">API key ID</span>
+          <input
+            #keyInput
+            type="text"
+            class="w-full rounded-xl border border-white/15 bg-white/5 px-3 py-2 focus:border-accent focus:outline-none"
+            [value]="keyId()"
+            (input)="setKeyId(keyInput.value)"
+            placeholder="key-prod-primary"
+          />
+        </label>
+        <div class="flex flex-wrap gap-3">
+          <button
+            type="button"
+            class="rounded-full border border-white/15 px-4 py-2 text-xs font-semibold uppercase tracking-wider text-text transition hover:border-accent hover:text-accent disabled:opacity-60"
+            (click)="rotateApiKey()"
+            [disabled]="busy()"
+          >
+            Rotate key
+          </button>
+          <button
+            type="button"
+            class="rounded-full border border-white/15 px-4 py-2 text-xs font-semibold uppercase tracking-wider text-rose-200 transition hover:border-rose-300 disabled:opacity-60"
+            (click)="deleteApiKey()"
+            [disabled]="busy()"
+          >
+            Delete key
+          </button>
+        </div>
+      </div>
     </article>
   </div>
+
+  <section class="rounded-2xl border border-white/10 bg-white/5 shadow-xl">
+    <header class="flex flex-wrap items-center justify-between gap-3 border-b border-white/10 p-5 text-sm text-text">
+      <div>
+        <p class="text-xs uppercase tracking-[0.3em] text-text-muted">Activity feed</p>
+        <p class="text-base font-semibold text-text">API key history</p>
+      </div>
+      <p class="text-xs text-text-muted">{{ activity().length }} entries</p>
+    </header>
+
+    @if (activity().length === 0) {
+      <p class="p-6 text-sm text-text-muted">No API key actions recorded yet.</p>
+    } @else {
+      <div class="overflow-x-auto">
+        <table class="min-w-full divide-y divide-white/10 text-sm text-text">
+          <thead class="text-left text-xs uppercase tracking-[0.3em] text-text-muted">
+            <tr>
+              <th class="px-4 py-3">Tenant</th>
+              <th class="px-4 py-3">Action</th>
+              <th class="px-4 py-3">Status</th>
+              <th class="px-4 py-3">Detail</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-white/5">
+            @for (entry of activity(); track entry.id) {
+              <tr class="hover:bg-white/3">
+                <td class="px-4 py-4">
+                  <p class="font-semibold text-text">{{ entry.tenantId }}</p>
+                  <p class="text-xs text-text-muted">{{ entry.environment || '—' }}</p>
+                  <p class="text-xs text-text-muted">{{ entry.recordedAt | date: 'short' }}</p>
+                </td>
+                <td class="px-4 py-4 capitalize">{{ entry.action }}</td>
+                <td class="px-4 py-4">
+                  <span
+                    class="rounded-full px-3 py-1 text-xs font-semibold uppercase tracking-wide"
+                    [class.bg-emerald-500/20]="entry.status === 'success'"
+                    [class.text-emerald-200]="entry.status === 'success'"
+                    [class.bg-amber-500/20]="entry.status === 'pending'"
+                    [class.text-amber-200]="entry.status === 'pending'"
+                    [class.bg-rose-500/20]="entry.status === 'error'"
+                    [class.text-rose-100]="entry.status === 'error'"
+                  >
+                    {{ entry.status }}
+                  </span>
+                </td>
+                <td class="px-4 py-4 text-xs text-text-muted">{{ entry.detail || '—' }}</td>
+              </tr>
+            }
+          </tbody>
+        </table>
+      </div>
+    }
+  </section>
+
+  <section class="rounded-2xl border border-white/10 bg-white/5 p-5">
+    <div class="flex items-center justify-between">
+      <div>
+        <p class="text-xs uppercase tracking-[0.3em] text-text-muted">API client snapshot</p>
+        <p class="text-base font-semibold text-text">Latest lookup</p>
+      </div>
+      <button
+        type="button"
+        class="rounded-full border border-white/15 px-4 py-2 text-xs font-semibold uppercase tracking-wider text-text transition hover:border-accent hover:text-accent"
+        (click)="lookupApiClient()"
+        [disabled]="busy()"
+      >
+        Refresh
+      </button>
+    </div>
+    @if (lastLookup()) {
+      <div class="mt-4 space-y-2 text-xs text-text-muted">
+        <p>
+          Tenant <span class="text-text">{{ lastLookup()?.tenantId }}</span> · Client
+          <span class="text-text">{{ lastLookup()?.clientId }}</span>
+        </p>
+        <p>Fetched {{ lastLookup()?.fetchedAt | date: 'short' }}</p>
+        <pre class="overflow-auto rounded-xl border border-white/10 bg-black/20 p-4 text-[11px] text-emerald-100">{{ lastLookup()?.payload | json }}</pre>
+      </div>
+    } @else {
+      <p class="mt-4 text-sm text-text-muted">Lookup a client to see the raw payload here.</p>
+    }
+  </section>
 </section>
