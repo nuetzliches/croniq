@@ -6,6 +6,11 @@ namespace Croniq.Sdk;
 
 public interface IJobExecutionContext
 {
+    /// <summary>
+    /// Unique identifier for the current job execution.
+    /// </summary>
+    string ExecutionId { get; }
+
     string JobKey { get; }
 
     IReadOnlyDictionary<string, string> Metadata { get; }

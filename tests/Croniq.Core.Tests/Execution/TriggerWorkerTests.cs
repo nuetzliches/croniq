@@ -87,6 +87,98 @@ public class TriggerWorkerTests
     {
         var lease = NewLease(jobKey: SampleJobKey.Value);
         var store = new FakeJobStore(new[] { lease });
+        var jobLogStore = Substitute.For<IExecutionLogStore>();
+
+        var registry = Substitute.For<IJobRegistry>();
+        registry.TryGet(SampleJobKey, out Arg.Any<JobDescriptor>()).Returns(ci =>
+        {
+            ci[1] = SampleDescriptor;
+            return true;
+        });
+
+        var misfirePolicy = Substitute.For<IMisfirePolicy>();
+        misfirePolicy.Evaluate(lease, Arg.Any<MisfirePolicyOptions>(), Arg.Any<DateTimeOffset>())
+            .Returns(new MisfireDecision(false, null));
+
+        var policyResolver = Substitute.For<IPolicyResolver>();
+        policyResolver.ResolveMisfire(SampleJobKey).Returns(new MisfirePolicyOptions());
+        policyResolver.ResolveQuota(SampleJobKey).Returns(new QuotaOptions());
+        policyResolver.ResolveExecution(SampleJobKey).Returns(new ExecutionPolicyOptions());
+
+        var quotaGuard = Substitute.For<IQuotaGuard>();
+        quotaGuard.TryAcquire(Arg.Any<JobKey>(), Arg.Any<QuotaOptions>(), Arg.Any<DateTimeOffset>(), out Arg.Any<DateTimeOffset?>())
+            .Returns(true);
+
+        var pipeline = Substitute.For<IJobExecutionPipeline>();
+        JobExecutionRequest? capturedRequest = null;
+        pipeline.ExecuteAsync(Arg.Do<JobExecutionRequest>(r => capturedRequest = r), Arg.Any<CancellationToken>())
+            .Returns(Task.CompletedTask);
+
+        var worker = CreateWorker(store, registry, policyResolver, misfirePolicy, quotaGuard, pipeline, jobLogStore);
+
+        var processed = await worker.ProcessBatchAsync(DateTimeOffset.UtcNow, batchSize: 1, CancellationToken.None);
+
+        processed.ShouldBe(1);
+        await pipeline.Received(1).ExecuteAsync(Arg.Any<JobExecutionRequest>(), Arg.Any<CancellationToken>());
+        store.Releases.ShouldHaveSingleItem();
+        store.Releases[0].Succeeded.ShouldBeTrue();
+        capturedRequest.ShouldNotBeNull();
+        capturedRequest!.ExecutionId.ShouldNotBeNullOrWhiteSpace();
+        capturedRequest.Metadata.ShouldContainKeyAndValue("trigger_id", lease.TriggerId);
+        await jobLogStore.Received(1).OnExecutionStartedAsync(Arg.Any<ExecutionRecord>(), Arg.Any<CancellationToken>());
+        await jobLogStore.Received(1).OnExecutionCompletedAsync(Arg.Is<ExecutionCompletion>(c => c.Status == ExecutionStatus.Succeeded), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task Persists_completion_on_failure()
+    {
+        var lease = NewLease(jobKey: SampleJobKey.Value);
+        var store = new FakeJobStore(new[] { lease });
+        var jobLogStore = Substitute.For<IExecutionLogStore>();
+
+        var registry = Substitute.For<IJobRegistry>();
+        registry.TryGet(SampleJobKey, out Arg.Any<JobDescriptor>()).Returns(ci =>
+        {
+            ci[1] = SampleDescriptor;
+            return true;
+        });
+
+        var misfirePolicy = Substitute.For<IMisfirePolicy>();
+        misfirePolicy.Evaluate(lease, Arg.Any<MisfirePolicyOptions>(), Arg.Any<DateTimeOffset>())
+            .Returns(new MisfireDecision(false, null));
+
+        var policyResolver = Substitute.For<IPolicyResolver>();
+        policyResolver.ResolveMisfire(SampleJobKey).Returns(new MisfirePolicyOptions());
+        policyResolver.ResolveQuota(SampleJobKey).Returns(new QuotaOptions());
+        policyResolver.ResolveExecution(SampleJobKey).Returns(new ExecutionPolicyOptions());
+
+        var quotaGuard = Substitute.For<IQuotaGuard>();
+        quotaGuard.TryAcquire(Arg.Any<JobKey>(), Arg.Any<QuotaOptions>(), Arg.Any<DateTimeOffset>(), out Arg.Any<DateTimeOffset?>())
+            .Returns(true);
+
+        var pipeline = Substitute.For<IJobExecutionPipeline>();
+        pipeline.ExecuteAsync(Arg.Any<JobExecutionRequest>(), Arg.Any<CancellationToken>())
+            .Returns(_ => Task.FromException(new InvalidOperationException("boom")));
+
+        var worker = CreateWorker(store, registry, policyResolver, misfirePolicy, quotaGuard, pipeline, jobLogStore);
+
+        var processed = await worker.ProcessBatchAsync(DateTimeOffset.UtcNow, batchSize: 1, CancellationToken.None);
+
+        processed.ShouldBe(0);
+        await jobLogStore.Received(1).OnExecutionStartedAsync(Arg.Any<ExecutionRecord>(), Arg.Any<CancellationToken>());
+        await jobLogStore.Received(1).OnExecutionCompletedAsync(Arg.Is<ExecutionCompletion>(c => c.Status == ExecutionStatus.Failed && c.ErrorMessage == "boom"), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task Log_store_failures_are_swallowed()
+    {
+        var lease = NewLease(jobKey: SampleJobKey.Value);
+        var store = new FakeJobStore(new[] { lease });
+        var jobLogStore = Substitute.For<IExecutionLogStore>();
+        jobLogStore.OnExecutionStartedAsync(Arg.Any<ExecutionRecord>(), Arg.Any<CancellationToken>())
+            .Returns(_ => Task.FromException(new InvalidOperationException("start-fail")));
+        jobLogStore.OnExecutionCompletedAsync(Arg.Any<ExecutionCompletion>(), Arg.Any<CancellationToken>())
+            .Returns(_ => Task.FromException(new InvalidOperationException("complete-fail")));
 
         var registry = Substitute.For<IJobRegistry>();
         registry.TryGet(SampleJobKey, out Arg.Any<JobDescriptor>()).Returns(ci =>
@@ -112,12 +204,11 @@ public class TriggerWorkerTests
         pipeline.ExecuteAsync(Arg.Any<JobExecutionRequest>(), Arg.Any<CancellationToken>())
             .Returns(Task.CompletedTask);
 
-        var worker = CreateWorker(store, registry, policyResolver, misfirePolicy, quotaGuard, pipeline);
+        var worker = CreateWorker(store, registry, policyResolver, misfirePolicy, quotaGuard, pipeline, jobLogStore);
 
         var processed = await worker.ProcessBatchAsync(DateTimeOffset.UtcNow, batchSize: 1, CancellationToken.None);
 
         processed.ShouldBe(1);
-        await pipeline.Received(1).ExecuteAsync(Arg.Any<JobExecutionRequest>(), Arg.Any<CancellationToken>());
         store.Releases.ShouldHaveSingleItem();
         store.Releases[0].Succeeded.ShouldBeTrue();
     }
@@ -140,7 +231,8 @@ public class TriggerWorkerTests
         IPolicyResolver? policyResolver = null,
         IMisfirePolicy? misfirePolicy = null,
         IQuotaGuard? quotaGuard = null,
-        IJobExecutionPipeline? pipeline = null)
+        IJobExecutionPipeline? pipeline = null,
+        IExecutionLogStore? jobLogStore = null)
     {
         if (policyResolver is null)
         {
@@ -171,6 +263,8 @@ public class TriggerWorkerTests
                 .Returns(Task.CompletedTask);
         }
 
+        jobLogStore ??= Substitute.For<IExecutionLogStore>();
+
         var options = Microsoft.Extensions.Options.Options.Create(new CroniqOptions { TenantId = "t1", EnvironmentTag = "dev", InstanceId = "test" });
 
         return new TriggerWorker(
@@ -181,6 +275,7 @@ public class TriggerWorkerTests
             policyResolver,
             options,
             quotaGuard,
+            jobLogStore,
             NullLogger<TriggerWorker>.Instance,
             new ActivitySource("Croniq.Core.Tests.TriggerWorker"));
     }
