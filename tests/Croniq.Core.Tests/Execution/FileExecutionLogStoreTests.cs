@@ -82,6 +82,34 @@ public class FileExecutionLogStoreTests : IDisposable
         content[2].ShouldContain("\"type\":\"completion\"");
     }
 
+    [Fact]
+    public async Task Uses_workflow_prefix_when_workflow_id_present()
+    {
+        var options = new FileExecutionLogStoreOptions { BasePath = _tempDir };
+        var store = new FileExecutionLogStore(options);
+
+        var record = new ExecutionRecord(
+            "exec-wf",
+            ExecutionKind.Workflow,
+            "wf-001",
+            "t:dev:ns:job",
+            "t",
+            "dev",
+            "tr-1",
+            DateTimeOffset.UtcNow,
+            DateTimeOffset.UtcNow,
+            "instance-1",
+            null,
+            null,
+            null);
+
+        await store.OnExecutionStartedAsync(record, CancellationToken.None);
+
+        var files = Directory.GetFiles(_tempDir, "*.ndjson", SearchOption.AllDirectories);
+        files.ShouldHaveSingleItem();
+        files.Single().ShouldContain("wf-001");
+    }
+
     public void Dispose()
     {
         try

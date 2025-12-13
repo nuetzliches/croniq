@@ -732,6 +732,28 @@ public static class ApiHostingExtensions
             return Results.NoContent();
         });
 
+        app.MapGet("/executions/{executionId}/logs", async (
+            string executionId,
+            IExecutionLogReader reader,
+            HttpResponse response,
+            CancellationToken cancellationToken) =>
+        {
+            response.ContentType = "application/x-ndjson";
+            var hasLines = false;
+            await foreach (var line in reader.ReadLinesAsync(executionId, cancellationToken))
+            {
+                hasLines = true;
+                await response.WriteAsync(line, cancellationToken).ConfigureAwait(false);
+                await response.WriteAsync('\n', cancellationToken).ConfigureAwait(false);
+            }
+
+            if (!hasLines)
+            {
+                response.StatusCode = StatusCodes.Status404NotFound;
+                await response.WriteAsync($"execution logs not found for {executionId}", cancellationToken).ConfigureAwait(false);
+            }
+        });
+
         app.MapPost("/jobs/trigger", async (
             TriggerJobRequest request,
             IJobRegistry registry,

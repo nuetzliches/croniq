@@ -33,15 +33,16 @@
 - [ ] (blocked bis Repo public) Docs Streams aufsetzen (docs root, docs/deep-dive) inkl. Quickstart & Mermaid policy – Plan siehe `docs/deep-dive/docstreams.md`
 - [ ] (deferred) UI-Backlog dokumentieren; Technologie nach API-Stabilisierung entscheiden – Plan siehe `docs/deep-dive/ui.md`
 - [ ] (deferred) Kubernetes Chart (charts/croniq) als Backlog-Platzhalter vorbereiten – Plan siehe `docs/deep-dive/kubernetes.md`
+- [ ] (deferred) Workflow-Ausführungen an Execution-Logging anbinden (ExecutionKind/WorkflowId nutzen; eigenes Interface/Adapter bei Workflow-Feature einziehen)
 - [x] CI/CD Validation Backlog abschließen (`docs/deep-dive/ci.md`): `ci-pr.yml`, reusable Scripts, Coverage-Kommentar, automatisches Staging-Deploy sowie Toolchain-Pinning + Secrets-Runbook sind stand 2025-12-10 umgesetzt.
 - [x] Policy-Dokumentation & Observability vervollständigen (`docs/deep-dive/policies.md`): Konfigurationsbeispiele dokumentieren sowie Dashboards/Alerts gemäß Observability-Plan verdrahten.
 - [x] Security/OIDC-Basis liefern (`docs/deep-dive/security.md`): OIDC-Options + Dual-Auth-Middleware, CallerContext + RateLimiter-Partitionierung, gRPC-Interceptor, Admin-APIs, Doku und Regressionstests implementieren.
 - [x] Supply-Chain-Nacharbeiten (`docs/deep-dive/supplychain.md`): Signing Keys bereitstellen, Verification-Doku + Waiver-Prozess ergänzt (`docs/deep-dive/release-verification.md`, `docs/deep-dive/supplychain-waivers.md`, `docs/SECURITY.md`). (`syft`/`trivy` Toolchain + lokale Anleitung erledigt 2025-12-12.)
 - [x] Webhook-Trigger (Croniq.Webhooks Projekt) planen, host implementieren und in `docs/deep-dive/architecture.md` verankern (inkl. CRUD-API + persistente Hooks)
-- [ ] Job-Log-Persistenz (Plan siehe `docs/deep-dive/designs/job-log-persistence.md`)
-  - [ ] ExecutionId/Correlation im Scheduler-Pipeline-Scope propagieren; `JobLogScope` + Provider opt-in (`IJobLogStore`/`IJobLogReader`) anlegen
-  - [ ] EF-Core-Schema (JobExecutionRecord, JobExecutionLogEntry, JobExecutionLogChunk) inkl. Optionen/Retention + Structured/NDJSON-Modus umsetzen; Filesystem/Object-Store-Modus (NDJSON pro Execution) verdrahten
-  - [ ] Tests + Retention-Job + Failure-Handling (Drop/Buffer) absichern; API/CLI-Reader bereitstellen
+- [x] Job-Log-Persistenz (Plan siehe `docs/deep-dive/designs/job-log-persistence.md`)
+  - [x] ExecutionId/Correlation im Scheduler-Pipeline-Scope propagieren; `ExecutionLogSink` + opt-in (`IExecutionLogStore`/`IExecutionLogReader`/Exporter) anlegen
+  - [x] Store/Modi (Filesystem NDJSON, No-Op) + Optionen/Retention-Service verdrahten; Reader bereitstellen
+  - [x] Tests + Failure-Handling (Drop/Buffer) absichern; CLI-Reader bereitstellen (API-Endpoint vorhanden)
 - [ ] Coverage-Ziel: Core/Overall ≥ 80 % erreichen (Gates nachziehen, wenn stabil)
 
 ## Deferred: Remote Persistence (SaaS)
@@ -94,5 +95,5 @@
 
 # Prüfen, beantworten, ggf. umsetzen
 
-- [ ] Können wir die Konfiguration des `otelBuilder` in `samples\Croniq.Sample.WorkerHost\Program.cs` so vereinfachen wie in `samples\Croniq.Sample.ApiHost\Program.cs`?
+- [x] Können wir die Konfiguration des `otelBuilder` in `samples\Croniq.Sample.WorkerHost\Program.cs` so vereinfachen wie in `samples\Croniq.Sample.ApiHost\Program.cs`?
 - [x] `src\Croniq.Core\Execution\IJobExecutionPipeline.cs` Naming-Check abgeschlossen: Für das aktuelle Scope bleibt das Interface job-spezifisch; Workflows würden ein eigenes Interface (`IWorkflowExecutionPipeline`) oder einen generischen `IExecutionPipeline` erhalten, sobald das Feature gestartet wird. Kein sofortiger Umbau nötig.

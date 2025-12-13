@@ -2,6 +2,7 @@ using System;
 using System.Diagnostics;
 using System.Reflection;
 using Croniq.Core.Execution;
+using Croniq.Core.Hosting;
 using Croniq.Core.Jobs;
 using Croniq.Core.Options;
 using Croniq.Core.Policies;
@@ -35,6 +36,7 @@ public static class ServiceCollectionExtensions
         services.TryAddSingleton<IJobExecutionPipeline, DefaultJobExecutionPipeline>();
         services.TryAddSingleton<IExecutionLogStore, NoOpExecutionLogStore>();
         services.TryAddSingleton<IExecutionLogExporter, LoggerExecutionLogExporter>();
+        services.TryAddSingleton<IExecutionLogReader, NoOpExecutionLogReader>();
         services.TryAddSingleton<TriggerWorker>();
 
         return services;
@@ -45,8 +47,10 @@ public static class ServiceCollectionExtensions
         var options = new FileExecutionLogStoreOptions();
         configure?.Invoke(options);
         services.RemoveAll(typeof(IExecutionLogStore));
+        services.RemoveAll(typeof(IExecutionLogReader));
         services.AddSingleton(options);
         services.AddSingleton<IExecutionLogStore, FileExecutionLogStore>();
+        services.AddSingleton<IExecutionLogReader, FileExecutionLogReader>();
         return services;
     }
 
@@ -58,6 +62,17 @@ public static class ServiceCollectionExtensions
         }
         builder.Services.AddSingleton<ILoggerProvider, ExecutionLogSinkProvider>();
         return builder;
+    }
+
+    public static IServiceCollection AddCroniqWorkerHost(this IServiceCollection services, Action<WorkerHostOptions>? configure = null)
+    {
+        services.AddOptions<WorkerHostOptions>();
+        if (configure is not null)
+        {
+            services.Configure(configure);
+        }
+        services.AddHostedService<CroniqWorkerHostedService>();
+        return services;
     }
 
     public static IServiceCollection AddCroniqJob<TJob>(this IServiceCollection services)

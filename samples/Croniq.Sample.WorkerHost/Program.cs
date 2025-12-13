@@ -29,30 +29,17 @@ builder.Services.AddCroniqDefaultProviders();
 builder.Services.AddCroniqCore();
 builder.Services.AddCroniqSampleJobs();
 
-ConfigurePersistence(builder);
+builder.Services.AddCroniqSamplePersistence(builder.Configuration);
 
-var otelBuilder = builder.Services.AddCroniqObservability(
+builder.Services.AddCroniqObservability(
     builder.Configuration,
     builder.Logging,
-    "Croniq.Worker",
-    options => options.ServiceVersion = Assembly.GetExecutingAssembly().GetName().Version?.ToString() ?? "dev");
+    "Croniq.Worker");
 
-otelBuilder.WithTracing(tracing =>
-{
-    tracing
-        .AddSource("Croniq.Core")
-        .AddHttpClientInstrumentation();
-});
-
-otelBuilder.WithMetrics(metrics =>
-{
-    metrics
-        .AddRuntimeInstrumentation()
-        .AddHttpClientInstrumentation()
-        .AddMeter("Croniq.Core");
-});
-
-builder.Services.AddHostedService<CroniqWorkerHostedService>();
+builder.Services.AddCroniqWorkerHost();
+builder.Services.AddCroniqFileExecutionLogStore();
+builder.Services.Configure<ExecutionLogRetentionOptions>(builder.Configuration.GetSection("Croniq:Logging:Execution:Retention"));
+builder.Services.AddHostedService<ExecutionLogRetentionService>();
 builder.Services.AddLogging(logging =>
 {
     logging.SetMinimumLevel(LogLevel.Information);
@@ -64,31 +51,4 @@ builder.Services.AddLogging(logging =>
     });
 });
 
-builder.Services.AddCroniqFileExecutionLogStore();
-
 await builder.Build().RunAsync();
-
-static void ConfigurePersistence(HostApplicationBuilder builder)
-{
-    var mode = builder.Configuration["Croniq:Persistence:Mode"] ?? "InMemory";
-    if (string.Equals(mode, "SqlServer", StringComparison.OrdinalIgnoreCase))
-    {
-        var sqlSection = builder.Configuration.GetSection("Croniq:SqlServer");
-        var connection = sqlSection["ConnectionString"];
-        if (string.IsNullOrWhiteSpace(connection))
-        {
-            throw new InvalidOperationException("Croniq:SqlServer:ConnectionString is required when Persistence.Mode = SqlServer.");
-        }
-
-        var persistenceSection = builder.Configuration.GetSection("Croniq:Persistence:SqlServer");
-        builder.Services.AddCroniqSqlServerPersistence(options =>
-        {
-            sqlSection.Bind(options);
-            options.ConnectionString = connection;
-        }, persistenceSection.Exists() ? persistence => persistenceSection.Bind(persistence) : null);
-    }
-    else
-    {
-        builder.Services.AddCroniqInMemoryJobStore();
-    }
-}

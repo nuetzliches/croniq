@@ -83,4 +83,58 @@ public class ExecutionLogSinkProviderTests
         await exporter.Received(1).ExportAsync(Arg.Any<IReadOnlyCollection<ExecutionLogEntry>>(), Arg.Any<CancellationToken>());
         provider.Dispose();
     }
+
+    [Fact]
+    public async Task Drops_when_channel_full_and_continues()
+    {
+        var store = Substitute.For<IExecutionLogStore>();
+        var exporter = Substitute.For<IExecutionLogExporter>();
+        var provider = new ExecutionLogSinkProvider(store, exporter, Microsoft.Extensions.Options.Options.Create(new ExecutionLogSinkOptions { BatchSize = 100, MaxQueueLength = 1, FlushInterval = TimeSpan.FromMilliseconds(50) }));
+        provider.SetScopeProvider(new LoggerExternalScopeProvider());
+        var logger = provider.CreateLogger("test");
+
+        using (logger.BeginScope(new Dictionary<string, object?>
+               {
+                   { "croniq.execution_id", "exec-drop" }
+               }))
+        {
+            logger.LogInformation("first");
+            logger.LogInformation("second"); // will be dropped if queue full
+        }
+
+        await Task.Delay(150);
+        await store.Received().AppendAsync(
+            "exec-drop",
+            Arg.Is<IReadOnlyCollection<ExecutionLogEntry>>(c => c.Count == 1),
+            Arg.Any<CancellationToken>());
+        provider.Dispose();
+    }
+
+    [Fact]
+    public async Task Swallows_exporter_failure()
+    {
+        var store = Substitute.For<IExecutionLogStore>();
+        var exporter = Substitute.For<IExecutionLogExporter>();
+        exporter.ExportAsync(Arg.Any<IReadOnlyCollection<ExecutionLogEntry>>(), Arg.Any<CancellationToken>())
+            .Returns(_ => Task.FromException(new InvalidOperationException("export-fail")));
+
+        var provider = new ExecutionLogSinkProvider(store, exporter, Microsoft.Extensions.Options.Options.Create(new ExecutionLogSinkOptions { BatchSize = 1, FlushInterval = TimeSpan.FromMilliseconds(50) }));
+        provider.SetScopeProvider(new LoggerExternalScopeProvider());
+        var logger = provider.CreateLogger("test");
+
+        using (logger.BeginScope(new Dictionary<string, object?>
+               {
+                   { "croniq.execution_id", "exec-export" }
+               }))
+        {
+            logger.LogInformation("hello");
+        }
+
+        await Task.Delay(150);
+        await store.Received().AppendAsync(
+            "exec-export",
+            Arg.Is<IReadOnlyCollection<ExecutionLogEntry>>(c => c.Count == 1),
+            Arg.Any<CancellationToken>());
+        provider.Dispose();
+    }
 }
