@@ -177,8 +177,8 @@ jobs:
           python scripts/ci/enforce_coverage_thresholds.py \
             coverage/report/Summary.json \
             --core-assembly Croniq.Core \
-            --core-threshold 65 \
-            --overall-threshold 70
+            --core-threshold 80 \
+            --overall-threshold 60
 
       - name: Comment coverage summary on PR
         if: github.event_name == 'pull_request'

@@ -18,7 +18,7 @@
     <IsTestProject>true</IsTestProject>
     <CollectCoverage>true</CollectCoverage>
     <CoverletOutputFormat>cobertura</CoverletOutputFormat>
-    <CoverletOutput>$(MSBuildProjectDirectory)\TestResults\coverage\$(MSBuildProjectName)</CoverletOutput>
+    <CoverletOutput>$(MSBuildProjectDirectory)\TestResults\coverage\$(MSBuildProjectName)\coverage</CoverletOutput>
     <ExcludeByFile>$(ExcludeByFile);**\bin\**;**\obj\**;**/CronExpression.cs</ExcludeByFile>
   </PropertyGroup>
   <ItemGroup Condition="$([System.String]::Copy('$(MSBuildProjectName)').Contains('.Tests'))">
