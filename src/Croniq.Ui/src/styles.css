@@ -1,1 +1,24 @@
-/* You can add global styles to this file, and also import other style files */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --cq-surface: #070d1a;
+  --cq-surface-alt: #111a2d;
+  --cq-text: #f8fafc;
+  --cq-text-muted: #94a3b8;
+  --cq-accent: #27d2ff;
+}
+
+html,
+body {
+  @apply min-h-screen bg-surface text-text antialiased;
+}
+
+body {
+  font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+}
+
+button {
+  font: inherit;
+}

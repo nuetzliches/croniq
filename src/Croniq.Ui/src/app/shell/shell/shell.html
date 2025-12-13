@@ -1,38 +1,52 @@
-<p>shell works!</p>
-<div class="shell">
-  <aside class="rail">
-    <div class="logo">Croniq</div>
-    <div class="tenant">
-      <div class="tenant-label">Tenant</div>
-      <div class="tenant-value">{{ tenant() }} · {{ environment() }}</div>
+<div class="grid min-h-screen grid-cols-[250px_1fr] bg-surface text-text">
+  <aside class="flex flex-col gap-6 border-r border-white/10 bg-surface-alt/95 px-6 py-6">
+    <div class="text-lg font-semibold uppercase tracking-[0.35em] text-text">Croniq</div>
+
+    <div class="rounded-xl border border-white/10 bg-white/5 px-4 py-3" aria-live="polite">
+      <div class="text-xs uppercase tracking-wide text-text-muted">Tenant</div>
+      <div class="text-base font-medium">{{ tenantDisplay() }}</div>
     </div>
-    <nav>
+
+    <nav class="flex flex-1 flex-col gap-2" aria-label="Primary">
+      @for (item of navItems(); track item.path) {
       <a
-        *ngFor="let item of navItems"
-        routerLink="item.path"
-        routerLinkActive="active"
-        class="nav-item"
+        [routerLink]="['/', item.path]"
+        routerLinkActive="border-accent bg-accent/10 text-white"
+        class="rounded-xl border border-transparent px-4 py-3 text-sm font-semibold text-text transition hover:border-accent/50 hover:bg-accent/5"
+        [attr.aria-label]="item.label"
       >
-        <span class="nav-label">{{ item.label }}</span>
-        <small>{{ item.description }}</small>
+        <span class="font-semibold">{{ item.label }}</span>
+        <small class="block text-xs text-text-muted">{{ item.description }}</small>
       </a>
+      }
     </nav>
-    <button class="command-button" type="button" (click)="openCommandPalette()">Command ⌘K</button>
+
+    <button
+      class="inline-flex items-center justify-between rounded-lg border border-white/10 bg-white/5 px-4 py-2 text-sm font-semibold text-text transition hover:border-accent hover:text-accent"
+      type="button"
+      (click)="openCommandPalette()"
+      [attr.aria-pressed]="commandPaletteOpen()"
+    >
+      Command
+      <span class="rounded border border-white/20 px-2 py-0.5 text-xs">⌘K</span>
+    </button>
   </aside>
 
-  <section class="workspace">
-    <header class="status-strip">
-      <app-status-beacon
-        *ngFor="let status of statusCards"
-        [label]="status.label"
-        [value]="status.value"
-        [intent]="status.intent"
-      />
+  <section
+    class="flex min-h-screen flex-col bg-gradient-to-b from-surface via-surface/80 to-surface/40"
+  >
+    <header
+      class="flex flex-wrap gap-4 border-b border-white/10 bg-surface/80 px-6 py-4 backdrop-blur"
+      aria-label="System status"
+    >
+      @for (status of statusCards(); track status.label) {
+      <app-status-beacon [label]="status.label" [value]="status.value" [intent]="status.intent" />
+      }
     </header>
-    <main class="content">
+    <main class="flex-1 p-6">
       <router-outlet />
     </main>
   </section>
 </div>
 
-<app-command-palette #palette />
+<app-command-palette (closed)="closeCommandPalette()" />

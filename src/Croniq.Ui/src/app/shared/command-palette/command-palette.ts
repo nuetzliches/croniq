@@ -1,44 +1,69 @@
 import { CommonModule } from '@angular/common';
-import { Component, EventEmitter, Output, signal } from '@angular/core';
-import { Router } from '@angular/router';
+import { ChangeDetectionStrategy, Component, ElementRef, computed, effect, inject, output, viewChild } from '@angular/core';
 
-interface CommandItem {
-  label: string;
-  path: string;
-}
+import { CommandPaletteCommand, CommandPaletteController } from './command-palette.controller';
 
 @Component({
   selector: 'app-command-palette',
-  standalone: true,
   imports: [CommonModule],
   templateUrl: './command-palette.html',
-  styleUrl: './command-palette.css',
+  changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class CommandPalette {
-  @Output() closed = new EventEmitter<void>();
+  readonly closed = output<void>();
+  private readonly controller = inject(CommandPaletteController);
+  private readonly searchField = viewChild<ElementRef<HTMLInputElement>>('commandPaletteInput');
 
-  readonly isOpen = signal(false);
-  readonly commands: CommandItem[] = [
-    { label: 'Dashboard', path: '/dashboard' },
-    { label: 'Schedules', path: '/schedules' },
-    { label: 'Jobs', path: '/jobs' },
-    { label: 'Webhooks', path: '/webhooks' },
-    { label: 'Tenants & Keys', path: '/tenants' },
-  ];
+  readonly isOpen = this.controller.isOpen;
+  readonly query = this.controller.query;
+  readonly results = this.controller.filteredCommands;
+  readonly activeIndex = this.controller.activeIndex;
+  readonly liveRegionMessage = this.controller.liveRegionMessage;
+  readonly activeDescendantId = computed(() => {
+    const commands = this.results();
+    const index = this.activeIndex();
+    if (index < 0 || index >= commands.length) {
+      return null;
+    }
+    return this.controller.optionId(commands[index], index);
+  });
 
-  constructor(private readonly router: Router) { }
-
-  open(): void {
-    this.isOpen.set(true);
-  }
+  private readonly focusInput = effect(() => {
+    if (!this.isOpen()) {
+      return;
+    }
+    const input = this.searchField();
+    if (!input) {
+      return;
+    }
+    queueMicrotask(() => input.nativeElement.focus());
+  });
 
   close(): void {
-    this.isOpen.set(false);
+    this.controller.close();
     this.closed.emit();
   }
 
-  async execute(command: CommandItem): Promise<void> {
-    await this.router.navigateByUrl(command.path);
-    this.close();
+  onSearch(value: string): void {
+    this.controller.updateQuery(value);
+  }
+
+  handleKey(event: KeyboardEvent): void {
+    if (this.controller.handleKey(event)) {
+      event.preventDefault();
+      event.stopPropagation();
+      if (!this.controller.isOpen()) {
+        this.closed.emit();
+      }
+    }
+  }
+
+  async execute(command: CommandPaletteCommand, index: number): Promise<void> {
+    await this.controller.executeCommand(index);
+    this.closed.emit();
+  }
+
+  optionId(command: CommandPaletteCommand, index: number): string {
+    return this.controller.optionId(command, index);
   }
 }

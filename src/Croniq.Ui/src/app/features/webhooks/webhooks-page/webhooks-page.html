@@ -1,1 +1,35 @@
-<p>webhooks-page works!</p>
+<section class="space-y-8">
+  <header class="space-y-2">
+    <h1 class="text-3xl font-semibold text-text">Webhook ingress</h1>
+    <p class="text-base text-text-muted">
+      Monitor delivery status, rotate secrets safely, and manage IP allow lists. The telemetry feed
+      will land here next sprint.
+    </p>
+  </header>
+
+  <article class="rounded-2xl border border-white/10 bg-white/5 p-6">
+    <div class="flex items-center justify-between">
+      <div>
+        <p class="text-sm uppercase tracking-[0.3em] text-text-muted">live feed</p>
+        <p class="text-lg font-semibold text-text">Delivery pulse on deck</p>
+      </div>
+      <span class="rounded-full border border-white/15 px-3 py-1 text-xs text-text-muted"
+        >ETA: Sprint 18</span
+      >
+    </div>
+    <p class="mt-3 text-sm text-text-muted">
+      We are wiring streaming updates from the telemetry service so failures show up without
+      refreshing. Expect filtering by tenant + endpoint soon.
+    </p>
+    <div class="mt-4 grid gap-3 text-sm text-text-muted sm:grid-cols-2">
+      <div class="rounded-xl border border-white/10 bg-white/5 p-3">
+        <p class="text-xs uppercase tracking-wider text-text-muted">Secret rotation</p>
+        <p class="text-text">Guided workflow ready</p>
+      </div>
+      <div class="rounded-xl border border-white/10 bg-white/5 p-3">
+        <p class="text-xs uppercase tracking-wider text-text-muted">Allow list</p>
+        <p class="text-text">Policy editor in review</p>
+      </div>
+    </div>
+  </article>
+</section>

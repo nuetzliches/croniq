@@ -1,1 +1,20 @@
-<p>dashboard-page works!</p>
+<section class="space-y-8">
+  <header class="space-y-3">
+    <h1 class="text-3xl font-semibold text-text">Operations dashboard</h1>
+    <p class="text-base text-text-muted">
+      Live glimpse into schedule execution, queue health, and webhook latency.
+    </p>
+  </header>
+
+  <section class="grid gap-4 md:grid-cols-2 xl:grid-cols-4" aria-label="Key metrics">
+    @for (card of summaryCards(); track card.label) {
+    <article
+      class="flex min-h-[150px] flex-col justify-between rounded-2xl border border-white/10 bg-gradient-to-br from-white/10 via-white/5 to-white/0 p-5 shadow-lg"
+    >
+      <span class="text-xs uppercase tracking-[0.35em] text-text-muted">{{ card.label }}</span>
+      <span class="text-4xl font-semibold text-text">{{ card.value }}</span>
+      <span class="text-sm text-text-muted">{{ card.description }}</span>
+    </article>
+    }
+  </section>
+</section>

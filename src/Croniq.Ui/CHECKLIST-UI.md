@@ -1,12 +1,12 @@
 # Croniq UI Checklist
 
-Derived from [docs/deep-dive/designs/angular-ui-concept.md](docs/deep-dive/designs/angular-ui-concept.md). Update these tasks as the Angular 21 + Tailwind admin UI progresses.
+Derived from [src/Croniq.Ui/docs/deep-dive/designs/angular-ui-concept.md](src/Croniq.Ui/docs/deep-dive/designs/angular-ui-concept.md). Update these tasks as the Angular 21 + Tailwind admin UI progresses.
 
 ## Delivery Phases
 
-- [x] Design Spike – produce wireframes and refreshed design tokens aligned with the concept doc. _(Wireframes captured in [docs/deep-dive/designs/angular-ui-wireframes.md](docs/deep-dive/designs/angular-ui-wireframes.md); token inventory drafted, awaiting stakeholder review.)_
-- [x] Design Spike – finalize Tailwind theme plus typography approvals with stakeholders. _(Theme + typographic tokens documented in [docs/deep-dive/designs/angular-ui-theme.md](docs-deep-dive/designs/angular-ui-theme.md); awaiting stakeholder sign-off recorded there.)_
-- [ ] Scaffolding & Auth – initialize the Angular workspace in `src/Croniq.Ui`, configure MCP helper tasks, and wire the OIDC stub with the tenant switcher. _(Plan documented in [docs/deep-dive/designs/angular-ui-scaffolding.md](docs-deep-dive/designs/angular-ui-scaffolding.md); pending execution of `ng new`, library generation, Tailwind tokens, and OIDC stub.)_
+- [x] Design Spike – produce wireframes and refreshed design tokens aligned with the concept doc. _(Wireframes captured in [src/Croniq.Ui/docs/deep-dive/designs/angular-ui-wireframes.md](src/Croniq.Ui/docs/deep-dive/designs/angular-ui-wireframes.md); token inventory drafted, awaiting stakeholder review.)_
+- [x] Design Spike – finalize Tailwind theme plus typography approvals with stakeholders. _(Theme + typographic tokens documented in [src/Croniq.Ui/docs/deep-dive/designs/angular-ui-theme.md](src/Croniq.Ui/docs/deep-dive/designs/angular-ui-theme.md); awaiting stakeholder sign-off recorded there.)_
+- [ ] Scaffolding & Auth – initialize the Angular workspace in `src/Croniq.Ui`, configure MCP helper tasks, and wire the OIDC stub with the tenant switcher. _(Plan documented in [src/Croniq.Ui/docs/deep-dive/designs/angular-ui-scaffolding.md](src/Croniq.Ui/docs/deep-dive/designs/angular-ui-scaffolding.md); pending execution of `ng new`, library generation, Tailwind tokens, and OIDC stub.)_
 - [ ] MVP Data Surfaces – deliver the dashboard metrics (stubbed), schedules read-only grid, and job registry view.
 - [ ] Admin Controls – implement CRUD for schedules, webhooks, and API keys, including dead-letter replay wiring.
 - [ ] Observability & Polish – embed Grafana/log pulse views and complete the accessibility plus localization review.
@@ -16,17 +16,19 @@ Derived from [docs/deep-dive/designs/angular-ui-concept.md](docs/deep-dive/desig
 - [ ] Confirm backend prerequisites are complete (schedule/job/admin APIs, gRPC-Web proxy, finalized OIDC story, observability feeds).
 - [ ] Document hosting decision (static assets behind Croniq.Api vs. dedicated `Croniq.Ui` container) and readiness/liveness expectations.
 - [ ] Validate new npm dependencies meet the MIT/Apache/BSD policy and record any exceptions before merge.
+- [ ] Publish the ARIA playbook (based on https://angular.dev/guide/aria/overview) in `docs/ai/aria.md` and reference it from the PR template so every feature answers for roles, focus order, and keyboard shortcuts.
 
 ## Repository & Tooling Setup
 
 - [ ] Scaffold `src/Croniq.Ui` structure (apps/admin, libs/data-access, libs/telemetry, libs/ui-kit) as outlined in the concept doc.
 - [ ] Configure Tailwind per [https://next.angular.dev/guide/tailwind](https://next.angular.dev/guide/tailwind) and emit Croniq tokens via CSS variables (`--cq-*`).
-- [x] Capture MCP server usage in `.vscode/tasks.json` and `docs/deep-dive/designs/angular-ui-concept.md`, including `npm run mcp` instructions. _(Script + VS Code task wired up; see concept/scaffolding docs for details.)_
+- [x] Capture MCP server usage in `.vscode/tasks.json` and `src/Croniq.Ui/docs/deep-dive/designs/angular-ui-concept.md`, including `npm run mcp` instructions. _(Script + VS Code task wired up; see concept/scaffolding docs for details.)_
 - [ ] Establish Angular Query + Signals boilerplate shared across feature modules.
 
 ## Application Architecture
 
-- [ ] Implement the shell layout (command rail, tenant selector, status beacons, command palette).
+- [x] Implement the shell layout (command rail, tenant selector, status beacons, command palette). _(Tailwind-first shell + command rail now live in [src/app/shell/shell/shell.html](src/app/shell/shell/shell.html) with shared status beacons in [src/app/shared/status-beacon/status-beacon.ts](src/app/shared/status-beacon/status-beacon.ts).)_
+- [x] Command palette: extract a headless controller (signals + keyboard orchestration) with ARIA-compliant wrappers so we can skin it via Tailwind without duplicating logic. _(Headless controller + utilities live in [src/app/shared/command-palette/command-palette.controller.ts](src/app/shared/command-palette/command-palette.controller.ts) and the Tailwind template in [src/app/shared/command-palette/command-palette.html](src/app/shared/command-palette/command-palette.html).)_
 - [ ] Build split-pane content templates (summary cards + tabbed detail panes) reusable across modules.
 - [ ] Deliver feature modules:
   - [ ] Dashboard – queue depth spark lines, upcoming triggers list, misfire heat map.
@@ -37,7 +39,7 @@ Derived from [docs/deep-dive/designs/angular-ui-concept.md](docs/deep-dive/desig
 
 ## Data Access & State
 
-- [ ] Generate REST clients via OpenAPI (or gRPC-Web bridge) and wrap them in the shared `ApiClient` service that injects telemetry headers.
+- [ ] Generate REST clients via OpenAPI (or gRPC-Web bridge) and wrap them in the shared `ApiClient` service that injects telemetry headers. _(In progress: runtime-safe models now live in `projects/api-schema`, the generator script `npm run generate:openapi` emits `public/swagger.json`; next step is feeding that spec into `openapi-zod-client` and wiring the shared `ApiClient`.)_
 - [ ] Configure Angular Query caches, refetch policies, and tenant/env scoping helpers.
 - [ ] Persist non-sensitive preferences (theme, table density) per tenant using IndexedDB with optional encryption.
 
@@ -47,6 +49,7 @@ Derived from [docs/deep-dive/designs/angular-ui-concept.md](docs/deep-dive/desig
 - [ ] Define semantic color ramps (surface, accent, danger) for both light/dark ops themes.
 - [ ] Specify motion patterns (panel sweep, counter flip) and implement reusable animation utilities.
 - [ ] Create layout primitives (`stack`, `cluster`, density controls) to keep spacing on the 8px grid.
+- [ ] Document the Tailwind enrichment plan (utility namespaces, component recipes, palette integration) and ensure headless components expose the hooks needed for utility-first theming.
 
 ## Security & Auth
 

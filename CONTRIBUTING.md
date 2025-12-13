@@ -69,7 +69,7 @@ See `docs/deep-dive/docstreams.md` for the living backlog that tracks the remain
 
 ## UI Contributions
 
-- The Croniq admin UI architecture, guardrails, and open questions live in [`docs/deep-dive/designs/angular-ui-concept.md`](docs/deep-dive/designs/angular-ui-concept.md); reference it before proposing frontend changes.
+- The Croniq admin UI architecture, guardrails, and open questions live in [`src/Croniq.Ui/docs/deep-dive/designs/angular-ui-concept.md`](src/Croniq.Ui/docs/deep-dive/designs/angular-ui-concept.md); reference it before proposing frontend changes.
 - Track implementation progress in [`CHECKLIST-UI.md`](CHECKLIST-UI.md) and update checkboxes when a delivery phase lands.
 - UI work targets Angular 21 + Tailwind; follow the official Angular Tailwind integration guidance at [https://next.angular.dev/guide/tailwind](https://next.angular.dev/guide/tailwind) when modifying builders or content scanning settings.
 - When using AI assistance, lean on Angular's "Develop with AI" workflows [https://next.angular.dev/ai/develop-with-ai](https://next.angular.dev/ai/develop-with-ai) plus the AI design patterns catalog [https://next.angular.dev/ai/design-patterns](https://next.angular.dev/ai/design-patterns) to keep generated components idiomatic and reviewed before merging.

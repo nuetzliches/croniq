@@ -2,13 +2,13 @@
 
 ## Goals & Success Criteria
 
-- Ship an opinionated admin UI that mirrors the personas and flows listed in `docs/deep-dive/ui.md` while staying optional for headless Croniq deployments.
+- Ship an opinionated admin UI that mirrors the personas and flows listed in `src/Croniq.Ui/docs/deep-dive/ui.md` while staying optional for headless Croniq deployments.
 - Keep the UI repo-local (no separate SPA repo) so architecture reviews and CI/CD remain aligned with backend changes.
 - Deliver a design language that feels operational, dense, and telemetry-aware; dashboards must communicate queue state, policy health, and webhook posture without feeling like a generic CRUD generator.
 
 ## Guardrails & Dependencies
 
-- Backend prerequisites: stable schedule/job/admin APIs, gRPC-Web proxy (if needed), finalized OIDC story, and observability endpoints as called out in `docs/deep-dive/architecture.md` and `docs/deep-dive/ui.md`.
+- Backend prerequisites: stable schedule/job/admin APIs, gRPC-Web proxy (if needed), finalized OIDC story, and observability endpoints as called out in `docs/deep-dive/architecture.md` and `src/Croniq.Ui/docs/deep-dive/ui.md`.
 - Platform constraints: MIT/Apache/BSD-only dependencies, OpenTelemetry-first instrumentation, strict separation between secrets and UI bundles (no API keys in browser storage).
 - Hosting: built artifacts deploy either as static assets behind Croniq.Api or via a slim `Croniq.Ui` container image that speaks the same readiness/liveness protocol as other services.
 

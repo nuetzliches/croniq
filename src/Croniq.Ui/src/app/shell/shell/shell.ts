@@ -1,43 +1,76 @@
 import { CommonModule } from '@angular/common';
-import { Component, ViewChild, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, HostListener, computed, inject, signal } from '@angular/core';
 import { RouterLink, RouterLinkActive, RouterOutlet } from '@angular/router';
 
 import { CommandPalette } from '../../shared/command-palette/command-palette';
+import { CommandPaletteController } from '../../shared/command-palette/command-palette.controller';
 import { StatusBeacon } from '../../shared/status-beacon/status-beacon';
+import { NavItem, PRIMARY_NAV_ITEMS } from '../../core/navigation/nav-items';
 
-type NavItem = {
-  path: string;
+type StatusIntent = 'success' | 'warn' | 'neutral';
+
+type StatusCard = {
   label: string;
-  description: string;
+  value: string;
+  intent: StatusIntent;
 };
 
 @Component({
   selector: 'app-shell',
-  standalone: true,
   imports: [CommonModule, RouterLink, RouterLinkActive, RouterOutlet, CommandPalette, StatusBeacon],
   templateUrl: './shell.html',
-  styleUrl: './shell.css',
+  changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class Shell {
+  private readonly commandPalette = inject(CommandPaletteController);
+
   readonly tenant = signal('Tenant Alpha');
   readonly environment = signal('dev');
-  readonly navItems: NavItem[] = [
-    { path: '/dashboard', label: 'Dashboard', description: 'Queue depth, misfires, hooks' },
-    { path: '/schedules', label: 'Schedules', description: 'Cron + policy inventory' },
-    { path: '/jobs', label: 'Jobs', description: 'Registry browser & triggers' },
-    { path: '/webhooks', label: 'Webhooks', description: 'Ingress status & secrets' },
-    { path: '/tenants', label: 'Tenants & Keys', description: 'Quota + key rotation' },
-  ];
+  readonly tenantDisplay = computed(() => `${this.tenant()} · ${this.environment()}`);
+  readonly navItems = signal<ReadonlyArray<NavItem>>(PRIMARY_NAV_ITEMS);
 
-  readonly statusCards = [
-    { label: 'Cluster', value: 'Healthy', intent: 'success' as const },
-    { label: 'Queue Depth', value: '42', intent: 'warn' as const },
-    { label: 'Clock Δ', value: '+120 ms', intent: 'neutral' as const },
-  ];
-
-  @ViewChild(CommandPalette) private commandPalette?: CommandPalette;
+  readonly statusCards = signal<ReadonlyArray<StatusCard>>([
+    { label: 'Cluster', value: 'Healthy', intent: 'success' },
+    { label: 'Queue Depth', value: '42', intent: 'warn' },
+    { label: 'Clock Δ', value: '+120 ms', intent: 'neutral' },
+  ]);
+  readonly commandPaletteOpen = this.commandPalette.isOpen;
 
   openCommandPalette(): void {
-    this.commandPalette?.open();
+    this.commandPalette.open();
   }
+
+  closeCommandPalette(): void {
+    this.commandPalette.close();
+  }
+
+  @HostListener('window:keydown', ['$event'])
+  handleGlobalPaletteShortcut(event: KeyboardEvent): void {
+    if (!isPaletteShortcut(event) || isEditableTarget(event.target)) {
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    if (this.commandPaletteOpen()) {
+      this.closeCommandPalette();
+    } else {
+      this.openCommandPalette();
+    }
+  }
+}
+
+const EDITABLE_TAGS = new Set(['INPUT', 'TEXTAREA', 'SELECT']);
+
+function isPaletteShortcut(event: KeyboardEvent): boolean {
+  if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
+    return !event.repeat;
+  }
+  return false;
+}
+
+function isEditableTarget(target: EventTarget | null): target is HTMLElement {
+  if (!(target instanceof HTMLElement)) {
+    return false;
+  }
+  return target.isContentEditable || EDITABLE_TAGS.has(target.tagName);
 }

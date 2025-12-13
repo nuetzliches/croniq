@@ -1,10 +1,10 @@
-import { Component } from '@angular/core';
+import { ChangeDetectionStrategy, Component } from '@angular/core';
 
 @Component({
   selector: 'app-tenant-context',
   imports: [],
   templateUrl: './tenant-context.html',
-  styleUrl: './tenant-context.css',
+  changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class TenantContext {
 

@@ -1,6 +1,19 @@
+import { signal } from '@angular/core';
 import { ComponentFixture, TestBed } from '@angular/core/testing';
 
+import { ScheduleSummary } from '@croniq/api-schema';
+
 import { SchedulesPage } from './schedules-page';
+import { SchedulesStore } from './schedules.store';
+
+class SchedulesStoreStub {
+  readonly schedules = signal<ReadonlyArray<ScheduleSummary>>([]);
+  readonly loading = signal(false);
+  readonly error = signal<string | null>(null);
+  readonly lastUpdated = signal(new Date().toISOString());
+
+  refresh = jasmine.createSpy('refresh');
+}
 
 describe('SchedulesPage', () => {
   let component: SchedulesPage;
@@ -8,9 +21,10 @@ describe('SchedulesPage', () => {
 
   beforeEach(async () => {
     await TestBed.configureTestingModule({
-      imports: [SchedulesPage]
+      imports: [SchedulesPage],
+      providers: [{ provide: SchedulesStore, useClass: SchedulesStoreStub }],
     })
-    .compileComponents();
+      .compileComponents();
 
     fixture = TestBed.createComponent(SchedulesPage);
     component = fixture.componentInstance;

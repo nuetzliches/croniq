@@ -1,13 +1,12 @@
-import { Component } from '@angular/core';
+import { ChangeDetectionStrategy, Component } from '@angular/core';
 
 import { Shell } from './shell/shell/shell';
 
 @Component({
   selector: 'app-root',
-  standalone: true,
   imports: [Shell],
   templateUrl: './app.html',
-  styleUrl: './app.css'
+  changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class App {
 }
