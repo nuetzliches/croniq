@@ -95,11 +95,11 @@
 
 # Logging Plan (2025-12-13)
 
-- [ ] Audit Croniq-eigene Logs je Projekt (Api, Webhooks, Worker, Persistence, Core): Lifecycle/Polling auf `Debug`/`Trace` herunterstufen, nur fachliche Zustandswechsel und extern sichtbare Aktionen auf `Information` lassen; `Warning`/`Error` nur bei Degradierung/Fehler.
-- [ ] Fehlende strukturierte Felder ergänzen (Tenant, Environment, InstanceId, HookKey/JobKey/ExecutionId) und `SourceContext` konsistent halten; Telemetrie-Tags mit Logs alignen.
-- [ ] Host-/Framework-Noise dämpfen: `MinimumLevelOverrides` standardisieren (Hosting.Diagnostics, EF Command, Lifetime, Kestrel) und als Defaults in Samples/Docs festhalten.
-- [ ] Logging-Guidelines in `docs/deep-dive/observability.md` verankern (Level-Definitionen, wann loggen, Noisy-Patterns vermeiden, Payload-/PII-Hinweise, strukturierte Templates).
-- [ ] Smoke-/Devstack-Check: Samples (InMemory/SqlServer) mit Overrides starten und verifizieren, dass keine Request- oder EF-Spam-Logs mehr auf `Information` landen.
+- [x] Audit Croniq-eigene Logs je Projekt (Api, Webhooks, Worker, Persistence, Core): Lifecycle/Polling auf `Debug`/`Trace` herunterstufen, nur fachliche Zustandswechsel und extern sichtbare Aktionen auf `Information` lassen; `Warning`/`Error` nur bei Degradierung/Fehler.
+- [x] Fehlende strukturierte Felder ergänzen (Tenant, Environment, InstanceId, HookKey/JobKey/ExecutionId) und `SourceContext` konsistent halten; Telemetrie-Tags mit Logs alignen.
+- [x] Host-/Framework-Noise dämpfen: `MinimumLevelOverrides` standardisieren (Hosting.Diagnostics, EF Command, Lifetime, Kestrel) und als Defaults in Samples/Docs festhalten.
+- [x] Logging-Guidelines in `docs/deep-dive/observability.md` verankern (Level-Definitionen, wann loggen, Noisy-Patterns vermeiden, Payload-/PII-Hinweise, strukturierte Templates).
+- [x] Smoke-/Devstack-Check: Samples (InMemory/SqlServer) mit Overrides starten und verifizieren, dass keine Request- oder EF-Spam-Logs mehr auf `Information` landen.
 
 # Prüfen, beantworten, ggf. umsetzen
 

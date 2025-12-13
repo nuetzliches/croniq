@@ -20,6 +20,30 @@ This document captures the logging, metrics, and tracing strategy for Croniq ser
 - **Hosts**: `AddCroniqObservability` wires the Serilog pipeline + OTLP sink automatically for `Croniq.Api`, the worker, and the sample hosts so no service needs bespoke logging bootstrap code. `Croniq.Api` and `Croniq.Webhooks` now ship convenience wrappers (`AddCroniqApiObservability`, `AddCroniqWebhookObservability`) that call the shared helper with their default tracing/meter wiring.
 - **Hosts**: call `services.AddCroniqObservability(configuration, loggingBuilder, "<service>")` (or the new service-specific wrappers) to provision Serilog (JSON console + OTLP sink) together with the shared OpenTelemetry exporters; `Croniq.Api` and both sample hosts already use these helpers.
 - **Structured job scope**: `DefaultJobExecutionPipeline` wraps every job execution with Serilog scopes that emit `croniq.job.key`, `.namespace`, `.name`, optional `.variant`, as well as `croniq.tenant_id`, `croniq.environment`, `croniq.trigger.id`, and `croniq.trigger.initiator`. Loki and Grafana queries (Log Pulse dashboard) rely on these fields for tenant-safe filtering and INFO/ERROR panels.
+- **Logging defaults and noise suppression**: use `MinimumLevelOverrides` to keep framework noise down while retaining Croniq lifecycle logs at `Information`. Recommended defaults:
+
+  ```jsonc
+  {
+    "Croniq": {
+      "Observability": {
+        "MinimumLevelOverrides": {
+          "Microsoft.EntityFrameworkCore.Database.Command": "Warning",
+          "Microsoft.Hosting.Lifetime": "Warning",
+          "Microsoft.AspNetCore.Hosting.Diagnostics": "Warning",
+          "Microsoft.AspNetCore.Mvc.Infrastructure.DefaultActionDescriptorCollectionProvider": "Warning"
+        }
+      }
+    }
+  }
+  ```
+
+  This suppresses verbose EF command and ASP.NET host/controller discovery chatter while keeping Croniq lifecycle logs (job/worker start-stop, policy transitions) on `Information` for operators.
+- **Structured logging guidelines**:
+  - Always include tenant/environment/instance identifiers and the relevant domain key: `croniq.tenant_id`, `croniq.environment`, `croniq.instance_id` (worker), plus `croniq.job.key` or `croniq.hook.key` depending on context.
+  - Keep lifecycle and externally visible state changes on `Information` (job start/complete, worker start/stop, policy retries/circuit transitions). Use `Debug/Trace` for polling/heartbeat noise; reserve `Warning/Error` for degradation and faults.
+  - Use structured templates; avoid embedding payloads or secrets. Prefer opaque IDs or hashes for payload-derived values.
+  - When adding new loggers, align `SourceContext` with the namespace and ensure the scope carries the standard fields above so Grafana/Loki filters continue to work.
+- **Quick noise check (devstack)**: start the devstack with obs profile, hit a sample endpoint, and tail logs. With the overrides above, you should not see `Hosting.Diagnostics`, EF SQL, or MVC action-descriptor info at `Information`; Croniq lifecycle messages should remain visible.
 
 ## Metrics
 
