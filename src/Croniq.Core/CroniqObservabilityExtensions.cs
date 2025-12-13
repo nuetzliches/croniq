@@ -180,6 +180,11 @@ public static class CroniqObservabilityExtensions
             .Enrich.WithSpan()
             .Enrich.WithProperty("service.name", options.ServiceName);
 
+        foreach (var overridePair in options.MinimumLevelOverrides)
+        {
+            loggerConfiguration.MinimumLevel.Override(overridePair.Key, overridePair.Value);
+        }
+
         if (!string.IsNullOrWhiteSpace(options.ServiceInstanceId))
         {
             loggerConfiguration.Enrich.WithProperty("service.instance.id", options.ServiceInstanceId);

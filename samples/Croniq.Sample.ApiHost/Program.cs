@@ -5,6 +5,7 @@ using Croniq.Core.Execution;
 using Croniq.Sample.Jobs;
 using Croniq.Webhooks;
 using Grpc.AspNetCore.Server;
+using Microsoft.Extensions.Logging;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -40,8 +41,10 @@ builder.Services.AddGrpcReflection();
 
 var app = builder.Build();
 
-if (app.Environment.IsDevelopment()
-    || builder.Configuration.GetValue<bool>("Croniq:Api:ExposeSchemas"))
+var swaggerEnabled = app.Environment.IsDevelopment()
+    || builder.Configuration.GetValue<bool>("Croniq:Api:ExposeSchemas");
+
+if (swaggerEnabled)
 {
     app.UseSwagger();
     app.UseSwaggerUI(options =>
@@ -55,5 +58,16 @@ if (app.Environment.IsDevelopment()
 
 app.UseCroniqApi();
 app.UseCroniqWebhooks(mapHealthEndpoints: false);
+
+var addresses = app.Urls?.Any() == true ? string.Join(", ", app.Urls) : "http://localhost:5000";
+if (swaggerEnabled)
+{
+    var swaggerAddress = app.Urls?.FirstOrDefault() ?? "http://localhost:5000";
+    app.Logger.LogInformation("Croniq API listening on {Addresses}. Swagger UI: {SwaggerUrl}", addresses, $"{swaggerAddress}/swagger");
+}
+else
+{
+    app.Logger.LogInformation("Croniq API listening on {Addresses}. Swagger UI disabled.", addresses);
+}
 
 app.Run();
