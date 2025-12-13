@@ -287,7 +287,8 @@ public static class WebhookHostingExtensions
 
             var metadata = metadataFactory.Create(endpoint, payload);
             var executionOptions = policyResolver.ResolveExecution(jobKey);
-            var execRequest = new JobExecutionRequest(jobKey, descriptor, executionOptions, metadata, ActivitySource);
+            var executionId = Guid.NewGuid().ToString("N");
+            var execRequest = new JobExecutionRequest(executionId, jobKey, descriptor, executionOptions, metadata, ActivitySource);
 
             using var activity = ActivitySource.StartActivity("Croniq.Webhooks.Trigger", ActivityKind.Server);
             activity?.SetTag("croniq.webhook.key", endpoint.HookKey);

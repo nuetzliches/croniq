@@ -22,6 +22,7 @@ using Croniq.Sdk;
 using Croniq.Hosting;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Options;
@@ -582,7 +583,8 @@ public static class ApiHostingExtensions
             metadata["webhook:deadletter:replay_at"] = DateTimeOffset.UtcNow.ToString("O", CultureInfo.InvariantCulture);
 
             var executionOptions = policyResolver.ResolveExecution(jobKey);
-            var execRequest = new JobExecutionRequest(jobKey, descriptor, executionOptions, metadata, TriggerActivitySource);
+            var executionId = Guid.NewGuid().ToString("N");
+            var execRequest = new JobExecutionRequest(executionId, jobKey, descriptor, executionOptions, metadata, TriggerActivitySource);
 
             using var replayActivity = TriggerActivitySource.StartActivity("Croniq.Api.WebhookReplay", ActivityKind.Server);
             replayActivity?.SetTag("croniq.webhook.deadletter", entry.Id);
@@ -734,7 +736,7 @@ public static class ApiHostingExtensions
 
         app.MapGet("/executions/{executionId}/logs", async (
             string executionId,
-            IExecutionLogReader reader,
+            [FromServices] IExecutionLogReader reader,
             HttpResponse response,
             CancellationToken cancellationToken) =>
         {
@@ -744,7 +746,7 @@ public static class ApiHostingExtensions
             {
                 hasLines = true;
                 await response.WriteAsync(line, cancellationToken).ConfigureAwait(false);
-                await response.WriteAsync('\n', cancellationToken).ConfigureAwait(false);
+                await response.WriteAsync("\n", cancellationToken).ConfigureAwait(false);
             }
 
             if (!hasLines)
@@ -768,7 +770,8 @@ public static class ApiHostingExtensions
 
             var metadata = ToReadOnly(request.Metadata) ?? new Dictionary<string, string>();
             var executionOptions = policyResolver.ResolveExecution(jobKey);
-            var execRequest = new JobExecutionRequest(jobKey, descriptor, executionOptions, metadata, TriggerActivitySource);
+            var executionId = Guid.NewGuid().ToString("N");
+            var execRequest = new JobExecutionRequest(executionId, jobKey, descriptor, executionOptions, metadata, TriggerActivitySource);
 
             using var triggerActivity = TriggerActivitySource.StartActivity("Croniq.Api.TriggerJob", ActivityKind.Server);
             triggerActivity?.SetTag("croniq.job.key", jobKey.Value);
