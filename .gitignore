@@ -66,3 +66,5 @@ infra/docker/mssql-data/
 docs/node_modules/
 docs/.vitepress/dist/
 docs/.vitepress/cache/
+
+node_modules/

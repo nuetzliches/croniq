@@ -33,12 +33,12 @@ This document describes the continuous integration and delivery strategy require
    - Matrix per test project (`Croniq.Core.Tests`, `Croniq.JobStore.InMemory.Tests`, `Croniq.Persistence.SqlServer.Tests`, `Croniq.Providers.Default.Tests`).
    - Use `dotnet test <proj> /p:CollectCoverage=true /p:CoverletOutputFormat=cobertura`.
    - Upload coverage report aggregate + test results (TRX) as artifacts.
-   - Fail if coverage <80% Core / <70% overall (use `coverlet.msbuild` thresholds).
+   - Fail if coverage <80% Core / <60% overall.
 4. **Security quick checks**
    - `dotnet list package --vulnerable --include-transitive`.
    - `trivy fs --exit-code 0 --severity HIGH,CRITICAL .` (informational in PR until release gating is ready).
 5. **Status reporting**
-   - `scripts/ci/enforce_coverage_thresholds.py` enforces ≥80%/≥70%.
+   - `scripts/ci/enforce_coverage_thresholds.py` enforces >=80%/>=60%.
    - The workflow posts an auto-updating PR comment summarizing overall + Croniq.Core coverage plus per-assembly breakdown.
 
 ## ci-nightly.yml (Full Suite)
