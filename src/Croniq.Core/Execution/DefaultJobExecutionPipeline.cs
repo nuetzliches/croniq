@@ -62,7 +62,7 @@ public sealed class DefaultJobExecutionPipeline : IJobExecutionPipeline
         activity?.SetTag("croniq.tenant_id", request.JobKey.TenantId);
         activity?.SetTag("croniq.environment", request.JobKey.EnvironmentTag);
         var stopwatch = Stopwatch.StartNew();
-        jobLogger.LogInformation("Trigger {JobKey} started", request.JobKey.Value);
+        jobLogger.LogDebug("Trigger {JobKey} started", request.JobKey.Value);
 
         var executionOptions = request.ExecutionOptions ?? _policyResolver.ResolveExecution(request.JobKey);
         var pipeline = _pipelineProvider.Get(request.JobKey, executionOptions);
@@ -78,7 +78,7 @@ public sealed class DefaultJobExecutionPipeline : IJobExecutionPipeline
             }, cancellationToken).ConfigureAwait(false);
             stopwatch.Stop();
             activity?.SetStatus(ActivityStatusCode.Ok);
-            jobLogger.LogInformation("Trigger {JobKey} completed in {ElapsedMilliseconds} ms", request.JobKey.Value, stopwatch.ElapsedMilliseconds);
+            jobLogger.LogDebug("Trigger {JobKey} completed in {ElapsedMilliseconds} ms", request.JobKey.Value, stopwatch.ElapsedMilliseconds);
         }
         catch (Exception ex)
         {

@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using System.Reflection;
 using Croniq.Api;
 using Croniq.Core;
@@ -6,6 +7,7 @@ using Croniq.Sample.Jobs;
 using Croniq.Webhooks;
 using Grpc.AspNetCore.Server;
 using Microsoft.Extensions.Logging;
+using Microsoft.OpenApi;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -36,7 +38,27 @@ builder.Services.AddCroniqWebhookObservability(
 
 builder.Services.AddCroniqSampleJobs();
 builder.Services.AddEndpointsApiExplorer();
-builder.Services.AddSwaggerGen();
+builder.Services.AddSwaggerGen(options =>
+{
+    options.SwaggerDoc("v1", new OpenApiInfo { Title = "Croniq Scheduler API", Version = "v1" });
+    options.AddSecurityDefinition("X-Croniq-Key", new OpenApiSecurityScheme
+    {
+        Description = "Croniq API key passed via X-Croniq-Key header.",
+        Name = "X-Croniq-Key",
+        In = ParameterLocation.Header,
+        Type = SecuritySchemeType.ApiKey
+    });
+
+    var apiKeySchemeReference = new OpenApiSecuritySchemeReference(
+        referenceId: "X-Croniq-Key",
+        hostDocument: null,
+        externalResource: null);
+
+    options.AddSecurityRequirement(_ => new OpenApiSecurityRequirement
+    {
+        { apiKeySchemeReference, new List<string>() }
+    });
+});
 builder.Services.AddGrpcReflection();
 
 var app = builder.Build();

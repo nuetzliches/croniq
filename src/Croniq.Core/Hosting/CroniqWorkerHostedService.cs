@@ -30,7 +30,7 @@ public sealed class CroniqWorkerHostedService : BackgroundService
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        _logger.LogInformation("Croniq worker starting for tenant {Tenant} / env {Environment} (instance {Instance})", _options.TenantId, _options.EnvironmentTag, _options.InstanceId);
+        _logger.LogDebug("Croniq worker starting for tenant {Tenant} / env {Environment} (instance {Instance})", _options.TenantId, _options.EnvironmentTag, _options.InstanceId);
 
         while (!stoppingToken.IsCancellationRequested)
         {
@@ -51,6 +51,6 @@ public sealed class CroniqWorkerHostedService : BackgroundService
             }
         }
 
-        _logger.LogInformation("Croniq worker stopping");
+        _logger.LogDebug("Croniq worker stopping");
     }
 }

@@ -99,7 +99,7 @@ public sealed class ExecutionPolicyPipelineProvider : IExecutionPolicyPipelinePr
                 OnRetry = args =>
                 {
                     var exceptionType = args.Outcome.Exception?.GetType().FullName ?? "unknown";
-                    _logger.LogInformation(
+                    _logger.LogDebug(
                         "Policy transition {Policy} for job {JobKey}: retry attempt {Attempt} (exception: {ExceptionType})",
                         "retry",
                         cacheKey,
