@@ -64,9 +64,4 @@ if __name__ == "__main__":
     summary_data = load_summary(args.summary)
     overall_value = extract_overall(summary_data)
     core_value = extract_assembly(summary_data, args.core_assembly)
-    enforce_thresholds(
-        overall=overall_value,
-        overall_threshold=args.overall_threshold,
-        core=core_value,
-        core_threshold=args.core_threshold,
-    )
+    enforce_thresholds(overall=overall_value, overall_threshold=args.overall_threshold, core=core_value, core_threshold=args.core_threshold)

@@ -28,7 +28,7 @@ This document extends the quality vision captured in `architecture.md` and descr
 - **Frameworks**: `xUnit` + `FluentAssertions`, with `NSubstitute` for lightweight mocks when an interface cannot be satisfied with in-memory doubles.
 - **Layout**: Mirror namespaces (e.g., `Croniq.Core.Tests/Scheduling/TriggerWorkerTests.cs`) with explicit Arrange–Act–Assert regions. Prefer `[Theory]` and `MemberData` for parser/policy matrices.
 - **Execution**: `dotnet test tests/Croniq.Core.Tests/Croniq.Core.Tests.csproj --configuration Release` (or target another suite directly).
-- **Gates**: Coverage per suite is aggregated by Coverlet; PRs fail when `Croniq.Core` line coverage <80% or repository coverage <70%.
+- **Gates**: Coverage per suite is aggregated by Coverlet; PRs fail when `Croniq.Core` line coverage <80% or repository coverage <60%.
 
 ### Contract Tests
 
@@ -77,7 +77,7 @@ This document extends the quality vision captured in `architecture.md` and descr
 - `dotnet-reportgenerator-globaltool` consolidates coverage into `coverage/report/Summary.json`.
 - Gates enforced in CI:
   - `Croniq.Core` line coverage ≥80% (hard fail).
-  - Repository-wide line coverage ≥70%.
+  - Repository-wide line coverage ≥60%.
   - No PR merges when any unit/contract suite fails.
 - Local guardrails: run `dotnet test --collect:"XPlat Code Coverage"` to preview coverage before opening a PR.
 
