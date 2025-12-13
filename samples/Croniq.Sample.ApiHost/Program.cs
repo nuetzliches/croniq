@@ -20,6 +20,10 @@ var otelBuilder = builder.Services.AddCroniqApiObservability(
     builder.Configuration,
     builder.Logging);
 
+// Persist execution logs locally for the sample host; production can swap to object storage or disable this.
+builder.Logging.AddCroniqExecutionLogSink();
+builder.Services.AddCroniqFileExecutionLogStore();
+
 builder.Services.AddCroniqWebhookObservability(
     builder.Configuration,
     builder.Logging,

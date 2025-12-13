@@ -101,7 +101,7 @@ public class TriggerWorkerMisfireTests
                 Microsoft.Extensions.Options.Options.Create(new PolicyOverrideOptions())),
             Microsoft.Extensions.Options.Options.Create(new CroniqOptions { TenantId = "t", EnvironmentTag = "dev", InstanceId = "i1" }),
             new InMemoryQuotaGuard(),
-            new NoOpJobLogStore(),
+            new NoOpExecutionLogStore(),
             NullLogger<TriggerWorker>.Instance,
             new ActivitySource("test"));
 
@@ -132,7 +132,7 @@ public class TriggerWorkerMisfireTests
                 Microsoft.Extensions.Options.Options.Create(new PolicyOverrideOptions())),
             Microsoft.Extensions.Options.Options.Create(new CroniqOptions { TenantId = "t", EnvironmentTag = "dev", InstanceId = "i1" }),
             new InMemoryQuotaGuard(),
-            new NoOpJobLogStore(),
+            new NoOpExecutionLogStore(),
             NullLogger<TriggerWorker>.Instance,
             new ActivitySource("test"));
 
@@ -180,7 +180,7 @@ public class TriggerWorkerMisfireTests
                 Microsoft.Extensions.Options.Options.Create(quotaOverrides)),
             Microsoft.Extensions.Options.Options.Create(new CroniqOptions { TenantId = "t", EnvironmentTag = "dev", InstanceId = "i1" }),
             new InMemoryQuotaGuard(),
-            new NoOpJobLogStore(),
+            new NoOpExecutionLogStore(),
             NullLogger<TriggerWorker>.Instance,
             new ActivitySource("test"));
 
@@ -241,7 +241,7 @@ public class TriggerWorkerMisfireTests
                 Microsoft.Extensions.Options.Options.Create(overrides)),
             Microsoft.Extensions.Options.Options.Create(new CroniqOptions { TenantId = "t", EnvironmentTag = "dev", InstanceId = "i1" }),
             new InMemoryQuotaGuard(),
-            new NoOpJobLogStore(),
+            new NoOpExecutionLogStore(),
             NullLogger<TriggerWorker>.Instance,
             new ActivitySource("test"));
 

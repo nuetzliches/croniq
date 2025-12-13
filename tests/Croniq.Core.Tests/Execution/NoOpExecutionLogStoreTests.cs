@@ -9,14 +9,16 @@ using Xunit;
 
 namespace Croniq.Core.Tests.Execution;
 
-public class NoOpJobLogStoreTests
+public class NoOpExecutionLogStoreTests
 {
     [Fact]
     public async Task Completes_without_throwing()
     {
-        var store = new NoOpJobLogStore();
-        var record = new JobExecutionRecord(
+        var store = new NoOpExecutionLogStore();
+        var record = new ExecutionRecord(
             "exec-1",
+            ExecutionKind.Job,
+            null,
             "t:env:ns:job",
             "t",
             "env",
@@ -28,7 +30,7 @@ public class NoOpJobLogStoreTests
             "span",
             "corr");
 
-        var entry = new JobLogEntry(
+        var entry = new ExecutionLogEntry(
             "exec-1",
             DateTimeOffset.UtcNow,
             LogLevel.Information,
@@ -41,10 +43,10 @@ public class NoOpJobLogStoreTests
             "corr",
             1);
 
-        var completion = new JobExecutionCompletion(
+        var completion = new ExecutionCompletion(
             "exec-1",
             DateTimeOffset.UtcNow,
-            JobExecutionStatus.Succeeded,
+            ExecutionStatus.Succeeded,
             12.3,
             null,
             null);
@@ -53,7 +55,6 @@ public class NoOpJobLogStoreTests
         await store.AppendAsync("exec-1", new[] { entry }, CancellationToken.None);
         await store.OnExecutionCompletedAsync(completion, CancellationToken.None);
 
-        // If we reached here without exceptions, the no-op store behaved as expected.
         true.ShouldBeTrue();
     }
 }

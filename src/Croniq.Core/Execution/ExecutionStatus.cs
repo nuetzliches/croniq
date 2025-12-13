@@ -1,9 +1,9 @@
 namespace Croniq.Core.Execution;
 
 /// <summary>
-/// Represents the terminal outcome of a job execution.
+/// Represents the terminal outcome of an execution.
 /// </summary>
-public enum JobExecutionStatus
+public enum ExecutionStatus
 {
     Succeeded,
     Failed,

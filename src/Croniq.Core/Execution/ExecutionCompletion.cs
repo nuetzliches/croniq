@@ -3,12 +3,12 @@ using System;
 namespace Croniq.Core.Execution;
 
 /// <summary>
-/// Captures the terminal state of a job execution for persistence.
+/// Captures the terminal state of an execution for persistence.
 /// </summary>
-public sealed record JobExecutionCompletion(
+public sealed record ExecutionCompletion(
     string ExecutionId,
     DateTimeOffset CompletedAtUtc,
-    JobExecutionStatus Status,
+    ExecutionStatus Status,
     double? DurationMs = null,
     string? ErrorType = null,
     string? ErrorMessage = null);

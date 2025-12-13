@@ -5,9 +5,9 @@ using Microsoft.Extensions.Logging;
 namespace Croniq.Core.Execution;
 
 /// <summary>
-/// Represents a persisted log entry emitted during a job execution.
+/// Represents a persisted log entry emitted during an execution.
 /// </summary>
-public sealed record JobLogEntry(
+public sealed record ExecutionLogEntry(
     string ExecutionId,
     DateTimeOffset TimestampUtc,
     LogLevel Level,

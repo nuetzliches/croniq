@@ -3,10 +3,12 @@ using System;
 namespace Croniq.Core.Execution;
 
 /// <summary>
-/// Snapshot captured when a job execution starts. Storage implementations can persist it alongside log entries.
+/// Snapshot captured when an execution starts. Storage implementations can persist it alongside log entries.
 /// </summary>
-public sealed record JobExecutionRecord(
+public sealed record ExecutionRecord(
     string ExecutionId,
+    ExecutionKind Kind,
+    string? WorkflowId,
     string JobKey,
     string TenantId,
     string EnvironmentTag,

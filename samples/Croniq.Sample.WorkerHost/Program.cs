@@ -56,12 +56,15 @@ builder.Services.AddHostedService<CroniqWorkerHostedService>();
 builder.Services.AddLogging(logging =>
 {
     logging.SetMinimumLevel(LogLevel.Information);
+    logging.AddCroniqExecutionLogSink();
     logging.AddSimpleConsole(options =>
     {
         options.SingleLine = true;
         options.TimestampFormat = "HH:mm:ss ";
     });
 });
+
+builder.Services.AddCroniqFileExecutionLogStore();
 
 await builder.Build().RunAsync();
 

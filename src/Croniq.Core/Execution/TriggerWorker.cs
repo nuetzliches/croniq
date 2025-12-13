@@ -27,7 +27,7 @@ public sealed class TriggerWorker
     private readonly IMisfirePolicy _misfirePolicy;
     private readonly IPolicyResolver _policyResolver;
     private readonly IQuotaGuard _quotaGuard;
-    private readonly IJobLogStore _jobLogStore;
+    private readonly IExecutionLogStore _executionLogStore;
     private readonly JsonSerializerOptions _jsonOptions = new(JsonSerializerDefaults.Web);
 
     public TriggerWorker(
@@ -38,7 +38,7 @@ public sealed class TriggerWorker
         IPolicyResolver policyResolver,
         IOptions<CroniqOptions> options,
         IQuotaGuard quotaGuard,
-        IJobLogStore jobLogStore,
+        IExecutionLogStore executionLogStore,
         ILogger<TriggerWorker> logger,
         ActivitySource activitySource)
     {
@@ -48,7 +48,7 @@ public sealed class TriggerWorker
         _misfirePolicy = misfirePolicy ?? throw new ArgumentNullException(nameof(misfirePolicy));
         _policyResolver = policyResolver ?? throw new ArgumentNullException(nameof(policyResolver));
         _quotaGuard = quotaGuard ?? throw new ArgumentNullException(nameof(quotaGuard));
-        _jobLogStore = jobLogStore ?? throw new ArgumentNullException(nameof(jobLogStore));
+        _executionLogStore = executionLogStore ?? throw new ArgumentNullException(nameof(executionLogStore));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
         _activitySource = activitySource ?? new ActivitySource("Croniq.Core.TriggerWorker");
@@ -147,7 +147,7 @@ public sealed class TriggerWorker
                     var elapsedMs = executionTimer.Elapsed.TotalMilliseconds;
                     SchedulerMetrics.RecordJobExecution(jobKey, succeeded: true, elapsedMs);
                     leaseActivity?.SetStatus(ActivityStatusCode.Ok);
-                    await TryStoreExecutionCompletedAsync(executionId, JobExecutionStatus.Succeeded, elapsedMs, null, cancellationToken).ConfigureAwait(false);
+                    await TryStoreExecutionCompletedAsync(executionId, ExecutionStatus.Succeeded, elapsedMs, null, cancellationToken).ConfigureAwait(false);
 
                     await ReleaseAsync(lease, succeeded: true, deadLetterReason: null, nextFireTimeUtc: null, cancellationToken).ConfigureAwait(false);
                     processed++;
@@ -159,7 +159,7 @@ public sealed class TriggerWorker
                     leaseActivity?.SetStatus(ActivityStatusCode.Error, ex.Message);
                     _logger.LogError(ex, "Error executing job {JobKey} for lease {LeaseId}", lease.JobKey, lease.LeaseId);
                     var releaseReason = "execution-error";
-                    await TryStoreExecutionCompletedAsync(executionId, JobExecutionStatus.Failed, elapsedMs, ex, cancellationToken).ConfigureAwait(false);
+                    await TryStoreExecutionCompletedAsync(executionId, ExecutionStatus.Failed, elapsedMs, ex, cancellationToken).ConfigureAwait(false);
 
                     if (executionOptions.DeadLetter.Enabled && !IsCancellation(ex, cancellationToken))
                     {
@@ -301,8 +301,10 @@ public sealed class TriggerWorker
     {
         try
         {
-            var record = new JobExecutionRecord(
+            var record = new ExecutionRecord(
                 executionId,
+                ExecutionKind.Job,
+                null,
                 jobKey.Value,
                 lease.Scope.TenantId,
                 lease.Scope.EnvironmentTag,
@@ -314,7 +316,7 @@ public sealed class TriggerWorker
                 activity?.SpanId.ToString(),
                 TryGetCorrelationId(activity));
 
-            await _jobLogStore.OnExecutionStartedAsync(record, cancellationToken).ConfigureAwait(false);
+            await _executionLogStore.OnExecutionStartedAsync(record, cancellationToken).ConfigureAwait(false);
         }
         catch (Exception ex)
         {
@@ -322,11 +324,11 @@ public sealed class TriggerWorker
         }
     }
 
-    private async Task TryStoreExecutionCompletedAsync(string executionId, JobExecutionStatus status, double? durationMs, Exception? error, CancellationToken cancellationToken)
+    private async Task TryStoreExecutionCompletedAsync(string executionId, ExecutionStatus status, double? durationMs, Exception? error, CancellationToken cancellationToken)
     {
         try
         {
-            var completion = new JobExecutionCompletion(
+            var completion = new ExecutionCompletion(
                 executionId,
                 DateTimeOffset.UtcNow,
                 status,
@@ -334,7 +336,7 @@ public sealed class TriggerWorker
                 error?.GetType().FullName ?? error?.GetType().Name,
                 error?.Message);
 
-            await _jobLogStore.OnExecutionCompletedAsync(completion, cancellationToken).ConfigureAwait(false);
+            await _executionLogStore.OnExecutionCompletedAsync(completion, cancellationToken).ConfigureAwait(false);
         }
         catch (Exception ex)
         {

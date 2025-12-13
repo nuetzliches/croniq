@@ -91,3 +91,8 @@
 - Offene Punkte:
   - Docs/Comms: Docstreams-Aufbau (blocked bis Repo public), CONTRIBUTING-Refresh, offene Quickstart/Consumer-Divergenzen.
   - Delivery Backlog: UI-Dokumentation, Kubernetes-Chart-Platzhalter, globales Audit der verbleibenden `- [ ]` Items.
+
+# Prüfen, beantworten, ggf. umsetzen
+
+- [ ] Können wir die Konfiguration des `otelBuilder` in `samples\Croniq.Sample.WorkerHost\Program.cs` so vereinfachen wie in `samples\Croniq.Sample.ApiHost\Program.cs`?
+- [x] `src\Croniq.Core\Execution\IJobExecutionPipeline.cs` Naming-Check abgeschlossen: Für das aktuelle Scope bleibt das Interface job-spezifisch; Workflows würden ein eigenes Interface (`IWorkflowExecutionPipeline`) oder einen generischen `IExecutionPipeline` erhalten, sobald das Feature gestartet wird. Kein sofortiger Umbau nötig.

@@ -87,7 +87,7 @@ public class TriggerWorkerTests
     {
         var lease = NewLease(jobKey: SampleJobKey.Value);
         var store = new FakeJobStore(new[] { lease });
-        var jobLogStore = Substitute.For<IJobLogStore>();
+        var jobLogStore = Substitute.For<IExecutionLogStore>();
 
         var registry = Substitute.For<IJobRegistry>();
         registry.TryGet(SampleJobKey, out Arg.Any<JobDescriptor>()).Returns(ci =>
@@ -125,8 +125,8 @@ public class TriggerWorkerTests
         capturedRequest.ShouldNotBeNull();
         capturedRequest!.ExecutionId.ShouldNotBeNullOrWhiteSpace();
         capturedRequest.Metadata.ShouldContainKeyAndValue("trigger_id", lease.TriggerId);
-        await jobLogStore.Received(1).OnExecutionStartedAsync(Arg.Any<JobExecutionRecord>(), Arg.Any<CancellationToken>());
-        await jobLogStore.Received(1).OnExecutionCompletedAsync(Arg.Is<JobExecutionCompletion>(c => c.Status == JobExecutionStatus.Succeeded), Arg.Any<CancellationToken>());
+        await jobLogStore.Received(1).OnExecutionStartedAsync(Arg.Any<ExecutionRecord>(), Arg.Any<CancellationToken>());
+        await jobLogStore.Received(1).OnExecutionCompletedAsync(Arg.Is<ExecutionCompletion>(c => c.Status == ExecutionStatus.Succeeded), Arg.Any<CancellationToken>());
     }
 
     [Fact]
@@ -134,7 +134,7 @@ public class TriggerWorkerTests
     {
         var lease = NewLease(jobKey: SampleJobKey.Value);
         var store = new FakeJobStore(new[] { lease });
-        var jobLogStore = Substitute.For<IJobLogStore>();
+        var jobLogStore = Substitute.For<IExecutionLogStore>();
 
         var registry = Substitute.For<IJobRegistry>();
         registry.TryGet(SampleJobKey, out Arg.Any<JobDescriptor>()).Returns(ci =>
@@ -165,8 +165,8 @@ public class TriggerWorkerTests
         var processed = await worker.ProcessBatchAsync(DateTimeOffset.UtcNow, batchSize: 1, CancellationToken.None);
 
         processed.ShouldBe(0);
-        await jobLogStore.Received(1).OnExecutionStartedAsync(Arg.Any<JobExecutionRecord>(), Arg.Any<CancellationToken>());
-        await jobLogStore.Received(1).OnExecutionCompletedAsync(Arg.Is<JobExecutionCompletion>(c => c.Status == JobExecutionStatus.Failed && c.ErrorMessage == "boom"), Arg.Any<CancellationToken>());
+        await jobLogStore.Received(1).OnExecutionStartedAsync(Arg.Any<ExecutionRecord>(), Arg.Any<CancellationToken>());
+        await jobLogStore.Received(1).OnExecutionCompletedAsync(Arg.Is<ExecutionCompletion>(c => c.Status == ExecutionStatus.Failed && c.ErrorMessage == "boom"), Arg.Any<CancellationToken>());
     }
 
     [Fact]
@@ -174,10 +174,10 @@ public class TriggerWorkerTests
     {
         var lease = NewLease(jobKey: SampleJobKey.Value);
         var store = new FakeJobStore(new[] { lease });
-        var jobLogStore = Substitute.For<IJobLogStore>();
-        jobLogStore.OnExecutionStartedAsync(Arg.Any<JobExecutionRecord>(), Arg.Any<CancellationToken>())
+        var jobLogStore = Substitute.For<IExecutionLogStore>();
+        jobLogStore.OnExecutionStartedAsync(Arg.Any<ExecutionRecord>(), Arg.Any<CancellationToken>())
             .Returns(_ => Task.FromException(new InvalidOperationException("start-fail")));
-        jobLogStore.OnExecutionCompletedAsync(Arg.Any<JobExecutionCompletion>(), Arg.Any<CancellationToken>())
+        jobLogStore.OnExecutionCompletedAsync(Arg.Any<ExecutionCompletion>(), Arg.Any<CancellationToken>())
             .Returns(_ => Task.FromException(new InvalidOperationException("complete-fail")));
 
         var registry = Substitute.For<IJobRegistry>();
@@ -232,7 +232,7 @@ public class TriggerWorkerTests
         IMisfirePolicy? misfirePolicy = null,
         IQuotaGuard? quotaGuard = null,
         IJobExecutionPipeline? pipeline = null,
-        IJobLogStore? jobLogStore = null)
+        IExecutionLogStore? jobLogStore = null)
     {
         if (policyResolver is null)
         {
@@ -263,7 +263,7 @@ public class TriggerWorkerTests
                 .Returns(Task.CompletedTask);
         }
 
-        jobLogStore ??= Substitute.For<IJobLogStore>();
+        jobLogStore ??= Substitute.For<IExecutionLogStore>();
 
         var options = Microsoft.Extensions.Options.Options.Create(new CroniqOptions { TenantId = "t1", EnvironmentTag = "dev", InstanceId = "test" });
 
