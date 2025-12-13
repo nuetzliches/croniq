@@ -27,30 +27,36 @@ Guidance for setting up the Angular 21 workspace (`src/Croniq.Ui`) plus initial 
    ng generate library telemetry
    ng generate library ui-kit
    ```
-5. Verify the directory structure after scaffolding:
+5. Verify the directory structure after scaffolding (Angular CLI 17+/21 uses `src/` for the main app and `projects/` for libraries):
    ```
    src/
      Croniq.Ui/
        angular.json
        package.json
-       tailwind.config.ts
-       apps/
-         admin/
-           src/app/
-             shell/
-             core/
-             shared/
-             features/
-           environments/
-       libs/
+       tsconfig.json
+       src/
+         app/
+           core/
+           shared/
+           shell/
+           features/
+         assets/
+         styles.css
+         main.ts
+       projects/
          data-access/
+           src/lib/
          telemetry/
+           src/lib/
          ui-kit/
+           src/lib/
+       public/
+       .vscode/
    ```
    Commit this baseline before layering feature work so diffs stay reviewable.
    - `data-access`: API clients + Angular Query setup.
    - `telemetry`: OpenTelemetry bridge + logging helpers.
-   - `ui-kit`: Tailwind-based headless components.
+   - `ui-kit`: Tailwind-based headless components (tokens live here).
 
 - Seed `tokens.css` with the semantic variables:
 
@@ -87,18 +93,37 @@ Guidance for setting up the Angular 21 workspace (`src/Croniq.Ui`) plus initial 
 
 ## MCP Helper Tasks
 
-- Create `.vscode/tasks.json` entry:
+- Configure `.vscode/mcp.json` with the VS Code-specific `servers` property so it mirrors [https://next.angular.dev/ai/mcp](https://next.angular.dev/ai/mcp):
+  ```json
+  {
+    "servers": {
+      "angular-cli": {
+        "command": "npx",
+        "args": ["-y", "@angular/cli", "mcp"]
+      }
+    }
+  }
+  ```
+- Add a persistent task so anyone can start the server from VS Code without retyping the command:
   ```json
   {
     "label": "Angular MCP Server",
     "type": "shell",
+    "command": "npm",
+    "args": ["run", "mcp"],
+    "isBackground": true,
     "options": { "cwd": "${workspaceFolder}/src/Croniq.Ui" }
   }
   ```
-- Add `scripts` entry in `package.json`:
+- Wire the npm script that proxies to `ng mcp`:
   ```json
-
+  {
+    "scripts": {
+      "mcp": "ng mcp"
+    }
+  }
   ```
+- When prompting GPT agents, attach Angular's best-practices context from [https://next.angular.dev/assets/context/best-practices.md](https://next.angular.dev/assets/context/best-practices.md) alongside `AI_ASSISTANT_INSTRUCTIONS.md` so generated code honors the "Develop with AI" guidance.
 
 Example shell skeleton (Angular standalone component):
 

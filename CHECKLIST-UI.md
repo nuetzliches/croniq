@@ -21,7 +21,7 @@ Derived from [docs/deep-dive/designs/angular-ui-concept.md](docs/deep-dive/desig
 
 - [ ] Scaffold `src/Croniq.Ui` structure (apps/admin, libs/data-access, libs/telemetry, libs/ui-kit) as outlined in the concept doc.
 - [ ] Configure Tailwind per [https://next.angular.dev/guide/tailwind](https://next.angular.dev/guide/tailwind) and emit Croniq tokens via CSS variables (`--cq-*`).
-- [ ] Capture MCP server usage in `.vscode/tasks.json` and `docs/deep-dive/designs/angular-ui-concept.md`, including `npm run mcp` instructions.
+- [x] Capture MCP server usage in `.vscode/tasks.json` and `docs/deep-dive/designs/angular-ui-concept.md`, including `npm run mcp` instructions. _(Script + VS Code task wired up; see concept/scaffolding docs for details.)_
 - [ ] Establish Angular Query + Signals boilerplate shared across feature modules.
 
 ## Application Architecture
@@ -57,7 +57,7 @@ Derived from [docs/deep-dive/designs/angular-ui-concept.md](docs/deep-dive/desig
 
 ## Tooling, AI & Automation
 
-- [ ] Document workflow for Angular MCP server and ensure it aligns with [https://next.angular.dev/ai/develop-with-ai](https://next.angular.dev/ai/develop-with-ai).
+- [x] Document workflow for Angular MCP server and ensure it aligns with [https://next.angular.dev/ai/develop-with-ai](https://next.angular.dev/ai/develop-with-ai). _(Concept + scaffolding docs now reference the Angular best-practices context and MCP launch steps.)_
 - [ ] Apply the Angular AI design-patterns checklist [https://next.angular.dev/ai/design-patterns](https://next.angular.dev/ai/design-patterns) when reviewing generated code.
 - [ ] Keep Storybook/Vitest/Playwright scripts wired into CI (npm run lint/test/build) and publish instructions in CONTRIBUTING.
 

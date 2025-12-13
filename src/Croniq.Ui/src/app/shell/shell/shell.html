@@ -1,0 +1,38 @@
+<p>shell works!</p>
+<div class="shell">
+  <aside class="rail">
+    <div class="logo">Croniq</div>
+    <div class="tenant">
+      <div class="tenant-label">Tenant</div>
+      <div class="tenant-value">{{ tenant() }} · {{ environment() }}</div>
+    </div>
+    <nav>
+      <a
+        *ngFor="let item of navItems"
+        routerLink="item.path"
+        routerLinkActive="active"
+        class="nav-item"
+      >
+        <span class="nav-label">{{ item.label }}</span>
+        <small>{{ item.description }}</small>
+      </a>
+    </nav>
+    <button class="command-button" type="button" (click)="openCommandPalette()">Command ⌘K</button>
+  </aside>
+
+  <section class="workspace">
+    <header class="status-strip">
+      <app-status-beacon
+        *ngFor="let status of statusCards"
+        [label]="status.label"
+        [value]="status.value"
+        [intent]="status.intent"
+      />
+    </header>
+    <main class="content">
+      <router-outlet />
+    </main>
+  </section>
+</div>
+
+<app-command-palette #palette />

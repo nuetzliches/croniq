@@ -101,9 +101,10 @@ src/
 ## Tooling & MCP Server Usage
 
 - The Angular MCP Server runs alongside VS Code so GPT-5.1-Codex agents can execute workspace-aware tasks (create components, update routes) while honoring the guardrails from `AI_ASSISTANT_INSTRUCTIONS.md`.
-- MCP stays dev-only: no runtime dependency, no shipped assets. Document how to start it via `npm run mcp` and expose a `.vscode/tasks.json` helper.
+- Launch the server locally with `npm run mcp` (or the "Angular MCP Server" VS Code task) from `src/Croniq.Ui`; the `.vscode/mcp.json` file wires VS Code to the Angular CLI MCP endpoint documented at [https://next.angular.dev/ai/mcp](https://next.angular.dev/ai/mcp).
+- MCP stays dev-only: no runtime dependency, no shipped assets, and the `servers.angular-cli` entry only runs in local dev shells.
 - Use the server to codify scaffolding recipes (e.g., `generate feature schedules --with-crud --with-grid`), ensuring consistent folder structure/tests.
-- Align MCP prompts and automation scripts with Angular's AI guidance: leverage the "Develop with AI" workflows [https://next.angular.dev/ai/develop-with-ai](https://next.angular.dev/ai/develop-with-ai) to keep generated code idiomatic, and apply the recommended AI design patterns [https://next.angular.dev/ai/design-patterns](https://next.angular.dev/ai/design-patterns) to validate what the agent produces before committing it.
+- Align MCP prompts and automation scripts with Angular's AI guidance: leverage the "Develop with AI" workflows [https://next.angular.dev/ai/develop-with-ai](https://next.angular.dev/ai/develop-with-ai), include the official best-practices context file when prompting, and apply the recommended AI design patterns [https://next.angular.dev/ai/design-patterns](https://next.angular.dev/ai/design-patterns) to validate what the agent produces before committing it.
 
 ## Build, Test & Release Flow
 

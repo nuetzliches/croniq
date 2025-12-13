@@ -1,0 +1,56 @@
+.palette {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+}
+
+.palette-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(2, 6, 23, 0.65);
+  backdrop-filter: blur(6px);
+}
+
+.palette-panel {
+  position: absolute;
+  top: 15vh;
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(640px, calc(100vw - 32px));
+  background: var(--cq-surface-alt, #111a2d);
+  border: 1px solid rgba(248, 250, 252, 0.08);
+  border-radius: 18px;
+  box-shadow: 0 20px 50px rgba(2, 6, 23, 0.6);
+  padding: 1rem 0;
+}
+
+.palette-panel header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0 1.25rem 0.5rem;
+  color: var(--cq-text-muted, #94a3b8);
+}
+
+.palette-panel ul {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.palette-panel li button {
+  width: 100%;
+  background: transparent;
+  border: 0;
+  color: inherit;
+  padding: 0.85rem 1.25rem;
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.95rem;
+  cursor: pointer;
+  text-align: left;
+}
+
+.palette-panel li button:hover {
+  background: rgba(39, 210, 255, 0.08);
+}

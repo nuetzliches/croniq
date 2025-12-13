@@ -1,0 +1,19 @@
+<p>command-palette works!</p>
+<section class="palette" *ngIf="isOpen()">
+  <div class="palette-backdrop" (click)="close()"></div>
+  <div class="palette-panel">
+    <header>
+      <span>Quick actions</span>
+      <button type="button" (click)="close()">Esc</button>
+    </header>
+
+    <ul>
+      <li *ngFor="let cmd of commands">
+        <button type="button" (click)="execute(cmd)">
+          <span>{{ cmd.label }}</span>
+          <small>{{ cmd.path }}</small>
+        </button>
+      </li>
+    </ul>
+  </div>
+</section>
