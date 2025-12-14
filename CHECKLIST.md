@@ -40,6 +40,8 @@
 - [x] Supply-Chain-Nacharbeiten (`docs/deep-dive/supplychain.md`): Signing Keys bereitstellen, Verification-Doku + Waiver-Prozess ergänzt (`docs/deep-dive/release-verification.md`, `docs/deep-dive/supplychain-waivers.md`, `docs/SECURITY.md`). (`syft`/`trivy` Toolchain + lokale Anleitung erledigt 2025-12-12.)
 - [x] gRPC-Clients/Samples: Neben `Croniq.Rpc.Client` (.NET) schlanke gRPC-Client-Samples/SDK-Snippets für Python, Go, Node (nur Proto + Auth/Metadata Helpers) bereitstellen; kein WorkerHost nötig; Java nur bei Bedarf.
 - [x] gRPC Observability & CI: gRPC-Routen mit OTel/Activity-Tags (Tenant/Environment/Job/Trigger) versehen; Sample-Syntax/Build-Checks via `eng/validate-grpc-samples.ps1` in CI (`ci-pr.yml`) verdrahtet.
+- [ ] gRPC Client Packages (non-.NET): Pro Sprache ein leichtes Paket inkl. generierter Stubs + kleinem Helper bereitstellen und dokumentieren (Python/PyPI, Go/Go module, Node/NPM); Samples referenzieren diese Pakete statt lokaler Stubs.
+- [ ] gRPC Docs ausbauen: Sprachspezifische Abschnitte (Python/Go/Node, optional Java) mit Paketnamen, Installation, Auth/Metadata-Helpers und Minimalbeispielen ergänzen.
 - [x] Webhook-Trigger (Croniq.Webhooks Projekt) planen, host implementieren und in `docs/deep-dive/architecture.md` verankern (inkl. CRUD-API + persistente Hooks)
 - [x] Job-Log-Persistenz (Plan siehe `docs/deep-dive/designs/job-log-persistence.md`)
   - [x] ExecutionId/Correlation im Scheduler-Pipeline-Scope propagieren; `ExecutionLogSink` + opt-in (`IExecutionLogStore`/`IExecutionLogReader`/Exporter) anlegen

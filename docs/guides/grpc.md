@@ -49,6 +49,7 @@ catch (CroniqRpcException ex)
 - Node/TS kann via `@grpc/grpc-js` + `@grpc/proto-loader` ohne Vorab-Generation arbeiten (siehe `samples/grpc-client-node`).
 - Samples: `samples/grpc-client-python`, `samples/grpc-client-go`, `samples/grpc-client-node`.
 - Empfohlenes Set: Python (Scripting), Go (CLI/Automation), Node/TS (Serverless/Edge). Java nur bei Bedarf der Konsumenten; gleiche Proto kann via `protoc --java_out` generiert werden.
+- Geplante Pakete: Leichte Client-Bundles pro Sprache (Python/PyPI, Go/Go module, Node/NPM) mit generierten Stubs + Minimal-Helper für Endpoint/Auth/Metadata, damit Samples nur noch das Paket konsumieren müssen.
 
 ## Logging & Telemetry
 
