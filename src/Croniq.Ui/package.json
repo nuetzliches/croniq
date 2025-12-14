@@ -8,8 +8,7 @@
     "watch": "ng build --watch --configuration development",
     "test": "ng test",
     "mcp": "ng mcp",
-    "generate:openapi": "tsx tools/generate-openapi.ts",
-    "generate:api": "npm run generate:openapi"
+    "generate:api": "tsx tools/generate-schemas.ts"
   },
   "prettier": {
     "printWidth": 100,
@@ -37,14 +36,15 @@
     "zod": "^4.1.13"
   },
   "devDependencies": {
+    "@apidevtools/swagger-parser": "^12.1.0",
     "@angular/build": "^21.0.3",
     "@angular/cli": "^21.0.3",
     "@angular/compiler-cli": "^21.0.3",
-    "@asteasolutions/zod-to-openapi": "^8.2.0",
     "ajv": "^8.12.0",
     "autoprefixer": "^10.4.20",
     "jsdom": "^27.1.0",
     "ng-packagr": "^21.0.0",
+    "openapi-zod-client": "^1.18.3",
     "postcss": "^8.4.47",
     "tailwindcss": "^3.4.13",
     "tsx": "^4.7.0",

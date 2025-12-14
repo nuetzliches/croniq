@@ -41,7 +41,7 @@ Derived from [src/Croniq.Ui/docs/deep-dive/designs/angular-ui-concept.md](src/Cr
 
 ## Data Access & State
 
-- [ ] Generate REST clients via OpenAPI (or gRPC-Web bridge) and wrap them in the shared `ApiClient` service that injects telemetry headers. _(In progress: runtime-safe models now live in `projects/api-schema`, the generator script `npm run generate:openapi` emits `public/swagger.json`. `CroniqApiClient` now powers feature stores for schedules, jobs, tenants, and webhooks — see [src/app/features/\*\*/](src/Croniq.Ui/src/app/features) for the new stores; remaining work is telemetry headers + response schemas for non-schedule payloads.)_
+- [ ] Generate REST clients directly from the upstream OpenAPI contract (or gRPC-Web bridge) and wrap them in the shared `ApiClient` service that injects telemetry headers. _(Status: runtime-safe models now flow from the upstream spec via `npm run generate:api`, which runs `openapi-zod-client` and writes to `projects/api-schema/generated`. Manual helpers still live in `projects/api-schema/src`, but next we need to wire CI and evaluate client generation.)_
 - [ ] Configure Angular Query caches, refetch policies, and tenant/env scoping helpers.
 - [ ] Persist non-sensitive preferences (theme, table density) per tenant using IndexedDB with optional encryption.
 

@@ -1,0 +1,57 @@
+import { z } from 'zod'; import type { EndpointDefinition } from '../schemas';
+{{#if schemas}}
+  import {
+  {{#each schemas}}
+    {{@key}},
+  {{/each}}
+  } from '../schemas';
+{{/if}}
+
+export const
+{{options.apiClientName}}: EndpointDefinition[] = [
+{{#each endpoints}}
+  { method: '{{method}}', path: '{{path}}',
+  {{#if description}}
+    description: `{{description}}`,
+  {{/if}}
+  {{#if alias}}
+    alias: '{{alias}}',
+  {{/if}}
+  {{#if requestFormat}}
+    requestFormat: '{{requestFormat}}',
+  {{/if}}
+  {{#if parameters}}
+    parameters: [
+    {{#each parameters}}
+      { name: '{{name}}',
+      {{#if description}}
+        description: `{{description}}`,
+      {{/if}}
+      {{#if type}}
+        type: '{{type}}',
+      {{/if}}
+      schema:
+      {{{schema}}}, },
+    {{/each}}
+    ],
+  {{/if}}
+  response:
+  {{{response}}},
+  {{#if errors.length}}
+    errors: [
+    {{#each errors}}
+      { status:
+      {{#ifeq status 'default'}}'default'{{else}}{{status}}{{/ifeq}},
+      {{#if description}}
+        description: `{{description}}`,
+      {{/if}}
+      schema:
+      {{{schema}}}, },
+    {{/each}}
+    ],
+  {{/if}}
+  },
+{{/each}}
+] as const; export type
+{{options.apiClientName}}Endpoint = (typeof
+{{options.apiClientName}})[number];

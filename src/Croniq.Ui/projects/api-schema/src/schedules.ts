@@ -22,23 +22,8 @@ export const scheduleListResponseSchema = z.object({
     updatedAt: z.string().datetime(),
 });
 
-const metadataRecordSchema = z
-    .record(z.string(), z.string())
-    .optional()
-    .nullable();
-
-export const upsertScheduleRequestSchema = z.object({
-    jobKey: z.string().min(1),
-    cronExpression: z.string().min(1),
-    triggerId: z.string().min(1).optional().nullable(),
-    startAtUtc: z.string().datetime().optional().nullable(),
-    endAtUtc: z.string().datetime().optional().nullable(),
-    enabled: z.boolean().optional(),
-    description: z.string().optional().nullable(),
-    metadata: metadataRecordSchema,
-});
+export { UpsertScheduleRequest as upsertScheduleRequestSchema } from '../generated/schemas';
 
 export type ScheduleState = z.infer<typeof scheduleStateSchema>;
 export type ScheduleSummary = z.infer<typeof scheduleSummarySchema>;
 export type ScheduleListResponse = z.infer<typeof scheduleListResponseSchema>;
-export type UpsertScheduleRequest = z.infer<typeof upsertScheduleRequestSchema>;
