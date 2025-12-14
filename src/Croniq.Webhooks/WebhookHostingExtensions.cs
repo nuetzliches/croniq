@@ -523,11 +523,11 @@ public static class WebhookHostingExtensions
         {
             if (_changefeed is null)
             {
-                _logger.LogInformation("Webhook changefeed not configured; cache invalidation disabled.");
+                _logger.LogDebug("Webhook changefeed not configured; cache invalidation disabled.");
                 return;
             }
 
-            _logger.LogInformation("Webhook changefeed cache invalidation started.");
+            _logger.LogDebug("Webhook changefeed cache invalidation started.");
 
             while (!stoppingToken.IsCancellationRequested)
             {
@@ -566,7 +566,7 @@ public static class WebhookHostingExtensions
                 }
             }
 
-            _logger.LogInformation("Webhook changefeed cache invalidation stopped.");
+            _logger.LogDebug("Webhook changefeed cache invalidation stopped.");
         }
 
         private static Task DelayAsync(int seconds, CancellationToken cancellationToken)

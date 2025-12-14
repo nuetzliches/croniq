@@ -14,6 +14,11 @@ public sealed class CroniqApiOptions
     public int RequestsPerMinute { get; set; } = 60;
 
     /// <summary>
+    /// Optional path prefixes that skip auth middleware. Use only for development routes (e.g., Swagger) and keep empty in production.
+    /// </summary>
+    public List<string> AnonymousPathPrefixes { get; set; } = new();
+
+    /// <summary>
     /// Optional per-tenant overrides keyed by TenantId.
     /// </summary>
     public Dictionary<string, TenantRateLimitOptions> TenantRateLimits { get; set; } = new(StringComparer.OrdinalIgnoreCase);

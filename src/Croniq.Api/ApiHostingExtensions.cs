@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Globalization;
+using System.Linq;
 using System.Threading.RateLimiting;
 using Croniq.Api.Models;
 using Croniq.Api.Security;
@@ -52,11 +53,21 @@ public static class ApiHostingExtensions
             app.UseRateLimiter();
         }
 
+        var anonymousPrefixes = new List<PathString>
+        {
+            "/health",
+            "/webhooks"
+        };
+
+        if (apiOpts.AnonymousPathPrefixes?.Count > 0)
+        {
+            anonymousPrefixes.AddRange(apiOpts.AnonymousPathPrefixes.Select(p => new PathString(p)));
+        }
+
         app.Use(async (context, next) =>
         {
             var path = context.Request.Path;
-            if (path.StartsWithSegments("/health", StringComparison.OrdinalIgnoreCase)
-                || path.StartsWithSegments("/webhooks", StringComparison.OrdinalIgnoreCase))
+            if (anonymousPrefixes.Any(prefix => path.StartsWithSegments(prefix, StringComparison.OrdinalIgnoreCase)))
             {
                 await next().ConfigureAwait(false);
                 return;
