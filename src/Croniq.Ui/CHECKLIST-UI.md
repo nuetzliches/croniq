@@ -9,6 +9,8 @@ Derived from [src/Croniq.Ui/docs/deep-dive/designs/angular-ui-concept.md](src/Cr
 - [ ] Scaffolding & Auth – initialize the Angular workspace in `src/Croniq.Ui`, configure MCP helper tasks, and wire the OIDC stub with the tenant switcher. _(Plan documented in [src/Croniq.Ui/docs/deep-dive/designs/angular-ui-scaffolding.md](src/Croniq.Ui/docs/deep-dive/designs/angular-ui-scaffolding.md); pending execution of `ng new`, library generation, Tailwind tokens, and OIDC stub.)_
   - [ ] Auth session persistence: store the opaque Croniq session token in `sessionStorage` only; never persist refresh data in `localStorage`/IndexedDB. _(Documented in [AUTH.md](src/Croniq.Ui/docs/deep-dive/AUTH.md), includes TODO to rotate keys during logout.)_
   - [ ] OAuth/OIDC expansion: leave hooks for PKCE/OIDC bootstrap (deferred) so we can swap session auth for standards-based login once backend is ready.
+  - [ ] ApiKey bootstrap: surface an operator-facing form to capture the short-lived Croniq API key (sent as `X-Croniq-Key`) and inject it through `EndpointExecutor` for every call until OIDC replaces it.
+  - [ ] Operator impersonation vs. OAuth: document the interim plan (manual tenant/operator context vs. delegated auth) and revisit once backend signals GA for full OAuth.
 - [ ] MVP Data Surfaces – deliver the dashboard metrics (stubbed), schedules read-only grid, and job registry view.
 - [ ] Admin Controls – implement CRUD for schedules, webhooks, and API keys, including dead-letter replay wiring.
 - [ ] Observability & Polish – embed Grafana/log pulse views and complete the accessibility plus localization review.
@@ -59,6 +61,7 @@ Derived from [src/Croniq.Ui/docs/deep-dive/designs/angular-ui-concept.md](src/Cr
 - [ ] Ensure secrets/tokens remain memory-only and never persist to local storage or IndexedDB.
 - [ ] Surface `ICallerContext` metadata in the UI so operators see "acting as" context during manual actions.
 - [ ] Respect backend-enforced feature flags; hide toggles unless the API advertises support.
+- [ ] Add Croniq API Key handling: map the captured token to the `X-Croniq-Key` header, validate expiry, and provide a single "Switch Operator" action that clears impersonation plus the key.
 
 ## Tooling, AI & Automation
 

@@ -2,6 +2,7 @@ import { HttpClient } from '@angular/common/http';
 import { Injectable, inject, signal } from '@angular/core';
 import { firstValueFrom } from 'rxjs';
 
+import { CRONIQ_API_BASE_URL } from 'data-access';
 import { TenantPreset } from './tenant-context.types';
 
 const FALLBACK_PRESETS: ReadonlyArray<TenantPreset> = [
@@ -45,6 +46,7 @@ export class TenantDirectoryService {
     private readonly http = inject(HttpClient);
     private readonly presetsSignal = signal<ReadonlyArray<TenantPreset>>(FALLBACK_PRESETS);
     private readonly loadingSignal = signal(false);
+    private readonly apiBaseUrl = inject(CRONIQ_API_BASE_URL);
 
     readonly presets = this.presetsSignal.asReadonly();
     readonly loading = this.loadingSignal.asReadonly();
@@ -61,8 +63,10 @@ export class TenantDirectoryService {
         }
         this.loadingSignal.set(true);
         try {
-            const payload = await firstValueFrom(this.http.get<unknown>('assets/tenant-presets.json'));
-            const parsed = normalizeTenantPresets(payload);
+            const response = await firstValueFrom(
+                this.http.get<unknown>(`${this.apiBaseUrl}/tenants/presets`),
+            );
+            const parsed = normalizeTenantPresets(extractPresetArray(response));
             if (parsed.length) {
                 this.presetsSignal.set(parsed);
             }
@@ -72,6 +76,19 @@ export class TenantDirectoryService {
             this.loadingSignal.set(false);
         }
     }
+}
+
+function extractPresetArray(value: unknown): unknown {
+    if (Array.isArray(value)) {
+        return value;
+    }
+    if (value && typeof value === 'object') {
+        const items = (value as Record<string, unknown>)['items'];
+        if (Array.isArray(items)) {
+            return items;
+        }
+    }
+    return FALLBACK_PRESETS;
 }
 
 function normalizeTenantPresets(value: unknown): ReadonlyArray<TenantPreset> {

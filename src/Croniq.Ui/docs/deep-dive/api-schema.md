@@ -16,6 +16,7 @@ artifacts/
 - **OpenAPI snapshots** live under `artifacts/` and remain the canonical description of Croniq.Api.
 - **Generated Zod schemas** reside in `projects/api-schema/generated` and are overwritten by `npm run generate:api`.
 - **Manual Zod helpers** stay in `projects/api-schema/src`. The entrypoint re-exports both the generated output and any handwritten shapes we still need.
+- **Tenant preset data** now flows from the Croniq.Api endpoint `GET /tenants/presets`; the UI falls back to the baked-in seeds only when that API call fails.
 
 ## 2. Current Workflow
 
