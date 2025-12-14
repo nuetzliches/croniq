@@ -107,11 +107,11 @@
                   <p class="text-xs text-text-muted">{{ entry.id }}</p>
                 </td>
                 <td class="px-4 py-4 text-xs text-text-muted">
-                  @if (Object.keys(entry.metadata).length === 0) {
+                  @if (!hasMetadata(entry)) {
                     <span>—</span>
                   } @else {
                     <ul class="space-y-1">
-                      @for (metadataEntry of (entry.metadata | keyvalue); track metadataEntry.key) {
+                      @for (metadataEntry of metadataEntries(entry); track metadataEntry.key) {
                         <li>
                           <span class="text-text">{{ metadataEntry.key }}</span> = {{ metadataEntry.value }}
                         </li>

@@ -2,6 +2,7 @@ import { CommonModule } from '@angular/common';
 import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@angular/core';
 
 import { JobsStore } from '../jobs.store';
+import type { ManualTriggerEntry } from '../jobs.store';
 
 @Component({
   selector: 'app-jobs-page',
@@ -36,6 +37,14 @@ export class JobsPage {
   async queueManualTrigger(): Promise<void> {
     const metadata = this.parseMetadata(this.metadataSource());
     await this.store.triggerJob(this.jobKey(), metadata);
+  }
+
+  hasMetadata(entry: ManualTriggerEntry): boolean {
+    return Object.keys(entry.metadata).length > 0;
+  }
+
+  metadataEntries(entry: ManualTriggerEntry): ReadonlyArray<{ key: string; value: string }> {
+    return Object.entries(entry.metadata).map(([key, value]) => ({ key, value }));
   }
 
   private parseMetadata(input: string): Record<string, string> {

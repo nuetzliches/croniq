@@ -112,11 +112,11 @@ export class TenantsPage {
     });
   }
 
-  private parseScopes(value: string): ReadonlyArray<string> {
+  private parseScopes(value: string): string[] {
     return value
       .split(',')
       .map((scope) => scope.trim())
-      .filter(Boolean);
+      .filter((scope): scope is string => Boolean(scope));
   }
 
   private parseNumber(value: string): number | undefined {
