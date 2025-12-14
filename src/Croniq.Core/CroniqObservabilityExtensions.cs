@@ -112,7 +112,24 @@ public static class CroniqObservabilityExtensions
         configure?.Invoke(options);
 
         options.ServiceInstanceId ??= options.ServiceName;
+        ApplyDefaultMinimumLevelOverrides(options.MinimumLevelOverrides);
         return options;
+    }
+
+    private static void ApplyDefaultMinimumLevelOverrides(IDictionary<string, Serilog.Events.LogEventLevel> overrides)
+    {
+        static void Ensure(IDictionary<string, Serilog.Events.LogEventLevel> target, string key, Serilog.Events.LogEventLevel level)
+        {
+            if (!target.ContainsKey(key))
+            {
+                target[key] = level;
+            }
+        }
+
+        Ensure(overrides, "Microsoft.EntityFrameworkCore.Database.Command", Serilog.Events.LogEventLevel.Warning);
+        Ensure(overrides, "Microsoft.Hosting.Lifetime", Serilog.Events.LogEventLevel.Warning);
+        Ensure(overrides, "Microsoft.AspNetCore.Hosting.Diagnostics", Serilog.Events.LogEventLevel.Warning);
+        Ensure(overrides, "Microsoft.AspNetCore.Mvc.Infrastructure.DefaultActionDescriptorCollectionProvider", Serilog.Events.LogEventLevel.Warning);
     }
 
     private static IReadOnlyList<KeyValuePair<string, object>> BuildResourceAttributes(CroniqObservabilityOptions options)
@@ -179,6 +196,11 @@ public static class CroniqObservabilityExtensions
             .Enrich.FromLogContext()
             .Enrich.WithSpan()
             .Enrich.WithProperty("service.name", options.ServiceName);
+
+        foreach (var overridePair in options.MinimumLevelOverrides)
+        {
+            loggerConfiguration.MinimumLevel.Override(overridePair.Key, overridePair.Value);
+        }
 
         if (!string.IsNullOrWhiteSpace(options.ServiceInstanceId))
         {

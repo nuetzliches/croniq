@@ -6,6 +6,7 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Channels;
 using System.Threading.Tasks;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
@@ -18,7 +19,7 @@ namespace Croniq.Core.Execution;
 public sealed class ExecutionLogSinkProvider : ILoggerProvider, ISupportExternalScope
 {
     private readonly IExecutionLogStore _store;
-    private readonly IExecutionLogExporter _exporter;
+    private readonly Lazy<IExecutionLogExporter> _exporter;
     private readonly ExecutionLogSinkOptions _options;
     private readonly Channel<ExecutionLogEntry> _channel;
     private readonly CancellationTokenSource _cts = new();
@@ -27,10 +28,16 @@ public sealed class ExecutionLogSinkProvider : ILoggerProvider, ISupportExternal
     private IExternalScopeProvider? _scopeProvider;
     private static readonly string ExporterCategory = typeof(LoggerExecutionLogExporter).FullName ?? "Croniq.Core.Execution.LoggerExecutionLogExporter";
 
-    public ExecutionLogSinkProvider(IExecutionLogStore store, IExecutionLogExporter exporter, IOptions<ExecutionLogSinkOptions> options)
+    public ExecutionLogSinkProvider(
+        IExecutionLogStore store,
+        IServiceProvider services,
+        IOptions<ExecutionLogSinkOptions> options)
     {
         _store = store ?? throw new ArgumentNullException(nameof(store));
-        _exporter = exporter ?? throw new ArgumentNullException(nameof(exporter));
+        if (services is null) throw new ArgumentNullException(nameof(services));
+        _exporter = new Lazy<IExecutionLogExporter>(
+            () => services.GetService<IExecutionLogExporter>() ?? new NoOpExecutionLogExporter(),
+            LazyThreadSafetyMode.ExecutionAndPublication);
         _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
         var bounded = new BoundedChannelOptions(_options.MaxQueueLength)
         {
@@ -160,6 +167,7 @@ public sealed class ExecutionLogSinkProvider : ILoggerProvider, ISupportExternal
 
     private async Task FlushAsync(IReadOnlyCollection<ExecutionLogEntry> entries)
     {
+        var exporter = _exporter.Value;
         foreach (var group in entries.GroupBy(x => x.ExecutionId))
         {
             try
@@ -174,7 +182,7 @@ public sealed class ExecutionLogSinkProvider : ILoggerProvider, ISupportExternal
 
         try
         {
-            await _exporter.ExportAsync(entries, _cts.Token).ConfigureAwait(false);
+            await exporter.ExportAsync(entries, _cts.Token).ConfigureAwait(false);
         }
         catch
         {

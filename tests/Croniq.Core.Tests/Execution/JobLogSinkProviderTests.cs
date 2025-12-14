@@ -19,7 +19,7 @@ public class ExecutionLogSinkProviderTests
     {
         var store = Substitute.For<IExecutionLogStore>();
         var exporter = Substitute.For<IExecutionLogExporter>();
-        var provider = new ExecutionLogSinkProvider(store, exporter, Microsoft.Extensions.Options.Options.Create(new ExecutionLogSinkOptions { BatchSize = 1, FlushInterval = TimeSpan.FromMilliseconds(50) }));
+        var provider = CreateProvider(store, exporter, new ExecutionLogSinkOptions { BatchSize = 1, FlushInterval = TimeSpan.FromMilliseconds(50) });
         var logger = provider.CreateLogger("test");
 
         logger.LogInformation("hello");
@@ -34,7 +34,7 @@ public class ExecutionLogSinkProviderTests
     {
         var store = Substitute.For<IExecutionLogStore>();
         var exporter = Substitute.For<IExecutionLogExporter>();
-        var provider = new ExecutionLogSinkProvider(store, exporter, Microsoft.Extensions.Options.Options.Create(new ExecutionLogSinkOptions { BatchSize = 1, FlushInterval = TimeSpan.FromMilliseconds(50) }));
+        var provider = CreateProvider(store, exporter, new ExecutionLogSinkOptions { BatchSize = 1, FlushInterval = TimeSpan.FromMilliseconds(50) });
         provider.SetScopeProvider(new LoggerExternalScopeProvider());
         var logger = provider.CreateLogger("test");
 
@@ -62,7 +62,7 @@ public class ExecutionLogSinkProviderTests
     {
         var store = Substitute.For<IExecutionLogStore>();
         var exporter = Substitute.For<IExecutionLogExporter>();
-        var provider = new ExecutionLogSinkProvider(store, exporter, Microsoft.Extensions.Options.Options.Create(new ExecutionLogSinkOptions { MinimumLevel = LogLevel.Warning, BatchSize = 1 }));
+        var provider = CreateProvider(store, exporter, new ExecutionLogSinkOptions { MinimumLevel = LogLevel.Warning, BatchSize = 1 });
         provider.SetScopeProvider(new LoggerExternalScopeProvider());
         var logger = provider.CreateLogger("test");
 
@@ -89,7 +89,7 @@ public class ExecutionLogSinkProviderTests
     {
         var store = Substitute.For<IExecutionLogStore>();
         var exporter = Substitute.For<IExecutionLogExporter>();
-        var provider = new ExecutionLogSinkProvider(store, exporter, Microsoft.Extensions.Options.Options.Create(new ExecutionLogSinkOptions { BatchSize = 100, MaxQueueLength = 1, FlushInterval = TimeSpan.FromMilliseconds(50) }));
+        var provider = CreateProvider(store, exporter, new ExecutionLogSinkOptions { BatchSize = 100, MaxQueueLength = 1, FlushInterval = TimeSpan.FromMilliseconds(50) });
         provider.SetScopeProvider(new LoggerExternalScopeProvider());
         var logger = provider.CreateLogger("test");
 
@@ -118,7 +118,7 @@ public class ExecutionLogSinkProviderTests
         exporter.ExportAsync(Arg.Any<IReadOnlyCollection<ExecutionLogEntry>>(), Arg.Any<CancellationToken>())
             .Returns(_ => Task.FromException(new InvalidOperationException("export-fail")));
 
-        var provider = new ExecutionLogSinkProvider(store, exporter, Microsoft.Extensions.Options.Options.Create(new ExecutionLogSinkOptions { BatchSize = 1, FlushInterval = TimeSpan.FromMilliseconds(50) }));
+        var provider = CreateProvider(store, exporter, new ExecutionLogSinkOptions { BatchSize = 1, FlushInterval = TimeSpan.FromMilliseconds(50) });
         provider.SetScopeProvider(new LoggerExternalScopeProvider());
         var logger = provider.CreateLogger("test");
 
@@ -136,5 +136,15 @@ public class ExecutionLogSinkProviderTests
             Arg.Is<IReadOnlyCollection<ExecutionLogEntry>>(c => c.Count == 1),
             Arg.Any<CancellationToken>());
         provider.Dispose();
+    }
+
+    private static ExecutionLogSinkProvider CreateProvider(
+        IExecutionLogStore store,
+        IExecutionLogExporter exporter,
+        ExecutionLogSinkOptions options)
+    {
+        var services = Substitute.For<IServiceProvider>();
+        services.GetService(typeof(IExecutionLogExporter)).Returns(exporter);
+        return new ExecutionLogSinkProvider(store, services, Microsoft.Extensions.Options.Options.Create(options));
     }
 }

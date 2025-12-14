@@ -67,6 +67,11 @@ public sealed class CroniqObservabilityOptions
     public bool EnableOtlpLogExport { get; set; } = true;
 
     /// <summary>
+    /// Optional per-category minimum log level overrides (e.g., suppress verbose EF Core logs).
+    /// </summary>
+    public Dictionary<string, LogEventLevel> MinimumLevelOverrides { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
     /// Minimum log level applied to the Serilog pipeline.
     /// </summary>
     public LogEventLevel MinimumLogLevel { get; set; } = LogEventLevel.Information;
