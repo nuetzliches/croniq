@@ -54,6 +54,10 @@ jobs:
       - name: Build with analyzers
         run: dotnet build croniq.sln --configuration Release --no-restore -warnaserror
 
+      - name: Validate gRPC samples (syntax/build-only)
+        shell: pwsh
+        run: ./eng/validate-grpc-samples.ps1
+
       - name: Dependency vulnerability scan (informational)
         run: |
           set +e

@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Globalization;
 using Croniq.Auth.Abstractions;
 using Croniq.Core.Execution;
@@ -14,6 +15,7 @@ namespace Croniq.Api;
 
 internal sealed class SchedulerGrpcService : Scheduler.SchedulerBase
 {
+    private static readonly ActivitySource ActivitySource = new("Croniq.Api.Grpc");
     private readonly IJobRegistry _registry;
     private readonly IJobExecutionPipeline _pipeline;
     private readonly IPolicyResolver _policyResolver;
@@ -63,6 +65,7 @@ internal sealed class SchedulerGrpcService : Scheduler.SchedulerBase
 
     public override async Task<TriggerJobResponse> TriggerJob(TriggerJobRequest request, ServerCallContext context)
     {
+        using var activity = ActivitySource.StartActivity("Croniq.Grpc.TriggerJob", ActivityKind.Server);
         try
         {
             if (!JobKey.TryParse(request.JobKey, out var jobKey))
@@ -70,6 +73,7 @@ internal sealed class SchedulerGrpcService : Scheduler.SchedulerBase
                 throw new RpcException(new Status(StatusCode.InvalidArgument, "job_key must follow the Croniq format."));
             }
 
+            EnrichActivityForJob(activity, jobKey);
             EnsureTenantOrThrow(TenantGuard.EnsureJobScope(_callerAccessor, jobKey, CroniqScopes.JobsTrigger));
 
             if (!_registry.TryGet(jobKey, out var descriptor))
@@ -86,21 +90,25 @@ internal sealed class SchedulerGrpcService : Scheduler.SchedulerBase
             var execRequest = new JobExecutionRequest(executionId, jobKey, descriptor, executionOptions, metadata, activitySource: null);
 
             await _pipeline.ExecuteAsync(execRequest, context.CancellationToken).ConfigureAwait(false);
+            activity?.SetStatus(ActivityStatusCode.Ok);
             return new TriggerJobResponse { Status = "triggered" };
         }
         catch (RpcException)
         {
+            activity?.SetStatus(ActivityStatusCode.Error);
             throw;
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "trigger-job failed for {JobKey}", request.JobKey);
+            activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
             throw new RpcException(new Status(StatusCode.Internal, ex.Message));
         }
     }
 
     public override async Task<UpsertScheduleResponse> UpsertSchedule(UpsertScheduleRequest request, ServerCallContext context)
     {
+        using var activity = ActivitySource.StartActivity("Croniq.Grpc.UpsertSchedule", ActivityKind.Server);
         try
         {
             if (string.IsNullOrWhiteSpace(request.JobKey) || string.IsNullOrWhiteSpace(request.CronExpression))
@@ -113,6 +121,7 @@ internal sealed class SchedulerGrpcService : Scheduler.SchedulerBase
                 throw new RpcException(new Status(StatusCode.InvalidArgument, "job_key must follow the Croniq format."));
             }
 
+            EnrichActivityForJob(activity, jobKey);
             EnsureTenantOrThrow(TenantGuard.EnsureJobScope(_callerAccessor, jobKey, CroniqScopes.SchedulesWrite));
 
             var triggerId = string.IsNullOrWhiteSpace(request.TriggerId)
@@ -148,6 +157,8 @@ internal sealed class SchedulerGrpcService : Scheduler.SchedulerBase
             await _store.UpsertJobAsync(job, context.CancellationToken).ConfigureAwait(false);
             await _store.UpsertTriggerAsync(trigger, context.CancellationToken).ConfigureAwait(false);
 
+            activity?.SetTag("croniq.trigger.id", trigger.TriggerId);
+            activity?.SetStatus(ActivityStatusCode.Ok);
             return new UpsertScheduleResponse
             {
                 TriggerId = trigger.TriggerId,
@@ -157,17 +168,20 @@ internal sealed class SchedulerGrpcService : Scheduler.SchedulerBase
         }
         catch (RpcException)
         {
+            activity?.SetStatus(ActivityStatusCode.Error);
             throw;
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "upsert-schedule failed for {JobKey}", request.JobKey);
+            activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
             throw new RpcException(new Status(StatusCode.Internal, ex.Message));
         }
     }
 
     public override async Task<DeleteScheduleResponse> DeleteSchedule(DeleteScheduleRequest request, ServerCallContext context)
     {
+        using var activity = ActivitySource.StartActivity("Croniq.Grpc.DeleteSchedule", ActivityKind.Server);
         try
         {
             if (string.IsNullOrWhiteSpace(request.TriggerId))
@@ -189,15 +203,21 @@ internal sealed class SchedulerGrpcService : Scheduler.SchedulerBase
 
             var scope = new PartitionScope(request.TenantId, request.EnvironmentTag);
             await _store.DeleteTriggerAsync(request.TriggerId, scope, context.CancellationToken).ConfigureAwait(false);
+            activity?.SetTag("croniq.trigger.id", request.TriggerId);
+            activity?.SetTag("croniq.tenant_id", request.TenantId);
+            activity?.SetTag("croniq.environment", request.EnvironmentTag);
+            activity?.SetStatus(ActivityStatusCode.Ok);
             return new DeleteScheduleResponse { Status = "deleted" };
         }
         catch (RpcException)
         {
+            activity?.SetStatus(ActivityStatusCode.Error);
             throw;
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "delete-schedule failed for {TriggerId}", request.TriggerId);
+            activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
             throw new RpcException(new Status(StatusCode.Internal, ex.Message));
         }
     }
@@ -240,5 +260,23 @@ internal sealed class SchedulerGrpcService : Scheduler.SchedulerBase
         }
 
         throw new RpcException(new Status(status, detail));
+    }
+
+    private static void EnrichActivityForJob(Activity? activity, JobKey jobKey)
+    {
+        if (activity is null)
+        {
+            return;
+        }
+
+        activity.SetTag("croniq.job.key", jobKey.Value);
+        activity.SetTag("croniq.tenant_id", jobKey.TenantId);
+        activity.SetTag("croniq.environment", jobKey.EnvironmentTag);
+        activity.SetTag("croniq.job.namespace", jobKey.NamespaceSegment);
+        activity.SetTag("croniq.job.name", jobKey.JobName);
+        if (!string.IsNullOrWhiteSpace(jobKey.Variant))
+        {
+            activity.SetTag("croniq.job.variant", jobKey.Variant);
+        }
     }
 }

@@ -115,7 +115,7 @@ public static class ApiHostingExtensions
         });
 
         app.MapGet("/health", () => Results.Ok(new { status = "ok" }));
-        app.MapGet("/health/persistence", async (IServiceProvider sp, CancellationToken ct) =>
+        app.MapGet("/health/persistence", async ([FromServices] IServiceProvider sp, CancellationToken ct) =>
         {
             var provider = sp.GetService<IJobPersistenceProvider>();
             var providerName = provider?.GetType().FullName ?? "unknown";
@@ -144,8 +144,8 @@ public static class ApiHostingExtensions
 
         app.MapPost("/schedules", async (
             UpsertScheduleRequest request,
-            ICallerContextAccessor callerContextAccessor,
-            IJobPersistenceProvider store,
+            [FromServices] ICallerContextAccessor callerContextAccessor,
+            [FromServices] IJobPersistenceProvider store,
             CancellationToken cancellationToken) =>
         {
             if (string.IsNullOrWhiteSpace(request.JobKey) || string.IsNullOrWhiteSpace(request.CronExpression))
@@ -199,8 +199,8 @@ public static class ApiHostingExtensions
         app.MapGet("/tenants/{tenantId}/webhooks", async (
             string tenantId,
             string environment,
-            ICallerContextAccessor callerContextAccessor,
-            IWebhookPersistenceProvider? webhookStore,
+            [FromServices] ICallerContextAccessor callerContextAccessor,
+            [FromServices] IWebhookPersistenceProvider? webhookStore,
             CancellationToken cancellationToken) =>
         {
             if (string.IsNullOrWhiteSpace(environment))
@@ -230,10 +230,10 @@ public static class ApiHostingExtensions
             string environment,
             bool allowUnsigned,
             UpsertWebhookEndpointRequest request,
-            ICallerContextAccessor callerContextAccessor,
-            IWebhookPersistenceProvider? webhookStore,
-            IConfiguration configuration,
-            ILogger<WebhookEndpointApiMarker> logger,
+            [FromServices] ICallerContextAccessor callerContextAccessor,
+            [FromServices] IWebhookPersistenceProvider? webhookStore,
+            [FromServices] IConfiguration configuration,
+            [FromServices] ILogger<WebhookEndpointApiMarker> logger,
             CancellationToken cancellationToken) =>
         {
             if (string.IsNullOrWhiteSpace(environment))
@@ -316,8 +316,8 @@ public static class ApiHostingExtensions
             string tenantId,
             string hookKey,
             string environment,
-            ICallerContextAccessor callerContextAccessor,
-            IWebhookPersistenceProvider? webhookStore,
+            [FromServices] ICallerContextAccessor callerContextAccessor,
+            [FromServices] IWebhookPersistenceProvider? webhookStore,
             CancellationToken cancellationToken) =>
         {
             if (string.IsNullOrWhiteSpace(environment))
@@ -346,8 +346,8 @@ public static class ApiHostingExtensions
             string hookKey,
             string environment,
             RotateWebhookSecretRequest request,
-            IWebhookPersistenceProvider? webhookStore,
-            ICallerContextAccessor callerContextAccessor,
+            [FromServices] IWebhookPersistenceProvider? webhookStore,
+            [FromServices] ICallerContextAccessor callerContextAccessor,
             CancellationToken cancellationToken) =>
         {
             if (string.IsNullOrWhiteSpace(environment))
@@ -401,8 +401,8 @@ public static class ApiHostingExtensions
             string tenantId,
             string hookKey,
             string environment,
-            ICallerContextAccessor callerContextAccessor,
-            IWebhookPersistenceProvider? webhookStore,
+            [FromServices] ICallerContextAccessor callerContextAccessor,
+            [FromServices] IWebhookPersistenceProvider? webhookStore,
             CancellationToken cancellationToken) =>
         {
             if (string.IsNullOrWhiteSpace(environment))
@@ -432,8 +432,8 @@ public static class ApiHostingExtensions
             string hookKey,
             string environment,
             CreateWebhookIpRuleRequest request,
-            ICallerContextAccessor callerContextAccessor,
-            IWebhookPersistenceProvider? webhookStore,
+            [FromServices] ICallerContextAccessor callerContextAccessor,
+            [FromServices] IWebhookPersistenceProvider? webhookStore,
             HttpContext httpContext,
             CancellationToken cancellationToken) =>
         {
@@ -486,8 +486,8 @@ public static class ApiHostingExtensions
             string hookKey,
             long ruleId,
             string environment,
-            ICallerContextAccessor callerContextAccessor,
-            IWebhookPersistenceProvider? webhookStore,
+            [FromServices] ICallerContextAccessor callerContextAccessor,
+            [FromServices] IWebhookPersistenceProvider? webhookStore,
             HttpContext httpContext,
             CancellationToken cancellationToken) =>
         {
@@ -519,8 +519,8 @@ public static class ApiHostingExtensions
         app.MapGet("/tenants/{tenantId}/webhooks/deadletters", async (
             string tenantId,
             string environment,
-            ICallerContextAccessor callerContextAccessor,
-            IWebhookDeadLetterStore? deadLetterStore,
+            [FromServices] ICallerContextAccessor callerContextAccessor,
+            [FromServices] IWebhookDeadLetterStore? deadLetterStore,
             CancellationToken cancellationToken) =>
         {
             if (string.IsNullOrWhiteSpace(environment))
@@ -549,12 +549,12 @@ public static class ApiHostingExtensions
             string tenantId,
             long deadLetterId,
             string environment,
-            ICallerContextAccessor callerContextAccessor,
-            IWebhookDeadLetterStore? deadLetterStore,
-            IJobRegistry registry,
-            IJobExecutionPipeline pipeline,
-            IPolicyResolver policyResolver,
-            ILogger<WebhookDeadLetterApiMarker> logger,
+            [FromServices] ICallerContextAccessor callerContextAccessor,
+            [FromServices] IWebhookDeadLetterStore? deadLetterStore,
+            [FromServices] IJobRegistry registry,
+            [FromServices] IJobExecutionPipeline pipeline,
+            [FromServices] IPolicyResolver policyResolver,
+            [FromServices] ILogger<WebhookDeadLetterApiMarker> logger,
             CancellationToken cancellationToken) =>
         {
             if (string.IsNullOrWhiteSpace(environment))
@@ -634,8 +634,8 @@ public static class ApiHostingExtensions
             string tenantId,
             string clientId,
             string? environment,
-            ICallerContextAccessor callerContextAccessor,
-            IApiKeyStore apiKeyStore,
+            [FromServices] ICallerContextAccessor callerContextAccessor,
+            [FromServices] IApiKeyStore apiKeyStore,
             CancellationToken cancellationToken) =>
         {
             var authFailure = WebhookAuthorization.Ensure(callerContextAccessor, tenantId, environment, CroniqScopes.ApiKeysManage);
@@ -665,9 +665,9 @@ public static class ApiHostingExtensions
         app.MapPost("/tenants/{tenantId}/api-keys", async (
             string tenantId,
             IssueApiKeyRequest request,
-            ICallerContextAccessor callerContextAccessor,
-            IApiKeyStore apiKeyStore,
-            ILogger<ApiKeyAdminApiMarker> logger,
+            [FromServices] ICallerContextAccessor callerContextAccessor,
+            [FromServices] IApiKeyStore apiKeyStore,
+            [FromServices] ILogger<ApiKeyAdminApiMarker> logger,
             CancellationToken cancellationToken) =>
         {
             var authFailure = WebhookAuthorization.Ensure(callerContextAccessor, tenantId, request.EnvironmentTag, CroniqScopes.ApiKeysManage);
@@ -706,9 +706,9 @@ public static class ApiHostingExtensions
             string tenantId,
             string keyId,
             string? environment,
-            ICallerContextAccessor callerContextAccessor,
-            IApiKeyStore apiKeyStore,
-            ILogger<ApiKeyAdminApiMarker> logger,
+            [FromServices] ICallerContextAccessor callerContextAccessor,
+            [FromServices] IApiKeyStore apiKeyStore,
+            [FromServices] ILogger<ApiKeyAdminApiMarker> logger,
             CancellationToken cancellationToken) =>
         {
             var authFailure = WebhookAuthorization.Ensure(callerContextAccessor, tenantId, environment, CroniqScopes.ApiKeysManage);
@@ -738,8 +738,8 @@ public static class ApiHostingExtensions
             string tenantId,
             string keyId,
             string? environment,
-            ICallerContextAccessor callerContextAccessor,
-            IApiKeyStore apiKeyStore,
+            [FromServices] ICallerContextAccessor callerContextAccessor,
+            [FromServices] IApiKeyStore apiKeyStore,
             CancellationToken cancellationToken) =>
         {
             var authFailure = WebhookAuthorization.Ensure(callerContextAccessor, tenantId, environment, CroniqScopes.ApiKeysManage);
@@ -760,7 +760,7 @@ public static class ApiHostingExtensions
         app.MapGet("/executions/{executionId}/logs", async (
             string executionId,
             [FromServices] IExecutionLogReader reader,
-            ICallerContextAccessor callerContextAccessor,
+            [FromServices] ICallerContextAccessor callerContextAccessor,
             HttpContext httpContext,
             CancellationToken cancellationToken) =>
         {
@@ -806,10 +806,10 @@ public static class ApiHostingExtensions
 
         app.MapPost("/jobs/trigger", async (
             TriggerJobRequest request,
-            IJobRegistry registry,
-            IJobExecutionPipeline pipeline,
-            IPolicyResolver policyResolver,
-            ICallerContextAccessor callerContextAccessor,
+            [FromServices] IJobRegistry registry,
+            [FromServices] IJobExecutionPipeline pipeline,
+            [FromServices] IPolicyResolver policyResolver,
+            [FromServices] ICallerContextAccessor callerContextAccessor,
             CancellationToken cancellationToken) =>
         {
             if (!JobKey.TryParse(request.JobKey, out var jobKey))
