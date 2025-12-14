@@ -15,6 +15,7 @@ import {
     TenantWebhookUpsertParams,
     WebhookInvocationParams,
 } from 'data-access';
+import { TenantContextService } from '../../core/tenant-context/tenant-context.service';
 
 export type WebhookEndpointView = {
     hookKey: string;
@@ -37,6 +38,7 @@ export type WebhookActionEntry = {
 @Injectable({ providedIn: 'root' })
 export class WebhooksStore {
     private readonly api = inject<CroniqApiClient>(CRONIQ_API_CLIENT);
+    private readonly tenantContext = inject(TenantContextService);
 
     private readonly endpointsSignal = signal<ReadonlyArray<WebhookEndpointView>>(seedEndpoints());
     private readonly actionLogSignal = signal<ReadonlyArray<WebhookActionEntry>>(seedActionLog());
@@ -55,7 +57,13 @@ export class WebhooksStore {
         this.loadingSignal.set(true);
         this.lastErrorSignal.set(null);
         try {
-            const response = await this.api.listTenantWebhooks(params);
+            const response = await this.api.listTenantWebhooks(
+                params,
+                this.tenantContext.createRequestOptions('webhooks.list', {
+                    tenantId: params.tenantId,
+                    environment: params.environment,
+                }),
+            );
             this.endpointsSignal.set(this.normalizeEndpointResponse(response, params.environment));
             await this.updateDeadLetterCount({ tenantId: params.tenantId, environment: params.environment });
             this.recordAction('Refreshed webhook endpoints', 'success');
@@ -73,7 +81,14 @@ export class WebhooksStore {
         payload: UpsertWebhookEndpointRequest,
     ): Promise<void> {
         try {
-            await this.api.upsertTenantWebhook(params, payload);
+            await this.api.upsertTenantWebhook(
+                params,
+                payload,
+                this.tenantContext.createRequestOptions('webhooks.upsert', {
+                    tenantId: params.tenantId,
+                    environment: params.environment,
+                }),
+            );
             this.recordAction(`Upserted ${payload.hookKey}`, 'success');
         } catch (error) {
             console.error('Unable to upsert webhook', error);
@@ -83,7 +98,13 @@ export class WebhooksStore {
 
     async deleteEndpoint(params: TenantWebhookParams): Promise<void> {
         try {
-            await this.api.deleteTenantWebhook(params);
+            await this.api.deleteTenantWebhook(
+                params,
+                this.tenantContext.createRequestOptions('webhooks.delete', {
+                    tenantId: params.tenantId,
+                    environment: params.environment,
+                }),
+            );
             this.recordAction(`Deleted ${params.hookKey}`, 'success');
         } catch (error) {
             console.error('Unable to delete webhook', error);
@@ -96,7 +117,14 @@ export class WebhooksStore {
         payload: RotateWebhookSecretRequest,
     ): Promise<void> {
         try {
-            await this.api.rotateTenantWebhookSecret(params, payload);
+            await this.api.rotateTenantWebhookSecret(
+                params,
+                payload,
+                this.tenantContext.createRequestOptions('webhooks.rotate-secret', {
+                    tenantId: params.tenantId,
+                    environment: params.environment,
+                }),
+            );
             this.recordAction(`Rotated secret for ${params.hookKey}`, 'success');
         } catch (error) {
             console.error('Unable to rotate webhook secret', error);
@@ -109,7 +137,14 @@ export class WebhooksStore {
         payload: CreateWebhookIpRuleRequest,
     ): Promise<void> {
         try {
-            await this.api.createTenantWebhookIpRule(params, payload);
+            await this.api.createTenantWebhookIpRule(
+                params,
+                payload,
+                this.tenantContext.createRequestOptions('webhooks.create-ip-rule', {
+                    tenantId: params.tenantId,
+                    environment: params.environment,
+                }),
+            );
             this.recordAction(`Created IP rule for ${params.hookKey}`, 'success');
         } catch (error) {
             console.error('Unable to create IP rule', error);
@@ -119,7 +154,13 @@ export class WebhooksStore {
 
     async deleteIpRule(params: TenantWebhookRuleParams): Promise<void> {
         try {
-            await this.api.deleteTenantWebhookIpRule(params);
+            await this.api.deleteTenantWebhookIpRule(
+                params,
+                this.tenantContext.createRequestOptions('webhooks.delete-ip-rule', {
+                    tenantId: params.tenantId,
+                    environment: params.environment,
+                }),
+            );
             this.recordAction(`Removed IP rule ${params.ruleId}`, 'success');
         } catch (error) {
             console.error('Unable to delete IP rule', error);
@@ -129,7 +170,13 @@ export class WebhooksStore {
 
     async replayDeadLetter(params: TenantDeadLetterParams): Promise<void> {
         try {
-            await this.api.replayTenantWebhookDeadLetter(params);
+            await this.api.replayTenantWebhookDeadLetter(
+                params,
+                this.tenantContext.createRequestOptions('webhooks.replay-dead-letter', {
+                    tenantId: params.tenantId,
+                    environment: params.environment,
+                }),
+            );
             this.recordAction(`Replayed dead letter ${params.deadLetterId}`, 'success');
         } catch (error) {
             console.error('Unable to replay dead letter', error);
@@ -139,7 +186,10 @@ export class WebhooksStore {
 
     async invokeWebhook(params: WebhookInvocationParams): Promise<void> {
         try {
-            await this.api.invokeWebhook(params);
+            await this.api.invokeWebhook(
+                params,
+                this.tenantContext.createRequestOptions(`webhooks.invoke:${params.hookKey}`),
+            );
             this.recordAction(`Invoked ${params.hookKey}`, 'success');
         } catch (error) {
             console.error('Unable to invoke webhook', error);
@@ -149,7 +199,13 @@ export class WebhooksStore {
 
     private async updateDeadLetterCount(params: TenantEnvironmentParams): Promise<void> {
         try {
-            const response = await this.api.listTenantWebhookDeadLetters(params);
+            const response = await this.api.listTenantWebhookDeadLetters(
+                params,
+                this.tenantContext.createRequestOptions('webhooks.list-dead-letters', {
+                    tenantId: params.tenantId,
+                    environment: params.environment,
+                }),
+            );
             const total = Array.isArray(response) ? response.length : this.deadLetterCountSignal();
             this.deadLetterCountSignal.set(total);
         } catch (error) {

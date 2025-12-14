@@ -1,16 +1,150 @@
-<section class="space-y-3 rounded-2xl border border-white/10 bg-white/5 p-6 text-sm text-text">
+<section class="space-y-5 rounded-2xl border border-white/10 bg-white/5 p-6 text-sm text-text">
   <header class="space-y-1">
     <p class="text-xs uppercase tracking-[0.35em] text-text-muted">Tenant context</p>
-    <h2 class="text-xl font-semibold">Unified configuration in progress</h2>
+    <h2 class="text-2xl font-semibold text-white">{{ tenantLabel() }}</h2>
+    <p class="text-xs text-text-muted">
+      Blueprint {{ snapshot().blueprintVersion }} · {{ snapshot().region | uppercase }} · audited
+      {{ snapshot().lastAuditedAt | date : 'short' }}
+    </p>
   </header>
-  <p class="text-text-muted">
-    This widget will surface the active tenant, environment overrides, and inherited policies so
-    operators can see what will change before editing schedules.
-  </p>
-  <button
-    type="button"
-    class="inline-flex items-center gap-2 rounded-lg border border-white/15 bg-accent/10 px-4 py-2 text-sm font-semibold text-accent transition hover:bg-accent/20"
+
+  <section class="space-y-3 rounded-2xl border border-white/10 bg-white/5 p-4">
+    <h3 class="text-xs uppercase tracking-[0.35em] text-text-muted">Switch tenant</h3>
+    <label class="space-y-1 text-xs uppercase tracking-[0.3em] text-text-muted">
+      Tenant preset
+      <select
+        class="w-full rounded-xl border border-white/15 bg-surface/40 px-3 py-2 text-sm text-text"
+        [value]="snapshot().tenantId"
+        (change)="selectTenant(($any($event.target)).value)"
+      >
+        @for (preset of tenantPresets(); track preset.id) {
+        <option [value]="preset.id">{{ preset.label }}</option>
+        }
+      </select>
+    </label>
+    <div class="space-y-2">
+      <p class="text-xs uppercase tracking-[0.35em] text-text-muted">Environment</p>
+      <div class="flex flex-wrap gap-2">
+        @for (environment of environments; track environment) {
+        <button
+          type="button"
+          class="rounded-full border px-3 py-1 text-xs font-semibold uppercase tracking-wide"
+          [class.border-accent]="snapshot().environment === environment"
+          [class.text-accent]="snapshot().environment === environment"
+          [class.border-white/15]="snapshot().environment !== environment"
+          (click)="selectEnvironment(environment)"
+        >
+          {{ environment }}
+        </button>
+        }
+      </div>
+    </div>
+  </section>
+
+  <dl
+    class="grid gap-4 rounded-2xl border border-white/10 bg-white/2 p-4 text-xs uppercase tracking-wide text-text-muted sm:grid-cols-2"
   >
-    Review tenant blueprint
-  </button>
+    <div class="space-y-1">
+      <dt>Tenant ID</dt>
+      <dd class="text-base normal-case text-text">{{ snapshot().tenantId }}</dd>
+    </div>
+    <div class="space-y-1">
+      <dt>Region</dt>
+      <dd class="text-base normal-case text-text">{{ snapshot().region }}</dd>
+    </div>
+    <div class="space-y-1">
+      <dt>Policies</dt>
+      <dd class="text-base normal-case text-text">{{ snapshot().policyCount }}</dd>
+    </div>
+    <div class="space-y-1">
+      <dt>Source</dt>
+      <dd class="text-base normal-case text-text">{{ snapshot().source }}</dd>
+    </div>
+  </dl>
+
+  <section class="space-y-3 rounded-2xl border border-dashed border-white/15 bg-white/3 p-4">
+    <h3 class="text-xs uppercase tracking-[0.35em] text-text-muted">Feature flags</h3>
+    @if (flags().length === 0) {
+    <p class="text-sm text-text-muted">No feature overrides applied.</p>
+    } @else {
+    <ul class="flex flex-wrap gap-2 text-xs font-semibold text-text">
+      @for (flag of flags(); track flag) {
+      <li class="inline-flex items-center gap-2 rounded-full border border-white/20 bg-white/10 px-3 py-1">
+        <span>{{ flag }}</span>
+        <button class="text-xs text-text-muted" type="button" (click)="removeFeatureFlag(flag)">&times;</button>
+      </li>
+      }
+    </ul>
+    }
+    <form
+      class="flex flex-wrap gap-2 text-xs"
+      (submit)="$event.preventDefault(); addFeatureFlag(flagInput);"
+    >
+      <input
+        #flagInput
+        type="text"
+        maxlength="40"
+        placeholder="Add flag"
+        class="flex-1 rounded-xl border border-white/15 bg-surface/20 px-3 py-2 text-sm text-text"
+      />
+      <button
+        type="submit"
+        class="rounded-full border border-accent/40 bg-accent/15 px-4 py-2 text-xs font-semibold uppercase tracking-wide text-accent"
+      >
+        Add flag
+      </button>
+    </form>
+  </section>
+
+  <section class="space-y-2 rounded-2xl border border-white/10 bg-surface/40 p-4">
+    <header class="space-y-1">
+      <p class="text-xs uppercase tracking-[0.35em] text-text-muted">Authenticated operator</p>
+      <p class="text-lg font-semibold text-white">{{ operatorSummary() }}</p>
+      <p class="text-sm text-text-muted">{{ operatorProfile().email }}</p>
+      <p class="text-xs text-text-muted">
+        Last auth {{ operatorProfile().lastAuthenticatedAt | date : 'short' }}
+      </p>
+    </header>
+    <div class="space-y-3">
+      <label class="block space-y-1 text-xs uppercase tracking-[0.35em] text-text-muted">
+        Display name
+        <input
+          type="text"
+          class="w-full rounded-xl border border-white/15 bg-white/5 px-3 py-2 text-sm text-text"
+          [value]="operatorProfile().displayName"
+          (input)="updateOperatorName(($any($event.target)).value)"
+        />
+      </label>
+      <label class="block space-y-1 text-xs uppercase tracking-[0.35em] text-text-muted">
+        Email
+        <input
+          type="email"
+          class="w-full rounded-xl border border-white/15 bg-white/5 px-3 py-2 text-sm text-text"
+          [value]="operatorProfile().email"
+          (input)="updateOperatorEmail(($any($event.target)).value)"
+        />
+      </label>
+      <div class="space-y-1">
+        <p class="text-xs uppercase tracking-[0.35em] text-text-muted">Scopes</p>
+        @if (operatorProfile().scopes.length === 0) {
+        <p class="text-xs text-text-muted">No scopes assigned.</p>
+        } @else {
+        <ul class="flex flex-wrap gap-2">
+          @for (scope of operatorProfile().scopes; track scope) {
+          <li class="rounded-full border border-white/10 bg-white/10 px-3 py-1 text-xs font-semibold text-text">
+            {{ scope }}
+          </li>
+          }
+        </ul>
+        }
+      </div>
+      <button
+        type="button"
+        class="rounded-full border border-white/20 px-4 py-2 text-xs font-semibold uppercase tracking-wide text-text"
+        (click)="toggleImpersonation()"
+      >
+        {{ operatorProfile().impersonating ? 'End impersonation' : 'Start impersonation' }}
+      </button>
+    </div>
+  </section>
 </section>

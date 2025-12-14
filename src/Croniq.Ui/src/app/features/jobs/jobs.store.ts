@@ -1,6 +1,8 @@
 import { Injectable, computed, inject, signal } from '@angular/core';
 
-import { CRONIQ_API_CLIENT, CroniqApiClient } from 'data-access';
+import { CRONIQ_API_CLIENT, CallerContext, CroniqApiClient } from 'data-access';
+
+import { TenantContextService } from '../../core/tenant-context/tenant-context.service';
 
 export type ManualTriggerStatus = 'pending' | 'success' | 'error';
 export type ManualTriggerEntry = {
@@ -16,6 +18,7 @@ export type ManualTriggerEntry = {
 @Injectable({ providedIn: 'root' })
 export class JobsStore {
     private readonly api = inject<CroniqApiClient>(CRONIQ_API_CLIENT);
+    private readonly tenantContext = inject(TenantContextService);
 
     private readonly triggerLog = signal<ReadonlyArray<ManualTriggerEntry>>(seedManualTriggers());
     private readonly lastErrorSignal = signal<string | null>(null);
@@ -43,7 +46,13 @@ export class JobsStore {
         this.lastErrorSignal.set(null);
 
         try {
-            await this.api.triggerJob({ jobKey: trimmedKey, metadata });
+            await this.api.triggerJob(
+                { jobKey: trimmedKey, metadata },
+                this.tenantContext.createRequestOptions(
+                    `jobs.trigger:${trimmedKey}`,
+                    this.buildCallerOverrides(metadata)
+                ),
+            );
             this.updateEntry(entry.id, {
                 status: 'success',
                 completedAt: new Date().toISOString(),
@@ -63,6 +72,19 @@ export class JobsStore {
         this.triggerLog.set(
             this.triggerLog().map((entry) => (entry.id === id ? { ...entry, ...patch } : entry))
         );
+    }
+
+    private buildCallerOverrides(metadata: Record<string, string>): Partial<CallerContext> {
+        const tenantId = metadata['tenant']?.trim();
+        const environment = metadata['environment']?.trim() ?? metadata['env']?.trim();
+        const actor = metadata['actor']?.trim();
+        const source = metadata['source']?.trim();
+        return {
+            tenantId: tenantId || undefined,
+            environment: environment || undefined,
+            actor: actor || undefined,
+            source: source || undefined,
+        };
     }
 }
 

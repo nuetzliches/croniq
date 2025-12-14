@@ -64,28 +64,71 @@ export interface ExecutionLogParams {
     executionId: string;
 }
 
-export interface CroniqApiClient {
-    getSchedules(): Promise<ScheduleListResponse>;
-    upsertSchedule(payload: UpsertScheduleRequest): Promise<void>;
-    triggerJob(payload: TriggerJobRequest): Promise<void>;
-    issueTenantApiKey(params: TenantScopedParams, payload: IssueApiKeyRequest): Promise<unknown>;
-    rotateTenantApiKey(params: TenantApiKeyParams): Promise<void>;
-    deleteTenantApiKey(params: TenantApiKeyParams): Promise<void>;
-    getTenantApiClient(params: TenantApiClientParams): Promise<unknown>;
-    listTenantWebhooks(params: TenantEnvironmentParams): Promise<unknown>;
-    upsertTenantWebhook(params: TenantWebhookUpsertParams, payload: UpsertWebhookEndpointRequest): Promise<void>;
-    deleteTenantWebhook(params: TenantWebhookParams): Promise<void>;
-    rotateTenantWebhookSecret(params: TenantWebhookParams, payload: RotateWebhookSecretRequest): Promise<void>;
-    listTenantWebhookIpRules(params: TenantWebhookParams): Promise<unknown>;
-    createTenantWebhookIpRule(params: TenantWebhookParams, payload: CreateWebhookIpRuleRequest): Promise<void>;
-    deleteTenantWebhookIpRule(params: TenantWebhookRuleParams): Promise<void>;
-    listTenantWebhookDeadLetters(params: TenantEnvironmentParams): Promise<unknown>;
-    replayTenantWebhookDeadLetter(params: TenantDeadLetterParams): Promise<void>;
-    invokeWebhook(params: WebhookInvocationParams): Promise<void>;
-    fetchExecutionLogs(params: ExecutionLogParams): Promise<string>;
-    checkServiceHealth(): Promise<void>;
-    checkPersistenceHealth(): Promise<void>;
+export interface CallerContext {
+    actor?: string;
+    tenantId?: string;
+    environment?: string;
+    source?: string;
+    command?: string;
 }
+
+export interface CroniqRequestOptions {
+    context?: CallerContext;
+}
+
+export interface CroniqApiClient {
+    getSchedules(options?: CroniqRequestOptions): Promise<ScheduleListResponse>;
+    upsertSchedule(payload: UpsertScheduleRequest, options?: CroniqRequestOptions): Promise<void>;
+    triggerJob(payload: TriggerJobRequest, options?: CroniqRequestOptions): Promise<void>;
+    issueTenantApiKey(
+        params: TenantScopedParams,
+        payload: IssueApiKeyRequest,
+        options?: CroniqRequestOptions,
+    ): Promise<unknown>;
+    rotateTenantApiKey(params: TenantApiKeyParams, options?: CroniqRequestOptions): Promise<void>;
+    deleteTenantApiKey(params: TenantApiKeyParams, options?: CroniqRequestOptions): Promise<void>;
+    getTenantApiClient(params: TenantApiClientParams, options?: CroniqRequestOptions): Promise<unknown>;
+    listTenantWebhooks(params: TenantEnvironmentParams, options?: CroniqRequestOptions): Promise<unknown>;
+    upsertTenantWebhook(
+        params: TenantWebhookUpsertParams,
+        payload: UpsertWebhookEndpointRequest,
+        options?: CroniqRequestOptions,
+    ): Promise<void>;
+    deleteTenantWebhook(params: TenantWebhookParams, options?: CroniqRequestOptions): Promise<void>;
+    rotateTenantWebhookSecret(
+        params: TenantWebhookParams,
+        payload: RotateWebhookSecretRequest,
+        options?: CroniqRequestOptions,
+    ): Promise<void>;
+    listTenantWebhookIpRules(params: TenantWebhookParams, options?: CroniqRequestOptions): Promise<unknown>;
+    createTenantWebhookIpRule(
+        params: TenantWebhookParams,
+        payload: CreateWebhookIpRuleRequest,
+        options?: CroniqRequestOptions,
+    ): Promise<void>;
+    deleteTenantWebhookIpRule(params: TenantWebhookRuleParams, options?: CroniqRequestOptions): Promise<void>;
+    listTenantWebhookDeadLetters(
+        params: TenantEnvironmentParams,
+        options?: CroniqRequestOptions,
+    ): Promise<unknown>;
+    replayTenantWebhookDeadLetter(params: TenantDeadLetterParams, options?: CroniqRequestOptions): Promise<void>;
+    invokeWebhook(params: WebhookInvocationParams, options?: CroniqRequestOptions): Promise<void>;
+    fetchExecutionLogs(params: ExecutionLogParams, options?: CroniqRequestOptions): Promise<string>;
+    checkServiceHealth(options?: CroniqRequestOptions): Promise<void>;
+    checkPersistenceHealth(options?: CroniqRequestOptions): Promise<void>;
+}
+
+type QueryRecord = Record<string, string | number | boolean | undefined | null>;
+
+type HttpRequestOptions = {
+    params?: Record<string, string>;
+    headers: Record<string, string>;
+};
+
+type BuildHttpOptionsInput = {
+    query?: QueryRecord;
+    context?: CallerContext;
+};
 
 export const CRONIQ_API_BASE_URL = new InjectionToken<string>('CRONIQ_API_BASE_URL', {
     providedIn: 'root',
@@ -95,181 +138,296 @@ export const CRONIQ_API_BASE_URL = new InjectionToken<string>('CRONIQ_API_BASE_U
 class HttpCroniqApiClient implements CroniqApiClient {
     constructor(private readonly http: HttpClient, private readonly baseUrl: string) { }
 
-    async getSchedules(): Promise<ScheduleListResponse> {
+    async getSchedules(options?: CroniqRequestOptions): Promise<ScheduleListResponse> {
+        const requestOptions = this.buildHttpOptions({ context: options?.context });
         const response$ = this.http
-            .get<unknown>(`${this.baseUrl}/schedules`)
+            .get<unknown>(`${this.baseUrl}/schedules`, requestOptions)
             .pipe(map((payload) => scheduleListResponseSchema.parse(payload)));
         return firstValueFrom(response$);
     }
 
-    async upsertSchedule(payload: UpsertScheduleRequest): Promise<void> {
+    async upsertSchedule(payload: UpsertScheduleRequest, options?: CroniqRequestOptions): Promise<void> {
         const body = upsertScheduleRequestSchema.parse(payload);
-        await firstValueFrom(this.http.post<void>(`${this.baseUrl}/schedules`, body));
+        const requestOptions = this.buildHttpOptions({ context: options?.context });
+        await firstValueFrom(this.http.post<void>(`${this.baseUrl}/schedules`, body, requestOptions));
     }
 
-    async triggerJob(payload: TriggerJobRequest): Promise<void> {
+    async triggerJob(payload: TriggerJobRequest, options?: CroniqRequestOptions): Promise<void> {
         const body = triggerJobRequestSchema.parse(payload);
-        await firstValueFrom(this.http.post<void>(`${this.baseUrl}/jobs/trigger`, body));
+        const requestOptions = this.buildHttpOptions({ context: options?.context });
+        await firstValueFrom(this.http.post<void>(`${this.baseUrl}/jobs/trigger`, body, requestOptions));
     }
 
-    async issueTenantApiKey(params: TenantScopedParams, payload: IssueApiKeyRequest): Promise<unknown> {
+    async issueTenantApiKey(
+        params: TenantScopedParams,
+        payload: IssueApiKeyRequest,
+        options?: CroniqRequestOptions,
+    ): Promise<unknown> {
         const body = issueApiKeyRequestSchema.parse(payload);
-        const response$ = this.http.post<unknown>(`${this.baseUrl}/tenants/${params.tenantId}/api-keys`, body);
+        const requestOptions = this.buildHttpOptions({ context: options?.context });
+        const response$ = this.http.post<unknown>(
+            `${this.baseUrl}/tenants/${params.tenantId}/api-keys`,
+            body,
+            requestOptions,
+        );
         return firstValueFrom(response$);
     }
 
-    async rotateTenantApiKey(params: TenantApiKeyParams): Promise<void> {
-        const options = this.buildQueryOptions({ environment: params.environment ?? undefined });
+    async rotateTenantApiKey(params: TenantApiKeyParams, options?: CroniqRequestOptions): Promise<void> {
+        const requestOptions = this.buildHttpOptions({
+            query: { environment: params.environment ?? undefined },
+            context: options?.context,
+        });
         await firstValueFrom(
             this.http.post<void>(
                 `${this.baseUrl}/tenants/${params.tenantId}/api-keys/${params.keyId}/rotate`,
                 null,
-                options
+                requestOptions,
             )
         );
     }
 
-    async deleteTenantApiKey(params: TenantApiKeyParams): Promise<void> {
-        const options = this.buildQueryOptions({ environment: params.environment ?? undefined });
+    async deleteTenantApiKey(params: TenantApiKeyParams, options?: CroniqRequestOptions): Promise<void> {
+        const requestOptions = this.buildHttpOptions({
+            query: { environment: params.environment ?? undefined },
+            context: options?.context,
+        });
         await firstValueFrom(
-            this.http.delete<void>(`${this.baseUrl}/tenants/${params.tenantId}/api-keys/${params.keyId}`, options)
+            this.http.delete<void>(`${this.baseUrl}/tenants/${params.tenantId}/api-keys/${params.keyId}`, requestOptions)
         );
     }
 
-    async getTenantApiClient(params: TenantApiClientParams): Promise<unknown> {
-        const options = this.buildQueryOptions({ environment: params.environment ?? undefined });
+    async getTenantApiClient(params: TenantApiClientParams, options?: CroniqRequestOptions): Promise<unknown> {
+        const requestOptions = this.buildHttpOptions({
+            query: { environment: params.environment ?? undefined },
+            context: options?.context,
+        });
         const response$ = this.http.get<unknown>(
             `${this.baseUrl}/tenants/${params.tenantId}/api-clients/${params.clientId}`,
-            options
+            requestOptions,
         );
         return firstValueFrom(response$);
     }
 
-    async listTenantWebhooks(params: TenantEnvironmentParams): Promise<unknown> {
-        const options = this.buildQueryOptions({ environment: params.environment });
-        const response$ = this.http.get<unknown>(`${this.baseUrl}/tenants/${params.tenantId}/webhooks`, options);
+    async listTenantWebhooks(
+        params: TenantEnvironmentParams,
+        options?: CroniqRequestOptions,
+    ): Promise<unknown> {
+        const requestOptions = this.buildHttpOptions({
+            query: { environment: params.environment },
+            context: options?.context,
+        });
+        const response$ = this.http.get<unknown>(
+            `${this.baseUrl}/tenants/${params.tenantId}/webhooks`,
+            requestOptions,
+        );
         return firstValueFrom(response$);
     }
 
     async upsertTenantWebhook(
         params: TenantWebhookUpsertParams,
-        payload: UpsertWebhookEndpointRequest
+        payload: UpsertWebhookEndpointRequest,
+        options?: CroniqRequestOptions,
     ): Promise<void> {
-        const options = this.buildQueryOptions({
-            environment: params.environment,
-            allowUnsigned: params.allowUnsigned,
+        const requestOptions = this.buildHttpOptions({
+            query: {
+                environment: params.environment,
+                allowUnsigned: params.allowUnsigned,
+            },
+            context: options?.context,
         });
         const body = upsertWebhookEndpointRequestSchema.parse(payload);
-        await firstValueFrom(this.http.post<void>(`${this.baseUrl}/tenants/${params.tenantId}/webhooks`, body, options));
+        await firstValueFrom(
+            this.http.post<void>(`${this.baseUrl}/tenants/${params.tenantId}/webhooks`, body, requestOptions)
+        );
     }
 
-    async deleteTenantWebhook(params: TenantWebhookParams): Promise<void> {
-        const options = this.buildQueryOptions({ environment: params.environment });
+    async deleteTenantWebhook(params: TenantWebhookParams, options?: CroniqRequestOptions): Promise<void> {
+        const requestOptions = this.buildHttpOptions({
+            query: { environment: params.environment },
+            context: options?.context,
+        });
         await firstValueFrom(
-            this.http.delete<void>(`${this.baseUrl}/tenants/${params.tenantId}/webhooks/${params.hookKey}`, options)
+            this.http.delete<void>(
+                `${this.baseUrl}/tenants/${params.tenantId}/webhooks/${params.hookKey}`,
+                requestOptions,
+            )
         );
     }
 
     async rotateTenantWebhookSecret(
         params: TenantWebhookParams,
-        payload: RotateWebhookSecretRequest
+        payload: RotateWebhookSecretRequest,
+        options?: CroniqRequestOptions,
     ): Promise<void> {
-        const options = this.buildQueryOptions({ environment: params.environment });
+        const requestOptions = this.buildHttpOptions({
+            query: { environment: params.environment },
+            context: options?.context,
+        });
         const body = rotateWebhookSecretRequestSchema.parse(payload);
         await firstValueFrom(
             this.http.post<void>(
                 `${this.baseUrl}/tenants/${params.tenantId}/webhooks/${params.hookKey}/rotate-secret`,
                 body,
-                options
+                requestOptions,
             )
         );
     }
 
-    async listTenantWebhookIpRules(params: TenantWebhookParams): Promise<unknown> {
-        const options = this.buildQueryOptions({ environment: params.environment });
+    async listTenantWebhookIpRules(
+        params: TenantWebhookParams,
+        options?: CroniqRequestOptions,
+    ): Promise<unknown> {
+        const requestOptions = this.buildHttpOptions({
+            query: { environment: params.environment },
+            context: options?.context,
+        });
         const response$ = this.http.get<unknown>(
             `${this.baseUrl}/tenants/${params.tenantId}/webhooks/${params.hookKey}/ip-rules`,
-            options
+            requestOptions,
         );
         return firstValueFrom(response$);
     }
 
     async createTenantWebhookIpRule(
         params: TenantWebhookParams,
-        payload: CreateWebhookIpRuleRequest
+        payload: CreateWebhookIpRuleRequest,
+        options?: CroniqRequestOptions,
     ): Promise<void> {
-        const options = this.buildQueryOptions({ environment: params.environment });
+        const requestOptions = this.buildHttpOptions({
+            query: { environment: params.environment },
+            context: options?.context,
+        });
         const body = createWebhookIpRuleRequestSchema.parse(payload);
         await firstValueFrom(
             this.http.post<void>(
                 `${this.baseUrl}/tenants/${params.tenantId}/webhooks/${params.hookKey}/ip-rules`,
                 body,
-                options
+                requestOptions,
             )
         );
     }
 
-    async deleteTenantWebhookIpRule(params: TenantWebhookRuleParams): Promise<void> {
-        const options = this.buildQueryOptions({ environment: params.environment });
+    async deleteTenantWebhookIpRule(
+        params: TenantWebhookRuleParams,
+        options?: CroniqRequestOptions,
+    ): Promise<void> {
+        const requestOptions = this.buildHttpOptions({
+            query: { environment: params.environment },
+            context: options?.context,
+        });
         await firstValueFrom(
             this.http.delete<void>(
                 `${this.baseUrl}/tenants/${params.tenantId}/webhooks/${params.hookKey}/ip-rules/${params.ruleId}`,
-                options
+                requestOptions,
             )
         );
     }
 
-    async listTenantWebhookDeadLetters(params: TenantEnvironmentParams): Promise<unknown> {
-        const options = this.buildQueryOptions({ environment: params.environment });
+    async listTenantWebhookDeadLetters(
+        params: TenantEnvironmentParams,
+        options?: CroniqRequestOptions,
+    ): Promise<unknown> {
+        const requestOptions = this.buildHttpOptions({
+            query: { environment: params.environment },
+            context: options?.context,
+        });
         const response$ = this.http.get<unknown>(
             `${this.baseUrl}/tenants/${params.tenantId}/webhooks/deadletters`,
-            options
+            requestOptions,
         );
         return firstValueFrom(response$);
     }
 
-    async replayTenantWebhookDeadLetter(params: TenantDeadLetterParams): Promise<void> {
-        const options = this.buildQueryOptions({ environment: params.environment });
+    async replayTenantWebhookDeadLetter(
+        params: TenantDeadLetterParams,
+        options?: CroniqRequestOptions,
+    ): Promise<void> {
+        const requestOptions = this.buildHttpOptions({
+            query: { environment: params.environment },
+            context: options?.context,
+        });
         await firstValueFrom(
             this.http.post<void>(
                 `${this.baseUrl}/tenants/${params.tenantId}/webhooks/deadletters/${params.deadLetterId}/replay`,
                 null,
-                options
+                requestOptions,
             )
         );
     }
 
-    async invokeWebhook(params: WebhookInvocationParams): Promise<void> {
-        await firstValueFrom(this.http.post<void>(`${this.baseUrl}/webhooks/${params.hookKey}`, null));
+    async invokeWebhook(params: WebhookInvocationParams, options?: CroniqRequestOptions): Promise<void> {
+        const requestOptions = this.buildHttpOptions({ context: options?.context });
+        await firstValueFrom(this.http.post<void>(`${this.baseUrl}/webhooks/${params.hookKey}`, null, requestOptions));
     }
 
-    async fetchExecutionLogs(params: ExecutionLogParams): Promise<string> {
-        const response$ = this.http.get(`${this.baseUrl}/executions/${params.executionId}/logs`, {
-            responseType: 'text',
-        });
+    async fetchExecutionLogs(params: ExecutionLogParams, options?: CroniqRequestOptions): Promise<string> {
+        const requestOptions = {
+            ...this.buildHttpOptions({ context: options?.context }),
+            responseType: 'text' as const,
+        };
+        const response$ = this.http.get(`${this.baseUrl}/executions/${params.executionId}/logs`, requestOptions);
         return firstValueFrom(response$);
     }
 
-    async checkServiceHealth(): Promise<void> {
-        await firstValueFrom(this.http.get<void>(`${this.baseUrl}/health`));
+    async checkServiceHealth(options?: CroniqRequestOptions): Promise<void> {
+        const requestOptions = this.buildHttpOptions({ context: options?.context });
+        await firstValueFrom(this.http.get<void>(`${this.baseUrl}/health`, requestOptions));
     }
 
-    async checkPersistenceHealth(): Promise<void> {
-        await firstValueFrom(this.http.get<void>(`${this.baseUrl}/health/persistence`));
+    async checkPersistenceHealth(options?: CroniqRequestOptions): Promise<void> {
+        const requestOptions = this.buildHttpOptions({ context: options?.context });
+        await firstValueFrom(this.http.get<void>(`${this.baseUrl}/health/persistence`, requestOptions));
     }
 
-    private buildQueryOptions(
-        record: Record<string, string | number | boolean | undefined | null>
-    ): { params: Record<string, string> } | undefined {
+    private buildHttpOptions(input: BuildHttpOptionsInput = {}): HttpRequestOptions {
+        const options: HttpRequestOptions = {
+            headers: this.createHeaders(input.context),
+        };
+        const params = this.createQueryParams(input.query);
+        if (params) {
+            options.params = params;
+        }
+        return options;
+    }
+
+    private createQueryParams(record?: QueryRecord): Record<string, string> | undefined {
+        if (!record) {
+            return undefined;
+        }
         const entries = Object.entries(record).filter(([, value]) => value !== undefined && value !== null);
         if (!entries.length) {
             return undefined;
         }
-        const params = entries.reduce<Record<string, string>>((acc, [key, value]) => {
+        return entries.reduce<Record<string, string>>((acc, [key, value]) => {
             acc[key] = String(value);
             return acc;
         }, {});
-        return { params };
+    }
+
+    private createHeaders(context?: CallerContext): Record<string, string> {
+        const headers: Record<string, string> = {
+            'X-Croniq-Client': 'Croniq.Ui',
+        };
+        if (!context) {
+            return headers;
+        }
+        if (context.source) {
+            headers['X-Croniq-Source'] = context.source;
+        }
+        if (context.actor) {
+            headers['X-Croniq-Actor'] = context.actor;
+        }
+        if (context.tenantId) {
+            headers['X-Croniq-Tenant'] = context.tenantId;
+        }
+        if (context.environment) {
+            headers['X-Croniq-Environment'] = context.environment;
+        }
+        if (context.command) {
+            headers['X-Croniq-Command'] = context.command;
+        }
+        return headers;
     }
 }
 

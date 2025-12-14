@@ -9,6 +9,8 @@ import {
     TenantScopedParams,
 } from 'data-access';
 
+import { TenantContextService } from '../../core/tenant-context/tenant-context.service';
+
 export type ApiKeyActionType = 'issue' | 'rotate' | 'delete';
 export type ApiKeyActionStatus = 'pending' | 'success' | 'error';
 export type ApiKeyActivityEntry = {
@@ -32,6 +34,7 @@ export type ApiClientSnapshot = {
 @Injectable({ providedIn: 'root' })
 export class TenantsStore {
     private readonly api = inject<CroniqApiClient>(CRONIQ_API_CLIENT);
+    private readonly tenantContext = inject(TenantContextService);
 
     private readonly activityLog = signal<ReadonlyArray<ApiKeyActivityEntry>>(seedActivity());
     private readonly lastLookupSignal = signal<ApiClientSnapshot | null>(null);
@@ -47,7 +50,11 @@ export class TenantsStore {
         const entry = this.appendActivity(params.tenantId, payload.environmentTag ?? null, 'issue');
         await this.runWithBusy(async () => {
             try {
-                const response = await this.api.issueTenantApiKey(params, payload);
+                const requestOptions = this.tenantContext.createRequestOptions('tenants.issue-api-key', {
+                    tenantId: params.tenantId,
+                    environment: payload.environmentTag ?? undefined,
+                });
+                const response = await this.api.issueTenantApiKey(params, payload, requestOptions);
                 this.patchActivity(entry.id, {
                     status: 'success',
                     detail: summarizeResponse(response),
@@ -68,7 +75,13 @@ export class TenantsStore {
         const entry = this.appendActivity(params.tenantId, params.environment ?? null, 'rotate');
         await this.runWithBusy(async () => {
             try {
-                await this.api.rotateTenantApiKey(params);
+                await this.api.rotateTenantApiKey(
+                    params,
+                    this.tenantContext.createRequestOptions('tenants.rotate-api-key', {
+                        tenantId: params.tenantId,
+                        environment: params.environment ?? undefined,
+                    }),
+                );
                 this.patchActivity(entry.id, { status: 'success', detail: 'Rotation scheduled' });
                 this.lastErrorSignal.set(null);
             } catch (error) {
@@ -86,7 +99,13 @@ export class TenantsStore {
         const entry = this.appendActivity(params.tenantId, params.environment ?? null, 'delete');
         await this.runWithBusy(async () => {
             try {
-                await this.api.deleteTenantApiKey(params);
+                await this.api.deleteTenantApiKey(
+                    params,
+                    this.tenantContext.createRequestOptions('tenants.delete-api-key', {
+                        tenantId: params.tenantId,
+                        environment: params.environment ?? undefined,
+                    }),
+                );
                 this.patchActivity(entry.id, { status: 'success', detail: 'Key deleted' });
                 this.lastErrorSignal.set(null);
             } catch (error) {
@@ -103,7 +122,13 @@ export class TenantsStore {
     async lookupApiClient(params: TenantApiClientParams): Promise<void> {
         await this.runWithBusy(async () => {
             try {
-                const payload = await this.api.getTenantApiClient(params);
+                const payload = await this.api.getTenantApiClient(
+                    params,
+                    this.tenantContext.createRequestOptions('tenants.lookup-api-client', {
+                        tenantId: params.tenantId,
+                        environment: params.environment ?? undefined,
+                    }),
+                );
                 this.lastLookupSignal.set({
                     tenantId: params.tenantId,
                     clientId: params.clientId,
@@ -151,6 +176,7 @@ export class TenantsStore {
             this.busySignal.set(false);
         }
     }
+
 }
 
 function seedActivity(): ReadonlyArray<ApiKeyActivityEntry> {

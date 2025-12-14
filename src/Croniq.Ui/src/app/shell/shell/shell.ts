@@ -1,11 +1,12 @@
 import { CommonModule } from '@angular/common';
-import { ChangeDetectionStrategy, Component, HostListener, computed, inject, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, HostListener, inject, signal } from '@angular/core';
 import { RouterLink, RouterLinkActive, RouterOutlet } from '@angular/router';
 
 import { CommandPalette } from '../../shared/command-palette/command-palette';
 import { CommandPaletteController } from '../../shared/command-palette/command-palette.controller';
 import { StatusBeacon } from '../../shared/status-beacon/status-beacon';
 import { NavItem, PRIMARY_NAV_ITEMS } from '../../core/navigation/nav-items';
+import { TenantContextService } from '../../core/tenant-context/tenant-context.service';
 
 type StatusIntent = 'success' | 'warn' | 'neutral';
 
@@ -23,10 +24,9 @@ type StatusCard = {
 })
 export class Shell {
   private readonly commandPalette = inject(CommandPaletteController);
+  private readonly tenantContext = inject(TenantContextService);
 
-  readonly tenant = signal('Tenant Alpha');
-  readonly environment = signal('dev');
-  readonly tenantDisplay = computed(() => `${this.tenant()} · ${this.environment()}`);
+  readonly tenantDisplay = this.tenantContext.tenantLabel;
   readonly navItems = signal<ReadonlyArray<NavItem>>(PRIMARY_NAV_ITEMS);
 
   readonly statusCards = signal<ReadonlyArray<StatusCard>>([

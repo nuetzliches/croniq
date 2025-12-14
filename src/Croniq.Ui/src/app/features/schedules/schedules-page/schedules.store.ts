@@ -3,9 +3,12 @@ import { Injectable, inject, signal } from '@angular/core';
 import { ScheduleListResponse, ScheduleSummary, scheduleListResponseSchema } from '@croniq/api-schema';
 import { CRONIQ_API_CLIENT, CroniqApiClient } from 'data-access';
 
+import { TenantContextService } from '../../../core/tenant-context/tenant-context.service';
+
 @Injectable({ providedIn: 'root' })
 export class SchedulesStore {
     private readonly api = inject<CroniqApiClient>(CRONIQ_API_CLIENT);
+    private readonly tenantContext = inject(TenantContextService);
 
     private readonly schedulesSignal = signal<ReadonlyArray<ScheduleSummary>>([]);
     private readonly lastUpdatedSignal = signal<string>(new Date().toISOString());
@@ -26,7 +29,9 @@ export class SchedulesStore {
         this.loading.set(true);
         this.error.set(null);
         try {
-            const response = await this.api.getSchedules();
+            const response = await this.api.getSchedules(
+                this.tenantContext.createRequestOptions('schedules.refresh')
+            );
             this.hydrate(response);
         } catch (error) {
             console.error('Failed to load schedules', error);
