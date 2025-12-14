@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Runtime.CompilerServices;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Croniq.Auth.Abstractions;
@@ -151,6 +153,8 @@ public sealed class TestCallerContextFactory : ICallerContextFactory
             CallerId: "itest-client",
             Scopes: new[]
             {
+                CroniqScopes.SchedulesWrite,
+                CroniqScopes.JobsTrigger,
                 CroniqScopes.WebhooksRead,
                 CroniqScopes.WebhooksWrite,
                 CroniqScopes.WebhooksRotate,
@@ -370,4 +374,41 @@ public sealed class FakeApiKeyStore : IApiKeyStore
         string ClientId,
         string? EnvironmentTag,
         IReadOnlyCollection<string> Scopes);
+}
+
+public sealed class TestExecutionLogReader : IExecutionLogReader
+{
+    private readonly Dictionary<string, List<string>> _logs = new(StringComparer.OrdinalIgnoreCase);
+    private readonly JsonSerializerOptions _jsonOptions = new(JsonSerializerDefaults.Web);
+
+    public void SetLog(string executionId, string tenantId, string? environmentTag)
+    {
+        if (string.IsNullOrWhiteSpace(executionId)) throw new ArgumentException("ExecutionId is required", nameof(executionId));
+        if (string.IsNullOrWhiteSpace(tenantId)) throw new ArgumentException("TenantId is required", nameof(tenantId));
+
+        var start = new
+        {
+            type = "start",
+            executionId,
+            tenantId,
+            environmentTag,
+            jobKey = $"{tenantId}:{environmentTag}:tests:job"
+        };
+
+        _logs[executionId] = new List<string> { JsonSerializer.Serialize(start, _jsonOptions) };
+    }
+
+    public void Clear() => _logs.Clear();
+
+    public async IAsyncEnumerable<string> ReadLinesAsync(string executionId, [EnumeratorCancellation] CancellationToken cancellationToken)
+    {
+        if (_logs.TryGetValue(executionId, out var lines))
+        {
+            foreach (var line in lines)
+            {
+                yield return line;
+                await Task.Yield();
+            }
+        }
+    }
 }
