@@ -38,6 +38,10 @@
 - [x] Policy-Dokumentation & Observability vervollständigen (`docs/deep-dive/policies.md`): Konfigurationsbeispiele dokumentieren sowie Dashboards/Alerts gemäß Observability-Plan verdrahten.
 - [x] Security/OIDC-Basis liefern (`docs/deep-dive/security.md`): OIDC-Options + Dual-Auth-Middleware, CallerContext + RateLimiter-Partitionierung, gRPC-Interceptor, Admin-APIs, Doku und Regressionstests implementieren.
 - [x] Supply-Chain-Nacharbeiten (`docs/deep-dive/supplychain.md`): Signing Keys bereitstellen, Verification-Doku + Waiver-Prozess ergänzt (`docs/deep-dive/release-verification.md`, `docs/deep-dive/supplychain-waivers.md`, `docs/SECURITY.md`). (`syft`/`trivy` Toolchain + lokale Anleitung erledigt 2025-12-12.)
+- [x] gRPC-Clients/Samples: Neben `Croniq.Rpc.Client` (.NET) schlanke gRPC-Client-Samples/SDK-Snippets für Python, Go, Node (nur Proto + Auth/Metadata Helpers) bereitstellen; kein WorkerHost nötig; Java nur bei Bedarf.
+- [x] gRPC Observability & CI: gRPC-Routen mit OTel/Activity-Tags (Tenant/Environment/Job/Trigger) versehen; Sample-Syntax/Build-Checks via `eng/validate-grpc-samples.ps1` in CI (`ci-pr.yml`) verdrahtet.
+- [ ] gRPC Client Packages (non-.NET): Pro Sprache ein leichtes Paket inkl. generierter Stubs + kleinem Helper bereitstellen und dokumentieren (Python/PyPI, Go/Go module, Node/NPM); Samples referenzieren diese Pakete statt lokaler Stubs.
+- [ ] gRPC Docs ausbauen: Sprachspezifische Abschnitte (Python/Go/Node, optional Java) mit Paketnamen, Installation, Auth/Metadata-Helpers und Minimalbeispielen ergänzen.
 - [x] Webhook-Trigger (Croniq.Webhooks Projekt) planen, host implementieren und in `docs/deep-dive/architecture.md` verankern (inkl. CRUD-API + persistente Hooks)
 - [x] Job-Log-Persistenz (Plan siehe `docs/deep-dive/designs/job-log-persistence.md`)
   - [x] ExecutionId/Correlation im Scheduler-Pipeline-Scope propagieren; `ExecutionLogSink` + opt-in (`IExecutionLogStore`/`IExecutionLogReader`/Exporter) anlegen
@@ -100,6 +104,15 @@
 - [x] Host-/Framework-Noise dämpfen: `MinimumLevelOverrides` standardisieren (Hosting.Diagnostics, EF Command, Lifetime, Kestrel) und als Defaults in Samples/Docs festhalten.
 - [x] Logging-Guidelines in `docs/deep-dive/observability.md` verankern (Level-Definitionen, wann loggen, Noisy-Patterns vermeiden, Payload-/PII-Hinweise, strukturierte Templates).
 - [x] Smoke-/Devstack-Check: Samples (InMemory/SqlServer) mit Overrides starten und verifizieren, dass keine Request- oder EF-Spam-Logs mehr auf `Information` landen.
+
+# Security / Tenant-Isolation (2025-12-14)
+
+- [x] Wie stellen wir eigentlich sicher, dass User nur auf zugewiesene Tenants zugreifen können?
+  - [x] Audit aller API/gRPC-Endpunkte auf Tenant-Enforcement (Route/Query/metadata vs. CallerContext.TenantId) und 403 bei Mismatch (REST abgeschlossen; gRPC folgt, sobald der Scheduler-RPC-Host landet).
+  - [x] Zentralen Tenant-Guard (Middleware/Filter) ergänzen, der den Abgleich erzwingt (inkl. Execution-Log-Metadaten).
+  - [x] Integrationstests “cross-tenant access denied” (REST hinzugefügt; gRPC-Suite pending RPC-Surface).
+  - [x] OIDC-Config härten: required scopes + tenant-claim Pflicht, andernfalls 401/403.
+  - [x] Docs notieren: Keys bleiben single-tenant; Cross-Tenant nur via Admin/Ops-Identitäten mit strengen Guards.
 
 # Prüfen, beantworten, ggf. umsetzen
 

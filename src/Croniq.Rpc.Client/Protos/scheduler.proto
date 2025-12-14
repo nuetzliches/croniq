@@ -15,6 +15,10 @@ message HealthRequest {}
 
 message HealthResponse {
   string status = 1;
+  string provider = 2;
+  string db = 3;
+  string detail = 4;
+  string note = 5;
 }
 
 message TriggerJobRequest {
@@ -32,8 +36,9 @@ message UpsertScheduleRequest {
   string cron_expression = 3;
   string start_at_utc = 4;
   string end_at_utc = 5;
-  bool enabled = 6;
+  optional bool enabled = 6;
   map<string, string> metadata = 7;
+  string description = 8;
 }
 
 message UpsertScheduleResponse {
@@ -44,6 +49,8 @@ message UpsertScheduleResponse {
 
 message DeleteScheduleRequest {
   string trigger_id = 1;
+  string tenant_id = 2;
+  string environment_tag = 3;
 }
 
 message DeleteScheduleResponse {

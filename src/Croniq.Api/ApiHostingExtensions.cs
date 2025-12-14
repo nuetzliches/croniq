@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Globalization;
 using System.Linq;
+using System.Text.Json;
 using System.Threading.RateLimiting;
 using Croniq.Api.Models;
 using Croniq.Api.Security;
@@ -114,7 +115,7 @@ public static class ApiHostingExtensions
         });
 
         app.MapGet("/health", () => Results.Ok(new { status = "ok" }));
-        app.MapGet("/health/persistence", async (IServiceProvider sp, CancellationToken ct) =>
+        app.MapGet("/health/persistence", async ([FromServices] IServiceProvider sp, CancellationToken ct) =>
         {
             var provider = sp.GetService<IJobPersistenceProvider>();
             var providerName = provider?.GetType().FullName ?? "unknown";
@@ -143,7 +144,8 @@ public static class ApiHostingExtensions
 
         app.MapPost("/schedules", async (
             UpsertScheduleRequest request,
-            IJobPersistenceProvider store,
+            [FromServices] ICallerContextAccessor callerContextAccessor,
+            [FromServices] IJobPersistenceProvider store,
             CancellationToken cancellationToken) =>
         {
             if (string.IsNullOrWhiteSpace(request.JobKey) || string.IsNullOrWhiteSpace(request.CronExpression))
@@ -151,25 +153,35 @@ public static class ApiHostingExtensions
                 return Results.BadRequest(new { error = "invalid-request", message = "JobKey and CronExpression are required." });
             }
 
-            var parts = ParseJobKey(request.JobKey);
+            if (!JobKey.TryParse(request.JobKey, out var jobKey))
+            {
+                return Results.BadRequest(new { error = "invalid-job-key", message = "JobKey must follow the Croniq format." });
+            }
+
+            var authFailure = TenantGuard.EnsureJobScope(callerContextAccessor, jobKey, CroniqScopes.SchedulesWrite);
+            if (authFailure is not null)
+            {
+                return authFailure;
+            }
+
             var triggerId = string.IsNullOrWhiteSpace(request.TriggerId)
                 ? $"{request.JobKey}:{request.CronExpression}"
                 : request.TriggerId;
 
-            var scope = new PartitionScope(parts.TenantId, parts.EnvironmentTag);
+            var scope = new PartitionScope(jobKey.TenantId, jobKey.EnvironmentTag);
 
             var metadata = ToReadOnly(request.Metadata);
             var job = new JobDefinition(
-                request.JobKey,
-                parts.NamespaceSegment,
-                parts.JobName,
-                parts.Variant,
+                jobKey.Value,
+                jobKey.NamespaceSegment,
+                jobKey.JobName,
+                jobKey.Variant,
                 request.Description,
                 metadata);
 
             var trigger = new TriggerDefinition(
                 triggerId,
-                request.JobKey,
+                jobKey.Value,
                 request.CronExpression,
                 scope,
                 request.StartAtUtc,
@@ -179,7 +191,7 @@ public static class ApiHostingExtensions
 
             await store.UpsertJobAsync(job, cancellationToken).ConfigureAwait(false);
             await store.UpsertTriggerAsync(trigger, cancellationToken).ConfigureAwait(false);
-            ApiMetrics.RecordScheduleUpsert(parts.TenantId, parts.EnvironmentTag, request.JobKey);
+            ApiMetrics.RecordScheduleUpsert(jobKey.TenantId, jobKey.EnvironmentTag, jobKey.Value);
 
             return Results.Created($"/schedules/{trigger.TriggerId}", new { trigger.TriggerId, trigger.JobKey, trigger.ScheduleExpression });
         });
@@ -187,8 +199,8 @@ public static class ApiHostingExtensions
         app.MapGet("/tenants/{tenantId}/webhooks", async (
             string tenantId,
             string environment,
-            ICallerContextAccessor callerContextAccessor,
-            IWebhookPersistenceProvider? webhookStore,
+            [FromServices] ICallerContextAccessor callerContextAccessor,
+            [FromServices] IWebhookPersistenceProvider? webhookStore,
             CancellationToken cancellationToken) =>
         {
             if (string.IsNullOrWhiteSpace(environment))
@@ -218,10 +230,10 @@ public static class ApiHostingExtensions
             string environment,
             bool allowUnsigned,
             UpsertWebhookEndpointRequest request,
-            ICallerContextAccessor callerContextAccessor,
-            IWebhookPersistenceProvider? webhookStore,
-            IConfiguration configuration,
-            ILogger<WebhookEndpointApiMarker> logger,
+            [FromServices] ICallerContextAccessor callerContextAccessor,
+            [FromServices] IWebhookPersistenceProvider? webhookStore,
+            [FromServices] IConfiguration configuration,
+            [FromServices] ILogger<WebhookEndpointApiMarker> logger,
             CancellationToken cancellationToken) =>
         {
             if (string.IsNullOrWhiteSpace(environment))
@@ -304,8 +316,8 @@ public static class ApiHostingExtensions
             string tenantId,
             string hookKey,
             string environment,
-            ICallerContextAccessor callerContextAccessor,
-            IWebhookPersistenceProvider? webhookStore,
+            [FromServices] ICallerContextAccessor callerContextAccessor,
+            [FromServices] IWebhookPersistenceProvider? webhookStore,
             CancellationToken cancellationToken) =>
         {
             if (string.IsNullOrWhiteSpace(environment))
@@ -334,8 +346,8 @@ public static class ApiHostingExtensions
             string hookKey,
             string environment,
             RotateWebhookSecretRequest request,
-            IWebhookPersistenceProvider? webhookStore,
-            ICallerContextAccessor callerContextAccessor,
+            [FromServices] IWebhookPersistenceProvider? webhookStore,
+            [FromServices] ICallerContextAccessor callerContextAccessor,
             CancellationToken cancellationToken) =>
         {
             if (string.IsNullOrWhiteSpace(environment))
@@ -389,8 +401,8 @@ public static class ApiHostingExtensions
             string tenantId,
             string hookKey,
             string environment,
-            ICallerContextAccessor callerContextAccessor,
-            IWebhookPersistenceProvider? webhookStore,
+            [FromServices] ICallerContextAccessor callerContextAccessor,
+            [FromServices] IWebhookPersistenceProvider? webhookStore,
             CancellationToken cancellationToken) =>
         {
             if (string.IsNullOrWhiteSpace(environment))
@@ -420,8 +432,8 @@ public static class ApiHostingExtensions
             string hookKey,
             string environment,
             CreateWebhookIpRuleRequest request,
-            ICallerContextAccessor callerContextAccessor,
-            IWebhookPersistenceProvider? webhookStore,
+            [FromServices] ICallerContextAccessor callerContextAccessor,
+            [FromServices] IWebhookPersistenceProvider? webhookStore,
             HttpContext httpContext,
             CancellationToken cancellationToken) =>
         {
@@ -474,8 +486,8 @@ public static class ApiHostingExtensions
             string hookKey,
             long ruleId,
             string environment,
-            ICallerContextAccessor callerContextAccessor,
-            IWebhookPersistenceProvider? webhookStore,
+            [FromServices] ICallerContextAccessor callerContextAccessor,
+            [FromServices] IWebhookPersistenceProvider? webhookStore,
             HttpContext httpContext,
             CancellationToken cancellationToken) =>
         {
@@ -507,8 +519,8 @@ public static class ApiHostingExtensions
         app.MapGet("/tenants/{tenantId}/webhooks/deadletters", async (
             string tenantId,
             string environment,
-            ICallerContextAccessor callerContextAccessor,
-            IWebhookDeadLetterStore? deadLetterStore,
+            [FromServices] ICallerContextAccessor callerContextAccessor,
+            [FromServices] IWebhookDeadLetterStore? deadLetterStore,
             CancellationToken cancellationToken) =>
         {
             if (string.IsNullOrWhiteSpace(environment))
@@ -537,12 +549,12 @@ public static class ApiHostingExtensions
             string tenantId,
             long deadLetterId,
             string environment,
-            ICallerContextAccessor callerContextAccessor,
-            IWebhookDeadLetterStore? deadLetterStore,
-            IJobRegistry registry,
-            IJobExecutionPipeline pipeline,
-            IPolicyResolver policyResolver,
-            ILogger<WebhookDeadLetterApiMarker> logger,
+            [FromServices] ICallerContextAccessor callerContextAccessor,
+            [FromServices] IWebhookDeadLetterStore? deadLetterStore,
+            [FromServices] IJobRegistry registry,
+            [FromServices] IJobExecutionPipeline pipeline,
+            [FromServices] IPolicyResolver policyResolver,
+            [FromServices] ILogger<WebhookDeadLetterApiMarker> logger,
             CancellationToken cancellationToken) =>
         {
             if (string.IsNullOrWhiteSpace(environment))
@@ -622,8 +634,8 @@ public static class ApiHostingExtensions
             string tenantId,
             string clientId,
             string? environment,
-            ICallerContextAccessor callerContextAccessor,
-            IApiKeyStore apiKeyStore,
+            [FromServices] ICallerContextAccessor callerContextAccessor,
+            [FromServices] IApiKeyStore apiKeyStore,
             CancellationToken cancellationToken) =>
         {
             var authFailure = WebhookAuthorization.Ensure(callerContextAccessor, tenantId, environment, CroniqScopes.ApiKeysManage);
@@ -653,9 +665,9 @@ public static class ApiHostingExtensions
         app.MapPost("/tenants/{tenantId}/api-keys", async (
             string tenantId,
             IssueApiKeyRequest request,
-            ICallerContextAccessor callerContextAccessor,
-            IApiKeyStore apiKeyStore,
-            ILogger<ApiKeyAdminApiMarker> logger,
+            [FromServices] ICallerContextAccessor callerContextAccessor,
+            [FromServices] IApiKeyStore apiKeyStore,
+            [FromServices] ILogger<ApiKeyAdminApiMarker> logger,
             CancellationToken cancellationToken) =>
         {
             var authFailure = WebhookAuthorization.Ensure(callerContextAccessor, tenantId, request.EnvironmentTag, CroniqScopes.ApiKeysManage);
@@ -694,9 +706,9 @@ public static class ApiHostingExtensions
             string tenantId,
             string keyId,
             string? environment,
-            ICallerContextAccessor callerContextAccessor,
-            IApiKeyStore apiKeyStore,
-            ILogger<ApiKeyAdminApiMarker> logger,
+            [FromServices] ICallerContextAccessor callerContextAccessor,
+            [FromServices] IApiKeyStore apiKeyStore,
+            [FromServices] ILogger<ApiKeyAdminApiMarker> logger,
             CancellationToken cancellationToken) =>
         {
             var authFailure = WebhookAuthorization.Ensure(callerContextAccessor, tenantId, environment, CroniqScopes.ApiKeysManage);
@@ -726,8 +738,8 @@ public static class ApiHostingExtensions
             string tenantId,
             string keyId,
             string? environment,
-            ICallerContextAccessor callerContextAccessor,
-            IApiKeyStore apiKeyStore,
+            [FromServices] ICallerContextAccessor callerContextAccessor,
+            [FromServices] IApiKeyStore apiKeyStore,
             CancellationToken cancellationToken) =>
         {
             var authFailure = WebhookAuthorization.Ensure(callerContextAccessor, tenantId, environment, CroniqScopes.ApiKeysManage);
@@ -748,33 +760,70 @@ public static class ApiHostingExtensions
         app.MapGet("/executions/{executionId}/logs", async (
             string executionId,
             [FromServices] IExecutionLogReader reader,
-            HttpResponse response,
+            [FromServices] ICallerContextAccessor callerContextAccessor,
+            HttpContext httpContext,
             CancellationToken cancellationToken) =>
         {
-            response.ContentType = "application/x-ndjson";
-            var hasLines = false;
-            await foreach (var line in reader.ReadLinesAsync(executionId, cancellationToken))
+            await using var enumerator = reader.ReadLinesAsync(executionId, cancellationToken).GetAsyncEnumerator(cancellationToken);
+            if (!await enumerator.MoveNextAsync().ConfigureAwait(false))
             {
-                hasLines = true;
-                await response.WriteAsync(line, cancellationToken).ConfigureAwait(false);
-                await response.WriteAsync("\n", cancellationToken).ConfigureAwait(false);
+                await Results.NotFound(new { error = "execution-logs-not-found", executionId })
+                    .ExecuteAsync(httpContext)
+                    .ConfigureAwait(false);
+                return;
             }
 
-            if (!hasLines)
+            var firstLine = enumerator.Current;
+            if (!TryExtractExecutionScope(firstLine, out var tenantId, out var environmentTag))
             {
-                response.StatusCode = StatusCodes.Status404NotFound;
-                await response.WriteAsync($"execution logs not found for {executionId}", cancellationToken).ConfigureAwait(false);
+                await Results.Problem(
+                        statusCode: StatusCodes.Status500InternalServerError,
+                        title: "execution-log-invalid",
+                        detail: "Execution log entry missing tenant/environment metadata.")
+                    .ExecuteAsync(httpContext)
+                    .ConfigureAwait(false);
+                return;
+            }
+
+            var authFailure = TenantGuard.EnsureTenant(callerContextAccessor, tenantId!, environmentTag, Array.Empty<string>());
+            if (authFailure is not null)
+            {
+                await authFailure.ExecuteAsync(httpContext).ConfigureAwait(false);
+                return;
+            }
+
+            var response = httpContext.Response;
+            response.ContentType = "application/x-ndjson";
+            await response.WriteAsync(firstLine, cancellationToken).ConfigureAwait(false);
+            await response.WriteAsync("\n", cancellationToken).ConfigureAwait(false);
+
+            while (await enumerator.MoveNextAsync().ConfigureAwait(false))
+            {
+                await response.WriteAsync(enumerator.Current, cancellationToken).ConfigureAwait(false);
+                await response.WriteAsync("\n", cancellationToken).ConfigureAwait(false);
             }
         });
 
         app.MapPost("/jobs/trigger", async (
             TriggerJobRequest request,
-            IJobRegistry registry,
-            IJobExecutionPipeline pipeline,
-            IPolicyResolver policyResolver,
+            [FromServices] IJobRegistry registry,
+            [FromServices] IJobExecutionPipeline pipeline,
+            [FromServices] IPolicyResolver policyResolver,
+            [FromServices] ICallerContextAccessor callerContextAccessor,
             CancellationToken cancellationToken) =>
         {
-            if (!JobKey.TryParse(request.JobKey, out var jobKey) || !registry.TryGet(jobKey, out var descriptor))
+            if (!JobKey.TryParse(request.JobKey, out var jobKey))
+            {
+                return Results.BadRequest(new { error = "invalid-job-key", message = "JobKey must follow the Croniq format." });
+            }
+
+            var authFailure = TenantGuard.EnsureJobScope(callerContextAccessor, jobKey, CroniqScopes.JobsTrigger);
+            if (authFailure is not null)
+            {
+                return authFailure;
+            }
+
+            if (!registry.TryGet(jobKey, out var descriptor))
             {
                 return Results.NotFound(new { error = "job-not-registered", request.JobKey });
             }
@@ -868,15 +917,46 @@ public static class ApiHostingExtensions
         return services;
     }
 
-
-    private static (string TenantId, string EnvironmentTag, string NamespaceSegment, string JobName, string? Variant) ParseJobKey(string jobKey)
+    public static WebApplication MapCroniqSchedulerGrpc(this WebApplication app)
     {
-        if (!JobKey.TryParse(jobKey, out var parsed))
+        app.MapGrpcService<SchedulerGrpcService>();
+        return app;
+    }
+
+    private static bool TryExtractExecutionScope(string line, out string? tenantId, out string? environmentTag)
+    {
+        tenantId = null;
+        environmentTag = null;
+
+        if (string.IsNullOrWhiteSpace(line))
         {
-            throw new ArgumentException($"Invalid JobKey format: {jobKey}", nameof(jobKey));
+            return false;
         }
 
-        return (parsed.TenantId, parsed.EnvironmentTag, parsed.NamespaceSegment, parsed.JobName, parsed.Variant);
+        try
+        {
+            using var doc = JsonDocument.Parse(line);
+            foreach (var property in doc.RootElement.EnumerateObject())
+            {
+                if (tenantId is null && string.Equals(property.Name, "tenantId", StringComparison.OrdinalIgnoreCase))
+                {
+                    tenantId = property.Value.GetString();
+                }
+
+                if (environmentTag is null
+                    && (string.Equals(property.Name, "environmentTag", StringComparison.OrdinalIgnoreCase)
+                        || string.Equals(property.Name, "environment", StringComparison.OrdinalIgnoreCase)))
+                {
+                    environmentTag = property.Value.GetString();
+                }
+            }
+
+            return !string.IsNullOrWhiteSpace(tenantId);
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
     }
 
     private static IReadOnlyDictionary<string, string>? ToReadOnly(IDictionary<string, string>? source)

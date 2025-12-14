@@ -36,6 +36,7 @@ packages/
 *.nupkg
 *.snupkg
 *.localhistory/
+tools/.store/
 
 # Coverage / analysis
 *.coverage

@@ -41,6 +41,8 @@ public sealed class WebhookApiTestHost : IAsyncLifetime
 
     public RecordingJobExecutionPipeline Pipeline { get; } = new();
 
+    public TestExecutionLogReader ExecutionLogs { get; } = new();
+
     public FakeJobRegistry Registry { get; } = new();
 
     public FakePolicyResolver Policies { get; } = new();
@@ -88,6 +90,9 @@ public sealed class WebhookApiTestHost : IAsyncLifetime
         builder.Services.AddSingleton(Pipeline);
         builder.Services.AddSingleton<IJobExecutionPipeline>(sp => sp.GetRequiredService<RecordingJobExecutionPipeline>());
 
+        builder.Services.AddSingleton(ExecutionLogs);
+        builder.Services.AddSingleton<IExecutionLogReader>(sp => sp.GetRequiredService<TestExecutionLogReader>());
+
         builder.Services.AddSingleton(Registry);
         builder.Services.AddSingleton<IJobRegistry>(sp => sp.GetRequiredService<FakeJobRegistry>());
 
@@ -128,6 +133,7 @@ public sealed class WebhookApiTestHost : IAsyncLifetime
         Webhooks.Clear();
         DeadLetters.Clear();
         Pipeline.Clear();
+        ExecutionLogs.Clear();
         Registry.Clear();
         Policies.Reset();
         ApiKeys.Reset();

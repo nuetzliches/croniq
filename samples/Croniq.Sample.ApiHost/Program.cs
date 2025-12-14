@@ -79,6 +79,7 @@ if (swaggerEnabled)
 }
 
 app.UseCroniqApi();
+app.MapCroniqSchedulerGrpc();
 app.UseCroniqWebhooks(mapHealthEndpoints: false);
 
 var addresses = app.Urls?.Any() == true ? string.Join(", ", app.Urls) : "http://localhost:5000";

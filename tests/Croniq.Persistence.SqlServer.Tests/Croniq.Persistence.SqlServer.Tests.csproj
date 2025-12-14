@@ -9,6 +9,7 @@
     <ProjectReference Include="..\..\src\Croniq.Core\Croniq.Core.csproj" />
     <ProjectReference Include="..\..\src\Croniq.Persistence.Abstractions\Croniq.Persistence.Abstractions.csproj" />
     <ProjectReference Include="..\..\src\Croniq.Persistence.SqlServer\Croniq.Persistence.SqlServer.csproj" />
+    <ProjectReference Include="..\..\src\Croniq.Auth.SqlServer\Croniq.Auth.SqlServer.csproj" />
     <ProjectReference Include="..\Croniq.TestKit\Croniq.TestKit.csproj" />
   </ItemGroup>
   <ItemGroup>

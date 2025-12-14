@@ -22,5 +22,9 @@
     <PackageReference Include="OpenTelemetry.Instrumentation.Http" Version="1.14.0" />
     <PackageReference Include="OpenTelemetry.Instrumentation.Runtime" Version="1.14.0" />
     <PackageReference Include="Grpc.AspNetCore.Server" Version="2.71.0" />
+    <PackageReference Include="Grpc.Tools" Version="2.71.0" PrivateAssets="All" />
+  </ItemGroup>
+  <ItemGroup>
+    <Protobuf Include="..\Croniq.Rpc.Client\Protos\scheduler.proto" GrpcServices="Both" Link="Protos\scheduler.proto" />
   </ItemGroup>
 </Project>
