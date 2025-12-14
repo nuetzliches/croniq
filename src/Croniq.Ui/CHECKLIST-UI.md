@@ -7,6 +7,8 @@ Derived from [src/Croniq.Ui/docs/deep-dive/designs/angular-ui-concept.md](src/Cr
 - [x] Design Spike – produce wireframes and refreshed design tokens aligned with the concept doc. _(Wireframes captured in [src/Croniq.Ui/docs/deep-dive/designs/angular-ui-wireframes.md](src/Croniq.Ui/docs/deep-dive/designs/angular-ui-wireframes.md); token inventory drafted, awaiting stakeholder review.)_
 - [x] Design Spike – finalize Tailwind theme plus typography approvals with stakeholders. _(Theme + typographic tokens documented in [src/Croniq.Ui/docs/deep-dive/designs/angular-ui-theme.md](src/Croniq.Ui/docs/deep-dive/designs/angular-ui-theme.md); awaiting stakeholder sign-off recorded there.)_
 - [ ] Scaffolding & Auth – initialize the Angular workspace in `src/Croniq.Ui`, configure MCP helper tasks, and wire the OIDC stub with the tenant switcher. _(Plan documented in [src/Croniq.Ui/docs/deep-dive/designs/angular-ui-scaffolding.md](src/Croniq.Ui/docs/deep-dive/designs/angular-ui-scaffolding.md); pending execution of `ng new`, library generation, Tailwind tokens, and OIDC stub.)_
+  - [ ] Auth session persistence: store the opaque Croniq session token in `sessionStorage` only; never persist refresh data in `localStorage`/IndexedDB. _(Documented in [AUTH.md](src/Croniq.Ui/docs/deep-dive/AUTH.md), includes TODO to rotate keys during logout.)_
+  - [ ] OAuth/OIDC expansion: leave hooks for PKCE/OIDC bootstrap (deferred) so we can swap session auth for standards-based login once backend is ready.
 - [ ] MVP Data Surfaces – deliver the dashboard metrics (stubbed), schedules read-only grid, and job registry view.
 - [ ] Admin Controls – implement CRUD for schedules, webhooks, and API keys, including dead-letter replay wiring.
 - [ ] Observability & Polish – embed Grafana/log pulse views and complete the accessibility plus localization review.
@@ -39,7 +41,7 @@ Derived from [src/Croniq.Ui/docs/deep-dive/designs/angular-ui-concept.md](src/Cr
 
 ## Data Access & State
 
-- [ ] Generate REST clients via OpenAPI (or gRPC-Web bridge) and wrap them in the shared `ApiClient` service that injects telemetry headers. _(In progress: runtime-safe models now live in `projects/api-schema`, the generator script `npm run generate:openapi` emits `public/swagger.json`; next step is feeding that spec into `openapi-zod-client` and wiring the shared `ApiClient`.)_
+- [ ] Generate REST clients via OpenAPI (or gRPC-Web bridge) and wrap them in the shared `ApiClient` service that injects telemetry headers. _(In progress: runtime-safe models now live in `projects/api-schema`, the generator script `npm run generate:openapi` emits `public/swagger.json`. `CroniqApiClient` now powers feature stores for schedules, jobs, tenants, and webhooks — see [src/app/features/\*\*/](src/Croniq.Ui/src/app/features) for the new stores; remaining work is telemetry headers + response schemas for non-schedule payloads.)_
 - [ ] Configure Angular Query caches, refetch policies, and tenant/env scoping helpers.
 - [ ] Persist non-sensitive preferences (theme, table density) per tenant using IndexedDB with optional encryption.
 
