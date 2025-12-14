@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Reflection;
 using Croniq.Api;
@@ -24,6 +25,33 @@ builder.Services.AddCroniqWebhookRateLimiter();
 var otelBuilder = builder.Services.AddCroniqApiObservability(
     builder.Configuration,
     builder.Logging);
+
+var corsPolicyName = "CroniqSampleApiCors";
+var allowedOrigins = builder.Configuration
+    .GetSection("Croniq:Sample:Api:Cors:AllowedOrigins")
+    .Get<string[]>() ?? Array.Empty<string>();
+
+builder.Services.AddCors(options =>
+{
+    options.AddPolicy(corsPolicyName, policy =>
+    {
+        if (allowedOrigins.Length == 0)
+        {
+            if (builder.Environment.IsDevelopment())
+            {
+                policy.AllowAnyOrigin().AllowAnyHeader().AllowAnyMethod();
+                return;
+            }
+
+            throw new InvalidOperationException("Croniq:Sample:Api:Cors:AllowedOrigins must be configured outside Development.");
+        }
+
+        policy
+            .WithOrigins(allowedOrigins)
+            .AllowAnyHeader()
+            .AllowAnyMethod();
+    });
+});
 
 // Persist execution logs locally for the sample host; production can swap to object storage or disable this.
 builder.Logging.AddCroniqExecutionLogSink();
@@ -78,6 +106,7 @@ if (swaggerEnabled)
     app.MapGrpcReflectionService();
 }
 
+app.UseCors(corsPolicyName);
 app.UseCroniqApi();
 app.MapCroniqSchedulerGrpc();
 app.UseCroniqWebhooks(mapHealthEndpoints: false);
