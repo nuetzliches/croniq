@@ -5,6 +5,12 @@
     <Nullable>enable</Nullable>
   </PropertyGroup>
   <ItemGroup>
-    <None Include="Protos\scheduler.proto" />
+    <PackageReference Include="Grpc.Tools" Version="2.71.0" PrivateAssets="All" />
+    <PackageReference Include="Grpc.Net.Client" Version="2.71.0" />
+    <PackageReference Include="Grpc.Net.ClientFactory" Version="2.71.0" />
+    <PackageReference Include="Google.Protobuf" Version="3.27.1" />
+  </ItemGroup>
+  <ItemGroup>
+    <Protobuf Include="Protos\scheduler.proto" GrpcServices="Client" />
   </ItemGroup>
 </Project>
