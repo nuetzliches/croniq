@@ -101,6 +101,15 @@
 - [x] Logging-Guidelines in `docs/deep-dive/observability.md` verankern (Level-Definitionen, wann loggen, Noisy-Patterns vermeiden, Payload-/PII-Hinweise, strukturierte Templates).
 - [x] Smoke-/Devstack-Check: Samples (InMemory/SqlServer) mit Overrides starten und verifizieren, dass keine Request- oder EF-Spam-Logs mehr auf `Information` landen.
 
+# Security / Tenant-Isolation (2025-12-14)
+
+- [ ] Wie stellen wir eigentlich sicher, dass User nur auf zugewiesene Tenants zugreifen können?
+  - [ ] Audit aller API/gRPC-Endpunkte auf Tenant-Enforcement (Route/Query/metadata vs. CallerContext.TenantId) und 403 bei Mismatch.
+  - [ ] Zentralen Tenant-Guard (Middleware/Filter) ergänzen, der den Abgleich erzwingt.
+  - [ ] Integrationstests “cross-tenant access denied” (REST + gRPC) hinzufügen.
+  - [ ] OIDC-Config härten: required scopes + tenant-claim Pflicht, andernfalls 401/403.
+  - [ ] Docs notieren: Keys bleiben single-tenant; Cross-Tenant nur via Admin/Ops-Identitäten mit strengen Guards.
+
 # Prüfen, beantworten, ggf. umsetzen
 
 - [x] Können wir die Konfiguration des `otelBuilder` in `samples\Croniq.Sample.WorkerHost\Program.cs` so vereinfachen wie in `samples\Croniq.Sample.ApiHost\Program.cs`?
