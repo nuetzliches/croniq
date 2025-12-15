@@ -2,6 +2,8 @@
 
 This document expands the backlog captured in `architecture.md` and describes the work required to satisfy the checklist item "Kubernetes Chart (charts/croniq) als Backlog-Platzhalter vorbereiten".
 
+> **Status (2025-12-15)**: Implementation work is deferred until a stakeholder explicitly requests Kubernetes delivery. The backlog below remains as a parking lot and should not start without a fresh kickoff signal.
+
 ## Objectives
 
 - Provide a single Helm chart (or Kustomize base) that deploys Croniq API, worker(s), optional UI, and dependencies (SQL Server, observability sidecars) across dev/stage/prod clusters.
