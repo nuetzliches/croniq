@@ -57,6 +57,36 @@ internal static class TenantGuard
         return null;
     }
 
+    internal static IResult? EnsureAdminScopes(
+        ICallerContextAccessor callerAccessor,
+        params string[] requiredScopes)
+    {
+        if (callerAccessor is null)
+        {
+            throw new ArgumentNullException(nameof(callerAccessor));
+        }
+
+        var caller = callerAccessor.Current;
+        if (caller is null)
+        {
+            return Results.Problem(
+                statusCode: StatusCodes.Status401Unauthorized,
+                title: "unauthorized",
+                detail: "Caller context is not available for this request.");
+        }
+
+        if (requiredScopes is { Length: > 0 } && !HasAllScopes(caller, requiredScopes))
+        {
+            var scopeList = string.Join(", ", requiredScopes);
+            return Results.Problem(
+                statusCode: StatusCodes.Status403Forbidden,
+                title: "insufficient-scope",
+                detail: $"Scope(s) {scopeList} are required for this operation.");
+        }
+
+        return null;
+    }
+
     internal static IResult? EnsureJobScope(
         ICallerContextAccessor callerAccessor,
         JobKey jobKey,

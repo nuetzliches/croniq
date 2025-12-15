@@ -1,3 +1,4 @@
+using System;
 using Croniq.Auth.Abstractions;
 using Croniq.Auth.Core;
 using Croniq.Auth.SqlServer;
@@ -113,14 +114,23 @@ public static class PlatformHostingExtensions
                     Scopes: new[]
                     {
                         CroniqScopes.SchedulesWrite,
+                        CroniqScopes.JobsRead,
                         CroniqScopes.JobsTrigger,
                         CroniqScopes.WebhooksRead,
                         CroniqScopes.WebhooksWrite,
                         CroniqScopes.WebhooksRotate,
                         CroniqScopes.WebhooksDeadLetter,
-                        CroniqScopes.ApiKeysManage
+                        CroniqScopes.ApiKeysManage,
+                        CroniqScopes.TenantsAdmin
                     },
                     ClientId: "default"));
+
+                options.Tenants.Add(new TenantSeed(
+                    TenantId: authOpts.InMemory.TenantId,
+                    Reference: authOpts.InMemory.TenantId,
+                    Name: $"{authOpts.InMemory.TenantId} (in-memory)",
+                    IsActive: true,
+                    CreatedAtUtc: DateTimeOffset.UtcNow));
             });
         }
 

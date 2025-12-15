@@ -292,6 +292,7 @@ public sealed record ApiKeySeed(
 public sealed class InMemoryApiKeyStoreOptions
 {
     public IList<ApiKeySeed> ApiKeys { get; } = new List<ApiKeySeed>();
+    public IList<TenantSeed> Tenants { get; } = new List<TenantSeed>();
 }
 
 public sealed class InMemoryApiKeyStore : IApiKeyStore
@@ -625,13 +626,27 @@ public static class AuthCoreServiceCollectionExtensions
     {
         var options = new InMemoryApiKeyStoreOptions();
         configure?.Invoke(options);
+        var tenantSeeds = options.Tenants.Count > 0
+            ? options.Tenants.ToArray()
+            : BuildTenantSeeds(options.ApiKeys).ToArray();
 
         services.AddOptions<CroniqOidcOptions>();
         services.AddOptions<CroniqTokenOptions>();
         services.AddScoped<ICallerContextAccessor, CallerContextAccessor>();
+        services.AddSingleton<ITenantStore>(_ => new InMemoryTenantStore(tenantSeeds));
         services.AddSingleton<IApiKeyStore>(_ => new InMemoryApiKeyStore(options.ApiKeys));
         services.AddScoped<ICallerContextFactory, CallerContextFactory>();
         services.AddSingleton<ICroniqTokenIssuer, CroniqTokenIssuer>();
         return services;
+    }
+
+    private static IEnumerable<TenantSeed> BuildTenantSeeds(IEnumerable<ApiKeySeed> apiKeys)
+    {
+        var now = DateTimeOffset.UtcNow;
+        return apiKeys
+            .Select(seed => seed.TenantId)
+            .Where(id => !string.IsNullOrWhiteSpace(id))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Select(id => new TenantSeed(id!, id!.Trim(), id!.Trim(), true, now));
     }
 }

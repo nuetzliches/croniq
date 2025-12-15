@@ -33,6 +33,7 @@ public static class ServiceCollectionExtensions
 
         services.AddCroniqSqlServerDbContext(configureSql);
         services.AddSingleton<IApiKeyStore, SqlServerApiKeyStore>();
+        services.AddSingleton<ITenantStore, SqlServerTenantStore>();
         services.AddOptions<CroniqTokenOptions>();
         services.AddSingleton<ICroniqTokenIssuer, CroniqTokenIssuer>();
         return services;

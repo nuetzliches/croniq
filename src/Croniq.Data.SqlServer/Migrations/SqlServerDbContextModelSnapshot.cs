@@ -139,6 +139,43 @@ namespace Croniq.Data.SqlServer.Migrations
                     b.ToTable("ApiKeys", "croniq");
                 });
 
+            modelBuilder.Entity("Croniq.Data.SqlServer.Entities.TenantEntity", b =>
+                {
+                    b.Property<string>("TenantId")
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("datetime2")
+                        .HasDefaultValueSql("sysutcdatetime()");
+
+                    b.Property<bool>("IsActive")
+                        .HasColumnType("bit");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("nvarchar(256)");
+
+                    b.Property<string>("Reference")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
+                    b.Property<DateTime>("UpdatedAtUtc")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("datetime2")
+                        .HasDefaultValueSql("sysutcdatetime()");
+
+                    b.HasKey("TenantId");
+
+                    b.HasIndex("Reference")
+                        .IsUnique();
+
+                    b.ToTable("Tenants", "croniq");
+                });
+
             modelBuilder.Entity("Croniq.Data.SqlServer.Entities.DeadLetterEntity", b =>
                 {
                     b.Property<long>("Id")

@@ -19,9 +19,11 @@ public sealed class SqlServerDbContext(DbContextOptions<SqlServerDbContext> opti
     public DbSet<WebhookDeadLetterEntity> WebhookDeadLetters => Set<WebhookDeadLetterEntity>();
     public DbSet<WebhookSecretHistoryEntity> WebhookSecretHistory => Set<WebhookSecretHistoryEntity>();
     public DbSet<WebhookEndpointIpRuleEntity> WebhookEndpointIpRules => Set<WebhookEndpointIpRuleEntity>();
+    public DbSet<TenantEntity> Tenants => Set<TenantEntity>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
+        ConfigureTenants(modelBuilder.Entity<TenantEntity>());
         ConfigureJobs(modelBuilder.Entity<JobEntity>());
         ConfigureTriggers(modelBuilder.Entity<TriggerEntity>());
         ConfigureDeadLetters(modelBuilder.Entity<DeadLetterEntity>());
@@ -32,6 +34,15 @@ public sealed class SqlServerDbContext(DbContextOptions<SqlServerDbContext> opti
         ConfigureWebhookEndpointEvents(modelBuilder.Entity<WebhookEndpointEventEntity>());
         ConfigureWebhookSecretHistory(modelBuilder.Entity<WebhookSecretHistoryEntity>());
         ConfigureWebhookEndpointIpRules(modelBuilder.Entity<WebhookEndpointIpRuleEntity>());
+    }
+
+    private static void ConfigureTenants(EntityTypeBuilder<TenantEntity> builder)
+    {
+        builder.ToTable("Tenants", "croniq");
+        builder.HasKey(x => x.TenantId);
+        builder.HasIndex(x => x.Reference).IsUnique();
+        builder.Property(x => x.CreatedAtUtc).HasDefaultValueSql("sysutcdatetime()");
+        builder.Property(x => x.UpdatedAtUtc).HasDefaultValueSql("sysutcdatetime()");
     }
 
     private static void ConfigureJobs(EntityTypeBuilder<JobEntity> builder)
