@@ -117,5 +117,6 @@
 
 # Prüfen, beantworten, ggf. umsetzen
 
+- [ ] In den der Croniq.Api fehlen noch weitere Endpunkte, z.B. zur Verwaltung von Jobs. Bitte prüfe, was uns noch fehlt und dokumentiere diese hier.
 - [x] Können wir die Konfiguration des `otelBuilder` in `samples\Croniq.Sample.WorkerHost\Program.cs` so vereinfachen wie in `samples\Croniq.Sample.ApiHost\Program.cs`?
 - [x] `src\Croniq.Core\Execution\IJobExecutionPipeline.cs` Naming-Check abgeschlossen: Für das aktuelle Scope bleibt das Interface job-spezifisch; Workflows würden ein eigenes Interface (`IWorkflowExecutionPipeline`) oder einen generischen `IExecutionPipeline` erhalten, sobald das Feature gestartet wird. Kein sofortiger Umbau nötig.
