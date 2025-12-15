@@ -3,6 +3,7 @@ bin/
 obj/
 out/
 artifacts/
+!src/Croniq.Ui/artifacts/
 TestResults/
 [Rr]elease/
 [Dd]ebug/

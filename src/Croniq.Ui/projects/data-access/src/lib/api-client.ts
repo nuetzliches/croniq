@@ -3,13 +3,11 @@ import { EnvironmentProviders, InjectionToken, Provider, inject, makeEnvironment
 
 import {
     CreateWebhookIpRuleRequest,
-    ExecutionsApi,
     HealthApi,
     IssueApiKeyRequest,
     JobsApi,
     RotateWebhookSecretRequest,
     ScheduleListResponse,
-    SchedulesApi,
     TenantsApi,
     TriggerJobRequest,
     UpsertScheduleRequest,
@@ -36,14 +34,13 @@ import type {
 import type { EndpointCallConfig } from './endpoint-executor';
 import { EndpointExecutor, requireEndpoint } from './endpoint-executor';
 
+const TENANT_LIST_SCHEDULES_ENDPOINT = requireEndpoint(TenantsApi, 'get', '/tenants/:tenantId/schedules');
 const LIST_SCHEDULES_ENDPOINT: EndpointDefinition = {
-    method: 'get',
-    path: '/tenants/:tenantId/schedules',
-    requestFormat: 'json',
+    ...TENANT_LIST_SCHEDULES_ENDPOINT,
     response: scheduleListResponseSchema,
 };
 
-const UPSERT_SCHEDULE_ENDPOINT = requireEndpoint(SchedulesApi, 'post', '/tenants/:tenantId/schedules');
+const UPSERT_SCHEDULE_ENDPOINT = requireEndpoint(TenantsApi, 'post', '/tenants/:tenantId/schedules');
 const TRIGGER_JOB_ENDPOINT = requireEndpoint(JobsApi, 'post', '/jobs/trigger');
 
 const TENANT_ENDPOINTS = {
@@ -76,7 +73,7 @@ const TENANT_ENDPOINTS = {
 
 const INVOKE_WEBHOOK_ENDPOINT = requireEndpoint(WebhooksApi, 'post', '/webhooks/:hookKey');
 const EXECUTION_LOG_ENDPOINT = requireEndpoint(
-    ExecutionsApi,
+    TenantsApi,
     'get',
     '/tenants/:tenantId/executions/:executionId/logs',
 );

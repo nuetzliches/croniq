@@ -43,3 +43,9 @@ __screenshots__/
 # System files
 .DS_Store
 Thumbs.db
+
+# Artifacts
+artifacts/*
+!artifacts/.gitkeep
+!artifacts/README.md
+!artifacts/swagger.json

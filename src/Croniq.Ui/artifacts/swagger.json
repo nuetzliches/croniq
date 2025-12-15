@@ -1,0 +1,907 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "Croniq API Snapshot",
+    "version": "0.1.0"
+  },
+  "servers": [
+    {
+      "url": "https://api.croniq.dev"
+    }
+  ],
+  "paths": {
+    "/jobs/trigger": {
+      "post": {
+        "operationId": "triggerJob",
+        "tags": ["Jobs"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TriggerJobRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "204": {
+            "description": "Job triggered"
+          }
+        }
+      }
+    },
+    "/tenants/{tenantId}/schedules": {
+      "get": {
+        "operationId": "listSchedules",
+        "tags": ["Schedules"],
+        "parameters": [
+          {
+            "name": "tenantId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Tenant schedule list",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScheduleListResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "operationId": "upsertSchedule",
+        "tags": ["Schedules"],
+        "parameters": [
+          {
+            "name": "tenantId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpsertScheduleRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "204": {
+            "description": "Schedule upserted"
+          }
+        }
+      }
+    },
+    "/tenants/{tenantId}/api-clients/{clientId}": {
+      "get": {
+        "operationId": "getTenantApiClient",
+        "tags": ["Tenants"],
+        "parameters": [
+          {
+            "name": "tenantId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "clientId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "environment",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Tenant API client"
+          }
+        }
+      }
+    },
+    "/tenants/{tenantId}/api-keys": {
+      "post": {
+        "operationId": "issueApiKey",
+        "tags": ["Tenants"],
+        "parameters": [
+          {
+            "name": "tenantId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/IssueApiKeyRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "204": {
+            "description": "API key issued"
+          }
+        }
+      }
+    },
+    "/tenants/{tenantId}/api-keys/{keyId}": {
+      "delete": {
+        "operationId": "deleteApiKey",
+        "tags": ["Tenants"],
+        "parameters": [
+          {
+            "name": "tenantId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "keyId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "environment",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "API key deleted"
+          }
+        }
+      }
+    },
+    "/tenants/{tenantId}/api-keys/{keyId}/rotate": {
+      "post": {
+        "operationId": "rotateApiKey",
+        "tags": ["Tenants"],
+        "parameters": [
+          {
+            "name": "tenantId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "keyId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "environment",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "API key rotated"
+          }
+        }
+      }
+    },
+    "/tenants/{tenantId}/webhooks": {
+      "get": {
+        "operationId": "listWebhooks",
+        "tags": ["Tenants"],
+        "parameters": [
+          {
+            "name": "tenantId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "environment",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Tenant webhooks"
+          }
+        }
+      },
+      "post": {
+        "operationId": "upsertWebhook",
+        "tags": ["Tenants"],
+        "parameters": [
+          {
+            "name": "tenantId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "environment",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "allowUnsigned",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpsertWebhookEndpointRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "204": {
+            "description": "Webhook upserted"
+          }
+        }
+      }
+    },
+    "/tenants/{tenantId}/webhooks/{hookKey}": {
+      "delete": {
+        "operationId": "deleteWebhook",
+        "tags": ["Tenants"],
+        "parameters": [
+          {
+            "name": "tenantId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "hookKey",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "environment",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Webhook deleted"
+          }
+        }
+      }
+    },
+    "/tenants/{tenantId}/webhooks/{hookKey}/ip-rules": {
+      "get": {
+        "operationId": "listWebhookIpRules",
+        "tags": ["Tenants"],
+        "parameters": [
+          {
+            "name": "tenantId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "hookKey",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "environment",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "IP rules"
+          }
+        }
+      },
+      "post": {
+        "operationId": "createWebhookIpRule",
+        "tags": ["Tenants"],
+        "parameters": [
+          {
+            "name": "tenantId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "hookKey",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "environment",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateWebhookIpRuleRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "204": {
+            "description": "IP rule created"
+          }
+        }
+      }
+    },
+    "/tenants/{tenantId}/webhooks/{hookKey}/ip-rules/{ruleId}": {
+      "delete": {
+        "operationId": "deleteWebhookIpRule",
+        "tags": ["Tenants"],
+        "parameters": [
+          {
+            "name": "tenantId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "hookKey",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "ruleId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "environment",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "IP rule deleted"
+          }
+        }
+      }
+    },
+    "/tenants/{tenantId}/webhooks/{hookKey}/rotate-secret": {
+      "post": {
+        "operationId": "rotateWebhookSecret",
+        "tags": ["Tenants"],
+        "parameters": [
+          {
+            "name": "tenantId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "hookKey",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "environment",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RotateWebhookSecretRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "204": {
+            "description": "Secret rotation scheduled"
+          }
+        }
+      }
+    },
+    "/tenants/{tenantId}/webhooks/deadletters": {
+      "get": {
+        "operationId": "listWebhookDeadLetters",
+        "tags": ["Tenants"],
+        "parameters": [
+          {
+            "name": "tenantId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "environment",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Dead letter list"
+          }
+        }
+      }
+    },
+    "/tenants/{tenantId}/webhooks/deadletters/{deadLetterId}/replay": {
+      "post": {
+        "operationId": "replayWebhookDeadLetter",
+        "tags": ["Tenants"],
+        "parameters": [
+          {
+            "name": "tenantId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "deadLetterId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "environment",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Dead letter replayed"
+          }
+        }
+      }
+    },
+    "/webhooks/{hookKey}": {
+      "post": {
+        "operationId": "invokeWebhook",
+        "tags": ["Webhooks"],
+        "parameters": [
+          {
+            "name": "hookKey",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Webhook invoked"
+          }
+        }
+      }
+    },
+    "/tenants/{tenantId}/executions/{executionId}/logs": {
+      "get": {
+        "operationId": "fetchExecutionLogs",
+        "tags": ["Executions"],
+        "parameters": [
+          {
+            "name": "tenantId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "executionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Execution log stream"
+          }
+        }
+      }
+    },
+    "/health": {
+      "get": {
+        "operationId": "checkServiceHealth",
+        "tags": ["Health"],
+        "responses": {
+          "200": {
+            "description": "Service health"
+          }
+        }
+      }
+    },
+    "/health/persistence": {
+      "get": {
+        "operationId": "checkPersistenceHealth",
+        "tags": ["Health"],
+        "responses": {
+          "200": {
+            "description": "Persistence health"
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "TriggerJobRequest": {
+        "type": "object",
+        "required": ["jobKey"],
+        "properties": {
+          "jobKey": {
+            "type": "string",
+            "minLength": 1
+          },
+          "metadata": {
+            "type": "object",
+            "nullable": true,
+            "additionalProperties": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "UpsertScheduleRequest": {
+        "type": "object",
+        "required": ["jobKey", "cronExpression"],
+        "properties": {
+          "jobKey": {
+            "type": "string",
+            "minLength": 1
+          },
+          "cronExpression": {
+            "type": "string",
+            "minLength": 1
+          },
+          "triggerId": {
+            "type": "string",
+            "nullable": true
+          },
+          "startAtUtc": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "endAtUtc": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "description": {
+            "type": "string",
+            "nullable": true
+          },
+          "metadata": {
+            "type": "object",
+            "nullable": true,
+            "additionalProperties": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "UpsertWebhookEndpointRequest": {
+        "type": "object",
+        "required": ["hookKey", "jobKey"],
+        "properties": {
+          "hookKey": {
+            "type": "string",
+            "minLength": 1
+          },
+          "jobKey": {
+            "type": "string",
+            "minLength": 1
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "requireSignature": {
+            "type": "boolean"
+          },
+          "requestsPerMinute": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "secret": {
+            "type": "string",
+            "nullable": true
+          },
+          "metadata": {
+            "type": "object",
+            "nullable": true,
+            "additionalProperties": {
+              "type": "string"
+            }
+          },
+          "signatureVersion": {
+            "type": "integer",
+            "format": "int32"
+          }
+        }
+      },
+      "RotateWebhookSecretRequest": {
+        "type": "object",
+        "properties": {
+          "activateInSeconds": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "gracePeriodSeconds": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "notes": {
+            "type": "string",
+            "nullable": true
+          }
+        }
+      },
+      "CreateWebhookIpRuleRequest": {
+        "type": "object",
+        "required": ["cidr"],
+        "properties": {
+          "cidr": {
+            "type": "string",
+            "minLength": 1
+          },
+          "description": {
+            "type": "string",
+            "nullable": true
+          }
+        }
+      },
+      "IssueApiKeyRequest": {
+        "type": "object",
+        "required": ["clientId"],
+        "properties": {
+          "clientId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "environmentTag": {
+            "type": "string",
+            "nullable": true
+          },
+          "scopes": {
+            "type": "array",
+            "nullable": true,
+            "items": {
+              "type": "string"
+            }
+          },
+          "ttlHours": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          }
+        }
+      },
+      "ScheduleSummary": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "tenant",
+          "cron",
+          "timezone",
+          "owner",
+          "state",
+          "nextFire",
+          "lastDurationMs",
+          "alerts"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "tenant": {
+            "type": "string",
+            "minLength": 1
+          },
+          "cron": {
+            "type": "string",
+            "minLength": 1
+          },
+          "timezone": {
+            "type": "string",
+            "minLength": 1
+          },
+          "owner": {
+            "type": "string",
+            "minLength": 1
+          },
+          "state": {
+            "type": "string",
+            "enum": ["active", "paused", "degraded"]
+          },
+          "nextFire": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "lastDurationMs": {
+            "type": "number",
+            "minimum": 0
+          },
+          "alerts": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "tags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "default": []
+          }
+        }
+      },
+      "ScheduleListResponse": {
+        "type": "object",
+        "required": ["items", "total", "updatedAt"],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ScheduleSummary"
+            }
+          },
+          "total": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      }
+    }
+  }
+}

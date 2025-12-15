@@ -82,3 +82,8 @@ Derived from [src/Croniq.Ui/docs/deep-dive/designs/angular-ui-concept.md](src/Cr
 - [ ] Choose hosting domain strategy (shared with Croniq.Api vs. `ui.croniq.dev`) for cookie reuse and CSP constraints.
 - [ ] Determine timeline for multi-tenant impersonation features before GA.
 - [ ] Define prefetch strategy (hover-driven vs. manual fetch) balancing responsiveness and API load; document final call in the concept doc.
+
+# Next Steps (2025-12-15)
+
+Exercise the issuance flow against a live environment (npm run start + backend) to validate headers and confirm whether the secret appears in the response.
+If/once the backend returns the token payload, extend the token service schema extraction with the factual shape and consider adding end-to-end tests around it.

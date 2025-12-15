@@ -1,7 +1,27 @@
+import { existsSync } from 'node:fs';
+import { resolve } from 'node:path';
+
 import type { TemplateContextOptions } from 'openapi-zod-client';
 import type { Options as PrettierOptions } from 'prettier';
 
-const OPENAPI_URL = process.env.CRONIQ_OPENAPI_URL ?? 'http://localhost:5000/swagger/v1/swagger.json';
+const DEFAULT_OPENAPI_ENDPOINT = 'http://localhost:5000/swagger/v1/swagger.json';
+const SNAPSHOT_RELATIVE_PATH = 'artifacts/swagger.json';
+
+function resolveOpenApiInput(): string {
+    const envOverride = process.env.CRONIQ_OPENAPI_URL?.trim();
+    if (envOverride) {
+        return envOverride;
+    }
+
+    const snapshotPath = resolve(process.cwd(), SNAPSHOT_RELATIVE_PATH);
+    if (existsSync(snapshotPath)) {
+        return snapshotPath;
+    }
+
+    return DEFAULT_OPENAPI_ENDPOINT;
+}
+
+const OPENAPI_INPUT = resolveOpenApiInput();
 const OUTPUT_DIR = 'projects/api-schema/generated';
 const OUTPUT_FILE = `${OUTPUT_DIR}/schemas.ts`;
 const ENDPOINT_OUTPUT_DIR = `${OUTPUT_DIR}/endpoints`;
@@ -37,7 +57,7 @@ const sharedPrettierConfig: PrettierOptions = {
 const config: SchemaGenerationConfig[] = [
     {
         mode: 'single',
-        input: OPENAPI_URL,
+        input: OPENAPI_INPUT,
         output: OUTPUT_FILE,
         template: SCHEMAS_TEMPLATE,
         prettier: sharedPrettierConfig,
@@ -50,7 +70,7 @@ const config: SchemaGenerationConfig[] = [
     {
         mode: 'split',
         groupBy: 'path',
-        input: OPENAPI_URL,
+        input: OPENAPI_INPUT,
         output: ENDPOINT_OUTPUT_DIR,
         template: ENDPOINT_TEMPLATE,
         prettier: sharedPrettierConfig,

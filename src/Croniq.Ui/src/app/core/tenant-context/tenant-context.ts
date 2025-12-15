@@ -3,6 +3,7 @@ import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@a
 
 import { AuthSessionService } from '../auth/auth-session.service';
 import { OperatorSession } from '../auth/operator-session';
+import { TenantTokenEndpointService } from '../auth/token-endpoint.service';
 import { TenantContextService } from './tenant-context.service';
 import { TenantEnvironment } from './tenant-context.types';
 
@@ -16,7 +17,11 @@ export class TenantContext {
   private readonly tenantContext = inject(TenantContextService);
   private readonly operatorSession = inject(OperatorSession);
   private readonly authSession = inject(AuthSessionService);
+  private readonly tenantTokenEndpoint = inject(TenantTokenEndpointService);
   readonly oidcBootstrapBusy = signal(false);
+  readonly tokenIssuanceBusy = signal(false);
+  readonly tokenIssuanceStatus = signal<string | null>(null);
+  readonly tokenIssuanceError = signal<string | null>(null);
 
   readonly snapshot = this.tenantContext.snapshot;
   readonly operatorProfile = this.operatorSession.profile;
@@ -99,6 +104,66 @@ export class TenantContext {
     this.authSession.clearApiKey();
   }
 
+  async issueTenantToken(
+    clientIdInput: HTMLInputElement,
+    ttlInput: HTMLInputElement,
+    scopesInput: HTMLInputElement,
+    labelInput: HTMLInputElement,
+    storeResultInput: HTMLInputElement,
+  ): Promise<void> {
+    if (this.tokenIssuanceBusy()) {
+      return;
+    }
+
+    const clientId = clientIdInput.value.trim();
+    if (!clientId) {
+      this.tokenIssuanceError.set('Client ID ist erforderlich, um einen Token anzufordern.');
+      return;
+    }
+
+    const ttlHours = this.parseNumber(ttlInput.value);
+    const scopes = this.parseScopes(scopesInput.value);
+    const label = labelInput.value?.trim() || null;
+    const persist = storeResultInput.checked;
+    const snapshot = this.snapshot();
+
+    this.tokenIssuanceBusy.set(true);
+    this.tokenIssuanceError.set(null);
+    this.tokenIssuanceStatus.set(null);
+
+    try {
+      const fallbackExpiry = this.estimateExpiry(ttlHours);
+      const result = await this.tenantTokenEndpoint.issueTenantToken({
+        tenantId: snapshot.tenantId,
+        clientId,
+        environmentTag: snapshot.environment,
+        scopes,
+        ttlHours,
+        label,
+        persistInSession: persist,
+        fallbackExpiry,
+      });
+
+      if (result.storedInSession) {
+        this.tokenIssuanceStatus.set('Token ausgegeben und sicher in der Sitzung gespeichert.');
+      } else if (result.token) {
+        this.tokenIssuanceStatus.set('Token ausgegeben – bitte sofort sicher notieren.');
+      } else {
+        this.tokenIssuanceStatus.set('Anfrage gesendet. Token-Ausgabe folgt durch den Backend-Service.');
+      }
+
+      clientIdInput.value = '';
+      ttlInput.value = '';
+      scopesInput.value = '';
+      labelInput.value = '';
+      storeResultInput.checked = true;
+    } catch (error) {
+      this.tokenIssuanceError.set(error instanceof Error ? error.message : 'Token-Anfrage fehlgeschlagen.');
+    } finally {
+      this.tokenIssuanceBusy.set(false);
+    }
+  }
+
   async startOidcBootstrap(): Promise<void> {
     if (this.oidcBootstrapBusy()) {
       return;
@@ -128,5 +193,32 @@ export class TenantContext {
       return raw;
     }
     return `•••• ${raw.slice(-4)}`;
+  }
+
+  private parseScopes(raw: string | null | undefined): string[] | undefined {
+    if (!raw) {
+      return undefined;
+    }
+    const scopes = raw
+      .split(/[,\s]+/)
+      .map((scope) => scope.trim())
+      .filter(Boolean);
+    return scopes.length ? scopes : undefined;
+  }
+
+  private parseNumber(value: string | null | undefined): number | null {
+    if (!value) {
+      return null;
+    }
+    const parsed = Number(value);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+  }
+
+  private estimateExpiry(ttlHours: number | null): string | null {
+    if (!ttlHours) {
+      return null;
+    }
+    const expiresAt = Date.now() + ttlHours * 60 * 60 * 1000;
+    return new Date(expiresAt).toISOString();
   }
 }

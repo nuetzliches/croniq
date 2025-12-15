@@ -21,7 +21,11 @@ artifacts/
 ## 2. Current Workflow
 
 1. Refresh the upstream spec (export from Croniq.Api, drop into `artifacts/swagger.json`).
-2. Run `npm run generate:api` to download the OpenAPI document from `http://localhost:5000/swagger/v1/swagger.json` (configurable via the `CRONIQ_OPENAPI_URL` environment variable) and emit Zod code into `projects/api-schema/generated`.
+2. Run `npm run generate:api`. The generator now resolves the OpenAPI document in this order:
+	- `CRONIQ_OPENAPI_URL` environment variable (when set)
+	- Local snapshot at `artifacts/swagger.json`
+	- Fallback URL `http://localhost:5000/swagger/v1/swagger.json`
+	This allows schema generation to work offline as long as the snapshot exists.
 3. Add or update any manual helpers in `projects/api-schema/src` and re-export everything via `src/index.ts` for the Angular app.
 
 There is still no runtime dependency on the OpenAPI document—`provideCroniqApiClient` validates against the Zod bundles that ship with the UI.

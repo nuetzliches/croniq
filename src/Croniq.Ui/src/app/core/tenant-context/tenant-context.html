@@ -103,7 +103,7 @@
         Store short-lived session tokens and API keys in sessionStorage only. These values never touch localStorage.
       </p>
     </header>
-    <div class="grid gap-4 lg:grid-cols-2">
+    <div class="grid gap-4 lg:grid-cols-3">
       <article class="space-y-3 rounded-2xl border border-white/10 bg-surface/40 p-4">
         <h4 class="text-xs uppercase tracking-[0.35em] text-text-muted">Croniq session token</h4>
         <p class="text-sm text-text-muted">
@@ -230,6 +230,81 @@
             </button>
           </div>
         </form>
+      </article>
+      <article class="space-y-3 rounded-2xl border border-white/10 bg-surface/40 p-4">
+        <h4 class="text-xs uppercase tracking-[0.35em] text-text-muted">Croniq API token anfordern</h4>
+        <p class="text-sm text-text-muted">
+          Fordere kurzlebige Croniq Tokens direkt beim Tenant-Endpunkt an. Sobald der Backend-Response das Secret
+          liefert, wird es automatisch gespeichert.
+        </p>
+        <form
+          class="space-y-2 text-xs"
+          (submit)="
+            $event.preventDefault();
+            issueTenantToken(issueTokenClientId, issueTokenTtl, issueTokenScopes, issueTokenLabel, issueTokenStoreResult);
+          "
+        >
+          <label class="space-y-1 text-text-muted">
+            Client ID
+            <input
+              #issueTokenClientId
+              type="text"
+              required
+              maxlength="120"
+              class="w-full rounded-xl border border-white/15 bg-white/5 px-3 py-2 text-sm text-text"
+              placeholder="scheduler-admin"
+            />
+          </label>
+          <label class="space-y-1 text-text-muted">
+            TTL (Stunden, optional)
+            <input
+              #issueTokenTtl
+              type="number"
+              min="1"
+              max="168"
+              class="w-full rounded-xl border border-white/15 bg-white/5 px-3 py-2 text-sm text-text"
+            />
+          </label>
+          <label class="space-y-1 text-text-muted">
+            Scopes (kommagetrennt)
+            <input
+              #issueTokenScopes
+              type="text"
+              maxlength="200"
+              class="w-full rounded-xl border border-white/15 bg-white/5 px-3 py-2 text-sm text-text"
+              placeholder="jobs:trigger, schedules:read"
+            />
+          </label>
+          <label class="space-y-1 text-text-muted">
+            Label (optional)
+            <input
+              #issueTokenLabel
+              type="text"
+              maxlength="40"
+              class="w-full rounded-xl border border-white/15 bg-white/5 px-3 py-2 text-sm text-text"
+              placeholder="Dispatcher Token"
+            />
+          </label>
+          <label class="flex items-center gap-2 text-text-muted">
+            <input #issueTokenStoreResult type="checkbox" class="h-4 w-4" checked />
+            <span>Secret nach Erfolg im Browser sichern</span>
+          </label>
+          <div class="flex flex-wrap gap-2">
+            <button
+              type="submit"
+              class="rounded-full border border-accent/40 bg-accent/15 px-4 py-2 text-xs font-semibold uppercase tracking-wide text-accent"
+              [disabled]="tokenIssuanceBusy()"
+            >
+              {{ tokenIssuanceBusy() ? 'Fordert Token an…' : 'Token anfordern' }}
+            </button>
+          </div>
+        </form>
+        @if (tokenIssuanceStatus()) {
+        <p class="text-xs text-emerald-300">{{ tokenIssuanceStatus() }}</p>
+        }
+        @if (tokenIssuanceError()) {
+        <p class="text-xs text-red-300">{{ tokenIssuanceError() }}</p>
+        }
       </article>
     </div>
     <button
