@@ -31,6 +31,11 @@ public sealed class CroniqApiException : Exception
             ? null
             : await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
 
+        if (string.IsNullOrWhiteSpace(body))
+        {
+            body = null;
+        }
+
         if (!string.IsNullOrWhiteSpace(body))
         {
             try

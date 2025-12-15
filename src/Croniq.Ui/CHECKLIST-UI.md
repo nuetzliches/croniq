@@ -44,6 +44,9 @@ Derived from [src/Croniq.Ui/docs/deep-dive/designs/angular-ui-concept.md](src/Cr
 ## Data Access & State
 
 - [ ] Generate REST clients directly from the upstream OpenAPI contract (or gRPC-Web bridge) and wrap them in the shared `ApiClient` service that injects telemetry headers. _(Status: runtime-safe models now flow from the upstream spec via `npm run generate:api`, which runs `openapi-zod-client` and writes to `projects/api-schema/generated`. Manual helpers still live in `projects/api-schema/src`, but next we need to wire CI and evaluate client generation.)_
+- [ ] Document & standardize OpenAPI source selection (snapshot vs. live server), including the recommended local dev command (`npm run generate:api:server`) and CI-safe fallback (`npm run generate:api`).
+- [ ] Decide CI policy for OpenAPI sync: keep committing `artifacts/swagger.json` snapshots vs. generating from a live/staging swagger endpoint (and how to avoid flaky builds when the endpoint is unavailable).
+- [ ] Wire newly generated endpoints into the relevant feature stores (no new UX): tenants list/create/deactivate, tenant api-clients list/upsert/delete, executions list, jobs list/get/delete, schedule get/delete, and token issuance endpoints.
 - [ ] Configure Angular Query caches, refetch policies, and tenant/env scoping helpers.
 - [ ] Persist non-sensitive preferences (theme, table density) per tenant using IndexedDB with optional encryption.
 
@@ -72,6 +75,7 @@ Derived from [src/Croniq.Ui/docs/deep-dive/designs/angular-ui-concept.md](src/Cr
 ## Build, Test & Release
 
 - [ ] Wire `npm run build`, `npm run lint`, and `npm run lint:styles` into CI gates, mirroring backend pipelines.
+- [ ] Resolve the current Angular build budget warning (initial bundle exceeds the configured budget); decide whether to optimize bundle size or update budgets with justification.
 - [ ] Maintain Vitest unit coverage thresholds and Playwright E2E smoke tests against the devstack.
 - [ ] Configure Storybook (Chromatic optional) for visual regression coverage on shared components.
 - [ ] Publish build artifacts to `eng/artifacts/ui` and containerize the UI for deployment parity with other Croniq services.
@@ -85,5 +89,5 @@ Derived from [src/Croniq.Ui/docs/deep-dive/designs/angular-ui-concept.md](src/Cr
 
 # Next Steps (2025-12-15)
 
-Exercise the issuance flow against a live environment (npm run start + backend) to validate headers and confirm whether the secret appears in the response.
-If/once the backend returns the token payload, extend the token service schema extraction with the factual shape and consider adding end-to-end tests around it.
+Exercise the token issuance flow against a live environment (`npm run start` + backend) and capture the actual response shape from `/tenants/:tenantId/tokens` so token extraction can be based on the factual payload.
+If/once the backend returns a stable token payload, replace the current permissive extraction logic with a Zod schema and add an integration-style test around it.

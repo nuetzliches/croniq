@@ -1,13 +1,18 @@
 using System;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Croniq.Core;
 using Croniq.Core.Execution;
+using Croniq.Core.Hosting;
 using Croniq.Core.Jobs;
+using Croniq.Core.Options;
 using Croniq.Core.Policies;
 using Croniq.Persistence.Abstractions;
 using Croniq.Sdk;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
 using Shouldly;
 using Xunit;
 
@@ -42,6 +47,59 @@ public class ServiceCollectionExtensionsTests
     {
         var services = new ServiceCollection();
         Should.Throw<InvalidOperationException>(() => services.AddCroniqJob<JobWithoutAttribute>());
+    }
+
+    [Fact]
+    public void AddCroniqFileExecutionLogStore_replaces_noop_services_with_file_implementations()
+    {
+        var services = new ServiceCollection();
+
+        services.AddCroniqCore();
+        services.AddCroniqFileExecutionLogStore(options => options.BasePath = "my-logs");
+
+        var provider = services.BuildServiceProvider();
+
+        provider.GetRequiredService<IExecutionLogStore>().ShouldBeOfType<FileExecutionLogStore>();
+        provider.GetRequiredService<IExecutionLogReader>().ShouldBeOfType<FileExecutionLogReader>();
+        provider.GetRequiredService<IExecutionHistoryReader>().ShouldBeOfType<FileExecutionHistoryReader>();
+        provider.GetRequiredService<FileExecutionLogStoreOptions>().BasePath.ShouldBe("my-logs");
+    }
+
+    [Fact]
+    public void AddCroniqExecutionLogSink_registers_provider_and_applies_options_when_configured()
+    {
+        var services = new ServiceCollection();
+
+        services.AddCroniqCore();
+
+        services.AddLogging(builder => builder.AddCroniqExecutionLogSink(options =>
+        {
+            options.MinimumLevel = LogLevel.Warning;
+            options.BatchSize = 7;
+        }));
+
+        var provider = services.BuildServiceProvider();
+        provider.GetServices<ILoggerProvider>().Any(p => p is ExecutionLogSinkProvider).ShouldBeTrue();
+
+        var options = provider.GetRequiredService<Microsoft.Extensions.Options.IOptions<ExecutionLogSinkOptions>>();
+        options.Value.MinimumLevel.ShouldBe(LogLevel.Warning);
+        options.Value.BatchSize.ShouldBe(7);
+    }
+
+    [Fact]
+    public void AddCroniqWorkerHost_registers_hosted_service_and_configures_options()
+    {
+        var services = new ServiceCollection();
+
+        services.AddCroniqCore();
+        services.AddLogging();
+        services.AddSingleton<IJobStore, StubJobStore>();
+
+        services.AddCroniqWorkerHost(options => options.BatchSize = 123);
+
+        var provider = services.BuildServiceProvider();
+        provider.GetServices<IHostedService>().Any(s => s is CroniqWorkerHostedService).ShouldBeTrue();
+        provider.GetRequiredService<Microsoft.Extensions.Options.IOptions<WorkerHostOptions>>().Value.BatchSize.ShouldBe(123);
     }
 
     [CroniqJob("core", "sample")]

@@ -1,5 +1,7 @@
 import SwaggerParser from '@apidevtools/swagger-parser';
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import http from 'node:http';
+import https from 'node:https';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 
 import { generateZodClientFromOpenAPI } from 'openapi-zod-client';
@@ -97,7 +99,9 @@ function normalizeConfig(
 
 async function loadOpenApiDocument(input: string): Promise<OpenAPIObject> {
     const target = resolveInput(input);
-    const document = (await SwaggerParser.parse(target)) as OpenAPIObject;
+    const document = isHttpUrl(target)
+        ? (await fetchJson(target)) as OpenAPIObject
+        : (await SwaggerParser.parse(target)) as OpenAPIObject;
 
     if (!document?.openapi?.startsWith('3.')) {
         throw new Error(
@@ -106,6 +110,44 @@ async function loadOpenApiDocument(input: string): Promise<OpenAPIObject> {
     }
 
     return document;
+}
+
+async function fetchJson(url: string): Promise<unknown> {
+    const client = url.startsWith('https://') ? https : http;
+
+    return new Promise((resolvePromise, reject) => {
+        const request = client.get(url, (response) => {
+            const status = response.statusCode ?? 0;
+            if (status < 200 || status >= 300) {
+                response.resume();
+                reject(new Error(`Failed to fetch OpenAPI document (${status}) from ${url}`));
+                return;
+            }
+
+            response.setEncoding('utf8');
+            let payload = '';
+            response.on('data', (chunk) => {
+                payload += chunk;
+            });
+            response.on('end', () => {
+                try {
+                    resolvePromise(JSON.parse(payload));
+                } catch (error) {
+                    reject(
+                        new Error(
+                            `OpenAPI endpoint did not return valid JSON (${url}): ${String(
+                                (error as Error).message ?? error,
+                            )}`,
+                        ),
+                    );
+                }
+            });
+        });
+
+        request.on('error', (error) => {
+            reject(error);
+        });
+    });
 }
 
 async function ensureOutputDirectory(targetFile: string): Promise<void> {

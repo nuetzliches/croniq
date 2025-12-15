@@ -15,19 +15,13 @@ import {
     UpsertWebhookEndpointRequest,
 } from '../schemas';
 
-export const HealthApi: EndpointDefinition[] = [
+export const MeApi: EndpointDefinition[] = [
     {
         method: 'get',
-        path: '/health',
-        requestFormat: 'json',
-        response: z.void(),
-    },
-    {
-        method: 'get',
-        path: '/health/persistence',
+        path: '/me',
         requestFormat: 'json',
         response: z.void(),
     },
 ] as const;
 
-export type HealthApiEndpoint = (typeof HealthApi)[number];
+export type MeApiEndpoint = (typeof MeApi)[number];

@@ -1,10 +1,12 @@
 import { z } from 'zod'; import type { EndpointDefinition } from '../schemas';
+
 {{#if schemas}}
   import {
   {{#each schemas}}
     {{@key}},
   {{/each}}
   } from '../schemas';
+
 {{/if}}
 
 export const

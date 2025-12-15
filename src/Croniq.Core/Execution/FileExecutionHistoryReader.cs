@@ -326,15 +326,38 @@ public sealed class FileExecutionHistoryReader : IExecutionHistoryReader
 
     private static ExecutionStatus? ParseEnum(JsonElement element, string propertyName, ExecutionStatus? defaultValue)
     {
-        var text = GetString(element, propertyName);
-        if (string.IsNullOrWhiteSpace(text))
+        if (!element.TryGetProperty(propertyName, out var property) || property.ValueKind == JsonValueKind.Null)
         {
             return defaultValue;
         }
 
-        if (Enum.TryParse<ExecutionStatus>(text, ignoreCase: true, out var status))
+        if (property.ValueKind == JsonValueKind.Number)
         {
-            return status;
+            if (property.TryGetInt32(out var numeric))
+            {
+                return (ExecutionStatus)numeric;
+            }
+
+            if (property.TryGetInt64(out var numeric64))
+            {
+                return (ExecutionStatus)numeric64;
+            }
+
+            return defaultValue;
+        }
+
+        if (property.ValueKind == JsonValueKind.String)
+        {
+            var text = property.GetString();
+            if (string.IsNullOrWhiteSpace(text))
+            {
+                return defaultValue;
+            }
+
+            if (Enum.TryParse<ExecutionStatus>(text, ignoreCase: true, out var status))
+            {
+                return status;
+            }
         }
 
         return defaultValue;
@@ -342,15 +365,38 @@ public sealed class FileExecutionHistoryReader : IExecutionHistoryReader
 
     private static ExecutionKind ParseEnum(JsonElement element, string propertyName, ExecutionKind defaultValue)
     {
-        var text = GetString(element, propertyName);
-        if (string.IsNullOrWhiteSpace(text))
+        if (!element.TryGetProperty(propertyName, out var property) || property.ValueKind == JsonValueKind.Null)
         {
             return defaultValue;
         }
 
-        if (Enum.TryParse<ExecutionKind>(text, ignoreCase: true, out var kind))
+        if (property.ValueKind == JsonValueKind.Number)
         {
-            return kind;
+            if (property.TryGetInt32(out var numeric))
+            {
+                return (ExecutionKind)numeric;
+            }
+
+            if (property.TryGetInt64(out var numeric64))
+            {
+                return (ExecutionKind)numeric64;
+            }
+
+            return defaultValue;
+        }
+
+        if (property.ValueKind == JsonValueKind.String)
+        {
+            var text = property.GetString();
+            if (string.IsNullOrWhiteSpace(text))
+            {
+                return defaultValue;
+            }
+
+            if (Enum.TryParse<ExecutionKind>(text, ignoreCase: true, out var kind))
+            {
+                return kind;
+            }
         }
 
         return defaultValue;

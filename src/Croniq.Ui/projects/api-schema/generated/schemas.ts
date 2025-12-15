@@ -1,77 +1,41 @@
 import { z } from 'zod';
-export const TriggerJobRequest = z
-    .object({
-        jobKey: z.string().min(1),
-        metadata: z.record(z.string(), z.string()).nullish(),
-    })
-    .passthrough();
-export type TriggerJobRequest = z.infer<typeof TriggerJobRequest>;
-export const ScheduleSummary = z
-    .object({
-        id: z.string().uuid(),
-        name: z.string().min(1),
-        tenant: z.string().min(1),
-        cron: z.string().min(1),
-        timezone: z.string().min(1),
-        owner: z.string().min(1),
-        state: z.enum(['active', 'paused', 'degraded']),
-        nextFire: z.string().datetime({ offset: true }),
-        lastDurationMs: z.number().gte(0),
-        alerts: z.number().int().gte(0),
-        tags: z.array(z.string()).optional().default([]),
-    })
-    .passthrough();
-export type ScheduleSummary = z.infer<typeof ScheduleSummary>;
-export const ScheduleListResponse = z
-    .object({
-        items: z.array(ScheduleSummary),
-        total: z.number().int().gte(0),
-        updatedAt: z.string().datetime({ offset: true }),
-    })
-    .passthrough();
-export type ScheduleListResponse = z.infer<typeof ScheduleListResponse>;
-export const UpsertScheduleRequest = z
-    .object({
-        jobKey: z.string().min(1),
-        cronExpression: z.string().min(1),
-        triggerId: z.string().nullish(),
-        startAtUtc: z.string().datetime({ offset: true }).nullish(),
-        endAtUtc: z.string().datetime({ offset: true }).nullish(),
-        enabled: z.boolean().optional(),
-        description: z.string().nullish(),
-        metadata: z.record(z.string(), z.string()).nullish(),
-    })
-    .passthrough();
+export const UpsertTenantRequest = z.object({
+    reference: z.string().min(1),
+    name: z.string().min(1),
+});
+export type UpsertTenantRequest = z.infer<typeof UpsertTenantRequest>;
+export const UpsertJobRequest = z.object({
+    jobKey: z.string().min(1),
+    namespace: z.string().min(1),
+    name: z.string().min(1),
+    variant: z.string().nullish(),
+    description: z.string().nullish(),
+    metadata: z.record(z.string(), z.string()).nullish(),
+});
+export type UpsertJobRequest = z.infer<typeof UpsertJobRequest>;
+export const UpsertScheduleRequest = z.object({
+    jobKey: z.string().min(1),
+    cronExpression: z.string().min(1),
+    triggerId: z.string().nullish(),
+    startAtUtc: z.string().datetime({ offset: true }).nullish(),
+    endAtUtc: z.string().datetime({ offset: true }).nullish(),
+    enabled: z.boolean().optional(),
+    description: z.string().nullish(),
+    metadata: z.record(z.string(), z.string()).nullish(),
+});
 export type UpsertScheduleRequest = z.infer<typeof UpsertScheduleRequest>;
-export const IssueApiKeyRequest = z
-    .object({
-        clientId: z.string().min(1),
-        environmentTag: z.string().nullish(),
-        scopes: z.array(z.string()).nullish(),
-        ttlHours: z.number().int().nullish(),
-    })
-    .passthrough();
-export type IssueApiKeyRequest = z.infer<typeof IssueApiKeyRequest>;
-export const UpsertWebhookEndpointRequest = z
-    .object({
-        hookKey: z.string().min(1),
-        jobKey: z.string().min(1),
-        enabled: z.boolean().optional(),
-        requireSignature: z.boolean().optional(),
-        requestsPerMinute: z.number().int().nullish(),
-        secret: z.string().nullish(),
-        metadata: z.record(z.string(), z.string()).nullish(),
-        signatureVersion: z.number().int().optional(),
-    })
-    .passthrough();
+export const UpsertWebhookEndpointRequest = z.object({
+    hookKey: z.string().min(1),
+    jobKey: z.string().min(1),
+    enabled: z.boolean().optional(),
+    requireSignature: z.boolean().optional(),
+    requestsPerMinute: z.number().int().nullish(),
+    secret: z.string().nullish(),
+    metadata: z.record(z.string(), z.string()).nullish(),
+    signatureVersion: z.number().int().optional(),
+});
 export type UpsertWebhookEndpointRequest = z.infer<
     typeof UpsertWebhookEndpointRequest
->;
-export const CreateWebhookIpRuleRequest = z
-    .object({ cidr: z.string().min(1), description: z.string().nullish() })
-    .passthrough();
-export type CreateWebhookIpRuleRequest = z.infer<
-    typeof CreateWebhookIpRuleRequest
 >;
 export const RotateWebhookSecretRequest = z
     .object({
@@ -79,20 +43,64 @@ export const RotateWebhookSecretRequest = z
         gracePeriodSeconds: z.number().int().nullable(),
         notes: z.string().nullable(),
     })
-    .partial()
-    .passthrough();
+    .partial();
 export type RotateWebhookSecretRequest = z.infer<
     typeof RotateWebhookSecretRequest
 >;
+export const CreateWebhookIpRuleRequest = z.object({
+    cidr: z.string().min(1),
+    description: z.string().nullish(),
+});
+export type CreateWebhookIpRuleRequest = z.infer<
+    typeof CreateWebhookIpRuleRequest
+>;
+export const UpsertApiClientRequest = z.object({
+    clientId: z.string().min(1),
+    name: z.string().nullish(),
+    environmentTag: z.string().nullish(),
+    scopes: z.array(z.string()).nullish(),
+    isActive: z.boolean().nullish(),
+});
+export type UpsertApiClientRequest = z.infer<typeof UpsertApiClientRequest>;
+export const IssueApiKeyRequest = z.object({
+    clientId: z.string().min(1),
+    environmentTag: z.string().nullish(),
+    scopes: z.array(z.string()).nullish(),
+    ttlHours: z.number().int().nullish(),
+});
+export type IssueApiKeyRequest = z.infer<typeof IssueApiKeyRequest>;
+export const IssueTokenRequest = z
+    .object({
+        clientId: z.string().nullable(),
+        scopes: z.array(z.string()).nullable(),
+        audience: z.string().nullable(),
+        ttlMinutes: z.number().int().nullable(),
+    })
+    .partial();
+export type IssueTokenRequest = z.infer<typeof IssueTokenRequest>;
+export const TriggerJobRequest = z.object({
+    jobKey: z.string().min(1),
+    metadata: z.record(z.string(), z.string()).nullish(),
+});
+export type TriggerJobRequest = z.infer<typeof TriggerJobRequest>;
+export const ExecutionStatus = z.union([
+    z.literal(0),
+    z.literal(1),
+    z.literal(2),
+]);
+export type ExecutionStatus = z.infer<typeof ExecutionStatus>;
 export const schemas = {
-    TriggerJobRequest,
-    ScheduleSummary,
-    ScheduleListResponse,
+    UpsertTenantRequest,
+    UpsertJobRequest,
     UpsertScheduleRequest,
-    IssueApiKeyRequest,
     UpsertWebhookEndpointRequest,
-    CreateWebhookIpRuleRequest,
     RotateWebhookSecretRequest,
+    CreateWebhookIpRuleRequest,
+    UpsertApiClientRequest,
+    IssueApiKeyRequest,
+    IssueTokenRequest,
+    TriggerJobRequest,
+    ExecutionStatus,
 };
 export type HttpMethod =
     | 'get'

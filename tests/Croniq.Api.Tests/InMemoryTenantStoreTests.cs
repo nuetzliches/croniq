@@ -1,4 +1,5 @@
 using System;
+using System.Linq;
 using Croniq.Auth.Core;
 using Shouldly;
 using Xunit;
@@ -39,5 +40,26 @@ public sealed class InMemoryTenantStoreTests
 
         var missing = await store.DeactivateAsync("tn_missing");
         missing.ShouldBeFalse();
+    }
+
+    [Fact]
+    public async Task GetByReference_returns_null_when_missing()
+    {
+        var store = new InMemoryTenantStore();
+
+        (await store.GetByReferenceAsync("missing")).ShouldBeNull();
+    }
+
+    [Fact]
+    public async Task List_orders_by_reference_case_insensitive()
+    {
+        var store = new InMemoryTenantStore();
+        await store.CreateAsync("beta", "b");
+        await store.CreateAsync("Alpha", "a");
+
+        var list = (await store.ListAsync()).ToArray();
+        list.Length.ShouldBe(2);
+        list[0].Reference.ShouldBe("Alpha");
+        list[1].Reference.ShouldBe("beta");
     }
 }

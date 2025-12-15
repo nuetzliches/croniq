@@ -1,6 +1,6 @@
 import { Injectable, inject } from '@angular/core';
 
-import type { IssueApiKeyRequest } from '@croniq/api-schema';
+import type { IssueTokenRequest } from '@croniq/api-schema';
 import { CRONIQ_API_CLIENT, type CroniqApiClient } from 'data-access';
 
 import { AuthSessionService } from './auth-session.service';
@@ -11,6 +11,7 @@ export interface IssueTenantTokenParams {
     environmentTag?: string | null;
     scopes?: string[];
     ttlHours?: number | null;
+    audience?: string | null;
     label?: string | null;
     persistInSession?: boolean;
     fallbackExpiry?: string | null;
@@ -29,14 +30,17 @@ export class TenantTokenEndpointService {
     private readonly authSession = inject(AuthSessionService);
 
     async issueTenantToken(params: IssueTenantTokenParams): Promise<IssueTenantTokenResult> {
-        const payload: IssueApiKeyRequest = {
+        const payload: IssueTokenRequest = {
             clientId: params.clientId,
-            environmentTag: params.environmentTag ?? undefined,
-            scopes: params.scopes && params.scopes.length ? params.scopes : undefined,
-            ttlHours: params.ttlHours ?? undefined,
+            scopes: params.scopes && params.scopes.length ? params.scopes : null,
+            audience: params.audience ?? null,
+            ttlMinutes: typeof params.ttlHours === 'number' ? params.ttlHours * 60 : null,
         };
 
-        const response = await this.apiClient.issueTenantApiKey({ tenantId: params.tenantId }, payload);
+        const response = await this.apiClient.issueTenantToken(
+            { tenantId: params.tenantId, environment: params.environmentTag ?? undefined },
+            payload,
+        );
         const token = this.extractToken(response);
         const fallbackExpiry = params.fallbackExpiry ?? null;
         let storedInSession = false;
@@ -67,7 +71,8 @@ export class TenantTokenEndpointService {
         if (!rawValue) {
             return null;
         }
-        const expiresAt = typeof candidate.expiresAt === 'string' ? candidate.expiresAt : null;
+        const expiresAtRaw = candidate['expiresAt'];
+        const expiresAt = typeof expiresAtRaw === 'string' ? expiresAtRaw : null;
         return { value: rawValue, expiresAt };
     }
 

@@ -1,9 +1,9 @@
 using System;
 using System.IO;
+using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
 using Croniq.Core.Execution;
-using Croniq.Core.Options;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Shouldly;
@@ -14,32 +14,52 @@ namespace Croniq.Core.Tests.Execution;
 public class ExecutionLogRetentionServiceTests
 {
     [Fact]
-    public async Task Deletes_files_older_than_retention_and_keeps_recent()
+    public void Sweep_returns_when_base_directory_does_not_exist()
+    {
+        var missingBasePath = Path.Combine(Path.GetTempPath(), "croniq-retention-tests", Guid.NewGuid().ToString("N"));
+
+        var storeOptions = Microsoft.Extensions.Options.Options.Create(new FileExecutionLogStoreOptions { BasePath = missingBasePath });
+        var retentionOptions = Microsoft.Extensions.Options.Options.Create(new ExecutionLogRetentionOptions { RetentionDays = 5, SweepInterval = TimeSpan.FromHours(1) });
+        var service = new ExecutionLogRetentionService(storeOptions, retentionOptions, NullLogger<ExecutionLogRetentionService>.Instance);
+
+        InvokeSweep(service);
+
+        Directory.Exists(missingBasePath).ShouldBeFalse();
+    }
+
+    [Fact]
+    public void Sweep_deletes_old_files_and_cleans_empty_directories()
     {
         var tempDir = Path.Combine(Path.GetTempPath(), "croniq-retention-tests", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(tempDir);
+
         try
         {
-            var recent = Path.Combine(tempDir, "recent.ndjson");
-            var old = Path.Combine(tempDir, "old.ndjson");
-            await File.WriteAllTextAsync(recent, "recent");
-            await File.WriteAllTextAsync(old, "old");
+            var deleteDir = Path.Combine(tempDir, "tenant-a", "prod");
+            Directory.CreateDirectory(deleteDir);
+            var keepDir = Path.Combine(tempDir, "tenant-b", "prod");
+            Directory.CreateDirectory(keepDir);
 
+            var old = Path.Combine(deleteDir, "old.ndjson");
+            File.WriteAllText(old, "old");
             File.SetLastWriteTimeUtc(old, DateTime.UtcNow.AddDays(-10));
+
+            var recent = Path.Combine(keepDir, "recent.ndjson");
+            File.WriteAllText(recent, "recent");
             File.SetLastWriteTimeUtc(recent, DateTime.UtcNow.AddDays(-1));
 
             var storeOptions = Microsoft.Extensions.Options.Options.Create(new FileExecutionLogStoreOptions { BasePath = tempDir });
             var retentionOptions = Microsoft.Extensions.Options.Options.Create(new ExecutionLogRetentionOptions { RetentionDays = 5, SweepInterval = TimeSpan.FromHours(1) });
             var service = new ExecutionLogRetentionService(storeOptions, retentionOptions, NullLogger<ExecutionLogRetentionService>.Instance);
 
-            // invoke Sweep indirectly via ExecuteAsync iteration
-            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(1));
-            await service.StartAsync(cts.Token);
-            await Task.Delay(TimeSpan.FromMilliseconds(200), cts.Token);
-            await service.StopAsync(cts.Token);
+            InvokeSweep(service);
 
             File.Exists(old).ShouldBeFalse();
             File.Exists(recent).ShouldBeTrue();
+
+            Directory.Exists(deleteDir).ShouldBeFalse();
+            Directory.Exists(Path.Combine(tempDir, "tenant-a")).ShouldBeFalse();
+            Directory.Exists(keepDir).ShouldBeTrue();
         }
         finally
         {
@@ -48,5 +68,12 @@ public class ExecutionLogRetentionServiceTests
                 Directory.Delete(tempDir, true);
             }
         }
+    }
+
+    private static void InvokeSweep(ExecutionLogRetentionService service)
+    {
+        var method = typeof(ExecutionLogRetentionService).GetMethod("Sweep", BindingFlags.Instance | BindingFlags.NonPublic);
+        method.ShouldNotBeNull();
+        method!.Invoke(service, null);
     }
 }

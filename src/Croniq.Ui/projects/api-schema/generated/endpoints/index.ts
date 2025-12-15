@@ -1,4 +1,5 @@
-export { JobsApi } from './jobs';
-export { TenantsApi } from './tenants';
-export { WebhooksApi } from './webhooks';
 export { HealthApi } from './health';
+export { MeApi } from './me';
+export { TenantsApi } from './tenants';
+export { JobsApi } from './jobs';
+export { WebhooksApi } from './webhooks';

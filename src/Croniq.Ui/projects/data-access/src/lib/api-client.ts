@@ -4,13 +4,18 @@ import { EnvironmentProviders, InjectionToken, Provider, inject, makeEnvironment
 import {
     CreateWebhookIpRuleRequest,
     HealthApi,
+    IssueTokenRequest,
     IssueApiKeyRequest,
     JobsApi,
+    MeApi,
     RotateWebhookSecretRequest,
     ScheduleListResponse,
     TenantsApi,
     TriggerJobRequest,
+    UpsertApiClientRequest,
+    UpsertJobRequest,
     UpsertScheduleRequest,
+    UpsertTenantRequest,
     UpsertWebhookEndpointRequest,
     WebhooksApi,
     scheduleListResponseSchema,
@@ -21,11 +26,16 @@ import type {
     CroniqCredentialSupplier,
     CroniqRequestOptions,
     ExecutionLogParams,
+    ExecutionParams,
     TenantApiClientParams,
+    TenantApiClientTokenParams,
     TenantApiKeyParams,
     TenantDeadLetterParams,
     TenantEnvironmentParams,
     TenantScopedParams,
+    TenantScheduleParams,
+    TenantTokenParams,
+    TenantUpsertApiClientParams,
     TenantWebhookParams,
     TenantWebhookRuleParams,
     TenantWebhookUpsertParams,
@@ -43,8 +53,22 @@ const LIST_SCHEDULES_ENDPOINT: EndpointDefinition = {
 const UPSERT_SCHEDULE_ENDPOINT = requireEndpoint(TenantsApi, 'post', '/tenants/:tenantId/schedules');
 const TRIGGER_JOB_ENDPOINT = requireEndpoint(JobsApi, 'post', '/jobs/trigger');
 
+const ME_ENDPOINT = requireEndpoint(MeApi, 'get', '/me');
+
+const TENANTS_ENDPOINTS = {
+    list: requireEndpoint(TenantsApi, 'get', '/tenants'),
+    create: requireEndpoint(TenantsApi, 'post', '/tenants'),
+    get: requireEndpoint(TenantsApi, 'get', '/tenants/:tenantId'),
+    deactivate: requireEndpoint(TenantsApi, 'delete', '/tenants/:tenantId'),
+};
+
 const TENANT_ENDPOINTS = {
     apiClient: requireEndpoint(TenantsApi, 'get', '/tenants/:tenantId/api-clients/:clientId'),
+    listApiClients: requireEndpoint(TenantsApi, 'get', '/tenants/:tenantId/api-clients'),
+    upsertApiClient: requireEndpoint(TenantsApi, 'post', '/tenants/:tenantId/api-clients'),
+    deleteApiClient: requireEndpoint(TenantsApi, 'delete', '/tenants/:tenantId/api-clients/:clientId'),
+    issueTenantToken: requireEndpoint(TenantsApi, 'post', '/tenants/:tenantId/tokens'),
+    issueApiClientToken: requireEndpoint(TenantsApi, 'post', '/tenants/:tenantId/api-clients/:clientId/tokens'),
     issueApiKey: requireEndpoint(TenantsApi, 'post', '/tenants/:tenantId/api-keys'),
     deleteApiKey: requireEndpoint(TenantsApi, 'delete', '/tenants/:tenantId/api-keys/:keyId'),
     rotateApiKey: requireEndpoint(TenantsApi, 'post', '/tenants/:tenantId/api-keys/:keyId/rotate'),
@@ -69,6 +93,14 @@ const TENANT_ENDPOINTS = {
         'post',
         '/tenants/:tenantId/webhooks/deadletters/:deadLetterId/replay',
     ),
+    listExecutions: requireEndpoint(TenantsApi, 'get', '/tenants/:tenantId/executions'),
+    getExecution: requireEndpoint(TenantsApi, 'get', '/tenants/:tenantId/executions/:executionId'),
+    listJobs: requireEndpoint(TenantsApi, 'get', '/tenants/:tenantId/jobs'),
+    upsertJob: requireEndpoint(TenantsApi, 'post', '/tenants/:tenantId/jobs'),
+    getJob: requireEndpoint(TenantsApi, 'get', '/tenants/:tenantId/jobs/:jobId'),
+    deleteJob: requireEndpoint(TenantsApi, 'delete', '/tenants/:tenantId/jobs/:jobId'),
+    getSchedule: requireEndpoint(TenantsApi, 'get', '/tenants/:tenantId/schedules/:triggerId'),
+    deleteSchedule: requireEndpoint(TenantsApi, 'delete', '/tenants/:tenantId/schedules/:triggerId'),
 };
 
 const INVOKE_WEBHOOK_ENDPOINT = requireEndpoint(WebhooksApi, 'post', '/webhooks/:hookKey');
@@ -85,13 +117,42 @@ const HEALTH_ENDPOINTS = {
 
 
 export interface CroniqApiClient {
-    getSchedules(params: TenantScopedParams, options?: CroniqRequestOptions): Promise<ScheduleListResponse>;
+    getSchedules(
+        params: TenantScopedParams & { environment?: string | null; jobKey?: string | null },
+        options?: CroniqRequestOptions,
+    ): Promise<ScheduleListResponse>;
     upsertSchedule(
         params: TenantScopedParams,
         payload: UpsertScheduleRequest,
         options?: CroniqRequestOptions,
     ): Promise<void>;
     triggerJob(payload: TriggerJobRequest, options?: CroniqRequestOptions): Promise<void>;
+
+    getMe(options?: CroniqRequestOptions): Promise<unknown>;
+
+    listTenants(params?: { state?: string | null }, options?: CroniqRequestOptions): Promise<unknown>;
+    createTenant(payload: UpsertTenantRequest, options?: CroniqRequestOptions): Promise<void>;
+    getTenant(params: TenantScopedParams, options?: CroniqRequestOptions): Promise<unknown>;
+    deactivateTenant(params: TenantScopedParams, options?: CroniqRequestOptions): Promise<void>;
+
+    issueTenantToken(
+        params: TenantTokenParams,
+        payload: IssueTokenRequest,
+        options?: CroniqRequestOptions,
+    ): Promise<unknown>;
+    issueApiClientToken(
+        params: TenantApiClientTokenParams,
+        payload: IssueTokenRequest,
+        options?: CroniqRequestOptions,
+    ): Promise<unknown>;
+
+    listTenantApiClients(params: TenantUpsertApiClientParams, options?: CroniqRequestOptions): Promise<unknown>;
+    upsertTenantApiClient(
+        params: TenantUpsertApiClientParams,
+        payload: UpsertApiClientRequest,
+        options?: CroniqRequestOptions,
+    ): Promise<void>;
+    deleteTenantApiClient(params: TenantApiClientParams, options?: CroniqRequestOptions): Promise<void>;
     issueTenantApiKey(
         params: TenantScopedParams,
         payload: IssueApiKeyRequest,
@@ -125,6 +186,15 @@ export interface CroniqApiClient {
     ): Promise<unknown>;
     replayTenantWebhookDeadLetter(params: TenantDeadLetterParams, options?: CroniqRequestOptions): Promise<void>;
     invokeWebhook(params: WebhookInvocationParams, options?: CroniqRequestOptions): Promise<void>;
+
+    listExecutions(params: ExecutionParams, options?: CroniqRequestOptions): Promise<unknown>;
+    getExecution(params: ExecutionParams & ExecutionLogParams, options?: CroniqRequestOptions): Promise<unknown>;
+    listJobs(params: TenantEnvironmentParams, options?: CroniqRequestOptions): Promise<unknown>;
+    upsertJob(params: TenantEnvironmentParams, payload: UpsertJobRequest, options?: CroniqRequestOptions): Promise<void>;
+    getJob(params: TenantEnvironmentParams & { jobId: string }, options?: CroniqRequestOptions): Promise<unknown>;
+    deleteJob(params: TenantEnvironmentParams & { jobId: string }, options?: CroniqRequestOptions): Promise<void>;
+    getSchedule(params: TenantScheduleParams, options?: CroniqRequestOptions): Promise<unknown>;
+    deleteSchedule(params: TenantScheduleParams, options?: CroniqRequestOptions): Promise<void>;
     fetchExecutionLogs(params: ExecutionLogParams, options?: CroniqRequestOptions): Promise<string>;
     checkServiceHealth(options?: CroniqRequestOptions): Promise<void>;
     checkPersistenceHealth(options?: CroniqRequestOptions): Promise<void>;
@@ -150,11 +220,18 @@ class HttpCroniqApiClient implements CroniqApiClient {
         this.executor = new EndpointExecutor(http, baseUrl, 'Croniq.Ui', credentials);
     }
 
-    getSchedules(params: TenantScopedParams, options?: CroniqRequestOptions): Promise<ScheduleListResponse> {
+    getSchedules(
+        params: TenantScopedParams & { environment?: string | null; jobKey?: string | null },
+        options?: CroniqRequestOptions,
+    ): Promise<ScheduleListResponse> {
         return this.execute<ScheduleListResponse>(
             LIST_SCHEDULES_ENDPOINT,
             {
                 path: { tenantId: params.tenantId },
+                query: {
+                    environment: params.environment ?? options?.context?.environment ?? undefined,
+                    jobKey: params.jobKey ?? undefined,
+                },
                 responseSchema: scheduleListResponseSchema,
             },
             options,
@@ -181,6 +258,138 @@ class HttpCroniqApiClient implements CroniqApiClient {
             TRIGGER_JOB_ENDPOINT,
             {
                 body: payload,
+            },
+            options,
+        );
+    }
+
+    getMe(options?: CroniqRequestOptions): Promise<unknown> {
+        return this.execute(ME_ENDPOINT, {}, options);
+    }
+
+    listTenants(params?: { state?: string | null }, options?: CroniqRequestOptions): Promise<unknown> {
+        return this.execute(
+            TENANTS_ENDPOINTS.list,
+            {
+                query: {
+                    state: params?.state ?? undefined,
+                },
+            },
+            options,
+        );
+    }
+
+    createTenant(payload: UpsertTenantRequest, options?: CroniqRequestOptions): Promise<void> {
+        return this.execute(
+            TENANTS_ENDPOINTS.create,
+            {
+                body: payload,
+            },
+            options,
+        );
+    }
+
+    getTenant(params: TenantScopedParams, options?: CroniqRequestOptions): Promise<unknown> {
+        return this.execute(
+            TENANTS_ENDPOINTS.get,
+            {
+                path: { tenantId: params.tenantId },
+            },
+            options,
+        );
+    }
+
+    deactivateTenant(params: TenantScopedParams, options?: CroniqRequestOptions): Promise<void> {
+        return this.execute(
+            TENANTS_ENDPOINTS.deactivate,
+            {
+                path: { tenantId: params.tenantId },
+            },
+            options,
+        );
+    }
+
+    issueTenantToken(
+        params: TenantTokenParams,
+        payload: IssueTokenRequest,
+        options?: CroniqRequestOptions,
+    ): Promise<unknown> {
+        return this.execute(
+            TENANT_ENDPOINTS.issueTenantToken,
+            {
+                path: { tenantId: params.tenantId },
+                query: {
+                    environment: params.environment ?? undefined,
+                },
+                body: payload,
+            },
+            options,
+        );
+    }
+
+    issueApiClientToken(
+        params: TenantApiClientTokenParams,
+        payload: IssueTokenRequest,
+        options?: CroniqRequestOptions,
+    ): Promise<unknown> {
+        return this.execute(
+            TENANT_ENDPOINTS.issueApiClientToken,
+            {
+                path: {
+                    tenantId: params.tenantId,
+                    clientId: params.clientId,
+                },
+                query: {
+                    environment: params.environment ?? undefined,
+                },
+                body: payload,
+            },
+            options,
+        );
+    }
+
+    listTenantApiClients(params: TenantUpsertApiClientParams, options?: CroniqRequestOptions): Promise<unknown> {
+        return this.execute(
+            TENANT_ENDPOINTS.listApiClients,
+            {
+                path: { tenantId: params.tenantId },
+                query: {
+                    environment: params.environment ?? undefined,
+                },
+            },
+            options,
+        );
+    }
+
+    upsertTenantApiClient(
+        params: TenantUpsertApiClientParams,
+        payload: UpsertApiClientRequest,
+        options?: CroniqRequestOptions,
+    ): Promise<void> {
+        return this.execute(
+            TENANT_ENDPOINTS.upsertApiClient,
+            {
+                path: { tenantId: params.tenantId },
+                query: {
+                    environment: params.environment ?? undefined,
+                },
+                body: payload,
+            },
+            options,
+        );
+    }
+
+    deleteTenantApiClient(params: TenantApiClientParams, options?: CroniqRequestOptions): Promise<void> {
+        return this.execute(
+            TENANT_ENDPOINTS.deleteApiClient,
+            {
+                path: {
+                    tenantId: params.tenantId,
+                    clientId: params.clientId,
+                },
+                query: {
+                    environment: params.environment ?? undefined,
+                },
             },
             options,
         );
@@ -244,6 +453,119 @@ class HttpCroniqApiClient implements CroniqApiClient {
                 query: {
                     environment: params.environment ?? undefined,
                 },
+            },
+            options,
+        );
+    }
+
+    listExecutions(params: ExecutionParams, options?: CroniqRequestOptions): Promise<unknown> {
+        return this.execute(
+            TENANT_ENDPOINTS.listExecutions,
+            {
+                path: { tenantId: params.tenantId },
+                query: {
+                    environment: params.environment,
+                    jobKey: params.jobKey ?? undefined,
+                    status: params.status ?? undefined,
+                    startedAfterUtc: params.startedAfterUtc ?? undefined,
+                    startedBeforeUtc: params.startedBeforeUtc ?? undefined,
+                    limit: params.limit ?? undefined,
+                },
+            },
+            options,
+        );
+    }
+
+    getExecution(params: ExecutionParams & ExecutionLogParams, options?: CroniqRequestOptions): Promise<unknown> {
+        return this.execute(
+            TENANT_ENDPOINTS.getExecution,
+            {
+                path: {
+                    tenantId: params.tenantId,
+                    executionId: params.executionId,
+                },
+                query: {
+                    environment: params.environment,
+                },
+            },
+            options,
+        );
+    }
+
+    listJobs(params: TenantEnvironmentParams, options?: CroniqRequestOptions): Promise<unknown> {
+        return this.execute(
+            TENANT_ENDPOINTS.listJobs,
+            {
+                path: { tenantId: params.tenantId },
+                query: { environment: params.environment },
+            },
+            options,
+        );
+    }
+
+    upsertJob(params: TenantEnvironmentParams, payload: UpsertJobRequest, options?: CroniqRequestOptions): Promise<void> {
+        return this.execute(
+            TENANT_ENDPOINTS.upsertJob,
+            {
+                path: { tenantId: params.tenantId },
+                query: { environment: params.environment },
+                body: payload,
+            },
+            options,
+        );
+    }
+
+    getJob(params: TenantEnvironmentParams & { jobId: string }, options?: CroniqRequestOptions): Promise<unknown> {
+        return this.execute(
+            TENANT_ENDPOINTS.getJob,
+            {
+                path: {
+                    tenantId: params.tenantId,
+                    jobId: params.jobId,
+                },
+                query: { environment: params.environment },
+            },
+            options,
+        );
+    }
+
+    deleteJob(params: TenantEnvironmentParams & { jobId: string }, options?: CroniqRequestOptions): Promise<void> {
+        return this.execute(
+            TENANT_ENDPOINTS.deleteJob,
+            {
+                path: {
+                    tenantId: params.tenantId,
+                    jobId: params.jobId,
+                },
+                query: { environment: params.environment },
+            },
+            options,
+        );
+    }
+
+    getSchedule(params: TenantScheduleParams, options?: CroniqRequestOptions): Promise<unknown> {
+        return this.execute(
+            TENANT_ENDPOINTS.getSchedule,
+            {
+                path: {
+                    tenantId: params.tenantId,
+                    triggerId: params.triggerId,
+                },
+                query: { environment: params.environment },
+            },
+            options,
+        );
+    }
+
+    deleteSchedule(params: TenantScheduleParams, options?: CroniqRequestOptions): Promise<void> {
+        return this.execute(
+            TENANT_ENDPOINTS.deleteSchedule,
+            {
+                path: {
+                    tenantId: params.tenantId,
+                    triggerId: params.triggerId,
+                },
+                query: { environment: params.environment },
             },
             options,
         );

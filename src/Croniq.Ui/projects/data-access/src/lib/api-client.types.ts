@@ -18,6 +18,12 @@ export interface TenantApiClientParams extends TenantEnvironmentOptionalParams {
     clientId: string;
 }
 
+export interface TenantUpsertApiClientParams extends TenantEnvironmentOptionalParams { }
+
+export interface TenantTokenParams extends TenantEnvironmentOptionalParams { }
+
+export interface TenantApiClientTokenParams extends TenantApiClientParams { }
+
 export interface TenantWebhookParams extends TenantEnvironmentParams {
     hookKey: string;
 }
@@ -40,6 +46,18 @@ export interface WebhookInvocationParams {
 
 export interface ExecutionLogParams extends TenantScopedParams {
     executionId: string;
+}
+
+export interface ExecutionParams extends TenantEnvironmentParams {
+    jobKey?: string | null;
+    status?: number | null;
+    startedAfterUtc?: string | null;
+    startedBeforeUtc?: string | null;
+    limit?: number | null;
+}
+
+export interface TenantScheduleParams extends TenantEnvironmentParams {
+    triggerId: string;
 }
 
 export interface CallerContext {

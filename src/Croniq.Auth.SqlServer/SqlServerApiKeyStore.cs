@@ -61,6 +61,7 @@ public sealed class SqlServerApiKeyStore : IApiKeyStore
 
         var entity = new ApiKeyEntity
         {
+            Client = client,
             ApiClientId = client.Id,
             KeyId = keyId,
             SecretHash = hash,
