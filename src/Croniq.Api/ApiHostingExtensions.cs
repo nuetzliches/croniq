@@ -146,6 +146,12 @@ public static partial class ApiHostingExtensions
 
         builder.WithName(name);
 
+        builder.WithSummary(summary);
+        if (!string.IsNullOrWhiteSpace(description))
+        {
+            builder.WithDescription(description);
+        }
+
         var applier = OpenApiSummaryApplier.Value;
         if (applier is not null)
         {

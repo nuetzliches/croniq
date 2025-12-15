@@ -125,7 +125,7 @@
 - [x] Können wir die Konfiguration des `otelBuilder` in `samples\Croniq.Sample.WorkerHost\Program.cs` so vereinfachen wie in `samples\Croniq.Sample.ApiHost\Program.cs`?
 - [x] `src\Croniq.Core\Execution\IJobExecutionPipeline.cs` Naming-Check abgeschlossen: Für das aktuelle Scope bleibt das Interface job-spezifisch; Workflows würden ein eigenes Interface (`IWorkflowExecutionPipeline`) oder einen generischen `IExecutionPipeline` erhalten, sobald das Feature gestartet wird. Kein sofortiger Umbau nötig.
 - [x] Route `/me` in `/profile` umbenennen? (Entscheidung: nein. `/me` bleibt bestehen, da bereits von Clients/Docs genutzt; Umbenennung wäre unnötiger Breaking-Change.)
-- [ ] (akut) `WithDocs` wird in Swagger nicht angezeigt: sicherstellen, dass OpenAPI Summary/Description im UI sichtbar sind (z.B. via `WithOpenApi(...)`-Integration bzw. korrigierte Fallback-Strategie).
+- [x] (akut) `WithDocs` wird in Swagger nicht angezeigt: sicherstellen, dass OpenAPI Summary/Description im UI sichtbar sind (z.B. via `WithOpenApi(...)`-Integration bzw. korrigierte Fallback-Strategie).
 - [ ] (nice-to-have) Solutionweit usings aufräumen?
 - [ ] CI Static Analysis / SAST: entscheiden und ggf. integrieren
   - [ ] CodeQL-Code-Scanning Workflow hinzufügen (optional; abhängig von GHAS/Repo-Settings)
