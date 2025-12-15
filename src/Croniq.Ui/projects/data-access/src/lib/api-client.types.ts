@@ -38,7 +38,7 @@ export interface WebhookInvocationParams {
     hookKey: string;
 }
 
-export interface ExecutionLogParams {
+export interface ExecutionLogParams extends TenantScopedParams {
     executionId: string;
 }
 
@@ -50,6 +50,13 @@ export interface CallerContext {
     command?: string;
 }
 
+export interface CroniqCredentialSupplier {
+    getApiKey(): string | null;
+    getSessionToken(): string | null;
+}
+
 export interface CroniqRequestOptions {
     context?: CallerContext;
+    apiKey?: string | null;
+    sessionToken?: string | null;
 }

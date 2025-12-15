@@ -96,6 +96,152 @@
     </form>
   </section>
 
+  <section class="space-y-4 rounded-2xl border border-white/10 bg-white/5 p-4">
+    <header class="space-y-1">
+      <p class="text-xs uppercase tracking-[0.35em] text-text-muted">Access credentials</p>
+      <p class="text-sm text-text-muted">
+        Store short-lived session tokens and API keys in sessionStorage only. These values never touch localStorage.
+      </p>
+    </header>
+    <div class="grid gap-4 lg:grid-cols-2">
+      <article class="space-y-3 rounded-2xl border border-white/10 bg-surface/40 p-4">
+        <h4 class="text-xs uppercase tracking-[0.35em] text-text-muted">Croniq session token</h4>
+        <p class="text-sm text-text-muted">
+          Active token: <span class="font-semibold text-text">{{ maskedSessionToken() }}</span>
+        </p>
+        @if (sessionToken()) {
+        <p class="text-xs text-text-muted">
+          @if (sessionToken()?.expiresAt) {
+          Expires {{ sessionToken()?.expiresAt | date : 'short' }}
+          } @else {
+          No expiry set
+          }
+        </p>
+        }
+        @if (sessionTokenExpired()) {
+        <p class="text-xs font-semibold text-red-300">Expired — clear or supply a new token.</p>
+        }
+        <form
+          class="space-y-2 text-xs"
+          (submit)="$event.preventDefault(); storeSessionToken(sessionTokenInput, sessionTokenExpiry);"
+        >
+          <label class="space-y-1 text-text-muted">
+            Token
+            <input
+              #sessionTokenInput
+              type="password"
+              autocomplete="off"
+              spellcheck="false"
+              class="w-full rounded-xl border border-white/15 bg-white/5 px-3 py-2 text-sm text-text"
+              placeholder="Copy the opaque Croniq session token"
+            />
+          </label>
+          <label class="space-y-1 text-text-muted">
+            Expires at (optional)
+            <input
+              #sessionTokenExpiry
+              type="datetime-local"
+              class="w-full rounded-xl border border-white/15 bg-white/5 px-3 py-2 text-sm text-text"
+            />
+          </label>
+          <div class="flex flex-wrap gap-2">
+            <button
+              type="submit"
+              class="rounded-full border border-accent/40 bg-accent/15 px-4 py-2 text-xs font-semibold uppercase tracking-wide text-accent"
+            >
+              Store token
+            </button>
+            <button
+              type="button"
+              class="rounded-full border border-white/20 px-4 py-2 text-xs font-semibold uppercase tracking-wide text-text"
+              (click)="clearSessionToken()"
+            >
+              Clear token
+            </button>
+          </div>
+        </form>
+      </article>
+      <article class="space-y-3 rounded-2xl border border-white/10 bg-surface/40 p-4">
+        <h4 class="text-xs uppercase tracking-[0.35em] text-text-muted">Croniq API key</h4>
+        <p class="text-sm text-text-muted">
+          Active key: <span class="font-semibold text-text">{{ maskedApiKey() }}</span>
+        </p>
+        @if (apiKey()) {
+        <p class="text-xs text-text-muted">
+          @if (apiKey()?.label) {
+          Label: {{ apiKey()?.label }} ·
+          }
+          @if (apiKey()?.expiresAt) {
+          Expires {{ apiKey()?.expiresAt | date : 'short' }}
+          } @else {
+          No expiry set
+          }
+        </p>
+        }
+        @if (apiKeyExpired()) {
+        <p class="text-xs font-semibold text-amber-300">Expired — rotate or remove the API key.</p>
+        }
+        <form
+          class="space-y-2 text-xs"
+          (submit)="$event.preventDefault(); storeApiKey(apiKeyInput, apiKeyLabel, apiKeyExpiry);"
+        >
+          <label class="space-y-1 text-text-muted">
+            API key
+            <input
+              #apiKeyInput
+              type="password"
+              autocomplete="off"
+              spellcheck="false"
+              class="w-full rounded-xl border border-white/15 bg-white/5 px-3 py-2 text-sm text-text"
+              placeholder="X-Croniq-Key value"
+            />
+          </label>
+          <label class="space-y-1 text-text-muted">
+            Label (optional)
+            <input
+              #apiKeyLabel
+              type="text"
+              maxlength="40"
+              class="w-full rounded-xl border border-white/15 bg-white/5 px-3 py-2 text-sm text-text"
+              placeholder="e.g. Router maintenance"
+            />
+          </label>
+          <label class="space-y-1 text-text-muted">
+            Expires at (optional)
+            <input
+              #apiKeyExpiry
+              type="datetime-local"
+              class="w-full rounded-xl border border-white/15 bg-white/5 px-3 py-2 text-sm text-text"
+            />
+          </label>
+          <div class="flex flex-wrap gap-2">
+            <button
+              type="submit"
+              class="rounded-full border border-accent/40 bg-accent/15 px-4 py-2 text-xs font-semibold uppercase tracking-wide text-accent"
+            >
+              Store API key
+            </button>
+            <button
+              type="button"
+              class="rounded-full border border-white/20 px-4 py-2 text-xs font-semibold uppercase tracking-wide text-text"
+              (click)="clearApiKey()"
+            >
+              Clear key
+            </button>
+          </div>
+        </form>
+      </article>
+    </div>
+    <button
+      type="button"
+      class="w-full rounded-2xl border border-dashed border-accent/40 px-4 py-3 text-xs font-semibold uppercase tracking-[0.35em] text-accent"
+      (click)="startOidcBootstrap()"
+      [disabled]="oidcBootstrapBusy()"
+    >
+      {{ oidcBootstrapBusy() ? 'Bootstrapping OIDC…' : 'Run OIDC bootstrap placeholder' }}
+    </button>
+  </section>
+
   <section class="space-y-2 rounded-2xl border border-white/10 bg-surface/40 p-4">
     <header class="space-y-1">
       <p class="text-xs uppercase tracking-[0.35em] text-text-muted">Authenticated operator</p>

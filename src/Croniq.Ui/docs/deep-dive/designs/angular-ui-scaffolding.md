@@ -165,6 +165,13 @@ export const environment = {
 
 4. Build an `AuthGuard` that blocks routes until the OIDC handshake completes; include a developer override for local mocks.
 
+## Interim Auth Implementation
+
+- `AuthSessionService` (`src/app/core/auth/auth-session.service.ts`) now owns all opaque Croniq session tokens and API keys. Both values live exclusively in `sessionStorage`, and the service auto-purges expired entries so nothing lingers between tabs.
+- `TenantContext` exposes input forms for both secrets plus an "OIDC bootstrap" stub button. The UI masks the stored values (last four characters only) so operators can confirm which secret is active without leaking the full string.
+- `EndpointExecutor` receives a credential supplier instance, allowing it to inject the `Authorization` bearer token and `X-Croniq-Key` header on every API call. Feature modules can still override the values per request when needed via `CroniqRequestOptions`.
+- Details, guardrails, and future steps are tracked in `docs/deep-dive/AUTH.md`.
+
 ## Command Palette & Shell
 
 - Scaffold `apps/admin/src/app/shell` containing the nav rail, status strip, and command palette placeholder.

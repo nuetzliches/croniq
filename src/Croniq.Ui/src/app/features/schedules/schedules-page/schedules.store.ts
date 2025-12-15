@@ -29,8 +29,10 @@ export class SchedulesStore {
         this.loading.set(true);
         this.error.set(null);
         try {
+            const requestOptions = this.tenantContext.createRequestOptions('schedules.refresh');
             const response = await this.api.getSchedules(
-                this.tenantContext.createRequestOptions('schedules.refresh')
+                { tenantId: this.tenantContext.snapshot().tenantId },
+                requestOptions
             );
             this.hydrate(response);
         } catch (error) {

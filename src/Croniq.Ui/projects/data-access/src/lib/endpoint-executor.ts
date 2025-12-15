@@ -3,7 +3,7 @@ import type { EndpointDefinition, ParameterLocation } from '@croniq/api-schema';
 import { firstValueFrom } from 'rxjs';
 import { z, type ZodTypeAny } from 'zod';
 
-import type { CallerContext } from './api-client.types';
+import type { CallerContext, CroniqCredentialSupplier } from './api-client.types';
 
 export interface EndpointCallConfig {
     path?: Record<string, unknown>;
@@ -14,6 +14,8 @@ export interface EndpointCallConfig {
     responseType?: 'json' | 'text';
     responseSchema?: ZodTypeAny | null;
     parseResponse?: boolean;
+    apiKey?: string | null;
+    sessionToken?: string | null;
 }
 
 export class EndpointExecutor {
@@ -21,6 +23,7 @@ export class EndpointExecutor {
         private readonly http: HttpClient,
         private readonly baseUrl: string,
         private readonly clientId = 'Croniq.Ui',
+        private readonly credentials?: CroniqCredentialSupplier | null,
     ) { }
 
     async execute<T = unknown>(endpoint: EndpointDefinition, config: EndpointCallConfig = {}): Promise<T> {
@@ -30,7 +33,7 @@ export class EndpointExecutor {
         const body = this.normalizeBody(endpoint, config.body);
         const responseType = config.responseType ?? 'json';
         const url = this.buildUrl(endpoint.path, pathValues);
-        const headers = this.createHeaders(config.context, headerValues);
+        const headers = this.createHeaders(config.context, headerValues, config);
         const params = this.createQueryParams(queryValues);
 
         const baseOptions: {
@@ -105,7 +108,11 @@ export class EndpointExecutor {
         return this.parseWithSchema(definition.schema, body);
     }
 
-    private createHeaders(context?: CallerContext, extras?: Record<string, string>): Record<string, string> {
+    private createHeaders(
+        context?: CallerContext,
+        extras?: Record<string, string>,
+        auth?: Pick<EndpointCallConfig, 'apiKey' | 'sessionToken'>,
+    ): Record<string, string> {
         const headers: Record<string, string> = {
             'X-Croniq-Client': this.clientId,
         };
@@ -124,6 +131,16 @@ export class EndpointExecutor {
         }
         if (context?.command) {
             headers['X-Croniq-Command'] = context.command;
+        }
+
+        const resolvedApiKey = auth?.apiKey ?? this.credentials?.getApiKey() ?? null;
+        if (resolvedApiKey) {
+            headers['X-Croniq-Key'] = resolvedApiKey;
+        }
+
+        const resolvedSessionToken = auth?.sessionToken ?? this.credentials?.getSessionToken() ?? null;
+        if (resolvedSessionToken) {
+            headers['Authorization'] = `Bearer ${resolvedSessionToken}`;
         }
 
         if (extras) {
