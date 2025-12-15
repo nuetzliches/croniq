@@ -86,6 +86,44 @@ public sealed class SqlServerJobPersistenceProviderTests : IAsyncLifetime
 
     [Fact]
     [Trait(TestCategories.Category, TestCategories.Contract)]
+    public async Task ListJobsAsync_Returns_matches_for_scope()
+    {
+        var devJob = JobKey.Create("tenant-c", "dev", "ops", "notify");
+        var qaJob = JobKey.Create("tenant-c", "qa", "ops", "notify");
+
+        await _persistence!.UpsertJobAsync(new JobDefinition(devJob.Value, devJob.NamespaceSegment, devJob.JobName, devJob.Variant, "dev job", null), CancellationToken.None);
+        await _persistence.UpsertJobAsync(new JobDefinition(qaJob.Value, qaJob.NamespaceSegment, qaJob.JobName, qaJob.Variant, "qa job", null), CancellationToken.None);
+
+        var scope = new PartitionScope(devJob.TenantId, devJob.EnvironmentTag);
+        var jobs = await _persistence.ListJobsAsync(scope, CancellationToken.None);
+
+        jobs.Count.ShouldBe(1);
+        jobs.Single().JobKey.ShouldBe(devJob.Value);
+        jobs.Single().Description.ShouldBe("dev job");
+    }
+
+    [Fact]
+    [Trait(TestCategories.Category, TestCategories.Contract)]
+    public async Task DeleteJobAsync_Removes_job_and_triggers()
+    {
+        var jobKey = JobKey.Create("tenant-d", "dev", "billing", "cleanup");
+        var scope = new PartitionScope(jobKey.TenantId, jobKey.EnvironmentTag);
+
+        await _persistence!.UpsertJobAsync(new JobDefinition(jobKey.Value, jobKey.NamespaceSegment, jobKey.JobName, jobKey.Variant, null, null), CancellationToken.None);
+        var trigger = new TriggerDefinition($"{jobKey.Value}:nightly", jobKey.Value, "0 0 * * * ?", scope);
+        await _persistence.UpsertTriggerAsync(trigger, CancellationToken.None);
+
+        await _persistence.DeleteJobAsync(jobKey.Value, scope, CancellationToken.None);
+
+        await using (var context = await _dbFactory!.CreateDbContextAsync())
+        {
+            (await context.Jobs.AnyAsync(j => j.JobKey == jobKey.Value)).ShouldBeFalse();
+            (await context.Triggers.AnyAsync(t => t.JobKey == jobKey.Value)).ShouldBeFalse();
+        }
+    }
+
+    [Fact]
+    [Trait(TestCategories.Category, TestCategories.Contract)]
     public async Task AcquireAsync_ReturnsDueTriggerWithinScope()
     {
         var jobKey = JobKey.Create("tenant-b", "qa", "billing", "invoice");

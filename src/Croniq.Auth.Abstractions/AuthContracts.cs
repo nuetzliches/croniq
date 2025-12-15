@@ -1,3 +1,6 @@
+using System;
+using System.Collections.Generic;
+
 namespace Croniq.Auth.Abstractions;
 
 /// <summary>Caller identity for the current request (API key or user token).</summary>
@@ -56,6 +59,14 @@ public sealed record ApiClientDescriptor(
     bool IsActive,
     DateTimeOffset? ExpiresAt);
 
+public sealed record ApiClientUpsertRequest(
+    string TenantId,
+    string ClientId,
+    string? Name,
+    string? EnvironmentTag,
+    IReadOnlyCollection<string>? Scopes,
+    bool IsActive = true);
+
 public sealed record ApiKeyIssueRequest(
     string TenantId,
     string ClientId,
@@ -79,6 +90,19 @@ public sealed record ApiKeyValidationResult(
     IReadOnlyCollection<string> Scopes,
     string? Failure);
 
+public sealed record CroniqTokenIssueRequest(
+    string TenantId,
+    string ClientId,
+    string? EnvironmentTag,
+    IReadOnlyCollection<string> Scopes,
+    string? Audience,
+    TimeSpan? Lifetime);
+
+public sealed record CroniqTokenIssueResult(
+    string AccessToken,
+    string TokenType,
+    int ExpiresInSeconds);
+
 /// <summary>Tenant CRUD for admin flows.</summary>
 public interface ITenantStore
 {
@@ -97,6 +121,9 @@ public interface IApiKeyStore
     Task<ApiKeyIssueResult?> RotateAsync(string tenantId, string keyId, CancellationToken cancellationToken = default);
     Task<ApiKeyValidationResult> ValidateAsync(string presentedKey, CancellationToken cancellationToken = default);
     Task<ApiClientDescriptor?> GetClientAsync(string tenantId, string clientId, CancellationToken cancellationToken = default);
+    Task<ApiClientDescriptor> UpsertClientAsync(ApiClientUpsertRequest request, CancellationToken cancellationToken = default);
+    Task<IReadOnlyCollection<ApiClientDescriptor>> ListClientsAsync(string tenantId, string? environmentTag, CancellationToken cancellationToken = default);
+    Task<bool> DeleteClientAsync(string tenantId, string clientId, CancellationToken cancellationToken = default);
 }
 
 /// <summary>User linkage to tenants and roles (OIDC-first).</summary>
@@ -105,4 +132,10 @@ public interface IUserStore
     Task<UserDescriptor> UpsertAsync(UserDescriptor descriptor, CancellationToken cancellationToken = default);
     Task<UserDescriptor?> FindBySubjectAsync(string issuer, string subject, CancellationToken cancellationToken = default);
     Task<IReadOnlyCollection<UserDescriptor>> ListByTenantAsync(string tenantId, CancellationToken cancellationToken = default);
+}
+
+/// <summary>Issues Croniq-signed bearer tokens for internal automation flows.</summary>
+public interface ICroniqTokenIssuer
+{
+    Task<CroniqTokenIssueResult> IssueAsync(CroniqTokenIssueRequest request, CancellationToken cancellationToken = default);
 }

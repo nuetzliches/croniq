@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.Globalization;
 using System.Linq;
@@ -149,6 +150,268 @@ public static class ApiHostingExtensions
         })
         .WithDocs("Health_Persistence_Get", "Persistence health", "Checks the configured job persistence provider for reachability.");
 
+        app.MapGet("/me", ([FromServices] ICallerContextAccessor callerContextAccessor) =>
+        {
+            var caller = callerContextAccessor.Current;
+            if (caller is null || !caller.IsActive)
+            {
+                return Results.Unauthorized();
+            }
+
+            return Results.Ok(ToCallerInfoResponse(caller));
+        })
+        .WithDocs("Caller_Get", "Inspect caller", "Returns the current caller context (tenant, environment, scopes) after authentication.");
+
+        app.MapGet("/tenants/{tenantId}/jobs", async (
+            string tenantId,
+            string environment,
+            [FromServices] ICallerContextAccessor callerContextAccessor,
+            [FromServices] IJobPersistenceProvider store,
+            CancellationToken cancellationToken) =>
+        {
+            if (string.IsNullOrWhiteSpace(environment))
+            {
+                return Results.BadRequest(new { error = "missing-environment", message = "Query parameter 'environment' is required." });
+            }
+
+            var authFailure = TenantGuard.EnsureTenant(callerContextAccessor, tenantId, environment, CroniqScopes.JobsRead);
+            if (authFailure is not null)
+            {
+                return authFailure;
+            }
+
+            var scope = new PartitionScope(tenantId, environment);
+            var jobs = await store.ListJobsAsync(scope, cancellationToken).ConfigureAwait(false);
+            var payload = jobs.Select(ToJobResponse).ToArray();
+            return Results.Ok(payload);
+        })
+        .WithDocs("Jobs_List", "List jobs", "Returns all job definitions for the tenant/environment scope.");
+
+        app.MapGet("/tenants/{tenantId}/jobs/{jobId}", async (
+            string tenantId,
+            string jobId,
+            string environment,
+            [FromServices] ICallerContextAccessor callerContextAccessor,
+            [FromServices] IJobPersistenceProvider store,
+            CancellationToken cancellationToken) =>
+        {
+            if (string.IsNullOrWhiteSpace(environment))
+            {
+                return Results.BadRequest(new { error = "missing-environment", message = "Query parameter 'environment' is required." });
+            }
+
+            if (!JobKey.TryParse(jobId, out var jobKey))
+            {
+                return Results.BadRequest(new { error = "invalid-job-key", message = "JobKey must follow the Croniq format." });
+            }
+
+            if (!string.Equals(jobKey.TenantId, tenantId, StringComparison.OrdinalIgnoreCase)
+                || !string.Equals(jobKey.EnvironmentTag, environment, StringComparison.OrdinalIgnoreCase))
+            {
+                return Results.Problem(statusCode: StatusCodes.Status403Forbidden, title: "scope-mismatch", detail: "JobKey tenant/environment must match the request scope.");
+            }
+
+            var authFailure = TenantGuard.EnsureJobScope(callerContextAccessor, jobKey, CroniqScopes.JobsRead);
+            if (authFailure is not null)
+            {
+                return authFailure;
+            }
+
+            var job = await store.GetJobAsync(jobKey.Value, cancellationToken).ConfigureAwait(false);
+            if (job is null)
+            {
+                return Results.NotFound(new { error = "job-not-found", jobId });
+            }
+
+            return Results.Ok(ToJobResponse(job));
+        })
+        .WithDocs("Jobs_Get", "Get job", "Returns the job definition for the specified job key.");
+
+        app.MapPost("/tenants/{tenantId}/jobs", async (
+            string tenantId,
+            string environment,
+            UpsertJobRequest request,
+            [FromServices] ICallerContextAccessor callerContextAccessor,
+            [FromServices] IJobPersistenceProvider store,
+            CancellationToken cancellationToken) =>
+        {
+            if (string.IsNullOrWhiteSpace(environment))
+            {
+                return Results.BadRequest(new { error = "missing-environment", message = "Query parameter 'environment' is required." });
+            }
+
+            if (!JobKey.TryParse(request.JobKey, out var jobKey))
+            {
+                return Results.BadRequest(new { error = "invalid-job-key", message = "JobKey must follow the Croniq format." });
+            }
+
+            if (!string.Equals(jobKey.TenantId, tenantId, StringComparison.OrdinalIgnoreCase)
+                || !string.Equals(jobKey.EnvironmentTag, environment, StringComparison.OrdinalIgnoreCase))
+            {
+                return Results.Problem(statusCode: StatusCodes.Status403Forbidden, title: "scope-mismatch", detail: "JobKey tenant/environment must match the request scope.");
+            }
+
+            var authFailure = TenantGuard.EnsureJobScope(callerContextAccessor, jobKey, CroniqScopes.JobsWrite);
+            if (authFailure is not null)
+            {
+                return authFailure;
+            }
+
+            if (!string.Equals(jobKey.NamespaceSegment, request.Namespace, StringComparison.OrdinalIgnoreCase))
+            {
+                return Results.BadRequest(new { error = "namespace-mismatch", message = "Namespace must match the job key namespace segment." });
+            }
+
+            if (!string.Equals(jobKey.JobName, request.Name, StringComparison.OrdinalIgnoreCase))
+            {
+                return Results.BadRequest(new { error = "name-mismatch", message = "Name must match the job key." });
+            }
+
+            var keyVariant = jobKey.Variant ?? string.Empty;
+            var requestVariant = request.Variant ?? string.Empty;
+            if (!string.Equals(keyVariant, requestVariant, StringComparison.OrdinalIgnoreCase))
+            {
+                return Results.BadRequest(new { error = "variant-mismatch", message = "Variant must match the job key variant." });
+            }
+
+            var job = new JobDefinition(
+                jobKey.Value,
+                request.Namespace,
+                request.Name,
+                request.Variant,
+                request.Description,
+                ToReadOnly(request.Metadata));
+
+            await store.UpsertJobAsync(job, cancellationToken).ConfigureAwait(false);
+            return Results.Created($"/tenants/{tenantId}/jobs/{Uri.EscapeDataString(job.JobKey)}", ToJobResponse(job));
+        })
+        .WithDocs("Jobs_Upsert", "Create or update job", "Creates or updates the job definition for the specified job key.");
+
+        app.MapDelete("/tenants/{tenantId}/jobs/{jobId}", async (
+            string tenantId,
+            string jobId,
+            string environment,
+            [FromServices] ICallerContextAccessor callerContextAccessor,
+            [FromServices] IJobPersistenceProvider store,
+            CancellationToken cancellationToken) =>
+        {
+            if (string.IsNullOrWhiteSpace(environment))
+            {
+                return Results.BadRequest(new { error = "missing-environment", message = "Query parameter 'environment' is required." });
+            }
+
+            if (!JobKey.TryParse(jobId, out var jobKey))
+            {
+                return Results.BadRequest(new { error = "invalid-job-key", message = "JobKey must follow the Croniq format." });
+            }
+
+            if (!string.Equals(jobKey.TenantId, tenantId, StringComparison.OrdinalIgnoreCase)
+                || !string.Equals(jobKey.EnvironmentTag, environment, StringComparison.OrdinalIgnoreCase))
+            {
+                return Results.Problem(statusCode: StatusCodes.Status403Forbidden, title: "scope-mismatch", detail: "JobKey tenant/environment must match the request scope.");
+            }
+
+            var authFailure = TenantGuard.EnsureJobScope(callerContextAccessor, jobKey, CroniqScopes.JobsWrite);
+            if (authFailure is not null)
+            {
+                return authFailure;
+            }
+
+            var scope = new PartitionScope(tenantId, environment);
+            await store.DeleteJobAsync(jobKey.Value, scope, cancellationToken).ConfigureAwait(false);
+            return Results.NoContent();
+        })
+        .WithDocs("Jobs_Delete", "Delete job", "Deletes the job definition and associated triggers within the tenant/environment scope.");
+
+        app.MapGet("/tenants/{tenantId}/executions", async (
+            string tenantId,
+            string environment,
+            string? jobKey,
+            ExecutionStatus? status,
+            DateTimeOffset? startedAfterUtc,
+            DateTimeOffset? startedBeforeUtc,
+            int? limit,
+            [FromServices] ICallerContextAccessor callerContextAccessor,
+            [FromServices] IExecutionHistoryReader historyReader,
+            CancellationToken cancellationToken) =>
+        {
+            if (string.IsNullOrWhiteSpace(environment))
+            {
+                return Results.BadRequest(new { error = "missing-environment", message = "Query parameter 'environment' is required." });
+            }
+
+            if (startedAfterUtc.HasValue && startedBeforeUtc.HasValue && startedAfterUtc.Value >= startedBeforeUtc.Value)
+            {
+                return Results.BadRequest(new { error = "invalid-range", message = "startedAfterUtc must be earlier than startedBeforeUtc." });
+            }
+
+            if (!string.IsNullOrWhiteSpace(jobKey))
+            {
+                if (!JobKey.TryParse(jobKey, out var parsed))
+                {
+                    return Results.BadRequest(new { error = "invalid-job-key", message = "JobKey must follow the Croniq format." });
+                }
+
+                if (!string.Equals(parsed.TenantId, tenantId, StringComparison.OrdinalIgnoreCase)
+                    || !string.Equals(parsed.EnvironmentTag, environment, StringComparison.OrdinalIgnoreCase))
+                {
+                    return Results.Problem(statusCode: StatusCodes.Status403Forbidden, title: "scope-mismatch", detail: "JobKey tenant/environment must match the request scope.");
+                }
+            }
+
+            var authFailure = TenantGuard.EnsureTenant(callerContextAccessor, tenantId, environment, CroniqScopes.ExecutionsRead);
+            if (authFailure is not null)
+            {
+                return authFailure;
+            }
+
+            var scope = new PartitionScope(tenantId, environment);
+            var query = new ExecutionHistoryQuery
+            {
+                JobKey = jobKey,
+                Status = status,
+                StartedAfterUtc = startedAfterUtc,
+                StartedBeforeUtc = startedBeforeUtc,
+                Limit = Math.Clamp(limit ?? ExecutionHistoryQuery.DefaultLimit, 1, ExecutionHistoryQuery.MaxLimit)
+            };
+
+            var summaries = await historyReader.ListExecutionsAsync(scope, query, cancellationToken).ConfigureAwait(false);
+            var payload = summaries.Select(ToExecutionResponse).ToArray();
+            return Results.Ok(payload);
+        })
+        .WithDocs("Executions_List", "List executions", "Returns execution summaries for the tenant/environment scope with optional filters.");
+
+        app.MapGet("/tenants/{tenantId}/executions/{executionId}", async (
+            string tenantId,
+            string executionId,
+            string environment,
+            [FromServices] ICallerContextAccessor callerContextAccessor,
+            [FromServices] IExecutionHistoryReader historyReader,
+            CancellationToken cancellationToken) =>
+        {
+            if (string.IsNullOrWhiteSpace(environment))
+            {
+                return Results.BadRequest(new { error = "missing-environment", message = "Query parameter 'environment' is required." });
+            }
+
+            var authFailure = TenantGuard.EnsureTenant(callerContextAccessor, tenantId, environment, CroniqScopes.ExecutionsRead);
+            if (authFailure is not null)
+            {
+                return authFailure;
+            }
+
+            var summary = await historyReader.GetExecutionAsync(executionId, cancellationToken).ConfigureAwait(false);
+            if (summary is null
+                || !string.Equals(summary.TenantId, tenantId, StringComparison.OrdinalIgnoreCase)
+                || !string.Equals(summary.EnvironmentTag, environment, StringComparison.OrdinalIgnoreCase))
+            {
+                return Results.NotFound(new { error = "execution-not-found", executionId });
+            }
+
+            return Results.Ok(ToExecutionResponse(summary));
+        })
+        .WithDocs("Executions_Get", "Get execution", "Returns metadata for a single execution in the tenant/environment scope.");
+
         app.MapPost("/tenants/{tenantId}/schedules", async (
             string tenantId,
             UpsertScheduleRequest request,
@@ -209,6 +472,110 @@ public static class ApiHostingExtensions
             return Results.Created($"/tenants/{tenantId}/schedules/{trigger.TriggerId}", new { trigger.TriggerId, trigger.JobKey, trigger.ScheduleExpression });
         })
         .WithDocs("Schedules_Upsert", "Create or update a schedule", "Registers a Cron-based trigger for the specified tenant-scoped job key.");
+
+        app.MapGet("/tenants/{tenantId}/schedules", async (
+            string tenantId,
+            string environment,
+            string? jobKey,
+            [FromServices] ICallerContextAccessor callerContextAccessor,
+            [FromServices] IJobPersistenceProvider store,
+            CancellationToken cancellationToken) =>
+        {
+            if (string.IsNullOrWhiteSpace(environment))
+            {
+                return Results.BadRequest(new { error = "missing-environment", message = "Query parameter 'environment' is required." });
+            }
+
+            if (!string.IsNullOrWhiteSpace(jobKey))
+            {
+                if (!JobKey.TryParse(jobKey, out var parsed))
+                {
+                    return Results.BadRequest(new { error = "invalid-job-key", message = "JobKey must follow the Croniq format." });
+                }
+
+                if (!string.Equals(parsed.TenantId, tenantId, StringComparison.OrdinalIgnoreCase)
+                    || !string.Equals(parsed.EnvironmentTag, environment, StringComparison.OrdinalIgnoreCase))
+                {
+                    return Results.Problem(statusCode: StatusCodes.Status403Forbidden, title: "scope-mismatch", detail: "JobKey tenant/environment must match the request scope.");
+                }
+            }
+
+            var authFailure = TenantGuard.EnsureTenant(callerContextAccessor, tenantId, environment, CroniqScopes.SchedulesWrite);
+            if (authFailure is not null)
+            {
+                return authFailure;
+            }
+
+            var scope = new PartitionScope(tenantId, environment);
+            var triggers = await store.ListTriggersAsync(scope, cancellationToken).ConfigureAwait(false);
+
+            if (!string.IsNullOrWhiteSpace(jobKey))
+            {
+                triggers = triggers
+                    .Where(t => string.Equals(t.JobKey, jobKey, StringComparison.OrdinalIgnoreCase))
+                    .ToArray();
+            }
+
+            var payload = triggers.Select(ToScheduleResponse).ToArray();
+            return Results.Ok(payload);
+        })
+        .WithDocs("Schedules_List", "List schedules", "Returns all persisted schedules for the tenant/environment scope, optionally filtered by job key.");
+
+        app.MapGet("/tenants/{tenantId}/schedules/{triggerId}", async (
+            string tenantId,
+            string triggerId,
+            string environment,
+            [FromServices] ICallerContextAccessor callerContextAccessor,
+            [FromServices] IJobPersistenceProvider store,
+            CancellationToken cancellationToken) =>
+        {
+            if (string.IsNullOrWhiteSpace(environment))
+            {
+                return Results.BadRequest(new { error = "missing-environment", message = "Query parameter 'environment' is required." });
+            }
+
+            var authFailure = TenantGuard.EnsureTenant(callerContextAccessor, tenantId, environment, CroniqScopes.SchedulesWrite);
+            if (authFailure is not null)
+            {
+                return authFailure;
+            }
+
+            var scope = new PartitionScope(tenantId, environment);
+            var triggers = await store.ListTriggersAsync(scope, cancellationToken).ConfigureAwait(false);
+            var match = triggers.FirstOrDefault(t => string.Equals(t.TriggerId, triggerId, StringComparison.OrdinalIgnoreCase));
+            if (match is null)
+            {
+                return Results.NotFound(new { error = "schedule-not-found", triggerId });
+            }
+
+            return Results.Ok(ToScheduleResponse(match));
+        })
+        .WithDocs("Schedules_Get", "Get schedule", "Returns the persisted schedule metadata for the requested trigger identifier.");
+
+        app.MapDelete("/tenants/{tenantId}/schedules/{triggerId}", async (
+            string tenantId,
+            string triggerId,
+            string environment,
+            [FromServices] ICallerContextAccessor callerContextAccessor,
+            [FromServices] IJobPersistenceProvider store,
+            CancellationToken cancellationToken) =>
+        {
+            if (string.IsNullOrWhiteSpace(environment))
+            {
+                return Results.BadRequest(new { error = "missing-environment", message = "Query parameter 'environment' is required." });
+            }
+
+            var authFailure = TenantGuard.EnsureTenant(callerContextAccessor, tenantId, environment, CroniqScopes.SchedulesWrite);
+            if (authFailure is not null)
+            {
+                return authFailure;
+            }
+
+            var scope = new PartitionScope(tenantId, environment);
+            await store.DeleteTriggerAsync(triggerId, scope, cancellationToken).ConfigureAwait(false);
+            return Results.NoContent();
+        })
+        .WithDocs("Schedules_Delete", "Delete schedule", "Deletes the persisted trigger for the tenant/environment scope.");
 
         app.MapGet("/tenants/{tenantId}/webhooks", async (
             string tenantId,
@@ -653,6 +1020,92 @@ public static class ApiHostingExtensions
         })
         .WithDocs("WebhookDeadLetters_Replay", "Replay webhook dead letter", "Re-dispatches a failed webhook payload via the job execution pipeline.");
 
+        app.MapGet("/tenants/{tenantId}/api-clients", async (
+            string tenantId,
+            string? environment,
+            [FromServices] ICallerContextAccessor callerContextAccessor,
+            [FromServices] IApiKeyStore apiKeyStore,
+            CancellationToken cancellationToken) =>
+        {
+            var authFailure = WebhookAuthorization.Ensure(callerContextAccessor, tenantId, environment, CroniqScopes.ApiKeysManage);
+            if (authFailure is not null)
+            {
+                return authFailure;
+            }
+
+            var clients = await apiKeyStore.ListClientsAsync(tenantId, environment, cancellationToken).ConfigureAwait(false);
+            var payload = clients.Select(ToApiClientResponse).ToArray();
+            return Results.Ok(payload);
+        })
+        .WithDocs("ApiClients_List", "List API clients", "Returns all registered API clients for the tenant, optionally filtered by environment.");
+
+        app.MapPost("/tenants/{tenantId}/api-clients", async (
+            string tenantId,
+            string? environment,
+            UpsertApiClientRequest request,
+            [FromServices] ICallerContextAccessor callerContextAccessor,
+            [FromServices] IApiKeyStore apiKeyStore,
+            CancellationToken cancellationToken) =>
+        {
+            if (string.IsNullOrWhiteSpace(request.ClientId))
+            {
+                return Results.BadRequest(new { error = "client-required", message = "ClientId is required." });
+            }
+
+            if (!string.IsNullOrWhiteSpace(environment)
+                && !string.IsNullOrWhiteSpace(request.EnvironmentTag)
+                && !string.Equals(environment, request.EnvironmentTag, StringComparison.OrdinalIgnoreCase))
+            {
+                return Results.BadRequest(new { error = "environment-mismatch", message = "Body environmentTag must match the query parameter value." });
+            }
+
+            var effectiveEnvironment = request.EnvironmentTag ?? environment;
+            var scopes = NormalizeScopes(request.Scopes);
+            var isActive = request.IsActive ?? true;
+
+            var authFailure = WebhookAuthorization.Ensure(callerContextAccessor, tenantId, effectiveEnvironment, CroniqScopes.ApiKeysManage);
+            if (authFailure is not null)
+            {
+                return authFailure;
+            }
+
+            var upsert = new ApiClientUpsertRequest(
+                tenantId,
+                request.ClientId,
+                request.Name,
+                effectiveEnvironment,
+                scopes,
+                isActive);
+
+            var descriptor = await apiKeyStore.UpsertClientAsync(upsert, cancellationToken).ConfigureAwait(false);
+            return Results.Ok(ToApiClientResponse(descriptor));
+        })
+        .WithDocs("ApiClients_Upsert", "Create or update API client", "Creates a tenant-scoped API client or updates metadata/scopes when the client already exists.");
+
+        app.MapDelete("/tenants/{tenantId}/api-clients/{clientId}", async (
+            string tenantId,
+            string clientId,
+            string? environment,
+            [FromServices] ICallerContextAccessor callerContextAccessor,
+            [FromServices] IApiKeyStore apiKeyStore,
+            CancellationToken cancellationToken) =>
+        {
+            var authFailure = WebhookAuthorization.Ensure(callerContextAccessor, tenantId, environment, CroniqScopes.ApiKeysManage);
+            if (authFailure is not null)
+            {
+                return authFailure;
+            }
+
+            var deleted = await apiKeyStore.DeleteClientAsync(tenantId, clientId, cancellationToken).ConfigureAwait(false);
+            if (!deleted)
+            {
+                return Results.NotFound(new { error = "api-client-not-found", clientId });
+            }
+
+            return Results.NoContent();
+        })
+        .WithDocs("ApiClients_Delete", "Delete API client", "Deletes the API client metadata and revokes any associated API keys.");
+
         app.MapGet("/tenants/{tenantId}/api-clients/{clientId}", async (
             string tenantId,
             string clientId,
@@ -673,16 +1126,7 @@ public static class ApiHostingExtensions
                 return Results.NotFound(new { error = "api-client-not-found", clientId });
             }
 
-            var response = new ApiClientResponse(
-                client.ClientId,
-                client.TenantId,
-                client.Name,
-                client.EnvironmentTag,
-                client.Scopes,
-                client.IsActive,
-                client.ExpiresAt);
-
-            return Results.Ok(response);
+            return Results.Ok(ToApiClientResponse(client));
         })
         .WithDocs("ApiClients_Get", "Get API client", "Returns metadata about a tenant-scoped API client, including scopes and activity flags.");
 
@@ -783,6 +1227,55 @@ public static class ApiHostingExtensions
             return Results.NoContent();
         })
         .WithDocs("ApiKeys_Delete", "Revoke API key", "Immediately revokes an API key for the tenant.");
+
+        app.MapPost("/tenants/{tenantId}/tokens", async (
+            string tenantId,
+            string? environment,
+            IssueTokenRequest request,
+            [FromServices] ICallerContextAccessor callerContextAccessor,
+            [FromServices] IApiKeyStore apiKeyStore,
+            [FromServices] ICroniqTokenIssuer tokenIssuer,
+            [FromServices] ILogger<ApiKeyAdminApiMarker> logger,
+            CancellationToken cancellationToken) =>
+        {
+            return await IssueTokenAsync(
+                    tenantId,
+                    environment,
+                    routeClientId: null,
+                    request,
+                    callerContextAccessor,
+                    apiKeyStore,
+                    tokenIssuer,
+                    logger,
+                    cancellationToken)
+                .ConfigureAwait(false);
+        })
+        .WithDocs("Tokens_Issue_Tenant", "Issue tenant token", "Mints a Croniq-signed bearer token for the specified client (tenant-level variant).");
+
+        app.MapPost("/tenants/{tenantId}/api-clients/{clientId}/tokens", async (
+            string tenantId,
+            string clientId,
+            string? environment,
+            IssueTokenRequest request,
+            [FromServices] ICallerContextAccessor callerContextAccessor,
+            [FromServices] IApiKeyStore apiKeyStore,
+            [FromServices] ICroniqTokenIssuer tokenIssuer,
+            [FromServices] ILogger<ApiKeyAdminApiMarker> logger,
+            CancellationToken cancellationToken) =>
+        {
+            return await IssueTokenAsync(
+                    tenantId,
+                    environment,
+                    clientId,
+                    request,
+                    callerContextAccessor,
+                    apiKeyStore,
+                    tokenIssuer,
+                    logger,
+                    cancellationToken)
+                .ConfigureAwait(false);
+        })
+        .WithDocs("Tokens_Issue_Client", "Issue client token", "Same payload as the tenant route but infers the clientId from the path.");
 
         app.MapGet("/tenants/{tenantId}/executions/{executionId}/logs", async (
             string tenantId,
@@ -1106,6 +1599,30 @@ public static class ApiHostingExtensions
         return new Dictionary<string, string>(source);
     }
 
+    private static ApiClientResponse ToApiClientResponse(ApiClientDescriptor descriptor)
+    {
+        var scopes = descriptor.Scopes ?? Array.Empty<string>();
+        return new ApiClientResponse(
+            descriptor.ClientId,
+            descriptor.TenantId,
+            descriptor.Name,
+            descriptor.EnvironmentTag,
+            scopes,
+            descriptor.IsActive,
+            descriptor.ExpiresAt);
+    }
+
+    private static CallerInfoResponse ToCallerInfoResponse(ICallerContext caller)
+    {
+        return new CallerInfoResponse(
+            caller.TenantId,
+            caller.EnvironmentTag,
+            caller.CallerId,
+            caller.CallerType,
+            caller.Scopes,
+            caller.IsActive);
+    }
+
     private static IssueApiKeyResponse ToIssueApiKeyResponse(ApiKeyIssueResult result)
     {
         return new IssueApiKeyResponse(
@@ -1115,6 +1632,60 @@ public static class ApiHostingExtensions
             result.PlaintextSecret,
             result.ExpiresAt,
             result.EnvironmentTag);
+    }
+
+    private static ScheduleResponse ToScheduleResponse(TriggerDefinition definition)
+    {
+        IReadOnlyDictionary<string, string>? metadata = definition.Metadata is null
+            ? null
+            : new Dictionary<string, string>(definition.Metadata, StringComparer.OrdinalIgnoreCase);
+
+        return new ScheduleResponse(
+            definition.TriggerId,
+            definition.JobKey,
+            definition.ScheduleExpression,
+            definition.Scope.TenantId,
+            definition.Scope.EnvironmentTag,
+            definition.StartAtUtc,
+            definition.EndAtUtc,
+            definition.Enabled,
+            metadata);
+    }
+
+    private static ExecutionResponse ToExecutionResponse(ExecutionSummary summary)
+    {
+        return new ExecutionResponse(
+            summary.ExecutionId,
+            summary.JobKey,
+            summary.TenantId,
+            summary.EnvironmentTag,
+            summary.Kind,
+            summary.Status,
+            summary.FireAtUtc,
+            summary.StartedAtUtc,
+            summary.CompletedAtUtc,
+            summary.DurationMs,
+            summary.TriggerId,
+            summary.InstanceId,
+            summary.TraceId,
+            summary.CorrelationId,
+            summary.ErrorType,
+            summary.ErrorMessage);
+    }
+
+    private static JobResponse ToJobResponse(JobDefinition job)
+    {
+        IReadOnlyDictionary<string, string>? metadata = job.Metadata is null
+            ? null
+            : new Dictionary<string, string>(job.Metadata, StringComparer.OrdinalIgnoreCase);
+
+        return new JobResponse(
+            job.JobKey,
+            job.Namespace,
+            job.Name,
+            job.Variant,
+            job.Description,
+            metadata);
     }
 
     private static IReadOnlyCollection<string> NormalizeScopes(IReadOnlyCollection<string>? requestedScopes)
@@ -1131,6 +1702,107 @@ public static class ApiHostingExtensions
             .ToArray();
 
         return normalized.Length == 0 ? Array.Empty<string>() : normalized;
+    }
+
+    private static bool AreScopesAllowed(IReadOnlyCollection<string> requested, IReadOnlyCollection<string> allowed)
+    {
+        if (requested.Count == 0)
+        {
+            return true;
+        }
+
+        if (allowed.Count == 0)
+        {
+            return false;
+        }
+
+        var permitted = new HashSet<string>(allowed, StringComparer.OrdinalIgnoreCase);
+        return requested.All(permitted.Contains);
+    }
+
+    private static async Task<IResult> IssueTokenAsync(
+        string tenantId,
+        string? environment,
+        string? routeClientId,
+        IssueTokenRequest request,
+        ICallerContextAccessor callerContextAccessor,
+        IApiKeyStore apiKeyStore,
+        ICroniqTokenIssuer tokenIssuer,
+        ILogger<ApiKeyAdminApiMarker> logger,
+        CancellationToken cancellationToken)
+    {
+        var clientId = routeClientId ?? request.ClientId;
+        if (string.IsNullOrWhiteSpace(clientId))
+        {
+            return Results.BadRequest(new { error = "client-required", message = "ClientId is required." });
+        }
+
+        if (request.TtlMinutes.HasValue && request.TtlMinutes.Value <= 0)
+        {
+            return Results.BadRequest(new { error = "invalid-ttl", message = "TtlMinutes must be greater than zero." });
+        }
+
+        var client = await apiKeyStore.GetClientAsync(tenantId, clientId, cancellationToken).ConfigureAwait(false);
+        if (client is null)
+        {
+            return Results.NotFound(new { error = "api-client-not-found", clientId });
+        }
+
+        if (!client.IsActive)
+        {
+            return Results.BadRequest(new { error = "client-inactive", message = "Inactive API clients cannot issue tokens." });
+        }
+
+        if (!string.IsNullOrWhiteSpace(environment)
+            && !string.IsNullOrWhiteSpace(client.EnvironmentTag)
+            && !string.Equals(client.EnvironmentTag, environment, StringComparison.OrdinalIgnoreCase))
+        {
+            return Results.BadRequest(new { error = "environment-mismatch", message = "Client environment does not match the requested environment." });
+        }
+
+        var guardEnvironment = environment ?? client.EnvironmentTag;
+        var authFailure = WebhookAuthorization.Ensure(callerContextAccessor, tenantId, guardEnvironment, CroniqScopes.ApiKeysManage);
+        if (authFailure is not null)
+        {
+            return authFailure;
+        }
+
+        var allowedScopes = client.Scopes ?? Array.Empty<string>();
+        var requestedScopes = NormalizeScopes(request.Scopes);
+        var tokenScopes = requestedScopes.Count == 0 ? allowedScopes : requestedScopes;
+        if (tokenScopes.Count == 0)
+        {
+            return Results.BadRequest(new { error = "missing-scopes", message = "Assign scopes to the client before issuing tokens." });
+        }
+
+        if (!AreScopesAllowed(tokenScopes, allowedScopes))
+        {
+            return Results.BadRequest(new { error = "invalid-scopes", message = "Requested scopes must be a subset of the client scopes." });
+        }
+
+        TimeSpan? lifetime = null;
+        if (request.TtlMinutes.HasValue)
+        {
+            lifetime = TimeSpan.FromMinutes(request.TtlMinutes.Value);
+        }
+
+        try
+        {
+            var token = await tokenIssuer.IssueAsync(new CroniqTokenIssueRequest(
+                tenantId,
+                clientId,
+                guardEnvironment,
+                tokenScopes,
+                request.Audience,
+                lifetime), cancellationToken).ConfigureAwait(false);
+
+            return Results.Ok(new IssueTokenResponse(token.AccessToken, token.TokenType, token.ExpiresInSeconds));
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "failed to issue token for tenant {TenantId} client {ClientId}", tenantId, clientId);
+            return Results.Problem(statusCode: StatusCodes.Status500InternalServerError, title: "token-issue-failed", detail: ex.Message);
+        }
     }
 
     private static WebhookEndpointResponse ToWebhookResponse(WebhookEndpointDefinition definition, string? secretOverride = null)

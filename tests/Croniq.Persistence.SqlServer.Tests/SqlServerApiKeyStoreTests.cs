@@ -95,4 +95,45 @@ public sealed class SqlServerApiKeyStoreTests : IAsyncLifetime
         newValidation.CallerId.ShouldBe(rotated.KeyId);
         newValidation.Scopes.ShouldContain("x");
     }
+
+    [Fact]
+    [Trait(TestCategories.Category, TestCategories.Contract)]
+    public async Task Upsert_and_list_clients_work()
+    {
+        var upsert = new ApiClientUpsertRequest(
+            TenantId: "tenant-sql",
+            ClientId: "ops-cli",
+            Name: "Ops CLI",
+            EnvironmentTag: "dev",
+            Scopes: new[] { "jobs:trigger" },
+            IsActive: true);
+
+        var descriptor = await _store!.UpsertClientAsync(upsert);
+        descriptor.ClientId.ShouldBe("ops-cli");
+        descriptor.Scopes.ShouldContain("jobs:trigger");
+
+        var listed = await _store.ListClientsAsync("tenant-sql", "dev");
+        listed.ShouldContain(client => client.ClientId == "ops-cli");
+
+        var fetched = await _store.GetClientAsync("tenant-sql", "ops-cli");
+        fetched.ShouldNotBeNull();
+        fetched!.Name.ShouldBe("Ops CLI");
+    }
+
+    [Fact]
+    [Trait(TestCategories.Category, TestCategories.Contract)]
+    public async Task Deleting_client_revokes_keys()
+    {
+        var issued = await _store!.IssueAsync(new ApiKeyIssueRequest("tenant-sql", "client-delete", "dev", new[] { "schedules:read" }, null));
+
+        var deleted = await _store.DeleteClientAsync("tenant-sql", "client-delete");
+        deleted.ShouldBeTrue();
+
+        var client = await _store.GetClientAsync("tenant-sql", "client-delete");
+        client.ShouldBeNull();
+
+        var validation = await _store.ValidateAsync(issued.PlaintextSecret);
+        validation.IsValid.ShouldBeFalse();
+        validation.Failure.ShouldBe("revoked");
+    }
 }

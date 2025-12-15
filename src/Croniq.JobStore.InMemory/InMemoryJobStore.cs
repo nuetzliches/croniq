@@ -4,6 +4,7 @@ using System.Linq;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using Croniq.Core.Jobs;
 using Croniq.Core.Scheduling;
 using Croniq.Persistence.Abstractions;
 using Microsoft.Extensions.Options;
@@ -35,7 +36,66 @@ public sealed class InMemoryJobStore : IJobPersistenceProvider
 
         lock (_lock)
         {
-            _jobs[job.JobKey] = job;
+            _jobs[job.JobKey] = CloneJob(job);
+        }
+
+        return Task.CompletedTask;
+    }
+
+    public Task<IReadOnlyCollection<JobDefinition>> ListJobsAsync(PartitionScope scope, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+
+        lock (_lock)
+        {
+            var matches = _jobs.Values
+                .Where(job => JobMatchesScope(job.JobKey, scope))
+                .Select(CloneJob)
+                .ToArray();
+
+            return Task.FromResult<IReadOnlyCollection<JobDefinition>>(matches);
+        }
+    }
+
+    public Task<JobDefinition?> GetJobAsync(string jobKey, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(jobKey)) throw new ArgumentNullException(nameof(jobKey));
+        cancellationToken.ThrowIfCancellationRequested();
+
+        lock (_lock)
+        {
+            if (!_jobs.TryGetValue(jobKey, out var job))
+            {
+                return Task.FromResult<JobDefinition?>(null);
+            }
+
+            return Task.FromResult<JobDefinition?>(CloneJob(job));
+        }
+    }
+
+    public Task DeleteJobAsync(string jobKey, PartitionScope scope, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(jobKey)) throw new ArgumentNullException(nameof(jobKey));
+        cancellationToken.ThrowIfCancellationRequested();
+
+        lock (_lock)
+        {
+            if (!_jobs.TryGetValue(jobKey, out var existing) || !JobMatchesScope(existing.JobKey, scope))
+            {
+                return Task.CompletedTask;
+            }
+
+            _jobs.Remove(jobKey);
+
+            var triggerKeys = _triggers
+                .Where(pair => string.Equals(pair.Value.Definition.JobKey, jobKey, StringComparison.OrdinalIgnoreCase))
+                .Select(pair => pair.Key)
+                .ToList();
+
+            foreach (var key in triggerKeys)
+            {
+                _triggers.Remove(key);
+            }
         }
 
         return Task.CompletedTask;
@@ -214,6 +274,26 @@ public sealed class InMemoryJobStore : IJobPersistenceProvider
     {
         return string.Equals(a.TenantId, b.TenantId, StringComparison.OrdinalIgnoreCase)
             && string.Equals(a.EnvironmentTag, b.EnvironmentTag, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool JobMatchesScope(string jobKey, PartitionScope scope)
+    {
+        if (!JobKey.TryParse(jobKey, out var key))
+        {
+            return false;
+        }
+
+        return string.Equals(key.TenantId, scope.TenantId, StringComparison.OrdinalIgnoreCase)
+            && string.Equals(key.EnvironmentTag, scope.EnvironmentTag, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static JobDefinition CloneJob(JobDefinition job)
+    {
+        IReadOnlyDictionary<string, string>? metadata = job.Metadata is null
+            ? null
+            : new Dictionary<string, string>(job.Metadata, StringComparer.OrdinalIgnoreCase);
+
+        return new JobDefinition(job.JobKey, job.Namespace, job.Name, job.Variant, job.Description, metadata);
     }
 
     private static DateTimeOffset? ComputeNextFire(TriggerDefinition trigger, CronSchedule schedule, DateTimeOffset referenceUtc)

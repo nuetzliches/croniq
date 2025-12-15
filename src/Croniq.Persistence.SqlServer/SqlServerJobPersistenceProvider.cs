@@ -72,6 +72,57 @@ public sealed class SqlServerJobPersistenceProvider : IJobPersistenceProvider
         await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
     }
 
+    public async Task<IReadOnlyCollection<JobDefinition>> ListJobsAsync(PartitionScope scope, CancellationToken cancellationToken)
+    {
+
+        await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
+        var rows = await db.Jobs
+            .Where(j => j.TenantId == scope.TenantId && j.EnvironmentTag == scope.EnvironmentTag)
+            .OrderBy(j => j.NamespaceSegment)
+            .ThenBy(j => j.Name)
+            .ThenBy(j => j.Variant)
+            .ToListAsync(cancellationToken)
+            .ConfigureAwait(false);
+
+        var result = new List<JobDefinition>(rows.Count);
+        foreach (var row in rows)
+        {
+            result.Add(ToJobDefinition(row));
+        }
+
+        return result;
+    }
+
+    public async Task<JobDefinition?> GetJobAsync(string jobKey, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(jobKey)) throw new ArgumentNullException(nameof(jobKey));
+
+        await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
+        var entity = await db.Jobs.FirstOrDefaultAsync(j => j.JobKey == jobKey, cancellationToken).ConfigureAwait(false);
+        return entity is null ? null : ToJobDefinition(entity);
+    }
+
+    public async Task DeleteJobAsync(string jobKey, PartitionScope scope, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(jobKey)) throw new ArgumentNullException(nameof(jobKey));
+
+        await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
+        var entity = await db.Jobs.FirstOrDefaultAsync(j => j.JobKey == jobKey, cancellationToken).ConfigureAwait(false);
+        if (entity is null)
+        {
+            return;
+        }
+
+        if (!string.Equals(entity.TenantId, scope.TenantId, StringComparison.OrdinalIgnoreCase)
+            || !string.Equals(entity.EnvironmentTag, scope.EnvironmentTag, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException("Job scope does not match requested scope.");
+        }
+
+        db.Jobs.Remove(entity);
+        await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+    }
+
     public async Task UpsertTriggerAsync(TriggerDefinition trigger, CancellationToken cancellationToken)
     {
         if (trigger is null) throw new ArgumentNullException(nameof(trigger));
@@ -388,6 +439,17 @@ public sealed class SqlServerJobPersistenceProvider : IJobPersistenceProvider
         {
             return TimeZoneInfo.Utc;
         }
+    }
+
+    private JobDefinition ToJobDefinition(JobEntity entity)
+    {
+        return new JobDefinition(
+            entity.JobKey,
+            entity.NamespaceSegment,
+            entity.Name,
+            entity.Variant,
+            entity.Description,
+            DeserializeMetadata(entity.MetadataJson));
     }
 
     private sealed record DeadLetterEnvelope(

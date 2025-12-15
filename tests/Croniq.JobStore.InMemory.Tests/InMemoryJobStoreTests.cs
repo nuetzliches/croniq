@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -86,6 +87,42 @@ public class InMemoryJobStoreTests
         var reacquire = await store.AcquireAsync(new TriggerAcquireRequest(DefaultScope, "i3", leaseA.FireAtUtc.AddSeconds(11), 5), CancellationToken.None);
         var leaseAfterExpiry = reacquire.ShouldHaveSingleItem();
         leaseAfterExpiry.TriggerId.ShouldBe(leaseA.TriggerId);
+    }
+
+    [Fact]
+    public async Task ListJobsAsync_returns_scope_matches_only()
+    {
+        var store = CreateStore(null, 30);
+        var jobA = "1:dev:samples:list";
+        var jobB = "1:qa:samples:list";
+
+        await store.UpsertJobAsync(new JobDefinition(jobA, "samples", "list", null, null, new Dictionary<string, string> { ["owner"] = "platform" }), CancellationToken.None);
+        await store.UpsertJobAsync(new JobDefinition(jobB, "samples", "list", null, null, null), CancellationToken.None);
+
+        var results = await store.ListJobsAsync(DefaultScope, CancellationToken.None);
+        results.Count.ShouldBe(1);
+        results.Single().JobKey.ShouldBe(jobA);
+        results.Single().Metadata!.ShouldContainKeyAndValue("owner", "platform");
+    }
+
+    [Fact]
+    public async Task DeleteJobAsync_removes_job_and_triggers()
+    {
+        var store = CreateStore(null, 30);
+        var jobKey = "1:dev:samples:delete";
+        var scope = DefaultScope;
+
+        await store.UpsertJobAsync(new JobDefinition(jobKey, "samples", "delete", null, null, null), CancellationToken.None);
+        await store.UpsertTriggerAsync(new TriggerDefinition($"{jobKey}:t1", jobKey, "0 * * * * ?", scope), CancellationToken.None);
+        await store.UpsertTriggerAsync(new TriggerDefinition($"{jobKey}:t2", jobKey, "*/15 * * * * ?", scope), CancellationToken.None);
+
+        await store.DeleteJobAsync(jobKey, scope, CancellationToken.None);
+
+        var jobs = await store.ListJobsAsync(scope, CancellationToken.None);
+        jobs.ShouldBeEmpty();
+
+        var triggers = await store.ListTriggersAsync(scope, CancellationToken.None);
+        triggers.ShouldBeEmpty();
     }
 
     private static InMemoryJobStore CreateStore(DateTimeOffset? now, int leaseDurationSeconds)

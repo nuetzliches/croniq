@@ -1,4 +1,5 @@
 using Croniq.Auth.Abstractions;
+using Croniq.Auth.Core;
 using Croniq.Data.SqlServer;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -32,6 +33,8 @@ public static class ServiceCollectionExtensions
 
         services.AddCroniqSqlServerDbContext(configureSql);
         services.AddSingleton<IApiKeyStore, SqlServerApiKeyStore>();
+        services.AddOptions<CroniqTokenOptions>();
+        services.AddSingleton<ICroniqTokenIssuer, CroniqTokenIssuer>();
         return services;
     }
 }

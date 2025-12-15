@@ -6,6 +6,7 @@
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\Croniq.Auth.Abstractions\Croniq.Auth.Abstractions.csproj" />
+    <ProjectReference Include="..\Croniq.Auth.Core\Croniq.Auth.Core.csproj" />
     <ProjectReference Include="..\Croniq.Data.SqlServer\Croniq.Data.SqlServer.csproj" />
   </ItemGroup>
   <ItemGroup>

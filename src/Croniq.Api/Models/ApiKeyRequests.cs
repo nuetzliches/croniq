@@ -1,5 +1,7 @@
 using System.Collections.Generic;
+using System.Collections.Generic;
 using System.ComponentModel.DataAnnotations;
+using Croniq.Auth.Abstractions;
 
 namespace Croniq.Api.Models;
 
@@ -25,3 +27,29 @@ public sealed record ApiClientResponse(
     IReadOnlyCollection<string> Scopes,
     bool IsActive,
     DateTimeOffset? ExpiresAtUtc);
+
+public sealed record UpsertApiClientRequest(
+    [property: Required] string ClientId,
+    string? Name,
+    string? EnvironmentTag,
+    IReadOnlyCollection<string>? Scopes,
+    bool? IsActive);
+
+public sealed record IssueTokenRequest(
+    string? ClientId,
+    IReadOnlyCollection<string>? Scopes,
+    string? Audience,
+    int? TtlMinutes);
+
+public sealed record IssueTokenResponse(
+    string AccessToken,
+    string TokenType,
+    int ExpiresIn);
+
+public sealed record CallerInfoResponse(
+    string TenantId,
+    string? EnvironmentTag,
+    string CallerId,
+    CallerType CallerType,
+    IReadOnlyCollection<string> Scopes,
+    bool IsActive);

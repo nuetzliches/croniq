@@ -297,25 +297,39 @@ public sealed class InMemoryApiKeyStoreOptions
 public sealed class InMemoryApiKeyStore : IApiKeyStore
 {
     private readonly ConcurrentDictionary<string, ApiKeyRecord> _store;
+    private readonly ConcurrentDictionary<string, ApiClientRecord> _clients;
 
     public InMemoryApiKeyStore(IEnumerable<ApiKeySeed>? seeds = null)
     {
         _store = new ConcurrentDictionary<string, ApiKeyRecord>(StringComparer.Ordinal);
+        _clients = new ConcurrentDictionary<string, ApiClientRecord>(StringComparer.OrdinalIgnoreCase);
 
         if (seeds is not null)
         {
             foreach (var seed in seeds)
             {
+                var scopes = seed.Scopes?.ToArray() ?? Array.Empty<string>();
                 var record = new ApiKeyRecord(
                     seed.KeyId,
                     seed.Secret,
                     seed.TenantId,
                     seed.EnvironmentTag,
-                    seed.Scopes.ToArray(),
+                    scopes,
                     seed.ClientId ?? seed.KeyId,
                     ExpiresAtUtc: null,
                     IsActive: true);
                 _store[seed.KeyId] = record;
+
+                var clientId = seed.ClientId ?? seed.KeyId;
+                var clientKey = GetClientKey(seed.TenantId, clientId);
+                _clients[clientKey] = new ApiClientRecord(
+                    seed.TenantId,
+                    clientId,
+                    clientId,
+                    seed.EnvironmentTag,
+                    scopes,
+                    IsActive: true,
+                    IsDeleted: false);
             }
         }
     }
@@ -336,6 +350,14 @@ public sealed class InMemoryApiKeyStore : IApiKeyStore
             ExpiresAtUtc: request.Ttl.HasValue ? DateTimeOffset.UtcNow.Add(request.Ttl.Value) : null,
             IsActive: true);
         _store[keyId] = record;
+
+        UpsertClientRecord(new ApiClientUpsertRequest(
+            request.TenantId,
+            request.ClientId,
+            null,
+            request.EnvironmentTag,
+            request.Scopes,
+            IsActive: true));
 
         return Task.FromResult(new ApiKeyIssueResult(
             request.ClientId,
@@ -429,20 +451,53 @@ public sealed class InMemoryApiKeyStore : IApiKeyStore
 
     public Task<ApiClientDescriptor?> GetClientAsync(string tenantId, string clientId, CancellationToken cancellationToken = default)
     {
-        var client = _store.Values.FirstOrDefault(v => v.ClientId == clientId && v.TenantId == tenantId);
-        if (client is null)
+        if (string.IsNullOrWhiteSpace(tenantId)) throw new ArgumentNullException(nameof(tenantId));
+        if (string.IsNullOrWhiteSpace(clientId)) throw new ArgumentNullException(nameof(clientId));
+
+        var key = GetClientKey(tenantId, clientId);
+        if (!_clients.TryGetValue(key, out var record) || record.IsDeleted)
         {
             return Task.FromResult<ApiClientDescriptor?>(null);
         }
 
-        return Task.FromResult<ApiClientDescriptor?>(new ApiClientDescriptor(
-            clientId,
-            tenantId,
-            clientId,
-            client.EnvironmentTag,
-            client.Scopes,
-            client.IsActive,
-            client.ExpiresAtUtc));
+        return Task.FromResult<ApiClientDescriptor?>(ToDescriptor(record));
+    }
+
+    public Task<ApiClientDescriptor> UpsertClientAsync(ApiClientUpsertRequest request, CancellationToken cancellationToken = default)
+    {
+        var record = UpsertClientRecord(request);
+        return Task.FromResult(ToDescriptor(record));
+    }
+
+    public Task<IReadOnlyCollection<ApiClientDescriptor>> ListClientsAsync(string tenantId, string? environmentTag, CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(tenantId)) throw new ArgumentNullException(nameof(tenantId));
+
+        var comparer = StringComparer.OrdinalIgnoreCase;
+        var matches = _clients.Values
+            .Where(record => comparer.Equals(record.TenantId, tenantId) && !record.IsDeleted)
+            .Where(record => string.IsNullOrWhiteSpace(environmentTag) || comparer.Equals(record.EnvironmentTag ?? string.Empty, environmentTag ?? string.Empty))
+            .Select(ToDescriptor)
+            .OrderBy(descriptor => descriptor.ClientId, comparer)
+            .ToArray();
+
+        return Task.FromResult<IReadOnlyCollection<ApiClientDescriptor>>(matches);
+    }
+
+    public Task<bool> DeleteClientAsync(string tenantId, string clientId, CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(tenantId)) throw new ArgumentNullException(nameof(tenantId));
+        if (string.IsNullOrWhiteSpace(clientId)) throw new ArgumentNullException(nameof(clientId));
+
+        var key = GetClientKey(tenantId, clientId);
+        if (!_clients.TryGetValue(key, out var existing))
+        {
+            return Task.FromResult(false);
+        }
+
+        _clients[key] = existing with { IsActive = false, IsDeleted = true };
+        DeactivateKeys(tenantId, clientId);
+        return Task.FromResult(true);
     }
 
     private static (string? KeyId, string Secret) SplitKey(string presented)
@@ -472,6 +527,96 @@ public sealed class InMemoryApiKeyStore : IApiKeyStore
         string ClientId,
         DateTimeOffset? ExpiresAtUtc,
         bool IsActive);
+
+    private sealed record ApiClientRecord(
+        string TenantId,
+        string ClientId,
+        string? Name,
+        string? EnvironmentTag,
+        IReadOnlyCollection<string> Scopes,
+        bool IsActive,
+        bool IsDeleted);
+
+    private ApiClientRecord UpsertClientRecord(ApiClientUpsertRequest request)
+    {
+        if (request is null) throw new ArgumentNullException(nameof(request));
+        if (string.IsNullOrWhiteSpace(request.TenantId)) throw new ArgumentException("TenantId is required", nameof(request));
+        if (string.IsNullOrWhiteSpace(request.ClientId)) throw new ArgumentException("ClientId is required", nameof(request));
+
+        var scoped = CopyScopes(request.Scopes);
+        var hasNewScopes = scoped.Count > 0;
+        var key = GetClientKey(request.TenantId, request.ClientId);
+
+        return _clients.AddOrUpdate(
+            key,
+            _ => new ApiClientRecord(
+                request.TenantId,
+                request.ClientId,
+                request.Name ?? request.ClientId,
+                request.EnvironmentTag,
+                hasNewScopes ? scoped : Array.Empty<string>(),
+                request.IsActive,
+                IsDeleted: false),
+            (_, existing) => existing with
+            {
+                Name = request.Name ?? existing.Name,
+                EnvironmentTag = request.EnvironmentTag ?? existing.EnvironmentTag,
+                Scopes = hasNewScopes ? scoped : existing.Scopes,
+                IsActive = request.IsActive,
+                IsDeleted = false
+            });
+    }
+
+    private static IReadOnlyCollection<string> CopyScopes(IReadOnlyCollection<string>? scopes)
+    {
+        if (scopes is null || scopes.Count == 0)
+        {
+            return Array.Empty<string>();
+        }
+
+        return scopes.ToArray();
+    }
+
+    private static string GetClientKey(string tenantId, string clientId) => $"{tenantId}::{clientId}";
+
+    private ApiClientDescriptor ToDescriptor(ApiClientRecord record)
+    {
+        return new ApiClientDescriptor(
+            record.ClientId,
+            record.TenantId,
+            record.Name,
+            record.EnvironmentTag,
+            record.Scopes,
+            record.IsActive && !record.IsDeleted,
+            ResolveClientExpiration(record.TenantId, record.ClientId));
+    }
+
+    private DateTimeOffset? ResolveClientExpiration(string tenantId, string clientId)
+    {
+        return _store.Values
+            .Where(key => key.IsActive
+                && string.Equals(key.TenantId, tenantId, StringComparison.OrdinalIgnoreCase)
+                && string.Equals(key.ClientId, clientId, StringComparison.OrdinalIgnoreCase)
+                && key.ExpiresAtUtc.HasValue)
+            .Select(key => key.ExpiresAtUtc)
+            .OrderBy(expiration => expiration)
+            .FirstOrDefault();
+    }
+
+    private void DeactivateKeys(string tenantId, string clientId)
+    {
+        foreach (var pair in _store)
+        {
+            var record = pair.Value;
+            if (!string.Equals(record.TenantId, tenantId, StringComparison.OrdinalIgnoreCase)
+                || !string.Equals(record.ClientId, clientId, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            _store[pair.Key] = record with { IsActive = false };
+        }
+    }
 }
 
 public static class AuthCoreServiceCollectionExtensions
@@ -482,9 +627,11 @@ public static class AuthCoreServiceCollectionExtensions
         configure?.Invoke(options);
 
         services.AddOptions<CroniqOidcOptions>();
+        services.AddOptions<CroniqTokenOptions>();
         services.AddScoped<ICallerContextAccessor, CallerContextAccessor>();
         services.AddSingleton<IApiKeyStore>(_ => new InMemoryApiKeyStore(options.ApiKeys));
         services.AddScoped<ICallerContextFactory, CallerContextFactory>();
+        services.AddSingleton<ICroniqTokenIssuer, CroniqTokenIssuer>();
         return services;
     }
 }

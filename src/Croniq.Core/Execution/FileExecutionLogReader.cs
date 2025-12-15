@@ -24,7 +24,7 @@ public sealed class FileExecutionLogReader : IExecutionLogReader
             yield break;
         }
 
-        var basePath = string.IsNullOrWhiteSpace(_options.BasePath) ? "logs" : _options.BasePath;
+        var basePath = FileExecutionLogPathHelper.ResolveBasePath(_options);
         if (!Directory.Exists(basePath))
         {
             yield break;

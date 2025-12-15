@@ -40,6 +40,7 @@ public sealed class FileExecutionLogStore : IExecutionLogStore
             type = "start",
             record.ExecutionId,
             record.Kind,
+            record.WorkflowId,
             record.JobKey,
             record.TenantId,
             record.EnvironmentTag,
@@ -140,58 +141,21 @@ public sealed class FileExecutionLogStore : IExecutionLogStore
 
     private string ResolvePath(ExecutionRecord record)
     {
-        var basePath = string.IsNullOrWhiteSpace(_options.BasePath) ? "logs" : _options.BasePath;
+        var basePath = FileExecutionLogPathHelper.GetScopeRoot(_options, record.TenantId, record.EnvironmentTag);
         var started = record.StartedAtUtc.UtcDateTime;
         var year = started.ToString("yyyy", CultureInfo.InvariantCulture);
         var month = started.ToString("MM", CultureInfo.InvariantCulture);
         var day = started.ToString("dd", CultureInfo.InvariantCulture);
-        var safeKey = Sanitize(record.JobKey);
-        var kindSegment = record.Kind switch
-        {
-            ExecutionKind.Workflow when !string.IsNullOrWhiteSpace(record.WorkflowId) => $"wf-{Sanitize(record.WorkflowId!)}",
-            _ => $"job-{safeKey}"
-        };
-        var shard = ResolveShard(record.ExecutionId);
+        var kindSegment = FileExecutionLogPathHelper.BuildKindSegment(record.Kind, record.JobKey, record.WorkflowId);
+        var shard = FileExecutionLogPathHelper.ResolveShard(record.ExecutionId, _options.ShardPrefixLength);
 
         return Path.Combine(
             basePath,
-            Sanitize(record.TenantId),
-            Sanitize(record.EnvironmentTag),
             kindSegment,
             year,
             month,
             day,
             shard,
             $"{record.ExecutionId}.ndjson");
-    }
-
-    private static string Sanitize(string value)
-    {
-        var invalid = Path.GetInvalidFileNameChars();
-        var sb = new StringBuilder(value.Length);
-        foreach (var ch in value)
-        {
-            if (Array.IndexOf(invalid, ch) >= 0 || ch == ':')
-            {
-                sb.Append('_');
-            }
-            else
-            {
-                sb.Append(ch);
-            }
-        }
-
-        return sb.ToString();
-    }
-
-    private string ResolveShard(string executionId)
-    {
-        if (_options.ShardPrefixLength <= 0 || string.IsNullOrWhiteSpace(executionId))
-        {
-            return "shard";
-        }
-
-        var length = Math.Min(_options.ShardPrefixLength, executionId.Length);
-        return Sanitize(executionId[..length]);
     }
 }

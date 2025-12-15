@@ -43,6 +43,8 @@ public sealed class WebhookApiTestHost : IAsyncLifetime
 
     public TestExecutionLogReader ExecutionLogs { get; } = new();
 
+    public TestExecutionHistoryReader ExecutionHistory { get; } = new();
+
     public FakeJobRegistry Registry { get; } = new();
 
     public FakePolicyResolver Policies { get; } = new();
@@ -65,13 +67,18 @@ public sealed class WebhookApiTestHost : IAsyncLifetime
         {
             ["Croniq:Api:RequestsPerMinute"] = "0",
             ["Croniq:Webhooks:RequestsPerMinute"] = "120",
-            ["Croniq:Webhooks:Security:AllowUnsignedHooks"] = "true"
+            ["Croniq:Webhooks:Security:AllowUnsignedHooks"] = "true",
+            ["Croniq:Auth:Tokens:Enabled"] = "true",
+            ["Croniq:Auth:Tokens:Issuer"] = "https://itest.croniq",
+            ["Croniq:Auth:Tokens:DefaultAudience"] = "cronqi-api",
+            ["Croniq:Auth:Tokens:SigningKey"] = "Y3JvbmlxLWl0ZXN0LXNpZ25pbmcta2V5LTEyMzQ1Njc4OTA="
         });
 
         builder.Services.AddLogging();
         builder.Services.AddRouting();
         builder.Services.AddOptions();
         builder.Services.Configure<CroniqApiOptions>(builder.Configuration.GetSection("Croniq:Api"));
+        builder.Services.Configure<CroniqTokenOptions>(builder.Configuration.GetSection("Croniq:Auth:Tokens"));
         builder.Services.AddCroniqApiRateLimiter();
         builder.Services.AddSingleton<TenantRateLimitDecider>();
 
@@ -93,6 +100,9 @@ public sealed class WebhookApiTestHost : IAsyncLifetime
         builder.Services.AddSingleton(ExecutionLogs);
         builder.Services.AddSingleton<IExecutionLogReader>(sp => sp.GetRequiredService<TestExecutionLogReader>());
 
+        builder.Services.AddSingleton(ExecutionHistory);
+        builder.Services.AddSingleton<IExecutionHistoryReader>(sp => sp.GetRequiredService<TestExecutionHistoryReader>());
+
         builder.Services.AddSingleton(Registry);
         builder.Services.AddSingleton<IJobRegistry>(sp => sp.GetRequiredService<FakeJobRegistry>());
 
@@ -105,6 +115,7 @@ public sealed class WebhookApiTestHost : IAsyncLifetime
 
         builder.Services.AddSingleton(ApiKeys);
         builder.Services.AddSingleton<IApiKeyStore>(sp => sp.GetRequiredService<FakeApiKeyStore>());
+        builder.Services.AddSingleton<ICroniqTokenIssuer, CroniqTokenIssuer>();
 
         _app = builder.Build();
         _app.UseCroniqApi();
@@ -134,8 +145,10 @@ public sealed class WebhookApiTestHost : IAsyncLifetime
         DeadLetters.Clear();
         Pipeline.Clear();
         ExecutionLogs.Clear();
+        ExecutionHistory.Clear();
         Registry.Clear();
         Policies.Reset();
+        JobStore.Reset();
         ApiKeys.Reset();
 
         if (Client is not null)

@@ -35,12 +35,13 @@ Croniq inspects headers per request: `Authorization: Bearer ...` first, then `X-
 
 ## API & Admin Endpoints
 
-Admin routes (scope `tenants:admin`) will expose:
+Admin routes (scope `tenants:admin`) expose:
 
 - `POST /tenants` – create/update tenant metadata (plan, lifecycle state, default env tag).
 - `GET /tenants` / `GET /tenants/{id}` – enumerate tenants and inspect quotas/config.
 - `POST /tenants/{id}/api-clients` – register a client (name, env tag, default scopes) before issuing keys or tokens.
 - `GET /tenants/{id}/api-clients` / `GET /tenants/{id}/api-clients/{clientId}` – list and inspect registered clients.
+- `DELETE /tenants/{id}/api-clients/{clientId}` – remove a client and revoke all dependent credentials.
 - `POST /tenants/{id}/api-keys` – issue a new key (returns plaintext once).
 - `POST /tenants/{id}/api-keys/{keyId}/rotate` – rotate secret, returns new plaintext.
 - `DELETE /tenants/{id}/api-keys/{keyId}` – revoke key immediately.
@@ -49,29 +50,33 @@ Admin routes (scope `tenants:admin`) will expose:
 - `POST /tenants/{id}/api-clients/{clientId}/tokens` – scoped Variante, wenn mehrere Clients pro Tenant leben (optional `audience`/`scopes`).
 - `GET /me` – resolve current caller context (user or API key) for self-checks.
 
-Implementation status is tracked in `security.md` backlog; this document will reflect the routes once they ship. The API-key CRUD routes already exist; tenant management + token issuance remain on the roadmap (see CHECKLIST entry "Croniq-internes Token-Issuing").
+Croniq.Api ships the API-client CRUD, token issuance, and `/me` endpoints described above (see [src/Croniq.Api/ApiHostingExtensions.cs#L163-L1294](src/Croniq.Api/ApiHostingExtensions.cs#L163-L1294)). Tenant onboarding (`POST/GET /tenants`) remains on the backlog.
 
-### Croniq-issued bearer tokens (planned)
+### Croniq-issued bearer tokens
 
-- **Motivation**: Operators want to bootstrap automations without wiring an external IdP. Croniq therefore ships eine leichte STS, die JWT-Access-Tokens pro Tenant signiert. Diese Tokens tragen die gleichen Claims (`tenant`, `env`, `scopes`) wie externe OIDC-Tokens, sodass Middleware unverändert bleiben kann.
-- **Flow**: Admin registriert Tenant + API-Client und ruft danach `POST /tenants/{tenantId}/tokens` (oder die Client-Variante) mit API-Key/Credentials auf. Die Antwort liefert `{ accessToken, expiresIn, tokenType = "Bearer" }` analog zum OAuth2 Client-Credentials-Flow.
-- **Signing**: Standardmäßig HMAC-SHA256; perspektivisch Signaturzertifikate (siehe Supply-Chain-Hardening). Public Keys landen unter `/.well-known/openid-configuration` + JWKS, damit Hosts Tokens offline validieren können.
-- **Claims**: `sub = clientId`, `tenant` + `env` stammen vom Client, `scope` enthält normalisierte Croniq-Scopes, optional `aud` gegen Replay.
-- **Lifetimes**: Default 15 Minuten, overrides pro Tenant/Client. Refresh Tokens zunächst out-of-scope; Caller fordern neue Tokens via API-Key oder Client-Secret an.
-- **Admin coverage**: `GET /me` liefert den aktuellen Caller (API-Key vs. Croniq-Token), damit Tooling Scopes prüfen kann ohne JWT zu decodieren. Zukünftige Admin-UIs verwenden dieselben Routen.
+- **Motivation**: Operators can bootstrap automation without an external IdP. Croniq's lightweight STS mints JWT access tokens per tenant with the same claims (`tenant`, `env`, `scope`) that the middleware already understands.
+- **Flow**: Admins register a tenant + API client and call `POST /tenants/{tenantId}/tokens` (or the client route) with an API key. The response is `{ accessToken, expiresIn, tokenType = "Bearer" }`, mirroring the OAuth2 client-credentials exchange.
+- **Signing**: HMAC-SHA256 by default; future releases may add asymmetric keys for public JWKS exposure. The signing key is configured via `Croniq:Auth:Tokens:SigningKey` (Base64) and never leaves the host.
+- **Claims**: `sub = clientId`, plus tenant/environment tags from the registered client. `scope` contains the normalized Croniq scopes that were requested (and must be a subset of the client's scopes). Optional `aud` values defend against replay.
+- **Lifetimes**: `Croniq:Auth:Tokens:DefaultLifetimeMinutes` controls the default (15 minutes). Callers can override with `ttlMinutes` per request when a shorter validity window is desired.
+- **Configuration**: `Croniq:Auth:Tokens:Enabled`, `Issuer`, `DefaultAudience`, `SigningKey`, and `DefaultLifetimeMinutes` all map to `CroniqTokenOptions`. Disable the issuer when an external IdP is mandatory.
+- **Admin coverage**: `/me` echoes the resolved caller context (API key vs. Croniq token) so tooling can confirm scopes without parsing JWTs.
 
 ### Tenant-/Client-/Token-Endpoints (Design-Spezifikation)
 
-| Method | Path | Summary | Notes |
-| ------ | ---- | ------- | ----- |
-| `POST` | `/tenants` | "Create tenant" | Body `{ reference, name }`; returns `TenantResponse { tenantId, reference, name, isActive, createdAtUtc }`.
-| `GET` | `/tenants` | "List tenants" | Optional query `state=active|all`. Returns collection of `TenantResponse`.
-| `GET` | `/tenants/{tenantId}` | "Get tenant" | 404 when unknown; response = `TenantResponse`.
-| `POST` | `/tenants/{tenantId}/api-clients` | "Register API client" | Body `{ clientId, name, environmentTag, defaultScopes[] }`; reuses/updates existing row when `clientId` exists.
-| `GET` | `/tenants/{tenantId}/api-clients` | "List API clients" | Optional `environment` filter; returns `ApiClientResponse` list (matches existing `/api-clients/{clientId}` schema).
-| `POST` | `/tenants/{tenantId}/tokens` | "Issue tenant token" | Body `{ clientId, scopes[], audience, ttlMinutes }`; authenticates via API key or PAT. Returns `{ accessToken, tokenType, expiresIn }`.
-| `POST` | `/tenants/{tenantId}/api-clients/{clientId}/tokens` | "Issue client token" | Same payload, automatically infers `clientId` and allowed scopes.
-| `GET` | `/me` | "Inspect caller context" | Echoes resolved tenant/environment/scopes for debugging.
+| Method   | Path                                                | Summary                  | Notes                                                                                                                                   |
+| -------- | --------------------------------------------------- | ------------------------ | --------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------- |
+| `POST`   | `/tenants`                                          | "Create tenant"          | Body `{ reference, name }`; returns `TenantResponse { tenantId, reference, name, isActive, createdAtUtc }`.                             |
+| `GET`    | `/tenants`                                          | "List tenants"           | Optional query `state=active                                                                                                            | all`. Returns collection of `TenantResponse`. |
+| `GET`    | `/tenants/{tenantId}`                               | "Get tenant"             | 404 when unknown; response = `TenantResponse`.                                                                                          |
+| `POST`   | `/tenants/{tenantId}/api-clients`                   | "Register API client"    | Body `{ clientId, name, environmentTag, defaultScopes[] }`; reuses/updates existing row when `clientId` exists.                         |
+| `GET`    | `/tenants/{tenantId}/api-clients`                   | "List API clients"       | Optional `environment` filter; returns `ApiClientResponse` list (matches existing `/api-clients/{clientId}` schema).                    |
+| `DELETE` | `/tenants/{tenantId}/api-clients/{clientId}`        | "Delete API client"      | Removes the client metadata and revokes any API keys for that client.                                                                   |
+| `POST`   | `/tenants/{tenantId}/tokens`                        | "Issue tenant token"     | Body `{ clientId, scopes[], audience, ttlMinutes }`; authenticates via API key or PAT. Returns `{ accessToken, tokenType, expiresIn }`. |
+| `POST`   | `/tenants/{tenantId}/api-clients/{clientId}/tokens` | "Issue client token"     | Same payload, automatically infers `clientId` and allowed scopes.                                                                       |
+| `GET`    | `/me`                                               | "Inspect caller context" | Echoes resolved tenant/environment/scopes for debugging.                                                                                |
+
+The entries highlighted above are live in the API host today ([src/Croniq.Api/ApiHostingExtensions.cs#L1040-L1294](src/Croniq.Api/ApiHostingExtensions.cs#L1040-L1294)). Tenant creation/listing remains a future milestone.
 
 #### Request/Response Skizzen
 
@@ -124,16 +129,21 @@ Alle Summaries/Beschreibungen aus der Tabelle landen wortgleich in den neuen Ope
 
 ## Configuration Reference
 
-| Key                                      | Description                                                                      |
-| ---------------------------------------- | -------------------------------------------------------------------------------- |
-| `Croniq:Auth:Mode`                       | `InMemory` or `SqlServer`.                                                       |
-| `Croniq:Auth:InMemory:ApiKey`            | Plaintext key for in-memory mode.                                                |
-| `Croniq:Auth:SqlServer:ConnectionString` | Optional connection override. Falls back to `Croniq:SqlServer:ConnectionString`. |
-| `Croniq:Auth:Oidc:Authority`             | Issuer URL.                                                                      |
-| `Croniq:Auth:Oidc:Audience`              | API resource identifier.                                                         |
-| `Croniq:Auth:Oidc:RequiredScopes`        | CSV list enforced at ingress.                                                    |
-| `Croniq:Auth:Oidc:TenantClaim`           | Claim name carrying tenant id (default `tenant`).                                |
-| `Croniq:Auth:Oidc:EnvironmentClaim`      | Claim name for environment tag (default `env`).                                  |
+| Key                                         | Description                                                                      |
+| ------------------------------------------- | -------------------------------------------------------------------------------- |
+| `Croniq:Auth:Mode`                          | `InMemory` or `SqlServer`.                                                       |
+| `Croniq:Auth:InMemory:ApiKey`               | Plaintext key for in-memory mode.                                                |
+| `Croniq:Auth:SqlServer:ConnectionString`    | Optional connection override. Falls back to `Croniq:SqlServer:ConnectionString`. |
+| `Croniq:Auth:Oidc:Authority`                | Issuer URL.                                                                      |
+| `Croniq:Auth:Oidc:Audience`                 | API resource identifier.                                                         |
+| `Croniq:Auth:Oidc:RequiredScopes`           | CSV list enforced at ingress.                                                    |
+| `Croniq:Auth:Oidc:TenantClaim`              | Claim name carrying tenant id (default `tenant`).                                |
+| `Croniq:Auth:Oidc:EnvironmentClaim`         | Claim name for environment tag (default `env`).                                  |
+| `Croniq:Auth:Tokens:Enabled`                | Toggles the built-in Croniq token issuer.                                        |
+| `Croniq:Auth:Tokens:Issuer`                 | Value emitted as `iss` for Croniq-minted tokens.                                 |
+| `Croniq:Auth:Tokens:DefaultAudience`        | Default `aud` claim when callers omit `audience`.                                |
+| `Croniq:Auth:Tokens:SigningKey`             | Base64-encoded symmetric key used for HMAC-SHA256 signing.                       |
+| `Croniq:Auth:Tokens:DefaultLifetimeMinutes` | Fallback TTL for minted tokens when `ttlMinutes` is not provided.                |
 
 ## Testing & Tooling
 
@@ -143,7 +153,7 @@ Alle Summaries/Beschreibungen aus der Tabelle landen wortgleich in den neuen Ope
 
 ## Backlog
 
-- Implement and document the admin routes listed above.
+- Implement tenant onboarding routes (`POST /tenants`, `GET /tenants/{id}`) and surface tenant metadata in the admin API.
 - Emit structured audit logs for key issuance/rotation/revocation and token failures.
 - Add caching of JWKS metadata for OIDC providers (per authority) and document cache invalidation knobs.
 - Provide automation scripts for issuing keys via CLI (tying into `tools/` folder).

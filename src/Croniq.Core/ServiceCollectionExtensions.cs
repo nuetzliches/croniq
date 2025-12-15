@@ -37,6 +37,7 @@ public static class ServiceCollectionExtensions
         services.TryAddSingleton<IExecutionLogStore, NoOpExecutionLogStore>();
         services.TryAddSingleton<IExecutionLogExporter, LoggerExecutionLogExporter>();
         services.TryAddSingleton<IExecutionLogReader, NoOpExecutionLogReader>();
+        services.TryAddSingleton<IExecutionHistoryReader, NoOpExecutionHistoryReader>();
         services.TryAddSingleton<TriggerWorker>();
 
         return services;
@@ -48,9 +49,11 @@ public static class ServiceCollectionExtensions
         configure?.Invoke(options);
         services.RemoveAll(typeof(IExecutionLogStore));
         services.RemoveAll(typeof(IExecutionLogReader));
+        services.RemoveAll(typeof(IExecutionHistoryReader));
         services.AddSingleton(options);
         services.AddSingleton<IExecutionLogStore, FileExecutionLogStore>();
         services.AddSingleton<IExecutionLogReader, FileExecutionLogReader>();
+        services.AddSingleton<IExecutionHistoryReader, FileExecutionHistoryReader>();
         return services;
     }
 

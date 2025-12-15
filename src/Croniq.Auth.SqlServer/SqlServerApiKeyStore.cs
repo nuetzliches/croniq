@@ -38,44 +38,18 @@ public sealed class SqlServerApiKeyStore : IApiKeyStore
         await using var db = await _dbContextFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
         var now = _timeProvider.GetUtcNow().UtcDateTime;
 
-        var client = await db.ApiClients
-            .FirstOrDefaultAsync(c => c.TenantId == request.TenantId && c.ClientId == request.ClientId, cancellationToken: cancellationToken)
-            .ConfigureAwait(false);
-
-        var serializedScopes = SerializeScopes(request.Scopes);
-
-        if (client is null)
-        {
-            client = new ApiClientEntity
-            {
-                TenantId = request.TenantId,
-                ClientId = request.ClientId,
-                EnvironmentTag = request.EnvironmentTag,
-                ScopesJson = serializedScopes,
-                CreatedAtUtc = now,
-                UpdatedAtUtc = now,
-                IsActive = true
-            };
-            db.ApiClients.Add(client);
-            await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
-        }
-        else
-        {
-            if (!string.IsNullOrWhiteSpace(request.EnvironmentTag))
-            {
-                client.EnvironmentTag = request.EnvironmentTag;
-            }
-
-            if (!string.IsNullOrWhiteSpace(serializedScopes))
-            {
-                client.ScopesJson = serializedScopes;
-            }
-
-            client.IsDeleted = false;
-            client.IsActive = true;
-            client.UpdatedAtUtc = now;
-            await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
-        }
+        var client = await UpsertClientEntityAsync(
+            db,
+            new ApiClientUpsertRequest(
+                request.TenantId,
+                request.ClientId,
+                Name: null,
+                request.EnvironmentTag,
+                request.Scopes,
+                IsActive: true),
+            now,
+            saveChanges: false,
+            cancellationToken).ConfigureAwait(false);
 
         var keyId = $"ak_{Guid.NewGuid():N}";
         var secret = GenerateSecret();
@@ -83,7 +57,7 @@ public sealed class SqlServerApiKeyStore : IApiKeyStore
         var hash = HashSecret(secret, salt);
         var expires = request.Ttl.HasValue ? now.Add(request.Ttl.Value) : (DateTime?)null;
         var environment = request.EnvironmentTag ?? client.EnvironmentTag;
-        var keyScopes = serializedScopes ?? client.ScopesJson;
+        var keyScopes = SerializeScopes(request.Scopes) ?? client.ScopesJson;
 
         var entity = new ApiKeyEntity
         {
@@ -235,11 +209,144 @@ public sealed class SqlServerApiKeyStore : IApiKeyStore
             .FirstOrDefaultAsync(c => c.TenantId == tenantId && c.ClientId == clientId, cancellationToken: cancellationToken)
             .ConfigureAwait(false);
 
-        if (entity is null)
+        if (entity is null || entity.IsDeleted)
         {
             return null;
         }
 
+        return ToDescriptor(entity);
+    }
+
+    public async Task<ApiClientDescriptor> UpsertClientAsync(ApiClientUpsertRequest request, CancellationToken cancellationToken = default)
+    {
+        if (request is null) throw new ArgumentNullException(nameof(request));
+
+        await using var db = await _dbContextFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
+        var now = _timeProvider.GetUtcNow().UtcDateTime;
+        var entity = await UpsertClientEntityAsync(db, request, now, saveChanges: true, cancellationToken).ConfigureAwait(false);
+        return ToDescriptor(entity);
+    }
+
+    public async Task<IReadOnlyCollection<ApiClientDescriptor>> ListClientsAsync(string tenantId, string? environmentTag, CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(tenantId)) throw new ArgumentNullException(nameof(tenantId));
+
+        await using var db = await _dbContextFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
+        var query = db.ApiClients
+            .AsNoTracking()
+            .Where(c => c.TenantId == tenantId && !c.IsDeleted);
+
+        if (!string.IsNullOrWhiteSpace(environmentTag))
+        {
+            query = query.Where(c => c.EnvironmentTag == environmentTag);
+        }
+
+        var entities = await query
+            .OrderBy(c => c.ClientId)
+            .ToListAsync(cancellationToken)
+            .ConfigureAwait(false);
+
+        return entities.Select(ToDescriptor).ToArray();
+    }
+
+    public async Task<bool> DeleteClientAsync(string tenantId, string clientId, CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(tenantId)) throw new ArgumentNullException(nameof(tenantId));
+        if (string.IsNullOrWhiteSpace(clientId)) throw new ArgumentNullException(nameof(clientId));
+
+        await using var db = await _dbContextFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
+        var entity = await db.ApiClients
+            .Include(c => c.ApiKeys)
+            .FirstOrDefaultAsync(c => c.TenantId == tenantId && c.ClientId == clientId, cancellationToken)
+            .ConfigureAwait(false);
+
+        if (entity is null)
+        {
+            return false;
+        }
+
+        var now = _timeProvider.GetUtcNow().UtcDateTime;
+        entity.IsDeleted = true;
+        entity.IsActive = false;
+        entity.UpdatedAtUtc = now;
+
+        foreach (var key in entity.ApiKeys)
+        {
+            if (!key.IsActive)
+            {
+                continue;
+            }
+
+            key.IsActive = false;
+            key.UpdatedAtUtc = now;
+        }
+
+        await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+        return true;
+    }
+
+    private async Task<ApiClientEntity> UpsertClientEntityAsync(
+        SqlServerDbContext db,
+        ApiClientUpsertRequest request,
+        DateTime now,
+        bool saveChanges,
+        CancellationToken cancellationToken)
+    {
+        if (request is null) throw new ArgumentNullException(nameof(request));
+
+        var serializedScopes = SerializeScopes(request.Scopes);
+        var entity = await db.ApiClients
+            .FirstOrDefaultAsync(c => c.TenantId == request.TenantId && c.ClientId == request.ClientId, cancellationToken)
+            .ConfigureAwait(false);
+
+        if (entity is null)
+        {
+            entity = new ApiClientEntity
+            {
+                TenantId = request.TenantId,
+                ClientId = request.ClientId,
+                Name = request.Name,
+                EnvironmentTag = request.EnvironmentTag,
+                ScopesJson = serializedScopes,
+                CreatedAtUtc = now,
+                UpdatedAtUtc = now,
+                IsActive = request.IsActive,
+                IsDeleted = false
+            };
+            db.ApiClients.Add(entity);
+        }
+        else
+        {
+            if (!string.IsNullOrWhiteSpace(request.Name))
+            {
+                entity.Name = request.Name;
+            }
+
+            if (!string.IsNullOrWhiteSpace(request.EnvironmentTag))
+            {
+                entity.EnvironmentTag = request.EnvironmentTag;
+            }
+
+            if (!string.IsNullOrWhiteSpace(serializedScopes))
+            {
+                entity.ScopesJson = serializedScopes;
+            }
+
+            entity.IsActive = request.IsActive;
+            entity.IsDeleted = false;
+            entity.UpdatedAtUtc = now;
+        }
+
+        if (saveChanges)
+        {
+            await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+        }
+
+        return entity;
+    }
+
+    private static ApiClientDescriptor ToDescriptor(ApiClientEntity entity)
+    {
         var scopes = ParseScopes(entity.ScopesJson, defaultValueJson: null);
         return new ApiClientDescriptor(
             entity.ClientId,

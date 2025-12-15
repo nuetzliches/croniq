@@ -88,6 +88,10 @@ public sealed class FakePolicyResolver : IPolicyResolver
 
 public sealed class NoopJobPersistenceProvider : IJobPersistenceProvider, IPersistenceHealth
 {
+    private readonly object _sync = new();
+    private readonly Dictionary<string, JobDefinition> _jobs = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, TriggerDefinition> _triggers = new(StringComparer.OrdinalIgnoreCase);
+
     public Task<IReadOnlyCollection<TriggerLease>> AcquireAsync(TriggerAcquireRequest request, CancellationToken cancellationToken)
     {
         return Task.FromResult<IReadOnlyCollection<TriggerLease>>(Array.Empty<TriggerLease>());
@@ -97,20 +101,170 @@ public sealed class NoopJobPersistenceProvider : IJobPersistenceProvider, IPersi
 
     public Task MoveToDeadLetterAsync(DeadLetterRequest request, CancellationToken cancellationToken) => Task.CompletedTask;
 
-    public Task UpsertJobAsync(JobDefinition job, CancellationToken cancellationToken) => Task.CompletedTask;
+    public Task UpsertJobAsync(JobDefinition job, CancellationToken cancellationToken)
+    {
+        if (job is null)
+        {
+            throw new ArgumentNullException(nameof(job));
+        }
 
-    public Task UpsertTriggerAsync(TriggerDefinition trigger, CancellationToken cancellationToken) => Task.CompletedTask;
+        lock (_sync)
+        {
+            _jobs[job.JobKey] = CloneJob(job);
+        }
+
+        return Task.CompletedTask;
+    }
+
+    public Task<IReadOnlyCollection<JobDefinition>> ListJobsAsync(PartitionScope scope, CancellationToken cancellationToken)
+    {
+
+        lock (_sync)
+        {
+            var matches = _jobs.Values
+                .Where(job => JobMatchesScope(job.JobKey, scope))
+                .Select(CloneJob)
+                .ToArray();
+
+            return Task.FromResult<IReadOnlyCollection<JobDefinition>>(matches);
+        }
+    }
+
+    public Task<JobDefinition?> GetJobAsync(string jobKey, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(jobKey)) throw new ArgumentNullException(nameof(jobKey));
+
+        lock (_sync)
+        {
+            if (!_jobs.TryGetValue(jobKey, out var job))
+            {
+                return Task.FromResult<JobDefinition?>(null);
+            }
+
+            return Task.FromResult<JobDefinition?>(CloneJob(job));
+        }
+    }
+
+    public Task DeleteJobAsync(string jobKey, PartitionScope scope, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(jobKey)) throw new ArgumentNullException(nameof(jobKey));
+
+        lock (_sync)
+        {
+            if (!_jobs.TryGetValue(jobKey, out var job) || !JobMatchesScope(job.JobKey, scope))
+            {
+                return Task.CompletedTask;
+            }
+
+            _jobs.Remove(jobKey);
+
+            var triggerIds = _triggers
+                .Where(pair => string.Equals(pair.Value.JobKey, jobKey, StringComparison.OrdinalIgnoreCase))
+                .Select(pair => pair.Key)
+                .ToList();
+
+            foreach (var triggerId in triggerIds)
+            {
+                _triggers.Remove(triggerId);
+            }
+        }
+
+        return Task.CompletedTask;
+    }
+
+    public Task UpsertTriggerAsync(TriggerDefinition trigger, CancellationToken cancellationToken)
+    {
+        if (trigger is null)
+        {
+            throw new ArgumentNullException(nameof(trigger));
+        }
+
+        lock (_sync)
+        {
+            _triggers[trigger.TriggerId] = CloneTrigger(trigger);
+        }
+
+        return Task.CompletedTask;
+    }
 
     public Task<IReadOnlyCollection<TriggerDefinition>> ListTriggersAsync(PartitionScope scope, CancellationToken cancellationToken)
     {
-        return Task.FromResult<IReadOnlyCollection<TriggerDefinition>>(Array.Empty<TriggerDefinition>());
+        lock (_sync)
+        {
+            var matches = _triggers.Values
+                .Where(t => string.Equals(t.Scope.TenantId, scope.TenantId, StringComparison.OrdinalIgnoreCase)
+                            && string.Equals(t.Scope.EnvironmentTag, scope.EnvironmentTag, StringComparison.OrdinalIgnoreCase))
+                .Select(CloneTrigger)
+                .ToArray();
+
+            return Task.FromResult<IReadOnlyCollection<TriggerDefinition>>(matches);
+        }
     }
 
-    public Task DeleteTriggerAsync(string triggerId, PartitionScope scope, CancellationToken cancellationToken) => Task.CompletedTask;
+    public Task DeleteTriggerAsync(string triggerId, PartitionScope scope, CancellationToken cancellationToken)
+    {
+        lock (_sync)
+        {
+            if (_triggers.TryGetValue(triggerId, out var trigger)
+                && string.Equals(trigger.Scope.TenantId, scope.TenantId, StringComparison.OrdinalIgnoreCase)
+                && string.Equals(trigger.Scope.EnvironmentTag, scope.EnvironmentTag, StringComparison.OrdinalIgnoreCase))
+            {
+                _triggers.Remove(triggerId);
+            }
+        }
+
+        return Task.CompletedTask;
+    }
 
     public Task<PersistenceHealthResult> CheckAsync(CancellationToken cancellationToken = default)
     {
         return Task.FromResult(new PersistenceHealthResult(true, "noop"));
+    }
+
+    public void Reset()
+    {
+        lock (_sync)
+        {
+            _jobs.Clear();
+            _triggers.Clear();
+        }
+    }
+
+    private static TriggerDefinition CloneTrigger(TriggerDefinition source)
+    {
+        IReadOnlyDictionary<string, string>? metadata = source.Metadata is null
+            ? null
+            : new Dictionary<string, string>(source.Metadata, StringComparer.OrdinalIgnoreCase);
+
+        return new TriggerDefinition(
+            source.TriggerId,
+            source.JobKey,
+            source.ScheduleExpression,
+            source.Scope,
+            source.StartAtUtc,
+            source.EndAtUtc,
+            source.Enabled,
+            metadata);
+    }
+
+    private static JobDefinition CloneJob(JobDefinition job)
+    {
+        IReadOnlyDictionary<string, string>? metadata = job.Metadata is null
+            ? null
+            : new Dictionary<string, string>(job.Metadata, StringComparer.OrdinalIgnoreCase);
+
+        return new JobDefinition(job.JobKey, job.Namespace, job.Name, job.Variant, job.Description, metadata);
+    }
+
+    private static bool JobMatchesScope(string jobKey, PartitionScope scope)
+    {
+        if (!JobKey.TryParse(jobKey, out var parsed))
+        {
+            return false;
+        }
+
+        return string.Equals(parsed.TenantId, scope.TenantId, StringComparison.OrdinalIgnoreCase)
+            && string.Equals(parsed.EnvironmentTag, scope.EnvironmentTag, StringComparison.OrdinalIgnoreCase);
     }
 }
 
@@ -154,6 +308,9 @@ public sealed class TestCallerContextFactory : ICallerContextFactory
             Scopes: new[]
             {
                 CroniqScopes.SchedulesWrite,
+                CroniqScopes.JobsRead,
+                CroniqScopes.ExecutionsRead,
+                CroniqScopes.JobsWrite,
                 CroniqScopes.JobsTrigger,
                 CroniqScopes.WebhooksRead,
                 CroniqScopes.WebhooksWrite,
@@ -205,11 +362,13 @@ public sealed class FakeApiKeyStore : IApiKeyStore
                 secret,
                 IsActive: true);
 
-            _clients[(request.TenantId, request.ClientId)] = new ClientRecord(
+            UpsertClientInternal(new ApiClientUpsertRequest(
                 request.TenantId,
                 request.ClientId,
+                request.ClientId,
                 request.EnvironmentTag,
-                scopes);
+                scopes,
+                IsActive: true));
         }
 
         return Task.FromResult(new ApiKeyIssueResult(
@@ -313,29 +472,60 @@ public sealed class FakeApiKeyStore : IApiKeyStore
     {
         lock (_sync)
         {
-            if (!_clients.TryGetValue((tenantId, clientId), out var record))
+            if (!_clients.TryGetValue((tenantId, clientId), out var record) || record.IsDeleted)
             {
                 return Task.FromResult<ApiClientDescriptor?>(null);
             }
 
-            var activeKey = _keys.Values
-                .Where(k => string.Equals(k.TenantId, tenantId, StringComparison.OrdinalIgnoreCase)
-                    && string.Equals(k.ClientId, clientId, StringComparison.OrdinalIgnoreCase)
-                    && k.IsActive)
-                .OrderBy(k => k.ExpiresAtUtc ?? DateTimeOffset.MaxValue)
-                .FirstOrDefault();
+            return Task.FromResult<ApiClientDescriptor?>(ToDescriptor(record));
+        }
+    }
 
-            var isActive = activeKey is not null;
-            var expires = activeKey?.ExpiresAtUtc;
+    public Task<ApiClientDescriptor> UpsertClientAsync(ApiClientUpsertRequest request, CancellationToken cancellationToken = default)
+    {
+        if (request is null) throw new ArgumentNullException(nameof(request));
 
-            return Task.FromResult<ApiClientDescriptor?>(new ApiClientDescriptor(
-                clientId,
-                tenantId,
-                clientId,
-                record.EnvironmentTag,
-                record.Scopes,
-                isActive,
-                expires));
+        lock (_sync)
+        {
+            var record = UpsertClientInternal(request);
+            return Task.FromResult(ToDescriptor(record));
+        }
+    }
+
+    public Task<IReadOnlyCollection<ApiClientDescriptor>> ListClientsAsync(string tenantId, string? environmentTag, CancellationToken cancellationToken = default)
+    {
+        lock (_sync)
+        {
+            var comparer = StringComparer.OrdinalIgnoreCase;
+            var matches = _clients.Values
+                .Where(record => comparer.Equals(record.TenantId, tenantId) && !record.IsDeleted)
+                .Where(record => string.IsNullOrWhiteSpace(environmentTag) || comparer.Equals(record.EnvironmentTag ?? string.Empty, environmentTag ?? string.Empty))
+                .Select(ToDescriptor)
+                .OrderBy(descriptor => descriptor.ClientId, comparer)
+                .ToArray();
+
+            return Task.FromResult<IReadOnlyCollection<ApiClientDescriptor>>(matches);
+        }
+    }
+
+    public Task<bool> DeleteClientAsync(string tenantId, string clientId, CancellationToken cancellationToken = default)
+    {
+        lock (_sync)
+        {
+            if (!_clients.TryGetValue((tenantId, clientId), out var record))
+            {
+                return Task.FromResult(false);
+            }
+
+            _clients[(tenantId, clientId)] = record with { IsActive = false, IsDeleted = true };
+
+            foreach (var pair in _keys.Where(kvp => string.Equals(kvp.Value.TenantId, tenantId, StringComparison.OrdinalIgnoreCase)
+                    && string.Equals(kvp.Value.ClientId, clientId, StringComparison.OrdinalIgnoreCase)).ToList())
+            {
+                _keys[pair.Key] = pair.Value with { IsActive = false };
+            }
+
+            return Task.FromResult(true);
         }
     }
 
@@ -346,6 +536,76 @@ public sealed class FakeApiKeyStore : IApiKeyStore
             _keys.Clear();
             _clients.Clear();
         }
+    }
+
+    private ClientRecord UpsertClientInternal(ApiClientUpsertRequest request)
+    {
+        var key = (request.TenantId, request.ClientId);
+        var newScopes = CopyScopes(request.Scopes);
+        var hasNewScopes = newScopes.Count > 0;
+
+        if (_clients.TryGetValue(key, out var existing))
+        {
+            var scopes = hasNewScopes ? newScopes : existing.Scopes;
+            var name = request.Name ?? existing.Name;
+            var environment = request.EnvironmentTag ?? existing.EnvironmentTag;
+            var updated = existing with
+            {
+                Name = name,
+                EnvironmentTag = environment,
+                Scopes = scopes,
+                IsActive = request.IsActive,
+                IsDeleted = false
+            };
+            _clients[key] = updated;
+            return updated;
+        }
+
+        var record = new ClientRecord(
+            request.TenantId,
+            request.ClientId,
+            request.Name ?? request.ClientId,
+            request.EnvironmentTag,
+            hasNewScopes ? newScopes : Array.Empty<string>(),
+            request.IsActive,
+            IsDeleted: false);
+        _clients[key] = record;
+        return record;
+    }
+
+    private static IReadOnlyCollection<string> CopyScopes(IReadOnlyCollection<string>? scopes)
+    {
+        if (scopes is null || scopes.Count == 0)
+        {
+            return Array.Empty<string>();
+        }
+
+        return scopes.ToArray();
+    }
+
+    private ApiClientDescriptor ToDescriptor(ClientRecord record)
+    {
+        return new ApiClientDescriptor(
+            record.ClientId,
+            record.TenantId,
+            record.Name,
+            record.EnvironmentTag,
+            record.Scopes,
+            record.IsActive && !record.IsDeleted,
+            ResolveClientExpiration(record.TenantId, record.ClientId));
+    }
+
+    private DateTimeOffset? ResolveClientExpiration(string tenantId, string clientId)
+    {
+        var match = _keys.Values
+            .Where(k => k.IsActive
+                && string.Equals(k.TenantId, tenantId, StringComparison.OrdinalIgnoreCase)
+                && string.Equals(k.ClientId, clientId, StringComparison.OrdinalIgnoreCase)
+                && k.ExpiresAtUtc.HasValue)
+            .OrderBy(k => k.ExpiresAtUtc)
+            .FirstOrDefault();
+
+        return match?.ExpiresAtUtc;
     }
 
     private static (string? KeyId, string? Secret) Split(string presented)
@@ -372,8 +632,11 @@ public sealed class FakeApiKeyStore : IApiKeyStore
     private sealed record ClientRecord(
         string TenantId,
         string ClientId,
+        string? Name,
         string? EnvironmentTag,
-        IReadOnlyCollection<string> Scopes);
+        IReadOnlyCollection<string> Scopes,
+        bool IsActive,
+        bool IsDeleted);
 }
 
 public sealed class TestExecutionLogReader : IExecutionLogReader
@@ -410,5 +673,103 @@ public sealed class TestExecutionLogReader : IExecutionLogReader
                 await Task.Yield();
             }
         }
+    }
+}
+
+public sealed class TestExecutionHistoryReader : IExecutionHistoryReader
+{
+    private readonly List<ExecutionSummary> _summaries = new();
+    private readonly object _sync = new();
+
+    public void SetExecutions(IEnumerable<ExecutionSummary> summaries)
+    {
+        if (summaries is null)
+        {
+            throw new ArgumentNullException(nameof(summaries));
+        }
+
+        lock (_sync)
+        {
+            _summaries.Clear();
+            _summaries.AddRange(summaries);
+        }
+    }
+
+    public void AddExecution(ExecutionSummary summary)
+    {
+        if (summary is null)
+        {
+            throw new ArgumentNullException(nameof(summary));
+        }
+
+        lock (_sync)
+        {
+            _summaries.Add(summary);
+        }
+    }
+
+    public void Clear()
+    {
+        lock (_sync)
+        {
+            _summaries.Clear();
+        }
+    }
+
+    public Task<IReadOnlyList<ExecutionSummary>> ListExecutionsAsync(PartitionScope scope, ExecutionHistoryQuery? query, CancellationToken cancellationToken)
+    {
+        var normalized = (query ?? new ExecutionHistoryQuery()).Normalize();
+        IReadOnlyList<ExecutionSummary> result;
+        lock (_sync)
+        {
+            result = _summaries
+                .Where(summary => string.Equals(summary.TenantId, scope.TenantId, StringComparison.OrdinalIgnoreCase)
+                    && string.Equals(summary.EnvironmentTag, scope.EnvironmentTag, StringComparison.OrdinalIgnoreCase))
+                .Where(summary => Matches(summary, normalized))
+                .OrderByDescending(summary => summary.StartedAtUtc)
+                .Take(normalized.Limit)
+                .ToList();
+        }
+
+        return Task.FromResult(result);
+    }
+
+    public Task<ExecutionSummary?> GetExecutionAsync(string executionId, CancellationToken cancellationToken)
+    {
+        ExecutionSummary? match;
+        lock (_sync)
+        {
+            match = _summaries.FirstOrDefault(summary => string.Equals(summary.ExecutionId, executionId, StringComparison.OrdinalIgnoreCase));
+        }
+
+        return Task.FromResult(match);
+    }
+
+    private static bool Matches(ExecutionSummary summary, ExecutionHistoryQuery query)
+    {
+        if (query.JobKey is { Length: > 0 } && !string.Equals(summary.JobKey, query.JobKey, StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        if (query.Status.HasValue)
+        {
+            if (!summary.Status.HasValue || summary.Status.Value != query.Status.Value)
+            {
+                return false;
+            }
+        }
+
+        if (query.StartedAfterUtc.HasValue && summary.StartedAtUtc < query.StartedAfterUtc.Value)
+        {
+            return false;
+        }
+
+        if (query.StartedBeforeUtc.HasValue && summary.StartedAtUtc > query.StartedBeforeUtc.Value)
+        {
+            return false;
+        }
+
+        return true;
     }
 }
