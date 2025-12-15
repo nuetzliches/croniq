@@ -239,6 +239,33 @@ public static class ApiHostingExtensions
         })
         .WithDocs("Tenants_Get", "Get tenant", "Returns tenant metadata for the provided tenant identifier.");
 
+        app.MapDelete("/tenants/{tenantId}", async (
+            string tenantId,
+            [FromServices] ITenantStore tenantStore,
+            [FromServices] ICallerContextAccessor callerContextAccessor,
+            CancellationToken cancellationToken) =>
+        {
+            var authFailure = TenantGuard.EnsureAdminScopes(callerContextAccessor, CroniqScopes.TenantsAdmin);
+            if (authFailure is not null)
+            {
+                return authFailure;
+            }
+
+            if (string.IsNullOrWhiteSpace(tenantId))
+            {
+                return Results.BadRequest(new { error = "missing-tenant", message = "TenantId is required." });
+            }
+
+            var deactivated = await tenantStore.DeactivateAsync(tenantId, cancellationToken).ConfigureAwait(false);
+            if (!deactivated)
+            {
+                return Results.NotFound(new { error = "tenant-not-found", tenantId });
+            }
+
+            return Results.NoContent();
+        })
+        .WithDocs("Tenants_Deactivate", "Deactivate tenant", "Marks the tenant as inactive without deleting historical data.");
+
         app.MapGet("/tenants/{tenantId}/jobs", async (
             string tenantId,
             string environment,

@@ -53,6 +53,8 @@ public sealed class WebhookApiTestHost : IAsyncLifetime
 
     public FakeApiKeyStore ApiKeys { get; } = new();
 
+    public TestTenantStore Tenants { get; } = new();
+
     public PartitionScope DefaultScope => new(TenantId, Environment);
 
     public async Task InitializeAsync()
@@ -117,6 +119,9 @@ public sealed class WebhookApiTestHost : IAsyncLifetime
         builder.Services.AddSingleton<IApiKeyStore>(sp => sp.GetRequiredService<FakeApiKeyStore>());
         builder.Services.AddSingleton<ICroniqTokenIssuer, CroniqTokenIssuer>();
 
+        builder.Services.AddSingleton(Tenants);
+        builder.Services.AddSingleton<ITenantStore>(sp => sp.GetRequiredService<TestTenantStore>());
+
         _app = builder.Build();
         _app.UseCroniqApi();
 
@@ -150,6 +155,7 @@ public sealed class WebhookApiTestHost : IAsyncLifetime
         Policies.Reset();
         JobStore.Reset();
         ApiKeys.Reset();
+        Tenants.Reset();
 
         if (Client is not null)
         {

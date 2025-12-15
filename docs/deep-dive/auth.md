@@ -39,6 +39,7 @@ Admin routes (scope `tenants:admin`) expose:
 
 - `POST /tenants` – create/update tenant metadata (plan, lifecycle state, default env tag).
 - `GET /tenants` / `GET /tenants/{id}` – enumerate tenants and inspect quotas/config.
+- `DELETE /tenants/{id}` – deactivate a tenant without removing historical data.
 - `POST /tenants/{id}/api-clients` – register a client (name, env tag, default scopes) before issuing keys or tokens.
 - `GET /tenants/{id}/api-clients` / `GET /tenants/{id}/api-clients/{clientId}` – list and inspect registered clients.
 - `DELETE /tenants/{id}/api-clients/{clientId}` – remove a client and revoke all dependent credentials.
@@ -50,7 +51,7 @@ Admin routes (scope `tenants:admin`) expose:
 - `POST /tenants/{id}/api-clients/{clientId}/tokens` – scoped Variante, wenn mehrere Clients pro Tenant leben (optional `audience`/`scopes`).
 - `GET /me` – resolve current caller context (user or API key) for self-checks.
 
-Croniq.Api ships the API-client CRUD, token issuance, and `/me` endpoints described above (see [src/Croniq.Api/ApiHostingExtensions.cs#L163-L1294](src/Croniq.Api/ApiHostingExtensions.cs#L163-L1294)). Tenant onboarding (`POST/GET /tenants`) remains on the backlog.
+Croniq.Api ships the tenant onboarding, API-client CRUD, token issuance, and `/me` endpoints described above (see [src/Croniq.Api/ApiHostingExtensions.cs](src/Croniq.Api/ApiHostingExtensions.cs)).
 
 ### Croniq-issued bearer tokens
 
@@ -69,6 +70,7 @@ Croniq.Api ships the API-client CRUD, token issuance, and `/me` endpoints descri
 | `POST`   | `/tenants`                                          | "Create tenant"          | Body `{ reference, name }`; returns `TenantResponse { tenantId, reference, name, isActive, createdAtUtc }`.                             |
 | `GET`    | `/tenants`                                          | "List tenants"           | Optional query `state=active                                                                                                            | all`. Returns collection of `TenantResponse`. |
 | `GET`    | `/tenants/{tenantId}`                               | "Get tenant"             | 404 when unknown; response = `TenantResponse`.                                                                                          |
+| `DELETE` | `/tenants/{tenantId}`                               | "Deactivate tenant"      | Marks the tenant inactive (soft-delete) and returns `204` or `404` when unknown.                                                        |
 | `POST`   | `/tenants/{tenantId}/api-clients`                   | "Register API client"    | Body `{ clientId, name, environmentTag, defaultScopes[] }`; reuses/updates existing row when `clientId` exists.                         |
 | `GET`    | `/tenants/{tenantId}/api-clients`                   | "List API clients"       | Optional `environment` filter; returns `ApiClientResponse` list (matches existing `/api-clients/{clientId}` schema).                    |
 | `DELETE` | `/tenants/{tenantId}/api-clients/{clientId}`        | "Delete API client"      | Removes the client metadata and revokes any API keys for that client.                                                                   |
@@ -76,7 +78,7 @@ Croniq.Api ships the API-client CRUD, token issuance, and `/me` endpoints descri
 | `POST`   | `/tenants/{tenantId}/api-clients/{clientId}/tokens` | "Issue client token"     | Same payload, automatically infers `clientId` and allowed scopes.                                                                       |
 | `GET`    | `/me`                                               | "Inspect caller context" | Echoes resolved tenant/environment/scopes for debugging.                                                                                |
 
-The entries highlighted above are live in the API host today ([src/Croniq.Api/ApiHostingExtensions.cs#L1040-L1294](src/Croniq.Api/ApiHostingExtensions.cs#L1040-L1294)). Tenant creation/listing remains a future milestone.
+The entries highlighted above are live in the API host today and covered by integration tests ([src/Croniq.Api/ApiHostingExtensions.cs](src/Croniq.Api/ApiHostingExtensions.cs), [tests/Croniq.Api.Tests/TenantAdminEndpointsTests.cs](tests/Croniq.Api.Tests/TenantAdminEndpointsTests.cs)).
 
 #### Request/Response Skizzen
 
@@ -153,7 +155,7 @@ Alle Summaries/Beschreibungen aus der Tabelle landen wortgleich in den neuen Ope
 
 ## Backlog
 
-- Implement tenant onboarding routes (`POST /tenants`, `GET /tenants/{id}`) and surface tenant metadata in the admin API.
+- Add tenant lifecycle hooks (audit events, quotas, default environment metadata) to the existing onboarding routes.
 - Emit structured audit logs for key issuance/rotation/revocation and token failures.
 - Add caching of JWKS metadata for OIDC providers (per authority) and document cache invalidation knobs.
 - Provide automation scripts for issuing keys via CLI (tying into `tools/` folder).

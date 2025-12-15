@@ -18,6 +18,7 @@ public sealed class SqlServerApiKeyStoreTests : IAsyncLifetime
     private readonly SqlServerContainerFixture _sql;
     private ServiceProvider? _provider;
     private IApiKeyStore? _store;
+    private ITenantStore? _tenants;
 
     public SqlServerApiKeyStoreTests(SqlServerContainerFixture sql)
     {
@@ -32,6 +33,7 @@ public sealed class SqlServerApiKeyStoreTests : IAsyncLifetime
         services.AddCroniqAuthSqlServer(options => options.ConnectionString = _sql.ConnectionString);
         _provider = services.BuildServiceProvider();
         _store = _provider.GetRequiredService<IApiKeyStore>();
+        _tenants = _provider.GetRequiredService<ITenantStore>();
     }
 
     public async Task DisposeAsync()
@@ -135,5 +137,41 @@ public sealed class SqlServerApiKeyStoreTests : IAsyncLifetime
         var validation = await _store.ValidateAsync(issued.PlaintextSecret);
         validation.IsValid.ShouldBeFalse();
         validation.Failure.ShouldBe("revoked");
+    }
+
+    [Fact]
+    [Trait(TestCategories.Category, TestCategories.Contract)]
+    public async Task Tenant_create_list_roundtrip_succeeds()
+    {
+        var reference = $"tenant-{Guid.NewGuid():N}";
+        var descriptor = await _tenants!.CreateAsync(reference, "Sql Corp");
+
+        descriptor.Reference.ShouldBe(reference);
+        descriptor.IsActive.ShouldBeTrue();
+
+        var byReference = await _tenants.GetByReferenceAsync(reference);
+        byReference.ShouldNotBeNull();
+        byReference!.TenantId.ShouldBe(descriptor.TenantId);
+
+        var listed = await _tenants.ListAsync();
+        listed.ShouldContain(tenant => tenant.TenantId == descriptor.TenantId);
+    }
+
+    [Fact]
+    [Trait(TestCategories.Category, TestCategories.Contract)]
+    public async Task Tenant_deactivate_marks_row_inactive()
+    {
+        var reference = $"tenant-{Guid.NewGuid():N}";
+        var descriptor = await _tenants!.CreateAsync(reference, "Inactive Corp");
+
+        var deactivated = await _tenants.DeactivateAsync(descriptor.TenantId);
+        deactivated.ShouldBeTrue();
+
+        var fetched = await _tenants.GetByIdAsync(descriptor.TenantId);
+        fetched.ShouldNotBeNull();
+        fetched!.IsActive.ShouldBeFalse();
+
+        var missing = await _tenants.DeactivateAsync("tn_missing");
+        missing.ShouldBeFalse();
     }
 }
