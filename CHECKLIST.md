@@ -47,6 +47,8 @@
   - [x] Store/Modi (Filesystem NDJSON, No-Op) + Optionen/Retention-Service verdrahten; Reader bereitstellen
   - [x] Tests + Failure-Handling (Drop/Buffer) absichern; CLI-Reader bereitstellen (API-Endpoint vorhanden)
 - [ ] Coverage-Ziel: Core/Overall ≥ 80 % erreichen (Gates nachziehen, wenn stabil)
+- [ ] Croniq-internes Token-Issuing: Admin-Endpunkte für Tenant-Onboarding, API-Client-Registrierung und Bearer-Token-Ausstellung (`POST /tenants`, `GET /tenants/{id}`, `POST /tenants/{id}/api-clients`, `POST /tenants/{id}/tokens`, `GET /me`) samt Dokumentation in `docs/deep-dive/auth.md` implementieren.
+- [x] API-Scope-Konsistenz für `/schedules`: Endpoint ist jetzt ausschließlich tenant-scoped (`POST /tenants/{tenantId}/schedules`, 2025-12-15) und alle Clients/Docs referenzieren den neuen Pfad.
 
 ## Deferred: Remote Persistence (SaaS)
 

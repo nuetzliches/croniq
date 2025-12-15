@@ -1,21 +1,18 @@
 import { z } from 'zod';
 
 import type { EndpointDefinition } from '../schemas';
-import {
-    CreateWebhookIpRuleRequest,
-    IssueApiKeyRequest,
-    RotateWebhookSecretRequest,
-    TriggerJobRequest,
-    UpsertScheduleRequest,
-    UpsertWebhookEndpointRequest,
-} from '../schemas';
 
 export const ExecutionsApi: EndpointDefinition[] = [
     {
         method: 'get',
-        path: '/executions/:executionId/logs',
+        path: '/tenants/:tenantId/executions/:executionId/logs',
         requestFormat: 'json',
         parameters: [
+            {
+                name: 'tenantId',
+                type: 'Path',
+                schema: z.string(),
+            },
             {
                 name: 'executionId',
                 type: 'Path',

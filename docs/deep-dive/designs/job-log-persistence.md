@@ -83,7 +83,7 @@
 - PII hygiene: allow a redaction filter that strips configured property keys before persistence; document safe defaults.
 - Multi-store support: file-based log store for air-gapped/offline scenarios, plus an interface for streaming logs to vendor APIs if SQL storage is disabled.
 - Backfill: one-time migration to copy recent Serilog sinks (if using file/Loki) into the new tables for continuity.
-- Operators: API exposes `GET /executions/{executionId}/logs` (NDJSON). Sample script `scripts/get-execution-logs.ps1` calls the endpoint (`-ExecutionId`, `-Endpoint`, `-ApiKey`); file store retention via `Croniq:Logging:Execution:Retention`.
+- Operators: API exposes `GET /tenants/{tenantId}/executions/{executionId}/logs` (NDJSON). Sample script `scripts/get-execution-logs.ps1` calls the endpoint (`-TenantId`, `-ExecutionId`, `-Endpoint`, `-ApiKey`); file store retention via `Croniq:Logging:Execution:Retention`.
 
 ## Suggested Implementation Stages
 

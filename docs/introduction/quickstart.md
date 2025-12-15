@@ -160,7 +160,7 @@ cd HelloCroniq
 ```
 
 ```cmd
-curl -X POST https://localhost:5001/schedules \
+curl -X POST https://localhost:5001/tenants/dev-sandbox/schedules \
      -H "Content-Type: application/json" \
      -H "X-Croniq-Key: <your-dev-key>" \
      -d "{
@@ -254,7 +254,7 @@ Pass `-ActivateInSeconds <seconds>` (up to seven days) when you need to stage th
 
 ## 5.1 Publish API & gRPC Schemas
 
-Croniq hosts both Minimal API endpoints (`/schedules`, `/jobs/trigger`, `/tenants/*/webhooks`) and the Scheduler gRPC surface defined in [src/Croniq.Rpc.Client/Protos/scheduler.proto](../../src/Croniq.Rpc.Client/Protos/scheduler.proto). Expose their schemas so downstream teams can generate clients without reverse engineering requests.
+Croniq hosts both Minimal API endpoints (`/tenants/{tenantId}/schedules`, `/jobs/trigger`, `/tenants/*/webhooks`) and the Scheduler gRPC surface defined in [src/Croniq.Rpc.Client/Protos/scheduler.proto](../../src/Croniq.Rpc.Client/Protos/scheduler.proto). Expose their schemas so downstream teams can generate clients without reverse engineering requests.
 
 Add the recommended tooling to your host:
 

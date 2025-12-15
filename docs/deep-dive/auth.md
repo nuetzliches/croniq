@@ -37,14 +37,77 @@ Croniq inspects headers per request: `Authorization: Bearer ...` first, then `X-
 
 Admin routes (scope `tenants:admin`) will expose:
 
-- `POST /tenants` – create tenant metadata (plan, default env tag).
+- `POST /tenants` – create/update tenant metadata (plan, lifecycle state, default env tag).
+- `GET /tenants` / `GET /tenants/{id}` – enumerate tenants and inspect quotas/config.
+- `POST /tenants/{id}/api-clients` – register a client (name, env tag, default scopes) before issuing keys or tokens.
+- `GET /tenants/{id}/api-clients` / `GET /tenants/{id}/api-clients/{clientId}` – list and inspect registered clients.
 - `POST /tenants/{id}/api-keys` – issue a new key (returns plaintext once).
 - `POST /tenants/{id}/api-keys/{keyId}/rotate` – rotate secret, returns new plaintext.
 - `DELETE /tenants/{id}/api-keys/{keyId}` – revoke key immediately.
 - `GET /tenants/{id}/api-keys` – list active keys with scopes + env tags.
+- `POST /tenants/{id}/tokens` – mint a short-lived bearer token that Croniq signiert (Client-Credentials-ähnliche Response mit `accessToken`/`expiresIn`).
+- `POST /tenants/{id}/api-clients/{clientId}/tokens` – scoped Variante, wenn mehrere Clients pro Tenant leben (optional `audience`/`scopes`).
 - `GET /me` – resolve current caller context (user or API key) for self-checks.
 
-Implementation status is tracked in `security.md` backlog; this document will reflect the routes once they ship.
+Implementation status is tracked in `security.md` backlog; this document will reflect the routes once they ship. The API-key CRUD routes already exist; tenant management + token issuance remain on the roadmap (see CHECKLIST entry "Croniq-internes Token-Issuing").
+
+### Croniq-issued bearer tokens (planned)
+
+- **Motivation**: Operators want to bootstrap automations without wiring an external IdP. Croniq therefore ships eine leichte STS, die JWT-Access-Tokens pro Tenant signiert. Diese Tokens tragen die gleichen Claims (`tenant`, `env`, `scopes`) wie externe OIDC-Tokens, sodass Middleware unverändert bleiben kann.
+- **Flow**: Admin registriert Tenant + API-Client und ruft danach `POST /tenants/{tenantId}/tokens` (oder die Client-Variante) mit API-Key/Credentials auf. Die Antwort liefert `{ accessToken, expiresIn, tokenType = "Bearer" }` analog zum OAuth2 Client-Credentials-Flow.
+- **Signing**: Standardmäßig HMAC-SHA256; perspektivisch Signaturzertifikate (siehe Supply-Chain-Hardening). Public Keys landen unter `/.well-known/openid-configuration` + JWKS, damit Hosts Tokens offline validieren können.
+- **Claims**: `sub = clientId`, `tenant` + `env` stammen vom Client, `scope` enthält normalisierte Croniq-Scopes, optional `aud` gegen Replay.
+- **Lifetimes**: Default 15 Minuten, overrides pro Tenant/Client. Refresh Tokens zunächst out-of-scope; Caller fordern neue Tokens via API-Key oder Client-Secret an.
+- **Admin coverage**: `GET /me` liefert den aktuellen Caller (API-Key vs. Croniq-Token), damit Tooling Scopes prüfen kann ohne JWT zu decodieren. Zukünftige Admin-UIs verwenden dieselben Routen.
+
+### Tenant-/Client-/Token-Endpoints (Design-Spezifikation)
+
+| Method | Path | Summary | Notes |
+| ------ | ---- | ------- | ----- |
+| `POST` | `/tenants` | "Create tenant" | Body `{ reference, name }`; returns `TenantResponse { tenantId, reference, name, isActive, createdAtUtc }`.
+| `GET` | `/tenants` | "List tenants" | Optional query `state=active|all`. Returns collection of `TenantResponse`.
+| `GET` | `/tenants/{tenantId}` | "Get tenant" | 404 when unknown; response = `TenantResponse`.
+| `POST` | `/tenants/{tenantId}/api-clients` | "Register API client" | Body `{ clientId, name, environmentTag, defaultScopes[] }`; reuses/updates existing row when `clientId` exists.
+| `GET` | `/tenants/{tenantId}/api-clients` | "List API clients" | Optional `environment` filter; returns `ApiClientResponse` list (matches existing `/api-clients/{clientId}` schema).
+| `POST` | `/tenants/{tenantId}/tokens` | "Issue tenant token" | Body `{ clientId, scopes[], audience, ttlMinutes }`; authenticates via API key or PAT. Returns `{ accessToken, tokenType, expiresIn }`.
+| `POST` | `/tenants/{tenantId}/api-clients/{clientId}/tokens` | "Issue client token" | Same payload, automatically infers `clientId` and allowed scopes.
+| `GET` | `/me` | "Inspect caller context" | Echoes resolved tenant/environment/scopes for debugging.
+
+#### Request/Response Skizzen
+
+```jsonc
+// POST /tenants
+{
+	"reference": "acme",
+	"name": "Acme Corp"
+}
+
+// TenantResponse
+{
+	"tenantId": "tn_d4c1...",
+	"reference": "acme",
+	"name": "Acme Corp",
+	"isActive": true,
+	"createdAtUtc": "2025-12-15T11:22:33Z"
+}
+
+// POST /tenants/{tenantId}/tokens
+{
+	"clientId": "portal",
+	"scopes": ["jobs:trigger", "schedules:write"],
+	"audience": "croniq-api",
+	"ttlMinutes": 30
+}
+
+// TokenResponse
+{
+	"accessToken": "eyJhbGciOiJIUzI1NiIs...",
+	"tokenType": "Bearer",
+	"expiresIn": 1800
+}
+```
+
+Alle Summaries/Beschreibungen aus der Tabelle landen wortgleich in den neuen OpenAPI-Metadaten, damit Swagger/CLI-Generatoren konsistente Texte zeigen.
 
 ## Secret Handling
 

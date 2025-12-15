@@ -2,20 +2,20 @@ import { z } from 'zod';
 
 import type { EndpointDefinition } from '../schemas';
 import {
-    UpsertScheduleRequest,
-    CreateWebhookIpRuleRequest,
-    IssueApiKeyRequest,
-    RotateWebhookSecretRequest,
-    TriggerJobRequest,
-    UpsertWebhookEndpointRequest,
+    UpsertScheduleRequest
 } from '../schemas';
 
 export const SchedulesApi: EndpointDefinition[] = [
     {
         method: 'post',
-        path: '/schedules',
+        path: '/tenants/:tenantId/schedules',
         requestFormat: 'json',
         parameters: [
+            {
+                name: 'tenantId',
+                type: 'Path',
+                schema: z.string(),
+            },
             {
                 name: 'body',
                 type: 'Body',

@@ -110,10 +110,25 @@ docs/
 
 ## API & RPC Surface
 
-- Minimal API endpoints: `POST /jobs/trigger`, `POST /schedules`, `GET/DELETE /schedules/{id}`, `GET /health` (anonymous).
+- Minimal API endpoints: `POST /jobs/trigger`, `POST /tenants/{tenantId}/schedules`, `GET/DELETE /tenants/{tenantId}/schedules/{id}`, `GET /health` (anonymous).
 - gRPC service (`SchedulerService`) offers strongly typed access (`TriggerJob`, `RegisterSchedule`, `GetSchedules`). JSON-RPC may appear later but is not core.
 - Hosting packages expose opinionated extensions so consumers can bootstrap Croniq quickly. Auth, persistence mode, and rate limits are all configuration-driven.
 - Rate limiting uses ASP.NET Core RateLimiter with per-tenant partitions; gRPC interceptors reuse the same policy.
+
+### Tenant-basierte Routen als neues Default
+
+- Wir verschieben sämtliche Verwaltungs-Endpunkte (Schedules, Executions, Admin-CRUD) unter den Basis-Pfad `/tenants/{tenantId}/{resource}`. Da es aktuell keine externen Konsumenten gibt, akzeptieren wir die Breaking Changes jetzt und vermeiden spätere Doppelpfade.
+- `POST /schedules` sowie `GET /executions/{executionId}/logs` wurden auf `/tenants/{tenantId}/schedules` bzw. `/tenants/{tenantId}/executions/{executionId}/logs` verschoben. Legacy-Pfade sind entfernt, da keine externen Konsumenten existierten.
+- Zielbild für die REST-Oberfläche (ausgenommen öffentlich nutzbare Trigger/Webhooks):
+  - `/tenants/{tenantId}/schedules`
+  - `/tenants/{tenantId}/executions`
+  - `/tenants/{tenantId}/api-clients`, `/api-keys`, `/tokens`
+  - `/jobs/trigger` (bleibt global nutzbar)
+  - `/webhooks/*` (separater Surface)
+- Umsetzungsschritte:
+  1. API-Code auf neue Pfade umstellen, alte Pfade in derselben Version entfernen (Breaking Change akzeptabel vor `v1.0.0`).
+  2. UI/SDKs + Scripting-Samples auf den konsistenten Basis-Pfad aktualisieren.
+  3. Dokumentation, OpenAPI-Beschreibungen und Tests auf die neuen Pfade drehen.
 
 ## Webhook Trigger Surface
 

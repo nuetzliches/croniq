@@ -1,6 +1,8 @@
 param(
     [Parameter(Mandatory = $true)]
     [string] $ExecutionId,
+    [Parameter(Mandatory = $true)]
+    [string] $TenantId,
     [string] $Endpoint = "http://localhost:5080",
     [string] $ApiKey = $env:CRONIQ_API_KEY,
     [string] $OutputPath
@@ -11,7 +13,7 @@ if (-not $ApiKey) {
     exit 1
 }
 
-$uri = "$Endpoint/executions/$ExecutionId/logs"
+$uri = "$Endpoint/tenants/$TenantId/executions/$ExecutionId/logs"
 $headers = @{ "X-Croniq-Key" = $ApiKey }
 
 try {

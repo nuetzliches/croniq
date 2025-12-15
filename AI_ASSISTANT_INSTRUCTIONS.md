@@ -29,6 +29,11 @@ All AI-generated contributions must align with the architectural ground rules do
    - Write unit tests (xUnit + Shouldly) for new logic; update integration tests when touching provider or persistence layers.
    - Keep secrets/config values outside source control; rely on the `ISecretProvider` abstractions instead of inline secrets.
 
+5. **Breaking Changes Before GA**
+
+   - There are currently no external consumers. Treat breaking API or contract changes as acceptable until we ship `v1.0.0` (non-RC).
+   - When making such changes, still document the rationale in `docs/deep-dive/*` so we keep a trace for future stabilization.
+
 5. **Documentation Cross-Links**
    - When new features impact consumers, update `docs/*` and refer to deeper explanations in `docs/deep-dive/*`.
    - Record noteworthy architectural decisions in the technical docs (especially `docs/deep-dive/architecture.md`).

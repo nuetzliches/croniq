@@ -27,4 +27,11 @@
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
     </PackageReference>
   </ItemGroup>
+  <Target Name="CleanLegacyCoverletOutput" BeforeTargets="Build" Condition="$([System.String]::Copy('$(MSBuildProjectName)').Contains('.Tests'))">
+    <PropertyGroup>
+      <LegacyCoverletOutput>$(MSBuildProjectDirectory)\TestResults\coverage\$(MSBuildProjectName)</LegacyCoverletOutput>
+    </PropertyGroup>
+    <!-- Remove leftover single-file coverage artifact so coverlet can create the new directory structure. -->
+    <Delete Condition="Exists('$(LegacyCoverletOutput)') and !$([System.IO.Directory]::Exists('$(LegacyCoverletOutput)'))" Files="$(LegacyCoverletOutput)" />
+  </Target>
 </Project>

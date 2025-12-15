@@ -60,7 +60,7 @@ This document defines the scope, technology evaluation, and backlog required to 
 
 ## Dependencies & Prereqs
 
-- Stable API contract (`/schedules`, `/jobs`, future admin endpoints) + OIDC integration.
+- Stable API contract (`/tenants/{tenantId}/schedules`, `/jobs`, future admin endpoints) + OIDC integration.
 - Policy, observability, and dev stack milestones complete (UI depends on their data feeds).
 - Decide hosting target (same repo vs separate). Recommendation: new project `src/Croniq.Ui` with optional publishing to `ui/` folder or container image.
 - Sequencing: do not begin UI implementation until all backend/provider/observability/security milestones are complete; UI remains a downstream stream after Core/API readiness.

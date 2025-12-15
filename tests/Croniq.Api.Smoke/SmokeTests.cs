@@ -63,7 +63,7 @@ public sealed class SmokeTests
         var jobKey = BuildJobKey("schedules");
         var payload = CreateSchedulePayload(jobKey);
 
-        using var response = await SendAsync(() => client.PostAsJsonAsync("schedules", payload));
+        using var response = await SendAsync(() => client.PostAsJsonAsync(GetSchedulesUrl(), payload));
 
         response.StatusCode.ShouldBe(HttpStatusCode.Created);
         var body = await response.Content.ReadFromJsonAsync<ScheduleResponse>();
@@ -179,7 +179,7 @@ public sealed class SmokeTests
 
     private static async Task UpsertScheduleAsync(HttpClient client, string jobKey)
     {
-        using var response = await SendAsync(() => client.PostAsJsonAsync("schedules", CreateSchedulePayload(jobKey)));
+        using var response = await SendAsync(() => client.PostAsJsonAsync(GetSchedulesUrl(), CreateSchedulePayload(jobKey)));
         response.EnsureSuccessStatusCode();
     }
 
@@ -188,6 +188,8 @@ public sealed class SmokeTests
 
     private static string GetWebhookCollectionUrl(bool allowUnsigned = false) =>
         $"tenants/{Config.TenantId}/webhooks?environment={Config.EnvironmentTag}&allowUnsigned={allowUnsigned.ToString().ToLowerInvariant()}";
+
+    private static string GetSchedulesUrl() => $"tenants/{Config.TenantId}/schedules";
 
     private static string GetWebhookResourceUrl(string hookKey) =>
         $"tenants/{Config.TenantId}/webhooks/{hookKey}?environment={Config.EnvironmentTag}";

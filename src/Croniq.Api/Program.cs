@@ -7,6 +7,7 @@ builder.Configuration
     .AddJsonFile("appsettings.Development.json", optional: true, reloadOnChange: true)
     .AddEnvironmentVariables();
 
+builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddCroniqApiServices(builder.Configuration);
 builder.Services.AddCroniqApiRateLimiter();
 

@@ -1,6 +1,8 @@
 using System.Diagnostics;
 using System.Globalization;
 using System.Linq;
+using System.Linq.Expressions;
+using System.Reflection;
 using System.Text.Json;
 using System.Threading.RateLimiting;
 using Croniq.Api.Models;
@@ -22,9 +24,11 @@ using Croniq.Persistence.SqlServer;
 using Croniq.Providers.Default;
 using Croniq.Sdk;
 using Croniq.Hosting;
-using Microsoft.AspNetCore.RateLimiting;
+using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.OpenApi;
+using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Options;
@@ -114,7 +118,9 @@ public static class ApiHostingExtensions
             await next().ConfigureAwait(false);
         });
 
-        app.MapGet("/health", () => Results.Ok(new { status = "ok" }));
+        app.MapGet("/health", () => Results.Ok(new { status = "ok" }))
+            .WithDocs("Health_Get", "Health probe", "Returns 200 when the Croniq API process is alive.");
+
         app.MapGet("/health/persistence", async ([FromServices] IServiceProvider sp, CancellationToken ct) =>
         {
             var provider = sp.GetService<IJobPersistenceProvider>();
@@ -140,9 +146,11 @@ public static class ApiHostingExtensions
             {
                 return Results.Problem(statusCode: StatusCodes.Status503ServiceUnavailable, title: "db-unreachable", detail: ex.Message);
             }
-        });
+        })
+        .WithDocs("Health_Persistence_Get", "Persistence health", "Checks the configured job persistence provider for reachability.");
 
-        app.MapPost("/schedules", async (
+        app.MapPost("/tenants/{tenantId}/schedules", async (
+            string tenantId,
             UpsertScheduleRequest request,
             [FromServices] ICallerContextAccessor callerContextAccessor,
             [FromServices] IJobPersistenceProvider store,
@@ -156,6 +164,11 @@ public static class ApiHostingExtensions
             if (!JobKey.TryParse(request.JobKey, out var jobKey))
             {
                 return Results.BadRequest(new { error = "invalid-job-key", message = "JobKey must follow the Croniq format." });
+            }
+
+            if (!string.Equals(jobKey.TenantId, tenantId, StringComparison.OrdinalIgnoreCase))
+            {
+                return Results.StatusCode(StatusCodes.Status403Forbidden);
             }
 
             var authFailure = TenantGuard.EnsureJobScope(callerContextAccessor, jobKey, CroniqScopes.SchedulesWrite);
@@ -193,8 +206,9 @@ public static class ApiHostingExtensions
             await store.UpsertTriggerAsync(trigger, cancellationToken).ConfigureAwait(false);
             ApiMetrics.RecordScheduleUpsert(jobKey.TenantId, jobKey.EnvironmentTag, jobKey.Value);
 
-            return Results.Created($"/schedules/{trigger.TriggerId}", new { trigger.TriggerId, trigger.JobKey, trigger.ScheduleExpression });
-        });
+            return Results.Created($"/tenants/{tenantId}/schedules/{trigger.TriggerId}", new { trigger.TriggerId, trigger.JobKey, trigger.ScheduleExpression });
+        })
+        .WithDocs("Schedules_Upsert", "Create or update a schedule", "Registers a Cron-based trigger for the specified tenant-scoped job key.");
 
         app.MapGet("/tenants/{tenantId}/webhooks", async (
             string tenantId,
@@ -223,7 +237,8 @@ public static class ApiHostingExtensions
             var endpoints = await webhookStore.ListAsync(scope, cancellationToken).ConfigureAwait(false);
             var response = endpoints.Select(def => ToWebhookResponse(def)).ToList();
             return Results.Ok(response);
-        });
+        })
+        .WithDocs("Webhooks_List", "List webhook endpoints", "Returns all webhook endpoints for the specified tenant/environment scope.");
 
         app.MapPost("/tenants/{tenantId}/webhooks", async (
             string tenantId,
@@ -310,7 +325,8 @@ public static class ApiHostingExtensions
 
             var response = ToWebhookResponse(persisted, request.Secret);
             return Results.Ok(response);
-        });
+        })
+        .WithDocs("Webhooks_Upsert", "Create or update a webhook", "Registers a webhook endpoint for a tenant/environment, optionally overriding rate limits and signatures.");
 
         app.MapDelete("/tenants/{tenantId}/webhooks/{hookKey}", async (
             string tenantId,
@@ -339,7 +355,8 @@ public static class ApiHostingExtensions
             var scope = new PartitionScope(tenantId, environment);
             await webhookStore.DeleteAsync(hookKey, scope, cancellationToken).ConfigureAwait(false);
             return Results.NoContent();
-        });
+        })
+        .WithDocs("Webhooks_Delete", "Delete a webhook", "Removes a webhook endpoint and its metadata for the tenant/environment scope.");
 
         app.MapPost("/tenants/{tenantId}/webhooks/{hookKey}/rotate-secret", async (
             string tenantId,
@@ -395,7 +412,8 @@ public static class ApiHostingExtensions
             {
                 return Results.Problem(statusCode: StatusCodes.Status500InternalServerError, title: "secret-rotation-failed", detail: ex.Message);
             }
-        });
+        })
+        .WithDocs("Webhooks_RotateSecret", "Rotate webhook secret", "Schedules or immediately rotates a webhook secret and returns the new plaintext.");
 
         app.MapGet("/tenants/{tenantId}/webhooks/{hookKey}/ip-rules", async (
             string tenantId,
@@ -425,7 +443,8 @@ public static class ApiHostingExtensions
             var rules = await webhookStore.ListIpRulesAsync(hookKey, scope, cancellationToken).ConfigureAwait(false);
             var payload = rules.Select(ToWebhookIpRuleResponse).ToList();
             return Results.Ok(payload);
-        });
+        })
+        .WithDocs("WebhookIpRules_List", "List webhook IP rules", "Returns the CIDR allow-list associated with a webhook endpoint.");
 
         app.MapPost("/tenants/{tenantId}/webhooks/{hookKey}/ip-rules", async (
             string tenantId,
@@ -479,7 +498,8 @@ public static class ApiHostingExtensions
             {
                 return Results.Problem(statusCode: StatusCodes.Status500InternalServerError, title: "ip-rule-create-failed", detail: ex.Message);
             }
-        });
+        })
+        .WithDocs("WebhookIpRules_Create", "Add webhook IP rule", "Adds a CIDR block to the allow-list for the webhook endpoint.");
 
         app.MapDelete("/tenants/{tenantId}/webhooks/{hookKey}/ip-rules/{ruleId:long}", async (
             string tenantId,
@@ -514,7 +534,8 @@ public static class ApiHostingExtensions
             var correlationId = ResolveCorrelationId(httpContext);
             await webhookStore.DeleteIpRuleAsync(ruleId, scope, deletedBy, correlationId, cancellationToken).ConfigureAwait(false);
             return Results.NoContent();
-        });
+        })
+        .WithDocs("WebhookIpRules_Delete", "Delete webhook IP rule", "Removes a CIDR allow-list entry from the webhook endpoint.");
 
         app.MapGet("/tenants/{tenantId}/webhooks/deadletters", async (
             string tenantId,
@@ -543,7 +564,8 @@ public static class ApiHostingExtensions
             var entries = await deadLetterStore.ListAsync(scope, cancellationToken).ConfigureAwait(false);
             var response = entries.Select(ToWebhookDeadLetterResponse).ToList();
             return Results.Ok(response);
-        });
+        })
+        .WithDocs("WebhookDeadLetters_List", "List webhook dead letters", "Enumerates failed webhook deliveries for investigation or replay.");
 
         app.MapPost("/tenants/{tenantId}/webhooks/deadletters/{deadLetterId}/replay", async (
             string tenantId,
@@ -628,7 +650,8 @@ public static class ApiHostingExtensions
                 await deadLetterStore.RecordFailureAsync(deadLetterId, scope, new WebhookDeadLetterFailure("execution-error", StatusCodes.Status500InternalServerError, ex.Message, null), cancellationToken).ConfigureAwait(false);
                 return Results.Problem(statusCode: StatusCodes.Status500InternalServerError, title: "replay-failed", detail: ex.Message);
             }
-        });
+        })
+        .WithDocs("WebhookDeadLetters_Replay", "Replay webhook dead letter", "Re-dispatches a failed webhook payload via the job execution pipeline.");
 
         app.MapGet("/tenants/{tenantId}/api-clients/{clientId}", async (
             string tenantId,
@@ -660,7 +683,8 @@ public static class ApiHostingExtensions
                 client.ExpiresAt);
 
             return Results.Ok(response);
-        });
+        })
+        .WithDocs("ApiClients_Get", "Get API client", "Returns metadata about a tenant-scoped API client, including scopes and activity flags.");
 
         app.MapPost("/tenants/{tenantId}/api-keys", async (
             string tenantId,
@@ -700,7 +724,8 @@ public static class ApiHostingExtensions
                 logger.LogError(ex, "failed to issue api key for tenant {TenantId} client {ClientId}", tenantId, request.ClientId);
                 return Results.Problem(statusCode: StatusCodes.Status500InternalServerError, title: "api-key-issue-failed", detail: ex.Message);
             }
-        });
+        })
+        .WithDocs("ApiKeys_Issue", "Issue API key", "Creates a new API key for the specified tenant client and returns the plaintext once.");
 
         app.MapPost("/tenants/{tenantId}/api-keys/{keyId}/rotate", async (
             string tenantId,
@@ -732,7 +757,8 @@ public static class ApiHostingExtensions
                 logger.LogError(ex, "failed to rotate api key {KeyId} for tenant {TenantId}", keyId, tenantId);
                 return Results.Problem(statusCode: StatusCodes.Status500InternalServerError, title: "api-key-rotation-failed", detail: ex.Message);
             }
-        });
+        })
+        .WithDocs("ApiKeys_Rotate", "Rotate API key", "Revokes an existing API key and returns a fresh secret for the same client.");
 
         app.MapDelete("/tenants/{tenantId}/api-keys/{keyId}", async (
             string tenantId,
@@ -755,9 +781,11 @@ public static class ApiHostingExtensions
             }
 
             return Results.NoContent();
-        });
+        })
+        .WithDocs("ApiKeys_Delete", "Revoke API key", "Immediately revokes an API key for the tenant.");
 
-        app.MapGet("/executions/{executionId}/logs", async (
+        app.MapGet("/tenants/{tenantId}/executions/{executionId}/logs", async (
+            string tenantId,
             string executionId,
             [FromServices] IExecutionLogReader reader,
             [FromServices] ICallerContextAccessor callerContextAccessor,
@@ -774,7 +802,7 @@ public static class ApiHostingExtensions
             }
 
             var firstLine = enumerator.Current;
-            if (!TryExtractExecutionScope(firstLine, out var tenantId, out var environmentTag))
+            if (!TryExtractExecutionScope(firstLine, out var logTenantId, out var environmentTag))
             {
                 await Results.Problem(
                         statusCode: StatusCodes.Status500InternalServerError,
@@ -785,7 +813,15 @@ public static class ApiHostingExtensions
                 return;
             }
 
-            var authFailure = TenantGuard.EnsureTenant(callerContextAccessor, tenantId!, environmentTag, Array.Empty<string>());
+            if (!string.Equals(logTenantId, tenantId, StringComparison.OrdinalIgnoreCase))
+            {
+                await Results.StatusCode(StatusCodes.Status403Forbidden)
+                    .ExecuteAsync(httpContext)
+                    .ConfigureAwait(false);
+                return;
+            }
+
+            var authFailure = TenantGuard.EnsureTenant(callerContextAccessor, logTenantId!, environmentTag, Array.Empty<string>());
             if (authFailure is not null)
             {
                 await authFailure.ExecuteAsync(httpContext).ConfigureAwait(false);
@@ -802,7 +838,8 @@ public static class ApiHostingExtensions
                 await response.WriteAsync(enumerator.Current, cancellationToken).ConfigureAwait(false);
                 await response.WriteAsync("\n", cancellationToken).ConfigureAwait(false);
             }
-        });
+        })
+        .WithDocs("Executions_GetLogs", "Stream execution logs", "Streams NDJSON execution logs for a tenant-scoped execution after authorizing tenant scope.");
 
         app.MapPost("/jobs/trigger", async (
             TriggerJobRequest request,
@@ -856,10 +893,113 @@ public static class ApiHostingExtensions
                 triggerActivity?.SetStatus(ActivityStatusCode.Error);
                 throw;
             }
-        });
+        })
+        .WithDocs("Jobs_Trigger", "Trigger a job manually", "Executes a job immediately using the provided metadata and job key.");
 
         return app;
     }
+
+    private static readonly Lazy<Func<RouteHandlerBuilder, string, string?, RouteHandlerBuilder>?> OpenApiSummaryApplier = new(CreateOpenApiSummaryApplier);
+
+    private static RouteHandlerBuilder WithDocs(this RouteHandlerBuilder builder, string name, string summary, string? description = null)
+    {
+        if (builder is null)
+        {
+            throw new ArgumentNullException(nameof(builder));
+        }
+
+        builder.WithName(name);
+
+        var applier = OpenApiSummaryApplier.Value;
+        if (applier is not null)
+        {
+            return applier(builder, summary, description);
+        }
+
+        builder.WithMetadata(new EndpointDocsMetadata(summary, description));
+        return builder;
+    }
+
+    private static Func<RouteHandlerBuilder, string, string?, RouteHandlerBuilder>? CreateOpenApiSummaryApplier()
+    {
+        var operationType = Type.GetType("Microsoft.OpenApi.Models.OpenApiOperation, Microsoft.OpenApi");
+        if (operationType is null)
+        {
+            return null;
+        }
+
+        var extensionsType = Type.GetType("Microsoft.AspNetCore.OpenApi.OpenApiRouteHandlerBuilderExtensions, Microsoft.AspNetCore.OpenApi");
+        var withOpenApiMethod = extensionsType?
+            .GetMethods(BindingFlags.Public | BindingFlags.Static)
+            .FirstOrDefault(method =>
+            {
+                if (method.Name != "WithOpenApi")
+                {
+                    return false;
+                }
+
+                var parameters = method.GetParameters();
+                if (parameters.Length != 2)
+                {
+                    return false;
+                }
+
+                return parameters[0].ParameterType == typeof(RouteHandlerBuilder);
+            });
+
+        if (withOpenApiMethod is null)
+        {
+            return null;
+        }
+
+        var applyDocsTemplate = typeof(ApiHostingExtensions)
+            .GetMethod(nameof(ApplyOpenApiDocs), BindingFlags.NonPublic | BindingFlags.Static);
+
+        if (applyDocsTemplate is null)
+        {
+            return null;
+        }
+
+        return (builder, summary, description) =>
+        {
+            var operationDelegate = CreateOpenApiOperationDelegate(operationType, applyDocsTemplate, summary, description);
+            var result = withOpenApiMethod.Invoke(null, new object[] { builder, operationDelegate });
+            return result as RouteHandlerBuilder ?? builder;
+        };
+    }
+
+    private static Delegate CreateOpenApiOperationDelegate(Type operationType, MethodInfo applyDocsTemplate, string summary, string? description)
+    {
+        var applyDocsMethod = applyDocsTemplate.MakeGenericMethod(operationType);
+        var operationParameter = Expression.Parameter(operationType, "operation");
+        var summaryConstant = Expression.Constant(summary, typeof(string));
+        var descriptionConstant = Expression.Constant(description, typeof(string));
+        var call = Expression.Call(applyDocsMethod, operationParameter, summaryConstant, descriptionConstant);
+        var funcType = typeof(Func<,>).MakeGenericType(operationType, operationType);
+        return Expression.Lambda(funcType, call, operationParameter).Compile();
+    }
+
+    private static T ApplyOpenApiDocs<T>(T operation, string summary, string? description)
+    {
+        if (operation is null)
+        {
+            return operation!;
+        }
+
+        var type = typeof(T);
+        var summaryProperty = type.GetProperty("Summary");
+        summaryProperty?.SetValue(operation, summary);
+
+        if (!string.IsNullOrWhiteSpace(description))
+        {
+            var descriptionProperty = type.GetProperty("Description");
+            descriptionProperty?.SetValue(operation, description);
+        }
+
+        return operation!;
+    }
+
+    private sealed record EndpointDocsMetadata(string Summary, string? Description);
 
     private static string ResolveCallerIdentity(ICallerContextAccessor accessor)
     {

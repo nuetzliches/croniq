@@ -29,7 +29,7 @@ public sealed class TenantIsolationTests : IClassFixture<WebhookApiTestHost>
             StartAtUtc: null,
             EndAtUtc: null);
 
-        var response = await _host.Client.PostAsJsonAsync("/schedules", request);
+        var response = await _host.Client.PostAsJsonAsync($"/tenants/{WebhookApiTestHost.TenantId}/schedules", request);
         response.StatusCode.ShouldBe(HttpStatusCode.Forbidden);
     }
 
@@ -44,7 +44,7 @@ public sealed class TenantIsolationTests : IClassFixture<WebhookApiTestHost>
             StartAtUtc: null,
             EndAtUtc: null);
 
-        var response = await _host.Client.PostAsJsonAsync("/schedules", request);
+        var response = await _host.Client.PostAsJsonAsync($"/tenants/{WebhookApiTestHost.TenantId}/schedules", request);
         response.StatusCode.ShouldBe(HttpStatusCode.Forbidden);
     }
 
@@ -86,7 +86,7 @@ public sealed class TenantIsolationTests : IClassFixture<WebhookApiTestHost>
         const string executionId = "exec-foreign";
         _host.ExecutionLogs.SetLog(executionId, tenantId: "other-tenant", environmentTag: WebhookApiTestHost.Environment);
 
-        var response = await _host.Client.GetAsync($"/executions/{executionId}/logs");
+        var response = await _host.Client.GetAsync($"/tenants/{WebhookApiTestHost.TenantId}/executions/{executionId}/logs");
         response.StatusCode.ShouldBe(HttpStatusCode.Forbidden);
     }
 
@@ -97,7 +97,7 @@ public sealed class TenantIsolationTests : IClassFixture<WebhookApiTestHost>
         const string executionId = "exec-env";
         _host.ExecutionLogs.SetLog(executionId, tenantId: WebhookApiTestHost.TenantId, environmentTag: "prod");
 
-        var response = await _host.Client.GetAsync($"/executions/{executionId}/logs");
+        var response = await _host.Client.GetAsync($"/tenants/{WebhookApiTestHost.TenantId}/executions/{executionId}/logs");
         response.StatusCode.ShouldBe(HttpStatusCode.Forbidden);
     }
 
@@ -108,7 +108,7 @@ public sealed class TenantIsolationTests : IClassFixture<WebhookApiTestHost>
         const string executionId = "exec-ok";
         _host.ExecutionLogs.SetLog(executionId, tenantId: WebhookApiTestHost.TenantId, environmentTag: WebhookApiTestHost.Environment);
 
-        var response = await _host.Client.GetAsync($"/executions/{executionId}/logs");
+        var response = await _host.Client.GetAsync($"/tenants/{WebhookApiTestHost.TenantId}/executions/{executionId}/logs");
         response.StatusCode.ShouldBe(HttpStatusCode.OK);
         response.Content.Headers.ContentType?.MediaType.ShouldBe("application/x-ndjson");
 
