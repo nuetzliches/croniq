@@ -85,32 +85,32 @@ The entries highlighted above are live in the API host today and covered by inte
 ```jsonc
 // POST /tenants
 {
-	"reference": "acme",
-	"name": "Acme Corp"
+  "reference": "acme",
+  "name": "Acme Corp"
 }
 
 // TenantResponse
 {
-	"tenantId": "tn_d4c1...",
-	"reference": "acme",
-	"name": "Acme Corp",
-	"isActive": true,
-	"createdAtUtc": "2025-12-15T11:22:33Z"
+  "tenantId": "tn_d4c1...",
+  "reference": "acme",
+  "name": "Acme Corp",
+  "isActive": true,
+  "createdAtUtc": "2025-12-15T11:22:33Z"
 }
 
 // POST /tenants/{tenantId}/tokens
 {
-	"clientId": "portal",
-	"scopes": ["jobs:trigger", "schedules:write"],
-	"audience": "croniq-api",
-	"ttlMinutes": 30
+  "clientId": "portal",
+  "scopes": ["jobs:trigger", "schedules:write"],
+  "audience": "croniq-api",
+  "ttlMinutes": 30
 }
 
 // TokenResponse
 {
-	"accessToken": "eyJhbGciOiJIUzI1NiIs...",
-	"tokenType": "Bearer",
-	"expiresIn": 1800
+  "accessToken": "eyJhbGciOiJIUzI1NiIs...",
+  "tokenType": "Bearer",
+  "expiresIn": 1800
 }
 ```
 
