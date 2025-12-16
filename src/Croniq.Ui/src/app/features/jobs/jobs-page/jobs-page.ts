@@ -1,11 +1,11 @@
 import { CommonModule } from '@angular/common';
 import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@angular/core';
 
-import { JobsStore } from '../jobs.store';
 import type { ManualTriggerEntry } from '../jobs.store';
+import { JobsStore } from '../jobs.store';
 
 @Component({
-  selector: 'app-jobs-page',
+  selector: 'cq-jobs-page',
   imports: [CommonModule],
   templateUrl: './jobs-page.html',
   changeDetection: ChangeDetectionStrategy.OnPush,

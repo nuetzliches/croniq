@@ -3,7 +3,7 @@ import { ChangeDetectionStrategy, Component, input } from '@angular/core';
 export type StatusIntent = 'success' | 'warn' | 'neutral';
 
 @Component({
-  selector: 'app-status-beacon',
+  selector: 'cq-status-beacon',
   imports: [],
   templateUrl: './status-beacon.html',
   changeDetection: ChangeDetectionStrategy.OnPush,

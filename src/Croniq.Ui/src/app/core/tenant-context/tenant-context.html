@@ -10,18 +10,41 @@
 
   <section class="space-y-3 rounded-2xl border border-white/10 bg-white/5 p-4">
     <h3 class="text-xs uppercase tracking-[0.35em] text-text-muted">Switch tenant</h3>
-    <label class="space-y-1 text-xs uppercase tracking-[0.3em] text-text-muted">
-      Tenant preset
-      <select
-        class="w-full rounded-xl border border-white/15 bg-surface/40 px-3 py-2 text-sm text-text"
-        [value]="snapshot().tenantId"
-        (change)="selectTenant(($any($event.target)).value)"
-      >
-        @for (preset of tenantPresets(); track preset.id) {
-        <option [value]="preset.id">{{ preset.label }}</option>
-        }
-      </select>
-    </label>
+    <form
+      class="grid gap-2 text-xs"
+      (submit)="$event.preventDefault(); updateTenantIdentity(tenantIdInput, tenantNameInput);"
+    >
+      <label class="space-y-1 text-xs uppercase tracking-[0.3em] text-text-muted">
+        Tenant ID
+        <input
+          #tenantIdInput
+          type="text"
+          maxlength="80"
+          class="w-full rounded-xl border border-white/15 bg-surface/40 px-3 py-2 text-sm text-text"
+          [value]="snapshot().tenantId"
+          placeholder="tenant-id"
+        />
+      </label>
+      <label class="space-y-1 text-xs uppercase tracking-[0.3em] text-text-muted">
+        Tenant name (optional)
+        <input
+          #tenantNameInput
+          type="text"
+          maxlength="120"
+          class="w-full rounded-xl border border-white/15 bg-surface/40 px-3 py-2 text-sm text-text"
+          [value]="snapshot().tenantName"
+          placeholder="Display name"
+        />
+      </label>
+      <div>
+        <button
+          type="submit"
+          class="rounded-full border border-accent/40 bg-accent/15 px-4 py-2 text-xs font-semibold uppercase tracking-wide text-accent"
+        >
+          Apply tenant
+        </button>
+      </div>
+    </form>
     <div class="space-y-2">
       <p class="text-xs uppercase tracking-[0.35em] text-text-muted">Environment</p>
       <div class="flex flex-wrap gap-2">

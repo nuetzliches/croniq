@@ -7,7 +7,7 @@ type SummaryCard = {
 };
 
 @Component({
-  selector: 'app-dashboard-page',
+  selector: 'cq-dashboard-page',
   imports: [],
   templateUrl: './dashboard-page.html',
   changeDetection: ChangeDetectionStrategy.OnPush,

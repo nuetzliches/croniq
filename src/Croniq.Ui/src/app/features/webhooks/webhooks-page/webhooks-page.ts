@@ -6,7 +6,7 @@ import { CreateWebhookIpRuleRequest, RotateWebhookSecretRequest, UpsertWebhookEn
 import { WebhooksStore } from '../webhooks.store';
 
 @Component({
-  selector: 'app-webhooks-page',
+  selector: 'cq-webhooks-page',
   imports: [CommonModule],
   templateUrl: './webhooks-page.html',
   changeDetection: ChangeDetectionStrategy.OnPush,

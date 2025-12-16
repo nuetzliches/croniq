@@ -1,16 +1,25 @@
 # Croniq UI Checklist
 
-Derived from [src/Croniq.Ui/docs/deep-dive/designs/angular-ui-concept.md](src/Croniq.Ui/docs/deep-dive/designs/angular-ui-concept.md). Update these tasks as the Angular 21 + Tailwind admin UI progresses.
+TEMPORARY FILE: This checklist is a short-lived status tracker.
+
+Long-term documentation lives in:
+
+- `README.md` (dev commands: start/tests/zoneless/OpenAPI generation/MCP)
+- `docs/deep-dive/ui.md` (current architecture + backlog)
+- `docs/deep-dive/api-schema.md` (OpenAPI → Zod generation)
+- `docs/deep-dive/AUTH.md` (auth notes)
+
+Derived from [docs/deep-dive/designs/angular-ui-concept.md](docs/deep-dive/designs/angular-ui-concept.md).
 
 ## Delivery Phases
 
-- [x] Design Spike – produce wireframes and refreshed design tokens aligned with the concept doc. _(Wireframes captured in [src/Croniq.Ui/docs/deep-dive/designs/angular-ui-wireframes.md](src/Croniq.Ui/docs/deep-dive/designs/angular-ui-wireframes.md); token inventory drafted, awaiting stakeholder review.)_
-- [x] Design Spike – finalize Tailwind theme plus typography approvals with stakeholders. _(Theme + typographic tokens documented in [src/Croniq.Ui/docs/deep-dive/designs/angular-ui-theme.md](src/Croniq.Ui/docs/deep-dive/designs/angular-ui-theme.md); awaiting stakeholder sign-off recorded there.)_
-- [ ] Scaffolding & Auth – initialize the Angular workspace in `src/Croniq.Ui`, configure MCP helper tasks, and wire the OIDC stub with the tenant switcher. _(Plan documented in [src/Croniq.Ui/docs/deep-dive/designs/angular-ui-scaffolding.md](src/Croniq.Ui/docs/deep-dive/designs/angular-ui-scaffolding.md); pending execution of `ng new`, library generation, Tailwind tokens, and OIDC stub.)_
-  - [x] Auth session persistence: store the opaque Croniq session token in `sessionStorage` only; never persist refresh data in `localStorage`/IndexedDB. _(Implemented via [src/app/core/auth/auth-session.service.ts](src/app/core/auth/auth-session.service.ts); forms wired in [src/app/core/tenant-context/tenant-context.html](src/app/core/tenant-context/tenant-context.html); rationale captured in [src/Croniq.Ui/docs/deep-dive/AUTH.md](src/Croniq.Ui/docs/deep-dive/AUTH.md).)_
+- [x] Design Spike – produce wireframes and refreshed design tokens aligned with the concept doc. _(Wireframes captured in [docs/deep-dive/designs/angular-ui-wireframes.md](docs/deep-dive/designs/angular-ui-wireframes.md); token inventory drafted, awaiting stakeholder review.)_
+- [x] Design Spike – finalize Tailwind theme plus typography approvals with stakeholders. _(Theme + typographic tokens documented in [docs/deep-dive/designs/angular-ui-theme.md](docs/deep-dive/designs/angular-ui-theme.md); awaiting stakeholder sign-off recorded there.)_
+- [ ] Scaffolding & Auth – keep this phase as a tracker; implementation details are documented in `README.md` and `docs/deep-dive/AUTH.md`. _(Original plan: [docs/deep-dive/designs/angular-ui-scaffolding.md](docs/deep-dive/designs/angular-ui-scaffolding.md).)_
+  - [x] Auth session persistence: store the opaque Croniq session token in `sessionStorage` only; never persist refresh data in `localStorage`/IndexedDB. _(Implemented via [src/app/core/auth/auth-session.service.ts](src/app/core/auth/auth-session.service.ts); forms wired in [src/app/core/tenant-context/tenant-context.html](src/app/core/tenant-context/tenant-context.html); rationale captured in [docs/deep-dive/AUTH.md](docs/deep-dive/AUTH.md).)_
   - [x] OAuth/OIDC expansion: leave hooks for PKCE/OIDC bootstrap (deferred) so we can swap session auth for standards-based login once backend is ready. _(UI button + `startOidcBootstrap()` placeholder now live in [src/app/core/tenant-context/tenant-context.ts](src/app/core/tenant-context/tenant-context.ts).)_
   - [x] ApiKey bootstrap: surface an operator-facing form to capture the short-lived Croniq API key (sent as `X-Croniq-Key`) and inject it through `EndpointExecutor` for every call until OIDC replaces it. _(Credential supplier + header wiring sit inside [projects/data-access/src/lib/endpoint-executor.ts](projects/data-access/src/lib/endpoint-executor.ts) and the tenant context form captures inputs.)_
-  - [x] Operator impersonation vs. OAuth: document the interim plan (manual tenant/operator context vs. delegated auth) and revisit once backend signals GA for full OAuth. _(Plan recorded in [src/Croniq.Ui/docs/deep-dive/AUTH.md](src/Croniq.Ui/docs/deep-dive/AUTH.md).)_
+  - [x] Operator impersonation vs. OAuth: document the interim plan (manual tenant/operator context vs. delegated auth) and revisit once backend signals GA for full OAuth. _(Plan recorded in [docs/deep-dive/AUTH.md](docs/deep-dive/AUTH.md).)_
 - [ ] MVP Data Surfaces – deliver the dashboard metrics (stubbed), schedules read-only grid, and job registry view.
 - [ ] Admin Controls – implement CRUD for schedules, webhooks, and API keys, including dead-letter replay wiring.
 - [ ] Observability & Polish – embed Grafana/log pulse views and complete the accessibility plus localization review.
@@ -26,7 +35,7 @@ Derived from [src/Croniq.Ui/docs/deep-dive/designs/angular-ui-concept.md](src/Cr
 
 - [ ] Scaffold `src/Croniq.Ui` structure (apps/admin, libs/data-access, libs/telemetry, libs/ui-kit) as outlined in the concept doc.
 - [ ] Configure Tailwind per [https://next.angular.dev/guide/tailwind](https://next.angular.dev/guide/tailwind) and emit Croniq tokens via CSS variables (`--cq-*`).
-- [x] Capture MCP server usage in `.vscode/tasks.json` and `src/Croniq.Ui/docs/deep-dive/designs/angular-ui-concept.md`, including `npm run mcp` instructions. _(Script + VS Code task wired up; see concept/scaffolding docs for details.)_
+- [x] Capture MCP server usage in `.vscode/tasks.json` and `docs/deep-dive/designs/angular-ui-concept.md`, including `npm run mcp` instructions. _(Script + VS Code task wired up; see concept/scaffolding docs for details.)_
 - [ ] Establish Angular Query + Signals boilerplate shared across feature modules.
 
 ## Application Architecture
@@ -79,6 +88,13 @@ Derived from [src/Croniq.Ui/docs/deep-dive/designs/angular-ui-concept.md](src/Cr
 - [ ] Maintain Vitest unit coverage thresholds and Playwright E2E smoke tests against the devstack.
 - [ ] Configure Storybook (Chromatic optional) for visual regression coverage on shared components.
 - [ ] Publish build artifacts to `eng/artifacts/ui` and containerize the UI for deployment parity with other Croniq services.
+
+### Developer instructions
+
+This checklist intentionally avoids duplicating how-tos.
+
+- Tests (watch vs. once): see `README.md`
+- Zoneless notes: see `README.md` and `docs/deep-dive/ui.md`
 
 ## Open Questions & Decisions
 

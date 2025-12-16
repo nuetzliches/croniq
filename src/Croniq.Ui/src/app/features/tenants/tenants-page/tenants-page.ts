@@ -4,7 +4,7 @@ import { ChangeDetectionStrategy, Component, inject, signal } from '@angular/cor
 import { TenantsStore } from '../tenants.store';
 
 @Component({
-  selector: 'app-tenants-page',
+  selector: 'cq-tenants-page',
   imports: [CommonModule, JsonPipe],
   templateUrl: './tenants-page.html',
   changeDetection: ChangeDetectionStrategy.OnPush,

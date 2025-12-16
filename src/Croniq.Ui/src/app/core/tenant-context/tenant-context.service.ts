@@ -3,19 +3,18 @@ import { Injectable, computed, effect, inject, signal } from '@angular/core';
 import { CallerContext, CroniqRequestOptions } from 'data-access';
 
 import { OperatorSession } from '../auth/operator-session';
-import { TenantDirectoryService } from './tenant-directory.service';
-import { TenantContextState, TenantEnvironment, TenantPreset } from './tenant-context.types';
+import { TenantContextState, TenantEnvironment } from './tenant-context.types';
 
 const DEFAULT_TENANT_CONTEXT: TenantContextState = {
-    tenantId: 'cron-lab',
-    tenantName: 'Cron Lab',
+    tenantId: '',
+    tenantName: '',
     environment: 'staging',
-    region: 'us-east-1',
-    blueprintVersion: 'v2025.12.02',
-    policyCount: 7,
-    lastAuditedAt: new Date(Date.now() - 1000 * 60 * 12).toISOString(),
-    featureFlags: ['webhooks-beta', 'deferred-tenants', 'legacy-fallbacks'],
-    source: 'Croniq.Ui',
+    region: '',
+    blueprintVersion: '',
+    policyCount: 0,
+    lastAuditedAt: new Date().toISOString(),
+    featureFlags: [],
+    source: 'manual',
 };
 
 const TENANT_STORAGE_KEY = 'croniq.ui.tenant-context';
@@ -23,24 +22,26 @@ const TENANT_STORAGE_KEY = 'croniq.ui.tenant-context';
 @Injectable({ providedIn: 'root' })
 export class TenantContextService {
     private readonly operatorSession = inject(OperatorSession);
-    private readonly tenantDirectory = inject(TenantDirectoryService);
     private readonly state = signal<TenantContextState>(loadStoredTenantContext() ?? DEFAULT_TENANT_CONTEXT);
 
     constructor() {
+        // Intentionally empty: tenant presets were removed.
+        // Tenant context is now operator-controlled and/or API-backed.
         effect(() => {
-            this.syncStateWithPresets(this.tenantDirectory.presets());
+            // keep effect hook so future derived syncing can be added without changing structure
+            void this.state();
         });
     }
 
     readonly snapshot = this.state.asReadonly();
     readonly tenantLabel = computed(() => {
         const ctx = this.state();
-        return `${ctx.tenantName} · ${ctx.environment}`;
+        const name = ctx.tenantName?.trim() || ctx.tenantId?.trim() || '—';
+        return `${name} · ${ctx.environment}`;
     });
     readonly tenantId = computed(() => this.state().tenantId);
     readonly environment = computed(() => this.state().environment);
     readonly featureFlags = computed(() => this.state().featureFlags);
-    readonly presets = this.tenantDirectory.presets;
 
     updateContext(patch: Partial<TenantContextState>): void {
         this.state.update((current) => {
@@ -55,22 +56,15 @@ export class TenantContextService {
         });
     }
 
-    applyPreset(tenantId: string): void {
-        const preset = this.tenantDirectory.presets().find((entry) => entry.id === tenantId);
-        if (!preset) {
-            return;
-        }
+    setTenantIdentity(tenantId: string, tenantName?: string | null): void {
+        const normalizedId = tenantId.trim();
+        const normalizedName = tenantName?.trim() || '';
         this.state.update((current) => {
             const next: TenantContextState = {
                 ...current,
-                tenantId: preset.id,
-                tenantName: preset.tenantName,
-                environment: preset.defaultEnvironment,
-                region: preset.region,
-                blueprintVersion: preset.blueprintVersion,
-                policyCount: preset.policyCount,
-                featureFlags: [...preset.featureFlags],
-                source: preset.source,
+                tenantId: normalizedId,
+                tenantName: normalizedName,
+                source: 'manual',
                 lastAuditedAt: new Date().toISOString(),
             };
             persistTenantContext(next);
@@ -119,21 +113,6 @@ export class TenantContextService {
             persistTenantContext(next);
             return next;
         });
-    }
-
-    private syncStateWithPresets(presets: ReadonlyArray<TenantPreset>): void {
-        if (!presets.length) {
-            return;
-        }
-        const current = this.state();
-        const preset = presets.find((entry) => entry.id === current.tenantId);
-        if (!preset) {
-            this.applyPreset(presets[0].id);
-            return;
-        }
-        if (!isTenantEnvironment(current.environment)) {
-            this.setEnvironment(preset.defaultEnvironment);
-        }
     }
 
     createCallerContext(command: string, overrides: Partial<CallerContext> = {}): CallerContext {

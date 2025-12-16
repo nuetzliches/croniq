@@ -40,7 +40,7 @@
       aria-label="System status"
     >
       @for (status of statusCards(); track status.label) {
-      <app-status-beacon [label]="status.label" [value]="status.value" [intent]="status.intent" />
+      <cq-status-beacon [label]="status.label" [value]="status.value" [intent]="status.intent" />
       }
     </header>
     <main class="flex-1 p-6">
@@ -49,4 +49,4 @@
   </section>
 </div>
 
-<app-command-palette (closed)="closeCommandPalette()" />
+<cq-command-palette (closed)="closeCommandPalette()" />

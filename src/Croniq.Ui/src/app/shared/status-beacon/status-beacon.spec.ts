@@ -1,3 +1,4 @@
+import { provideZonelessChangeDetection } from '@angular/core';
 import { ComponentFixture, TestBed } from '@angular/core/testing';
 
 import { StatusBeacon } from './status-beacon';
@@ -8,7 +9,8 @@ describe('StatusBeacon', () => {
 
   beforeEach(async () => {
     await TestBed.configureTestingModule({
-      imports: [StatusBeacon]
+      imports: [StatusBeacon],
+      providers: [provideZonelessChangeDetection()],
     })
     .compileComponents();
 

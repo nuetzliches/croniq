@@ -1,59 +1,70 @@
-# CroniqUi
+# Croniq.Ui
 
-This project was generated using [Angular CLI](https://github.com/angular/angular-cli) version 21.1.0-next.2.
+Angular 21 (standalone) admin UI for Croniq. The app is configured to run **zoneless** and uses Tailwind for styling.
 
-## Development server
+## Prerequisites
 
-To start a local development server, run:
+- Node.js (use the repo/toolchain standard; `packageManager` is pinned in `package.json`)
+- `npm install`
 
-```bash
-ng serve
-```
+## Development
 
-Once the server is running, open your browser and navigate to `http://localhost:4200/`. The application will automatically reload whenever you modify any of the source files.
+- Start dev server: `npm start` (default: http://localhost:4200)
+- Build: `npm run build`
 
-## Code scaffolding
+### Runtime config
 
-Angular CLI includes powerful code scaffolding tools. To generate a new component, run:
+Runtime config is loaded from `public/assets/croniq-config.json` (optional). Supported keys:
 
-```bash
-ng generate component component-name
-```
+- `apiBaseUrl`: absolute URL (`http/https`) or absolute path (`/...`)
+- `swaggerUiUrl`: optional override (absolute URL or absolute path)
 
-For a complete list of available schematics (such as `components`, `directives`, or `pipes`), run:
+See `src/app/core/api-config.ts` and `src/app/core/runtime-config.service.ts`.
 
-```bash
-ng generate --help
-```
+### Tests (watch vs. once)
 
-## Building
+Angular 21 uses the `@angular/build:unit-test` builder (Vitest). In interactive terminals, `ng test` defaults to watch mode.
 
-To build the project run:
+- Watch mode (local dev): `npm test`
+- Run once (recommended for CI / quick verification): `npm run test:once`
+- CI mode (explicit `CI=1` + run once): `npm run test:ci`
+- List tests: `npm run test:list`
 
-```bash
-ng build
-```
+Note: `npm run test -- --watch=false` may still enter watch mode in some shells/TTY setups; prefer `--no-watch` via `test:once`.
 
-This will compile your project and store the build artifacts in the `dist/` directory. By default, the production build optimizes your application for performance and speed.
+### Zoneless
 
-## Running unit tests
+Zoneless change detection is enabled in `src/app/app.config.ts` via `provideZonelessChangeDetection()`.
 
-To execute unit tests with the [Vitest](https://vitest.dev/) test runner, use the following command:
+Practical implications:
 
-```bash
-ng test
-```
+- Prefer Signals (`signal`, `computed`, `effect`) for UI state.
+- If you update non-signal state from async callbacks, you may need `ChangeDetectorRef.markForCheck()`.
 
-## Running end-to-end tests
+## OpenAPI  Zod generation
 
-For end-to-end (e2e) testing, run:
+Generate runtime-safe Zod schemas and endpoint definitions from the upstream OpenAPI document:
 
-```bash
-ng e2e
-```
+- Offline-friendly (prefers snapshot): `npm run generate:api`
+- Force live swagger (local devstack): `npm run generate:api:server`
 
-Angular CLI does not come with an end-to-end testing framework by default. You can choose one that suits your needs.
+Input resolution order for `generate:api`:
 
-## Additional Resources
+1. `CRONIQ_OPENAPI_URL` (when set)
+2. `artifacts/swagger.json` (snapshot)
+3. `http://localhost:5000/swagger/v1/swagger.json` (fallback)
 
-For more information on using the Angular CLI, including detailed command references, visit the [Angular CLI Overview and Command Reference](https://angular.dev/tools/cli) page.
+Generated output:
+
+- `projects/api-schema/generated/` (overwritten)
+- Templates: `tools/templates/`
+
+Details: `docs/deep-dive/api-schema.md`.
+
+## Angular MCP server
+
+Dev-only helper to enable workspace-aware Angular operations via MCP:
+
+- Start: `npm run mcp`
+- VS Code task: `Angular MCP Server`
+

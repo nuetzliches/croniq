@@ -8,7 +8,7 @@ import { TenantContextService } from './tenant-context.service';
 import { TenantEnvironment } from './tenant-context.types';
 
 @Component({
-  selector: 'app-tenant-context',
+  selector: 'cq-tenant-context',
   imports: [CommonModule],
   templateUrl: './tenant-context.html',
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -27,7 +27,6 @@ export class TenantContext {
   readonly operatorProfile = this.operatorSession.profile;
   readonly flags = this.tenantContext.featureFlags;
   readonly tenantLabel = this.tenantContext.tenantLabel;
-  readonly tenantPresets = this.tenantContext.presets;
   readonly sessionToken = this.authSession.sessionToken;
   readonly sessionTokenExpired = this.authSession.sessionTokenExpired;
   readonly apiKey = this.authSession.apiKey;
@@ -40,8 +39,8 @@ export class TenantContext {
   readonly maskedSessionToken = computed(() => this.maskSecret(this.sessionToken()));
   readonly maskedApiKey = computed(() => this.maskSecret(this.apiKey()));
 
-  selectTenant(tenantId: string): void {
-    this.tenantContext.applyPreset(tenantId);
+  updateTenantIdentity(tenantIdInput: HTMLInputElement, tenantNameInput: HTMLInputElement): void {
+    this.tenantContext.setTenantIdentity(tenantIdInput.value, tenantNameInput.value);
   }
 
   selectEnvironment(environment: TenantEnvironment): void {

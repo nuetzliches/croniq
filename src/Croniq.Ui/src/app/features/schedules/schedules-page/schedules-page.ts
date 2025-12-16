@@ -16,7 +16,7 @@ type FilterOption = {
 };
 
 @Component({
-  selector: 'app-schedules-page',
+  selector: 'cq-schedules-page',
   imports: [CommonModule],
   templateUrl: './schedules-page.html',
   changeDetection: ChangeDetectionStrategy.OnPush,

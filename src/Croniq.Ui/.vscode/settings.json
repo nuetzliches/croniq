@@ -19,5 +19,11 @@
         "copilot/grok-code-fast-1"
       ]
     }
+  },
+  "files.exclude": {
+    "**/node_modules": true
+  },
+  "search.exclude": {
+    "**/node_modules": true
   }
 }

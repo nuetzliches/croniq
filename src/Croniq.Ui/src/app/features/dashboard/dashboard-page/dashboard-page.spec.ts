@@ -1,3 +1,4 @@
+import { provideZonelessChangeDetection } from '@angular/core';
 import { ComponentFixture, TestBed } from '@angular/core/testing';
 
 import { DashboardPage } from './dashboard-page';
@@ -8,7 +9,8 @@ describe('DashboardPage', () => {
 
   beforeEach(async () => {
     await TestBed.configureTestingModule({
-      imports: [DashboardPage]
+      imports: [DashboardPage],
+      providers: [provideZonelessChangeDetection()],
     })
     .compileComponents();
 

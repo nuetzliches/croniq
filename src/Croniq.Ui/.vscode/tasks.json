@@ -39,6 +39,12 @@
       }
     },
     {
+      "type": "npm",
+      "script": "test:once",
+      "isBackground": false,
+      "problemMatcher": []
+    },
+    {
       "label": "Angular MCP Server",
       "type": "shell",
       "command": "npm",

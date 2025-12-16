@@ -1,12 +1,12 @@
 import { CommonModule } from '@angular/common';
-import { ChangeDetectionStrategy, Component, HostListener, inject, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, inject, signal } from '@angular/core';
 import { RouterLink, RouterLinkActive, RouterOutlet } from '@angular/router';
 
+import { NavItem, PRIMARY_NAV_ITEMS } from '../../core/navigation/nav-items';
+import { TenantContextService } from '../../core/tenant-context/tenant-context.service';
 import { CommandPalette } from '../../shared/command-palette/command-palette';
 import { CommandPaletteController } from '../../shared/command-palette/command-palette.controller';
 import { StatusBeacon } from '../../shared/status-beacon/status-beacon';
-import { NavItem, PRIMARY_NAV_ITEMS } from '../../core/navigation/nav-items';
-import { TenantContextService } from '../../core/tenant-context/tenant-context.service';
 
 type StatusIntent = 'success' | 'warn' | 'neutral';
 
@@ -17,9 +17,12 @@ type StatusCard = {
 };
 
 @Component({
-  selector: 'app-shell',
+  selector: 'cq-shell',
   imports: [CommonModule, RouterLink, RouterLinkActive, RouterOutlet, CommandPalette, StatusBeacon],
   templateUrl: './shell.html',
+  host: {
+    '(window:keydown)': 'handleGlobalPaletteShortcut($event)',
+  },
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class Shell {
@@ -44,7 +47,6 @@ export class Shell {
     this.commandPalette.close();
   }
 
-  @HostListener('window:keydown', ['$event'])
   handleGlobalPaletteShortcut(event: KeyboardEvent): void {
     if (!isPaletteShortcut(event) || isEditableTarget(event.target)) {
       return;

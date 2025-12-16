@@ -1,6 +1,6 @@
 # Croniq UI Tailwind Theme & Typography
 
-Theme blueprint for the Angular 21 + Tailwind admin UI. Use these tokens in `tailwind.config.ts`, Storybook stories, and CSS variables scoped by data-theme attributes.
+Theme blueprint for the Angular 21 + Tailwind admin UI. Use these tokens in `tailwind.config.js` and the CSS variables in `src/styles.css`.
 
 ## Goals
 
@@ -80,59 +80,32 @@ Define CSS variables on `:root[data-theme="ops-light"]` and `:root[data-theme="o
 
 ## Tailwind Config Snippet
 
-```ts
-// tailwind.config.ts
-import { defineConfig } from "tailwindcss/resolveConfig";
-
-export default defineConfig({
-  darkMode: ["class", "[data-theme='ops-dark']"],
-  content: ["./apps/**/*.{html,ts}", "./libs/**/*.{html,ts}"],
+```js
+// tailwind.config.js
+module.exports = {
+  content: ['./src/**/*.{html,ts}', './projects/**/*.{html,ts}'],
   theme: {
-    fontFamily: {
-      display: ['"Space Grotesk"', '"Segoe UI"', "sans-serif"],
-      body: ['"Inter"', '"Segoe UI"', "sans-serif"],
-      mono: ['"IBM Plex Mono"', '"SFMono-Regular"', "monospace"],
-    },
     extend: {
       colors: {
-        surface: "rgb(var(--cq-surface) / <alpha-value>)",
-        "surface-alt": "rgb(var(--cq-surface-alt) / <alpha-value>)",
-        border: "rgb(var(--cq-border) / <alpha-value>)",
-        text: "rgb(var(--cq-text) / <alpha-value>)",
-        "text-muted": "rgb(var(--cq-text-muted) / <alpha-value>)",
-        accent: "rgb(var(--cq-accent) / <alpha-value>)",
-        danger: "rgb(var(--cq-danger) / <alpha-value>)",
-        warning: "rgb(var(--cq-warning) / <alpha-value>)",
-        success: "rgb(var(--cq-success) / <alpha-value>)",
-      },
-      spacing: {
-        1: "4px",
-        2: "8px",
-        3: "12px",
-        4: "16px",
-        6: "24px",
-        8: "32px",
-        10: "40px",
-        12: "48px",
-      },
-      boxShadow: {
-        shell: "0 8px 30px rgba(15, 23, 42, 0.35)",
-        card: "0 4px 15px rgba(15, 23, 42, 0.18)",
-      },
-      transitionTimingFunction: {
-        fast: "cubic-bezier(0.4, 0, 0.2, 1)",
-        emphasis: "cubic-bezier(0.25, 0.8, 0.25, 1)",
-      },
-      transitionDuration: {
-        fast: "120ms",
-        medium: "220ms",
-        emphasis: "320ms",
+        surface: {
+          DEFAULT: 'var(--cq-surface)',
+          alt: 'var(--cq-surface-alt)',
+        },
+        text: {
+          DEFAULT: 'var(--cq-text)',
+          muted: 'var(--cq-text-muted)',
+        },
+        accent: {
+          DEFAULT: 'var(--cq-accent)',
+        },
       },
     },
   },
   plugins: [],
-});
+};
 ```
+
+Note: today the CSS variables in `src/styles.css` are defined as hex values. If we later need alpha-friendly tokens (`rgb(var(--token) / <alpha>)`), we should migrate both token values and usages together.
 
 ## Approval Workflow
 

@@ -2,13 +2,13 @@
 
 ## Goals & Success Criteria
 
-- Ship an opinionated admin UI that mirrors the personas and flows listed in `src/Croniq.Ui/docs/deep-dive/ui.md` while staying optional for headless Croniq deployments.
+- Ship an opinionated admin UI that mirrors the personas and flows listed in `docs/deep-dive/ui.md` while staying optional for headless Croniq deployments.
 - Keep the UI repo-local (no separate SPA repo) so architecture reviews and CI/CD remain aligned with backend changes.
 - Deliver a design language that feels operational, dense, and telemetry-aware; dashboards must communicate queue state, policy health, and webhook posture without feeling like a generic CRUD generator.
 
 ## Guardrails & Dependencies
 
-- Backend prerequisites: stable schedule/job/admin APIs, gRPC-Web proxy (if needed), finalized OIDC story, and observability endpoints as called out in `docs/deep-dive/architecture.md` and `src/Croniq.Ui/docs/deep-dive/ui.md`.
+- Backend prerequisites: stable schedule/job/admin APIs, gRPC-Web proxy (if needed), finalized OIDC story, and observability endpoints as called out in `docs/deep-dive/architecture.md` and `docs/deep-dive/ui.md`.
 - Platform constraints: MIT/Apache/BSD-only dependencies, OpenTelemetry-first instrumentation, strict separation between secrets and UI bundles (no API keys in browser storage).
 - Hosting: built artifacts deploy either as static assets behind Croniq.Api or via a slim `Croniq.Ui` container image that speaks the same readiness/liveness protocol as other services.
 
@@ -17,46 +17,44 @@
 | Concern            | Decision                                                                                 | Notes                                                                                                                                                                                                    |
 | ------------------ | ---------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Framework          | Angular 21 standalone apps, built with the Vite-powered builder                          | Gives SSR-ready hydration, Signals API, and CLI ergonomics familiar to enterprise contributors.                                                                                                          |
-| Styling            | Tailwind CSS + custom tokens                                                             | Tailwind provides utility primitives; we layer Croniq-specific tokens (spacing, typography, semantic colors) via `tailwind.config.ts` and CSS variables for dark/light surfaces.                         |
+| Styling            | Tailwind CSS + custom tokens                                                             | Tailwind provides utility primitives; we layer Croniq-specific tokens (semantic colors) via `tailwind.config.js` and CSS variables.                                                                      |
 | Component strategy | Headless primitives + lightweight shims                                                  | Compose Radix-inspired headless patterns with Tailwind classes to avoid Material sameness; focus on split-pane layouts, dense data grids, and status pills.                                              |
-| State/query        | Angular Query (TanStack Query for Angular) + `effect` based local stores                 | Query handles caching, retries, and background refresh; Signals/effects model UI-only state.                                                                                                             |
-| Forms              | Angular Reactive Forms + Zod schema validation compiled via `@abraham/reflex` or similar | Keeps validation logic shareable with backend contracts.                                                                                                                                                 |
-| Testing            | Vitest + Playwright + Storybook (Chromatic optional)                                     | Aligns with Croniq testing stack; Playwright exercises auth + data grid behavior.                                                                                                                        |
-| DX automation      | Angular MCP Server                                                                       | Allows VS Code + GPT-5.1-Codex agents to scaffold components/modules that respect the repo-level AI instructions; server remains optional and runs locally so no build/runtime dependency is introduced. |
+| State/query        | Signals-first, typed services (optional query lib later)                                 | Current codebase is Signals-first + strict typing; if we add a query lib, it should be justified and used consistently (avoid half-migrations).                                                          |
+| Forms              | Angular Signal Forms (experimental in v21) + Zod at the edges                             | Prefer Signal Forms for new forms once we're comfortable with the API; use Zod to validate runtime config and API contracts.                                                                             |
+| Testing            | Vitest                                                                                   | E2E/Storybook are optional future additions; don't document them as required until wired in `package.json`.                                                                                              |
+| DX automation      | Angular MCP Server                                                                       | Dev-only helper (VS Code + MCP). Use `.vscode/mcp.json` + `npm run mcp` and keep it out of runtime builds.                                                                                               |
 
 ## Repository & Project Layout
 
 ```
+angular.json
+package.json
+tailwind.config.js
+tsconfig.json
+
 src/
-  Croniq.Ui/
-    angular.json
-    package.json
-    tailwind.config.ts
-    tsconfig.base.json
-    apps/
-      admin/
-        src/
-          app/
-            core/        # auth, api clients, guards
-            shared/      # reusable UI atoms/molecules
-            features/
-              dashboard/
-              schedules/
-              jobs/
-              webhooks/
-              tenants/
-            app.config.ts
-            app.routes.ts
-          environments/
-    libs/
-      data-access/       # typed API clients, DTO mapping helpers
-      telemetry/         # OTEL bridge, log ingestion helpers
-      ui-kit/            # headless components styled w/ Tailwind tokens
+   app/
+      core/
+      shared/
+      shell/
+      features/
+   main.ts
+   styles.css
+
+projects/
+   api-schema/
+   data-access/
+   telemetry/
+   ui-kit/
+
+public/
+   assets/
+      croniq-config.json
 ```
 
 - Place the Angular workspace in `src/Croniq.Ui` so it lives next to other product code and inherits the same build/versioning pipelines.
 - Use secondary entry points (libraries) to separate regulated surfaces (telemetry, auth) from visual components; this aides tree-shaking when we publish micro-frontends later.
-- Tailwind config exports CSS variables under the `:root[data-theme="ops"]` namespace to express semantic colors (`--cq-surface`, `--cq-accent`, `--cq-danger`) and follows the official Angular Tailwind guidance at [https://next.angular.dev/guide/tailwind](https://next.angular.dev/guide/tailwind) for builder integration and content scanning configuration.
+- Tailwind uses CSS variables for semantic colors (see `src/styles.css` + `tailwind.config.js`). If we add theme switching later, scope variables via `data-theme`.
 
 ## Application Architecture
 
@@ -76,13 +74,13 @@ src/
 
 3. **Data Access**
 
-   - Generate REST clients via OpenAPI (NSwag) or call the existing `Croniq.Rpc.Client` through a lightweight WebAssembly proxy if gRPC-Web is required.
-   - Central `ApiClient` service injects the auth token/API key and adds OpenTelemetry trace headers so UI actions appear in distributed traces.
-   - Use Angular Query to automatically refetch stale data when the operator switches tenants or env tags.
+   - API contracts are generated from the upstream OpenAPI document into runtime-safe Zod schemas + endpoint definitions (see `docs/deep-dive/api-schema.md`).
+   - The `projects/data-access` library owns request execution and auth/header injection.
+   - Keep feature data access consistent: prefer one shared abstraction (executor/client) rather than ad-hoc `HttpClient` usage across features.
 
 4. **State & Caching**
    - Use Signals for local ephemeral state (panel toggles, wizard steps) to avoid unnecessary RxJS complexity.
-   - Persist user preferences (theme, table density) via IndexedDB + encryption where possible; treat as non-sensitive but namespaced per tenant.
+   - Persistence of preferences (theme, density) is a future decision; document and implement it only once requirements are clear.
 
 ## Styling & Design Language
 
@@ -100,8 +98,8 @@ src/
 
 ## Tooling & MCP Server Usage
 
-- The Angular MCP Server runs alongside VS Code so GPT-5.1-Codex agents can execute workspace-aware tasks (create components, update routes) while honoring the guardrails from `AI_ASSISTANT_INSTRUCTIONS.md`.
-- Launch the server locally with `npm run mcp` (or the "Angular MCP Server" VS Code task) from `src/Croniq.Ui`; the `.vscode/mcp.json` file wires VS Code to the Angular CLI MCP endpoint documented at [https://next.angular.dev/ai/mcp](https://next.angular.dev/ai/mcp).
+- The Angular MCP Server runs alongside VS Code so tools/agents can execute workspace-aware tasks (create components, update routes) while honoring repo guardrails.
+- Launch the server locally with `npm run mcp` (or the "Angular MCP Server" VS Code task). `.vscode/mcp.json` wires VS Code to the Angular CLI MCP endpoint documented at https://angular.dev/ai/mcp.
 - MCP stays dev-only: no runtime dependency, no shipped assets, and the `servers.angular-cli` entry only runs in local dev shells.
 - Use the server to codify scaffolding recipes (e.g., `generate feature schedules --with-crud --with-grid`), ensuring consistent folder structure/tests.
 - Align MCP prompts and automation scripts with Angular's AI guidance: leverage the "Develop with AI" workflows [https://next.angular.dev/ai/develop-with-ai](https://next.angular.dev/ai/develop-with-ai), include the official best-practices context file when prompting, and apply the recommended AI design patterns [https://next.angular.dev/ai/design-patterns](https://next.angular.dev/ai/design-patterns) to validate what the agent produces before committing it.
@@ -109,10 +107,10 @@ src/
 ## Build, Test & Release Flow
 
 1. **Build**: `npm run build` uses Angular's Vite builder; Tailwind compiled during build to minimize runtime CSS cost.
-2. **Static analysis**: ESLint + Angular template lint + `npm run lint:styles` for Tailwind class validation.
-3. **Unit/UI tests**: Vitest for logic + DOM tests; Storybook stories double as visual regression coverage via Chromatic (optional but recommended).
-4. **E2E**: Playwright suite runs against the devstack, mocking OIDC tokens via the existing test host.
-5. **Packaging**: artifacts emitted to `dist/apps/admin`; publish to `eng/artifacts/ui` for CI consumption and to a container image for Ops.
+2. **Unit tests**: `npm test` (watch) / `npm run test:once` (single run).
+3. **Packaging**: `npm run build` emits `dist/` artifacts (exact output path is defined by the Angular builder).
+
+Optional future additions (only when implemented): ESLint/template lint, Playwright E2E, Storybook.
 
 ## Delivery Phases
 

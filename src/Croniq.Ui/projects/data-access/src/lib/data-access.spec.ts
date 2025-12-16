@@ -1,3 +1,4 @@
+import { provideZonelessChangeDetection } from '@angular/core';
 import { ComponentFixture, TestBed } from '@angular/core/testing';
 
 import { DataAccess } from './data-access';
@@ -8,7 +9,8 @@ describe('DataAccess', () => {
 
   beforeEach(async () => {
     await TestBed.configureTestingModule({
-      imports: [DataAccess]
+      imports: [DataAccess],
+      providers: [provideZonelessChangeDetection()],
     })
     .compileComponents();
 

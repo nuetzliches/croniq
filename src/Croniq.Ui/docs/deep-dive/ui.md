@@ -1,76 +1,93 @@
-# Croniq UI Backlog Plan
+# Croniq UI
 
-This document defines the scope, technology evaluation, and backlog required to fulfill the checklist item "UI-Backlog dokumentieren; Technologie nach API-Stabilisierung entscheiden".
+This document describes the current Croniq UI implementation (Angular 21 + Tailwind) and the near-term backlog.
 
-## Objectives
+## Current Stack
 
-- Deliver an administrative UI that surfaces core Croniq capabilities (tenants, schedules, triggers, jobs, observability) once the API and provider contracts stabilize.
-- Keep the UI optional, decoupled from the scheduler runtime, and deployable as a static SPA or container.
-- Provide a clear decision tree for technology choices (component libraries, charts, auth integration) so work can start as soon as backend prerequisites are done.
+- Angular 21 standalone application using the `@angular/build` (Vite-powered) builders
+- **Zoneless** change detection enabled via `provideZonelessChangeDetection()`
+- Styling via Tailwind (see `tailwind.config.js`, `src/styles.css`)
+- Libraries under `projects/`:
+	- `projects/data-access`: API access helpers
+	- `projects/api-schema`: generated Zod schemas + endpoint definitions
+	- `projects/telemetry`: telemetry helpers
+	- `projects/ui-kit`: UI primitives
 
-## Target Personas & Use Cases
+Auth notes and guardrails live in `docs/deep-dive/AUTH.md`.
 
-1. **Platform operators**: monitor scheduler health, inspect dead-letter queues, manage tenants & API keys, view quotas/misfires.
-2. **Developers/job authors**: browse job metadata, trigger manual executions, inspect logs/metrics for their namespace.
-3. **Support / SRE**: investigate incidents, replay dead-lettered executions, confirm rate limits and policy overrides.
+## Repository Layout (current)
 
-## High-Level Requirements
+```
+src/
+	app/
+	main.ts
+	styles.css
+projects/
+	api-schema/
+	data-access/
+	telemetry/
+	ui-kit/
+public/
+	assets/
+		croniq-config.json
+```
 
-- Authentication: reuse API-key/OIDC flows (per `security.md`). Support tenant-scoped views + admin roles.
-- Features (MVP): dashboard (queue depth, trigger throughput), schedules CRUD, job registry view, dead-letter browser, API-key manager.
-- Observability visualizations: integrate with OTel metrics via backend proxy or embed Grafana panels.
-- Extensibility: plugin-friendly for custom job metadata or provider-specific actions.
+## Runtime Configuration
 
-## Technology Options
+The UI loads an optional runtime config from `public/assets/croniq-config.json`.
 
-| Frontend Stack                       | Pros                                                             | Cons                                                          | Status            |
-| ------------------------------------ | ---------------------------------------------------------------- | ------------------------------------------------------------- | ----------------- |
-| Angular 21 + Vite + TypeScript       | Opinionated enterprise tooling, CLI scaffolding, RxJS-friendly   | Heavier runtime than Svelte, contributors need Angular skills | Preferred default |
-| React + Vite + TypeScript + Tailwind | Large ecosystem, easy component sharing, good DX                 | Common choice, but needs careful design to avoid generic look | Alternative       |
-| SvelteKit                            | Lightweight, excellent transitions, good for dashboard-style UIs | Smaller pool of contributors                                  | Alternative       |
-| Blazor WebAssembly                   | .NET-native, reuses models                                       | Larger payloads, requires .NET runtime download               | Hold              |
+- Schema + validation: `src/app/core/api-config.ts` (Zod)
+- Loader: `src/app/core/runtime-config.service.ts`
 
-- Component library candidates: Radix UI + custom styling, Chakra UI, or custom design system. Avoid Material clones to keep a distinct visual identity.
-- Charts: `visx`, `ECharts`, or `Recharts` (React) to plot queue depth and schedule stats.
+Supported keys:
 
-## Architecture Outline
+- `apiBaseUrl` (absolute URL or absolute path)
+- `swaggerUiUrl` (optional override)
 
-- UI is a standalone SPA served from CDN or Croniq.Api static hosting.
-- Data access via Croniq REST/gRPC endpoints (use backend proxy for gRPC-Web if needed).
-- State management: React Query/TanStack Query for data fetching; keep local stores minimal.
-- Auth: API keys stored in browser? Avoid; prefer user tokens (OIDC). For admin flows, run UI behind an internal gateway injecting tokens or use PKCE auth code flow.
-- Feature flags: integrate with existing configuration (headers or query) to toggle advanced features.
+## API Schema & Generation
 
-## Webhook IP Allow-List Surface
+The UI uses runtime-safe Zod models generated from the upstream OpenAPI contract.
 
-- Add a tenant-scoped grid for webhook endpoints showing the current CIDR list from `GET /tenants/{tenantId}/webhooks/{hookKey}/ip-rules`.
-- Support inline create/delete actions with optimistic updates so operators can reconcile their CMDB inventory quickly.
-- Display audit metadata (`CreatedBy`, timestamps) and expose CSV/JSON export to simplify reviews with security teams.
-- Highlight enforcement state per hook (open vs locked down) and warn when production hooks lack any CIDRs.
-- Reuse the same helper layer that the SDK will expose so UI + automation stay aligned.
+- Command (offline-friendly): `npm run generate:api`
+- Command (force local swagger): `npm run generate:api:server`
+- Output: `projects/api-schema/generated/` (overwritten)
+- Templates: `tools/templates/`
 
-## Delivery Phases
+Details: `docs/deep-dive/api-schema.md`.
 
-1. **Design & Wireframes**: define IA, layout, color scheme, navigation. Produce Figma or equivalent.
-2. **Scaffolding**: create `src/Croniq.Ui` (Angular 21 + TypeScript) with linting, tests, Storybook/Storybook-like tooling, CI build.
-3. **MVP features**: login flow, dashboard (metrics stub), schedules list/detail (read-only), job registry view.
-4. **Management features**: API-key CRUD, tenant admin, trigger creation, manual job trigger UI.
-5. **Observability integration**: embed metrics/traces (via OTel backend or Grafana). Provide log viewer hooking into Serilog sinks.
-6. **Polish & release**: theming, accessibility, localization (if required), packaging as static assets + Dockerfile.
+## Tests
 
-## Dependencies & Prereqs
+Unit tests use the Angular unit-test builder (Vitest).
 
-- Stable API contract (`/tenants/{tenantId}/schedules`, `/jobs`, future admin endpoints) + OIDC integration.
-- Policy, observability, and dev stack milestones complete (UI depends on their data feeds).
-- Decide hosting target (same repo vs separate). Recommendation: new project `src/Croniq.Ui` with optional publishing to `ui/` folder or container image.
-- Sequencing: do not begin UI implementation until all backend/provider/observability/security milestones are complete; UI remains a downstream stream after Core/API readiness.
+- Watch mode: `npm test`
+- Run once: `npm run test:once`
 
-## Backlog to Complete Checklist Item
+## Zoneless Notes
 
-- [ ] Draft IA/wireframes and attach to `src/Croniq.Ui/docs/deep-dive/ui.md` (link to design artifacts).
-- [ ] Implement MVP dashboard + schedules read-only views using mocked data, then wire to API once ready.
-- [ ] Add webhook IP allow-list management UI (list/create/delete, diff/export) once the SDK helper ships.
-- [ ] Document contribution guidelines (coding standards, CSS strategy, design tokens) and add to docstreams plan.
-- [ ] Provide deployment strategy (static hosting + Dockerfile) and integrate into release pipeline.
+Zoneless is enabled in `src/app/app.config.ts`.
 
-This plan can be expanded as soon as prerequisites are satisfied. Completing the backlog will unblock the UI milestone in the checklist.
+- Prefer Signals for UI state.
+- For async updates that don't touch signals, use `ChangeDetectorRef.markForCheck()` where needed.
+
+## MCP (dev-only)
+
+The Angular MCP server is a development helper for workspace-aware automation.
+
+- Start: `npm run mcp`
+- VS Code task: `Angular MCP Server`
+
+## Backlog
+
+### Target Personas & Use Cases
+
+1. Platform operators: monitor scheduler health, manage tenants and API keys, investigate failures.
+2. Developers/job authors: browse job metadata, trigger manual executions, inspect logs/metrics.
+3. Support/SRE: incident investigation, dead-letter browsing/replay, policy/limit verification.
+
+### Delivery Phases
+
+1. Scaffolding & Auth: keep the UI optional; align with backend auth readiness.
+2. MVP data surfaces: dashboard (stubbed), schedules read-only, job registry.
+3. Admin controls: CRUD for schedules/webhooks/API keys; dead-letter wiring.
+4. Observability & polish: embed metrics/log views; accessibility review.
+

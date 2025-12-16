@@ -7,6 +7,9 @@
     "build": "ng build",
     "watch": "ng build --watch --configuration development",
     "test": "ng test",
+    "test:once": "ng test --no-watch",
+    "test:ci": "cross-env CI=1 ng test --no-watch",
+    "test:list": "ng test --list-tests --no-watch",
     "mcp": "ng mcp",
     "generate:api": "tsx tools/generate-schemas.ts",
     "generate:api:server": "cross-env CRONIQ_OPENAPI_URL=http://localhost:5000/swagger/v1/swagger.json tsx tools/generate-schemas.ts"

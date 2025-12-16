@@ -4,7 +4,7 @@ import { ChangeDetectionStrategy, Component, ElementRef, computed, effect, injec
 import { CommandPaletteCommand, CommandPaletteController } from './command-palette.controller';
 
 @Component({
-  selector: 'app-command-palette',
+  selector: 'cq-command-palette',
   imports: [CommonModule],
   templateUrl: './command-palette.html',
   changeDetection: ChangeDetectionStrategy.OnPush,

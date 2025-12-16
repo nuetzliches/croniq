@@ -2,13 +2,11 @@
 
 Guidance for setting up the Angular 21 workspace (`src/Croniq.Ui`) plus initial auth plumbing and MCP helper tasks.
 
+Status: the workspace is already scaffolded. Treat this document as a plan/historical reference; prefer `README.md` for day-to-day commands.
+
 ## Workspace Creation
 
-1. Install the Angular CLI 21 preview (requires Node 20+):
-   ```bash
-   npm install -g @angular/cli@next
-   ```
-2. Scaffold the workspace inside `src/Croniq.Ui`:
+1. Scaffold the workspace inside `src/Croniq.Ui` (only if you are re-creating from scratch):
    ```bash
    cd src
    ng new Croniq.Ui \
@@ -19,8 +17,8 @@ Guidance for setting up the Angular 21 workspace (`src/Croniq.Ui`) plus initial 
      --skip-git true \
      --package-manager npm
    ```
-3. Remove the default `app.component.*` content and replace it with the global shell skeleton described in `angular-ui-wireframes.md`.
-4. Add secondary libraries:
+2. Remove the default `app.component.*` content and replace it with the global shell skeleton described in `angular-ui-wireframes.md`.
+3. Add secondary libraries:
    ```bash
    cd Croniq.Ui
    ng generate library data-access
@@ -34,13 +32,13 @@ Guidance for setting up the Angular 21 workspace (`src/Croniq.Ui`) plus initial 
        angular.json
        package.json
        tsconfig.json
+       tailwind.config.js
        src/
          app/
            core/
            shared/
            shell/
            features/
-         assets/
          styles.css
          main.ts
        projects/
@@ -51,10 +49,12 @@ Guidance for setting up the Angular 21 workspace (`src/Croniq.Ui`) plus initial 
          ui-kit/
            src/lib/
        public/
+         assets/
+           croniq-config.json
        .vscode/
    ```
-   Commit this baseline before layering feature work so diffs stay reviewable.
-   - `data-access`: API clients + Angular Query setup.
+  Commit this baseline before layering feature work so diffs stay reviewable.
+  - `data-access`: API client plumbing + endpoint executor.
    - `telemetry`: OpenTelemetry bridge + logging helpers.
    - `ui-kit`: Tailwind-based headless components (tokens live here).
 
@@ -86,20 +86,19 @@ Guidance for setting up the Angular 21 workspace (`src/Croniq.Ui`) plus initial 
   }
   ```
 
-  Tailwind pulls these via `rgb(var(--cq-accent) / <alpha-value>)`.
+  If you use this RGB-triplet token format, Tailwind can apply alpha via `rgb(var(--token) / <alpha>)`.
 
-- Install Tailwind per Angular docs: `ng add @angular-devkit/schematics-cli && npm install -D tailwindcss postcss autoprefixer`.
-- Create `tailwind.config.ts` using the token blueprint from `angular-ui-theme.md` and output CSS variables in `libs/ui-kit/src/lib/tokens.css`.
+- Tailwind is already installed; config lives in `tailwind.config.js` and tokens currently live in `src/styles.css`.
 
 ## MCP Helper Tasks
 
-- Configure `.vscode/mcp.json` with the VS Code-specific `servers` property so it mirrors [https://next.angular.dev/ai/mcp](https://next.angular.dev/ai/mcp):
+- Configure `.vscode/mcp.json` with the VS Code-specific `servers` property (see https://angular.dev/ai/mcp). We run MCP via the repo-local CLI (`npm run mcp`) to keep versions consistent.
   ```json
   {
     "servers": {
       "angular-cli": {
-        "command": "npx",
-        "args": ["-y", "@angular/cli", "mcp"]
+        "command": "npm",
+        "args": ["run", "mcp"]
       }
     }
   }
@@ -112,7 +111,7 @@ Guidance for setting up the Angular 21 workspace (`src/Croniq.Ui`) plus initial 
     "command": "npm",
     "args": ["run", "mcp"],
     "isBackground": true,
-    "options": { "cwd": "${workspaceFolder}/src/Croniq.Ui" }
+    "options": { "cwd": "${workspaceFolder}" }
   }
   ```
 - Wire the npm script that proxies to `ng mcp`:
@@ -145,25 +144,7 @@ export class ShellComponent {
 }
 ```
 
-````
-- Document the workflow in this file and in `CONTRIBUTING.md` so contributors know how to start the server.
-
-```ts
-export const environment = {
-  production: false,
-  auth: {
-    authority: 'https://devstack.identity',
-    clientId: 'croniq-ui',
-    redirectUri: 'http://localhost:4200/callback',
-    mockPrincipal: {
-      id: 'tenant-admin',
-      roles: ['Admin'],
-    },
-  },
-};
-````
-
-4. Build an `AuthGuard` that blocks routes until the OIDC handshake completes; include a developer override for local mocks.
+Note: this repo uses runtime config via `public/assets/croniq-config.json` instead of Angular environments.
 
 ## Interim Auth Implementation
 
@@ -174,20 +155,20 @@ export const environment = {
 
 ## Command Palette & Shell
 
-- Scaffold `apps/admin/src/app/shell` containing the nav rail, status strip, and command palette placeholder.
+- Shell lives under `src/app/shell/` and shared primitives under `src/app/shared/`.
 - Use the tokens from `angular-ui-theme.md` for spacing/typography.
 - Ensure the command palette can be invoked via `Ctrl/Cmd+K` and log telemetry events for each command selection.
 
 ## Verification Checklist
 
-- [ ] `npm run lint` succeeds (ESLint + Angular template lint).
-- [ ] `npm run test` runs default Karma/Vitest suite (decide on Vitest before merging).
-- [ ] `npm run build` produces `dist/apps/admin` artifacts referencing the Tailwind tokens.
-- [ ] Storybook placeholder added for the global shell (even if not populated yet).
-- [ ] OIDC stub returns a mocked principal when `environment.mock.ts` is active.
+- [ ] `npm run test:once` passes.
+- [ ] `npm run build` succeeds.
+- [ ] Runtime config loads from `public/assets/croniq-config.json` (optional) and falls back to sane defaults.
+
+Optional future checklist (only when implemented): ESLint/template lint, Storybook, Playwright.
 
 ## Next Steps
 
 1. Implement the command rail + tenant selector per the wireframes.
-2. Add Angular Query provider module in `libs/data-access` with default retry/backoff.
+2. Decide on the data fetching/caching abstraction (keep it consistent; avoid half-migrations).
 3. Flesh out the MCP recipes (component scaffolding, tests) so GPT agents can help build features while respecting repo guardrails.

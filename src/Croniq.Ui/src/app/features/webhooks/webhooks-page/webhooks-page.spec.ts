@@ -1,4 +1,4 @@
-import { signal } from '@angular/core';
+import { provideZonelessChangeDetection, signal } from '@angular/core';
 import { ComponentFixture, TestBed } from '@angular/core/testing';
 
 import { WebhooksStore } from '../webhooks.store';
@@ -29,7 +29,7 @@ describe('WebhooksPage', () => {
   beforeEach(async () => {
     await TestBed.configureTestingModule({
       imports: [WebhooksPage],
-      providers: [{ provide: WebhooksStore, useClass: WebhooksStoreStub }],
+      providers: [provideZonelessChangeDetection(), { provide: WebhooksStore, useClass: WebhooksStoreStub }],
     })
       .compileComponents();
 

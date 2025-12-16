@@ -1,4 +1,4 @@
-import { signal } from '@angular/core';
+import { provideZonelessChangeDetection, signal } from '@angular/core';
 import { ComponentFixture, TestBed } from '@angular/core/testing';
 
 import { JobsStore } from '../jobs.store';
@@ -19,7 +19,7 @@ describe('JobsPage', () => {
   beforeEach(async () => {
     await TestBed.configureTestingModule({
       imports: [JobsPage],
-      providers: [{ provide: JobsStore, useClass: JobsStoreStub }],
+      providers: [provideZonelessChangeDetection(), { provide: JobsStore, useClass: JobsStoreStub }],
     })
       .compileComponents();
 

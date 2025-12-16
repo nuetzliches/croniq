@@ -1,4 +1,4 @@
-import { signal } from '@angular/core';
+import { provideZonelessChangeDetection, signal } from '@angular/core';
 import { ComponentFixture, TestBed } from '@angular/core/testing';
 
 import { ScheduleSummary } from '@croniq/api-schema';
@@ -22,7 +22,7 @@ describe('SchedulesPage', () => {
   beforeEach(async () => {
     await TestBed.configureTestingModule({
       imports: [SchedulesPage],
-      providers: [{ provide: SchedulesStore, useClass: SchedulesStoreStub }],
+      providers: [provideZonelessChangeDetection(), { provide: SchedulesStore, useClass: SchedulesStoreStub }],
     })
       .compileComponents();
 

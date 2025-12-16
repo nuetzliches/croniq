@@ -1,3 +1,4 @@
+import { provideZonelessChangeDetection } from '@angular/core';
 import { ComponentFixture, TestBed } from '@angular/core/testing';
 
 import { TenantContext } from './tenant-context';
@@ -8,7 +9,8 @@ describe('TenantContext', () => {
 
   beforeEach(async () => {
     await TestBed.configureTestingModule({
-      imports: [TenantContext]
+      imports: [TenantContext],
+      providers: [provideZonelessChangeDetection()],
     })
     .compileComponents();
 

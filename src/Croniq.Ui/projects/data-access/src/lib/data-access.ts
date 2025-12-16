@@ -1,7 +1,7 @@
-import { Component } from '@angular/core';
+import { ChangeDetectionStrategy, Component } from '@angular/core';
 
 @Component({
-  selector: 'lib-data-access',
+  selector: 'cq-data-access',
   imports: [],
   template: `
     <p>
@@ -9,6 +9,7 @@ import { Component } from '@angular/core';
     </p>
   `,
   styles: ``,
+  changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class DataAccess {
 
