@@ -13,6 +13,9 @@ describe('StatusBeacon', () => {
     .compileComponents();
 
     fixture = TestBed.createComponent(StatusBeacon);
+    fixture.componentRef.setInput('label', 'Status');
+    fixture.componentRef.setInput('value', 'OK');
+    fixture.detectChanges();
     component = fixture.componentInstance;
     await fixture.whenStable();
   });

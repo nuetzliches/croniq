@@ -1,17 +1,29 @@
-import { isDevMode } from '@angular/core';
+import { z } from 'zod';
 
-const PROD_BASE_URL = 'https://api.croniq.dev';
-const DEV_BASE_URL = 'http://localhost:5000';
+const urlLikeSchema = z
+    .string()
+    .trim()
+    .min(1)
+    .refine((value) => value.startsWith('/') || value.startsWith('http://') || value.startsWith('https://'), {
+        message: 'Expected an absolute URL (http/https) or an absolute path starting with /',
+    });
 
-const envBaseUrl = import.meta.env?.NG_APP_API_BASE_URL?.trim();
-const resolvedBaseUrl = envBaseUrl && envBaseUrl.length > 0 ? envBaseUrl : isDevMode() ? DEV_BASE_URL : PROD_BASE_URL;
+export const croniqUiRuntimeConfigSchema = z
+    .object({
+        apiBaseUrl: urlLikeSchema.optional(),
+        swaggerUiUrl: urlLikeSchema.optional(),
+    })
+    .strict();
 
-const envSwaggerUiUrl = import.meta.env?.NG_APP_SWAGGER_UI_URL?.trim();
-const resolvedSwaggerUiUrl = envSwaggerUiUrl && envSwaggerUiUrl.length > 0
-    ? envSwaggerUiUrl
-    : new URL('/swagger/index.html', resolvedBaseUrl).toString();
+export type CroniqUiRuntimeConfig = z.infer<typeof croniqUiRuntimeConfigSchema>;
 
-export const API_CONFIG = {
-    baseUrl: resolvedBaseUrl,
-    swaggerUiUrl: resolvedSwaggerUiUrl,
-} as const;
+export function resolveSwaggerUiUrl(apiBaseUrl: string, explicitSwaggerUiUrl?: string | null): string {
+    const trimmed = explicitSwaggerUiUrl?.trim();
+    if (trimmed) {
+        return trimmed;
+    }
+    if (!apiBaseUrl || apiBaseUrl.startsWith('/')) {
+        return '/swagger/index.html';
+    }
+    return new URL('/swagger/index.html', apiBaseUrl).toString();
+}

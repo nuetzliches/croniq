@@ -24,7 +24,7 @@ describe('CommandPaletteController', () => {
 
         controller = TestBed.inject(CommandPaletteController);
         router = TestBed.inject(Router);
-        spyOn(router, 'navigate').and.returnValue(Promise.resolve(true));
+        vi.spyOn(router, 'navigate').mockResolvedValue(true);
     });
 
     it('exposes commands provided via injection token', () => {
@@ -47,7 +47,7 @@ describe('CommandPaletteController', () => {
         expect(controller.activeIndex()).toBe(1);
 
         const handled = controller.handleKey(new KeyboardEvent('keydown', { key: 'ArrowUp' }));
-        expect(handled).toBeTrue();
+        expect(handled).toBe(true);
         expect(controller.activeIndex()).toBe(0);
     });
 
@@ -56,6 +56,6 @@ describe('CommandPaletteController', () => {
         await controller.executeCommand(1);
 
         expect(router.navigate).toHaveBeenCalledWith(['/', 'schedules']);
-        expect(controller.isOpen()).toBeFalse();
+        expect(controller.isOpen()).toBe(false);
     });
 });

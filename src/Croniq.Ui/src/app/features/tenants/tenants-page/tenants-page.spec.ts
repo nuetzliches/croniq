@@ -1,8 +1,8 @@
 import { signal } from '@angular/core';
 import { ComponentFixture, TestBed } from '@angular/core/testing';
 
-import { TenantsPage } from './tenants-page';
 import { TenantsStore } from '../tenants.store';
+import { TenantsPage } from './tenants-page';
 
 class TenantsStoreStub {
   readonly activity = signal([]);
@@ -10,10 +10,10 @@ class TenantsStoreStub {
   readonly busy = signal(false);
   readonly lastError = signal<string | null>(null);
 
-  issueApiKey = jasmine.createSpy('issueApiKey');
-  rotateApiKey = jasmine.createSpy('rotateApiKey');
-  deleteApiKey = jasmine.createSpy('deleteApiKey');
-  lookupApiClient = jasmine.createSpy('lookupApiClient');
+  issueApiKey = vi.fn();
+  rotateApiKey = vi.fn();
+  deleteApiKey = vi.fn();
+  lookupApiClient = vi.fn();
 }
 
 describe('TenantsPage', () => {

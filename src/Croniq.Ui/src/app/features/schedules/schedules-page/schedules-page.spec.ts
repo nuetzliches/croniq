@@ -12,7 +12,7 @@ class SchedulesStoreStub {
   readonly error = signal<string | null>(null);
   readonly lastUpdated = signal(new Date().toISOString());
 
-  refresh = jasmine.createSpy('refresh');
+  refresh = vi.fn();
 }
 
 describe('SchedulesPage', () => {

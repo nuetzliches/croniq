@@ -1,15 +1,15 @@
 import { signal } from '@angular/core';
 import { ComponentFixture, TestBed } from '@angular/core/testing';
 
-import { JobsPage } from './jobs-page';
 import { JobsStore } from '../jobs.store';
+import { JobsPage } from './jobs-page';
 
 class JobsStoreStub {
   readonly manualTriggers = signal([]);
   readonly pendingCount = signal(0);
   readonly lastError = signal<string | null>(null);
 
-  triggerJob = jasmine.createSpy('triggerJob');
+  triggerJob = vi.fn();
 }
 
 describe('JobsPage', () => {
