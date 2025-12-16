@@ -34,6 +34,12 @@ public static class ServiceCollectionExtensions
         services.AddCroniqSqlServerDbContext(configureSql);
         services.AddSingleton<IApiKeyStore, SqlServerApiKeyStore>();
         services.AddSingleton<ITenantStore, SqlServerTenantStore>();
+
+        services.AddOptions<PasswordAuthOptions>();
+        services.AddSingleton<IPasswordUserStore, SqlServerPasswordUserStore>();
+        services.AddSingleton<IRefreshTokenStore, SqlServerRefreshTokenStore>();
+        services.AddSingleton<PasswordAuthService>();
+
         services.AddOptions<CroniqTokenOptions>();
         services.AddSingleton<ICroniqTokenIssuer, CroniqTokenIssuer>();
         return services;

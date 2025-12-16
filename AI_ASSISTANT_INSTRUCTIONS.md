@@ -29,12 +29,18 @@ All AI-generated contributions must align with the architectural ground rules do
    - Write unit tests (xUnit + Shouldly) for new logic; update integration tests when touching provider or persistence layers.
    - Keep secrets/config values outside source control; rely on the `ISecretProvider` abstractions instead of inline secrets.
 
-5. **Breaking Changes Before GA**
+5. **Auth Direction (V1)**
+
+   - The initial target is **self-hosted, private-network, single-tenant** deployments.
+   - For password auth, treat tenant selection as optional via `Croniq:Auth:Password:DefaultTenant` (tenant reference).
+   - Do not introduce new external identity provider flows or user/tenant membership models unless explicitly requested; federated login is deferred to later versions (see `CLOUD-CONCEPT.md` / `CLOUD-REPO-SPLIT.md`).
+
+6. **Breaking Changes Before GA**
 
    - There are currently no external consumers. Treat breaking API or contract changes as acceptable until we ship `v1.0.0` (non-RC).
    - When making such changes, still document the rationale in `docs/deep-dive/*` so we keep a trace for future stabilization.
 
-5. **Documentation Cross-Links**
+7. **Documentation Cross-Links**
    - When new features impact consumers, update `docs/*` and refer to deeper explanations in `docs/deep-dive/*`.
    - Record noteworthy architectural decisions in the technical docs (especially `docs/deep-dive/architecture.md`).
 

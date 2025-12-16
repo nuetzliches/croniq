@@ -2,12 +2,16 @@ import { HttpClient } from '@angular/common/http';
 import { EnvironmentProviders, InjectionToken, Provider, inject, makeEnvironmentProviders } from '@angular/core';
 
 import {
+    AuthApi,
     CreateWebhookIpRuleRequest,
     HealthApi,
     IssueApiKeyRequest,
     IssueTokenRequest,
     JobsApi,
     MeApi,
+    PasswordLoginRequest,
+    PasswordLogoutRequest,
+    PasswordRefreshRequest,
     RotateWebhookSecretRequest,
     ScheduleListResponse,
     TenantsApi,
@@ -54,6 +58,12 @@ const UPSERT_SCHEDULE_ENDPOINT = requireEndpoint(TenantsApi, 'post', '/tenants/:
 const TRIGGER_JOB_ENDPOINT = requireEndpoint(JobsApi, 'post', '/jobs/trigger');
 
 const ME_ENDPOINT = requireEndpoint(MeApi, 'get', '/me');
+
+const AUTH_ENDPOINTS = {
+    login: requireEndpoint(AuthApi, 'post', '/auth/login'),
+    refresh: requireEndpoint(AuthApi, 'post', '/auth/refresh'),
+    logout: requireEndpoint(AuthApi, 'post', '/auth/logout'),
+};
 
 const TENANTS_ENDPOINTS = {
     list: requireEndpoint(TenantsApi, 'get', '/tenants'),
@@ -117,6 +127,10 @@ const HEALTH_ENDPOINTS = {
 
 
 export interface CroniqApiClient {
+    passwordLogin(payload: PasswordLoginRequest, options?: CroniqRequestOptions): Promise<unknown>;
+    passwordRefresh(payload: PasswordRefreshRequest, options?: CroniqRequestOptions): Promise<unknown>;
+    passwordLogout(payload: PasswordLogoutRequest, options?: CroniqRequestOptions): Promise<void>;
+
     getSchedules(
         params: TenantScopedParams & { environment?: string | null; jobKey?: string | null },
         options?: CroniqRequestOptions,
@@ -256,6 +270,36 @@ class HttpCroniqApiClient implements CroniqApiClient {
     triggerJob(payload: TriggerJobRequest, options?: CroniqRequestOptions): Promise<void> {
         return this.execute(
             TRIGGER_JOB_ENDPOINT,
+            {
+                body: payload,
+            },
+            options,
+        );
+    }
+
+    passwordLogin(payload: PasswordLoginRequest, options?: CroniqRequestOptions): Promise<unknown> {
+        return this.execute(
+            AUTH_ENDPOINTS.login,
+            {
+                body: payload,
+            },
+            options,
+        );
+    }
+
+    passwordRefresh(payload: PasswordRefreshRequest, options?: CroniqRequestOptions): Promise<unknown> {
+        return this.execute(
+            AUTH_ENDPOINTS.refresh,
+            {
+                body: payload,
+            },
+            options,
+        );
+    }
+
+    passwordLogout(payload: PasswordLogoutRequest, options?: CroniqRequestOptions): Promise<void> {
+        return this.execute(
+            AUTH_ENDPOINTS.logout,
             {
                 body: payload,
             },

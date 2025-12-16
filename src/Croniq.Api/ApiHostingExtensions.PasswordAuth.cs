@@ -1,0 +1,263 @@
+using Croniq.Api.Models;
+using Croniq.Auth.Abstractions;
+using Croniq.Auth.SqlServer;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Options;
+
+namespace Croniq.Api;
+
+public static partial class ApiHostingExtensions
+{
+    private static void MapPasswordAuthEndpoints(WebApplication app)
+    {
+        _ = app ?? throw new ArgumentNullException(nameof(app));
+
+        app.MapPost("/auth/login", async (
+            PasswordLoginRequest request,
+            [FromServices] IServiceProvider services,
+            [FromServices] IOptionsMonitor<PasswordAuthOptions> options,
+            CancellationToken cancellationToken) =>
+        {
+            if (!(options.CurrentValue?.Enabled ?? false))
+            {
+                return Results.NotFound();
+            }
+
+            var auth = services.GetService<PasswordAuthService>();
+            if (auth is null)
+            {
+                return Results.NotFound();
+            }
+
+            var tenants = services.GetService<ITenantStore>();
+            if (tenants is null)
+            {
+                return Results.NotFound();
+            }
+
+            var resolvedTenantId = await ResolveTenantIdAsync(
+                    tenants,
+                    request.TenantId,
+                    request.TenantReference,
+                    options.CurrentValue,
+                    cancellationToken)
+                .ConfigureAwait(false);
+
+            if (string.IsNullOrWhiteSpace(resolvedTenantId))
+            {
+                // Do not leak whether the tenant exists.
+                return Results.Unauthorized();
+            }
+
+            var result = await auth.LoginAsync(
+                    resolvedTenantId,
+                    request.Username,
+                    request.Password,
+                    request.EnvironmentTag,
+                    request.Scopes,
+                    request.Audience,
+                    cancellationToken)
+                .ConfigureAwait(false);
+
+            if (result is null)
+            {
+                return Results.NotFound();
+            }
+
+            if (!result.Success)
+            {
+                if (result.LockoutEndUtc.HasValue)
+                {
+                    return Results.Problem(
+                        title: "locked",
+                        detail: "too many failed login attempts",
+                        statusCode: StatusCodes.Status403Forbidden,
+                        extensions: new Dictionary<string, object?> { ["lockoutEndUtc"] = result.LockoutEndUtc });
+                }
+
+                return Results.Unauthorized();
+            }
+
+            return Results.Ok(new
+            {
+                tenantId = resolvedTenantId,
+                accessToken = result.AccessToken,
+                tokenType = "Bearer",
+                expiresIn = result.ExpiresInSeconds,
+                refreshToken = result.RefreshToken
+            });
+        })
+        .WithDocs("Auth_Login", "Password login", "Authenticates a username/password and issues access + refresh tokens. Tenant can be provided via tenantId or tenantReference; it can be omitted if a default tenant is configured.");
+
+        app.MapPost("/auth/refresh", async (
+            PasswordRefreshRequest request,
+            [FromServices] IServiceProvider services,
+            [FromServices] IOptionsMonitor<PasswordAuthOptions> options,
+            CancellationToken cancellationToken) =>
+        {
+            if (!(options.CurrentValue?.Enabled ?? false))
+            {
+                return Results.NotFound();
+            }
+
+            var auth = services.GetService<PasswordAuthService>();
+            if (auth is null)
+            {
+                return Results.NotFound();
+            }
+
+            var tenants = services.GetService<ITenantStore>();
+            if (tenants is null)
+            {
+                return Results.NotFound();
+            }
+
+            var resolvedTenantId = await ResolveTenantIdAsync(
+                    tenants,
+                    request.TenantId,
+                    tenantReference: null,
+                    options.CurrentValue,
+                    cancellationToken)
+                .ConfigureAwait(false);
+
+            if (string.IsNullOrWhiteSpace(resolvedTenantId))
+            {
+                // Do not leak whether the tenant exists.
+                return Results.Unauthorized();
+            }
+
+            var result = await auth.RefreshAsync(
+                    resolvedTenantId,
+                    request.RefreshToken,
+                    request.EnvironmentTag,
+                    request.Scopes,
+                    request.Audience,
+                    cancellationToken)
+                .ConfigureAwait(false);
+
+            if (result is null)
+            {
+                return Results.NotFound();
+            }
+
+            if (!result.Success)
+            {
+                return Results.Unauthorized();
+            }
+
+            return Results.Ok(new
+            {
+                accessToken = result.AccessToken,
+                tokenType = "Bearer",
+                expiresIn = result.ExpiresInSeconds,
+                refreshToken = result.RefreshToken
+            });
+        })
+        .WithDocs("Auth_Refresh", "Refresh access token", "Rotates the refresh token and returns a new access token.");
+
+        app.MapPost("/auth/logout", async (
+            PasswordLogoutRequest request,
+            [FromServices] IServiceProvider services,
+            [FromServices] IOptionsMonitor<PasswordAuthOptions> options,
+            CancellationToken cancellationToken) =>
+        {
+            if (!(options.CurrentValue?.Enabled ?? false))
+            {
+                return Results.NotFound();
+            }
+
+            var auth = services.GetService<PasswordAuthService>();
+            if (auth is null)
+            {
+                return Results.NotFound();
+            }
+
+            var tenants = services.GetService<ITenantStore>();
+            if (tenants is null)
+            {
+                return Results.NotFound();
+            }
+
+            var resolvedTenantId = await ResolveTenantIdAsync(
+                    tenants,
+                    request.TenantId,
+                    tenantReference: null,
+                    options.CurrentValue,
+                    cancellationToken)
+                .ConfigureAwait(false);
+
+            if (string.IsNullOrWhiteSpace(resolvedTenantId))
+            {
+                // Do not leak whether the tenant exists.
+                return Results.Unauthorized();
+            }
+
+            var revoked = await auth.LogoutAsync(resolvedTenantId, request.RefreshToken, cancellationToken).ConfigureAwait(false);
+            if (revoked is null)
+            {
+                return Results.NotFound();
+            }
+
+            if (revoked == false)
+            {
+                return Results.NoContent();
+            }
+
+            return Results.NoContent();
+        })
+        .WithDocs("Auth_Logout", "Logout", "Revokes the provided refresh token.");
+    }
+
+    private static async Task<string?> ResolveTenantIdAsync(
+        ITenantStore tenants,
+        string? tenantId,
+        string? tenantReference,
+        PasswordAuthOptions? options,
+        CancellationToken cancellationToken)
+    {
+        if (tenants is null) throw new ArgumentNullException(nameof(tenants));
+
+        static string? Clean(string? value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+
+        tenantId = Clean(tenantId);
+        tenantReference = Clean(tenantReference);
+
+        // If the client passed something in tenantId, treat it as either an actual id OR a reference
+        // (to support "user only knows the tenant code" without changing payload name).
+        if (tenantId is not null)
+        {
+            var byId = await tenants.GetByIdAsync(tenantId, cancellationToken).ConfigureAwait(false);
+            if (byId is not null && byId.IsActive)
+            {
+                return byId.TenantId;
+            }
+
+            var byRef = await tenants.GetByReferenceAsync(tenantId, cancellationToken).ConfigureAwait(false);
+            if (byRef is not null && byRef.IsActive)
+            {
+                return byRef.TenantId;
+            }
+        }
+
+        if (tenantReference is not null)
+        {
+            var byRef = await tenants.GetByReferenceAsync(tenantReference, cancellationToken).ConfigureAwait(false);
+            if (byRef is not null && byRef.IsActive)
+            {
+                return byRef.TenantId;
+            }
+        }
+
+        var defaultTenant = Clean(options?.DefaultTenant);
+        if (defaultTenant is not null)
+        {
+            var byRef = await tenants.GetByReferenceAsync(defaultTenant, cancellationToken).ConfigureAwait(false);
+            if (byRef is not null && byRef.IsActive)
+            {
+                return byRef.TenantId;
+            }
+        }
+
+        return null;
+    }
+}

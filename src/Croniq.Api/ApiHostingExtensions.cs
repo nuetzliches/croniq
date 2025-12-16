@@ -62,7 +62,8 @@ public static partial class ApiHostingExtensions
         var anonymousPrefixes = new List<PathString>
         {
             "/health",
-            "/webhooks"
+            "/webhooks",
+            "/auth"
         };
 
         if (apiOpts.AnonymousPathPrefixes?.Count > 0)
@@ -129,6 +130,7 @@ public static partial class ApiHostingExtensions
         MapApiClientEndpoints(app);
         MapApiKeyEndpoints(app);
         MapTokenEndpoints(app);
+        MapPasswordAuthEndpoints(app);
         MapExecutionLogEndpoints(app);
         MapJobTriggerEndpoints(app);
 

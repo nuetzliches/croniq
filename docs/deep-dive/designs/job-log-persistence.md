@@ -4,7 +4,7 @@
 
 - Persist job-scoped logs so job authors and operators can inspect executions alongside job/trigger metadata.
 - Keep persistence optional and non-blocking for the hot path; default to memory-only when the feature is disabled.
-- Preserve multi-tenant isolation (`TenantId`, `EnvironmentTag`) and let retention policies trim log data independently of job/trigger lifetime.
+- Preserve tenant isolation (`TenantId`, `EnvironmentTag`) and let retention policies trim log data independently of job/trigger lifetime.
 
 ## Current State
 
@@ -29,10 +29,10 @@
   2. **Chunked NDJSON**: `JobExecutionLogChunk`
      - Columns: `Id`, `ExecutionId`, `ChunkNumber`, `Payload` (`nvarchar(max)` NDJSON, optionally compressed), `FirstTimestampUtc`, `LastTimestampUtc`, `LineCount`, `CorrelationId`, `TraceId`.
      - Use fixed chunk sizes (e.g., 64-128 KB) to avoid oversized rows; append-only per execution.
-  3. **Filesystem/Object storage** (preferred for SaaS volumes):
+  3. **Filesystem/Object storage** (preferred for large volumes):
      - Store one file per execution as NDJSON; path pattern: `logs/{tenant}/{environment}/{jobKey}/{yyyy}/{MM}/{dd}/{executionId}.ndjson` (optionally `.ndjson.gz`).
      - A slim `JobExecutionRecord` row in SQL keeps `StorageKind=File|Object`, `StoragePath` (or URI), `ContentEncoding`, `ContentLength`, `ChunkCount`, `TraceId`, `CorrelationId`, `Status`, and timing/outcome fields. No per-line rows in SQL.
-     - For multi-instance workers, write to shared storage (NFS in dev, S3/Azure Blob in SaaS) with tenant-prefixed folders; record a SHA256 hash in the record for integrity checks.
+  - For multi-instance workers, write to shared storage (NFS in dev, S3/Azure Blob) with tenant-prefixed folders; record a SHA256 hash in the record for integrity checks.
 - No hard FK to `JobEntity`/`TriggerEntity`: retention jobs can delete log rows without blocking job deletions; `JobKey`/`TriggerKey` keep the link semantically intact.
 
 ### Write Path
@@ -65,7 +65,7 @@
 
 - New options (example): `Croniq:Logging:PersistJobLogs:{Enabled,Mode=Structured|Ndjson|Filesystem,Level,MaxSizePerExecutionKb,ChunkSizeKb,RetentionDays,MaxEntriesPerExecution,BasePath|ObjectBucket,UseGzip}`.
 - Retention job deletes expired `JobExecutionLogEntry`/`JobExecutionLogChunk` rows and prunes stale `JobExecutionRecord` entries; keep defaults modest (e.g., 7-30 days).
-- Filesystem/Object retention: delete expired files/objects and clear `JobExecutionRecord` pointers; prefer bucket lifecycle rules in SaaS.
+- Filesystem/Object retention: delete expired files/objects and clear `JobExecutionRecord` pointers; prefer bucket lifecycle rules.
 - Allow per-job overrides (e.g., only persist WARN+ for high-volume jobs).
 
 ### Correlation

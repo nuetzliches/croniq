@@ -35,7 +35,7 @@
 - [ ] (deferred) Workflow-Ausführungen an Execution-Logging anbinden (ExecutionKind/WorkflowId nutzen; eigenes Interface/Adapter bei Workflow-Feature einziehen)
 - [x] CI/CD Validation Backlog abschließen (`docs/deep-dive/ci.md`): `ci-pr.yml`, reusable Scripts, Coverage-Kommentar, automatisches Staging-Deploy sowie Toolchain-Pinning + Secrets-Runbook sind stand 2025-12-10 umgesetzt.
 - [x] Policy-Dokumentation & Observability vervollständigen (`docs/deep-dive/policies.md`): Konfigurationsbeispiele dokumentieren sowie Dashboards/Alerts gemäß Observability-Plan verdrahten.
-- [x] Security/OIDC-Basis liefern (`docs/deep-dive/security.md`): OIDC-Options + Dual-Auth-Middleware, CallerContext + RateLimiter-Partitionierung, gRPC-Interceptor, Admin-APIs, Doku und Regressionstests implementieren.
+- [x] Security/Bearer-Basis liefern (`docs/deep-dive/security.md`): Bearer-Token-Validierung + Dual-Auth-Middleware, CallerContext + RateLimiter-Partitionierung, gRPC-Interceptor, Admin-APIs, Doku und Regressionstests implementieren.
 - [x] Supply-Chain-Nacharbeiten (`docs/deep-dive/supplychain.md`): Signing Keys bereitstellen, Verification-Doku + Waiver-Prozess ergänzt (`docs/deep-dive/release-verification.md`, `docs/deep-dive/supplychain-waivers.md`, `docs/SECURITY.md`). (`syft`/`trivy` Toolchain + lokale Anleitung erledigt 2025-12-12.)
 - [x] gRPC-Clients/Samples: Neben `Croniq.Rpc.Client` (.NET) schlanke gRPC-Client-Samples/SDK-Snippets für Python, Go, Node (nur Proto + Auth/Metadata Helpers) bereitstellen; kein WorkerHost nötig; Java nur bei Bedarf.
 - [x] gRPC Observability & CI: gRPC-Routen mit OTel/Activity-Tags (Tenant/Environment/Job/Trigger) versehen; Sample-Syntax/Build-Checks via `eng/validate-grpc-samples.ps1` in CI (`ci-pr.yml`) verdrahtet.
@@ -55,9 +55,9 @@
 - [x] Execution-Übersicht fertiggestellt: `GET /tenants/{tenantId}/executions` + `GET /tenants/{tenantId}/executions/{executionId}` listen bzw. liefern Execution-Snapshots mit Filteroptionen, abgesichert über `executions:read` Scope [src/Croniq.Api/ApiHostingExtensions.cs#L200-L330](src/Croniq.Api/ApiHostingExtensions.cs#L200-L330). Die Daten kommen aus dem neuen `IExecutionHistoryReader` + File-basiertem Reader, der NDJSON-Starts/Completions auswertet [src/Croniq.Core/Execution/FileExecutionHistoryReader.cs](src/Croniq.Core/Execution/FileExecutionHistoryReader.cs); Tests decken Reader und API ab [tests/Croniq.Core.Tests/Execution/FileExecutionHistoryReaderTests.cs](tests/Croniq.Core.Tests/Execution/FileExecutionHistoryReaderTests.cs), [tests/Croniq.Api.Tests/ExecutionEndpointsTests.cs](tests/Croniq.Api.Tests/ExecutionEndpointsTests.cs).
 - [x] API-Clients & Tokens: CRUD (`GET/POST/DELETE /tenants/{tenantId}/api-clients`) plus Token-Issuing (`POST /tenants/{tenantId}/tokens`, `/api-clients/{clientId}/tokens`) und `/me` ausgeliefert inkl. Tests/Docs [src/Croniq.Api/ApiHostingExtensions.cs#L163-L1294](src/Croniq.Api/ApiHostingExtensions.cs#L163-L1294), [tests/Croniq.Api.Tests/ApiKeyAdminIntegrationTests.cs#L19-L210](tests/Croniq.Api.Tests/ApiKeyAdminIntegrationTests.cs#L19-L210), [docs/deep-dive/auth.md#L32-L160](docs/deep-dive/auth.md#L32-L160).
 
-## Deferred: Remote Persistence (SaaS)
+## Deferred: Remote Persistence (Hosted)
 
-- [ ] Architekturskizze `Croniq.Persistence.Remote` (Client) + `Croniq.Persistence.Remote.Service` (Service-Seite): Transport, Auth (ApiKey/OIDC), Throttling, Multitenancy.
+- [ ] Architekturskizze `Croniq.Persistence.Remote` (Client) + `Croniq.Persistence.Remote.Service` (Service-Seite): Transport, Auth (ApiKey/Bearer), Throttling, Tenant-Isolation.
 - [ ] Evaluieren, ob vorhandene `Croniq.Api`-Endpoints erweitert werden oder ein separates Service-Repo nötig ist; Migrationsplan dokumentieren.
 - [ ] Sicherheits-/Governance-Aspekte festhalten (Tenant-Isolation, SLAs, Secrets, Observability).
 - [ ] Betriebs- und Provisionierungs-Runbook (Deploy-Topologie, Monitoring, Kostenkontrolle).
@@ -68,18 +68,18 @@
 1. (Done 2025-12-09) Webhook-CRUD/API abgesichert: Authz-Scopes vereinheitlicht, Integrationstests für CRUD/Rotate/Dead-Letter-Endpunkte laufen über den neuen TestHost.
 2. (Blocked bis Repo public) Docstreams-Prozess etablieren (`docs/deep-dive/docstreams.md`), Quickstart synchronisieren und Consumer/Technical Docs laufend spiegeln.
 3. CI + Supplychain Hardening fortsetzen (`docs/deep-dive/ci.md`, `docs/deep-dive/supplychain.md`): Coverage-Gates automatisieren, SBOM/Signierung in Release-Pipeline finalisieren.
-4. Security/OIDC + Plattform-Scaffolding adressieren (`docs/deep-dive/security.md`, `docs/deep-dive/kubernetes.md`, `docs/deep-dive/ui.md`): Auth-Flows und Secrets-Governance präzisieren, Kubernetes-Chart + UI-Backlog grobplanen.
+4. Security/Auth + Plattform-Scaffolding adressieren (`docs/deep-dive/security.md`, `docs/deep-dive/kubernetes.md`, `docs/deep-dive/ui.md`): Auth-Flows und Secrets-Governance präzisieren, Kubernetes-Chart + UI-Backlog grobplanen.
 
 ## Outstanding Backlog (Audit 2025-12-10)
 
 - **Docstreams & Docs Hygiene**: `docs/deep-dive/docstreams.md` + Quickstart spiegeln weiterhin Consumer/Technical-Divergenzen; Stream-Owner-Workflow erst nach Repo-Öffnung aktivierbar (siehe offenes Checklist-Item "Docs Streams").
 - **CI & Supplychain**: `docs/deep-dive/ci.md` und `docs/deep-dive/supplychain.md` listen ungelöste Tasks (Toolchain-Pinning, `eng/`-Assets, Secrets-Runbook, Waiver-Prozess); das automatische Staging-Deploy via `deploy-staging.yml`/`release.yml` ist erledigt.
-- **Security & Auth/OIDC**: `docs/deep-dive/security.md` markiert offene Arbeiten an OIDC-Flows, Secrets-Governance sowie Hardenings; entsprechendes Checklist-Item "Security/OIDC-Basis" hinzugefügt.
+- **Security & Auth**: `docs/deep-dive/security.md` markiert offene Arbeiten an Auth-Flows, Secrets-Governance sowie Hardenings; entsprechendes Checklist-Item "Security/Bearer-Basis" hinzugefügt.
 - **Kubernetes & UI Scaffolding**: Platzhalter in `docs/deep-dive/kubernetes.md` und `docs/deep-dive/ui.md` beschreiben fehlende Chart-Baseline, UI-Tech-Entscheid und Content-Aufbereitung (Checklist-Items "UI-Backlog" und "Kubernetes Chart").
 
 ## Webhook-Trigger-Konzept (Backlog)
 
-- **Use Cases**: Eingehende HTTP-Events (z.B. external Systeme, SaaS Hooks, Custom Apps) sollen Croniq-Jobs auslösen – etwa wenn Payment eingetroffen ist oder Deployments Jobs anstoßen. Webhooks agieren damit als Trigger-Quelle neben Cron, Intervallen und RPC.
+- **Use Cases**: Eingehende HTTP-Events (z.B. externe Systeme, Hooks, Custom Apps) sollen Croniq-Jobs auslösen – etwa wenn Payment eingetroffen ist oder Deployments Jobs anstoßen. Webhooks agieren damit als Trigger-Quelle neben Cron, Intervallen und RPC.
 - **Croniq.Webhooks Service**: Eigenes ASP.NET-Hostprojekt stellt pro Tenant konfigurierbare Routen `/webhooks/{hookKey}` bereit. Samples (`Croniq.Sample.ApiHost`) binden es optional ein, Services können es separat deployen und skalieren. Jeder Hook verweist auf ein Job/Trigger-Mapping und kann optional Payload-Transformationen definieren.
 - **Konfiguration**: `Croniq:Webhooks:Mode = InMemory|SqlServer`. SqlServer speichert Hooks samt Secrets, RateLimits, Payload-Schema. InMemory bietet minimale Konfiguration für Samples. Admin-API bietet CRUD (`POST /tenants/{id}/webhooks`).
 - **Processing Pipeline**: Eingehender Request → Auth/Signature-Check → RateLimiter → Payload Normalizer → Job Dispatch (`TriggerJobAsync`). Fehlschläge landen in einer `WebhookIngressDeadLetter`-Queue; Retry-Policy getrennt von regulären Job-Policies.
@@ -117,7 +117,7 @@
   - [x] Audit aller API/gRPC-Endpunkte auf Tenant-Enforcement (Route/Query/metadata vs. CallerContext.TenantId) und 403 bei Mismatch (REST abgeschlossen; gRPC folgt, sobald der Scheduler-RPC-Host landet).
   - [x] Zentralen Tenant-Guard (Middleware/Filter) ergänzen, der den Abgleich erzwingt (inkl. Execution-Log-Metadaten).
   - [x] Integrationstests “cross-tenant access denied” (REST hinzugefügt; gRPC-Suite pending RPC-Surface).
-  - [x] OIDC-Config härten: required scopes + tenant-claim Pflicht, andernfalls 401/403.
+  - [x] Bearer-Token-Validierung härten: required scopes + tenant-claim Pflicht, andernfalls 401/403.
   - [x] Docs notieren: Keys bleiben single-tenant; Cross-Tenant nur via Admin/Ops-Identitäten mit strengen Guards.
 
 # Prüfen, beantworten, ggf. umsetzen
@@ -126,6 +126,9 @@
 - [x] `src\Croniq.Core\Execution\IJobExecutionPipeline.cs` Naming-Check abgeschlossen: Für das aktuelle Scope bleibt das Interface job-spezifisch; Workflows würden ein eigenes Interface (`IWorkflowExecutionPipeline`) oder einen generischen `IExecutionPipeline` erhalten, sobald das Feature gestartet wird. Kein sofortiger Umbau nötig.
 - [x] Route `/me` in `/profile` umbenennen? (Entscheidung: nein. `/me` bleibt bestehen, da bereits von Clients/Docs genutzt; Umbenennung wäre unnötiger Breaking-Change.)
 - [x] (akut) `WithDocs` wird in Swagger nicht angezeigt: sicherstellen, dass OpenAPI Summary/Description im UI sichtbar sind (z.B. via `WithOpenApi(...)`-Integration bzw. korrigierte Fallback-Strategie).
+- [ ] Username/Passwort Login für BearerTokens: Konzept + Implementierung (Tenant-Isolation, Scopes, RateLimits, Lockout, Refresh-Token-Rotation)
+  - [ ] Entscheidung: Standard-Login über HTTPS (Server verifiziert Password) vs. PAKE (OPAQUE/SRP) wenn "Passwort nie übertragen" zwingend ist
+  - [ ] Konzept-Doku: `docs/deep-dive/password-auth.md` (Option A baseline, Option B PAKE outline)
 - [ ] (nice-to-have) Solutionweit usings aufräumen?
 - [ ] CI Static Analysis / SAST: entscheiden und ggf. integrieren
   - [ ] CodeQL-Code-Scanning Workflow hinzufügen (optional; abhängig von GHAS/Repo-Settings)

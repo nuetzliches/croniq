@@ -139,3 +139,54 @@ public interface ICroniqTokenIssuer
 {
     Task<CroniqTokenIssueResult> IssueAsync(CroniqTokenIssueRequest request, CancellationToken cancellationToken = default);
 }
+
+public sealed record PasswordUserRecord(
+    string UserId,
+    string TenantId,
+    string Username,
+    IReadOnlyCollection<string> Scopes,
+    string PasswordHash,
+    bool IsActive,
+    int FailedLoginCount,
+    DateTimeOffset? LockoutEndUtc,
+    DateTimeOffset CreatedAtUtc,
+    DateTimeOffset UpdatedAtUtc);
+
+public sealed record PasswordUserUpsertRequest(
+    string TenantId,
+    string Username,
+    string PasswordHash,
+    IReadOnlyCollection<string> Scopes,
+    bool IsActive = true);
+
+public interface IPasswordUserStore
+{
+    Task<PasswordUserRecord?> FindByUsernameAsync(string tenantId, string username, CancellationToken cancellationToken = default);
+    Task<PasswordUserRecord?> FindByIdAsync(string tenantId, string userId, CancellationToken cancellationToken = default);
+    Task<PasswordUserRecord> UpsertAsync(PasswordUserUpsertRequest request, CancellationToken cancellationToken = default);
+    Task RecordLoginFailureAsync(string tenantId, string userId, DateTimeOffset? lockoutEndUtc, CancellationToken cancellationToken = default);
+    Task RecordLoginSuccessAsync(string tenantId, string userId, CancellationToken cancellationToken = default);
+}
+
+public sealed record RefreshTokenRecord(
+    string TokenId,
+    string TenantId,
+    string UserId,
+    string TokenHash,
+    DateTimeOffset ExpiresAtUtc,
+    DateTimeOffset? RevokedAtUtc,
+    string? ReplacedByTokenId,
+    DateTimeOffset CreatedAtUtc);
+
+public sealed record RefreshTokenCreateRequest(
+    string TenantId,
+    string UserId,
+    string TokenHash,
+    DateTimeOffset ExpiresAtUtc);
+
+public interface IRefreshTokenStore
+{
+    Task<RefreshTokenRecord> CreateAsync(RefreshTokenCreateRequest request, CancellationToken cancellationToken = default);
+    Task<RefreshTokenRecord?> FindActiveByHashAsync(string tenantId, string tokenHash, CancellationToken cancellationToken = default);
+    Task RevokeAsync(string tenantId, string tokenId, string? replacedByTokenId, CancellationToken cancellationToken = default);
+}

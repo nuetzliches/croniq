@@ -11,6 +11,9 @@ import {
     IssueApiKeyRequest,
     IssueTokenRequest,
     ExecutionStatus,
+    PasswordLoginRequest,
+    PasswordLogoutRequest,
+    PasswordRefreshRequest,
     TriggerJobRequest,
 } from '../schemas';
 

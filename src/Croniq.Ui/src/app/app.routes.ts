@@ -9,7 +9,13 @@ export const appRoutes: Routes = [
         redirectTo: 'dashboard',
     },
     {
+        path: 'login',
+        loadComponent: () =>
+            import('./features/login/login-page/login-page').then((m) => m.LoginPage),
+    },
+    {
         path: 'dashboard',
+        canActivate: [requireSessionTokenGuard],
         loadComponent: () =>
             import('./features/dashboard/dashboard-page/dashboard-page').then((m) => m.DashboardPage),
     },

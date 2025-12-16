@@ -7,5 +7,5 @@ export const requireSessionTokenGuard: CanActivateFn = () => {
   const authSession = inject(AuthSessionService);
   const router = inject(Router);
 
-  return authSession.getSessionToken() ? true : router.createUrlTree(['/dashboard']);
+  return authSession.getSessionToken() ? true : router.createUrlTree(['/login']);
 };

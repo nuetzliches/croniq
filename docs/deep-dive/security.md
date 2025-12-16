@@ -4,7 +4,7 @@ This document specifies the authentication, authorization, and rate limiting des
 
 ## Objectives
 
-- Support API key and OAuth2/OIDC user flows with a shared `ICallerContext` abstraction and tenant-aware partition enforcement.
+- Support API key and user bearer-token flows with a shared `ICallerContext` abstraction and tenant-aware partition enforcement.
 - Guarantee that every request is rate limited per tenant+caller, while policy-driven quotas inside the Scheduler remain authoritative.
 - Keep secrets (API keys, connection strings) outside application binaries by using providers and hashed storage.
 - Provide deterministic admin/rotation flows so operators can issue, revoke, and audit identities programmatically.
@@ -53,27 +53,12 @@ This document specifies the authentication, authorization, and rate limiting des
 
 5. **Configuration**: `Croniq:Auth:Mode = InMemory|SqlServer`. When `SqlServer`, either reuse `Croniq:SqlServer:ConnectionString` or provide `Croniq:Auth:SqlServer:ConnectionString` explicitly.
 
-### OAuth2 / OIDC (Users)
+### Bearer Tokens (Users)
 
-1. **Support**: `Croniq:Auth:Oidc` options (Authority, Audience, TenantClaim, EnvironmentClaim, ScopeClaims, RequiredScopes, `RequireHttpsMetadata`, etc.) now configure Croniq's built-in OIDC validator. Example:
+1. **Support**: Croniq can validate bearer tokens and map tenant/environment/scopes from claims.
+   Forward-looking, hosted-oriented details live in `CLOUD-CONCEPT.md`.
 
-   ```json
-   "Croniq": {
-      "Auth": {
-         "Mode": "SqlServer",
-         "Oidc": {
-            "Enabled": true,
-            "Authority": "https://login.microsoftonline.com/<tenant>",
-            "Audience": "api://cronq",
-            "TenantClaim": "tid",
-            "EnvironmentClaim": "env",
-            "RequiredScopes": [ "cronq.api" ]
-         }
-      }
-   }
-   ```
-
-2. **Caller Context**: `ICallerContextFactory.FromBearerTokenAsync` now validates JWTs via the issuer's JWKS metadata, caches the configuration, and maps Croniq-specific fields:
+2. **Caller Context**: `ICallerContextFactory.FromBearerTokenAsync` validates JWTs via issuer metadata, caches configuration, and maps Croniq-specific fields:
    - Tenant ID resolved from `TenantClaim` (default `tenant`) falling back to `tid` or other configured claims.
    - Environment tag derived from `EnvironmentClaim` with optional fallbacks/defaults.
    - Scopes gathered from `scope`/`scp` style claims, normalized to lowercase when configured; required scopes are enforced before a caller context is emitted.
@@ -82,7 +67,7 @@ This document specifies the authentication, authorization, and rate limiting des
 
 ### Mixed Mode & Future Providers
 
-- Hosts can simultaneously enable API keys and OIDC. The middleware inspects the request headers in order: Bearer token, then API key. Only one caller context is created per request.
+- Hosts can simultaneously enable API keys and bearer tokens. The middleware inspects the request headers in order: Bearer token, then API key. Only one caller context is created per request.
 - Additional providers (mTLS, external gateway) can plug in through new methods on `ICallerContextFactory` or dedicated middleware.
 
 ## Authorization & Tenant Enforcement
@@ -90,7 +75,7 @@ This document specifies the authentication, authorization, and rate limiting des
 - `ICallerContext` lives in scoped DI via `ICallerContextAccessor`. Downstream components (Persistence, JobStore) fetch it to derive `PartitionScope` (TenantId + EnvironmentTag).
 - `TenantGuard` enforces caller tenant/environment across REST routes (webhooks CRUD, schedules, manual triggers) and rejects cross-tenant attempts with 403 before persistence/pipeline execution. The execution-log endpoint now inspects the first log entry to validate tenant/environment metadata before streaming; the gRPC surface will reuse the same guard once the Scheduler RPC host is exposed.
 - Scope naming convention mirrors REST permissions: `schedules:write`, `jobs:trigger`, `tenants:admin`, `api-keys:manage`, `cluster:read`.
-- Bearer/OIDC tokens must carry the configured `TenantClaim` (or fallback) and any `RequiredScopes`; missing claims/scopes yield 401/403. API keys remain single-tenant because validation bakes the tenant into the emitted caller context.
+- Bearer tokens must carry the configured tenant claim (or fallback) and any required scopes; missing claims/scopes yield 401/403. API keys remain single-tenant because validation bakes the tenant into the emitted caller context.
 - gRPC Scheduler: the Scheduler service is hosted in `Croniq.Api` (mapped via `MapCroniqSchedulerGrpc`). Calls use the same middleware/guards as HTTP; clients must send `x-croniq-key` (or Bearer) metadata and align `tenant_id`/`environment_tag` (required on `DeleteSchedule`). The proto lives under `src/Croniq.Rpc.Client/Protos/scheduler.proto`; `Croniq.Sample.GrpcClient` shows usage with `Croniq.Rpc.Client` and the DI helper `AddCroniqSchedulerClient`. Safe wrappers emit `CroniqRpcException` to avoid direct coupling zu `Grpc.Core`.
 - Admin APIs verify both caller scope and tenant match (e.g., only Tenant Admins can mutate their key space). Cross-tenant actions require service-level credentials flagged with `CallerType = ApiKey` and `Scopes` containing `system:*`.
 
@@ -217,13 +202,13 @@ Minimal configuration example:
 
 ## Backlog to Reach "Security-Basis"
 
-- [x] Introduce `Croniq:Auth:Oidc` options and wire bearer authentication into `Croniq.Api`.
+- [x] Wire bearer authentication into `Croniq.Api`.
 - [x] Implement `ICallerContextFactory.FromBearerTokenAsync` with tenant/environment/scopes mapping + caching of JWKS metadata.
 - [x] Refactor the auth middleware to choose between Bearer and API key flows, and expose `ICallerContext` downstream via features.
 - [x] Update rate limiter to partition on `TenantId:CallerId` (fallback to key header when context missing) and expose per-tenant overrides.
 - [x] Add gRPC interceptor mirroring the HTTP rate limiter.
 - [x] Create admin endpoints + docs for API key issuance/rotation (ties into `Croniq.Auth.Abstractions` stores).
-- [x] Extend `docs/configuration.md` with an "Authentication" section (API key vs OIDC) and examples.
+- [x] Extend configuration docs with an "Authentication" section and examples.
 - [x] Add automated security regression tests (invalid key, expired key, revoked key, missing scope) under `Croniq.Api.Tests` or the future smoke suite.
 - [x] Harden webhook ingress: per-hook IP allow lists and guardrails for payload size/content-type.
 - [x] Build webhook allow-list smoke tests (allow + deny paths) and payload size guardrail coverage under `tests/Croniq.Api.Smoke` (`Webhook_ip_rule_crud_roundtrip`, `Webhook_ingress_respects_ip_rules`).
@@ -237,4 +222,4 @@ Minimal configuration example:
   - [x] Document replay windows, required headers (`X-Croniq-Timestamp`, `X-Croniq-Delivery-Id`), and backoff expectations for 429s.
   - [x] Include rotation guidance referencing `WebhookEndpointEvents`, plus troubleshooting flow for `signature-invalid` metrics.
 
-Delivering the checklist item means these backlog bullets are implemented and documented, ensuring both API key and OIDC callers share the same enforcement and observability experience.
+Delivering the checklist item means these backlog bullets are implemented and documented, ensuring both API key and bearer-token callers share the same enforcement and observability experience.

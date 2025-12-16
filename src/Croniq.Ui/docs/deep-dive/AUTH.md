@@ -1,19 +1,34 @@
 # Croniq UI Auth Notes
 
-Interim plan for securing the Angular admin surface until the backend completes the full OIDC + delegated operator flow.
+Interim plan for securing the Angular admin surface until the backend completes the delegated operator flow and external identity provider integration.
 
-## Session Token Handling
+## Access Token Handling
 
-- Tokens are captured via the tenant context panel and persisted with `AuthSessionService` (`src/app/core/auth/auth-session.service.ts`).
-- Storage backend is always `sessionStorage`; no auth artifacts land in `localStorage` or IndexedDB.
+- The UI stores the **access token** via `AuthSessionService` (`src/app/core/auth/auth-session.service.ts`).
+- Storage backend for the access token is always `sessionStorage`; no auth artifacts land in `localStorage` or IndexedDB.
 - Expiration metadata is optional but recommended. Expired secrets are purged automatically.
-- When an operator clears the token, the service also clears the matching storage slot, so refresh tokens never linger between sessions.
 
-### Bootstrap (current state)
+## Refresh Token Handling
 
-- The UI does **not** have a login flow yet (the OIDC/PKCE path is a placeholder).
-- To get started, you must obtain a valid Croniq session token out-of-band (e.g., via backend/operator tooling) and paste it into the tenant-context "Store token" form.
-- Without a valid bearer token, protected API calls (including tenant token issuance) will respond with 401.
+- Refresh tokens are treated as sensitive and are **not persisted**.
+- Current UI behavior keeps refresh tokens **memory-only** (per tab/session). Reloading the page requires re-login.
+
+## Password Login (`/auth/*`)
+
+The backend exposes these routes:
+
+- `POST /auth/login` (request: `PasswordLoginRequest`)
+- `POST /auth/refresh` (request: `PasswordRefreshRequest`)
+- `POST /auth/logout` (request: `PasswordLogoutRequest`)
+
+Important: The current OpenAPI snapshot documents request shapes, but does not yet include a response schema for these routes.
+The UI therefore parses the response defensively and extracts the access token from common fields like `accessToken`.
+
+### Tenant / Environment resolution
+
+- Tenant and environment are configured server-side.
+- The UI therefore **does not set `tenantId` nor `environmentTag`** in the login request.
+- Tenant selection remains part of the UI shell context, but is not required for authentication.
 
 ## Tenant Token Issuance
 
@@ -22,11 +37,10 @@ Interim plan for securing the Angular admin surface until the backend completes 
 - The tenant-context panel can persist the returned secret automatically whenever the backend includes it in the response payload.
 - Issuance requests capture client ID, scopes, TTL, and optional labels so the backend can scope the token properly. The service also estimates an expiry timestamp locally to keep storage metadata consistent when the response omits it.
 
-## OIDC / PKCE Placeholder
+## External Login Placeholder (future)
 
-- The `startOidcBootstrap()` hook leaves space for the PKCE handshake once the backend exposes the authorize endpoint.
-- Today it resolves immediately, but the component-level call path (button + busy state) is in place, so dropping in the actual redirect/popup logic will not require UI rewrites.
-- When the backend is ready, the hook should exchange the PKCE code for a Croniq session token, then update `AuthSessionService` so the UI refreshes automatically.
+- The tenant-context bootstrap hook still leaves space for an interactive external login handshake (PKCE/OIDC) once the backend exposes the necessary endpoints.
+- For now we use `/auth/login` (username/password) for local testing and early deployments.
 
 ## Operator Impersonation vs. OAuth
 
@@ -36,7 +50,7 @@ Interim plan for securing the Angular admin surface until the backend completes 
 
 ## Next Steps for Full Auth
 
-1. Replace the PKCE placeholder with real OIDC client logic (likely via `@azure/msal-browser` or a lightweight PKCE helper).
+1. Replace password login with real external login client logic (PKCE-based).
 2. Distribute the Croniq session token via HttpInterceptors instead of the shared executor so that feature modules can call `HttpClient` directly when needed.
 3. Wire logout to clear session storage, operator impersonation state, and command palette caches.
 4. Document CSP changes once the login redirect domain is finalized.

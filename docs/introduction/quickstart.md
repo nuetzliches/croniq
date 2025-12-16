@@ -354,7 +354,7 @@ Watch the API logs; you should see the `HelloWorldJob` message. Logs, metrics, a
 - Extend the job to read secrets via `ISecretProvider`, add retry policies, or push telemetry to your observability stack.
 - Continue with:
   - [`configuration.md`](/introduction/configuration.md) for tenant/environment options
-  - [`auth.md`](/guides/auth.md) to switch between API key and OIDC caller flows
+  - [`auth.md`](/guides/auth.md) to switch between API key and password login
   - [`policies.md`](/guides/policies.md) and [`triggers.md`](/guides/triggers.md) to tune job behavior
   - `/deep-dive/job-registration.md` for internal startup flow and persistence sync details
 - Hit [`troubleshooting.md`](/ops/troubleshooting.md) if any of the steps above fail or you suspect dev stack issues

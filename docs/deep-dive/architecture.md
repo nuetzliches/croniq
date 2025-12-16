@@ -91,7 +91,7 @@ docs/
   - `Croniq:Auth:Mode = InMemory|SqlServer`; overrides under `Croniq:Auth:SqlServer:*`.
   - `Croniq:Persistence:Mode = InMemory|SqlServer`; overrides under `Croniq:Persistence:SqlServer:*`.
   - Shared connection string at `Croniq:SqlServer:ConnectionString` unless overridden.
-- API key flow (header `X-Croniq-Key`) is the default. OIDC/OAuth2 bearer flow feeds the same `ICallerContext` abstraction. Rate limiting partitions on `TenantId:CallerId`.
+- API key flow (header `X-Croniq-Key`) is the default. Bearer-token flow feeds the same `ICallerContext` abstraction. Rate limiting partitions on `TenantId:CallerId`.
 
 ## Scheduler & Execution Semantics
 
@@ -134,12 +134,12 @@ docs/
 
 ## Webhook Trigger Surface
 
-- **Goal**: Allow external SaaS systems or internal apps to push HTTP events into Croniq without custom glue code. Each tenant mints webhook receivers that immediately trigger jobs, making Webhooks a first-class trigger source alongside cron, interval, and event streams.
+- **Goal**: Allow external systems or internal apps to push HTTP events into Croniq without custom glue code. Each tenant mints webhook receivers that immediately trigger jobs, making Webhooks a first-class trigger source alongside cron, interval, and event streams.
 - **Host Composition**: `Croniq.Webhooks` is a Minimal API host that reuses `Croniq.Hosting` for DI (auth, persistence, policies). Only ingress-specific pieces live here: signature validation, rate limiting, payload inspection, and dispatch into the execution pipeline. `AddCroniqWebhookServices` wires everything up for both the standalone host and co-hosted samples.
 - **Deployment Guidance**: Run `Croniq.Webhooks` as an independent deployment whenever you expect bursty ingress traffic or need separate autoscaling from `Croniq.Api`. Samples (and very small tenants) can co-host both surfaces in a single process by calling `UseCroniqWebhooks(mapHealthEndpoints: false)` inside the API host, but production topologies typically expose two pods / services so management calls stay isolated from webhook storms.
 - **Endpoints & Protocols**: Authenticated routes such as `POST /webhooks/{hookKey}` accept JSON payloads today, with CloudEvents planned. Each hook maps to a registered `JobKey`. Payload metadata is projected into `IJobExecutionContext` with `webhook:*` and `payload:*` prefixes so downstream jobs can branch without re-parsing JSON.
 - **Configuration Source**: Hooks are defined under `Croniq:Webhooks` (in-memory for dev) or persisted via `Croniq.Persistence.SqlServer` once the admin API lands. The shape includes `HookKey`, `JobKey`, `Secret`, per-hook `RequestsPerMinute`, and arbitrary metadata. The host falls back to global defaults when per-hook values are omitted.
-- **Processing Stages**: Request enters `Croniq.Webhooks` → optional caller auth (API key/OIDC) → HMAC signature validation (`X-Croniq-Signature`) → named ASP.NET Core rate limiter partitioned per hook → payload normalization/metadata enrichment → dispatcher enqueues the execution via `IJobExecutionPipeline`. Failures bubble into policy-based retries, logging, and (later) a `WebhookIngressDeadLetter` store for diagnostics.
+- **Processing Stages**: Request enters `Croniq.Webhooks` → optional caller auth (API key/bearer token) → HMAC signature validation (`X-Croniq-Signature`) → named ASP.NET Core rate limiter partitioned per hook → payload normalization/metadata enrichment → dispatcher enqueues the execution via `IJobExecutionPipeline`. Failures bubble into policy-based retries, logging, and (later) a `WebhookIngressDeadLetter` store for diagnostics.
 - **Security & Observability**: TLS is mandatory; secrets never leave the server; validation runs in constant time to avoid timing attacks. OpenTelemetry spans (`Croniq.Webhooks.Ingress`) capture hook/job tags, and the host exports the same metrics/logging decorators as `Croniq.Api`, making it easy to monitor ingress pressure separately from management traffic.
 - **Docs Impact**: `docs/guides/triggers.md` demonstrates configuration + curl usage, the quickstart teaches how to co-host webhooks, and this section outlines deployment trade-offs so operators understand when to promote the ingress to a dedicated service.
 
@@ -178,12 +178,12 @@ docs/
 - Docker strategy: multi-stage .NET 10 images, Compose stack for API, worker, SQL Server, observability, optional RPC sample.
 - GitHub Actions build/test/publish NuGet packages and OCI images, uploading docs previews as artifacts.
 
-## Reliability, Recovery & Multi-Tenancy
+## Reliability, Recovery & Tenant Isolation
 
 - Recovery flow: on startup, load persisted triggers, clean stale locks, resume pending executions before declaring the instance healthy.
 - Clock drift monitoring via `ITimeProvider`; warnings from 50 ms drift upward.
 - Retention defaults: dead letters 30 days, execution history 90 days, audit logs 365 days (all configurable).
-- Multi-tenancy is enforced everywhere: persistence schemas, caller context, telemetry dimensions, rate limiting, and API scopes.
+- Tenant isolation is enforced everywhere: persistence schemas, caller context, telemetry dimensions, rate limiting, and API scopes.
 - Quotas per tenant cover max trigger/minute, concurrent executions, and payload size; defaults live under `Croniq:Api:RequestsPerMinute` with overrides per tenant.
 
 ## Release, Testing & Compliance

@@ -17,15 +17,15 @@ Derived from [docs/deep-dive/designs/angular-ui-concept.md](docs/deep-dive/desig
 - [x] Design Spike – finalize Tailwind theme plus typography approvals with stakeholders. _(Theme + typographic tokens documented in [docs/deep-dive/designs/angular-ui-theme.md](docs/deep-dive/designs/angular-ui-theme.md); awaiting stakeholder sign-off recorded there.)_
 - [ ] Scaffolding & Auth – keep this phase as a tracker; implementation details are documented in `README.md` and `docs/deep-dive/AUTH.md`. _(Original plan: [docs/deep-dive/designs/angular-ui-scaffolding.md](docs/deep-dive/designs/angular-ui-scaffolding.md).)_
   - [x] Auth session persistence: store the opaque Croniq session token in `sessionStorage` only; never persist refresh data in `localStorage`/IndexedDB. _(Implemented via [src/app/core/auth/auth-session.service.ts](src/app/core/auth/auth-session.service.ts); forms wired in [src/app/core/tenant-context/tenant-context.html](src/app/core/tenant-context/tenant-context.html); rationale captured in [docs/deep-dive/AUTH.md](docs/deep-dive/AUTH.md).)_
-  - [x] OAuth/OIDC expansion: leave hooks for PKCE/OIDC bootstrap (deferred) so we can swap session auth for standards-based login once backend is ready. _(UI button + `startOidcBootstrap()` placeholder now live in [src/app/core/tenant-context/tenant-context.ts](src/app/core/tenant-context/tenant-context.ts).)_
-  - [x] Operator impersonation vs. OAuth: document the interim plan (manual tenant/operator context vs. delegated auth) and revisit once backend signals GA for full OAuth. _(Plan recorded in [docs/deep-dive/AUTH.md](docs/deep-dive/AUTH.md).)_
+  - [x] External login expansion: leave hooks for a PKCE-based login bootstrap (deferred) so we can swap session auth for standards-based login once backend is ready.
+  - [x] Operator impersonation vs. delegated auth: document the interim plan (manual tenant/operator context vs. delegated auth) and revisit once backend signals GA for full delegated auth. _(Plan recorded in [docs/deep-dive/AUTH.md](docs/deep-dive/AUTH.md).)_
 - [ ] MVP Data Surfaces – deliver the dashboard metrics (stubbed), schedules read-only grid, and job registry view.
 - [ ] Admin Controls – implement CRUD for schedules, webhooks, and API keys, including dead-letter replay wiring.
 - [ ] Observability & Polish – embed Grafana/log pulse views and complete the accessibility plus localization review.
 
 ## Guardrails & Dependencies
 
-- [ ] Confirm backend prerequisites are complete (schedule/job/admin APIs, gRPC-Web proxy, finalized OIDC story, observability feeds).
+- [ ] Confirm backend prerequisites are complete (schedule/job/admin APIs, gRPC-Web proxy, finalized login story, observability feeds).
 - [ ] Document hosting decision (static assets behind Croniq.Api vs. dedicated `Croniq.Ui` container) and readiness/liveness expectations.
 - [ ] Validate new npm dependencies meet the MIT/Apache/BSD policy and record any exceptions before merge.
 - [ ] Publish the ARIA playbook (based on https://angular.dev/guide/aria/overview) in `docs/ai/aria.md` and reference it from the PR template so every feature answers for roles, focus order, and keyboard shortcuts.
@@ -69,7 +69,7 @@ Derived from [docs/deep-dive/designs/angular-ui-concept.md](docs/deep-dive/desig
 
 ## Security & Auth
 
-- [ ] Implement OIDC PKCE login plus fallback for short-lived API tokens behind VPN.
+- [ ] Implement PKCE-based interactive login plus fallback for short-lived API tokens behind VPN.
 - [ ] Ensure secrets/tokens remain memory-only and never persist to local storage or IndexedDB.
 - [ ] Surface `ICallerContext` metadata in the UI so operators see "acting as" context during manual actions.
 - [ ] Respect backend-enforced feature flags; hide toggles unless the API advertises support.
@@ -103,11 +103,16 @@ This checklist intentionally avoids duplicating how-tos.
 
 - [ ] Decide whether Grafana panels render inline (iframe) or via deep links and document CSP implications.
 - [ ] Choose hosting domain strategy (shared with Croniq.Api vs. `ui.croniq.dev`) for cookie reuse and CSP constraints.
-- [ ] Determine timeline for multi-tenant impersonation features before GA.
+- [ ] Determine timeline for tenant impersonation features before GA.
 - [ ] Define prefetch strategy (hover-driven vs. manual fetch) balancing responsiveness and API load; document final call in the concept doc.
 
 # Next Steps (2025-12-16)
 
 - When the backend contract changes: run `npm run snapshot:swagger`, then `npm run generate:api`.
-- Validate token issuance against the live backend and reconcile any schema gaps (ideally by fixing OpenAPI responses upstream).
-- Decide and document the canonical auth mechanism in Swagger, then implement the missing login/bootstrap routine in the UI.
+- Validate `/auth/login` (username/password) against the live backend and reconcile any schema gaps (ideally by fixing OpenAPI responses upstream).
+- Keep `tenantId` / `environmentTag` unset in the login payload (server-configured defaults).
+- Decide and document the canonical auth mechanism in Swagger, then implement the full refresh/logout wiring in the UI.
+
+# Prüfen / Nachbessern
+
+- [ ] Die Zod Models verwenden obsolete Typen oder Felder (z.B. passthrough). Bitte prüfen, ob wir eine zod.instructions.md Datei brauchen, die erklärt. Eventuell bietet Zod selbst schon Anleitungen.

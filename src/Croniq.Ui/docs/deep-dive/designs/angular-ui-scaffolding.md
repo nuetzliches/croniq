@@ -25,7 +25,7 @@ Status: the workspace is already scaffolded. Treat this document as a plan/histo
    ng generate library telemetry
    ng generate library ui-kit
    ```
-5. Verify the directory structure after scaffolding (Angular CLI 17+/21 uses `src/` for the main app and `projects/` for libraries):
+4. Verify the directory structure after scaffolding (Angular CLI 17+/21 uses `src/` for the main app and `projects/` for libraries):
    ```
    src/
      Croniq.Ui/
@@ -53,15 +53,16 @@ Status: the workspace is already scaffolded. Treat this document as a plan/histo
            croniq-config.json
        .vscode/
    ```
-  Commit this baseline before layering feature work so diffs stay reviewable.
-  - `data-access`: API client plumbing + endpoint executor.
-   - `telemetry`: OpenTelemetry bridge + logging helpers.
-   - `ui-kit`: Tailwind-based headless components (tokens live here).
+   Commit this baseline before layering feature work so diffs stay reviewable.
+
+- `data-access`: API client plumbing + endpoint executor.
+- `telemetry`: OpenTelemetry bridge + logging helpers.
+- `ui-kit`: Tailwind-based headless components (tokens live here).
 
 - Seed `tokens.css` with the semantic variables:
 
   ```css
-  :root[data-theme="ops-light"] {
+  :root[data-theme='ops-light'] {
     --cq-surface: 248 250 252;
     --cq-surface-alt: 238 242 247;
     --cq-border: 203 210 223;
@@ -73,7 +74,7 @@ Status: the workspace is already scaffolded. Treat this document as a plan/histo
     --cq-success: 31 173 102;
   }
 
-  :root[data-theme="ops-dark"] {
+  :root[data-theme='ops-dark'] {
     --cq-surface: 15 23 42;
     --cq-surface-alt: 30 42 63;
     --cq-border: 39 52 77;
@@ -128,10 +129,10 @@ Example shell skeleton (Angular standalone component):
 
 ```ts
 @Component({
-  selector: "cq-shell",
+  selector: 'cq-shell',
   standalone: true,
-  templateUrl: "./shell.component.html",
-  styleUrls: ["./shell.component.css"],
+  templateUrl: './shell.component.html',
+  styleUrls: ['./shell.component.css'],
 })
 export class ShellComponent {
   readonly tenant$ = inject(TenantContextService).tenant$;
@@ -139,7 +140,7 @@ export class ShellComponent {
 
   openCommandPalette(): void {
     this.commandPalette.open();
-    this.telemetry.track("command_palette_opened");
+    this.telemetry.track('command_palette_opened');
   }
 }
 ```
@@ -149,7 +150,7 @@ Note: this repo uses runtime config via `public/assets/croniq-config.json` inste
 ## Interim Auth Implementation
 
 - `AuthSessionService` (`src/app/core/auth/auth-session.service.ts`) now owns the opaque Croniq session token. The value lives exclusively in `sessionStorage`, and the service auto-purges expired entries so nothing lingers between tabs.
-- `TenantContext` exposes an input form for the token plus an "OIDC bootstrap" stub button. The UI masks the stored value (last four characters only) so operators can confirm which secret is active without leaking the full string.
+- `TenantContext` exposes an input form for the token plus a login-bootstrap stub button. The UI masks the stored value (last four characters only) so operators can confirm which secret is active without leaking the full string.
 - `EndpointExecutor` receives a credential supplier instance, allowing it to inject the `Authorization` bearer token on every API call. Feature modules can still override the value per request when needed via `CroniqRequestOptions`.
 - Details, guardrails, and future steps are tracked in `docs/deep-dive/AUTH.md`.
 

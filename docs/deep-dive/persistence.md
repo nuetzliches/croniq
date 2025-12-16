@@ -5,7 +5,7 @@ This document describes the current SqlServer persistence layer for Croniq: sche
 ## Scope & Goals
 
 - A single SqlServer schema (`croniq`) backs both scheduler persistence and auth data.
-- Every entity includes `TenantId`, `EnvironmentTag`, and concurrency metadata to guarantee multi-tenant isolation.
+- Every entity includes `TenantId`, `EnvironmentTag`, and concurrency metadata to guarantee tenant isolation.
 - EF Core is the only abstraction; migrations are versioned in `src/Croniq.Data.SqlServer/Migrations` and applied via `tools/Croniq.DbMigrator`.
 - Croniq hosts can switch between in-memory and SqlServer persistence via configuration (`Croniq:Persistence:Mode`).
 

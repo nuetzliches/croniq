@@ -30,6 +30,7 @@ public sealed class CallerContextFactory : ICallerContextFactory
 {
     private readonly IApiKeyStore _apiKeyStore;
     private readonly IOptionsMonitor<CroniqOidcOptions> _oidcOptions;
+    private readonly IOptionsMonitor<CroniqTokenOptions> _tokenOptions;
     private readonly ILogger<CallerContextFactory> _logger;
     private readonly JsonWebTokenHandler _tokenHandler = new();
     private readonly object _oidcConfigurationLock = new();
@@ -39,10 +40,12 @@ public sealed class CallerContextFactory : ICallerContextFactory
     public CallerContextFactory(
         IApiKeyStore apiKeyStore,
         IOptionsMonitor<CroniqOidcOptions> oidcOptions,
+        IOptionsMonitor<CroniqTokenOptions> tokenOptions,
         ILogger<CallerContextFactory> logger)
     {
         _apiKeyStore = apiKeyStore ?? throw new ArgumentNullException(nameof(apiKeyStore));
         _oidcOptions = oidcOptions ?? throw new ArgumentNullException(nameof(oidcOptions));
+        _tokenOptions = tokenOptions ?? throw new ArgumentNullException(nameof(tokenOptions));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
     }
 
@@ -76,8 +79,7 @@ public sealed class CallerContextFactory : ICallerContextFactory
         var options = _oidcOptions.CurrentValue ?? new CroniqOidcOptions();
         if (!options.Enabled || string.IsNullOrWhiteSpace(options.Authority))
         {
-            _logger.LogDebug("OIDC bearer auth disabled or authority missing");
-            return null;
+            return await TryValidateCroniqTokenAsync(token, cancellationToken).ConfigureAwait(false);
         }
 
         try
@@ -123,6 +125,86 @@ public sealed class CallerContextFactory : ICallerContextFactory
         catch (Exception ex)
         {
             _logger.LogError(ex, "Unexpected failure while validating bearer token");
+            return null;
+        }
+    }
+
+    private async Task<ICallerContext?> TryValidateCroniqTokenAsync(string token, CancellationToken cancellationToken)
+    {
+        var tokenOptions = _tokenOptions.CurrentValue ?? new CroniqTokenOptions();
+        if (!tokenOptions.Enabled || string.IsNullOrWhiteSpace(tokenOptions.SigningKey))
+        {
+            _logger.LogDebug("Croniq token auth disabled or signing key missing");
+            return null;
+        }
+
+        SecurityKey signingKey;
+        try
+        {
+            signingKey = new SymmetricSecurityKey(Convert.FromBase64String(tokenOptions.SigningKey));
+        }
+        catch (FormatException ex)
+        {
+            _logger.LogError(ex, "Croniq token signing key is not valid Base64");
+            return null;
+        }
+
+        try
+        {
+            var validationParameters = new TokenValidationParameters
+            {
+                ValidateIssuer = true,
+                ValidIssuer = tokenOptions.Issuer,
+                ValidateIssuerSigningKey = true,
+                IssuerSigningKey = signingKey,
+                RequireExpirationTime = true,
+                ValidateLifetime = true,
+                ClockSkew = TimeSpan.FromMinutes(1),
+                RequireSignedTokens = true,
+                ValidateAudience = false,
+                NameClaimType = tokenOptions.ClientClaim
+            };
+
+            var result = await _tokenHandler.ValidateTokenAsync(token, validationParameters).ConfigureAwait(false);
+            if (!result.IsValid || result.ClaimsIdentity is null)
+            {
+                _logger.LogWarning("Croniq token validation failed: {Reason}", result.Exception?.Message ?? "invalid");
+                return null;
+            }
+
+            var principal = new ClaimsPrincipal(result.ClaimsIdentity);
+            var tenantId = FindFirst(principal, tokenOptions.TenantClaim, fallbacks: null);
+            if (string.IsNullOrWhiteSpace(tenantId))
+            {
+                _logger.LogWarning("Croniq token missing tenant claim '{Claim}'", tokenOptions.TenantClaim);
+                return null;
+            }
+
+            var environment = FindFirst(principal, tokenOptions.EnvironmentClaim, fallbacks: null);
+            var callerId = FindFirst(principal, tokenOptions.ClientClaim, fallbacks: new[] { "sub" })
+                ?? principal.Identity?.Name
+                ?? "croniq-user";
+            var scopes = ResolveScopes(principal, new CroniqOidcOptions
+            {
+                ScopeClaims = new[] { tokenOptions.ScopeClaim },
+                NormalizeScopesToLowercase = false
+            });
+
+            return new CallerContext(
+                tenantId,
+                environment,
+                CallerType.User,
+                callerId,
+                scopes);
+        }
+        catch (SecurityTokenException ex)
+        {
+            _logger.LogWarning(ex, "Croniq token rejected");
+            return null;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Unexpected failure while validating Croniq token");
             return null;
         }
     }

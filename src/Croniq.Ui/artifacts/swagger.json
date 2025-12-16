@@ -1310,6 +1310,81 @@
         }
       }
     },
+    "/auth/login": {
+      "post": {
+        "tags": [
+          "Croniq.Sample.ApiHost"
+        ],
+        "summary": "Password login",
+        "description": "Authenticates a username/password and issues access + refresh tokens. Tenant can be provided via tenantId or tenantReference; it can be omitted if a default tenant is configured.",
+        "operationId": "Auth_Login",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PasswordLoginRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/auth/refresh": {
+      "post": {
+        "tags": [
+          "Croniq.Sample.ApiHost"
+        ],
+        "summary": "Refresh access token",
+        "description": "Rotates the refresh token and returns a new access token.",
+        "operationId": "Auth_Refresh",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PasswordRefreshRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/auth/logout": {
+      "post": {
+        "tags": [
+          "Croniq.Sample.ApiHost"
+        ],
+        "summary": "Logout",
+        "description": "Revokes the provided refresh token.",
+        "operationId": "Auth_Logout",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PasswordLogoutRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
     "/tenants/{tenantId}/executions/{executionId}/logs": {
       "get": {
         "tags": [
@@ -1469,6 +1544,86 @@
           "ttlMinutes": {
             "type": "integer",
             "format": "int32",
+            "nullable": true
+          }
+        },
+        "additionalProperties": false
+      },
+      "PasswordLoginRequest": {
+        "type": "object",
+        "properties": {
+          "tenantId": {
+            "type": "string",
+            "nullable": true
+          },
+          "username": {
+            "type": "string",
+            "nullable": true
+          },
+          "password": {
+            "type": "string",
+            "nullable": true
+          },
+          "environmentTag": {
+            "type": "string",
+            "nullable": true
+          },
+          "scopes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "nullable": true
+          },
+          "audience": {
+            "type": "string",
+            "nullable": true
+          },
+          "tenantReference": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "additionalProperties": false
+      },
+      "PasswordLogoutRequest": {
+        "type": "object",
+        "properties": {
+          "tenantId": {
+            "type": "string",
+            "nullable": true
+          },
+          "refreshToken": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "additionalProperties": false
+      },
+      "PasswordRefreshRequest": {
+        "type": "object",
+        "properties": {
+          "tenantId": {
+            "type": "string",
+            "nullable": true
+          },
+          "refreshToken": {
+            "type": "string",
+            "nullable": true
+          },
+          "environmentTag": {
+            "type": "string",
+            "nullable": true
+          },
+          "scopes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "nullable": true
+          },
+          "audience": {
+            "type": "string",
             "nullable": true
           }
         },

@@ -1,0 +1,108 @@
+import { Injectable, inject } from '@angular/core';
+import { z } from 'zod';
+
+import type { PasswordLoginRequest } from '@croniq/api-schema';
+import { CRONIQ_API_CLIENT, type CroniqApiClient } from 'data-access';
+
+import { tryIsoFromUnknown } from '../time/clock';
+import { AuthSessionService } from './auth-session.service';
+
+const passwordLoginResponseSchema = z
+    .preprocess((input) => {
+        if (typeof input === 'string') {
+            const trimmed = input.trim();
+            return trimmed ? { accessToken: trimmed } : input;
+        }
+        return input;
+    },
+        z
+            .object({
+                accessToken: z.string().trim().min(1).optional(),
+                token: z.string().trim().min(1).optional(),
+                value: z.string().trim().min(1).optional(),
+                refreshToken: z.string().trim().min(1).optional(),
+                expiresAt: z.unknown().optional(),
+                expiresInSeconds: z.number().int().positive().optional(),
+            })
+            .passthrough()
+            .superRefine((data, ctx) => {
+                if (!data.accessToken && !data.token && !data.value) {
+                    ctx.addIssue({
+                        code: z.ZodIssueCode.custom,
+                        message: 'Expected login response to contain accessToken/token/value.',
+                    });
+                }
+            })
+            .transform((data) => {
+                const resolvedAccessToken = (data.accessToken ?? data.token ?? data.value) as string;
+                const expiryFromField = tryIsoFromUnknown(data.expiresAt);
+                return {
+                    accessToken: resolvedAccessToken,
+                    refreshToken: data.refreshToken ?? null,
+                    expiresAt: expiryFromField,
+                    raw: data as unknown,
+                };
+            }),
+    );
+
+type PasswordLoginResponse = z.infer<typeof passwordLoginResponseSchema>;
+
+export interface PasswordLoginParams {
+    username: string;
+    password: string;
+    scopes?: string[];
+    audience?: string | null;
+}
+
+export interface PasswordLoginResult {
+    storedInSession: boolean;
+    token: string;
+    expiresAt: string | null;
+    refreshTokenPresent: boolean;
+    raw: unknown;
+}
+
+@Injectable({ providedIn: 'root' })
+export class PasswordAuthService {
+    private readonly apiClient = inject<CroniqApiClient>(CRONIQ_API_CLIENT);
+    private readonly authSession = inject(AuthSessionService);
+
+    async login(params: PasswordLoginParams): Promise<PasswordLoginResult> {
+        const payload: PasswordLoginRequest = {
+            username: params.username,
+            password: params.password,
+            // Per new auth concept: tenant/environment are server-configured.
+            tenantId: null,
+            tenantReference: null,
+            environmentTag: null,
+            scopes: params.scopes && params.scopes.length ? params.scopes : null,
+            audience: params.audience ?? null,
+        };
+
+        const response = await this.apiClient.passwordLogin(payload);
+        const parsed = this.extract(response);
+        if (!parsed) {
+            throw new Error('Login failed: unsupported response shape (missing access token).');
+        }
+
+        this.authSession.storeSessionToken(parsed.accessToken, { expiresAt: parsed.expiresAt });
+        if (parsed.refreshToken) {
+            this.authSession.storeRefreshToken(parsed.refreshToken);
+        } else {
+            this.authSession.clearRefreshToken();
+        }
+
+        return {
+            storedInSession: true,
+            token: parsed.accessToken,
+            expiresAt: parsed.expiresAt ?? null,
+            refreshTokenPresent: Boolean(parsed.refreshToken),
+            raw: parsed.raw,
+        };
+    }
+
+    private extract(response: unknown): PasswordLoginResponse | null {
+        const parsed = passwordLoginResponseSchema.safeParse(response);
+        return parsed.success ? parsed.data : null;
+    }
+}

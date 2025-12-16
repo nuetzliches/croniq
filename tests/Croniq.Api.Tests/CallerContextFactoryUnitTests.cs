@@ -14,10 +14,13 @@ public sealed class CallerContextFactoryUnitTests
     private static readonly IOptionsMonitor<CroniqOidcOptions> DisabledOidc =
         new StubOptionsMonitor<CroniqOidcOptions>(new CroniqOidcOptions { Enabled = false });
 
+    private static readonly IOptionsMonitor<CroniqTokenOptions> DisabledCroniqTokens =
+        new StubOptionsMonitor<CroniqTokenOptions>(new CroniqTokenOptions { Enabled = false });
+
     [Fact]
     public async Task FromApiKeyAsync_returns_null_for_empty_input()
     {
-        var factory = new CallerContextFactory(new InMemoryApiKeyStore(), DisabledOidc, NullLogger<CallerContextFactory>.Instance);
+        var factory = new CallerContextFactory(new InMemoryApiKeyStore(), DisabledOidc, DisabledCroniqTokens, NullLogger<CallerContextFactory>.Instance);
 
         (await factory.FromApiKeyAsync(" ")).ShouldBeNull();
     }
@@ -25,7 +28,7 @@ public sealed class CallerContextFactoryUnitTests
     [Fact]
     public async Task FromApiKeyAsync_returns_null_when_validation_fails()
     {
-        var factory = new CallerContextFactory(new InMemoryApiKeyStore(), DisabledOidc, NullLogger<CallerContextFactory>.Instance);
+        var factory = new CallerContextFactory(new InMemoryApiKeyStore(), DisabledOidc, DisabledCroniqTokens, NullLogger<CallerContextFactory>.Instance);
 
         (await factory.FromApiKeyAsync("ak_x.invalid")).ShouldBeNull();
     }
@@ -48,12 +51,13 @@ public sealed class CallerContextFactoryUnitTests
     {
         var store = new InMemoryApiKeyStore();
 
-        var disabled = new CallerContextFactory(store, DisabledOidc, NullLogger<CallerContextFactory>.Instance);
+        var disabled = new CallerContextFactory(store, DisabledOidc, DisabledCroniqTokens, NullLogger<CallerContextFactory>.Instance);
         (await disabled.FromBearerTokenAsync("Bearer whatever")).ShouldBeNull();
 
         var enabledNoAuthority = new CallerContextFactory(
             store,
             new StubOptionsMonitor<CroniqOidcOptions>(new CroniqOidcOptions { Enabled = true, Authority = "" }),
+            DisabledCroniqTokens,
             NullLogger<CallerContextFactory>.Instance);
         (await enabledNoAuthority.FromBearerTokenAsync("Bearer whatever")).ShouldBeNull();
     }

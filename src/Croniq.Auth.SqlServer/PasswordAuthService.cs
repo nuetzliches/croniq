@@ -1,0 +1,316 @@
+using System.Security.Cryptography;
+using System.Text;
+using System.Linq;
+using Croniq.Auth.Abstractions;
+using Microsoft.AspNetCore.Identity;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
+
+namespace Croniq.Auth.SqlServer;
+
+public sealed class PasswordAuthService
+{
+    private readonly IPasswordUserStore _users;
+    private readonly IRefreshTokenStore _refreshTokens;
+    private readonly ICroniqTokenIssuer _tokenIssuer;
+    private readonly IOptionsMonitor<PasswordAuthOptions> _options;
+    private readonly ILogger<PasswordAuthService> _logger;
+    private readonly TimeProvider _timeProvider;
+    private readonly PasswordHasher<PasswordAuthUser> _passwordHasher = new();
+
+    public PasswordAuthService(
+        IPasswordUserStore users,
+        IRefreshTokenStore refreshTokens,
+        ICroniqTokenIssuer tokenIssuer,
+        IOptionsMonitor<PasswordAuthOptions> options,
+        ILogger<PasswordAuthService> logger,
+        TimeProvider? timeProvider = null)
+    {
+        _users = users ?? throw new ArgumentNullException(nameof(users));
+        _refreshTokens = refreshTokens ?? throw new ArgumentNullException(nameof(refreshTokens));
+        _tokenIssuer = tokenIssuer ?? throw new ArgumentNullException(nameof(tokenIssuer));
+        _options = options ?? throw new ArgumentNullException(nameof(options));
+        _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+        _timeProvider = timeProvider ?? TimeProvider.System;
+    }
+
+    public async Task<PasswordLoginResult?> LoginAsync(
+        string tenantId,
+        string username,
+        string password,
+        string? environmentTag,
+        IReadOnlyCollection<string>? requestedScopes,
+        string? audience,
+        CancellationToken cancellationToken = default)
+    {
+        if (!IsEnabled())
+        {
+            return null;
+        }
+
+        if (string.IsNullOrWhiteSpace(tenantId)) throw new ArgumentNullException(nameof(tenantId));
+        if (string.IsNullOrWhiteSpace(username)) throw new ArgumentNullException(nameof(username));
+        if (string.IsNullOrWhiteSpace(password)) throw new ArgumentNullException(nameof(password));
+
+        var user = await _users.FindByUsernameAsync(tenantId, username, cancellationToken).ConfigureAwait(false);
+        if (user is null)
+        {
+            return new PasswordLoginResult(false, null, null, null, null);
+        }
+
+        if (!user.IsActive)
+        {
+            return new PasswordLoginResult(false, null, null, null, null);
+        }
+
+        var now = _timeProvider.GetUtcNow();
+        if (user.LockoutEndUtc.HasValue && user.LockoutEndUtc.Value > now)
+        {
+            return new PasswordLoginResult(false, null, null, null, user.LockoutEndUtc);
+        }
+
+        var verification = _passwordHasher.VerifyHashedPassword(
+            new PasswordAuthUser(user.UserId, user.Username),
+            user.PasswordHash,
+            password);
+
+        if (verification == PasswordVerificationResult.SuccessRehashNeeded)
+        {
+            try
+            {
+                var upgradedHash = _passwordHasher.HashPassword(new PasswordAuthUser(user.UserId, user.Username), password);
+                await _users.UpsertAsync(new PasswordUserUpsertRequest(
+                    user.TenantId,
+                    user.Username,
+                    upgradedHash,
+                    user.Scopes,
+                    user.IsActive),
+                    cancellationToken).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to upgrade password hash for {TenantId}/{UserId}", user.TenantId, user.UserId);
+            }
+        }
+
+        if (verification != PasswordVerificationResult.Success && verification != PasswordVerificationResult.SuccessRehashNeeded)
+        {
+            var options = _options.CurrentValue ?? new PasswordAuthOptions();
+            var nextFailed = user.FailedLoginCount + 1;
+
+            DateTimeOffset? lockoutEndUtc = null;
+            if (options.MaxFailedAccessAttempts > 0 && nextFailed >= options.MaxFailedAccessAttempts)
+            {
+                var lockoutMinutes = options.LockoutMinutes <= 0 ? 15 : options.LockoutMinutes;
+                lockoutEndUtc = now.AddMinutes(lockoutMinutes);
+            }
+
+            await _users.RecordLoginFailureAsync(user.TenantId, user.UserId, lockoutEndUtc, cancellationToken).ConfigureAwait(false);
+            return new PasswordLoginResult(false, null, null, null, lockoutEndUtc);
+        }
+
+        await _users.RecordLoginSuccessAsync(user.TenantId, user.UserId, cancellationToken).ConfigureAwait(false);
+
+        var scopes = ResolveGrantedScopes(user.Scopes, requestedScopes);
+        if (scopes is null)
+        {
+            return new PasswordLoginResult(false, null, null, null, null);
+        }
+
+        var accessTokenLifetime = ResolveAccessTokenLifetime(_options.CurrentValue);
+
+        var token = await _tokenIssuer.IssueAsync(new CroniqTokenIssueRequest(
+            tenantId,
+            ClientId: user.UserId,
+            environmentTag,
+            scopes,
+            audience,
+            accessTokenLifetime),
+            cancellationToken).ConfigureAwait(false);
+
+        var (refreshToken, refreshTokenHash) = CreateRefreshToken();
+        var refreshExpiresAt = now.AddDays(ResolveRefreshTokenLifetimeDays(_options.CurrentValue));
+
+        await _refreshTokens.CreateAsync(new RefreshTokenCreateRequest(
+            tenantId,
+            user.UserId,
+            refreshTokenHash,
+            refreshExpiresAt),
+            cancellationToken).ConfigureAwait(false);
+
+        return new PasswordLoginResult(true, token.AccessToken, refreshToken, token.ExpiresInSeconds, null);
+    }
+
+    public async Task<PasswordRefreshResult?> RefreshAsync(
+        string tenantId,
+        string refreshToken,
+        string? environmentTag,
+        IReadOnlyCollection<string>? requestedScopes,
+        string? audience,
+        CancellationToken cancellationToken = default)
+    {
+        if (!IsEnabled())
+        {
+            return null;
+        }
+
+        if (string.IsNullOrWhiteSpace(tenantId)) throw new ArgumentNullException(nameof(tenantId));
+        if (string.IsNullOrWhiteSpace(refreshToken)) throw new ArgumentNullException(nameof(refreshToken));
+
+        var refreshHash = HashRefreshToken(refreshToken);
+        var existing = await _refreshTokens.FindActiveByHashAsync(tenantId, refreshHash, cancellationToken).ConfigureAwait(false);
+        if (existing is null)
+        {
+            return new PasswordRefreshResult(false, null, null, null);
+        }
+
+        var user = await _users.FindByIdAsync(tenantId, existing.UserId, cancellationToken).ConfigureAwait(false);
+        if (user is null || !user.IsActive)
+        {
+            return new PasswordRefreshResult(false, null, null, null);
+        }
+
+        var scopes = ResolveGrantedScopes(user.Scopes, requestedScopes);
+        if (scopes is null)
+        {
+            return new PasswordRefreshResult(false, null, null, null);
+        }
+
+        var accessTokenLifetime = ResolveAccessTokenLifetime(_options.CurrentValue);
+        var token = await _tokenIssuer.IssueAsync(new CroniqTokenIssueRequest(
+            tenantId,
+            ClientId: user.UserId,
+            environmentTag,
+            scopes,
+            audience,
+            accessTokenLifetime),
+            cancellationToken).ConfigureAwait(false);
+
+        var (newRefreshToken, newHash) = CreateRefreshToken();
+        var now = _timeProvider.GetUtcNow();
+        var refreshExpiresAt = now.AddDays(ResolveRefreshTokenLifetimeDays(_options.CurrentValue));
+
+        var created = await _refreshTokens.CreateAsync(new RefreshTokenCreateRequest(
+            tenantId,
+            user.UserId,
+            newHash,
+            refreshExpiresAt),
+            cancellationToken).ConfigureAwait(false);
+
+        await _refreshTokens.RevokeAsync(tenantId, existing.TokenId, created.TokenId, cancellationToken).ConfigureAwait(false);
+
+        return new PasswordRefreshResult(true, token.AccessToken, newRefreshToken, token.ExpiresInSeconds);
+    }
+
+    public async Task<bool?> LogoutAsync(string tenantId, string refreshToken, CancellationToken cancellationToken = default)
+    {
+        if (!IsEnabled())
+        {
+            return null;
+        }
+
+        if (string.IsNullOrWhiteSpace(tenantId)) throw new ArgumentNullException(nameof(tenantId));
+        if (string.IsNullOrWhiteSpace(refreshToken)) throw new ArgumentNullException(nameof(refreshToken));
+
+        var refreshHash = HashRefreshToken(refreshToken);
+        var existing = await _refreshTokens.FindActiveByHashAsync(tenantId, refreshHash, cancellationToken).ConfigureAwait(false);
+        if (existing is null)
+        {
+            return false;
+        }
+
+        await _refreshTokens.RevokeAsync(tenantId, existing.TokenId, replacedByTokenId: null, cancellationToken).ConfigureAwait(false);
+        return true;
+    }
+
+    public string HashPassword(string userId, string username, string password)
+    {
+        if (string.IsNullOrWhiteSpace(userId)) throw new ArgumentNullException(nameof(userId));
+        if (string.IsNullOrWhiteSpace(username)) throw new ArgumentNullException(nameof(username));
+        if (string.IsNullOrWhiteSpace(password)) throw new ArgumentNullException(nameof(password));
+
+        return _passwordHasher.HashPassword(new PasswordAuthUser(userId, username), password);
+    }
+
+    private bool IsEnabled()
+    {
+        var options = _options.CurrentValue ?? new PasswordAuthOptions();
+        return options.Enabled;
+    }
+
+    private static TimeSpan ResolveAccessTokenLifetime(PasswordAuthOptions? options)
+    {
+        var minutes = options?.AccessTokenLifetimeMinutes ?? 15;
+        if (minutes <= 0)
+        {
+            minutes = 15;
+        }
+
+        return TimeSpan.FromMinutes(minutes);
+    }
+
+    private static int ResolveRefreshTokenLifetimeDays(PasswordAuthOptions? options)
+    {
+        var days = options?.RefreshTokenLifetimeDays ?? 7;
+        return days <= 0 ? 7 : days;
+    }
+
+    private static IReadOnlyCollection<string>? ResolveGrantedScopes(
+        IReadOnlyCollection<string> allowed,
+        IReadOnlyCollection<string>? requested)
+    {
+        if (allowed is null || allowed.Count == 0)
+        {
+            return Array.Empty<string>();
+        }
+
+        if (requested is null || requested.Count == 0)
+        {
+            return allowed;
+        }
+
+        var allowedSet = new HashSet<string>(allowed.Where(s => !string.IsNullOrWhiteSpace(s)).Select(s => s.Trim()), StringComparer.OrdinalIgnoreCase);
+        var requestedClean = requested.Where(s => !string.IsNullOrWhiteSpace(s)).Select(s => s.Trim()).ToArray();
+
+        foreach (var scope in requestedClean)
+        {
+            if (!allowedSet.Contains(scope))
+            {
+                return null;
+            }
+        }
+
+        return requestedClean;
+    }
+
+    private static (string Token, string Hash) CreateRefreshToken()
+    {
+        var bytes = new byte[32];
+        RandomNumberGenerator.Fill(bytes);
+        var token = Convert.ToBase64String(bytes);
+        var hash = HashRefreshToken(token);
+        return (token, hash);
+    }
+
+    private static string HashRefreshToken(string token)
+    {
+        var raw = Encoding.UTF8.GetBytes(token);
+        var hash = SHA256.HashData(raw);
+        return Convert.ToBase64String(hash);
+    }
+
+    private sealed record PasswordAuthUser(string UserId, string Username);
+}
+
+public sealed record PasswordLoginResult(
+    bool Success,
+    string? AccessToken,
+    string? RefreshToken,
+    int? ExpiresInSeconds,
+    DateTimeOffset? LockoutEndUtc);
+
+public sealed record PasswordRefreshResult(
+    bool Success,
+    string? AccessToken,
+    string? RefreshToken,
+    int? ExpiresInSeconds);

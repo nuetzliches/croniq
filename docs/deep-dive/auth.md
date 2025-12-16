@@ -13,11 +13,10 @@ This document dives deeper into the authentication/authorization subsystem than 
 
 ## Authentication Modes
 
-| Mode            | Description                                                                                 | Typical Use                                                         |
-| --------------- | ------------------------------------------------------------------------------------------- | ------------------------------------------------------------------- |
-| `InMemory`      | Single API key per host (`Croniq:Auth:InMemory:ApiKey`). No persistence.                    | Local dev, unit tests, samples.                                     |
-| `SqlServer`     | Multi-tenant API clients/keys persisted in SqlServer. Rotation, revocation, scopes per key. | Production.                                                         |
-| `Oidc` (hybrid) | OAuth2/OIDC bearer tokens validated via `Croniq:Auth:Oidc:*` settings.                      | Human operators, portals, automation that already leverages an IdP. |
+| Mode        | Description                                                                                 | Typical Use                     |
+| ----------- | ------------------------------------------------------------------------------------------- | ------------------------------- |
+| `InMemory`  | Single API key per host (`Croniq:Auth:InMemory:ApiKey`). No persistence.                    | Local dev, unit tests, samples. |
+| `SqlServer` | Tenant-aware API clients/keys persisted in SqlServer. Rotation, revocation, scopes per key. | Production.                     |
 
 Croniq inspects headers per request: `Authorization: Bearer ...` first, then `X-Croniq-Key`. Only one `ICallerContext` is produced per request.
 
@@ -29,9 +28,10 @@ Croniq inspects headers per request: `Authorization: Bearer ...` first, then `X-
 
 ### Tenant & Environment Claims
 
-- `Croniq:Auth:Oidc:TenantClaim` defaults to `tenant`, fallback `tid`.
-- `Croniq:Auth:Oidc:EnvironmentClaim` defaults to `env`; missing values use the tenant default (configured per host).
+- Bearer tokens and Croniq-minted tokens carry tenant/environment/scope claims.
 - API keys record both tenant and optional environment tag when issued.
+
+Forward-looking notes about federated login are tracked in `CLOUD-CONCEPT.md`.
 
 ## API & Admin Endpoints
 
@@ -136,11 +136,6 @@ Alle Summaries/Beschreibungen aus der Tabelle landen wortgleich in den neuen Ope
 | `Croniq:Auth:Mode`                          | `InMemory` or `SqlServer`.                                                       |
 | `Croniq:Auth:InMemory:ApiKey`               | Plaintext key for in-memory mode.                                                |
 | `Croniq:Auth:SqlServer:ConnectionString`    | Optional connection override. Falls back to `Croniq:SqlServer:ConnectionString`. |
-| `Croniq:Auth:Oidc:Authority`                | Issuer URL.                                                                      |
-| `Croniq:Auth:Oidc:Audience`                 | API resource identifier.                                                         |
-| `Croniq:Auth:Oidc:RequiredScopes`           | CSV list enforced at ingress.                                                    |
-| `Croniq:Auth:Oidc:TenantClaim`              | Claim name carrying tenant id (default `tenant`).                                |
-| `Croniq:Auth:Oidc:EnvironmentClaim`         | Claim name for environment tag (default `env`).                                  |
 | `Croniq:Auth:Tokens:Enabled`                | Toggles the built-in Croniq token issuer.                                        |
 | `Croniq:Auth:Tokens:Issuer`                 | Value emitted as `iss` for Croniq-minted tokens.                                 |
 | `Croniq:Auth:Tokens:DefaultAudience`        | Default `aud` claim when callers omit `audience`.                                |
@@ -157,5 +152,4 @@ Alle Summaries/Beschreibungen aus der Tabelle landen wortgleich in den neuen Ope
 
 - Add tenant lifecycle hooks (audit events, quotas, default environment metadata) to the existing onboarding routes.
 - Emit structured audit logs for key issuance/rotation/revocation and token failures.
-- Add caching of JWKS metadata for OIDC providers (per authority) and document cache invalidation knobs.
 - Provide automation scripts for issuing keys via CLI (tying into `tools/` folder).

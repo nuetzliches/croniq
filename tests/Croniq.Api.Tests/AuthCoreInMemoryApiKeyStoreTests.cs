@@ -12,12 +12,15 @@ public sealed class AuthCoreInMemoryApiKeyStoreTests
     private static readonly IOptionsMonitor<CroniqOidcOptions> DisabledOidc =
         new StubOptionsMonitor<CroniqOidcOptions>(new CroniqOidcOptions { Enabled = false });
 
+    private static readonly IOptionsMonitor<CroniqTokenOptions> DisabledCroniqTokens =
+        new StubOptionsMonitor<CroniqTokenOptions>(new CroniqTokenOptions { Enabled = false });
+
     [Fact]
     public async Task Issue_and_validate_roundtrip_returns_caller_context()
     {
         var store = new InMemoryApiKeyStore();
         var issued = await store.IssueAsync(new ApiKeyIssueRequest("tenant-1", "client-1", "dev", new[] { "schedules:read" }, null));
-        var factory = new CallerContextFactory(store, DisabledOidc, NullLogger<CallerContextFactory>.Instance);
+        var factory = new CallerContextFactory(store, DisabledOidc, DisabledCroniqTokens, NullLogger<CallerContextFactory>.Instance);
 
         var context = await factory.FromApiKeyAsync(issued.PlaintextSecret);
 

@@ -78,6 +78,35 @@ export const IssueTokenRequest = z
     })
     .partial();
 export type IssueTokenRequest = z.infer<typeof IssueTokenRequest>;
+export const PasswordLoginRequest = z
+    .object({
+        tenantId: z.string().nullable(),
+        username: z.string().nullable(),
+        password: z.string().nullable(),
+        environmentTag: z.string().nullable(),
+        scopes: z.array(z.string()).nullable(),
+        audience: z.string().nullable(),
+        tenantReference: z.string().nullable(),
+    })
+    .partial();
+export type PasswordLoginRequest = z.infer<typeof PasswordLoginRequest>;
+export const PasswordRefreshRequest = z
+    .object({
+        tenantId: z.string().nullable(),
+        refreshToken: z.string().nullable(),
+        environmentTag: z.string().nullable(),
+        scopes: z.array(z.string()).nullable(),
+        audience: z.string().nullable(),
+    })
+    .partial();
+export type PasswordRefreshRequest = z.infer<typeof PasswordRefreshRequest>;
+export const PasswordLogoutRequest = z
+    .object({
+        tenantId: z.string().nullable(),
+        refreshToken: z.string().nullable(),
+    })
+    .partial();
+export type PasswordLogoutRequest = z.infer<typeof PasswordLogoutRequest>;
 export const TriggerJobRequest = z.object({
     jobKey: z.string().min(1),
     metadata: z.record(z.string(), z.string()).nullish(),
@@ -99,6 +128,9 @@ export const schemas = {
     UpsertApiClientRequest,
     IssueApiKeyRequest,
     IssueTokenRequest,
+    PasswordLoginRequest,
+    PasswordRefreshRequest,
+    PasswordLogoutRequest,
     TriggerJobRequest,
     ExecutionStatus,
 };

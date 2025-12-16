@@ -70,6 +70,36 @@ describe('TenantTokenEndpointService', () => {
         });
     });
 
+    it('accepts plain string token responses', async () => {
+        (apiClient.issueTenantToken as unknown as ReturnType<typeof vi.fn>).mockResolvedValue('tenant-token-string');
+
+        const result = await service.issueTenantToken({
+            tenantId: 'cron-lab',
+            clientId: 'ui',
+            persistInSession: true,
+        });
+
+        expect(result.token).toBe('tenant-token-string');
+        expect(result.storedInSession).toBe(true);
+        expect(authSession.storeSessionToken).toHaveBeenCalledWith('tenant-token-string', { expiresAt: null });
+    });
+
+    it('accepts accessToken as the token field', async () => {
+        (apiClient.issueTenantToken as unknown as ReturnType<typeof vi.fn>).mockResolvedValue({
+            accessToken: 'tenant-access-token-123',
+        });
+
+        const result = await service.issueTenantToken({
+            tenantId: 'cron-lab',
+            clientId: 'ui',
+            persistInSession: true,
+        });
+
+        expect(result.token).toBe('tenant-access-token-123');
+        expect(result.storedInSession).toBe(true);
+        expect(authSession.storeSessionToken).toHaveBeenCalledWith('tenant-access-token-123', { expiresAt: null });
+    });
+
     it('returns null token and does not persist when response shape is invalid', async () => {
         (apiClient.issueTenantToken as unknown as ReturnType<typeof vi.fn>).mockResolvedValue({
             expiresAt: '2025-12-16T00:00:00.000Z',

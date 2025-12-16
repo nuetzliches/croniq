@@ -38,7 +38,7 @@ builder.Services.PostConfigure<CroniqAuthOptions>(options =>
 
 ## 3. Key Environment Variables
 
-See [`auth.md`](/guides/auth.md) for the end-to-end authentication story and when to prefer API keys vs OAuth2/OIDC.
+See [`auth.md`](/guides/auth.md) for the end-to-end authentication story and when to prefer API keys vs bearer tokens.
 
 | Variable                                           | Required                                                          | Description                                                                                | Example                                            |
 | -------------------------------------------------- | ----------------------------------------------------------------- | ------------------------------------------------------------------------------------------ | -------------------------------------------------- |
@@ -56,7 +56,7 @@ See [`auth.md`](/guides/auth.md) for the end-to-end authentication story and whe
 
 ## 4. Authentication Modes
 
-Croniq keeps authentication pluggable so you can start with a single API key and grow into OAuth2/OIDC without touching application code. Pick the mode that matches your caller profile, then set the corresponding configuration keys.
+Croniq keeps authentication pluggable so you can start with a single API key and grow into bearer tokens without touching application code. Pick the mode that matches your caller profile, then set the corresponding configuration keys.
 
 ### API Keys (machines / automation)
 
@@ -74,29 +74,14 @@ $Env:Croniq__Core__TenantId = "prod"
 $Env:Croniq__Core__EnvironmentTag = "prod-cluster"
 ```
 
-### OAuth2 / OIDC (interactive callers)
+### Password Login (humans)
 
-- Enable by setting `Croniq__Auth__Oidc__Enabled=true` in addition to `Croniq__Auth__Mode=SqlServer` (API keys can stay on for hybrid setups).
-- Required fields: `Authority`, `Audience`, `TenantClaim`, optional `EnvironmentClaim`, and `RequiredScopes`.
-- Croniq validates bearer tokens using the issuer's JWKS metadata and enforces the configured scopes **before** routing the request.
+Croniq can optionally expose username/password endpoints for self-hosted deployments.
 
-Sample JSON snippet:
+- Enable via `Croniq:Auth:Password:Enabled`.
+- Configure the default tenant via `Croniq:Auth:Password:DefaultTenant` so callers can omit tenant selection.
 
-```json
-"Croniq": {
-    "Auth": {
-        "Mode": "SqlServer",
-        "Oidc": {
-            "Enabled": true,
-            "Authority": "https://login.microsoftonline.com/<tenant>",
-            "Audience": "api://cronq",
-            "TenantClaim": "tid",
-            "EnvironmentClaim": "env",
-            "RequiredScopes": [ "cronq.api" ]
-        }
-    }
-}
-```
+See [docs/deep-dive/password-auth.md](/deep-dive/password-auth.md) for the full flow.
 
 ### Mixed Mode & Scope Mapping
 

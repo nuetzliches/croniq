@@ -4,14 +4,14 @@
 
 ## What Is Croniq?
 
-Croniq is a multi-tenant scheduling platform built on .NET 10. It combines a fluent job SDK, a configurable policy engine, and REST/gRPC gateways with SqlServer-backed durability. By keeping scheduling, throttling, and observability in one place, Croniq helps you coordinate maintenance tasks, compliance workflows, and recurring automations across dozens of services.
+Croniq is a tenant-aware scheduling platform built on .NET 10. It combines a fluent job SDK, a configurable policy engine, and REST/gRPC gateways with SqlServer-backed durability. By keeping scheduling, throttling, and observability in one place, Croniq helps you coordinate maintenance tasks, compliance workflows, and recurring automations across dozens of services.
 
 ### Why teams adopt Croniq
 
 - **Unified orchestration:** Register jobs once, attach cron/interval/event triggers, and let Croniq fan them out across workers.
 - **Central guardrails:** Apply retry, timeout, concurrency, and quota policies globally while keeping tenant isolation.
 - **Operational clarity:** Stream logs/metrics/traces via the built-in OpenTelemetry stack and inspect dead letters centrally.
-- **Secure access:** Mix API keys and OIDC callers with per-tenant scopes, rate limits, and auditing.
+- **Secure access:** Mix API keys and bearer tokens with per-tenant scopes, rate limits, and auditing.
 - **Easy onboarding:** Spin up the Docker dev stack, run the quickstart, and grow into the deeper architecture guides at your own pace.
 
 Whenever you need implementation details (dev stack bootstrap, CI/CD, troubleshooting), jump into `/deep-dive/`.

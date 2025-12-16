@@ -35,7 +35,7 @@ catch (CroniqRpcException ex)
 ## Auth & Headers
 
 - API-Key: send `X-Croniq-Key` header (AddCroniqSchedulerClient setzt ihn, wenn `ApiKey` hinterlegt ist).
-- Bearer/OIDC: send `Authorization: Bearer <token>`. Tenant/Environment werden aus Claims gezogen; Cross-Tenant wird mit `PermissionDenied` geblockt.
+- Bearer: send `Authorization: Bearer <token>`. Tenant/Environment werden aus Claims gezogen; Cross-Tenant wird mit `PermissionDenied` geblockt.
 
 ## Proto Semantik
 

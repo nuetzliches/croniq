@@ -8,21 +8,21 @@
 
 ## Guardrails & Dependencies
 
-- Backend prerequisites: stable schedule/job/admin APIs, gRPC-Web proxy (if needed), finalized OIDC story, and observability endpoints as called out in `docs/deep-dive/architecture.md` and `docs/deep-dive/ui.md`.
+- Backend prerequisites: stable schedule/job/admin APIs, gRPC-Web proxy (if needed), finalized login story, and observability endpoints as called out in `docs/deep-dive/architecture.md` and `docs/deep-dive/ui.md`.
 - Platform constraints: MIT/Apache/BSD-only dependencies, OpenTelemetry-first instrumentation, strict separation between secrets and UI bundles (no API keys in browser storage).
 - Hosting: built artifacts deploy either as static assets behind Croniq.Api or via a slim `Croniq.Ui` container image that speaks the same readiness/liveness protocol as other services.
 
 ## Technology Decisions
 
-| Concern            | Decision                                                                                 | Notes                                                                                                                                                                                                    |
-| ------------------ | ---------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Framework          | Angular 21 standalone apps, built with the Vite-powered builder                          | Gives SSR-ready hydration, Signals API, and CLI ergonomics familiar to enterprise contributors.                                                                                                          |
-| Styling            | Tailwind CSS + custom tokens                                                             | Tailwind provides utility primitives; we layer Croniq-specific tokens (semantic colors) via `tailwind.config.js` and CSS variables.                                                                      |
-| Component strategy | Headless primitives + lightweight shims                                                  | Compose Radix-inspired headless patterns with Tailwind classes to avoid Material sameness; focus on split-pane layouts, dense data grids, and status pills.                                              |
-| State/query        | Signals-first, typed services (optional query lib later)                                 | Current codebase is Signals-first + strict typing; if we add a query lib, it should be justified and used consistently (avoid half-migrations).                                                          |
-| Forms              | Angular Signal Forms (experimental in v21) + Zod at the edges                             | Prefer Signal Forms for new forms once we're comfortable with the API; use Zod to validate runtime config and API contracts.                                                                             |
-| Testing            | Vitest                                                                                   | E2E/Storybook are optional future additions; don't document them as required until wired in `package.json`.                                                                                              |
-| DX automation      | Angular MCP Server                                                                       | Dev-only helper (VS Code + MCP). Use `.vscode/mcp.json` + `npm run mcp` and keep it out of runtime builds.                                                                                               |
+| Concern            | Decision                                                        | Notes                                                                                                                                                       |
+| ------------------ | --------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Framework          | Angular 21 standalone apps, built with the Vite-powered builder | Gives SSR-ready hydration, Signals API, and CLI ergonomics familiar to enterprise contributors.                                                             |
+| Styling            | Tailwind CSS + custom tokens                                    | Tailwind provides utility primitives; we layer Croniq-specific tokens (semantic colors) via `tailwind.config.js` and CSS variables.                         |
+| Component strategy | Headless primitives + lightweight shims                         | Compose Radix-inspired headless patterns with Tailwind classes to avoid Material sameness; focus on split-pane layouts, dense data grids, and status pills. |
+| State/query        | Signals-first, typed services (optional query lib later)        | Current codebase is Signals-first + strict typing; if we add a query lib, it should be justified and used consistently (avoid half-migrations).             |
+| Forms              | Angular Signal Forms (experimental in v21) + Zod at the edges   | Prefer Signal Forms for new forms once we're comfortable with the API; use Zod to validate runtime config and API contracts.                                |
+| Testing            | Vitest                                                          | E2E/Storybook are optional future additions; don't document them as required until wired in `package.json`.                                                 |
+| DX automation      | Angular MCP Server                                              | Dev-only helper (VS Code + MCP). Use `.vscode/mcp.json` + `npm run mcp` and keep it out of runtime builds.                                                  |
 
 ## Repository & Project Layout
 
@@ -91,7 +91,7 @@ public/
 
 ## Security & Auth Integration
 
-- Support OIDC PKCE login for human operators; fallback to short-lived API tokens for service technicians behind VPN.
+- Support interactive login (PKCE) for human operators; fallback to short-lived API tokens for service technicians behind VPN.
 - Never persist secrets locally; rely on backend-managed session cookies or ephemeral tokens stored in memory.
 - Integrate with `ICallerContext` metadata so the UI can show "acting as" context and log audit trails for manual actions.
 - Enforce feature flags in the backend as well; the UI only exposes toggles that the API already guards.
@@ -118,7 +118,7 @@ Optional future additions (only when implemented): ESLint/template lint, Playwri
    - Produce wireframes + updated design tokens.
    - Finalize Tailwind theme + typography approvals with stakeholders.
 2. **Scaffolding & Auth** (1 sprint)
-   - Initialize Angular workspace, configure MCP tasks, hook up OIDC stub + tenant switcher.
+   - Initialize Angular workspace, configure MCP tasks, hook up login bootstrap stub + tenant switcher.
 3. **MVP Data Surfaces** (2 sprints)
    - Dashboard metrics (stubbed), schedules read-only grid, job registry view.
 4. **Admin Controls** (2 sprints)
@@ -130,5 +130,5 @@ Optional future additions (only when implemented): ESLint/template lint, Playwri
 
 - Do we expose Grafana panels inline or via deep-link? (Impacts CSP + iframe hardening.)
 - Should we host the UI on the same domain as Croniq.Api to reuse cookies, or isolate it on `ui.croniq.dev` for stricter CSP?
-- Is multi-tenant impersonation required on day one, or can we defer until the support runbook is ready?
+- Is tenant impersonation required on day one, or can we defer until the support runbook is ready?
 - How aggressively should we prefetch data when operators hover over job links (trade-off between responsiveness and API load)?

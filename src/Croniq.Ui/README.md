@@ -38,8 +38,13 @@ Zoneless change detection is enabled in `src/app/app.config.ts` via `provideZone
 
 Practical implications:
 
-- Prefer Signals (`signal`, `computed`, `effect`) for UI state.
-- If you update non-signal state from async callbacks, you may need `ChangeDetectorRef.markForCheck()`.
+## Auth (dev)
+
+The UI supports a simple username/password login against the backend `/auth/*` routes.
+
+- Open `http://localhost:4200/login`
+- The access token is stored in `sessionStorage` only.
+- Tenant/environment are server-configured and are not set in the login payload.
 
 ## OpenAPI  Zod generation
 
@@ -67,4 +72,3 @@ Dev-only helper to enable workspace-aware Angular operations via MCP:
 
 - Start: `npm run mcp`
 - VS Code task: `Angular MCP Server`
-

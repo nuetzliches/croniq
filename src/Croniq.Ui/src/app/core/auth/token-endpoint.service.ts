@@ -8,25 +8,34 @@ import { tryIsoFromUnknown } from '../time/clock';
 import { AuthSessionService } from './auth-session.service';
 
 const issuedTenantTokenResponseSchema = z
-    .object({
-        token: z.string().trim().min(1).optional(),
-        value: z.string().trim().min(1).optional(),
-        apiKey: z.string().trim().min(1).optional(),
-        expiresAt: z.unknown().optional(),
-    })
-    .passthrough()
-    .superRefine((data, ctx) => {
-        if (!data.token && !data.value && !data.apiKey) {
-            ctx.addIssue({
-                code: z.ZodIssueCode.custom,
-                message: 'Expected token response to contain token/value (legacy: apiKey).',
-            });
+    .preprocess((input) => {
+        if (typeof input === 'string') {
+            const trimmed = input.trim();
+            return trimmed ? { value: trimmed } : input;
         }
-    })
-    .transform((data) => ({
-        value: (data.token ?? data.value ?? data.apiKey) as string,
-        expiresAt: tryIsoFromUnknown(data.expiresAt),
-    }));
+        return input;
+    }, z
+        .object({
+            token: z.string().trim().min(1).optional(),
+            value: z.string().trim().min(1).optional(),
+            accessToken: z.string().trim().min(1).optional(),
+            apiKey: z.string().trim().min(1).optional(),
+            expiresAt: z.unknown().optional(),
+        })
+        .passthrough()
+        .superRefine((data, ctx) => {
+            if (!data.token && !data.value && !data.accessToken && !data.apiKey) {
+                ctx.addIssue({
+                    code: z.ZodIssueCode.custom,
+                    message: 'Expected token response to contain token/value/accessToken (legacy: apiKey).',
+                });
+            }
+        })
+        .transform((data) => ({
+            value: (data.token ?? data.value ?? data.accessToken ?? data.apiKey) as string,
+            expiresAt: tryIsoFromUnknown(data.expiresAt),
+        }))
+    );
 
 type IssuedTenantToken = z.infer<typeof issuedTenantTokenResponseSchema>;
 

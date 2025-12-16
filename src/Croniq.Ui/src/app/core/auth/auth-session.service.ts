@@ -22,9 +22,11 @@ const STORAGE_KEYS = {
 @Injectable({ providedIn: 'root' })
 export class AuthSessionService implements CroniqCredentialSupplier {
     private readonly sessionTokenSignal = signal<StoredSecret | null>(loadSecret(STORAGE_KEYS.sessionToken));
+    private readonly refreshTokenSignal = signal<string | null>(null);
 
     readonly sessionToken = this.sessionTokenSignal.asReadonly();
     readonly sessionTokenExpired = computed(() => isSecretExpired(this.sessionTokenSignal()));
+    readonly refreshToken = this.refreshTokenSignal.asReadonly();
 
     constructor() {
         effect(() => {
@@ -46,7 +48,17 @@ export class AuthSessionService implements CroniqCredentialSupplier {
 
     clearSessionToken(): void {
         this.sessionTokenSignal.set(null);
+        this.refreshTokenSignal.set(null);
         clearSecret(STORAGE_KEYS.sessionToken);
+    }
+
+    storeRefreshToken(value: string): void {
+        const trimmed = value?.trim();
+        this.refreshTokenSignal.set(trimmed ? trimmed : null);
+    }
+
+    clearRefreshToken(): void {
+        this.refreshTokenSignal.set(null);
     }
 
     async startOidcBootstrap(): Promise<void> {

@@ -20,6 +20,8 @@ public sealed class SqlServerDbContext(DbContextOptions<SqlServerDbContext> opti
     public DbSet<WebhookSecretHistoryEntity> WebhookSecretHistory => Set<WebhookSecretHistoryEntity>();
     public DbSet<WebhookEndpointIpRuleEntity> WebhookEndpointIpRules => Set<WebhookEndpointIpRuleEntity>();
     public DbSet<TenantEntity> Tenants => Set<TenantEntity>();
+    public DbSet<PasswordUserEntity> PasswordUsers => Set<PasswordUserEntity>();
+    public DbSet<RefreshTokenEntity> RefreshTokens => Set<RefreshTokenEntity>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -34,6 +36,8 @@ public sealed class SqlServerDbContext(DbContextOptions<SqlServerDbContext> opti
         ConfigureWebhookEndpointEvents(modelBuilder.Entity<WebhookEndpointEventEntity>());
         ConfigureWebhookSecretHistory(modelBuilder.Entity<WebhookSecretHistoryEntity>());
         ConfigureWebhookEndpointIpRules(modelBuilder.Entity<WebhookEndpointIpRuleEntity>());
+        ConfigurePasswordUsers(modelBuilder.Entity<PasswordUserEntity>());
+        ConfigureRefreshTokens(modelBuilder.Entity<RefreshTokenEntity>());
     }
 
     private static void ConfigureTenants(EntityTypeBuilder<TenantEntity> builder)
@@ -142,5 +146,25 @@ public sealed class SqlServerDbContext(DbContextOptions<SqlServerDbContext> opti
         builder.HasIndex(x => new { x.HookKey, x.Cidr }).IsUnique();
         builder.Property(x => x.CreatedAtUtc).HasDefaultValueSql("sysutcdatetime()");
         builder.Property(x => x.UpdatedAtUtc).HasDefaultValueSql("sysutcdatetime()");
+    }
+
+    private static void ConfigurePasswordUsers(EntityTypeBuilder<PasswordUserEntity> builder)
+    {
+        builder.ToTable("Users", "auth");
+        builder.HasKey(x => x.UserId);
+        builder.HasIndex(x => new { x.TenantId, x.UsernameNormalized }).IsUnique();
+        builder.HasIndex(x => new { x.TenantId, x.IsActive });
+        builder.Property(x => x.CreatedAtUtc).HasDefaultValueSql("sysutcdatetime()");
+        builder.Property(x => x.UpdatedAtUtc).HasDefaultValueSql("sysutcdatetime()");
+    }
+
+    private static void ConfigureRefreshTokens(EntityTypeBuilder<RefreshTokenEntity> builder)
+    {
+        builder.ToTable("RefreshTokens", "auth");
+        builder.HasKey(x => x.TokenId);
+        builder.HasIndex(x => new { x.TenantId, x.TokenHash }).IsUnique();
+        builder.HasIndex(x => new { x.TenantId, x.UserId });
+        builder.HasIndex(x => x.ExpiresAtUtc);
+        builder.Property(x => x.CreatedAtUtc).HasDefaultValueSql("sysutcdatetime()");
     }
 }

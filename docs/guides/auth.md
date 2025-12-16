@@ -1,14 +1,14 @@
 # Croniq Authentication Guide
 
-This consumer-focused guide explains how to secure Croniq hosts with API keys or OAuth2/OIDC. Use it when you deploy `Croniq.Api`, any sample host, or your own app that embeds Croniq services. The deep-dive design remains in `/deep-dive/security.md`.
+This consumer-focused guide explains how to secure Croniq hosts with API keys and (optionally) bearer tokens. Use it when you deploy `Croniq.Api`, any sample host, or your own app that embeds Croniq services. The deep-dive design remains in `/deep-dive/security.md`.
 
 ## Choose an Authentication Mode
 
-| Scenario                                     | Recommended Mode          | Notes                                                                                                                   |
-| -------------------------------------------- | ------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
-| Automation, schedulers, integration tests    | API keys                  | Lowest friction, scopes enforced per key, easiest to rotate non-interactive callers.                                    |
-| Human operators via UI, self-service portals | OAuth2/OIDC bearer tokens | Reuse your identity provider (Entra ID, Auth0, etc.) and map tenants via claims.                                        |
-| Hybrid workloads                             | Mixed (enable both)       | Croniq inspects `Authorization: Bearer ...` first, then `X-Croniq-Key`. Only one caller context is created per request. |
+| Scenario                                  | Recommended Mode    | Notes                                                                                                                   |
+| ----------------------------------------- | ------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| Automation, schedulers, integration tests | API keys            | Lowest friction, scopes enforced per key, easiest to rotate non-interactive callers.                                    |
+| Human operators via UI                    | Password login      | Self-hosted option; Croniq issues access + refresh tokens.                                                              |
+| Hybrid workloads                          | Mixed (enable both) | Croniq inspects `Authorization: Bearer ...` first, then `X-Croniq-Key`. Only one caller context is created per request. |
 
 You can switch between modes (or enable both) by changing configuration—no code changes are required.
 
@@ -55,52 +55,20 @@ set Croniq__Core__EnvironmentTag=dev-jane
 - In-memory mode: update the environment variable and restart the host. Any cached callers must pick up the new value.
 - Always remove revoked keys from CI/CD secrets. Croniq rate limiting partitions by Tenant + Caller ID, so stale keys fall back to anonymous throttles and fail fast.
 
-## OAuth2 / OIDC
+## Password Login
 
-### When to Use OAuth2/OIDC
+Croniq can expose a username/password login for self-hosted deployments.
 
-- Human users interact with Croniq dashboards or management APIs.
-- You already have an IdP and prefer centralized lifecycle management.
-- You need per-user scopes (e.g., schedule viewers vs tenant admins).
+- Endpoints: `/auth/login`, `/auth/refresh`, `/auth/logout`
+- Configure default tenant resolution via `Croniq:Auth:Password:DefaultTenant`.
 
-### High-Level Steps
-
-1. **Create an application** in your identity provider.
-   - Enable the authorization code + PKCE or client credentials flow depending on your client type.
-   - Configure audiences/scopes that match Croniq permissions (e.g., `schedules.read`, `jobs.trigger`, `tenants.admin`).
-2. **Configure Croniq** via `Croniq:Auth:Oidc` options:
-   - `Authority`: the issuer URL (e.g., `https://login.microsoftonline.com/<tenant>/v2.0`).
-   - `Audience`: the API resource identifier your IdP issues.
-   - `RequiredScopes`: comma-separated list enforced at gateway level.
-   - `TenantClaim`: claim name that contains the tenant id (`tenant`, `tid`, or custom claim).
-3. **Enable JWT bearer authentication** in your host (Croniq.Api wires this automatically once the backlog item lands).
-4. **Send requests** with `Authorization: Bearer <access-token>` headers. Croniq validates the token using the authority JWKS and builds the caller context from claims.
-
-### Claim Mapping
-
-| Croniq Field    | Default Claim             | Notes                                                                      |
-| --------------- | ------------------------- | -------------------------------------------------------------------------- |
-| Tenant Id       | `tenant` (fallback `tid`) | Override via `Croniq:Auth:Oidc:TenantClaim` when you use custom naming.    |
-| Environment Tag | `env`                     | Missing value falls back to the configured default per tenant/environment. |
-| Scopes          | `scope` or `scp`          | Missing required scopes cause a 403 response.                              |
-| Caller Id       | `sub`                     | combine with tenant when you audit requests.                               |
-
-### Mixed Mode
-
-Set both configurations (API keys + OIDC). Croniq inspects headers in this order per request:
-
-1. `Authorization: Bearer ...` → OIDC path.
-2. `X-Croniq-Key` → API key path.
-3. No headers → request rejected with 401.
-
-This allows service accounts and humans to coexist without separate gateways.
+See [docs/deep-dive/password-auth.md](/deep-dive/password-auth.md) for details.
 
 ## Local Development
 
 | Task                      | Tip                                                                                                                                                     |
 | ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Use a single shared key   | Keep `Croniq__Auth__Mode=InMemory` for local runs and place the key in `.env`. Scripts in `scripts/` already load `.env` when they start the dev stack. |
-| Test OAuth flows          | Run the API outside Docker (so it can reach your IdP callback) and point it at a dev tenant. Use `dotnet user-secrets` to store client secrets.         |
 | Simulate multiple tenants | Override `Croniq__Core__TenantId` and `Croniq__Core__EnvironmentTag` per terminal session to see how rate limiting and observability labels change.     |
 
 ## FAQs
