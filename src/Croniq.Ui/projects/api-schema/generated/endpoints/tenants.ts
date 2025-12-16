@@ -1,6 +1,5 @@
 import { z } from 'zod';
 import type { EndpointDefinition } from '../schemas';
-
 import {
     UpsertTenantRequest,
     UpsertJobRequest,
@@ -19,65 +18,46 @@ export const TenantsApi: EndpointDefinition[] = [
     {
         method: 'get',
         path: '/tenants',
+        description: `Returns tenant metadata. Use state&#x3D;all to include inactive tenants.`,
         requestFormat: 'json',
         parameters: [
-            {
-                name: 'state',
-                type: 'Query',
-                schema: z.string().optional(),
-            },
+            { name: 'state', type: 'Query', schema: z.string().optional() },
         ],
         response: z.void(),
     },
     {
         method: 'post',
         path: '/tenants',
+        description: `Creates or updates a tenant record based on the provided reference and name.`,
         requestFormat: 'json',
         parameters: [
-            {
-                name: 'body',
-                type: 'Body',
-                schema: UpsertTenantRequest,
-            },
+            { name: 'body', type: 'Body', schema: UpsertTenantRequest },
         ],
         response: z.void(),
     },
     {
         method: 'get',
         path: '/tenants/:tenantId',
+        description: `Returns tenant metadata for the provided tenant identifier.`,
         requestFormat: 'json',
-        parameters: [
-            {
-                name: 'tenantId',
-                type: 'Path',
-                schema: z.string(),
-            },
-        ],
+        parameters: [{ name: 'tenantId', type: 'Path', schema: z.string() }],
         response: z.void(),
     },
     {
         method: 'delete',
         path: '/tenants/:tenantId',
+        description: `Marks the tenant as inactive without deleting historical data.`,
         requestFormat: 'json',
-        parameters: [
-            {
-                name: 'tenantId',
-                type: 'Path',
-                schema: z.string(),
-            },
-        ],
+        parameters: [{ name: 'tenantId', type: 'Path', schema: z.string() }],
         response: z.void(),
     },
     {
         method: 'get',
         path: '/tenants/:tenantId/api-clients',
+        description: `Returns all registered API clients for the tenant, optionally filtered by environment.`,
         requestFormat: 'json',
         parameters: [
-            {
-                name: 'tenantId',
-                type: 'Path',
-                schema: z.string(),
-            },
+            { name: 'tenantId', type: 'Path', schema: z.string() },
             {
                 name: 'environment',
                 type: 'Query',
@@ -89,18 +69,11 @@ export const TenantsApi: EndpointDefinition[] = [
     {
         method: 'post',
         path: '/tenants/:tenantId/api-clients',
+        description: `Creates a tenant-scoped API client or updates metadata/scopes when the client already exists.`,
         requestFormat: 'json',
         parameters: [
-            {
-                name: 'body',
-                type: 'Body',
-                schema: UpsertApiClientRequest,
-            },
-            {
-                name: 'tenantId',
-                type: 'Path',
-                schema: z.string(),
-            },
+            { name: 'body', type: 'Body', schema: UpsertApiClientRequest },
+            { name: 'tenantId', type: 'Path', schema: z.string() },
             {
                 name: 'environment',
                 type: 'Query',
@@ -112,18 +85,11 @@ export const TenantsApi: EndpointDefinition[] = [
     {
         method: 'get',
         path: '/tenants/:tenantId/api-clients/:clientId',
+        description: `Returns metadata about a tenant-scoped API client, including scopes and activity flags.`,
         requestFormat: 'json',
         parameters: [
-            {
-                name: 'tenantId',
-                type: 'Path',
-                schema: z.string(),
-            },
-            {
-                name: 'clientId',
-                type: 'Path',
-                schema: z.string(),
-            },
+            { name: 'tenantId', type: 'Path', schema: z.string() },
+            { name: 'clientId', type: 'Path', schema: z.string() },
             {
                 name: 'environment',
                 type: 'Query',
@@ -135,18 +101,11 @@ export const TenantsApi: EndpointDefinition[] = [
     {
         method: 'delete',
         path: '/tenants/:tenantId/api-clients/:clientId',
+        description: `Deletes the API client metadata and revokes any associated API keys.`,
         requestFormat: 'json',
         parameters: [
-            {
-                name: 'tenantId',
-                type: 'Path',
-                schema: z.string(),
-            },
-            {
-                name: 'clientId',
-                type: 'Path',
-                schema: z.string(),
-            },
+            { name: 'tenantId', type: 'Path', schema: z.string() },
+            { name: 'clientId', type: 'Path', schema: z.string() },
             {
                 name: 'environment',
                 type: 'Query',
@@ -158,23 +117,12 @@ export const TenantsApi: EndpointDefinition[] = [
     {
         method: 'post',
         path: '/tenants/:tenantId/api-clients/:clientId/tokens',
+        description: `Same payload as the tenant route but infers the clientId from the path.`,
         requestFormat: 'json',
         parameters: [
-            {
-                name: 'body',
-                type: 'Body',
-                schema: IssueTokenRequest,
-            },
-            {
-                name: 'tenantId',
-                type: 'Path',
-                schema: z.string(),
-            },
-            {
-                name: 'clientId',
-                type: 'Path',
-                schema: z.string(),
-            },
+            { name: 'body', type: 'Body', schema: IssueTokenRequest },
+            { name: 'tenantId', type: 'Path', schema: z.string() },
+            { name: 'clientId', type: 'Path', schema: z.string() },
             {
                 name: 'environment',
                 type: 'Query',
@@ -186,36 +134,22 @@ export const TenantsApi: EndpointDefinition[] = [
     {
         method: 'post',
         path: '/tenants/:tenantId/api-keys',
+        description: `Creates a new API key for the specified tenant client and returns the plaintext once.`,
         requestFormat: 'json',
         parameters: [
-            {
-                name: 'body',
-                type: 'Body',
-                schema: IssueApiKeyRequest,
-            },
-            {
-                name: 'tenantId',
-                type: 'Path',
-                schema: z.string(),
-            },
+            { name: 'body', type: 'Body', schema: IssueApiKeyRequest },
+            { name: 'tenantId', type: 'Path', schema: z.string() },
         ],
         response: z.void(),
     },
     {
         method: 'delete',
         path: '/tenants/:tenantId/api-keys/:keyId',
+        description: `Immediately revokes an API key for the tenant.`,
         requestFormat: 'json',
         parameters: [
-            {
-                name: 'tenantId',
-                type: 'Path',
-                schema: z.string(),
-            },
-            {
-                name: 'keyId',
-                type: 'Path',
-                schema: z.string(),
-            },
+            { name: 'tenantId', type: 'Path', schema: z.string() },
+            { name: 'keyId', type: 'Path', schema: z.string() },
             {
                 name: 'environment',
                 type: 'Query',
@@ -227,18 +161,11 @@ export const TenantsApi: EndpointDefinition[] = [
     {
         method: 'post',
         path: '/tenants/:tenantId/api-keys/:keyId/rotate',
+        description: `Revokes an existing API key and returns a fresh secret for the same client.`,
         requestFormat: 'json',
         parameters: [
-            {
-                name: 'tenantId',
-                type: 'Path',
-                schema: z.string(),
-            },
-            {
-                name: 'keyId',
-                type: 'Path',
-                schema: z.string(),
-            },
+            { name: 'tenantId', type: 'Path', schema: z.string() },
+            { name: 'keyId', type: 'Path', schema: z.string() },
             {
                 name: 'environment',
                 type: 'Query',
@@ -250,23 +177,12 @@ export const TenantsApi: EndpointDefinition[] = [
     {
         method: 'get',
         path: '/tenants/:tenantId/executions',
+        description: `Returns execution summaries for the tenant/environment scope with optional filters.`,
         requestFormat: 'json',
         parameters: [
-            {
-                name: 'tenantId',
-                type: 'Path',
-                schema: z.string(),
-            },
-            {
-                name: 'environment',
-                type: 'Query',
-                schema: z.string(),
-            },
-            {
-                name: 'jobKey',
-                type: 'Query',
-                schema: z.string().optional(),
-            },
+            { name: 'tenantId', type: 'Path', schema: z.string() },
+            { name: 'environment', type: 'Query', schema: z.string() },
+            { name: 'jobKey', type: 'Query', schema: z.string().optional() },
             {
                 name: 'status',
                 type: 'Query',
@@ -295,233 +211,128 @@ export const TenantsApi: EndpointDefinition[] = [
     {
         method: 'get',
         path: '/tenants/:tenantId/executions/:executionId',
+        description: `Returns metadata for a single execution in the tenant/environment scope.`,
         requestFormat: 'json',
         parameters: [
-            {
-                name: 'tenantId',
-                type: 'Path',
-                schema: z.string(),
-            },
-            {
-                name: 'executionId',
-                type: 'Path',
-                schema: z.string(),
-            },
-            {
-                name: 'environment',
-                type: 'Query',
-                schema: z.string(),
-            },
+            { name: 'tenantId', type: 'Path', schema: z.string() },
+            { name: 'executionId', type: 'Path', schema: z.string() },
+            { name: 'environment', type: 'Query', schema: z.string() },
         ],
         response: z.void(),
     },
     {
         method: 'get',
         path: '/tenants/:tenantId/executions/:executionId/logs',
+        description: `Streams NDJSON execution logs for a tenant-scoped execution after authorizing tenant scope.`,
         requestFormat: 'json',
         parameters: [
-            {
-                name: 'tenantId',
-                type: 'Path',
-                schema: z.string(),
-            },
-            {
-                name: 'executionId',
-                type: 'Path',
-                schema: z.string(),
-            },
+            { name: 'tenantId', type: 'Path', schema: z.string() },
+            { name: 'executionId', type: 'Path', schema: z.string() },
         ],
         response: z.void(),
     },
     {
         method: 'get',
         path: '/tenants/:tenantId/jobs',
+        description: `Returns all job definitions for the tenant/environment scope.`,
         requestFormat: 'json',
         parameters: [
-            {
-                name: 'tenantId',
-                type: 'Path',
-                schema: z.string(),
-            },
-            {
-                name: 'environment',
-                type: 'Query',
-                schema: z.string(),
-            },
+            { name: 'tenantId', type: 'Path', schema: z.string() },
+            { name: 'environment', type: 'Query', schema: z.string() },
         ],
         response: z.void(),
     },
     {
         method: 'post',
         path: '/tenants/:tenantId/jobs',
+        description: `Creates or updates the job definition for the specified job key.`,
         requestFormat: 'json',
         parameters: [
-            {
-                name: 'body',
-                type: 'Body',
-                schema: UpsertJobRequest,
-            },
-            {
-                name: 'tenantId',
-                type: 'Path',
-                schema: z.string(),
-            },
-            {
-                name: 'environment',
-                type: 'Query',
-                schema: z.string(),
-            },
+            { name: 'body', type: 'Body', schema: UpsertJobRequest },
+            { name: 'tenantId', type: 'Path', schema: z.string() },
+            { name: 'environment', type: 'Query', schema: z.string() },
         ],
         response: z.void(),
     },
     {
         method: 'get',
         path: '/tenants/:tenantId/jobs/:jobId',
+        description: `Returns the job definition for the specified job key.`,
         requestFormat: 'json',
         parameters: [
-            {
-                name: 'tenantId',
-                type: 'Path',
-                schema: z.string(),
-            },
-            {
-                name: 'jobId',
-                type: 'Path',
-                schema: z.string(),
-            },
-            {
-                name: 'environment',
-                type: 'Query',
-                schema: z.string(),
-            },
+            { name: 'tenantId', type: 'Path', schema: z.string() },
+            { name: 'jobId', type: 'Path', schema: z.string() },
+            { name: 'environment', type: 'Query', schema: z.string() },
         ],
         response: z.void(),
     },
     {
         method: 'delete',
         path: '/tenants/:tenantId/jobs/:jobId',
+        description: `Deletes the job definition and associated triggers within the tenant/environment scope.`,
         requestFormat: 'json',
         parameters: [
-            {
-                name: 'tenantId',
-                type: 'Path',
-                schema: z.string(),
-            },
-            {
-                name: 'jobId',
-                type: 'Path',
-                schema: z.string(),
-            },
-            {
-                name: 'environment',
-                type: 'Query',
-                schema: z.string(),
-            },
+            { name: 'tenantId', type: 'Path', schema: z.string() },
+            { name: 'jobId', type: 'Path', schema: z.string() },
+            { name: 'environment', type: 'Query', schema: z.string() },
         ],
         response: z.void(),
     },
     {
         method: 'get',
         path: '/tenants/:tenantId/schedules',
+        description: `Returns all persisted schedules for the tenant/environment scope, optionally filtered by job key.`,
         requestFormat: 'json',
         parameters: [
-            {
-                name: 'tenantId',
-                type: 'Path',
-                schema: z.string(),
-            },
-            {
-                name: 'environment',
-                type: 'Query',
-                schema: z.string(),
-            },
-            {
-                name: 'jobKey',
-                type: 'Query',
-                schema: z.string().optional(),
-            },
+            { name: 'tenantId', type: 'Path', schema: z.string() },
+            { name: 'environment', type: 'Query', schema: z.string() },
+            { name: 'jobKey', type: 'Query', schema: z.string().optional() },
         ],
         response: z.void(),
     },
     {
         method: 'post',
         path: '/tenants/:tenantId/schedules',
+        description: `Registers a Cron-based trigger for the specified tenant-scoped job key.`,
         requestFormat: 'json',
         parameters: [
-            {
-                name: 'body',
-                type: 'Body',
-                schema: UpsertScheduleRequest,
-            },
-            {
-                name: 'tenantId',
-                type: 'Path',
-                schema: z.string(),
-            },
+            { name: 'body', type: 'Body', schema: UpsertScheduleRequest },
+            { name: 'tenantId', type: 'Path', schema: z.string() },
         ],
         response: z.void(),
     },
     {
         method: 'get',
         path: '/tenants/:tenantId/schedules/:triggerId',
+        description: `Returns the persisted schedule metadata for the requested trigger identifier.`,
         requestFormat: 'json',
         parameters: [
-            {
-                name: 'tenantId',
-                type: 'Path',
-                schema: z.string(),
-            },
-            {
-                name: 'triggerId',
-                type: 'Path',
-                schema: z.string(),
-            },
-            {
-                name: 'environment',
-                type: 'Query',
-                schema: z.string(),
-            },
+            { name: 'tenantId', type: 'Path', schema: z.string() },
+            { name: 'triggerId', type: 'Path', schema: z.string() },
+            { name: 'environment', type: 'Query', schema: z.string() },
         ],
         response: z.void(),
     },
     {
         method: 'delete',
         path: '/tenants/:tenantId/schedules/:triggerId',
+        description: `Deletes the persisted trigger for the tenant/environment scope.`,
         requestFormat: 'json',
         parameters: [
-            {
-                name: 'tenantId',
-                type: 'Path',
-                schema: z.string(),
-            },
-            {
-                name: 'triggerId',
-                type: 'Path',
-                schema: z.string(),
-            },
-            {
-                name: 'environment',
-                type: 'Query',
-                schema: z.string(),
-            },
+            { name: 'tenantId', type: 'Path', schema: z.string() },
+            { name: 'triggerId', type: 'Path', schema: z.string() },
+            { name: 'environment', type: 'Query', schema: z.string() },
         ],
         response: z.void(),
     },
     {
         method: 'post',
         path: '/tenants/:tenantId/tokens',
+        description: `Mints a Croniq-signed bearer token for the specified client (tenant-level variant).`,
         requestFormat: 'json',
         parameters: [
-            {
-                name: 'body',
-                type: 'Body',
-                schema: IssueTokenRequest,
-            },
-            {
-                name: 'tenantId',
-                type: 'Path',
-                schema: z.string(),
-            },
+            { name: 'body', type: 'Body', schema: IssueTokenRequest },
+            { name: 'tenantId', type: 'Path', schema: z.string() },
             {
                 name: 'environment',
                 type: 'Query',
@@ -533,24 +344,18 @@ export const TenantsApi: EndpointDefinition[] = [
     {
         method: 'get',
         path: '/tenants/:tenantId/webhooks',
+        description: `Returns all webhook endpoints for the specified tenant/environment scope.`,
         requestFormat: 'json',
         parameters: [
-            {
-                name: 'tenantId',
-                type: 'Path',
-                schema: z.string(),
-            },
-            {
-                name: 'environment',
-                type: 'Query',
-                schema: z.string(),
-            },
+            { name: 'tenantId', type: 'Path', schema: z.string() },
+            { name: 'environment', type: 'Query', schema: z.string() },
         ],
         response: z.void(),
     },
     {
         method: 'post',
         path: '/tenants/:tenantId/webhooks',
+        description: `Registers a webhook endpoint for a tenant/environment, optionally overriding rate limits and signatures.`,
         requestFormat: 'json',
         parameters: [
             {
@@ -558,192 +363,95 @@ export const TenantsApi: EndpointDefinition[] = [
                 type: 'Body',
                 schema: UpsertWebhookEndpointRequest,
             },
-            {
-                name: 'tenantId',
-                type: 'Path',
-                schema: z.string(),
-            },
-            {
-                name: 'environment',
-                type: 'Query',
-                schema: z.string(),
-            },
-            {
-                name: 'allowUnsigned',
-                type: 'Query',
-                schema: z.boolean(),
-            },
+            { name: 'tenantId', type: 'Path', schema: z.string() },
+            { name: 'environment', type: 'Query', schema: z.string() },
+            { name: 'allowUnsigned', type: 'Query', schema: z.boolean() },
         ],
         response: z.void(),
     },
     {
         method: 'delete',
         path: '/tenants/:tenantId/webhooks/:hookKey',
+        description: `Removes a webhook endpoint and its metadata for the tenant/environment scope.`,
         requestFormat: 'json',
         parameters: [
-            {
-                name: 'tenantId',
-                type: 'Path',
-                schema: z.string(),
-            },
-            {
-                name: 'hookKey',
-                type: 'Path',
-                schema: z.string(),
-            },
-            {
-                name: 'environment',
-                type: 'Query',
-                schema: z.string(),
-            },
+            { name: 'tenantId', type: 'Path', schema: z.string() },
+            { name: 'hookKey', type: 'Path', schema: z.string() },
+            { name: 'environment', type: 'Query', schema: z.string() },
         ],
         response: z.void(),
     },
     {
         method: 'get',
         path: '/tenants/:tenantId/webhooks/:hookKey/ip-rules',
+        description: `Returns the CIDR allow-list associated with a webhook endpoint.`,
         requestFormat: 'json',
         parameters: [
-            {
-                name: 'tenantId',
-                type: 'Path',
-                schema: z.string(),
-            },
-            {
-                name: 'hookKey',
-                type: 'Path',
-                schema: z.string(),
-            },
-            {
-                name: 'environment',
-                type: 'Query',
-                schema: z.string(),
-            },
+            { name: 'tenantId', type: 'Path', schema: z.string() },
+            { name: 'hookKey', type: 'Path', schema: z.string() },
+            { name: 'environment', type: 'Query', schema: z.string() },
         ],
         response: z.void(),
     },
     {
         method: 'post',
         path: '/tenants/:tenantId/webhooks/:hookKey/ip-rules',
+        description: `Adds a CIDR block to the allow-list for the webhook endpoint.`,
         requestFormat: 'json',
         parameters: [
-            {
-                name: 'body',
-                type: 'Body',
-                schema: CreateWebhookIpRuleRequest,
-            },
-            {
-                name: 'tenantId',
-                type: 'Path',
-                schema: z.string(),
-            },
-            {
-                name: 'hookKey',
-                type: 'Path',
-                schema: z.string(),
-            },
-            {
-                name: 'environment',
-                type: 'Query',
-                schema: z.string(),
-            },
+            { name: 'body', type: 'Body', schema: CreateWebhookIpRuleRequest },
+            { name: 'tenantId', type: 'Path', schema: z.string() },
+            { name: 'hookKey', type: 'Path', schema: z.string() },
+            { name: 'environment', type: 'Query', schema: z.string() },
         ],
         response: z.void(),
     },
     {
         method: 'delete',
         path: '/tenants/:tenantId/webhooks/:hookKey/ip-rules/:ruleId',
+        description: `Removes a CIDR allow-list entry from the webhook endpoint.`,
         requestFormat: 'json',
         parameters: [
-            {
-                name: 'tenantId',
-                type: 'Path',
-                schema: z.string(),
-            },
-            {
-                name: 'hookKey',
-                type: 'Path',
-                schema: z.string(),
-            },
-            {
-                name: 'ruleId',
-                type: 'Path',
-                schema: z.number().int(),
-            },
-            {
-                name: 'environment',
-                type: 'Query',
-                schema: z.string(),
-            },
+            { name: 'tenantId', type: 'Path', schema: z.string() },
+            { name: 'hookKey', type: 'Path', schema: z.string() },
+            { name: 'ruleId', type: 'Path', schema: z.number().int() },
+            { name: 'environment', type: 'Query', schema: z.string() },
         ],
         response: z.void(),
     },
     {
         method: 'post',
         path: '/tenants/:tenantId/webhooks/:hookKey/rotate-secret',
+        description: `Schedules or immediately rotates a webhook secret and returns the new plaintext.`,
         requestFormat: 'json',
         parameters: [
-            {
-                name: 'body',
-                type: 'Body',
-                schema: RotateWebhookSecretRequest,
-            },
-            {
-                name: 'tenantId',
-                type: 'Path',
-                schema: z.string(),
-            },
-            {
-                name: 'hookKey',
-                type: 'Path',
-                schema: z.string(),
-            },
-            {
-                name: 'environment',
-                type: 'Query',
-                schema: z.string(),
-            },
+            { name: 'body', type: 'Body', schema: RotateWebhookSecretRequest },
+            { name: 'tenantId', type: 'Path', schema: z.string() },
+            { name: 'hookKey', type: 'Path', schema: z.string() },
+            { name: 'environment', type: 'Query', schema: z.string() },
         ],
         response: z.void(),
     },
     {
         method: 'get',
         path: '/tenants/:tenantId/webhooks/deadletters',
+        description: `Enumerates failed webhook deliveries for investigation or replay.`,
         requestFormat: 'json',
         parameters: [
-            {
-                name: 'tenantId',
-                type: 'Path',
-                schema: z.string(),
-            },
-            {
-                name: 'environment',
-                type: 'Query',
-                schema: z.string(),
-            },
+            { name: 'tenantId', type: 'Path', schema: z.string() },
+            { name: 'environment', type: 'Query', schema: z.string() },
         ],
         response: z.void(),
     },
     {
         method: 'post',
         path: '/tenants/:tenantId/webhooks/deadletters/:deadLetterId/replay',
+        description: `Re-dispatches a failed webhook payload via the job execution pipeline.`,
         requestFormat: 'json',
         parameters: [
-            {
-                name: 'tenantId',
-                type: 'Path',
-                schema: z.string(),
-            },
-            {
-                name: 'deadLetterId',
-                type: 'Path',
-                schema: z.number().int(),
-            },
-            {
-                name: 'environment',
-                type: 'Query',
-                schema: z.string(),
-            },
+            { name: 'tenantId', type: 'Path', schema: z.string() },
+            { name: 'deadLetterId', type: 'Path', schema: z.number().int() },
+            { name: 'environment', type: 'Query', schema: z.string() },
         ],
         response: z.void(),
     },

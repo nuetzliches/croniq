@@ -9,6 +9,12 @@ Interim plan for securing the Angular admin surface until the backend completes 
 - Expiration metadata is optional but recommended. Expired secrets are purged automatically.
 - When an operator clears the token, the service also clears the matching storage slot, so refresh tokens never linger between sessions.
 
+### Bootstrap (current state)
+
+- The UI does **not** have a login flow yet (the OIDC/PKCE path is a placeholder).
+- To get started, you must obtain a valid Croniq session token out-of-band (e.g., via backend/operator tooling) and paste it into the tenant-context "Store token" form.
+- Without a valid bearer token, protected API calls (including tenant token issuance) will respond with 401.
+
 ## Tenant Token Issuance
 
 - The UI can request short-lived tenant-scoped tokens via `TenantTokenEndpointService`.

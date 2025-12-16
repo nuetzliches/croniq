@@ -1,10 +1,34 @@
 import { Injectable, inject } from '@angular/core';
+import { z } from 'zod';
 
 import type { IssueTokenRequest } from '@croniq/api-schema';
 import { CRONIQ_API_CLIENT, type CroniqApiClient } from 'data-access';
 
 import { tryIsoFromUnknown } from '../time/clock';
 import { AuthSessionService } from './auth-session.service';
+
+const issuedTenantTokenResponseSchema = z
+    .object({
+        token: z.string().trim().min(1).optional(),
+        value: z.string().trim().min(1).optional(),
+        apiKey: z.string().trim().min(1).optional(),
+        expiresAt: z.unknown().optional(),
+    })
+    .passthrough()
+    .superRefine((data, ctx) => {
+        if (!data.token && !data.value && !data.apiKey) {
+            ctx.addIssue({
+                code: z.ZodIssueCode.custom,
+                message: 'Expected token response to contain token/value (legacy: apiKey).',
+            });
+        }
+    })
+    .transform((data) => ({
+        value: (data.token ?? data.value ?? data.apiKey) as string,
+        expiresAt: tryIsoFromUnknown(data.expiresAt),
+    }));
+
+type IssuedTenantToken = z.infer<typeof issuedTenantTokenResponseSchema>;
 
 export interface IssueTenantTokenParams {
     tenantId: string;
@@ -43,8 +67,8 @@ export class TenantTokenEndpointService {
             payload,
         );
         const token = this.extractToken(response);
-        const fallbackExpiry = params.fallbackExpiry ?? null;
-        const resolvedExpiry = tryIsoFromUnknown(token?.expiresAt ?? fallbackExpiry);
+        const fallbackExpiry = tryIsoFromUnknown(params.fallbackExpiry);
+        const resolvedExpiry = token?.expiresAt ?? fallbackExpiry;
         let storedInSession = false;
 
         if (token && params.persistInSession) {
@@ -60,22 +84,8 @@ export class TenantTokenEndpointService {
         };
     }
 
-    private extractToken(response: unknown): { value: string; expiresAt: string | null } | null {
-        if (!response || typeof response !== 'object') {
-            return null;
-        }
-        const candidate = response as Record<string, unknown>;
-        const rawValue = this.pickTokenValue(candidate);
-        if (!rawValue) {
-            return null;
-        }
-        const expiresAt = tryIsoFromUnknown(candidate['expiresAt']);
-        return { value: rawValue, expiresAt };
-    }
-
-    private pickTokenValue(source: Record<string, unknown>): string | null {
-        const candidates: Array<unknown> = [source['token'], source['apiKey'], source['value']];
-        const match = candidates.find((entry) => typeof entry === 'string' && entry.trim().length > 0);
-        return (match as string | undefined)?.trim() ?? null;
+    private extractToken(response: unknown): IssuedTenantToken | null {
+        const parsed = issuedTenantTokenResponseSchema.safeParse(response);
+        return parsed.success ? parsed.data : null;
     }
 }

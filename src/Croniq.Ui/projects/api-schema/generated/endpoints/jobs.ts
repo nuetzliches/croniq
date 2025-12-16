@@ -1,6 +1,5 @@
 import { z } from 'zod';
 import type { EndpointDefinition } from '../schemas';
-
 import {
     TriggerJobRequest,
     CreateWebhookIpRuleRequest,
@@ -19,14 +18,9 @@ export const JobsApi: EndpointDefinition[] = [
     {
         method: 'post',
         path: '/jobs/trigger',
+        description: `Executes a job immediately using the provided metadata and job key.`,
         requestFormat: 'json',
-        parameters: [
-            {
-                name: 'body',
-                type: 'Body',
-                schema: TriggerJobRequest,
-            },
-        ],
+        parameters: [{ name: 'body', type: 'Body', schema: TriggerJobRequest }],
         response: z.void(),
     },
 ] as const;

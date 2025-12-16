@@ -1,6 +1,5 @@
 import { z } from 'zod';
 import type { EndpointDefinition } from '../schemas';
-
 import {
     CreateWebhookIpRuleRequest,
     ExecutionStatus,
@@ -20,13 +19,7 @@ export const WebhooksApi: EndpointDefinition[] = [
         method: 'post',
         path: '/webhooks/:hookKey',
         requestFormat: 'json',
-        parameters: [
-            {
-                name: 'hookKey',
-                type: 'Path',
-                schema: z.string(),
-            },
-        ],
+        parameters: [{ name: 'hookKey', type: 'Path', schema: z.string() }],
         response: z.void(),
     },
 ] as const;

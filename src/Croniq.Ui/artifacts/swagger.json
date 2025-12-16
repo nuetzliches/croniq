@@ -1,40 +1,110 @@
 {
-  "openapi": "3.0.3",
+  "openapi": "3.0.4",
   "info": {
-    "title": "Croniq API Snapshot",
-    "version": "0.1.0"
+    "title": "Croniq Scheduler API",
+    "version": "v1"
   },
-  "servers": [
-    {
-      "url": "https://api.croniq.dev"
-    }
-  ],
   "paths": {
-    "/jobs/trigger": {
-      "post": {
-        "operationId": "triggerJob",
-        "tags": ["Jobs"],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/TriggerJobRequest"
-              }
-            }
-          }
-        },
+    "/health": {
+      "get": {
+        "tags": [
+          "Croniq.Sample.ApiHost"
+        ],
+        "summary": "Health probe",
+        "description": "Returns 200 when the Croniq API process is alive.",
+        "operationId": "Health_Get",
         "responses": {
-          "204": {
-            "description": "Job triggered"
+          "200": {
+            "description": "OK"
           }
         }
       }
     },
-    "/tenants/{tenantId}/schedules": {
+    "/health/persistence": {
       "get": {
-        "operationId": "listSchedules",
-        "tags": ["Schedules"],
+        "tags": [
+          "Croniq.Sample.ApiHost"
+        ],
+        "summary": "Persistence health",
+        "description": "Checks the configured job persistence provider for reachability.",
+        "operationId": "Health_Persistence_Get",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/me": {
+      "get": {
+        "tags": [
+          "Croniq.Sample.ApiHost"
+        ],
+        "summary": "Inspect caller",
+        "description": "Returns the current caller context (tenant, environment, scopes) after authentication.",
+        "operationId": "Caller_Get",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/tenants": {
+      "post": {
+        "tags": [
+          "Croniq.Sample.ApiHost"
+        ],
+        "summary": "Create tenant",
+        "description": "Creates or updates a tenant record based on the provided reference and name.",
+        "operationId": "Tenants_Create",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpsertTenantRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      },
+      "get": {
+        "tags": [
+          "Croniq.Sample.ApiHost"
+        ],
+        "summary": "List tenants",
+        "description": "Returns tenant metadata. Use state=all to include inactive tenants.",
+        "operationId": "Tenants_List",
+        "parameters": [
+          {
+            "name": "state",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/tenants/{tenantId}": {
+      "get": {
+        "tags": [
+          "Croniq.Sample.ApiHost"
+        ],
+        "summary": "Get tenant",
+        "description": "Returns tenant metadata for the provided tenant identifier.",
+        "operationId": "Tenants_Get",
         "parameters": [
           {
             "name": "tenantId",
@@ -47,20 +117,308 @@
         ],
         "responses": {
           "200": {
-            "description": "Tenant schedule list",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ScheduleListResponse"
-                }
-              }
+            "description": "OK"
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Croniq.Sample.ApiHost"
+        ],
+        "summary": "Deactivate tenant",
+        "description": "Marks the tenant as inactive without deleting historical data.",
+        "operationId": "Tenants_Deactivate",
+        "parameters": [
+          {
+            "name": "tenantId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
             }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/tenants/{tenantId}/jobs": {
+      "get": {
+        "tags": [
+          "Croniq.Sample.ApiHost"
+        ],
+        "summary": "List jobs",
+        "description": "Returns all job definitions for the tenant/environment scope.",
+        "operationId": "Jobs_List",
+        "parameters": [
+          {
+            "name": "tenantId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "environment",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
           }
         }
       },
       "post": {
-        "operationId": "upsertSchedule",
-        "tags": ["Schedules"],
+        "tags": [
+          "Croniq.Sample.ApiHost"
+        ],
+        "summary": "Create or update job",
+        "description": "Creates or updates the job definition for the specified job key.",
+        "operationId": "Jobs_Upsert",
+        "parameters": [
+          {
+            "name": "tenantId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "environment",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpsertJobRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/tenants/{tenantId}/jobs/{jobId}": {
+      "get": {
+        "tags": [
+          "Croniq.Sample.ApiHost"
+        ],
+        "summary": "Get job",
+        "description": "Returns the job definition for the specified job key.",
+        "operationId": "Jobs_Get",
+        "parameters": [
+          {
+            "name": "tenantId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "jobId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "environment",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Croniq.Sample.ApiHost"
+        ],
+        "summary": "Delete job",
+        "description": "Deletes the job definition and associated triggers within the tenant/environment scope.",
+        "operationId": "Jobs_Delete",
+        "parameters": [
+          {
+            "name": "tenantId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "jobId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "environment",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/tenants/{tenantId}/executions": {
+      "get": {
+        "tags": [
+          "Croniq.Sample.ApiHost"
+        ],
+        "summary": "List executions",
+        "description": "Returns execution summaries for the tenant/environment scope with optional filters.",
+        "operationId": "Executions_List",
+        "parameters": [
+          {
+            "name": "tenantId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "environment",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "jobKey",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "schema": {
+              "$ref": "#/components/schemas/ExecutionStatus"
+            }
+          },
+          {
+            "name": "startedAfterUtc",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            }
+          },
+          {
+            "name": "startedBeforeUtc",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/tenants/{tenantId}/executions/{executionId}": {
+      "get": {
+        "tags": [
+          "Croniq.Sample.ApiHost"
+        ],
+        "summary": "Get execution",
+        "description": "Returns metadata for a single execution in the tenant/environment scope.",
+        "operationId": "Executions_Get",
+        "parameters": [
+          {
+            "name": "tenantId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "executionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "environment",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/tenants/{tenantId}/schedules": {
+      "post": {
+        "tags": [
+          "Croniq.Sample.ApiHost"
+        ],
+        "summary": "Create or update a schedule",
+        "description": "Registers a Cron-based trigger for the specified tenant-scoped job key.",
+        "operationId": "Schedules_Upsert",
         "parameters": [
           {
             "name": "tenantId",
@@ -72,26 +430,28 @@
           }
         ],
         "requestBody": {
-          "required": true,
           "content": {
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/UpsertScheduleRequest"
               }
             }
-          }
+          },
+          "required": true
         },
         "responses": {
-          "204": {
-            "description": "Schedule upserted"
+          "200": {
+            "description": "OK"
           }
         }
-      }
-    },
-    "/tenants/{tenantId}/api-clients/{clientId}": {
+      },
       "get": {
-        "operationId": "getTenantApiClient",
-        "tags": ["Tenants"],
+        "tags": [
+          "Croniq.Sample.ApiHost"
+        ],
+        "summary": "List schedules",
+        "description": "Returns all persisted schedules for the tenant/environment scope, optionally filtered by job key.",
+        "operationId": "Schedules_List",
         "parameters": [
           {
             "name": "tenantId",
@@ -102,17 +462,16 @@
             }
           },
           {
-            "name": "clientId",
-            "in": "path",
+            "name": "environment",
+            "in": "query",
             "required": true,
             "schema": {
               "type": "string"
             }
           },
           {
-            "name": "environment",
+            "name": "jobKey",
             "in": "query",
-            "required": false,
             "schema": {
               "type": "string"
             }
@@ -120,15 +479,19 @@
         ],
         "responses": {
           "200": {
-            "description": "Tenant API client"
+            "description": "OK"
           }
         }
       }
     },
-    "/tenants/{tenantId}/api-keys": {
-      "post": {
-        "operationId": "issueApiKey",
-        "tags": ["Tenants"],
+    "/tenants/{tenantId}/schedules/{triggerId}": {
+      "get": {
+        "tags": [
+          "Croniq.Sample.ApiHost"
+        ],
+        "summary": "Get schedule",
+        "description": "Returns the persisted schedule metadata for the requested trigger identifier.",
+        "operationId": "Schedules_Get",
         "parameters": [
           {
             "name": "tenantId",
@@ -137,29 +500,37 @@
             "schema": {
               "type": "string"
             }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/IssueApiKeyRequest"
-              }
+          },
+          {
+            "name": "triggerId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "environment",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
             }
           }
-        },
+        ],
         "responses": {
-          "204": {
-            "description": "API key issued"
+          "200": {
+            "description": "OK"
           }
         }
-      }
-    },
-    "/tenants/{tenantId}/api-keys/{keyId}": {
+      },
       "delete": {
-        "operationId": "deleteApiKey",
-        "tags": ["Tenants"],
+        "tags": [
+          "Croniq.Sample.ApiHost"
+        ],
+        "summary": "Delete schedule",
+        "description": "Deletes the persisted trigger for the tenant/environment scope.",
+        "operationId": "Schedules_Delete",
         "parameters": [
           {
             "name": "tenantId",
@@ -170,7 +541,7 @@
             }
           },
           {
-            "name": "keyId",
+            "name": "triggerId",
             "in": "path",
             "required": true,
             "schema": {
@@ -180,60 +551,27 @@
           {
             "name": "environment",
             "in": "query",
-            "required": false,
+            "required": true,
             "schema": {
               "type": "string"
             }
           }
         ],
         "responses": {
-          "204": {
-            "description": "API key deleted"
-          }
-        }
-      }
-    },
-    "/tenants/{tenantId}/api-keys/{keyId}/rotate": {
-      "post": {
-        "operationId": "rotateApiKey",
-        "tags": ["Tenants"],
-        "parameters": [
-          {
-            "name": "tenantId",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "keyId",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "environment",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "204": {
-            "description": "API key rotated"
+          "200": {
+            "description": "OK"
           }
         }
       }
     },
     "/tenants/{tenantId}/webhooks": {
       "get": {
-        "operationId": "listWebhooks",
-        "tags": ["Tenants"],
+        "tags": [
+          "Croniq.Sample.ApiHost"
+        ],
+        "summary": "List webhook endpoints",
+        "description": "Returns all webhook endpoints for the specified tenant/environment scope.",
+        "operationId": "Webhooks_List",
         "parameters": [
           {
             "name": "tenantId",
@@ -254,13 +592,17 @@
         ],
         "responses": {
           "200": {
-            "description": "Tenant webhooks"
+            "description": "OK"
           }
         }
       },
       "post": {
-        "operationId": "upsertWebhook",
-        "tags": ["Tenants"],
+        "tags": [
+          "Croniq.Sample.ApiHost"
+        ],
+        "summary": "Create or update a webhook",
+        "description": "Registers a webhook endpoint for a tenant/environment, optionally overriding rate limits and signatures.",
+        "operationId": "Webhooks_Upsert",
         "parameters": [
           {
             "name": "tenantId",
@@ -288,63 +630,30 @@
           }
         ],
         "requestBody": {
-          "required": true,
           "content": {
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/UpsertWebhookEndpointRequest"
               }
             }
-          }
+          },
+          "required": true
         },
         "responses": {
-          "204": {
-            "description": "Webhook upserted"
+          "200": {
+            "description": "OK"
           }
         }
       }
     },
     "/tenants/{tenantId}/webhooks/{hookKey}": {
       "delete": {
-        "operationId": "deleteWebhook",
-        "tags": ["Tenants"],
-        "parameters": [
-          {
-            "name": "tenantId",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "hookKey",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "environment",
-            "in": "query",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
+        "tags": [
+          "Croniq.Sample.ApiHost"
         ],
-        "responses": {
-          "204": {
-            "description": "Webhook deleted"
-          }
-        }
-      }
-    },
-    "/tenants/{tenantId}/webhooks/{hookKey}/ip-rules": {
-      "get": {
-        "operationId": "listWebhookIpRules",
-        "tags": ["Tenants"],
+        "summary": "Delete a webhook",
+        "description": "Removes a webhook endpoint and its metadata for the tenant/environment scope.",
+        "operationId": "Webhooks_Delete",
         "parameters": [
           {
             "name": "tenantId",
@@ -373,13 +682,19 @@
         ],
         "responses": {
           "200": {
-            "description": "IP rules"
+            "description": "OK"
           }
         }
-      },
+      }
+    },
+    "/tenants/{tenantId}/webhooks/{hookKey}/rotate-secret": {
       "post": {
-        "operationId": "createWebhookIpRule",
-        "tags": ["Tenants"],
+        "tags": [
+          "Croniq.Sample.ApiHost"
+        ],
+        "summary": "Rotate webhook secret",
+        "description": "Schedules or immediately rotates a webhook secret and returns the new plaintext.",
+        "operationId": "Webhooks_RotateSecret",
         "parameters": [
           {
             "name": "tenantId",
@@ -407,26 +722,120 @@
           }
         ],
         "requestBody": {
-          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RotateWebhookSecretRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/tenants/{tenantId}/webhooks/{hookKey}/ip-rules": {
+      "get": {
+        "tags": [
+          "Croniq.Sample.ApiHost"
+        ],
+        "summary": "List webhook IP rules",
+        "description": "Returns the CIDR allow-list associated with a webhook endpoint.",
+        "operationId": "WebhookIpRules_List",
+        "parameters": [
+          {
+            "name": "tenantId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "hookKey",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "environment",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Croniq.Sample.ApiHost"
+        ],
+        "summary": "Add webhook IP rule",
+        "description": "Adds a CIDR block to the allow-list for the webhook endpoint.",
+        "operationId": "WebhookIpRules_Create",
+        "parameters": [
+          {
+            "name": "tenantId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "hookKey",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "environment",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
           "content": {
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/CreateWebhookIpRuleRequest"
               }
             }
-          }
+          },
+          "required": true
         },
         "responses": {
-          "204": {
-            "description": "IP rule created"
+          "200": {
+            "description": "OK"
           }
         }
       }
     },
     "/tenants/{tenantId}/webhooks/{hookKey}/ip-rules/{ruleId}": {
       "delete": {
-        "operationId": "deleteWebhookIpRule",
-        "tags": ["Tenants"],
+        "tags": [
+          "Croniq.Sample.ApiHost"
+        ],
+        "summary": "Delete webhook IP rule",
+        "description": "Removes a CIDR allow-list entry from the webhook endpoint.",
+        "operationId": "WebhookIpRules_Delete",
         "parameters": [
           {
             "name": "tenantId",
@@ -450,7 +859,7 @@
             "required": true,
             "schema": {
               "type": "integer",
-              "format": "int32"
+              "format": "int64"
             }
           },
           {
@@ -463,63 +872,20 @@
           }
         ],
         "responses": {
-          "204": {
-            "description": "IP rule deleted"
-          }
-        }
-      }
-    },
-    "/tenants/{tenantId}/webhooks/{hookKey}/rotate-secret": {
-      "post": {
-        "operationId": "rotateWebhookSecret",
-        "tags": ["Tenants"],
-        "parameters": [
-          {
-            "name": "tenantId",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "hookKey",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "environment",
-            "in": "query",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/RotateWebhookSecretRequest"
-              }
-            }
-          }
-        },
-        "responses": {
-          "204": {
-            "description": "Secret rotation scheduled"
+          "200": {
+            "description": "OK"
           }
         }
       }
     },
     "/tenants/{tenantId}/webhooks/deadletters": {
       "get": {
-        "operationId": "listWebhookDeadLetters",
-        "tags": ["Tenants"],
+        "tags": [
+          "Croniq.Sample.ApiHost"
+        ],
+        "summary": "List webhook dead letters",
+        "description": "Enumerates failed webhook deliveries for investigation or replay.",
+        "operationId": "WebhookDeadLetters_List",
         "parameters": [
           {
             "name": "tenantId",
@@ -540,15 +906,19 @@
         ],
         "responses": {
           "200": {
-            "description": "Dead letter list"
+            "description": "OK"
           }
         }
       }
     },
     "/tenants/{tenantId}/webhooks/deadletters/{deadLetterId}/replay": {
       "post": {
-        "operationId": "replayWebhookDeadLetter",
-        "tags": ["Tenants"],
+        "tags": [
+          "Croniq.Sample.ApiHost"
+        ],
+        "summary": "Replay webhook dead letter",
+        "description": "Re-dispatches a failed webhook payload via the job execution pipeline.",
+        "operationId": "WebhookDeadLetters_Replay",
         "parameters": [
           {
             "name": "tenantId",
@@ -564,7 +934,7 @@
             "required": true,
             "schema": {
               "type": "integer",
-              "format": "int32"
+              "format": "int64"
             }
           },
           {
@@ -577,19 +947,173 @@
           }
         ],
         "responses": {
-          "204": {
-            "description": "Dead letter replayed"
+          "200": {
+            "description": "OK"
           }
         }
       }
     },
-    "/webhooks/{hookKey}": {
-      "post": {
-        "operationId": "invokeWebhook",
-        "tags": ["Webhooks"],
+    "/tenants/{tenantId}/api-clients": {
+      "get": {
+        "tags": [
+          "Croniq.Sample.ApiHost"
+        ],
+        "summary": "List API clients",
+        "description": "Returns all registered API clients for the tenant, optionally filtered by environment.",
+        "operationId": "ApiClients_List",
         "parameters": [
           {
-            "name": "hookKey",
+            "name": "tenantId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "environment",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Croniq.Sample.ApiHost"
+        ],
+        "summary": "Create or update API client",
+        "description": "Creates a tenant-scoped API client or updates metadata/scopes when the client already exists.",
+        "operationId": "ApiClients_Upsert",
+        "parameters": [
+          {
+            "name": "tenantId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "environment",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpsertApiClientRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/tenants/{tenantId}/api-clients/{clientId}": {
+      "delete": {
+        "tags": [
+          "Croniq.Sample.ApiHost"
+        ],
+        "summary": "Delete API client",
+        "description": "Deletes the API client metadata and revokes any associated API keys.",
+        "operationId": "ApiClients_Delete",
+        "parameters": [
+          {
+            "name": "tenantId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "clientId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "environment",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      },
+      "get": {
+        "tags": [
+          "Croniq.Sample.ApiHost"
+        ],
+        "summary": "Get API client",
+        "description": "Returns metadata about a tenant-scoped API client, including scopes and activity flags.",
+        "operationId": "ApiClients_Get",
+        "parameters": [
+          {
+            "name": "tenantId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "clientId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "environment",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/tenants/{tenantId}/api-keys": {
+      "post": {
+        "tags": [
+          "Croniq.Sample.ApiHost"
+        ],
+        "summary": "Issue API key",
+        "description": "Creates a new API key for the specified tenant client and returns the plaintext once.",
+        "operationId": "ApiKeys_Issue",
+        "parameters": [
+          {
+            "name": "tenantId",
             "in": "path",
             "required": true,
             "schema": {
@@ -597,17 +1121,203 @@
             }
           }
         ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/IssueApiKeyRequest"
+              }
+            }
+          },
+          "required": true
+        },
         "responses": {
-          "204": {
-            "description": "Webhook invoked"
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/tenants/{tenantId}/api-keys/{keyId}/rotate": {
+      "post": {
+        "tags": [
+          "Croniq.Sample.ApiHost"
+        ],
+        "summary": "Rotate API key",
+        "description": "Revokes an existing API key and returns a fresh secret for the same client.",
+        "operationId": "ApiKeys_Rotate",
+        "parameters": [
+          {
+            "name": "tenantId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "keyId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "environment",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/tenants/{tenantId}/api-keys/{keyId}": {
+      "delete": {
+        "tags": [
+          "Croniq.Sample.ApiHost"
+        ],
+        "summary": "Revoke API key",
+        "description": "Immediately revokes an API key for the tenant.",
+        "operationId": "ApiKeys_Delete",
+        "parameters": [
+          {
+            "name": "tenantId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "keyId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "environment",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/tenants/{tenantId}/tokens": {
+      "post": {
+        "tags": [
+          "Croniq.Sample.ApiHost"
+        ],
+        "summary": "Issue tenant token",
+        "description": "Mints a Croniq-signed bearer token for the specified client (tenant-level variant).",
+        "operationId": "Tokens_Issue_Tenant",
+        "parameters": [
+          {
+            "name": "tenantId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "environment",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/IssueTokenRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/tenants/{tenantId}/api-clients/{clientId}/tokens": {
+      "post": {
+        "tags": [
+          "Croniq.Sample.ApiHost"
+        ],
+        "summary": "Issue client token",
+        "description": "Same payload as the tenant route but infers the clientId from the path.",
+        "operationId": "Tokens_Issue_Client",
+        "parameters": [
+          {
+            "name": "tenantId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "clientId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "environment",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/IssueTokenRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK"
           }
         }
       }
     },
     "/tenants/{tenantId}/executions/{executionId}/logs": {
       "get": {
-        "operationId": "fetchExecutionLogs",
-        "tags": ["Executions"],
+        "tags": [
+          "Croniq.Sample.ApiHost"
+        ],
+        "summary": "Stream execution logs",
+        "description": "Streams NDJSON execution logs for a tenant-scoped execution after authorizing tenant scope.",
+        "operationId": "Executions_GetLogs",
         "parameters": [
           {
             "name": "tenantId",
@@ -628,29 +1338,54 @@
         ],
         "responses": {
           "200": {
-            "description": "Execution log stream"
+            "description": "OK"
           }
         }
       }
     },
-    "/health": {
-      "get": {
-        "operationId": "checkServiceHealth",
-        "tags": ["Health"],
+    "/jobs/trigger": {
+      "post": {
+        "tags": [
+          "Croniq.Sample.ApiHost"
+        ],
+        "summary": "Trigger a job manually",
+        "description": "Executes a job immediately using the provided metadata and job key.",
+        "operationId": "Jobs_Trigger",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TriggerJobRequest"
+              }
+            }
+          },
+          "required": true
+        },
         "responses": {
           "200": {
-            "description": "Service health"
+            "description": "OK"
           }
         }
       }
     },
-    "/health/persistence": {
-      "get": {
-        "operationId": "checkPersistenceHealth",
-        "tags": ["Health"],
+    "/webhooks/{hookKey}": {
+      "post": {
+        "tags": [
+          "Croniq.Sample.ApiHost"
+        ],
+        "parameters": [
+          {
+            "name": "hookKey",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "responses": {
           "200": {
-            "description": "Persistence health"
+            "description": "OK"
           }
         }
       }
@@ -658,34 +1393,211 @@
   },
   "components": {
     "schemas": {
-      "TriggerJobRequest": {
+      "CreateWebhookIpRuleRequest": {
+        "required": [
+          "cidr"
+        ],
         "type": "object",
-        "required": ["jobKey"],
+        "properties": {
+          "cidr": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "description": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "additionalProperties": false
+      },
+      "ExecutionStatus": {
+        "enum": [
+          0,
+          1,
+          2
+        ],
+        "type": "integer",
+        "format": "int32"
+      },
+      "IssueApiKeyRequest": {
+        "required": [
+          "clientId"
+        ],
+        "type": "object",
+        "properties": {
+          "clientId": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "environmentTag": {
+            "type": "string",
+            "nullable": true
+          },
+          "scopes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "nullable": true
+          },
+          "ttlHours": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          }
+        },
+        "additionalProperties": false
+      },
+      "IssueTokenRequest": {
+        "type": "object",
+        "properties": {
+          "clientId": {
+            "type": "string",
+            "nullable": true
+          },
+          "scopes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "nullable": true
+          },
+          "audience": {
+            "type": "string",
+            "nullable": true
+          },
+          "ttlMinutes": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          }
+        },
+        "additionalProperties": false
+      },
+      "RotateWebhookSecretRequest": {
+        "type": "object",
+        "properties": {
+          "activateInSeconds": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "gracePeriodSeconds": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "notes": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "additionalProperties": false
+      },
+      "TriggerJobRequest": {
+        "required": [
+          "jobKey"
+        ],
+        "type": "object",
         "properties": {
           "jobKey": {
-            "type": "string",
-            "minLength": 1
+            "minLength": 1,
+            "type": "string"
           },
           "metadata": {
             "type": "object",
-            "nullable": true,
             "additionalProperties": {
               "type": "string"
-            }
+            },
+            "nullable": true
           }
-        }
+        },
+        "additionalProperties": false
       },
-      "UpsertScheduleRequest": {
+      "UpsertApiClientRequest": {
+        "required": [
+          "clientId"
+        ],
         "type": "object",
-        "required": ["jobKey", "cronExpression"],
+        "properties": {
+          "clientId": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "name": {
+            "type": "string",
+            "nullable": true
+          },
+          "environmentTag": {
+            "type": "string",
+            "nullable": true
+          },
+          "scopes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "nullable": true
+          },
+          "isActive": {
+            "type": "boolean",
+            "nullable": true
+          }
+        },
+        "additionalProperties": false
+      },
+      "UpsertJobRequest": {
+        "required": [
+          "jobKey",
+          "name",
+          "namespace"
+        ],
+        "type": "object",
         "properties": {
           "jobKey": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "namespace": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "name": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "variant": {
             "type": "string",
-            "minLength": 1
+            "nullable": true
+          },
+          "description": {
+            "type": "string",
+            "nullable": true
+          },
+          "metadata": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "nullable": true
+          }
+        },
+        "additionalProperties": false
+      },
+      "UpsertScheduleRequest": {
+        "required": [
+          "cronExpression",
+          "jobKey"
+        ],
+        "type": "object",
+        "properties": {
+          "jobKey": {
+            "minLength": 1,
+            "type": "string"
           },
           "cronExpression": {
-            "type": "string",
-            "minLength": 1
+            "minLength": 1,
+            "type": "string"
           },
           "triggerId": {
             "type": "string",
@@ -710,24 +1622,46 @@
           },
           "metadata": {
             "type": "object",
-            "nullable": true,
             "additionalProperties": {
               "type": "string"
-            }
+            },
+            "nullable": true
           }
-        }
+        },
+        "additionalProperties": false
+      },
+      "UpsertTenantRequest": {
+        "required": [
+          "name",
+          "reference"
+        ],
+        "type": "object",
+        "properties": {
+          "reference": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "name": {
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
       },
       "UpsertWebhookEndpointRequest": {
+        "required": [
+          "hookKey",
+          "jobKey"
+        ],
         "type": "object",
-        "required": ["hookKey", "jobKey"],
         "properties": {
           "hookKey": {
-            "type": "string",
-            "minLength": 1
+            "minLength": 1,
+            "type": "string"
           },
           "jobKey": {
-            "type": "string",
-            "minLength": 1
+            "minLength": 1,
+            "type": "string"
           },
           "enabled": {
             "type": "boolean"
@@ -746,162 +1680,41 @@
           },
           "metadata": {
             "type": "object",
-            "nullable": true,
             "additionalProperties": {
               "type": "string"
-            }
+            },
+            "nullable": true
           },
           "signatureVersion": {
             "type": "integer",
             "format": "int32"
           }
-        }
+        },
+        "additionalProperties": false
+      }
+    },
+    "securitySchemes": {
+      "X-Croniq-Key": {
+        "type": "apiKey",
+        "description": "Croniq API key passed via X-Croniq-Key header.",
+        "name": "X-Croniq-Key",
+        "in": "header"
       },
-      "RotateWebhookSecretRequest": {
-        "type": "object",
-        "properties": {
-          "activateInSeconds": {
-            "type": "integer",
-            "format": "int32",
-            "nullable": true
-          },
-          "gracePeriodSeconds": {
-            "type": "integer",
-            "format": "int32",
-            "nullable": true
-          },
-          "notes": {
-            "type": "string",
-            "nullable": true
-          }
-        }
-      },
-      "CreateWebhookIpRuleRequest": {
-        "type": "object",
-        "required": ["cidr"],
-        "properties": {
-          "cidr": {
-            "type": "string",
-            "minLength": 1
-          },
-          "description": {
-            "type": "string",
-            "nullable": true
-          }
-        }
-      },
-      "IssueApiKeyRequest": {
-        "type": "object",
-        "required": ["clientId"],
-        "properties": {
-          "clientId": {
-            "type": "string",
-            "minLength": 1
-          },
-          "environmentTag": {
-            "type": "string",
-            "nullable": true
-          },
-          "scopes": {
-            "type": "array",
-            "nullable": true,
-            "items": {
-              "type": "string"
-            }
-          },
-          "ttlHours": {
-            "type": "integer",
-            "format": "int32",
-            "nullable": true
-          }
-        }
-      },
-      "ScheduleSummary": {
-        "type": "object",
-        "required": [
-          "id",
-          "name",
-          "tenant",
-          "cron",
-          "timezone",
-          "owner",
-          "state",
-          "nextFire",
-          "lastDurationMs",
-          "alerts"
-        ],
-        "properties": {
-          "id": {
-            "type": "string",
-            "format": "uuid"
-          },
-          "name": {
-            "type": "string",
-            "minLength": 1
-          },
-          "tenant": {
-            "type": "string",
-            "minLength": 1
-          },
-          "cron": {
-            "type": "string",
-            "minLength": 1
-          },
-          "timezone": {
-            "type": "string",
-            "minLength": 1
-          },
-          "owner": {
-            "type": "string",
-            "minLength": 1
-          },
-          "state": {
-            "type": "string",
-            "enum": ["active", "paused", "degraded"]
-          },
-          "nextFire": {
-            "type": "string",
-            "format": "date-time"
-          },
-          "lastDurationMs": {
-            "type": "number",
-            "minimum": 0
-          },
-          "alerts": {
-            "type": "integer",
-            "format": "int32",
-            "minimum": 0
-          },
-          "tags": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            },
-            "default": []
-          }
-        }
-      },
-      "ScheduleListResponse": {
-        "type": "object",
-        "required": ["items", "total", "updatedAt"],
-        "properties": {
-          "items": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/ScheduleSummary"
-            }
-          },
-          "total": {
-            "type": "integer",
-            "format": "int32",
-            "minimum": 0
-          },
-          "updatedAt": {
-            "type": "string",
-            "format": "date-time"
-          }
-        }
+      "Bearer": {
+        "type": "http",
+        "description": "Croniq bearer token passed via Authorization: Bearer {token}.",
+        "scheme": "bearer",
+        "bearerFormat": "JWT"
       }
     }
-  }
+  },
+  "security": [
+    {},
+    {}
+  ],
+  "tags": [
+    {
+      "name": "Croniq.Sample.ApiHost"
+    }
+  ]
 }

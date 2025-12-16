@@ -16,12 +16,4 @@
     <ProjectReference Include="..\..\src\Croniq.Webhooks\Croniq.Webhooks.csproj" />
     <ProjectReference Include="..\Croniq.Sample.Jobs\Croniq.Sample.Jobs.csproj" />
   </ItemGroup>
-  <ItemGroup>
-    <PackageReference Include="OpenTelemetry.Instrumentation.AspNetCore" Version="1.14.0" />
-    <PackageReference Include="OpenTelemetry.Instrumentation.Http" Version="1.14.0" />
-    <PackageReference Include="OpenTelemetry.Instrumentation.Runtime" Version="1.14.0" />
-    <PackageReference Include="Microsoft.OpenApi" Version="2.3.0" />
-    <PackageReference Include="Swashbuckle.AspNetCore" Version="10.0.1" />
-    <PackageReference Include="Grpc.AspNetCore.Server.Reflection" Version="2.71.0" />
-  </ItemGroup>
 </Project>

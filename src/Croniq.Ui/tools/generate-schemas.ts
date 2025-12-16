@@ -9,13 +9,76 @@ import type { OpenAPIObject, PathItemObject } from 'openapi3-ts';
 import prettier, { type Options as PrettierOptions } from 'prettier';
 import ts from 'typescript';
 
-import generatorConfig, { type SchemaGenerationConfig } from '../config/openapi-zod-client.config';
+import generatorConfig, {
+    SNAPSHOT_RELATIVE_PATH,
+    type SchemaGenerationConfig,
+} from '../config/openapi-zod-client.config';
+
+type CliOptions = {
+    updateSnapshot: boolean;
+    snapshotPath: string;
+};
+
+function parseCliArgs(argv: string[]): CliOptions {
+    let updateSnapshot = false;
+    let snapshotPath = SNAPSHOT_RELATIVE_PATH;
+
+    for (let index = 0; index < argv.length; index++) {
+        const arg = argv[index];
+
+        if (arg === '--update-snapshot' || arg === '--snapshot') {
+            updateSnapshot = true;
+            continue;
+        }
+
+        if (arg === '--snapshot-path') {
+            const value = argv[index + 1];
+            if (!value || value.startsWith('--')) {
+                throw new Error('Missing value for --snapshot-path');
+            }
+            snapshotPath = value;
+            index++;
+            continue;
+        }
+
+        if (arg.startsWith('--snapshot-path=')) {
+            const value = arg.slice('--snapshot-path='.length).trim();
+            if (!value) {
+                throw new Error('Missing value for --snapshot-path');
+            }
+            snapshotPath = value;
+        }
+    }
+
+    return { updateSnapshot, snapshotPath };
+}
+
+type LoadedOpenApiDocument = {
+    document: OpenAPIObject;
+    source: string;
+    sourceType: 'http' | 'file';
+};
 
 async function main(): Promise<void> {
+    const cli = parseCliArgs(process.argv.slice(2));
     const configs = normalizeConfig(generatorConfig);
 
+    const cache = new Map<string, Promise<LoadedOpenApiDocument>>();
+    const snapshotWrittenForSources = new Set<string>();
+
     for (const config of configs) {
-        const openApiDoc = await loadOpenApiDocument(config.input);
+        const loaded = cache.get(config.input) ?? loadOpenApiDocument(config.input);
+        if (!cache.has(config.input)) {
+            cache.set(config.input, loaded);
+        }
+
+        const { document: openApiDoc, source, sourceType } = await loaded;
+
+        if (cli.updateSnapshot && sourceType === 'http' && !snapshotWrittenForSources.has(source)) {
+            snapshotWrittenForSources.add(source);
+            await writeSnapshot(openApiDoc, cli.snapshotPath);
+            console.log(`✓ Updated OpenAPI snapshot at ${resolvePath(cli.snapshotPath)}`);
+        }
 
         if (config.mode === 'split') {
             await generateGroupedOutput(config, openApiDoc);
@@ -78,6 +141,7 @@ async function generateGroupedOutput(
         });
 
         indexEntries.push({ exportName: apiClientName, fileBase });
+        await formatTypescriptFile(distPath, config.prettier ?? null);
         console.log(`✓ Generated ${apiClientName} endpoints at ${distPath}`);
     }
 
@@ -88,7 +152,33 @@ async function generateGroupedOutput(
         .concat(indexEntries.length ? '\n' : '');
 
     await writeFile(indexPath, indexSource, 'utf8');
+    await formatTypescriptFile(indexPath, config.prettier ?? null);
     console.log(`✓ Wrote endpoint index at ${indexPath}`);
+}
+
+async function formatTypescriptFile(targetFile: string, prettierConfig: PrettierOptions | null): Promise<void> {
+    if (!prettierConfig) {
+        return;
+    }
+
+    const originalSource = await readFile(targetFile, 'utf8');
+    const sanitized = sanitizeGeneratedSource(originalSource);
+    const formatted = prettier.format(sanitized, {
+        ...prettierConfig,
+        parser: prettierConfig.parser ?? 'typescript',
+    });
+
+    if (formatted !== originalSource) {
+        await writeFile(targetFile, formatted, 'utf8');
+    }
+}
+
+function sanitizeGeneratedSource(source: string): string {
+    return source
+        .replace(/as const;\s*export type/g, 'as const;\n\nexport type')
+    .replace(/export\s+type\s*\n\s*/g, 'export type ')
+    .replace(/export\s+const\s*\n\s*/g, 'export const ')
+        .replace(/;\s*import\s+/g, ';\nimport ');
 }
 
 function normalizeConfig(
@@ -97,9 +187,10 @@ function normalizeConfig(
     return Array.isArray(config) ? config : [config];
 }
 
-async function loadOpenApiDocument(input: string): Promise<OpenAPIObject> {
+async function loadOpenApiDocument(input: string): Promise<LoadedOpenApiDocument> {
     const target = resolveInput(input);
-    const document = isHttpUrl(target)
+    const sourceType: LoadedOpenApiDocument['sourceType'] = isHttpUrl(target) ? 'http' : 'file';
+    const document = sourceType === 'http'
         ? (await fetchJson(target)) as OpenAPIObject
         : (await SwaggerParser.parse(target)) as OpenAPIObject;
 
@@ -109,7 +200,15 @@ async function loadOpenApiDocument(input: string): Promise<OpenAPIObject> {
         );
     }
 
-    return document;
+    return { document, source: target, sourceType };
+}
+
+async function writeSnapshot(openApiDoc: OpenAPIObject, outputPath: string): Promise<void> {
+    const resolved = resolvePath(outputPath);
+    await ensureOutputDirectory(resolved);
+
+    const serialized = JSON.stringify(openApiDoc, null, 2) + '\n';
+    await writeFile(resolved, serialized, 'utf8');
 }
 
 async function fetchJson(url: string): Promise<unknown> {

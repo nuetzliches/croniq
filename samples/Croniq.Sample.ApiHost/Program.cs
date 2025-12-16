@@ -1,14 +1,8 @@
-using System;
-using System.Collections.Generic;
-using System.Reflection;
 using Croniq.Api;
 using Croniq.Core;
 using Croniq.Core.Execution;
 using Croniq.Sample.Jobs;
 using Croniq.Webhooks;
-using Grpc.AspNetCore.Server;
-using Microsoft.Extensions.Logging;
-using Microsoft.OpenApi;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -65,61 +59,15 @@ builder.Services.AddCroniqWebhookObservability(
     builder: otelBuilder);
 
 builder.Services.AddCroniqSampleJobs();
-builder.Services.AddEndpointsApiExplorer();
-builder.Services.AddSwaggerGen(options =>
-{
-    options.SwaggerDoc("v1", new OpenApiInfo { Title = "Croniq Scheduler API", Version = "v1" });
-    options.AddSecurityDefinition("X-Croniq-Key", new OpenApiSecurityScheme
-    {
-        Description = "Croniq API key passed via X-Croniq-Key header.",
-        Name = "X-Croniq-Key",
-        In = ParameterLocation.Header,
-        Type = SecuritySchemeType.ApiKey
-    });
-
-    var apiKeySchemeReference = new OpenApiSecuritySchemeReference(
-        referenceId: "X-Croniq-Key",
-        hostDocument: null,
-        externalResource: null);
-
-    options.AddSecurityRequirement(_ => new OpenApiSecurityRequirement
-    {
-        { apiKeySchemeReference, new List<string>() }
-    });
-});
-builder.Services.AddGrpcReflection();
+builder.Services.AddCroniqApiSchemas();
 
 var app = builder.Build();
 
-var swaggerEnabled = app.Environment.IsDevelopment()
-    || builder.Configuration.GetValue<bool>("Croniq:Api:ExposeSchemas");
-
-if (swaggerEnabled)
-{
-    app.UseSwagger();
-    app.UseSwaggerUI(options =>
-    {
-        options.SwaggerEndpoint("/swagger/v1/swagger.json", "Croniq Scheduler API v1");
-        options.DisplayRequestDuration();
-    });
-
-    app.MapGrpcReflectionService();
-}
+app.UseCroniqApiSwaggerUi(builder.Configuration);
 
 app.UseCors(corsPolicyName);
 app.UseCroniqApi();
 app.MapCroniqSchedulerGrpc();
 app.UseCroniqWebhooks(mapHealthEndpoints: false);
-
-var addresses = app.Urls?.Any() == true ? string.Join(", ", app.Urls) : "http://localhost:5000";
-if (swaggerEnabled)
-{
-    var swaggerAddress = app.Urls?.FirstOrDefault() ?? "http://localhost:5000";
-    app.Logger.LogInformation("Croniq API listening on {Addresses}. Swagger UI: {SwaggerUrl}", addresses, $"{swaggerAddress}/swagger");
-}
-else
-{
-    app.Logger.LogInformation("Croniq API listening on {Addresses}. Swagger UI disabled.", addresses);
-}
 
 app.Run();

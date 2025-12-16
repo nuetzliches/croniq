@@ -51,8 +51,9 @@ Derived from [docs/deep-dive/designs/angular-ui-concept.md](docs/deep-dive/desig
 
 ## Data Access & State
 
-- [ ] Generate REST clients directly from the upstream OpenAPI contract (or gRPC-Web bridge) and wrap them in the shared `ApiClient` service that injects telemetry headers. _(Status: runtime-safe models now flow from the upstream spec via `npm run generate:api`, which runs `openapi-zod-client` and writes to `projects/api-schema/generated`. Manual helpers still live in `projects/api-schema/src`, but next we need to wire CI and evaluate client generation.)_
-- [ ] Document & standardize OpenAPI source selection (snapshot vs. live server), including the recommended local dev command (`npm run generate:api:server`) and CI-safe fallback (`npm run generate:api`).
+- [x] Generate REST clients directly from the upstream OpenAPI contract (or gRPC-Web bridge) and wrap them in the shared `ApiClient` service that injects telemetry headers. _(Implemented via `openapi-zod-client` generation to `projects/api-schema/generated`; scripts live in `package.json`.)_
+- [x] Document & standardize OpenAPI source selection (snapshot vs. live server), including the recommended local dev commands and the fallback order. _(See `artifacts/README.md`; use `npm run generate:api` (snapshot/offline) or `npm run generate:api:server` (live).)_
+- [x] Add a one-shot Swagger snapshot command (`npm run snapshot:swagger`) and a combined refresh command (`npm run generate:api:server:snapshot`) so the repo snapshot can be updated deterministically.
 - [ ] Decide CI policy for OpenAPI sync: keep committing `artifacts/swagger.json` snapshots vs. generating from a live/staging swagger endpoint (and how to avoid flaky builds when the endpoint is unavailable).
 - [ ] Wire newly generated endpoints into the relevant feature stores (no new UX): tenants list/create/deactivate, tenant api-clients list/upsert/delete, executions list, jobs list/get/delete, schedule get/delete, and token issuance endpoints.
 - [ ] Configure Angular Query caches, refetch policies, and tenant/env scoping helpers.
@@ -72,7 +73,9 @@ Derived from [docs/deep-dive/designs/angular-ui-concept.md](docs/deep-dive/desig
 - [ ] Ensure secrets/tokens remain memory-only and never persist to local storage or IndexedDB.
 - [ ] Surface `ICallerContext` metadata in the UI so operators see "acting as" context during manual actions.
 - [ ] Respect backend-enforced feature flags; hide toggles unless the API advertises support.
-- [ ] Ensure token issuance flow matches the live backend response shape (then tighten token extraction with a Zod schema).
+- [x] Tighten `/tenants/:tenantId/tokens` token extraction with a local Zod schema + unit tests. _(Implemented in [src/app/core/auth/token-endpoint.service.ts](src/app/core/auth/token-endpoint.service.ts) with coverage in [src/app/core/auth/token-endpoint.service.spec.ts](src/app/core/auth/token-endpoint.service.spec.ts).)_
+- [ ] Validate the token issuance flow matches the live backend response shape and adjust the Zod schema/tests (or upstream OpenAPI) accordingly.
+- [ ] Confirm the backend's intended auth scheme (Bearer session token vs. `X-Croniq-Key`) is reflected in the upstream OpenAPI contract and align the UI accordingly.
 
 ## Tooling, AI & Automation
 
@@ -103,7 +106,8 @@ This checklist intentionally avoids duplicating how-tos.
 - [ ] Determine timeline for multi-tenant impersonation features before GA.
 - [ ] Define prefetch strategy (hover-driven vs. manual fetch) balancing responsiveness and API load; document final call in the concept doc.
 
-# Next Steps (2025-12-15)
+# Next Steps (2025-12-16)
 
-Exercise the token issuance flow against a live environment (`npm run start` + backend) and capture the actual response shape from `/tenants/:tenantId/tokens` so token extraction can be based on the factual payload.
-If/once the backend returns a stable token payload, replace the current permissive extraction logic with a Zod schema and add an integration-style test around it.
+- When the backend contract changes: run `npm run snapshot:swagger`, then `npm run generate:api`.
+- Validate token issuance against the live backend and reconcile any schema gaps (ideally by fixing OpenAPI responses upstream).
+- Decide and document the canonical auth mechanism in Swagger, then implement the missing login/bootstrap routine in the UI.
