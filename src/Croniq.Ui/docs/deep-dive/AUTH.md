@@ -9,12 +9,11 @@ Interim plan for securing the Angular admin surface until the backend completes 
 - Expiration metadata is optional but recommended. Expired secrets are purged automatically.
 - When an operator clears the token, the service also clears the matching storage slot, so refresh tokens never linger between sessions.
 
-## Croniq API Key Bootstrap
+## Tenant Token Issuance
 
-- Operators can provide a temporary `X-Croniq-Key` in the tenant context UI. The value flows through `AuthSessionService` so it shares the same lifecycle rules as the opaque session token.
-- `EndpointExecutor` now pulls both the API key and the bearer token from the credential supplier before every call. Manual overrides are still possible per request via `CroniqRequestOptions` for future automated flows.
-- Keys are masked in the UI (last four characters only) to reduce shoulder-surfing risk.
-- The UI now surfaces the `/tenants/{tenantId}/api-keys` issuance endpoint through `TenantTokenEndpointService`. The component attempts to persist the returned secret automatically whenever the backend includes it in the response payload; until then the call still primes the backend-side rotation flow.
+- The UI can request short-lived tenant-scoped tokens via `TenantTokenEndpointService`.
+- `EndpointExecutor` pulls the bearer token from the credential supplier before every call. Manual overrides are still possible per request via `CroniqRequestOptions`.
+- The tenant-context panel can persist the returned secret automatically whenever the backend includes it in the response payload.
 - Issuance requests capture client ID, scopes, TTL, and optional labels so the backend can scope the token properly. The service also estimates an expiry timestamp locally to keep storage metadata consistent when the response omits it.
 
 ## OIDC / PKCE Placeholder

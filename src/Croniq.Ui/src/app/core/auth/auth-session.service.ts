@@ -5,40 +5,29 @@ import type { CroniqCredentialSupplier } from 'data-access';
 interface StoredSecret {
     value: string;
     expiresAt?: string | null;
-    label?: string | null;
     issuedAt: string;
     lastUpdatedAt: string;
 }
 
 interface SecretUpdateOptions {
     expiresAt?: string | Date | null;
-    label?: string | null;
 }
 
 const STORAGE_KEYS = {
     sessionToken: 'croniq.auth.session-token',
-    apiKey: 'croniq.auth.api-key',
 };
 
 @Injectable({ providedIn: 'root' })
 export class AuthSessionService implements CroniqCredentialSupplier {
     private readonly sessionTokenSignal = signal<StoredSecret | null>(loadSecret(STORAGE_KEYS.sessionToken));
-    private readonly apiKeySignal = signal<StoredSecret | null>(loadSecret(STORAGE_KEYS.apiKey));
 
     readonly sessionToken = this.sessionTokenSignal.asReadonly();
-    readonly apiKey = this.apiKeySignal.asReadonly();
     readonly sessionTokenExpired = computed(() => isSecretExpired(this.sessionTokenSignal()));
-    readonly apiKeyExpired = computed(() => isSecretExpired(this.apiKeySignal()));
 
     constructor() {
         effect(() => {
             if (this.sessionTokenExpired()) {
                 this.clearSessionToken();
-            }
-        });
-        effect(() => {
-            if (this.apiKeyExpired()) {
-                this.clearApiKey();
             }
         });
     }
@@ -58,21 +47,6 @@ export class AuthSessionService implements CroniqCredentialSupplier {
         clearSecret(STORAGE_KEYS.sessionToken);
     }
 
-    storeApiKey(value: string, options: SecretUpdateOptions = {}): void {
-        if (!value || !value.trim()) {
-            this.clearApiKey();
-            return;
-        }
-        const payload = this.createSecret(value, options);
-        this.apiKeySignal.set(payload);
-        persistSecret(STORAGE_KEYS.apiKey, payload);
-    }
-
-    clearApiKey(): void {
-        this.apiKeySignal.set(null);
-        clearSecret(STORAGE_KEYS.apiKey);
-    }
-
     async startOidcBootstrap(): Promise<void> {
         // Placeholder for PKCE/OIDC handshake. This keeps the hook in place so we can
         // swap the manual token input for a standards-based login once backend is ready.
@@ -81,10 +55,6 @@ export class AuthSessionService implements CroniqCredentialSupplier {
 
     getSessionToken(): string | null {
         return this.sessionTokenSignal()?.value ?? null;
-    }
-
-    getApiKey(): string | null {
-        return this.apiKeySignal()?.value ?? null;
     }
 
     private createSecret(value: string, options: SecretUpdateOptions): StoredSecret {
@@ -97,7 +67,6 @@ export class AuthSessionService implements CroniqCredentialSupplier {
         return {
             value: value.trim(),
             expiresAt,
-            label: options.label?.trim() || null,
             issuedAt: now,
             lastUpdatedAt: now,
         };

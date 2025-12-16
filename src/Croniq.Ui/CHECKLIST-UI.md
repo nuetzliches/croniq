@@ -18,7 +18,6 @@ Derived from [docs/deep-dive/designs/angular-ui-concept.md](docs/deep-dive/desig
 - [ ] Scaffolding & Auth – keep this phase as a tracker; implementation details are documented in `README.md` and `docs/deep-dive/AUTH.md`. _(Original plan: [docs/deep-dive/designs/angular-ui-scaffolding.md](docs/deep-dive/designs/angular-ui-scaffolding.md).)_
   - [x] Auth session persistence: store the opaque Croniq session token in `sessionStorage` only; never persist refresh data in `localStorage`/IndexedDB. _(Implemented via [src/app/core/auth/auth-session.service.ts](src/app/core/auth/auth-session.service.ts); forms wired in [src/app/core/tenant-context/tenant-context.html](src/app/core/tenant-context/tenant-context.html); rationale captured in [docs/deep-dive/AUTH.md](docs/deep-dive/AUTH.md).)_
   - [x] OAuth/OIDC expansion: leave hooks for PKCE/OIDC bootstrap (deferred) so we can swap session auth for standards-based login once backend is ready. _(UI button + `startOidcBootstrap()` placeholder now live in [src/app/core/tenant-context/tenant-context.ts](src/app/core/tenant-context/tenant-context.ts).)_
-  - [x] ApiKey bootstrap: surface an operator-facing form to capture the short-lived Croniq API key (sent as `X-Croniq-Key`) and inject it through `EndpointExecutor` for every call until OIDC replaces it. _(Credential supplier + header wiring sit inside [projects/data-access/src/lib/endpoint-executor.ts](projects/data-access/src/lib/endpoint-executor.ts) and the tenant context form captures inputs.)_
   - [x] Operator impersonation vs. OAuth: document the interim plan (manual tenant/operator context vs. delegated auth) and revisit once backend signals GA for full OAuth. _(Plan recorded in [docs/deep-dive/AUTH.md](docs/deep-dive/AUTH.md).)_
 - [ ] MVP Data Surfaces – deliver the dashboard metrics (stubbed), schedules read-only grid, and job registry view.
 - [ ] Admin Controls – implement CRUD for schedules, webhooks, and API keys, including dead-letter replay wiring.
@@ -73,7 +72,7 @@ Derived from [docs/deep-dive/designs/angular-ui-concept.md](docs/deep-dive/desig
 - [ ] Ensure secrets/tokens remain memory-only and never persist to local storage or IndexedDB.
 - [ ] Surface `ICallerContext` metadata in the UI so operators see "acting as" context during manual actions.
 - [ ] Respect backend-enforced feature flags; hide toggles unless the API advertises support.
-- [ ] Add Croniq API Key handling: map the captured token to the `X-Croniq-Key` header, validate expiry, and provide a single "Switch Operator" action that clears impersonation plus the key.
+- [ ] Ensure token issuance flow matches the live backend response shape (then tighten token extraction with a Zod schema).
 
 ## Tooling, AI & Automation
 

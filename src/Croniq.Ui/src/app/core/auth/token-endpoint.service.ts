@@ -47,10 +47,7 @@ export class TenantTokenEndpointService {
 
         if (token && params.persistInSession) {
             const expiresAt = fallbackExpiry ?? token.expiresAt ?? null;
-            this.authSession.storeApiKey(token.value, {
-                expiresAt,
-                label: params.label ?? null,
-            });
+            this.authSession.storeSessionToken(token.value, { expiresAt });
             storedInSession = true;
         }
 

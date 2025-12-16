@@ -14,7 +14,6 @@ export interface EndpointCallConfig {
     responseType?: 'json' | 'text';
     responseSchema?: ZodTypeAny | null;
     parseResponse?: boolean;
-    apiKey?: string | null;
     sessionToken?: string | null;
 }
 
@@ -111,7 +110,7 @@ export class EndpointExecutor {
     private createHeaders(
         context?: CallerContext,
         extras?: Record<string, string>,
-        auth?: Pick<EndpointCallConfig, 'apiKey' | 'sessionToken'>,
+        auth?: Pick<EndpointCallConfig, 'sessionToken'>,
     ): Record<string, string> {
         const headers: Record<string, string> = {
             'X-Croniq-Client': this.clientId,
@@ -131,11 +130,6 @@ export class EndpointExecutor {
         }
         if (context?.command) {
             headers['X-Croniq-Command'] = context.command;
-        }
-
-        const resolvedApiKey = auth?.apiKey ?? this.credentials?.getApiKey() ?? null;
-        if (resolvedApiKey) {
-            headers['X-Croniq-Key'] = resolvedApiKey;
         }
 
         const resolvedSessionToken = auth?.sessionToken ?? this.credentials?.getSessionToken() ?? null;

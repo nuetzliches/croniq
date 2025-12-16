@@ -4,8 +4,8 @@ import { EnvironmentProviders, InjectionToken, Provider, inject, makeEnvironment
 import {
     CreateWebhookIpRuleRequest,
     HealthApi,
-    IssueTokenRequest,
     IssueApiKeyRequest,
+    IssueTokenRequest,
     JobsApi,
     MeApi,
     RotateWebhookSecretRequest,
@@ -32,8 +32,8 @@ import type {
     TenantApiKeyParams,
     TenantDeadLetterParams,
     TenantEnvironmentParams,
-    TenantScopedParams,
     TenantScheduleParams,
+    TenantScopedParams,
     TenantTokenParams,
     TenantUpsertApiClientParams,
     TenantWebhookParams,
@@ -770,9 +770,6 @@ class HttpCroniqApiClient implements CroniqApiClient {
         const merged: EndpointCallConfig = { ...config };
         if (merged.context === undefined) {
             merged.context = options.context;
-        }
-        if (!('apiKey' in merged)) {
-            merged.apiKey = options.apiKey ?? null;
         }
         if (!('sessionToken' in merged)) {
             merged.sessionToken = options.sessionToken ?? null;

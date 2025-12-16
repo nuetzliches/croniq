@@ -29,15 +29,12 @@ export class TenantContext {
   readonly tenantLabel = this.tenantContext.tenantLabel;
   readonly sessionToken = this.authSession.sessionToken;
   readonly sessionTokenExpired = this.authSession.sessionTokenExpired;
-  readonly apiKey = this.authSession.apiKey;
-  readonly apiKeyExpired = this.authSession.apiKeyExpired;
   readonly environments: ReadonlyArray<TenantEnvironment> = ['dev', 'staging', 'production'];
   readonly operatorSummary = computed(() => {
     const profile = this.operatorProfile();
     return profile.impersonating ? `${profile.displayName} (impersonating)` : profile.displayName;
   });
   readonly maskedSessionToken = computed(() => this.maskSecret(this.sessionToken()));
-  readonly maskedApiKey = computed(() => this.maskSecret(this.apiKey()));
 
   updateTenantIdentity(tenantIdInput: HTMLInputElement, tenantNameInput: HTMLInputElement): void {
     this.tenantContext.setTenantIdentity(tenantIdInput.value, tenantNameInput.value);
@@ -84,23 +81,6 @@ export class TenantContext {
 
   clearSessionToken(): void {
     this.authSession.clearSessionToken();
-  }
-
-  storeApiKey(keyInput: HTMLInputElement, labelInput?: HTMLInputElement, expiryInput?: HTMLInputElement): void {
-    const expiresAt = this.resolveExpiry(expiryInput?.value);
-    const label = labelInput?.value?.trim() || null;
-    this.authSession.storeApiKey(keyInput.value, { expiresAt, label });
-    keyInput.value = '';
-    if (labelInput) {
-      labelInput.value = '';
-    }
-    if (expiryInput) {
-      expiryInput.value = '';
-    }
-  }
-
-  clearApiKey(): void {
-    this.authSession.clearApiKey();
   }
 
   async issueTenantToken(

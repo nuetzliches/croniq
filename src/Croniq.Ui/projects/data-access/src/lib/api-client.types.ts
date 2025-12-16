@@ -69,12 +69,10 @@ export interface CallerContext {
 }
 
 export interface CroniqCredentialSupplier {
-    getApiKey(): string | null;
     getSessionToken(): string | null;
 }
 
 export interface CroniqRequestOptions {
     context?: CallerContext;
-    apiKey?: string | null;
     sessionToken?: string | null;
 }
