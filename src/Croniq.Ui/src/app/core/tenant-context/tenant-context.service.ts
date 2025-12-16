@@ -3,6 +3,7 @@ import { Injectable, computed, effect, inject, signal } from '@angular/core';
 import { CallerContext, CroniqRequestOptions } from 'data-access';
 
 import { OperatorSession } from '../auth/operator-session';
+import { nowIso } from '../time/clock';
 import { TenantContextState, TenantEnvironment } from './tenant-context.types';
 
 const DEFAULT_TENANT_CONTEXT: TenantContextState = {
@@ -12,7 +13,7 @@ const DEFAULT_TENANT_CONTEXT: TenantContextState = {
     region: '',
     blueprintVersion: '',
     policyCount: 0,
-    lastAuditedAt: new Date().toISOString(),
+    lastAuditedAt: nowIso(),
     featureFlags: [],
     source: 'manual',
 };
@@ -65,7 +66,7 @@ export class TenantContextService {
                 tenantId: normalizedId,
                 tenantName: normalizedName,
                 source: 'manual',
-                lastAuditedAt: new Date().toISOString(),
+                lastAuditedAt: nowIso(),
             };
             persistTenantContext(next);
             return next;

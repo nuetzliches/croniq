@@ -94,6 +94,7 @@ This checklist intentionally avoids duplicating how-tos.
 
 - Tests (watch vs. once): see `README.md`
 - Zoneless notes: see `README.md` and `docs/deep-dive/ui.md`
+- Time & dates policy: see `docs/deep-dive/ui.md` ("Time & Dates")
 
 ## Open Questions & Decisions
 

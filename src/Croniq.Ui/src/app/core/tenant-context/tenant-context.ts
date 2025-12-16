@@ -4,6 +4,7 @@ import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@a
 import { AuthSessionService } from '../auth/auth-session.service';
 import { OperatorSession } from '../auth/operator-session';
 import { TenantTokenEndpointService } from '../auth/token-endpoint.service';
+import { nowMs, tryIsoFromUnknown } from '../time/clock';
 import { TenantContextService } from './tenant-context.service';
 import { TenantEnvironment } from './tenant-context.types';
 
@@ -159,8 +160,7 @@ export class TenantContext {
     if (!value) {
       return null;
     }
-    const timestamp = Date.parse(value);
-    return Number.isFinite(timestamp) ? new Date(timestamp).toISOString() : null;
+    return tryIsoFromUnknown(value);
   }
 
   private maskSecret(secret: { value: string | undefined | null } | null): string {
@@ -197,7 +197,7 @@ export class TenantContext {
     if (!ttlHours) {
       return null;
     }
-    const expiresAt = Date.now() + ttlHours * 60 * 60 * 1000;
-    return new Date(expiresAt).toISOString();
+    const expiresAt = nowMs() + ttlHours * 60 * 60 * 1000;
+    return tryIsoFromUnknown(expiresAt);
   }
 }

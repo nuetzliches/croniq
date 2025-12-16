@@ -3,6 +3,7 @@ import { Injectable, computed, inject, signal } from '@angular/core';
 import { CRONIQ_API_CLIENT, CallerContext, CroniqApiClient } from 'data-access';
 
 import { TenantContextService } from '../../core/tenant-context/tenant-context.service';
+import { isoFromEpochMs, nowIso, nowMs } from '../../core/time/clock';
 
 export type ManualTriggerStatus = 'pending' | 'success' | 'error';
 export type ManualTriggerEntry = {
@@ -39,7 +40,7 @@ export class JobsStore {
             jobKey: trimmedKey,
             metadata,
             status: 'pending',
-            startedAt: new Date().toISOString(),
+            startedAt: nowIso(),
         };
 
         this.triggerLog.set([entry, ...this.triggerLog()]);
@@ -55,14 +56,14 @@ export class JobsStore {
             );
             this.updateEntry(entry.id, {
                 status: 'success',
-                completedAt: new Date().toISOString(),
+                completedAt: nowIso(),
             });
         } catch (error) {
             console.error('Failed to trigger job', error);
             this.lastErrorSignal.set('Unable to trigger job via API — entry retained locally.');
             this.updateEntry(entry.id, {
                 status: 'error',
-                completedAt: new Date().toISOString(),
+                completedAt: nowIso(),
                 error: error instanceof Error ? error.message : 'Unknown error',
             });
         }
@@ -89,22 +90,23 @@ export class JobsStore {
 }
 
 function seedManualTriggers(): ReadonlyArray<ManualTriggerEntry> {
+    const now = nowMs();
     return [
         {
             id: createEntryId(),
             jobKey: 'nightly-billing-sweep',
             metadata: { tenant: 'cron-lab', source: 'ui-seed' },
             status: 'success',
-            startedAt: new Date(Date.now() - 1000 * 60 * 45).toISOString(),
-            completedAt: new Date(Date.now() - 1000 * 60 * 44).toISOString(),
+            startedAt: isoFromEpochMs(now - 1000 * 60 * 45),
+            completedAt: isoFromEpochMs(now - 1000 * 60 * 44),
         },
         {
             id: createEntryId(),
             jobKey: 'webhook-retry',
             metadata: { tenant: 'northwind', retries: '3' },
             status: 'error',
-            startedAt: new Date(Date.now() - 1000 * 60 * 120).toISOString(),
-            completedAt: new Date(Date.now() - 1000 * 60 * 119).toISOString(),
+            startedAt: isoFromEpochMs(now - 1000 * 60 * 120),
+            completedAt: isoFromEpochMs(now - 1000 * 60 * 119),
             error: 'Missing webhook scope',
         },
     ];
@@ -113,5 +115,5 @@ function seedManualTriggers(): ReadonlyArray<ManualTriggerEntry> {
 function createEntryId(): string {
     return typeof crypto !== 'undefined' && 'randomUUID' in crypto
         ? crypto.randomUUID()
-        : `${Date.now()}-${Math.round(Math.random() * 1000)}`;
+    : `${nowMs()}-${Math.round(Math.random() * 1000)}`;
 }

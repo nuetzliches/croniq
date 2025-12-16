@@ -69,6 +69,16 @@ Zoneless is enabled in `src/app/app.config.ts`.
 - Prefer Signals for UI state.
 - For async updates that don't touch signals, use `ChangeDetectorRef.markForCheck()` where needed.
 
+## Time & Dates
+
+The UI standardizes timestamp handling via `src/app/core/time/clock.ts`.
+
+- Prefer `nowMs()` / `nowIso()` for "current time".
+- Prefer `isoFromEpochMs(epochMs)` for ISO formatting.
+- Prefer `epochMsFromIso(iso)` for parsing ISO-ish strings.
+- When reading date-ish values from `unknown` payloads (manual parsing, permissive API responses), normalize via `tryIsoFromUnknown(value)`.
+- Avoid direct `new Date(...)`, `Date.now()`, `Date.parse(...)`, or `toISOString()` outside `clock.ts`.
+
 ## MCP (dev-only)
 
 The Angular MCP server is a development helper for workspace-aware automation.

@@ -3,6 +3,7 @@ import { Injectable, inject } from '@angular/core';
 import type { IssueTokenRequest } from '@croniq/api-schema';
 import { CRONIQ_API_CLIENT, type CroniqApiClient } from 'data-access';
 
+import { tryIsoFromUnknown } from '../time/clock';
 import { AuthSessionService } from './auth-session.service';
 
 export interface IssueTenantTokenParams {
@@ -43,18 +44,18 @@ export class TenantTokenEndpointService {
         );
         const token = this.extractToken(response);
         const fallbackExpiry = params.fallbackExpiry ?? null;
+        const resolvedExpiry = tryIsoFromUnknown(token?.expiresAt ?? fallbackExpiry);
         let storedInSession = false;
 
         if (token && params.persistInSession) {
-            const expiresAt = fallbackExpiry ?? token.expiresAt ?? null;
-            this.authSession.storeSessionToken(token.value, { expiresAt });
+            this.authSession.storeSessionToken(token.value, { expiresAt: resolvedExpiry });
             storedInSession = true;
         }
 
         return {
             storedInSession,
             token: token?.value ?? null,
-            expiresAt: token?.expiresAt ?? fallbackExpiry,
+            expiresAt: resolvedExpiry,
             raw: response,
         };
     }
@@ -68,8 +69,7 @@ export class TenantTokenEndpointService {
         if (!rawValue) {
             return null;
         }
-        const expiresAtRaw = candidate['expiresAt'];
-        const expiresAt = typeof expiresAtRaw === 'string' ? expiresAtRaw : null;
+        const expiresAt = tryIsoFromUnknown(candidate['expiresAt']);
         return { value: rawValue, expiresAt };
     }
 

@@ -1,5 +1,7 @@
 import { Injectable, computed, signal } from '@angular/core';
 
+import { isoFromEpochMs, nowIso, nowMs } from '../time/clock';
+
 export type OperatorScope =
     | 'schedules:read'
     | 'schedules:write'
@@ -24,7 +26,7 @@ const DEFAULT_OPERATOR: OperatorProfile = {
     displayName: 'Matta Rivera',
     email: 'matta.rivera@croniq.dev',
     scopes: ['schedules:read', 'jobs:trigger', 'webhooks:manage', 'tenants:rotate-keys', 'telemetry:read'],
-    lastAuthenticatedAt: new Date(Date.now() - 1000 * 30).toISOString(),
+    lastAuthenticatedAt: isoFromEpochMs(nowMs() - 1000 * 30),
 };
 
 const OPERATOR_STORAGE_KEY = 'croniq.ui.operator-profile';
@@ -61,7 +63,7 @@ export class OperatorSession {
                 displayName,
                 email,
                 impersonating: true,
-                lastAuthenticatedAt: new Date().toISOString(),
+                lastAuthenticatedAt: nowIso(),
             };
             persistOperatorProfile(next);
             return next;

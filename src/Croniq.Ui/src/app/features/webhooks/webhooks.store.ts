@@ -16,6 +16,7 @@ import {
     WebhookInvocationParams,
 } from 'data-access';
 import { TenantContextService } from '../../core/tenant-context/tenant-context.service';
+import { isoFromEpochMs, nowIso, nowMs, tryIsoFromUnknown } from '../../core/time/clock';
 
 export type WebhookEndpointView = {
     hookKey: string;
@@ -234,9 +235,7 @@ export class WebhooksStore {
                         ? record['status']
                         : 'active',
                 lastDeliveryAt:
-                    typeof record['lastDeliveryAt'] === 'string'
-                        ? record['lastDeliveryAt']
-                        : new Date().toISOString(),
+                    tryIsoFromUnknown(record['lastDeliveryAt']) ?? nowIso(),
             });
         });
         return entries.length ? entries : this.endpointsSignal();
@@ -248,13 +247,14 @@ export class WebhooksStore {
             summary,
             status,
             detail,
-            recordedAt: new Date().toISOString(),
+            recordedAt: nowIso(),
         };
         this.actionLogSignal.set([entry, ...this.actionLogSignal()].slice(0, 20));
     }
 }
 
 function seedEndpoints(): ReadonlyArray<WebhookEndpointView> {
+    const now = nowMs();
     return [
         {
             hookKey: 'billing-updates',
@@ -263,7 +263,7 @@ function seedEndpoints(): ReadonlyArray<WebhookEndpointView> {
             requireSignature: true,
             requestsPerMinute: 120,
             status: 'active',
-            lastDeliveryAt: new Date(Date.now() - 1000 * 60 * 5).toISOString(),
+            lastDeliveryAt: isoFromEpochMs(now - 1000 * 60 * 5),
         },
         {
             hookKey: 'ops-dead-letter',
@@ -272,18 +272,19 @@ function seedEndpoints(): ReadonlyArray<WebhookEndpointView> {
             requireSignature: true,
             requestsPerMinute: 40,
             status: 'degraded',
-            lastDeliveryAt: new Date(Date.now() - 1000 * 60 * 45).toISOString(),
+            lastDeliveryAt: isoFromEpochMs(now - 1000 * 60 * 45),
         },
     ];
 }
 
 function seedActionLog(): ReadonlyArray<WebhookActionEntry> {
+    const now = nowMs();
     return [
         {
             id: createEntryId(),
             summary: 'Secret rotated for billing-updates',
             status: 'success',
-            recordedAt: new Date(Date.now() - 1000 * 60 * 60).toISOString(),
+            recordedAt: isoFromEpochMs(now - 1000 * 60 * 60),
         },
     ];
 }
@@ -291,5 +292,5 @@ function seedActionLog(): ReadonlyArray<WebhookActionEntry> {
 function createEntryId(): string {
     return typeof crypto !== 'undefined' && 'randomUUID' in crypto
         ? crypto.randomUUID()
-        : `${Date.now()}-${Math.round(Math.random() * 1000)}`;
+    : `${nowMs()}-${Math.round(Math.random() * 1000)}`;
 }

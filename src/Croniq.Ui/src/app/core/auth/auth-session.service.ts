@@ -2,6 +2,8 @@ import { Injectable, computed, effect, signal } from '@angular/core';
 
 import type { CroniqCredentialSupplier } from 'data-access';
 
+import { epochMsFromIso, nowIso, nowMs, tryIsoFromUnknown } from '../time/clock';
+
 interface StoredSecret {
     value: string;
     expiresAt?: string | null;
@@ -58,12 +60,8 @@ export class AuthSessionService implements CroniqCredentialSupplier {
     }
 
     private createSecret(value: string, options: SecretUpdateOptions): StoredSecret {
-        const expiresAt = options.expiresAt
-            ? typeof options.expiresAt === 'string'
-                ? options.expiresAt
-                : options.expiresAt.toISOString()
-            : null;
-        const now = new Date().toISOString();
+        const expiresAt = options.expiresAt ? tryIsoFromUnknown(options.expiresAt) : null;
+        const now = nowIso();
         return {
             value: value.trim(),
             expiresAt,
@@ -119,6 +117,6 @@ function isSecretExpired(secret: StoredSecret | null): boolean {
     if (!secret?.expiresAt) {
         return false;
     }
-    const expiry = Date.parse(secret.expiresAt);
-    return Number.isFinite(expiry) ? expiry <= Date.now() : false;
+    const expiry = epochMsFromIso(secret.expiresAt);
+    return expiry != null ? expiry <= nowMs() : false;
 }

@@ -3,7 +3,9 @@ import { Injectable, inject, signal } from '@angular/core';
 import { ScheduleListResponse, ScheduleSummary, scheduleListResponseSchema } from '@croniq/api-schema';
 import { CRONIQ_API_CLIENT, CroniqApiClient } from 'data-access';
 
+import { authFailureFromError } from '../../../core/auth/auth-failure';
 import { TenantContextService } from '../../../core/tenant-context/tenant-context.service';
+import { isoFromEpochMs, nowIso, nowMs } from '../../../core/time/clock';
 
 @Injectable({ providedIn: 'root' })
 export class SchedulesStore {
@@ -11,7 +13,7 @@ export class SchedulesStore {
     private readonly tenantContext = inject(TenantContextService);
 
     private readonly schedulesSignal = signal<ReadonlyArray<ScheduleSummary>>([]);
-    private readonly lastUpdatedSignal = signal<string>(new Date().toISOString());
+    private readonly lastUpdatedSignal = signal<string>(nowIso());
     readonly loading = signal(true);
     readonly error = signal<string | null>(null);
 
@@ -37,6 +39,16 @@ export class SchedulesStore {
             this.hydrate(response);
         } catch (error) {
             console.error('Failed to load schedules', error);
+            const authFailure = authFailureFromError(error, {
+                forbidden: 'Forbidden (403) — your token is missing schedules permissions for this tenant.',
+            });
+            if (authFailure) {
+                this.error.set(authFailure.message);
+                this.schedulesSignal.set([]);
+                this.lastUpdatedSignal.set(nowIso());
+                return;
+            }
+
             this.error.set('Unable to load schedules from API — showing fallback data.');
             if (this.schedulesSignal().length === 0) {
                 this.hydrate(createFallbackResponse());
@@ -57,11 +69,12 @@ function createFallbackResponse(): ScheduleListResponse {
     return scheduleListResponseSchema.parse({
         items,
         total: items.length,
-        updatedAt: new Date().toISOString(),
+        updatedAt: nowIso(),
     });
 }
 
 function createFallbackSchedules(): ReadonlyArray<ScheduleSummary> {
+    const now = nowMs();
     return [
         {
             id: '8f2059c8-6fb9-4a8f-8d3f-a5b1a7bd81c2',
@@ -71,7 +84,7 @@ function createFallbackSchedules(): ReadonlyArray<ScheduleSummary> {
             timezone: 'UTC',
             owner: 'billing@croniq.dev',
             state: 'active',
-            nextFire: new Date(Date.now() + 1000 * 60 * 90).toISOString(),
+            nextFire: isoFromEpochMs(now + 1000 * 60 * 90),
             lastDurationMs: 1850,
             alerts: 0,
             tags: ['critical'],
@@ -84,7 +97,7 @@ function createFallbackSchedules(): ReadonlyArray<ScheduleSummary> {
             timezone: 'UTC',
             owner: 'hooks@croniq.dev',
             state: 'degraded',
-            nextFire: new Date(Date.now() + 1000 * 60 * 5).toISOString(),
+            nextFire: isoFromEpochMs(now + 1000 * 60 * 5),
             lastDurationMs: 5320,
             alerts: 3,
             tags: ['webhooks'],
@@ -97,7 +110,7 @@ function createFallbackSchedules(): ReadonlyArray<ScheduleSummary> {
             timezone: 'America/Chicago',
             owner: 'ops@croniq.dev',
             state: 'active',
-            nextFire: new Date(Date.now() + 1000 * 60 * 15).toISOString(),
+            nextFire: isoFromEpochMs(now + 1000 * 60 * 15),
             lastDurationMs: 2440,
             alerts: 1,
             tags: ['usage'],
@@ -110,7 +123,7 @@ function createFallbackSchedules(): ReadonlyArray<ScheduleSummary> {
             timezone: 'UTC',
             owner: 'migrations@croniq.dev',
             state: 'paused',
-            nextFire: new Date(Date.now() + 1000 * 60 * 60 * 6).toISOString(),
+            nextFire: isoFromEpochMs(now + 1000 * 60 * 60 * 6),
             lastDurationMs: 8840,
             alerts: 0,
             tags: ['migration'],

@@ -10,6 +10,7 @@ import {
 } from 'data-access';
 
 import { TenantContextService } from '../../core/tenant-context/tenant-context.service';
+import { isoFromEpochMs, nowIso, nowMs } from '../../core/time/clock';
 
 export type ApiKeyActionType = 'issue' | 'rotate' | 'delete';
 export type ApiKeyActionStatus = 'pending' | 'success' | 'error';
@@ -134,7 +135,7 @@ export class TenantsStore {
                     clientId: params.clientId,
                     environment: params.environment ?? null,
                     payload,
-                    fetchedAt: new Date().toISOString(),
+                    fetchedAt: nowIso(),
                 });
                 this.lastErrorSignal.set(null);
             } catch (error) {
@@ -155,7 +156,7 @@ export class TenantsStore {
             environment,
             action,
             status: 'pending',
-            recordedAt: new Date().toISOString(),
+            recordedAt: nowIso(),
         };
         this.activityLog.set([entry, ...this.activityLog()]);
         return entry;
@@ -180,6 +181,7 @@ export class TenantsStore {
 }
 
 function seedActivity(): ReadonlyArray<ApiKeyActivityEntry> {
+    const now = nowMs();
     return [
         {
             id: createEntryId(),
@@ -188,7 +190,7 @@ function seedActivity(): ReadonlyArray<ApiKeyActivityEntry> {
             action: 'issue',
             status: 'success',
             detail: 'Key issued via CLI',
-            recordedAt: new Date(Date.now() - 1000 * 60 * 90).toISOString(),
+            recordedAt: isoFromEpochMs(now - 1000 * 60 * 90),
         },
         {
             id: createEntryId(),
@@ -197,7 +199,7 @@ function seedActivity(): ReadonlyArray<ApiKeyActivityEntry> {
             action: 'rotate',
             status: 'error',
             detail: 'Scope mismatch',
-            recordedAt: new Date(Date.now() - 1000 * 60 * 200).toISOString(),
+            recordedAt: isoFromEpochMs(now - 1000 * 60 * 200),
         },
     ];
 }
@@ -205,7 +207,7 @@ function seedActivity(): ReadonlyArray<ApiKeyActivityEntry> {
 function createEntryId(): string {
     return typeof crypto !== 'undefined' && 'randomUUID' in crypto
         ? crypto.randomUUID()
-        : `${Date.now()}-${Math.round(Math.random() * 1000)}`;
+    : `${nowMs()}-${Math.round(Math.random() * 1000)}`;
 }
 
 function summarizeResponse(value: unknown): string {

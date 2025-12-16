@@ -1,5 +1,6 @@
 import { provideZonelessChangeDetection, signal } from '@angular/core';
 import { ComponentFixture, TestBed } from '@angular/core/testing';
+import { nowIso } from '../../../core/time/clock';
 
 import { ScheduleSummary } from '@croniq/api-schema';
 
@@ -10,7 +11,7 @@ class SchedulesStoreStub {
   readonly schedules = signal<ReadonlyArray<ScheduleSummary>>([]);
   readonly loading = signal(false);
   readonly error = signal<string | null>(null);
-  readonly lastUpdated = signal(new Date().toISOString());
+  readonly lastUpdated = signal(nowIso());
 
   refresh = vi.fn();
 }
