@@ -78,6 +78,7 @@ public sealed class SqlServerPasswordUserStore : IPasswordUserStore
                 PasswordHash = request.PasswordHash,
                 ScopesJson = SerializeScopes(request.Scopes),
                 IsActive = request.IsActive,
+                PasswordChangeRequired = request.PasswordChangeRequired,
                 FailedLoginCount = 0,
                 LockoutEndUtc = null,
                 CreatedAtUtc = now,
@@ -93,6 +94,7 @@ public sealed class SqlServerPasswordUserStore : IPasswordUserStore
             entity.PasswordHash = request.PasswordHash;
             entity.ScopesJson = SerializeScopes(request.Scopes);
             entity.IsActive = request.IsActive;
+            entity.PasswordChangeRequired = request.PasswordChangeRequired;
             entity.UpdatedAtUtc = now;
         }
 
@@ -167,7 +169,8 @@ public sealed class SqlServerPasswordUserStore : IPasswordUserStore
             entity.FailedLoginCount,
             entity.LockoutEndUtc.HasValue ? new DateTimeOffset(DateTime.SpecifyKind(entity.LockoutEndUtc.Value, DateTimeKind.Utc)) : null,
             new DateTimeOffset(DateTime.SpecifyKind(entity.CreatedAtUtc, DateTimeKind.Utc)),
-            new DateTimeOffset(DateTime.SpecifyKind(entity.UpdatedAtUtc, DateTimeKind.Utc)));
+            new DateTimeOffset(DateTime.SpecifyKind(entity.UpdatedAtUtc, DateTimeKind.Utc)),
+            entity.PasswordChangeRequired);
     }
 
     private static string? SerializeScopes(IReadOnlyCollection<string> scopes)

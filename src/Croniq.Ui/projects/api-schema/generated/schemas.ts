@@ -97,6 +97,7 @@ export const PasswordRefreshRequest = z
         environmentTag: z.string().nullable(),
         scopes: z.array(z.string()).nullable(),
         audience: z.string().nullable(),
+        tenantReference: z.string().nullable(),
     })
     .partial();
 export type PasswordRefreshRequest = z.infer<typeof PasswordRefreshRequest>;
@@ -104,6 +105,7 @@ export const PasswordLogoutRequest = z
     .object({
         tenantId: z.string().nullable(),
         refreshToken: z.string().nullable(),
+        tenantReference: z.string().nullable(),
     })
     .partial();
 export type PasswordLogoutRequest = z.infer<typeof PasswordLogoutRequest>;

@@ -129,6 +129,7 @@
 - [ ] Username/Passwort Login für BearerTokens: Konzept + Implementierung (Tenant-Isolation, Scopes, RateLimits, Lockout, Refresh-Token-Rotation)
   - [ ] Entscheidung: Standard-Login über HTTPS (Server verifiziert Password) vs. PAKE (OPAQUE/SRP) wenn "Passwort nie übertragen" zwingend ist
   - [ ] Konzept-Doku: `docs/deep-dive/password-auth.md` (Option A baseline, Option B PAKE outline)
+  - [ ] "Change password" Endpoint + Flow: `POST /auth/change-password` (oder ähnlich) inkl. Enforcement via `PasswordChangeRequired` (Seed `admin/admin`) + UI-Flow
 - [ ] (nice-to-have) Solutionweit usings aufräumen?
 - [ ] CI Static Analysis / SAST: entscheiden und ggf. integrieren
   - [ ] CodeQL-Code-Scanning Workflow hinzufügen (optional; abhängig von GHAS/Repo-Settings)

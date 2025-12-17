@@ -38,7 +38,6 @@ public sealed class PasswordAuthEndpointsTests : IClassFixture<PasswordAuthApiTe
             IsActive: true));
 
         var login = new PasswordLoginRequest(
-            PasswordAuthApiTestHost.TenantId,
             username,
             password,
             PasswordAuthApiTestHost.Environment,
@@ -83,7 +82,6 @@ public sealed class PasswordAuthEndpointsTests : IClassFixture<PasswordAuthApiTe
             IsActive: true));
 
         var loginResponse = await _host.Client.PostAsJsonAsync("/auth/login", new PasswordLoginRequest(
-            PasswordAuthApiTestHost.TenantId,
             username,
             password,
             PasswordAuthApiTestHost.Environment,
@@ -98,7 +96,6 @@ public sealed class PasswordAuthEndpointsTests : IClassFixture<PasswordAuthApiTe
         firstRefresh.ShouldNotBeNullOrWhiteSpace();
 
         var refreshResponse = await _host.Client.PostAsJsonAsync("/auth/refresh", new PasswordRefreshRequest(
-            PasswordAuthApiTestHost.TenantId,
             firstRefresh!,
             PasswordAuthApiTestHost.Environment,
             Scopes: null,
@@ -110,7 +107,6 @@ public sealed class PasswordAuthEndpointsTests : IClassFixture<PasswordAuthApiTe
         refreshed!.RefreshToken.ShouldNotBe(firstRefresh);
 
         var secondAttempt = await _host.Client.PostAsJsonAsync("/auth/refresh", new PasswordRefreshRequest(
-            PasswordAuthApiTestHost.TenantId,
             firstRefresh!,
             PasswordAuthApiTestHost.Environment,
             Scopes: null,
@@ -137,7 +133,6 @@ public sealed class PasswordAuthEndpointsTests : IClassFixture<PasswordAuthApiTe
             IsActive: true));
 
         var first = await _host.Client.PostAsJsonAsync("/auth/login", new PasswordLoginRequest(
-            PasswordAuthApiTestHost.TenantId,
             username,
             "wrong",
             PasswordAuthApiTestHost.Environment,
@@ -147,7 +142,6 @@ public sealed class PasswordAuthEndpointsTests : IClassFixture<PasswordAuthApiTe
         first.StatusCode.ShouldBe(HttpStatusCode.Unauthorized);
 
         var second = await _host.Client.PostAsJsonAsync("/auth/login", new PasswordLoginRequest(
-            PasswordAuthApiTestHost.TenantId,
             username,
             "wrong",
             PasswordAuthApiTestHost.Environment,

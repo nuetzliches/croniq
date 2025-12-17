@@ -73,8 +73,8 @@ Derived from [docs/deep-dive/designs/angular-ui-concept.md](docs/deep-dive/desig
 - [ ] Ensure secrets/tokens remain memory-only and never persist to local storage or IndexedDB.
 - [ ] Surface `ICallerContext` metadata in the UI so operators see "acting as" context during manual actions.
 - [ ] Respect backend-enforced feature flags; hide toggles unless the API advertises support.
-- [x] Tighten `/tenants/:tenantId/tokens` token extraction with a local Zod schema + unit tests. _(Implemented in [src/app/core/auth/token-endpoint.service.ts](src/app/core/auth/token-endpoint.service.ts) with coverage in [src/app/core/auth/token-endpoint.service.spec.ts](src/app/core/auth/token-endpoint.service.spec.ts).)_
-- [ ] Validate the token issuance flow matches the live backend response shape and adjust the Zod schema/tests (or upstream OpenAPI) accordingly.
+- [x] Wire `/auth/login` username/password flow and parse the backend response defensively (incl. `expiresIn`) with unit tests. _(Implemented in [src/app/core/auth/password-auth.service.ts](src/app/core/auth/password-auth.service.ts) with coverage in [src/app/core/auth/password-auth.service.spec.ts](src/app/core/auth/password-auth.service.spec.ts).)_
+- [x] Remove manual token overrides and token issuance from the tenant-context panel (UI cleanup for password login).
 - [ ] Confirm the backend's intended auth scheme (Bearer session token vs. `X-Croniq-Key`) is reflected in the upstream OpenAPI contract and align the UI accordingly.
 
 ## Tooling, AI & Automation
@@ -109,7 +109,7 @@ This checklist intentionally avoids duplicating how-tos.
 # Next Steps (2025-12-16)
 
 - When the backend contract changes: run `npm run snapshot:swagger`, then `npm run generate:api`.
-- Validate `/auth/login` (username/password) against the live backend and reconcile any schema gaps (ideally by fixing OpenAPI responses upstream).
+- Keep OpenAPI responses in sync with the backend (ideally add response schemas for `/auth/*` upstream so generation no longer yields `z.void()` responses).
 - Keep `tenantId` / `environmentTag` unset in the login payload (server-configured defaults).
 - Decide and document the canonical auth mechanism in Swagger, then implement the full refresh/logout wiring in the UI.
 

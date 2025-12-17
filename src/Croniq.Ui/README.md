@@ -46,7 +46,7 @@ The UI supports a simple username/password login against the backend `/auth/*` r
 - The access token is stored in `sessionStorage` only.
 - Tenant/environment are server-configured and are not set in the login payload.
 
-## OpenAPI  Zod generation
+## OpenAPI → Zod generation
 
 Generate runtime-safe Zod schemas and endpoint definitions from the upstream OpenAPI document:
 

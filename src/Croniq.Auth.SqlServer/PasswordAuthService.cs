@@ -84,7 +84,8 @@ public sealed class PasswordAuthService
                     user.Username,
                     upgradedHash,
                     user.Scopes,
-                    user.IsActive),
+                    user.IsActive,
+                    PasswordChangeRequired: user.PasswordChangeRequired),
                     cancellationToken).ConfigureAwait(false);
             }
             catch (Exception ex)
@@ -138,7 +139,7 @@ public sealed class PasswordAuthService
             refreshExpiresAt),
             cancellationToken).ConfigureAwait(false);
 
-        return new PasswordLoginResult(true, token.AccessToken, refreshToken, token.ExpiresInSeconds, null);
+        return new PasswordLoginResult(true, token.AccessToken, refreshToken, token.ExpiresInSeconds, null, user.PasswordChangeRequired);
     }
 
     public async Task<PasswordRefreshResult?> RefreshAsync(
@@ -199,7 +200,7 @@ public sealed class PasswordAuthService
 
         await _refreshTokens.RevokeAsync(tenantId, existing.TokenId, created.TokenId, cancellationToken).ConfigureAwait(false);
 
-        return new PasswordRefreshResult(true, token.AccessToken, newRefreshToken, token.ExpiresInSeconds);
+        return new PasswordRefreshResult(true, token.AccessToken, newRefreshToken, token.ExpiresInSeconds, user.PasswordChangeRequired);
     }
 
     public async Task<bool?> LogoutAsync(string tenantId, string refreshToken, CancellationToken cancellationToken = default)
@@ -307,10 +308,12 @@ public sealed record PasswordLoginResult(
     string? AccessToken,
     string? RefreshToken,
     int? ExpiresInSeconds,
-    DateTimeOffset? LockoutEndUtc);
+    DateTimeOffset? LockoutEndUtc,
+    bool PasswordChangeRequired = false);
 
 public sealed record PasswordRefreshResult(
     bool Success,
     string? AccessToken,
     string? RefreshToken,
-    int? ExpiresInSeconds);
+    int? ExpiresInSeconds,
+    bool PasswordChangeRequired = false);

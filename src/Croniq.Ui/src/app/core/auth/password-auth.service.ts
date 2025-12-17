@@ -22,6 +22,8 @@ const passwordLoginResponseSchema = z
                 value: z.string().trim().min(1).optional(),
                 refreshToken: z.string().trim().min(1).optional(),
                 expiresAt: z.unknown().optional(),
+                // Backend currently returns `expiresIn` (seconds). Keep `expiresInSeconds` for compatibility.
+                expiresIn: z.number().int().positive().optional(),
                 expiresInSeconds: z.number().int().positive().optional(),
             })
             .passthrough()
@@ -36,10 +38,15 @@ const passwordLoginResponseSchema = z
             .transform((data) => {
                 const resolvedAccessToken = (data.accessToken ?? data.token ?? data.value) as string;
                 const expiryFromField = tryIsoFromUnknown(data.expiresAt);
+                const expiresInSeconds = data.expiresInSeconds ?? data.expiresIn;
+                const expiryFromSeconds =
+                    !expiryFromField && typeof expiresInSeconds === 'number'
+                        ? new Date(Date.now() + expiresInSeconds * 1000).toISOString()
+                        : null;
                 return {
                     accessToken: resolvedAccessToken,
                     refreshToken: data.refreshToken ?? null,
-                    expiresAt: expiryFromField,
+                    expiresAt: expiryFromField ?? expiryFromSeconds,
                     raw: data as unknown,
                 };
             }),
@@ -50,6 +57,7 @@ type PasswordLoginResponse = z.infer<typeof passwordLoginResponseSchema>;
 export interface PasswordLoginParams {
     username: string;
     password: string;
+    tenantReference?: string | null;
     scopes?: string[];
     audience?: string | null;
 }
@@ -72,8 +80,7 @@ export class PasswordAuthService {
             username: params.username,
             password: params.password,
             // Per new auth concept: tenant/environment are server-configured.
-            tenantId: null,
-            tenantReference: null,
+            tenantReference: params.tenantReference ?? null,
             environmentTag: null,
             scopes: params.scopes && params.scopes.length ? params.scopes : null,
             audience: params.audience ?? null,

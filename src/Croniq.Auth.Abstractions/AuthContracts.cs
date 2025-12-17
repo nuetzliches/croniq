@@ -150,14 +150,16 @@ public sealed record PasswordUserRecord(
     int FailedLoginCount,
     DateTimeOffset? LockoutEndUtc,
     DateTimeOffset CreatedAtUtc,
-    DateTimeOffset UpdatedAtUtc);
+    DateTimeOffset UpdatedAtUtc,
+    bool PasswordChangeRequired = false);
 
 public sealed record PasswordUserUpsertRequest(
     string TenantId,
     string Username,
     string PasswordHash,
     IReadOnlyCollection<string> Scopes,
-    bool IsActive = true);
+    bool IsActive = true,
+    bool PasswordChangeRequired = false);
 
 public interface IPasswordUserStore
 {

@@ -33,6 +33,8 @@ public sealed class PasswordUserEntity
 
     public bool IsActive { get; set; } = true;
 
+    public bool PasswordChangeRequired { get; set; }
+
     public int FailedLoginCount { get; set; }
 
     public DateTime? LockoutEndUtc { get; set; }

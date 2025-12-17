@@ -20,8 +20,6 @@ export interface TenantApiClientParams extends TenantEnvironmentOptionalParams {
 
 export interface TenantUpsertApiClientParams extends TenantEnvironmentOptionalParams { }
 
-export interface TenantTokenParams extends TenantEnvironmentOptionalParams { }
-
 export interface TenantApiClientTokenParams extends TenantApiClientParams { }
 
 export interface TenantWebhookParams extends TenantEnvironmentParams {

@@ -26,6 +26,29 @@ If/when we decide to split hosted work into a separate repository, see `CLOUD-RE
   - persisted in Croniq (roles/groups, invitations), or
   - hybrid.
 
+#### Bearer token validation vs federated/OIDC login
+
+These are related, but not the same problem:
+
+- **Bearer token validation** (resource-server concern): how `Croniq.Api` decides whether an incoming `Authorization: Bearer ...` token is trusted and how it maps claims to Croniq's caller context.
+- **Federated/OIDC login** (interactive auth concern): how a human operator obtains a bearer token in the first place (redirect-based login, PKCE, sessions, logout, etc.).
+
+In other words: OIDC is one way to _get_ a bearer token; bearer validation is the server-side mechanism to _accept_ a bearer token.
+
+**Typical validation building blocks**
+
+- Signature verification (HMAC or asymmetric keys via JWKS)
+- Issuer (`iss`) and audience (`aud`) checks
+- Lifetime checks (`exp`, `nbf`)
+- Claim mapping to Croniq semantics (`tenant`, `env`, `scope`, `sub`)
+
+**Why this matters for repo boundaries**
+
+- Self-hosted V1 can keep a lightweight story: Croniq-issued tokens and/or password login, with local validation.
+- A hosted/cloud story usually wants: tenant-aware issuer/authority management, federated login UX, token exchange patterns, and stronger audit/compliance requirements.
+
+This is a good candidate for a separate repo/module when it starts to drive dependency and doc churn (see `CLOUD-REPO-SPLIT.md`).
+
 ### Hosted operations
 
 - Hardening for **SaaS** scale: multi-region, HA, autoscaling worker fleets, tenant-level rate limits/quotas, incident response runbooks.

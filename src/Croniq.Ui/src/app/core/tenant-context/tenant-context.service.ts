@@ -2,7 +2,6 @@ import { Injectable, computed, effect, inject, signal } from '@angular/core';
 
 import { CallerContext, CroniqRequestOptions } from 'data-access';
 
-import { OperatorSession } from '../auth/operator-session';
 import { nowIso } from '../time/clock';
 import { TenantContextState, TenantEnvironment } from './tenant-context.types';
 
@@ -22,7 +21,6 @@ const TENANT_STORAGE_KEY = 'croniq.ui.tenant-context';
 
 @Injectable({ providedIn: 'root' })
 export class TenantContextService {
-    private readonly operatorSession = inject(OperatorSession);
     private readonly state = signal<TenantContextState>(loadStoredTenantContext() ?? DEFAULT_TENANT_CONTEXT);
 
     constructor() {
@@ -118,13 +116,12 @@ export class TenantContextService {
 
     createCallerContext(command: string, overrides: Partial<CallerContext> = {}): CallerContext {
         const ctx = this.state();
-        const operatorActor = this.operatorSession.telemetryActor();
         return {
             source: overrides.source ?? ctx.source,
             command,
             tenantId: overrides.tenantId ?? ctx.tenantId,
             environment: overrides.environment ?? ctx.environment,
-            actor: overrides.actor ?? operatorActor,
+            actor: overrides.actor ?? 'ui',
         };
     }
 

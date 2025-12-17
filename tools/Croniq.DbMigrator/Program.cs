@@ -1,6 +1,9 @@
 using Croniq.Data.SqlServer;
+using Croniq.Auth.Abstractions;
+using Croniq.Auth.SqlServer;
 using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.AspNetCore.Identity;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using System.Linq;
@@ -24,12 +27,17 @@ services.AddCroniqSqlServerDbContext(options =>
     options.EnableSensitiveDataLogging = true;
 });
 
+services.AddSingleton<ITenantStore, SqlServerTenantStore>();
+services.AddSingleton<IPasswordUserStore, SqlServerPasswordUserStore>();
+
 await using var provider = services.BuildServiceProvider();
 
 try
 {
     await ApplyMigrationsAsync(provider, token).ConfigureAwait(false);
     Console.WriteLine("Croniq SQL Server migrations applied successfully.");
+
+    await SeedAdminAsync(provider, token).ConfigureAwait(false);
     return 0;
 }
 catch (Exception ex)
@@ -76,6 +84,80 @@ static async Task ApplyMigrationsAsync(IServiceProvider provider, CancellationTo
             throw;
         }
     }
+}
+
+static async Task SeedAdminAsync(IServiceProvider provider, CancellationToken token)
+{
+    var seedEnabled = Environment.GetEnvironmentVariable("CRONIQ_SEED_ADMIN");
+    if (!string.Equals(seedEnabled, "true", StringComparison.OrdinalIgnoreCase)
+        && !string.Equals(seedEnabled, "1", StringComparison.OrdinalIgnoreCase))
+    {
+        return;
+    }
+
+    using var scope = provider.CreateScope();
+    var loggerFactory = scope.ServiceProvider.GetRequiredService<ILoggerFactory>();
+    var logger = loggerFactory.CreateLogger("Croniq.DbMigrator.Seed");
+
+    var tenants = scope.ServiceProvider.GetRequiredService<ITenantStore>();
+    var users = scope.ServiceProvider.GetRequiredService<IPasswordUserStore>();
+
+    var tenantReference = (Environment.GetEnvironmentVariable("CRONIQ_SEED_TENANT_REFERENCE") ?? "default").Trim();
+    var tenantName = (Environment.GetEnvironmentVariable("CRONIQ_SEED_TENANT_NAME") ?? "Default").Trim();
+    var username = (Environment.GetEnvironmentVariable("CRONIQ_SEED_ADMIN_USERNAME") ?? "admin").Trim();
+    var password = (Environment.GetEnvironmentVariable("CRONIQ_SEED_ADMIN_PASSWORD") ?? "admin").Trim();
+    var overwrite = string.Equals(Environment.GetEnvironmentVariable("CRONIQ_SEED_ADMIN_OVERWRITE"), "true", StringComparison.OrdinalIgnoreCase)
+        || string.Equals(Environment.GetEnvironmentVariable("CRONIQ_SEED_ADMIN_OVERWRITE"), "1", StringComparison.OrdinalIgnoreCase);
+
+    if (string.IsNullOrWhiteSpace(tenantReference))
+    {
+        logger.LogWarning("Admin seeding enabled but CRONIQ_SEED_TENANT_REFERENCE is empty; skipping.");
+        return;
+    }
+
+    if (string.IsNullOrWhiteSpace(username) || string.IsNullOrWhiteSpace(password))
+    {
+        logger.LogWarning("Admin seeding enabled but username/password missing; skipping.");
+        return;
+    }
+
+    var tenant = await tenants.CreateAsync(tenantReference, tenantName, token).ConfigureAwait(false);
+
+    var existing = await users.FindByUsernameAsync(tenant.TenantId, username, token).ConfigureAwait(false);
+    if (existing is not null && !overwrite)
+    {
+        logger.LogInformation("Admin user already exists for tenant '{TenantReference}'; skipping (set CRONIQ_SEED_ADMIN_OVERWRITE=true to reset).", tenant.Reference);
+        return;
+    }
+
+    var scopes = new[]
+    {
+        CroniqScopes.SchedulesWrite,
+        CroniqScopes.JobsRead,
+        CroniqScopes.JobsWrite,
+        CroniqScopes.JobsTrigger,
+        CroniqScopes.ExecutionsRead,
+        CroniqScopes.WebhooksRead,
+        CroniqScopes.WebhooksWrite,
+        CroniqScopes.WebhooksRotate,
+        CroniqScopes.WebhooksDeadLetter,
+        CroniqScopes.ApiKeysManage,
+        CroniqScopes.TenantsAdmin
+    };
+
+    // PasswordHasher does not incorporate the user object by default.
+    var hasher = new PasswordHasher<object>();
+    var hash = hasher.HashPassword(user: new object(), password);
+
+    await users.UpsertAsync(new PasswordUserUpsertRequest(
+        tenant.TenantId,
+        username,
+        hash,
+        scopes,
+        IsActive: true,
+        PasswordChangeRequired: true), token).ConfigureAwait(false);
+
+    logger.LogInformation("Seeded admin user '{Username}' for tenant '{TenantReference}' (PasswordChangeRequired=true).", username, tenant.Reference);
 }
 
 static bool IsDatabaseProvisioningError(SqlException exception)

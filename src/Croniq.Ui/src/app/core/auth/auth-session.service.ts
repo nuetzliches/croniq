@@ -61,12 +61,6 @@ export class AuthSessionService implements CroniqCredentialSupplier {
         this.refreshTokenSignal.set(null);
     }
 
-    async startOidcBootstrap(): Promise<void> {
-        // Placeholder for PKCE/OIDC handshake. This keeps the hook in place so we can
-        // swap the manual token input for a standards-based login once backend is ready.
-        await Promise.resolve();
-    }
-
     getSessionToken(): string | null {
         return this.sessionTokenSignal()?.value ?? null;
     }

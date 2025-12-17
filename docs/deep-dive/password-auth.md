@@ -66,17 +66,18 @@ The rest of this document describes Option A as the baseline, and outlines Optio
 
   - Body: `{ tenantId?, tenantReference?, username, password, environmentTag?, audience?, scopes? }`
   - In V1, `tenantId`/`tenantReference` are typically omitted.
-  - Returns: `{ accessToken, tokenType: "Bearer", expiresIn }`
-  - Also issues a refresh token as an **HttpOnly Secure cookie** (recommended for UI/BFF).
+  - Returns: `{ tenantId, accessToken, tokenType: "Bearer", expiresIn, refreshToken }`
 
 - `POST /auth/refresh`
 
   - Rotates refresh token.
-  - Returns a new access token.
+  - Body: `{ tenantId?, refreshToken, environmentTag?, audience?, scopes? }`
+  - Returns: `{ accessToken, tokenType: "Bearer", expiresIn, refreshToken }`
 
 - `POST /auth/logout`
 
   - Revokes refresh token (server-side).
+  - Body: `{ tenantId?, refreshToken }`
 
 - Optional admin endpoints (restricted):
   - `POST /tenants/{tenantId}/users` create user / invite.
@@ -119,7 +120,39 @@ The rest of this document describes Option A as the baseline, and outlines Optio
 - Prefer a **BFF pattern**: UI keeps only a session cookie (HttpOnly). API calls happen through the BFF.
 - If the UI must call APIs directly:
   - Store access tokens only in memory (not localStorage).
-  - Refresh token should still be a secure cookie where possible.
+  - Prefer a refresh token cookie for browser-only clients; for non-browser clients, body transport is often simpler.
+
+## Refresh token transport (concrete trade-offs)
+
+Croniq can transport refresh tokens in two common ways.
+
+**Stand jetzt**: refresh tokens are returned in the JSON response body and must be provided in the request body for `/auth/refresh` and `/auth/logout`.
+
+### Variant A: refresh token in JSON body (current)
+
+**Pros**
+
+- Works uniformly for browsers, CLIs, and service-to-service clients.
+- No ambient-cookie CSRF surface.
+- Easier debugging (explicit payload).
+
+**Cons**
+
+- In browsers, you must store the refresh token somewhere: any XSS can typically exfiltrate it.
+- Higher risk of accidental logging/telemetry leakage (payloads, headers, SDK traces).
+
+### Variant B: refresh token as HttpOnly Secure cookie (typical for UI/BFF)
+
+**Pros**
+
+- Better XSS resilience for refresh tokens (JS cannot read HttpOnly cookies).
+- Natural fit for a BFF: browser never handles a long-lived secret.
+
+**Cons**
+
+- Requires CSRF strategy (at minimum: `SameSite` and/or CSRF token depending on deployment).
+- More ops complexity (domain/path/secure/samesite, reverse proxy behavior).
+- Less convenient for non-browser clients unless you also provide a body-based flow.
 
 ## Option B (Advanced): PAKE (OPAQUE/SRP)
 
@@ -166,6 +199,20 @@ Note: Password auth user records are tenant-scoped; without a default tenant the
 - It is stored as a claim in the access token.
 - Refresh tokens are not bound to an environment.
 - Clients may request a different `environmentTag` on refresh to switch environments without re-entering the password.
+
+## Tenant & environment: "Stand jetzt" and open decisions
+
+**Stand jetzt (V1)**
+
+- Tenant can be omitted for password endpoints if `Croniq:Auth:Password:DefaultTenant` is configured.
+- `environmentTag` is treated as a partition/preset and is carried in the access token.
+- Refresh can switch environments by passing a different `environmentTag`.
+
+**Open decisions**
+
+- Bind refresh tokens to environments (force re-login on env switch) vs allow env switch via refresh.
+- Require explicit tenant selection even in single-tenant installs vs rely on default tenant.
+- Add dedicated audit events when environment switches happen via refresh.
 
 ## Tenants & Scopes
 

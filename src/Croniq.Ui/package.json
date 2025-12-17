@@ -11,7 +11,6 @@
     "test:ci": "cross-env CI=1 ng test --no-watch",
     "test:list": "ng test --list-tests --no-watch",
     "mcp": "ng mcp",
-    "inspect:issue-tenant-token": "tsx tools/inspect-issue-tenant-token.ts",
     "generate:api": "tsx tools/generate-schemas.ts",
     "generate:api:server": "cross-env CRONIQ_OPENAPI_URL=http://localhost:5000/swagger/v1/swagger.json tsx tools/generate-schemas.ts",
     "generate:api:server:snapshot": "cross-env CRONIQ_OPENAPI_URL=http://localhost:5000/swagger/v1/swagger.json tsx tools/generate-schemas.ts --update-snapshot",

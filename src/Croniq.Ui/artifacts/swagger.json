@@ -1596,6 +1596,10 @@
           "refreshToken": {
             "type": "string",
             "nullable": true
+          },
+          "tenantReference": {
+            "type": "string",
+            "nullable": true
           }
         },
         "additionalProperties": false
@@ -1623,6 +1627,10 @@
             "nullable": true
           },
           "audience": {
+            "type": "string",
+            "nullable": true
+          },
+          "tenantReference": {
             "type": "string",
             "nullable": true
           }

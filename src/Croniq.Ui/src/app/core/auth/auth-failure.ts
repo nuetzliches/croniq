@@ -24,7 +24,7 @@ export function authFailureFromError(error: unknown, messages: AuthFailureMessag
       status: 401,
       message:
         messages.unauthenticated ??
-        'Not authenticated (401) — set a Croniq session token in the tenant context panel.',
+        'Not authenticated (401) — please login via /login.',
     };
   }
 

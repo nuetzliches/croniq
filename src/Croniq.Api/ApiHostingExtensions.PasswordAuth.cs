@@ -37,7 +37,6 @@ public static partial class ApiHostingExtensions
 
             var resolvedTenantId = await ResolveTenantIdAsync(
                     tenants,
-                    request.TenantId,
                     request.TenantReference,
                     options.CurrentValue,
                     cancellationToken)
@@ -78,16 +77,19 @@ public static partial class ApiHostingExtensions
                 return Results.Unauthorized();
             }
 
+            var tenantDescriptor = await tenants.GetByIdAsync(resolvedTenantId, cancellationToken).ConfigureAwait(false);
+
             return Results.Ok(new
             {
-                tenantId = resolvedTenantId,
+                tenantReference = tenantDescriptor?.Reference,
                 accessToken = result.AccessToken,
                 tokenType = "Bearer",
                 expiresIn = result.ExpiresInSeconds,
-                refreshToken = result.RefreshToken
+                refreshToken = result.RefreshToken,
+                passwordChangeRequired = result.PasswordChangeRequired
             });
         })
-        .WithDocs("Auth_Login", "Password login", "Authenticates a username/password and issues access + refresh tokens. Tenant can be provided via tenantId or tenantReference; it can be omitted if a default tenant is configured.");
+        .WithDocs("Auth_Login", "Password login", "Authenticates a username/password and issues access + refresh tokens. Tenant can be provided via tenantReference; it can be omitted if a default tenant is configured.");
 
         app.MapPost("/auth/refresh", async (
             PasswordRefreshRequest request,
@@ -114,8 +116,7 @@ public static partial class ApiHostingExtensions
 
             var resolvedTenantId = await ResolveTenantIdAsync(
                     tenants,
-                    request.TenantId,
-                    tenantReference: null,
+                    request.TenantReference,
                     options.CurrentValue,
                     cancellationToken)
                 .ConfigureAwait(false);
@@ -150,7 +151,8 @@ public static partial class ApiHostingExtensions
                 accessToken = result.AccessToken,
                 tokenType = "Bearer",
                 expiresIn = result.ExpiresInSeconds,
-                refreshToken = result.RefreshToken
+                refreshToken = result.RefreshToken,
+                passwordChangeRequired = result.PasswordChangeRequired
             });
         })
         .WithDocs("Auth_Refresh", "Refresh access token", "Rotates the refresh token and returns a new access token.");
@@ -180,8 +182,7 @@ public static partial class ApiHostingExtensions
 
             var resolvedTenantId = await ResolveTenantIdAsync(
                     tenants,
-                    request.TenantId,
-                    tenantReference: null,
+                    request.TenantReference,
                     options.CurrentValue,
                     cancellationToken)
                 .ConfigureAwait(false);
@@ -210,7 +211,6 @@ public static partial class ApiHostingExtensions
 
     private static async Task<string?> ResolveTenantIdAsync(
         ITenantStore tenants,
-        string? tenantId,
         string? tenantReference,
         PasswordAuthOptions? options,
         CancellationToken cancellationToken)
@@ -219,25 +219,7 @@ public static partial class ApiHostingExtensions
 
         static string? Clean(string? value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
 
-        tenantId = Clean(tenantId);
         tenantReference = Clean(tenantReference);
-
-        // If the client passed something in tenantId, treat it as either an actual id OR a reference
-        // (to support "user only knows the tenant code" without changing payload name).
-        if (tenantId is not null)
-        {
-            var byId = await tenants.GetByIdAsync(tenantId, cancellationToken).ConfigureAwait(false);
-            if (byId is not null && byId.IsActive)
-            {
-                return byId.TenantId;
-            }
-
-            var byRef = await tenants.GetByReferenceAsync(tenantId, cancellationToken).ConfigureAwait(false);
-            if (byRef is not null && byRef.IsActive)
-            {
-                return byRef.TenantId;
-            }
-        }
 
         if (tenantReference is not null)
         {

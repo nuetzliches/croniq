@@ -38,7 +38,6 @@ import type {
     TenantEnvironmentParams,
     TenantScheduleParams,
     TenantScopedParams,
-    TenantTokenParams,
     TenantUpsertApiClientParams,
     TenantWebhookParams,
     TenantWebhookRuleParams,
@@ -77,7 +76,6 @@ const TENANT_ENDPOINTS = {
     listApiClients: requireEndpoint(TenantsApi, 'get', '/tenants/:tenantId/api-clients'),
     upsertApiClient: requireEndpoint(TenantsApi, 'post', '/tenants/:tenantId/api-clients'),
     deleteApiClient: requireEndpoint(TenantsApi, 'delete', '/tenants/:tenantId/api-clients/:clientId'),
-    issueTenantToken: requireEndpoint(TenantsApi, 'post', '/tenants/:tenantId/tokens'),
     issueApiClientToken: requireEndpoint(TenantsApi, 'post', '/tenants/:tenantId/api-clients/:clientId/tokens'),
     issueApiKey: requireEndpoint(TenantsApi, 'post', '/tenants/:tenantId/api-keys'),
     deleteApiKey: requireEndpoint(TenantsApi, 'delete', '/tenants/:tenantId/api-keys/:keyId'),
@@ -149,11 +147,6 @@ export interface CroniqApiClient {
     getTenant(params: TenantScopedParams, options?: CroniqRequestOptions): Promise<unknown>;
     deactivateTenant(params: TenantScopedParams, options?: CroniqRequestOptions): Promise<void>;
 
-    issueTenantToken(
-        params: TenantTokenParams,
-        payload: IssueTokenRequest,
-        options?: CroniqRequestOptions,
-    ): Promise<unknown>;
     issueApiClientToken(
         params: TenantApiClientTokenParams,
         payload: IssueTokenRequest,
@@ -348,24 +341,6 @@ class HttpCroniqApiClient implements CroniqApiClient {
             TENANTS_ENDPOINTS.deactivate,
             {
                 path: { tenantId: params.tenantId },
-            },
-            options,
-        );
-    }
-
-    issueTenantToken(
-        params: TenantTokenParams,
-        payload: IssueTokenRequest,
-        options?: CroniqRequestOptions,
-    ): Promise<unknown> {
-        return this.execute(
-            TENANT_ENDPOINTS.issueTenantToken,
-            {
-                path: { tenantId: params.tenantId },
-                query: {
-                    environment: params.environment ?? undefined,
-                },
-                body: payload,
             },
             options,
         );
