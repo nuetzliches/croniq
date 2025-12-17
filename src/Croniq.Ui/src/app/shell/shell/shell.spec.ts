@@ -1,8 +1,6 @@
 import { provideZonelessChangeDetection } from '@angular/core';
 import { ComponentFixture, TestBed } from '@angular/core/testing';
-import { RouterTestingModule } from '@angular/router/testing';
-
-import { Shell } from './shell';
+import { RouterTestingModule } from '@angular/router/testing';import { Shell } from './shell';
 
 describe('Shell', () => {
   let component: Shell;

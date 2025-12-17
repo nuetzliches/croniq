@@ -1,9 +1,7 @@
 import { provideZonelessChangeDetection, signal } from '@angular/core';
 import { ComponentFixture, TestBed } from '@angular/core/testing';
-import { nowIso } from '../../../core/time/clock';
-
+import { nowIso } from '@core/time/clock';
 import { ScheduleSummary } from '@croniq/api-schema';
-
 import { SchedulesPage } from './schedules-page';
 import { SchedulesStore } from './schedules.store';
 

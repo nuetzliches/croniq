@@ -1,11 +1,9 @@
 import { Injectable, inject, signal } from '@angular/core';
-
+import { authFailureFromError } from '@core/auth/auth-failure';
+import { TenantContextService } from '@core/tenant-context/tenant-context.service';
+import { isoFromEpochMs, nowIso, nowMs } from '@core/time/clock';
 import { ScheduleListResponse, ScheduleSummary, scheduleListResponseSchema } from '@croniq/api-schema';
 import { CRONIQ_API_CLIENT, CroniqApiClient } from 'data-access';
-
-import { authFailureFromError } from '../../../core/auth/auth-failure';
-import { TenantContextService } from '../../../core/tenant-context/tenant-context.service';
-import { isoFromEpochMs, nowIso, nowMs } from '../../../core/time/clock';
 
 @Injectable({ providedIn: 'root' })
 export class SchedulesStore {

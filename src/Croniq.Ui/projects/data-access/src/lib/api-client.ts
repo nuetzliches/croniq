@@ -1,7 +1,5 @@
 import { HttpClient } from '@angular/common/http';
-import { EnvironmentProviders, InjectionToken, Provider, inject, makeEnvironmentProviders } from '@angular/core';
-
-import {
+import { EnvironmentProviders, InjectionToken, Provider, inject, makeEnvironmentProviders } from '@angular/core';import {
     AuthApi,
     CreateWebhookIpRuleRequest,
     HealthApi,
@@ -24,9 +22,7 @@ import {
     WebhooksApi,
     scheduleListResponseSchema,
     type EndpointDefinition,
-} from '@croniq/api-schema';
-
-import type {
+} from '@croniq/api-schema';import type {
     CroniqCredentialSupplier,
     CroniqRequestOptions,
     ExecutionLogParams,

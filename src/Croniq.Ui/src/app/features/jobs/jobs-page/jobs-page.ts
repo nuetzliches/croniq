@@ -1,8 +1,7 @@
 import { CommonModule } from '@angular/common';
 import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@angular/core';
-
-import type { ManualTriggerEntry } from '../jobs.store';
-import { JobsStore } from '../jobs.store';
+import type { ManualTriggerEntry } from '@features/jobs/jobs.store';
+import { JobsStore } from '@features/jobs/jobs.store';
 
 @Component({
   selector: 'cq-jobs-page',
@@ -16,6 +15,10 @@ export class JobsPage {
   readonly manualTriggers = this.store.manualTriggers;
   readonly pendingCount = this.store.pendingCount;
   readonly lastError = this.store.lastError;
+
+  readonly jobRegistry = this.store.jobRegistry;
+  readonly jobRegistryLoading = this.store.jobRegistryLoading;
+  readonly jobRegistryError = this.store.jobRegistryError;
 
   readonly jobKey = signal('nightly-billing-sweep');
   readonly metadataSource = signal('tenant=cron-lab\nsource=ui');
@@ -37,6 +40,10 @@ export class JobsPage {
   async queueManualTrigger(): Promise<void> {
     const metadata = this.parseMetadata(this.metadataSource());
     await this.store.triggerJob(this.jobKey(), metadata);
+  }
+
+  refreshJobRegistry(): void {
+    void this.store.refreshJobRegistry();
   }
 
   hasMetadata(entry: ManualTriggerEntry): boolean {

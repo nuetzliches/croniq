@@ -1,9 +1,5 @@
 import { provideZonelessChangeDetection } from '@angular/core';
-import { TestBed } from '@angular/core/testing';
-
-import { CRONIQ_API_CLIENT, type CroniqApiClient } from 'data-access';
-
-import { AuthSessionService } from './auth-session.service';
+import { TestBed } from '@angular/core/testing';import { CRONIQ_API_CLIENT, type CroniqApiClient } from 'data-access';import { AuthSessionService } from './auth-session.service';
 import { PasswordAuthService } from './password-auth.service';
 
 describe('PasswordAuthService', () => {

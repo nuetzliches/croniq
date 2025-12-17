@@ -1,8 +1,6 @@
 import { Injectable, computed, effect, signal } from '@angular/core';
-
+import { epochMsFromIso, nowIso, nowMs, tryIsoFromUnknown } from '@core/time/clock';
 import type { CroniqCredentialSupplier } from 'data-access';
-
-import { epochMsFromIso, nowIso, nowMs, tryIsoFromUnknown } from '../time/clock';
 
 interface StoredSecret {
     value: string;

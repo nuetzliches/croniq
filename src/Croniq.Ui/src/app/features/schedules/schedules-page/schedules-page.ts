@@ -1,7 +1,5 @@
 import { CommonModule } from '@angular/common';
-import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@angular/core';
-
-import { ScheduleState } from '@croniq/api-schema';
+import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@angular/core';import { ScheduleState } from '@croniq/api-schema';
 import { SchedulesStore } from './schedules.store';
 
 type ScheduleFilter = ScheduleState | 'all';

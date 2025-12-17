@@ -1,4 +1,4 @@
-import { Injectable, Provider, computed, inject, signal, InjectionToken } from '@angular/core';
+import { Injectable, InjectionToken, Provider, computed, inject, signal } from '@angular/core';
 import { Router } from '@angular/router';
 
 type CommandKeyword = string;
@@ -28,7 +28,6 @@ const DEFAULT_COMMANDS: ReadonlyArray<CommandPaletteCommand> = [
     { id: 'schedules', label: 'Schedules', path: 'schedules', description: 'Cron + policy inventory' },
     { id: 'jobs', label: 'Jobs', path: 'jobs', description: 'Registry browser & triggers' },
     { id: 'webhooks', label: 'Webhooks', path: 'webhooks', description: 'Ingress status & secrets' },
-    { id: 'tenants', label: 'Tenants & Keys', path: 'tenants', description: 'Quota + key rotation' },
 ];
 
 @Injectable({ providedIn: 'root' })

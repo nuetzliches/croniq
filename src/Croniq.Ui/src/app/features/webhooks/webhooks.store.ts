@@ -1,5 +1,6 @@
 import { Injectable, computed, inject, signal } from '@angular/core';
-
+import { TenantContextService } from '@core/tenant-context/tenant-context.service';
+import { isoFromEpochMs, nowIso, nowMs, tryIsoFromUnknown } from '@core/time/clock';
 import {
     CreateWebhookIpRuleRequest,
     RotateWebhookSecretRequest,
@@ -15,8 +16,6 @@ import {
     TenantWebhookUpsertParams,
     WebhookInvocationParams,
 } from 'data-access';
-import { TenantContextService } from '../../core/tenant-context/tenant-context.service';
-import { isoFromEpochMs, nowIso, nowMs, tryIsoFromUnknown } from '../../core/time/clock';
 
 export type WebhookEndpointView = {
     hookKey: string;

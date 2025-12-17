@@ -1,7 +1,5 @@
 import { provideZonelessChangeDetection } from '@angular/core';
-import { ComponentFixture, TestBed } from '@angular/core/testing';
-
-import { Telemetry } from './telemetry';
+import { ComponentFixture, TestBed } from '@angular/core/testing';import { Telemetry } from './telemetry';
 
 describe('Telemetry', () => {
   let component: Telemetry;

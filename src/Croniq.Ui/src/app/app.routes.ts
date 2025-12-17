@@ -1,5 +1,4 @@
 import { Routes } from '@angular/router';
-
 import { requireSessionTokenGuard } from './core/auth/require-session-token.guard';
 
 export const appRoutes: Routes = [
@@ -36,12 +35,6 @@ export const appRoutes: Routes = [
         canActivate: [requireSessionTokenGuard],
         loadComponent: () =>
             import('./features/webhooks/webhooks-page/webhooks-page').then((m) => m.WebhooksPage),
-    },
-    {
-        path: 'tenants',
-        canActivate: [requireSessionTokenGuard],
-        loadComponent: () =>
-            import('./features/tenants/tenants-page/tenants-page').then((m) => m.TenantsPage),
     },
     {
         path: '**',

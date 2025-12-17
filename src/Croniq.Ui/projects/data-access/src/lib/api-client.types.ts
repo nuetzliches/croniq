@@ -18,9 +18,9 @@ export interface TenantApiClientParams extends TenantEnvironmentOptionalParams {
     clientId: string;
 }
 
-export interface TenantUpsertApiClientParams extends TenantEnvironmentOptionalParams { }
+export type TenantUpsertApiClientParams = TenantEnvironmentOptionalParams;
 
-export interface TenantApiClientTokenParams extends TenantApiClientParams { }
+export type TenantApiClientTokenParams = TenantApiClientParams;
 
 export interface TenantWebhookParams extends TenantEnvironmentParams {
     hookKey: string;

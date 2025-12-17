@@ -1,7 +1,5 @@
 import { provideZonelessChangeDetection } from '@angular/core';
-import { ComponentFixture, TestBed } from '@angular/core/testing';
-
-import { DataAccess } from './data-access';
+import { ComponentFixture, TestBed } from '@angular/core/testing';import { DataAccess } from './data-access';
 
 describe('DataAccess', () => {
   let component: DataAccess;

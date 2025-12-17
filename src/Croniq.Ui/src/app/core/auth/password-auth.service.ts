@@ -1,10 +1,8 @@
 import { Injectable, inject } from '@angular/core';
-import { z } from 'zod';
-
+import { tryIsoFromUnknown } from '@core/time/clock';
 import type { PasswordLoginRequest } from '@croniq/api-schema';
 import { CRONIQ_API_CLIENT, type CroniqApiClient } from 'data-access';
-
-import { tryIsoFromUnknown } from '../time/clock';
+import { z } from 'zod';
 import { AuthSessionService } from './auth-session.service';
 
 const passwordLoginResponseSchema = z

@@ -1,7 +1,5 @@
 import { provideZonelessChangeDetection } from '@angular/core';
-import { ComponentFixture, TestBed } from '@angular/core/testing';
-
-import { StatusBeacon } from './status-beacon';
+import { ComponentFixture, TestBed } from '@angular/core/testing';import { StatusBeacon } from './status-beacon';
 
 describe('StatusBeacon', () => {
   let component: StatusBeacon;

@@ -1,9 +1,8 @@
 import { CommonModule } from '@angular/common';
 import { ChangeDetectionStrategy, Component, inject, signal } from '@angular/core';
-
+import { TenantContextService } from '@core/tenant-context/tenant-context.service';
 import { CreateWebhookIpRuleRequest, RotateWebhookSecretRequest, UpsertWebhookEndpointRequest } from '@croniq/api-schema';
-
-import { WebhooksStore } from '../webhooks.store';
+import { WebhooksStore } from '@features/webhooks/webhooks.store';
 
 @Component({
   selector: 'cq-webhooks-page',
@@ -13,6 +12,7 @@ import { WebhooksStore } from '../webhooks.store';
 })
 export class WebhooksPage {
   private readonly store = inject(WebhooksStore);
+  private readonly tenantContext = inject(TenantContextService);
 
   readonly endpoints = this.store.endpoints;
   readonly actionLog = this.store.actionLog;
@@ -21,8 +21,8 @@ export class WebhooksPage {
   readonly lastError = this.store.lastError;
   readonly activeCount = this.store.activeCount;
 
-  readonly tenantId = signal('cron-lab');
-  readonly environment = signal('production');
+  readonly tenantId = this.tenantContext.tenantId;
+  readonly environment = this.tenantContext.environment;
   readonly hookKey = signal('billing-updates');
   readonly jobKey = signal('jobs.billing-webhook');
   readonly requestsPerMinute = signal('120');
@@ -34,14 +34,6 @@ export class WebhooksPage {
   readonly deadLetterId = signal('dl-001');
   readonly secretActivateDelay = signal('60');
   readonly secretGracePeriod = signal('600');
-
-  setTenantId(value: string): void {
-    this.tenantId.set(value);
-  }
-
-  setEnvironment(value: string): void {
-    this.environment.set(value);
-  }
 
   setHookKey(value: string): void {
     this.hookKey.set(value);
@@ -92,7 +84,7 @@ export class WebhooksPage {
     if (!tenantId) {
       return;
     }
-    await this.store.refreshEndpoints({ tenantId, environment: this.environment().trim() || 'production' });
+    await this.store.refreshEndpoints({ tenantId, environment: this.environment() });
   }
 
   async upsertEndpoint(): Promise<void> {
@@ -117,7 +109,7 @@ export class WebhooksPage {
     await this.store.upsertEndpoint(
       {
         tenantId,
-        environment: this.environment().trim() || 'production',
+        environment: this.environment(),
         hookKey,
         allowUnsigned: this.allowUnsigned(),
       },
@@ -133,7 +125,7 @@ export class WebhooksPage {
     }
     await this.store.deleteEndpoint({
       tenantId,
-      environment: this.environment().trim() || 'production',
+      environment: this.environment(),
       hookKey,
     });
   }
@@ -152,7 +144,7 @@ export class WebhooksPage {
     await this.store.rotateSecret(
       {
         tenantId,
-        environment: this.environment().trim() || 'production',
+        environment: this.environment(),
         hookKey,
       },
       payload,
@@ -172,7 +164,7 @@ export class WebhooksPage {
     await this.store.createIpRule(
       {
         tenantId,
-        environment: this.environment().trim() || 'production',
+        environment: this.environment(),
         hookKey,
       },
       payload,
@@ -188,7 +180,7 @@ export class WebhooksPage {
     }
     await this.store.deleteIpRule({
       tenantId,
-      environment: this.environment().trim() || 'production',
+      environment: this.environment(),
       hookKey,
       ruleId,
     });
@@ -202,7 +194,7 @@ export class WebhooksPage {
     }
     await this.store.replayDeadLetter({
       tenantId,
-      environment: this.environment().trim() || 'production',
+      environment: this.environment(),
       deadLetterId,
     });
   }

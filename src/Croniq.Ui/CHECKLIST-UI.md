@@ -47,7 +47,7 @@ Derived from [docs/deep-dive/designs/angular-ui-concept.md](docs/deep-dive/desig
   - [ ] Schedules – list/detail views with JSON diff preview for policy delta inspection.
   - [ ] Jobs – registry browser, manual trigger action, last-N execution view.
   - [ ] Webhooks – ingress status, secret rotation UI, IP allow-list grid.
-  - [ ] Tenants & API keys – quota management, key rotation, policy override visibility.
+  - [ ] Tenants & API keys – intentionally excluded (single-tenant UI); no menu/command entries. Tenant reference is still required for tenant-scoped API routes.
 
 ## Data Access & State
 
@@ -55,7 +55,14 @@ Derived from [docs/deep-dive/designs/angular-ui-concept.md](docs/deep-dive/desig
 - [x] Document & standardize OpenAPI source selection (snapshot vs. live server), including the recommended local dev commands and the fallback order. _(See `artifacts/README.md`; use `npm run generate:api` (snapshot/offline) or `npm run generate:api:server` (live).)_
 - [x] Add a one-shot Swagger snapshot command (`npm run snapshot:swagger`) and a combined refresh command (`npm run generate:api:server:snapshot`) so the repo snapshot can be updated deterministically.
 - [ ] Decide CI policy for OpenAPI sync: keep committing `artifacts/swagger.json` snapshots vs. generating from a live/staging swagger endpoint (and how to avoid flaky builds when the endpoint is unavailable).
-- [ ] Wire newly generated endpoints into the relevant feature stores (no new UX): tenants list/create/deactivate, tenant api-clients list/upsert/delete, executions list, jobs list/get/delete, schedule get/delete, and token issuance endpoints.
+- [ ] Wire newly generated endpoints into the relevant feature stores (no new UX):
+  - [ ] tenants list/create/deactivate (deferred: tenant feature excluded in single-tenant UI)
+  - [ ] tenant api-clients list/upsert/delete (deferred: tenant feature excluded in single-tenant UI)
+  - [x] executions list
+  - [x] jobs list (registry)
+  - [ ] jobs get/delete
+  - [ ] schedule get/delete
+  - [ ] token issuance endpoints
 - [ ] Configure Angular Query caches, refetch policies, and tenant/env scoping helpers.
 - [ ] Persist non-sensitive preferences (theme, table density) per tenant using IndexedDB with optional encryption.
 
@@ -111,6 +118,7 @@ This checklist intentionally avoids duplicating how-tos.
 - When the backend contract changes: run `npm run snapshot:swagger`, then `npm run generate:api`.
 - Keep OpenAPI responses in sync with the backend (ideally add response schemas for `/auth/*` upstream so generation no longer yields `z.void()` responses).
 - Keep `tenantId` / `environmentTag` unset in the login payload (server-configured defaults).
+- For tenant-scoped API routes (`/tenants/:tenantId/*`), pass the **tenant reference** (see root docs: `docs/deep-dive/password-auth.md` and `AI_ASSISTANT_INSTRUCTIONS.md`).
 - Decide and document the canonical auth mechanism in Swagger, then implement the full refresh/logout wiring in the UI.
 
 # Prüfen / Nachbessern

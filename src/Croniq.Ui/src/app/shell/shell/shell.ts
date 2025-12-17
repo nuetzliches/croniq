@@ -1,12 +1,11 @@
 import { CommonModule } from '@angular/common';
 import { ChangeDetectionStrategy, Component, inject, signal } from '@angular/core';
 import { RouterLink, RouterLinkActive, RouterOutlet } from '@angular/router';
-
-import { NavItem, PRIMARY_NAV_ITEMS } from '../../core/navigation/nav-items';
-import { TenantContextService } from '../../core/tenant-context/tenant-context.service';
-import { CommandPalette } from '../../shared/command-palette/command-palette';
-import { CommandPaletteController } from '../../shared/command-palette/command-palette.controller';
-import { StatusBeacon } from '../../shared/status-beacon/status-beacon';
+import { NavItem, PRIMARY_NAV_ITEMS } from '@core/navigation/nav-items';
+import { TenantContextService } from '@core/tenant-context/tenant-context.service';
+import { CommandPalette } from '@shared/command-palette/command-palette';
+import { CommandPaletteController } from '@shared/command-palette/command-palette.controller';
+import { StatusBeacon } from '@shared/status-beacon/status-beacon';
 
 type StatusIntent = 'success' | 'warn' | 'neutral';
 

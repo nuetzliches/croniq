@@ -1,7 +1,5 @@
 import { CommonModule } from '@angular/common';
-import { ChangeDetectionStrategy, Component, ElementRef, computed, effect, inject, output, viewChild } from '@angular/core';
-
-import { CommandPaletteCommand, CommandPaletteController } from './command-palette.controller';
+import { ChangeDetectionStrategy, Component, ElementRef, computed, effect, inject, output, viewChild } from '@angular/core';import { CommandPaletteCommand, CommandPaletteController } from './command-palette.controller';
 
 @Component({
   selector: 'cq-command-palette',

@@ -1,8 +1,6 @@
 import { HttpClient } from '@angular/common/http';
 import { Injectable, inject, isDevMode } from '@angular/core';
-import { firstValueFrom } from 'rxjs';
-
-import {
+import { firstValueFrom } from 'rxjs';import {
     croniqUiRuntimeConfigSchema,
     resolveSwaggerUiUrl,
     type CroniqUiRuntimeConfig,

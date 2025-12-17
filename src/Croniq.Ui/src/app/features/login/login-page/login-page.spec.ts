@@ -1,9 +1,8 @@
 import { provideZonelessChangeDetection, signal } from '@angular/core';
 import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { provideRouter } from '@angular/router';
-
-import { AuthSessionService } from '../../../core/auth/auth-session.service';
-import { PasswordAuthService } from '../../../core/auth/password-auth.service';
+import { AuthSessionService } from '@core/auth/auth-session.service';
+import { PasswordAuthService } from '@core/auth/password-auth.service';
 import { LoginPage } from './login-page';
 
 class AuthSessionStub {

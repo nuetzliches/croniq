@@ -1,7 +1,7 @@
 import { CommonModule, JsonPipe } from '@angular/common';
 import { ChangeDetectionStrategy, Component, inject, signal } from '@angular/core';
-
-import { TenantsStore } from '../tenants.store';
+import { TenantContextService } from '@core/tenant-context/tenant-context.service';
+import { TenantsStore } from '@features/tenants/tenants.store';
 
 @Component({
   selector: 'cq-tenants-page',
@@ -11,28 +11,21 @@ import { TenantsStore } from '../tenants.store';
 })
 export class TenantsPage {
   private readonly store = inject(TenantsStore);
+  private readonly tenantContext = inject(TenantContextService);
 
   readonly activity = this.store.activity;
   readonly lastLookup = this.store.lastLookup;
   readonly busy = this.store.busy;
   readonly lastError = this.store.lastError;
 
-  readonly tenantId = signal('cron-lab');
-  readonly environment = signal('production');
+  readonly tenantId = this.tenantContext.tenantId;
+  readonly environment = this.tenantContext.environment;
   readonly clientId = signal('payments-service');
   readonly scopesInput = signal('schedules:read, webhooks:write');
   readonly ttlHoursInput = signal('24');
   readonly keyId = signal('key-prod-primary');
 
   readonly scopesPreview = signal('schedules:read, webhooks:write');
-
-  setTenantId(value: string): void {
-    this.tenantId.set(value);
-  }
-
-  setEnvironment(value: string): void {
-    this.environment.set(value);
-  }
 
   setClientId(value: string): void {
     this.clientId.set(value);
@@ -65,7 +58,7 @@ export class TenantsPage {
       { tenantId },
       {
         clientId: this.clientId().trim(),
-        environmentTag: this.environment().trim() || null,
+        environmentTag: this.environment(),
         scopes: this.parseScopes(this.scopesInput()),
         ttlHours: this.parseNumber(this.ttlHoursInput()),
       }
@@ -81,7 +74,7 @@ export class TenantsPage {
     await this.store.rotateApiKey({
       tenantId,
       keyId,
-      environment: this.environment().trim() || undefined,
+      environment: this.environment(),
     });
   }
 
@@ -94,7 +87,7 @@ export class TenantsPage {
     await this.store.deleteApiKey({
       tenantId,
       keyId,
-      environment: this.environment().trim() || undefined,
+      environment: this.environment(),
     });
   }
 
@@ -108,7 +101,7 @@ export class TenantsPage {
     await this.store.lookupApiClient({
       tenantId,
       clientId,
-      environment: this.environment().trim() || undefined,
+      environment: this.environment(),
     });
   }
 

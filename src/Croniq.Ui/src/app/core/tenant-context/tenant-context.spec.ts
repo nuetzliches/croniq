@@ -1,7 +1,5 @@
 import { provideZonelessChangeDetection } from '@angular/core';
-import { ComponentFixture, TestBed } from '@angular/core/testing';
-
-import { TenantContext } from './tenant-context';
+import { ComponentFixture, TestBed } from '@angular/core/testing';import { TenantContext } from './tenant-context';
 
 describe('TenantContext', () => {
   let component: TenantContext;

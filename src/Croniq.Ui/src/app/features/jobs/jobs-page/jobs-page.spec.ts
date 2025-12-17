@@ -1,7 +1,6 @@
 import { provideZonelessChangeDetection, signal } from '@angular/core';
 import { ComponentFixture, TestBed } from '@angular/core/testing';
-
-import { JobsStore } from '../jobs.store';
+import { JobsStore } from '@features/jobs/jobs.store';
 import { JobsPage } from './jobs-page';
 
 class JobsStoreStub {
@@ -9,7 +8,13 @@ class JobsStoreStub {
   readonly pendingCount = signal(0);
   readonly lastError = signal<string | null>(null);
 
+  readonly jobRegistry = signal([]);
+  readonly jobRegistryLoading = signal(false);
+  readonly jobRegistryError = signal<string | null>(null);
+
   triggerJob = vi.fn();
+
+  refreshJobRegistry = vi.fn();
 }
 
 describe('JobsPage', () => {

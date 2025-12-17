@@ -1,6 +1,4 @@
-import { ChangeDetectionStrategy, Component } from '@angular/core';
-
-import { Shell } from './shell/shell/shell';
+import { ChangeDetectionStrategy, Component } from '@angular/core';import { Shell } from './shell/shell/shell';
 
 @Component({
   selector: 'cq-root',

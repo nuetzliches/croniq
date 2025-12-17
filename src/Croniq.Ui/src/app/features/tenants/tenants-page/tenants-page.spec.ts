@@ -1,7 +1,6 @@
 import { provideZonelessChangeDetection, signal } from '@angular/core';
 import { ComponentFixture, TestBed } from '@angular/core/testing';
-
-import { TenantsStore } from '../tenants.store';
+import { TenantsStore } from '@features/tenants/tenants.store';
 import { TenantsPage } from './tenants-page';
 
 class TenantsStoreStub {

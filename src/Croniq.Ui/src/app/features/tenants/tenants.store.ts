@@ -1,5 +1,6 @@
 import { Injectable, inject, signal } from '@angular/core';
-
+import { TenantContextService } from '@core/tenant-context/tenant-context.service';
+import { isoFromEpochMs, nowIso, nowMs } from '@core/time/clock';
 import { IssueApiKeyRequest } from '@croniq/api-schema';
 import {
     CRONIQ_API_CLIENT,
@@ -8,9 +9,6 @@ import {
     TenantApiKeyParams,
     TenantScopedParams,
 } from 'data-access';
-
-import { TenantContextService } from '../../core/tenant-context/tenant-context.service';
-import { isoFromEpochMs, nowIso, nowMs } from '../../core/time/clock';
 
 export type ApiKeyActionType = 'issue' | 'rotate' | 'delete';
 export type ApiKeyActionStatus = 'pending' | 'success' | 'error';

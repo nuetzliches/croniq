@@ -1,4 +1,4 @@
-import { CommandPaletteCommand, provideCommandPaletteCommands } from '../../shared/command-palette/command-palette.controller';
+import { CommandPaletteCommand, provideCommandPaletteCommands } from '@shared/command-palette/command-palette.controller';
 
 const SCHEDULES_COMMANDS: ReadonlyArray<CommandPaletteCommand> = [
     {

@@ -1,10 +1,9 @@
 import { CommonModule } from '@angular/common';
 import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@angular/core';
 import { Router, RouterLink } from '@angular/router';
-
-import { AuthSessionService } from '../../../core/auth/auth-session.service';
-import { PasswordAuthService } from '../../../core/auth/password-auth.service';
-import { TenantContextService } from '../../../core/tenant-context/tenant-context.service';
+import { AuthSessionService } from '@core/auth/auth-session.service';
+import { PasswordAuthService } from '@core/auth/password-auth.service';
+import { TenantContextService } from '@core/tenant-context/tenant-context.service';
 
 @Component({
     selector: 'cq-login-page',

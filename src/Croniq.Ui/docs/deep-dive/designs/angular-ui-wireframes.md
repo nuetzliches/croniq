@@ -100,6 +100,20 @@ Text-based wireframes and component inventory for the Angular 21 + Tailwind admi
 └──────────────────────────────┴──────────────────────────────────────────────┘
 ```
 
+## Webhook Dead-Letters
+
+```
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ Dead-Letters                                                                 │
+│ Filters: [Search] [Status ▾] [Hook Key ▾]                                    │
+│ Table:                                                                       │
+│ ┌──────────────┬───────────┬───────────────┬───────────────┬──────────────┐  │
+│ │ DeadLetterId │ Hook Key   │ Received      │ Last Error    │ Status       │  │
+│ └──────────────┴───────────┴───────────────┴───────────────┴──────────────┘  │
+│ Row actions: [View Payload] [Replay]                                         │
+└──────────────────────────────────────────────────────────────────────────────┘
+```
+
 ## Tenants & API Keys
 
 ```
@@ -114,6 +128,55 @@ Text-based wireframes and component inventory for the Angular 21 + Tailwind admi
 └──────────────────────────────┴──────────────────────────────────────────────┘
 ```
 
+### Tenant detail: API Clients
+
+```
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ Tenant detail tabs: Overview | API Keys | API Clients | Policies | Audit      │
+├──────────────────────────────────────────────────────────────────────────────┤
+│ API Clients                                                                  │
+│ [Upsert Client]                                                              │
+│ ┌───────────┬──────────────┬───────────────┬───────────────┬──────────────┐  │
+│ │ Client Id │ Name          │ Scopes        │ Last Issued   │ Status       │  │
+│ └───────────┴──────────────┴───────────────┴───────────────┴──────────────┘  │
+│ Row actions: [Issue Token] [Delete]                                          │
+└──────────────────────────────────────────────────────────────────────────────┘
+```
+
+### Tenant detail: Tenant Tokens
+
+```
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ Tenant detail tabs: Overview | API Keys | API Clients | Tokens | Policies    │
+├──────────────────────────────────────────────────────────────────────────────┤
+│ Tokens                                                                       │
+│ [Issue Tenant Token]                                                         │
+│ Output: one-time token display w/ [Copy]                                     │
+└──────────────────────────────────────────────────────────────────────────────┘
+```
+
+### Tenant detail: Deactivate tenant
+
+```
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ Tenant detail: Overview                                                      │
+│ Danger zone: [Deactivate Tenant] (requires confirmation)                     │
+└──────────────────────────────────────────────────────────────────────────────┘
+```
+
+## Execution Viewer (shared)
+
+```
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ Execution Details                                                            │
+│ Header: {executionId} · {status} · {started} → {finished}                    │
+├──────────────────────────────────────────────────────────────────────────────┤
+│ Tabs: Summary | Logs                                                          │
+│ Summary: job key, schedule trigger id, retry/misfire metadata                 │
+│ Logs: scrollable text view with [Copy] / [Download]                           │
+└──────────────────────────────────────────────────────────────────────────────┘
+```
+
 ## Component Checklist
 
 | Surface        | Components Needed                                                                                                       | Notes                                                       |
@@ -124,6 +187,9 @@ Text-based wireframes and component inventory for the Angular 21 + Tailwind admi
 | Jobs           | Faceted search, card grid, slide-over drawer, execution timeline, trace link badge                                      | Drawer shares components with schedules timeline.           |
 | Webhooks       | KPI strip, grid with status pills, detail tabs, editable table (IP rules), timeline of secret rotations, action buttons | Secret rotation CTA reuses admin action modal.              |
 | Tenants        | Master-detail layout, tabbed content, API key table, quota visualizations                                               | API key table integrates copy-to-clipboard + rotation flow. |
+| API Clients    | Master-detail tab, client table, token issuance flow (one-time token display), confirm delete                            | Maps to `api-clients/*` + `api-clients/*/tokens`.           |
+| Dead-Letters   | Table, payload viewer, replay action with confirmation                                                                  | Maps to `webhooks/deadletters/*`.                           |
+| Executions     | Execution detail viewer, logs viewer, navigation from schedules/jobs timelines                                           | Maps to `executions/*` + `executions/*/logs`.               |
 | Observability  | Grafana embed wrapper, log pulse chart, filter bar                                                                      | Inline vs deep-link decision tracked in checklist.          |
 | Modals/Dialogs | Confirm dialogs, rotation wizard, JSON editor, impersonation banner                                                     | All dialogs share focus management + telemetry hooks.       |
 
