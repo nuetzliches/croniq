@@ -11,7 +11,7 @@
 var services = new ServiceCollection();
 services.AddCroniqSchedulerClient(opts =>
 {
-    opts.Endpoint = "http://localhost:5000";
+    opts.Endpoint = "http://localhost:5080";
     opts.ApiKey = "<your-key>";
 });
 var client = services.BuildServiceProvider().GetRequiredService<Scheduler.SchedulerClient>();

@@ -5,7 +5,7 @@ import scheduler_pb2_grpc as svc
 
 
 def main():
-    endpoint = os.environ.get("CRONIQ_ENDPOINT", "localhost:5000")
+    endpoint = os.environ.get("CRONIQ_ENDPOINT", "localhost:5080")
     api_key = os.environ.get("CRONIQ_API_KEY", "dev-key")
     tenant_id = os.environ.get("CRONIQ_TENANT_ID", "1")
     environment_tag = os.environ.get("CRONIQ_ENVIRONMENT", "dev")

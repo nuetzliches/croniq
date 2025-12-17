@@ -38,6 +38,7 @@ This document captures the logging, metrics, and tracing strategy for Croniq ser
   ```
 
   This suppresses verbose EF command and ASP.NET host/controller discovery chatter while keeping Croniq lifecycle logs (job/worker start-stop, policy transitions) on `Information` for operators.
+
 - **Structured logging guidelines**:
   - Always include tenant/environment/instance identifiers and the relevant domain key: `croniq.tenant_id`, `croniq.environment`, `croniq.instance_id` (worker), plus `croniq.job.key` or `croniq.hook.key` depending on context.
   - Keep lifecycle and externally visible state changes on `Information` (job start/complete, worker start/stop, policy retries/circuit transitions). Use `Debug/Trace` for polling/heartbeat noise; reserve `Warning/Error` for degradation and faults.

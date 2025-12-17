@@ -53,4 +53,3 @@ if !ATTEMPTS! gtr 60 (endlocal & exit /b 1)
 curl --silent --fail "!URL!" >nul 2>&1 && (endlocal & exit /b 0)
 timeout /t 2 >nul
 goto poll
-*** End Patch

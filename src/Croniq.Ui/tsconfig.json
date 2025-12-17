@@ -33,7 +33,12 @@
     "strictInjectionParameters": true,
     "strictInputAccessModifiers": true,
     "strictTemplates": true,
-    "controlFlow": true
+    "controlFlow": true,
+    "extendedDiagnostics": {
+      "checks": {
+        "unusedStandaloneImports": "warning"
+      }
+    }
   },
   "files": [],
   "references": [

@@ -1,14 +1,10 @@
-﻿using Croniq.Data.SqlServer;
-using Microsoft.EntityFrameworkCore.Infrastructure;
-using Microsoft.EntityFrameworkCore.Migrations;
+﻿using Microsoft.EntityFrameworkCore.Migrations;
 
 #nullable disable
 
 namespace Croniq.Data.SqlServer.Migrations
 {
     /// <inheritdoc />
-    [DbContext(typeof(SqlServerDbContext))]
-    [Migration("20251216234726_AddPasswordChangeRequiredToPasswordUsers")]
     public partial class AddPasswordChangeRequiredToPasswordUsers : Migration
     {
         /// <inheritdoc />

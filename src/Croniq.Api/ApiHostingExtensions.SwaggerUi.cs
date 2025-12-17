@@ -20,7 +20,7 @@ public static partial class ApiHostingExtensions
 
         public bool LogStartupMessage { get; init; } = true;
 
-        public string FallbackBaseAddress { get; init; } = "http://localhost:5000";
+        public string FallbackBaseAddress { get; init; } = "http://localhost:5080";
     }
 
     public static WebApplication UseCroniqApiSwaggerUi(

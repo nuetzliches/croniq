@@ -1,6 +1,6 @@
 param(
     [Parameter(Mandatory = $false)]
-    [string]$ApiBaseUrl = "http://localhost:5000",
+    [string]$ApiBaseUrl = "http://localhost:5080",
 
     [Parameter(Mandatory = $true)]
     [string]$TenantId,

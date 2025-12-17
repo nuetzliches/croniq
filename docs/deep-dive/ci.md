@@ -81,11 +81,11 @@ This document describes the continuous integration and delivery strategy require
 - Trigger: manual `workflow_dispatch` guarded by the `staging` environment **and** `workflow_call` from `release.yml`.
 - Prereqs: `charts/croniq` + `charts/environments/staging-values.yaml`, secrets `STAGING_KUBECONFIG` (base64), optional `image-tag` input (release passes the git tag).
 - Steps:
-   1. Resolve image tag (defaults to current ref, workflow input, or `staging-<run>`).
-   2. Configure kubectl/Helm with the staging kubeconfig and install/upgrade the chart with staged API/worker tags.
-   3. Run layered health probes via `scripts/ci/wait-for-http.ps1` against `/health`, `/health/persistence`, and `/webhooks/health`; on failure, capture `kubectl get/describe/logs` before exiting.
-   4. Execute `dotnet test tests/Croniq.Api.Smoke/... -- TestRunParameters.Parameter(BaseUrl, https://staging.croniq.local)` to validate ingress + APIs.
-   5. Collect diagnostics (pods, describe output, API/worker logs) as artifacts for traceability.
+  1.  Resolve image tag (defaults to current ref, workflow input, or `staging-<run>`).
+  2.  Configure kubectl/Helm with the staging kubeconfig and install/upgrade the chart with staged API/worker tags.
+  3.  Run layered health probes via `scripts/ci/wait-for-http.ps1` against `/health`, `/health/persistence`, and `/webhooks/health`; on failure, capture `kubectl get/describe/logs` before exiting.
+  4.  Execute `dotnet test tests/Croniq.Api.Smoke/... -- TestRunParameters.Parameter(BaseUrl, https://staging.croniq.local)` to validate ingress + APIs.
+  5.  Collect diagnostics (pods, describe output, API/worker logs) as artifacts for traceability.
 
 Release builds automatically call this workflow; you can still dispatch it manually for ad-hoc staging refreshes.
 
@@ -129,13 +129,13 @@ Release builds automatically call this workflow; you can still dispatch it manua
 
 ## Secrets & Environment
 
-| Workflow | Environment | Required Secrets | Notes |
-| --- | --- | --- | --- |
-| `ci-pr.yml` | _none_ | (optional) `CODECOV_TOKEN` once coverage uploads are enabled | Uses repo-level permissions only. |
-| `ci-nightly.yml` | `nightly` (optional) | `GITHUB_TOKEN` (default) | Additional secrets only needed for experimental scans. |
-| `release.yml` | `release` | `NUGET_API_KEY`, `NUGET_SIGNING_CERT_BASE64`, `NUGET_SIGNING_CERT_PASSWORD`, `COSIGN_KEY`, `COSIGN_PASSWORD`, `STAGING_KUBECONFIG` | `STAGING_KUBECONFIG` is forwarded to `deploy-staging.yml` via `workflow_call`. |
-| `deploy-staging.yml` | `staging` (requires reviewers) | `STAGING_KUBECONFIG` | kubeconfig is base64-encoded; workflow decodes to `kubeconfig`. |
-| `dacpac.yml` | _none_ | (optional) `SQL_EDGE_SA_PASSWORD` | Manual workflow remains disabled until the `run_workflow` input is set to `true`. |
+| Workflow             | Environment                    | Required Secrets                                                                                                                   | Notes                                                                             |
+| -------------------- | ------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------- |
+| `ci-pr.yml`          | _none_                         | (optional) `CODECOV_TOKEN` once coverage uploads are enabled                                                                       | Uses repo-level permissions only.                                                 |
+| `ci-nightly.yml`     | `nightly` (optional)           | `GITHUB_TOKEN` (default)                                                                                                           | Additional secrets only needed for experimental scans.                            |
+| `release.yml`        | `release`                      | `NUGET_API_KEY`, `NUGET_SIGNING_CERT_BASE64`, `NUGET_SIGNING_CERT_PASSWORD`, `COSIGN_KEY`, `COSIGN_PASSWORD`, `STAGING_KUBECONFIG` | `STAGING_KUBECONFIG` is forwarded to `deploy-staging.yml` via `workflow_call`.    |
+| `deploy-staging.yml` | `staging` (requires reviewers) | `STAGING_KUBECONFIG`                                                                                                               | kubeconfig is base64-encoded; workflow decodes to `kubeconfig`.                   |
+| `dacpac.yml`         | _none_                         | (optional) `SQL_EDGE_SA_PASSWORD`                                                                                                  | Manual workflow remains disabled until the `run_workflow` input is set to `true`. |
 
 Reference `eng/pipelines/secrets.template.md` when provisioning secrets so the internal runbook stays in sync.
 

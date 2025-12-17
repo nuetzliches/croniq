@@ -15,7 +15,7 @@ import (
 )
 
 func main() {
-	endpoint := getenv("CRONIQ_ENDPOINT", "localhost:5000")
+	endpoint := getenv("CRONIQ_ENDPOINT", "localhost:5080")
 	apiKey := getenv("CRONIQ_API_KEY", "dev-key")
 	tenantId := getenv("CRONIQ_TENANT_ID", "1")
 	environment := getenv("CRONIQ_ENVIRONMENT", "dev")

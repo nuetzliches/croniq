@@ -1,5 +1,6 @@
 import { CommonModule } from '@angular/common';
 import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@angular/core';
+import { Field, form, required } from '@angular/forms/signals';
 import { Router, RouterLink } from '@angular/router';
 import { AuthSessionService } from '@core/auth/auth-session.service';
 import { PasswordAuthService } from '@core/auth/password-auth.service';
@@ -7,7 +8,7 @@ import { TenantContextService } from '@core/tenant-context/tenant-context.servic
 
 @Component({
     selector: 'cq-login-page',
-    imports: [CommonModule, RouterLink],
+    imports: [CommonModule, RouterLink, Field],
     templateUrl: './login-page.html',
     changeDetection: ChangeDetectionStrategy.OnPush,
 })
@@ -34,13 +35,28 @@ export class LoginPage {
     readonly lastAction = signal<string | null>(null);
     readonly busy = signal(false);
 
-    async login(usernameInput: HTMLInputElement, passwordInput: HTMLInputElement): Promise<void> {
+    readonly loginModel = signal({
+        username: '',
+        password: '',
+    });
+
+    readonly loginForm = form(this.loginModel, (fieldPath) => {
+        required(fieldPath.username, { message: 'Bitte Username angeben.' });
+        required(fieldPath.password, { message: 'Bitte Passwort angeben.' });
+    });
+
+    async login(): Promise<void> {
         if (this.busy()) {
             return;
         }
 
-        const username = usernameInput.value.trim();
-        const password = passwordInput.value;
+        if (this.loginForm().invalid()) {
+            this.lastAction.set('Bitte Username und Passwort angeben.');
+            return;
+        }
+
+        const username = this.loginModel().username.trim();
+        const password = this.loginModel().password;
         if (!username || !password) {
             this.lastAction.set('Bitte Username und Passwort angeben.');
             return;
@@ -61,7 +77,7 @@ export class LoginPage {
                     this.tenantContext.setTenantIdentity(tenantReference);
                 }
             }
-            passwordInput.value = '';
+            this.loginModel.update((model) => ({ ...model, password: '' }));
             this.lastAction.set('Login erfolgreich.');
             await this.router.navigateByUrl('/schedules');
         } catch (error) {

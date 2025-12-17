@@ -24,13 +24,12 @@
       </a>
     </div>
 
-    <form class="space-y-4" (submit)="$event.preventDefault(); login(usernameInput, passwordInput)">
+    <form class="space-y-4" (submit)="$event.preventDefault(); login()">
       <label class="space-y-1 text-text-muted">
         Username
         <input
-          #usernameInput
           type="text"
-          required
+          [field]="loginForm.username"
           class="w-full rounded-xl border border-white/15 bg-white/5 px-3 py-2 text-sm text-text"
           autocomplete="username"
         />
@@ -39,9 +38,8 @@
       <label class="space-y-1 text-text-muted">
         Password
         <input
-          #passwordInput
           type="password"
-          required
+          [field]="loginForm.password"
           class="w-full rounded-xl border border-white/15 bg-white/5 px-3 py-2 text-sm text-text"
           autocomplete="current-password"
         />

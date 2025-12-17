@@ -4,7 +4,7 @@ import { resolve } from 'node:path';
 import type { TemplateContextOptions } from 'openapi-zod-client';
 import type { Options as PrettierOptions } from 'prettier';
 
-export const DEFAULT_OPENAPI_ENDPOINT = 'http://localhost:5000/swagger/v1/swagger.json';
+export const DEFAULT_OPENAPI_ENDPOINT = 'http://localhost:5080/swagger/v1/swagger.json';
 export const SNAPSHOT_RELATIVE_PATH = 'artifacts/swagger.json';
 
 function resolveOpenApiInput(): string {

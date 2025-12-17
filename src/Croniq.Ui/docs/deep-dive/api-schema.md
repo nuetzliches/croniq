@@ -22,10 +22,10 @@ artifacts/
 
 1. Refresh the upstream spec (export from Croniq.Api, drop into `artifacts/swagger.json`).
 2. Run `npm run generate:api`. The generator resolves the OpenAPI document in this order:
-	- `CRONIQ_OPENAPI_URL` environment variable (when set)
-	- Local snapshot at `artifacts/swagger.json`
-	- Fallback URL `http://localhost:5000/swagger/v1/swagger.json`
-	This allows schema generation to work offline as long as the snapshot exists.
+   - `CRONIQ_OPENAPI_URL` environment variable (when set)
+   - Local snapshot at `artifacts/swagger.json`
+   - Fallback URL `http://localhost:5080/swagger/v1/swagger.json`
+     This allows schema generation to work offline as long as the snapshot exists.
 3. Add or update any manual helpers in `projects/api-schema/src` and re-export everything via `src/index.ts` for the Angular app.
 
 There is still no runtime dependency on the OpenAPI document—`provideCroniqApiClient` validates against the Zod bundles that ship with the UI.
@@ -35,8 +35,8 @@ There is still no runtime dependency on the OpenAPI document—`provideCroniqApi
 - Entry point: `tools/generate-schemas.ts`
 - Tooling: `openapi-zod-client` + custom Handlebars templates under `tools/templates/`
 - Output:
-	- `projects/api-schema/generated/schemas.ts`
-	- `projects/api-schema/generated/endpoints/*.ts` (split by domain)
+  - `projects/api-schema/generated/schemas.ts`
+  - `projects/api-schema/generated/endpoints/*.ts` (split by domain)
 
 Do not edit files under `projects/api-schema/generated/` manually; change the templates or the generator and re-run.
 
@@ -59,4 +59,3 @@ We still want automated Zod generation from the upstream OpenAPI spec. Outstandi
 2. ✅ **Done:** the generator now emits one `schemas.ts` plus an `endpoints/` folder split by primary path segment so each domain gets its own strongly typed collection.
 3. Wire CI so that `npm run generate:api` runs and fails on diffs whenever the upstream spec changes.
 4. Decide whether we also want to generate typed API clients alongside the schemas (left disabled for now).
-

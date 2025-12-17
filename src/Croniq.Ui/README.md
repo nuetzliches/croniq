@@ -57,7 +57,7 @@ Input resolution order for `generate:api`:
 
 1. `CRONIQ_OPENAPI_URL` (when set)
 2. `artifacts/swagger.json` (snapshot)
-3. `http://localhost:5000/swagger/v1/swagger.json` (fallback)
+3. `http://localhost:5080/swagger/v1/swagger.json` (fallback)
 
 Generated output:
 

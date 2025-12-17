@@ -2,7 +2,7 @@ using System;
 using Croniq.Rpc;
 using Microsoft.Extensions.DependencyInjection;
 
-var endpoint = Environment.GetEnvironmentVariable("CRONIQ_ENDPOINT") ?? "http://localhost:5000";
+var endpoint = Environment.GetEnvironmentVariable("CRONIQ_ENDPOINT") ?? "http://localhost:5080";
 var apiKey = Environment.GetEnvironmentVariable("CRONIQ_API_KEY") ?? "dev-key";
 var tenantId = Environment.GetEnvironmentVariable("CRONIQ_TENANT_ID") ?? "1";
 var environmentTag = Environment.GetEnvironmentVariable("CRONIQ_ENVIRONMENT") ?? "dev";

@@ -16,7 +16,7 @@ const packageDefinition = protoLoader.loadSync(PROTO_PATH, {
 
 const schedulerPackage = grpc.loadPackageDefinition(packageDefinition).croniq.rpc;
 
-const endpoint = process.env.CRONIQ_ENDPOINT || 'localhost:5000';
+const endpoint = process.env.CRONIQ_ENDPOINT || 'localhost:5080';
 const apiKey = process.env.CRONIQ_API_KEY || 'dev-key';
 const tenantId = process.env.CRONIQ_TENANT_ID || '1';
 const environmentTag = process.env.CRONIQ_ENVIRONMENT || 'dev';

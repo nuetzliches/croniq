@@ -70,7 +70,7 @@ public sealed class ExecutionEndpointsTests : IClassFixture<WebhookApiTestHost>
             StartedAtUtc: startedAt,
             CompletedAtUtc: startedAt.AddSeconds(5),
             Status: status,
-            DurationMs: 5000,
+            DurationMs: 5080,
             InstanceId: "node",
             TraceId: Guid.NewGuid().ToString("N"),
             CorrelationId: Guid.NewGuid().ToString("N"),
