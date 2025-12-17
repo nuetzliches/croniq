@@ -130,6 +130,108 @@ public static partial class ApiHostingExtensions
             await next().ConfigureAwait(false);
         });
 
+        app.Use(async (context, next) =>
+        {
+            static bool IsCanonicalTenantId(string segment) => segment.StartsWith("tn_", StringComparison.OrdinalIgnoreCase);
+
+            static bool IsUrlSafeTenantReferenceSegment(string segment)
+            {
+                if (string.IsNullOrWhiteSpace(segment))
+                {
+                    return false;
+                }
+
+                var trimmed = segment.Trim();
+                if (trimmed.Length > 64)
+                {
+                    return false;
+                }
+
+                foreach (var ch in trimmed)
+                {
+                    if ((ch >= 'a' && ch <= 'z')
+                        || (ch >= 'A' && ch <= 'Z')
+                        || (ch >= '0' && ch <= '9')
+                        || ch is '-' or '_' or '.')
+                    {
+                        continue;
+                    }
+                    return false;
+                }
+
+                return true;
+            }
+
+            static bool TryExtractFirstSegment(PathString remainder, out string tenantSegment, out string suffix)
+            {
+                tenantSegment = string.Empty;
+                suffix = string.Empty;
+
+                var value = remainder.Value;
+                if (string.IsNullOrWhiteSpace(value) || value == "/")
+                {
+                    return false;
+                }
+
+                if (!value.StartsWith("/", StringComparison.Ordinal))
+                {
+                    value = "/" + value;
+                }
+
+                var secondSlash = value.IndexOf('/', 1);
+                if (secondSlash < 0)
+                {
+                    tenantSegment = value[1..];
+                    suffix = string.Empty;
+                    return !string.IsNullOrWhiteSpace(tenantSegment);
+                }
+
+                tenantSegment = value[1..secondSlash];
+                suffix = value[secondSlash..];
+                return !string.IsNullOrWhiteSpace(tenantSegment);
+            }
+
+            async Task TryRewriteTenantPathAsync(string tenantsPrefix)
+            {
+                if (!context.Request.Path.StartsWithSegments(tenantsPrefix, StringComparison.OrdinalIgnoreCase, out var remainder))
+                {
+                    return;
+                }
+
+                if (!TryExtractFirstSegment(remainder, out var tenantSegment, out var suffix))
+                {
+                    return;
+                }
+
+                if (IsCanonicalTenantId(tenantSegment) || !IsUrlSafeTenantReferenceSegment(tenantSegment))
+                {
+                    return;
+                }
+
+                var tenantStore = context.RequestServices.GetService<ITenantStore>();
+                if (tenantStore is null)
+                {
+                    return;
+                }
+
+                var resolved = await tenantStore.GetByReferenceAsync(tenantSegment, context.RequestAborted).ConfigureAwait(false);
+                if (resolved is null || !resolved.IsActive || string.IsNullOrWhiteSpace(resolved.TenantId))
+                {
+                    return;
+                }
+
+                // Update both the raw path and route values: depending on hosting pipeline ordering,
+                // route matching may already have happened by the time we run.
+                context.Request.Path = new PathString($"{tenantsPrefix}/{resolved.TenantId}{suffix}");
+                context.Request.RouteValues["tenantId"] = resolved.TenantId;
+            }
+
+            await TryRewriteTenantPathAsync("/tenants").ConfigureAwait(false);
+            await TryRewriteTenantPathAsync("/api/tenants").ConfigureAwait(false);
+
+            await next().ConfigureAwait(false);
+        });
+
         MapHealthEndpoints(app);
         MapTenantAdminEndpoints(app);
         MapJobEndpoints(app);

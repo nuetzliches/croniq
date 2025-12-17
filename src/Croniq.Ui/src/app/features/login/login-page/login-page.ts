@@ -4,6 +4,7 @@ import { Router, RouterLink } from '@angular/router';
 
 import { AuthSessionService } from '../../../core/auth/auth-session.service';
 import { PasswordAuthService } from '../../../core/auth/password-auth.service';
+import { TenantContextService } from '../../../core/tenant-context/tenant-context.service';
 
 @Component({
     selector: 'cq-login-page',
@@ -14,6 +15,7 @@ import { PasswordAuthService } from '../../../core/auth/password-auth.service';
 export class LoginPage {
     private readonly authSession = inject(AuthSessionService);
     private readonly passwordAuth = inject(PasswordAuthService);
+    private readonly tenantContext = inject(TenantContextService);
     private readonly router = inject(Router);
 
     readonly sessionToken = this.authSession.sessionToken;
@@ -49,7 +51,17 @@ export class LoginPage {
         this.lastAction.set(null);
 
         try {
-            await this.passwordAuth.login({ username, password });
+            const result = await this.passwordAuth.login({ username, password });
+            const tenantId = this.tenantContext.snapshot().tenantId.trim();
+            const resolvedTenantId = result.tenantId?.trim();
+            const tenantReference = result.tenantReference?.trim();
+            if (!tenantId) {
+                if (resolvedTenantId) {
+                    this.tenantContext.setTenantIdentity(resolvedTenantId);
+                } else if (tenantReference) {
+                    this.tenantContext.setTenantIdentity(tenantReference);
+                }
+            }
             passwordInput.value = '';
             this.lastAction.set('Login erfolgreich.');
             await this.router.navigateByUrl('/schedules');

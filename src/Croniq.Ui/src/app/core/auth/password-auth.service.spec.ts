@@ -61,6 +61,8 @@ describe('PasswordAuthService', () => {
         expect(authSession.storeRefreshToken).toHaveBeenCalledWith('refresh-xyz');
         expect(result.token).toBe('access-123');
         expect(result.refreshTokenPresent).toBe(true);
+        expect(result.tenantId).toBe(null);
+        expect(result.tenantReference).toBe(null);
 
         vi.useRealTimers();
     });
@@ -73,6 +75,8 @@ describe('PasswordAuthService', () => {
         expect(authSession.storeSessionToken).toHaveBeenCalledWith('access-token-string', { expiresAt: null });
         expect(authSession.clearRefreshToken).toHaveBeenCalled();
         expect(result.refreshTokenPresent).toBe(false);
+        expect(result.tenantId).toBe(null);
+        expect(result.tenantReference).toBe(null);
     });
 
     it('throws when response does not contain an access token', async () => {
@@ -85,5 +89,23 @@ describe('PasswordAuthService', () => {
         );
 
         expect(authSession.storeSessionToken).not.toHaveBeenCalled();
+    });
+
+    it('extracts tenantId from jwt tenant claim', async () => {
+        // header: {"alg":"none","typ":"JWT"}
+        // payload: {"tenant":"tn_test"}
+        const token =
+            'eyJhbGciOiJub25lIiwidHlwIjoiSldUIn0.' +
+            'eyJ0ZW5hbnQiOiJ0bl90ZXN0In0.' +
+            'signature';
+
+        (apiClient.passwordLogin as unknown as ReturnType<typeof vi.fn>).mockResolvedValue({
+            accessToken: token,
+            expiresIn: 120,
+        });
+
+        const result = await service.login({ username: 'alice', password: 'secret' });
+
+        expect(result.tenantId).toBe('tn_test');
     });
 });

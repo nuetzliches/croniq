@@ -25,6 +25,8 @@ const passwordLoginResponseSchema = z
                 // Backend currently returns `expiresIn` (seconds). Keep `expiresInSeconds` for compatibility.
                 expiresIn: z.number().int().positive().optional(),
                 expiresInSeconds: z.number().int().positive().optional(),
+                tenantReference: z.string().trim().min(1).optional().nullable(),
+                tenantId: z.string().trim().min(1).optional().nullable(),
             })
             .passthrough()
             .superRefine((data, ctx) => {
@@ -47,6 +49,7 @@ const passwordLoginResponseSchema = z
                     accessToken: resolvedAccessToken,
                     refreshToken: data.refreshToken ?? null,
                     expiresAt: expiryFromField ?? expiryFromSeconds,
+                    tenantReference: (data.tenantReference ?? data.tenantId ?? null) as string | null,
                     raw: data as unknown,
                 };
             }),
@@ -67,6 +70,8 @@ export interface PasswordLoginResult {
     token: string;
     expiresAt: string | null;
     refreshTokenPresent: boolean;
+    tenantId: string | null;
+    tenantReference: string | null;
     raw: unknown;
 }
 
@@ -99,11 +104,15 @@ export class PasswordAuthService {
             this.authSession.clearRefreshToken();
         }
 
+        const tenantId = tryExtractTenantIdFromJwt(parsed.accessToken);
+
         return {
             storedInSession: true,
             token: parsed.accessToken,
             expiresAt: parsed.expiresAt ?? null,
             refreshTokenPresent: Boolean(parsed.refreshToken),
+            tenantId,
+            tenantReference: parsed.tenantReference ?? null,
             raw: parsed.raw,
         };
     }
@@ -111,5 +120,37 @@ export class PasswordAuthService {
     private extract(response: unknown): PasswordLoginResponse | null {
         const parsed = passwordLoginResponseSchema.safeParse(response);
         return parsed.success ? parsed.data : null;
+    }
+}
+
+function tryExtractTenantIdFromJwt(token: string): string | null {
+    const trimmed = token.trim();
+    const parts = trimmed.split('.');
+    if (parts.length !== 3) {
+        return null;
+    }
+
+    const payloadJson = base64UrlDecodeToString(parts[1]);
+    if (!payloadJson) {
+        return null;
+    }
+
+    try {
+        const payload = JSON.parse(payloadJson) as Record<string, unknown>;
+        const tenant = payload['tenant'];
+        return typeof tenant === 'string' && tenant.trim().length > 0 ? tenant.trim() : null;
+    } catch {
+        return null;
+    }
+}
+
+function base64UrlDecodeToString(value: string): string | null {
+    const normalized = value.replace(/-/g, '+').replace(/_/g, '/');
+    const padLength = (4 - (normalized.length % 4)) % 4;
+    const padded = normalized + '='.repeat(padLength);
+    try {
+        return atob(padded);
+    } catch {
+        return null;
     }
 }
