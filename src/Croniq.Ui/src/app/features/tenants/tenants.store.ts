@@ -1,7 +1,7 @@
 import { Injectable, inject, signal } from '@angular/core';
 import { TenantContextService } from '@core/tenant-context/tenant-context.service';
 import { isoFromEpochMs, nowIso, nowMs } from '@core/time/clock';
-import { IssueApiKeyRequest } from '@croniq/api-schema';
+import { IssueApiKeyRequest, IssueTokenRequest } from '@croniq/api-schema';
 import {
     CRONIQ_API_CLIENT,
     CroniqApiClient,
@@ -10,7 +10,7 @@ import {
     TenantScopedParams,
 } from 'data-access';
 
-export type ApiKeyActionType = 'issue' | 'rotate' | 'delete';
+export type ApiKeyActionType = 'issue' | 'issue-token' | 'rotate' | 'delete';
 export type ApiKeyActionStatus = 'pending' | 'success' | 'error';
 export type ApiKeyActivityEntry = {
     id: string;
@@ -66,6 +66,31 @@ export class TenantsStore {
                     detail: error instanceof Error ? error.message : 'Unknown error',
                 });
                 this.lastErrorSignal.set('API key issuance failed — check activity feed for details.');
+            }
+        });
+    }
+
+    async issueApiClientToken(params: TenantApiClientParams, payload: IssueTokenRequest): Promise<void> {
+        const entry = this.appendActivity(params.tenantId, params.environment ?? null, 'issue-token');
+        await this.runWithBusy(async () => {
+            try {
+                const requestOptions = this.tenantContext.createRequestOptions('tenants.issue-api-client-token', {
+                    tenantId: params.tenantId,
+                    environment: params.environment ?? undefined,
+                });
+                const response = await this.api.issueApiClientToken(params, payload, requestOptions);
+                this.patchActivity(entry.id, {
+                    status: 'success',
+                    detail: summarizeResponse(response),
+                });
+                this.lastErrorSignal.set(null);
+            } catch (error) {
+                console.error('Unable to issue API client token', error);
+                this.patchActivity(entry.id, {
+                    status: 'error',
+                    detail: error instanceof Error ? error.message : 'Unknown error',
+                });
+                this.lastErrorSignal.set('Token issuance failed — operator should review logs.');
             }
         });
     }

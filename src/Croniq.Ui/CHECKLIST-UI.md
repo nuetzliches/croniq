@@ -60,9 +60,9 @@ Derived from [docs/deep-dive/designs/angular-ui-concept.md](docs/deep-dive/desig
   - [ ] tenant api-clients list/upsert/delete (deferred: tenant feature excluded in single-tenant UI)
   - [x] executions list
   - [x] jobs list (registry)
-  - [ ] jobs get/delete
-  - [ ] schedule get/delete
-  - [ ] token issuance endpoints
+  - [x] jobs get/delete
+  - [x] schedule get/delete
+  - [x] token issuance endpoints
 - [ ] Configure Angular Query caches, refetch policies, and tenant/env scoping helpers.
 - [ ] Persist non-sensitive preferences (theme, table density) per tenant using IndexedDB with optional encryption.
 

@@ -1,3 +1,4 @@
+import { HttpErrorResponse } from '@angular/common/http';
 import { Injectable, computed, inject, signal } from '@angular/core';
 import { authFailureFromError } from '@core/auth/auth-failure';
 import { TenantContextService } from '@core/tenant-context/tenant-context.service';
@@ -27,6 +28,12 @@ export type ExecutionSummary = {
     startedAt?: string;
 };
 
+export type JobDetail = {
+    jobId: string;
+    jobKey?: string;
+    description?: string;
+};
+
 @Injectable({ providedIn: 'root' })
 export class JobsStore {
     private readonly api = inject<CroniqApiClient>(CRONIQ_API_CLIENT);
@@ -41,6 +48,12 @@ export class JobsStore {
     private readonly executionsLoadingSignal = signal(false);
     private readonly executionsErrorSignal = signal<string | null>(null);
 
+    private readonly jobDetailSignal = signal<JobDetail | null>(null);
+    private readonly jobDetailLoadingSignal = signal(false);
+    private readonly jobDetailErrorSignal = signal<string | null>(null);
+    private readonly deleteJobLoadingSignal = signal(false);
+    private readonly deleteJobErrorSignal = signal<string | null>(null);
+
     private readonly lastErrorSignal = signal<string | null>(null);
 
     readonly manualTriggers = this.triggerLog.asReadonly();
@@ -54,6 +67,12 @@ export class JobsStore {
     readonly executions = this.executionsSignal.asReadonly();
     readonly executionsLoading = this.executionsLoadingSignal.asReadonly();
     readonly executionsError = this.executionsErrorSignal.asReadonly();
+
+    readonly jobDetail = this.jobDetailSignal.asReadonly();
+    readonly jobDetailLoading = this.jobDetailLoadingSignal.asReadonly();
+    readonly jobDetailError = this.jobDetailErrorSignal.asReadonly();
+    readonly deleteJobLoading = this.deleteJobLoadingSignal.asReadonly();
+    readonly deleteJobError = this.deleteJobErrorSignal.asReadonly();
 
     constructor() {
         queueMicrotask(() => {
@@ -145,6 +164,112 @@ export class JobsStore {
             this.jobRegistryErrorSignal.set('Unable to load jobs from API.');
         } finally {
             this.jobRegistryLoadingSignal.set(false);
+        }
+    }
+
+    async refreshJobDetail(jobId: string): Promise<void> {
+        const trimmedId = jobId.trim();
+        if (!trimmedId) {
+            this.jobDetailErrorSignal.set('Job id is required to load job detail.');
+            this.jobDetailSignal.set(null);
+            return;
+        }
+
+        const { tenantId, environment } = this.tenantContext.snapshot();
+        if (!tenantId.trim()) {
+            this.jobDetailErrorSignal.set('TenantId is not set — select a tenant to load job detail.');
+            this.jobDetailSignal.set(null);
+            return;
+        }
+        if (!environment.trim()) {
+            this.jobDetailErrorSignal.set('Environment is not set — select an environment to load job detail.');
+            this.jobDetailSignal.set(null);
+            return;
+        }
+
+        this.jobDetailLoadingSignal.set(true);
+        this.jobDetailErrorSignal.set(null);
+        try {
+            const response = await this.api.getJob(
+                { tenantId, environment, jobId: trimmedId },
+                this.tenantContext.createRequestOptions('jobs.get', {
+                    tenantId,
+                    environment,
+                }),
+            );
+            this.jobDetailSignal.set(normalizeJobDetail(response, trimmedId));
+        } catch (error) {
+            console.error('Failed to load job detail', error);
+            const authFailure = authFailureFromError(error, {
+                forbidden: 'Forbidden (403) — your token is missing jobs permissions for this tenant.',
+            });
+            if (authFailure) {
+                this.jobDetailErrorSignal.set(authFailure.message);
+                this.jobDetailSignal.set(null);
+                return;
+            }
+            if (error instanceof HttpErrorResponse && error.status === 404) {
+                this.jobDetailErrorSignal.set('Job not found (404) — verify the job id in the registry.');
+                this.jobDetailSignal.set(null);
+                return;
+            }
+            this.jobDetailErrorSignal.set('Unable to load job detail from API.');
+            this.jobDetailSignal.set(null);
+        } finally {
+            this.jobDetailLoadingSignal.set(false);
+        }
+    }
+
+    async deleteJob(jobId: string): Promise<void> {
+        const trimmedId = jobId.trim();
+        if (!trimmedId) {
+            this.deleteJobErrorSignal.set('Job id is required before deleting.');
+            return;
+        }
+
+        const { tenantId, environment } = this.tenantContext.snapshot();
+        if (!tenantId.trim()) {
+            this.deleteJobErrorSignal.set('TenantId is not set — select a tenant to delete jobs.');
+            return;
+        }
+        if (!environment.trim()) {
+            this.deleteJobErrorSignal.set('Environment is not set — select an environment to delete jobs.');
+            return;
+        }
+
+        this.deleteJobLoadingSignal.set(true);
+        this.deleteJobErrorSignal.set(null);
+        try {
+            await this.api.deleteJob(
+                { tenantId, environment, jobId: trimmedId },
+                this.tenantContext.createRequestOptions('jobs.delete', {
+                    tenantId,
+                    environment,
+                }),
+            );
+
+            const current = this.jobDetailSignal();
+            if (current?.jobId === trimmedId || current?.jobKey === trimmedId) {
+                this.jobDetailSignal.set(null);
+            }
+            this.jobRegistrySignal.set(this.jobRegistrySignal().filter((entry) => entry.jobKey !== trimmedId));
+            void this.refreshJobRegistry();
+        } catch (error) {
+            console.error('Failed to delete job', error);
+            const authFailure = authFailureFromError(error, {
+                forbidden: 'Forbidden (403) — your token is missing jobs permissions for this tenant.',
+            });
+            if (authFailure) {
+                this.deleteJobErrorSignal.set(authFailure.message);
+                return;
+            }
+            if (error instanceof HttpErrorResponse && error.status === 404) {
+                this.deleteJobErrorSignal.set('Job not found (404) — it may have already been deleted.');
+                return;
+            }
+            this.deleteJobErrorSignal.set('Unable to delete job via API.');
+        } finally {
+            this.deleteJobLoadingSignal.set(false);
         }
     }
 
@@ -304,4 +429,29 @@ function normalizeExecutions(value: unknown): ReadonlyArray<ExecutionSummary> {
     }
 
     return entries;
+}
+
+function normalizeJobDetail(value: unknown, fallbackId: string): JobDetail | null {
+    if (typeof value !== 'object' || value === null) {
+        return { jobId: fallbackId };
+    }
+
+    const record = value as Record<string, unknown>;
+    const jobIdRaw =
+        typeof record['jobId'] === 'string'
+            ? record['jobId']
+            : typeof record['id'] === 'string'
+                ? record['id']
+                : typeof record['jobKey'] === 'string'
+                    ? record['jobKey']
+                    : fallbackId;
+    const jobId = jobIdRaw.trim() || fallbackId;
+
+    const jobKey = typeof record['jobKey'] === 'string' ? record['jobKey'].trim() : undefined;
+    const description = typeof record['description'] === 'string' ? record['description'].trim() : undefined;
+    return {
+        jobId,
+        jobKey: jobKey || undefined,
+        description: description || undefined,
+    };
 }
