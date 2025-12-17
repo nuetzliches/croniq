@@ -1,8 +1,14 @@
 using Croniq.Api;
+using Croniq.Auth.Abstractions;
+using Croniq.Auth.SqlServer;
 using Croniq.Core;
 using Croniq.Core.Execution;
 using Croniq.Sample.Jobs;
 using Croniq.Webhooks;
+using Croniq.Data.SqlServer;
+using Microsoft.AspNetCore.Identity;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -62,6 +68,67 @@ builder.Services.AddCroniqSampleJobs();
 builder.Services.AddCroniqApiSchemas();
 
 var app = builder.Build();
+
+if (app.Environment.IsDevelopment())
+{
+    await using var scope = app.Services.CreateAsyncScope();
+    var services = scope.ServiceProvider;
+
+    var passwordAuthOptions = services.GetRequiredService<IOptions<PasswordAuthOptions>>().Value;
+    if (passwordAuthOptions.Enabled)
+    {
+        var dbFactory = services.GetRequiredService<IDbContextFactory<SqlServerDbContext>>();
+        await using (var db = await dbFactory.CreateDbContextAsync())
+        {
+            await db.Database.MigrateAsync();
+        }
+
+        var config = services.GetRequiredService<IConfiguration>();
+        var seedSection = config.GetSection("Croniq:Sample:Auth:Password");
+
+        var tenantReference = seedSection["TenantReference"]?.Trim();
+        if (string.IsNullOrWhiteSpace(tenantReference))
+        {
+            tenantReference = passwordAuthOptions.DefaultTenant?.Trim();
+        }
+
+        tenantReference ??= "dev";
+
+        var tenantName = seedSection["TenantName"]?.Trim();
+        tenantName ??= "Croniq Dev";
+
+        var username = seedSection["Username"]?.Trim();
+        username ??= "admin";
+
+        var password = seedSection["Password"];
+        password ??= "admin";
+
+        var tenants = services.GetRequiredService<ITenantStore>();
+        var tenant = await tenants.GetByReferenceAsync(tenantReference) ?? await tenants.CreateAsync(tenantReference, tenantName);
+
+        var hasher = new PasswordHasher<object>();
+        var passwordHash = hasher.HashPassword(new object(), password);
+
+        var users = services.GetRequiredService<IPasswordUserStore>();
+        await users.UpsertAsync(new PasswordUserUpsertRequest(
+            tenant.TenantId,
+            username,
+            passwordHash,
+            new[]
+            {
+                CroniqScopes.SchedulesWrite,
+                CroniqScopes.JobsRead,
+                CroniqScopes.JobsTrigger,
+                CroniqScopes.WebhooksRead,
+                CroniqScopes.WebhooksWrite,
+                CroniqScopes.WebhooksRotate,
+                CroniqScopes.WebhooksDeadLetter,
+                CroniqScopes.ApiKeysManage,
+                CroniqScopes.TenantsAdmin,
+            },
+            IsActive: true));
+    }
+}
 
 app.UseCroniqApiSwaggerUi(builder.Configuration);
 

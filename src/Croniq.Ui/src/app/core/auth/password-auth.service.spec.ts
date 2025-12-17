@@ -49,7 +49,6 @@ describe('PasswordAuthService', () => {
         expect(apiClient.passwordLogin).toHaveBeenCalledWith({
             username: 'alice',
             password: 'secret',
-            tenantId: null,
             tenantReference: null,
             environmentTag: null,
             scopes: null,

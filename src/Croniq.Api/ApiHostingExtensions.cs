@@ -63,7 +63,13 @@ public static partial class ApiHostingExtensions
         {
             "/health",
             "/webhooks",
-            "/auth"
+            "/auth",
+            // When hosted behind a reverse proxy that prefixes routes with /api,
+            // the application sees the full prefixed path (e.g. /api/auth/login).
+            // Keep auth-less endpoints reachable in that configuration.
+            "/api/health",
+            "/api/webhooks",
+            "/api/auth"
         };
 
         if (apiOpts.AnonymousPathPrefixes?.Count > 0)
@@ -74,7 +80,10 @@ public static partial class ApiHostingExtensions
         app.Use(async (context, next) =>
         {
             var path = context.Request.Path;
-            if (anonymousPrefixes.Any(prefix => path.StartsWithSegments(prefix, StringComparison.OrdinalIgnoreCase)))
+            var pathWithBase = context.Request.PathBase.Add(path);
+            if (anonymousPrefixes.Any(prefix =>
+                    path.StartsWithSegments(prefix, StringComparison.OrdinalIgnoreCase)
+                    || pathWithBase.StartsWithSegments(prefix, StringComparison.OrdinalIgnoreCase)))
             {
                 await next().ConfigureAwait(false);
                 return;

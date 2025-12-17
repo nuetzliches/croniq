@@ -21,7 +21,7 @@ export const AuthApi: EndpointDefinition[] = [
     {
         method: 'post',
         path: '/auth/login',
-        description: `Authenticates a username/password and issues access + refresh tokens. Tenant can be provided via tenantId or tenantReference; it can be omitted if a default tenant is configured.`,
+        description: `Authenticates a username/password and issues access + refresh tokens. Tenant can be provided via tenantReference; it can be omitted if a default tenant is configured.`,
         requestFormat: 'json',
         parameters: [
             { name: 'body', type: 'Body', schema: PasswordLoginRequest },

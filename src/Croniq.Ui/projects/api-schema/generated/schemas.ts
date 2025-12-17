@@ -80,7 +80,6 @@ export const IssueTokenRequest = z
 export type IssueTokenRequest = z.infer<typeof IssueTokenRequest>;
 export const PasswordLoginRequest = z
     .object({
-        tenantId: z.string().nullable(),
         username: z.string().nullable(),
         password: z.string().nullable(),
         environmentTag: z.string().nullable(),
@@ -92,7 +91,6 @@ export const PasswordLoginRequest = z
 export type PasswordLoginRequest = z.infer<typeof PasswordLoginRequest>;
 export const PasswordRefreshRequest = z
     .object({
-        tenantId: z.string().nullable(),
         refreshToken: z.string().nullable(),
         environmentTag: z.string().nullable(),
         scopes: z.array(z.string()).nullable(),
@@ -103,7 +101,6 @@ export const PasswordRefreshRequest = z
 export type PasswordRefreshRequest = z.infer<typeof PasswordRefreshRequest>;
 export const PasswordLogoutRequest = z
     .object({
-        tenantId: z.string().nullable(),
         refreshToken: z.string().nullable(),
         tenantReference: z.string().nullable(),
     })
