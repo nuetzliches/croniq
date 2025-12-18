@@ -1,6 +1,6 @@
 import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@angular/core';
 import { Field, form, required } from '@angular/forms/signals';
-import { Router, RouterLink } from '@angular/router';
+import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 import { AuthSessionService } from '@core/auth/auth-session.service';
 import { PasswordAuthService } from '@core/auth/password-auth.service';
 import { TenantContextService } from '@core/tenant-context/tenant-context.service';
@@ -16,6 +16,7 @@ export class LoginPage {
     private readonly authSession = inject(AuthSessionService);
     private readonly passwordAuth = inject(PasswordAuthService);
     private readonly tenantContext = inject(TenantContextService);
+    private readonly route = inject(ActivatedRoute);
     private readonly router = inject(Router);
 
     readonly sessionToken = this.authSession.sessionToken;
@@ -107,13 +108,25 @@ export class LoginPage {
             this.loginModel.update((model) => ({ ...model, password: '' }));
             this.lastAction.set('Login erfolgreich.');
             this.lastActionTone.set('success');
-            await this.router.navigateByUrl('/schedules');
+            await this.router.navigateByUrl(this.resolveReturnUrl());
         } catch (error) {
             this.lastAction.set(error instanceof Error ? error.message : 'Login fehlgeschlagen.');
             this.lastActionTone.set('error');
         } finally {
             this.busy.set(false);
         }
+    }
+
+    private resolveReturnUrl(): string {
+        const fromQuery = (this.route.snapshot.queryParamMap.get('returnUrl') ?? '').trim();
+        const fromHistory = (this.router.getCurrentNavigation()?.previousNavigation?.finalUrl?.toString() ?? '').trim();
+        const candidate = fromQuery || fromHistory;
+
+        if (!candidate || candidate === '/' || candidate.startsWith('/login')) {
+            return '/';
+        }
+
+        return candidate;
     }
 
     clearToken(): void {

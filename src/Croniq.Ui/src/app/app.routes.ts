@@ -1,4 +1,5 @@
 import { Routes } from '@angular/router';
+import { redirectIfSessionTokenGuard } from './core/auth/redirect-if-session-token.guard';
 import { requireSessionTokenGuard } from './core/auth/require-session-token.guard';
 
 export const appRoutes: Routes = [
@@ -9,6 +10,7 @@ export const appRoutes: Routes = [
     },
     {
         path: 'login',
+        canActivate: [redirectIfSessionTokenGuard],
         loadComponent: () =>
             import('./features/login/login-page/login-page').then((m) => m.LoginPage),
     },
