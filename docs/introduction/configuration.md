@@ -1,6 +1,6 @@
 # Croniq Configuration Guide
 
-This guide explains how the Croniq API host (`Croniq.Api`) resolves configuration when you call `AddCroniqApiServices(...)` and `UseCroniqApi(...)`. It also lists the environment variables you typically need during local development or deployments. If you still need to pick an auth mode or understand how callers authenticate, start with the consumer guide in [`auth.md`](/guides/auth.md).
+This guide explains how the Croniq API host (`Croniq.Api`) resolves configuration when you call `AddCroniqApiServices(...)` and `UseCroniqApi(...)`. It also lists the environment variables you typically need during local development or deployments. If you still need to pick an auth mode or understand how callers authenticate, start with the consumer guide in [`auth.md`](../guides/auth.md).
 
 ## 1. Configuration Sources & Priority
 
@@ -38,7 +38,7 @@ builder.Services.PostConfigure<CroniqAuthOptions>(options =>
 
 ## 3. Key Environment Variables
 
-See [`auth.md`](/guides/auth.md) for the end-to-end authentication story and when to prefer API keys vs bearer tokens.
+See [`auth.md`](../guides/auth.md) for the end-to-end authentication story and when to prefer API keys vs bearer tokens.
 
 | Variable                                           | Required                                                          | Description                                                                                | Example                                            |
 | -------------------------------------------------- | ----------------------------------------------------------------- | ------------------------------------------------------------------------------------------ | -------------------------------------------------- |
@@ -81,13 +81,13 @@ Croniq can optionally expose username/password endpoints for self-hosted deploym
 - Enable via `Croniq:Auth:Password:Enabled`.
 - Configure the default tenant via `Croniq:Auth:Password:DefaultTenant` so callers can omit tenant selection.
 
-See [docs/deep-dive/password-auth.md](/deep-dive/password-auth.md) for the full flow.
+See [docs/deep-dive/password-auth.md](../deep-dive/password-auth.md) for the full flow.
 
 ### Mixed Mode & Scope Mapping
 
 - You can keep both modes enabled: Croniq checks `Authorization: Bearer ...` first, then falls back to `X-Croniq-Key`. Only one caller context is created per request.
 - Map scopes to REST permissions (e.g., `schedules:write`, `jobs:trigger`, `api-keys:manage`). When callers lack a scope, Croniq returns `403 insufficient-scope`.
-- For a deeper walkthrough (including sample IdP setups), jump to [`guides/auth.md`](/guides/auth.md) or the security deep dive.
+- For a deeper walkthrough (including sample IdP setups), jump to [`guides/auth.md`](../guides/auth.md) or the security deep dive.
 
 ## 5. Sample Local Setup
 
@@ -138,11 +138,11 @@ Only override the values you truly need—everything else continues to flow from
 - **Unexpected tenant scope:** Verify `Croniq__Core__TenantId`/`EnvironmentTag` when multiple developers work on the same database to avoid job collisions.
 - **Rate limiter rejecting calls:** Increase `Croniq__Api__RequestsPerMinute` or tailor the limiter via `AddCroniqApiRateLimiter` options.
 
-Need a bigger checklist? Jump to [`troubleshooting.md`](/ops/troubleshooting.md) for Docker/dev-stack, observability, and CLI-specific fixes.
+Need a bigger checklist? Jump to [`troubleshooting.md`](../ops/troubleshooting.md) for Docker/dev-stack, observability, and CLI-specific fixes.
 
 ## 8. Next Steps
 
-- Return to the [Quickstart](/introduction/quickstart.md) to continue the walkthrough.
+- Return to the [Quickstart](./quickstart.md) to continue the walkthrough.
 - Consult `docs/deep-dive/job-registration.md` (upcoming) for the in-depth view on how the runtime persists job metadata during startup.
-- Switch to [`auth.md`](/guides/auth.md) when you need detailed guidance on caller flows and secret rotation.
-- Keep [`troubleshooting.md`](/ops/troubleshooting.md) handy when startup or dev stack issues block you.
+- Switch to [`auth.md`](../guides/auth.md) when you need detailed guidance on caller flows and secret rotation.
+- Keep [`troubleshooting.md`](../ops/troubleshooting.md) handy when startup or dev stack issues block you.

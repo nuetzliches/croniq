@@ -18,19 +18,19 @@ Whenever you need implementation details (dev stack bootstrap, CI/CD, troublesho
 
 ## Getting Started
 
-1. Review [`/deep-dive/architecture.md`](/deep-dive/architecture.md) for the core scheduling model.
-2. Walk through the [Hello Croniq Quickstart](/introduction/quickstart.md) to register an `IJob` implementation and trigger it via the Minimal API.
-3. Configure endpoints, API keys, and tenant scopes via the [Configuration Guide](/introduction/configuration.md).
-4. Learn about job policies and trigger options via [`policies.md`](/guides/policies.md) and [`triggers.md`](/guides/triggers.md).
+1. Review [`/deep-dive/architecture.md`](../deep-dive/architecture.md) for the core scheduling model.
+2. Walk through the [Hello Croniq Quickstart](./quickstart.md) to register an `IJob` implementation and trigger it via the Minimal API.
+3. Configure endpoints, API keys, and tenant scopes via the [Configuration Guide](./configuration.md).
+4. Learn about job policies and trigger options via [`policies.md`](../guides/policies.md) and [`triggers.md`](../guides/triggers.md).
 5. Use the SDK reference (coming soon) for detailed descriptions of `IJob`, `IJobExecutionContext`, and helper attributes.
 6. Need diagnostics, observability, or CI internals? Follow the "Learn more" links that point into `/deep-dive/*` (for example, the Docker dev stack lives in `/deep-dive/devstack.md`).
 
 ## Placeholder Topics
 
-- [Quickstart: first job & schedule](/introduction/quickstart.md)
-- [Configuration & environment variables](/introduction/configuration.md)
-- [Policies & operational controls](/guides/policies.md)
-- [Trigger types](/guides/triggers.md)
+- [Quickstart: first job & schedule](./quickstart.md)
+- [Configuration & environment variables](./configuration.md)
+- [Policies & operational controls](../guides/policies.md)
+- [Trigger types](../guides/triggers.md)
 - How to provision API keys
 - Job metadata & `CroniqJobAttribute`
 - Working with environments/Tenant scopes
@@ -40,4 +40,4 @@ The dev stack, diagnostics, and operational handbooks are **not** duplicated her
 
 Each topic should link back to relevant deep dives in `/deep-dive/` for advanced context.
 
-Contributing to the docs? Start with the [Documentation Streams plan](/deep-dive/docstreams.md) to understand personas, ownership, and review expectations.
+Contributing to the docs? Start with the [Documentation Streams plan](../deep-dive/docstreams.md) to understand personas, ownership, and review expectations.

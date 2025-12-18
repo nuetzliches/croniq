@@ -125,8 +125,8 @@ docs/
   - `/tenants/{tenantId}/api-clients`, `/api-keys`, `/tokens`
   - `/jobs/trigger` (bleibt global nutzbar)
   - `/webhooks/*` (separater Surface)
-  - Execution-Übersicht steht jetzt zur Verfügung: `GET /tenants/{tenantId}/executions` liefert filterbare Listen, `GET /tenants/{tenantId}/executions/{executionId}` das Detail; beide Endpunkte hängen am neuen `executions:read`-Scope und bauen auf `IExecutionHistoryReader` auf [src/Croniq.Api/ApiHostingExtensions.cs#L200-L330](src/Croniq.Api/ApiHostingExtensions.cs#L200-L330).
-  - API-Client-Verwaltung + Token-Issuing liegen unter `/tenants/{tenantId}/api-clients*` bzw. `/tenants/{tenantId}/tokens` [src/Croniq.Api/ApiHostingExtensions.cs#L1040-L1294](src/Croniq.Api/ApiHostingExtensions.cs#L1040-L1294).
+  - Execution-Übersicht steht jetzt zur Verfügung: `GET /tenants/{tenantId}/executions` liefert filterbare Listen, `GET /tenants/{tenantId}/executions/{executionId}` das Detail; beide Endpunkte hängen am neuen `executions:read`-Scope und bauen auf `IExecutionHistoryReader` auf [src/Croniq.Api/ApiHostingExtensions.cs#L200-L330](../../src/Croniq.Api/ApiHostingExtensions.cs#L200-L330).
+  - API-Client-Verwaltung + Token-Issuing liegen unter `/tenants/{tenantId}/api-clients*` bzw. `/tenants/{tenantId}/tokens` [src/Croniq.Api/ApiHostingExtensions.cs#L1040-L1294](../../src/Croniq.Api/ApiHostingExtensions.cs#L1040-L1294).
 - Umsetzungsschritte:
   1. API-Code auf neue Pfade umstellen, alte Pfade in derselben Version entfernen (Breaking Change akzeptabel vor `v1.0.0`).
   2. UI/SDKs + Scripting-Samples auf den konsistenten Basis-Pfad aktualisieren.

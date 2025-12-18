@@ -2,7 +2,7 @@
 
 This document defines a first-party username/password login concept for Croniq.
 
-It complements (not replaces) the existing authentication modes documented in [docs/deep-dive/auth.md](docs/deep-dive/auth.md). Password auth is primarily aimed at self-hosted environments without an external identity provider.
+It complements (not replaces) the existing authentication modes documented in [docs/deep-dive/auth.md](./auth.md). Password auth is primarily aimed at self-hosted environments without an external identity provider.
 
 ## Goals
 

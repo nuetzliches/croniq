@@ -51,7 +51,7 @@ Admin routes (scope `tenants:admin`) expose:
 - `POST /tenants/{id}/api-clients/{clientId}/tokens` – scoped Variante, wenn mehrere Clients pro Tenant leben (optional `audience`/`scopes`).
 - `GET /me` – resolve current caller context (user or API key) for self-checks.
 
-Croniq.Api ships the tenant onboarding, API-client CRUD, token issuance, and `/me` endpoints described above (see [src/Croniq.Api/ApiHostingExtensions.cs](src/Croniq.Api/ApiHostingExtensions.cs)).
+Croniq.Api ships the tenant onboarding, API-client CRUD, token issuance, and `/me` endpoints described above (see [src/Croniq.Api/ApiHostingExtensions.cs](../../src/Croniq.Api/ApiHostingExtensions.cs)).
 
 ### Croniq-issued bearer tokens
 
@@ -78,7 +78,7 @@ Croniq.Api ships the tenant onboarding, API-client CRUD, token issuance, and `/m
 | `POST`   | `/tenants/{tenantId}/api-clients/{clientId}/tokens` | "Issue client token"     | Same payload, automatically infers `clientId` and allowed scopes.                                                                       |
 | `GET`    | `/me`                                               | "Inspect caller context" | Echoes resolved tenant/environment/scopes for debugging.                                                                                |
 
-The entries highlighted above are live in the API host today and covered by integration tests ([src/Croniq.Api/ApiHostingExtensions.cs](src/Croniq.Api/ApiHostingExtensions.cs), [tests/Croniq.Api.Tests/TenantAdminEndpointsTests.cs](tests/Croniq.Api.Tests/TenantAdminEndpointsTests.cs)).
+The entries highlighted above are live in the API host today and covered by integration tests ([src/Croniq.Api/ApiHostingExtensions.cs](../../src/Croniq.Api/ApiHostingExtensions.cs), [tests/Croniq.Api.Tests/TenantAdminEndpointsTests.cs](../../tests/Croniq.Api.Tests/TenantAdminEndpointsTests.cs)).
 
 #### Request/Response Skizzen
 

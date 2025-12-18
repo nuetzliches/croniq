@@ -1,6 +1,6 @@
 # Croniq Quickstart: Hello Croniq Job
 
-This guide walks you through creating your first Croniq job, registering it with the Scheduler, and triggering it via the Minimal API. It assumes you already reviewed the architectural context in [`/deep-dive/architecture.md`](/deep-dive/architecture.md).
+This guide walks you through creating your first Croniq job, registering it with the Scheduler, and triggering it via the Minimal API. It assumes you already reviewed the architectural context in [`/deep-dive/architecture.md`](../deep-dive/architecture.md).
 
 > **Prerequisites**
 >
@@ -10,9 +10,9 @@ This guide walks you through creating your first Croniq job, registering it with
 >
 > All commands are shown for Windows PowerShell / CMD; adapt paths for your OS if needed.
 >
-> Need the full Croniq reference environment? Follow [`docs/deep-dive/devstack.md`](/deep-dive/devstack.md) for compose profiles and helper scripts.
+> Need the full Croniq reference environment? Follow [`docs/deep-dive/devstack.md`](../deep-dive/devstack.md) for compose profiles and helper scripts.
 >
-> Still deciding how to secure the API? Read [`auth.md`](/guides/auth.md) for the consumer-facing guide to API keys vs OAuth2 before exposing your endpoints.
+> Still deciding how to secure the API? Read [`auth.md`](../guides/auth.md) for the consumer-facing guide to API keys vs OAuth2 before exposing your endpoints.
 
 ## 1. Create a Single Project
 
@@ -235,7 +235,7 @@ Invoke-WebRequest -Uri "https://localhost:5001/webhooks/hello-world" `
 
 `Croniq.Webhooks` recomputes the signature, enforces the rate limit, and invokes the job pipeline. You should see the same log output as the manual trigger, plus webhook-specific metadata (e.g., `payload:invoiceId=INV-42`).
 
-> **Learn more:** The deep dive section [`Webhook Trigger Surface`](/deep-dive/architecture.md#webhook-trigger-surface) explains how the dedicated `Croniq.Webhooks` host scales independently, how persistence works, and what security constraints apply in production.
+> **Learn more:** The deep dive section [`Webhook Trigger Surface`](../deep-dive/architecture.md#webhook-trigger-surface) explains how the dedicated `Croniq.Webhooks` host scales independently, how persistence works, and what security constraints apply in production.
 
 ### Rotate webhook secrets from the CLI
 
@@ -300,7 +300,7 @@ cd HelloCroniq.Api
  dotnet run
 ```
 
-If you need the Croniq dev stack instead of a local SDK host, start it via the instructions in [`docs/deep-dive/devstack.md`](/deep-dive/devstack.md).
+If you need the Croniq dev stack instead of a local SDK host, start it via the instructions in [`docs/deep-dive/devstack.md`](../deep-dive/devstack.md).
 
 Trigger the job manually:
 
@@ -346,17 +346,17 @@ Watch the API logs; you should see the `HelloWorldJob` message. Logs, metrics, a
    - Inspect traces under Grafana ▸ Explore ▸ Tempo, filtering by `service.name="Croniq.Api"`.
    - Check Prometheus ▸ Alerts to see the built-in alerts from `infra/monitoring/rules/scheduler-alerts.yaml`. Alerts fire when dead letters, misfires, queue depth, or latency breach their thresholds (`CroniqDeadLettersHigh`, `CroniqMisfireBurst`, `CroniqQueueDepthHigh`, `CroniqLatencyP95High`, `CroniqJobFailures`).
 
-4. Deploying to your own observability stack? Copy the dashboard JSON + rule file into your Grafana/Prometheus setup and keep the datasource UIDs (`prometheus`, `tempo`) consistent. See [`docs/deep-dive/observability.md`](/deep-dive/observability.md#dashboards--alerts) for detailed instructions.
+4. Deploying to your own observability stack? Copy the dashboard JSON + rule file into your Grafana/Prometheus setup and keep the datasource UIDs (`prometheus`, `tempo`) consistent. See [`docs/deep-dive/observability.md`](../deep-dive/observability.md#dashboards--alerts) for detailed instructions.
 
 ## 7. Clean Up & Next Steps
 
 - Stop the API, tear down Docker resources (`docker compose down`) if used.
 - Extend the job to read secrets via `ISecretProvider`, add retry policies, or push telemetry to your observability stack.
 - Continue with:
-  - [`configuration.md`](/introduction/configuration.md) for tenant/environment options
-  - [`auth.md`](/guides/auth.md) to switch between API key and password login
-  - [`policies.md`](/guides/policies.md) and [`triggers.md`](/guides/triggers.md) to tune job behavior
+  - [`configuration.md`](./configuration.md) for tenant/environment options
+  - [`auth.md`](../guides/auth.md) to switch between API key and password login
+  - [`policies.md`](../guides/policies.md) and [`triggers.md`](../guides/triggers.md) to tune job behavior
   - `/deep-dive/job-registration.md` for internal startup flow and persistence sync details
-- Hit [`troubleshooting.md`](/ops/troubleshooting.md) if any of the steps above fail or you suspect dev stack issues
+- Hit [`troubleshooting.md`](../ops/troubleshooting.md) if any of the steps above fail or you suspect dev stack issues
 
 Happy scheduling! Translate findings back into the documentation as you refine the workflow.
