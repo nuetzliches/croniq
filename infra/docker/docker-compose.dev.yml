@@ -66,6 +66,7 @@ services:
   # Override base migrator service with dev-only seeding.
   croniq-db-migrator:
     environment:
+      CRONIQ_SQL_CONNECTION: Server=${CRONIQ_SQL_HOST:-mssql-22},1433;Database=${CRONIQ_SQL_DATABASE:-CroniqDev};User Id=sa;Password=${CRONIQ_SQL_PASSWORD:-CroniqSqlP@ssw0rd!};Encrypt=False;TrustServerCertificate=True;
       CRONIQ_SEED_ADMIN: ${CRONIQ_SEED_ADMIN:-true}
       CRONIQ_SEED_TENANT_REFERENCE: ${CRONIQ_SEED_TENANT_REFERENCE:-default}
       CRONIQ_SEED_TENANT_NAME: ${CRONIQ_SEED_TENANT_NAME:-Default}
