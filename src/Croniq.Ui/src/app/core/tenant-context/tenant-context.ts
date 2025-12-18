@@ -1,10 +1,11 @@
-import { CommonModule } from '@angular/common';
-import { ChangeDetectionStrategy, Component, inject } from '@angular/core';import { TenantContextService } from './tenant-context.service';
+import { DatePipe, UpperCasePipe } from '@angular/common';
+import { ChangeDetectionStrategy, Component, inject } from '@angular/core';
+import { TenantContextService } from './tenant-context.service';
 import { TenantEnvironment } from './tenant-context.types';
 
 @Component({
   selector: 'cq-tenant-context',
-  imports: [CommonModule],
+  imports: [DatePipe, UpperCasePipe],
   templateUrl: './tenant-context.html',
   changeDetection: ChangeDetectionStrategy.OnPush,
 })

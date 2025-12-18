@@ -19,7 +19,7 @@ Derived from [docs/deep-dive/designs/angular-ui-concept.md](docs/deep-dive/desig
   - [x] Auth session persistence: store the opaque Croniq session token in `sessionStorage` only; never persist refresh data in `localStorage`/IndexedDB. _(Implemented via [src/app/core/auth/auth-session.service.ts](src/app/core/auth/auth-session.service.ts); forms wired in [src/app/core/tenant-context/tenant-context.html](src/app/core/tenant-context/tenant-context.html); rationale captured in [docs/deep-dive/AUTH.md](docs/deep-dive/AUTH.md).)_
   - [x] External login expansion: leave hooks for a PKCE-based login bootstrap (deferred) so we can swap session auth for standards-based login once backend is ready.
   - [x] Operator impersonation vs. delegated auth: document the interim plan (manual tenant/operator context vs. delegated auth) and revisit once backend signals GA for full delegated auth. _(Plan recorded in [docs/deep-dive/AUTH.md](docs/deep-dive/AUTH.md).)_
-- [ ] MVP Data Surfaces – deliver the dashboard metrics (stubbed), schedules read-only grid, and job registry view.
+- [x] MVP Data Surfaces – deliver the dashboard metrics (stubbed), schedules read-only grid, and job registry view.
 - [ ] Admin Controls – implement CRUD for schedules, webhooks, and API keys, including dead-letter replay wiring.
 - [ ] Observability & Polish – embed Grafana/log pulse views and complete the accessibility plus localization review.
 
@@ -28,12 +28,12 @@ Derived from [docs/deep-dive/designs/angular-ui-concept.md](docs/deep-dive/desig
 - [ ] Confirm backend prerequisites are complete (schedule/job/admin APIs, gRPC-Web proxy, finalized login story, observability feeds).
 - [ ] Document hosting decision (static assets behind Croniq.Api vs. dedicated `Croniq.Ui` container) and readiness/liveness expectations.
 - [ ] Validate new npm dependencies meet the MIT/Apache/BSD policy and record any exceptions before merge.
-- [ ] Publish the ARIA playbook (based on https://angular.dev/guide/aria/overview) in `docs/ai/aria.md` and reference it from the PR template so every feature answers for roles, focus order, and keyboard shortcuts.
+- [x] Publish the ARIA playbook (based on https://angular.dev/guide/aria/overview) in `docs/ai/aria.md` and reference it from the PR template so every feature answers for roles, focus order, and keyboard shortcuts.
 
 ## Repository & Tooling Setup
 
-- [ ] Scaffold `src/Croniq.Ui` structure (apps/admin, libs/data-access, libs/telemetry, libs/ui-kit) as outlined in the concept doc.
-- [ ] Configure Tailwind per [https://next.angular.dev/guide/tailwind](https://next.angular.dev/guide/tailwind) and emit Croniq tokens via CSS variables (`--cq-*`).
+- [x] Scaffold `src/Croniq.Ui` structure (application + libraries `data-access`, `telemetry`, `ui-kit`, plus generated `api-schema`) as outlined in the concept doc.
+- [x] Configure Tailwind per [https://next.angular.dev/guide/tailwind](https://next.angular.dev/guide/tailwind) and emit Croniq tokens via CSS variables (`--cq-*`).
 - [x] Capture MCP server usage in `.vscode/tasks.json` and `docs/deep-dive/designs/angular-ui-concept.md`, including `npm run mcp` instructions. _(Script + VS Code task wired up; see concept/scaffolding docs for details.)_
 - [ ] Establish Angular Query + Signals boilerplate shared across feature modules.
 
@@ -41,7 +41,7 @@ Derived from [docs/deep-dive/designs/angular-ui-concept.md](docs/deep-dive/desig
 
 - [x] Implement the shell layout (command rail, tenant selector, status beacons, command palette). _(Tailwind-first shell + command rail now live in [src/app/shell/shell/shell.html](src/app/shell/shell/shell.html) with shared status beacons in [src/app/shared/status-beacon/status-beacon.ts](src/app/shared/status-beacon/status-beacon.ts).)_
 - [x] Command palette: extract a headless controller (signals + keyboard orchestration) with ARIA-compliant wrappers so we can skin it via Tailwind without duplicating logic. _(Headless controller + utilities live in [src/app/shared/command-palette/command-palette.controller.ts](src/app/shared/command-palette/command-palette.controller.ts) and the Tailwind template in [src/app/shared/command-palette/command-palette.html](src/app/shared/command-palette/command-palette.html).)_
-- [ ] Build split-pane content templates (summary cards + tabbed detail panes) reusable across modules.
+- [x] Implement split-pane layout pattern (summary cards + tabbed detail panes) per page using Angular Aria tabs (no shared page-sized component).
 - [ ] Deliver feature modules:
   - [ ] Dashboard – queue depth spark lines, upcoming triggers list, misfire heat map.
   - [ ] Schedules – list/detail views with JSON diff preview for policy delta inspection.

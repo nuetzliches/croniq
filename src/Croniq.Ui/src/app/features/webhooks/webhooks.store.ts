@@ -1,21 +1,8 @@
 import { Injectable, computed, inject, signal } from '@angular/core';
 import { TenantContextService } from '@core/tenant-context/tenant-context.service';
 import { isoFromEpochMs, nowIso, nowMs, tryIsoFromUnknown } from '@core/time/clock';
-import {
-    CreateWebhookIpRuleRequest,
-    RotateWebhookSecretRequest,
-    UpsertWebhookEndpointRequest,
-} from '@croniq/api-schema';
-import {
-    CRONIQ_API_CLIENT,
-    CroniqApiClient,
-    TenantDeadLetterParams,
-    TenantEnvironmentParams,
-    TenantWebhookParams,
-    TenantWebhookRuleParams,
-    TenantWebhookUpsertParams,
-    WebhookInvocationParams,
-} from 'data-access';
+import { CreateWebhookIpRuleRequest, RotateWebhookSecretRequest, UpsertWebhookEndpointRequest } from '@croniq/api-schema';
+import { CRONIQ_API_CLIENT, CroniqApiClient, TenantDeadLetterParams, TenantEnvironmentParams, TenantWebhookParams, TenantWebhookRuleParams, TenantWebhookUpsertParams, WebhookInvocationParams } from 'data-access';
 
 export type WebhookEndpointView = {
     hookKey: string;
@@ -291,5 +278,5 @@ function seedActionLog(): ReadonlyArray<WebhookActionEntry> {
 function createEntryId(): string {
     return typeof crypto !== 'undefined' && 'randomUUID' in crypto
         ? crypto.randomUUID()
-    : `${nowMs()}-${Math.round(Math.random() * 1000)}`;
+        : `${nowMs()}-${Math.round(Math.random() * 1000)}`;
 }

@@ -1,11 +1,7 @@
 import { HttpClient } from '@angular/common/http';
 import { Injectable, inject, isDevMode } from '@angular/core';
 import { firstValueFrom } from 'rxjs';
-import {
-    croniqUiRuntimeConfigSchema,
-    resolveSwaggerUiUrl,
-    type CroniqUiRuntimeConfig,
-} from './api-config';
+import { croniqUiRuntimeConfigSchema, resolveSwaggerUiUrl, type CroniqUiRuntimeConfig } from './api-config';
 
 const DEFAULT_DEV_API_BASE_URL = 'http://localhost:5080';
 

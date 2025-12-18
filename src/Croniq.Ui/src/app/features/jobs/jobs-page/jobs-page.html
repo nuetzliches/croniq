@@ -15,166 +15,202 @@
     </p>
   </header>
 
-  <cq-split-pane [tabs]="detailTabs" tabListLabel="Job detail">
-    <article cqSplitPaneSummary class="rounded-2xl border border-white/10 bg-white/5 p-5">
-      <div class="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h2 class="text-sm uppercase tracking-[0.3em] text-text-muted">Registry</h2>
-          <p class="mt-2 text-lg font-semibold text-text">Tenant job catalog</p>
+  <section class="grid gap-6 lg:grid-cols-[360px_1fr]">
+    <aside class="space-y-6">
+      <article class="rounded-2xl border border-white/10 bg-white/5 p-5">
+        <div class="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h2 class="text-sm uppercase tracking-[0.3em] text-text-muted">Registry</h2>
+            <p class="mt-2 text-lg font-semibold text-text">Tenant job catalog</p>
+          </div>
+          <button
+            type="button"
+            class="rounded-full border border-white/15 px-4 py-2 text-xs font-semibold uppercase tracking-wider text-text transition hover:border-accent hover:text-accent disabled:opacity-60"
+            (click)="refreshJobRegistry()"
+            [disabled]="jobRegistryLoading()"
+          >
+            {{ jobRegistryLoading() ? 'Refreshing…' : 'Refresh' }}
+          </button>
         </div>
-        <button
-          type="button"
-          class="rounded-full border border-white/15 px-4 py-2 text-xs font-semibold uppercase tracking-wider text-text transition hover:border-accent hover:text-accent disabled:opacity-60"
-          (click)="refreshJobRegistry()"
-          [disabled]="jobRegistryLoading()"
+
+        <p class="mt-3 text-sm text-text-muted">
+          Read-only feed from <span class="font-mono">GET /tenants/:tenantId/jobs</span>. Manual triggers remain available as the
+          operational fallback.
+        </p>
+
+        @if (jobRegistryError()) {
+          <p class="mt-3 text-sm text-rose-200">{{ jobRegistryError() }}</p>
+        }
+
+        @if (jobRegistry().length === 0) {
+          <p class="mt-4 text-sm text-text-muted">No jobs reported for the current tenant scope.</p>
+        } @else {
+          <ul class="mt-4 space-y-2 text-sm">
+            @for (job of jobRegistry(); track job.jobKey) {
+              <li class="rounded-xl border border-white/10 bg-white/5 p-3">
+                <p class="font-semibold text-text">{{ job.jobKey }}</p>
+                <p class="text-xs text-text-muted">{{ job.description || '—' }}</p>
+              </li>
+            }
+          </ul>
+        }
+      </article>
+    </aside>
+
+    <article class="rounded-2xl border border-white/10 bg-white/5 shadow-xl" ngTabs>
+      <header class="border-b border-white/10 p-4">
+        <div
+          ngTabList
+          [wrap]="true"
+          selectionMode="follow"
+          [selectedTab]="selectedTab()"
+          (selectedTabChange)="setSelectedTab($event)"
+          class="flex flex-wrap gap-2"
+          aria-label="Job detail"
         >
-          {{ jobRegistryLoading() ? 'Refreshing…' : 'Refresh' }}
-        </button>
-      </div>
-
-      <p class="mt-3 text-sm text-text-muted">
-        Read-only feed from <span class="font-mono">GET /tenants/:tenantId/jobs</span>. Manual triggers remain available as the
-        operational fallback.
-      </p>
-
-      @if (jobRegistryError()) {
-        <p class="mt-3 text-sm text-rose-200">{{ jobRegistryError() }}</p>
-      }
-
-      @if (jobRegistry().length === 0) {
-        <p class="mt-4 text-sm text-text-muted">No jobs reported for the current tenant scope.</p>
-      } @else {
-        <ul class="mt-4 space-y-2 text-sm">
-          @for (job of jobRegistry(); track job.jobKey) {
-            <li class="rounded-xl border border-white/10 bg-white/5 p-3">
-              <p class="font-semibold text-text">{{ job.jobKey }}</p>
-              <p class="text-xs text-text-muted">{{ job.description || '—' }}</p>
-            </li>
-          }
-        </ul>
-      }
-    </article>
-
-    <ng-template cqSplitPaneTab="trigger">
-      <div class="space-y-3">
-        <h2 class="text-sm uppercase tracking-[0.3em] text-text-muted">Fire manual trigger</h2>
-        <form class="space-y-4 text-sm text-text" (submit)="$event.preventDefault(); queueManualTrigger();">
-          <label class="space-y-1">
-            <span class="text-text-muted">Job key</span>
-            <input
-              #jobKeyInput
-              type="text"
-              class="w-full rounded-xl border border-white/15 bg-white/5 px-3 py-2 focus:border-accent focus:outline-none"
-              placeholder="nightly-billing-sweep"
-              [value]="jobKey()"
-              (input)="setJobKey(jobKeyInput.value)"
-              required
-            />
-          </label>
-          <label class="space-y-1">
-            <span class="text-text-muted">Metadata (key=value per line)</span>
-            <textarea
-              #metadataField
-              rows="4"
-              class="w-full rounded-xl border border-white/15 bg-white/5 px-3 py-2 font-mono text-xs leading-relaxed focus:border-accent focus:outline-none"
-              [value]="metadataSource()"
-              (input)="setMetadataSource(metadataField.value)"
-            ></textarea>
-          </label>
-          <p class="text-xs text-text-muted">
-            Parsed metadata: <span class="font-semibold text-text">{{ metadataPreview() || '—' }}</span>
-          </p>
-          <div class="flex flex-wrap gap-3">
-            <button
-              type="submit"
-              class="rounded-full border border-accent/50 bg-accent/15 px-5 py-2 text-sm font-semibold text-accent transition hover:bg-accent/25"
-            >
-              Queue trigger
-            </button>
+          @for (tab of detailTabs; track tab.id) {
             <button
               type="button"
-              class="rounded-full border border-white/15 px-4 py-2 text-xs font-semibold uppercase tracking-wider text-text-muted"
-              (click)="setMetadataSource('tenant=cron-lab\nsource=ui')"
+              ngTab
+              [value]="tab.id"
+              class="rounded-full px-4 py-2 text-xs font-semibold uppercase tracking-wide transition"
+              [class.bg-accent/20]="selectedTab() === tab.id"
+              [class.text-white]="selectedTab() === tab.id"
+              [class.text-text-muted]="selectedTab() !== tab.id"
             >
-              Reset metadata
+              {{ tab.label }}
             </button>
-          </div>
-        </form>
-      </div>
-    </ng-template>
+          }
+        </div>
+      </header>
 
-    <ng-template cqSplitPaneTab="history">
-      <section class="rounded-2xl border border-white/10 bg-white/5 shadow-xl">
-        <header class="flex flex-wrap items-center justify-between gap-3 border-b border-white/10 p-5 text-sm text-text">
-          <div>
-            <p class="text-xs uppercase tracking-[0.3em] text-text-muted">Activity feed</p>
-            <p class="text-base font-semibold text-text">Manual trigger history</p>
-          </div>
-          <p class="text-xs text-text-muted">{{ manualTriggers().length }} recorded · newest first</p>
-        </header>
+      <section class="p-5">
+        <div ngTabPanel value="trigger" [preserveContent]="false">
+          <ng-template ngTabContent>
+            <div class="space-y-3">
+              <h2 class="text-sm uppercase tracking-[0.3em] text-text-muted">Fire manual trigger</h2>
+              <form class="space-y-4 text-sm text-text" (submit)="$event.preventDefault(); queueManualTrigger();">
+                <label class="space-y-1">
+                  <span class="text-text-muted">Job key</span>
+                  <input
+                    #jobKeyInput
+                    type="text"
+                    class="w-full rounded-xl border border-white/15 bg-white/5 px-3 py-2 focus:border-accent focus:outline-none"
+                    placeholder="nightly-billing-sweep"
+                    [value]="jobKey()"
+                    (input)="setJobKey(jobKeyInput.value)"
+                    required
+                  />
+                </label>
+                <label class="space-y-1">
+                  <span class="text-text-muted">Metadata (key=value per line)</span>
+                  <textarea
+                    #metadataField
+                    rows="4"
+                    class="w-full rounded-xl border border-white/15 bg-white/5 px-3 py-2 font-mono text-xs leading-relaxed focus:border-accent focus:outline-none"
+                    [value]="metadataSource()"
+                    (input)="setMetadataSource(metadataField.value)"
+                  ></textarea>
+                </label>
+                <p class="text-xs text-text-muted">
+                  Parsed metadata: <span class="font-semibold text-text">{{ metadataPreview() || '—' }}</span>
+                </p>
+                <div class="flex flex-wrap gap-3">
+                  <button
+                    type="submit"
+                    class="rounded-full border border-accent/50 bg-accent/15 px-5 py-2 text-sm font-semibold text-accent transition hover:bg-accent/25"
+                  >
+                    Queue trigger
+                  </button>
+                  <button
+                    type="button"
+                    class="rounded-full border border-white/15 px-4 py-2 text-xs font-semibold uppercase tracking-wider text-text-muted"
+                    (click)="setMetadataSource('tenant=cron-lab\nsource=ui')"
+                  >
+                    Reset metadata
+                  </button>
+                </div>
+              </form>
+            </div>
+          </ng-template>
+        </div>
 
-        @if (manualTriggers().length === 0) {
-          <p class="p-6 text-sm text-text-muted">No manual triggers recorded yet.</p>
-        } @else {
-          <div class="overflow-x-auto">
-            <table class="min-w-full divide-y divide-white/10 text-sm text-text">
-              <thead class="text-left text-xs uppercase tracking-[0.3em] text-text-muted">
-                <tr>
-                  <th class="px-4 py-3">Job</th>
-                  <th class="px-4 py-3">Metadata</th>
-                  <th class="px-4 py-3">Started</th>
-                  <th class="px-4 py-3">Status</th>
-                </tr>
-              </thead>
-              <tbody class="divide-y divide-white/5">
-                @for (entry of manualTriggers(); track entry.id) {
-                  <tr class="hover:bg-white/3">
-                    <td class="px-4 py-4">
-                      <p class="font-semibold text-text">{{ entry.jobKey }}</p>
-                      <p class="text-xs text-text-muted">{{ entry.id }}</p>
-                    </td>
-                    <td class="px-4 py-4 text-xs text-text-muted">
-                      @if (!hasMetadata(entry)) {
-                        <span>—</span>
-                      } @else {
-                        <ul class="space-y-1">
-                          @for (metadataEntry of metadataEntries(entry); track metadataEntry.key) {
-                            <li>
-                              <span class="text-text">{{ metadataEntry.key }}</span> = {{ metadataEntry.value }}
-                            </li>
-                          }
-                        </ul>
+        <div ngTabPanel value="history" [preserveContent]="false">
+          <ng-template ngTabContent>
+            <section class="rounded-2xl border border-white/10 bg-white/5 shadow-xl">
+              <header class="flex flex-wrap items-center justify-between gap-3 border-b border-white/10 p-5 text-sm text-text">
+                <div>
+                  <p class="text-xs uppercase tracking-[0.3em] text-text-muted">Activity feed</p>
+                  <p class="text-base font-semibold text-text">Manual trigger history</p>
+                </div>
+                <p class="text-xs text-text-muted">{{ manualTriggers().length }} recorded · newest first</p>
+              </header>
+
+              @if (manualTriggers().length === 0) {
+                <p class="p-6 text-sm text-text-muted">No manual triggers recorded yet.</p>
+              } @else {
+                <div class="overflow-x-auto">
+                  <table class="min-w-full divide-y divide-white/10 text-sm text-text">
+                    <thead class="text-left text-xs uppercase tracking-[0.3em] text-text-muted">
+                      <tr>
+                        <th class="px-4 py-3">Job</th>
+                        <th class="px-4 py-3">Metadata</th>
+                        <th class="px-4 py-3">Started</th>
+                        <th class="px-4 py-3">Status</th>
+                      </tr>
+                    </thead>
+                    <tbody class="divide-y divide-white/5">
+                      @for (entry of manualTriggers(); track entry.id) {
+                        <tr class="hover:bg-white/3">
+                          <td class="px-4 py-4">
+                            <p class="font-semibold text-text">{{ entry.jobKey }}</p>
+                            <p class="text-xs text-text-muted">{{ entry.id }}</p>
+                          </td>
+                          <td class="px-4 py-4 text-xs text-text-muted">
+                            @if (!hasMetadata(entry)) {
+                              <span>—</span>
+                            } @else {
+                              <ul class="space-y-1">
+                                @for (metadataEntry of metadataEntries(entry); track metadataEntry.key) {
+                                  <li>
+                                    <span class="text-text">{{ metadataEntry.key }}</span> = {{ metadataEntry.value }}
+                                  </li>
+                                }
+                              </ul>
+                            }
+                          </td>
+                          <td class="px-4 py-4">
+                            <p class="text-xs text-text-muted">{{ entry.startedAt | date: 'short' }}</p>
+                            @if (entry.completedAt) {
+                              <p class="text-xs text-text-muted">Done {{ entry.completedAt | date: 'shortTime' }}</p>
+                            }
+                          </td>
+                          <td class="px-4 py-4">
+                            <span
+                              class="rounded-full px-3 py-1 text-xs font-semibold uppercase tracking-wide"
+                              [class.bg-emerald-500/20]="entry.status === 'success'"
+                              [class.text-emerald-200]="entry.status === 'success'"
+                              [class.bg-amber-500/20]="entry.status === 'pending'"
+                              [class.text-amber-200]="entry.status === 'pending'"
+                              [class.bg-rose-500/20]="entry.status === 'error'"
+                              [class.text-rose-100]="entry.status === 'error'"
+                            >
+                              {{ entry.status }}
+                            </span>
+                            @if (entry.error) {
+                              <p class="mt-2 text-xs text-rose-200">{{ entry.error }}</p>
+                            }
+                          </td>
+                        </tr>
                       }
-                    </td>
-                    <td class="px-4 py-4">
-                      <p class="text-xs text-text-muted">{{ entry.startedAt | date: 'short' }}</p>
-                      @if (entry.completedAt) {
-                        <p class="text-xs text-text-muted">Done {{ entry.completedAt | date: 'shortTime' }}</p>
-                      }
-                    </td>
-                    <td class="px-4 py-4">
-                      <span
-                        class="rounded-full px-3 py-1 text-xs font-semibold uppercase tracking-wide"
-                        [class.bg-emerald-500/20]="entry.status === 'success'"
-                        [class.text-emerald-200]="entry.status === 'success'"
-                        [class.bg-amber-500/20]="entry.status === 'pending'"
-                        [class.text-amber-200]="entry.status === 'pending'"
-                        [class.bg-rose-500/20]="entry.status === 'error'"
-                        [class.text-rose-100]="entry.status === 'error'"
-                      >
-                        {{ entry.status }}
-                      </span>
-                      @if (entry.error) {
-                        <p class="mt-2 text-xs text-rose-200">{{ entry.error }}</p>
-                      }
-                    </td>
-                  </tr>
-                }
-              </tbody>
-            </table>
-          </div>
-        }
+                    </tbody>
+                  </table>
+                </div>
+              }
+            </section>
+          </ng-template>
+        </div>
       </section>
-    </ng-template>
-  </cq-split-pane>
+    </article>
+  </section>
 </section>

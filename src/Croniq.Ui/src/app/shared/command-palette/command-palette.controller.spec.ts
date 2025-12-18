@@ -1,10 +1,8 @@
 import { provideZonelessChangeDetection } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { Router } from '@angular/router';
-import { RouterTestingModule } from '@angular/router/testing';import {
-    CommandPaletteController,
-    provideCommandPaletteCommands,
-} from './command-palette.controller';
+import { RouterTestingModule } from '@angular/router/testing';
+import { CommandPaletteController, provideCommandPaletteCommands } from './command-palette.controller';
 
 describe('CommandPaletteController', () => {
     let controller: CommandPaletteController;

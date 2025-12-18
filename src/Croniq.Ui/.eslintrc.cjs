@@ -2,6 +2,7 @@
 module.exports = {
   root: true,
   ignorePatterns: [
+    'out-tsc/**',
     'dist/**',
     'coverage/**',
     'node_modules/**',
@@ -43,6 +44,13 @@ module.exports = {
         'no-restricted-imports': [
           'error',
           {
+            paths: [
+              {
+                name: '@angular/common',
+                importNames: ['CommonModule'],
+                message: 'Avoid CommonModule in standalone components; import the standalone directives/pipes you use (e.g. DatePipe) instead.',
+              },
+            ],
             patterns: ['../**'],
           },
         ],

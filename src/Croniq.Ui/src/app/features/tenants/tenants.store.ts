@@ -2,13 +2,7 @@ import { Injectable, inject, signal } from '@angular/core';
 import { TenantContextService } from '@core/tenant-context/tenant-context.service';
 import { isoFromEpochMs, nowIso, nowMs } from '@core/time/clock';
 import { IssueApiKeyRequest, IssueTokenRequest } from '@croniq/api-schema';
-import {
-    CRONIQ_API_CLIENT,
-    CroniqApiClient,
-    TenantApiClientParams,
-    TenantApiKeyParams,
-    TenantScopedParams,
-} from 'data-access';
+import { CRONIQ_API_CLIENT, CroniqApiClient, TenantApiClientParams, TenantApiKeyParams, TenantScopedParams } from 'data-access';
 
 export type ApiKeyActionType = 'issue' | 'issue-token' | 'rotate' | 'delete';
 export type ApiKeyActionStatus = 'pending' | 'success' | 'error';
@@ -230,7 +224,7 @@ function seedActivity(): ReadonlyArray<ApiKeyActivityEntry> {
 function createEntryId(): string {
     return typeof crypto !== 'undefined' && 'randomUUID' in crypto
         ? crypto.randomUUID()
-    : `${nowMs()}-${Math.round(Math.random() * 1000)}`;
+        : `${nowMs()}-${Math.round(Math.random() * 1000)}`;
 }
 
 function summarizeResponse(value: unknown): string {

@@ -1,5 +1,10 @@
+import { Tab, TabContent, TabList, TabPanel, Tabs } from '@angular/aria/tabs';
 import { ChangeDetectionStrategy, Component, signal } from '@angular/core';
-import { SplitPane, type SplitPaneTab } from '@shared/split-pane/split-pane';
+
+type DetailTab = {
+  id: 'metrics';
+  label: string;
+};
 
 type SummaryCard = {
   label: string;
@@ -9,12 +14,17 @@ type SummaryCard = {
 
 @Component({
   selector: 'cq-dashboard-page',
-  imports: [SplitPane],
+  imports: [Tabs, TabList, Tab, TabPanel, TabContent],
   templateUrl: './dashboard-page.html',
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class DashboardPage {
-  readonly detailTabs: ReadonlyArray<SplitPaneTab> = [{ id: 'metrics', label: 'Metrics' }];
+  readonly detailTabs: ReadonlyArray<DetailTab> = [{ id: 'metrics', label: 'Metrics' }];
+  readonly selectedTab = signal<string>(this.detailTabs[0]?.id ?? '');
+
+  setSelectedTab(nextTab: string | null | undefined): void {
+    this.selectedTab.set(nextTab ?? this.detailTabs[0]?.id ?? '');
+  }
 
   readonly summaryCards = signal<ReadonlyArray<SummaryCard>>([
     { label: 'Active schedules', value: '128', description: 'Enabled policies across tenants' },

@@ -1,45 +1,7 @@
 import { HttpClient } from '@angular/common/http';
-import { EnvironmentProviders, InjectionToken, Provider, inject, makeEnvironmentProviders } from '@angular/core';import {
-    AuthApi,
-    CreateWebhookIpRuleRequest,
-    HealthApi,
-    IssueApiKeyRequest,
-    IssueTokenRequest,
-    JobsApi,
-    MeApi,
-    PasswordLoginRequest,
-    PasswordLogoutRequest,
-    PasswordRefreshRequest,
-    RotateWebhookSecretRequest,
-    ScheduleListResponse,
-    TenantsApi,
-    TriggerJobRequest,
-    UpsertApiClientRequest,
-    UpsertJobRequest,
-    UpsertScheduleRequest,
-    UpsertTenantRequest,
-    UpsertWebhookEndpointRequest,
-    WebhooksApi,
-    scheduleListResponseSchema,
-    type EndpointDefinition,
-} from '@croniq/api-schema';import type {
-    CroniqCredentialSupplier,
-    CroniqRequestOptions,
-    ExecutionLogParams,
-    ExecutionParams,
-    TenantApiClientParams,
-    TenantApiClientTokenParams,
-    TenantApiKeyParams,
-    TenantDeadLetterParams,
-    TenantEnvironmentParams,
-    TenantScheduleParams,
-    TenantScopedParams,
-    TenantUpsertApiClientParams,
-    TenantWebhookParams,
-    TenantWebhookRuleParams,
-    TenantWebhookUpsertParams,
-    WebhookInvocationParams,
-} from './api-client.types';
+import { EnvironmentProviders, InjectionToken, Provider, inject, makeEnvironmentProviders } from '@angular/core';
+import { AuthApi, CreateWebhookIpRuleRequest, HealthApi, IssueApiKeyRequest, IssueTokenRequest, JobsApi, MeApi, PasswordLoginRequest, PasswordLogoutRequest, PasswordRefreshRequest, RotateWebhookSecretRequest, ScheduleListResponse, TenantsApi, TriggerJobRequest, UpsertApiClientRequest, UpsertJobRequest, UpsertScheduleRequest, UpsertTenantRequest, UpsertWebhookEndpointRequest, WebhooksApi, scheduleListResponseSchema, type EndpointDefinition } from '@croniq/api-schema';
+import type { CroniqCredentialSupplier, CroniqRequestOptions, ExecutionLogParams, ExecutionParams, TenantApiClientParams, TenantApiClientTokenParams, TenantApiKeyParams, TenantDeadLetterParams, TenantEnvironmentParams, TenantScheduleParams, TenantScopedParams, TenantUpsertApiClientParams, TenantWebhookParams, TenantWebhookRuleParams, TenantWebhookUpsertParams, WebhookInvocationParams } from './api-client.types';
 import type { EndpointCallConfig } from './endpoint-executor';
 import { EndpointExecutor, requireEndpoint } from './endpoint-executor';
 
@@ -811,19 +773,5 @@ export function provideCroniqApiClient(config: { baseUrl?: string } = {}): Envir
     return makeEnvironmentProviders(providers);
 }
 
-export type {
-    CallerContext,
-    CroniqCredentialSupplier,
-    CroniqRequestOptions,
-    ExecutionLogParams,
-    TenantApiClientParams,
-    TenantApiKeyParams,
-    TenantDeadLetterParams,
-    TenantEnvironmentParams,
-    TenantScopedParams,
-    TenantWebhookParams,
-    TenantWebhookRuleParams,
-    TenantWebhookUpsertParams,
-    WebhookInvocationParams
-} from './api-client.types';
+export type { CallerContext, CroniqCredentialSupplier, CroniqRequestOptions, ExecutionLogParams, TenantApiClientParams, TenantApiKeyParams, TenantDeadLetterParams, TenantEnvironmentParams, TenantScopedParams, TenantWebhookParams, TenantWebhookRuleParams, TenantWebhookUpsertParams, WebhookInvocationParams } from './api-client.types';
 

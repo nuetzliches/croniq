@@ -1,13 +1,18 @@
-import { CommonModule } from '@angular/common';
+import { Tab, TabContent, TabList, TabPanel, Tabs } from '@angular/aria/tabs';
+import { DatePipe } from '@angular/common';
 import { ChangeDetectionStrategy, Component, inject, signal } from '@angular/core';
 import { TenantContextService } from '@core/tenant-context/tenant-context.service';
 import { CreateWebhookIpRuleRequest, RotateWebhookSecretRequest, UpsertWebhookEndpointRequest } from '@croniq/api-schema';
 import { WebhooksStore } from '@features/webhooks/webhooks.store';
-import { SplitPane, type SplitPaneTab, SplitPaneTabTemplateDirective } from '@shared/split-pane/split-pane';
+
+type DetailTab = {
+  id: 'controls' | 'endpoints' | 'ops';
+  label: string;
+};
 
 @Component({
   selector: 'cq-webhooks-page',
-  imports: [CommonModule, SplitPane, SplitPaneTabTemplateDirective],
+  imports: [DatePipe, Tabs, TabList, Tab, TabPanel, TabContent],
   templateUrl: './webhooks-page.html',
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
@@ -15,11 +20,17 @@ export class WebhooksPage {
   private readonly store = inject(WebhooksStore);
   private readonly tenantContext = inject(TenantContextService);
 
-  readonly detailTabs: ReadonlyArray<SplitPaneTab> = [
+  readonly detailTabs: ReadonlyArray<DetailTab> = [
     { id: 'controls', label: 'Controls' },
     { id: 'endpoints', label: 'Endpoints' },
     { id: 'ops', label: 'Ops log' },
   ];
+
+  readonly selectedTab = signal<string>(this.detailTabs[0]?.id ?? '');
+
+  setSelectedTab(nextTab: string | null | undefined): void {
+    this.selectedTab.set(nextTab ?? this.detailTabs[0]?.id ?? '');
+  }
 
   readonly endpoints = this.store.endpoints;
   readonly actionLog = this.store.actionLog;

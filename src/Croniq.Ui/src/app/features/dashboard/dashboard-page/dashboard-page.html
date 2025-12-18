@@ -1,24 +1,58 @@
 <section class="space-y-8">
-  <cq-split-pane [tabs]="detailTabs" tabListLabel="Dashboard detail">
-    <header cqSplitPaneSummary class="space-y-3">
-      <h1 class="text-3xl font-semibold text-text">Operations dashboard</h1>
-      <p class="text-base text-text-muted">
-        Live glimpse into schedule execution, queue health, and webhook latency.
-      </p>
-    </header>
+  <section class="grid gap-6 lg:grid-cols-[360px_1fr]">
+    <aside class="space-y-6">
+      <header class="space-y-3">
+        <h1 class="text-3xl font-semibold text-text">Operations dashboard</h1>
+        <p class="text-base text-text-muted">
+          Live glimpse into schedule execution, queue health, and webhook latency.
+        </p>
+      </header>
+    </aside>
 
-    <ng-template cqSplitPaneTab="metrics">
-      <section class="grid gap-4 md:grid-cols-2 xl:grid-cols-4" aria-label="Key metrics">
-        @for (card of summaryCards(); track card.label) {
-        <article
-          class="flex min-h-[150px] flex-col justify-between rounded-2xl border border-white/10 bg-gradient-to-br from-white/10 via-white/5 to-white/0 p-5 shadow-lg"
+    <article class="rounded-2xl border border-white/10 bg-white/5 shadow-xl" ngTabs>
+      <header class="border-b border-white/10 p-4">
+        <div
+          ngTabList
+          [wrap]="true"
+          selectionMode="follow"
+          [selectedTab]="selectedTab()"
+          (selectedTabChange)="setSelectedTab($event)"
+          class="flex flex-wrap gap-2"
+          aria-label="Dashboard detail"
         >
-          <span class="text-xs uppercase tracking-[0.35em] text-text-muted">{{ card.label }}</span>
-          <span class="text-4xl font-semibold text-text">{{ card.value }}</span>
-          <span class="text-sm text-text-muted">{{ card.description }}</span>
-        </article>
-        }
+          @for (tab of detailTabs; track tab.id) {
+            <button
+              type="button"
+              ngTab
+              [value]="tab.id"
+              class="rounded-full px-4 py-2 text-xs font-semibold uppercase tracking-wide transition"
+              [class.bg-accent/20]="selectedTab() === tab.id"
+              [class.text-white]="selectedTab() === tab.id"
+              [class.text-text-muted]="selectedTab() !== tab.id"
+            >
+              {{ tab.label }}
+            </button>
+          }
+        </div>
+      </header>
+
+      <section class="p-5">
+        <div ngTabPanel value="metrics" [preserveContent]="false">
+          <ng-template ngTabContent>
+            <section class="grid gap-4 md:grid-cols-2 xl:grid-cols-4" aria-label="Key metrics">
+              @for (card of summaryCards(); track card.label) {
+                <article
+                  class="flex min-h-[150px] flex-col justify-between rounded-2xl border border-white/10 bg-gradient-to-br from-white/10 via-white/5 to-white/0 p-5 shadow-lg"
+                >
+                  <span class="text-xs uppercase tracking-[0.35em] text-text-muted">{{ card.label }}</span>
+                  <span class="text-4xl font-semibold text-text">{{ card.value }}</span>
+                  <span class="text-sm text-text-muted">{{ card.description }}</span>
+                </article>
+              }
+            </section>
+          </ng-template>
+        </div>
       </section>
-    </ng-template>
-  </cq-split-pane>
+    </article>
+  </section>
 </section>

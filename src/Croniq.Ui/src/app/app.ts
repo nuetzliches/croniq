@@ -1,8 +1,9 @@
-import { ChangeDetectionStrategy, Component } from '@angular/core';import { Shell } from './shell/shell/shell';
+import { ChangeDetectionStrategy, Component } from '@angular/core';
+import { RouterOutlet } from '@angular/router';
 
 @Component({
   selector: 'cq-root',
-  imports: [Shell],
+  imports: [RouterOutlet],
   templateUrl: './app.html',
   changeDetection: ChangeDetectionStrategy.OnPush,
 })

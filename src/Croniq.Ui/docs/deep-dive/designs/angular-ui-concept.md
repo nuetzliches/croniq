@@ -14,15 +14,15 @@
 
 ## Technology Decisions
 
-| Concern            | Decision                                                        | Notes                                                                                                                                                       |
-| ------------------ | --------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Framework          | Angular 21 standalone apps, built with the Vite-powered builder | Gives SSR-ready hydration, Signals API, and CLI ergonomics familiar to enterprise contributors.                                                             |
-| Styling            | Tailwind CSS + custom tokens                                    | Tailwind provides utility primitives; we layer Croniq-specific tokens (semantic colors) via `tailwind.config.js` and CSS variables.                         |
-| Component strategy | Headless primitives + lightweight shims                         | Compose Radix-inspired headless patterns with Tailwind classes to avoid Material sameness; focus on split-pane layouts, dense data grids, and status pills. |
-| State/query        | Signals-first, typed services (optional query lib later)        | Current codebase is Signals-first + strict typing; if we add a query lib, it should be justified and used consistently (avoid half-migrations).             |
-| Forms              | Angular Signal Forms (experimental in v21) + Zod at the edges   | Prefer Signal Forms for new forms once we're comfortable with the API; use Zod to validate runtime config and API contracts.                                |
-| Testing            | Vitest                                                          | E2E/Storybook are optional future additions; don't document them as required until wired in `package.json`.                                                 |
-| DX automation      | Angular MCP Server                                              | Dev-only helper (VS Code + MCP). Use `.vscode/mcp.json` + `npm run mcp` and keep it out of runtime builds.                                                  |
+| Concern            | Decision                                                        | Notes                                                                                                                                                                   |
+| ------------------ | --------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Framework          | Angular 21 standalone apps, built with the Vite-powered builder | Gives SSR-ready hydration, Signals API, and CLI ergonomics familiar to enterprise contributors.                                                                         |
+| Styling            | Tailwind CSS + custom tokens                                    | Tailwind provides utility primitives; we layer Croniq-specific tokens (semantic colors) via `tailwind.config.js` and CSS variables.                                     |
+| Component strategy | Headless primitives + lightweight shims                         | Compose headless patterns (Angular Aria) with Tailwind classes; pages compose a two-pane layout (summary column + tabbed detail) without a shared page-sized component. |
+| State/query        | Signals-first, typed services (optional query lib later)        | Current codebase is Signals-first + strict typing; if we add a query lib, it should be justified and used consistently (avoid half-migrations).                         |
+| Forms              | Angular Signal Forms (experimental in v21) + Zod at the edges   | Prefer Signal Forms for new forms once we're comfortable with the API; use Zod to validate runtime config and API contracts.                                            |
+| Testing            | Vitest                                                          | E2E/Storybook are optional future additions; don't document them as required until wired in `package.json`.                                                             |
+| DX automation      | Angular MCP Server                                              | Dev-only helper (VS Code + MCP). Use `.vscode/mcp.json` + `npm run mcp` and keep it out of runtime builds.                                                              |
 
 ## Repository & Project Layout
 
@@ -61,7 +61,7 @@ public/
 1. **Shell & Layout**
 
    - Persistent command rail on the left with tenant selector + status beacons (cluster health, clock skew, policy alerts).
-   - Main canvas uses split panes (top summary cards, lower tabbed details) to emphasize live metrics.
+   - Main canvas uses a page-local two-pane layout: summary column on the left and tabbed detail panel on the right (Angular Aria tabs) to emphasize live metrics.
    - Global command palette (Ctrl+K) surfaces job search, quick trigger, and navigation actions.
 
 2. **Feature Modules**
@@ -110,7 +110,7 @@ public/
 2. **Unit tests**: `npm test` (watch) / `npm run test:once` (single run).
 3. **Packaging**: `npm run build` emits `dist/` artifacts (exact output path is defined by the Angular builder).
 
-Optional future additions (only when implemented): ESLint/template lint, Playwright E2E, Storybook.
+Optional future additions (only when implemented): Playwright E2E, Storybook.
 
 ## Delivery Phases
 

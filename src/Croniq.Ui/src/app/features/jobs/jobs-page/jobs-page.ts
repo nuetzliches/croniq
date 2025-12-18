@@ -1,22 +1,33 @@
-import { CommonModule } from '@angular/common';
+import { Tab, TabContent, TabList, TabPanel, Tabs } from '@angular/aria/tabs';
+import { DatePipe } from '@angular/common';
 import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@angular/core';
 import type { ManualTriggerEntry } from '@features/jobs/jobs.store';
 import { JobsStore } from '@features/jobs/jobs.store';
-import { SplitPane, SplitPaneTab, SplitPaneTabTemplateDirective } from '@shared/split-pane/split-pane';
+
+type DetailTab = {
+  id: 'trigger' | 'history';
+  label: string;
+};
 
 @Component({
   selector: 'cq-jobs-page',
-  imports: [CommonModule, SplitPane, SplitPaneTabTemplateDirective],
+  imports: [DatePipe, Tabs, TabList, Tab, TabPanel, TabContent],
   templateUrl: './jobs-page.html',
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class JobsPage {
   private readonly store = inject(JobsStore);
 
-  readonly detailTabs: ReadonlyArray<SplitPaneTab> = [
+  readonly detailTabs: ReadonlyArray<DetailTab> = [
     { id: 'trigger', label: 'Trigger' },
     { id: 'history', label: 'History' },
   ];
+
+  readonly selectedTab = signal<string>(this.detailTabs[0]?.id ?? '');
+
+  setSelectedTab(nextTab: string | null | undefined): void {
+    this.selectedTab.set(nextTab ?? this.detailTabs[0]?.id ?? '');
+  }
 
   readonly manualTriggers = this.store.manualTriggers;
   readonly pendingCount = this.store.pendingCount;

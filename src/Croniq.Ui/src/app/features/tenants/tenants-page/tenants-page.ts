@@ -1,11 +1,11 @@
-import { CommonModule, JsonPipe } from '@angular/common';
+import { DatePipe, JsonPipe } from '@angular/common';
 import { ChangeDetectionStrategy, Component, inject, signal } from '@angular/core';
 import { TenantContextService } from '@core/tenant-context/tenant-context.service';
 import { TenantsStore } from '@features/tenants/tenants.store';
 
 @Component({
   selector: 'cq-tenants-page',
-  imports: [CommonModule, JsonPipe],
+  imports: [DatePipe, JsonPipe],
   templateUrl: './tenants-page.html',
   changeDetection: ChangeDetectionStrategy.OnPush,
 })

@@ -1,7 +1,7 @@
-import { CommonModule } from '@angular/common';
+import { Tab, TabContent, TabList, TabPanel, Tabs } from '@angular/aria/tabs';
+import { DatePipe } from '@angular/common';
 import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@angular/core';
 import { ScheduleState } from '@croniq/api-schema';
-import { SplitPane, SplitPaneTab, SplitPaneTabTemplateDirective } from '@shared/split-pane/split-pane';
 import { SchedulesStore } from './schedules.store';
 
 type ScheduleFilter = ScheduleState | 'all';
@@ -15,16 +15,26 @@ type FilterOption = {
   value: ScheduleFilter;
 };
 
+type DetailTab = {
+  id: 'list';
+  label: string;
+};
+
 @Component({
   selector: 'cq-schedules-page',
-  imports: [CommonModule, SplitPane, SplitPaneTabTemplateDirective],
+  imports: [DatePipe, Tabs, TabList, Tab, TabPanel, TabContent],
   templateUrl: './schedules-page.html',
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class SchedulesPage {
   private readonly store = inject(SchedulesStore);
 
-  readonly detailTabs: ReadonlyArray<SplitPaneTab> = [{ id: 'list', label: 'List' }];
+  readonly detailTabs: ReadonlyArray<DetailTab> = [{ id: 'list', label: 'List' }];
+  readonly selectedTab = signal<string>(this.detailTabs[0]?.id ?? '');
+
+  setSelectedTab(nextTab: string | null | undefined): void {
+    this.selectedTab.set(nextTab ?? this.detailTabs[0]?.id ?? '');
+  }
 
   readonly filterOptions: ReadonlyArray<FilterOption> = [
     { label: 'All', value: 'all' },

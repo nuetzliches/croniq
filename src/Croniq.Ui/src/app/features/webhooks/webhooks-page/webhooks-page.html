@@ -18,303 +18,341 @@
     </p>
   </header>
 
-  <cq-split-pane [tabs]="detailTabs" tabListLabel="Webhook detail">
-    <article cqSplitPaneSummary class="rounded-2xl border border-white/10 bg-white/5 p-5">
-      <h2 class="text-sm uppercase tracking-[0.3em] text-text-muted">Delivery pulse</h2>
-      <p class="mt-3 text-lg font-semibold text-text">Live feed is wiring in</p>
-      <p class="text-sm text-text-muted">
-        Streaming telemetry is next on the roadmap. Meanwhile, the controls on the right keep ops in
-        sync with manual tasks (dead letters, allow lists, signature enforcement).
-      </p>
-      <ul class="mt-4 space-y-2 text-xs text-text-muted">
-        <li>Tenant · {{ tenantId() }} · Env {{ environment() || '—' }}</li>
-        <li>Selected hook · {{ hookKey() }}</li>
-      </ul>
-      <div class="mt-4 grid gap-3 text-sm text-text-muted sm:grid-cols-2">
-        <div class="rounded-xl border border-white/10 bg-white/5 p-3">
-          <p class="text-xs uppercase tracking-wider text-text-muted">Secret rotation</p>
-          <p class="text-text">Guided flow online</p>
-        </div>
-        <div class="rounded-xl border border-white/10 bg-white/5 p-3">
-          <p class="text-xs uppercase tracking-wider text-text-muted">Allow list</p>
-          <p class="text-text">Policy editor live</p>
-        </div>
-      </div>
-    </article>
-
-    <ng-template cqSplitPaneTab="controls">
-      <article class="rounded-2xl border border-dashed border-white/20 bg-white/5 p-5 text-sm text-text">
-        <h2 class="text-sm uppercase tracking-[0.3em] text-text-muted">Control surface</h2>
-        <div class="mt-4 space-y-4">
-          <div class="grid gap-4 sm:grid-cols-2">
-            <label class="space-y-1">
-              <span class="text-text-muted">Hook key</span>
-              <input
-                #hookInput
-                type="text"
-                class="w-full rounded-xl border border-white/15 bg-white/5 px-3 py-2 focus:border-accent focus:outline-none"
-                [value]="hookKey()"
-                (input)="setHookKey(hookInput.value)"
-              />
-            </label>
-            <label class="space-y-1">
-              <span class="text-text-muted">Job key</span>
-              <input
-                #jobInput
-                type="text"
-                class="w-full rounded-xl border border-white/15 bg-white/5 px-3 py-2 focus:border-accent focus:outline-none"
-                [value]="jobKey()"
-                (input)="setJobKey(jobInput.value)"
-              />
-            </label>
-            <label class="space-y-1">
-              <span class="text-text-muted">Requests per minute</span>
-              <input
-                #rpmInput
-                type="number"
-                min="1"
-                class="w-full rounded-xl border border-white/15 bg-white/5 px-3 py-2 focus:border-accent focus:outline-none"
-                [value]="requestsPerMinute()"
-                (input)="setRequestsPerMinute(rpmInput.value)"
-              />
-            </label>
-            <div class="flex items-center gap-2 pt-6 text-xs text-text-muted">
-              <label class="inline-flex items-center gap-2">
-                <input type="checkbox" [checked]="requireSignature()" (change)="toggleRequireSignature()" />
-                Require signature
-              </label>
-              <label class="inline-flex items-center gap-2">
-                <input type="checkbox" [checked]="allowUnsigned()" (change)="toggleAllowUnsigned()" />
-                Allow unsigned
-              </label>
-            </div>
+  <section class="grid gap-6 lg:grid-cols-[360px_1fr]">
+    <aside class="space-y-6">
+      <article class="rounded-2xl border border-white/10 bg-white/5 p-5">
+        <h2 class="text-sm uppercase tracking-[0.3em] text-text-muted">Delivery pulse</h2>
+        <p class="mt-3 text-lg font-semibold text-text">Live feed is wiring in</p>
+        <p class="text-sm text-text-muted">
+          Streaming telemetry is next on the roadmap. Meanwhile, the controls on the right keep ops in
+          sync with manual tasks (dead letters, allow lists, signature enforcement).
+        </p>
+        <ul class="mt-4 space-y-2 text-xs text-text-muted">
+          <li>Tenant · {{ tenantId() }} · Env {{ environment() || '—' }}</li>
+          <li>Selected hook · {{ hookKey() }}</li>
+        </ul>
+        <div class="mt-4 grid gap-3 text-sm text-text-muted sm:grid-cols-2">
+          <div class="rounded-xl border border-white/10 bg-white/5 p-3">
+            <p class="text-xs uppercase tracking-wider text-text-muted">Secret rotation</p>
+            <p class="text-text">Guided flow online</p>
           </div>
-          <div class="flex flex-wrap gap-3">
-            <button
-              type="button"
-              class="rounded-full border border-accent/50 bg-accent/15 px-5 py-2 text-sm font-semibold text-accent transition hover:bg-accent/25 disabled:opacity-60"
-              (click)="upsertEndpoint()"
-              [disabled]="loading()"
-            >
-              Upsert endpoint
-            </button>
-            <button
-              type="button"
-              class="rounded-full border border-white/15 px-4 py-2 text-xs font-semibold uppercase tracking-wider text-text transition hover:border-accent hover:text-accent disabled:opacity-60"
-              (click)="refreshEndpoints()"
-              [disabled]="loading()"
-            >
-              Refresh endpoints
-            </button>
-            <button
-              type="button"
-              class="rounded-full border border-white/15 px-4 py-2 text-xs font-semibold uppercase tracking-wider text-rose-200 transition hover:border-rose-300 disabled:opacity-60"
-              (click)="deleteEndpoint()"
-              [disabled]="loading()"
-            >
-              Delete endpoint
-            </button>
-            <button
-              type="button"
-              class="rounded-full border border-white/15 px-4 py-2 text-xs font-semibold uppercase tracking-wider text-text-muted"
-              (click)="invokeWebhook()"
-            >
-              Invoke once
-            </button>
+          <div class="rounded-xl border border-white/10 bg-white/5 p-3">
+            <p class="text-xs uppercase tracking-wider text-text-muted">Allow list</p>
+            <p class="text-text">Policy editor live</p>
           </div>
-
-          <div class="grid gap-4 sm:grid-cols-2">
-            <label class="space-y-1">
-              <span class="text-text-muted">Activate delay (seconds)</span>
-              <input
-                #activateInput
-                type="number"
-                min="0"
-                class="w-full rounded-xl border border-white/15 bg-white/5 px-3 py-2 focus:border-accent focus:outline-none"
-                [value]="secretActivateDelay()"
-                (input)="setSecretActivateDelay(activateInput.value)"
-              />
-            </label>
-            <label class="space-y-1">
-              <span class="text-text-muted">Grace period (seconds)</span>
-              <input
-                #graceInput
-                type="number"
-                min="0"
-                class="w-full rounded-xl border border-white/15 bg-white/5 px-3 py-2 focus:border-accent focus:outline-none"
-                [value]="secretGracePeriod()"
-                (input)="setSecretGracePeriod(graceInput.value)"
-              />
-            </label>
-          </div>
-          <div class="flex flex-wrap gap-3">
-            <button
-              type="button"
-              class="rounded-full border border-white/15 px-4 py-2 text-xs font-semibold uppercase tracking-wider text-text transition hover:border-accent hover:text-accent"
-              (click)="rotateSecret()"
-            >
-              Rotate secret
-            </button>
-            <button
-              type="button"
-              class="rounded-full border border-white/15 px-4 py-2 text-xs font-semibold uppercase tracking-wider text-text"
-              (click)="replayDeadLetter()"
-            >
-              Replay dead letter
-            </button>
-          </div>
-
-          <div class="grid gap-4 sm:grid-cols-2">
-            <label class="space-y-1">
-              <span class="text-text-muted">IP rule ID</span>
-              <input
-                #ruleIdInput
-                type="text"
-                class="w-full rounded-xl border border-white/15 bg-white/5 px-3 py-2 focus:border-accent focus:outline-none"
-                [value]="ipRuleId()"
-                (input)="setIpRuleId(ruleIdInput.value)"
-              />
-            </label>
-            <label class="space-y-1">
-              <span class="text-text-muted">CIDR</span>
-              <input
-                #cidrInput
-                type="text"
-                class="w-full rounded-xl border border-white/15 bg-white/5 px-3 py-2 focus:border-accent focus:outline-none"
-                [value]="ipRuleCidr()"
-                (input)="setIpRuleCidr(cidrInput.value)"
-              />
-            </label>
-          </div>
-          <label class="space-y-1">
-            <span class="text-text-muted">Description</span>
-            <input
-              #ruleDescriptionInput
-              type="text"
-              class="w-full rounded-xl border border-white/15 bg-white/5 px-3 py-2 focus:border-accent focus:outline-none"
-              [value]="ipRuleDescription()"
-              (input)="setIpRuleDescription(ruleDescriptionInput.value)"
-            />
-          </label>
-          <div class="flex flex-wrap gap-3">
-            <button
-              type="button"
-              class="rounded-full border border-white/15 px-4 py-2 text-xs font-semibold uppercase tracking-wider text-text"
-              (click)="createIpRule()"
-            >
-              Create IP rule
-            </button>
-            <button
-              type="button"
-              class="rounded-full border border-white/15 px-4 py-2 text-xs font-semibold uppercase tracking-wider text-rose-200"
-              (click)="deleteIpRule()"
-            >
-              Delete IP rule
-            </button>
-          </div>
-
-          <label class="space-y-1">
-            <span class="text-text-muted">Dead letter ID</span>
-            <input
-              #deadLetterInput
-              type="text"
-              class="w-full rounded-xl border border-white/15 bg-white/5 px-3 py-2 focus:border-accent focus:outline-none"
-              [value]="deadLetterId()"
-              (input)="setDeadLetterId(deadLetterInput.value)"
-            />
-          </label>
         </div>
       </article>
-    </ng-template>
+    </aside>
 
-    <ng-template cqSplitPaneTab="endpoints">
-      <section class="rounded-2xl border border-white/10 bg-white/5 shadow-xl">
-        <header class="flex flex-wrap items-center justify-between gap-3 border-b border-white/10 p-5 text-sm text-text">
-          <div>
-            <p class="text-xs uppercase tracking-[0.3em] text-text-muted">Endpoints</p>
-            <p class="text-base font-semibold text-text">Tenant catalog</p>
-          </div>
-          <p class="text-xs text-text-muted">{{ endpoints().length }} entries</p>
-        </header>
+    <article class="rounded-2xl border border-white/10 bg-white/5 shadow-xl" ngTabs>
+      <header class="border-b border-white/10 p-4">
+        <div
+          ngTabList
+          [wrap]="true"
+          selectionMode="follow"
+          [selectedTab]="selectedTab()"
+          (selectedTabChange)="setSelectedTab($event)"
+          class="flex flex-wrap gap-2"
+          aria-label="Webhook detail"
+        >
+          @for (tab of detailTabs; track tab.id) {
+            <button
+              type="button"
+              ngTab
+              [value]="tab.id"
+              class="rounded-full px-4 py-2 text-xs font-semibold uppercase tracking-wide transition"
+              [class.bg-accent/20]="selectedTab() === tab.id"
+              [class.text-white]="selectedTab() === tab.id"
+              [class.text-text-muted]="selectedTab() !== tab.id"
+            >
+              {{ tab.label }}
+            </button>
+          }
+        </div>
+      </header>
 
-        @if (endpoints().length === 0) {
-          <p class="p-6 text-sm text-text-muted">No webhook endpoints recorded for this tenant.</p>
-        } @else {
-          <div class="overflow-x-auto">
-            <table class="min-w-full divide-y divide-white/10 text-sm text-text">
-              <thead class="text-left text-xs uppercase tracking-[0.3em] text-text-muted">
-                <tr>
-                  <th class="px-4 py-3">Hook</th>
-                  <th class="px-4 py-3">Job</th>
-                  <th class="px-4 py-3">RPM</th>
-                  <th class="px-4 py-3">Signature</th>
-                  <th class="px-4 py-3">Last delivery</th>
-                </tr>
-              </thead>
-              <tbody class="divide-y divide-white/5">
-                @for (endpoint of endpoints(); track endpoint.hookKey) {
-                  <tr class="hover:bg-white/3">
-                    <td class="px-4 py-4">
-                      <p class="font-semibold text-text">{{ endpoint.hookKey }}</p>
-                      <p class="text-xs text-text-muted">{{ endpoint.environment }}</p>
-                    </td>
-                    <td class="px-4 py-4 text-xs text-text-muted">{{ endpoint.jobKey }}</td>
-                    <td class="px-4 py-4">
-                      {{ endpoint.requestsPerMinute || '—' }}
-                    </td>
-                    <td class="px-4 py-4">
+      <section class="p-5">
+        <div ngTabPanel value="controls" [preserveContent]="false">
+          <ng-template ngTabContent>
+            <article class="rounded-2xl border border-dashed border-white/20 bg-white/5 p-5 text-sm text-text">
+              <h2 class="text-sm uppercase tracking-[0.3em] text-text-muted">Control surface</h2>
+              <div class="mt-4 space-y-4">
+                <div class="grid gap-4 sm:grid-cols-2">
+                  <label class="space-y-1">
+                    <span class="text-text-muted">Hook key</span>
+                    <input
+                      #hookInput
+                      type="text"
+                      class="w-full rounded-xl border border-white/15 bg-white/5 px-3 py-2 focus:border-accent focus:outline-none"
+                      [value]="hookKey()"
+                      (input)="setHookKey(hookInput.value)"
+                    />
+                  </label>
+                  <label class="space-y-1">
+                    <span class="text-text-muted">Job key</span>
+                    <input
+                      #jobInput
+                      type="text"
+                      class="w-full rounded-xl border border-white/15 bg-white/5 px-3 py-2 focus:border-accent focus:outline-none"
+                      [value]="jobKey()"
+                      (input)="setJobKey(jobInput.value)"
+                    />
+                  </label>
+                  <label class="space-y-1">
+                    <span class="text-text-muted">Requests per minute</span>
+                    <input
+                      #rpmInput
+                      type="number"
+                      min="1"
+                      class="w-full rounded-xl border border-white/15 bg-white/5 px-3 py-2 focus:border-accent focus:outline-none"
+                      [value]="requestsPerMinute()"
+                      (input)="setRequestsPerMinute(rpmInput.value)"
+                    />
+                  </label>
+                  <div class="flex items-center gap-2 pt-6 text-xs text-text-muted">
+                    <label class="inline-flex items-center gap-2">
+                      <input type="checkbox" [checked]="requireSignature()" (change)="toggleRequireSignature()" />
+                      Require signature
+                    </label>
+                    <label class="inline-flex items-center gap-2">
+                      <input type="checkbox" [checked]="allowUnsigned()" (change)="toggleAllowUnsigned()" />
+                      Allow unsigned
+                    </label>
+                  </div>
+                </div>
+                <div class="flex flex-wrap gap-3">
+                  <button
+                    type="button"
+                    class="rounded-full border border-accent/50 bg-accent/15 px-5 py-2 text-sm font-semibold text-accent transition hover:bg-accent/25 disabled:opacity-60"
+                    (click)="upsertEndpoint()"
+                    [disabled]="loading()"
+                  >
+                    Upsert endpoint
+                  </button>
+                  <button
+                    type="button"
+                    class="rounded-full border border-white/15 px-4 py-2 text-xs font-semibold uppercase tracking-wider text-text transition hover:border-accent hover:text-accent disabled:opacity-60"
+                    (click)="refreshEndpoints()"
+                    [disabled]="loading()"
+                  >
+                    Refresh endpoints
+                  </button>
+                  <button
+                    type="button"
+                    class="rounded-full border border-white/15 px-4 py-2 text-xs font-semibold uppercase tracking-wider text-rose-200 transition hover:border-rose-300 disabled:opacity-60"
+                    (click)="deleteEndpoint()"
+                    [disabled]="loading()"
+                  >
+                    Delete endpoint
+                  </button>
+                  <button
+                    type="button"
+                    class="rounded-full border border-white/15 px-4 py-2 text-xs font-semibold uppercase tracking-wider text-text-muted"
+                    (click)="invokeWebhook()"
+                  >
+                    Invoke once
+                  </button>
+                </div>
+
+                <div class="grid gap-4 sm:grid-cols-2">
+                  <label class="space-y-1">
+                    <span class="text-text-muted">Activate delay (seconds)</span>
+                    <input
+                      #activateInput
+                      type="number"
+                      min="0"
+                      class="w-full rounded-xl border border-white/15 bg-white/5 px-3 py-2 focus:border-accent focus:outline-none"
+                      [value]="secretActivateDelay()"
+                      (input)="setSecretActivateDelay(activateInput.value)"
+                    />
+                  </label>
+                  <label class="space-y-1">
+                    <span class="text-text-muted">Grace period (seconds)</span>
+                    <input
+                      #graceInput
+                      type="number"
+                      min="0"
+                      class="w-full rounded-xl border border-white/15 bg-white/5 px-3 py-2 focus:border-accent focus:outline-none"
+                      [value]="secretGracePeriod()"
+                      (input)="setSecretGracePeriod(graceInput.value)"
+                    />
+                  </label>
+                </div>
+                <div class="flex flex-wrap gap-3">
+                  <button
+                    type="button"
+                    class="rounded-full border border-white/15 px-4 py-2 text-xs font-semibold uppercase tracking-wider text-text transition hover:border-accent hover:text-accent"
+                    (click)="rotateSecret()"
+                  >
+                    Rotate secret
+                  </button>
+                  <button
+                    type="button"
+                    class="rounded-full border border-white/15 px-4 py-2 text-xs font-semibold uppercase tracking-wider text-text"
+                    (click)="replayDeadLetter()"
+                  >
+                    Replay dead letter
+                  </button>
+                </div>
+
+                <div class="grid gap-4 sm:grid-cols-2">
+                  <label class="space-y-1">
+                    <span class="text-text-muted">IP rule ID</span>
+                    <input
+                      #ruleIdInput
+                      type="text"
+                      class="w-full rounded-xl border border-white/15 bg-white/5 px-3 py-2 focus:border-accent focus:outline-none"
+                      [value]="ipRuleId()"
+                      (input)="setIpRuleId(ruleIdInput.value)"
+                    />
+                  </label>
+                  <label class="space-y-1">
+                    <span class="text-text-muted">CIDR</span>
+                    <input
+                      #cidrInput
+                      type="text"
+                      class="w-full rounded-xl border border-white/15 bg-white/5 px-3 py-2 focus:border-accent focus:outline-none"
+                      [value]="ipRuleCidr()"
+                      (input)="setIpRuleCidr(cidrInput.value)"
+                    />
+                  </label>
+                </div>
+                <label class="space-y-1">
+                  <span class="text-text-muted">Description</span>
+                  <input
+                    #ruleDescriptionInput
+                    type="text"
+                    class="w-full rounded-xl border border-white/15 bg-white/5 px-3 py-2 focus:border-accent focus:outline-none"
+                    [value]="ipRuleDescription()"
+                    (input)="setIpRuleDescription(ruleDescriptionInput.value)"
+                  />
+                </label>
+                <div class="flex flex-wrap gap-3">
+                  <button
+                    type="button"
+                    class="rounded-full border border-white/15 px-4 py-2 text-xs font-semibold uppercase tracking-wider text-text"
+                    (click)="createIpRule()"
+                  >
+                    Create IP rule
+                  </button>
+                  <button
+                    type="button"
+                    class="rounded-full border border-white/15 px-4 py-2 text-xs font-semibold uppercase tracking-wider text-rose-200"
+                    (click)="deleteIpRule()"
+                  >
+                    Delete IP rule
+                  </button>
+                </div>
+
+                <label class="space-y-1">
+                  <span class="text-text-muted">Dead letter ID</span>
+                  <input
+                    #deadLetterInput
+                    type="text"
+                    class="w-full rounded-xl border border-white/15 bg-white/5 px-3 py-2 focus:border-accent focus:outline-none"
+                    [value]="deadLetterId()"
+                    (input)="setDeadLetterId(deadLetterInput.value)"
+                  />
+                </label>
+              </div>
+            </article>
+          </ng-template>
+        </div>
+
+        <div ngTabPanel value="endpoints" [preserveContent]="false">
+          <ng-template ngTabContent>
+            <section class="rounded-2xl border border-white/10 bg-white/5 shadow-xl">
+              <header class="flex flex-wrap items-center justify-between gap-3 border-b border-white/10 p-5 text-sm text-text">
+                <div>
+                  <p class="text-xs uppercase tracking-[0.3em] text-text-muted">Endpoints</p>
+                  <p class="text-base font-semibold text-text">Tenant catalog</p>
+                </div>
+                <p class="text-xs text-text-muted">{{ endpoints().length }} entries</p>
+              </header>
+
+              @if (endpoints().length === 0) {
+                <p class="p-6 text-sm text-text-muted">No webhook endpoints recorded for this tenant.</p>
+              } @else {
+                <div class="overflow-x-auto">
+                  <table class="min-w-full divide-y divide-white/10 text-sm text-text">
+                    <thead class="text-left text-xs uppercase tracking-[0.3em] text-text-muted">
+                      <tr>
+                        <th class="px-4 py-3">Hook</th>
+                        <th class="px-4 py-3">Job</th>
+                        <th class="px-4 py-3">RPM</th>
+                        <th class="px-4 py-3">Signature</th>
+                        <th class="px-4 py-3">Last delivery</th>
+                      </tr>
+                    </thead>
+                    <tbody class="divide-y divide-white/5">
+                      @for (endpoint of endpoints(); track endpoint.hookKey) {
+                        <tr class="hover:bg-white/3">
+                          <td class="px-4 py-4">
+                            <p class="font-semibold text-text">{{ endpoint.hookKey }}</p>
+                            <p class="text-xs text-text-muted">{{ endpoint.environment }}</p>
+                          </td>
+                          <td class="px-4 py-4 text-xs text-text-muted">{{ endpoint.jobKey }}</td>
+                          <td class="px-4 py-4">
+                            {{ endpoint.requestsPerMinute || '—' }}
+                          </td>
+                          <td class="px-4 py-4">
+                            <span
+                              class="rounded-full px-3 py-1 text-xs font-semibold uppercase tracking-wide"
+                              [class.bg-emerald-500/20]="endpoint.requireSignature"
+                              [class.text-emerald-200]="endpoint.requireSignature"
+                              [class.bg-amber-500/20]="!endpoint.requireSignature"
+                              [class.text-amber-200]="!endpoint.requireSignature"
+                            >
+                              {{ endpoint.requireSignature ? 'signed' : 'open' }}
+                            </span>
+                          </td>
+                          <td class="px-4 py-4 text-xs text-text-muted">{{ endpoint.lastDeliveryAt | date: 'short' }}</td>
+                        </tr>
+                      }
+                    </tbody>
+                  </table>
+                </div>
+              }
+            </section>
+          </ng-template>
+        </div>
+
+        <div ngTabPanel value="ops" [preserveContent]="false">
+          <ng-template ngTabContent>
+            <section class="rounded-2xl border border-white/10 bg-white/5 p-5">
+              <header class="flex items-center justify-between text-sm text-text">
+                <div>
+                  <p class="text-xs uppercase tracking-[0.3em] text-text-muted">Ops log</p>
+                  <p class="text-base font-semibold text-text">Latest webhook actions</p>
+                </div>
+                <p class="text-xs text-text-muted">Showing {{ actionLog().length }} events</p>
+              </header>
+              <ul class="mt-4 space-y-3 text-sm text-text">
+                @for (entry of actionLog(); track entry.id) {
+                  <li class="rounded-xl border border-white/10 bg-white/5 p-3">
+                    <div class="flex items-center justify-between">
+                      <p class="font-semibold">{{ entry.summary }}</p>
                       <span
                         class="rounded-full px-3 py-1 text-xs font-semibold uppercase tracking-wide"
-                        [class.bg-emerald-500/20]="endpoint.requireSignature"
-                        [class.text-emerald-200]="endpoint.requireSignature"
-                        [class.bg-amber-500/20]="!endpoint.requireSignature"
-                        [class.text-amber-200]="!endpoint.requireSignature"
+                        [class.bg-emerald-500/20]="entry.status === 'success'"
+                        [class.text-emerald-200]="entry.status === 'success'"
+                        [class.bg-rose-500/20]="entry.status === 'error'"
+                        [class.text-rose-100]="entry.status === 'error'"
                       >
-                        {{ endpoint.requireSignature ? 'signed' : 'open' }}
+                        {{ entry.status }}
                       </span>
-                    </td>
-                    <td class="px-4 py-4 text-xs text-text-muted">{{ endpoint.lastDeliveryAt | date: 'short' }}</td>
-                  </tr>
+                    </div>
+                    <p class="text-xs text-text-muted">{{ entry.recordedAt | date: 'short' }}</p>
+                    @if (entry.detail) {
+                      <p class="text-xs text-text-muted">{{ entry.detail }}</p>
+                    }
+                  </li>
                 }
-              </tbody>
-            </table>
-          </div>
-        }
+              </ul>
+            </section>
+          </ng-template>
+        </div>
       </section>
-    </ng-template>
-
-    <ng-template cqSplitPaneTab="ops">
-      <section class="rounded-2xl border border-white/10 bg-white/5 p-5">
-        <header class="flex items-center justify-between text-sm text-text">
-          <div>
-            <p class="text-xs uppercase tracking-[0.3em] text-text-muted">Ops log</p>
-            <p class="text-base font-semibold text-text">Latest webhook actions</p>
-          </div>
-          <p class="text-xs text-text-muted">Showing {{ actionLog().length }} events</p>
-        </header>
-        <ul class="mt-4 space-y-3 text-sm text-text">
-          @for (entry of actionLog(); track entry.id) {
-            <li class="rounded-xl border border-white/10 bg-white/5 p-3">
-              <div class="flex items-center justify-between">
-                <p class="font-semibold">{{ entry.summary }}</p>
-                <span
-                  class="rounded-full px-3 py-1 text-xs font-semibold uppercase tracking-wide"
-                  [class.bg-emerald-500/20]="entry.status === 'success'"
-                  [class.text-emerald-200]="entry.status === 'success'"
-                  [class.bg-rose-500/20]="entry.status === 'error'"
-                  [class.text-rose-100]="entry.status === 'error'"
-                >
-                  {{ entry.status }}
-                </span>
-              </div>
-              <p class="text-xs text-text-muted">{{ entry.recordedAt | date: 'short' }}</p>
-              @if (entry.detail) {
-                <p class="text-xs text-text-muted">{{ entry.detail }}</p>
-              }
-            </li>
-          }
-        </ul>
-      </section>
-    </ng-template>
-  </cq-split-pane>
+    </article>
+  </section>
 </section>

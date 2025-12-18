@@ -1,14 +1,14 @@
-import { CommonModule } from '@angular/common';
 import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@angular/core';
 import { Field, form, required } from '@angular/forms/signals';
 import { Router, RouterLink } from '@angular/router';
 import { AuthSessionService } from '@core/auth/auth-session.service';
 import { PasswordAuthService } from '@core/auth/password-auth.service';
 import { TenantContextService } from '@core/tenant-context/tenant-context.service';
+import { AppBrand } from '@shared/app-brand/app-brand';
 
 @Component({
     selector: 'cq-login-page',
-    imports: [CommonModule, RouterLink, Field],
+    imports: [RouterLink, Field, AppBrand],
     templateUrl: './login-page.html',
     changeDetection: ChangeDetectionStrategy.OnPush,
 })

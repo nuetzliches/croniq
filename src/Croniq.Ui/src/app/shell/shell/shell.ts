@@ -1,8 +1,8 @@
-import { CommonModule } from '@angular/common';
 import { ChangeDetectionStrategy, Component, inject, signal } from '@angular/core';
 import { RouterLink, RouterLinkActive, RouterOutlet } from '@angular/router';
 import { NavItem, PRIMARY_NAV_ITEMS } from '@core/navigation/nav-items';
 import { TenantContextService } from '@core/tenant-context/tenant-context.service';
+import { AppBrand } from '@shared/app-brand/app-brand';
 import { CommandPalette } from '@shared/command-palette/command-palette';
 import { CommandPaletteController } from '@shared/command-palette/command-palette.controller';
 import { StatusBeacon } from '@shared/status-beacon/status-beacon';
@@ -17,7 +17,7 @@ type StatusCard = {
 
 @Component({
   selector: 'cq-shell',
-  imports: [CommonModule, RouterLink, RouterLinkActive, RouterOutlet, CommandPalette, StatusBeacon],
+  imports: [RouterLink, RouterLinkActive, RouterOutlet, AppBrand, CommandPalette, StatusBeacon],
   templateUrl: './shell.html',
   host: {
     '(window:keydown)': 'handleGlobalPaletteShortcut($event)',
