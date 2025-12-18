@@ -1,4 +1,5 @@
 import { ChangeDetectionStrategy, Component, signal } from '@angular/core';
+import { SplitPane, type SplitPaneTab } from '@shared/split-pane/split-pane';
 
 type SummaryCard = {
   label: string;
@@ -8,11 +9,13 @@ type SummaryCard = {
 
 @Component({
   selector: 'cq-dashboard-page',
-  imports: [],
+  imports: [SplitPane],
   templateUrl: './dashboard-page.html',
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class DashboardPage {
+  readonly detailTabs: ReadonlyArray<SplitPaneTab> = [{ id: 'metrics', label: 'Metrics' }];
+
   readonly summaryCards = signal<ReadonlyArray<SummaryCard>>([
     { label: 'Active schedules', value: '128', description: 'Enabled policies across tenants' },
     { label: 'Queue depth', value: '42', description: 'Waiting jobs in the last minute' },

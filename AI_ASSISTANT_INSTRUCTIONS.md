@@ -41,13 +41,12 @@ All AI-generated contributions must align with the architectural ground rules do
    - When making such changes, still document the rationale in `docs/deep-dive/*` so we keep a trace for future stabilization.
 
 7. **Documentation Cross-Links**
+
    - When new features impact consumers, update `docs/*` and refer to deeper explanations in `docs/deep-dive/*`.
    - Record noteworthy architectural decisions in the technical docs (especially `docs/deep-dive/architecture.md`).
 
 8. **Angular UI (Croniq.Ui) Workflow**
 
-   - When working in the Angular workspace under `src/Croniq.Ui`, start the Angular MCP server first (VS Code task **Angular MCP Server** or `npm run mcp`).
-   - Prefer the MCP tooling to discover project structure and confirm best practices before making Angular code changes.
-   - Keep UX/documentation artifacts (e.g., wireframes in `src/Croniq.Ui/docs/deep-dive/designs/`) in sync with the OpenAPI snapshot when adding UI flows.
+   - See `src/Croniq.Ui/.github/ng.instructions.md` (and `src/Croniq.Ui/.github/copilot.instructions.md`) for the authoritative Angular UI instructions.
 
 By following these instructions, AI contributions remain compliant with the project's technical vision and developer experience goals.

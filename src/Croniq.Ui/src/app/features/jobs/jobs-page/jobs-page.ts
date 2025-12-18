@@ -2,15 +2,21 @@ import { CommonModule } from '@angular/common';
 import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@angular/core';
 import type { ManualTriggerEntry } from '@features/jobs/jobs.store';
 import { JobsStore } from '@features/jobs/jobs.store';
+import { SplitPane, SplitPaneTab, SplitPaneTabTemplateDirective } from '@shared/split-pane/split-pane';
 
 @Component({
   selector: 'cq-jobs-page',
-  imports: [CommonModule],
+  imports: [CommonModule, SplitPane, SplitPaneTabTemplateDirective],
   templateUrl: './jobs-page.html',
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class JobsPage {
   private readonly store = inject(JobsStore);
+
+  readonly detailTabs: ReadonlyArray<SplitPaneTab> = [
+    { id: 'trigger', label: 'Trigger' },
+    { id: 'history', label: 'History' },
+  ];
 
   readonly manualTriggers = this.store.manualTriggers;
   readonly pendingCount = this.store.pendingCount;

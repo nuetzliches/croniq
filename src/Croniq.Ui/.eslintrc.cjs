@@ -14,10 +14,7 @@ module.exports = {
       parser: '@typescript-eslint/parser',
       parserOptions: {
         project: [
-          'tsconfig.json',
-          'tsconfig.app.json',
-          'tsconfig.spec.json',
-          'projects/*/tsconfig*.json',
+          'tsconfig.eslint.json',
         ],
         tsconfigRootDir: __dirname,
         sourceType: 'module',
@@ -35,6 +32,13 @@ module.exports = {
         '@typescript-eslint/no-unused-vars': [
           'error',
           { argsIgnorePattern: '^_', varsIgnorePattern: '^_' },
+        ],
+        'object-curly-newline': [
+          'error',
+          {
+            ImportDeclaration: 'never',
+            ExportDeclaration: 'never',
+          },
         ],
         'no-restricted-imports': [
           'error',

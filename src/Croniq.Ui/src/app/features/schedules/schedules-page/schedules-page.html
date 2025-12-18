@@ -19,29 +19,29 @@
     </p>
   </header>
 
-  <section class="grid gap-4 sm:grid-cols-3" aria-label="Schedule health overview">
-    @for (status of statusOverview(); track status.state) {
-    <article class="rounded-2xl border border-white/10 bg-white/5 p-5">
-      <p class="text-xs uppercase tracking-[0.35em] text-text-muted">{{ status.label }}</p>
-      <p class="mt-3 text-3xl font-semibold text-text">{{ status.count }}</p>
-    </article>
-    }
-  </section>
+  <cq-split-pane [tabs]="detailTabs" tabListLabel="Schedules">
+    <section cqSplitPaneSummary class="grid gap-4" aria-label="Schedule health overview">
+      @for (status of statusOverview(); track status.state) {
+        <article class="rounded-2xl border border-white/10 bg-white/5 p-5">
+          <p class="text-xs uppercase tracking-[0.35em] text-text-muted">{{ status.label }}</p>
+          <p class="mt-3 text-3xl font-semibold text-text">{{ status.count }}</p>
+        </article>
+      }
+    </section>
 
-  <section class="rounded-2xl border border-white/10 bg-white/5 shadow-xl">
-    <header class="flex flex-wrap items-center justify-between gap-4 border-b border-white/10 p-5">
+    <div cqSplitPaneDetailHeader class="flex flex-wrap items-center justify-between gap-4">
       <div class="flex flex-wrap gap-2" role="toolbar" aria-label="Filter schedules by state">
         @for (option of filterOptions; track option.value) {
-        <button
-          type="button"
-          class="rounded-full px-4 py-1.5 text-sm font-semibold capitalize transition"
-          [class.bg-accent/20]="stateFilter() === option.value"
-          [class.text-white]="stateFilter() === option.value"
-          [class.text-text-muted]="stateFilter() !== option.value"
-          (click)="setFilter(option.value)"
-        >
-          {{ option.label }}
-        </button>
+          <button
+            type="button"
+            class="rounded-full px-4 py-1.5 text-sm font-semibold capitalize transition"
+            [class.bg-accent/20]="stateFilter() === option.value"
+            [class.text-white]="stateFilter() === option.value"
+            [class.text-text-muted]="stateFilter() !== option.value"
+            (click)="setFilter(option.value)"
+          >
+            {{ option.label }}
+          </button>
         }
       </div>
       <label class="relative block w-full max-w-xs text-sm text-text" aria-label="Search schedules">
@@ -62,83 +62,75 @@
       >
         {{ isLoading() ? 'Refreshing…' : 'Refresh' }}
       </button>
-    </header>
-
-    @if (filteredSchedules().length === 0) {
-    <p class="p-6 text-sm text-text-muted">No schedules match the current filters.</p>
-    } @else {
-    <div class="overflow-x-auto">
-      <table class="min-w-full divide-y divide-white/10 text-sm text-text">
-        <thead class="text-left text-xs uppercase tracking-[0.3em] text-text-muted">
-          <tr>
-            <th class="px-4 py-3">Schedule</th>
-            <th class="px-4 py-3">Tenant</th>
-            <th class="px-4 py-3">Owner</th>
-            <th class="px-4 py-3">Next run</th>
-            <th class="px-4 py-3">Last duration</th>
-            <th class="px-4 py-3">Alerts</th>
-            <th class="px-4 py-3 text-right">Actions</th>
-          </tr>
-        </thead>
-        <tbody class="divide-y divide-white/5">
-          @for (schedule of filteredSchedules(); track schedule.id) {
-          <tr class="hover:bg-white/3">
-            <td class="px-4 py-4">
-              <div class="font-semibold text-text">{{ schedule.name }}</div>
-              <p class="text-xs text-text-muted">
-                {{ schedule.cron }} · {{ schedule.timezone }}
-              </p>
-              <div class="mt-2 flex flex-wrap gap-2 text-xs">
-                <span
-                  class="rounded-full px-3 py-0.5 text-xs font-semibold capitalize"
-                  [class.bg-emerald-500/20]="schedule.state === 'active'"
-                  [class.text-emerald-300]="schedule.state === 'active'"
-                  [class.bg-amber-500/20]="schedule.state === 'paused'"
-                  [class.text-amber-200]="schedule.state === 'paused'"
-                  [class.bg-rose-500/20]="schedule.state === 'degraded'"
-                  [class.text-rose-200]="schedule.state === 'degraded'"
-                >
-                  {{ schedule.state }}
-                </span>
-                @for (tag of schedule.tags; track tag) {
-                <span class="rounded-full border border-white/15 px-3 py-0.5 text-text-muted">{{ tag }}</span>
-                }
-              </div>
-            </td>
-            <td class="px-4 py-4">
-              <p class="font-medium">{{ schedule.tenant }}</p>
-            </td>
-            <td class="px-4 py-4">
-              <p class="font-medium">{{ schedule.owner }}</p>
-            </td>
-            <td class="px-4 py-4">
-              <p class="font-medium">{{ schedule.nextFire | date: 'short' }}</p>
-            </td>
-            <td class="px-4 py-4">
-              <p class="font-medium">{{ formatDuration(schedule.lastDurationMs) }}</p>
-            </td>
-            <td class="px-4 py-4">
-              <p
-                class="font-medium"
-                [class.text-rose-300]="schedule.alerts > 0"
-                [class.text-text-muted]="schedule.alerts === 0"
-              >
-                {{ formatAlerts(schedule.alerts) }}
-              </p>
-            </td>
-            <td class="px-4 py-4 text-right">
-              <button
-                type="button"
-                class="rounded-lg border border-white/15 px-4 py-2 text-xs font-semibold uppercase tracking-wide text-text transition hover:border-accent hover:text-accent"
-              >
-                Open
-              </button>
-            </td>
-          </tr>
-          }
-        </tbody>
-      </table>
     </div>
-    }
-  </section>
+
+    <ng-template cqSplitPaneTab="list">
+      @if (filteredSchedules().length === 0) {
+        <p class="text-sm text-text-muted">No schedules match the current filters.</p>
+      } @else {
+        <div class="overflow-x-auto">
+          <table class="min-w-full divide-y divide-white/10 text-sm text-text">
+            <thead class="text-left text-xs uppercase tracking-[0.3em] text-text-muted">
+              <tr>
+                <th class="px-4 py-3">Schedule</th>
+                <th class="px-4 py-3">Tenant</th>
+                <th class="px-4 py-3">Owner</th>
+                <th class="px-4 py-3">Next run</th>
+                <th class="px-4 py-3">Last duration</th>
+                <th class="px-4 py-3">Alerts</th>
+                <th class="px-4 py-3 text-right">Actions</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-white/5">
+              @for (schedule of filteredSchedules(); track schedule.id) {
+                <tr class="hover:bg-white/3">
+                  <td class="px-4 py-4">
+                    <div class="font-semibold text-text">{{ schedule.name }}</div>
+                    <p class="text-xs text-text-muted">{{ schedule.cron }} · {{ schedule.timezone }}</p>
+                    <div class="mt-2 flex flex-wrap gap-2 text-xs">
+                      <span
+                        class="rounded-full px-3 py-0.5 text-xs font-semibold capitalize"
+                        [class.bg-emerald-500/20]="schedule.state === 'active'"
+                        [class.text-emerald-300]="schedule.state === 'active'"
+                        [class.bg-amber-500/20]="schedule.state === 'paused'"
+                        [class.text-amber-200]="schedule.state === 'paused'"
+                        [class.bg-rose-500/20]="schedule.state === 'degraded'"
+                        [class.text-rose-200]="schedule.state === 'degraded'"
+                      >
+                        {{ schedule.state }}
+                      </span>
+                      @for (tag of schedule.tags; track tag) {
+                        <span class="rounded-full border border-white/15 px-3 py-0.5 text-text-muted">{{ tag }}</span>
+                      }
+                    </div>
+                  </td>
+                  <td class="px-4 py-4"><p class="font-medium">{{ schedule.tenant }}</p></td>
+                  <td class="px-4 py-4"><p class="font-medium">{{ schedule.owner }}</p></td>
+                  <td class="px-4 py-4"><p class="font-medium">{{ schedule.nextFire | date: 'short' }}</p></td>
+                  <td class="px-4 py-4"><p class="font-medium">{{ formatDuration(schedule.lastDurationMs) }}</p></td>
+                  <td class="px-4 py-4">
+                    <p
+                      class="font-medium"
+                      [class.text-rose-300]="schedule.alerts > 0"
+                      [class.text-text-muted]="schedule.alerts === 0"
+                    >
+                      {{ formatAlerts(schedule.alerts) }}
+                    </p>
+                  </td>
+                  <td class="px-4 py-4 text-right">
+                    <button
+                      type="button"
+                      class="rounded-lg border border-white/15 px-4 py-2 text-xs font-semibold uppercase tracking-wide text-text transition hover:border-accent hover:text-accent"
+                    >
+                      Open
+                    </button>
+                  </td>
+                </tr>
+              }
+            </tbody>
+          </table>
+        </div>
+      }
+    </ng-template>
+  </cq-split-pane>
 </section>

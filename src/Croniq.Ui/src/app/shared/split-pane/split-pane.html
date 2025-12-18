@@ -1,0 +1,54 @@
+<section class="grid gap-6 lg:grid-cols-[360px_1fr]">
+  <aside class="space-y-6">
+    <ng-content select="[cqSplitPaneSummary]"></ng-content>
+  </aside>
+
+  <article class="rounded-2xl border border-white/10 bg-white/5 shadow-xl">
+    @if (tabs().length === 0) {
+      <div class="p-5">
+        <p class="text-sm text-text-muted">No tabs configured.</p>
+      </div>
+    } @else {
+      <header class="border-b border-white/10 p-4">
+        @if (tabs().length > 1) {
+          <div class="flex flex-wrap gap-2" role="tablist" [attr.aria-label]="tabListLabel()">
+            @for (tab of tabs(); track tab.id; let i = $index) {
+              <button
+                type="button"
+                role="tab"
+                class="rounded-full px-4 py-2 text-xs font-semibold uppercase tracking-wide transition"
+                [id]="tabButtonId(tab.id)"
+                [attr.aria-selected]="activeTabId() === tab.id"
+                [attr.aria-controls]="tabPanelId(tab.id)"
+                [attr.tabindex]="activeTabId() === tab.id ? 0 : -1"
+                [class.bg-accent/20]="activeTabId() === tab.id"
+                [class.text-white]="activeTabId() === tab.id"
+                [class.text-text-muted]="activeTabId() !== tab.id"
+                (click)="selectTab(tab.id)"
+                (keydown)="onTabKeydown($event, i)"
+              >
+                {{ tab.label }}
+              </button>
+            }
+          </div>
+        } @else {
+          <ng-content select="[cqSplitPaneDetailHeader]"></ng-content>
+        }
+      </header>
+
+      <section
+        class="p-5"
+        role="tabpanel"
+        [id]="tabPanelId(tabs()[activeTabIndex()]?.id ?? 'default')"
+        [attr.aria-labelledby]="tabButtonId(tabs()[activeTabIndex()]?.id ?? 'default')"
+        tabindex="0"
+      >
+        @if (activeTemplate(); as template) {
+          <ng-container [ngTemplateOutlet]="template"></ng-container>
+        } @else {
+          <p class="text-sm text-text-muted">No tab content registered.</p>
+        }
+      </section>
+    }
+  </article>
+</section>

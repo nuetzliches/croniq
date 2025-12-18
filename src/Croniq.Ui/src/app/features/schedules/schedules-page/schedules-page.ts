@@ -1,5 +1,7 @@
 import { CommonModule } from '@angular/common';
-import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@angular/core';import { ScheduleState } from '@croniq/api-schema';
+import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@angular/core';
+import { ScheduleState } from '@croniq/api-schema';
+import { SplitPane, SplitPaneTab, SplitPaneTabTemplateDirective } from '@shared/split-pane/split-pane';
 import { SchedulesStore } from './schedules.store';
 
 type ScheduleFilter = ScheduleState | 'all';
@@ -15,12 +17,14 @@ type FilterOption = {
 
 @Component({
   selector: 'cq-schedules-page',
-  imports: [CommonModule],
+  imports: [CommonModule, SplitPane, SplitPaneTabTemplateDirective],
   templateUrl: './schedules-page.html',
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class SchedulesPage {
   private readonly store = inject(SchedulesStore);
+
+  readonly detailTabs: ReadonlyArray<SplitPaneTab> = [{ id: 'list', label: 'List' }];
 
   readonly filterOptions: ReadonlyArray<FilterOption> = [
     { label: 'All', value: 'all' },

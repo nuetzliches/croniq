@@ -3,16 +3,23 @@ import { ChangeDetectionStrategy, Component, inject, signal } from '@angular/cor
 import { TenantContextService } from '@core/tenant-context/tenant-context.service';
 import { CreateWebhookIpRuleRequest, RotateWebhookSecretRequest, UpsertWebhookEndpointRequest } from '@croniq/api-schema';
 import { WebhooksStore } from '@features/webhooks/webhooks.store';
+import { SplitPane, type SplitPaneTab, SplitPaneTabTemplateDirective } from '@shared/split-pane/split-pane';
 
 @Component({
   selector: 'cq-webhooks-page',
-  imports: [CommonModule],
+  imports: [CommonModule, SplitPane, SplitPaneTabTemplateDirective],
   templateUrl: './webhooks-page.html',
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class WebhooksPage {
   private readonly store = inject(WebhooksStore);
   private readonly tenantContext = inject(TenantContextService);
+
+  readonly detailTabs: ReadonlyArray<SplitPaneTab> = [
+    { id: 'controls', label: 'Controls' },
+    { id: 'endpoints', label: 'Endpoints' },
+    { id: 'ops', label: 'Ops log' },
+  ];
 
   readonly endpoints = this.store.endpoints;
   readonly actionLog = this.store.actionLog;
