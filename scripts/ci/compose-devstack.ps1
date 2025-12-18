@@ -52,12 +52,70 @@ function Capture-ComposeDiagnostics {
     }
 }
 
+function Get-ComposeServiceContainerId {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string] $Service
+    )
+
+    $cid = & docker compose @composeFiles @profileArgs ps -q $Service
+    if ([string]::IsNullOrWhiteSpace($cid)) {
+        $cid = & docker compose @composeFiles @profileArgs ps -a -q $Service
+    }
+
+    return ($cid | Select-Object -First 1)
+}
+
+function Wait-ForServiceExit {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string] $Service,
+
+        [TimeSpan] $Timeout = ([TimeSpan]::FromMinutes(10)),
+
+        [int] $PollSeconds = 2
+    )
+
+    $deadline = (Get-Date).Add($Timeout)
+    $cid = Get-ComposeServiceContainerId -Service $Service
+    if ([string]::IsNullOrWhiteSpace($cid)) {
+        throw "Could not determine container id for service '$Service'."
+    }
+
+    while ((Get-Date) -lt $deadline) {
+        $state = & docker inspect -f "{{.State.Status}} {{.State.ExitCode}}" $cid
+        if (-not [string]::IsNullOrWhiteSpace($state)) {
+            $parts = $state -split ' ', 2
+            $status = $parts[0]
+            $exitCode = 0
+            if ($parts.Count -gt 1) { [void][int]::TryParse($parts[1], [ref]$exitCode) }
+
+            if ($status -eq 'exited') {
+                return $exitCode
+            }
+        }
+
+        Start-Sleep -Seconds $PollSeconds
+    }
+
+    throw "Timed out waiting for service '$Service' to exit after $($Timeout.TotalMinutes) minutes."
+}
+
 switch ($Action) {
     "Up" {
         Invoke-Compose -AdditionalArgs @("up", "--build", "-d")
-        if ($LASTEXITCODE -ne 0) {
-            Capture-ComposeDiagnostics -Reason "docker compose up failed" -ExitCode $LASTEXITCODE
-            throw "docker compose up failed with exit code $LASTEXITCODE. Diagnostics written to '$OutputDirectory'."
+        $composeExit = $LASTEXITCODE
+        if ($composeExit -ne 0) {
+            Capture-ComposeDiagnostics -Reason "docker compose up failed" -ExitCode $composeExit
+            throw "docker compose up failed with exit code $composeExit. Diagnostics written to '$OutputDirectory'."
+        }
+
+        # Some docker compose versions return exit code 0 even if a one-shot service exits non-zero.
+        # The devstack requires the migrator to complete successfully before api/worker are considered ready.
+        $migratorExit = Wait-ForServiceExit -Service 'croniq-db-migrator' -Timeout ([TimeSpan]::FromMinutes(10))
+        if ($migratorExit -ne 0) {
+            Capture-ComposeDiagnostics -Reason "croniq-db-migrator failed" -ExitCode $migratorExit
+            throw "croniq-db-migrator didn't complete successfully (exit $migratorExit). Diagnostics written to '$OutputDirectory'."
         }
         break
     }
