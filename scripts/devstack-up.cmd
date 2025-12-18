@@ -63,16 +63,42 @@ if not "%CRONIQ_DEVSTACK_PROFILES%"=="" (
     set PROFILE_ARGS=%DEFAULT_PROFILES% %USER_PROFILES%
 )
 
-REM Default = Host API unless explicitly disabled or container api profile was requested.
-if "%RUN_SAMPLE%"=="" if "%NO_SAMPLE%"=="" (
-    echo %PROFILE_ARGS% ^| find /I "--profile api" >nul
-    if errorlevel 1 set RUN_SAMPLE=apihost
+if not "%CRONIQ_DEVSTACK_PROFILES%"=="" (
+    echo [devstack] Using CRONIQ_DEVSTACK_PROFILES override: %CRONIQ_DEVSTACK_PROFILES%
+)
+
+echo [devstack] USER_PROFILES=%USER_PROFILES%
+
+call :detect_profiles "%PROFILE_ARGS%"
+echo [devstack] PROFILE_ARGS=%PROFILE_ARGS% (hasApi=!HAS_API_PROFILE!, hasObs=!HAS_OBS_PROFILE!)
+
+REM Explain whether/why we start the host ApiHost sample.
+set AUTO_SAMPLE=0
+set SAMPLE_REASON=
+
+if not "%RUN_SAMPLE%"=="" (
+    set SAMPLE_REASON=explicit --sample %RUN_SAMPLE%
+) else if not "%NO_SAMPLE%"=="" (
+    set SAMPLE_REASON=disabled via --no-sample
+) else (
+    if "!HAS_API_PROFILE!"=="1" (
+        set SAMPLE_REASON=disabled because container api profile requested
+    ) else (
+        set RUN_SAMPLE=apihost
+        set AUTO_SAMPLE=1
+        set SAMPLE_REASON=enabled by default
+    )
+)
+
+if "%RUN_SAMPLE%"=="" (
+    echo [devstack] Host ApiHost not started: !SAMPLE_REASON!
+) else (
+    echo [devstack] Host ApiHost will start: !SAMPLE_REASON!
 )
 
 REM Guard: do not allow container api and host api simultaneously.
 if /I "%RUN_SAMPLE%"=="apihost" (
-    echo %PROFILE_ARGS% ^| find /I "--profile api" >nul
-    if not errorlevel 1 (
+    if "!HAS_API_PROFILE!"=="1" (
         echo [devstack] Invalid configuration: Host ApiHost --sample apihost cannot be combined with container profile 'api'.
         echo [devstack] Remove '--profile api' or set --no-sample to run container api instead.
         exit /b 1
@@ -114,6 +140,9 @@ if "%CRONIQ_SAMPLE_APIHOST_HTTP_PORT%"=="" set CRONIQ_SAMPLE_APIHOST_HTTP_PORT=%
 set PID_DIR=artifacts\devstack
 if not exist "%PID_DIR%" mkdir "%PID_DIR%" >nul 2>&1
 set PID_FILE=%PID_DIR%\sample-apihost.pid
+set OUT_LOG=%PID_DIR%\sample-apihost.out.log
+set ERR_LOG=%PID_DIR%\sample-apihost.err.log
+set START_LOG=%PID_DIR%\sample-apihost.start.log
 
 REM Stop previous instance if pid file exists.
 if exist "%PID_FILE%" (
@@ -125,24 +154,27 @@ if exist "%PID_FILE%" (
 )
 
 echo [devstack] Starting sample ApiHost via dotnet run on http://localhost:%CRONIQ_SAMPLE_APIHOST_HTTP_PORT% ...
-REM Build host connection string (SQL is exposed on localhost:CRONIQ_SQL_HOST_PORT).
-if "%CRONIQ_SQL_HOST_PORT%"=="" set CRONIQ_SQL_HOST_PORT=11433
-if "%CRONIQ_SQL_DATABASE%"=="" set CRONIQ_SQL_DATABASE=CroniqDev
-if "%CRONIQ_SQL_PASSWORD%"=="" set CRONIQ_SQL_PASSWORD=CroniqSqlP@ssw0rd!
-set CRONIQ_HOST_SQL_CONNECTION=Server=localhost,%CRONIQ_SQL_HOST_PORT%;Database=%CRONIQ_SQL_DATABASE%;User Id=sa;Password=%CRONIQ_SQL_PASSWORD%;Encrypt=False;TrustServerCertificate=True;
+REM Build host connection string in PowerShell to avoid delayed-expansion issues with '!' in passwords.
 
 REM If observability profile is enabled, prefer localhost OTLP endpoint for host-run processes.
 set CRONIQ_HOST_OTLP_ENDPOINT=
-echo %PROFILE_ARGS% | find /I "--profile obs" >nul
-if not errorlevel 1 (
+call :detect_profiles "%PROFILE_ARGS%"
+if "!HAS_OBS_PROFILE!"=="1" (
     if "%CRONIQ_OTLP_GRPC_PORT%"=="" set CRONIQ_OTLP_GRPC_PORT=4317
     set CRONIQ_HOST_OTLP_ENDPOINT=http://localhost:%CRONIQ_OTLP_GRPC_PORT%
 )
 
 REM Use PowerShell to set env vars + capture PID reliably.
-powershell -NoProfile -Command "$env:ASPNETCORE_URLS='http://0.0.0.0:%CRONIQ_SAMPLE_APIHOST_HTTP_PORT%'; if ($env:CRONIQ_DOTNET_ENVIRONMENT) { $env:DOTNET_ENVIRONMENT=$env:CRONIQ_DOTNET_ENVIRONMENT }; $env:Croniq__Auth__Mode=$env:CRONIQ_AUTH_MODE; $env:Croniq__Auth__InMemory__ApiKey=$env:CRONIQ_SMOKE_API_KEY; $env:Croniq__Auth__InMemory__TenantId=$env:CRONIQ_CORE_TENANT_ID; $env:Croniq__Auth__InMemory__EnvironmentTag=$env:CRONIQ_CORE_ENVIRONMENT; $env:Croniq__Persistence__Mode='SqlServer'; $env:Croniq__Api__RequestsPerMinute=$env:CRONIQ_API_REQUESTS_PER_MINUTE; $env:Croniq__Core__TenantId=$env:CRONIQ_CORE_TENANT_ID; $env:Croniq__Core__EnvironmentTag=$env:CRONIQ_CORE_ENVIRONMENT; $env:Croniq__Core__InstanceId=$env:CRONIQ_API_INSTANCE_ID; $env:Croniq__SqlServer__ConnectionString='%CRONIQ_HOST_SQL_CONNECTION%'; if ('%CRONIQ_HOST_OTLP_ENDPOINT%') { $env:Croniq__Observability__OtlpEndpoint='%CRONIQ_HOST_OTLP_ENDPOINT%'; $env:Croniq__Observability__OtlpProtocol=$env:CRONIQ_OBS_OTLP_PROTOCOL }; $p = Start-Process -FilePath 'dotnet' -ArgumentList @('run','--project','samples\\Croniq.Sample.ApiHost\\Croniq.Sample.ApiHost.csproj') -WorkingDirectory (Resolve-Path '.') -PassThru; $p.Id | Out-File -FilePath '%PID_FILE%' -Encoding ascii" >nul
+del /q "%OUT_LOG%" >nul 2>&1
+del /q "%ERR_LOG%" >nul 2>&1
+del /q "%START_LOG%" >nul 2>&1
+powershell -NoProfile -Command "$env:ASPNETCORE_URLS='http://0.0.0.0:%CRONIQ_SAMPLE_APIHOST_HTTP_PORT%'; if ($env:CRONIQ_DOTNET_ENVIRONMENT) { $env:DOTNET_ENVIRONMENT=$env:CRONIQ_DOTNET_ENVIRONMENT }; $env:Croniq__Auth__Mode=$env:CRONIQ_AUTH_MODE; $env:Croniq__Auth__InMemory__ApiKey=$env:CRONIQ_SMOKE_API_KEY; $env:Croniq__Auth__InMemory__TenantId=$env:CRONIQ_CORE_TENANT_ID; $env:Croniq__Auth__InMemory__EnvironmentTag=$env:CRONIQ_CORE_ENVIRONMENT; $env:Croniq__Persistence__Mode='SqlServer'; $env:Croniq__Api__RequestsPerMinute=$env:CRONIQ_API_REQUESTS_PER_MINUTE; $env:Croniq__Core__TenantId=$env:CRONIQ_CORE_TENANT_ID; $env:Croniq__Core__EnvironmentTag=$env:CRONIQ_CORE_ENVIRONMENT; $env:Croniq__Core__InstanceId=$env:CRONIQ_API_INSTANCE_ID; $dotenv=@{}; if (Test-Path '.env') { Get-Content '.env' | ForEach-Object { $l=$_.Trim(); if (!$l -or $l.StartsWith('#')) { return }; $parts=$l -split '=',2; if ($parts.Count -eq 2) { $dotenv[$parts[0].Trim()]=$parts[1].Trim() } } }; function Get-EnvOrDotenv([string]$k,[string]$fallback) { $v=[Environment]::GetEnvironmentVariable($k); if ($v) { return $v }; if ($dotenv.ContainsKey($k) -and $dotenv[$k]) { return $dotenv[$k] }; return $fallback }; $sqlPort = Get-EnvOrDotenv 'CRONIQ_SQL_HOST_PORT' '11433'; $sqlDb = Get-EnvOrDotenv 'CRONIQ_SQL_DATABASE' 'CroniqDev'; $sqlPw = Get-EnvOrDotenv 'CRONIQ_SQL_PASSWORD' 'CroniqSqlP@ssw0rd!'; $env:Croniq__SqlServer__ConnectionString = ('Server=localhost,' + $sqlPort + ';Database=' + $sqlDb + ';User Id=sa;Password=' + $sqlPw + ';Encrypt=False;TrustServerCertificate=True;'); if ('%CRONIQ_HOST_OTLP_ENDPOINT%') { $env:Croniq__Observability__OtlpEndpoint='%CRONIQ_HOST_OTLP_ENDPOINT%'; $env:Croniq__Observability__OtlpProtocol=$env:CRONIQ_OBS_OTLP_PROTOCOL }; $p = Start-Process -FilePath 'dotnet' -ArgumentList @('run','--project','samples\\Croniq.Sample.ApiHost\\Croniq.Sample.ApiHost.csproj') -WorkingDirectory (Resolve-Path '.') -RedirectStandardOutput '%OUT_LOG%' -RedirectStandardError '%ERR_LOG%' -PassThru; $p.Id | Out-File -FilePath '%PID_FILE%' -Encoding ascii" > "%START_LOG%" 2>&1
 if errorlevel 1 (
     echo [devstack] Failed to start sample ApiHost.
+    if exist "%START_LOG%" (
+        echo [devstack] Last lines from %START_LOG%:
+        powershell -NoProfile -Command "if (Test-Path '%START_LOG%') { Get-Content -Path '%START_LOG%' -Tail 60 }" 2>nul
+    )
     endlocal & exit /b 1
 )
 
@@ -151,6 +183,14 @@ echo [devstack] Waiting for host ApiHost at %HEALTH_URL% ...
 call :wait_for_health "%HEALTH_URL%"
 if errorlevel 1 (
     echo [devstack] Host ApiHost did not become healthy in time.
+    if exist "%ERR_LOG%" (
+        echo [devstack] Last lines from %ERR_LOG%:
+        powershell -NoProfile -Command "if (Test-Path '%ERR_LOG%') { Get-Content -Path '%ERR_LOG%' -Tail 60 }" 2>nul
+    )
+    if exist "%OUT_LOG%" (
+        echo [devstack] Last lines from %OUT_LOG%:
+        powershell -NoProfile -Command "if (Test-Path '%OUT_LOG%') { Get-Content -Path '%OUT_LOG%' -Tail 60 }" 2>nul
+    )
     endlocal & exit /b 1
 )
 endlocal & exit /b 0
@@ -164,8 +204,8 @@ if not "%RUN_SAMPLE%"=="" (
     echo [devstack] Host ApiHost enabled. Skipping container API health probe.
     endlocal & exit /b 0
 )
-echo %PROFILE_ARGS% | find /I "--profile api" >nul
-if errorlevel 1 (
+call :detect_profiles "%PROFILE_ARGS%"
+if not "!HAS_API_PROFILE!"=="1" (
     echo [devstack] API profile disabled. Skipping health probe.
     endlocal & exit /b 0
 )
@@ -176,6 +216,23 @@ if errorlevel 1 (
     endlocal & exit /b 1
 )
 endlocal & exit /b 0
+
+:detect_profiles
+setlocal EnableDelayedExpansion
+set "ARGS=%~1"
+set HAS_API=0
+set HAS_OBS=0
+set PREV=
+
+for %%T in (!ARGS!) do (
+    if /I "!PREV!"=="--profile" (
+        if /I "%%T"=="api" set HAS_API=1
+        if /I "%%T"=="obs" set HAS_OBS=1
+    )
+    set PREV=%%T
+)
+
+endlocal & set "HAS_API_PROFILE=%HAS_API%" & set "HAS_OBS_PROFILE=%HAS_OBS%" & exit /b 0
 
 :wait_for_health
 setlocal
