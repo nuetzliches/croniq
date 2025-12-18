@@ -11,6 +11,9 @@ if /I "%~1"=="/?" goto help
 
 set RUN_SAMPLE=
 set NO_SAMPLE=
+set DO_BUILD=1
+set FOLLOW_SAMPLE=
+set NO_SAMPLE_WINDOW=
 
 if not exist ".env" (
     echo [devstack] Missing .env in repo root. Copy .env.example to .env first.
@@ -33,9 +36,45 @@ if "%~1"=="" goto parsed
 if /I "%~1"=="--help" goto help
 if /I "%~1"=="-h" goto help
 if /I "%~1"=="/?" goto help
+if /I "%~1"=="--build" goto handle_build
+if /I "%~1"=="--no-build" goto handle_no_build
+if /I "%~1"=="--follow" goto handle_follow
+if /I "%~1"=="--no-follow" goto handle_no_follow
+if /I "%~1"=="--no-window" goto handle_no_window
+if /I "%~1"=="--window" goto handle_window
 if /I "%~1"=="--no-sample" goto handle_no_sample
 if /I "%~1"=="--sample" goto handle_sample
 set USER_PROFILES=%USER_PROFILES% %~1
+shift
+goto parse
+
+:handle_build
+set DO_BUILD=1
+shift
+goto parse
+
+:handle_no_build
+set DO_BUILD=0
+shift
+goto parse
+
+:handle_follow
+set FOLLOW_SAMPLE=1
+shift
+goto parse
+
+:handle_no_follow
+set FOLLOW_SAMPLE=0
+shift
+goto parse
+
+:handle_no_window
+set NO_SAMPLE_WINDOW=1
+shift
+goto parse
+
+:handle_window
+set NO_SAMPLE_WINDOW=0
 shift
 goto parse
 
@@ -96,6 +135,15 @@ if "%RUN_SAMPLE%"=="" (
     echo [devstack] Host ApiHost will start: !SAMPLE_REASON!
 )
 
+REM Default behavior: if we start a host sample, follow its log so the console stays attached.
+if not "%RUN_SAMPLE%"=="" (
+    if "%FOLLOW_SAMPLE%"=="" set FOLLOW_SAMPLE=1
+    if "%NO_SAMPLE_WINDOW%"=="" set NO_SAMPLE_WINDOW=1
+) else (
+    if "%FOLLOW_SAMPLE%"=="" set FOLLOW_SAMPLE=0
+    if "%NO_SAMPLE_WINDOW%"=="" set NO_SAMPLE_WINDOW=0
+)
+
 REM Guard: do not allow container api and host api simultaneously.
 if /I "%RUN_SAMPLE%"=="apihost" (
     if "!HAS_API_PROFILE!"=="1" (
@@ -105,8 +153,11 @@ if /I "%RUN_SAMPLE%"=="apihost" (
     )
 )
 
+set BUILD_ARG=--build
+if "%DO_BUILD%"=="0" set BUILD_ARG=
+
 echo [devstack] Starting Croniq services (%PROFILE_ARGS%)...
-docker compose %COMPOSE_ARGS% %PROFILE_ARGS% up --build -d
+docker compose %COMPOSE_ARGS% %PROFILE_ARGS% up %BUILD_ARG% -d
 if errorlevel 1 (
     echo [devstack] docker compose up failed.
     exit /b 1
@@ -122,6 +173,10 @@ call :maybe_start_sample "%RUN_SAMPLE%" "%HEALTH_URL%" "%PROFILE_ARGS%"
 if errorlevel 1 exit /b 1
 
 echo [devstack] Croniq dev stack is ready.
+
+call :maybe_follow_sample "%RUN_SAMPLE%" "%FOLLOW_SAMPLE%"
+if errorlevel 1 exit /b 1
+
 exit /b 0
 
 :maybe_start_sample
@@ -165,15 +220,24 @@ if "!HAS_OBS_PROFILE!"=="1" (
 )
 
 REM Use PowerShell to set env vars + capture PID reliably.
+del /q "%START_LOG%" >nul 2>&1
 del /q "%OUT_LOG%" >nul 2>&1
 del /q "%ERR_LOG%" >nul 2>&1
-del /q "%START_LOG%" >nul 2>&1
-powershell -NoProfile -Command "$env:ASPNETCORE_URLS='http://0.0.0.0:%CRONIQ_SAMPLE_APIHOST_HTTP_PORT%'; if ($env:CRONIQ_DOTNET_ENVIRONMENT) { $env:DOTNET_ENVIRONMENT=$env:CRONIQ_DOTNET_ENVIRONMENT }; $env:Croniq__Auth__Mode=$env:CRONIQ_AUTH_MODE; $env:Croniq__Auth__InMemory__ApiKey=$env:CRONIQ_SMOKE_API_KEY; $env:Croniq__Auth__InMemory__TenantId=$env:CRONIQ_CORE_TENANT_ID; $env:Croniq__Auth__InMemory__EnvironmentTag=$env:CRONIQ_CORE_ENVIRONMENT; $env:Croniq__Persistence__Mode='SqlServer'; $env:Croniq__Api__RequestsPerMinute=$env:CRONIQ_API_REQUESTS_PER_MINUTE; $env:Croniq__Core__TenantId=$env:CRONIQ_CORE_TENANT_ID; $env:Croniq__Core__EnvironmentTag=$env:CRONIQ_CORE_ENVIRONMENT; $env:Croniq__Core__InstanceId=$env:CRONIQ_API_INSTANCE_ID; $dotenv=@{}; if (Test-Path '.env') { Get-Content '.env' | ForEach-Object { $l=$_.Trim(); if (!$l -or $l.StartsWith('#')) { return }; $parts=$l -split '=',2; if ($parts.Count -eq 2) { $dotenv[$parts[0].Trim()]=$parts[1].Trim() } } }; function Get-EnvOrDotenv([string]$k,[string]$fallback) { $v=[Environment]::GetEnvironmentVariable($k); if ($v) { return $v }; if ($dotenv.ContainsKey($k) -and $dotenv[$k]) { return $dotenv[$k] }; return $fallback }; $sqlPort = Get-EnvOrDotenv 'CRONIQ_SQL_HOST_PORT' '11433'; $sqlDb = Get-EnvOrDotenv 'CRONIQ_SQL_DATABASE' 'CroniqDev'; $sqlPw = Get-EnvOrDotenv 'CRONIQ_SQL_PASSWORD' 'CroniqSqlP@ssw0rd!'; $env:Croniq__SqlServer__ConnectionString = ('Server=localhost,' + $sqlPort + ';Database=' + $sqlDb + ';User Id=sa;Password=' + $sqlPw + ';Encrypt=False;TrustServerCertificate=True;'); if ('%CRONIQ_HOST_OTLP_ENDPOINT%') { $env:Croniq__Observability__OtlpEndpoint='%CRONIQ_HOST_OTLP_ENDPOINT%'; $env:Croniq__Observability__OtlpProtocol=$env:CRONIQ_OBS_OTLP_PROTOCOL }; $p = Start-Process -FilePath 'dotnet' -ArgumentList @('run','--project','samples\\Croniq.Sample.ApiHost\\Croniq.Sample.ApiHost.csproj') -WorkingDirectory (Resolve-Path '.') -RedirectStandardOutput '%OUT_LOG%' -RedirectStandardError '%ERR_LOG%' -PassThru; $p.Id | Out-File -FilePath '%PID_FILE%' -Encoding ascii" > "%START_LOG%" 2>&1
-if errorlevel 1 (
+
+set "PS_WINDOW_ARGS="
+if "%NO_SAMPLE_WINDOW%"=="1" set "PS_WINDOW_ARGS=-WindowStyle Hidden"
+
+set PS_EXIT=0
+setlocal DisableDelayedExpansion
+powershell -NoProfile -Command "$env:ASPNETCORE_URLS='http://0.0.0.0:%CRONIQ_SAMPLE_APIHOST_HTTP_PORT%'; if ($env:CRONIQ_DOTNET_ENVIRONMENT) { $env:DOTNET_ENVIRONMENT=$env:CRONIQ_DOTNET_ENVIRONMENT }; $env:Croniq__Auth__Mode=$env:CRONIQ_AUTH_MODE; $env:Croniq__Auth__InMemory__ApiKey=$env:CRONIQ_SMOKE_API_KEY; $env:Croniq__Auth__InMemory__TenantId=$env:CRONIQ_CORE_TENANT_ID; $env:Croniq__Auth__InMemory__EnvironmentTag=$env:CRONIQ_CORE_ENVIRONMENT; $env:Croniq__Persistence__Mode='SqlServer'; $env:Croniq__Api__RequestsPerMinute=$env:CRONIQ_API_REQUESTS_PER_MINUTE; $env:Croniq__Core__TenantId=$env:CRONIQ_CORE_TENANT_ID; $env:Croniq__Core__EnvironmentTag=$env:CRONIQ_CORE_ENVIRONMENT; $env:Croniq__Core__InstanceId=$env:CRONIQ_API_INSTANCE_ID; $dotenv=@{}; if (Test-Path '.env') { Get-Content '.env' | ForEach-Object { $l=$_.Trim(); if (!$l -or $l.StartsWith('#')) { return }; $parts=$l -split '=',2; if ($parts.Count -eq 2) { $dotenv[$parts[0].Trim()]=$parts[1].Trim() } } }; function Get-EnvOrDotenv([string]$k,[string]$fallback) { $v=[Environment]::GetEnvironmentVariable($k); if ($v) { return $v }; if ($dotenv.ContainsKey($k) -and $dotenv[$k]) { return $dotenv[$k] }; return $fallback }; $sqlPort = Get-EnvOrDotenv 'CRONIQ_SQL_HOST_PORT' '11433'; $sqlDb = Get-EnvOrDotenv 'CRONIQ_SQL_DATABASE' 'CroniqDev'; $sqlPw = Get-EnvOrDotenv 'CRONIQ_SQL_PASSWORD' 'CroniqSqlP@ssw0rd!'; $env:Croniq__SqlServer__ConnectionString = ('Server=localhost,' + $sqlPort + ';Database=' + $sqlDb + ';User Id=sa;Password=' + $sqlPw + ';Encrypt=False;TrustServerCertificate=True;'); if ('%CRONIQ_HOST_OTLP_ENDPOINT%') { $env:Croniq__Observability__OtlpEndpoint='%CRONIQ_HOST_OTLP_ENDPOINT%'; $env:Croniq__Observability__OtlpProtocol=$env:CRONIQ_OBS_OTLP_PROTOCOL }; $p = Start-Process -FilePath 'dotnet' -ArgumentList @('run','--project','samples\Croniq.Sample.ApiHost\Croniq.Sample.ApiHost.csproj') -WorkingDirectory (Resolve-Path '.') %PS_WINDOW_ARGS% -RedirectStandardOutput '%OUT_LOG%' -RedirectStandardError '%ERR_LOG%' -PassThru; $p.Id | Out-File -FilePath '%PID_FILE%' -Encoding ascii" > "%START_LOG%" 2>&1
+set PS_EXIT=%ERRORLEVEL%
+endlocal & set PS_EXIT=%PS_EXIT%
+
+if not "%PS_EXIT%"=="0" (
     echo [devstack] Failed to start sample ApiHost.
     if exist "%START_LOG%" (
         echo [devstack] Last lines from %START_LOG%:
-        powershell -NoProfile -Command "if (Test-Path '%START_LOG%') { Get-Content -Path '%START_LOG%' -Tail 60 }" 2>nul
+        powershell -NoProfile -Command "if (Test-Path '%START_LOG%') { Get-Content -Encoding UTF8 -Path '%START_LOG%' -Tail 60 }" 2>nul
     )
     endlocal & exit /b 1
 )
@@ -185,14 +249,36 @@ if errorlevel 1 (
     echo [devstack] Host ApiHost did not become healthy in time.
     if exist "%ERR_LOG%" (
         echo [devstack] Last lines from %ERR_LOG%:
-        powershell -NoProfile -Command "if (Test-Path '%ERR_LOG%') { Get-Content -Path '%ERR_LOG%' -Tail 60 }" 2>nul
+        powershell -NoProfile -Command "if (Test-Path '%ERR_LOG%') { Get-Content -Encoding UTF8 -Path '%ERR_LOG%' -Tail 80 }" 2>nul
     )
     if exist "%OUT_LOG%" (
         echo [devstack] Last lines from %OUT_LOG%:
-        powershell -NoProfile -Command "if (Test-Path '%OUT_LOG%') { Get-Content -Path '%OUT_LOG%' -Tail 60 }" 2>nul
+        powershell -NoProfile -Command "if (Test-Path '%OUT_LOG%') { Get-Content -Encoding UTF8 -Path '%OUT_LOG%' -Tail 80 }" 2>nul
     )
     endlocal & exit /b 1
 )
+endlocal & exit /b 0
+
+:maybe_follow_sample
+setlocal EnableExtensions DisableDelayedExpansion
+set "SAMPLE=%~1"
+set "FOLLOW=%~2"
+set "SAMPLE=%SAMPLE:"=%"
+
+if "%SAMPLE%"=="" (endlocal & exit /b 0)
+if /I not "%SAMPLE%"=="apihost" (endlocal & exit /b 0)
+if not "%FOLLOW%"=="1" (endlocal & exit /b 0)
+
+set "OUT_LOG=artifacts\devstack\sample-apihost.out.log"
+set "ERR_LOG=artifacts\devstack\sample-apihost.err.log"
+
+if not exist "%OUT_LOG%" if not exist "%ERR_LOG%" (
+    echo [devstack] ApiHost log files not found.
+    endlocal & exit /b 0
+)
+
+echo [devstack] Following host ApiHost logs (Ctrl+C to stop following; ApiHost keeps running)...
+powershell -NoProfile -Command "Get-Content -Encoding UTF8 -Path @('%OUT_LOG%','%ERR_LOG%') -Tail 50 -Wait"
 endlocal & exit /b 0
 
 :maybe_wait_for_api
@@ -295,6 +381,12 @@ echo.
 echo Options:
 echo   --profile NAME     Forwarded to docker compose. You can pass multiple.
 echo                    Common profiles: api, worker, obs
+echo   --build            Build docker images before starting containers (default).
+echo   --no-build         Skip docker image build and just start existing images.
+echo   --follow           If a host sample is started, follow its log output (default).
+echo   --no-follow        Do not follow host sample logs; exit after printing 'ready'.
+echo   --no-window        Start host sample without a visible window (default).
+echo   --window           Start host sample with a normal window (debug).
 echo   --sample apihost   Starts samples\Croniq.Sample.ApiHost on the host via dotnet run
 echo                    after the DB migrator completed (and after API health check if api profile is enabled).
 echo   --no-sample        Do not start the default host ApiHost.
