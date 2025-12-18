@@ -101,12 +101,64 @@ function Wait-ForServiceExit {
     throw "Timed out waiting for service '$Service' to exit after $($Timeout.TotalMinutes) minutes."
 }
 
+function Try-GetServiceExitCode {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string] $Service
+    )
+
+    try {
+        $cid = Get-ComposeServiceContainerId -Service $Service
+        if ([string]::IsNullOrWhiteSpace($cid)) {
+            return $null
+        }
+
+        $status = & docker inspect -f "{{.State.Status}}" $cid
+        if ($status -ne 'exited') {
+            return $null
+        }
+
+        $exit = & docker inspect -f "{{.State.ExitCode}}" $cid
+        $exitCode = 0
+        if ([int]::TryParse($exit, [ref]$exitCode)) {
+            return $exitCode
+        }
+
+        return $null
+    }
+    catch {
+        return $null
+    }
+}
+
+function Write-MigratorTailToConsole {
+    param(
+        [int] $Tail = 200
+    )
+
+    try {
+        Write-Host "--- croniq-db-migrator logs (tail=$Tail) ---" -ForegroundColor Yellow
+        & docker compose @composeFiles @profileArgs logs --no-color --tail=$Tail croniq-db-migrator
+        Write-Host "--- end croniq-db-migrator logs ---" -ForegroundColor Yellow
+    }
+    catch {
+        Write-Host "Failed to print migrator logs: $_" -ForegroundColor Yellow
+    }
+}
+
 switch ($Action) {
     "Up" {
         Invoke-Compose -AdditionalArgs @("up", "--build", "-d")
         $composeExit = $LASTEXITCODE
         if ($composeExit -ne 0) {
+            $migratorExit = Try-GetServiceExitCode -Service 'croniq-db-migrator'
             Capture-ComposeDiagnostics -Reason "docker compose up failed" -ExitCode $composeExit
+            Write-MigratorTailToConsole -Tail 200
+
+            if ($null -ne $migratorExit -and $migratorExit -ne 0) {
+                throw "croniq-db-migrator didn't complete successfully (exit $migratorExit). docker compose up returned exit $composeExit. Diagnostics written to '$OutputDirectory'."
+            }
+
             throw "docker compose up failed with exit code $composeExit. Diagnostics written to '$OutputDirectory'."
         }
 
@@ -115,6 +167,7 @@ switch ($Action) {
         $migratorExit = Wait-ForServiceExit -Service 'croniq-db-migrator' -Timeout ([TimeSpan]::FromMinutes(10))
         if ($migratorExit -ne 0) {
             Capture-ComposeDiagnostics -Reason "croniq-db-migrator failed" -ExitCode $migratorExit
+            Write-MigratorTailToConsole -Tail 200
             throw "croniq-db-migrator didn't complete successfully (exit $migratorExit). Diagnostics written to '$OutputDirectory'."
         }
         break
