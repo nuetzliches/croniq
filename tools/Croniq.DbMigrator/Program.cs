@@ -37,7 +37,24 @@ try
     await ApplyMigrationsAsync(provider, token).ConfigureAwait(false);
     Console.WriteLine("Croniq SQL Server migrations applied successfully.");
 
-    await SeedAdminAsync(provider, token).ConfigureAwait(false);
+    try
+    {
+        await SeedAdminAsync(provider, token).ConfigureAwait(false);
+    }
+    catch (Exception ex)
+    {
+        // Seeding is a dev convenience. It should not block containers/CI by default.
+        // If you want seeding failures to fail the migrator, set CRONIQ_SEED_ADMIN_REQUIRED=true.
+        var required = Environment.GetEnvironmentVariable("CRONIQ_SEED_ADMIN_REQUIRED");
+        var isRequired = string.Equals(required, "true", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(required, "1", StringComparison.OrdinalIgnoreCase);
+
+        Console.Error.WriteLine($"Admin seeding failed: {ex}");
+        if (isRequired)
+        {
+            throw;
+        }
+    }
     return 0;
 }
 catch (Exception ex)
