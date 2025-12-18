@@ -138,7 +138,8 @@ if (app.Environment.IsDevelopment())
                 CroniqScopes.ApiKeysManage,
                 CroniqScopes.TenantsAdmin,
             },
-            IsActive: true));
+            IsActive: true,
+            PasswordChangeRequired: true));
     }
 
 after_password_seed:;

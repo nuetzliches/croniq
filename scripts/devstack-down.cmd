@@ -39,13 +39,31 @@ goto parse
 
 :run
 echo [devstack] Stopping Croniq services...
+call :ensure_docker_engine
+if errorlevel 1 (
+  set DOCKER_EXIT=1
+  goto after_compose
+)
+
 docker.exe compose %COMPOSE_ARGS% %PROFILE_ARGS% down %DOWN_ARGS%
 set DOCKER_EXIT=%ERRORLEVEL%
 
 REM Stop optional host-run samples (best-effort).
+:after_compose
 call :stop_sample_apihost
 
 exit /b %DOCKER_EXIT%
+
+:ensure_docker_engine
+setlocal
+docker.exe info >nul 2>&1
+if errorlevel 1 (
+  echo [devstack] Docker engine not reachable.
+  echo [devstack] Start Docker Desktop and try again.
+  echo [devstack] If this persists, verify the Docker context with: docker context ls
+  endlocal & exit /b 1
+)
+endlocal & exit /b 0
 
 :stop_sample_apihost
 setlocal

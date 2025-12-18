@@ -143,7 +143,26 @@ static async Task SeedAdminAsync(IServiceProvider provider, CancellationToken to
     var existing = await users.FindByUsernameAsync(tenant.TenantId, username, token).ConfigureAwait(false);
     if (existing is not null && !overwrite)
     {
-        logger.LogInformation("Admin user already exists for tenant '{TenantReference}'; skipping (set CRONIQ_SEED_ADMIN_OVERWRITE=true to reset).", tenant.Reference);
+        if (!existing.PasswordChangeRequired)
+        {
+            await users.UpsertAsync(new PasswordUserUpsertRequest(
+                tenant.TenantId,
+                username,
+                existing.PasswordHash,
+                existing.Scopes,
+                IsActive: existing.IsActive,
+                PasswordChangeRequired: true), token).ConfigureAwait(false);
+
+            logger.LogInformation(
+                "Admin user already exists for tenant '{TenantReference}' but PasswordChangeRequired was false; updated to true.",
+                tenant.Reference);
+
+            return;
+        }
+
+        logger.LogInformation(
+            "Admin user already exists for tenant '{TenantReference}'; skipping (set CRONIQ_SEED_ADMIN_OVERWRITE=true to reset).",
+            tenant.Reference);
         return;
     }
 

@@ -27,26 +27,55 @@
       </a>
     </div>
 
-    <form class="space-y-4" (submit)="$event.preventDefault(); login()">
+    <form
+      class="space-y-4"
+      novalidate
+      [attr.aria-busy]="busy()"
+      (submit)="$event.preventDefault(); login()"
+    >
       <label class="space-y-1 text-text-muted">
         Username
         <input
+          id="login-username"
           type="text"
           [field]="loginForm.username"
           class="w-full rounded-xl border border-white/15 bg-white/5 px-3 py-2 text-sm text-text"
           autocomplete="username"
+          autocapitalize="none"
+          spellcheck="false"
+          autofocus
+          aria-required="true"
+          [attr.aria-invalid]="showValidation() && usernameEmpty() ? 'true' : null"
+          [attr.aria-describedby]="usernameDescribedBy()"
+          (input)="onCredentialEdit()"
         />
       </label>
+
+      <p id="login-username-hint" class="sr-only">Bitte den Username eingeben.</p>
+      @if (showValidation() && usernameEmpty()) {
+      <p id="login-username-error" class="text-sm text-danger">Bitte Username angeben.</p>
+      }
 
       <label class="space-y-1 text-text-muted">
         Password
         <input
+          id="login-password"
           type="password"
           [field]="loginForm.password"
           class="w-full rounded-xl border border-white/15 bg-white/5 px-3 py-2 text-sm text-text"
           autocomplete="current-password"
+          aria-required="true"
+          [attr.aria-invalid]="showValidation() && passwordEmpty() ? 'true' : null"
+          [attr.aria-describedby]="passwordDescribedBy()"
+          enterkeyhint="go"
+          (input)="onCredentialEdit()"
         />
       </label>
+
+      <p id="login-password-hint" class="sr-only">Bitte das Passwort eingeben.</p>
+      @if (showValidation() && passwordEmpty()) {
+      <p id="login-password-error" class="text-sm text-danger">Bitte Passwort angeben.</p>
+      }
 
       <div class="flex flex-wrap gap-2">
         <button
@@ -55,12 +84,14 @@
           [disabled]="busy()"
           [attr.aria-disabled]="busy()"
         >
-          Login
+          @if (busy()) { Anmelden… } @else { Login }
         </button>
 
         <button
           type="button"
           class="rounded-full border border-white/20 px-4 py-2 text-xs font-semibold uppercase tracking-wide text-text"
+          [disabled]="busy() || !sessionToken()"
+          [attr.aria-disabled]="busy() || !sessionToken()"
           (click)="clearToken()"
         >
           Clear
@@ -68,7 +99,16 @@
       </div>
 
       @if (lastAction()) {
-      <p class="text-sm text-text-muted" aria-live="polite">{{ lastAction() }}</p>
+      <p
+        class="text-sm"
+        [class.text-danger]="lastActionTone() === 'error'"
+        [class.text-accent]="lastActionTone() === 'success'"
+        [class.text-text-muted]="lastActionTone() === 'info' || !lastActionTone()"
+        [attr.role]="lastActionTone() === 'error' ? 'alert' : null"
+        [attr.aria-live]="lastActionTone() === 'error' ? 'assertive' : 'polite'"
+      >
+        {{ lastAction() }}
+      </p>
       }
 
       <p class="text-xs text-text-muted">

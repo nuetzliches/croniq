@@ -33,11 +33,33 @@ export class LoginPage {
     });
 
     readonly lastAction = signal<string | null>(null);
+    readonly lastActionTone = signal<'info' | 'error' | 'success' | null>(null);
     readonly busy = signal(false);
+    readonly submitAttempted = signal(false);
 
     readonly loginModel = signal({
         username: '',
         password: '',
+    });
+
+    readonly usernameEmpty = computed(() => this.loginModel().username.trim().length === 0);
+    readonly passwordEmpty = computed(() => this.loginModel().password.length === 0);
+    readonly showValidation = computed(() => this.submitAttempted() && (this.usernameEmpty() || this.passwordEmpty()));
+
+    readonly usernameDescribedBy = computed(() => {
+        const ids = ['login-username-hint'];
+        if (this.showValidation() && this.usernameEmpty()) {
+            ids.push('login-username-error');
+        }
+        return ids.join(' ');
+    });
+
+    readonly passwordDescribedBy = computed(() => {
+        const ids = ['login-password-hint'];
+        if (this.showValidation() && this.passwordEmpty()) {
+            ids.push('login-password-error');
+        }
+        return ids.join(' ');
     });
 
     readonly loginForm = form(this.loginModel, (fieldPath) => {
@@ -50,8 +72,11 @@ export class LoginPage {
             return;
         }
 
+        this.submitAttempted.set(true);
+
         if (this.loginForm().invalid()) {
             this.lastAction.set('Bitte Username und Passwort angeben.');
+            this.lastActionTone.set('error');
             return;
         }
 
@@ -59,11 +84,13 @@ export class LoginPage {
         const password = this.loginModel().password;
         if (!username || !password) {
             this.lastAction.set('Bitte Username und Passwort angeben.');
+            this.lastActionTone.set('error');
             return;
         }
 
         this.busy.set(true);
         this.lastAction.set(null);
+        this.lastActionTone.set(null);
 
         try {
             const result = await this.passwordAuth.login({ username, password });
@@ -79,9 +106,11 @@ export class LoginPage {
             }
             this.loginModel.update((model) => ({ ...model, password: '' }));
             this.lastAction.set('Login erfolgreich.');
+            this.lastActionTone.set('success');
             await this.router.navigateByUrl('/schedules');
         } catch (error) {
             this.lastAction.set(error instanceof Error ? error.message : 'Login fehlgeschlagen.');
+            this.lastActionTone.set('error');
         } finally {
             this.busy.set(false);
         }
@@ -90,5 +119,13 @@ export class LoginPage {
     clearToken(): void {
         this.authSession.clearSessionToken();
         this.lastAction.set('Token entfernt.');
+        this.lastActionTone.set('info');
+    }
+
+    onCredentialEdit(): void {
+        if (this.lastActionTone() === 'error') {
+            this.lastAction.set(null);
+            this.lastActionTone.set(null);
+        }
     }
 }

@@ -157,6 +157,8 @@ set BUILD_ARG=--build
 if "%DO_BUILD%"=="0" set BUILD_ARG=
 
 echo [devstack] Starting Croniq services (%PROFILE_ARGS%)...
+call :ensure_docker_engine
+if errorlevel 1 exit /b 1
 docker compose %COMPOSE_ARGS% %PROFILE_ARGS% up %BUILD_ARG% -d
 if errorlevel 1 (
     echo [devstack] docker compose up failed.
@@ -370,6 +372,17 @@ if not "!MIGRATOR_CID!"=="" (
 
 timeout /t 2 >nul
 goto migrator_poll
+
+:ensure_docker_engine
+setlocal
+docker.exe info >nul 2>&1
+if errorlevel 1 (
+    echo [devstack] Docker engine not reachable.
+    echo [devstack] Start Docker Desktop and try again.
+    echo [devstack] If this persists, verify the Docker context with: docker context ls
+    endlocal & exit /b 1
+)
+endlocal & exit /b 0
 
 :help
 echo.
