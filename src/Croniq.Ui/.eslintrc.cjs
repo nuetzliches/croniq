@@ -34,6 +34,15 @@ module.exports = {
           'error',
           { argsIgnorePattern: '^_', varsIgnorePattern: '^_' },
         ],
+        'no-restricted-syntax': [
+          'error',
+          {
+            selector:
+              "MethodDefinition[key.name='ngOnInit'],MethodDefinition[key.name='ngOnDestroy'],MethodDefinition[key.name='ngOnChanges'],MethodDefinition[key.name='ngAfterViewInit'],MethodDefinition[key.name='ngAfterViewChecked'],MethodDefinition[key.name='ngAfterContentInit'],MethodDefinition[key.name='ngAfterContentChecked'],MethodDefinition[key.name='ngDoCheck'],MethodDefinition[key.name='ngDoBootstrap']",
+            message:
+              'Avoid Angular lifecycle hook methods. Prefer route guards/resolvers for navigation, signals + computed for state, and takeUntilDestroyed(inject(DestroyRef)) for teardown.',
+          },
+        ],
         'object-curly-newline': [
           'error',
           {

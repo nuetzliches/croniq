@@ -10,6 +10,11 @@ These instructions complement `.github/copilot.instructions.md` and capture repo
 - Keep UX/documentation artifacts (e.g., wireframes in `src/Croniq.Ui/docs/deep-dive/designs/`) in sync with the OpenAPI snapshot when adding UI flows.
 - Follow Angular's official coding style guide for naming and structure: https://angular.dev/style-guide
 - Standalone import hygiene: avoid importing `CommonModule`. Import only the standalone directives/pipes you use (e.g. `DatePipe`) and prefer built-in control flow (`@if`, `@for`, `@switch`).
+- Avoid Angular lifecycle hook methods (`ngOnInit`, `ngOnDestroy`, etc.). Prefer:
+  - Route guards/resolvers for navigation and preloading
+  - signals + `computed()` for state
+  - `takeUntilDestroyed(inject(DestroyRef))` for teardown
+    (Enforced by ESLint.)
 
 ## Accessibility (A11y)
 

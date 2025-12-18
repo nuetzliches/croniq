@@ -71,7 +71,7 @@ describe('LoginPage', () => {
             redirectIfSessionTokenGuard({
                 queryParamMap: convertToParamMap({ returnUrl: '/jobs' }),
             } as never,
-            { url: '/login' } as never),
+                { url: '/login' } as never),
         );
 
         expect(result).toBeInstanceOf(UrlTree);
