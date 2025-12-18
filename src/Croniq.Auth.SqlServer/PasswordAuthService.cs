@@ -224,6 +224,54 @@ public sealed class PasswordAuthService
         return true;
     }
 
+    public async Task<bool?> ChangePasswordAsync(
+        string tenantId,
+        string userId,
+        string currentPassword,
+        string newPassword,
+        CancellationToken cancellationToken = default)
+    {
+        if (!IsEnabled())
+        {
+            return null;
+        }
+
+        if (string.IsNullOrWhiteSpace(tenantId)) throw new ArgumentNullException(nameof(tenantId));
+        if (string.IsNullOrWhiteSpace(userId)) throw new ArgumentNullException(nameof(userId));
+        if (string.IsNullOrWhiteSpace(currentPassword)) throw new ArgumentNullException(nameof(currentPassword));
+        if (string.IsNullOrWhiteSpace(newPassword)) throw new ArgumentNullException(nameof(newPassword));
+
+        var user = await _users.FindByIdAsync(tenantId, userId, cancellationToken).ConfigureAwait(false);
+        if (user is null || !user.IsActive)
+        {
+            return false;
+        }
+
+        var verification = _passwordHasher.VerifyHashedPassword(
+            new PasswordAuthUser(user.UserId, user.Username),
+            user.PasswordHash,
+            currentPassword);
+
+        if (verification != PasswordVerificationResult.Success && verification != PasswordVerificationResult.SuccessRehashNeeded)
+        {
+            return false;
+        }
+
+        var newHash = _passwordHasher.HashPassword(new PasswordAuthUser(user.UserId, user.Username), newPassword);
+
+        await _users.UpsertAsync(new PasswordUserUpsertRequest(
+                user.TenantId,
+                user.Username,
+                newHash,
+                user.Scopes,
+                user.IsActive,
+                PasswordChangeRequired: false),
+            cancellationToken).ConfigureAwait(false);
+
+        await _users.RecordLoginSuccessAsync(user.TenantId, user.UserId, cancellationToken).ConfigureAwait(false);
+        return true;
+    }
+
     public string HashPassword(string userId, string username, string password)
     {
         if (string.IsNullOrWhiteSpace(userId)) throw new ArgumentNullException(nameof(userId));

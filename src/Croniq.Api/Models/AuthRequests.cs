@@ -18,3 +18,7 @@ public sealed record PasswordRefreshRequest(
 public sealed record PasswordLogoutRequest(
     string RefreshToken,
     string? TenantReference = null);
+
+public sealed record PasswordChangePasswordRequest(
+    string CurrentPassword,
+    string NewPassword);

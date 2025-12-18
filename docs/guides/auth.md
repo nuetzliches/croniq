@@ -59,7 +59,7 @@ set Croniq__Core__EnvironmentTag=dev-jane
 
 Croniq can expose a username/password login for self-hosted deployments.
 
-- Endpoints: `/auth/login`, `/auth/refresh`, `/auth/logout`
+- Endpoints: `/auth/login`, `/auth/refresh`, `/auth/logout`, `/auth/change-password`
 - Configure default tenant resolution via `Croniq:Auth:Password:DefaultTenant`.
 - Stand jetzt: the API returns `refreshToken` in the JSON response body and expects it in the request body for refresh/logout.
 

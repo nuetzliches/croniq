@@ -43,6 +43,7 @@ public sealed class InMemoryPasswordUserStore : IPasswordUserStore
                 PasswordHash = request.PasswordHash,
                 Scopes = request.Scopes,
                 IsActive = request.IsActive,
+                PasswordChangeRequired = request.PasswordChangeRequired,
                 UpdatedAtUtc = now
             };
         }
@@ -59,7 +60,8 @@ public sealed class InMemoryPasswordUserStore : IPasswordUserStore
                 FailedLoginCount: 0,
                 LockoutEndUtc: null,
                 CreatedAtUtc: now,
-                UpdatedAtUtc: now);
+                UpdatedAtUtc: now,
+                PasswordChangeRequired: request.PasswordChangeRequired);
         }
 
         _byTenantAndName[nameKey] = result;

@@ -63,13 +63,17 @@ public static partial class ApiHostingExtensions
         {
             "/health",
             "/webhooks",
-            "/auth",
+            "/auth/login",
+            "/auth/refresh",
+            "/auth/logout",
             // When hosted behind a reverse proxy that prefixes routes with /api,
             // the application sees the full prefixed path (e.g. /api/auth/login).
             // Keep auth-less endpoints reachable in that configuration.
             "/api/health",
             "/api/webhooks",
-            "/api/auth"
+            "/api/auth/login",
+            "/api/auth/refresh",
+            "/api/auth/logout"
         };
 
         if (apiOpts.AnonymousPathPrefixes?.Count > 0)

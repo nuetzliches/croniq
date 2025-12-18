@@ -79,6 +79,12 @@ The rest of this document describes Option A as the baseline, and outlines Optio
   - Revokes refresh token (server-side).
   - Body: `{ tenantId?, refreshToken }`
 
+- `POST /auth/change-password`
+
+  - Changes the password for the currently authenticated password user.
+  - Requires a valid access token.
+  - Body: `{ currentPassword, newPassword }`
+
 - Optional admin endpoints (restricted):
   - `POST /tenants/{tenantId}/users` create user / invite.
   - `POST /tenants/{tenantId}/users/{userId}/reset-password`.
