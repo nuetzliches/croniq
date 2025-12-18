@@ -27,7 +27,8 @@ services:
   croniq-db-migrator:
     build:
       context: ../..
-      dockerfile: tools/Croniq.DbMigrator/Dockerfile
+      dockerfile: infra/docker/Dockerfile.services
+      target: migrator
     environment:
       CRONIQ_SQL_CONNECTION: Server=${CRONIQ_SQL_HOST:-mssql-22},1433;Database=${CRONIQ_SQL_DATABASE:-CroniqDev};User Id=sa;Password=${CRONIQ_SQL_PASSWORD:-CroniqSqlP@ssw0rd!};Encrypt=False;TrustServerCertificate=True;
     depends_on:

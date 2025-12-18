@@ -3,7 +3,8 @@ services:
     profiles: ["api"]
     build:
       context: ../..
-      dockerfile: samples/Croniq.Sample.ApiHost/Dockerfile
+      dockerfile: infra/docker/Dockerfile.services
+      target: api
     environment:
       ASPNETCORE_URLS: http://0.0.0.0:${CRONIQ_API_INTERNAL_PORT:-5080}
       DOTNET_ENVIRONMENT: ${CRONIQ_DOTNET_ENVIRONMENT:-Development}
@@ -43,7 +44,8 @@ services:
     profiles: ["worker"]
     build:
       context: ../..
-      dockerfile: samples/Croniq.Sample.WorkerHost/Dockerfile
+      dockerfile: infra/docker/Dockerfile.services
+      target: worker
     environment:
       DOTNET_ENVIRONMENT: ${CRONIQ_DOTNET_ENVIRONMENT:-Development}
       Croniq__Core__TenantId: ${CRONIQ_CORE_TENANT_ID:-1}

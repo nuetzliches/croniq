@@ -24,7 +24,8 @@ services:
   croniq-db-migrator:
     build:
       context: ../..
-      dockerfile: tools/Croniq.DbMigrator/Dockerfile
+      dockerfile: infra/docker/Dockerfile.services
+      target: migrator
     environment:
       CRONIQ_SQL_CONNECTION: Server=croniq-sql,1433;Database=CroniqSmoke;User Id=sa;Password=${CRONIQ_SQL_PASSWORD:-CroniqSqlP@ssw0rd!};Encrypt=False;TrustServerCertificate=True;
     depends_on:
@@ -35,7 +36,8 @@ services:
   croniq-api:
     build:
       context: ../..
-      dockerfile: samples/Croniq.Sample.ApiHost/Dockerfile
+      dockerfile: infra/docker/Dockerfile.services
+      target: api
     environment:
       ASPNETCORE_URLS: http://0.0.0.0:5080
       DOTNET_ENVIRONMENT: Development
@@ -64,7 +66,8 @@ services:
   croniq-worker:
     build:
       context: ../..
-      dockerfile: samples/Croniq.Sample.WorkerHost/Dockerfile
+      dockerfile: infra/docker/Dockerfile.services
+      target: worker
     environment:
       DOTNET_ENVIRONMENT: Development
       Croniq__Core__TenantId: "1"
