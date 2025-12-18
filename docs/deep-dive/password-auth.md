@@ -136,25 +136,25 @@ Croniq can transport refresh tokens in two common ways.
 
 ### Variant A: refresh token in JSON body (current)
 
-**Pros**
+#### Pros (Variant A)
 
 - Works uniformly for browsers, CLIs, and service-to-service clients.
 - No ambient-cookie CSRF surface.
 - Easier debugging (explicit payload).
 
-**Cons**
+#### Cons (Variant A)
 
 - In browsers, you must store the refresh token somewhere: any XSS can typically exfiltrate it.
 - Higher risk of accidental logging/telemetry leakage (payloads, headers, SDK traces).
 
 ### Variant B: refresh token as HttpOnly Secure cookie (typical for UI/BFF)
 
-**Pros**
+#### Pros (Variant B)
 
 - Better XSS resilience for refresh tokens (JS cannot read HttpOnly cookies).
 - Natural fit for a BFF: browser never handles a long-lived secret.
 
-**Cons**
+#### Cons (Variant B)
 
 - Requires CSRF strategy (at minimum: `SameSite` and/or CSRF token depending on deployment).
 - More ops complexity (domain/path/secure/samesite, reverse proxy behavior).
@@ -208,13 +208,13 @@ Note: Password auth user records are tenant-scoped; without a default tenant the
 
 ## Tenant & environment: "Stand jetzt" and open decisions
 
-**Stand jetzt (V1)**
+### Stand jetzt (V1)
 
 - Tenant can be omitted for password endpoints if `Croniq:Auth:Password:DefaultTenant` is configured.
 - `environmentTag` is treated as a partition/preset and is carried in the access token.
 - Refresh can switch environments by passing a different `environmentTag`.
 
-**Open decisions**
+### Open decisions
 
 - Bind refresh tokens to environments (force re-login on env switch) vs allow env switch via refresh.
 - Require explicit tenant selection even in single-tenant installs vs rely on default tenant.

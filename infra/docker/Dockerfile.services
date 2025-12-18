@@ -8,34 +8,54 @@ WORKDIR /src
 COPY croniq.sln .
 COPY Directory.Build.props .
 
-COPY src/*/*.csproj src/*/
-COPY samples/Croniq.Sample.ApiHost/*.csproj samples/Croniq.Sample.ApiHost/
-COPY samples/Croniq.Sample.WorkerHost/*.csproj samples/Croniq.Sample.WorkerHost/
-COPY tools/Croniq.DbMigrator/*.csproj tools/Croniq.DbMigrator/
+# Keep this list in sync with the project graph used by ApiHost/WorkerHost/DbMigrator.
+# If a build fails with MSB3202 (project not found), add the missing *.csproj COPY here.
 
-RUN --mount=type=cache,id=nuget-packages,target=/root/.nuget/packages \
-	--mount=type=cache,id=nuget-http-cache,target=/root/.local/share/NuGet/v3-cache \
-	set -eux; \
-	dotnet restore samples/Croniq.Sample.ApiHost/Croniq.Sample.ApiHost.csproj; \
-	dotnet restore samples/Croniq.Sample.WorkerHost/Croniq.Sample.WorkerHost.csproj; \
-	dotnet restore tools/Croniq.DbMigrator/Croniq.DbMigrator.csproj
+COPY src/Croniq.Api/Croniq.Api.csproj src/Croniq.Api/
+COPY src/Croniq.Auth.Abstractions/Croniq.Auth.Abstractions.csproj src/Croniq.Auth.Abstractions/
+COPY src/Croniq.Auth.Core/Croniq.Auth.Core.csproj src/Croniq.Auth.Core/
+COPY src/Croniq.Auth.SqlServer/Croniq.Auth.SqlServer.csproj src/Croniq.Auth.SqlServer/
+COPY src/Croniq.Core/Croniq.Core.csproj src/Croniq.Core/
+COPY src/Croniq.Data.SqlServer/Croniq.Data.SqlServer.csproj src/Croniq.Data.SqlServer/
+COPY src/Croniq.Hosting/Croniq.Hosting.csproj src/Croniq.Hosting/
+COPY src/Croniq.JobStore.InMemory/Croniq.JobStore.InMemory.csproj src/Croniq.JobStore.InMemory/
+COPY src/Croniq.Persistence.Abstractions/Croniq.Persistence.Abstractions.csproj src/Croniq.Persistence.Abstractions/
+COPY src/Croniq.Persistence.SqlServer/Croniq.Persistence.SqlServer.csproj src/Croniq.Persistence.SqlServer/
+COPY src/Croniq.Providers.Abstractions/Croniq.Providers.Abstractions.csproj src/Croniq.Providers.Abstractions/
+COPY src/Croniq.Providers.Default/Croniq.Providers.Default.csproj src/Croniq.Providers.Default/
+COPY src/Croniq.Rpc.Client/Croniq.Rpc.Client.csproj src/Croniq.Rpc.Client/
+COPY src/Croniq.Sdk/Croniq.Sdk.csproj src/Croniq.Sdk/
+COPY src/Croniq.Webhooks/Croniq.Webhooks.csproj src/Croniq.Webhooks/
+
+COPY samples/Croniq.Sample.ApiHost/Croniq.Sample.ApiHost.csproj samples/Croniq.Sample.ApiHost/
+COPY samples/Croniq.Sample.Jobs/Croniq.Sample.Jobs.csproj samples/Croniq.Sample.Jobs/
+COPY samples/Croniq.Sample.WorkerHost/Croniq.Sample.WorkerHost.csproj samples/Croniq.Sample.WorkerHost/
+
+COPY tools/Croniq.DbMigrator/Croniq.DbMigrator.csproj tools/Croniq.DbMigrator/
+
+RUN --mount=type=cache,id=nuget-packages,target=/root/.nuget/packages,sharing=locked \
+    --mount=type=cache,id=nuget-http-cache,target=/root/.local/share/NuGet/v3-cache,sharing=locked \
+    set -eux; \
+    dotnet restore samples/Croniq.Sample.ApiHost/Croniq.Sample.ApiHost.csproj; \
+    dotnet restore samples/Croniq.Sample.WorkerHost/Croniq.Sample.WorkerHost.csproj; \
+    dotnet restore tools/Croniq.DbMigrator/Croniq.DbMigrator.csproj
 
 COPY . .
 
 FROM build-base AS publish-api
-RUN --mount=type=cache,id=nuget-packages,target=/root/.nuget/packages \
-	--mount=type=cache,id=nuget-http-cache,target=/root/.local/share/NuGet/v3-cache \
-	dotnet publish samples/Croniq.Sample.ApiHost/Croniq.Sample.ApiHost.csproj -c Release -o /app/publish /p:UseAppHost=false --no-restore
+RUN --mount=type=cache,id=nuget-packages,target=/root/.nuget/packages,sharing=locked \
+    --mount=type=cache,id=nuget-http-cache,target=/root/.local/share/NuGet/v3-cache,sharing=locked \
+    dotnet publish samples/Croniq.Sample.ApiHost/Croniq.Sample.ApiHost.csproj -c Release -o /app/publish /p:UseAppHost=false --no-restore
 
 FROM build-base AS publish-worker
-RUN --mount=type=cache,id=nuget-packages,target=/root/.nuget/packages \
-	--mount=type=cache,id=nuget-http-cache,target=/root/.local/share/NuGet/v3-cache \
-	dotnet publish samples/Croniq.Sample.WorkerHost/Croniq.Sample.WorkerHost.csproj -c Release -o /app/publish /p:UseAppHost=false --no-restore
+RUN --mount=type=cache,id=nuget-packages,target=/root/.nuget/packages,sharing=locked \
+    --mount=type=cache,id=nuget-http-cache,target=/root/.local/share/NuGet/v3-cache,sharing=locked \
+    dotnet publish samples/Croniq.Sample.WorkerHost/Croniq.Sample.WorkerHost.csproj -c Release -o /app/publish /p:UseAppHost=false --no-restore
 
 FROM build-base AS publish-migrator
-RUN --mount=type=cache,id=nuget-packages,target=/root/.nuget/packages \
-	--mount=type=cache,id=nuget-http-cache,target=/root/.local/share/NuGet/v3-cache \
-	dotnet publish tools/Croniq.DbMigrator/Croniq.DbMigrator.csproj -c Release -o /app/publish /p:UseAppHost=false --no-restore
+RUN --mount=type=cache,id=nuget-packages,target=/root/.nuget/packages,sharing=locked \
+    --mount=type=cache,id=nuget-http-cache,target=/root/.local/share/NuGet/v3-cache,sharing=locked \
+    dotnet publish tools/Croniq.DbMigrator/Croniq.DbMigrator.csproj -c Release -o /app/publish /p:UseAppHost=false --no-restore
 
 FROM mcr.microsoft.com/dotnet/aspnet:${DOTNET_VERSION} AS api
 WORKDIR /app

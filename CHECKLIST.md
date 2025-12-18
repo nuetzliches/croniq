@@ -19,7 +19,7 @@
 - [x] gRPC SchedulerService Proto und Client SDK (Croniq.Rpc.Client) generieren
 - [x] Build/Test CI Pipelines (GitHub Actions) mit Lint/Coverage Gates einrichten – Plan siehe `docs/deep-dive/ci.md`
 - [x] Docker Compose Dev-Stack (API, Worker, SqlServer, OTel/Grafana) bereitstellen – Plan siehe `docs/deep-dive/devstack.md`
-- [ ] Devstack Build-Performance: Shared Docker Build (multi-target/shared layers) für ApiHost/Worker/Migrator, um Rebuild-Zeiten zu reduzieren
+- [x] Devstack Build-Performance: Shared Docker Build (multi-target/shared layers) für ApiHost/Worker/Migrator, um Rebuild-Zeiten zu reduzieren
 - [x] Observability/Grafana abgeschlossen (Loki Tenant + Croniq Log Pulse Dashboard) – Plan siehe `docs/deep-dive/observability.md`
 - [x] Loki-Tenant (`croniq-devstack`) und Explore-Hinweise in `docs/deep-dive/devstack.md` dokumentiert
 - [x] SBOM/Signierung und Vulnerability Scans in Release-Flow einbauen – Plan siehe `docs/deep-dive/supplychain.md`

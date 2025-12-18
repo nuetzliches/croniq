@@ -43,6 +43,7 @@ All services share a `croniq-net` bridge network. Ports are exposed via `.env` d
 - `infra/docker/docker-compose.yml`: base SQL container plus the `croniq-db-migrator` helper that auto-applies EF migrations once SQL is healthy.
 - `infra/docker/docker-compose.dev.yml`: adds API + worker hosts (profiles `api` / `worker`) and optional RPC sample/helper containers.
 - `infra/docker/docker-compose.observability.yml`: overlay enabling the observability toolchain (OTel Collector, Prometheus, Tempo, Grafana) behind the `obs` profile.
+- The API/worker/migrator images are built from a shared multi-target Dockerfile (`infra/docker/Dockerfile.services`). Compose selects the right output with `build.target` (`api`, `worker`, `migrator`) so restore/build layers are reused across services.
 - The helper scripts always load all three files, so adding `--profile obs` is enough to wire up Grafana/Tempo/Prometheus without custom compose commands.
 - Use Compose profiles (`api`, `worker`, `obs`) to allow lightweight setups (`docker compose --profile api up`). Nightly CI runs all profiles.
 
