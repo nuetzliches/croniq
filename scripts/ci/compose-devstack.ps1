@@ -33,20 +33,44 @@ function Invoke-Compose {
     & docker compose @composeFiles @profileArgs @AdditionalArgs
 }
 
+function Capture-ComposeDiagnostics {
+    param(
+        [string] $Reason,
+        [int] $ExitCode = -1
+    )
+
+    try {
+        "[{0:O}] compose-devstack diagnostics: {1} (exit={2})" -f (Get-Date), $Reason, $ExitCode | Out-File -FilePath (Join-Path $outputPath "diagnostics.txt") -Encoding utf8 -Append
+
+        & docker compose @composeFiles @profileArgs ps -a *> (Join-Path $outputPath "ps.txt")
+        & docker compose @composeFiles @profileArgs config *> (Join-Path $outputPath "compose.config.yml")
+        & docker compose @composeFiles @profileArgs logs --no-color *> (Join-Path $outputPath "compose.log")
+        & docker compose @composeFiles @profileArgs logs --no-color --tail=500 croniq-db-migrator *> (Join-Path $outputPath "migrator.log")
+    }
+    catch {
+        "[{0:O}] failed to capture compose diagnostics: {1}" -f (Get-Date), $_ | Out-File -FilePath (Join-Path $outputPath "diagnostics.txt") -Encoding utf8 -Append
+    }
+}
+
 switch ($Action) {
     "Up" {
         Invoke-Compose -AdditionalArgs @("up", "--build", "-d")
-        break
-    }
-    "Down" {
-        Invoke-Compose -AdditionalArgs @("down", "--remove-orphans")
-        if ($CaptureLogs) {
-            & docker compose @composeFiles @profileArgs logs *> (Join-Path $outputPath "compose.log")
+        if ($LASTEXITCODE -ne 0) {
+            Capture-ComposeDiagnostics -Reason "docker compose up failed" -ExitCode $LASTEXITCODE
+            throw "docker compose up failed with exit code $LASTEXITCODE. Diagnostics written to '$OutputDirectory'."
         }
         break
     }
+    "Down" {
+        if ($CaptureLogs) {
+            Capture-ComposeDiagnostics -Reason "capture logs before down"
+        }
+
+        Invoke-Compose -AdditionalArgs @("down", "--remove-orphans")
+        break
+    }
     "Logs" {
-        & docker compose @composeFiles @profileArgs logs *> (Join-Path $outputPath "compose.log")
+        Capture-ComposeDiagnostics -Reason "logs requested"
         break
     }
 }
