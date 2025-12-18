@@ -146,6 +146,24 @@ function Write-MigratorTailToConsole {
     }
 }
 
+function Write-ServiceTailToConsole {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string] $Service,
+
+        [int] $Tail = 200
+    )
+
+    try {
+        Write-Host "--- $Service logs (tail=$Tail) ---" -ForegroundColor Yellow
+        & docker compose @composeFiles @profileArgs logs --no-color --tail=$Tail $Service
+        Write-Host "--- end $Service logs ---" -ForegroundColor Yellow
+    }
+    catch {
+        Write-Host "Failed to print $Service logs: $_" -ForegroundColor Yellow
+    }
+}
+
 switch ($Action) {
     "Up" {
         Invoke-Compose -AdditionalArgs @("up", "--build", "-d")
@@ -182,6 +200,20 @@ switch ($Action) {
     }
     "Logs" {
         Capture-ComposeDiagnostics -Reason "logs requested"
+
+        try {
+            Write-Host "--- docker compose ps -a ---" -ForegroundColor Yellow
+            & docker compose @composeFiles @profileArgs ps -a
+            Write-Host "--- end docker compose ps -a ---" -ForegroundColor Yellow
+        }
+        catch {
+            Write-Host "Failed to print compose ps: $_" -ForegroundColor Yellow
+        }
+
+        # Print the most relevant service tails to the console so failures are visible without downloading artifacts.
+        Write-ServiceTailToConsole -Service 'croniq-db-migrator' -Tail 200
+        Write-ServiceTailToConsole -Service 'croniq-api' -Tail 200
+        Write-ServiceTailToConsole -Service 'croniq-worker' -Tail 200
         break
     }
 }
