@@ -32,6 +32,11 @@ Angular 21 uses the `@angular/build:unit-test` builder (Vitest). In interactive 
 
 Note: `npm run test -- --watch=false` may still enter watch mode in some shells/TTY setups; prefer `--no-watch` via `test:once`.
 
+## Lint
+
+- Run: `npm run lint`
+- Note: generated build output under `out-tsc/` is ignored by ESLint to avoid parsing errors.
+
 ### Zoneless
 
 Zoneless change detection is enabled in `src/app/app.config.ts` via `provideZonelessChangeDetection()`.

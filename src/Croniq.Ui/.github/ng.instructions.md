@@ -18,6 +18,14 @@ These instructions complement `.github/copilot.instructions.md` and capture repo
   - Installation: https://angular.dev/guide/aria/overview#installation
   - Tabs: https://angular.dev/guide/aria/tabs
 
+### Tabs (Angular Aria)
+
+- Use `@angular/aria/tabs` for any tabbed UI; do not hand-roll ARIA/keyboard logic.
+- Keep the tabs selection API consistent across pages:
+  - Maintain `selectedTab` as a signal.
+  - Provide a `setSelectedTab(nextTab)` method that applies `$event` and falls back to the first configured tab.
+  - In templates, bind `(selectedTabChange)="setSelectedTab($event)"` (avoid duplicating fallback logic inline).
+
 ## Component granularity
 
 - Create components/directives in the smallest useful unit (Pages are the exception and may compose multiple smaller building blocks).

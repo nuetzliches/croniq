@@ -77,13 +77,20 @@ if (app.Environment.IsDevelopment())
     var passwordAuthOptions = services.GetRequiredService<IOptions<PasswordAuthOptions>>().Value;
     if (passwordAuthOptions.Enabled)
     {
+        var config = services.GetRequiredService<IConfiguration>();
+        var authMode = (config["Croniq:Auth:Mode"] ?? string.Empty).Trim();
+        if (!string.Equals(authMode, "SqlServer", StringComparison.OrdinalIgnoreCase))
+        {
+            app.Logger.LogInformation("Password auth seeding is enabled, but Croniq:Auth:Mode is '{AuthMode}'. Skipping password auth seeding.", authMode);
+            goto after_password_seed;
+        }
+
         var dbFactory = services.GetRequiredService<IDbContextFactory<SqlServerDbContext>>();
         await using (var db = await dbFactory.CreateDbContextAsync())
         {
             await db.Database.MigrateAsync();
         }
 
-        var config = services.GetRequiredService<IConfiguration>();
         var seedSection = config.GetSection("Croniq:Sample:Auth:Password");
 
         var tenantReference = seedSection["TenantReference"]?.Trim();
@@ -109,7 +116,12 @@ if (app.Environment.IsDevelopment())
         var hasher = new PasswordHasher<object>();
         var passwordHash = hasher.HashPassword(new object(), password);
 
-        var users = services.GetRequiredService<IPasswordUserStore>();
+        var users = services.GetService<IPasswordUserStore>();
+        if (users is null)
+        {
+            app.Logger.LogWarning("Password auth seeding requested, but IPasswordUserStore is not registered. Ensure Croniq auth mode is SqlServer and Croniq.Auth.SqlServer services are wired.");
+            goto after_password_seed;
+        }
         await users.UpsertAsync(new PasswordUserUpsertRequest(
             tenant.TenantId,
             username,
@@ -128,6 +140,8 @@ if (app.Environment.IsDevelopment())
             },
             IsActive: true));
     }
+
+after_password_seed:;
 }
 
 app.UseCroniqApiSwaggerUi(builder.Configuration);
