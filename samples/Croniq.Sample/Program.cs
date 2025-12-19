@@ -1,6 +1,4 @@
 using Croniq;
-using Croniq.Sample;
-using Croniq.Sample.Jobs;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -13,8 +11,26 @@ builder.Logging.AddSimpleConsole(options =>
     options.TimestampFormat = "HH:mm:ss ";
 });
 
-builder.Services.AddCroniq();
-builder.Services.AddCroniqSampleJobs();
-builder.Services.AddHostedService<SampleTriggerSeedHostedService>();
+builder.Services
+    .AddCroniq()
+    .AddCroniqJob("samples", "smoke", (context, _) =>
+    {
+        var metadataCount = context.Metadata?.Count ?? 0;
+        context.Logger.LogInformation(
+            "Executing Croniq smoke job for {JobKey} with {MetadataCount} metadata entries",
+            context.JobKey,
+            metadataCount);
+        return Task.CompletedTask;
+    })
+    .AddTrigger("0/5 * * * * ?", trigger =>
+    {
+        trigger.TriggerId = "samples-smoke-every-5s";
+        trigger.ManagedBy = "Croniq.Sample";
+        trigger.StartAtUtc = DateTimeOffset.UtcNow;
+        trigger.Metadata = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["seededBy"] = "Croniq.Sample"
+        };
+    });
 
 await builder.Build().RunAsync();

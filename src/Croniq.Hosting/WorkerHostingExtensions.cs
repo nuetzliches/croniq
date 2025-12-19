@@ -1,5 +1,6 @@
 using System;
 using Croniq.Core;
+using Croniq.Core.Hosting;
 using Croniq.Core.Options;
 using Croniq.Core.Policies;
 using Croniq.Data.SqlServer;
@@ -21,6 +22,7 @@ public static class WorkerHostingExtensions
         services.Configure<CroniqOptions>(configuration.GetSection("Croniq:Core"));
         services.Configure<WorkerHostOptions>(configuration.GetSection("Croniq:WorkerHost"));
         services.Configure<InMemoryJobStoreOptions>(configuration.GetSection("Croniq:JobStore:InMemory"));
+        services.Configure<CroniqSeedingOptions>(configuration.GetSection("Croniq:Seeding"));
         services.Configure<MisfirePolicyOptions>(configuration.GetSection("Croniq:Policies:Misfire"));
         services.Configure<ExecutionPolicyOptions>(configuration.GetSection("Croniq:Policies:Execution"));
         services.Configure<PolicyOverrideOptions>(configuration.GetSection("Croniq:Policies:Overrides"));
@@ -30,6 +32,7 @@ public static class WorkerHostingExtensions
         services.AddCroniqCore();
         services.AddCroniqDefaultProviders();
         services.AddCroniqInMemoryJobStore();
+        services.AddHostedService<CroniqTriggerSeedingHostedService>();
         services.AddCroniqWorkerHost();
 
         var persistenceOpts = configuration.GetSection("Croniq:Persistence").Get<CroniqPersistenceOptions>() ?? new CroniqPersistenceOptions();

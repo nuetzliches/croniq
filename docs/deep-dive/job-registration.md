@@ -1,74 +1,83 @@
 # Croniq Job Registration Flow
 
-This deep dive explains how Croniq discovers jobs, composes metadata, syncs definitions with persistence, and exposes them to the scheduler. It complements the consumer Quickstart by revealing what happens behind `AddCroniqJob(...)` and `AddCroniq()`.
+This deep dive explains how Croniq discovers jobs, composes job keys, and persists schedules. It complements the Quickstart by describing what happens behind `AddCroniqJob(...)` and `AddCroniq()`.
 
 ## Discovery Options
 
-Croniq supports two primary registration styles:
+Croniq supports two registration styles:
 
-1. **Fluent jobs** – call `builder.Services.AddCroniqJob(jobKey, job => ...)` and configure handlers/policies inline.
-2. **Attributed classes** – implement `IJob`, decorate with `[CroniqJob("namespace", "name", variant: "optional")]`, and register via `AddCroniqJob<TJob>()`.
+1. **Inline handlers** - call `builder.Services.AddCroniqJob("namespace", "name", handler)` and provide a delegate. This uses an internal delegating `IJob` that dispatches to the handler.
+2. **Attributed classes** - implement `IJob`, decorate with `[CroniqJob("namespace", "name", variant: "optional")]`, and register via `AddCroniqJob<TJob>()`.
 
-Internally, both paths produce a `JobDescriptor` (job key, handlers, metadata, policies) stored in DI for later syncing.
+Both paths produce a `JobDescriptor` with a deterministic job key.
 
-### JobKey composition
+## JobKey Composition
 
-- Format: `TenantId:EnvironmentTag:Namespace:Name[:Variant]`.
-- Tenant/environment default to `Croniq:Core:*` options unless overridden per host.
-- Namespace + name must be deterministic and unique per tenant/environment to avoid collisions in the persistence store.
+- Format: `TenantId:EnvironmentTag:Namespace:Name[:Variant]`
+- Tenant/environment default to `Croniq:Core:*` unless overridden per host.
+- Namespace + name must be deterministic and unique per tenant/environment to avoid collisions.
 
-## Startup Pipeline
+## Trigger Persistence & Startup Flow
+
+Jobs are registered in DI, but schedules are persisted through seeding (worker hosts) or API/gRPC (platform hosts).
 
 ```mermaid
 sequenceDiagram
-    participant Host as ASP.NET Host
-    participant Croniq as CroniqBuilder
-    participant Sync as JobSyncService
+    participant Host as Worker Host
+    participant Croniq as AddCroniq(...)
+    participant Registry as JobRegistry
+    participant Seed as TriggerSeedingService
     participant Store as IJobPersistenceProvider
 
-    Host->>Croniq: AddCroniqApiServices(configuration)
-    Croniq-->>Host: registers JobRegistry, JobSyncService
+    Host->>Croniq: AddCroniq(...)
+    Croniq-->>Host: registers JobRegistry + TriggerSeedingHostedService
     Host->>Croniq: AddCroniqJob(...)
-    Croniq-->>Host: stores JobDescriptor in JobRegistry
-    Host->>Sync: app.StartAsync()
-    Sync->>Store: UpsertJob(jobDescriptor)
-    Sync->>Store: UpsertTrigger(triggerDescriptor)
-    Store-->>Sync: Persisted rowversion
-    Sync-->>Host: Job sync complete
+    Croniq-->>Registry: stores JobDescriptor/handler
+    Host->>Seed: app.StartAsync()
+    Seed->>Store: UpsertJob(jobDefinition)
+    Seed->>Store: UpsertTrigger(triggerDefinition)
 ```
 
-- `JobRegistry` keeps descriptors until the host builds.
-- `JobSyncService` runs as a hosted service. On startup it iterates descriptors, compares rowversions, and upserts jobs/triggers into the configured `IJobPersistenceProvider`.
-- When persistence runs in-memory, the sync simply seeds the in-memory store; with SqlServer it uses EF Core transactions.
+If schedules are created via the API/gRPC, the API host upserts jobs/triggers directly. Worker hosts only need the job registrations to execute them.
 
-## Handler Execution Context
+## Seeding Sources
 
-- Each handler receives `IJobExecutionContext` with job key, metadata, logger, and telemetry hooks.
-- Extension methods provide `InitProgress`, `ReportProgress`, and `CustomState` to send status into telemetry/logs.
-- Policies (retry, timeout, concurrency, dead letters) wrap the handler pipeline in the order they were registered.
+Seeding reads from two sources:
 
-## Metadata & Policies
+- **Configuration**: `Croniq:Triggers` (list or map).
+- **Fluent**: `AddCroniqJob(...).AddTrigger(...)`.
 
-- Arbitrary metadata can be attached via `job.WithMetadata(key, value)`; values are persisted and surface in API payloads/logs.
-- Concurrency, retry, timeout, and dead-letter policies map directly to the Polly-based engine described in `deep-dive/policies.md`.
-- Idempotency configuration is optional; when set, Croniq reads the key from execution metadata to deduplicate results.
+The seeding mode is controlled by `Croniq:Seeding:Mode`:
 
-## Sync Failure Modes
+- `Off` disables seeding.
+- `CreateIfMissing` creates only new triggers (default).
+- `ForceUpdate` updates existing triggers only when `managedBy` matches.
+
+Invalid cron expressions, missing job registrations, or scope mismatches fail fast at startup.
+
+## Execution Context
+
+`IJobExecutionContext` provides:
+
+- `ExecutionId` for correlation.
+- `JobKey` and `Metadata` (metadata comes from schedules or manual triggers).
+- `Logger` and `ActivitySource` for observability.
+
+## Policies & Overrides
+
+Policies are configured via `Croniq:Policies:*`. Use `Croniq:Policies:Overrides` for per-job overrides. There is no fluent per-job policy builder yet.
+
+## Failure Modes
 
 | Scenario | Behavior | Recommendation |
 | --- | --- | --- |
-| Duplicate job keys | Sync aborts with a descriptive exception before the host starts | Ensure namespace/name pairs are unique per tenant/environment |
-| Persistence unavailable | Hosted service retries with exponential backoff; host fails readiness checks until sync succeeds | Use health probes and `scripts/devstack-up.cmd` to ensure DB is online |
-| Schema drift | `Croniq.DbMigrator --verify` catches missing migrations; sync fails with `DbUpdateException` | Always run migrations before deploying new code |
-
-## Testing & Tooling
-
-- Unit tests: `Croniq.Core.Tests` exercises job descriptors and policy chains.
-- Contract tests: `Croniq.Persistence.SqlServer.Tests` validate `UpsertJob/Trigger` semantics against Testcontainers.
-- Sample hosts under `samples/` demonstrate both fluent and class-based jobs; reference them when authoring docs or verifying new APIs.
+| Duplicate job keys | Startup throws before workers run | Keep namespace/name unique per tenant/environment |
+| Invalid cron expression | Seeding throws and stops startup | Validate cron strings before deploy |
+| ForceUpdate without managedBy | Seeding throws | Set `ManagedBy` on seeded triggers |
+| Persistence unavailable | Seeding fails and startup stops | Ensure the store is reachable before starting workers |
 
 ## Backlog
 
-- Support hot-reload of job descriptors without redeploying (watcher service).
-- Document the CLI/API workflow for dynamic job creation (outside of startup).
-- Surface job sync status in `/health` endpoints and operator dashboards.
+- Assembly scanning helpers (`AddCroniqJobsFromAssembly`).
+- Fluent per-job policy builder.
+- Optional validate-only startup mode and health checks.

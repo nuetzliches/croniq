@@ -1,76 +1,81 @@
 # Croniq Job Policies
 
-Policies let you describe operational behavior independently from handler logic. Attach them via the fluent builder after defining handlers.
+Policies control retries, timeouts, dead-lettering, and misfire handling. Configure them via `Croniq:Policies:*` in configuration. A fluent per-job policy builder is not available yet.
 
-> **Note:** The current Croniq runtime configures policies via `Croniq:Policies:*` options and `PolicyOverrideOptions`. A fluent per-job builder is on the UX backlog.
+## Global Defaults
 
-## Concurrency
+`Croniq:Policies:Execution` sets retry/timeout/circuit-breaker/dead-letter defaults. `Croniq:Policies:Misfire` configures misfire handling.
 
-```csharp
-job.WithConcurrency(options =>
+```json
 {
-    options.MaxParallelRuns = 2;
-    options.QueueOverflow = ConcurrencyOverflowPolicy.Queue;
-});
+  "Croniq": {
+    "Policies": {
+      "Execution": {
+        "Retry": {
+          "Enabled": true,
+          "MaxAttempts": 5,
+          "BackoffStrategy": "Exponential",
+          "InitialDelay": "00:00:02",
+          "MaxDelay": "00:00:30"
+        },
+        "Timeout": {
+          "Enabled": true,
+          "Timeout": "00:02:00",
+          "CancelExecutionOnTimeout": true
+        },
+        "CircuitBreaker": {
+          "Enabled": false
+        },
+        "DeadLetter": {
+          "Enabled": true,
+          "Retention": "30.00:00:00"
+        }
+      },
+      "Misfire": {
+        "MaxMisfireDelay": "00:05:00",
+        "DeadLetterOnMisfire": true,
+        "RescheduleBackoff": "00:00:30"
+      }
+    }
+  }
+}
 ```
 
-Set `MaxParallelRuns` to limit how many executions overlap per job key. Overflow policy chooses between queueing, dropping, or replacing pending work.
+## Per-job Overrides
 
-## Retries
+Use `Croniq:Policies:Overrides` to override execution/misfire options for specific scopes and to define quota limits. Execution/misfire overrides pick the most specific match (tenant/env/namespace/job). Quotas choose the most restrictive values.
 
-```csharp
-job.WithRetry(options =>
+```json
 {
-    options.MaxAttempts = 5;
-    options.Backoff = RetryBackoff.Exponential(TimeSpan.FromSeconds(5));
-});
-```
-
-Exponential backoff protects downstream systems. Use `RetryPredicate` when only certain exceptions should retry.
-
-## Timeouts
-
-```csharp
-job.WithTimeout(TimeSpan.FromMinutes(2));
-```
-
-Croniq cancels the handler via `CancellationToken` when the timeout elapses.
-
-## Dead Letter Routing
-
-```csharp
-job.WithDeadLetter(queue =>
-{
-    queue.Target = DeadLetterTarget.Storage("cron-failures");
-});
-```
-
-Store unprocessable payloads for later inspection. Integration depends on your configured provider (e.g., Azure Storage, SQS).
-
-## Idempotency Tokens
-
-```csharp
-job.WithIdempotency(id =>
-{
-    id.ResolveFrom(context => context.Metadata["orderId"]);
-});
-```
-
-Prevents duplicate execution when the same payload arrives multiple times.
-
-## Composition Order
-
-Policies apply in the order you register them. A typical chain:
-
-```csharp
-builder.Services.AddCroniqJob(jobKey, job =>
-    job.Handle(...)
-       .WithConcurrency(...)
-       .WithRetry(...)
-       .WithTimeout(...));
+  "Croniq": {
+    "Policies": {
+      "Overrides": {
+        "Execution": [
+          {
+            "NamespaceSegment": "samples",
+            "JobName": "smoke",
+            "Options": {
+              "Timeout": { "Timeout": "00:00:30" }
+            }
+          }
+        ],
+        "Quotas": [
+          {
+            "NamespaceSegment": "samples",
+            "JobName": "smoke",
+            "Options": {
+              "MaxParallelExecutionsPerJob": 2,
+              "MaxTriggersPerMinute": 10
+            }
+          }
+        ]
+      }
+    }
+  }
+}
 ```
 
 ## Diagnostics
 
-- Enable structured logging via `logging.AddCroniqExecutionLogSink()` or `services.AddCroniqObservability(...)`.
-- Use `context.ActivitySource` inside handlers to create spans or tags.
+- Use `logging.AddCroniqExecutionLogSink()` or `services.AddCroniqObservability(...)` to capture structured execution logs.
+- Misfires and quota reschedules are emitted as metrics via `Croniq.Core.Scheduler` (OTel).

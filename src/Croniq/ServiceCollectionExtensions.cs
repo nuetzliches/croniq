@@ -1,5 +1,7 @@
 using System;
 using Croniq.Core;
+using Croniq.Core.Hosting;
+using Croniq.Core.Jobs;
 using Croniq.Core.Options;
 using Croniq.Core.Policies;
 using Croniq.JobStore.InMemory;
@@ -7,6 +9,7 @@ using Croniq.Providers.Default;
 using Croniq.Sdk;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 
 namespace Croniq;
 
@@ -15,6 +18,7 @@ public static class ServiceCollectionExtensions
     private const string CoreSectionPath = "Croniq:Core";
     private const string WorkerHostSectionPath = "Croniq:WorkerHost";
     private const string InMemoryJobStoreSectionPath = "Croniq:JobStore:InMemory";
+    private const string SeedingSectionPath = "Croniq:Seeding";
     private const string MisfirePolicySectionPath = "Croniq:Policies:Misfire";
     private const string ExecutionPolicySectionPath = "Croniq:Policies:Execution";
     private const string PolicyOverridesSectionPath = "Croniq:Policies:Overrides";
@@ -52,6 +56,7 @@ public static class ServiceCollectionExtensions
         services.Configure<CroniqOptions>(configuration.GetSection(CoreSectionPath));
         services.Configure<WorkerHostOptions>(configuration.GetSection(WorkerHostSectionPath));
         services.Configure<InMemoryJobStoreOptions>(configuration.GetSection(InMemoryJobStoreSectionPath));
+        services.Configure<CroniqSeedingOptions>(configuration.GetSection(SeedingSectionPath));
         services.Configure<MisfirePolicyOptions>(configuration.GetSection(MisfirePolicySectionPath));
         services.Configure<ExecutionPolicyOptions>(configuration.GetSection(ExecutionPolicySectionPath));
         services.Configure<PolicyOverrideOptions>(configuration.GetSection(PolicyOverridesSectionPath));
@@ -127,6 +132,7 @@ public static class ServiceCollectionExtensions
         services.AddCroniqDefaultProviders();
         services.AddCroniqCore();
         services.AddCroniqInMemoryJobStore();
+        services.AddHostedService<CroniqTriggerSeedingHostedService>();
         services.AddCroniqWorkerHost();
 
         return services;
@@ -136,5 +142,37 @@ public static class ServiceCollectionExtensions
         where TJob : class, IJob
     {
         return Core.ServiceCollectionExtensions.AddCroniqJob<TJob>(services);
+    }
+
+    public static CroniqJobBuilder AddCroniqJob(
+        this IServiceCollection services,
+        string namespaceSegment,
+        string jobName,
+        Func<IJobExecutionContext, CancellationToken, Task> handler,
+        string? variant = null)
+    {
+        if (handler is null) throw new ArgumentNullException(nameof(handler));
+        return AddCroniqJob(services, namespaceSegment, jobName, (sp, ctx, token) => handler(ctx, token), variant);
+    }
+
+    public static CroniqJobBuilder AddCroniqJob(
+        this IServiceCollection services,
+        string namespaceSegment,
+        string jobName,
+        Func<IServiceProvider, IJobExecutionContext, CancellationToken, Task> handler,
+        string? variant = null)
+    {
+        ArgumentNullException.ThrowIfNull(services);
+        ArgumentNullException.ThrowIfNull(handler);
+
+        var attribute = new CroniqJobAttribute(namespaceSegment, jobName, variant);
+
+        services.TryAddSingleton<IJobHandlerRegistry, JobHandlerRegistry>();
+        services.TryAddTransient<DelegatingJob>();
+
+        services.TryAddEnumerable(ServiceDescriptor.Singleton<JobRegistration>(new FluentJobRegistration(typeof(DelegatingJob), attribute)));
+        services.TryAddEnumerable(ServiceDescriptor.Singleton(new JobHandlerRegistration(attribute, handler)));
+
+        return new CroniqJobBuilder(services, attribute);
     }
 }

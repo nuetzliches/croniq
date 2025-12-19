@@ -43,7 +43,72 @@ builder.Services.PostConfigure<CroniqAuthOptions>(options =>
 });
 ```
 
-## 3. Key Environment Variables
+## 3. Trigger Seeding (Worker Hosts)
+
+Worker hosts can seed triggers on startup so schedules exist without manual API calls. This runs when you use `AddCroniq(...)` (package `Croniq`) or `AddCroniqWorkerServices(...)` (package `Croniq.Hosting`).
+
+Seeding mode:
+
+- `Croniq:Seeding:Mode = Off` disables seeding entirely.
+- `Croniq:Seeding:Mode = CreateIfMissing` (default) creates triggers only if they are not present.
+- `Croniq:Seeding:Mode = ForceUpdate` updates existing triggers **only** when they are marked `managedBy` (either the `ManagedBy` property or `metadata.managedBy`).
+
+Configure triggers via `Croniq:Triggers` as a list:
+
+```json
+{
+  "Croniq": {
+    "Seeding": { "Mode": "CreateIfMissing" },
+    "Triggers": [
+      {
+        "TriggerId": "samples-smoke-every-5s",
+        "JobKey": "default:dev:samples:smoke",
+        "CronExpression": "0/5 * * * * ?",
+        "StartAtUtc": "2025-01-01T00:00:00Z",
+        "Enabled": true,
+        "ManagedBy": "Croniq.Sample",
+        "Metadata": { "seededBy": "Croniq.Sample" }
+      }
+    ]
+  }
+}
+```
+
+Or via a map keyed by trigger id:
+
+```json
+{
+  "Croniq": {
+    "Triggers": {
+      "samples-smoke-every-5s": {
+        "JobKey": "default:dev:samples:smoke",
+        "CronExpression": "0/5 * * * * ?",
+        "ManagedBy": "Croniq.Sample"
+      }
+    }
+  }
+}
+```
+
+Invalid cron expressions, missing job registrations, or tenant/environment mismatches fail fast on startup and log a readable summary of the cron expression.
+
+Prefer config for shared environments and use the fluent builder for inline setup:
+
+```csharp
+builder.Services
+    .AddCroniq()
+    .AddCroniqJob("samples", "smoke", (context, _) =>
+    {
+        context.Logger.LogInformation("Hello from {JobKey}", context.JobKey);
+        return Task.CompletedTask;
+    })
+    .AddTrigger("0/5 * * * * ?", trigger =>
+    {
+        trigger.ManagedBy = "Croniq.Sample";
+    });
+```
+
+## 4. Key Environment Variables
 
 See [`auth.md`](../guides/auth.md) for the end-to-end authentication story and when to prefer API keys vs bearer tokens.
 
@@ -61,7 +126,7 @@ See [`auth.md`](../guides/auth.md) for the end-to-end authentication story and w
 
 > **Tip:** Keep secrets (API keys, connection strings) outside source control. Prefer user-secrets for local development and a managed vault for hosted environments.
 
-## 4. Authentication Modes
+## 5. Authentication Modes
 
 Croniq keeps authentication pluggable so you can start with a single API key and grow into bearer tokens without touching application code. Pick the mode that matches your caller profile, then set the corresponding configuration keys.
 
@@ -96,7 +161,7 @@ See [docs/deep-dive/password-auth.md](../deep-dive/password-auth.md) for the ful
 - Map scopes to REST permissions (e.g., `schedules:write`, `jobs:trigger`, `api-keys:manage`). When callers lack a scope, Croniq returns `403 insufficient-scope`.
 - For a deeper walkthrough (including sample IdP setups), jump to [`guides/auth.md`](../guides/auth.md) or the security deep dive.
 
-## 5. Sample Local Setup
+## 6. Sample Local Setup
 
 ```cmd
 set Croniq__Auth__Mode=InMemory
@@ -114,7 +179,7 @@ $Env:Croniq__Persistence__Mode = "SqlServer"
 $Env:Croniq__SqlServer__ConnectionString = "Server=localhost;Database=Croniq;User Id=sa;Password=Secret123!"
 ```
 
-## 6. Programmatic Overrides
+## 7. Programmatic Overrides
 
 When you need per-tenant or per-cluster customization, hook into the options pipeline instead of inventing new configuration entry points:
 
@@ -138,7 +203,7 @@ builder.Services.PostConfigure<CroniqPersistenceOptions>(options =>
 
 Only override the values you truly need—everything else continues to flow from configuration files or environment variables.
 
-## 7. Troubleshooting
+## 8. Troubleshooting
 
 - **Missing connection string:** When either `Auth.Mode` or `Persistence.Mode` is `SqlServer`, the extension throws if it cannot find a connection string on the domain-specific section or the shared `Croniq__SqlServer__ConnectionString` key.
 - **Missing API key:** When `Auth.Mode = InMemory`, you must provide `Croniq__Auth__InMemory__ApiKey`. Otherwise startup throws `InvalidOperationException`.
@@ -147,7 +212,7 @@ Only override the values you truly need—everything else continues to flow from
 
 Need a bigger checklist? Jump to [`troubleshooting.md`](../ops/troubleshooting.md) for Docker/dev-stack, observability, and CLI-specific fixes.
 
-## 8. Next Steps
+## 9. Next Steps
 
 - Return to the [Quickstart](./quickstart.md) to continue the walkthrough.
 - Consult `docs/deep-dive/job-registration.md` (upcoming) for the in-depth view on how the runtime persists job metadata during startup.

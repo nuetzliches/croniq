@@ -161,13 +161,13 @@ docs/
 
 ## Job Authoring Model
 
-- `Croniq.Sdk` defines `[CroniqJob]` attribute, `IJob`, DI helpers (`AddCroniqJob<T>` / `AddCroniqJob(key, builder => ...)`).
+- `Croniq.Sdk` defines `[CroniqJob]` attribute, `IJob`, DI helpers (`AddCroniqJob<T>` / `AddCroniqJob("namespace", "name", handler)`).
 - Jobs live in dedicated class libraries per domain. Packaging guidelines recommend NuGet distribution to enforce versioning.
-- Fluent handler patterns: basic `Handle`, batch handlers, stateful handlers, progress reporting, custom states.
+- Inline handlers use delegates; complex workflows should implement `IJob` directly.
 
 ## Policies & Error Handling
 
-- Policy engine builds on Polly (retry, timeout, circuit, fallback). Policies attach via the fluent builder or configuration, applying order-defined behavior.
+- Policy engine builds on Polly (retry, timeout, circuit, fallback). Policies attach via configuration; a fluent per-job builder is on the backlog.
 - Dead-letter routing persists payload and reason, default retention 30 days (configurable). Recoveries feed into admin tooling via SqlServer tables.
 - Idempotency tokens derive from metadata when needed; concurrency controls limit overlapping runs per job.
 

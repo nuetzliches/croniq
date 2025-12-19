@@ -74,6 +74,24 @@ public sealed class HelloWorldJob : IJob
 - `AddCroniqApiServices(...)` exposes the management API. If you do not want to co-host, move API registration into a separate web host.
 - Job keys are composed as `TenantId:EnvironmentTag:Namespace:Name` (defaults come from `Croniq:Core:*`).
 
+Prefer an inline handler and a seeded schedule instead of a job class + API call? Use the fluent registration:
+
+```csharp
+builder.Services
+    .AddCroniq(builder.Configuration)
+    .AddCroniqJob("samples", "HelloWorld", (context, _) =>
+    {
+        context.Logger.LogInformation("Hello from Croniq! JobKey={JobKey}", context.JobKey);
+        return Task.CompletedTask;
+    })
+    .AddTrigger("0 * * * * ?", trigger =>
+    {
+        trigger.ManagedBy = "HelloCroniq";
+    });
+```
+
+With `AddTrigger(...)` the schedule is seeded at startup, so you can skip the API call below if you prefer config/code-first schedules.
+
 ```cmd
 # Terminal 1
 cd HelloCroniq

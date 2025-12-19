@@ -1,54 +1,71 @@
 # Croniq Triggers
 
-Triggers decide when a job key should run. Configure them per job via the fluent builder or centrally through configuration.
+Triggers decide when a job key should run. Croniq currently supports cron-based schedules. You can create them via the API/gRPC or seed them at worker startup (config or fluent).
 
-## Cron Expression
+## Cron Expressions
+
+Croniq uses 7-field cron expressions (seconds precision). Examples:
 
 ```csharp
-job.WithCronTrigger("0 */5 * * * *"); // every 5 minutes
+var everyFiveMinutes = "0 */5 * * * *";
+var weekdaysAtNine = "0 0 9 * * MON-FRI";
 ```
 
-Uses standard CRON format (seconds precision). Combine with `TimeZoneInfo` if you need region-specific execution:
+Schedules run in UTC by default. Persisted triggers store the cron expression plus optional start/end bounds.
 
-```csharp
-job.WithCronTrigger("0 0 9 * * MON-FRI", tz => tz.WithTimeZone("Europe/Berlin"));
-```
+## Seed Triggers via Configuration
 
-## Fixed Interval
+Worker hosts can seed schedules on startup:
 
-```csharp
-job.WithIntervalTrigger(TimeSpan.FromSeconds(30));
-```
-
-Simple heartbeat jobs; Croniq prevents overlapping runs if the handler is still active.
-
-## Calendar Window
-
-```csharp
-job.WithCalendarTrigger(calendar =>
+```json
 {
-    calendar.Weekdays(DayOfWeek.Monday, DayOfWeek.Wednesday);
-    calendar.At(14, 30);
-});
+  "Croniq": {
+    "Seeding": { "Mode": "CreateIfMissing" },
+    "Triggers": [
+      {
+        "TriggerId": "samples-smoke-every-5s",
+        "JobKey": "default:dev:samples:smoke",
+        "CronExpression": "0/5 * * * * ?",
+        "ManagedBy": "Croniq.Sample",
+        "Enabled": true
+      }
+    ]
+  }
+}
 ```
 
-Useful for business schedules without maintaining full CRON strings.
-
-## Event-Driven / Ad-hoc
+## Seed Triggers via Fluent Registration
 
 ```csharp
-job.WithEventTrigger(trigger =>
-{
-    trigger.Source = "orders";
-    trigger.Match(metadata => metadata.ContainsKey("priority"));
-});
+builder.Services
+    .AddCroniq()
+    .AddCroniqJob("samples", "smoke", (context, _) =>
+    {
+        context.Logger.LogInformation("Hello from {JobKey}", context.JobKey);
+        return Task.CompletedTask;
+    })
+    .AddTrigger("0/5 * * * * ?", trigger =>
+    {
+        trigger.ManagedBy = "Croniq.Sample";
+    });
 ```
 
-Push notifications or webhooks can enqueue context payloads into the named source.
+## Create or Update via API
+
+```bash
+curl -X POST https://localhost:5001/tenants/dev-sandbox/schedules \
+  -H "Content-Type: application/json" \
+  -H "X-Croniq-Key: <your-dev-key>" \
+  -d "{
+        \"jobKey\": \"dev-sandbox:dev-local:samples:HelloWorld\",
+        \"cronExpression\": \"0 * * * * ?\",
+        \"enabled\": true
+      }"
+```
 
 ### Incoming Webhook Trigger
 
-The `Croniq.Webhooks` host exposes tenant-scoped endpoints such as `POST /webhooks/{hookKey}`. Each hook references a job key and forwards request metadata into the event trigger shown above.
+The `Croniq.Webhooks` host exposes tenant-scoped endpoints such as `POST /webhooks/{hookKey}`. Each hook references a job key and forwards request metadata into the job execution.
 
 ```http
 POST /webhooks/invoice-paid HTTP/1.1
@@ -64,7 +81,7 @@ Content-Type: application/json
 }
 ```
 
-The webhook host validates the signature, enforces a per-hook rate limit, then enqueues a trigger with metadata (e.g., `metadata["invoiceId"] = ...`). Until GA, you can simulate the flow via custom controllers that call `WithEventTrigger` sources directly.
+The webhook host validates the signature, enforces a per-hook rate limit, then enqueues a trigger with metadata (e.g., `metadata["invoiceId"] = ...`).
 
 Sample configuration (`appsettings.Development.json`) wired up in `Croniq.Sample.ApiHost`:
 
@@ -211,15 +228,10 @@ Treat secrets as credentials: read them from your secret manager at runtime, nev
 - After rotating, send health-check payloads using both the old and new secrets to confirm Croniq accepts them until the grace period expires.
 - Keep rotation notes (`notes` field) descriptive—Croniq surfaces them in `WebhookEndpointEvents` to speed up incident reviews.
 
-## Pausing & Resuming
+## Enable or Disable Schedules
 
-```csharp
-await cronScheduler.PauseAsync(jobKey);
-await cronScheduler.ResumeAsync(jobKey);
-```
+Update a schedule via the API (or config/seeded triggers) and set `enabled=false` to pause it. Re-enable by setting `enabled=true` or delete the schedule to remove it entirely.
 
-Pausing keeps the trigger definition but suppresses new executions until resumed.
+## Configuration Overrides
 
-## Trigger Overlays via Configuration
-
-Environment variables (e.g., `CRONIQ_JOBS__samples-HelloWorld__trigger`) override code-defined triggers, making it easy to tweak schedules per environment without redeploying.
+`Croniq:Triggers` uses the normal configuration pipeline, so environment variables can override JSON values when you need per-environment schedules.

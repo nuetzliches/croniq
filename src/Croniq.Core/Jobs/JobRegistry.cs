@@ -18,7 +18,13 @@ public sealed class JobRegistry : IJobRegistry
         _descriptors = new Dictionary<string, JobDescriptor>(StringComparer.OrdinalIgnoreCase);
         foreach (var registration in registrations ?? Enumerable.Empty<JobRegistration>())
         {
-            Add(registration.JobType, options.Value);
+            if (registration is FluentJobRegistration fluent)
+            {
+                Add(fluent.JobType, options.Value, fluent.Attribute);
+                continue;
+            }
+
+            Add(registration.JobType, options.Value, null);
         }
     }
 
@@ -29,9 +35,9 @@ public sealed class JobRegistry : IJobRegistry
         return _descriptors.TryGetValue(jobKey.Value, out descriptor!);
     }
 
-    private void Add(Type jobType, CroniqOptions options)
+    private void Add(Type jobType, CroniqOptions options, CroniqJobAttribute? attributeOverride)
     {
-        var attribute = jobType.GetCustomAttribute<CroniqJobAttribute>();
+        var attribute = attributeOverride ?? jobType.GetCustomAttribute<CroniqJobAttribute>();
         if (attribute is null)
         {
             throw new InvalidOperationException($"Type {jobType.FullName} is missing CroniqJobAttribute.");

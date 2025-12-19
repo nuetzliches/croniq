@@ -35,15 +35,16 @@ Problem heute: `PlatformHostingExtensions.AddCroniqPlatformServices` bindet viel
 
 Problem heute: Consumer müssen Trigger selbst „zusammenklicken“ und beim Start per Upsert persistieren. Das lädt zu "Overrides"/"Drift" und zu Überschreiben von UI/API Änderungen ein.
 
-- [ ] **First-class Trigger-Seeding**: Core/Hosting soll ein offizielles Konzept für „Seeding“ liefern:
-  - [ ] `Croniq:Seeding:Mode = Off|CreateIfMissing|ForceUpdate`.
-  - [ ] Standard: `CreateIfMissing`.
-  - [ ] `ForceUpdate` nur für Trigger mit `managedBy=<app>`.
+- [x] **First-class Trigger-Seeding**: Core/Hosting soll ein offizielles Konzept für „Seeding“ liefern:
+  - [x] `Croniq:Seeding:Mode = Off|CreateIfMissing|ForceUpdate`.
+  - [x] Standard: `CreateIfMissing`.
+  - [x] `ForceUpdate` nur für Trigger mit `managedBy=<app>`.
+- [x] **Fluent Trigger-Seeding**: `services.AddCroniqJob(...).AddTrigger(...)` fuer code-first Seeds.
 - [ ] **Trigger-Model in Config** (modellierbar):
-  - [ ] `Croniq:Triggers` als Liste/Map (TriggerId, JobKey, CronExpression, StartAtUtc, EndAtUtc, Enabled, Metadata).
+  - [x] `Croniq:Triggers` als Liste/Map (TriggerId, JobKey, CronExpression, StartAtUtc, EndAtUtc, Enabled, Metadata).
   - [ ] Optional „typed metadata“/Konventionen (z.B. `days`) dokumentieren.
-- [ ] **Validation & Summaries**:
-  - [ ] Cron-Expression validate (fail-fast) + human readable Summary (für Logs/UI).
+- [x] **Validation & Summaries**:
+  - [x] Cron-Expression validate (fail-fast) + human readable Summary (für Logs/UI).
 
 ## 4) „One-Off / RunOnce“ als offizielles Feature (wichtig)
 
@@ -83,6 +84,7 @@ Problem heute: Quartz-User lieben „Job Summary“. Croniq sollte das out-of-th
 
 Problem heute: Jobs müssen häufig einzeln registriert werden; das erhöht Boilerplate und ist fehleranfällig.
 
+- [x] **Inline Job Registration**: `AddCroniqJob("namespace", "name", handler)` fuer delegate-based Jobs.
 - [ ] **Assembly-Scanning**: `services.AddCroniqJobsFromAssembly(Assembly)` / `AddCroniqJobsFromEntryAssembly()` (scan nach `CroniqJobAttribute` + auto `AddCroniqJob<T>`).
 - [ ] **Gute Fehlermeldungen**: Bei Duplicate JobKeys/fehlenden Attributen klare Errors inkl. Vorschlag.
 - [ ] **Optional: Source Generator** (später): Compile-time Registrierung für „zero reflection“ + bessere DX.
