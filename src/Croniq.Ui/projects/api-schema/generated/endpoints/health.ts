@@ -5,6 +5,7 @@ import {
     ExecutionStatus,
     IssueApiKeyRequest,
     IssueTokenRequest,
+    PasswordChangePasswordRequest,
     PasswordLoginRequest,
     PasswordLogoutRequest,
     PasswordRefreshRequest,

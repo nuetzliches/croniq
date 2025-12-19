@@ -4,6 +4,7 @@ import {
     PasswordLoginRequest,
     PasswordRefreshRequest,
     PasswordLogoutRequest,
+    PasswordChangePasswordRequest,
     CreateWebhookIpRuleRequest,
     ExecutionStatus,
     IssueApiKeyRequest,
@@ -18,6 +19,20 @@ import {
 } from '../schemas';
 
 export const AuthApi: EndpointDefinition[] = [
+    {
+        method: 'post',
+        path: '/auth/change-password',
+        description: `Changes the password for the currently authenticated password user. Requires a valid access token.`,
+        requestFormat: 'json',
+        parameters: [
+            {
+                name: 'body',
+                type: 'Body',
+                schema: PasswordChangePasswordRequest,
+            },
+        ],
+        response: z.void(),
+    },
     {
         method: 'post',
         path: '/auth/login',

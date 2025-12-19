@@ -106,6 +106,15 @@ export const PasswordLogoutRequest = z
     })
     .partial();
 export type PasswordLogoutRequest = z.infer<typeof PasswordLogoutRequest>;
+export const PasswordChangePasswordRequest = z
+    .object({
+        currentPassword: z.string().nullable(),
+        newPassword: z.string().nullable(),
+    })
+    .partial();
+export type PasswordChangePasswordRequest = z.infer<
+    typeof PasswordChangePasswordRequest
+>;
 export const TriggerJobRequest = z.object({
     jobKey: z.string().min(1),
     metadata: z.record(z.string(), z.string()).nullish(),
@@ -130,6 +139,7 @@ export const schemas = {
     PasswordLoginRequest,
     PasswordRefreshRequest,
     PasswordLogoutRequest,
+    PasswordChangePasswordRequest,
     TriggerJobRequest,
     ExecutionStatus,
 };

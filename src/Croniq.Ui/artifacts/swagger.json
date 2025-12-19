@@ -1385,6 +1385,31 @@
         }
       }
     },
+    "/auth/change-password": {
+      "post": {
+        "tags": [
+          "Croniq.Sample.ApiHost"
+        ],
+        "summary": "Change password",
+        "description": "Changes the password for the currently authenticated password user. Requires a valid access token.",
+        "operationId": "Auth_ChangePassword",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PasswordChangePasswordRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
     "/tenants/{tenantId}/executions/{executionId}/logs": {
       "get": {
         "tags": [
@@ -1544,6 +1569,20 @@
           "ttlMinutes": {
             "type": "integer",
             "format": "int32",
+            "nullable": true
+          }
+        },
+        "additionalProperties": false
+      },
+      "PasswordChangePasswordRequest": {
+        "type": "object",
+        "properties": {
+          "currentPassword": {
+            "type": "string",
+            "nullable": true
+          },
+          "newPassword": {
+            "type": "string",
             "nullable": true
           }
         },

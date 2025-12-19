@@ -1,15 +1,21 @@
 import { z } from 'zod';
 import type { EndpointDefinition } from '../schemas';
 import {
-    CreateWebhookIpRuleRequest,
-    IssueApiKeyRequest,
-    IssueTokenRequest,
-    RotateWebhookSecretRequest,
-    UpsertApiClientRequest,
+    UpsertTenantRequest,
     UpsertJobRequest,
     UpsertScheduleRequest,
-    UpsertTenantRequest,
-    UpsertWebhookEndpointRequest
+    UpsertWebhookEndpointRequest,
+    RotateWebhookSecretRequest,
+    CreateWebhookIpRuleRequest,
+    UpsertApiClientRequest,
+    IssueApiKeyRequest,
+    IssueTokenRequest,
+    ExecutionStatus,
+    PasswordChangePasswordRequest,
+    PasswordLoginRequest,
+    PasswordLogoutRequest,
+    PasswordRefreshRequest,
+    TriggerJobRequest,
 } from '../schemas';
 
 export const TenantsApi: EndpointDefinition[] = [
