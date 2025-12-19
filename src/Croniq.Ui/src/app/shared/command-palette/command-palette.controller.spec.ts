@@ -54,7 +54,7 @@ describe('CommandPaletteController', () => {
 
     it('navigates to the selected command and closes', async () => {
         controller.open();
-        await controller.executeCommand(1);
+        controller.executeCommand(1);
 
         expect(router.navigate).toHaveBeenCalledWith(['/', 'schedules']);
         expect(controller.isOpen()).toBe(false);
@@ -62,7 +62,7 @@ describe('CommandPaletteController', () => {
 
     it('executes action commands without router navigation and closes', async () => {
         controller.open();
-        await controller.executeCommand(2);
+        controller.executeCommand(2);
 
         expect(executeGamma).toHaveBeenCalledTimes(1);
         expect(router.navigate).not.toHaveBeenCalled();

@@ -3,7 +3,7 @@ import { DatePipe } from '@angular/common';
 import { ChangeDetectionStrategy, Component, inject, signal } from '@angular/core';
 import { TenantContextService } from '@core/tenant-context/tenant-context.service';
 import { CreateWebhookIpRuleRequest, RotateWebhookSecretRequest, UpsertWebhookEndpointRequest } from '@croniq/api-schema';
-import { WebhooksStore } from '@features/webhooks/webhooks.store';
+import { WebhookDeadLetterView, WebhookEndpointView, WebhookIpRuleView, WebhooksStore } from '@features/webhooks/webhooks.store';
 
 type DetailTab = {
   id: 'controls' | 'endpoints' | 'ops';
@@ -21,6 +21,10 @@ export class WebhooksPage {
   private readonly store = inject(WebhooksStore);
   private readonly tenantContext = inject(TenantContextService);
 
+  constructor() {
+    this.store.selectHook(this.hookKey());
+  }
+
   readonly detailTabs: ReadonlyArray<DetailTab> = [
     { id: 'controls', label: 'Controls' },
     { id: 'endpoints', label: 'Endpoints' },
@@ -37,6 +41,9 @@ export class WebhooksPage {
   readonly actionLog = this.store.actionLog;
   readonly loading = this.store.loading;
   readonly deadLetterCount = this.store.deadLetterCount;
+  readonly deadLetters = this.store.deadLetters;
+  readonly ipRules = this.store.ipRules;
+  readonly rotatedSecret = this.store.rotatedSecret;
   readonly lastError = this.store.lastError;
   readonly activeCount = this.store.activeCount;
 
@@ -56,6 +63,7 @@ export class WebhooksPage {
 
   setHookKey(value: string): void {
     this.hookKey.set(value);
+    this.store.selectHook(value);
   }
 
   setJobKey(value: string): void {
@@ -90,6 +98,27 @@ export class WebhooksPage {
     this.deadLetterId.set(value);
   }
 
+  selectEndpoint(endpoint: WebhookEndpointView): void {
+    this.setHookKey(endpoint.hookKey);
+    this.setJobKey(endpoint.jobKey);
+    this.requireSignature.set(endpoint.requireSignature);
+    if (endpoint.requestsPerMinute !== undefined) {
+      this.requestsPerMinute.set(String(endpoint.requestsPerMinute));
+    }
+    this.setSelectedTab('controls');
+  }
+
+  selectIpRule(rule: WebhookIpRuleView): void {
+    this.ipRuleId.set(rule.ruleId);
+    this.ipRuleCidr.set(rule.cidr);
+    this.ipRuleDescription.set(rule.description ?? '');
+  }
+
+  selectDeadLetter(entry: WebhookDeadLetterView): void {
+    this.deadLetterId.set(entry.id);
+    this.setSelectedTab('controls');
+  }
+
   setSecretActivateDelay(value: string): void {
     this.secretActivateDelay.set(value);
   }
@@ -98,15 +127,15 @@ export class WebhooksPage {
     this.secretGracePeriod.set(value);
   }
 
-  async refreshEndpoints(): Promise<void> {
+  refreshEndpoints(): void {
     const tenantId = this.tenantId().trim();
     if (!tenantId) {
       return;
     }
-    await this.store.refreshEndpoints({ tenantId, environment: this.environment() });
+    this.store.refreshEndpoints({ tenantId, environment: this.environment() });
   }
 
-  async upsertEndpoint(): Promise<void> {
+  upsertEndpoint(): void {
     const tenantId = this.tenantId().trim();
     const hookKey = this.hookKey().trim();
     const jobKey = this.jobKey().trim();
@@ -125,7 +154,7 @@ export class WebhooksPage {
       signatureVersion: 1,
     };
 
-    await this.store.upsertEndpoint(
+    this.store.upsertEndpoint(
       {
         tenantId,
         environment: this.environment(),
@@ -136,20 +165,20 @@ export class WebhooksPage {
     );
   }
 
-  async deleteEndpoint(): Promise<void> {
+  deleteEndpoint(): void {
     const tenantId = this.tenantId().trim();
     const hookKey = this.hookKey().trim();
     if (!tenantId || !hookKey) {
       return;
     }
-    await this.store.deleteEndpoint({
+    this.store.deleteEndpoint({
       tenantId,
       environment: this.environment(),
       hookKey,
     });
   }
 
-  async rotateSecret(): Promise<void> {
+  rotateSecret(): void {
     const tenantId = this.tenantId().trim();
     const hookKey = this.hookKey().trim();
     if (!tenantId || !hookKey) {
@@ -160,7 +189,7 @@ export class WebhooksPage {
       gracePeriodSeconds: this.parseNumber(this.secretGracePeriod()),
       notes: 'UI-initiated rotation',
     };
-    await this.store.rotateSecret(
+    this.store.rotateSecret(
       {
         tenantId,
         environment: this.environment(),
@@ -170,7 +199,7 @@ export class WebhooksPage {
     );
   }
 
-  async createIpRule(): Promise<void> {
+  createIpRule(): void {
     const tenantId = this.tenantId().trim();
     const hookKey = this.hookKey().trim();
     if (!tenantId || !hookKey) {
@@ -180,7 +209,7 @@ export class WebhooksPage {
       cidr: this.ipRuleCidr().trim(),
       description: this.ipRuleDescription().trim() || undefined,
     };
-    await this.store.createIpRule(
+    this.store.createIpRule(
       {
         tenantId,
         environment: this.environment(),
@@ -190,14 +219,14 @@ export class WebhooksPage {
     );
   }
 
-  async deleteIpRule(): Promise<void> {
+  deleteIpRule(): void {
     const tenantId = this.tenantId().trim();
     const hookKey = this.hookKey().trim();
     const ruleId = this.ipRuleId().trim();
     if (!tenantId || !hookKey || !ruleId) {
       return;
     }
-    await this.store.deleteIpRule({
+    this.store.deleteIpRule({
       tenantId,
       environment: this.environment(),
       hookKey,
@@ -205,25 +234,25 @@ export class WebhooksPage {
     });
   }
 
-  async replayDeadLetter(): Promise<void> {
+  replayDeadLetter(): void {
     const tenantId = this.tenantId().trim();
     const deadLetterId = this.deadLetterId().trim();
     if (!tenantId || !deadLetterId) {
       return;
     }
-    await this.store.replayDeadLetter({
+    this.store.replayDeadLetter({
       tenantId,
       environment: this.environment(),
       deadLetterId,
     });
   }
 
-  async invokeWebhook(): Promise<void> {
+  invokeWebhook(): void {
     const hookKey = this.hookKey().trim();
     if (!hookKey) {
       return;
     }
-    await this.store.invokeWebhook({ hookKey });
+    this.store.invokeWebhook({ hookKey });
   }
 
   private parseNumber(value: string): number | undefined {

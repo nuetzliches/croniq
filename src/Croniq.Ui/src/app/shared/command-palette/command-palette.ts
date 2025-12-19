@@ -55,8 +55,8 @@ export class CommandPalette {
     }
   }
 
-  async execute(command: CommandPaletteCommand, index: number): Promise<void> {
-    await this.controller.executeCommand(index);
+  execute(command: CommandPaletteCommand, index: number): void {
+    this.controller.executeCommand(index);
     this.closed.emit();
   }
 

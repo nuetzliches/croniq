@@ -2,6 +2,8 @@ import { Injectable, inject } from '@angular/core';
 import { tryIsoFromUnknown } from '@core/time/clock';
 import type { PasswordChangePasswordRequest, PasswordLoginRequest, PasswordLogoutRequest } from '@croniq/api-schema';
 import { CRONIQ_API_CLIENT, type CroniqApiClient } from 'data-access';
+import { catchError, map, of, throwError } from 'rxjs';
+import type { Observable } from 'rxjs';
 import { z } from 'zod';
 import { AuthSessionService } from './auth-session.service';
 
@@ -95,7 +97,7 @@ export class PasswordAuthService {
     private readonly apiClient = inject<CroniqApiClient>(CRONIQ_API_CLIENT);
     private readonly authSession = inject(AuthSessionService);
 
-    async login(params: PasswordLoginParams): Promise<PasswordLoginResult> {
+    login(params: PasswordLoginParams): Observable<PasswordLoginResult> {
         const payload: PasswordLoginRequest = {
             username: params.username,
             password: params.password,
@@ -106,37 +108,40 @@ export class PasswordAuthService {
             audience: params.audience ?? null,
         };
 
-        const response = await this.apiClient.passwordLogin(payload);
-        const parsed = this.extract(response);
-        if (!parsed) {
-            throw new Error('Login failed: unsupported response shape (missing access token).');
-        }
+        return this.apiClient.passwordLogin(payload).pipe(
+            map((response) => {
+                const parsed = this.extract(response);
+                if (!parsed) {
+                    throw new Error('Login failed: unsupported response shape (missing access token).');
+                }
 
-        this.authSession.storeSessionToken(parsed.accessToken, {
-            expiresAt: parsed.expiresAt,
-            passwordChangeRequired: parsed.passwordChangeRequired,
-        });
-        if (parsed.refreshToken) {
-            this.authSession.storeRefreshToken(parsed.refreshToken);
-        } else {
-            this.authSession.clearRefreshToken();
-        }
+                this.authSession.storeSessionToken(parsed.accessToken, {
+                    expiresAt: parsed.expiresAt,
+                    passwordChangeRequired: parsed.passwordChangeRequired,
+                });
+                if (parsed.refreshToken) {
+                    this.authSession.storeRefreshToken(parsed.refreshToken);
+                } else {
+                    this.authSession.clearRefreshToken();
+                }
 
-        const tenantId = tryExtractTenantIdFromJwt(parsed.accessToken);
+                const tenantId = tryExtractTenantIdFromJwt(parsed.accessToken);
 
-        return {
-            storedInSession: true,
-            token: parsed.accessToken,
-            expiresAt: parsed.expiresAt ?? null,
-            refreshTokenPresent: Boolean(parsed.refreshToken),
-            passwordChangeRequired: parsed.passwordChangeRequired,
-            tenantId,
-            tenantReference: parsed.tenantReference ?? null,
-            raw: parsed.raw,
-        };
+                return {
+                    storedInSession: true,
+                    token: parsed.accessToken,
+                    expiresAt: parsed.expiresAt ?? null,
+                    refreshTokenPresent: Boolean(parsed.refreshToken),
+                    passwordChangeRequired: parsed.passwordChangeRequired,
+                    tenantId,
+                    tenantReference: parsed.tenantReference ?? null,
+                    raw: parsed.raw,
+                };
+            }),
+        );
     }
 
-    async logout(): Promise<void> {
+    logout(): Observable<void> {
         const refreshToken = this.authSession.refreshToken()?.trim() ?? '';
 
         if (refreshToken) {
@@ -145,66 +150,76 @@ export class PasswordAuthService {
                 tenantReference: null,
             };
 
-            try {
-                await this.apiClient.passwordLogout(payload);
-            } catch {
-                // Best-effort: even if the server rejects logout, we still clear local state.
-            }
+            return this.apiClient.passwordLogout(payload).pipe(
+                catchError(() => of(undefined)),
+                map(() => {
+                    // Best-effort: even if the server rejects logout, we still clear local state.
+                    this.authSession.clearAuthState();
+                }),
+            );
         }
 
         this.authSession.clearAuthState();
+
+        return of(undefined);
     }
 
-    async refresh(): Promise<PasswordRefreshResult> {
+    refresh(): Observable<PasswordRefreshResult> {
         const refreshToken = this.authSession.refreshToken()?.trim() ?? '';
         if (!refreshToken) {
-            throw new Error('Refresh failed: missing refresh token.');
+            return throwError(() => new Error('Refresh failed: missing refresh token.'));
         }
 
-        const response = await this.apiClient.passwordRefresh({
-            refreshToken,
-            tenantReference: null,
-            environmentTag: null,
-            scopes: null,
-            audience: null,
-        });
+        return this.apiClient
+            .passwordRefresh({
+                refreshToken,
+                tenantReference: null,
+                environmentTag: null,
+                scopes: null,
+                audience: null,
+            })
+            .pipe(
+                map((response) => {
+                    const parsed = this.extract(response);
+                    if (!parsed) {
+                        throw new Error('Refresh failed: unsupported response shape (missing access token).');
+                    }
 
-        const parsed = this.extract(response);
-        if (!parsed) {
-            throw new Error('Refresh failed: unsupported response shape (missing access token).');
-        }
+                    this.authSession.storeSessionToken(parsed.accessToken, {
+                        expiresAt: parsed.expiresAt,
+                        passwordChangeRequired: parsed.passwordChangeRequired,
+                    });
 
-        this.authSession.storeSessionToken(parsed.accessToken, {
-            expiresAt: parsed.expiresAt,
-            passwordChangeRequired: parsed.passwordChangeRequired,
-        });
+                    if (parsed.refreshToken) {
+                        this.authSession.storeRefreshToken(parsed.refreshToken);
+                    } else {
+                        this.authSession.clearRefreshToken();
+                    }
 
-        if (parsed.refreshToken) {
-            this.authSession.storeRefreshToken(parsed.refreshToken);
-        } else {
-            this.authSession.clearRefreshToken();
-        }
-
-        return {
-            storedInSession: true,
-            token: parsed.accessToken,
-            expiresAt: parsed.expiresAt ?? null,
-            refreshTokenPresent: Boolean(parsed.refreshToken),
-            passwordChangeRequired: parsed.passwordChangeRequired,
-            raw: parsed.raw,
-        };
+                    return {
+                        storedInSession: true,
+                        token: parsed.accessToken,
+                        expiresAt: parsed.expiresAt ?? null,
+                        refreshTokenPresent: Boolean(parsed.refreshToken),
+                        passwordChangeRequired: parsed.passwordChangeRequired,
+                        raw: parsed.raw,
+                    };
+                }),
+            );
     }
 
-    async changePassword(params: PasswordChangePasswordParams): Promise<void> {
+    changePassword(params: PasswordChangePasswordParams): Observable<void> {
         const payload: PasswordChangePasswordRequest = {
             currentPassword: params.currentPassword,
             newPassword: params.newPassword,
         };
 
-        await this.apiClient.passwordChangePassword(payload);
-
-        // Password changes revoke refresh tokens server-side; force a clean re-login.
-        this.authSession.clearAuthState();
+        return this.apiClient.passwordChangePassword(payload).pipe(
+            map(() => {
+                // Password changes revoke refresh tokens server-side; force a clean re-login.
+                this.authSession.clearAuthState();
+            }),
+        );
     }
 
     private extract(response: unknown): PasswordLoginResponse | null {

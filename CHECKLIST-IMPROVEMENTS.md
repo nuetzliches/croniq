@@ -57,9 +57,9 @@ Problem heute: One-Off wird oft direkt über Pipeline „manuell“ ausgelöst. 
 
 Problem heute: Quartz-User lieben „Job Summary“. Croniq sollte das out-of-the-box liefern.
 
-- [ ] **HostedService im WorkerHost**: Beim Start die Trigger des Scopes laden und in Logs ausgeben:
-  - [ ] Trigger count, disabled triggers, nächster Run je Trigger.
-  - [ ] Einheitliche Log-Templates + strukturierte Felder (`tenantId`, `environmentTag`, `jobKey`, `triggerId`, `nextFireAtUtc`).
+- [x] **HostedService im WorkerHost**: Beim Start die Trigger des Scopes laden und in Logs ausgeben:
+  - [x] Trigger count, disabled triggers, nächster Run je Trigger.
+  - [x] Einheitliche Log-Templates + strukturierte Felder (`tenantId`, `environmentTag`, `jobKey`, `triggerId`, `nextFireAtUtc`).
 
 ## 6) Usability: weniger `using` / weniger "Core"-Typen direkt anfassen (mittel)
 

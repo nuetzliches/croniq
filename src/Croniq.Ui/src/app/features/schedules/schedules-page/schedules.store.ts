@@ -6,7 +6,7 @@ import { TenantContextService } from '@core/tenant-context/tenant-context.servic
 import { isoFromEpochMs, nowIso, nowMs } from '@core/time/clock';
 import { ScheduleListResponse, ScheduleSummary, scheduleListResponseSchema } from '@croniq/api-schema';
 import { CRONIQ_API_CLIENT, CroniqApiClient } from 'data-access';
-import { catchError, from, map, of, tap } from 'rxjs';
+import { EMPTY, catchError, finalize, map, of, tap } from 'rxjs';
 
 export type ScheduleDetail = {
     triggerId: string;
@@ -42,9 +42,7 @@ export class SchedulesStore {
                 return of(fallback);
             }
 
-            const request$ = this.api.getSchedules$
-                ? this.api.getSchedules$({ tenantId }, requestOptions)
-                : from(this.api.getSchedules({ tenantId }, requestOptions));
+            const request$ = this.api.getSchedules({ tenantId }, requestOptions);
 
             return request$.pipe(
                 tap((response) => {
@@ -113,9 +111,7 @@ export class SchedulesStore {
                 return of(null);
             }
 
-            const request$ = this.api.getSchedule$
-                ? this.api.getSchedule$({ tenantId, environment, triggerId: trimmedId }, requestOptions)
-                : from(this.api.getSchedule({ tenantId, environment, triggerId: trimmedId }, requestOptions));
+            const request$ = this.api.getSchedule({ tenantId, environment, triggerId: trimmedId }, requestOptions);
 
             return request$.pipe(
                 map((response) => normalizeScheduleDetail(response, trimmedId)),
@@ -165,7 +161,7 @@ export class SchedulesStore {
         this.schedulesResource.reload();
     }
 
-    async refreshScheduleDetail(triggerId: string): Promise<void> {
+    refreshScheduleDetail(triggerId: string): void {
         const trimmedId = triggerId.trim();
         if (!trimmedId) {
             this.scheduleDetailErrorSignal.set('Trigger id is required to load schedule detail.');
@@ -178,7 +174,7 @@ export class SchedulesStore {
         this.scheduleDetailResource.reload();
     }
 
-    async deleteSchedule(triggerId: string): Promise<void> {
+    deleteSchedule(triggerId: string): void {
         const trimmedId = triggerId.trim();
         if (!trimmedId) {
             this.deleteScheduleErrorSignal.set('Trigger id is required before deleting.');
@@ -197,38 +193,47 @@ export class SchedulesStore {
 
         this.deleteScheduleLoadingSignal.set(true);
         this.deleteScheduleErrorSignal.set(null);
-        try {
-            await this.api.deleteSchedule(
+
+        this.api
+            .deleteSchedule(
                 { tenantId, environment, triggerId: trimmedId },
                 this.tenantContext.createRequestOptions('schedules.delete', {
                     tenantId,
                     environment,
                 }),
-            );
-
-            const current = this.scheduleDetailSignal();
-            if (current?.triggerId === trimmedId) {
-                this.scheduleDetailSignal.set(null);
-            }
-            this.schedulesSignal.set(this.schedulesSignal().filter((schedule) => schedule.id !== trimmedId));
-            this.refresh();
-        } catch (error) {
-            console.error('Failed to delete schedule', error);
-            const authFailure = authFailureFromError(error, {
-                forbidden: 'Forbidden (403) — your token is missing schedules permissions for this tenant.',
-            });
-            if (authFailure) {
-                this.deleteScheduleErrorSignal.set(authFailure.message);
-                return;
-            }
-            if (error instanceof HttpErrorResponse && error.status === 404) {
-                this.deleteScheduleErrorSignal.set('Schedule not found (404) — it may have already been deleted.');
-                return;
-            }
-            this.deleteScheduleErrorSignal.set('Unable to delete schedule via API.');
-        } finally {
-            this.deleteScheduleLoadingSignal.set(false);
-        }
+            )
+            .pipe(
+                tap(() => {
+                    const current = this.scheduleDetailSignal();
+                    if (current?.triggerId === trimmedId) {
+                        this.scheduleDetailSignal.set(null);
+                    }
+                    this.schedulesSignal.set(this.schedulesSignal().filter((schedule) => schedule.id !== trimmedId));
+                    this.refresh();
+                }),
+                catchError((error: unknown) => {
+                    console.error('Failed to delete schedule', error);
+                    const authFailure = authFailureFromError(error, {
+                        forbidden: 'Forbidden (403) — your token is missing schedules permissions for this tenant.',
+                    });
+                    if (authFailure) {
+                        this.deleteScheduleErrorSignal.set(authFailure.message);
+                        return EMPTY;
+                    }
+                    if (error instanceof HttpErrorResponse && error.status === 404) {
+                        this.deleteScheduleErrorSignal.set(
+                            'Schedule not found (404) — it may have already been deleted.',
+                        );
+                        return EMPTY;
+                    }
+                    this.deleteScheduleErrorSignal.set('Unable to delete schedule via API.');
+                    return EMPTY;
+                }),
+                finalize(() => {
+                    this.deleteScheduleLoadingSignal.set(false);
+                }),
+            )
+            .subscribe();
     }
 
     private hydrate(response: ScheduleListResponse): void {

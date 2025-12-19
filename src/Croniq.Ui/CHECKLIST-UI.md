@@ -127,3 +127,5 @@ This checklist intentionally avoids duplicating how-tos.
 # Prüfen / Nachbessern
 
 - [x] Zod-Modelle/Generator-Ausgabe geprüft; `passthrough()` ist in Zod v4 nicht deprecated. Kurzer Leitfaden in `docs/ai/zod.instructions.md`.
+- [x] OpenAPI-Codegen validiert: `npm run generate:api` erfolgreich (2025-12-20).
+- [x] Testsuite validiert: `npm run test:once` erfolgreich (2025-12-20).

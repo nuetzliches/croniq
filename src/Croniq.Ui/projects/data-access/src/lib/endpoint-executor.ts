@@ -1,6 +1,6 @@
 import { HttpClient } from '@angular/common/http';
 import type { EndpointDefinition, ParameterLocation } from '@croniq/api-schema';
-import { Observable, firstValueFrom, map } from 'rxjs';
+import { Observable, map } from 'rxjs';
 import { z } from 'zod';
 import type { CallerContext, CroniqCredentialSupplier } from './api-client.types';
 
@@ -25,10 +25,6 @@ export class EndpointExecutor {
         private readonly clientId = 'Croniq.Ui',
         private readonly credentials?: CroniqCredentialSupplier | null,
     ) { }
-
-    async execute<T = unknown>(endpoint: EndpointDefinition, config: EndpointCallConfig = {}): Promise<T> {
-        return firstValueFrom(this.execute$<T>(endpoint, config));
-    }
 
     execute$<T = unknown>(endpoint: EndpointDefinition, config: EndpointCallConfig = {}): Observable<T> {
         const pathValues = this.normalizeParams(endpoint, 'Path', config.path);

@@ -7,6 +7,7 @@ import { AppBrand } from '@shared/app-brand/app-brand';
 import { CommandPalette } from '@shared/command-palette/command-palette';
 import { CommandPaletteController } from '@shared/command-palette/command-palette.controller';
 import { StatusBeacon } from '@shared/status-beacon/status-beacon';
+import { finalize } from 'rxjs';
 
 type StatusIntent = 'success' | 'warn' | 'neutral';
 
@@ -49,9 +50,11 @@ export class Shell {
     this.commandPalette.close();
   }
 
-  async logout(): Promise<void> {
-    await this.passwordAuth.logout();
-    await this.router.navigate(['/login']);
+  logout(): void {
+    this.passwordAuth
+      .logout()
+      .pipe(finalize(() => void this.router.navigate(['/login'])))
+      .subscribe();
   }
 
   handleGlobalPaletteShortcut(event: KeyboardEvent): void {

@@ -8,8 +8,13 @@ class WebhooksStoreStub {
   readonly actionLog = signal([]);
   readonly loading = signal(false);
   readonly deadLetterCount = signal(0);
+  readonly deadLetters = signal([]);
+  readonly ipRules = signal([]);
+  readonly rotatedSecret = signal<string | null>(null);
   readonly lastError = signal<string | null>(null);
   readonly activeCount = signal(0);
+
+  selectHook = vi.fn();
 
   refreshEndpoints = vi.fn();
   upsertEndpoint = vi.fn();

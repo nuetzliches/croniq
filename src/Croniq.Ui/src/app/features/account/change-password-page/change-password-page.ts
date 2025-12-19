@@ -2,6 +2,7 @@ import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@a
 import { Field, form, required } from '@angular/forms/signals';
 import { Router, RouterLink } from '@angular/router';
 import { PasswordAuthService } from '@core/auth/password-auth.service';
+import { finalize } from 'rxjs';
 
 @Component({
     selector: 'cq-change-password-page',
@@ -35,7 +36,7 @@ export class ChangePasswordPage {
         required(fieldPath.newPassword, { message: 'Bitte neues Passwort angeben.' });
     });
 
-    async submit(): Promise<void> {
+    submit(): void {
         if (this.busy()) {
             return;
         }
@@ -55,17 +56,20 @@ export class ChangePasswordPage {
         this.lastAction.set(null);
         this.lastActionTone.set(null);
 
-        try {
-            await this.auth.changePassword({ currentPassword, newPassword });
-            this.lastAction.set('Passwort geändert. Bitte neu einloggen.');
-            this.lastActionTone.set('success');
-            await this.router.navigateByUrl('/login');
-        } catch (error) {
-            this.lastAction.set(error instanceof Error ? error.message : 'Passwort ändern fehlgeschlagen.');
-            this.lastActionTone.set('error');
-        } finally {
-            this.busy.set(false);
-        }
+        this.auth
+            .changePassword({ currentPassword, newPassword })
+            .pipe(finalize(() => this.busy.set(false)))
+            .subscribe({
+                next: () => {
+                    this.lastAction.set('Passwort geändert. Bitte neu einloggen.');
+                    this.lastActionTone.set('success');
+                    void this.router.navigateByUrl('/login');
+                },
+                error: (error: unknown) => {
+                    this.lastAction.set(error instanceof Error ? error.message : 'Passwort ändern fehlgeschlagen.');
+                    this.lastActionTone.set('error');
+                },
+            });
     }
 
     onEdit(): void {

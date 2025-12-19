@@ -2,6 +2,7 @@ import { Provider, inject } from '@angular/core';
 import { Router } from '@angular/router';
 import { PasswordAuthService } from '@core/auth/password-auth.service';
 import { COMMAND_PALETTE_COMMANDS, type CommandPaletteCommand } from '@shared/command-palette/command-palette.controller';
+import { finalize } from 'rxjs';
 
 const ACCOUNT_COMMANDS: ReadonlyArray<CommandPaletteCommand> = [
     {
@@ -28,9 +29,11 @@ export const ACCOUNT_COMMANDS_PROVIDER: Provider = {
                 path: 'login',
                 description: 'Abmelden und zurück zum Login',
                 keywords: ['logout', 'abmelden', 'sign out', 'session'],
-                execute: async () => {
-                    await passwordAuth.logout();
-                    await router.navigate(['/login']);
+                execute: () => {
+                    passwordAuth
+                        .logout()
+                        .pipe(finalize(() => void router.navigate(['/login'])))
+                        .subscribe();
                 },
             },
         ];

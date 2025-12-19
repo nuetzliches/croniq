@@ -30,6 +30,12 @@
 - Avoid `ngClass`/`ngStyle`; rely on `[class.foo]`/`[style.bar.px]` bindings.
 - Inject services with `inject()`; services should favor `providedIn: 'root'` unless scoped explicitly.
 
+## Async / Promises vs Observables
+
+- Prefer RxJS `Observable` for async boundaries in app code (services, stores, data-access, interceptors).
+- Avoid `Promise`/`async`/`await` in production UI code unless you are integrating with an API that is inherently Promise-based (e.g. Router navigation) and cannot be expressed as an Observable.
+- When you need a one-shot value from an Observable, prefer keeping it as an Observable and wiring it via `AsyncPipe`, `toSignal`, or `rxResource`/`tenantRxResource` rather than converting to a Promise.
+
 ## Accessibility and UX
 
 - Output must pass AXE checks and meet WCAG 2.1 AA (focus management, contrast, ARIA).

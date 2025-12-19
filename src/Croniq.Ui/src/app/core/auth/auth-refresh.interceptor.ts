@@ -2,7 +2,7 @@ import { HttpContextToken, HttpErrorResponse, type HttpInterceptorFn } from '@an
 import { inject } from '@angular/core';
 import { Router } from '@angular/router';
 import { CRONIQ_API_BASE_URL } from 'data-access';
-import { catchError, from, switchMap, throwError } from 'rxjs';
+import { catchError, switchMap, throwError } from 'rxjs';
 import { AuthRefreshCoordinator } from './auth-refresh-coordinator.service';
 
 const DID_RETRY_WITH_REFRESH = new HttpContextToken<boolean>(() => false);
@@ -23,7 +23,7 @@ export const authRefreshInterceptor: HttpInterceptorFn = (req, next) => {
         return next(req);
     }
 
-    return from(refreshCoordinator.ensureFreshAccessToken()).pipe(
+    return refreshCoordinator.ensureFreshAccessToken().pipe(
         switchMap((token) => {
             const withAuth = token
                 ? req.clone({ setHeaders: { Authorization: `Bearer ${token}` } })
@@ -36,7 +36,7 @@ export const authRefreshInterceptor: HttpInterceptorFn = (req, next) => {
                         error.status === 401 &&
                         !withAuth.context.get(DID_RETRY_WITH_REFRESH)
                     ) {
-                        return from(refreshCoordinator.forceRefresh()).pipe(
+                        return refreshCoordinator.forceRefresh().pipe(
                             switchMap((refreshed) => {
                                 if (!refreshed) {
                                     const returnUrl = router.url;

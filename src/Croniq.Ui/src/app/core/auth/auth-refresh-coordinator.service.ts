@@ -1,6 +1,8 @@
 import { Injectable, inject } from '@angular/core';
 import { Router } from '@angular/router';
 import { epochMsFromIso, nowMs } from '@core/time/clock';
+import { catchError, defer, finalize, map, of, shareReplay } from 'rxjs';
+import type { Observable } from 'rxjs';
 import { AuthSessionService } from './auth-session.service';
 import { PasswordAuthService } from './password-auth.service';
 
@@ -12,14 +14,14 @@ export class AuthRefreshCoordinator {
     private readonly passwordAuth = inject(PasswordAuthService);
     private readonly router = inject(Router);
 
-    private inFlight: Promise<string | null> | null = null;
+    private inFlight$: Observable<string | null> | null = null;
 
-    async ensureFreshAccessToken(): Promise<string | null> {
+    ensureFreshAccessToken(): Observable<string | null> {
         const refreshToken = this.authSession.refreshToken()?.trim() ?? '';
         const currentToken = this.authSession.getSessionToken();
 
         if (!refreshToken) {
-            return currentToken;
+            return of(currentToken);
         }
 
         const expiresAt = this.authSession.sessionToken()?.expiresAt ?? null;
@@ -29,33 +31,35 @@ export class AuthRefreshCoordinator {
             (expiryMs != null && expiryMs - nowMs() <= REFRESH_SKEW_MS);
 
         if (!shouldRefresh) {
-            return currentToken;
+            return of(currentToken);
         }
 
         return this.forceRefresh();
     }
 
-    async forceRefresh(): Promise<string | null> {
-        if (this.inFlight) {
-            return this.inFlight;
+    forceRefresh(): Observable<string | null> {
+        if (this.inFlight$) {
+            return this.inFlight$;
         }
 
-        this.inFlight = (async () => {
-            try {
-                const result = await this.passwordAuth.refresh();
+        this.inFlight$ = defer(() => this.passwordAuth.refresh()).pipe(
+            map((result) => {
                 if (result.passwordChangeRequired) {
-                    await this.router.navigate(['/change-password']);
+                    void this.router.navigate(['/change-password']);
                 }
                 return result.token;
-            } catch {
+            }),
+            catchError(() => {
                 this.authSession.clearAuthState();
-                await this.router.navigate(['/login']);
-                return null;
-            } finally {
-                this.inFlight = null;
-            }
-        })();
+                void this.router.navigate(['/login']);
+                return of(null);
+            }),
+            shareReplay({ bufferSize: 1, refCount: false }),
+            finalize(() => {
+                this.inFlight$ = null;
+            }),
+        );
 
-        return this.inFlight;
+        return this.inFlight$;
     }
 }

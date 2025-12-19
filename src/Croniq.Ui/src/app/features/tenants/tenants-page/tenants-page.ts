@@ -49,13 +49,13 @@ export class TenantsPage {
     this.keyId.set(value);
   }
 
-  async issueApiKey(): Promise<void> {
+  issueApiKey(): void {
     const tenantId = this.tenantId().trim();
     if (!tenantId || !this.clientId().trim()) {
       return;
     }
 
-    await this.store.issueApiKey(
+    this.store.issueApiKey(
       { tenantId },
       {
         clientId: this.clientId().trim(),
@@ -66,40 +66,40 @@ export class TenantsPage {
     );
   }
 
-  async rotateApiKey(): Promise<void> {
+  rotateApiKey(): void {
     const tenantId = this.tenantId().trim();
     const keyId = this.keyId().trim();
     if (!tenantId || !keyId) {
       return;
     }
-    await this.store.rotateApiKey({
+    this.store.rotateApiKey({
       tenantId,
       keyId,
       environment: this.environment(),
     });
   }
 
-  async deleteApiKey(): Promise<void> {
+  deleteApiKey(): void {
     const tenantId = this.tenantId().trim();
     const keyId = this.keyId().trim();
     if (!tenantId || !keyId) {
       return;
     }
-    await this.store.deleteApiKey({
+    this.store.deleteApiKey({
       tenantId,
       keyId,
       environment: this.environment(),
     });
   }
 
-  async lookupApiClient(): Promise<void> {
+  lookupApiClient(): void {
     const tenantId = this.tenantId().trim();
     const clientId = this.clientId().trim();
     if (!tenantId || !clientId) {
       return;
     }
 
-    await this.store.lookupApiClient({
+    this.store.lookupApiClient({
       tenantId,
       clientId,
       environment: this.environment(),

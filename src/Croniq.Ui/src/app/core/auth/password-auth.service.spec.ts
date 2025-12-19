@@ -1,6 +1,7 @@
 import { provideZonelessChangeDetection } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { CRONIQ_API_CLIENT, type CroniqApiClient } from 'data-access';
+import { firstValueFrom, of } from 'rxjs';
 import { AuthSessionService } from './auth-session.service';
 import { PasswordAuthService } from './password-auth.service';
 
@@ -36,16 +37,16 @@ describe('PasswordAuthService', () => {
     });
 
     it('sends tenant/environment as null and stores access token', async () => {
-        (apiClient.passwordLogin as unknown as ReturnType<typeof vi.fn>).mockResolvedValue({
+        (apiClient.passwordLogin as unknown as ReturnType<typeof vi.fn>).mockReturnValue(of({
             accessToken: 'access-123',
             expiresIn: 120,
             refreshToken: 'refresh-xyz',
-        });
+        }));
 
         vi.useFakeTimers();
         vi.setSystemTime(new Date('2025-12-17T00:00:00.000Z'));
 
-        const result = await service.login({ username: 'alice', password: 'secret' });
+        const result = await firstValueFrom(service.login({ username: 'alice', password: 'secret' }));
 
         expect(apiClient.passwordLogin).toHaveBeenCalledWith({
             username: 'alice',
@@ -71,9 +72,9 @@ describe('PasswordAuthService', () => {
     });
 
     it('accepts plain string responses and clears refresh token', async () => {
-        (apiClient.passwordLogin as unknown as ReturnType<typeof vi.fn>).mockResolvedValue('access-token-string');
+        (apiClient.passwordLogin as unknown as ReturnType<typeof vi.fn>).mockReturnValue(of('access-token-string'));
 
-        const result = await service.login({ username: 'alice', password: 'secret' });
+        const result = await firstValueFrom(service.login({ username: 'alice', password: 'secret' }));
 
         expect(authSession.storeSessionToken).toHaveBeenCalledWith('access-token-string', {
             expiresAt: null,
@@ -87,11 +88,11 @@ describe('PasswordAuthService', () => {
     });
 
     it('throws when response does not contain an access token', async () => {
-        (apiClient.passwordLogin as unknown as ReturnType<typeof vi.fn>).mockResolvedValue({
+        (apiClient.passwordLogin as unknown as ReturnType<typeof vi.fn>).mockReturnValue(of({
             expiresIn: 60,
-        });
+        }));
 
-        await expect(service.login({ username: 'alice', password: 'secret' })).rejects.toThrow(
+        await expect(firstValueFrom(service.login({ username: 'alice', password: 'secret' }))).rejects.toThrow(
             /unsupported response shape/i,
         );
 
@@ -106,12 +107,12 @@ describe('PasswordAuthService', () => {
             'eyJ0ZW5hbnQiOiJ0bl90ZXN0In0.' +
             'signature';
 
-        (apiClient.passwordLogin as unknown as ReturnType<typeof vi.fn>).mockResolvedValue({
+        (apiClient.passwordLogin as unknown as ReturnType<typeof vi.fn>).mockReturnValue(of({
             accessToken: token,
             expiresIn: 120,
-        });
+        }));
 
-        const result = await service.login({ username: 'alice', password: 'secret' });
+        const result = await firstValueFrom(service.login({ username: 'alice', password: 'secret' }));
 
         expect(result.tenantId).toBe('tn_test');
     });

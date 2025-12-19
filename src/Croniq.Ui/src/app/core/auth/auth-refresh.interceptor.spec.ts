@@ -36,7 +36,7 @@ describe('authRefreshInterceptor', () => {
     });
 
     it('passes through requests that are not API calls', async () => {
-        coordinator.ensureFreshAccessToken.mockResolvedValue('access-1');
+        coordinator.ensureFreshAccessToken.mockReturnValue(of('access-1'));
 
         const req = new HttpRequest('GET', 'https://other.example/jobs');
         const next = vi.fn((r: HttpRequest<unknown>) => of(new HttpResponse({ status: 200, url: r.url })));
@@ -50,7 +50,7 @@ describe('authRefreshInterceptor', () => {
     });
 
     it('skips /auth/* endpoints', async () => {
-        coordinator.ensureFreshAccessToken.mockResolvedValue('access-1');
+        coordinator.ensureFreshAccessToken.mockReturnValue(of('access-1'));
 
         const req = new HttpRequest('POST', 'https://api.example/auth/login', null);
         const next = vi.fn((r: HttpRequest<unknown>) => of(new HttpResponse({ status: 200, url: r.url })));
@@ -62,7 +62,7 @@ describe('authRefreshInterceptor', () => {
     });
 
     it('injects Authorization header when a token is available', async () => {
-        coordinator.ensureFreshAccessToken.mockResolvedValue('access-1');
+        coordinator.ensureFreshAccessToken.mockReturnValue(of('access-1'));
 
         const req = new HttpRequest('GET', 'https://api.example/jobs');
         const next = vi.fn((r: HttpRequest<unknown>) => of(new HttpResponse({ status: 200, url: r.url })));
@@ -76,7 +76,7 @@ describe('authRefreshInterceptor', () => {
     });
 
     it('overwrites existing Authorization header when a token is available', async () => {
-        coordinator.ensureFreshAccessToken.mockResolvedValue('access-1');
+        coordinator.ensureFreshAccessToken.mockReturnValue(of('access-1'));
 
         const req = new HttpRequest('GET', 'https://api.example/jobs', {
             headers: new HttpHeaders({ Authorization: 'Bearer executor-token' }),
@@ -90,7 +90,7 @@ describe('authRefreshInterceptor', () => {
     });
 
     it('preserves existing Authorization header when no token is available', async () => {
-        coordinator.ensureFreshAccessToken.mockResolvedValue(null);
+        coordinator.ensureFreshAccessToken.mockReturnValue(of(null));
 
         const req = new HttpRequest('GET', 'https://api.example/jobs', {
             headers: new HttpHeaders({ Authorization: 'Bearer executor-token' }),
@@ -104,8 +104,8 @@ describe('authRefreshInterceptor', () => {
     });
 
     it('retries once on 401 after a forced refresh', async () => {
-        coordinator.ensureFreshAccessToken.mockResolvedValue('access-1');
-        coordinator.forceRefresh.mockResolvedValue('access-2');
+        coordinator.ensureFreshAccessToken.mockReturnValue(of('access-1'));
+        coordinator.forceRefresh.mockReturnValue(of('access-2'));
 
         const req = new HttpRequest('GET', 'https://api.example/jobs');
 
@@ -128,8 +128,8 @@ describe('authRefreshInterceptor', () => {
     });
 
     it('does not retry infinitely (401 twice triggers only one refresh)', async () => {
-        coordinator.ensureFreshAccessToken.mockResolvedValue('access-1');
-        coordinator.forceRefresh.mockResolvedValue('access-2');
+        coordinator.ensureFreshAccessToken.mockReturnValue(of('access-1'));
+        coordinator.forceRefresh.mockReturnValue(of('access-2'));
 
         const req = new HttpRequest('GET', 'https://api.example/jobs');
 
@@ -146,8 +146,8 @@ describe('authRefreshInterceptor', () => {
     });
 
     it('navigates to /login and rethrows when refresh fails on 401', async () => {
-        coordinator.ensureFreshAccessToken.mockResolvedValue('access-1');
-        coordinator.forceRefresh.mockResolvedValue(null);
+        coordinator.ensureFreshAccessToken.mockReturnValue(of('access-1'));
+        coordinator.forceRefresh.mockReturnValue(of(null));
 
         const req = new HttpRequest('GET', 'https://api.example/jobs');
         const next = vi.fn(() =>

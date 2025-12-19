@@ -4,6 +4,7 @@ import { ActivatedRoute, Router, UrlTree, convertToParamMap, provideRouter } fro
 import { AuthSessionService } from '@core/auth/auth-session.service';
 import { PasswordAuthService } from '@core/auth/password-auth.service';
 import { redirectIfSessionTokenGuard } from '@core/auth/redirect-if-session-token.guard';
+import { of } from 'rxjs';
 import { LoginPage } from './login-page';
 
 class AuthSessionStub {
@@ -81,7 +82,7 @@ describe('LoginPage', () => {
 
     it('redirects to returnUrl after successful login', async () => {
         const navigateSpy = vi.spyOn(router, 'navigateByUrl').mockResolvedValue(true as never);
-        passwordAuth.login.mockResolvedValue({
+        passwordAuth.login.mockReturnValue(of({
             storedInSession: true,
             token: 'access-token',
             expiresAt: null,
@@ -90,17 +91,17 @@ describe('LoginPage', () => {
             tenantId: null,
             tenantReference: null,
             raw: {},
-        });
+        }));
 
         component.loginModel.set({ username: 'admin', password: 'admin' });
-        await component.login();
+        component.login();
 
         expect(navigateSpy).toHaveBeenCalledWith('/jobs');
     });
 
     it('forces /change-password when password change is required', async () => {
         const navigateSpy = vi.spyOn(router, 'navigateByUrl').mockResolvedValue(true as never);
-        passwordAuth.login.mockResolvedValue({
+        passwordAuth.login.mockReturnValue(of({
             storedInSession: true,
             token: 'access-token',
             expiresAt: null,
@@ -109,10 +110,10 @@ describe('LoginPage', () => {
             tenantId: null,
             tenantReference: null,
             raw: {},
-        });
+        }));
 
         component.loginModel.set({ username: 'admin', password: 'admin' });
-        await component.login();
+        component.login();
 
         expect(navigateSpy).toHaveBeenCalledWith('/change-password');
     });

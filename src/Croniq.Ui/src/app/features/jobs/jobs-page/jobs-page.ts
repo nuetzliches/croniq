@@ -55,9 +55,9 @@ export class JobsPage {
     this.metadataSource.set(value);
   }
 
-  async queueManualTrigger(): Promise<void> {
+  queueManualTrigger(): void {
     const metadata = this.parseMetadata(this.metadataSource());
-    await this.store.triggerJob(this.jobKey(), metadata);
+    this.store.triggerJob(this.jobKey(), metadata);
   }
 
   refreshJobRegistry(): void {

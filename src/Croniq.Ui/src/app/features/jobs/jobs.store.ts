@@ -5,7 +5,7 @@ import { tenantRxResource } from '@core/resource/tenant-rx-resource';
 import { TenantContextService } from '@core/tenant-context/tenant-context.service';
 import { isoFromEpochMs, nowIso, nowMs } from '@core/time/clock';
 import { CRONIQ_API_CLIENT, CallerContext, CroniqApiClient } from 'data-access';
-import { catchError, from, map, of, tap } from 'rxjs';
+import { EMPTY, catchError, finalize, map, of, tap } from 'rxjs';
 
 export type ManualTriggerStatus = 'pending' | 'success' | 'error';
 export type ManualTriggerEntry = {
@@ -69,9 +69,7 @@ export class JobsStore {
                 return of([]);
             }
 
-            const request$ = this.api.listJobs$
-                ? this.api.listJobs$({ tenantId, environment }, requestOptions)
-                : from(this.api.listJobs({ tenantId, environment }, requestOptions));
+            const request$ = this.api.listJobs({ tenantId, environment }, requestOptions);
 
             return request$.pipe(
                 map((response) => normalizeJobRegistry(response)),
@@ -135,27 +133,15 @@ export class JobsStore {
                 return of([]);
             }
 
-            const request$ = this.api.listExecutions$
-                ? this.api.listExecutions$(
-                    {
-                        tenantId,
-                        environment,
-                        jobKey: params.jobKey,
-                        limit: typeof params.limit === 'number' ? params.limit : 25,
-                    },
-                    requestOptions,
-                )
-                : from(
-                    this.api.listExecutions(
-                        {
-                            tenantId,
-                            environment,
-                            jobKey: params.jobKey,
-                            limit: typeof params.limit === 'number' ? params.limit : 25,
-                        },
-                        requestOptions,
-                    ),
-                );
+            const request$ = this.api.listExecutions(
+                {
+                    tenantId,
+                    environment,
+                    jobKey: params.jobKey,
+                    limit: typeof params.limit === 'number' ? params.limit : 25,
+                },
+                requestOptions,
+            );
 
             return request$.pipe(
                 map((response) => normalizeExecutions(response)),
@@ -217,9 +203,7 @@ export class JobsStore {
                 return of(null);
             }
 
-            const request$ = this.api.getJob$
-                ? this.api.getJob$({ tenantId, environment, jobId: trimmedId }, requestOptions)
-                : from(this.api.getJob({ tenantId, environment, jobId: trimmedId }, requestOptions));
+            const request$ = this.api.getJob({ tenantId, environment, jobId: trimmedId }, requestOptions);
 
             return request$.pipe(
                 map((response) => normalizeJobDetail(response, trimmedId)),
@@ -274,12 +258,12 @@ export class JobsStore {
 
     constructor() {
         queueMicrotask(() => {
-            void this.refreshJobRegistry();
-            void this.refreshExecutions();
+            this.refreshJobRegistry();
+            this.refreshExecutions();
         });
     }
 
-    async refreshExecutions(params: { jobKey?: string; limit?: number } = {}): Promise<void> {
+    refreshExecutions(params: { jobKey?: string; limit?: number } = {}): void {
         this.executionsQuery.set({
             jobKey: params.jobKey?.trim() || undefined,
             limit: typeof params.limit === 'number' ? params.limit : 25,
@@ -287,11 +271,11 @@ export class JobsStore {
         this.executionsResource.reload();
     }
 
-    async refreshJobRegistry(): Promise<void> {
+    refreshJobRegistry(): void {
         this.jobRegistryResource.reload();
     }
 
-    async refreshJobDetail(jobId: string): Promise<void> {
+    refreshJobDetail(jobId: string): void {
         const trimmedId = jobId.trim();
         if (!trimmedId) {
             this.jobDetailErrorSignal.set('Job id is required to load job detail.');
@@ -304,7 +288,7 @@ export class JobsStore {
         this.jobDetailResource.reload();
     }
 
-    async deleteJob(jobId: string): Promise<void> {
+    deleteJob(jobId: string): void {
         const trimmedId = jobId.trim();
         if (!trimmedId) {
             this.deleteJobErrorSignal.set('Job id is required before deleting.');
@@ -323,41 +307,50 @@ export class JobsStore {
 
         this.deleteJobLoadingSignal.set(true);
         this.deleteJobErrorSignal.set(null);
-        try {
-            await this.api.deleteJob(
+
+        this.api
+            .deleteJob(
                 { tenantId, environment, jobId: trimmedId },
                 this.tenantContext.createRequestOptions('jobs.delete', {
                     tenantId,
                     environment,
                 }),
-            );
-
-            const current = this.jobDetailSignal();
-            if (current?.jobId === trimmedId || current?.jobKey === trimmedId) {
-                this.jobDetailSignal.set(null);
-            }
-            this.jobRegistrySignal.set(this.jobRegistrySignal().filter((entry) => entry.jobKey !== trimmedId));
-            void this.refreshJobRegistry();
-        } catch (error) {
-            console.error('Failed to delete job', error);
-            const authFailure = authFailureFromError(error, {
-                forbidden: 'Forbidden (403) — your token is missing jobs permissions for this tenant.',
-            });
-            if (authFailure) {
-                this.deleteJobErrorSignal.set(authFailure.message);
-                return;
-            }
-            if (error instanceof HttpErrorResponse && error.status === 404) {
-                this.deleteJobErrorSignal.set('Job not found (404) — it may have already been deleted.');
-                return;
-            }
-            this.deleteJobErrorSignal.set('Unable to delete job via API.');
-        } finally {
-            this.deleteJobLoadingSignal.set(false);
-        }
+            )
+            .pipe(
+                tap(() => {
+                    const current = this.jobDetailSignal();
+                    if (current?.jobId === trimmedId || current?.jobKey === trimmedId) {
+                        this.jobDetailSignal.set(null);
+                    }
+                    this.jobRegistrySignal.set(
+                        this.jobRegistrySignal().filter((entry) => entry.jobKey !== trimmedId),
+                    );
+                    this.refreshJobRegistry();
+                }),
+                catchError((error: unknown) => {
+                    console.error('Failed to delete job', error);
+                    const authFailure = authFailureFromError(error, {
+                        forbidden: 'Forbidden (403) — your token is missing jobs permissions for this tenant.',
+                    });
+                    if (authFailure) {
+                        this.deleteJobErrorSignal.set(authFailure.message);
+                        return EMPTY;
+                    }
+                    if (error instanceof HttpErrorResponse && error.status === 404) {
+                        this.deleteJobErrorSignal.set('Job not found (404) — it may have already been deleted.');
+                        return EMPTY;
+                    }
+                    this.deleteJobErrorSignal.set('Unable to delete job via API.');
+                    return EMPTY;
+                }),
+                finalize(() => {
+                    this.deleteJobLoadingSignal.set(false);
+                }),
+            )
+            .subscribe();
     }
 
-    async triggerJob(jobKey: string, metadata: Record<string, string>): Promise<void> {
+    triggerJob(jobKey: string, metadata: Record<string, string>): void {
         const trimmedKey = jobKey.trim();
         if (!trimmedKey) {
             this.lastErrorSignal.set('Job key is required before triggering.');
@@ -375,27 +368,33 @@ export class JobsStore {
         this.triggerLog.set([entry, ...this.triggerLog()]);
         this.lastErrorSignal.set(null);
 
-        try {
-            await this.api.triggerJob(
+        this.api
+            .triggerJob(
                 { jobKey: trimmedKey, metadata },
                 this.tenantContext.createRequestOptions(
                     `jobs.trigger:${trimmedKey}`,
-                    this.buildCallerOverrides(metadata)
+                    this.buildCallerOverrides(metadata),
                 ),
-            );
-            this.updateEntry(entry.id, {
-                status: 'success',
-                completedAt: nowIso(),
-            });
-        } catch (error) {
-            console.error('Failed to trigger job', error);
-            this.lastErrorSignal.set('Unable to trigger job via API — entry retained locally.');
-            this.updateEntry(entry.id, {
-                status: 'error',
-                completedAt: nowIso(),
-                error: error instanceof Error ? error.message : 'Unknown error',
-            });
-        }
+            )
+            .pipe(
+                tap(() => {
+                    this.updateEntry(entry.id, {
+                        status: 'success',
+                        completedAt: nowIso(),
+                    });
+                }),
+                catchError((error: unknown) => {
+                    console.error('Failed to trigger job', error);
+                    this.lastErrorSignal.set('Unable to trigger job via API — entry retained locally.');
+                    this.updateEntry(entry.id, {
+                        status: 'error',
+                        completedAt: nowIso(),
+                        error: error instanceof Error ? error.message : 'Unknown error',
+                    });
+                    return EMPTY;
+                }),
+            )
+            .subscribe();
     }
 
     private updateEntry(id: string, patch: Partial<ManualTriggerEntry>): void {

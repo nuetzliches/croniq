@@ -7,7 +7,7 @@ export type CommandPaletteCommand = {
     id: string;
     label: string;
     path?: string;
-    execute?: () => void | Promise<void>;
+    execute?: () => void;
     description?: string;
     keywords?: ReadonlyArray<CommandKeyword>;
 };
@@ -119,20 +119,20 @@ export class CommandPaletteController {
         this.activeIndex.set(next);
     }
 
-    async executeCommand(index = this.activeIndex()): Promise<void> {
+    executeCommand(index = this.activeIndex()): void {
         const command = this.filteredCommands()[index];
         if (!command) {
             return;
         }
 
         if (command.execute) {
-            await command.execute();
+            command.execute();
             this.close();
             return;
         }
 
         if (command.path) {
-            await this.router.navigate(['/', command.path]);
+            void this.router.navigate(['/', command.path]);
             this.close();
         }
     }

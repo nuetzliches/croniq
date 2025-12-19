@@ -5,6 +5,7 @@ import { AuthSessionService } from '@core/auth/auth-session.service';
 import { PasswordAuthService } from '@core/auth/password-auth.service';
 import { TenantContextService } from '@core/tenant-context/tenant-context.service';
 import { AppBrand } from '@shared/app-brand/app-brand';
+import { finalize } from 'rxjs';
 
 @Component({
     selector: 'cq-login-page',
@@ -68,7 +69,7 @@ export class LoginPage {
         required(fieldPath.password, { message: 'Bitte Passwort angeben.' });
     });
 
-    async login(): Promise<void> {
+    login(): void {
         if (this.busy()) {
             return;
         }
@@ -93,33 +94,36 @@ export class LoginPage {
         this.lastAction.set(null);
         this.lastActionTone.set(null);
 
-        try {
-            const result = await this.passwordAuth.login({ username, password });
-            const tenantId = this.tenantContext.snapshot().tenantId.trim();
-            const resolvedTenantId = result.tenantId?.trim();
-            const tenantReference = result.tenantReference?.trim();
-            if (!tenantId) {
-                if (resolvedTenantId) {
-                    this.tenantContext.setTenantIdentity(resolvedTenantId);
-                } else if (tenantReference) {
-                    this.tenantContext.setTenantIdentity(tenantReference);
-                }
-            }
-            this.loginModel.update((model) => ({ ...model, password: '' }));
-            this.lastAction.set('Login erfolgreich.');
-            this.lastActionTone.set('success');
+        this.passwordAuth
+            .login({ username, password })
+            .pipe(finalize(() => this.busy.set(false)))
+            .subscribe({
+                next: (result) => {
+                    const tenantId = this.tenantContext.snapshot().tenantId.trim();
+                    const resolvedTenantId = result.tenantId?.trim();
+                    const tenantReference = result.tenantReference?.trim();
+                    if (!tenantId) {
+                        if (resolvedTenantId) {
+                            this.tenantContext.setTenantIdentity(resolvedTenantId);
+                        } else if (tenantReference) {
+                            this.tenantContext.setTenantIdentity(tenantReference);
+                        }
+                    }
+                    this.loginModel.update((model) => ({ ...model, password: '' }));
+                    this.lastAction.set('Login erfolgreich.');
+                    this.lastActionTone.set('success');
 
-            if (result.passwordChangeRequired) {
-                await this.router.navigateByUrl('/change-password');
-            } else {
-                await this.router.navigateByUrl(this.resolveReturnUrl());
-            }
-        } catch (error) {
-            this.lastAction.set(error instanceof Error ? error.message : 'Login fehlgeschlagen.');
-            this.lastActionTone.set('error');
-        } finally {
-            this.busy.set(false);
-        }
+                    if (result.passwordChangeRequired) {
+                        void this.router.navigateByUrl('/change-password');
+                    } else {
+                        void this.router.navigateByUrl(this.resolveReturnUrl());
+                    }
+                },
+                error: (error: unknown) => {
+                    this.lastAction.set(error instanceof Error ? error.message : 'Login fehlgeschlagen.');
+                    this.lastActionTone.set('error');
+                },
+            });
     }
 
     private resolveReturnUrl(): string {

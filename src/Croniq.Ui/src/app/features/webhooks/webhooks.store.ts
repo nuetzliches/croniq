@@ -4,7 +4,7 @@ import { TenantContextService } from '@core/tenant-context/tenant-context.servic
 import { isoFromEpochMs, nowIso, nowMs, tryIsoFromUnknown } from '@core/time/clock';
 import { CreateWebhookIpRuleRequest, RotateWebhookSecretRequest, UpsertWebhookEndpointRequest } from '@croniq/api-schema';
 import { CRONIQ_API_CLIENT, CroniqApiClient, TenantDeadLetterParams, TenantEnvironmentParams, TenantWebhookParams, TenantWebhookRuleParams, TenantWebhookUpsertParams, WebhookInvocationParams } from 'data-access';
-import { catchError, from, map, of, tap } from 'rxjs';
+import { EMPTY, catchError, map, of, tap } from 'rxjs';
 
 export type WebhookEndpointView = {
     hookKey: string;
@@ -24,14 +24,32 @@ export type WebhookActionEntry = {
     recordedAt: string;
 };
 
+export type WebhookIpRuleView = {
+    ruleId: string;
+    cidr: string;
+    description?: string;
+};
+
+export type WebhookDeadLetterView = {
+    id: string;
+    hookKey: string;
+    jobKey?: string;
+    occurredAt: string;
+    attempts?: number;
+    reason?: string;
+};
+
 @Injectable()
 export class WebhooksStore {
     private readonly api = inject<CroniqApiClient>(CRONIQ_API_CLIENT);
     private readonly tenantContext = inject(TenantContextService);
 
-    private readonly endpointsSignal = signal<ReadonlyArray<WebhookEndpointView>>(seedEndpoints());
-    private readonly actionLogSignal = signal<ReadonlyArray<WebhookActionEntry>>(seedActionLog());
-    private readonly deadLetterCountSignal = signal(0);
+    private readonly selectedHookKeySignal = signal('');
+    private readonly endpointsSignal = signal<ReadonlyArray<WebhookEndpointView>>([]);
+    private readonly actionLogSignal = signal<ReadonlyArray<WebhookActionEntry>>([]);
+    private readonly ipRulesSignal = signal<ReadonlyArray<WebhookIpRuleView>>([]);
+    private readonly deadLettersSignal = signal<ReadonlyArray<WebhookDeadLetterView>>([]);
+    private readonly rotatedSecretSignal = signal<string | null>(null);
     private readonly lastErrorSignal = signal<string | null>(null);
     private readonly logNextRefreshSignal = signal(false);
 
@@ -51,9 +69,7 @@ export class WebhooksStore {
                 return of(this.endpointsSignal());
             }
 
-            const request$ = this.api.listTenantWebhooks$
-                ? this.api.listTenantWebhooks$({ tenantId, environment }, requestOptions)
-                : from(this.api.listTenantWebhooks({ tenantId, environment }, requestOptions));
+            const request$ = this.api.listTenantWebhooks({ tenantId, environment }, requestOptions);
 
             return request$.pipe(
                 map((response) => this.normalizeEndpointResponse(response, environment)),
@@ -92,19 +108,46 @@ export class WebhooksStore {
             const tenantId = params.tenantId.trim();
             const environment = params.environment.trim();
             if (!tenantId || !environment) {
-                return of(this.deadLetterCountSignal());
+                return of(this.deadLettersSignal().length);
             }
 
-            const request$ = this.api.listTenantWebhookDeadLetters$
-                ? this.api.listTenantWebhookDeadLetters$({ tenantId, environment }, requestOptions)
-                : from(this.api.listTenantWebhookDeadLetters({ tenantId, environment }, requestOptions));
+            const request$ = this.api.listTenantWebhookDeadLetters({ tenantId, environment }, requestOptions);
 
             return request$.pipe(
-                map((response) => (Array.isArray(response) ? response.length : this.deadLetterCountSignal())),
-                tap((total) => this.deadLetterCountSignal.set(total)),
+                map((response) => this.normalizeDeadLettersResponse(response, environment)),
+                tap((entries) => this.deadLettersSignal.set(entries)),
+                map((entries) => entries.length),
                 catchError((error: unknown) => {
                     console.error('Unable to fetch dead letters', error);
-                    return of(this.deadLetterCountSignal());
+                    return of(this.deadLettersSignal().length);
+                }),
+            );
+        },
+    });
+
+    private readonly ipRulesResource = tenantRxResource<ReadonlyArray<WebhookIpRuleView>, { tenantId: string; environment: string; hookKey: string }>({
+        command: 'webhooks.list-ip-rules',
+        defaultValue: this.ipRulesSignal(),
+        params: () => {
+            const { tenantId, environment } = this.tenantContext.snapshot();
+            return { tenantId, environment, hookKey: this.selectedHookKeySignal() };
+        },
+        stream: ({ params, requestOptions }) => {
+            const tenantId = params.tenantId.trim();
+            const environment = params.environment.trim();
+            const hookKey = params.hookKey.trim();
+            if (!tenantId || !environment || !hookKey) {
+                return of(this.ipRulesSignal());
+            }
+
+            const request$ = this.api.listTenantWebhookIpRules({ tenantId, environment, hookKey }, requestOptions);
+
+            return request$.pipe(
+                map((response) => this.normalizeIpRulesResponse(response)),
+                tap((rules) => this.ipRulesSignal.set(rules)),
+                catchError((error: unknown) => {
+                    console.error('Unable to fetch IP rules', error);
+                    return of(this.ipRulesSignal());
                 }),
             );
         },
@@ -112,12 +155,30 @@ export class WebhooksStore {
 
     readonly endpoints = this.endpointsSignal.asReadonly();
     readonly actionLog = this.actionLogSignal.asReadonly();
-    readonly loading = computed(() => this.endpointsResource.isLoading() || this.deadLetterCountResource.isLoading());
-    readonly deadLetterCount = this.deadLetterCountSignal.asReadonly();
+    readonly ipRules = this.ipRulesSignal.asReadonly();
+    readonly deadLetters = this.deadLettersSignal.asReadonly();
+    readonly rotatedSecret = this.rotatedSecretSignal.asReadonly();
+
+    readonly loading = computed(() =>
+        this.endpointsResource.isLoading()
+        || this.deadLetterCountResource.isLoading()
+        || this.ipRulesResource.isLoading(),
+    );
+
+    readonly deadLetterCount = computed(() => this.deadLettersSignal().length);
     readonly lastError = this.lastErrorSignal.asReadonly();
     readonly activeCount = computed(() => this.endpoints().filter((endpoint) => endpoint.status === 'active').length);
 
-    async refreshEndpoints(params: TenantEnvironmentParams): Promise<void> {
+    selectHook(hookKey: string): void {
+        const normalized = hookKey.trim();
+        if (normalized === this.selectedHookKeySignal()) {
+            return;
+        }
+        this.selectedHookKeySignal.set(normalized);
+        this.rotatedSecretSignal.set(null);
+    }
+
+    refreshEndpoints(params: TenantEnvironmentParams): void {
         const tenantId = params.tenantId.trim();
         const environment = params.environment.trim();
         if (!tenantId) {
@@ -132,127 +193,248 @@ export class WebhooksStore {
         this.logNextRefreshSignal.set(true);
         this.endpointsResource.reload();
         this.deadLetterCountResource.reload();
+        this.ipRulesResource.reload();
     }
 
-    async upsertEndpoint(
+    upsertEndpoint(
         params: TenantWebhookUpsertParams,
         payload: UpsertWebhookEndpointRequest,
-    ): Promise<void> {
-        try {
-            await this.api.upsertTenantWebhook(
+    ): void {
+        this.api
+            .upsertTenantWebhook(
                 params,
                 payload,
                 this.tenantContext.createRequestOptions('webhooks.upsert', {
                     tenantId: params.tenantId,
                     environment: params.environment,
                 }),
-            );
-            this.recordAction(`Upserted ${payload.hookKey}`, 'success');
-        } catch (error) {
-            console.error('Unable to upsert webhook', error);
-            this.recordAction('Upsert failed', 'error', error instanceof Error ? error.message : 'Unknown error');
-        }
+            )
+            .pipe(
+                tap(() => {
+                    this.recordAction(`Upserted ${payload.hookKey}`, 'success');
+                    this.endpointsResource.reload();
+                }),
+                catchError((error: unknown) => {
+                    console.error('Unable to upsert webhook', error);
+                    this.recordAction(
+                        'Upsert failed',
+                        'error',
+                        error instanceof Error ? error.message : 'Unknown error',
+                    );
+                    return EMPTY;
+                }),
+            )
+            .subscribe();
     }
 
-    async deleteEndpoint(params: TenantWebhookParams): Promise<void> {
-        try {
-            await this.api.deleteTenantWebhook(
+    deleteEndpoint(params: TenantWebhookParams): void {
+        this.api
+            .deleteTenantWebhook(
                 params,
                 this.tenantContext.createRequestOptions('webhooks.delete', {
                     tenantId: params.tenantId,
                     environment: params.environment,
                 }),
-            );
-            this.recordAction(`Deleted ${params.hookKey}`, 'success');
-        } catch (error) {
-            console.error('Unable to delete webhook', error);
-            this.recordAction('Delete failed', 'error', error instanceof Error ? error.message : 'Unknown error');
-        }
+            )
+            .pipe(
+                tap(() => {
+                    this.recordAction(`Deleted ${params.hookKey}`, 'success');
+                    this.endpointsResource.reload();
+                }),
+                catchError((error: unknown) => {
+                    console.error('Unable to delete webhook', error);
+                    this.recordAction(
+                        'Delete failed',
+                        'error',
+                        error instanceof Error ? error.message : 'Unknown error',
+                    );
+                    return EMPTY;
+                }),
+            )
+            .subscribe();
     }
 
-    async rotateSecret(
+    rotateSecret(
         params: TenantWebhookParams,
         payload: RotateWebhookSecretRequest,
-    ): Promise<void> {
-        try {
-            await this.api.rotateTenantWebhookSecret(
+    ): void {
+        this.api
+            .rotateTenantWebhookSecret(
                 params,
                 payload,
                 this.tenantContext.createRequestOptions('webhooks.rotate-secret', {
                     tenantId: params.tenantId,
                     environment: params.environment,
                 }),
-            );
-            this.recordAction(`Rotated secret for ${params.hookKey}`, 'success');
-        } catch (error) {
-            console.error('Unable to rotate webhook secret', error);
-            this.recordAction('Secret rotation failed', 'error', error instanceof Error ? error.message : 'Unknown error');
-        }
+            )
+            .pipe(
+                tap((response) => {
+                    const rotatedSecret = extractRotatedSecret(response);
+                    this.rotatedSecretSignal.set(rotatedSecret);
+                    this.recordAction(`Rotated secret for ${params.hookKey}`, 'success');
+                    this.endpointsResource.reload();
+                }),
+                catchError((error: unknown) => {
+                    console.error('Unable to rotate webhook secret', error);
+                    this.recordAction(
+                        'Secret rotation failed',
+                        'error',
+                        error instanceof Error ? error.message : 'Unknown error',
+                    );
+                    return EMPTY;
+                }),
+            )
+            .subscribe();
     }
 
-    async createIpRule(
+    createIpRule(
         params: TenantWebhookParams,
         payload: CreateWebhookIpRuleRequest,
-    ): Promise<void> {
-        try {
-            await this.api.createTenantWebhookIpRule(
+    ): void {
+        this.api
+            .createTenantWebhookIpRule(
                 params,
                 payload,
                 this.tenantContext.createRequestOptions('webhooks.create-ip-rule', {
                     tenantId: params.tenantId,
                     environment: params.environment,
                 }),
-            );
-            this.recordAction(`Created IP rule for ${params.hookKey}`, 'success');
-        } catch (error) {
-            console.error('Unable to create IP rule', error);
-            this.recordAction('IP rule creation failed', 'error', error instanceof Error ? error.message : 'Unknown error');
-        }
+            )
+            .pipe(
+                tap(() => {
+                    this.recordAction(`Created IP rule for ${params.hookKey}`, 'success');
+                    this.ipRulesResource.reload();
+                }),
+                catchError((error: unknown) => {
+                    console.error('Unable to create IP rule', error);
+                    this.recordAction(
+                        'IP rule creation failed',
+                        'error',
+                        error instanceof Error ? error.message : 'Unknown error',
+                    );
+                    return EMPTY;
+                }),
+            )
+            .subscribe();
     }
 
-    async deleteIpRule(params: TenantWebhookRuleParams): Promise<void> {
-        try {
-            await this.api.deleteTenantWebhookIpRule(
+    deleteIpRule(params: TenantWebhookRuleParams): void {
+        this.api
+            .deleteTenantWebhookIpRule(
                 params,
                 this.tenantContext.createRequestOptions('webhooks.delete-ip-rule', {
                     tenantId: params.tenantId,
                     environment: params.environment,
                 }),
-            );
-            this.recordAction(`Removed IP rule ${params.ruleId}`, 'success');
-        } catch (error) {
-            console.error('Unable to delete IP rule', error);
-            this.recordAction('IP rule deletion failed', 'error', error instanceof Error ? error.message : 'Unknown error');
-        }
+            )
+            .pipe(
+                tap(() => {
+                    this.recordAction(`Removed IP rule ${params.ruleId}`, 'success');
+                    this.ipRulesResource.reload();
+                }),
+                catchError((error: unknown) => {
+                    console.error('Unable to delete IP rule', error);
+                    this.recordAction(
+                        'IP rule deletion failed',
+                        'error',
+                        error instanceof Error ? error.message : 'Unknown error',
+                    );
+                    return EMPTY;
+                }),
+            )
+            .subscribe();
     }
 
-    async replayDeadLetter(params: TenantDeadLetterParams): Promise<void> {
-        try {
-            await this.api.replayTenantWebhookDeadLetter(
+    replayDeadLetter(params: TenantDeadLetterParams): void {
+        this.api
+            .replayTenantWebhookDeadLetter(
                 params,
                 this.tenantContext.createRequestOptions('webhooks.replay-dead-letter', {
                     tenantId: params.tenantId,
                     environment: params.environment,
                 }),
-            );
-            this.recordAction(`Replayed dead letter ${params.deadLetterId}`, 'success');
-        } catch (error) {
-            console.error('Unable to replay dead letter', error);
-            this.recordAction('Dead letter replay failed', 'error', error instanceof Error ? error.message : 'Unknown error');
-        }
+            )
+            .pipe(
+                tap(() => {
+                    this.recordAction(`Replayed dead letter ${params.deadLetterId}`, 'success');
+                    this.deadLetterCountResource.reload();
+                }),
+                catchError((error: unknown) => {
+                    console.error('Unable to replay dead letter', error);
+                    this.recordAction(
+                        'Dead letter replay failed',
+                        'error',
+                        error instanceof Error ? error.message : 'Unknown error',
+                    );
+                    return EMPTY;
+                }),
+            )
+            .subscribe();
     }
 
-    async invokeWebhook(params: WebhookInvocationParams): Promise<void> {
-        try {
-            await this.api.invokeWebhook(
-                params,
-                this.tenantContext.createRequestOptions(`webhooks.invoke:${params.hookKey}`),
-            );
-            this.recordAction(`Invoked ${params.hookKey}`, 'success');
-        } catch (error) {
-            console.error('Unable to invoke webhook', error);
-            this.recordAction('Invocation failed', 'error', error instanceof Error ? error.message : 'Unknown error');
+    invokeWebhook(params: WebhookInvocationParams): void {
+        this.api
+            .invokeWebhook(params, this.tenantContext.createRequestOptions(`webhooks.invoke:${params.hookKey}`))
+            .pipe(
+                tap(() => {
+                    this.recordAction(`Invoked ${params.hookKey}`, 'success');
+                }),
+                catchError((error: unknown) => {
+                    console.error('Unable to invoke webhook', error);
+                    this.recordAction(
+                        'Invocation failed',
+                        'error',
+                        error instanceof Error ? error.message : 'Unknown error',
+                    );
+                    return EMPTY;
+                }),
+            )
+            .subscribe();
+    }
+
+    private normalizeDeadLettersResponse(value: unknown, fallbackEnvironment: string): ReadonlyArray<WebhookDeadLetterView> {
+        if (!Array.isArray(value)) {
+            return this.deadLettersSignal();
         }
+
+        const entries: WebhookDeadLetterView[] = [];
+        value.forEach((item, index) => {
+            if (typeof item !== 'object' || item === null) {
+                return;
+            }
+            const record = item as Record<string, unknown>;
+            const id = record['id'] ?? record['deadLetterId'] ?? index;
+            entries.push({
+                id: String(id),
+                hookKey: typeof record['hookKey'] === 'string' ? record['hookKey'] : 'unknown-hook',
+                jobKey: typeof record['jobKey'] === 'string' ? record['jobKey'] : undefined,
+                occurredAt: tryIsoFromUnknown(record['occurredAt'] ?? record['occurredAtUtc'] ?? record['createdAt'] ?? record['createdAtUtc']) ?? nowIso(),
+                attempts: typeof record['attempts'] === 'number' ? record['attempts'] : undefined,
+                reason: typeof record['reason'] === 'string' ? record['reason'] : typeof record['error'] === 'string' ? record['error'] : undefined,
+            });
+        });
+
+        return entries.length ? entries : this.deadLettersSignal();
+    }
+
+    private normalizeIpRulesResponse(value: unknown): ReadonlyArray<WebhookIpRuleView> {
+        if (!Array.isArray(value)) {
+            return this.ipRulesSignal();
+        }
+        const entries: WebhookIpRuleView[] = [];
+        value.forEach((item, index) => {
+            if (typeof item !== 'object' || item === null) {
+                return;
+            }
+            const record = item as Record<string, unknown>;
+            const id = record['ruleId'] ?? record['id'] ?? index;
+            entries.push({
+                ruleId: String(id),
+                cidr: typeof record['cidr'] === 'string' ? record['cidr'] : 'unknown-cidr',
+                description: typeof record['description'] === 'string' ? record['description'] : undefined,
+            });
+        });
+        return entries.length ? entries : this.ipRulesSignal();
     }
 
     private normalizeEndpointResponse(value: unknown, fallbackEnvironment: string): ReadonlyArray<WebhookEndpointView> {
@@ -294,40 +476,22 @@ export class WebhooksStore {
     }
 }
 
-function seedEndpoints(): ReadonlyArray<WebhookEndpointView> {
-    const now = nowMs();
-    return [
-        {
-            hookKey: 'billing-updates',
-            jobKey: 'jobs.billing-webhook',
-            environment: 'production',
-            requireSignature: true,
-            requestsPerMinute: 120,
-            status: 'active',
-            lastDeliveryAt: isoFromEpochMs(now - 1000 * 60 * 5),
-        },
-        {
-            hookKey: 'ops-dead-letter',
-            jobKey: 'jobs.ops-dead-letter',
-            environment: 'staging',
-            requireSignature: true,
-            requestsPerMinute: 40,
-            status: 'degraded',
-            lastDeliveryAt: isoFromEpochMs(now - 1000 * 60 * 45),
-        },
+function extractRotatedSecret(payload: unknown): string | null {
+    if (typeof payload === 'string') {
+        return payload.trim() ? payload : null;
+    }
+    if (typeof payload !== 'object' || payload === null) {
+        return null;
+    }
+    const record = payload as Record<string, unknown>;
+    const candidates: ReadonlyArray<unknown> = [
+        record['secret'],
+        record['plaintextSecret'],
+        record['plainTextSecret'],
+        record['value'],
     ];
-}
-
-function seedActionLog(): ReadonlyArray<WebhookActionEntry> {
-    const now = nowMs();
-    return [
-        {
-            id: createEntryId(),
-            summary: 'Secret rotated for billing-updates',
-            status: 'success',
-            recordedAt: isoFromEpochMs(now - 1000 * 60 * 60),
-        },
-    ];
+    const hit = candidates.find((value) => typeof value === 'string' && value.trim().length > 0);
+    return typeof hit === 'string' ? hit : null;
 }
 
 function createEntryId(): string {

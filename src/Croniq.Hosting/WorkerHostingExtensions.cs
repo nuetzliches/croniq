@@ -33,6 +33,7 @@ public static class WorkerHostingExtensions
         services.AddCroniqDefaultProviders();
         services.AddCroniqInMemoryJobStore();
         services.AddHostedService<CroniqTriggerSeedingHostedService>();
+        services.AddHostedService<CroniqTriggerSummaryHostedService>();
         services.AddCroniqWorkerHost();
 
         var persistenceOpts = configuration.GetSection("Croniq:Persistence").Get<CroniqPersistenceOptions>() ?? new CroniqPersistenceOptions();
