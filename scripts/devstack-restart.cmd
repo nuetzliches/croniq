@@ -22,6 +22,8 @@ if /I "%~1"=="/?" goto help
 if /I "%~1"=="--clean" goto handle_clean
 if /I "%~1"=="--build" goto handle_build
 if /I "%~1"=="--no-build" goto handle_no_build
+if /I "%~1"=="--ui" goto handle_ui
+if /I "%~1"=="--no-ui" goto handle_no_ui
 if /I "%~1"=="--sample" goto handle_sample
 if /I "%~1"=="--no-sample" goto handle_no_sample
 if /I "%~1"=="--follow" goto handle_follow
@@ -29,6 +31,16 @@ if /I "%~1"=="--no-follow" goto handle_no_follow
 if /I "%~1"=="--no-window" goto handle_no_window
 if /I "%~1"=="--window" goto handle_window
 set DOWN_FORWARD_ARGS=!DOWN_FORWARD_ARGS! %~1
+set UP_FORWARD_ARGS=!UP_FORWARD_ARGS! %~1
+shift
+goto parse
+
+:handle_ui
+set UP_FORWARD_ARGS=!UP_FORWARD_ARGS! %~1
+shift
+goto parse
+
+:handle_no_ui
 set UP_FORWARD_ARGS=!UP_FORWARD_ARGS! %~1
 shift
 goto parse
@@ -110,12 +122,13 @@ echo.
 echo Croniq devstack restart
 echo.
 echo Usage:
-echo   scripts\devstack-restart.cmd [--profile NAME ...] [--sample apihost] [--no-sample]
+echo   scripts\devstack-restart.cmd [--profile NAME ...] [--sample apihost] [--no-sample] [--ui ^| --no-ui]
 echo.
 echo Notes:
 echo   - --profile is forwarded to docker compose (via devstack-down/up).
 echo   - --sample is forwarded only to devstack-up.cmd (host-run samples).
 echo   - --no-sample is forwarded only to devstack-up.cmd.
+echo   - --ui/--no-ui are forwarded only to devstack-up.cmd.
 echo   - --follow/--no-follow are forwarded only to devstack-up.cmd.
 echo   - --no-window/--window are forwarded only to devstack-up.cmd.
 echo   - Restart keeps volumes by default for speed; use --clean to drop volumes (-v).

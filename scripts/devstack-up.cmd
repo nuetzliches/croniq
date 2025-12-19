@@ -15,6 +15,9 @@ set DO_BUILD=1
 set FOLLOW_SAMPLE=
 set NO_SAMPLE_WINDOW=
 
+set START_UI=
+set NO_UI=
+
 if not exist ".env" (
     echo [devstack] Missing .env in repo root. Copy .env.example to .env first.
     exit /b 1
@@ -36,6 +39,8 @@ if "%~1"=="" goto parsed
 if /I "%~1"=="--help" goto help
 if /I "%~1"=="-h" goto help
 if /I "%~1"=="/?" goto help
+if /I "%~1"=="--ui" goto handle_ui
+if /I "%~1"=="--no-ui" goto handle_no_ui
 if /I "%~1"=="--build" goto handle_build
 if /I "%~1"=="--no-build" goto handle_no_build
 if /I "%~1"=="--follow" goto handle_follow
@@ -45,6 +50,18 @@ if /I "%~1"=="--window" goto handle_window
 if /I "%~1"=="--no-sample" goto handle_no_sample
 if /I "%~1"=="--sample" goto handle_sample
 set USER_PROFILES=%USER_PROFILES% %~1
+shift
+goto parse
+
+:handle_ui
+set START_UI=1
+set NO_UI=
+shift
+goto parse
+
+:handle_no_ui
+set NO_UI=1
+set START_UI=
 shift
 goto parse
 
@@ -153,6 +170,62 @@ if /I "%RUN_SAMPLE%"=="apihost" (
     )
 )
 
+REM Decide whether to start the UI (dev-only) in a separate terminal.
+set UI_REASON=
+set AUTO_UI=0
+set UI_ENABLED=
+
+REM Hard-disable in CI / GitHub Actions (even if --ui is passed).
+if not "%GITHUB_ACTIONS%"=="" (
+    set UI_ENABLED=0
+    set UI_REASON=disabled because running in GitHub Actions
+) else if not "%CI%"=="" (
+    set UI_ENABLED=0
+    set UI_REASON=disabled because running in CI
+)
+
+REM Allow env override for local dev.
+if "%UI_ENABLED%"=="" (
+    if /I "%CRONIQ_DEVSTACK_UI%"=="0" set UI_ENABLED=0
+    if /I "%CRONIQ_DEVSTACK_UI%"=="false" set UI_ENABLED=0
+    if /I "%CRONIQ_DEVSTACK_UI%"=="1" set UI_ENABLED=1
+    if /I "%CRONIQ_DEVSTACK_UI%"=="true" set UI_ENABLED=1
+    if not "%UI_ENABLED%"=="" set UI_REASON=override via CRONIQ_DEVSTACK_UI=%CRONIQ_DEVSTACK_UI%
+)
+
+REM Command line opts win over env (except CI hard-disable above).
+if "%UI_ENABLED%"=="" (
+    if not "%START_UI%"=="" (
+        set UI_ENABLED=1
+        set UI_REASON=explicit --ui
+    ) else if not "%NO_UI%"=="" (
+        set UI_ENABLED=0
+        set UI_REASON=disabled via --no-ui
+    ) else (
+        set UI_ENABLED=1
+        set AUTO_UI=1
+        set UI_REASON=enabled by default
+    )
+)
+
+REM Guard: UI needs an API (either host sample or container profile).
+if "%UI_ENABLED%"=="1" (
+    if not "%RUN_SAMPLE%"=="" (
+        REM Host ApiHost will be started; OK.
+    ) else (
+        if not "!HAS_API_PROFILE!"=="1" (
+            set UI_ENABLED=0
+            set UI_REASON=skipped because no API is started (no host sample, no api profile)
+        )
+    )
+)
+
+if "%UI_ENABLED%"=="1" (
+    echo [devstack] UI will start: %UI_REASON%
+) else (
+    echo [devstack] UI not started: %UI_REASON%
+)
+
 set BUILD_ARG=--build
 if "%DO_BUILD%"=="0" set BUILD_ARG=
 
@@ -172,6 +245,9 @@ call :maybe_wait_for_api "%PROFILE_ARGS%" "%HEALTH_URL%" "%RUN_SAMPLE%"
 if errorlevel 1 exit /b 1
 
 call :maybe_start_sample "%RUN_SAMPLE%" "%HEALTH_URL%" "%PROFILE_ARGS%"
+if errorlevel 1 exit /b 1
+
+call :maybe_start_ui "%UI_ENABLED%"
 if errorlevel 1 exit /b 1
 
 echo [devstack] Croniq dev stack is ready.
@@ -283,6 +359,76 @@ echo [devstack] Following host ApiHost logs (Ctrl+C to stop following; ApiHost k
 powershell -NoProfile -Command "Get-Content -Encoding UTF8 -Path @('%OUT_LOG%','%ERR_LOG%') -Tail 50 -Wait"
 endlocal & exit /b 0
 
+:maybe_start_ui
+setlocal EnableExtensions DisableDelayedExpansion
+set "ENABLE=%~1"
+
+if not "%ENABLE%"=="1" (endlocal & exit /b 0)
+
+REM We start the UI in a separate PowerShell window (dev-only).
+set "UI_DIR=src\Croniq.Ui"
+if not exist "%UI_DIR%\package.json" (
+    echo [devstack] UI not started: %UI_DIR%\package.json not found.
+    endlocal & exit /b 0
+)
+
+REM Best-effort check for npm.
+where npm >nul 2>&1
+if errorlevel 1 (
+    echo [devstack] UI not started: npm not found on PATH.
+    echo [devstack] Install Node.js + npm, then rerun devstack-up.
+    endlocal & exit /b 0
+)
+
+set "PID_DIR=artifacts\devstack"
+if not exist "%PID_DIR%" mkdir "%PID_DIR%" >nul 2>&1
+set "PID_FILE=%PID_DIR%\ui.pid"
+
+REM Stop previous UI instance if pid file exists.
+if exist "%PID_FILE%" (
+    for /f "usebackq delims=" %%P in ("%PID_FILE%") do set OLD_PID=%%P
+    if not "%OLD_PID%"=="" (
+        powershell -NoProfile -Command "try { Stop-Process -Id %OLD_PID% -Force -ErrorAction SilentlyContinue } catch {}" >nul 2>&1
+    )
+    del /q "%PID_FILE%" >nul 2>&1
+)
+
+REM UI endpoint (Angular default).
+if "%CRONIQ_UI_HTTP_PORT%"=="" set CRONIQ_UI_HTTP_PORT=5081
+echo [devstack] Starting UI (Angular) in a new terminal tab: http://localhost:%CRONIQ_UI_HTTP_PORT% ...
+
+set "UI_SCRIPT=scripts\devstack-ui.ps1"
+if not exist "%UI_SCRIPT%" (
+    echo [devstack] UI not started: %UI_SCRIPT% not found.
+    endlocal & exit /b 0
+)
+
+REM Prefer Windows Terminal new-tab when running inside Windows Terminal.
+where wt >nul 2>&1
+if not errorlevel 1 (
+    if not "%WT_SESSION%"=="" (
+        wt -w 0 new-tab --title "Croniq UI" -d "%CD%" powershell -NoProfile -NoExit -ExecutionPolicy Bypass -File "%CD%\%UI_SCRIPT%" -UiPort %CRONIQ_UI_HTTP_PORT% >nul 2>&1
+        goto wait_for_ui_pid
+    )
+)
+
+REM Fallback: start a separate PowerShell window.
+powershell -NoProfile -Command "$root=(Resolve-Path '.'); $script=Join-Path $root '%UI_SCRIPT%'; $args=@('-NoProfile','-NoExit','-ExecutionPolicy','Bypass','-File',$script,'-UiPort','%CRONIQ_UI_HTTP_PORT%'); Start-Process -FilePath 'powershell' -ArgumentList $args -WorkingDirectory $root | Out-Null" >nul 2>&1
+
+:wait_for_ui_pid
+REM Wait briefly for PID file to be created by scripts/devstack-ui.ps1.
+for /L %%I in (1,1,20) do (
+    if exist "%PID_FILE%" goto ui_pid_ok
+    timeout /t 1 >nul
+)
+
+echo [devstack] Warning: UI PID file was not created. UI may still be running.
+endlocal & exit /b 0
+
+:ui_pid_ok
+echo [devstack] UI PID written to %PID_FILE%
+endlocal & exit /b 0
+
 :maybe_wait_for_api
 setlocal
 set PROFILE_ARGS=%~1
@@ -389,11 +535,13 @@ echo.
 echo Croniq devstack up
 echo.
 echo Usage:
-echo   scripts\devstack-up.cmd [--profile NAME ...] [--sample apihost]
+echo   scripts\devstack-up.cmd [--profile NAME ...] [--sample apihost] [--ui ^| --no-ui]
 echo.
 echo Options:
 echo   --profile NAME     Forwarded to docker compose. You can pass multiple.
 echo                    Common profiles: api, worker, obs
+echo   --ui               Start Croniq.Ui (Angular) in a separate terminal (dev-only).
+echo   --no-ui            Do not start Croniq.Ui.
 echo   --build            Build docker images before starting containers (default).
 echo   --no-build         Skip docker image build and just start existing images.
 echo   --follow           If a host sample is started, follow its log output (default).
@@ -407,12 +555,16 @@ echo   --help, -h, /?     Show this help.
 echo.
 echo Environment overrides:
 echo   CRONIQ_DEVSTACK_PROFILES   If set, overrides all profile args passed to this script.
+echo   CRONIQ_DEVSTACK_UI         If set (0/1, false/true), overrides starting the UI (local dev only; CI is always disabled).
 echo   CRONIQ_API_HTTP_PORT       Used for host ApiHost port and container API health probe (default: 5080).
 echo   CRONIQ_API_BASEURL         Used for API health probe (default: http://localhost:%%CRONIQ_API_HTTP_PORT%%).
+echo   CRONIQ_UI_HTTP_PORT        UI port for ng serve (default: 5081).
 echo   CRONIQ_SAMPLE_APIHOST_HTTP_PORT  Informational only (default: 5090).
 echo.
 echo Examples:
 echo   scripts\devstack-up.cmd
+echo   scripts\devstack-up.cmd --no-ui
+echo   scripts\devstack-up.cmd --ui
 echo   scripts\devstack-up.cmd --profile api --profile obs
 echo   scripts\devstack-up.cmd --profile worker --sample apihost
 echo   scripts\devstack-up.cmd --profile worker --no-sample

@@ -324,9 +324,11 @@ Watch the API logs; you should see the `HelloWorldJob` message. Logs, metrics, a
    scripts\devstack-up.cmd --profile obs
    ```
 
-   This launches Prometheus (`http://localhost:9090`), Tempo, and Grafana (`http://localhost:5610`, default credentials `admin/admin`).
+By default, the dev stack also starts the Croniq UI dev server at `http://localhost:5081` (disable via `scripts\devstack-up.cmd --no-ui`). The API is reachable at `http://localhost:5080`.
 
-   > **Tenant reminder**: Loki and Grafana share the tenant `croniq-devstack`. If you fork the stack, keep the `X-Scope-OrgID` header (in `infra/docker/observability/grafana/datasources/datasource.yml`) and the OTEL collector header (`infra/docker/observability/otel-collector-config.yaml`) in sync so Explore always queries the tenant that actually receives your logs. Labels exposed by the collector (`service_name`, `service_instance`, `environment`, `tenant`) make it easy to scope queries such as `{tenant="croniq-devstack", environment="dev"}`.
+This launches Prometheus (`http://localhost:9090`), Tempo, and Grafana (`http://localhost:5610`, default credentials `admin/admin`).
+
+> **Tenant reminder**: Loki and Grafana share the tenant `croniq-devstack`. If you fork the stack, keep the `X-Scope-OrgID` header (in `infra/docker/observability/grafana/datasources/datasource.yml`) and the OTEL collector header (`infra/docker/observability/otel-collector-config.yaml`) in sync so Explore always queries the tenant that actually receives your logs. Labels exposed by the collector (`service_name`, `service_instance`, `environment`, `tenant`) make it easy to scope queries such as `{tenant="croniq-devstack", environment="dev"}`.
 
 2. Configure your quickstart host to export telemetry. The `AddCroniqObservability` helper reads `Croniq:Observability` settings, so either add them to `appsettings.Development.json` or export environment variables before running `dotnet run`:
 
