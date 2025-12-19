@@ -1,0 +1,44 @@
+<Solution>
+  <Configurations>
+    <Platform Name="Any CPU" />
+    <Platform Name="x64" />
+    <Platform Name="x86" />
+  </Configurations>
+  <Folder Name="/samples/">
+    <Project Path="samples/Croniq.Sample.ApiHost/Croniq.Sample.ApiHost.csproj" />
+    <Project Path="samples/Croniq.Sample.GrpcClient/Croniq.Sample.GrpcClient.csproj" />
+    <Project Path="samples/Croniq.Sample.Jobs/Croniq.Sample.Jobs.csproj" />
+    <Project Path="samples/Croniq.Sample.WorkerHost/Croniq.Sample.WorkerHost.csproj" />
+  </Folder>
+  <Folder Name="/src/">
+    <Project Path="src/Croniq.Api/Croniq.Api.csproj" />
+    <Project Path="src/Croniq.Auth.Abstractions/Croniq.Auth.Abstractions.csproj" />
+    <Project Path="src/Croniq.Auth.Core/Croniq.Auth.Core.csproj" />
+    <Project Path="src/Croniq.Auth.SqlServer/Croniq.Auth.SqlServer.csproj" />
+    <Project Path="src/Croniq.Core/Croniq.Core.csproj" />
+    <Project Path="src/Croniq.Hosting/Croniq.Hosting.csproj" />
+    <Project Path="src/Croniq.JobStore.InMemory/Croniq.JobStore.InMemory.csproj" />
+    <Project Path="src/Croniq.Persistence.Abstractions/Croniq.Persistence.Abstractions.csproj" />
+    <Project Path="src/Croniq.Persistence.SqlServer/Croniq.Persistence.SqlServer.csproj" />
+    <Project Path="src/Croniq.Providers.Abstractions/Croniq.Providers.Abstractions.csproj" />
+    <Project Path="src/Croniq.Providers.Default/Croniq.Providers.Default.csproj" />
+    <Project Path="src/Croniq.Rpc.Client/Croniq.Rpc.Client.csproj" />
+    <Project Path="src/Croniq.Sdk/Croniq.Sdk.csproj" />
+    <Project Path="src/Croniq.Webhooks/Croniq.Webhooks.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Croniq.Api.Smoke/Croniq.Api.Smoke.csproj" />
+    <Project Path="tests/Croniq.Api.Tests/Croniq.Api.Tests.csproj" />
+    <Project Path="tests/Croniq.Core.Tests/Croniq.Core.Tests.csproj" />
+    <Project Path="tests/Croniq.JobStore.InMemory.Tests/Croniq.JobStore.InMemory.Tests.csproj" />
+    <Project Path="tests/Croniq.Observability.Tests/Croniq.Observability.Tests.csproj" />
+    <Project Path="tests/Croniq.Persistence.SqlServer.Tests/Croniq.Persistence.SqlServer.Tests.csproj" />
+    <Project Path="tests/Croniq.Providers.Default.Tests/Croniq.Providers.Default.Tests.csproj" />
+    <Project Path="tests/Croniq.Sdk.Tests/Croniq.Sdk.Tests.csproj" />
+    <Project Path="tests/Croniq.TestKit/Croniq.TestKit.csproj" />
+  </Folder>
+  <Folder Name="/tools/">
+    <Project Path="tools/Croniq.DbMigrator/Croniq.DbMigrator.csproj" />
+  </Folder>
+  <Project Path="src/Croniq.Data.SqlServer/Croniq.Data.SqlServer.csproj" />
+</Solution>

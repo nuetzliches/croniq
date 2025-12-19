@@ -5,7 +5,7 @@ ARG DOTNET_VERSION=10.0
 FROM mcr.microsoft.com/dotnet/sdk:${DOTNET_VERSION} AS build-base
 WORKDIR /src
 
-COPY croniq.sln .
+COPY croniq.slnx .
 COPY Directory.Build.props .
 
 # Keep this list in sync with the project graph used by ApiHost/WorkerHost/DbMigrator.

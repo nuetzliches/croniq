@@ -118,7 +118,7 @@ This document extends the quality vision captured in `architecture.md` and descr
 
 ### PR Workflow (`.github/workflows/ci-pr.yml`)
 
-- **Lint**: `dotnet format croniq.sln --verify-no-changes`.
+- **Lint**: `dotnet format croniq.slnx --verify-no-changes`.
 - **Build**: `dotnet restore` + `dotnet build -warnaserror`.
 - **Unit/Contract Matrix**: run `dotnet test` for each suite (Core, JobStore.InMemory, Providers.Default, Observability, Persistence.SqlServer contract tests) with Coverlet instrumentation.
 - **Coverage Aggregation**: install `dotnet-reportgenerator-globaltool`, produce `coverage/report/Summary.json`, enforce thresholds.

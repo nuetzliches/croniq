@@ -120,7 +120,7 @@ jobs:
           dotnet-version: 10.0.x
 
       - name: Restore solution
-        run: dotnet restore croniq.sln
+        run: dotnet restore croniq.slnx
 
       - name: Prepare directories
         run: |

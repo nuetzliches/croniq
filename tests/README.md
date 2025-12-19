@@ -1,7 +1,7 @@
 ## Testing Guidance
 
-- Run the full solution suite via `pwsh ./scripts/run-tests.ps1 -Configuration Debug` from the repo root. The script wires required env vars (`CRONIQ_SQL`, coverage reporting, binlogs) and executes `dotnet test croniq.sln` outside of the VS Code extension host.
-- If you need to run `dotnet test croniq.sln` manually, do so from an external (preferably elevated) terminal instead of the VS Code Test Explorer. This avoids the GitHub Copilot Chat log-rotation issue that can freeze the editor when large test outputs are streamed inside VS Code.
+- Run the full solution suite via `pwsh ./scripts/run-tests.ps1 -Configuration Debug` from the repo root. The script wires required env vars (`CRONIQ_SQL`, coverage reporting, binlogs) and executes `dotnet test croniq.slnx` outside of the VS Code extension host.
+- If you need to run `dotnet test croniq.slnx` manually, do so from an external (preferably elevated) terminal instead of the VS Code Test Explorer. This avoids the GitHub Copilot Chat log-rotation issue that can freeze the editor when large test outputs are streamed inside VS Code.
 
 # Croniq Test Harness
 
@@ -17,7 +17,7 @@ This folder contains all automated test suites that back the Croniq quality stra
 
 ```cmd
 :: Unit + contract suites (fast)
-dotnet test croniq.sln --filter Category!=E2E
+dotnet test croniq.slnx --filter Category!=E2E
 
 :: Observability smoke test (no Docker required)
 dotnet test tests\Croniq.Observability.Tests\Croniq.Observability.Tests.csproj
@@ -28,13 +28,13 @@ scripts\test-e2e.cmd
 
 ## Suite Overview
 
-| Suite / Project                                   | Description                                                                                        | Trigger                          |
-| ------------------------------------------------- | -------------------------------------------------------------------------------------------------- | -------------------------------- |
-| `tests/Croniq.Core.Tests`                         | Unit tests for scheduler, policies, and hosting extensions.                                        | Run on every PR + local pre-push |
-| `tests/Croniq.JobStore.InMemory.Tests`            | Unit tests covering the in-memory job store implementation.                                        | Run on every PR                  |
-| `tests/Croniq.Providers.Default.Tests`            | Unit/contract tests validating provider defaults and DI wiring.                                    | Run on every PR                  |
-| `tests/Croniq.Observability.Tests`                | Spins up an in-memory OTLP collector and verifies logs/metrics/traces reach it.                    | Nightly workflow + before merges |
-| `tests/Croniq.Persistence.SqlServer.Tests`        | Contract tests using Croniq.TestKit + Testcontainers to validate the SqlServer persistence layer.  | Run on every PR (Docker needed)  |
+| Suite / Project                                   | Description                                                                                                             | Trigger                          |
+| ------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- | -------------------------------- |
+| `tests/Croniq.Core.Tests`                         | Unit tests for scheduler, policies, and hosting extensions.                                                             | Run on every PR + local pre-push |
+| `tests/Croniq.JobStore.InMemory.Tests`            | Unit tests covering the in-memory job store implementation.                                                             | Run on every PR                  |
+| `tests/Croniq.Providers.Default.Tests`            | Unit/contract tests validating provider defaults and DI wiring.                                                         | Run on every PR                  |
+| `tests/Croniq.Observability.Tests`                | Spins up an in-memory OTLP collector and verifies logs/metrics/traces reach it.                                         | Nightly workflow + before merges |
+| `tests/Croniq.Persistence.SqlServer.Tests`        | Contract tests using Croniq.TestKit + Testcontainers to validate the SqlServer persistence layer.                       | Run on every PR (Docker needed)  |
 | `tests/Croniq.Api.Smoke` + `scripts/test-e2e.cmd` | Docker Compose stack (API + Worker + SQL) plus HTTP smoke tests exercising `/health` + `/tenants/{tenantId}/schedules`. | Nightly + release readiness      |
 
 All suites are regular `dotnet test` projects, so you can target any subset via `dotnet test <path> --filter ...`.

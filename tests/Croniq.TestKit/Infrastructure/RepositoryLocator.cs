@@ -10,7 +10,7 @@ namespace Croniq.TestKit.Infrastructure;
 /// </summary>
 public static class RepositoryLocator
 {
-    private const string SolutionFileName = "croniq.sln";
+    private const string SolutionFileName = "croniq.slnx";
     private static readonly Lazy<string> RootResolver = new(ResolveRoot);
 
     public static string Root => RootResolver.Value;
@@ -42,6 +42,6 @@ public static class RepositoryLocator
             directory = directory.Parent;
         }
 
-        throw new InvalidOperationException($"Unable to locate '{SolutionFileName}' starting from '{AppContext.BaseDirectory}'.");
+        throw new InvalidOperationException($"Unable to locate solution file '{SolutionFileName}' starting from '{AppContext.BaseDirectory}'.");
     }
 }

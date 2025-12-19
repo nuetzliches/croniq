@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
     [string]$Configuration = "Debug",
-    [string]$Solution = "croniq.sln",
+    [string]$Solution = "croniq.slnx",
     [string]$SqlConnection = "Server=localhost,11433;Database=CroniqDev;User Id=sa;Password=CroniqSqlP@ssw0rd!;Encrypt=False;TrustServerCertificate=True;",
     [switch]$DisableCoverage,
     [string[]]$AdditionalDotnetArguments = @()
@@ -122,14 +122,14 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 $envOverrides = @{
-    "CRONIQ_SQL" = $SqlConnection
-    "DOTNET_NOLOGO" = "1"
-    "DOTNET_CLI_UI_LANGUAGE" = "en"
-    "DOTNET_PRINT_TELEMETRY_MESSAGE" = "false"
-    "DOTNET_ENVIRONMENT" = "CI"
-    "ASPNETCORE_ENVIRONMENT" = "CI"
-    "Logging__LogLevel__Default" = "Warning"
-    "Logging__LogLevel__Microsoft" = "Warning"
+    "CRONIQ_SQL"                                       = $SqlConnection
+    "DOTNET_NOLOGO"                                    = "1"
+    "DOTNET_CLI_UI_LANGUAGE"                           = "en"
+    "DOTNET_PRINT_TELEMETRY_MESSAGE"                   = "false"
+    "DOTNET_ENVIRONMENT"                               = "CI"
+    "ASPNETCORE_ENVIRONMENT"                           = "CI"
+    "Logging__LogLevel__Default"                       = "Warning"
+    "Logging__LogLevel__Microsoft"                     = "Warning"
     "Logging__LogLevel__Microsoft.EntityFrameworkCore" = "Warning"
 }
 
