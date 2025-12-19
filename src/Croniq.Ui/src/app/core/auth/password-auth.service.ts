@@ -1,6 +1,6 @@
 import { Injectable, inject } from '@angular/core';
 import { tryIsoFromUnknown } from '@core/time/clock';
-import type { PasswordLoginRequest } from '@croniq/api-schema';
+import type { PasswordChangePasswordRequest, PasswordLoginRequest, PasswordLogoutRequest } from '@croniq/api-schema';
 import { CRONIQ_API_CLIENT, type CroniqApiClient } from 'data-access';
 import { z } from 'zod';
 import { AuthSessionService } from './auth-session.service';
@@ -73,6 +73,11 @@ export interface PasswordLoginResult {
     raw: unknown;
 }
 
+export interface PasswordChangePasswordParams {
+    currentPassword: string;
+    newPassword: string;
+}
+
 @Injectable({ providedIn: 'root' })
 export class PasswordAuthService {
     private readonly apiClient = inject<CroniqApiClient>(CRONIQ_API_CLIENT);
@@ -113,6 +118,39 @@ export class PasswordAuthService {
             tenantReference: parsed.tenantReference ?? null,
             raw: parsed.raw,
         };
+    }
+
+    async logout(): Promise<void> {
+        const refreshToken = this.authSession.refreshToken()?.trim() ?? '';
+
+        if (refreshToken) {
+            const payload: PasswordLogoutRequest = {
+                refreshToken,
+                tenantReference: null,
+            };
+
+            try {
+                await this.apiClient.passwordLogout(payload);
+            } catch {
+                // Best-effort: even if the server rejects logout, we still clear local state.
+            }
+        }
+
+        this.authSession.clearSessionToken();
+        this.authSession.clearRefreshToken();
+    }
+
+    async changePassword(params: PasswordChangePasswordParams): Promise<void> {
+        const payload: PasswordChangePasswordRequest = {
+            currentPassword: params.currentPassword,
+            newPassword: params.newPassword,
+        };
+
+        await this.apiClient.passwordChangePassword(payload);
+
+        // Password changes revoke refresh tokens server-side; force a clean re-login.
+        this.authSession.clearSessionToken();
+        this.authSession.clearRefreshToken();
     }
 
     private extract(response: unknown): PasswordLoginResponse | null {

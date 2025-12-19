@@ -6,7 +6,8 @@ type CommandKeyword = string;
 export type CommandPaletteCommand = {
     id: string;
     label: string;
-    path: string;
+    path?: string;
+    execute?: () => void | Promise<void>;
     description?: string;
     keywords?: ReadonlyArray<CommandKeyword>;
 };
@@ -54,7 +55,12 @@ export class CommandPaletteController {
         }
 
         return this.commands().filter((command) => {
-            const haystack = [command.label, command.path, command.description ?? '', ...(command.keywords ?? [])]
+            const haystack = [
+                command.label,
+                command.path ?? '',
+                command.description ?? '',
+                ...(command.keywords ?? []),
+            ]
                 .join(' ')
                 .toLowerCase();
             return haystack.includes(q);
@@ -118,8 +124,17 @@ export class CommandPaletteController {
         if (!command) {
             return;
         }
-        await this.router.navigate(['/', command.path]);
-        this.close();
+
+        if (command.execute) {
+            await command.execute();
+            this.close();
+            return;
+        }
+
+        if (command.path) {
+            await this.router.navigate(['/', command.path]);
+            this.close();
+        }
     }
 
     optionId(command: CommandPaletteCommand, index: number): string {

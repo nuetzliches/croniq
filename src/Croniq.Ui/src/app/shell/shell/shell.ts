@@ -1,7 +1,8 @@
 import { ChangeDetectionStrategy, Component, inject, signal } from '@angular/core';
-import { RouterLink, RouterLinkActive, RouterOutlet } from '@angular/router';
+import { Router, RouterLink, RouterLinkActive, RouterOutlet } from '@angular/router';
 import { NavItem, PRIMARY_NAV_ITEMS } from '@core/navigation/nav-items';
 import { TenantContextService } from '@core/tenant-context/tenant-context.service';
+import { PasswordAuthService } from '@core/auth/password-auth.service';
 import { AppBrand } from '@shared/app-brand/app-brand';
 import { CommandPalette } from '@shared/command-palette/command-palette';
 import { CommandPaletteController } from '@shared/command-palette/command-palette.controller';
@@ -27,6 +28,8 @@ type StatusCard = {
 export class Shell {
   private readonly commandPalette = inject(CommandPaletteController);
   private readonly tenantContext = inject(TenantContextService);
+  private readonly passwordAuth = inject(PasswordAuthService);
+  private readonly router = inject(Router);
 
   readonly tenantDisplay = this.tenantContext.tenantLabel;
   readonly navItems = signal<ReadonlyArray<NavItem>>(PRIMARY_NAV_ITEMS);
@@ -44,6 +47,11 @@ export class Shell {
 
   closeCommandPalette(): void {
     this.commandPalette.close();
+  }
+
+  async logout(): Promise<void> {
+    await this.passwordAuth.logout();
+    await this.router.navigate(['/login']);
   }
 
   handleGlobalPaletteShortcut(event: KeyboardEvent): void {

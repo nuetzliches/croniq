@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.OpenApi;
 using Swashbuckle.AspNetCore.SwaggerGen;
@@ -12,7 +13,7 @@ public static partial class ApiHostingExtensions
     {
         public string DocumentName { get; init; } = "v1";
 
-        public string Title { get; init; } = "Croniq Scheduler API";
+        public string Title { get; init; } = "Croniq API";
 
         public string Version { get; init; } = "v1";
 
@@ -51,7 +52,8 @@ public static partial class ApiHostingExtensions
             swaggerOptions.DocumentName,
             new OpenApiInfo { Title = swaggerOptions.Title, Version = swaggerOptions.Version });
 
-        OpenApiSecuritySchemeReference? apiKeyReference = null;
+        options.OperationFilter<AnonymousPathsOperationFilter>();
+
         if (swaggerOptions.AddApiKeyScheme)
         {
             options.AddSecurityDefinition(swaggerOptions.ApiKeySchemeName, new OpenApiSecurityScheme
@@ -61,14 +63,8 @@ public static partial class ApiHostingExtensions
                 In = ParameterLocation.Header,
                 Type = SecuritySchemeType.ApiKey
             });
-
-            apiKeyReference = new OpenApiSecuritySchemeReference(
-                referenceId: swaggerOptions.ApiKeySchemeName,
-                hostDocument: null,
-                externalResource: null);
         }
 
-        OpenApiSecuritySchemeReference? bearerReference = null;
         if (swaggerOptions.AddBearerScheme)
         {
             options.AddSecurityDefinition(swaggerOptions.BearerSchemeName, new OpenApiSecurityScheme
@@ -80,27 +76,63 @@ public static partial class ApiHostingExtensions
                 Scheme = "bearer",
                 BearerFormat = "JWT"
             });
-
-            bearerReference = new OpenApiSecuritySchemeReference(
-                referenceId: swaggerOptions.BearerSchemeName,
-                hostDocument: null,
-                externalResource: null);
         }
 
-        if (apiKeyReference is not null)
+        if (swaggerOptions.AddApiKeyScheme)
         {
-            options.AddSecurityRequirement(_ => new OpenApiSecurityRequirement
+            options.AddSecurityRequirement(hostDocument => new OpenApiSecurityRequirement
             {
-                { apiKeyReference, new List<string>() }
+                {
+                    new OpenApiSecuritySchemeReference(
+                        referenceId: swaggerOptions.ApiKeySchemeName,
+                        hostDocument: hostDocument,
+                        externalResource: null),
+                    new List<string>()
+                }
             });
         }
 
-        if (bearerReference is not null)
+        if (swaggerOptions.AddBearerScheme)
         {
-            options.AddSecurityRequirement(_ => new OpenApiSecurityRequirement
+            options.AddSecurityRequirement(hostDocument => new OpenApiSecurityRequirement
             {
-                { bearerReference, new List<string>() }
+                {
+                    new OpenApiSecuritySchemeReference(
+                        referenceId: swaggerOptions.BearerSchemeName,
+                        hostDocument: hostDocument,
+                        externalResource: null),
+                    new List<string>()
+                }
             });
+        }
+    }
+
+    private sealed class AnonymousPathsOperationFilter : IOperationFilter
+    {
+        private static readonly string[] AnonymousPrefixes =
+        [
+            "health",
+            "webhooks",
+            "auth/login",
+            "auth/refresh",
+            "auth/logout",
+        ];
+
+        public void Apply(OpenApiOperation operation, OperationFilterContext context)
+        {
+            var relativePath = context.ApiDescription.RelativePath;
+            if (string.IsNullOrWhiteSpace(relativePath))
+            {
+                return;
+            }
+
+            var normalized = relativePath.TrimStart('/');
+            if (!AnonymousPrefixes.Any(prefix => normalized.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)))
+            {
+                return;
+            }
+
+            operation.Security = new List<OpenApiSecurityRequirement>();
         }
     }
 }

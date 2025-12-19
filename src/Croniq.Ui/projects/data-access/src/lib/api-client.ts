@@ -1,6 +1,6 @@
 import { HttpClient } from '@angular/common/http';
 import { EnvironmentProviders, InjectionToken, Provider, inject, makeEnvironmentProviders } from '@angular/core';
-import { AuthApi, CreateWebhookIpRuleRequest, HealthApi, IssueApiKeyRequest, IssueTokenRequest, JobsApi, MeApi, PasswordLoginRequest, PasswordLogoutRequest, PasswordRefreshRequest, RotateWebhookSecretRequest, ScheduleListResponse, TenantsApi, TriggerJobRequest, UpsertApiClientRequest, UpsertJobRequest, UpsertScheduleRequest, UpsertTenantRequest, UpsertWebhookEndpointRequest, WebhooksApi, scheduleListResponseSchema, type EndpointDefinition } from '@croniq/api-schema';
+import { AuthApi, CreateWebhookIpRuleRequest, HealthApi, IssueApiKeyRequest, IssueTokenRequest, JobsApi, MeApi, PasswordChangePasswordRequest, PasswordLoginRequest, PasswordLogoutRequest, PasswordRefreshRequest, RotateWebhookSecretRequest, ScheduleListResponse, TenantsApi, TriggerJobRequest, UpsertApiClientRequest, UpsertJobRequest, UpsertScheduleRequest, UpsertTenantRequest, UpsertWebhookEndpointRequest, WebhooksApi, scheduleListResponseSchema, type EndpointDefinition } from '@croniq/api-schema';
 import type { CroniqCredentialSupplier, CroniqRequestOptions, ExecutionLogParams, ExecutionParams, TenantApiClientParams, TenantApiClientTokenParams, TenantApiKeyParams, TenantDeadLetterParams, TenantEnvironmentParams, TenantScheduleParams, TenantScopedParams, TenantUpsertApiClientParams, TenantWebhookParams, TenantWebhookRuleParams, TenantWebhookUpsertParams, WebhookInvocationParams } from './api-client.types';
 import type { EndpointCallConfig } from './endpoint-executor';
 import { EndpointExecutor, requireEndpoint } from './endpoint-executor';
@@ -20,6 +20,7 @@ const AUTH_ENDPOINTS = {
     login: requireEndpoint(AuthApi, 'post', '/auth/login'),
     refresh: requireEndpoint(AuthApi, 'post', '/auth/refresh'),
     logout: requireEndpoint(AuthApi, 'post', '/auth/logout'),
+    changePassword: requireEndpoint(AuthApi, 'post', '/auth/change-password'),
 };
 
 const TENANTS_ENDPOINTS = {
@@ -86,6 +87,7 @@ export interface CroniqApiClient {
     passwordLogin(payload: PasswordLoginRequest, options?: CroniqRequestOptions): Promise<unknown>;
     passwordRefresh(payload: PasswordRefreshRequest, options?: CroniqRequestOptions): Promise<unknown>;
     passwordLogout(payload: PasswordLogoutRequest, options?: CroniqRequestOptions): Promise<void>;
+    passwordChangePassword(payload: PasswordChangePasswordRequest, options?: CroniqRequestOptions): Promise<void>;
 
     getSchedules(
         params: TenantScopedParams & { environment?: string | null; jobKey?: string | null },
@@ -251,6 +253,16 @@ class HttpCroniqApiClient implements CroniqApiClient {
     passwordLogout(payload: PasswordLogoutRequest, options?: CroniqRequestOptions): Promise<void> {
         return this.execute(
             AUTH_ENDPOINTS.logout,
+            {
+                body: payload,
+            },
+            options,
+        );
+    }
+
+    passwordChangePassword(payload: PasswordChangePasswordRequest, options?: CroniqRequestOptions): Promise<void> {
+        return this.execute(
+            AUTH_ENDPOINTS.changePassword,
             {
                 body: payload,
             },

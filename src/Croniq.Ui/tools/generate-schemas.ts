@@ -208,8 +208,76 @@ async function writeSnapshot(openApiDoc: OpenAPIObject, outputPath: string): Pro
     const resolved = resolvePath(outputPath);
     await ensureOutputDirectory(resolved);
 
-    const serialized = JSON.stringify(openApiDoc, null, 2) + '\n';
+    const normalized = normalizeSnapshotSecurity(openApiDoc);
+    const serialized = JSON.stringify(normalized, null, 2) + '\n';
     await writeFile(resolved, serialized, 'utf8');
+}
+
+function normalizeSnapshotSecurity(openApiDoc: OpenAPIObject): OpenAPIObject {
+    const clone = structuredClone(openApiDoc);
+
+    const schemes = (clone.components?.securitySchemes ?? {}) as Record<string, unknown>;
+    const security: Array<Record<string, string[]>> = [];
+    if (schemes.Bearer) {
+        security.push({ Bearer: [] });
+    }
+    if (schemes['X-Croniq-Key']) {
+        security.push({ 'X-Croniq-Key': [] });
+    }
+
+    if (security.length) {
+        clone.security = security;
+    }
+
+    const anonymousPrefixPaths = ['/health', '/webhooks'];
+    const anonymousExactPaths = new Set(['/auth/login', '/auth/refresh', '/auth/logout']);
+    const bearerOnlyExactPaths = new Set(['/auth/change-password']);
+    const httpMethods = ['get', 'post', 'put', 'patch', 'delete', 'head', 'options', 'trace'] as const;
+
+    for (const [path, pathItem] of Object.entries(clone.paths ?? {})) {
+        if (!pathItem) {
+            continue;
+        }
+
+        const isAnonymous = anonymousExactPaths.has(path)
+            || anonymousPrefixPaths.some((prefix) => path.startsWith(prefix));
+
+        if (!isAnonymous) {
+            continue;
+        }
+
+        for (const method of httpMethods) {
+            const operation = (pathItem as PathItemObject & Record<string, unknown>)[method] as
+                | (PathItemObject[keyof PathItemObject] & { security?: unknown })
+                | undefined;
+
+            if (!operation) {
+                continue;
+            }
+
+            operation.security = [];
+        }
+    }
+
+    for (const [path, pathItem] of Object.entries(clone.paths ?? {})) {
+        if (!pathItem || !bearerOnlyExactPaths.has(path)) {
+            continue;
+        }
+
+        for (const method of httpMethods) {
+            const operation = (pathItem as PathItemObject & Record<string, unknown>)[method] as
+                | (PathItemObject[keyof PathItemObject] & { security?: unknown })
+                | undefined;
+
+            if (!operation) {
+                continue;
+            }
+
+            operation.security = schemes.Bearer ? [{ Bearer: [] }] : operation.security;
+        }
+    }
+
+    return clone;
 }
 
 async function fetchJson(url: string): Promise<unknown> {

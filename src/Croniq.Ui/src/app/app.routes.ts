@@ -39,6 +39,13 @@ export const appRoutes: Routes = [
                 loadComponent: () =>
                     import('./features/webhooks/webhooks-page/webhooks-page').then((m) => m.WebhooksPage),
             },
+            {
+                path: 'change-password',
+                loadComponent: () =>
+                    import('./features/account/change-password-page/change-password-page').then(
+                        (m) => m.ChangePasswordPage,
+                    ),
+            },
         ],
     },
     {

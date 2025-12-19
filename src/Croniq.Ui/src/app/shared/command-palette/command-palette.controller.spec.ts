@@ -7,8 +7,10 @@ import { CommandPaletteController, provideCommandPaletteCommands } from './comma
 describe('CommandPaletteController', () => {
     let controller: CommandPaletteController;
     let router: Router;
+    const executeGamma = vi.fn();
 
     beforeEach(() => {
+        executeGamma.mockClear();
         TestBed.configureTestingModule({
             imports: [RouterTestingModule],
             providers: [
@@ -16,6 +18,7 @@ describe('CommandPaletteController', () => {
                 provideCommandPaletteCommands([
                     { id: 'alpha', label: 'Alpha', path: 'dashboard', description: 'Main overview' },
                     { id: 'beta', label: 'Beta', path: 'schedules', description: 'All schedules' },
+                    { id: 'gamma', label: 'Gamma', description: 'Run action', execute: () => executeGamma() },
                 ]),
             ],
         });
@@ -26,7 +29,7 @@ describe('CommandPaletteController', () => {
     });
 
     it('exposes commands provided via injection token', () => {
-        expect(controller.filteredCommands().map((command) => command.id)).toEqual(['alpha', 'beta']);
+        expect(controller.filteredCommands().map((command) => command.id)).toEqual(['alpha', 'beta', 'gamma']);
     });
 
     it('filters commands based on query text and announces counts', () => {
@@ -54,6 +57,15 @@ describe('CommandPaletteController', () => {
         await controller.executeCommand(1);
 
         expect(router.navigate).toHaveBeenCalledWith(['/', 'schedules']);
+        expect(controller.isOpen()).toBe(false);
+    });
+
+    it('executes action commands without router navigation and closes', async () => {
+        controller.open();
+        await controller.executeCommand(2);
+
+        expect(executeGamma).toHaveBeenCalledTimes(1);
+        expect(router.navigate).not.toHaveBeenCalled();
         expect(controller.isOpen()).toBe(false);
     });
 });

@@ -62,7 +62,7 @@
             (click)="execute(cmd, idx)"
           >
             <span>{{ cmd.label }}</span>
-            <small class="text-xs text-text-muted">{{ cmd.description ?? '/' + cmd.path }}</small>
+            <small class="text-xs text-text-muted">{{ cmd.description ?? (cmd.path ? '/' + cmd.path : '') }}</small>
           </button>
         </li>
         } }
