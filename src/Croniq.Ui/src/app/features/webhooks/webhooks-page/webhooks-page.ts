@@ -13,6 +13,7 @@ type DetailTab = {
 @Component({
   selector: 'cq-webhooks-page',
   imports: [DatePipe, Tabs, TabList, Tab, TabPanel, TabContent],
+  providers: [WebhooksStore],
   templateUrl: './webhooks-page.html',
   changeDetection: ChangeDetectionStrategy.OnPush,
 })

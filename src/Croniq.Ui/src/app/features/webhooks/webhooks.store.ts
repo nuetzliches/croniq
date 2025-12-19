@@ -1,8 +1,10 @@
 import { Injectable, computed, inject, signal } from '@angular/core';
+import { tenantRxResource } from '@core/resource/tenant-rx-resource';
 import { TenantContextService } from '@core/tenant-context/tenant-context.service';
 import { isoFromEpochMs, nowIso, nowMs, tryIsoFromUnknown } from '@core/time/clock';
 import { CreateWebhookIpRuleRequest, RotateWebhookSecretRequest, UpsertWebhookEndpointRequest } from '@croniq/api-schema';
 import { CRONIQ_API_CLIENT, CroniqApiClient, TenantDeadLetterParams, TenantEnvironmentParams, TenantWebhookParams, TenantWebhookRuleParams, TenantWebhookUpsertParams, WebhookInvocationParams } from 'data-access';
+import { catchError, from, map, of, tap } from 'rxjs';
 
 export type WebhookEndpointView = {
     hookKey: string;
@@ -22,45 +24,114 @@ export type WebhookActionEntry = {
     recordedAt: string;
 };
 
-@Injectable({ providedIn: 'root' })
+@Injectable()
 export class WebhooksStore {
     private readonly api = inject<CroniqApiClient>(CRONIQ_API_CLIENT);
     private readonly tenantContext = inject(TenantContextService);
 
     private readonly endpointsSignal = signal<ReadonlyArray<WebhookEndpointView>>(seedEndpoints());
     private readonly actionLogSignal = signal<ReadonlyArray<WebhookActionEntry>>(seedActionLog());
-    private readonly loadingSignal = signal(false);
     private readonly deadLetterCountSignal = signal(0);
     private readonly lastErrorSignal = signal<string | null>(null);
+    private readonly logNextRefreshSignal = signal(false);
+
+    private readonly endpointsResource = tenantRxResource<ReadonlyArray<WebhookEndpointView>, { tenantId: string; environment: string }>({
+        command: 'webhooks.list',
+        defaultValue: this.endpointsSignal(),
+        params: () => {
+            const { tenantId, environment } = this.tenantContext.snapshot();
+            return { tenantId, environment };
+        },
+        stream: ({ params, requestOptions }) => {
+            this.lastErrorSignal.set(null);
+
+            const tenantId = params.tenantId.trim();
+            const environment = params.environment.trim();
+            if (!tenantId || !environment) {
+                return of(this.endpointsSignal());
+            }
+
+            const request$ = this.api.listTenantWebhooks$
+                ? this.api.listTenantWebhooks$({ tenantId, environment }, requestOptions)
+                : from(this.api.listTenantWebhooks({ tenantId, environment }, requestOptions));
+
+            return request$.pipe(
+                map((response) => this.normalizeEndpointResponse(response, environment)),
+                tap((normalized) => {
+                    this.endpointsSignal.set(normalized);
+                    if (this.logNextRefreshSignal()) {
+                        this.logNextRefreshSignal.set(false);
+                        this.recordAction('Refreshed webhook endpoints', 'success');
+                    }
+                }),
+                catchError((error: unknown) => {
+                    console.error('Unable to refresh webhooks', error);
+                    this.lastErrorSignal.set('Failed to load endpoints from API.');
+                    if (this.logNextRefreshSignal()) {
+                        this.logNextRefreshSignal.set(false);
+                        this.recordAction(
+                            'Refresh failed',
+                            'error',
+                            error instanceof Error ? error.message : 'Unknown error',
+                        );
+                    }
+                    return of(this.endpointsSignal());
+                }),
+            );
+        },
+    });
+
+    private readonly deadLetterCountResource = tenantRxResource<number, { tenantId: string; environment: string }>({
+        command: 'webhooks.list-dead-letters',
+        defaultValue: 0,
+        params: () => {
+            const { tenantId, environment } = this.tenantContext.snapshot();
+            return { tenantId, environment };
+        },
+        stream: ({ params, requestOptions }) => {
+            const tenantId = params.tenantId.trim();
+            const environment = params.environment.trim();
+            if (!tenantId || !environment) {
+                return of(this.deadLetterCountSignal());
+            }
+
+            const request$ = this.api.listTenantWebhookDeadLetters$
+                ? this.api.listTenantWebhookDeadLetters$({ tenantId, environment }, requestOptions)
+                : from(this.api.listTenantWebhookDeadLetters({ tenantId, environment }, requestOptions));
+
+            return request$.pipe(
+                map((response) => (Array.isArray(response) ? response.length : this.deadLetterCountSignal())),
+                tap((total) => this.deadLetterCountSignal.set(total)),
+                catchError((error: unknown) => {
+                    console.error('Unable to fetch dead letters', error);
+                    return of(this.deadLetterCountSignal());
+                }),
+            );
+        },
+    });
 
     readonly endpoints = this.endpointsSignal.asReadonly();
     readonly actionLog = this.actionLogSignal.asReadonly();
-    readonly loading = this.loadingSignal.asReadonly();
+    readonly loading = computed(() => this.endpointsResource.isLoading() || this.deadLetterCountResource.isLoading());
     readonly deadLetterCount = this.deadLetterCountSignal.asReadonly();
     readonly lastError = this.lastErrorSignal.asReadonly();
     readonly activeCount = computed(() => this.endpoints().filter((endpoint) => endpoint.status === 'active').length);
 
     async refreshEndpoints(params: TenantEnvironmentParams): Promise<void> {
-        this.loadingSignal.set(true);
-        this.lastErrorSignal.set(null);
-        try {
-            const response = await this.api.listTenantWebhooks(
-                params,
-                this.tenantContext.createRequestOptions('webhooks.list', {
-                    tenantId: params.tenantId,
-                    environment: params.environment,
-                }),
-            );
-            this.endpointsSignal.set(this.normalizeEndpointResponse(response, params.environment));
-            await this.updateDeadLetterCount({ tenantId: params.tenantId, environment: params.environment });
-            this.recordAction('Refreshed webhook endpoints', 'success');
-        } catch (error) {
-            console.error('Unable to refresh webhooks', error);
-            this.lastErrorSignal.set('Failed to load endpoints from API.');
-            this.recordAction('Refresh failed', 'error', error instanceof Error ? error.message : 'Unknown error');
-        } finally {
-            this.loadingSignal.set(false);
+        const tenantId = params.tenantId.trim();
+        const environment = params.environment.trim();
+        if (!tenantId) {
+            this.lastErrorSignal.set('TenantId is not set — select a tenant to load webhooks.');
+            return;
         }
+        if (!environment) {
+            this.lastErrorSignal.set('Environment is not set — select an environment to load webhooks.');
+            return;
+        }
+
+        this.logNextRefreshSignal.set(true);
+        this.endpointsResource.reload();
+        this.deadLetterCountResource.reload();
     }
 
     async upsertEndpoint(
@@ -181,22 +252,6 @@ export class WebhooksStore {
         } catch (error) {
             console.error('Unable to invoke webhook', error);
             this.recordAction('Invocation failed', 'error', error instanceof Error ? error.message : 'Unknown error');
-        }
-    }
-
-    private async updateDeadLetterCount(params: TenantEnvironmentParams): Promise<void> {
-        try {
-            const response = await this.api.listTenantWebhookDeadLetters(
-                params,
-                this.tenantContext.createRequestOptions('webhooks.list-dead-letters', {
-                    tenantId: params.tenantId,
-                    environment: params.environment,
-                }),
-            );
-            const total = Array.isArray(response) ? response.length : this.deadLetterCountSignal();
-            this.deadLetterCountSignal.set(total);
-        } catch (error) {
-            console.error('Unable to fetch dead letters', error);
         }
     }
 

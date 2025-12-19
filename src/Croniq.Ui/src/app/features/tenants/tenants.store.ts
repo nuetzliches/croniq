@@ -1,8 +1,10 @@
-import { Injectable, inject, signal } from '@angular/core';
+import { Injectable, computed, inject, signal } from '@angular/core';
+import { tenantRxResource } from '@core/resource/tenant-rx-resource';
 import { TenantContextService } from '@core/tenant-context/tenant-context.service';
 import { isoFromEpochMs, nowIso, nowMs } from '@core/time/clock';
 import { IssueApiKeyRequest, IssueTokenRequest } from '@croniq/api-schema';
 import { CRONIQ_API_CLIENT, CroniqApiClient, TenantApiClientParams, TenantApiKeyParams, TenantScopedParams } from 'data-access';
+import { catchError, from, map, of, tap } from 'rxjs';
 
 export type ApiKeyActionType = 'issue' | 'issue-token' | 'rotate' | 'delete';
 export type ApiKeyActionStatus = 'pending' | 'success' | 'error';
@@ -24,19 +26,62 @@ export type ApiClientSnapshot = {
     fetchedAt: string;
 };
 
-@Injectable({ providedIn: 'root' })
+type ApiClientLookupParams = TenantApiClientParams & { trigger: number };
+
+@Injectable()
 export class TenantsStore {
     private readonly api = inject<CroniqApiClient>(CRONIQ_API_CLIENT);
     private readonly tenantContext = inject(TenantContextService);
 
     private readonly activityLog = signal<ReadonlyArray<ApiKeyActivityEntry>>(seedActivity());
-    private readonly lastLookupSignal = signal<ApiClientSnapshot | null>(null);
     private readonly busySignal = signal(false);
     private readonly lastErrorSignal = signal<string | null>(null);
 
+    private readonly apiClientLookupParamsSignal = signal<ApiClientLookupParams>({
+        trigger: 0,
+        tenantId: '',
+        clientId: '',
+        environment: null,
+    });
+
+    private readonly apiClientLookupResource = tenantRxResource<ApiClientSnapshot | null, ApiClientLookupParams>({
+        command: 'tenants.lookup-api-client',
+        defaultValue: null,
+        params: () => this.apiClientLookupParamsSignal(),
+        callerContextOverrides: (params) => ({
+            tenantId: params.tenantId,
+            environment: params.environment ?? undefined,
+        }),
+        stream: ({ params, requestOptions }) => {
+            if (params.trigger === 0) {
+                return of(null);
+            }
+
+            const request$ = this.api.getTenantApiClient$
+                ? this.api.getTenantApiClient$(params, requestOptions)
+                : from(this.api.getTenantApiClient(params, requestOptions));
+
+            return request$.pipe(
+                map((payload) => ({
+                    tenantId: params.tenantId,
+                    clientId: params.clientId,
+                    environment: params.environment ?? null,
+                    payload,
+                    fetchedAt: nowIso(),
+                })),
+                tap(() => this.lastErrorSignal.set(null)),
+                catchError((error) => {
+                    console.error('Unable to fetch API client', error);
+                    this.lastErrorSignal.set('API client lookup failed.');
+                    return of(null);
+                }),
+            );
+        },
+    });
+
     readonly activity = this.activityLog.asReadonly();
-    readonly lastLookup = this.lastLookupSignal.asReadonly();
-    readonly busy = this.busySignal.asReadonly();
+    readonly lastLookup = computed(() => this.apiClientLookupResource.value());
+    readonly busy = computed(() => this.busySignal() || this.apiClientLookupResource.isLoading());
     readonly lastError = this.lastErrorSignal.asReadonly();
 
     async issueApiKey(params: TenantScopedParams, payload: IssueApiKeyRequest): Promise<void> {
@@ -138,28 +183,13 @@ export class TenantsStore {
     }
 
     async lookupApiClient(params: TenantApiClientParams): Promise<void> {
-        await this.runWithBusy(async () => {
-            try {
-                const payload = await this.api.getTenantApiClient(
-                    params,
-                    this.tenantContext.createRequestOptions('tenants.lookup-api-client', {
-                        tenantId: params.tenantId,
-                        environment: params.environment ?? undefined,
-                    }),
-                );
-                this.lastLookupSignal.set({
-                    tenantId: params.tenantId,
-                    clientId: params.clientId,
-                    environment: params.environment ?? null,
-                    payload,
-                    fetchedAt: nowIso(),
-                });
-                this.lastErrorSignal.set(null);
-            } catch (error) {
-                console.error('Unable to fetch API client', error);
-                this.lastErrorSignal.set('API client lookup failed.');
-            }
+        this.apiClientLookupParamsSignal.set({
+            trigger: nowMs(),
+            tenantId: params.tenantId,
+            clientId: params.clientId,
+            environment: params.environment ?? null,
         });
+        this.apiClientLookupResource.reload();
     }
 
     private appendActivity(

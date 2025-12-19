@@ -23,6 +23,7 @@ type DetailTab = {
 @Component({
   selector: 'cq-schedules-page',
   imports: [DatePipe, Tabs, TabList, Tab, TabPanel, TabContent],
+  providers: [SchedulesStore],
   templateUrl: './schedules-page.html',
   changeDetection: ChangeDetectionStrategy.OnPush,
 })

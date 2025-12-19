@@ -1,6 +1,7 @@
 import { HttpClient } from '@angular/common/http';
 import { EnvironmentProviders, InjectionToken, Provider, inject, makeEnvironmentProviders } from '@angular/core';
 import { AuthApi, CreateWebhookIpRuleRequest, HealthApi, IssueApiKeyRequest, IssueTokenRequest, JobsApi, MeApi, PasswordChangePasswordRequest, PasswordLoginRequest, PasswordLogoutRequest, PasswordRefreshRequest, RotateWebhookSecretRequest, ScheduleListResponse, TenantsApi, TriggerJobRequest, UpsertApiClientRequest, UpsertJobRequest, UpsertScheduleRequest, UpsertTenantRequest, UpsertWebhookEndpointRequest, WebhooksApi, scheduleListResponseSchema, type EndpointDefinition } from '@croniq/api-schema';
+import type { Observable } from 'rxjs';
 import type { CroniqCredentialSupplier, CroniqRequestOptions, ExecutionLogParams, ExecutionParams, TenantApiClientParams, TenantApiClientTokenParams, TenantApiKeyParams, TenantDeadLetterParams, TenantEnvironmentParams, TenantScheduleParams, TenantScopedParams, TenantUpsertApiClientParams, TenantWebhookParams, TenantWebhookRuleParams, TenantWebhookUpsertParams, WebhookInvocationParams } from './api-client.types';
 import type { EndpointCallConfig } from './endpoint-executor';
 import { EndpointExecutor, requireEndpoint } from './endpoint-executor';
@@ -93,6 +94,10 @@ export interface CroniqApiClient {
         params: TenantScopedParams & { environment?: string | null; jobKey?: string | null },
         options?: CroniqRequestOptions,
     ): Promise<ScheduleListResponse>;
+    getSchedules$?: (
+        params: TenantScopedParams & { environment?: string | null; jobKey?: string | null },
+        options?: CroniqRequestOptions,
+    ) => Observable<ScheduleListResponse>;
     upsertSchedule(
         params: TenantScopedParams,
         payload: UpsertScheduleRequest,
@@ -128,7 +133,9 @@ export interface CroniqApiClient {
     rotateTenantApiKey(params: TenantApiKeyParams, options?: CroniqRequestOptions): Promise<void>;
     deleteTenantApiKey(params: TenantApiKeyParams, options?: CroniqRequestOptions): Promise<void>;
     getTenantApiClient(params: TenantApiClientParams, options?: CroniqRequestOptions): Promise<unknown>;
+    getTenantApiClient$?: (params: TenantApiClientParams, options?: CroniqRequestOptions) => Observable<unknown>;
     listTenantWebhooks(params: TenantEnvironmentParams, options?: CroniqRequestOptions): Promise<unknown>;
+    listTenantWebhooks$?: (params: TenantEnvironmentParams, options?: CroniqRequestOptions) => Observable<unknown>;
     upsertTenantWebhook(
         params: TenantWebhookUpsertParams,
         payload: UpsertWebhookEndpointRequest,
@@ -141,6 +148,7 @@ export interface CroniqApiClient {
         options?: CroniqRequestOptions,
     ): Promise<void>;
     listTenantWebhookIpRules(params: TenantWebhookParams, options?: CroniqRequestOptions): Promise<unknown>;
+    listTenantWebhookIpRules$?: (params: TenantWebhookParams, options?: CroniqRequestOptions) => Observable<unknown>;
     createTenantWebhookIpRule(
         params: TenantWebhookParams,
         payload: CreateWebhookIpRuleRequest,
@@ -151,18 +159,31 @@ export interface CroniqApiClient {
         params: TenantEnvironmentParams,
         options?: CroniqRequestOptions,
     ): Promise<unknown>;
+    listTenantWebhookDeadLetters$?: (
+        params: TenantEnvironmentParams,
+        options?: CroniqRequestOptions,
+    ) => Observable<unknown>;
     replayTenantWebhookDeadLetter(params: TenantDeadLetterParams, options?: CroniqRequestOptions): Promise<void>;
     invokeWebhook(params: WebhookInvocationParams, options?: CroniqRequestOptions): Promise<void>;
 
     listExecutions(params: ExecutionParams, options?: CroniqRequestOptions): Promise<unknown>;
+    listExecutions$?: (params: ExecutionParams, options?: CroniqRequestOptions) => Observable<unknown>;
     getExecution(params: ExecutionParams & ExecutionLogParams, options?: CroniqRequestOptions): Promise<unknown>;
+    getExecution$?: (params: ExecutionParams & ExecutionLogParams, options?: CroniqRequestOptions) => Observable<unknown>;
     listJobs(params: TenantEnvironmentParams, options?: CroniqRequestOptions): Promise<unknown>;
+    listJobs$?: (params: TenantEnvironmentParams, options?: CroniqRequestOptions) => Observable<unknown>;
     upsertJob(params: TenantEnvironmentParams, payload: UpsertJobRequest, options?: CroniqRequestOptions): Promise<void>;
     getJob(params: TenantEnvironmentParams & { jobId: string }, options?: CroniqRequestOptions): Promise<unknown>;
+    getJob$?: (
+        params: TenantEnvironmentParams & { jobId: string },
+        options?: CroniqRequestOptions,
+    ) => Observable<unknown>;
     deleteJob(params: TenantEnvironmentParams & { jobId: string }, options?: CroniqRequestOptions): Promise<void>;
     getSchedule(params: TenantScheduleParams, options?: CroniqRequestOptions): Promise<unknown>;
+    getSchedule$?: (params: TenantScheduleParams, options?: CroniqRequestOptions) => Observable<unknown>;
     deleteSchedule(params: TenantScheduleParams, options?: CroniqRequestOptions): Promise<void>;
     fetchExecutionLogs(params: ExecutionLogParams, options?: CroniqRequestOptions): Promise<string>;
+    fetchExecutionLogs$?: (params: ExecutionLogParams, options?: CroniqRequestOptions) => Observable<string>;
     checkServiceHealth(options?: CroniqRequestOptions): Promise<void>;
     checkPersistenceHealth(options?: CroniqRequestOptions): Promise<void>;
 }
@@ -192,6 +213,24 @@ class HttpCroniqApiClient implements CroniqApiClient {
         options?: CroniqRequestOptions,
     ): Promise<ScheduleListResponse> {
         return this.execute<ScheduleListResponse>(
+            LIST_SCHEDULES_ENDPOINT,
+            {
+                path: { tenantId: params.tenantId },
+                query: {
+                    environment: params.environment ?? options?.context?.environment ?? undefined,
+                    jobKey: params.jobKey ?? undefined,
+                },
+                responseSchema: scheduleListResponseSchema,
+            },
+            options,
+        );
+    }
+
+    getSchedules$(
+        params: TenantScopedParams & { environment?: string | null; jobKey?: string | null },
+        options?: CroniqRequestOptions,
+    ): Observable<ScheduleListResponse> {
+        return this.execute$<ScheduleListResponse>(
             LIST_SCHEDULES_ENDPOINT,
             {
                 path: { tenantId: params.tenantId },
@@ -447,8 +486,42 @@ class HttpCroniqApiClient implements CroniqApiClient {
         );
     }
 
+    getTenantApiClient$(params: TenantApiClientParams, options?: CroniqRequestOptions): Observable<unknown> {
+        return this.execute$(
+            TENANT_ENDPOINTS.apiClient,
+            {
+                path: {
+                    tenantId: params.tenantId,
+                    clientId: params.clientId,
+                },
+                query: {
+                    environment: params.environment ?? undefined,
+                },
+            },
+            options,
+        );
+    }
+
     listExecutions(params: ExecutionParams, options?: CroniqRequestOptions): Promise<unknown> {
         return this.execute(
+            TENANT_ENDPOINTS.listExecutions,
+            {
+                path: { tenantId: params.tenantId },
+                query: {
+                    environment: params.environment,
+                    jobKey: params.jobKey ?? undefined,
+                    status: params.status ?? undefined,
+                    startedAfterUtc: params.startedAfterUtc ?? undefined,
+                    startedBeforeUtc: params.startedBeforeUtc ?? undefined,
+                    limit: params.limit ?? undefined,
+                },
+            },
+            options,
+        );
+    }
+
+    listExecutions$(params: ExecutionParams, options?: CroniqRequestOptions): Observable<unknown> {
+        return this.execute$(
             TENANT_ENDPOINTS.listExecutions,
             {
                 path: { tenantId: params.tenantId },
@@ -481,8 +554,35 @@ class HttpCroniqApiClient implements CroniqApiClient {
         );
     }
 
+    getExecution$(params: ExecutionParams & ExecutionLogParams, options?: CroniqRequestOptions): Observable<unknown> {
+        return this.execute$(
+            TENANT_ENDPOINTS.getExecution,
+            {
+                path: {
+                    tenantId: params.tenantId,
+                    executionId: params.executionId,
+                },
+                query: {
+                    environment: params.environment,
+                },
+            },
+            options,
+        );
+    }
+
     listJobs(params: TenantEnvironmentParams, options?: CroniqRequestOptions): Promise<unknown> {
         return this.execute(
+            TENANT_ENDPOINTS.listJobs,
+            {
+                path: { tenantId: params.tenantId },
+                query: { environment: params.environment },
+            },
+            options,
+        );
+    }
+
+    listJobs$(params: TenantEnvironmentParams, options?: CroniqRequestOptions): Observable<unknown> {
+        return this.execute$(
             TENANT_ENDPOINTS.listJobs,
             {
                 path: { tenantId: params.tenantId },
@@ -506,6 +606,23 @@ class HttpCroniqApiClient implements CroniqApiClient {
 
     getJob(params: TenantEnvironmentParams & { jobId: string }, options?: CroniqRequestOptions): Promise<unknown> {
         return this.execute(
+            TENANT_ENDPOINTS.getJob,
+            {
+                path: {
+                    tenantId: params.tenantId,
+                    jobId: params.jobId,
+                },
+                query: { environment: params.environment },
+            },
+            options,
+        );
+    }
+
+    getJob$(
+        params: TenantEnvironmentParams & { jobId: string },
+        options?: CroniqRequestOptions,
+    ): Observable<unknown> {
+        return this.execute$(
             TENANT_ENDPOINTS.getJob,
             {
                 path: {
@@ -546,6 +663,20 @@ class HttpCroniqApiClient implements CroniqApiClient {
         );
     }
 
+    getSchedule$(params: TenantScheduleParams, options?: CroniqRequestOptions): Observable<unknown> {
+        return this.execute$(
+            TENANT_ENDPOINTS.getSchedule,
+            {
+                path: {
+                    tenantId: params.tenantId,
+                    triggerId: params.triggerId,
+                },
+                query: { environment: params.environment },
+            },
+            options,
+        );
+    }
+
     deleteSchedule(params: TenantScheduleParams, options?: CroniqRequestOptions): Promise<void> {
         return this.execute(
             TENANT_ENDPOINTS.deleteSchedule,
@@ -565,6 +696,20 @@ class HttpCroniqApiClient implements CroniqApiClient {
         options?: CroniqRequestOptions,
     ): Promise<unknown> {
         return this.execute(
+            TENANT_ENDPOINTS.listWebhooks,
+            {
+                path: { tenantId: params.tenantId },
+                query: { environment: params.environment },
+            },
+            options,
+        );
+    }
+
+    listTenantWebhooks$(
+        params: TenantEnvironmentParams,
+        options?: CroniqRequestOptions,
+    ): Observable<unknown> {
+        return this.execute$(
             TENANT_ENDPOINTS.listWebhooks,
             {
                 path: { tenantId: params.tenantId },
@@ -643,6 +788,20 @@ class HttpCroniqApiClient implements CroniqApiClient {
         );
     }
 
+    listTenantWebhookIpRules$(params: TenantWebhookParams, options?: CroniqRequestOptions): Observable<unknown> {
+        return this.execute$(
+            TENANT_ENDPOINTS.listIpRules,
+            {
+                path: {
+                    tenantId: params.tenantId,
+                    hookKey: params.hookKey,
+                },
+                query: { environment: params.environment },
+            },
+            options,
+        );
+    }
+
     createTenantWebhookIpRule(
         params: TenantWebhookParams,
         payload: CreateWebhookIpRuleRequest,
@@ -694,6 +853,20 @@ class HttpCroniqApiClient implements CroniqApiClient {
         );
     }
 
+    listTenantWebhookDeadLetters$(
+        params: TenantEnvironmentParams,
+        options?: CroniqRequestOptions,
+    ): Observable<unknown> {
+        return this.execute$(
+            TENANT_ENDPOINTS.listDeadLetters,
+            {
+                path: { tenantId: params.tenantId },
+                query: { environment: params.environment },
+            },
+            options,
+        );
+    }
+
     replayTenantWebhookDeadLetter(
         params: TenantDeadLetterParams,
         options?: CroniqRequestOptions,
@@ -736,6 +909,21 @@ class HttpCroniqApiClient implements CroniqApiClient {
         );
     }
 
+    fetchExecutionLogs$(params: ExecutionLogParams, options?: CroniqRequestOptions): Observable<string> {
+        return this.execute$<string>(
+            EXECUTION_LOG_ENDPOINT,
+            {
+                path: {
+                    tenantId: params.tenantId,
+                    executionId: params.executionId,
+                },
+                responseType: 'text',
+                parseResponse: false,
+            },
+            options,
+        );
+    }
+
     checkServiceHealth(options?: CroniqRequestOptions): Promise<void> {
         return this.execute(HEALTH_ENDPOINTS.service, {}, options);
     }
@@ -750,6 +938,14 @@ class HttpCroniqApiClient implements CroniqApiClient {
         options?: CroniqRequestOptions,
     ): Promise<T> {
         return this.executor.execute<T>(endpoint, this.withRequestOptions(config, options));
+    }
+
+    private execute$<T>(
+        endpoint: EndpointDefinition,
+        config: EndpointCallConfig,
+        options?: CroniqRequestOptions,
+    ): Observable<T> {
+        return this.executor.execute$<T>(endpoint, this.withRequestOptions(config, options));
     }
 
     private withRequestOptions(config: EndpointCallConfig, options?: CroniqRequestOptions): EndpointCallConfig {

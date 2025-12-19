@@ -12,6 +12,7 @@ type DetailTab = {
 @Component({
   selector: 'cq-jobs-page',
   imports: [DatePipe, Tabs, TabList, Tab, TabPanel, TabContent],
+  providers: [JobsStore],
   templateUrl: './jobs-page.html',
   changeDetection: ChangeDetectionStrategy.OnPush,
 })

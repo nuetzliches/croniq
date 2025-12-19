@@ -35,7 +35,7 @@ Derived from [docs/deep-dive/designs/angular-ui-concept.md](docs/deep-dive/desig
 - [x] Scaffold `src/Croniq.Ui` structure (application + libraries `data-access`, `telemetry`, `ui-kit`, plus generated `api-schema`) as outlined in the concept doc.
 - [x] Configure Tailwind per [https://next.angular.dev/guide/tailwind](https://next.angular.dev/guide/tailwind) and emit Croniq tokens via CSS variables (`--cq-*`).
 - [x] Capture MCP server usage in `.vscode/tasks.json` and `docs/deep-dive/designs/angular-ui-concept.md`, including `npm run mcp` instructions. _(Script + VS Code task wired up; see concept/scaffolding docs for details.)_
-- [ ] Establish Angular Query + Signals boilerplate shared across feature modules.
+- [x] Establish built-in Angular resource (`rxResource`) + signals boilerplate shared across feature modules. _(Core helper in [src/app/core/resource/tenant-rx-resource.ts](src/app/core/resource/tenant-rx-resource.ts); first usage in schedules store.)_
 
 ## Application Architecture
 

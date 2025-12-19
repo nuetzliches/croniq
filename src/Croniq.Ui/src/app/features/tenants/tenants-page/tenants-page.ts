@@ -7,6 +7,7 @@ import { TenantsStore } from '@features/tenants/tenants.store';
   selector: 'cq-tenants-page',
   imports: [DatePipe, JsonPipe],
   templateUrl: './tenants-page.html',
+  providers: [TenantsStore],
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class TenantsPage {

@@ -1,6 +1,6 @@
 import { HttpClient } from '@angular/common/http';
 import type { EndpointDefinition, ParameterLocation } from '@croniq/api-schema';
-import { firstValueFrom } from 'rxjs';
+import { Observable, firstValueFrom, map } from 'rxjs';
 import { z } from 'zod';
 import type { CallerContext, CroniqCredentialSupplier } from './api-client.types';
 
@@ -27,6 +27,10 @@ export class EndpointExecutor {
     ) { }
 
     async execute<T = unknown>(endpoint: EndpointDefinition, config: EndpointCallConfig = {}): Promise<T> {
+        return firstValueFrom(this.execute$<T>(endpoint, config));
+    }
+
+    execute$<T = unknown>(endpoint: EndpointDefinition, config: EndpointCallConfig = {}): Observable<T> {
         const pathValues = this.normalizeParams(endpoint, 'Path', config.path);
         const queryValues = this.normalizeParams(endpoint, 'Query', config.query);
         const headerValues = this.normalizeParams(endpoint, 'Header', config.headers);
@@ -50,26 +54,13 @@ export class EndpointExecutor {
         }
 
         const method = endpoint.method.toUpperCase();
-        let response: unknown;
-        if (responseType === 'text') {
-            response = await firstValueFrom(
-                this.http.request(method, url, {
-                    ...baseOptions,
-                    responseType: 'text',
-                    observe: 'body',
-                }),
-            );
-        } else {
-            response = await firstValueFrom(
-                this.http.request(method, url, {
-                    ...baseOptions,
-                    responseType: 'json',
-                    observe: 'body',
-                }),
-            );
-        }
+        const request$ = this.http.request(method, url, {
+            ...baseOptions,
+            responseType: responseType === 'text' ? 'text' : 'json',
+            observe: 'body',
+        } as unknown as { responseType: 'json' | 'text'; observe: 'body' });
 
-        return this.parseResponse<T>(endpoint, response, config);
+        return request$.pipe(map((response) => this.parseResponse<T>(endpoint, response, config)));
     }
 
     private normalizeParams(

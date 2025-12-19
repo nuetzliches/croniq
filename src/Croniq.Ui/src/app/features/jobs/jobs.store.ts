@@ -1,9 +1,11 @@
 import { HttpErrorResponse } from '@angular/common/http';
 import { Injectable, computed, inject, signal } from '@angular/core';
 import { authFailureFromError } from '@core/auth/auth-failure';
+import { tenantRxResource } from '@core/resource/tenant-rx-resource';
 import { TenantContextService } from '@core/tenant-context/tenant-context.service';
 import { isoFromEpochMs, nowIso, nowMs } from '@core/time/clock';
 import { CRONIQ_API_CLIENT, CallerContext, CroniqApiClient } from 'data-access';
+import { catchError, from, map, of, tap } from 'rxjs';
 
 export type ManualTriggerStatus = 'pending' | 'success' | 'error';
 export type ManualTriggerEntry = {
@@ -34,23 +36,219 @@ export type JobDetail = {
     description?: string;
 };
 
-@Injectable({ providedIn: 'root' })
+@Injectable()
 export class JobsStore {
     private readonly api = inject<CroniqApiClient>(CRONIQ_API_CLIENT);
     private readonly tenantContext = inject(TenantContextService);
 
     private readonly triggerLog = signal<ReadonlyArray<ManualTriggerEntry>>(seedManualTriggers());
     private readonly jobRegistrySignal = signal<ReadonlyArray<JobRegistryEntry>>([]);
-    private readonly jobRegistryLoadingSignal = signal(false);
     private readonly jobRegistryErrorSignal = signal<string | null>(null);
 
+    private readonly jobRegistryResource = tenantRxResource<ReadonlyArray<JobRegistryEntry>, { tenantId: string; environment: string }>({
+        command: 'jobs.list',
+        defaultValue: [],
+        params: () => {
+            const { tenantId, environment } = this.tenantContext.snapshot();
+            return { tenantId, environment };
+        },
+        stream: ({ params, requestOptions }) => {
+            this.jobRegistryErrorSignal.set(null);
+
+            const tenantId = params.tenantId.trim();
+            const environment = params.environment.trim();
+
+            if (!tenantId) {
+                this.jobRegistryErrorSignal.set('TenantId is not set — select a tenant to load jobs.');
+                this.jobRegistrySignal.set([]);
+                return of([]);
+            }
+            if (!environment) {
+                this.jobRegistryErrorSignal.set('Environment is not set — select an environment to load jobs.');
+                this.jobRegistrySignal.set([]);
+                return of([]);
+            }
+
+            const request$ = this.api.listJobs$
+                ? this.api.listJobs$({ tenantId, environment }, requestOptions)
+                : from(this.api.listJobs({ tenantId, environment }, requestOptions));
+
+            return request$.pipe(
+                map((response) => normalizeJobRegistry(response)),
+                tap((normalized) => {
+                    this.jobRegistrySignal.set(normalized);
+                }),
+                catchError((error: unknown) => {
+                    console.error('Failed to load job registry', error);
+                    const authFailure = authFailureFromError(error, {
+                        forbidden: 'Forbidden (403) — your token is missing jobs permissions for this tenant.',
+                    });
+                    if (authFailure) {
+                        this.jobRegistryErrorSignal.set(authFailure.message);
+                        this.jobRegistrySignal.set([]);
+                        return of([]);
+                    }
+
+                    this.jobRegistryErrorSignal.set('Unable to load jobs from API.');
+                    this.jobRegistrySignal.set([]);
+                    return of([]);
+                }),
+            );
+        },
+    });
+
     private readonly executionsSignal = signal<ReadonlyArray<ExecutionSummary>>([]);
-    private readonly executionsLoadingSignal = signal(false);
     private readonly executionsErrorSignal = signal<string | null>(null);
 
+    private readonly executionsQuery = signal<{ jobKey?: string; limit: number }>({
+        jobKey: undefined,
+        limit: 25,
+    });
+
+    private readonly executionsResource = tenantRxResource<ReadonlyArray<ExecutionSummary>, { tenantId: string; environment: string; jobKey?: string; limit: number }>({
+        command: 'executions.list',
+        defaultValue: [],
+        params: () => {
+            const { tenantId, environment } = this.tenantContext.snapshot();
+            const query = this.executionsQuery();
+            return {
+                tenantId,
+                environment,
+                jobKey: query.jobKey?.trim() || undefined,
+                limit: query.limit,
+            };
+        },
+        stream: ({ params, requestOptions }) => {
+            this.executionsErrorSignal.set(null);
+
+            const tenantId = params.tenantId.trim();
+            const environment = params.environment.trim();
+
+            if (!tenantId) {
+                this.executionsErrorSignal.set('TenantId is not set — select a tenant to load executions.');
+                this.executionsSignal.set([]);
+                return of([]);
+            }
+            if (!environment) {
+                this.executionsErrorSignal.set('Environment is not set — select an environment to load executions.');
+                this.executionsSignal.set([]);
+                return of([]);
+            }
+
+            const request$ = this.api.listExecutions$
+                ? this.api.listExecutions$(
+                    {
+                        tenantId,
+                        environment,
+                        jobKey: params.jobKey,
+                        limit: typeof params.limit === 'number' ? params.limit : 25,
+                    },
+                    requestOptions,
+                )
+                : from(
+                    this.api.listExecutions(
+                        {
+                            tenantId,
+                            environment,
+                            jobKey: params.jobKey,
+                            limit: typeof params.limit === 'number' ? params.limit : 25,
+                        },
+                        requestOptions,
+                    ),
+                );
+
+            return request$.pipe(
+                map((response) => normalizeExecutions(response)),
+                tap((normalized) => {
+                    this.executionsSignal.set(normalized);
+                }),
+                catchError((error: unknown) => {
+                    console.error('Failed to load executions', error);
+                    const authFailure = authFailureFromError(error, {
+                        forbidden:
+                            'Forbidden (403) — your token is missing executions permissions for this tenant.',
+                    });
+                    if (authFailure) {
+                        this.executionsErrorSignal.set(authFailure.message);
+                        this.executionsSignal.set([]);
+                        return of([]);
+                    }
+                    this.executionsErrorSignal.set('Unable to load executions from API.');
+                    this.executionsSignal.set([]);
+                    return of([]);
+                }),
+            );
+        },
+    });
+
     private readonly jobDetailSignal = signal<JobDetail | null>(null);
-    private readonly jobDetailLoadingSignal = signal(false);
+    private readonly jobDetailJobIdSignal = signal<string | null>(null);
     private readonly jobDetailErrorSignal = signal<string | null>(null);
+    private readonly jobDetailResource = tenantRxResource<JobDetail | null, { tenantId: string; environment: string; jobId: string | null }>({
+        command: 'jobs.get',
+        defaultValue: null,
+        params: () => {
+            const { tenantId, environment } = this.tenantContext.snapshot();
+            return {
+                tenantId,
+                environment,
+                jobId: this.jobDetailJobIdSignal(),
+            };
+        },
+        stream: ({ params, requestOptions }) => {
+            this.jobDetailErrorSignal.set(null);
+
+            const trimmedId = params.jobId?.trim() ?? '';
+            if (!trimmedId) {
+                this.jobDetailSignal.set(null);
+                return of(null);
+            }
+
+            const tenantId = params.tenantId.trim();
+            const environment = params.environment.trim();
+            if (!tenantId) {
+                this.jobDetailErrorSignal.set('TenantId is not set — select a tenant to load job detail.');
+                this.jobDetailSignal.set(null);
+                return of(null);
+            }
+            if (!environment) {
+                this.jobDetailErrorSignal.set('Environment is not set — select an environment to load job detail.');
+                this.jobDetailSignal.set(null);
+                return of(null);
+            }
+
+            const request$ = this.api.getJob$
+                ? this.api.getJob$({ tenantId, environment, jobId: trimmedId }, requestOptions)
+                : from(this.api.getJob({ tenantId, environment, jobId: trimmedId }, requestOptions));
+
+            return request$.pipe(
+                map((response) => normalizeJobDetail(response, trimmedId)),
+                tap((normalized) => {
+                    this.jobDetailSignal.set(normalized);
+                }),
+                catchError((error: unknown) => {
+                    console.error('Failed to load job detail', error);
+                    const authFailure = authFailureFromError(error, {
+                        forbidden: 'Forbidden (403) — your token is missing jobs permissions for this tenant.',
+                    });
+                    if (authFailure) {
+                        this.jobDetailErrorSignal.set(authFailure.message);
+                        this.jobDetailSignal.set(null);
+                        return of(null);
+                    }
+                    if (error instanceof HttpErrorResponse && error.status === 404) {
+                        this.jobDetailErrorSignal.set('Job not found (404) — verify the job id in the registry.');
+                        this.jobDetailSignal.set(null);
+                        return of(null);
+                    }
+                    this.jobDetailErrorSignal.set('Unable to load job detail from API.');
+                    this.jobDetailSignal.set(null);
+                    return of(null);
+                }),
+            );
+        },
+    });
+
     private readonly deleteJobLoadingSignal = signal(false);
     private readonly deleteJobErrorSignal = signal<string | null>(null);
 
@@ -61,15 +259,15 @@ export class JobsStore {
     readonly pendingCount = computed(() => this.manualTriggers().filter((entry) => entry.status === 'pending').length);
 
     readonly jobRegistry = this.jobRegistrySignal.asReadonly();
-    readonly jobRegistryLoading = this.jobRegistryLoadingSignal.asReadonly();
+    readonly jobRegistryLoading = computed(() => this.jobRegistryResource.isLoading());
     readonly jobRegistryError = this.jobRegistryErrorSignal.asReadonly();
 
     readonly executions = this.executionsSignal.asReadonly();
-    readonly executionsLoading = this.executionsLoadingSignal.asReadonly();
+    readonly executionsLoading = computed(() => this.executionsResource.isLoading());
     readonly executionsError = this.executionsErrorSignal.asReadonly();
 
     readonly jobDetail = this.jobDetailSignal.asReadonly();
-    readonly jobDetailLoading = this.jobDetailLoadingSignal.asReadonly();
+    readonly jobDetailLoading = computed(() => this.jobDetailResource.isLoading());
     readonly jobDetailError = this.jobDetailErrorSignal.asReadonly();
     readonly deleteJobLoading = this.deleteJobLoadingSignal.asReadonly();
     readonly deleteJobError = this.deleteJobErrorSignal.asReadonly();
@@ -82,142 +280,28 @@ export class JobsStore {
     }
 
     async refreshExecutions(params: { jobKey?: string; limit?: number } = {}): Promise<void> {
-        const { tenantId, environment } = this.tenantContext.snapshot();
-        if (!tenantId.trim()) {
-            this.executionsErrorSignal.set('TenantId is not set — select a tenant to load executions.');
-            this.executionsSignal.set([]);
-            return;
-        }
-        if (!environment.trim()) {
-            this.executionsErrorSignal.set('Environment is not set — select an environment to load executions.');
-            this.executionsSignal.set([]);
-            return;
-        }
-
-        this.executionsLoadingSignal.set(true);
-        this.executionsErrorSignal.set(null);
-        try {
-            const response = await this.api.listExecutions(
-                {
-                    tenantId,
-                    environment,
-                    jobKey: params.jobKey?.trim() || undefined,
-                    limit: typeof params.limit === 'number' ? params.limit : 25,
-                },
-                this.tenantContext.createRequestOptions('executions.list', {
-                    tenantId,
-                    environment,
-                }),
-            );
-            this.executionsSignal.set(normalizeExecutions(response));
-        } catch (error) {
-            console.error('Failed to load executions', error);
-            const authFailure = authFailureFromError(error, {
-                forbidden: 'Forbidden (403) — your token is missing executions permissions for this tenant.',
-            });
-            if (authFailure) {
-                this.executionsErrorSignal.set(authFailure.message);
-                this.executionsSignal.set([]);
-                return;
-            }
-            this.executionsErrorSignal.set('Unable to load executions from API.');
-            this.executionsSignal.set([]);
-        } finally {
-            this.executionsLoadingSignal.set(false);
-        }
+        this.executionsQuery.set({
+            jobKey: params.jobKey?.trim() || undefined,
+            limit: typeof params.limit === 'number' ? params.limit : 25,
+        });
+        this.executionsResource.reload();
     }
 
     async refreshJobRegistry(): Promise<void> {
-        const { tenantId, environment } = this.tenantContext.snapshot();
-        if (!tenantId.trim()) {
-            this.jobRegistryErrorSignal.set('TenantId is not set — select a tenant to load jobs.');
-            this.jobRegistrySignal.set([]);
-            return;
-        }
-        if (!environment.trim()) {
-            this.jobRegistryErrorSignal.set('Environment is not set — select an environment to load jobs.');
-            this.jobRegistrySignal.set([]);
-            return;
-        }
-
-        this.jobRegistryLoadingSignal.set(true);
-        this.jobRegistryErrorSignal.set(null);
-        try {
-            const response = await this.api.listJobs(
-                { tenantId, environment },
-                this.tenantContext.createRequestOptions('jobs.list', {
-                    tenantId,
-                    environment,
-                }),
-            );
-            this.jobRegistrySignal.set(normalizeJobRegistry(response));
-        } catch (error) {
-            console.error('Failed to load job registry', error);
-            const authFailure = authFailureFromError(error, {
-                forbidden: 'Forbidden (403) — your token is missing jobs permissions for this tenant.',
-            });
-            if (authFailure) {
-                this.jobRegistryErrorSignal.set(authFailure.message);
-                this.jobRegistrySignal.set([]);
-                return;
-            }
-            this.jobRegistryErrorSignal.set('Unable to load jobs from API.');
-        } finally {
-            this.jobRegistryLoadingSignal.set(false);
-        }
+        this.jobRegistryResource.reload();
     }
 
     async refreshJobDetail(jobId: string): Promise<void> {
         const trimmedId = jobId.trim();
         if (!trimmedId) {
             this.jobDetailErrorSignal.set('Job id is required to load job detail.');
+            this.jobDetailJobIdSignal.set(null);
             this.jobDetailSignal.set(null);
             return;
         }
 
-        const { tenantId, environment } = this.tenantContext.snapshot();
-        if (!tenantId.trim()) {
-            this.jobDetailErrorSignal.set('TenantId is not set — select a tenant to load job detail.');
-            this.jobDetailSignal.set(null);
-            return;
-        }
-        if (!environment.trim()) {
-            this.jobDetailErrorSignal.set('Environment is not set — select an environment to load job detail.');
-            this.jobDetailSignal.set(null);
-            return;
-        }
-
-        this.jobDetailLoadingSignal.set(true);
-        this.jobDetailErrorSignal.set(null);
-        try {
-            const response = await this.api.getJob(
-                { tenantId, environment, jobId: trimmedId },
-                this.tenantContext.createRequestOptions('jobs.get', {
-                    tenantId,
-                    environment,
-                }),
-            );
-            this.jobDetailSignal.set(normalizeJobDetail(response, trimmedId));
-        } catch (error) {
-            console.error('Failed to load job detail', error);
-            const authFailure = authFailureFromError(error, {
-                forbidden: 'Forbidden (403) — your token is missing jobs permissions for this tenant.',
-            });
-            if (authFailure) {
-                this.jobDetailErrorSignal.set(authFailure.message);
-                this.jobDetailSignal.set(null);
-                return;
-            }
-            if (error instanceof HttpErrorResponse && error.status === 404) {
-                this.jobDetailErrorSignal.set('Job not found (404) — verify the job id in the registry.');
-                this.jobDetailSignal.set(null);
-                return;
-            }
-            this.jobDetailErrorSignal.set('Unable to load job detail from API.');
-            this.jobDetailSignal.set(null);
-        } finally {
-            this.jobDetailLoadingSignal.set(false);
-        }
+        this.jobDetailJobIdSignal.set(trimmedId);
+        this.jobDetailResource.reload();
     }
 
     async deleteJob(jobId: string): Promise<void> {
@@ -360,7 +444,7 @@ function seedManualTriggers(): ReadonlyArray<ManualTriggerEntry> {
 function createEntryId(): string {
     return typeof crypto !== 'undefined' && 'randomUUID' in crypto
         ? crypto.randomUUID()
-    : `${nowMs()}-${Math.round(Math.random() * 1000)}`;
+        : `${nowMs()}-${Math.round(Math.random() * 1000)}`;
 }
 
 function normalizeJobRegistry(value: unknown): ReadonlyArray<JobRegistryEntry> {

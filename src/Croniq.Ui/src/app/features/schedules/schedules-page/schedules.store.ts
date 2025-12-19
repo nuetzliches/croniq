@@ -1,10 +1,12 @@
 import { HttpErrorResponse } from '@angular/common/http';
-import { Injectable, inject, signal } from '@angular/core';
+import { Injectable, computed, inject, signal } from '@angular/core';
 import { authFailureFromError } from '@core/auth/auth-failure';
+import { tenantRxResource } from '@core/resource/tenant-rx-resource';
 import { TenantContextService } from '@core/tenant-context/tenant-context.service';
 import { isoFromEpochMs, nowIso, nowMs } from '@core/time/clock';
 import { ScheduleListResponse, ScheduleSummary, scheduleListResponseSchema } from '@croniq/api-schema';
 import { CRONIQ_API_CLIENT, CroniqApiClient } from 'data-access';
+import { catchError, from, map, of, tap } from 'rxjs';
 
 export type ScheduleDetail = {
     triggerId: string;
@@ -14,19 +16,135 @@ export type ScheduleDetail = {
     state?: string;
 };
 
-@Injectable({ providedIn: 'root' })
+@Injectable()
 export class SchedulesStore {
     private readonly api = inject<CroniqApiClient>(CRONIQ_API_CLIENT);
     private readonly tenantContext = inject(TenantContextService);
 
     private readonly schedulesSignal = signal<ReadonlyArray<ScheduleSummary>>([]);
     private readonly lastUpdatedSignal = signal<string>(nowIso());
-    readonly loading = signal(true);
     readonly error = signal<string | null>(null);
 
+    private readonly schedulesResource = tenantRxResource<ScheduleListResponse, { tenantId: string }>({
+        command: 'schedules.refresh',
+        defaultValue: createFallbackResponse(),
+        params: () => ({
+            tenantId: this.tenantContext.snapshot().tenantId,
+        }),
+        stream: ({ params, requestOptions }) => {
+            this.error.set(null);
+
+            const tenantId = params.tenantId.trim();
+            if (!tenantId) {
+                const fallback = createFallbackResponse();
+                this.hydrate(fallback);
+                this.error.set('TenantId is not set — select a tenant to load schedules.');
+                return of(fallback);
+            }
+
+            const request$ = this.api.getSchedules$
+                ? this.api.getSchedules$({ tenantId }, requestOptions)
+                : from(this.api.getSchedules({ tenantId }, requestOptions));
+
+            return request$.pipe(
+                tap((response) => {
+                    this.hydrate(response);
+                }),
+                catchError((error: unknown) => {
+                    console.error('Failed to load schedules', error);
+                    const authFailure = authFailureFromError(error, {
+                        forbidden:
+                            'Forbidden (403) — your token is missing schedules permissions for this tenant.',
+                    });
+                    if (authFailure) {
+                        this.error.set(authFailure.message);
+                        const empty = createEmptyResponse();
+                        this.hydrate(empty);
+                        return of(empty);
+                    }
+
+                    this.error.set('Unable to load schedules from API — showing fallback data.');
+                    const fallback = createFallbackResponse();
+                    this.hydrate(fallback);
+                    return of(fallback);
+                }),
+            );
+        },
+    });
+
+    readonly loading = computed(() => this.schedulesResource.isLoading());
+
     private readonly scheduleDetailSignal = signal<ScheduleDetail | null>(null);
-    private readonly scheduleDetailLoadingSignal = signal(false);
+    private readonly scheduleDetailTriggerIdSignal = signal<string | null>(null);
     private readonly scheduleDetailErrorSignal = signal<string | null>(null);
+    private readonly scheduleDetailResource = tenantRxResource<ScheduleDetail | null, { tenantId: string; environment: string; triggerId: string | null }>({
+        command: 'schedules.get',
+        defaultValue: null,
+        params: () => {
+            const { tenantId, environment } = this.tenantContext.snapshot();
+            return {
+                tenantId,
+                environment,
+                triggerId: this.scheduleDetailTriggerIdSignal(),
+            };
+        },
+        stream: ({ params, requestOptions }) => {
+            this.scheduleDetailErrorSignal.set(null);
+
+            const trimmedId = params.triggerId?.trim() ?? '';
+            if (!trimmedId) {
+                // Nothing selected -> nothing to load.
+                this.scheduleDetailSignal.set(null);
+                return of(null);
+            }
+
+            const tenantId = params.tenantId.trim();
+            const environment = params.environment.trim();
+            if (!tenantId) {
+                this.scheduleDetailErrorSignal.set('TenantId is not set — select a tenant to load schedule detail.');
+                this.scheduleDetailSignal.set(null);
+                return of(null);
+            }
+            if (!environment) {
+                this.scheduleDetailErrorSignal.set(
+                    'Environment is not set — select an environment to load schedule detail.',
+                );
+                this.scheduleDetailSignal.set(null);
+                return of(null);
+            }
+
+            const request$ = this.api.getSchedule$
+                ? this.api.getSchedule$({ tenantId, environment, triggerId: trimmedId }, requestOptions)
+                : from(this.api.getSchedule({ tenantId, environment, triggerId: trimmedId }, requestOptions));
+
+            return request$.pipe(
+                map((response) => normalizeScheduleDetail(response, trimmedId)),
+                tap((normalized) => {
+                    this.scheduleDetailSignal.set(normalized);
+                }),
+                catchError((error: unknown) => {
+                    console.error('Failed to load schedule detail', error);
+                    const authFailure = authFailureFromError(error, {
+                        forbidden: 'Forbidden (403) — your token is missing schedules permissions for this tenant.',
+                    });
+                    if (authFailure) {
+                        this.scheduleDetailErrorSignal.set(authFailure.message);
+                        this.scheduleDetailSignal.set(null);
+                        return of(null);
+                    }
+                    if (error instanceof HttpErrorResponse && error.status === 404) {
+                        this.scheduleDetailErrorSignal.set('Schedule not found (404) — verify the trigger id.');
+                        this.scheduleDetailSignal.set(null);
+                        return of(null);
+                    }
+                    this.scheduleDetailErrorSignal.set('Unable to load schedule detail from API.');
+                    this.scheduleDetailSignal.set(null);
+                    return of(null);
+                }),
+            );
+        },
+    });
+
     private readonly deleteScheduleLoadingSignal = signal(false);
     private readonly deleteScheduleErrorSignal = signal<string | null>(null);
 
@@ -34,100 +152,30 @@ export class SchedulesStore {
     readonly lastUpdated = this.lastUpdatedSignal.asReadonly();
 
     readonly scheduleDetail = this.scheduleDetailSignal.asReadonly();
-    readonly scheduleDetailLoading = this.scheduleDetailLoadingSignal.asReadonly();
+    readonly scheduleDetailLoading = computed(() => this.scheduleDetailResource.isLoading());
     readonly scheduleDetailError = this.scheduleDetailErrorSignal.asReadonly();
     readonly deleteScheduleLoading = this.deleteScheduleLoadingSignal.asReadonly();
     readonly deleteScheduleError = this.deleteScheduleErrorSignal.asReadonly();
 
     constructor() {
         this.hydrate(createFallbackResponse());
-        queueMicrotask(() => {
-            void this.refresh();
-        });
     }
 
-    async refresh(): Promise<void> {
-        this.loading.set(true);
-        this.error.set(null);
-        try {
-            const requestOptions = this.tenantContext.createRequestOptions('schedules.refresh');
-            const response = await this.api.getSchedules(
-                { tenantId: this.tenantContext.snapshot().tenantId },
-                requestOptions
-            );
-            this.hydrate(response);
-        } catch (error) {
-            console.error('Failed to load schedules', error);
-            const authFailure = authFailureFromError(error, {
-                forbidden: 'Forbidden (403) — your token is missing schedules permissions for this tenant.',
-            });
-            if (authFailure) {
-                this.error.set(authFailure.message);
-                this.schedulesSignal.set([]);
-                this.lastUpdatedSignal.set(nowIso());
-                return;
-            }
-
-            this.error.set('Unable to load schedules from API — showing fallback data.');
-            if (this.schedulesSignal().length === 0) {
-                this.hydrate(createFallbackResponse());
-            }
-        } finally {
-            this.loading.set(false);
-        }
+    refresh(): void {
+        this.schedulesResource.reload();
     }
 
     async refreshScheduleDetail(triggerId: string): Promise<void> {
         const trimmedId = triggerId.trim();
         if (!trimmedId) {
             this.scheduleDetailErrorSignal.set('Trigger id is required to load schedule detail.');
+            this.scheduleDetailTriggerIdSignal.set(null);
             this.scheduleDetailSignal.set(null);
             return;
         }
 
-        const { tenantId, environment } = this.tenantContext.snapshot();
-        if (!tenantId.trim()) {
-            this.scheduleDetailErrorSignal.set('TenantId is not set — select a tenant to load schedule detail.');
-            this.scheduleDetailSignal.set(null);
-            return;
-        }
-        if (!environment.trim()) {
-            this.scheduleDetailErrorSignal.set('Environment is not set — select an environment to load schedule detail.');
-            this.scheduleDetailSignal.set(null);
-            return;
-        }
-
-        this.scheduleDetailLoadingSignal.set(true);
-        this.scheduleDetailErrorSignal.set(null);
-        try {
-            const response = await this.api.getSchedule(
-                { tenantId, environment, triggerId: trimmedId },
-                this.tenantContext.createRequestOptions('schedules.get', {
-                    tenantId,
-                    environment,
-                }),
-            );
-            this.scheduleDetailSignal.set(normalizeScheduleDetail(response, trimmedId));
-        } catch (error) {
-            console.error('Failed to load schedule detail', error);
-            const authFailure = authFailureFromError(error, {
-                forbidden: 'Forbidden (403) — your token is missing schedules permissions for this tenant.',
-            });
-            if (authFailure) {
-                this.scheduleDetailErrorSignal.set(authFailure.message);
-                this.scheduleDetailSignal.set(null);
-                return;
-            }
-            if (error instanceof HttpErrorResponse && error.status === 404) {
-                this.scheduleDetailErrorSignal.set('Schedule not found (404) — verify the trigger id.');
-                this.scheduleDetailSignal.set(null);
-                return;
-            }
-            this.scheduleDetailErrorSignal.set('Unable to load schedule detail from API.');
-            this.scheduleDetailSignal.set(null);
-        } finally {
-            this.scheduleDetailLoadingSignal.set(false);
-        }
+        this.scheduleDetailTriggerIdSignal.set(trimmedId);
+        this.scheduleDetailResource.reload();
     }
 
     async deleteSchedule(triggerId: string): Promise<void> {
@@ -163,7 +211,7 @@ export class SchedulesStore {
                 this.scheduleDetailSignal.set(null);
             }
             this.schedulesSignal.set(this.schedulesSignal().filter((schedule) => schedule.id !== trimmedId));
-            void this.refresh();
+            this.refresh();
         } catch (error) {
             console.error('Failed to delete schedule', error);
             const authFailure = authFailureFromError(error, {
@@ -194,6 +242,14 @@ function createFallbackResponse(): ScheduleListResponse {
     return scheduleListResponseSchema.parse({
         items,
         total: items.length,
+        updatedAt: nowIso(),
+    });
+}
+
+function createEmptyResponse(): ScheduleListResponse {
+    return scheduleListResponseSchema.parse({
+        items: [],
+        total: 0,
         updatedAt: nowIso(),
     });
 }
