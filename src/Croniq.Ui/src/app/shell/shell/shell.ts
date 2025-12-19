@@ -1,8 +1,8 @@
 import { ChangeDetectionStrategy, Component, inject, signal } from '@angular/core';
 import { Router, RouterLink, RouterLinkActive, RouterOutlet } from '@angular/router';
+import { PasswordAuthService } from '@core/auth/password-auth.service';
 import { NavItem, PRIMARY_NAV_ITEMS } from '@core/navigation/nav-items';
 import { TenantContextService } from '@core/tenant-context/tenant-context.service';
-import { PasswordAuthService } from '@core/auth/password-auth.service';
 import { AppBrand } from '@shared/app-brand/app-brand';
 import { CommandPalette } from '@shared/command-palette/command-palette';
 import { CommandPaletteController } from '@shared/command-palette/command-palette.controller';
