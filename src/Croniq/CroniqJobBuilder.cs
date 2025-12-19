@@ -2,7 +2,6 @@ using System;
 using Croniq.Core.Hosting;
 using Croniq.Sdk;
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.DependencyInjection.Extensions;
 
 namespace Croniq;
 
@@ -27,7 +26,7 @@ public sealed class CroniqJobBuilder
         var registration = new CroniqTriggerSeedRegistration(_attribute, cronExpression);
         configure?.Invoke(registration);
 
-        _services.TryAddEnumerable(ServiceDescriptor.Singleton(registration));
+        _services.AddSingleton(registration);
         return this;
     }
 }

@@ -133,6 +133,7 @@ public static class ServiceCollectionExtensions
         services.AddCroniqCore();
         services.AddCroniqInMemoryJobStore();
         services.AddHostedService<CroniqTriggerSeedingHostedService>();
+        services.AddHostedService<CroniqTriggerSummaryHostedService>();
         services.AddCroniqWorkerHost();
 
         return services;
@@ -170,8 +171,8 @@ public static class ServiceCollectionExtensions
         services.TryAddSingleton<IJobHandlerRegistry, JobHandlerRegistry>();
         services.TryAddTransient<DelegatingJob>();
 
-        services.TryAddEnumerable(ServiceDescriptor.Singleton<JobRegistration>(new FluentJobRegistration(typeof(DelegatingJob), attribute)));
-        services.TryAddEnumerable(ServiceDescriptor.Singleton(new JobHandlerRegistration(attribute, handler)));
+        services.AddSingleton<JobRegistration>(new FluentJobRegistration(typeof(DelegatingJob), attribute));
+        services.AddSingleton(new JobHandlerRegistration(attribute, handler));
 
         return new CroniqJobBuilder(services, attribute);
     }
