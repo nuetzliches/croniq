@@ -2,6 +2,8 @@
 
 Policies let you describe operational behavior independently from handler logic. Attach them via the fluent builder after defining handlers.
 
+> **Note:** The current Croniq runtime configures policies via `Croniq:Policies:*` options and `PolicyOverrideOptions`. A fluent per-job builder is on the UX backlog.
+
 ## Concurrency
 
 ```csharp
@@ -70,5 +72,5 @@ builder.Services.AddCroniqJob(jobKey, job =>
 
 ## Diagnostics
 
-- Enable structured logging via `AddCroniq(options => options.Logging = CroniqLogging.Verbose);`
-- Use `context.Telemetry` inside handlers to emit custom traces.
+- Enable structured logging via `logging.AddCroniqExecutionLogSink()` or `services.AddCroniqObservability(...)`.
+- Use `context.ActivitySource` inside handlers to create spans or tags.

@@ -30,133 +30,54 @@ Until official packages exist, you can reference local projects or NuGet prerele
 
 ```cmd
 cd HelloCroniq
+ dotnet add package Croniq --version <latest>
  dotnet add package Croniq.Api --version <latest>
- dotnet add package Croniq.Sdk --version <latest>
 ```
 
-> Always install the latest stable version (see `AI_ASSISTANT_INSTRUCTIONS.md`). For local development before packages exist, add project references to `src/Croniq.Api` and `src/Croniq.Sdk` instead of NuGet packages.
+> Always install the latest stable version (see `AI_ASSISTANT_INSTRUCTIONS.md`). For local development before packages exist, add project references to `src/Croniq` and `src/Croniq.Api` instead of NuGet packages.
 
-## 3. Register a Fluent `IJob` Handler
+## 3. Register a Job Class
 
-Croniq supports a fluent registration model whenever you do not want to create a dedicated class type. Example inside `HelloCroniq/Program.cs`:
-
-### Minimal handler
+Implement `IJob` and register it via `AddCroniqJob<TJob>()` inside `HelloCroniq/Program.cs`:
 
 ```csharp
-using Croniq.Api;
+using Croniq;
 using Croniq.Sdk;
+using Croniq.Api;
+using Microsoft.Extensions.Logging;
 
 var builder = WebApplication.CreateBuilder(args);
 
-builder.Services.AddCroniq();
+builder.Services.AddCroniq(builder.Configuration); // worker defaults (InMemory job store + worker host)
+builder.Services.AddCroniqApiServices(builder.Configuration);
+builder.Services.AddCroniqApiRateLimiter();
 
-var helloWorldKey = JobKey.From("samples", "HelloWorld");
-
-builder.Services.AddCroniqJob(helloWorldKey, job =>
-  job.WithDescription("Logs a friendly greeting")
-     .WithMetadata("owner", "quickstart")
-     .Handle(async (context, cancellationToken) =>
-     {
-       context.Logger.LogInformation(
-         "Hello from Croniq (single) JobKey={JobKey}",
-         context.JobKey);
-       await Task.CompletedTask;
-     }));
+builder.Services.AddCroniqJob<HelloWorldJob>();
 
 var app = builder.Build();
 
-app.UseCroniqApi(); // wires the Croniq management endpoints + auth middleware
-
+app.UseCroniqApi();
 app.Run();
-```
-
-- `AddCroniqJob(JobKey jobKey, Action<IJobBuilder> configure)` accepts the fully composed key (namespace + job name + optional variant) as a single parameter. Use `JobKey.From(...)` or map existing metadata to keep naming deterministic.
-- The fluent API surfaces multiple `Handle*` overloads if you need them, but Croniq expects most jobs to rely on a single `Handle` delegate and to report progress/state through the execution context (examples below).
-- `builder.Services.AddCroniq()` reads every `CRONIQ_*` environment variable by default (e.g., `CRONIQ_ENDPOINT`, `CRONIQ_API_KEY`, optional `CRONIQ_TENANT`, `CRONIQ_ENV`), so you do not have to duplicate endpoint or key configuration in code.
-- Configuration precedence and advanced scenarios are described in [`configuration.md`](configuration.md).
-- API surface will evolve. Always check the latest signatures in `/deep-dive/` (start with `architecture.md`).
-
-### Report progress from a single handler
-
-```csharp
-builder.Services.AddCroniqJob(helloWorldKey, job =>
-  job.Handle(async (context, cancellationToken) =>
-  {
-    context.InitProgress(100);
-    var processed = 0;
-
-    try
-    {
-      for (; processed < 100; processed++)
-      {
-        await ProcessRecordAsync(processed, cancellationToken);
-        context.ReportProgress(processed + 1);
-      }
-
-      context.Logger.LogInformation("Finished all {Total} records", processed);
-    }
-    catch (Exception ex)
-    {
-      context.Logger.LogError(ex, "Failed after {Processed} records", processed);
-      throw; // bubble up so Croniq policies can retry or dead-letter
-    }
-  }));
-```
-
-- `InitProgress(total)` initializes the Croniq progress tracker; call it once per execution path (skip it when you bail out before processing begins).
-- `ReportProgress(processed)` pushes the current count to the scheduler UI/logs.
-- Log and rethrow exceptions so Croniq can execute retry/dead-letter policies.
-
-### Emit custom waiting/running states
-
-```csharp
-builder.Services.AddCroniqJob(helloWorldKey, job =>
-  job.Handle(async (context, cancellationToken) =>
-  {
-    if (!await PrerequisiteReadyAsync(cancellationToken))
-    {
-      return CustomState("waiting-on-dependency"); // defaults to JobState.Waiting
-    }
-
-    await ExecuteStepsAsync(cancellationToken);
-    return CustomState("steps-finished", JobState.Finalized);
-  }));
-```
-
-- `CustomState(string detail, JobState state = JobState.Waiting)` stores the Croniq core state plus your own descriptor. Keep descriptors deterministic so monitoring/search works well.
-- Consider exposing a known list of descriptors per job (e.g., `waiting-on-dependency`, `step-1`, `step-2`, `finalized`) to make filtering easier in tooling; no prior registration is required by the runtime.
-
-## 4. Class-Based Pattern (Alternative)
-
-If you prefer a testable class or need constructor injection, implement `IJob` like this (in the same project) and register it via `AddCroniqJob<TJob>()`:
-
-```csharp
-using Croniq.Sdk;
-using Microsoft.Extensions.Logging;
-
-namespace HelloCroniq.Jobs;
 
 [CroniqJob("samples", "HelloWorld")]
 public sealed class HelloWorldJob : IJob
 {
   public Task ExecuteAsync(IJobExecutionContext context, CancellationToken cancellationToken)
   {
-    context.Logger.LogInformation("Hello from Croniq (class)! JobKey={JobKey}", context.JobKey);
+    context.Logger.LogInformation("Hello from Croniq! JobKey={JobKey}", context.JobKey);
     return Task.CompletedTask;
   }
 }
-
-// Program.cs (additional registration)
-builder.Services.AddCroniqJob<HelloWorldJob>();
 ```
+
+- `AddCroniq(...)` wires the worker runtime with safe defaults; drop the `configuration` argument if you want pure defaults.
+- `AddCroniqApiServices(...)` exposes the management API. If you do not want to co-host, move API registration into a separate web host.
+- Job keys are composed as `TenantId:EnvironmentTag:Namespace:Name` (defaults come from `Croniq:Core:*`).
 
 ```cmd
 # Terminal 1
 cd HelloCroniq
  dotnet run
-
-# Terminal 2 (optional)
-
 ```
 
 ```cmd
@@ -172,7 +93,7 @@ curl -X POST https://localhost:5001/tenants/dev-sandbox/schedules \
 
 Refer to `/deep-dive/persistence.md` (to be added) for the exact schedule payload and validation rules.
 
-## 5. Trigger Jobs via Webhooks (Optional)
+## 4. Trigger Jobs via Webhooks (Optional)
 
 Inbound webhooks let external systems trigger the job you just registered without touching the management API. For local development you can co-host the webhook ingress alongside the API by adding the `Croniq.Webhooks` package:
 
@@ -252,7 +173,7 @@ scripts/webhook-rotate-secret.ps1 `
 
 Pass `-ActivateInSeconds <seconds>` (up to seven days) when you need to stage the new secret before callers switch over. The script prints the activation window plus the plaintext secret—capture it immediately because Croniq never stores or returns it again.
 
-## 5.1 Publish API & gRPC Schemas
+## 4.1 Publish API & gRPC Schemas
 
 Croniq hosts both Minimal API endpoints (`/tenants/{tenantId}/schedules`, `/jobs/trigger`, `/tenants/*/webhooks`) and the Scheduler gRPC surface defined in [src/Croniq.Rpc.Client/Protos/scheduler.proto](../../src/Croniq.Rpc.Client/Protos/scheduler.proto). Expose their schemas so downstream teams can generate clients without reverse engineering requests.
 
@@ -292,7 +213,7 @@ app.UseCroniqApi();
 - When you need a signed artifact for consumers, install the Swashbuckle CLI (`dotnet tool install --global Swashbuckle.AspNetCore.Cli`) and run `dotnet swagger tofile --output docs/public/api/croniq-api-v1.json <YourApp>.dll v1` as part of CI.
 - Check the `.proto` file into your docs (or push it to a Buf registry) whenever the gRPC contract changes so language-specific clients can regenerate strongly typed stubs without hitting your environment.
 
-## 6. Run Everything
+## 5. Run Everything
 
 ```cmd
 # Terminal 1
@@ -316,7 +237,7 @@ curl -X POST https://localhost:5001/jobs/trigger \
 
 Watch the API logs; you should see the `HelloWorldJob` message. Logs, metrics, and traces are emitted via Serilog + OpenTelemetry as soon as you point Croniq at an OTLP collector (details below).
 
-## 7.1 Add Observability (Optional but Recommended)
+## 6.1 Add Observability (Optional but Recommended)
 
 1. Start the observability stack that ships with Croniq:
 
@@ -350,7 +271,7 @@ This launches Prometheus (`http://localhost:9090`), Tempo, and Grafana (`http://
 
 4. Deploying to your own observability stack? Copy the dashboard JSON + rule file into your Grafana/Prometheus setup and keep the datasource UIDs (`prometheus`, `tempo`) consistent. See [`docs/deep-dive/observability.md`](../deep-dive/observability.md#dashboards--alerts) for detailed instructions.
 
-## 7. Clean Up & Next Steps
+## 6. Clean Up & Next Steps
 
 - Stop the API, tear down Docker resources (`docker compose down`) if used.
 - Extend the job to read secrets via `ISecretProvider`, add retry policies, or push telemetry to your observability stack.

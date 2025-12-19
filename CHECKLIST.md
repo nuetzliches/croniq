@@ -25,7 +25,8 @@
 - [x] Loki-Tenant (`croniq-devstack`) und Explore-Hinweise in `docs/deep-dive/devstack.md` dokumentiert
 - [x] SBOM/Signierung und Vulnerability Scans in Release-Flow einbauen – Plan siehe `docs/deep-dive/supplychain.md`
 - [x] Quota-Guards im Core verankern (Rate/Concurrency) basierend auf PolicyResolver + Tests
-- [x] Webhook-Persistenz hardenen (EF-Migration `AddWebhookEndpoints`, DbMigrator, CRUD-Tests) – Plan siehe `docs/deep-dive/architecture.md`
+- [ ] Long-running Jobs: Lease-Heartbeat/Extend + Konzept fuer Ausfuehrungen > LeaseDuration; Default Timeout/Lease aufeinander abstimmen und dokumentieren
+- [x] Webhook-Persistenz hardenen (EF-Migration `AddWebhookEndpoints`, DbMigrator, CRUD-Tests) - Plan siehe `docs/deep-dive/architecture.md`
 - [x] Webhook-Operations ausbauen: Changefeed-basierte Cache-Invalidierung, Dual-Secret-Rotation (WebhookSecretHistory) plus CLI/SDK-Helfer dokumentieren (Dead-Letter-Tabelle + Replay-API umgesetzt)
 - [x] FluentAssertions -> Shouldly Migration (MIT-only policy)
   - [x] MIT-kompatible Lizenzvorgabe in AI_ASSISTANT_INSTRUCTIONS.md dokumentiert (2025-12-11)

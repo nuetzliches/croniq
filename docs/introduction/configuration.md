@@ -11,7 +11,7 @@ This guide explains how the Croniq API host (`Croniq.Api`) resolves configuratio
 3. Environment variables (`Croniq__Section__Property` notation with double underscores).
 4. Secret providers such as `dotnet user-secrets`, Azure Key Vault, or custom `IConfiguration` sources.
 
-There is no bespoke `AddCroniq(...)` overload; customization is done through configuration files, environment variables, or the normal `Configure<TOptions>`/`PostConfigure<TOptions>` patterns.
+For API hosts, `AddCroniqApiServices(...)` stays configuration-first. For worker-only hosts, Croniq exposes `AddCroniq(...)` (package `Croniq`) or `AddCroniqWorkerServices(...)` (package `Croniq.Hosting`) which bind the `Croniq:*` sections and apply defaults.
 
 ## 2. Registration Quick Reference
 
@@ -24,6 +24,13 @@ builder.Services.AddCroniqApiRateLimiter();     // optional but recommended
 var app = builder.Build();
 app.UseCroniqApi();
 app.Run();
+```
+
+Worker-only hosts use the slimmer facade:
+
+```csharp
+var builder = Host.CreateApplicationBuilder(args);
+builder.Services.AddCroniq(); // or AddCroniqWorkerServices(builder.Configuration)
 ```
 
 Need to override something programmatically? Use the regular options APIs before building the app:
