@@ -84,6 +84,7 @@ Derived from [docs/deep-dive/designs/angular-ui-concept.md](docs/deep-dive/desig
 - [x] Remove manual token overrides and token issuance from the tenant-context panel (UI cleanup for password login).
 - [x] Confirm the backend's intended auth scheme (Bearer session token vs. `X-Croniq-Key`) is reflected in the upstream OpenAPI contract and align the UI accordingly. _(Swagger snapshot normalization + Bearer-only `/auth/change-password` are in place; UI uses Bearer session token.)_
 - [x] Respect `passwordChangeRequired` by forcing `/change-password` and exposing logout/password-change UX entry points (sidebar + command palette).
+- [x] Wire silent refresh end-to-end (preemptive refresh + retry-on-401 once; refresh token remains memory-only; clear auth state and redirect to `/login` on refresh failure), incl. unit tests. _(See [src/app/core/auth/auth-refresh-coordinator.service.ts](src/app/core/auth/auth-refresh-coordinator.service.ts), [src/app/core/auth/auth-refresh.interceptor.ts](src/app/core/auth/auth-refresh.interceptor.ts), and specs in [src/app/core/auth/auth-refresh-coordinator.service.spec.ts](src/app/core/auth/auth-refresh-coordinator.service.spec.ts) + [src/app/core/auth/auth-refresh.interceptor.spec.ts](src/app/core/auth/auth-refresh.interceptor.spec.ts).)_
 
 ## Tooling, AI & Automation
 
@@ -114,13 +115,14 @@ This checklist intentionally avoids duplicating how-tos.
 - [ ] Determine timeline for tenant impersonation features before GA.
 - [ ] Define prefetch strategy (hover-driven vs. manual fetch) balancing responsiveness and API load; document final call in the concept doc.
 
-# Next Steps (2025-12-16)
+# Next Steps (2025-12-19)
 
 - When the backend contract changes: run `npm run snapshot:swagger`, then `npm run generate:api`.
 - Keep OpenAPI responses in sync with the backend (ideally add response schemas for `/auth/*` upstream so generation no longer yields `z.void()` responses).
 - Keep `tenantId` / `environmentTag` unset in the login payload (server-configured defaults).
 - For tenant-scoped API routes (`/tenants/:tenantId/*`), pass the **tenant reference** (see root docs: `docs/deep-dive/password-auth.md` and `AI_ASSISTANT_INSTRUCTIONS.md`).
-- Decide and document the canonical auth mechanism in Swagger, then implement the full refresh wiring in the UI.
+- Decide CI policy for OpenAPI sync (snapshot commit vs. live/staging generation) and implement it.
+- Establish Angular Query + Signals boilerplate shared across feature modules.
 
 # Prüfen / Nachbessern
 

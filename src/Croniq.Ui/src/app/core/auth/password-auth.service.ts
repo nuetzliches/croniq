@@ -76,6 +76,15 @@ export interface PasswordLoginResult {
     raw: unknown;
 }
 
+export interface PasswordRefreshResult {
+    storedInSession: boolean;
+    token: string;
+    expiresAt: string | null;
+    refreshTokenPresent: boolean;
+    passwordChangeRequired: boolean;
+    raw: unknown;
+}
+
 export interface PasswordChangePasswordParams {
     currentPassword: string;
     newPassword: string;
@@ -143,8 +152,47 @@ export class PasswordAuthService {
             }
         }
 
-        this.authSession.clearSessionToken();
-        this.authSession.clearRefreshToken();
+        this.authSession.clearAuthState();
+    }
+
+    async refresh(): Promise<PasswordRefreshResult> {
+        const refreshToken = this.authSession.refreshToken()?.trim() ?? '';
+        if (!refreshToken) {
+            throw new Error('Refresh failed: missing refresh token.');
+        }
+
+        const response = await this.apiClient.passwordRefresh({
+            refreshToken,
+            tenantReference: null,
+            environmentTag: null,
+            scopes: null,
+            audience: null,
+        });
+
+        const parsed = this.extract(response);
+        if (!parsed) {
+            throw new Error('Refresh failed: unsupported response shape (missing access token).');
+        }
+
+        this.authSession.storeSessionToken(parsed.accessToken, {
+            expiresAt: parsed.expiresAt,
+            passwordChangeRequired: parsed.passwordChangeRequired,
+        });
+
+        if (parsed.refreshToken) {
+            this.authSession.storeRefreshToken(parsed.refreshToken);
+        } else {
+            this.authSession.clearRefreshToken();
+        }
+
+        return {
+            storedInSession: true,
+            token: parsed.accessToken,
+            expiresAt: parsed.expiresAt ?? null,
+            refreshTokenPresent: Boolean(parsed.refreshToken),
+            passwordChangeRequired: parsed.passwordChangeRequired,
+            raw: parsed.raw,
+        };
     }
 
     async changePassword(params: PasswordChangePasswordParams): Promise<void> {
@@ -156,8 +204,7 @@ export class PasswordAuthService {
         await this.apiClient.passwordChangePassword(payload);
 
         // Password changes revoke refresh tokens server-side; force a clean re-login.
-        this.authSession.clearSessionToken();
-        this.authSession.clearRefreshToken();
+        this.authSession.clearAuthState();
     }
 
     private extract(response: unknown): PasswordLoginResponse | null {

@@ -17,6 +17,7 @@ class AuthSessionStub {
 
     storeSessionToken = vi.fn();
     clearSessionToken = vi.fn();
+    clearAuthState = vi.fn();
     storeRefreshToken = vi.fn();
     clearRefreshToken = vi.fn();
 }

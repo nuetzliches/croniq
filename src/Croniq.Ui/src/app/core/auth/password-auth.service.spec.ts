@@ -7,7 +7,10 @@ import { PasswordAuthService } from './password-auth.service';
 describe('PasswordAuthService', () => {
     let service: PasswordAuthService;
     let apiClient: Pick<CroniqApiClient, 'passwordLogin'>;
-    let authSession: Pick<AuthSessionService, 'storeSessionToken' | 'storeRefreshToken' | 'clearRefreshToken'>;
+    let authSession: Pick<
+        AuthSessionService,
+        'storeSessionToken' | 'storeRefreshToken' | 'clearRefreshToken'
+    >;
 
     beforeEach(() => {
         apiClient = {

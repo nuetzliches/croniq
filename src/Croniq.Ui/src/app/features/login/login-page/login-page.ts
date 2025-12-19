@@ -135,7 +135,7 @@ export class LoginPage {
     }
 
     clearToken(): void {
-        this.authSession.clearSessionToken();
+        this.authSession.clearAuthState();
         this.lastAction.set('Token entfernt.');
         this.lastActionTone.set('info');
     }

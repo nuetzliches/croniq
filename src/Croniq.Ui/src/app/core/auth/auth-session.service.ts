@@ -49,8 +49,12 @@ export class AuthSessionService implements CroniqCredentialSupplier {
 
     clearSessionToken(): void {
         this.sessionTokenSignal.set(null);
-        this.refreshTokenSignal.set(null);
         clearSecret(STORAGE_KEYS.sessionToken);
+    }
+
+    clearAuthState(): void {
+        this.clearSessionToken();
+        this.clearRefreshToken();
     }
 
     storeRefreshToken(value: string): void {
