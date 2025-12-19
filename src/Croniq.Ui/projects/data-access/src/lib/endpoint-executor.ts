@@ -1,7 +1,10 @@
 import { HttpClient } from '@angular/common/http';
 import type { EndpointDefinition, ParameterLocation } from '@croniq/api-schema';
 import { firstValueFrom } from 'rxjs';
-import { z, type ZodTypeAny } from 'zod';import type { CallerContext, CroniqCredentialSupplier } from './api-client.types';
+import { z } from 'zod';
+import type { CallerContext, CroniqCredentialSupplier } from './api-client.types';
+
+type AnyZodSchema = z.ZodType<unknown>;
 
 export interface EndpointCallConfig {
     path?: Record<string, unknown>;
@@ -10,7 +13,7 @@ export interface EndpointCallConfig {
     body?: unknown;
     context?: CallerContext;
     responseType?: 'json' | 'text';
-    responseSchema?: ZodTypeAny | null;
+    responseSchema?: AnyZodSchema | null;
     parseResponse?: boolean;
     sessionToken?: string | null;
 }
@@ -194,6 +197,6 @@ export function requireEndpoint(
     return target;
 }
 
-function isZodSchema(value: unknown): value is ZodTypeAny {
-    return Boolean(value && typeof (value as ZodTypeAny).parse === 'function');
+function isZodSchema(value: unknown): value is AnyZodSchema {
+    return Boolean(value && typeof (value as { parse?: unknown }).parse === 'function');
 }

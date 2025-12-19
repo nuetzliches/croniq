@@ -123,4 +123,4 @@ This checklist intentionally avoids duplicating how-tos.
 
 # Prüfen / Nachbessern
 
-- [ ] Die Zod Models verwenden obsolete Typen oder Felder (z.B. passthrough). Bitte prüfen, ob wir eine zod.instructions.md Datei brauchen, die erklärt. Eventuell bietet Zod selbst schon Anleitungen.
+- [x] Zod-Modelle/Generator-Ausgabe geprüft; `passthrough()` ist in Zod v4 nicht deprecated. Kurzer Leitfaden in `docs/ai/zod.instructions.md`.

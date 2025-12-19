@@ -10,7 +10,7 @@ export const scheduleSummarySchema = z.object({
     timezone: z.string().min(1),
     owner: z.string().min(1),
     state: scheduleStateSchema,
-    nextFire: z.string().datetime(),
+    nextFire: z.iso.datetime(),
     lastDurationMs: z.number().nonnegative(),
     alerts: z.number().int().nonnegative(),
     tags: z.array(z.string()).default([]),
@@ -19,7 +19,7 @@ export const scheduleSummarySchema = z.object({
 export const scheduleListResponseSchema = z.object({
     items: z.array(scheduleSummarySchema),
     total: z.number().int().nonnegative(),
-    updatedAt: z.string().datetime(),
+    updatedAt: z.iso.datetime(),
 });
 
 export { UpsertScheduleRequest as upsertScheduleRequestSchema } from '../generated/schemas';

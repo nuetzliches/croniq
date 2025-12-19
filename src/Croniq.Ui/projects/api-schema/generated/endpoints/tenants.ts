@@ -1,20 +1,15 @@
 import { z } from 'zod';
 import type { EndpointDefinition } from '../schemas';
 import {
-    UpsertTenantRequest,
-    UpsertJobRequest,
-    UpsertScheduleRequest,
-    UpsertWebhookEndpointRequest,
-    RotateWebhookSecretRequest,
     CreateWebhookIpRuleRequest,
-    UpsertApiClientRequest,
     IssueApiKeyRequest,
     IssueTokenRequest,
-    ExecutionStatus,
-    PasswordLoginRequest,
-    PasswordLogoutRequest,
-    PasswordRefreshRequest,
-    TriggerJobRequest,
+    RotateWebhookSecretRequest,
+    UpsertApiClientRequest,
+    UpsertJobRequest,
+    UpsertScheduleRequest,
+    UpsertTenantRequest,
+    UpsertWebhookEndpointRequest
 } from '../schemas';
 
 export const TenantsApi: EndpointDefinition[] = [
@@ -196,12 +191,12 @@ export const TenantsApi: EndpointDefinition[] = [
             {
                 name: 'startedAfterUtc',
                 type: 'Query',
-                schema: z.string().datetime({ offset: true }).optional(),
+                schema: z.iso.datetime({ offset: true }).optional(),
             },
             {
                 name: 'startedBeforeUtc',
                 type: 'Query',
-                schema: z.string().datetime({ offset: true }).optional(),
+                schema: z.iso.datetime({ offset: true }).optional(),
             },
             {
                 name: 'limit',

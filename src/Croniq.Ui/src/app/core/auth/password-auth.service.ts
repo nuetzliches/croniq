@@ -30,7 +30,7 @@ const passwordLoginResponseSchema = z
             .superRefine((data, ctx) => {
                 if (!data.accessToken && !data.token && !data.value) {
                     ctx.addIssue({
-                        code: z.ZodIssueCode.custom,
+                        code: 'custom',
                         message: 'Expected login response to contain accessToken/token/value.',
                     });
                 }

@@ -163,7 +163,8 @@ async function formatTypescriptFile(targetFile: string, prettierConfig: Prettier
 
     const originalSource = await readFile(targetFile, 'utf8');
     const sanitized = sanitizeGeneratedSource(originalSource);
-    const formatted = prettier.format(sanitized, {
+    const rewritten = rewriteDeprecatedZodStringChecks(sanitized).code;
+    const formatted = prettier.format(rewritten, {
         ...prettierConfig,
         parser: prettierConfig.parser ?? 'typescript',
     });
@@ -176,8 +177,8 @@ async function formatTypescriptFile(targetFile: string, prettierConfig: Prettier
 function sanitizeGeneratedSource(source: string): string {
     return source
         .replace(/as const;\s*export type/g, 'as const;\n\nexport type')
-    .replace(/export\s+type\s*\n\s*/g, 'export type ')
-    .replace(/export\s+const\s*\n\s*/g, 'export const ')
+        .replace(/export\s+type\s*\n\s*/g, 'export type ')
+        .replace(/export\s+const\s*\n\s*/g, 'export const ')
         .replace(/;\s*import\s+/g, ';\nimport ');
 }
 
@@ -409,17 +410,32 @@ function clone<T>(value: T): T {
 
 async function postProcessSchemaFile(distPath: string, prettierConfig: PrettierOptions | null): Promise<void> {
     const originalSource = await readFile(distPath, 'utf8');
-    const { code: transformedSource, changed } = ensureRecordHasKeyArgument(originalSource);
+    const recordFixed = ensureRecordHasKeyArgument(originalSource);
+    const rewritten = rewriteDeprecatedZodStringChecks(recordFixed.code);
+    const changed = recordFixed.changed || rewritten.changed;
 
-    if (!changed) {
-        return;
-    }
+    if (!changed) return;
 
     const formatted = prettierConfig
-        ? prettier.format(transformedSource, { ...prettierConfig, parser: prettierConfig.parser ?? 'typescript' })
-        : transformedSource;
+        ? prettier.format(rewritten.code, { ...prettierConfig, parser: prettierConfig.parser ?? 'typescript' })
+        : rewritten.code;
 
     await writeFile(distPath, formatted, 'utf8');
+}
+
+function rewriteDeprecatedZodStringChecks(source: string): { code: string; changed: boolean } {
+    let mutated = false;
+
+    // Zod v4 deprecates string().datetime/date/time/duration in favor of z.iso.* helpers.
+    const replaced = source.replace(
+        /\bz\.string\(\)\.(datetime|date|time|duration)\b/g,
+        (_, method: string) => {
+            mutated = true;
+            return `z.iso.${method}`;
+        },
+    );
+
+    return { code: replaced, changed: mutated };
 }
 
 function ensureRecordHasKeyArgument(source: string): { code: string; changed: boolean } {
