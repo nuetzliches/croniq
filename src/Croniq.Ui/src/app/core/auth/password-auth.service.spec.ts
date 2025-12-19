@@ -1,5 +1,7 @@
 import { provideZonelessChangeDetection } from '@angular/core';
-import { TestBed } from '@angular/core/testing';import { CRONIQ_API_CLIENT, type CroniqApiClient } from 'data-access';import { AuthSessionService } from './auth-session.service';
+import { TestBed } from '@angular/core/testing';
+import { CRONIQ_API_CLIENT, type CroniqApiClient } from 'data-access';
+import { AuthSessionService } from './auth-session.service';
 import { PasswordAuthService } from './password-auth.service';
 
 describe('PasswordAuthService', () => {
@@ -53,10 +55,12 @@ describe('PasswordAuthService', () => {
 
         expect(authSession.storeSessionToken).toHaveBeenCalledWith('access-123', {
             expiresAt: '2025-12-17T00:02:00.000Z',
+            passwordChangeRequired: false,
         });
         expect(authSession.storeRefreshToken).toHaveBeenCalledWith('refresh-xyz');
         expect(result.token).toBe('access-123');
         expect(result.refreshTokenPresent).toBe(true);
+        expect(result.passwordChangeRequired).toBe(false);
         expect(result.tenantId).toBe(null);
         expect(result.tenantReference).toBe(null);
 
@@ -68,9 +72,13 @@ describe('PasswordAuthService', () => {
 
         const result = await service.login({ username: 'alice', password: 'secret' });
 
-        expect(authSession.storeSessionToken).toHaveBeenCalledWith('access-token-string', { expiresAt: null });
+        expect(authSession.storeSessionToken).toHaveBeenCalledWith('access-token-string', {
+            expiresAt: null,
+            passwordChangeRequired: false,
+        });
         expect(authSession.clearRefreshToken).toHaveBeenCalled();
         expect(result.refreshTokenPresent).toBe(false);
+        expect(result.passwordChangeRequired).toBe(false);
         expect(result.tenantId).toBe(null);
         expect(result.tenantReference).toBe(null);
     });

@@ -25,6 +25,7 @@ const passwordLoginResponseSchema = z
                 expiresInSeconds: z.number().int().positive().optional(),
                 tenantReference: z.string().trim().min(1).optional().nullable(),
                 tenantId: z.string().trim().min(1).optional().nullable(),
+                passwordChangeRequired: z.boolean().optional(),
             })
             .passthrough()
             .superRefine((data, ctx) => {
@@ -48,6 +49,7 @@ const passwordLoginResponseSchema = z
                     refreshToken: data.refreshToken ?? null,
                     expiresAt: expiryFromField ?? expiryFromSeconds,
                     tenantReference: (data.tenantReference ?? data.tenantId ?? null) as string | null,
+                    passwordChangeRequired: Boolean(data.passwordChangeRequired),
                     raw: data as unknown,
                 };
             }),
@@ -68,6 +70,7 @@ export interface PasswordLoginResult {
     token: string;
     expiresAt: string | null;
     refreshTokenPresent: boolean;
+    passwordChangeRequired: boolean;
     tenantId: string | null;
     tenantReference: string | null;
     raw: unknown;
@@ -100,7 +103,10 @@ export class PasswordAuthService {
             throw new Error('Login failed: unsupported response shape (missing access token).');
         }
 
-        this.authSession.storeSessionToken(parsed.accessToken, { expiresAt: parsed.expiresAt });
+        this.authSession.storeSessionToken(parsed.accessToken, {
+            expiresAt: parsed.expiresAt,
+            passwordChangeRequired: parsed.passwordChangeRequired,
+        });
         if (parsed.refreshToken) {
             this.authSession.storeRefreshToken(parsed.refreshToken);
         } else {
@@ -114,6 +120,7 @@ export class PasswordAuthService {
             token: parsed.accessToken,
             expiresAt: parsed.expiresAt ?? null,
             refreshTokenPresent: Boolean(parsed.refreshToken),
+            passwordChangeRequired: parsed.passwordChangeRequired,
             tenantId,
             tenantReference: parsed.tenantReference ?? null,
             raw: parsed.raw,

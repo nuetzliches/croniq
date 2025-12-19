@@ -108,7 +108,12 @@ export class LoginPage {
             this.loginModel.update((model) => ({ ...model, password: '' }));
             this.lastAction.set('Login erfolgreich.');
             this.lastActionTone.set('success');
-            await this.router.navigateByUrl(this.resolveReturnUrl());
+
+            if (result.passwordChangeRequired) {
+                await this.router.navigateByUrl('/change-password');
+            } else {
+                await this.router.navigateByUrl(this.resolveReturnUrl());
+            }
         } catch (error) {
             this.lastAction.set(error instanceof Error ? error.message : 'Login fehlgeschlagen.');
             this.lastActionTone.set('error');

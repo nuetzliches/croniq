@@ -5,12 +5,14 @@ import type { CroniqCredentialSupplier } from 'data-access';
 interface StoredSecret {
     value: string;
     expiresAt?: string | null;
+    passwordChangeRequired?: boolean;
     issuedAt: string;
     lastUpdatedAt: string;
 }
 
 interface SecretUpdateOptions {
     expiresAt?: string | Date | null;
+    passwordChangeRequired?: boolean;
 }
 
 const STORAGE_KEYS = {
@@ -25,6 +27,7 @@ export class AuthSessionService implements CroniqCredentialSupplier {
     readonly sessionToken = this.sessionTokenSignal.asReadonly();
     readonly sessionTokenExpired = computed(() => isSecretExpired(this.sessionTokenSignal()));
     readonly refreshToken = this.refreshTokenSignal.asReadonly();
+    readonly passwordChangeRequired = computed(() => Boolean(this.sessionTokenSignal()?.passwordChangeRequired));
 
     constructor() {
         effect(() => {
@@ -69,6 +72,7 @@ export class AuthSessionService implements CroniqCredentialSupplier {
         return {
             value: value.trim(),
             expiresAt,
+            passwordChangeRequired: options.passwordChangeRequired,
             issuedAt: now,
             lastUpdatedAt: now,
         };

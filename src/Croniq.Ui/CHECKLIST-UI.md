@@ -82,7 +82,8 @@ Derived from [docs/deep-dive/designs/angular-ui-concept.md](docs/deep-dive/desig
 - [ ] Respect backend-enforced feature flags; hide toggles unless the API advertises support.
 - [x] Wire `/auth/login` username/password flow and parse the backend response defensively (incl. `expiresIn`) with unit tests. _(Implemented in [src/app/core/auth/password-auth.service.ts](src/app/core/auth/password-auth.service.ts) with coverage in [src/app/core/auth/password-auth.service.spec.ts](src/app/core/auth/password-auth.service.spec.ts).)_
 - [x] Remove manual token overrides and token issuance from the tenant-context panel (UI cleanup for password login).
-- [ ] Confirm the backend's intended auth scheme (Bearer session token vs. `X-Croniq-Key`) is reflected in the upstream OpenAPI contract and align the UI accordingly.
+- [x] Confirm the backend's intended auth scheme (Bearer session token vs. `X-Croniq-Key`) is reflected in the upstream OpenAPI contract and align the UI accordingly. _(Swagger snapshot normalization + Bearer-only `/auth/change-password` are in place; UI uses Bearer session token.)_
+- [x] Respect `passwordChangeRequired` by forcing `/change-password` and exposing logout/password-change UX entry points (sidebar + command palette).
 
 ## Tooling, AI & Automation
 
@@ -119,7 +120,7 @@ This checklist intentionally avoids duplicating how-tos.
 - Keep OpenAPI responses in sync with the backend (ideally add response schemas for `/auth/*` upstream so generation no longer yields `z.void()` responses).
 - Keep `tenantId` / `environmentTag` unset in the login payload (server-configured defaults).
 - For tenant-scoped API routes (`/tenants/:tenantId/*`), pass the **tenant reference** (see root docs: `docs/deep-dive/password-auth.md` and `AI_ASSISTANT_INSTRUCTIONS.md`).
-- Decide and document the canonical auth mechanism in Swagger, then implement the full refresh/logout wiring in the UI.
+- Decide and document the canonical auth mechanism in Swagger, then implement the full refresh wiring in the UI.
 
 # Prüfen / Nachbessern
 

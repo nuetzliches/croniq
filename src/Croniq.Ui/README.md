@@ -9,7 +9,7 @@ Angular 21 (standalone) admin UI for Croniq. The app is configured to run **zone
 
 ## Development
 
-- Start dev server: `npm start` (default: http://localhost:4200)
+- Start dev server: `npm start` (default: http://localhost:5081)
 - Build: `npm run build`
 
 ### Runtime config
@@ -47,7 +47,7 @@ Practical implications:
 
 The UI supports a simple username/password login against the backend `/auth/*` routes.
 
-- Open `http://localhost:4200/login`
+- Open `http://localhost:5081/login`
 - The access token is stored in `sessionStorage` only.
 - Tenant/environment are server-configured and are not set in the login payload.
 

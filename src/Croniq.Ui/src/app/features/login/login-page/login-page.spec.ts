@@ -1,9 +1,9 @@
 import { provideZonelessChangeDetection, signal } from '@angular/core';
 import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { ActivatedRoute, Router, UrlTree, convertToParamMap, provideRouter } from '@angular/router';
-import { redirectIfSessionTokenGuard } from '@core/auth/redirect-if-session-token.guard';
 import { AuthSessionService } from '@core/auth/auth-session.service';
 import { PasswordAuthService } from '@core/auth/password-auth.service';
+import { redirectIfSessionTokenGuard } from '@core/auth/redirect-if-session-token.guard';
 import { LoginPage } from './login-page';
 
 class AuthSessionStub {
@@ -85,6 +85,7 @@ describe('LoginPage', () => {
             token: 'access-token',
             expiresAt: null,
             refreshTokenPresent: false,
+            passwordChangeRequired: false,
             tenantId: null,
             tenantReference: null,
             raw: {},
@@ -94,5 +95,24 @@ describe('LoginPage', () => {
         await component.login();
 
         expect(navigateSpy).toHaveBeenCalledWith('/jobs');
+    });
+
+    it('forces /change-password when password change is required', async () => {
+        const navigateSpy = vi.spyOn(router, 'navigateByUrl').mockResolvedValue(true as never);
+        passwordAuth.login.mockResolvedValue({
+            storedInSession: true,
+            token: 'access-token',
+            expiresAt: null,
+            refreshTokenPresent: false,
+            passwordChangeRequired: true,
+            tenantId: null,
+            tenantReference: null,
+            raw: {},
+        });
+
+        component.loginModel.set({ username: 'admin', password: 'admin' });
+        await component.login();
+
+        expect(navigateSpy).toHaveBeenCalledWith('/change-password');
     });
 });
