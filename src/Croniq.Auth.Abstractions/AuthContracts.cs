@@ -191,4 +191,5 @@ public interface IRefreshTokenStore
     Task<RefreshTokenRecord> CreateAsync(RefreshTokenCreateRequest request, CancellationToken cancellationToken = default);
     Task<RefreshTokenRecord?> FindActiveByHashAsync(string tenantId, string tokenHash, CancellationToken cancellationToken = default);
     Task RevokeAsync(string tenantId, string tokenId, string? replacedByTokenId, CancellationToken cancellationToken = default);
+    Task RevokeAllForUserAsync(string tenantId, string userId, CancellationToken cancellationToken = default);
 }

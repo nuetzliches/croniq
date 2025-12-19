@@ -94,6 +94,36 @@ public sealed class SqlServerRefreshTokenStore : IRefreshTokenStore
         await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
     }
 
+    public async Task RevokeAllForUserAsync(string tenantId, string userId, CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(tenantId)) throw new ArgumentNullException(nameof(tenantId));
+        if (string.IsNullOrWhiteSpace(userId)) throw new ArgumentNullException(nameof(userId));
+
+        var now = _timeProvider.GetUtcNow().UtcDateTime;
+
+        await using var db = await _dbContextFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
+        var activeTokens = await db.RefreshTokens
+            .Where(t => t.TenantId == tenantId
+                        && t.UserId == userId
+                        && t.RevokedAtUtc == null
+                        && t.ExpiresAtUtc > now)
+            .ToListAsync(cancellationToken)
+            .ConfigureAwait(false);
+
+        if (activeTokens.Count == 0)
+        {
+            return;
+        }
+
+        foreach (var token in activeTokens)
+        {
+            token.RevokedAtUtc = now;
+            token.ReplacedByTokenId = null;
+        }
+
+        await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+    }
+
     private static RefreshTokenRecord ToRecord(RefreshTokenEntity entity)
     {
         return new RefreshTokenRecord(

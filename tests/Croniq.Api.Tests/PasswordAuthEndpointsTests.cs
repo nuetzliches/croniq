@@ -288,17 +288,14 @@ public sealed class PasswordAuthEndpointsTests : IClassFixture<PasswordAuthApiTe
 
         changeResponse.StatusCode.ShouldBe(HttpStatusCode.NoContent);
 
-        var refreshed = await _host.Client.PostAsJsonAsync("/auth/refresh", new PasswordRefreshRequest(
+        var refreshAfterChange = await _host.Client.PostAsJsonAsync("/auth/refresh", new PasswordRefreshRequest(
             login.RefreshToken!,
             PasswordAuthApiTestHost.Environment,
             Scopes: null,
             Audience: null));
 
-        refreshed.StatusCode.ShouldBe(HttpStatusCode.OK);
-        var refreshedBody = await refreshed.Content.ReadFromJsonAsync<TokenEnvelope>();
-        refreshedBody.ShouldNotBeNull();
-        refreshedBody!.PasswordChangeRequired.ShouldNotBeNull();
-        refreshedBody.PasswordChangeRequired!.Value.ShouldBeFalse();
+        // Password change revokes all refresh tokens, requiring a new login.
+        refreshAfterChange.StatusCode.ShouldBe(HttpStatusCode.Unauthorized);
 
         var oldLoginAttempt = await _host.Client.PostAsJsonAsync("/auth/login", new PasswordLoginRequest(
             username,
@@ -317,6 +314,10 @@ public sealed class PasswordAuthEndpointsTests : IClassFixture<PasswordAuthApiTe
             Audience: null));
 
         newLoginAttempt.StatusCode.ShouldBe(HttpStatusCode.OK);
+        var newLoginBody = await newLoginAttempt.Content.ReadFromJsonAsync<TokenEnvelope>();
+        newLoginBody.ShouldNotBeNull();
+        newLoginBody!.PasswordChangeRequired.ShouldNotBeNull();
+        newLoginBody.PasswordChangeRequired!.Value.ShouldBeFalse();
 
         var stored = await _host.Users.FindByUsernameAsync(PasswordAuthApiTestHost.TenantId, username);
         stored.ShouldNotBeNull();

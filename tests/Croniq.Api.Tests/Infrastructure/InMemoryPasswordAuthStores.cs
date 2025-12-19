@@ -190,6 +190,46 @@ public sealed class InMemoryRefreshTokenStore : IRefreshTokenStore
         return Task.CompletedTask;
     }
 
+    public Task RevokeAllForUserAsync(string tenantId, string userId, CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(tenantId)) throw new ArgumentNullException(nameof(tenantId));
+        if (string.IsNullOrWhiteSpace(userId)) throw new ArgumentNullException(nameof(userId));
+
+        var now = DateTimeOffset.UtcNow;
+
+        foreach (var entry in _byId.ToArray())
+        {
+            var key = entry.Key;
+            var existing = entry.Value;
+
+            if (!string.Equals(existing.TenantId, tenantId, StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            if (!string.Equals(existing.UserId, userId, StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            if (existing.RevokedAtUtc.HasValue || existing.ExpiresAtUtc <= now)
+            {
+                continue;
+            }
+
+            var updated = existing with
+            {
+                RevokedAtUtc = now,
+                ReplacedByTokenId = null
+            };
+
+            _byId[key] = updated;
+            _byHash[GetHashKey(updated.TenantId, updated.TokenHash)] = updated;
+        }
+
+        return Task.CompletedTask;
+    }
+
     private static string GetHashKey(string tenantId, string tokenHash) => $"{tenantId}|{tokenHash}";
 
     private static string GetIdKey(string tenantId, string tokenId) => $"{tenantId}|{tokenId}";

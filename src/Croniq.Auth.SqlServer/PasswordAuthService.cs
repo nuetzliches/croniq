@@ -269,6 +269,9 @@ public sealed class PasswordAuthService
             cancellationToken).ConfigureAwait(false);
 
         await _users.RecordLoginSuccessAsync(user.TenantId, user.UserId, cancellationToken).ConfigureAwait(false);
+
+        // Password change is a security boundary: invalidate all refresh tokens so sessions must be re-established.
+        await _refreshTokens.RevokeAllForUserAsync(user.TenantId, user.UserId, cancellationToken).ConfigureAwait(false);
         return true;
     }
 

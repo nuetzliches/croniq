@@ -84,6 +84,7 @@ The rest of this document describes Option A as the baseline, and outlines Optio
   - Changes the password for the currently authenticated password user.
   - Requires a valid access token.
   - Body: `{ currentPassword, newPassword }`
+  - After a successful password change, all refresh tokens for the user are revoked. Clients must re-login to obtain a new refresh token.
 
 - Optional admin endpoints (restricted):
   - `POST /tenants/{tenantId}/users` create user / invite.
