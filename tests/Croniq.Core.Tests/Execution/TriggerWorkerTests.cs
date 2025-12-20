@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Croniq.Core.Execution;
@@ -130,6 +131,43 @@ public class TriggerWorkerTests
     }
 
     [Fact]
+    public async Task Applies_trigger_metadata_from_payload()
+    {
+        var payloadMetadata = new Dictionary<string, string>
+        {
+            { "initiator", "seed" },
+            { "custom", "value" },
+            { "trigger_id", "override" }
+        };
+        var payload = JsonSerializer.Serialize(payloadMetadata, new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        var lease = NewLease(jobKey: SampleJobKey.Value, payload: payload);
+        var store = new FakeJobStore(new[] { lease });
+
+        var registry = Substitute.For<IJobRegistry>();
+        registry.TryGet(SampleJobKey, out Arg.Any<JobDescriptor>()).Returns(ci =>
+        {
+            ci[1] = SampleDescriptor;
+            return true;
+        });
+
+        var pipeline = Substitute.For<IJobExecutionPipeline>();
+        JobExecutionRequest? capturedRequest = null;
+        pipeline.ExecuteAsync(Arg.Do<JobExecutionRequest>(r => capturedRequest = r), Arg.Any<CancellationToken>())
+            .Returns(Task.CompletedTask);
+
+        var worker = CreateWorker(store, registry, pipeline: pipeline);
+
+        var processed = await worker.ProcessBatchAsync(DateTimeOffset.UtcNow, batchSize: 1, CancellationToken.None);
+
+        processed.ShouldBe(1);
+        capturedRequest.ShouldNotBeNull();
+        capturedRequest!.Metadata["trigger_id"].ShouldBe(lease.TriggerId);
+        capturedRequest.Metadata["initiator"].ShouldBe("seed");
+        capturedRequest.Metadata["custom"].ShouldBe("value");
+        capturedRequest.Metadata.ContainsKey("payload").ShouldBeFalse();
+    }
+
+    [Fact]
     public async Task Persists_completion_on_failure()
     {
         var lease = NewLease(jobKey: SampleJobKey.Value);
@@ -213,7 +251,7 @@ public class TriggerWorkerTests
         store.Releases[0].Succeeded.ShouldBeTrue();
     }
 
-    private static TriggerLease NewLease(string jobKey)
+    private static TriggerLease NewLease(string jobKey, string? payload = null)
     {
         return new TriggerLease(
             LeaseId: Guid.NewGuid().ToString("N"),
@@ -222,7 +260,7 @@ public class TriggerWorkerTests
             Scope: new PartitionScope("t1", "dev"),
             FireAtUtc: DateTimeOffset.UtcNow,
             LeaseExpiresAtUtc: DateTimeOffset.UtcNow.AddMinutes(5),
-            Payload: null);
+            Payload: payload);
     }
 
     private static TriggerWorker CreateWorker(

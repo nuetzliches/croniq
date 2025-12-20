@@ -18,6 +18,14 @@ namespace Croniq.Core.Execution;
 /// </summary>
 public sealed class TriggerWorker
 {
+    private const string TriggerIdMetadataKey = "trigger_id";
+    private const string PayloadMetadataKey = "payload";
+    private static readonly HashSet<string> ReservedMetadataKeys = new(StringComparer.OrdinalIgnoreCase)
+    {
+        TriggerIdMetadataKey,
+        PayloadMetadataKey
+    };
+
     private readonly IJobStore _jobStore;
     private readonly IJobRegistry _registry;
     private readonly IJobExecutionPipeline _pipeline;
@@ -123,14 +131,7 @@ public sealed class TriggerWorker
                 }
 
                 var executionOptions = _policyResolver.ResolveExecution(jobKey);
-                var metadata = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
-                {
-                    { "trigger_id", lease.TriggerId }
-                };
-                if (lease.Payload is not null)
-                {
-                    metadata["payload"] = lease.Payload;
-                }
+                var metadata = BuildExecutionMetadata(lease);
 
                 var executionId = Guid.NewGuid().ToString("N");
                 leaseActivity?.SetTag("croniq.execution_id", executionId);
@@ -292,6 +293,56 @@ public sealed class TriggerWorker
         }
 
         return new Dictionary<string, string>(metadata, StringComparer.OrdinalIgnoreCase);
+    }
+
+    private Dictionary<string, string> BuildExecutionMetadata(TriggerLease lease)
+    {
+        var metadata = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            { TriggerIdMetadataKey, lease.TriggerId }
+        };
+
+        if (!string.IsNullOrWhiteSpace(lease.Payload))
+        {
+            if (!TryMergePayloadMetadata(metadata, lease.Payload))
+            {
+                metadata[PayloadMetadataKey] = lease.Payload;
+            }
+        }
+
+        return metadata;
+    }
+
+    private bool TryMergePayloadMetadata(Dictionary<string, string> metadata, string payload)
+    {
+        Dictionary<string, string>? parsed;
+        try
+        {
+            parsed = JsonSerializer.Deserialize<Dictionary<string, string>>(payload, _jsonOptions);
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
+
+        if (parsed is null || parsed.Count == 0)
+        {
+            return false;
+        }
+
+        var merged = false;
+        foreach (var pair in parsed)
+        {
+            if (string.IsNullOrWhiteSpace(pair.Key) || ReservedMetadataKeys.Contains(pair.Key))
+            {
+                continue;
+            }
+
+            metadata[pair.Key] = pair.Value ?? string.Empty;
+            merged = true;
+        }
+
+        return merged;
     }
 
     private static bool IsCancellation(Exception exception, CancellationToken cancellationToken)

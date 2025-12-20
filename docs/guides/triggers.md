@@ -47,7 +47,7 @@ Worker hosts can seed schedules on startup:
 | EndAtUtc | No | Optional UTC end bound (ISO-8601). |
 | Enabled | No | Defaults to `true`. |
 | ManagedBy | No | Required when `Croniq:Seeding:Mode=ForceUpdate`; also stored as `metadata.managedBy`. |
-| Metadata | No | String dictionary stored with the trigger definition. |
+| Metadata | No | String dictionary stored with the trigger definition and exposed via `IJobExecutionContext.Metadata`. |
 
 ### Metadata conventions
 
