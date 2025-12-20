@@ -302,6 +302,11 @@ export const TenantsApi: EndpointDefinition[] = [
         parameters: [
             { name: 'body', type: 'Body', schema: UpsertScheduleRequest },
             { name: 'tenantId', type: 'Path', schema: z.string() },
+            {
+                name: 'environment',
+                type: 'Query',
+                schema: z.string().optional(),
+            },
         ],
         response: z.void(),
     },
@@ -325,6 +330,29 @@ export const TenantsApi: EndpointDefinition[] = [
         parameters: [
             { name: 'tenantId', type: 'Path', schema: z.string() },
             { name: 'triggerId', type: 'Path', schema: z.string() },
+            { name: 'environment', type: 'Query', schema: z.string() },
+        ],
+        response: z.void(),
+    },
+    {
+        method: 'get',
+        path: '/tenants/:tenantId/schedules/deadletters',
+        description: `Enumerates failed trigger executions for investigation or replay.`,
+        requestFormat: 'json',
+        parameters: [
+            { name: 'tenantId', type: 'Path', schema: z.string() },
+            { name: 'environment', type: 'Query', schema: z.string() },
+        ],
+        response: z.void(),
+    },
+    {
+        method: 'post',
+        path: '/tenants/:tenantId/schedules/deadletters/:deadLetterId/replay',
+        description: `Re-dispatches a failed trigger execution via the job execution pipeline.`,
+        requestFormat: 'json',
+        parameters: [
+            { name: 'tenantId', type: 'Path', schema: z.string() },
+            { name: 'deadLetterId', type: 'Path', schema: z.number().int() },
             { name: 'environment', type: 'Query', schema: z.string() },
         ],
         response: z.void(),

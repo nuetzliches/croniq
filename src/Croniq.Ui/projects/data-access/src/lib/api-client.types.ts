@@ -35,7 +35,7 @@ export interface TenantWebhookRuleParams extends TenantWebhookParams {
 }
 
 export interface TenantDeadLetterParams extends TenantEnvironmentParams {
-    deadLetterId: string;
+    deadLetterId: number;
 }
 
 export interface WebhookInvocationParams {

@@ -4,7 +4,7 @@ import { authFailureFromError } from '@core/auth/auth-failure';
 import { tenantRxResource } from '@core/resource/tenant-rx-resource';
 import { TenantContextService } from '@core/tenant-context/tenant-context.service';
 import { isoFromEpochMs, nowIso, nowMs } from '@core/time/clock';
-import { ScheduleListResponse, ScheduleSummary, scheduleListResponseSchema } from '@croniq/api-schema';
+import { ScheduleListResponse, ScheduleSummary, UpsertScheduleRequest, scheduleListResponseSchema } from '@croniq/api-schema';
 import { CRONIQ_API_CLIENT, CroniqApiClient } from 'data-access';
 import { EMPTY, catchError, finalize, map, of, tap } from 'rxjs';
 
@@ -14,6 +14,14 @@ export type ScheduleDetail = {
     cron?: string;
     timezone?: string;
     state?: string;
+};
+
+export type ScheduleDeadLetterView = {
+    id: number;
+    triggerId?: string;
+    jobKey?: string;
+    occurredAtUtc?: string;
+    detail?: string;
 };
 
 @Injectable()
@@ -144,6 +152,43 @@ export class SchedulesStore {
     private readonly deleteScheduleLoadingSignal = signal(false);
     private readonly deleteScheduleErrorSignal = signal<string | null>(null);
 
+    private readonly upsertScheduleLoadingSignal = signal(false);
+    private readonly upsertScheduleErrorSignal = signal<string | null>(null);
+
+    private readonly scheduleDeadLettersSignal = signal<ReadonlyArray<ScheduleDeadLetterView>>([]);
+    private readonly scheduleDeadLettersErrorSignal = signal<string | null>(null);
+    private readonly scheduleDeadLettersResource = tenantRxResource<ReadonlyArray<ScheduleDeadLetterView>, { tenantId: string; environment: string }>(
+        {
+            command: 'schedules.list-dead-letters',
+            defaultValue: [],
+            params: () => {
+                const { tenantId, environment } = this.tenantContext.snapshot();
+                return { tenantId, environment };
+            },
+            stream: ({ params, requestOptions }) => {
+                this.scheduleDeadLettersErrorSignal.set(null);
+
+                const tenantId = params.tenantId.trim();
+                const environment = params.environment.trim();
+                if (!tenantId || !environment) {
+                    this.scheduleDeadLettersSignal.set([]);
+                    return of([]);
+                }
+
+                return this.api.listTenantScheduleDeadLetters({ tenantId, environment }, requestOptions).pipe(
+                    map((response) => normalizeScheduleDeadLettersResponse(response)),
+                    tap((entries) => this.scheduleDeadLettersSignal.set(entries)),
+                    catchError((error: unknown) => {
+                        console.error('Failed to load schedule dead letters', error);
+                        this.scheduleDeadLettersErrorSignal.set('Unable to load schedule dead letters from API.');
+                        const current = this.scheduleDeadLettersSignal();
+                        return of(current);
+                    }),
+                );
+            },
+        },
+    );
+
     readonly schedules = this.schedulesSignal.asReadonly();
     readonly lastUpdated = this.lastUpdatedSignal.asReadonly();
 
@@ -152,6 +197,14 @@ export class SchedulesStore {
     readonly scheduleDetailError = this.scheduleDetailErrorSignal.asReadonly();
     readonly deleteScheduleLoading = this.deleteScheduleLoadingSignal.asReadonly();
     readonly deleteScheduleError = this.deleteScheduleErrorSignal.asReadonly();
+
+    readonly upsertScheduleLoading = this.upsertScheduleLoadingSignal.asReadonly();
+    readonly upsertScheduleError = this.upsertScheduleErrorSignal.asReadonly();
+
+    readonly scheduleDeadLetters = this.scheduleDeadLettersSignal.asReadonly();
+    readonly scheduleDeadLettersLoading = computed(() => this.scheduleDeadLettersResource.isLoading());
+    readonly scheduleDeadLettersError = this.scheduleDeadLettersErrorSignal.asReadonly();
+    readonly scheduleDeadLetterCount = computed(() => this.scheduleDeadLettersSignal().length);
 
     constructor() {
         this.hydrate(createFallbackResponse());
@@ -236,10 +289,144 @@ export class SchedulesStore {
             .subscribe();
     }
 
+    upsertSchedule(payload: UpsertScheduleRequest): void {
+        const { tenantId, environment } = this.tenantContext.snapshot();
+        if (!tenantId.trim()) {
+            this.upsertScheduleErrorSignal.set('TenantId is not set — select a tenant to upsert schedules.');
+            return;
+        }
+        if (!environment.trim()) {
+            this.upsertScheduleErrorSignal.set('Environment is not set — select an environment to upsert schedules.');
+            return;
+        }
+
+        // Safety net: when updating a selected schedule, always keep its triggerId unless the caller provided one.
+        // Without triggerId, the backend derives `{jobKey}:{cronExpression}` which would create a new trigger if the cron changes.
+        const selected = this.scheduleDetailSignal();
+        const normalizedTriggerId = typeof payload.triggerId === 'string' ? payload.triggerId.trim() : '';
+        const safePayload: UpsertScheduleRequest = {
+            ...payload,
+            triggerId: normalizedTriggerId ? normalizedTriggerId : selected?.triggerId,
+        };
+
+        this.upsertScheduleLoadingSignal.set(true);
+        this.upsertScheduleErrorSignal.set(null);
+
+        this.api
+            .upsertSchedule(
+                { tenantId, environment },
+                safePayload,
+                this.tenantContext.createRequestOptions('schedules.upsert', {
+                    tenantId,
+                    environment,
+                }),
+            )
+            .pipe(
+                tap(() => {
+                    this.refresh();
+                    const triggerId = safePayload.triggerId;
+                    if (triggerId) {
+                        this.refreshScheduleDetail(triggerId);
+                    }
+                }),
+                catchError((error: unknown) => {
+                    console.error('Failed to upsert schedule', error);
+                    const authFailure = authFailureFromError(error, {
+                        forbidden: 'Forbidden (403) — your token is missing schedules permissions for this tenant.',
+                    });
+                    if (authFailure) {
+                        this.upsertScheduleErrorSignal.set(authFailure.message);
+                        return EMPTY;
+                    }
+                    this.upsertScheduleErrorSignal.set('Unable to upsert schedule via API.');
+                    return EMPTY;
+                }),
+                finalize(() => this.upsertScheduleLoadingSignal.set(false)),
+            )
+            .subscribe();
+    }
+
+    refreshScheduleDeadLetters(): void {
+        this.scheduleDeadLettersResource.reload();
+    }
+
+    replayScheduleDeadLetter(deadLetterId: number): void {
+        const { tenantId, environment } = this.tenantContext.snapshot();
+        if (!tenantId.trim()) {
+            this.scheduleDeadLettersErrorSignal.set('TenantId is not set — select a tenant to replay dead letters.');
+            return;
+        }
+        if (!environment.trim()) {
+            this.scheduleDeadLettersErrorSignal.set('Environment is not set — select an environment to replay dead letters.');
+            return;
+        }
+        if (!Number.isFinite(deadLetterId)) {
+            this.scheduleDeadLettersErrorSignal.set('Dead letter id is invalid.');
+            return;
+        }
+
+        this.api
+            .replayTenantScheduleDeadLetter(
+                { tenantId, environment, deadLetterId },
+                this.tenantContext.createRequestOptions('schedules.replay-dead-letter', {
+                    tenantId,
+                    environment,
+                }),
+            )
+            .pipe(
+                tap(() => {
+                    this.refreshScheduleDeadLetters();
+                }),
+                catchError((error: unknown) => {
+                    console.error('Failed to replay schedule dead letter', error);
+                    this.scheduleDeadLettersErrorSignal.set('Unable to replay schedule dead letter.');
+                    return EMPTY;
+                }),
+            )
+            .subscribe();
+    }
+
     private hydrate(response: ScheduleListResponse): void {
         this.schedulesSignal.set(response.items);
         this.lastUpdatedSignal.set(response.updatedAt);
     }
+}
+
+function normalizeScheduleDeadLettersResponse(value: unknown): ReadonlyArray<ScheduleDeadLetterView> {
+    if (!Array.isArray(value)) {
+        return [];
+    }
+
+    const entries: ScheduleDeadLetterView[] = [];
+    for (const [index, item] of value.entries()) {
+        if (!item || typeof item !== 'object') {
+            continue;
+        }
+        const record = item as Record<string, unknown>;
+        const idRaw = record['id'] ?? record['deadLetterId'] ?? index;
+        const id = typeof idRaw === 'number' ? idRaw : Number(idRaw);
+        if (!Number.isFinite(id)) {
+            continue;
+        }
+        const triggerId = typeof record['triggerId'] === 'string' ? record['triggerId'] : undefined;
+        const jobKey = typeof record['jobKey'] === 'string' ? record['jobKey'] : undefined;
+        const occurredAtUtc =
+            typeof record['occurredAtUtc'] === 'string'
+                ? record['occurredAtUtc']
+                : typeof record['timestampUtc'] === 'string'
+                    ? record['timestampUtc']
+                    : undefined;
+        const detail =
+            typeof record['detail'] === 'string'
+                ? record['detail']
+                : typeof record['message'] === 'string'
+                    ? record['message']
+                    : undefined;
+
+        entries.push({ id, triggerId, jobKey, occurredAtUtc, detail });
+    }
+
+    return entries;
 }
 
 function createFallbackResponse(): ScheduleListResponse {

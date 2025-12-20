@@ -1,6 +1,6 @@
 import { HttpClient } from '@angular/common/http';
 import { EnvironmentProviders, InjectionToken, Provider, inject, makeEnvironmentProviders } from '@angular/core';
-import { AuthApi, CreateWebhookIpRuleRequest, HealthApi, IssueApiKeyRequest, IssueTokenRequest, JobsApi, MeApi, PasswordChangePasswordRequest, PasswordLoginRequest, PasswordLogoutRequest, PasswordRefreshRequest, RotateWebhookSecretRequest, RotateWebhookSecretResponse, ScheduleListResponse, TenantsApi, TriggerJobRequest, UpsertApiClientRequest, UpsertJobRequest, UpsertScheduleRequest, UpsertTenantRequest, UpsertWebhookEndpointRequest, WebhookDeadLetterResponse, WebhookEndpointResponse, WebhookIpRuleResponse, WebhooksApi, scheduleListResponseSchema, type EndpointDefinition } from '@croniq/api-schema';
+import { AuthApi, CreateWebhookIpRuleRequest, HealthApi, IssueApiKeyRequest, IssueTokenRequest, JobsApi, MeApi, PasswordChangePasswordRequest, PasswordLoginRequest, PasswordLogoutRequest, PasswordRefreshRequest, RotateWebhookSecretRequest, ScheduleListResponse, TenantsApi, TriggerJobRequest, UpsertApiClientRequest, UpsertJobRequest, UpsertScheduleRequest, UpsertTenantRequest, UpsertWebhookEndpointRequest, WebhooksApi, scheduleListResponseSchema, type EndpointDefinition } from '@croniq/api-schema';
 import type { Observable } from 'rxjs';
 import type { CroniqCredentialSupplier, CroniqRequestOptions, ExecutionLogParams, ExecutionParams, TenantApiClientParams, TenantApiClientTokenParams, TenantApiKeyParams, TenantDeadLetterParams, TenantEnvironmentParams, TenantScheduleParams, TenantScopedParams, TenantUpsertApiClientParams, TenantWebhookParams, TenantWebhookRuleParams, TenantWebhookUpsertParams, WebhookInvocationParams } from './api-client.types';
 import type { EndpointCallConfig } from './endpoint-executor';
@@ -69,6 +69,12 @@ const TENANT_ENDPOINTS = {
     deleteJob: requireEndpoint(TenantsApi, 'delete', '/tenants/:tenantId/jobs/:jobId'),
     getSchedule: requireEndpoint(TenantsApi, 'get', '/tenants/:tenantId/schedules/:triggerId'),
     deleteSchedule: requireEndpoint(TenantsApi, 'delete', '/tenants/:tenantId/schedules/:triggerId'),
+    listScheduleDeadLetters: requireEndpoint(TenantsApi, 'get', '/tenants/:tenantId/schedules/deadletters'),
+    replayScheduleDeadLetter: requireEndpoint(
+        TenantsApi,
+        'post',
+        '/tenants/:tenantId/schedules/deadletters/:deadLetterId/replay',
+    ),
 };
 
 const INVOKE_WEBHOOK_ENDPOINT = requireEndpoint(WebhooksApi, 'post', '/webhooks/:hookKey');
@@ -95,7 +101,7 @@ export interface CroniqApiClient {
         options?: CroniqRequestOptions,
     ): Observable<ScheduleListResponse>;
     upsertSchedule(
-        params: TenantScopedParams,
+        params: TenantEnvironmentParams,
         payload: UpsertScheduleRequest,
         options?: CroniqRequestOptions,
     ): Observable<void>;
@@ -133,7 +139,7 @@ export interface CroniqApiClient {
     listTenantWebhooks(
         params: TenantEnvironmentParams,
         options?: CroniqRequestOptions,
-    ): Observable<ReadonlyArray<WebhookEndpointResponse>>;
+    ): Observable<unknown>;
     upsertTenantWebhook(
         params: TenantWebhookUpsertParams,
         payload: UpsertWebhookEndpointRequest,
@@ -144,11 +150,11 @@ export interface CroniqApiClient {
         params: TenantWebhookParams,
         payload: RotateWebhookSecretRequest,
         options?: CroniqRequestOptions,
-    ): Observable<RotateWebhookSecretResponse>;
+    ): Observable<unknown>;
     listTenantWebhookIpRules(
         params: TenantWebhookParams,
         options?: CroniqRequestOptions,
-    ): Observable<ReadonlyArray<WebhookIpRuleResponse>>;
+    ): Observable<unknown>;
     createTenantWebhookIpRule(
         params: TenantWebhookParams,
         payload: CreateWebhookIpRuleRequest,
@@ -158,7 +164,7 @@ export interface CroniqApiClient {
     listTenantWebhookDeadLetters(
         params: TenantEnvironmentParams,
         options?: CroniqRequestOptions,
-    ): Observable<ReadonlyArray<WebhookDeadLetterResponse>>;
+    ): Observable<unknown>;
     replayTenantWebhookDeadLetter(params: TenantDeadLetterParams, options?: CroniqRequestOptions): Observable<void>;
     invokeWebhook(params: WebhookInvocationParams, options?: CroniqRequestOptions): Observable<void>;
 
@@ -170,6 +176,9 @@ export interface CroniqApiClient {
     deleteJob(params: TenantEnvironmentParams & { jobId: string }, options?: CroniqRequestOptions): Observable<void>;
     getSchedule(params: TenantScheduleParams, options?: CroniqRequestOptions): Observable<unknown>;
     deleteSchedule(params: TenantScheduleParams, options?: CroniqRequestOptions): Observable<void>;
+
+    listTenantScheduleDeadLetters(params: TenantEnvironmentParams, options?: CroniqRequestOptions): Observable<unknown>;
+    replayTenantScheduleDeadLetter(params: TenantDeadLetterParams, options?: CroniqRequestOptions): Observable<void>;
     fetchExecutionLogs(params: ExecutionLogParams, options?: CroniqRequestOptions): Observable<string>;
     checkServiceHealth(options?: CroniqRequestOptions): Observable<void>;
     checkPersistenceHealth(options?: CroniqRequestOptions): Observable<void>;
@@ -214,7 +223,7 @@ class HttpCroniqApiClient implements CroniqApiClient {
     }
 
     upsertSchedule(
-        params: TenantScopedParams,
+        params: TenantEnvironmentParams,
         payload: UpsertScheduleRequest,
         options?: CroniqRequestOptions,
     ): Observable<void> {
@@ -222,6 +231,7 @@ class HttpCroniqApiClient implements CroniqApiClient {
             UPSERT_SCHEDULE_ENDPOINT,
             {
                 path: { tenantId: params.tenantId },
+                query: { environment: params.environment },
                 body: payload,
             },
             options,
@@ -568,11 +578,39 @@ class HttpCroniqApiClient implements CroniqApiClient {
         );
     }
 
+    listTenantScheduleDeadLetters(
+        params: TenantEnvironmentParams,
+        options?: CroniqRequestOptions,
+    ): Observable<unknown> {
+        return this.execute$(
+            TENANT_ENDPOINTS.listScheduleDeadLetters,
+            {
+                path: { tenantId: params.tenantId },
+                query: { environment: params.environment },
+            },
+            options,
+        );
+    }
+
+    replayTenantScheduleDeadLetter(params: TenantDeadLetterParams, options?: CroniqRequestOptions): Observable<void> {
+        return this.execute$(
+            TENANT_ENDPOINTS.replayScheduleDeadLetter,
+            {
+                path: {
+                    tenantId: params.tenantId,
+                    deadLetterId: params.deadLetterId,
+                },
+                query: { environment: params.environment },
+            },
+            options,
+        );
+    }
+
     listTenantWebhooks(
         params: TenantEnvironmentParams,
         options?: CroniqRequestOptions,
-    ): Observable<ReadonlyArray<WebhookEndpointResponse>> {
-        return this.execute$<ReadonlyArray<WebhookEndpointResponse>>(
+    ): Observable<unknown> {
+        return this.execute$(
             TENANT_ENDPOINTS.listWebhooks,
             {
                 path: { tenantId: params.tenantId },
@@ -619,8 +657,8 @@ class HttpCroniqApiClient implements CroniqApiClient {
         params: TenantWebhookParams,
         payload: RotateWebhookSecretRequest,
         options?: CroniqRequestOptions,
-    ): Observable<RotateWebhookSecretResponse> {
-        return this.execute$<RotateWebhookSecretResponse>(
+    ): Observable<unknown> {
+        return this.execute$(
             TENANT_ENDPOINTS.rotateWebhookSecret,
             {
                 path: {
@@ -637,8 +675,8 @@ class HttpCroniqApiClient implements CroniqApiClient {
     listTenantWebhookIpRules(
         params: TenantWebhookParams,
         options?: CroniqRequestOptions,
-    ): Observable<ReadonlyArray<WebhookIpRuleResponse>> {
-        return this.execute$<ReadonlyArray<WebhookIpRuleResponse>>(
+    ): Observable<unknown> {
+        return this.execute$(
             TENANT_ENDPOINTS.listIpRules,
             {
                 path: {
@@ -691,8 +729,8 @@ class HttpCroniqApiClient implements CroniqApiClient {
     listTenantWebhookDeadLetters(
         params: TenantEnvironmentParams,
         options?: CroniqRequestOptions,
-    ): Observable<ReadonlyArray<WebhookDeadLetterResponse>> {
-        return this.execute$<ReadonlyArray<WebhookDeadLetterResponse>>(
+    ): Observable<unknown> {
+        return this.execute$(
             TENANT_ENDPOINTS.listDeadLetters,
             {
                 path: { tenantId: params.tenantId },

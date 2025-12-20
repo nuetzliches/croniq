@@ -57,7 +57,7 @@ export class WebhooksPage {
   readonly ipRuleId = signal('rule-allow-vpn');
   readonly ipRuleCidr = signal('10.0.0.0/24');
   readonly ipRuleDescription = signal('Ops VPN');
-  readonly deadLetterId = signal('dl-001');
+  readonly deadLetterId = signal('1');
   readonly secretActivateDelay = signal('60');
   readonly secretGracePeriod = signal('600');
 
@@ -236,8 +236,8 @@ export class WebhooksPage {
 
   replayDeadLetter(): void {
     const tenantId = this.tenantId().trim();
-    const deadLetterId = this.deadLetterId().trim();
-    if (!tenantId || !deadLetterId) {
+    const deadLetterId = this.parseNumber(this.deadLetterId().trim());
+    if (!tenantId || deadLetterId === undefined) {
       return;
     }
     this.store.replayDeadLetter({

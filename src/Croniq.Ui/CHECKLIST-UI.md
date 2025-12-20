@@ -26,6 +26,22 @@ Derived from [docs/deep-dive/designs/angular-ui-concept.md](docs/deep-dive/desig
 ## Guardrails & Dependencies
 
 - [ ] Confirm backend prerequisites are complete (schedule/job/admin APIs, gRPC-Web proxy, finalized login story, observability feeds).
+- [ ] Definition of ready (next slice): schedules CRUD + schedule dead-letters replay
+  - [x] API endpoints exist in the OpenAPI contract and are generated into `projects/api-schema/generated`:
+    - `GET /tenants/:tenantId/schedules?environment=...&jobKey?=...`
+    - `GET /tenants/:tenantId/schedules/:triggerId?environment=...`
+    - `DELETE /tenants/:tenantId/schedules/:triggerId?environment=...`
+    - `POST /tenants/:tenantId/schedules` (Upsert; see semantics below)
+    - `GET /tenants/:tenantId/schedules/deadletters?environment=...`
+    - Replay endpoint for schedule dead-letters (exact route TBD by contract; must be present before UI wiring)
+  - [x] `environment` is supported consistently for schedules + dead-letters (query param).
+  - [x] Upsert semantics documented for UI wiring:
+    - `POST /tenants/{tenantId}/schedules` is Upsert.
+    - `triggerId` in body is optional; if missing it defaults to `{jobKey}:{cronExpression}`.
+    - If `triggerId` is provided, create/update is keyed by this id.
+    - Important: if `cronExpression` changes and UI omits `triggerId`, the server will create a new trigger.
+  - [ ] OpenAPI responses are modeled (avoid `z.void()` for critical flows): schedules list/detail, upsert result (at least persisted `triggerId`), dead-letters list, replay result.
+  - [ ] Error behavior is stable and documented: `400` validation, `401/403`, `404`, and idempotency expectations for replay.
 - [ ] Document hosting decision (static assets behind Croniq.Api vs. dedicated `Croniq.Ui` container) and readiness/liveness expectations.
 - [ ] Validate new npm dependencies meet the MIT/Apache/BSD policy and record any exceptions before merge.
 - [x] Publish the ARIA playbook (based on https://angular.dev/guide/aria/overview) in `docs/ai/aria.md` and reference it from the PR template so every feature answers for roles, focus order, and keyboard shortcuts.
@@ -62,6 +78,7 @@ Derived from [docs/deep-dive/designs/angular-ui-concept.md](docs/deep-dive/desig
   - [x] jobs list (registry)
   - [x] jobs get/delete
   - [x] schedule get/delete
+  - [ ] schedules upsert (POST Upsert) + schedule dead-letters list/replay (no new UX beyond the existing admin controls scope)
   - [x] token issuance endpoints
 - [ ] Configure Angular Query caches, refetch policies, and tenant/env scoping helpers.
 - [ ] Persist non-sensitive preferences (theme, table density) per tenant using IndexedDB with optional encryption.
