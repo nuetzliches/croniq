@@ -42,7 +42,7 @@ Problem heute: Consumer müssen Trigger selbst „zusammenklicken“ und beim St
 - [x] **Fluent Trigger-Seeding**: `services.AddCroniqJob(...).AddTrigger(...)` fuer code-first Seeds.
 - [ ] **Trigger-Model in Config** (modellierbar):
   - [x] `Croniq:Triggers` als Liste/Map (TriggerId, JobKey, CronExpression, StartAtUtc, EndAtUtc, Enabled, Metadata).
-  - [ ] Optional „typed metadata“/Konventionen (z.B. `days`) dokumentieren.
+  - [x] Optional „typed metadata“/Konventionen (z.B. `days`) dokumentieren.
 - [x] **Validation & Summaries**:
   - [x] Cron-Expression validate (fail-fast) + human readable Summary (für Logs/UI).
 

@@ -34,6 +34,32 @@ Worker hosts can seed schedules on startup:
 }
 ```
 
+### Trigger configuration fields
+
+`Croniq:Triggers` accepts either a JSON array or an object keyed by trigger id. When you use the map form, the key becomes `TriggerId` if the field is omitted.
+
+| Field | Required | Notes |
+| --- | --- | --- |
+| TriggerId | No | Defaults to `{JobKey}:{CronExpression}` when omitted. |
+| JobKey | Yes | Must match the host tenant/environment. |
+| CronExpression | Yes | 7-field cron expression. |
+| StartAtUtc | No | Optional UTC start bound (ISO-8601). |
+| EndAtUtc | No | Optional UTC end bound (ISO-8601). |
+| Enabled | No | Defaults to `true`. |
+| ManagedBy | No | Required when `Croniq:Seeding:Mode=ForceUpdate`; also stored as `metadata.managedBy`. |
+| Metadata | No | String dictionary stored with the trigger definition. |
+
+### Metadata conventions
+
+Trigger metadata values are strings. Croniq stores them with the trigger definition and returns them via the schedules API; it does not change scheduling behavior beyond the `managedBy` guard. Pick a predictable encoding for typed values so UI/ops tooling can parse them:
+
+- booleans: `true` or `false`
+- numbers: invariant culture (e.g., `12.5`)
+- timestamps: ISO-8601 UTC (e.g., `2025-01-01T00:00:00Z`)
+- lists: comma-separated values (e.g., `days=MON,WED,FRI`)
+
+Croniq also reserves a few keys during execution: `trigger_id` is injected by the worker, `payload` carries the trigger payload when present, and webhook ingress prefixes metadata with `webhook:*` and `payload:*`. Avoid reusing those names for custom metadata.
+
 ## Seed Triggers via Fluent Registration
 
 ```csharp

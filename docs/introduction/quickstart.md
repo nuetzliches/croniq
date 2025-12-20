@@ -269,7 +269,7 @@ This launches Prometheus (`http://localhost:9090`), Tempo, and Grafana (`http://
 
 > **Tenant reminder**: Loki and Grafana share the tenant `croniq-devstack`. If you fork the stack, keep the `X-Scope-OrgID` header (in `infra/docker/observability/grafana/datasources/datasource.yml`) and the OTEL collector header (`infra/docker/observability/otel-collector-config.yaml`) in sync so Explore always queries the tenant that actually receives your logs. Labels exposed by the collector (`service_name`, `service_instance`, `environment`, `tenant`) make it easy to scope queries such as `{tenant="croniq-devstack", environment="dev"}`.
 
-2. Configure your quickstart host to export telemetry. The `AddCroniqObservability` helper reads `Croniq:Observability` settings, so either add them to `appsettings.Development.json` or export environment variables before running `dotnet run`:
+1. Configure your quickstart host to export telemetry. The `AddCroniqObservability` helper reads `Croniq:Observability` settings, so either add them to `appsettings.Development.json` or export environment variables before running `dotnet run`:
 
    ```cmd
    setx Croniq__Observability__OtlpEndpoint http://localhost:4317
@@ -281,13 +281,13 @@ This launches Prometheus (`http://localhost:9090`), Tempo, and Grafana (`http://
 
    Restart the application so the new environment variables take effect. The defaults already point at `otel-collector:4317` inside Docker, so these overrides are only needed when you run the app on your host machine.
 
-3. Trigger your job again. Within a few seconds you can:
+2. Trigger your job again. Within a few seconds you can:
 
    - Open Grafana ▸ Dashboards ▸ _Croniq Scheduler Health_ or _Croniq API Gateway_ to view the panels provisioned from `infra/docker/observability/grafana/dashboards/` (they refresh every 30s).
    - Inspect traces under Grafana ▸ Explore ▸ Tempo, filtering by `service.name="Croniq.Api"`.
    - Check Prometheus ▸ Alerts to see the built-in alerts from `infra/monitoring/rules/scheduler-alerts.yaml`. Alerts fire when dead letters, misfires, queue depth, or latency breach their thresholds (`CroniqDeadLettersHigh`, `CroniqMisfireBurst`, `CroniqQueueDepthHigh`, `CroniqLatencyP95High`, `CroniqJobFailures`).
 
-4. Deploying to your own observability stack? Copy the dashboard JSON + rule file into your Grafana/Prometheus setup and keep the datasource UIDs (`prometheus`, `tempo`) consistent. See [`docs/deep-dive/observability.md`](../deep-dive/observability.md#dashboards--alerts) for detailed instructions.
+3. Deploying to your own observability stack? Copy the dashboard JSON + rule file into your Grafana/Prometheus setup and keep the datasource UIDs (`prometheus`, `tempo`) consistent. See [`docs/deep-dive/observability.md`](../deep-dive/observability.md#dashboards--alerts) for detailed instructions.
 
 ## 6. Clean Up & Next Steps
 
