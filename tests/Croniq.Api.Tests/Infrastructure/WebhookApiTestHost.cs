@@ -8,6 +8,7 @@ using Croniq.Core.Execution;
 using Croniq.Core.Jobs;
 using Croniq.Core.Policies;
 using Croniq.Persistence.Abstractions;
+using Croniq.Sdk;
 using Croniq.Webhooks.InMemory;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
@@ -100,6 +101,8 @@ public sealed class WebhookApiTestHost : IAsyncLifetime
 
         builder.Services.AddSingleton(Pipeline);
         builder.Services.AddSingleton<IJobExecutionPipeline>(sp => sp.GetRequiredService<RecordingJobExecutionPipeline>());
+
+        builder.Services.AddSingleton<IJobTrigger, DefaultJobTrigger>();
 
         builder.Services.AddSingleton(ExecutionLogs);
         builder.Services.AddSingleton<IExecutionLogReader>(sp => sp.GetRequiredService<TestExecutionLogReader>());

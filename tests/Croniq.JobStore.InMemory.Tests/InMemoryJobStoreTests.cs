@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using Croniq.Core.Scheduling;
 using Croniq.JobStore.InMemory;
 using Croniq.Persistence.Abstractions;
 using Shouldly;
@@ -60,6 +61,29 @@ public class InMemoryJobStoreTests
         var nextLease = reacquired.ShouldHaveSingleItem();
         nextLease.TriggerId.ShouldBe(triggerKey);
         nextLease.FireAtUtc.ShouldBe(retryAt);
+    }
+
+    [Fact]
+    public async Task OneOff_trigger_fires_once()
+    {
+        var now = new DateTimeOffset(2025, 1, 1, 0, 0, 0, TimeSpan.Zero);
+        var store = CreateStore(now, 30);
+
+        var jobKey = "1:dev:samples:once";
+        var triggerId = $"{jobKey}:once";
+
+        await store.UpsertJobAsync(new JobDefinition(jobKey, "samples", "once", null, "sample", null), CancellationToken.None);
+        await store.UpsertTriggerAsync(
+            new TriggerDefinition(triggerId, jobKey, TriggerSchedule.OnceExpression, DefaultScope, StartAtUtc: now),
+            CancellationToken.None);
+
+        var lease = (await store.AcquireAsync(new TriggerAcquireRequest(DefaultScope, "instance-1", now, 1), CancellationToken.None))
+            .ShouldHaveSingleItem();
+
+        await store.ReleaseAsync(new TriggerReleaseRequest(lease, true, null), CancellationToken.None);
+
+        var reacquire = await store.AcquireAsync(new TriggerAcquireRequest(DefaultScope, "instance-1", now.AddMinutes(1), 1), CancellationToken.None);
+        reacquire.ShouldBeEmpty();
     }
 
     [Fact]

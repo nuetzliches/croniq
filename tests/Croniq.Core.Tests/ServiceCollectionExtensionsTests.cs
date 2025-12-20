@@ -31,13 +31,16 @@ public class ServiceCollectionExtensionsTests
             options.EnvironmentTag = "dev";
         });
         services.AddLogging();
-        services.AddSingleton<IJobStore, StubJobStore>();
+        services.AddSingleton<StubJobStore>();
+        services.AddSingleton<IJobStore>(sp => sp.GetRequiredService<StubJobStore>());
+        services.AddSingleton<IJobPersistenceProvider>(sp => sp.GetRequiredService<StubJobStore>());
         services.AddCroniqJob<SampleJob>();
 
         var provider = services.BuildServiceProvider();
 
         provider.GetRequiredService<TriggerWorker>().ShouldNotBeNull();
         provider.GetRequiredService<IJobExecutionPipeline>().ShouldBeOfType<DefaultJobExecutionPipeline>();
+        provider.GetRequiredService<IJobTrigger>().ShouldBeOfType<DefaultJobTrigger>();
         provider.GetRequiredService<IMisfirePolicy>().ShouldBeOfType<DefaultMisfirePolicy>();
         provider.GetRequiredService<IJobRegistry>().TryGet(JobKey.Create("t", "dev", "core", "sample"), out _).ShouldBeTrue();
     }
@@ -113,7 +116,7 @@ public class ServiceCollectionExtensionsTests
         public Task ExecuteAsync(IJobExecutionContext context, CancellationToken cancellationToken = default) => Task.CompletedTask;
     }
 
-    private sealed class StubJobStore : IJobStore
+    private sealed class StubJobStore : IJobPersistenceProvider
     {
         public Task<IReadOnlyCollection<TriggerLease>> AcquireAsync(TriggerAcquireRequest request, CancellationToken cancellationToken) =>
             Task.FromResult<IReadOnlyCollection<TriggerLease>>(Array.Empty<TriggerLease>());
@@ -121,5 +124,22 @@ public class ServiceCollectionExtensionsTests
         public Task ReleaseAsync(TriggerReleaseRequest request, CancellationToken cancellationToken) => Task.CompletedTask;
 
         public Task MoveToDeadLetterAsync(DeadLetterRequest request, CancellationToken cancellationToken) => Task.CompletedTask;
+
+        public Task UpsertJobAsync(JobDefinition job, CancellationToken cancellationToken) => Task.CompletedTask;
+
+        public Task<IReadOnlyCollection<JobDefinition>> ListJobsAsync(PartitionScope scope, CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyCollection<JobDefinition>>(Array.Empty<JobDefinition>());
+
+        public Task<JobDefinition?> GetJobAsync(string jobKey, CancellationToken cancellationToken) =>
+            Task.FromResult<JobDefinition?>(null);
+
+        public Task DeleteJobAsync(string jobKey, PartitionScope scope, CancellationToken cancellationToken) => Task.CompletedTask;
+
+        public Task UpsertTriggerAsync(TriggerDefinition trigger, CancellationToken cancellationToken) => Task.CompletedTask;
+
+        public Task<IReadOnlyCollection<TriggerDefinition>> ListTriggersAsync(PartitionScope scope, CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyCollection<TriggerDefinition>>(Array.Empty<TriggerDefinition>());
+
+        public Task DeleteTriggerAsync(string triggerId, PartitionScope scope, CancellationToken cancellationToken) => Task.CompletedTask;
     }
 }

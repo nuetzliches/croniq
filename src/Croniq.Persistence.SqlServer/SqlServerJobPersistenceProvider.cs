@@ -305,6 +305,23 @@ public sealed class SqlServerJobPersistenceProvider : IJobPersistenceProvider
         trigger.LastCompletedAtUtc = DateTime.UtcNow;
         trigger.LastResult = request.DeadLetterReason;
 
+        if (TriggerSchedule.IsOnceExpression(trigger.CronExpression))
+        {
+            if (request.NextFireTimeUtc.HasValue)
+            {
+                trigger.NextFireAtUtc = request.NextFireTimeUtc.Value.UtcDateTime;
+                trigger.Enabled = true;
+            }
+            else
+            {
+                trigger.Enabled = false;
+                trigger.NextFireAtUtc = null;
+            }
+
+            await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
         if (!request.Succeeded && request.NextFireTimeUtc is null)
         {
             trigger.Enabled = false;
@@ -399,27 +416,19 @@ public sealed class SqlServerJobPersistenceProvider : IJobPersistenceProvider
 
     private DateTime? ComputeNextFireUtc(string cronExpression, string timeZoneId, DateTime? startAtUtc, DateTime? endAtUtc, DateTimeOffset referenceUtc)
     {
-        var schedule = new CronSchedule(cronExpression, ResolveTimeZone(timeZoneId));
-        var cursor = referenceUtc;
+        var start = startAtUtc.HasValue
+            ? new DateTimeOffset(DateTime.SpecifyKind(startAtUtc.Value, DateTimeKind.Utc))
+            : (DateTimeOffset?)null;
+        var end = endAtUtc.HasValue
+            ? new DateTimeOffset(DateTime.SpecifyKind(endAtUtc.Value, DateTimeKind.Utc))
+            : (DateTimeOffset?)null;
 
-        if (startAtUtc.HasValue)
-        {
-            var start = DateTime.SpecifyKind(startAtUtc.Value, DateTimeKind.Utc);
-            if (start > cursor.UtcDateTime)
-            {
-                cursor = new DateTimeOffset(start, TimeSpan.Zero);
-            }
-        }
-
-        var next = schedule.GetNextOccurrence(cursor);
-        if (next.HasValue && endAtUtc.HasValue)
-        {
-            var end = DateTime.SpecifyKind(endAtUtc.Value, DateTimeKind.Utc);
-            if (next.Value.UtcDateTime > end)
-            {
-                return null;
-            }
-        }
+        var next = TriggerSchedule.GetNextOccurrence(
+            cronExpression,
+            referenceUtc,
+            start,
+            end,
+            ResolveTimeZone(timeZoneId));
 
         return next?.UtcDateTime;
     }

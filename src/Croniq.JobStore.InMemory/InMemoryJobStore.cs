@@ -107,7 +107,8 @@ public sealed class InMemoryJobStore : IJobPersistenceProvider, IJobDeadLetterSt
         if (trigger is null) throw new ArgumentNullException(nameof(trigger));
         cancellationToken.ThrowIfCancellationRequested();
 
-        var schedule = new CronSchedule(trigger.ScheduleExpression);
+        var isOnce = TriggerSchedule.IsOnceExpression(trigger.ScheduleExpression);
+        var schedule = isOnce ? null : new CronSchedule(trigger.ScheduleExpression);
         var now = UtcNow();
         var nextFire = ComputeNextFire(trigger, schedule, now);
 
@@ -239,6 +240,12 @@ public sealed class InMemoryJobStore : IJobPersistenceProvider, IJobDeadLetterSt
             }
 
             entry.Lease = null;
+
+            if (TriggerSchedule.IsOnceExpression(entry.Definition.ScheduleExpression))
+            {
+                entry.NextFireAtUtc = request.NextFireTimeUtc;
+                return Task.CompletedTask;
+            }
 
             if (!request.Succeeded && request.NextFireTimeUtc is null)
             {
@@ -374,8 +381,14 @@ public sealed class InMemoryJobStore : IJobPersistenceProvider, IJobDeadLetterSt
         return new JobDefinition(job.JobKey, job.Namespace, job.Name, job.Variant, job.Description, metadata);
     }
 
-    private static DateTimeOffset? ComputeNextFire(TriggerDefinition trigger, CronSchedule schedule, DateTimeOffset referenceUtc)
+    private static DateTimeOffset? ComputeNextFire(TriggerDefinition trigger, CronSchedule? schedule, DateTimeOffset referenceUtc)
     {
+        if (TriggerSchedule.IsOnceExpression(trigger.ScheduleExpression))
+        {
+            return TriggerSchedule.GetNextOccurrence(trigger.ScheduleExpression, referenceUtc, trigger.StartAtUtc, trigger.EndAtUtc);
+        }
+
+        schedule ??= new CronSchedule(trigger.ScheduleExpression);
         var cursor = referenceUtc;
 
         if (trigger.StartAtUtc.HasValue && trigger.StartAtUtc.Value > cursor)
@@ -420,7 +433,7 @@ public sealed class InMemoryJobStore : IJobPersistenceProvider, IJobDeadLetterSt
 
     private sealed class TriggerEntry
     {
-        public TriggerEntry(TriggerDefinition definition, CronSchedule schedule, DateTimeOffset? nextFireAtUtc)
+        public TriggerEntry(TriggerDefinition definition, CronSchedule? schedule, DateTimeOffset? nextFireAtUtc)
         {
             Definition = definition;
             Schedule = schedule;
@@ -428,7 +441,7 @@ public sealed class InMemoryJobStore : IJobPersistenceProvider, IJobDeadLetterSt
         }
 
         public TriggerDefinition Definition { get; }
-        public CronSchedule Schedule { get; }
+        public CronSchedule? Schedule { get; }
         public DateTimeOffset? NextFireAtUtc { get; set; }
         public LeaseInfo? Lease { get; set; }
         public List<DeadLetterEntry> DeadLetters { get; } = new();

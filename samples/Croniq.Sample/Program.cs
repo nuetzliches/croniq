@@ -30,6 +30,17 @@ builder.Services
         {
             ["seededBy"] = "Croniq.Sample"
         };
+    })
+    .AddTrigger("@once", trigger =>
+    {
+        trigger.TriggerId = "samples-smoke-once";
+        trigger.ManagedBy = "Croniq.Sample";
+        trigger.StartAtUtc = DateTimeOffset.UtcNow.AddSeconds(10);
+        trigger.Metadata = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["seededBy"] = "Croniq.Sample",
+            ["runType"] = "once"
+        };
     });
 
 await builder.Build().RunAsync();

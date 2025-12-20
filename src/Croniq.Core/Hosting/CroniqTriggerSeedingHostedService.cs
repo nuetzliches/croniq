@@ -256,15 +256,22 @@ public sealed class CroniqTriggerSeedingHostedService : IHostedService
             }
 
             string summary;
-            try
+            if (TriggerSchedule.IsOnceExpression(cronExpression))
             {
-                var cron = new CronExpression(cronExpression);
-                summary = NormalizeSummary(cron.GetExpressionSummary());
+                summary = BuildOnceSummary(definition.StartAtUtc);
             }
-            catch (Exception ex)
+            else
             {
-                errors.Add($"{label}: CronExpression '{cronExpression}' is invalid ({ex.Message}).");
-                continue;
+                try
+                {
+                    var cron = new CronExpression(cronExpression);
+                    summary = NormalizeSummary(cron.GetExpressionSummary());
+                }
+                catch (Exception ex)
+                {
+                    errors.Add($"{label}: CronExpression '{cronExpression}' is invalid ({ex.Message}).");
+                    continue;
+                }
             }
 
             if (definition.StartAtUtc.HasValue && definition.EndAtUtc.HasValue
@@ -412,6 +419,16 @@ public sealed class CroniqTriggerSeedingHostedService : IHostedService
             .Replace("\r", string.Empty, StringComparison.Ordinal)
             .Replace("\n", "; ", StringComparison.Ordinal)
             .Trim();
+    }
+
+    private static string BuildOnceSummary(DateTimeOffset? startAtUtc)
+    {
+        if (startAtUtc.HasValue)
+        {
+            return $"once at {startAtUtc.Value:O}";
+        }
+
+        return "once";
     }
 
     private static string? ResolveManagedBy(CroniqTriggerSeedDefinition definition)

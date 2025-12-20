@@ -2,6 +2,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json;
 using Croniq.Core.Jobs;
+using Croniq.Core.Scheduling;
 using Croniq.Data.SqlServer;
 using Croniq.Persistence.Abstractions;
 using Croniq.Persistence.SqlServer;
@@ -167,6 +168,36 @@ public sealed class SqlServerJobPersistenceProviderTests : IAsyncLifetime
         row.LeaseInstanceId.ShouldBe("instance-1");
         row.LeaseExpiresAtUtc.ShouldNotBeNull();
         row.LeaseExpiresAtUtc!.Value.ShouldBeGreaterThan(DateTime.UtcNow);
+    }
+
+    [Fact]
+    [Trait(TestCategories.Category, TestCategories.Contract)]
+    public async Task UpsertTriggerAsync_AllowsOnceExpression()
+    {
+        var jobKey = JobKey.Create("tenant-once", "dev", "ops", "once");
+        var scope = new PartitionScope(jobKey.TenantId, jobKey.EnvironmentTag);
+
+        await _persistence!.UpsertJobAsync(
+            new JobDefinition(jobKey.Value, jobKey.NamespaceSegment, jobKey.JobName, jobKey.Variant, null, null),
+            CancellationToken.None);
+
+        var startAt = DateTimeOffset.UtcNow.AddMinutes(5);
+        startAt = new DateTimeOffset(startAt.Year, startAt.Month, startAt.Day, startAt.Hour, startAt.Minute, startAt.Second, TimeSpan.Zero);
+
+        var trigger = new TriggerDefinition(
+            TriggerId: "once-trigger",
+            JobKey: jobKey.Value,
+            ScheduleExpression: TriggerSchedule.OnceExpression,
+            Scope: scope,
+            StartAtUtc: startAt);
+
+        await _persistence.UpsertTriggerAsync(trigger, CancellationToken.None);
+
+        await using var context = await _dbFactory!.CreateDbContextAsync();
+        var row = await context.Triggers.SingleAsync(t => t.TriggerKey == trigger.TriggerId);
+        row.CronExpression.ShouldBe(TriggerSchedule.OnceExpression);
+        row.NextFireAtUtc.ShouldNotBeNull();
+        row.NextFireAtUtc!.Value.ShouldBe(startAt.UtcDateTime);
     }
 
     private static ServiceProvider BuildServiceProvider(string connectionString)

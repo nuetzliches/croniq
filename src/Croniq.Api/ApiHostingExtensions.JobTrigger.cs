@@ -1,13 +1,11 @@
 using System;
-using System.Collections.Generic;
 using System.Diagnostics;
 using Croniq.Api.Models;
 using Croniq.Api.Telemetry;
 using Croniq.Auth.Abstractions;
 using Croniq.Auth.Core;
-using Croniq.Core.Execution;
 using Croniq.Core.Jobs;
-using Croniq.Core.Policies;
+using Croniq.Sdk;
 using Microsoft.AspNetCore.Mvc;
 
 namespace Croniq.Api;
@@ -21,8 +19,7 @@ public static partial class ApiHostingExtensions
         app.MapPost("/jobs/trigger", async (
             TriggerJobRequest request,
             [FromServices] IJobRegistry registry,
-            [FromServices] IJobExecutionPipeline pipeline,
-            [FromServices] IPolicyResolver policyResolver,
+            [FromServices] IJobTrigger jobTrigger,
             [FromServices] ICallerContextAccessor callerContextAccessor,
             CancellationToken cancellationToken) =>
         {
@@ -37,15 +34,20 @@ public static partial class ApiHostingExtensions
                 return authFailure;
             }
 
-            if (!registry.TryGet(jobKey, out var descriptor))
+            if (!registry.TryGet(jobKey, out _))
             {
                 return Results.NotFound(new { error = "job-not-registered", request.JobKey });
             }
 
-            var metadata = ToReadOnly(request.Metadata) ?? new Dictionary<string, string>();
-            var executionOptions = policyResolver.ResolveExecution(jobKey);
-            var executionId = Guid.NewGuid().ToString("N");
-            var execRequest = new JobExecutionRequest(executionId, jobKey, descriptor, executionOptions, metadata, TriggerActivitySource);
+            if (request.DelaySeconds.HasValue && request.DelaySeconds.Value < 0)
+            {
+                return Results.BadRequest(new { error = "invalid-delay", message = "DelaySeconds must be zero or greater." });
+            }
+
+            var delay = request.DelaySeconds.HasValue
+                ? TimeSpan.FromSeconds(request.DelaySeconds.Value)
+                : (TimeSpan?)null;
+            var metadata = ToReadOnly(request.Metadata);
 
             using var triggerActivity = TriggerActivitySource.StartActivity("Croniq.Api.TriggerJob", ActivityKind.Server);
             triggerActivity?.SetTag("croniq.job.key", jobKey.Value);
@@ -53,6 +55,10 @@ public static partial class ApiHostingExtensions
             triggerActivity?.SetTag("croniq.environment", jobKey.EnvironmentTag);
             triggerActivity?.SetTag("croniq.job.namespace", jobKey.NamespaceSegment);
             triggerActivity?.SetTag("croniq.job.name", jobKey.JobName);
+            if (delay.HasValue && delay.Value > TimeSpan.Zero)
+            {
+                triggerActivity?.SetTag("croniq.job.trigger_delay_seconds", delay.Value.TotalSeconds);
+            }
             if (!string.IsNullOrWhiteSpace(jobKey.Variant))
             {
                 triggerActivity?.SetTag("croniq.job.variant", jobKey.Variant);
@@ -60,10 +66,11 @@ public static partial class ApiHostingExtensions
 
             try
             {
-                await pipeline.ExecuteAsync(execRequest, cancellationToken).ConfigureAwait(false);
+                await jobTrigger.TriggerOnceAsync(jobKey.Value, metadata, delay, cancellationToken).ConfigureAwait(false);
                 ApiMetrics.RecordManualTrigger(jobKey);
                 triggerActivity?.SetStatus(ActivityStatusCode.Ok);
-                return Results.Accepted(value: new { status = "triggered", request.JobKey });
+                var status = delay.HasValue && delay.Value > TimeSpan.Zero ? "scheduled" : "triggered";
+                return Results.Accepted(value: new { status, request.JobKey });
             }
             catch
             {
@@ -71,6 +78,6 @@ public static partial class ApiHostingExtensions
                 throw;
             }
         })
-        .WithDocs("Jobs_Trigger", "Trigger a job manually", "Executes a job immediately using the provided metadata and job key.");
+        .WithDocs("Jobs_Trigger", "Trigger a job manually", "Executes a job immediately or schedules a one-off run when DelaySeconds is provided.");
     }
 }

@@ -89,20 +89,10 @@ public sealed class CroniqTriggerSummaryHostedService : IHostedService
 
     private static DateTimeOffset? ComputeNextFire(TriggerDefinition trigger, DateTimeOffset referenceUtc)
     {
-        var schedule = new CronSchedule(trigger.ScheduleExpression);
-        var cursor = referenceUtc;
-
-        if (trigger.StartAtUtc.HasValue && trigger.StartAtUtc.Value > cursor)
-        {
-            cursor = trigger.StartAtUtc.Value;
-        }
-
-        var next = schedule.GetNextOccurrence(cursor);
-        if (next.HasValue && trigger.EndAtUtc.HasValue && next.Value > trigger.EndAtUtc.Value)
-        {
-            return null;
-        }
-
-        return next;
+        return TriggerSchedule.GetNextOccurrence(
+            trigger.ScheduleExpression,
+            referenceUtc,
+            trigger.StartAtUtc,
+            trigger.EndAtUtc);
     }
 }

@@ -11,6 +11,8 @@ var everyFiveMinutes = "0 */5 * * * *";
 var weekdaysAtNine = "0 0 9 * * MON-FRI";
 ```
 
+Croniq also supports the special expression `@once` (alias `once`) for a single execution. When used, Croniq schedules exactly one run at `StartAtUtc` if provided, otherwise it fires immediately.
+
 Schedules run in UTC by default. Persisted triggers store the cron expression plus optional start/end bounds.
 
 ## Seed Triggers via Configuration
@@ -42,7 +44,7 @@ Worker hosts can seed schedules on startup:
 | --- | --- | --- |
 | TriggerId | No | Defaults to `{JobKey}:{CronExpression}` when omitted. |
 | JobKey | Yes | Must match the host tenant/environment. |
-| CronExpression | Yes | 7-field cron expression. |
+| CronExpression | Yes | 7-field cron expression, or `@once` for a one-off trigger. |
 | StartAtUtc | No | Optional UTC start bound (ISO-8601). |
 | EndAtUtc | No | Optional UTC end bound (ISO-8601). |
 | Enabled | No | Defaults to `true`. |
@@ -86,6 +88,28 @@ curl -X POST https://localhost:5001/tenants/dev-sandbox/schedules \
         \"jobKey\": \"dev-sandbox:dev-local:samples:HelloWorld\",
         \"cronExpression\": \"0 * * * * ?\",
         \"enabled\": true
+      }"
+```
+
+## One-off triggers
+
+Use `@once` in schedules or trigger a single run directly:
+
+```csharp
+await jobTrigger.TriggerOnceAsync(
+    "dev-sandbox:dev-local:samples:HelloWorld",
+    new Dictionary<string, string> { ["reason"] = "manual" },
+    delay: TimeSpan.FromMinutes(5));
+```
+
+```bash
+curl -X POST https://localhost:5001/jobs/trigger \
+  -H "Content-Type: application/json" \
+  -H "X-Croniq-Key: <your-dev-key>" \
+  -d "{
+        \"jobKey\": \"dev-sandbox:dev-local:samples:HelloWorld\",
+        \"delaySeconds\": 300,
+        \"metadata\": { \"reason\": \"manual\" }
       }"
 ```
 

@@ -40,7 +40,7 @@ Problem heute: Consumer müssen Trigger selbst „zusammenklicken“ und beim St
   - [x] Standard: `CreateIfMissing`.
   - [x] `ForceUpdate` nur für Trigger mit `managedBy=<app>`.
 - [x] **Fluent Trigger-Seeding**: `services.AddCroniqJob(...).AddTrigger(...)` fuer code-first Seeds.
-- [ ] **Trigger-Model in Config** (modellierbar):
+- [x] **Trigger-Model in Config** (modellierbar):
   - [x] `Croniq:Triggers` als Liste/Map (TriggerId, JobKey, CronExpression, StartAtUtc, EndAtUtc, Enabled, Metadata).
   - [x] Optional „typed metadata“/Konventionen (z.B. `days`) dokumentieren.
 - [x] **Validation & Summaries**:
@@ -50,8 +50,8 @@ Problem heute: Consumer müssen Trigger selbst „zusammenklicken“ und beim St
 
 Problem heute: One-Off wird oft direkt über Pipeline „manuell“ ausgelöst. Das ist funktional, aber UX (Nachvollziehbarkeit) leidet.
 
-- [ ] **Offizielles API/SDK**: `IJobTrigger` (oder ähnlich) für `TriggerOnceAsync(jobKey, metadata, delay?)`.
-- [ ] **Optional persistierter One-Off Trigger**: Wenn es besser passt, One-Off als TriggerDefinition mit `StartAtUtc` + Cron „@once“/special schedule modellieren (oder eigener Schedule-Typ).
+- [x] **Offizielles API/SDK**: `IJobTrigger` (oder ähnlich) für `TriggerOnceAsync(jobKey, metadata, delay?)`.
+- [x] **Optional persistierter One-Off Trigger**: Wenn es besser passt, One-Off als TriggerDefinition mit `StartAtUtc` + Cron „@once“/special schedule modellieren (oder eigener Schedule-Typ).
 
 ## 5) Startup UX: „Was läuft wann?“ (wichtig)
 

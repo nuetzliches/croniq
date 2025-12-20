@@ -34,6 +34,7 @@ public static class ServiceCollectionExtensions
         services.TryAddSingleton<ActivitySource>(_ => new ActivitySource("Croniq.Core"));
         services.TryAddSingleton<IJobRegistry, JobRegistry>();
         services.TryAddSingleton<IJobExecutionPipeline, DefaultJobExecutionPipeline>();
+        services.TryAddSingleton<IJobTrigger, DefaultJobTrigger>();
         services.TryAddSingleton<IExecutionLogStore, NoOpExecutionLogStore>();
         services.TryAddSingleton<IExecutionLogExporter, LoggerExecutionLogExporter>();
         services.TryAddSingleton<IExecutionLogReader, NoOpExecutionLogReader>();

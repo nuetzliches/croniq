@@ -15,7 +15,8 @@ public sealed record UpsertScheduleRequest(
 
 public sealed record TriggerJobRequest(
     [property: Required] string JobKey,
-    IDictionary<string, string>? Metadata = null);
+    IDictionary<string, string>? Metadata = null,
+    int? DelaySeconds = null);
 
 public sealed record JobResponse(
     string JobKey,
