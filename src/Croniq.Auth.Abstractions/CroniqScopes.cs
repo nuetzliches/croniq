@@ -4,6 +4,7 @@ namespace Croniq.Auth.Abstractions;
 public static class CroniqScopes
 {
     public const string SchedulesWrite = "schedules:write";
+    public const string SchedulesDeadLetter = "schedules:deadletter";
     public const string JobsRead = "jobs:read";
     public const string JobsWrite = "jobs:write";
     public const string JobsTrigger = "jobs:trigger";

@@ -241,6 +241,7 @@ public static partial class ApiHostingExtensions
         MapJobEndpoints(app);
         MapExecutionEndpoints(app);
         MapScheduleEndpoints(app);
+        MapScheduleDeadLetterEndpoints(app);
         MapWebhookEndpoints(app);
         MapApiClientEndpoints(app);
         MapApiKeyEndpoints(app);
@@ -526,6 +527,26 @@ public static partial class ApiHostingExtensions
             definition.EndAtUtc,
             definition.Enabled,
             metadata);
+    }
+
+    private static ScheduleDeadLetterResponse ToScheduleDeadLetterResponse(JobDeadLetterEntry entry)
+    {
+        IReadOnlyDictionary<string, string>? metadata = entry.Metadata is null
+            ? null
+            : new Dictionary<string, string>(entry.Metadata, StringComparer.OrdinalIgnoreCase);
+
+        return new ScheduleDeadLetterResponse(
+            entry.Id,
+            entry.TriggerId,
+            entry.JobKey,
+            entry.TenantId,
+            entry.EnvironmentTag,
+            entry.FireAtUtc,
+            entry.Reason,
+            entry.Payload,
+            metadata,
+            entry.CreatedAtUtc,
+            entry.ExpiresAtUtc);
     }
 
     private static ExecutionResponse ToExecutionResponse(ExecutionSummary summary)

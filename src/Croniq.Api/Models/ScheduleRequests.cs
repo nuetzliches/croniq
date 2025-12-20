@@ -43,3 +43,16 @@ public sealed record ScheduleResponse(
     DateTimeOffset? EndAtUtc,
     bool Enabled,
     IReadOnlyDictionary<string, string>? Metadata);
+
+public sealed record ScheduleDeadLetterResponse(
+    long Id,
+    string TriggerId,
+    string JobKey,
+    string TenantId,
+    string EnvironmentTag,
+    DateTimeOffset FireAtUtc,
+    string Reason,
+    string Payload,
+    IReadOnlyDictionary<string, string>? Metadata,
+    DateTimeOffset CreatedAtUtc,
+    DateTimeOffset? ExpiresAtUtc);

@@ -79,3 +79,16 @@ Use `Croniq:Policies:Overrides` to override execution/misfire options for specif
 
 - Use `logging.AddCroniqExecutionLogSink()` or `services.AddCroniqObservability(...)` to capture structured execution logs.
 - Misfires and quota reschedules are emitted as metrics via `Croniq.Core.Scheduler` (OTel).
+
+## Dead Letter Replay
+
+When a scheduled trigger is routed to the dead-letter store, list and replay it via the API:
+
+```bash
+GET /tenants/{tenantId}/schedules/deadletters?environment={env}
+POST /tenants/{tenantId}/schedules/deadletters/{id}/replay?environment={env}
+```
+
+The replay endpoint requires the `schedules:deadletter` scope. Replay keeps the stored metadata and adds `deadletter:id` and `deadletter:replay_at` so jobs can trace replays.
+
+See the deep dive in `docs/deep-dive/policies.md` for more background on dead-letter behavior and retention.

@@ -268,6 +268,73 @@ public sealed class NoopJobPersistenceProvider : IJobPersistenceProvider, IPersi
     }
 }
 
+public sealed class InMemoryJobDeadLetterStore : IJobDeadLetterStore
+{
+    private readonly object _sync = new();
+    private readonly List<JobDeadLetterEntry> _entries = new();
+    private long _sequence;
+
+    public JobDeadLetterEntry Add(JobDeadLetterEntry entry)
+    {
+        lock (_sync)
+        {
+            var id = entry.Id > 0 ? entry.Id : Interlocked.Increment(ref _sequence);
+            var stored = entry with { Id = id };
+            _entries.Add(stored);
+            return stored;
+        }
+    }
+
+    public void Clear()
+    {
+        lock (_sync)
+        {
+            _entries.Clear();
+        }
+    }
+
+    public Task<IReadOnlyCollection<JobDeadLetterEntry>> ListAsync(PartitionScope scope, CancellationToken cancellationToken)
+    {
+        lock (_sync)
+        {
+            var result = _entries
+                .Where(entry => MatchesScope(entry, scope))
+                .OrderByDescending(entry => entry.CreatedAtUtc)
+                .ToArray();
+            return Task.FromResult<IReadOnlyCollection<JobDeadLetterEntry>>(result);
+        }
+    }
+
+    public Task<JobDeadLetterEntry?> FindAsync(long id, PartitionScope scope, CancellationToken cancellationToken)
+    {
+        lock (_sync)
+        {
+            var match = _entries.FirstOrDefault(entry => entry.Id == id && MatchesScope(entry, scope));
+            return Task.FromResult(match);
+        }
+    }
+
+    public Task ResolveAsync(long id, PartitionScope scope, CancellationToken cancellationToken)
+    {
+        lock (_sync)
+        {
+            var index = _entries.FindIndex(entry => entry.Id == id && MatchesScope(entry, scope));
+            if (index >= 0)
+            {
+                _entries.RemoveAt(index);
+            }
+        }
+
+        return Task.CompletedTask;
+    }
+
+    private static bool MatchesScope(JobDeadLetterEntry entry, PartitionScope scope)
+    {
+        return string.Equals(entry.TenantId, scope.TenantId, StringComparison.OrdinalIgnoreCase)
+            && string.Equals(entry.EnvironmentTag, scope.EnvironmentTag, StringComparison.OrdinalIgnoreCase);
+    }
+}
+
 public sealed class TestCallerContextFactory : ICallerContextFactory
 {
     public const string ApiKey = "ak_itest.default";
@@ -308,6 +375,7 @@ public sealed class TestCallerContextFactory : ICallerContextFactory
             Scopes: new[]
             {
                 CroniqScopes.SchedulesWrite,
+                CroniqScopes.SchedulesDeadLetter,
                 CroniqScopes.JobsRead,
                 CroniqScopes.ExecutionsRead,
                 CroniqScopes.JobsWrite,

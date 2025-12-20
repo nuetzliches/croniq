@@ -115,6 +115,7 @@ public static class PlatformHostingExtensions
                     Scopes: new[]
                     {
                         CroniqScopes.SchedulesWrite,
+                        CroniqScopes.SchedulesDeadLetter,
                         CroniqScopes.JobsRead,
                         CroniqScopes.JobsTrigger,
                         CroniqScopes.WebhooksRead,

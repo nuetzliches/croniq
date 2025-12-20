@@ -14,7 +14,7 @@ namespace Croniq.JobStore.InMemory;
 /// <summary>
 /// Reference in-memory implementation of the persistence abstractions.
 /// </summary>
-public sealed class InMemoryJobStore : IJobPersistenceProvider
+public sealed class InMemoryJobStore : IJobPersistenceProvider, IJobDeadLetterStore
 {
     private readonly object _lock = new();
     private readonly Dictionary<string, JobDefinition> _jobs = new(StringComparer.OrdinalIgnoreCase);
@@ -22,6 +22,7 @@ public sealed class InMemoryJobStore : IJobPersistenceProvider
     private readonly JsonSerializerOptions _jsonOptions = new(JsonSerializerDefaults.Web);
     private readonly InMemoryJobStoreOptions _options;
     private long _leaseSequence;
+    private long _deadLetterSequence;
 
     public InMemoryJobStore(IOptions<InMemoryJobStoreOptions>? options = null)
     {
@@ -223,12 +224,18 @@ public sealed class InMemoryJobStore : IJobPersistenceProvider
 
             if (!string.IsNullOrWhiteSpace(request.DeadLetterReason))
             {
+                var id = Interlocked.Increment(ref _deadLetterSequence);
                 entry.DeadLetters.Add(new DeadLetterEntry(
-                    request.DeadLetterReason!,
-                    Payload: null,
+                    Id: id,
+                    TriggerId: request.Lease.TriggerId,
+                    JobKey: request.Lease.JobKey,
+                    Scope: request.Lease.Scope,
+                    FireAtUtc: request.Lease.FireAtUtc,
+                    Reason: request.DeadLetterReason!,
+                    Payload: request.Lease.Payload ?? string.Empty,
                     Metadata: null,
-                    UtcNow(),
-                    TimeSpan.Zero));
+                    CreatedAtUtc: UtcNow(),
+                    ExpiresAtUtc: null));
             }
 
             entry.Lease = null;
@@ -257,12 +264,83 @@ public sealed class InMemoryJobStore : IJobPersistenceProvider
                 throw new InvalidOperationException($"Trigger '{request.Lease.TriggerId}' not found.");
             }
 
+            var payload = request.Payload ?? string.Empty;
+            var metadata = request.Metadata is null
+                ? null
+                : new Dictionary<string, string>(request.Metadata, StringComparer.OrdinalIgnoreCase);
+            var expiresAtUtc = request.Retention > TimeSpan.Zero
+                ? request.OccurredAtUtc.Add(request.Retention)
+                : (DateTimeOffset?)null;
+            var id = Interlocked.Increment(ref _deadLetterSequence);
+
             entry.DeadLetters.Add(new DeadLetterEntry(
+                id,
+                request.Lease.TriggerId,
+                request.Lease.JobKey,
+                request.Lease.Scope,
+                request.Lease.FireAtUtc,
                 request.Reason,
-                request.Payload,
-                request.Metadata is null ? null : new Dictionary<string, string>(request.Metadata, StringComparer.OrdinalIgnoreCase),
+                payload,
+                metadata,
                 request.OccurredAtUtc,
-                request.Retention));
+                expiresAtUtc));
+        }
+
+        return Task.CompletedTask;
+    }
+
+    public Task<IReadOnlyCollection<JobDeadLetterEntry>> ListAsync(PartitionScope scope, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+
+        lock (_lock)
+        {
+            var entries = _triggers.Values
+                .Where(t => MatchesScope(t.Definition.Scope, scope))
+                .SelectMany(t => t.DeadLetters)
+                .OrderByDescending(entry => entry.CreatedAtUtc)
+                .Select(MapDeadLetter)
+                .ToArray();
+
+            return Task.FromResult<IReadOnlyCollection<JobDeadLetterEntry>>(entries);
+        }
+    }
+
+    public Task<JobDeadLetterEntry?> FindAsync(long id, PartitionScope scope, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+
+        lock (_lock)
+        {
+            var match = _triggers.Values
+                .Where(t => MatchesScope(t.Definition.Scope, scope))
+                .SelectMany(t => t.DeadLetters)
+                .FirstOrDefault(entry => entry.Id == id);
+
+            return Task.FromResult(match is null ? null : MapDeadLetter(match));
+        }
+    }
+
+    public Task ResolveAsync(long id, PartitionScope scope, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+
+        lock (_lock)
+        {
+            foreach (var trigger in _triggers.Values)
+            {
+                if (!MatchesScope(trigger.Definition.Scope, scope))
+                {
+                    continue;
+                }
+
+                var index = trigger.DeadLetters.FindIndex(entry => entry.Id == id);
+                if (index >= 0)
+                {
+                    trigger.DeadLetters.RemoveAt(index);
+                    break;
+                }
+            }
         }
 
         return Task.CompletedTask;
@@ -320,6 +398,26 @@ public sealed class InMemoryJobStore : IJobPersistenceProvider
         return JsonSerializer.Serialize(metadata, _jsonOptions);
     }
 
+    private static JobDeadLetterEntry MapDeadLetter(DeadLetterEntry entry)
+    {
+        IReadOnlyDictionary<string, string>? metadata = entry.Metadata is null
+            ? null
+            : new Dictionary<string, string>(entry.Metadata, StringComparer.OrdinalIgnoreCase);
+
+        return new JobDeadLetterEntry(
+            entry.Id,
+            entry.TriggerId,
+            entry.JobKey,
+            entry.Scope.TenantId,
+            entry.Scope.EnvironmentTag,
+            entry.FireAtUtc,
+            entry.Reason,
+            entry.Payload,
+            metadata,
+            entry.CreatedAtUtc,
+            entry.ExpiresAtUtc);
+    }
+
     private sealed class TriggerEntry
     {
         public TriggerEntry(TriggerDefinition definition, CronSchedule schedule, DateTimeOffset? nextFireAtUtc)
@@ -339,9 +437,14 @@ public sealed class InMemoryJobStore : IJobPersistenceProvider
     private sealed record LeaseInfo(string LeaseId, string InstanceId, DateTimeOffset ExpiresAtUtc, DateTimeOffset FireAtUtc);
 
     private sealed record DeadLetterEntry(
+        long Id,
+        string TriggerId,
+        string JobKey,
+        PartitionScope Scope,
+        DateTimeOffset FireAtUtc,
         string Reason,
-        string? Payload,
+        string Payload,
         IReadOnlyDictionary<string, string>? Metadata,
         DateTimeOffset CreatedAtUtc,
-        TimeSpan Retention);
+        DateTimeOffset? ExpiresAtUtc);
 }

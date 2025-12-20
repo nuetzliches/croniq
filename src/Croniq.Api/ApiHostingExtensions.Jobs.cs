@@ -183,6 +183,7 @@ public static partial class ApiHostingExtensions
     {
         app.MapPost("/tenants/{tenantId}/schedules", async (
             string tenantId,
+            string? environment,
             UpsertScheduleRequest request,
             [FromServices] ICallerContextAccessor callerContextAccessor,
             [FromServices] IJobPersistenceProvider store,
@@ -201,6 +202,12 @@ public static partial class ApiHostingExtensions
             if (!string.Equals(jobKey.TenantId, tenantId, StringComparison.OrdinalIgnoreCase))
             {
                 return Results.StatusCode(StatusCodes.Status403Forbidden);
+            }
+
+            if (!string.IsNullOrWhiteSpace(environment)
+                && !string.Equals(jobKey.EnvironmentTag, environment, StringComparison.OrdinalIgnoreCase))
+            {
+                return Results.Problem(statusCode: StatusCodes.Status403Forbidden, title: "scope-mismatch", detail: "JobKey tenant/environment must match the request scope.");
             }
 
             var authFailure = TenantGuard.EnsureJobScope(callerContextAccessor, jobKey, CroniqScopes.SchedulesWrite);

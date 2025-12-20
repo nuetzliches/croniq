@@ -125,6 +125,52 @@ public class InMemoryJobStoreTests
         triggers.ShouldBeEmpty();
     }
 
+    [Fact]
+    public async Task DeadLetters_can_be_listed_and_resolved()
+    {
+        var now = new DateTimeOffset(2025, 1, 1, 0, 0, 0, TimeSpan.Zero);
+        var store = CreateStore(now, 30);
+        var jobKey = "1:dev:samples:deadletter";
+        var triggerId = $"{jobKey}:t1";
+
+        await store.UpsertJobAsync(new JobDefinition(jobKey, "samples", "deadletter", null, null, null), CancellationToken.None);
+        await store.UpsertTriggerAsync(new TriggerDefinition(triggerId, jobKey, "0 * * * * ?", DefaultScope), CancellationToken.None);
+
+        var lease = new TriggerLease(
+            LeaseId: "lease-1",
+            TriggerId: triggerId,
+            JobKey: jobKey,
+            Scope: DefaultScope,
+            FireAtUtc: now.AddMinutes(-1),
+            LeaseExpiresAtUtc: now.AddMinutes(1),
+            Payload: "payload");
+
+        await store.MoveToDeadLetterAsync(
+            new DeadLetterRequest(
+                lease,
+                Reason: "boom",
+                OccurredAtUtc: now,
+                Retention: TimeSpan.FromDays(1),
+                Payload: "envelope",
+                Metadata: new Dictionary<string, string> { ["initiator"] = "test" }),
+            CancellationToken.None);
+
+        var entries = await store.ListAsync(DefaultScope, CancellationToken.None);
+        var entry = entries.ShouldHaveSingleItem();
+        entry.TriggerId.ShouldBe(triggerId);
+        entry.JobKey.ShouldBe(jobKey);
+        entry.Reason.ShouldBe("boom");
+        entry.Metadata.ShouldNotBeNull();
+        entry.Metadata!.ShouldContainKeyAndValue("initiator", "test");
+
+        var fetched = await store.FindAsync(entry.Id, DefaultScope, CancellationToken.None);
+        fetched.ShouldNotBeNull();
+        fetched!.Id.ShouldBe(entry.Id);
+
+        await store.ResolveAsync(entry.Id, DefaultScope, CancellationToken.None);
+        (await store.ListAsync(DefaultScope, CancellationToken.None)).ShouldBeEmpty();
+    }
+
     private static InMemoryJobStore CreateStore(DateTimeOffset? now, int leaseDurationSeconds)
     {
         var options = new InMemoryJobStoreOptions

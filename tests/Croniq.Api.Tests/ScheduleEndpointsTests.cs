@@ -69,6 +69,25 @@ public sealed class ScheduleEndpointsTests : IClassFixture<WebhookApiTestHost>
         payload.ShouldBeEmpty();
     }
 
+    [Fact]
+    public async Task UpsertScheduleRejectsEnvironmentQueryMismatch()
+    {
+        _host.Reset();
+        var jobKey = $"{WebhookApiTestHost.TenantId}:{WebhookApiTestHost.Environment}:ops:env";
+        var request = new UpsertScheduleRequest(
+            JobKey: jobKey,
+            CronExpression: "0 */5 * * * ?",
+            TriggerId: null,
+            StartAtUtc: null,
+            EndAtUtc: null);
+
+        var response = await _host.Client.PostAsJsonAsync(
+            $"/tenants/{WebhookApiTestHost.TenantId}/schedules?environment=prod",
+            request);
+
+        response.StatusCode.ShouldBe(HttpStatusCode.Forbidden);
+    }
+
     private async Task<string> UpsertScheduleAsync(string jobKey, string? triggerId = null)
     {
         var identifier = triggerId ?? $"{jobKey}:manual";
