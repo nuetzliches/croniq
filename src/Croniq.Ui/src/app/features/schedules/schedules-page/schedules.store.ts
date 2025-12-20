@@ -10,6 +10,12 @@ import { EMPTY, catchError, finalize, map, of, tap } from 'rxjs';
 
 export type ScheduleDetail = {
     triggerId: string;
+    jobKey?: string;
+    cronExpression?: string;
+    enabled?: boolean;
+    startAtUtc?: string;
+    endAtUtc?: string;
+    description?: string;
     name?: string;
     cron?: string;
     timezone?: string;
@@ -523,8 +529,27 @@ function normalizeScheduleDetail(value: unknown, fallbackId: string): ScheduleDe
     const timezone = typeof record['timezone'] === 'string' ? record['timezone'].trim() : undefined;
     const state = typeof record['state'] === 'string' ? record['state'].trim() : undefined;
 
+    const jobKey = typeof record['jobKey'] === 'string' ? record['jobKey'].trim() : undefined;
+    const cronExpressionRaw =
+        typeof record['cronExpression'] === 'string'
+            ? record['cronExpression']
+            : typeof record['cron'] === 'string'
+                ? record['cron']
+                : undefined;
+    const cronExpression = cronExpressionRaw?.trim() || undefined;
+    const enabled = typeof record['enabled'] === 'boolean' ? record['enabled'] : undefined;
+    const startAtUtc = typeof record['startAtUtc'] === 'string' ? record['startAtUtc'].trim() : undefined;
+    const endAtUtc = typeof record['endAtUtc'] === 'string' ? record['endAtUtc'].trim() : undefined;
+    const description = typeof record['description'] === 'string' ? record['description'].trim() : undefined;
+
     return {
         triggerId,
+        jobKey: jobKey || undefined,
+        cronExpression: cronExpression || undefined,
+        enabled,
+        startAtUtc: startAtUtc || undefined,
+        endAtUtc: endAtUtc || undefined,
+        description: description || undefined,
         name: name || undefined,
         cron: cron || undefined,
         timezone: timezone || undefined,

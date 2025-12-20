@@ -8,12 +8,14 @@ This document describes the current Croniq UI implementation (Angular 21 + Tailw
 - **Zoneless** change detection enabled via `provideZonelessChangeDetection()`
 - Styling via Tailwind (see `tailwind.config.js`, `src/styles.css`)
 - Libraries under `projects/`:
-	- `projects/data-access`: API access helpers
-	- `projects/api-schema`: generated Zod schemas + endpoint definitions
-	- `projects/telemetry`: telemetry helpers
-	- `projects/ui-kit`: UI primitives
+  - `projects/data-access`: API access helpers
+  - `projects/api-schema`: generated Zod schemas + endpoint definitions
+  - `projects/telemetry`: telemetry helpers
+  - `projects/ui-kit`: UI primitives
 
 Auth notes and guardrails live in `docs/deep-dive/AUTH.md`.
+
+Detail surface patterns (Dialog / Slide‑In) live in `docs/deep-dive/designs/detail-surfaces.md`.
 
 ## Repository Layout (current)
 
@@ -100,4 +102,3 @@ The Angular MCP server is a development helper for workspace-aware automation.
 2. MVP data surfaces: dashboard (stubbed), schedules read-only, job registry.
 3. Admin controls: CRUD for schedules/webhooks/API keys; dead-letter wiring.
 4. Observability & polish: embed metrics/log views; accessibility review.
-

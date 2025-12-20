@@ -11,7 +11,28 @@ class SchedulesStoreStub {
   readonly error = signal<string | null>(null);
   readonly lastUpdated = signal(nowIso());
 
+  readonly scheduleDetail = signal<unknown | null>(null);
+  readonly scheduleDetailLoading = signal(false);
+  readonly scheduleDetailError = signal<string | null>(null);
+
+  readonly deleteScheduleLoading = signal(false);
+  readonly deleteScheduleError = signal<string | null>(null);
+
+  readonly upsertScheduleLoading = signal(false);
+  readonly upsertScheduleError = signal<string | null>(null);
+
+  readonly scheduleDeadLetters = signal<ReadonlyArray<{ id: number }>>([]);
+  readonly scheduleDeadLettersLoading = signal(false);
+  readonly scheduleDeadLettersError = signal<string | null>(null);
+  readonly scheduleDeadLetterCount = signal(0);
+
   refresh = vi.fn();
+
+  refreshScheduleDetail = vi.fn();
+  deleteSchedule = vi.fn();
+  upsertSchedule = vi.fn();
+  refreshScheduleDeadLetters = vi.fn();
+  replayScheduleDeadLetter = vi.fn();
 }
 
 describe('SchedulesPage', () => {
