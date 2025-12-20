@@ -442,7 +442,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/UpsertScheduleRequest"
+                "$ref": "#/components/schemas/CroniqTriggerSeedDefinition"
               }
             }
           },
@@ -1541,7 +1541,7 @@
           "Croniq.Sample.ApiHost"
         ],
         "summary": "Trigger a job manually",
-        "description": "Executes a job immediately using the provided metadata and job key.",
+        "description": "Executes a job immediately or schedules a one-off run when DelaySeconds is provided.",
         "operationId": "Jobs_Trigger",
         "requestBody": {
           "content": {
@@ -1597,6 +1597,52 @@
             "type": "string"
           },
           "description": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "additionalProperties": false
+      },
+      "CroniqTriggerSeedDefinition": {
+        "type": "object",
+        "properties": {
+          "triggerId": {
+            "type": "string",
+            "nullable": true
+          },
+          "jobKey": {
+            "type": "string",
+            "nullable": true
+          },
+          "cronExpression": {
+            "type": "string",
+            "nullable": true
+          },
+          "startAtUtc": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "endAtUtc": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "metadata": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "nullable": true
+          },
+          "description": {
+            "type": "string",
+            "nullable": true
+          },
+          "managedBy": {
             "type": "string",
             "nullable": true
           }
@@ -1793,6 +1839,11 @@
               "type": "string"
             },
             "nullable": true
+          },
+          "delaySeconds": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
           }
         },
         "additionalProperties": false
@@ -1852,52 +1903,6 @@
           "variant": {
             "type": "string",
             "nullable": true
-          },
-          "description": {
-            "type": "string",
-            "nullable": true
-          },
-          "metadata": {
-            "type": "object",
-            "additionalProperties": {
-              "type": "string"
-            },
-            "nullable": true
-          }
-        },
-        "additionalProperties": false
-      },
-      "UpsertScheduleRequest": {
-        "required": [
-          "cronExpression",
-          "jobKey"
-        ],
-        "type": "object",
-        "properties": {
-          "jobKey": {
-            "minLength": 1,
-            "type": "string"
-          },
-          "cronExpression": {
-            "minLength": 1,
-            "type": "string"
-          },
-          "triggerId": {
-            "type": "string",
-            "nullable": true
-          },
-          "startAtUtc": {
-            "type": "string",
-            "format": "date-time",
-            "nullable": true
-          },
-          "endAtUtc": {
-            "type": "string",
-            "format": "date-time",
-            "nullable": true
-          },
-          "enabled": {
-            "type": "boolean"
           },
           "description": {
             "type": "string",

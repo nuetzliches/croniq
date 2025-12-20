@@ -6,6 +6,7 @@ import {
     PasswordLogoutRequest,
     PasswordChangePasswordRequest,
     CreateWebhookIpRuleRequest,
+    CroniqTriggerSeedDefinition,
     ExecutionStatus,
     IssueApiKeyRequest,
     IssueTokenRequest,
@@ -13,7 +14,6 @@ import {
     TriggerJobRequest,
     UpsertApiClientRequest,
     UpsertJobRequest,
-    UpsertScheduleRequest,
     UpsertTenantRequest,
     UpsertWebhookEndpointRequest,
 } from '../schemas';

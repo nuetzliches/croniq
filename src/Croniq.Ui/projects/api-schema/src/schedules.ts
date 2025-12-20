@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { CroniqTriggerSeedDefinition } from '../generated/schemas';
 
 export const scheduleStateSchema = z.enum(['active', 'paused', 'degraded']);
 
@@ -22,8 +23,9 @@ export const scheduleListResponseSchema = z.object({
     updatedAt: z.iso.datetime(),
 });
 
-export { UpsertScheduleRequest as upsertScheduleRequestSchema } from '../generated/schemas';
+export const upsertScheduleRequestSchema = CroniqTriggerSeedDefinition;
 
 export type ScheduleState = z.infer<typeof scheduleStateSchema>;
 export type ScheduleSummary = z.infer<typeof scheduleSummarySchema>;
 export type ScheduleListResponse = z.infer<typeof scheduleListResponseSchema>;
+export type UpsertScheduleRequest = z.infer<typeof upsertScheduleRequestSchema>;

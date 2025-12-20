@@ -102,34 +102,6 @@
                 </button>
               </div>
             </div>
-          } @else if (selectedTab() === 'edit') {
-            <div class="flex flex-wrap items-center justify-between gap-4" role="toolbar" aria-label="Schedule editing actions">
-              <div class="space-y-1">
-                <p class="text-xs uppercase tracking-[0.3em] text-text-muted">Schedule editor</p>
-                @if (selectedTriggerId()) {
-                  <p class="text-sm text-text">Trigger id: <span class="font-semibold">{{ selectedTriggerId() }}</span></p>
-                } @else {
-                  <p class="text-sm text-text-muted">Create a new schedule for the current tenant/environment.</p>
-                }
-              </div>
-              <div class="flex flex-wrap items-center gap-2">
-                <button
-                  type="button"
-                  class="rounded-full border border-white/15 px-4 py-2 text-xs font-semibold uppercase tracking-wide text-text transition hover:border-accent hover:text-accent"
-                  (click)="startCreate()"
-                >
-                  New
-                </button>
-                <button
-                  type="button"
-                  class="rounded-full border border-white/15 px-4 py-2 text-xs font-semibold uppercase tracking-wide text-text transition hover:border-accent hover:text-accent disabled:opacity-70"
-                  (click)="refreshSelectedSchedule()"
-                  [disabled]="!selectedTriggerId() || scheduleDetailLoading()"
-                >
-                  {{ scheduleDetailLoading() ? 'Loading…' : 'Reload' }}
-                </button>
-              </div>
-            </div>
           } @else {
             <div class="flex flex-wrap items-center justify-between gap-4" role="toolbar" aria-label="Schedule dead letters actions">
               <div class="space-y-1">
@@ -222,171 +194,6 @@
           </ng-template>
         </div>
 
-        <div ngTabPanel value="edit" [preserveContent]="false">
-          <ng-template ngTabContent>
-            <div class="space-y-6">
-              @if (scheduleDetailError()) {
-                <p class="text-sm text-rose-300">{{ scheduleDetailError() }}</p>
-              }
-              @if (deleteScheduleError()) {
-                <p class="text-sm text-rose-300">{{ deleteScheduleError() }}</p>
-              }
-              @if (upsertScheduleError()) {
-                <p class="text-sm text-rose-300">{{ upsertScheduleError() }}</p>
-              }
-              @if (formError()) {
-                <p class="text-sm text-rose-300">{{ formError() }}</p>
-              }
-
-              <form class="grid gap-4 md:grid-cols-2" (submit)="$event.preventDefault(); submitUpsert()">
-                <label class="space-y-1 text-sm text-text">
-                  <span class="text-xs uppercase tracking-[0.3em] text-text-muted">Job key</span>
-                  <input
-                    type="text"
-                    class="w-full rounded-xl border border-white/10 bg-white/5 px-4 py-2 placeholder:text-text-muted focus:border-accent focus:outline-none"
-                    placeholder="billing.sweep"
-                    [value]="draft().jobKey"
-                    (input)="updateDraftJobKey($any($event.target).value)"
-                    autocomplete="off"
-                  />
-                </label>
-
-                <label class="space-y-1 text-sm text-text">
-                  <span class="text-xs uppercase tracking-[0.3em] text-text-muted">Cron expression</span>
-                  <input
-                    type="text"
-                    class="w-full rounded-xl border border-white/10 bg-white/5 px-4 py-2 placeholder:text-text-muted focus:border-accent focus:outline-none"
-                    placeholder="0 2 * * *"
-                    [value]="draft().cronExpression"
-                    (input)="updateDraftCronExpression($any($event.target).value)"
-                    autocomplete="off"
-                  />
-                </label>
-
-                <label class="space-y-1 text-sm text-text">
-                  <span class="text-xs uppercase tracking-[0.3em] text-text-muted">Trigger id (optional)</span>
-                  <input
-                    type="text"
-                    class="w-full rounded-xl border border-white/10 bg-white/5 px-4 py-2 placeholder:text-text-muted focus:border-accent focus:outline-none"
-                    placeholder="{jobKey}:{cronExpression}"
-                    [value]="draft().triggerId"
-                    (input)="updateDraftTriggerId($any($event.target).value)"
-                    autocomplete="off"
-                  />
-                  <p class="text-xs text-text-muted">Tip: keep this filled when editing to avoid creating a new trigger.</p>
-                </label>
-
-                <label class="flex items-center gap-3 rounded-xl border border-white/10 bg-white/3 px-4 py-3 text-sm text-text">
-                  <input
-                    type="checkbox"
-                    class="h-4 w-4"
-                    [checked]="draft().enabled"
-                    (change)="updateDraftEnabled(!!$any($event.target).checked)"
-                  />
-                  <span class="font-medium">Enabled</span>
-                </label>
-
-                <label class="space-y-1 text-sm text-text">
-                  <span class="text-xs uppercase tracking-[0.3em] text-text-muted">Start at (UTC ISO, optional)</span>
-                  <input
-                    type="text"
-                    class="w-full rounded-xl border border-white/10 bg-white/5 px-4 py-2 placeholder:text-text-muted focus:border-accent focus:outline-none"
-                    placeholder="2025-01-01T00:00:00Z"
-                    [value]="draft().startAtUtc"
-                    (input)="updateDraftStartAtUtc($any($event.target).value)"
-                    autocomplete="off"
-                  />
-                </label>
-
-                <label class="space-y-1 text-sm text-text">
-                  <span class="text-xs uppercase tracking-[0.3em] text-text-muted">End at (UTC ISO, optional)</span>
-                  <input
-                    type="text"
-                    class="w-full rounded-xl border border-white/10 bg-white/5 px-4 py-2 placeholder:text-text-muted focus:border-accent focus:outline-none"
-                    placeholder="2025-12-31T23:59:59Z"
-                    [value]="draft().endAtUtc"
-                    (input)="updateDraftEndAtUtc($any($event.target).value)"
-                    autocomplete="off"
-                  />
-                </label>
-
-                <label class="space-y-1 text-sm text-text md:col-span-2">
-                  <span class="text-xs uppercase tracking-[0.3em] text-text-muted">Description (optional)</span>
-                  <textarea
-                    rows="3"
-                    class="w-full resize-y rounded-xl border border-white/10 bg-white/5 px-4 py-2 placeholder:text-text-muted focus:border-accent focus:outline-none"
-                    placeholder="Why this schedule exists"
-                    [value]="draft().description"
-                    (input)="updateDraftDescription($any($event.target).value)"
-                  ></textarea>
-                </label>
-
-                <div class="flex flex-wrap items-center gap-2 md:col-span-2">
-                  <button
-                    type="submit"
-                    class="rounded-full bg-accent/20 px-5 py-2 text-xs font-semibold uppercase tracking-wide text-white transition disabled:opacity-70"
-                    [disabled]="upsertScheduleLoading()"
-                  >
-                    {{ upsertScheduleLoading() ? 'Saving…' : 'Save' }}
-                  </button>
-                  <button
-                    type="button"
-                    class="rounded-full border border-white/15 px-5 py-2 text-xs font-semibold uppercase tracking-wide text-text transition hover:border-accent hover:text-accent disabled:opacity-70"
-                    (click)="deleteSelectedSchedule()"
-                    [disabled]="!canDelete() || deleteScheduleLoading()"
-                  >
-                    {{ deleteScheduleLoading() ? 'Deleting…' : 'Delete' }}
-                  </button>
-                </div>
-              </form>
-
-              @if (scheduleDetail()) {
-                <div class="rounded-2xl border border-white/10 bg-white/3 p-4">
-                  <p class="text-xs uppercase tracking-[0.3em] text-text-muted">Loaded detail</p>
-                  <div class="mt-3 grid gap-3 text-sm text-text md:grid-cols-2">
-                    <div>
-                      <p class="text-text-muted">Trigger id</p>
-                      <p class="font-semibold">{{ detailTriggerIdText() }}</p>
-                    </div>
-                    <div>
-                      <p class="text-text-muted">State</p>
-                      <p class="font-semibold">{{ detailStateText() }}</p>
-                    </div>
-                    <div>
-                      <p class="text-text-muted">Name</p>
-                      <p class="font-semibold">{{ detailNameText() }}</p>
-                    </div>
-                    <div>
-                      <p class="text-text-muted">Cron</p>
-                      <p class="font-semibold">{{ detailCronText() }}</p>
-                    </div>
-                    <div>
-                      <p class="text-text-muted">Job key</p>
-                      <p class="font-semibold">{{ detailJobKeyText() }}</p>
-                    </div>
-                    <div>
-                      <p class="text-text-muted">Enabled</p>
-                      <p class="font-semibold">{{ detailEnabledText() }}</p>
-                    </div>
-                    <div>
-                      <p class="text-text-muted">Start at (UTC)</p>
-                      <p class="font-semibold">{{ detailStartAtUtcText() }}</p>
-                    </div>
-                    <div>
-                      <p class="text-text-muted">End at (UTC)</p>
-                      <p class="font-semibold">{{ detailEndAtUtcText() }}</p>
-                    </div>
-                    <div class="md:col-span-2">
-                      <p class="text-text-muted">Description</p>
-                      <p class="font-semibold">{{ detailDescriptionText() }}</p>
-                    </div>
-                  </div>
-                </div>
-              }
-            </div>
-          </ng-template>
-        </div>
-
         <div ngTabPanel value="deadletters" [preserveContent]="false">
           <ng-template ngTabContent>
             <div class="space-y-4">
@@ -450,4 +257,191 @@
       </section>
     </article>
   </section>
+
+  <cq-detail-surface
+    [open]="editorOpen()"
+    mode="drawer"
+    [title]="editorTitle()"
+    [subtitle]="editorSubtitle()"
+    (closed)="closeEditor()"
+  >
+  <button
+    cqDetailSurfaceHeader
+    type="button"
+    class="rounded-md border border-white/10 px-3 py-1 text-xs font-semibold text-text transition hover:border-accent hover:text-accent disabled:opacity-70"
+    (click)="refreshSelectedSchedule()"
+    [disabled]="!selectedTriggerId() || scheduleDetailLoading()"
+  >
+    {{ scheduleDetailLoading() ? 'Loading…' : 'Reload' }}
+  </button>
+
+  <div class="space-y-6">
+    @if (scheduleDetailError()) {
+      <p class="text-sm text-rose-300">{{ scheduleDetailError() }}</p>
+    }
+    @if (deleteScheduleError()) {
+      <p class="text-sm text-rose-300">{{ deleteScheduleError() }}</p>
+    }
+    @if (upsertScheduleError()) {
+      <p class="text-sm text-rose-300">{{ upsertScheduleError() }}</p>
+    }
+    @if (formError()) {
+      <p class="text-sm text-rose-300">{{ formError() }}</p>
+    }
+
+    <form class="grid gap-4 md:grid-cols-2" (submit)="$event.preventDefault(); submitUpsert()">
+      <label class="space-y-1 text-sm text-text">
+        <span class="text-xs uppercase tracking-[0.3em] text-text-muted">Job key</span>
+        <input
+          type="text"
+          class="w-full rounded-xl border border-white/10 bg-white/5 px-4 py-2 placeholder:text-text-muted focus:border-accent focus:outline-none"
+          placeholder="billing.sweep"
+          [value]="draft().jobKey"
+          (input)="updateDraftJobKey($any($event.target).value)"
+          autocomplete="off"
+        />
+      </label>
+
+      <label class="space-y-1 text-sm text-text">
+        <span class="text-xs uppercase tracking-[0.3em] text-text-muted">Cron expression</span>
+        <input
+          type="text"
+          class="w-full rounded-xl border border-white/10 bg-white/5 px-4 py-2 placeholder:text-text-muted focus:border-accent focus:outline-none"
+          placeholder="0 2 * * *"
+          [value]="draft().cronExpression"
+          (input)="updateDraftCronExpression($any($event.target).value)"
+          autocomplete="off"
+        />
+      </label>
+
+      <label class="space-y-1 text-sm text-text">
+        <span class="text-xs uppercase tracking-[0.3em] text-text-muted">Trigger id (optional)</span>
+        <input
+          type="text"
+          class="w-full rounded-xl border border-white/10 bg-white/5 px-4 py-2 placeholder:text-text-muted focus:border-accent focus:outline-none"
+          placeholder="{jobKey}:{cronExpression}"
+          [value]="draft().triggerId"
+          (input)="updateDraftTriggerId($any($event.target).value)"
+          autocomplete="off"
+        />
+        <p class="text-xs text-text-muted">Tip: keep this filled when editing to avoid creating a new trigger.</p>
+      </label>
+
+      <label class="flex items-center gap-3 rounded-xl border border-white/10 bg-white/3 px-4 py-3 text-sm text-text">
+        <input
+          type="checkbox"
+          class="h-4 w-4"
+          [checked]="draft().enabled"
+          (change)="updateDraftEnabled(!!$any($event.target).checked)"
+        />
+        <span class="font-medium">Enabled</span>
+      </label>
+
+      <label class="space-y-1 text-sm text-text">
+        <span class="text-xs uppercase tracking-[0.3em] text-text-muted">Start at (UTC ISO, optional)</span>
+        <input
+          type="text"
+          class="w-full rounded-xl border border-white/10 bg-white/5 px-4 py-2 placeholder:text-text-muted focus:border-accent focus:outline-none"
+          placeholder="2025-01-01T00:00:00Z"
+          [value]="draft().startAtUtc"
+          (input)="updateDraftStartAtUtc($any($event.target).value)"
+          autocomplete="off"
+        />
+      </label>
+
+      <label class="space-y-1 text-sm text-text">
+        <span class="text-xs uppercase tracking-[0.3em] text-text-muted">End at (UTC ISO, optional)</span>
+        <input
+          type="text"
+          class="w-full rounded-xl border border-white/10 bg-white/5 px-4 py-2 placeholder:text-text-muted focus:border-accent focus:outline-none"
+          placeholder="2025-12-31T23:59:59Z"
+          [value]="draft().endAtUtc"
+          (input)="updateDraftEndAtUtc($any($event.target).value)"
+          autocomplete="off"
+        />
+      </label>
+
+      <label class="space-y-1 text-sm text-text md:col-span-2">
+        <span class="text-xs uppercase tracking-[0.3em] text-text-muted">Description (optional)</span>
+        <textarea
+          rows="3"
+          class="w-full resize-y rounded-xl border border-white/10 bg-white/5 px-4 py-2 placeholder:text-text-muted focus:border-accent focus:outline-none"
+          placeholder="Why this schedule exists"
+          [value]="draft().description"
+          (input)="updateDraftDescription($any($event.target).value)"
+        ></textarea>
+      </label>
+
+      @if (scheduleDetail()) {
+        <div class="rounded-2xl border border-white/10 bg-white/3 p-4 md:col-span-2">
+          <p class="text-xs uppercase tracking-[0.3em] text-text-muted">Loaded detail</p>
+          <div class="mt-3 grid gap-3 text-sm text-text md:grid-cols-2">
+            <div>
+              <p class="text-text-muted">Trigger id</p>
+              <p class="font-semibold">{{ detailTriggerIdText() }}</p>
+            </div>
+            <div>
+              <p class="text-text-muted">State</p>
+              <p class="font-semibold">{{ detailStateText() }}</p>
+            </div>
+            <div>
+              <p class="text-text-muted">Name</p>
+              <p class="font-semibold">{{ detailNameText() }}</p>
+            </div>
+            <div>
+              <p class="text-text-muted">Cron</p>
+              <p class="font-semibold">{{ detailCronText() }}</p>
+            </div>
+            <div>
+              <p class="text-text-muted">Job key</p>
+              <p class="font-semibold">{{ detailJobKeyText() }}</p>
+            </div>
+            <div>
+              <p class="text-text-muted">Enabled</p>
+              <p class="font-semibold">{{ detailEnabledText() }}</p>
+            </div>
+            <div>
+              <p class="text-text-muted">Start at (UTC)</p>
+              <p class="font-semibold">{{ detailStartAtUtcText() }}</p>
+            </div>
+            <div>
+              <p class="text-text-muted">End at (UTC)</p>
+              <p class="font-semibold">{{ detailEndAtUtcText() }}</p>
+            </div>
+            <div class="md:col-span-2">
+              <p class="text-text-muted">Description</p>
+              <p class="font-semibold">{{ detailDescriptionText() }}</p>
+            </div>
+          </div>
+        </div>
+      }
+    </form>
+  </div>
+
+  <div cqDetailSurfaceFooter class="flex flex-wrap items-center gap-2">
+    <button
+      type="button"
+      class="rounded-full bg-accent/20 px-5 py-2 text-xs font-semibold uppercase tracking-wide text-white transition disabled:opacity-70"
+      (click)="submitUpsert()"
+      [disabled]="upsertScheduleLoading()"
+    >
+      {{ upsertScheduleLoading() ? 'Saving…' : 'Save' }}
+    </button>
+    <button
+      type="button"
+      class="rounded-full border border-white/15 px-5 py-2 text-xs font-semibold uppercase tracking-wide text-text transition hover:border-accent hover:text-accent disabled:opacity-70"
+      (click)="deleteSelectedSchedule()"
+      [disabled]="!canDelete() || deleteScheduleLoading()"
+    >
+      {{ deleteScheduleLoading() ? 'Deleting…' : 'Delete' }}
+    </button>
+    <button
+      type="button"
+      class="rounded-full border border-white/15 px-5 py-2 text-xs font-semibold uppercase tracking-wide text-text transition hover:border-accent hover:text-accent"
+      (click)="closeEditor()"
+    >
+      Close
+    </button>
+  </div>
+</cq-detail-surface>
 </section>

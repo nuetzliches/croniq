@@ -2,6 +2,7 @@
   "name": "ui-kit",
   "version": "0.0.1",
   "peerDependencies": {
+    "@angular/cdk": "^21.0.3",
     "@angular/common": "^21.1.0-next.0",
     "@angular/core": "^21.1.0-next.0"
   },

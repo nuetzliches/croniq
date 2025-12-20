@@ -4,6 +4,7 @@ import { ChangeDetectionStrategy, Component, computed, effect, inject, signal } 
 import { ScheduleState } from '@croniq/api-schema';
 import type { UpsertScheduleRequest } from '@croniq/api-schema';
 import { SchedulesStore } from './schedules.store';
+import { DetailSurface } from 'ui-kit';
 
 type ScheduleFilter = ScheduleState | 'all';
 type StatusOverview = {
@@ -17,7 +18,7 @@ type FilterOption = {
 };
 
 type DetailTab = {
-  id: 'list' | 'edit' | 'deadletters';
+  id: 'list' | 'deadletters';
   label: string;
 };
 
@@ -33,7 +34,7 @@ type ScheduleDraft = {
 
 @Component({
   selector: 'cq-schedules-page',
-  imports: [DatePipe, Tabs, TabList, Tab, TabPanel, TabContent],
+  imports: [DatePipe, Tabs, TabList, Tab, TabPanel, TabContent, DetailSurface],
   providers: [SchedulesStore],
   templateUrl: './schedules-page.html',
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -43,7 +44,6 @@ export class SchedulesPage {
 
   readonly detailTabs: ReadonlyArray<DetailTab> = [
     { id: 'list', label: 'List' },
-    { id: 'edit', label: 'Edit / Create' },
     { id: 'deadletters', label: 'Dead letters' },
   ];
   readonly selectedTab = signal<string>(this.detailTabs[0]?.id ?? '');
@@ -84,6 +84,16 @@ export class SchedulesPage {
   readonly searchTerm = signal('');
 
   readonly selectedTriggerId = signal<string | null>(null);
+  readonly editorOpen = signal(false);
+  readonly editorTitle = computed(() => (this.selectedTriggerId() ? 'Edit schedule' : 'New schedule'));
+  readonly editorSubtitle = computed(() => {
+    const triggerId = this.selectedTriggerId();
+    if (triggerId?.trim()) {
+      return `Trigger id: ${triggerId}`;
+    }
+    return 'Create a new schedule for the current tenant/environment.';
+  });
+
   readonly draft = signal<ScheduleDraft>(createEmptyDraft());
   readonly formError = signal<string | null>(null);
   private readonly prefillPendingTriggerId = signal<string | null>(null);
@@ -224,11 +234,11 @@ export class SchedulesPage {
 
   startCreate(): void {
     this.selectedTriggerId.set(null);
+    this.editorOpen.set(true);
     this.formError.set(null);
     this.draft.set(createEmptyDraft());
     this.prefillPendingTriggerId.set(null);
     this.seededCronFromSummary.set(false);
-    this.selectedTab.set('edit');
   }
 
   openSchedule(triggerId: string): void {
@@ -238,8 +248,8 @@ export class SchedulesPage {
     }
 
     this.selectedTriggerId.set(trimmed);
+    this.editorOpen.set(true);
     this.formError.set(null);
-    this.selectedTab.set('edit');
 
     this.prefillPendingTriggerId.set(trimmed);
     this.store.refreshScheduleDetail(trimmed);
@@ -263,6 +273,13 @@ export class SchedulesPage {
       return;
     }
     this.store.refreshScheduleDetail(triggerId);
+  }
+
+  closeEditor(): void {
+    this.editorOpen.set(false);
+    this.formError.set(null);
+    this.prefillPendingTriggerId.set(null);
+    this.seededCronFromSummary.set(false);
   }
 
   updateDraftTriggerId(value: unknown): void {

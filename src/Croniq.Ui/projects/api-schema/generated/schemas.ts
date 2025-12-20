@@ -13,17 +13,22 @@ export const UpsertJobRequest = z.object({
     metadata: z.record(z.string(), z.string()).nullish(),
 });
 export type UpsertJobRequest = z.infer<typeof UpsertJobRequest>;
-export const UpsertScheduleRequest = z.object({
-    jobKey: z.string().min(1),
-    cronExpression: z.string().min(1),
-    triggerId: z.string().nullish(),
-    startAtUtc: z.iso.datetime({ offset: true }).nullish(),
-    endAtUtc: z.iso.datetime({ offset: true }).nullish(),
-    enabled: z.boolean().optional(),
-    description: z.string().nullish(),
-    metadata: z.record(z.string(), z.string()).nullish(),
-});
-export type UpsertScheduleRequest = z.infer<typeof UpsertScheduleRequest>;
+export const CroniqTriggerSeedDefinition = z
+    .object({
+        triggerId: z.string().nullable(),
+        jobKey: z.string().nullable(),
+        cronExpression: z.string().nullable(),
+        startAtUtc: z.iso.datetime({ offset: true }).nullable(),
+        endAtUtc: z.iso.datetime({ offset: true }).nullable(),
+        enabled: z.boolean(),
+        metadata: z.record(z.string(), z.string()).nullable(),
+        description: z.string().nullable(),
+        managedBy: z.string().nullable(),
+    })
+    .partial();
+export type CroniqTriggerSeedDefinition = z.infer<
+    typeof CroniqTriggerSeedDefinition
+>;
 export const UpsertWebhookEndpointRequest = z.object({
     hookKey: z.string().min(1),
     jobKey: z.string().min(1),
@@ -118,6 +123,7 @@ export type PasswordChangePasswordRequest = z.infer<
 export const TriggerJobRequest = z.object({
     jobKey: z.string().min(1),
     metadata: z.record(z.string(), z.string()).nullish(),
+    delaySeconds: z.number().int().nullish(),
 });
 export type TriggerJobRequest = z.infer<typeof TriggerJobRequest>;
 export const ExecutionStatus = z.union([
@@ -129,7 +135,7 @@ export type ExecutionStatus = z.infer<typeof ExecutionStatus>;
 export const schemas = {
     UpsertTenantRequest,
     UpsertJobRequest,
-    UpsertScheduleRequest,
+    CroniqTriggerSeedDefinition,
     UpsertWebhookEndpointRequest,
     RotateWebhookSecretRequest,
     CreateWebhookIpRuleRequest,

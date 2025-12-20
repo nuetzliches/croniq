@@ -3,7 +3,7 @@ import type { EndpointDefinition } from '../schemas';
 import {
     UpsertTenantRequest,
     UpsertJobRequest,
-    UpsertScheduleRequest,
+    CroniqTriggerSeedDefinition,
     UpsertWebhookEndpointRequest,
     RotateWebhookSecretRequest,
     CreateWebhookIpRuleRequest,
@@ -300,7 +300,7 @@ export const TenantsApi: EndpointDefinition[] = [
         description: `Registers a Cron-based trigger for the specified tenant-scoped job key.`,
         requestFormat: 'json',
         parameters: [
-            { name: 'body', type: 'Body', schema: UpsertScheduleRequest },
+            { name: 'body', type: 'Body', schema: CroniqTriggerSeedDefinition },
             { name: 'tenantId', type: 'Path', schema: z.string() },
             {
                 name: 'environment',

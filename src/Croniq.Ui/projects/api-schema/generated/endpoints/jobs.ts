@@ -3,6 +3,7 @@ import type { EndpointDefinition } from '../schemas';
 import {
     TriggerJobRequest,
     CreateWebhookIpRuleRequest,
+    CroniqTriggerSeedDefinition,
     ExecutionStatus,
     IssueApiKeyRequest,
     IssueTokenRequest,
@@ -13,7 +14,6 @@ import {
     RotateWebhookSecretRequest,
     UpsertApiClientRequest,
     UpsertJobRequest,
-    UpsertScheduleRequest,
     UpsertTenantRequest,
     UpsertWebhookEndpointRequest,
 } from '../schemas';
@@ -22,7 +22,7 @@ export const JobsApi: EndpointDefinition[] = [
     {
         method: 'post',
         path: '/jobs/trigger',
-        description: `Executes a job immediately using the provided metadata and job key.`,
+        description: `Executes a job immediately or schedules a one-off run when DelaySeconds is provided.`,
         requestFormat: 'json',
         parameters: [{ name: 'body', type: 'Body', schema: TriggerJobRequest }],
         response: z.void(),
