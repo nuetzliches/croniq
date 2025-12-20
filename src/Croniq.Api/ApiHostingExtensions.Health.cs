@@ -1,6 +1,5 @@
 using System;
 using System.Threading;
-using Croniq.Auth.Abstractions;
 using Croniq.Persistence.Abstractions;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
@@ -42,17 +41,5 @@ public static partial class ApiHostingExtensions
             }
         })
         .WithDocs("Health_Persistence_Get", "Persistence health", "Checks the configured job persistence provider for reachability.");
-
-        app.MapGet("/me", ([FromServices] ICallerContextAccessor callerContextAccessor) =>
-        {
-            var caller = callerContextAccessor.Current;
-            if (caller is null || !caller.IsActive)
-            {
-                return Results.Unauthorized();
-            }
-
-            return Results.Ok(ToCallerInfoResponse(caller));
-        })
-        .WithDocs("Caller_Get", "Inspect caller", "Returns the current caller context (tenant, environment, scopes) after authentication.");
     }
 }

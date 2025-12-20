@@ -131,6 +131,76 @@ public class TriggerWorkerTests
     }
 
     [Fact]
+    public async Task Renews_lease_while_job_runs()
+    {
+        var lease = NewLease(jobKey: SampleJobKey.Value) with
+        {
+            LeaseExpiresAtUtc = DateTimeOffset.UtcNow.AddMilliseconds(150)
+        };
+        var store = new FakeJobStore(new[] { lease });
+        store.RenewHandler = request => request.Lease with { LeaseExpiresAtUtc = request.NowUtc.AddSeconds(5) };
+
+        var registry = Substitute.For<IJobRegistry>();
+        registry.TryGet(SampleJobKey, out Arg.Any<JobDescriptor>()).Returns(ci =>
+        {
+            ci[1] = SampleDescriptor;
+            return true;
+        });
+
+        var pipeline = new DelayedPipeline(TimeSpan.FromMilliseconds(200));
+        var worker = CreateWorker(
+            store,
+            registry,
+            pipeline: pipeline,
+            hostOptions: new WorkerHostOptions { LeaseRenewalLeadTime = TimeSpan.FromMilliseconds(50) });
+
+        var processed = await worker.ProcessBatchAsync(DateTimeOffset.UtcNow, batchSize: 1, CancellationToken.None);
+
+        processed.ShouldBe(1);
+        pipeline.Executions.ShouldBe(1);
+        store.RenewRequests.Count.ShouldBeGreaterThan(0);
+        store.Releases.ShouldHaveSingleItem();
+        store.Releases[0].Succeeded.ShouldBeTrue();
+    }
+
+    [Fact]
+    public async Task Cancels_job_when_lease_cannot_be_renewed()
+    {
+        var lease = NewLease(jobKey: SampleJobKey.Value) with
+        {
+            LeaseExpiresAtUtc = DateTimeOffset.UtcNow.AddMilliseconds(150)
+        };
+        var store = new FakeJobStore(new[] { lease });
+        store.RenewHandler = _ => null;
+        var jobLogStore = Substitute.For<IExecutionLogStore>();
+
+        var registry = Substitute.For<IJobRegistry>();
+        registry.TryGet(SampleJobKey, out Arg.Any<JobDescriptor>()).Returns(ci =>
+        {
+            ci[1] = SampleDescriptor;
+            return true;
+        });
+
+        var pipeline = new DelayedPipeline(TimeSpan.FromMilliseconds(500));
+        var worker = CreateWorker(
+            store,
+            registry,
+            pipeline: pipeline,
+            jobLogStore: jobLogStore,
+            hostOptions: new WorkerHostOptions { LeaseRenewalLeadTime = TimeSpan.FromMilliseconds(50) });
+
+        var processed = await worker.ProcessBatchAsync(DateTimeOffset.UtcNow, batchSize: 1, CancellationToken.None);
+
+        processed.ShouldBe(0);
+        store.RenewRequests.Count.ShouldBeGreaterThan(0);
+        store.Releases.ShouldBeEmpty();
+        store.DeadLetters.ShouldBeEmpty();
+        await jobLogStore.Received(1).OnExecutionCompletedAsync(
+            Arg.Is<ExecutionCompletion>(c => c.Status == ExecutionStatus.Canceled),
+            Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
     public async Task Applies_trigger_metadata_from_payload()
     {
         var payloadMetadata = new Dictionary<string, string>
@@ -270,7 +340,8 @@ public class TriggerWorkerTests
         IMisfirePolicy? misfirePolicy = null,
         IQuotaGuard? quotaGuard = null,
         IJobExecutionPipeline? pipeline = null,
-        IExecutionLogStore? jobLogStore = null)
+        IExecutionLogStore? jobLogStore = null,
+        WorkerHostOptions? hostOptions = null)
     {
         if (policyResolver is null)
         {
@@ -304,6 +375,7 @@ public class TriggerWorkerTests
         jobLogStore ??= Substitute.For<IExecutionLogStore>();
 
         var options = Microsoft.Extensions.Options.Options.Create(new CroniqOptions { TenantId = "t1", EnvironmentTag = "dev", InstanceId = "test" });
+        var workerOptions = Microsoft.Extensions.Options.Options.Create(hostOptions ?? new WorkerHostOptions { LeaseRenewalLeadTime = TimeSpan.Zero });
 
         return new TriggerWorker(
             store,
@@ -312,6 +384,7 @@ public class TriggerWorkerTests
             misfirePolicy,
             policyResolver,
             options,
+            workerOptions,
             quotaGuard,
             jobLogStore,
             NullLogger<TriggerWorker>.Instance,
@@ -327,6 +400,24 @@ public class TriggerWorkerTests
         }
     }
 
+    private sealed class DelayedPipeline : IJobExecutionPipeline
+    {
+        private readonly TimeSpan _delay;
+
+        public DelayedPipeline(TimeSpan delay)
+        {
+            _delay = delay;
+        }
+
+        public int Executions { get; private set; }
+
+        public Task ExecuteAsync(JobExecutionRequest request, CancellationToken cancellationToken)
+        {
+            Executions++;
+            return Task.Delay(_delay, cancellationToken);
+        }
+    }
+
     private sealed class FakeJobStore : IJobStore
     {
         private readonly IReadOnlyCollection<TriggerLease> _leases;
@@ -338,10 +429,23 @@ public class TriggerWorkerTests
 
         public List<TriggerReleaseRequest> Releases { get; } = new();
         public List<DeadLetterRequest> DeadLetters { get; } = new();
+        public List<TriggerLeaseRenewRequest> RenewRequests { get; } = new();
+        public Func<TriggerLeaseRenewRequest, TriggerLease?>? RenewHandler { get; set; }
 
         public Task<IReadOnlyCollection<TriggerLease>> AcquireAsync(TriggerAcquireRequest request, CancellationToken cancellationToken)
         {
             return Task.FromResult(_leases);
+        }
+
+        public Task<TriggerLease?> TryRenewLeaseAsync(TriggerLeaseRenewRequest request, CancellationToken cancellationToken)
+        {
+            RenewRequests.Add(request);
+            if (RenewHandler is null)
+            {
+                return Task.FromResult<TriggerLease?>(request.Lease);
+            }
+
+            return Task.FromResult(RenewHandler(request));
         }
 
         public Task ReleaseAsync(TriggerReleaseRequest request, CancellationToken cancellationToken)

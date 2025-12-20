@@ -11,6 +11,8 @@ public interface IJobStore
 {
     Task<IReadOnlyCollection<TriggerLease>> AcquireAsync(TriggerAcquireRequest request, CancellationToken cancellationToken);
 
+    Task<TriggerLease?> TryRenewLeaseAsync(TriggerLeaseRenewRequest request, CancellationToken cancellationToken);
+
     Task ReleaseAsync(TriggerReleaseRequest request, CancellationToken cancellationToken);
 
     Task MoveToDeadLetterAsync(DeadLetterRequest request, CancellationToken cancellationToken);

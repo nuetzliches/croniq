@@ -28,7 +28,7 @@ This document extends the quality vision captured in `architecture.md` and descr
 - **Frameworks**: `xUnit` + `FluentAssertions`, with `NSubstitute` for lightweight mocks when an interface cannot be satisfied with in-memory doubles.
 - **Layout**: Mirror namespaces (e.g., `Croniq.Core.Tests/Scheduling/TriggerWorkerTests.cs`) with explicit Arrange–Act–Assert regions. Prefer `[Theory]` and `MemberData` for parser/policy matrices.
 - **Execution**: `dotnet test tests/Croniq.Core.Tests/Croniq.Core.Tests.csproj --configuration Release` (or target another suite directly).
-- **Gates**: Coverage per suite is aggregated by Coverlet; PRs fail when `Croniq.Core` line coverage <80% or repository coverage <60%.
+- **Gates**: Coverage per suite is aggregated by Coverlet; PRs fail when `Croniq.Core` line coverage <73%, overall line coverage <75%, or branch coverage <55% (overall + Core).
 
 ### Contract Tests
 
@@ -76,8 +76,9 @@ This document extends the quality vision captured in `architecture.md` and descr
 - Each `*.Tests` project inherits Coverlet MSBuild props from `Directory.Build.props`, emitting Cobertura files to `coverage/<Suite>/coverage.cobertura.xml`.
 - `dotnet-reportgenerator-globaltool` consolidates coverage into `coverage/report/Summary.json`.
 - Gates enforced in CI:
-  - `Croniq.Core` line coverage ≥80% (hard fail).
-  - Repository-wide line coverage ≥60%.
+  - `Croniq.Core` line coverage ≥73% (hard fail).
+  - Repository-wide line coverage ≥75%.
+  - Branch coverage ≥55% (overall + `Croniq.Core`).
   - No PR merges when any unit/contract suite fails.
 - Local guardrails: run `dotnet test --collect:"XPlat Code Coverage"` to preview coverage before opening a PR.
 
@@ -161,7 +162,7 @@ This document extends the quality vision captured in `architecture.md` and descr
 | Status | Item                                                         | Evidence / Next Step                                                                                                      |
 | ------ | ------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------- |
 | ✅     | Coverlet instrumentation enabled for every `*.Tests` project | `Directory.Build.props` sets `CollectCoverage=true` and wires `coverlet.msbuild`.                                         |
-| ✅     | PR workflow runs lint/build/unit suites with coverage gates  | `.github/workflows/ci-pr.yml` executes all current unit suites, aggregates coverage, and enforces ≥80%/≥70% thresholds.   |
+| ✅     | PR workflow runs lint/build/unit suites with coverage gates  | `.github/workflows/ci-pr.yml` executes all current unit suites, aggregates coverage, and enforces ≥73% core / ≥75% overall + ≥55% branch thresholds.   |
 | ✅     | Observability suite covered in CI                            | `Run Croniq.Observability.Tests` step in `ci-pr.yml` validates OTLP wiring on every PR.                                   |
 | ✅     | Smoke harness available for manual/Nightly use               | `scripts/test-e2e.cmd` orchestrates Docker Compose + `tests/Croniq.Api.Smoke`.                                            |
 | ✅     | Croniq.TestKit shared fixtures committed                     | `tests/Croniq.TestKit/` now ships SQL Server fixtures, log collectors, and canonical trait constants.                     |

@@ -23,4 +23,9 @@ public sealed class WorkerHostOptions
     /// Delay after an error before retrying.
     /// </summary>
     public TimeSpan ErrorDelay { get; set; } = TimeSpan.FromSeconds(5);
+
+    /// <summary>
+    /// Lead time before lease expiry to renew it (set to zero to disable renewals).
+    /// </summary>
+    public TimeSpan LeaseRenewalLeadTime { get; set; } = TimeSpan.FromSeconds(10);
 }

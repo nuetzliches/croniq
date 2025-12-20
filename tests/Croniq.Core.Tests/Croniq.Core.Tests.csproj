@@ -9,6 +9,7 @@
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\..\src\Croniq.Core\Croniq.Core.csproj" />
+    <ProjectReference Include="..\..\src\Croniq.Hosting\Croniq.Hosting.csproj" />
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="18.0.1" />

@@ -237,6 +237,7 @@ public static partial class ApiHostingExtensions
         });
 
         MapHealthEndpoints(app);
+        MapCallerEndpoints(app);
         MapTenantAdminEndpoints(app);
         MapJobEndpoints(app);
         MapExecutionEndpoints(app);

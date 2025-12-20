@@ -97,6 +97,11 @@ public sealed class NoopJobPersistenceProvider : IJobPersistenceProvider, IPersi
         return Task.FromResult<IReadOnlyCollection<TriggerLease>>(Array.Empty<TriggerLease>());
     }
 
+    public Task<TriggerLease?> TryRenewLeaseAsync(TriggerLeaseRenewRequest request, CancellationToken cancellationToken)
+    {
+        return Task.FromResult<TriggerLease?>(null);
+    }
+
     public Task ReleaseAsync(TriggerReleaseRequest request, CancellationToken cancellationToken) => Task.CompletedTask;
 
     public Task MoveToDeadLetterAsync(DeadLetterRequest request, CancellationToken cancellationToken) => Task.CompletedTask;

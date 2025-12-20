@@ -62,6 +62,8 @@ public static class SqlServerDatabaseMigrator
         await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
 
         const string sql = """
+        DELETE FROM [auth].[RefreshTokens];
+        DELETE FROM [auth].[Users];
         DELETE FROM [croniq].[WebhookSecretHistory];
         DELETE FROM [croniq].[WebhookEndpointEvents];
         DELETE FROM [croniq].[WebhookDeadLetters];
@@ -71,6 +73,7 @@ public static class SqlServerDatabaseMigrator
         DELETE FROM [croniq].[Jobs];
         DELETE FROM [croniq].[ApiKeys];
         DELETE FROM [croniq].[ApiClients];
+        DELETE FROM [croniq].[Tenants];
         """;
 
         await using var command = connection.CreateCommand();

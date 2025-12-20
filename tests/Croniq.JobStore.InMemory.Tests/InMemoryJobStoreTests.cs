@@ -41,6 +41,32 @@ public class InMemoryJobStoreTests
     }
 
     [Fact]
+    public async Task Renew_extends_active_lease()
+    {
+        var now = new DateTimeOffset(2025, 1, 1, 0, 0, 0, TimeSpan.Zero);
+        var store = CreateStore(now, 30);
+
+        var jobKey = "1:dev:samples:renew";
+        var triggerId = $"{jobKey}:t1";
+
+        await store.UpsertJobAsync(new JobDefinition(jobKey, "samples", "renew", null, "sample", null), CancellationToken.None);
+        await store.UpsertTriggerAsync(new TriggerDefinition(triggerId, jobKey, "0 * * * * ?", DefaultScope), CancellationToken.None);
+
+        var acquireAt = now.AddMinutes(1);
+        var lease = (await store.AcquireAsync(new TriggerAcquireRequest(DefaultScope, "instance-1", acquireAt, 1), CancellationToken.None))
+            .ShouldHaveSingleItem();
+
+        var renewAt = acquireAt.AddSeconds(5);
+        var renewed = await store.TryRenewLeaseAsync(new TriggerLeaseRenewRequest(lease, "instance-1", renewAt), CancellationToken.None);
+
+        renewed.ShouldNotBeNull();
+        renewed!.LeaseExpiresAtUtc.ShouldBe(renewAt.AddSeconds(30));
+
+        var rejected = await store.TryRenewLeaseAsync(new TriggerLeaseRenewRequest(lease, "instance-2", renewAt), CancellationToken.None);
+        rejected.ShouldBeNull();
+    }
+
+    [Fact]
     public async Task Reschedules_on_failure_when_next_fire_provided()
     {
         var now = new DateTimeOffset(2025, 1, 1, 0, 0, 0, TimeSpan.Zero);

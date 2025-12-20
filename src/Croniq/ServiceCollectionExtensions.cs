@@ -95,7 +95,8 @@ public static class ServiceCollectionExtensions
             if (options.BatchSize.HasValue
                 || options.IdleDelay.HasValue
                 || options.BusyDelay.HasValue
-                || options.ErrorDelay.HasValue)
+                || options.ErrorDelay.HasValue
+                || options.LeaseRenewalLeadTime.HasValue)
             {
                 services.PostConfigure<WorkerHostOptions>(worker =>
                 {
@@ -117,6 +118,11 @@ public static class ServiceCollectionExtensions
                     if (options.ErrorDelay.HasValue)
                     {
                         worker.ErrorDelay = options.ErrorDelay.Value;
+                    }
+
+                    if (options.LeaseRenewalLeadTime.HasValue)
+                    {
+                        worker.LeaseRenewalLeadTime = options.LeaseRenewalLeadTime.Value;
                     }
                 });
             }

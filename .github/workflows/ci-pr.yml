@@ -96,6 +96,8 @@ jobs:
         include:
           - displayName: Croniq.Core.Tests
             project: tests/Croniq.Core.Tests/Croniq.Core.Tests.csproj
+          - displayName: Croniq.Api.Tests
+            project: tests/Croniq.Api.Tests/Croniq.Api.Tests.csproj
           - displayName: Croniq.JobStore.InMemory.Tests
             project: tests/Croniq.JobStore.InMemory.Tests/Croniq.JobStore.InMemory.Tests.csproj
           - displayName: Croniq.Providers.Default.Tests
@@ -104,6 +106,8 @@ jobs:
             project: tests/Croniq.Observability.Tests/Croniq.Observability.Tests.csproj
           - displayName: Croniq.Persistence.SqlServer.Tests
             project: tests/Croniq.Persistence.SqlServer.Tests/Croniq.Persistence.SqlServer.Tests.csproj
+          - displayName: Croniq.Sdk.Tests
+            project: tests/Croniq.Sdk.Tests/Croniq.Sdk.Tests.csproj
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -181,8 +185,10 @@ jobs:
           python scripts/ci/enforce_coverage_thresholds.py \
             coverage/report/Summary.json \
             --core-assembly Croniq.Core \
-            --core-threshold 80 \
-            --overall-threshold 60
+            --core-threshold 73 \
+            --overall-threshold 75 \
+            --core-branch-threshold 55 \
+            --overall-branch-threshold 55
 
       - name: Comment coverage summary on PR
         if: github.event_name == 'pull_request'

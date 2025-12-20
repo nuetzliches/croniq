@@ -30,15 +30,15 @@ This document describes the continuous integration and delivery strategy require
    - `dotnet format --verify-no-changes`.
    - `dotnet build -warnaserror` to enforce analyzers.
 3. **Unit + contract tests**
-   - Matrix per test project (`Croniq.Core.Tests`, `Croniq.JobStore.InMemory.Tests`, `Croniq.Persistence.SqlServer.Tests`, `Croniq.Providers.Default.Tests`).
+   - Matrix per test project (`Croniq.Core.Tests`, `Croniq.Api.Tests`, `Croniq.JobStore.InMemory.Tests`, `Croniq.Persistence.SqlServer.Tests`, `Croniq.Providers.Default.Tests`, `Croniq.Sdk.Tests`).
    - Use `dotnet test <proj> /p:CollectCoverage=true /p:CoverletOutputFormat=cobertura`.
    - Upload coverage report aggregate + test results (TRX) as artifacts.
-   - Fail if coverage <80% Core / <60% overall.
+   - Fail if coverage <73% Core line / <75% overall line / <55% branch (overall + Core).
 4. **Security quick checks**
    - `dotnet list package --vulnerable --include-transitive`.
    - `trivy fs --exit-code 0 --severity HIGH,CRITICAL .` (informational in PR until release gating is ready).
 5. **Status reporting**
-   - `scripts/ci/enforce_coverage_thresholds.py` enforces >=80%/>=60%.
+   - `scripts/ci/enforce_coverage_thresholds.py` enforces the line + branch thresholds above.
    - The workflow posts an auto-updating PR comment summarizing overall + Croniq.Core coverage plus per-assembly breakdown.
 
 ## ci-nightly.yml (Full Suite)
@@ -120,7 +120,7 @@ Release builds automatically call this workflow; you can still dispatch it manua
    - Repeat per suite; artifacts land under `TestResults/` + `coverage/` just like CI.
 2. **Coverage summary + gates**
    - Run `reportgenerator "-reports:coverage/**/coverage.cobertura.xml" "-targetdir:coverage/report" -reporttypes:JsonSummary`.
-   - Enforce thresholds with `python scripts/ci/enforce_coverage_thresholds.py coverage/report/Summary.json` (same logic as CI).
+   - Enforce thresholds with `python scripts/ci/enforce_coverage_thresholds.py coverage/report/Summary.json --core-assembly Croniq.Core --core-threshold 73 --overall-threshold 75 --core-branch-threshold 55 --overall-branch-threshold 55` (same logic as CI).
 3. **Compose-driven dev stack**
    - `pwsh ./scripts/ci/compose-devstack.ps1 -Action Up` starts the API/worker/observability profiles.
    - `pwsh ./scripts/ci/compose-devstack.ps1 -Action Down -CaptureLogs` stops the stack and collects logs to `artifacts/ci-compose/`.

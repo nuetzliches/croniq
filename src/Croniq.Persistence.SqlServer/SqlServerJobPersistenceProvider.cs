@@ -286,6 +286,42 @@ public sealed class SqlServerJobPersistenceProvider : IJobPersistenceProvider
         }).ConfigureAwait(false);
     }
 
+    public async Task<TriggerLease?> TryRenewLeaseAsync(TriggerLeaseRenewRequest request, CancellationToken cancellationToken)
+    {
+        if (request is null) throw new ArgumentNullException(nameof(request));
+
+        await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
+        var trigger = await db.Triggers.FirstOrDefaultAsync(t => t.TriggerKey == request.Lease.TriggerId, cancellationToken).ConfigureAwait(false);
+        if (trigger is null)
+        {
+            return null;
+        }
+
+        if (!string.Equals(trigger.LeaseId, request.Lease.LeaseId, StringComparison.OrdinalIgnoreCase))
+        {
+            return null;
+        }
+
+        if (!string.Equals(trigger.LeaseInstanceId, request.InstanceId, StringComparison.OrdinalIgnoreCase))
+        {
+            return null;
+        }
+
+        var nowUtc = request.NowUtc.UtcDateTime;
+        if (!trigger.LeaseExpiresAtUtc.HasValue || trigger.LeaseExpiresAtUtc <= nowUtc)
+        {
+            return null;
+        }
+
+        var expiresAt = nowUtc.AddSeconds(_options.LeaseDurationSeconds);
+        trigger.LeaseExpiresAtUtc = expiresAt;
+        trigger.UpdatedAtUtc = nowUtc;
+
+        await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+
+        return request.Lease with { LeaseExpiresAtUtc = new DateTimeOffset(DateTime.SpecifyKind(expiresAt, DateTimeKind.Utc)) };
+    }
+
     public async Task ReleaseAsync(TriggerReleaseRequest request, CancellationToken cancellationToken)
     {
         if (request is null) throw new ArgumentNullException(nameof(request));

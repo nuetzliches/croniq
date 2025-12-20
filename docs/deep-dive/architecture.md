@@ -101,6 +101,14 @@ docs/
 - Misfires are retried while `MaxMisfireDelay` (default 5 minutes) is respected. Beyond that the execution is marked as dead letter.
 - Delivery semantics: at-least-once by default. Callers may supply `IdempotencyKey` metadata to deduplicate downstream effects.
 
+### Lease Renewal & Long-Running Jobs
+
+- Each trigger execution is protected by a lease (`Croniq:Persistence:SqlServer:LeaseDurationSeconds` or `Croniq:JobStore:InMemory:LeaseDurationSeconds`, default 60s).
+- While a job runs, the worker renews the lease ahead of expiry (`Croniq:WorkerHost:LeaseRenewalLeadTime`, default 10s). Setting this to `00:00:00` disables renewals.
+- If renewal fails, the worker cancels the execution and skips releasing the lease to avoid clobbering a new owner; once the lease expires the trigger can be reacquired.
+- If renewals are disabled or a lease is lost, another worker may pick up the same trigger while the original handler is still running, so long-running jobs must remain idempotent.
+- Keep execution timeouts aligned: `Croniq:Policies:Execution:Timeout:Timeout` defaults to 5 minutes and should remain higher than the lease duration. For long-running jobs, increase/disable the timeout and ensure `LeaseRenewalLeadTime` is comfortably smaller than the lease (e.g., 10s lead on a 60s lease).
+
 ## Job Store & Provider Model
 
 - In-memory JobStore (`Croniq.JobStore.InMemory`) stays the default for dev/test while all operations flow through `IJobPersistenceProvider` contracts.
@@ -189,7 +197,7 @@ docs/
 ## Release, Testing & Compliance
 
 - Versioning: SemVer for libraries/SDKs, `/v1` routes for HTTP APIs. Breaking changes require new majors plus deprecation windows.
-- Testing strategy: unit tests (xUnit) + contract tests (provider fixtures/Testcontainers) + Compose-based smoke/e2e suites (nightly and pre-release). Coverage gates: ≥80% core, ≥70% overall.
+- Testing strategy: unit tests (xUnit) + contract tests (provider fixtures/Testcontainers) + Compose-based smoke/e2e suites (nightly and pre-release). Coverage gates: Core line ≥73%, overall line ≥75%, branch coverage ≥55% (overall + Core).
 - Release pipeline runs migrations (`Croniq.DbMigrator`), executes smoke tests, produces SBOMs (Syft) and signs artifacts (Cosign/SignPath). Dependency updates are scanned via Trivy/Snyk and tracked by Renovate.
 
 ## Roadmap Snapshots

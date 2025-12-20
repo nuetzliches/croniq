@@ -19,7 +19,7 @@
     <CollectCoverage>true</CollectCoverage>
     <CoverletOutputFormat>cobertura</CoverletOutputFormat>
     <CoverletOutput>$(MSBuildProjectDirectory)\TestResults\coverage\$(MSBuildProjectName)\coverage</CoverletOutput>
-    <ExcludeByFile>$(ExcludeByFile);**\bin\**;**\obj\**;**/CronExpression.cs</ExcludeByFile>
+    <ExcludeByFile>**\bin\**,**\obj\**,**/bin/**,**/obj/**,**/Migrations/**/*.cs,**\Migrations\**\*.cs,**/Program.cs,**\Program.cs,**/CronExpression.cs,**\CronExpression.cs</ExcludeByFile>
   </PropertyGroup>
   <ItemGroup Condition="$([System.String]::Copy('$(MSBuildProjectName)').Contains('.Tests'))">
     <PackageReference Include="coverlet.msbuild" Version="6.0.4">

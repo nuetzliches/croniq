@@ -31,6 +31,7 @@ public sealed class TriggerWorker
     private readonly IJobExecutionPipeline _pipeline;
     private readonly ILogger<TriggerWorker> _logger;
     private readonly CroniqOptions _options;
+    private readonly WorkerHostOptions _hostOptions;
     private readonly ActivitySource _activitySource;
     private readonly IMisfirePolicy _misfirePolicy;
     private readonly IPolicyResolver _policyResolver;
@@ -45,6 +46,7 @@ public sealed class TriggerWorker
         IMisfirePolicy misfirePolicy,
         IPolicyResolver policyResolver,
         IOptions<CroniqOptions> options,
+        IOptions<WorkerHostOptions> hostOptions,
         IQuotaGuard quotaGuard,
         IExecutionLogStore executionLogStore,
         ILogger<TriggerWorker> logger,
@@ -59,6 +61,7 @@ public sealed class TriggerWorker
         _executionLogStore = executionLogStore ?? throw new ArgumentNullException(nameof(executionLogStore));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
+        _hostOptions = hostOptions?.Value ?? throw new ArgumentNullException(nameof(hostOptions));
         _activitySource = activitySource ?? new ActivitySource("Croniq.Core.TriggerWorker");
     }
 
@@ -138,31 +141,56 @@ public sealed class TriggerWorker
                 await TryStoreExecutionStartedAsync(executionId, lease, jobKey, leaseActivity, cancellationToken).ConfigureAwait(false);
 
                 Stopwatch? executionTimer = null;
+                using var jobCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                var renewTask = StartLeaseRenewalAsync(lease, jobKey, jobCancellation, cancellationToken);
 
                 try
                 {
                     var request = new JobExecutionRequest(executionId, jobKey, descriptor, executionOptions, metadata, _activitySource);
                     executionTimer = Stopwatch.StartNew();
-                    await _pipeline.ExecuteAsync(request, cancellationToken).ConfigureAwait(false);
+                    await _pipeline.ExecuteAsync(request, jobCancellation.Token).ConfigureAwait(false);
 
                     var elapsedMs = executionTimer.Elapsed.TotalMilliseconds;
-                    SchedulerMetrics.RecordJobExecution(jobKey, succeeded: true, elapsedMs);
-                    leaseActivity?.SetStatus(ActivityStatusCode.Ok);
-                    await TryStoreExecutionCompletedAsync(executionId, ExecutionStatus.Succeeded, elapsedMs, null, cancellationToken).ConfigureAwait(false);
+                    var leaseLost = await CompleteLeaseRenewalAsync(renewTask, jobCancellation).ConfigureAwait(false);
+                    if (leaseLost)
+                    {
+                        SchedulerMetrics.RecordJobExecution(jobKey, succeeded: false, elapsedMs);
+                        leaseActivity?.SetStatus(ActivityStatusCode.Error, "lease-lost");
+                        await TryStoreExecutionCompletedAsync(executionId, ExecutionStatus.Canceled, elapsedMs, null, cancellationToken).ConfigureAwait(false);
+                        _logger.LogWarning("Lease {LeaseId} for job {JobKey} was lost; skipping release.", lease.LeaseId, lease.JobKey);
+                    }
+                    else
+                    {
+                        SchedulerMetrics.RecordJobExecution(jobKey, succeeded: true, elapsedMs);
+                        leaseActivity?.SetStatus(ActivityStatusCode.Ok);
+                        await TryStoreExecutionCompletedAsync(executionId, ExecutionStatus.Succeeded, elapsedMs, null, cancellationToken).ConfigureAwait(false);
 
-                    await ReleaseAsync(lease, succeeded: true, deadLetterReason: null, nextFireTimeUtc: null, cancellationToken).ConfigureAwait(false);
-                    processed++;
+                        await ReleaseAsync(lease, succeeded: true, deadLetterReason: null, nextFireTimeUtc: null, cancellationToken).ConfigureAwait(false);
+                        processed++;
+                    }
                 }
                 catch (Exception ex)
                 {
                     var elapsedMs = executionTimer?.Elapsed.TotalMilliseconds ?? 0d;
+                    var leaseLost = await CompleteLeaseRenewalAsync(renewTask, jobCancellation).ConfigureAwait(false);
+                    var canceled = IsCancellation(ex, jobCancellation.Token);
                     SchedulerMetrics.RecordJobExecution(jobKey, succeeded: false, elapsedMs);
-                    leaseActivity?.SetStatus(ActivityStatusCode.Error, ex.Message);
-                    _logger.LogError(ex, "Error executing job {JobKey} for lease {LeaseId}", lease.JobKey, lease.LeaseId);
-                    var releaseReason = "execution-error";
-                    await TryStoreExecutionCompletedAsync(executionId, ExecutionStatus.Failed, elapsedMs, ex, cancellationToken).ConfigureAwait(false);
+                    if (canceled)
+                    {
+                        leaseActivity?.SetStatus(ActivityStatusCode.Error, "canceled");
+                        _logger.LogWarning("Execution canceled for job {JobKey} (lease {LeaseId})", lease.JobKey, lease.LeaseId);
+                    }
+                    else
+                    {
+                        leaseActivity?.SetStatus(ActivityStatusCode.Error, ex.Message);
+                        _logger.LogError(ex, "Error executing job {JobKey} for lease {LeaseId}", lease.JobKey, lease.LeaseId);
+                    }
 
-                    if (executionOptions.DeadLetter.Enabled && !IsCancellation(ex, cancellationToken))
+                    var releaseReason = "execution-error";
+                    var status = canceled ? ExecutionStatus.Canceled : ExecutionStatus.Failed;
+                    await TryStoreExecutionCompletedAsync(executionId, status, elapsedMs, canceled ? null : ex, cancellationToken).ConfigureAwait(false);
+
+                    if (executionOptions.DeadLetter.Enabled && !canceled && !leaseLost)
                     {
                         var occurredAtUtc = DateTimeOffset.UtcNow;
                         var metadataSnapshot = CloneMetadata(metadata);
@@ -188,7 +216,10 @@ public sealed class TriggerWorker
                         releaseReason = null;
                     }
 
-                    await ReleaseAsync(lease, succeeded: false, deadLetterReason: releaseReason, nextFireTimeUtc: null, cancellationToken).ConfigureAwait(false);
+                    if (!leaseLost)
+                    {
+                        await ReleaseAsync(lease, succeeded: false, deadLetterReason: releaseReason, nextFireTimeUtc: null, cancellationToken).ConfigureAwait(false);
+                    }
                 }
                 finally
                 {
@@ -343,6 +374,140 @@ public sealed class TriggerWorker
         }
 
         return merged;
+    }
+
+    private Task<bool>? StartLeaseRenewalAsync(
+        TriggerLease lease,
+        JobKey jobKey,
+        CancellationTokenSource jobCancellation,
+        CancellationToken hostCancellation)
+    {
+        if (_hostOptions.LeaseRenewalLeadTime <= TimeSpan.Zero)
+        {
+            return null;
+        }
+
+        return MaintainLeaseAsync(lease, jobKey, jobCancellation, hostCancellation);
+    }
+
+    private async Task<bool> CompleteLeaseRenewalAsync(Task<bool>? renewTask, CancellationTokenSource jobCancellation)
+    {
+        if (renewTask is null)
+        {
+            return false;
+        }
+
+        if (!jobCancellation.IsCancellationRequested)
+        {
+            jobCancellation.Cancel();
+        }
+
+        try
+        {
+            return await renewTask.ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            return false;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Lease renewal task failed.");
+            return false;
+        }
+    }
+
+    private async Task<bool> MaintainLeaseAsync(
+        TriggerLease lease,
+        JobKey jobKey,
+        CancellationTokenSource jobCancellation,
+        CancellationToken hostCancellation)
+    {
+        var leadTime = _hostOptions.LeaseRenewalLeadTime;
+        if (leadTime <= TimeSpan.Zero)
+        {
+            return false;
+        }
+
+        var warned = false;
+        var currentLease = lease;
+
+        while (!jobCancellation.IsCancellationRequested && !hostCancellation.IsCancellationRequested)
+        {
+            var nowUtc = DateTimeOffset.UtcNow;
+            var delay = GetRenewalDelay(nowUtc, currentLease.LeaseExpiresAtUtc, leadTime, ref warned, jobKey);
+            if (delay > TimeSpan.Zero)
+            {
+                try
+                {
+                    await Task.Delay(delay, jobCancellation.Token).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException)
+                {
+                    break;
+                }
+            }
+
+            if (jobCancellation.IsCancellationRequested || hostCancellation.IsCancellationRequested)
+            {
+                break;
+            }
+
+            var renewRequest = new TriggerLeaseRenewRequest(currentLease, _options.InstanceId, DateTimeOffset.UtcNow);
+            TriggerLease? renewed;
+            try
+            {
+                renewed = await _jobStore.TryRenewLeaseAsync(renewRequest, hostCancellation).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (hostCancellation.IsCancellationRequested)
+            {
+                return false;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Lease {LeaseId} for job {JobKey} could not be renewed; canceling execution.", currentLease.LeaseId, jobKey.Value);
+                jobCancellation.Cancel();
+                return true;
+            }
+
+            if (renewed is null)
+            {
+                _logger.LogWarning("Lease {LeaseId} for job {JobKey} could not be renewed; canceling execution.", currentLease.LeaseId, jobKey.Value);
+                jobCancellation.Cancel();
+                return true;
+            }
+
+            currentLease = renewed;
+        }
+
+        return false;
+    }
+
+    private TimeSpan GetRenewalDelay(DateTimeOffset nowUtc, DateTimeOffset leaseExpiresAtUtc, TimeSpan leadTime, ref bool warned, JobKey jobKey)
+    {
+        var remaining = leaseExpiresAtUtc - nowUtc;
+        if (remaining <= TimeSpan.Zero)
+        {
+            return TimeSpan.Zero;
+        }
+
+        var delay = remaining - leadTime;
+        if (delay <= TimeSpan.Zero)
+        {
+            if (!warned)
+            {
+                _logger.LogWarning(
+                    "LeaseRenewalLeadTime {LeadTime} is >= remaining lease {Remaining} for job {JobKey}; using a conservative renewal cadence.",
+                    leadTime,
+                    remaining,
+                    jobKey.Value);
+                warned = true;
+            }
+
+            delay = TimeSpan.FromTicks(Math.Max(remaining.Ticks / 2, 0));
+        }
+
+        return delay;
     }
 
     private static bool IsCancellation(Exception exception, CancellationToken cancellationToken)

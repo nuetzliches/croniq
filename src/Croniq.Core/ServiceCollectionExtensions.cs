@@ -29,6 +29,7 @@ public static class ServiceCollectionExtensions
         services.AddOptions<CroniqSeedingOptions>()
             .Validate(ValidateSeedingOptions, "Croniq:Seeding:Mode must be Off, CreateIfMissing, or ForceUpdate.")
             .ValidateOnStart();
+        services.AddOptions<WorkerHostOptions>();
         if (configure is not null)
         {
             services.Configure(configure);
@@ -270,7 +271,8 @@ public static class ServiceCollectionExtensions
         return options.BatchSize > 0
             && options.IdleDelay >= TimeSpan.Zero
             && options.BusyDelay >= TimeSpan.Zero
-            && options.ErrorDelay >= TimeSpan.Zero;
+            && options.ErrorDelay >= TimeSpan.Zero
+            && options.LeaseRenewalLeadTime >= TimeSpan.Zero;
     }
 
     private static bool ValidateSeedingOptions(CroniqSeedingOptions options)

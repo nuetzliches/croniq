@@ -19,8 +19,9 @@ public sealed class CroniqWorkerOptions
 
     public TimeSpan? ErrorDelay { get; set; }
 
+    public TimeSpan? LeaseRenewalLeadTime { get; set; }
+
     public int? InMemoryLeaseDurationSeconds { get; set; }
 
     public Action<IServiceCollection>? ConfigureServices { get; set; }
 }
-

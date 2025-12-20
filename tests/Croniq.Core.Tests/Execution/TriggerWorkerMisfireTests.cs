@@ -63,6 +63,11 @@ public class TriggerWorkerMisfireTests
             return Task.FromResult(_leases);
         }
 
+        public Task<TriggerLease?> TryRenewLeaseAsync(TriggerLeaseRenewRequest request, CancellationToken cancellationToken)
+        {
+            return Task.FromResult<TriggerLease?>(null);
+        }
+
         public Task ReleaseAsync(TriggerReleaseRequest request, CancellationToken cancellationToken)
         {
             Releases.Add(request);
@@ -100,6 +105,7 @@ public class TriggerWorkerMisfireTests
                 Microsoft.Extensions.Options.Options.Create(new ExecutionPolicyOptions()),
                 Microsoft.Extensions.Options.Options.Create(new PolicyOverrideOptions())),
             Microsoft.Extensions.Options.Options.Create(new CroniqOptions { TenantId = "t", EnvironmentTag = "dev", InstanceId = "i1" }),
+            Microsoft.Extensions.Options.Options.Create(new WorkerHostOptions { LeaseRenewalLeadTime = TimeSpan.Zero }),
             new InMemoryQuotaGuard(),
             new NoOpExecutionLogStore(),
             NullLogger<TriggerWorker>.Instance,
@@ -131,6 +137,7 @@ public class TriggerWorkerMisfireTests
                 Microsoft.Extensions.Options.Options.Create(new ExecutionPolicyOptions()),
                 Microsoft.Extensions.Options.Options.Create(new PolicyOverrideOptions())),
             Microsoft.Extensions.Options.Options.Create(new CroniqOptions { TenantId = "t", EnvironmentTag = "dev", InstanceId = "i1" }),
+            Microsoft.Extensions.Options.Options.Create(new WorkerHostOptions { LeaseRenewalLeadTime = TimeSpan.Zero }),
             new InMemoryQuotaGuard(),
             new NoOpExecutionLogStore(),
             NullLogger<TriggerWorker>.Instance,
@@ -179,6 +186,7 @@ public class TriggerWorkerMisfireTests
                 Microsoft.Extensions.Options.Options.Create(new ExecutionPolicyOptions()),
                 Microsoft.Extensions.Options.Options.Create(quotaOverrides)),
             Microsoft.Extensions.Options.Options.Create(new CroniqOptions { TenantId = "t", EnvironmentTag = "dev", InstanceId = "i1" }),
+            Microsoft.Extensions.Options.Options.Create(new WorkerHostOptions { LeaseRenewalLeadTime = TimeSpan.Zero }),
             new InMemoryQuotaGuard(),
             new NoOpExecutionLogStore(),
             NullLogger<TriggerWorker>.Instance,
@@ -240,6 +248,7 @@ public class TriggerWorkerMisfireTests
                 Microsoft.Extensions.Options.Options.Create(new ExecutionPolicyOptions { DeadLetter = new DeadLetterPolicyOptions { Enabled = true } }),
                 Microsoft.Extensions.Options.Options.Create(overrides)),
             Microsoft.Extensions.Options.Options.Create(new CroniqOptions { TenantId = "t", EnvironmentTag = "dev", InstanceId = "i1" }),
+            Microsoft.Extensions.Options.Options.Create(new WorkerHostOptions { LeaseRenewalLeadTime = TimeSpan.Zero }),
             new InMemoryQuotaGuard(),
             new NoOpExecutionLogStore(),
             NullLogger<TriggerWorker>.Instance,

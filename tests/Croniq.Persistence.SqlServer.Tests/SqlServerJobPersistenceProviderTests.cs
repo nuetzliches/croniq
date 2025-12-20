@@ -172,6 +172,50 @@ public sealed class SqlServerJobPersistenceProviderTests : IAsyncLifetime
 
     [Fact]
     [Trait(TestCategories.Category, TestCategories.Contract)]
+    public async Task TryRenewLeaseAsync_ExtendsLease()
+    {
+        var jobKey = JobKey.Create("tenant-renew", "dev", "billing", "renew");
+        var scope = new PartitionScope(jobKey.TenantId, jobKey.EnvironmentTag);
+
+        await _persistence!.UpsertJobAsync(
+            new JobDefinition(jobKey.Value, jobKey.NamespaceSegment, "RenewJob", jobKey.Variant, null, null),
+            CancellationToken.None);
+
+        var trigger = new TriggerDefinition(
+            TriggerId: $"{jobKey.Value}:trigger",
+            JobKey: jobKey.Value,
+            ScheduleExpression: "0/5 * * * * ?",
+            Scope: scope,
+            Enabled: true);
+
+        await _persistence.UpsertTriggerAsync(trigger, CancellationToken.None);
+
+        await using (var context = await _dbFactory!.CreateDbContextAsync())
+        {
+            var entity = await context.Triggers.SingleAsync(t => t.TriggerKey == trigger.TriggerId);
+            entity.NextFireAtUtc = DateTime.UtcNow.AddSeconds(-30);
+            entity.Enabled = true;
+            await context.SaveChangesAsync();
+        }
+
+        var lease = (await _persistence.AcquireAsync(new TriggerAcquireRequest(scope, "instance-1", DateTimeOffset.UtcNow, BatchSize: 1), CancellationToken.None))
+            .Single();
+
+        var renewed = await _persistence.TryRenewLeaseAsync(
+            new TriggerLeaseRenewRequest(lease, "instance-1", DateTimeOffset.UtcNow),
+            CancellationToken.None);
+
+        renewed.ShouldNotBeNull();
+        renewed!.LeaseExpiresAtUtc.ShouldBeGreaterThan(lease.LeaseExpiresAtUtc);
+
+        await using var verification = await _dbFactory.CreateDbContextAsync();
+        var row = await verification.Triggers.SingleAsync(t => t.TriggerKey == trigger.TriggerId);
+        row.LeaseExpiresAtUtc.ShouldNotBeNull();
+        row.LeaseExpiresAtUtc!.Value.ShouldBeGreaterThan(lease.LeaseExpiresAtUtc.UtcDateTime);
+    }
+
+    [Fact]
+    [Trait(TestCategories.Category, TestCategories.Contract)]
     public async Task UpsertTriggerAsync_AllowsOnceExpression()
     {
         var jobKey = JobKey.Create("tenant-once", "dev", "ops", "once");

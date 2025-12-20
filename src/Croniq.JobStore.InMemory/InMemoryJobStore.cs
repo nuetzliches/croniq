@@ -206,6 +206,44 @@ public sealed class InMemoryJobStore : IJobPersistenceProvider, IJobDeadLetterSt
         return Task.FromResult<IReadOnlyCollection<TriggerLease>>(leases);
     }
 
+    public Task<TriggerLease?> TryRenewLeaseAsync(TriggerLeaseRenewRequest request, CancellationToken cancellationToken)
+    {
+        if (request is null) throw new ArgumentNullException(nameof(request));
+        cancellationToken.ThrowIfCancellationRequested();
+
+        lock (_lock)
+        {
+            if (!_triggers.TryGetValue(request.Lease.TriggerId, out var entry))
+            {
+                return Task.FromResult<TriggerLease?>(null);
+            }
+
+            if (entry.Lease is null || !string.Equals(entry.Lease.LeaseId, request.Lease.LeaseId, StringComparison.Ordinal))
+            {
+                return Task.FromResult<TriggerLease?>(null);
+            }
+
+            if (!string.Equals(entry.Lease.InstanceId, request.InstanceId, StringComparison.Ordinal))
+            {
+                return Task.FromResult<TriggerLease?>(null);
+            }
+
+            var now = request.NowUtc;
+            if (entry.Lease.ExpiresAtUtc <= now)
+            {
+                entry.Lease = null;
+                return Task.FromResult<TriggerLease?>(null);
+            }
+
+            var leaseDuration = TimeSpan.FromSeconds(_options.LeaseDurationSeconds);
+            var expiresAt = now.Add(leaseDuration);
+            entry.Lease = entry.Lease with { ExpiresAtUtc = expiresAt };
+
+            var renewed = request.Lease with { LeaseExpiresAtUtc = expiresAt };
+            return Task.FromResult<TriggerLease?>(renewed);
+        }
+    }
+
     public Task ReleaseAsync(TriggerReleaseRequest request, CancellationToken cancellationToken)
     {
         if (request is null) throw new ArgumentNullException(nameof(request));

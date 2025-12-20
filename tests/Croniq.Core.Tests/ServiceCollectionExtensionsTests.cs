@@ -193,6 +193,9 @@ public class ServiceCollectionExtensionsTests
         public Task<IReadOnlyCollection<TriggerLease>> AcquireAsync(TriggerAcquireRequest request, CancellationToken cancellationToken) =>
             Task.FromResult<IReadOnlyCollection<TriggerLease>>(Array.Empty<TriggerLease>());
 
+        public Task<TriggerLease?> TryRenewLeaseAsync(TriggerLeaseRenewRequest request, CancellationToken cancellationToken) =>
+            Task.FromResult<TriggerLease?>(null);
+
         public Task ReleaseAsync(TriggerReleaseRequest request, CancellationToken cancellationToken) => Task.CompletedTask;
 
         public Task MoveToDeadLetterAsync(DeadLetterRequest request, CancellationToken cancellationToken) => Task.CompletedTask;
