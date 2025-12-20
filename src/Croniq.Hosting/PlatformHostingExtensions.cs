@@ -21,6 +21,7 @@ public static class PlatformHostingExtensions
     public static IServiceCollection AddCroniqPlatformServices(this IServiceCollection services, IConfiguration configuration)
     {
         services.Configure<CroniqOptions>(configuration.GetSection("Croniq:Core"));
+        services.Configure<CroniqStartupOptions>(configuration.GetSection("Croniq:Startup"));
         services.Configure<CroniqAuthOptions>(configuration.GetSection("Croniq:Auth"));
         services.Configure<CroniqOidcOptions>(configuration.GetSection("Croniq:Auth:Oidc"));
         services.Configure<CroniqTokenOptions>(configuration.GetSection("Croniq:Auth:Tokens"));

@@ -16,20 +16,30 @@ public sealed class CroniqTriggerSummaryHostedService : IHostedService
 {
     private readonly IJobPersistenceProvider _store;
     private readonly CroniqOptions _options;
+    private readonly CroniqStartupOptions _startupOptions;
     private readonly ILogger<CroniqTriggerSummaryHostedService> _logger;
 
     public CroniqTriggerSummaryHostedService(
         IJobPersistenceProvider store,
         IOptions<CroniqOptions> options,
+        IOptions<CroniqStartupOptions> startupOptions,
         ILogger<CroniqTriggerSummaryHostedService> logger)
     {
         _store = store ?? throw new ArgumentNullException(nameof(store));
         _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
+        _startupOptions = startupOptions?.Value ?? new CroniqStartupOptions();
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
     }
 
     public async Task StartAsync(CancellationToken cancellationToken)
     {
+        var startupMode = CroniqStartupModeParser.Parse(_startupOptions.Mode);
+        if (startupMode == CroniqStartupMode.Validate)
+        {
+            _logger.LogInformation("Croniq startup mode is Validate; trigger summary is disabled.");
+            return;
+        }
+
         var scope = new PartitionScope(_options.TenantId, _options.EnvironmentTag);
         using var logScope = _logger.BeginScope(new Dictionary<string, object?>
         {

@@ -87,12 +87,11 @@ Problem heute: Jobs müssen häufig einzeln registriert werden; das erhöht Boil
 - [x] **Inline Job Registration**: `AddCroniqJob("namespace", "name", handler)` fuer delegate-based Jobs.
 - [x] **Assembly-Scanning**: `services.AddCroniqJobsFromAssembly(Assembly)` / `AddCroniqJobsFromEntryAssembly()` (scan nach `CroniqJobAttribute` + auto `AddCroniqJob<T>`).
 - [x] **Gute Fehlermeldungen**: Bei Duplicate JobKeys/fehlenden Attributen klare Errors inkl. Vorschlag.
-- [ ] **Optional: Source Generator** (später): Compile-time Registrierung für „zero reflection“ + bessere DX.
 
 ## 10) Fail-fast Options/Config UX (wichtig)
 
-- [ ] **ValidateOnStart**: Core/Worker-Defaults sollen fehlende Pflichtwerte sofort mit klarer Message abbrechen (statt „mysteriöser“ Runtime-Effekte).
-- [ ] **„Validate only“ Mode**: `Croniq:Startup:Mode = Run|Validate` (lädt/bindet/validiert Config + Triggers, startet aber keine Worker-Loops).
+- [x] **ValidateOnStart**: Core/Worker-Defaults sollen fehlende Pflichtwerte sofort mit klarer Message abbrechen (statt „mysteriöser“ Runtime-Effekte).
+- [x] **„Validate only“ Mode**: `Croniq:Startup:Mode = Run|Validate` (lädt/bindet/validiert Config + Triggers, startet aber keine Worker-Loops).
 - [ ] **Health/Readiness**: Optional `AddCroniqHealthChecks()` (z.B. „JobStore erreichbar“, „Trigger geladen“, „Worker lease ok“).
 
 ## 11) Templates & Tooling (nice-to-have)

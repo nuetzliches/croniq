@@ -17,6 +17,7 @@ namespace Croniq;
 public static class ServiceCollectionExtensions
 {
     private const string CoreSectionPath = "Croniq:Core";
+    private const string StartupSectionPath = "Croniq:Startup";
     private const string WorkerHostSectionPath = "Croniq:WorkerHost";
     private const string InMemoryJobStoreSectionPath = "Croniq:JobStore:InMemory";
     private const string SeedingSectionPath = "Croniq:Seeding";
@@ -55,6 +56,7 @@ public static class ServiceCollectionExtensions
         ArgumentNullException.ThrowIfNull(configuration);
 
         services.Configure<CroniqOptions>(configuration.GetSection(CoreSectionPath));
+        services.Configure<CroniqStartupOptions>(configuration.GetSection(StartupSectionPath));
         services.Configure<WorkerHostOptions>(configuration.GetSection(WorkerHostSectionPath));
         services.Configure<InMemoryJobStoreOptions>(configuration.GetSection(InMemoryJobStoreSectionPath));
         services.Configure<CroniqSeedingOptions>(configuration.GetSection(SeedingSectionPath));

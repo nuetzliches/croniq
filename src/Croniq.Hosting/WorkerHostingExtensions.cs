@@ -20,6 +20,7 @@ public static class WorkerHostingExtensions
         ArgumentNullException.ThrowIfNull(configuration);
 
         services.Configure<CroniqOptions>(configuration.GetSection("Croniq:Core"));
+        services.Configure<CroniqStartupOptions>(configuration.GetSection("Croniq:Startup"));
         services.Configure<WorkerHostOptions>(configuration.GetSection("Croniq:WorkerHost"));
         services.Configure<InMemoryJobStoreOptions>(configuration.GetSection("Croniq:JobStore:InMemory"));
         services.Configure<CroniqSeedingOptions>(configuration.GetSection("Croniq:Seeding"));

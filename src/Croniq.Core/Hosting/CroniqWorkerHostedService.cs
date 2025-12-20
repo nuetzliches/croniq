@@ -15,21 +15,31 @@ public sealed class CroniqWorkerHostedService : BackgroundService
     private readonly ILogger<CroniqWorkerHostedService> _logger;
     private readonly CroniqOptions _options;
     private readonly WorkerHostOptions _hostOptions;
+    private readonly CroniqStartupOptions _startupOptions;
 
     public CroniqWorkerHostedService(
         TriggerWorker worker,
         IOptions<CroniqOptions> options,
         IOptions<WorkerHostOptions> hostOptions,
+        IOptions<CroniqStartupOptions> startupOptions,
         ILogger<CroniqWorkerHostedService> logger)
     {
         _worker = worker ?? throw new ArgumentNullException(nameof(worker));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
         _hostOptions = hostOptions?.Value ?? throw new ArgumentNullException(nameof(hostOptions));
+        _startupOptions = startupOptions?.Value ?? new CroniqStartupOptions();
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        var startupMode = CroniqStartupModeParser.Parse(_startupOptions.Mode);
+        if (startupMode == CroniqStartupMode.Validate)
+        {
+            _logger.LogInformation("Croniq startup mode is Validate; worker loops are disabled.");
+            return;
+        }
+
         _logger.LogInformation("Croniq worker starting for tenant {Tenant} / env {Environment} (instance {Instance})", _options.TenantId, _options.EnvironmentTag, _options.InstanceId);
 
         while (!stoppingToken.IsCancellationRequested)

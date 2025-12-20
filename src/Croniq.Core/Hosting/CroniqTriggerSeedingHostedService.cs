@@ -25,6 +25,7 @@ public sealed class CroniqTriggerSeedingHostedService : IHostedService
     private readonly IJobRegistry _jobs;
     private readonly CroniqOptions _coreOptions;
     private readonly CroniqSeedingOptions _seedingOptions;
+    private readonly CroniqStartupOptions _startupOptions;
     private readonly ILogger<CroniqTriggerSeedingHostedService> _logger;
     private readonly IReadOnlyCollection<CroniqTriggerSeedRegistration> _fluentRegistrations;
 
@@ -35,6 +36,7 @@ public sealed class CroniqTriggerSeedingHostedService : IHostedService
         IEnumerable<CroniqTriggerSeedRegistration> fluentRegistrations,
         IOptions<CroniqOptions> coreOptions,
         IOptions<CroniqSeedingOptions> seedingOptions,
+        IOptions<CroniqStartupOptions> startupOptions,
         ILogger<CroniqTriggerSeedingHostedService> logger)
     {
         _configuration = configuration ?? throw new ArgumentNullException(nameof(configuration));
@@ -43,13 +45,15 @@ public sealed class CroniqTriggerSeedingHostedService : IHostedService
         _fluentRegistrations = fluentRegistrations?.ToArray() ?? Array.Empty<CroniqTriggerSeedRegistration>();
         _coreOptions = coreOptions?.Value ?? throw new ArgumentNullException(nameof(coreOptions));
         _seedingOptions = seedingOptions?.Value ?? new CroniqSeedingOptions();
+        _startupOptions = startupOptions?.Value ?? new CroniqStartupOptions();
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
     }
 
     public async Task StartAsync(CancellationToken cancellationToken)
     {
+        var startupMode = CroniqStartupModeParser.Parse(_startupOptions.Mode);
         var mode = ParseMode(_seedingOptions.Mode);
-        if (mode == CroniqSeedingMode.Off)
+        if (startupMode != CroniqStartupMode.Validate && mode == CroniqSeedingMode.Off)
         {
             _logger.LogInformation("Croniq trigger seeding is disabled.");
             return;
@@ -58,7 +62,10 @@ public sealed class CroniqTriggerSeedingHostedService : IHostedService
         var definitions = LoadDefinitions();
         if (definitions.Count == 0)
         {
-            _logger.LogInformation("Croniq trigger seeding skipped; no triggers configured.");
+            var message = startupMode == CroniqStartupMode.Validate
+                ? "Croniq trigger validation skipped; no triggers configured."
+                : "Croniq trigger seeding skipped; no triggers configured.";
+            _logger.LogInformation(message);
             return;
         }
 
@@ -66,7 +73,20 @@ public sealed class CroniqTriggerSeedingHostedService : IHostedService
         var plans = BuildPlans(definitions, scope, mode);
         if (plans.Count == 0)
         {
-            _logger.LogInformation("Croniq trigger seeding skipped; no valid triggers resolved.");
+            var message = startupMode == CroniqStartupMode.Validate
+                ? "Croniq trigger validation skipped; no valid triggers resolved."
+                : "Croniq trigger seeding skipped; no valid triggers resolved.";
+            _logger.LogInformation(message);
+            return;
+        }
+
+        if (startupMode == CroniqStartupMode.Validate)
+        {
+            _logger.LogInformation(
+                "Croniq trigger validation completed with {Count} trigger definitions for {TenantId}/{EnvironmentTag}.",
+                plans.Count,
+                _coreOptions.TenantId,
+                _coreOptions.EnvironmentTag);
             return;
         }
 

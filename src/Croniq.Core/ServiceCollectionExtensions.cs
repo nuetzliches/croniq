@@ -18,7 +18,15 @@ public static class ServiceCollectionExtensions
 {
     public static IServiceCollection AddCroniqCore(this IServiceCollection services, Action<CroniqOptions>? configure = null)
     {
-        services.AddOptions<CroniqOptions>();
+        services.AddOptions<CroniqOptions>()
+            .Validate(ValidateCroniqOptions, "Croniq:Core must set TenantId, EnvironmentTag, and InstanceId.")
+            .ValidateOnStart();
+        services.AddOptions<CroniqStartupOptions>()
+            .Validate(ValidateStartupOptions, "Croniq:Startup:Mode must be Run or Validate.")
+            .ValidateOnStart();
+        services.AddOptions<CroniqSeedingOptions>()
+            .Validate(ValidateSeedingOptions, "Croniq:Seeding:Mode must be Off, CreateIfMissing, or ForceUpdate.")
+            .ValidateOnStart();
         if (configure is not null)
         {
             services.Configure(configure);
@@ -70,7 +78,9 @@ public static class ServiceCollectionExtensions
 
     public static IServiceCollection AddCroniqWorkerHost(this IServiceCollection services, Action<WorkerHostOptions>? configure = null)
     {
-        services.AddOptions<WorkerHostOptions>();
+        services.AddOptions<WorkerHostOptions>()
+            .Validate(ValidateWorkerHostOptions, "Croniq:WorkerHost must set BatchSize > 0 and non-negative delays.")
+            .ValidateOnStart();
         if (configure is not null)
         {
             services.Configure(configure);
@@ -219,6 +229,32 @@ public static class ServiceCollectionExtensions
         }
 
         return $"{attribute.NamespaceSegment}:{attribute.JobName}:{attribute.Variant}";
+    }
+
+    private static bool ValidateCroniqOptions(CroniqOptions options)
+    {
+        return !string.IsNullOrWhiteSpace(options.TenantId)
+            && !string.IsNullOrWhiteSpace(options.EnvironmentTag)
+            && !string.IsNullOrWhiteSpace(options.InstanceId);
+    }
+
+    private static bool ValidateWorkerHostOptions(WorkerHostOptions options)
+    {
+        return options.BatchSize > 0
+            && options.IdleDelay >= TimeSpan.Zero
+            && options.BusyDelay >= TimeSpan.Zero
+            && options.ErrorDelay >= TimeSpan.Zero;
+    }
+
+    private static bool ValidateSeedingOptions(CroniqSeedingOptions options)
+    {
+        return string.IsNullOrWhiteSpace(options.Mode)
+            || Enum.TryParse<CroniqSeedingMode>(options.Mode, ignoreCase: true, out _);
+    }
+
+    private static bool ValidateStartupOptions(CroniqStartupOptions options)
+    {
+        return CroniqStartupModeParser.TryParse(options.Mode, out _);
     }
 
     private sealed record ScannedJob(Type JobType, CroniqJobAttribute Attribute);
