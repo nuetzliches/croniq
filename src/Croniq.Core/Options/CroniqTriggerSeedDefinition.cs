@@ -1,7 +1,7 @@
 using System;
 using System.Collections.Generic;
 
-namespace Croniq.Core.Options;
+namespace Croniq.Options;
 
 public sealed class CroniqTriggerSeedDefinition
 {
@@ -18,6 +18,8 @@ public sealed class CroniqTriggerSeedDefinition
     public bool Enabled { get; set; } = true;
 
     public Dictionary<string, string>? Metadata { get; set; }
+
+    public string? Description { get; set; }
 
     public string? ManagedBy { get; set; }
 }

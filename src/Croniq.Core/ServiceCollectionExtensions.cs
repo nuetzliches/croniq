@@ -2,14 +2,16 @@ using System;
 using System.Diagnostics;
 using System.Reflection;
 using Croniq.Core.Execution;
+using Croniq.Core.Health;
 using Croniq.Core.Hosting;
 using Croniq.Core.Jobs;
-using Croniq.Core.Options;
+using Croniq.Options;
 using Croniq.Core.Policies;
 using Croniq.Sdk;
 using Croniq.Persistence.Abstractions;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Microsoft.Extensions.Logging;
 
 namespace Croniq.Core;
@@ -89,6 +91,31 @@ public static class ServiceCollectionExtensions
         return services;
     }
 
+    public static IServiceCollection AddCroniqHealthChecks(
+        this IServiceCollection services,
+        Action<CroniqHealthCheckOptions>? configure = null)
+    {
+        ArgumentNullException.ThrowIfNull(services);
+
+        services.AddOptions<CroniqHealthCheckOptions>();
+        if (configure is not null)
+        {
+            services.Configure(configure);
+        }
+
+        services.AddHealthChecks()
+            .AddCheck<CroniqPersistenceHealthCheck>(
+                "croniq.persistence",
+                failureStatus: HealthStatus.Unhealthy,
+                tags: new[] { "croniq", "ready" })
+            .AddCheck<CroniqTriggerHealthCheck>(
+                "croniq.triggers",
+                failureStatus: HealthStatus.Degraded,
+                tags: new[] { "croniq", "ready" });
+
+        return services;
+    }
+
     public static IServiceCollection AddCroniqJob<TJob>(this IServiceCollection services)
         where TJob : class, IJob
     {
@@ -114,7 +141,7 @@ public static class ServiceCollectionExtensions
         }
 
         services.AddTransient(jobType);
-        services.TryAddEnumerable(ServiceDescriptor.Singleton<JobRegistration>(new JobRegistration(jobType)));
+        services.AddSingleton<JobRegistration>(new JobRegistration(jobType));
         return services;
     }
 

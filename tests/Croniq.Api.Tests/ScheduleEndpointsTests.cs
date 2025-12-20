@@ -3,6 +3,7 @@ using System.Net;
 using System.Net.Http.Json;
 using Croniq.Api.Models;
 using Croniq.Api.Tests.Infrastructure;
+using Croniq.Options;
 using Shouldly;
 using Xunit;
 
@@ -74,12 +75,14 @@ public sealed class ScheduleEndpointsTests : IClassFixture<WebhookApiTestHost>
     {
         _host.Reset();
         var jobKey = $"{WebhookApiTestHost.TenantId}:{WebhookApiTestHost.Environment}:ops:env";
-        var request = new UpsertScheduleRequest(
-            JobKey: jobKey,
-            CronExpression: "0 */5 * * * ?",
-            TriggerId: null,
-            StartAtUtc: null,
-            EndAtUtc: null);
+        var request = new CroniqTriggerSeedDefinition
+        {
+            JobKey = jobKey,
+            CronExpression = "0 */5 * * * ?",
+            TriggerId = null,
+            StartAtUtc = null,
+            EndAtUtc = null
+        };
 
         var response = await _host.Client.PostAsJsonAsync(
             $"/tenants/{WebhookApiTestHost.TenantId}/schedules?environment=prod",
@@ -91,15 +94,17 @@ public sealed class ScheduleEndpointsTests : IClassFixture<WebhookApiTestHost>
     private async Task<string> UpsertScheduleAsync(string jobKey, string? triggerId = null)
     {
         var identifier = triggerId ?? $"{jobKey}:manual";
-        var request = new UpsertScheduleRequest(
-            JobKey: jobKey,
-            CronExpression: "0 */5 * * * ?",
-            TriggerId: identifier,
-            StartAtUtc: null,
-            EndAtUtc: null,
-            Enabled: true,
-            Description: null,
-            Metadata: null);
+        var request = new CroniqTriggerSeedDefinition
+        {
+            JobKey = jobKey,
+            CronExpression = "0 */5 * * * ?",
+            TriggerId = identifier,
+            StartAtUtc = null,
+            EndAtUtc = null,
+            Enabled = true,
+            Description = null,
+            Metadata = null
+        };
 
         var response = await _host.Client.PostAsJsonAsync($"/tenants/{WebhookApiTestHost.TenantId}/schedules", request);
         response.StatusCode.ShouldBe(HttpStatusCode.Created);

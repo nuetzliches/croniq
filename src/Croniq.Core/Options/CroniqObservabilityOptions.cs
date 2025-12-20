@@ -2,7 +2,7 @@ using System;
 using System.Collections.Generic;
 using Serilog.Events;
 
-namespace Croniq.Core.Options;
+namespace Croniq.Options;
 
 public sealed class CroniqObservabilityOptions
 {

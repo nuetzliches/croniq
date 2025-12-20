@@ -6,7 +6,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Croniq.Core.Execution;
 using Croniq.Core.Jobs;
-using Croniq.Core.Options;
+using Croniq.Options;
 using Croniq.Core.Policies;
 using Croniq.Persistence.Abstractions;
 using Croniq.Sdk;

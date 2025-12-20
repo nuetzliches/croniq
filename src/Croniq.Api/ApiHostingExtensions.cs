@@ -15,7 +15,7 @@ using Croniq.Auth.SqlServer;
 using Croniq.Core;
 using Croniq.Core.Execution;
 using Croniq.Core.Jobs;
-using Croniq.Core.Options;
+using Croniq.Options;
 using Croniq.Core.Policies;
 using Croniq.Core.Security;
 using Croniq.Data.SqlServer;

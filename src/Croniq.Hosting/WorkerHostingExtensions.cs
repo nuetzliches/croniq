@@ -1,7 +1,7 @@
 using System;
 using Croniq.Core;
 using Croniq.Core.Hosting;
-using Croniq.Core.Options;
+using Croniq.Options;
 using Croniq.Core.Policies;
 using Croniq.Data.SqlServer;
 using Croniq.JobStore.InMemory;

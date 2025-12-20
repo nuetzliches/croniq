@@ -1,4 +1,4 @@
-namespace Croniq.Core.Options;
+namespace Croniq.Options;
 
 public sealed class CroniqStartupOptions
 {

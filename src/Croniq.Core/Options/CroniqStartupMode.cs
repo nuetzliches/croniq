@@ -1,6 +1,6 @@
 using System;
 
-namespace Croniq.Core.Options;
+namespace Croniq.Options;
 
 public enum CroniqStartupMode
 {

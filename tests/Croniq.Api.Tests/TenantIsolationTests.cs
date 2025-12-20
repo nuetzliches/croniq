@@ -4,6 +4,7 @@ using Croniq.Api.Models;
 using Croniq.Api.Tests.Infrastructure;
 using Croniq.Auth.Abstractions;
 using Croniq.Auth.Core;
+using Croniq.Options;
 using Shouldly;
 using Xunit;
 
@@ -22,12 +23,14 @@ public sealed class TenantIsolationTests : IClassFixture<WebhookApiTestHost>
     public async Task ScheduleUpsertRejectsCrossTenant()
     {
         _host.Reset();
-        var request = new UpsertScheduleRequest(
-            JobKey: $"other-tenant:{WebhookApiTestHost.Environment}:ops:job",
-            CronExpression: "0 0/5 * * * ?",
-            TriggerId: null,
-            StartAtUtc: null,
-            EndAtUtc: null);
+        var request = new CroniqTriggerSeedDefinition
+        {
+            JobKey = $"other-tenant:{WebhookApiTestHost.Environment}:ops:job",
+            CronExpression = "0 0/5 * * * ?",
+            TriggerId = null,
+            StartAtUtc = null,
+            EndAtUtc = null
+        };
 
         var response = await _host.Client.PostAsJsonAsync($"/tenants/{WebhookApiTestHost.TenantId}/schedules", request);
         response.StatusCode.ShouldBe(HttpStatusCode.Forbidden);
@@ -37,12 +40,14 @@ public sealed class TenantIsolationTests : IClassFixture<WebhookApiTestHost>
     public async Task ScheduleUpsertRejectsEnvironmentMismatch()
     {
         _host.Reset();
-        var request = new UpsertScheduleRequest(
-            JobKey: $"{WebhookApiTestHost.TenantId}:prod:ops:job",
-            CronExpression: "0 0/5 * * * ?",
-            TriggerId: null,
-            StartAtUtc: null,
-            EndAtUtc: null);
+        var request = new CroniqTriggerSeedDefinition
+        {
+            JobKey = $"{WebhookApiTestHost.TenantId}:prod:ops:job",
+            CronExpression = "0 0/5 * * * ?",
+            TriggerId = null,
+            StartAtUtc = null,
+            EndAtUtc = null
+        };
 
         var response = await _host.Client.PostAsJsonAsync($"/tenants/{WebhookApiTestHost.TenantId}/schedules", request);
         response.StatusCode.ShouldBe(HttpStatusCode.Forbidden);

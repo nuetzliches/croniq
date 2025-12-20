@@ -3,7 +3,7 @@ using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 using Croniq.Core.Jobs;
-using Croniq.Core.Options;
+using Croniq.Options;
 using Croniq.Sdk;
 using Microsoft.Extensions.Options;
 using Shouldly;

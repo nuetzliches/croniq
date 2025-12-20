@@ -5,6 +5,8 @@ using Croniq.Auth.Abstractions;
 using Croniq.Api.Models;
 using Croniq.Api.Telemetry;
 using Croniq.Core.Jobs;
+using Croniq.Core.Scheduling;
+using Croniq.Options;
 using Croniq.Persistence.Abstractions;
 using Croniq.Sdk;
 using Microsoft.AspNetCore.Builder;
@@ -184,20 +186,17 @@ public static partial class ApiHostingExtensions
         app.MapPost("/tenants/{tenantId}/schedules", async (
             string tenantId,
             string? environment,
-            UpsertScheduleRequest request,
+            CroniqTriggerSeedDefinition request,
             [FromServices] ICallerContextAccessor callerContextAccessor,
             [FromServices] IJobPersistenceProvider store,
             CancellationToken cancellationToken) =>
         {
-            if (string.IsNullOrWhiteSpace(request.JobKey) || string.IsNullOrWhiteSpace(request.CronExpression))
+            if (!TriggerDefinitionValidator.TryValidate(request, scope: null, out var validation, out var error))
             {
-                return Results.BadRequest(new { error = "invalid-request", message = "JobKey and CronExpression are required." });
+                return Results.BadRequest(new { error = "invalid-request", message = error });
             }
 
-            if (!JobKey.TryParse(request.JobKey, out var jobKey))
-            {
-                return Results.BadRequest(new { error = "invalid-job-key", message = "JobKey must follow the Croniq format." });
-            }
+            var jobKey = validation.JobKey;
 
             if (!string.Equals(jobKey.TenantId, tenantId, StringComparison.OrdinalIgnoreCase))
             {
@@ -216,10 +215,6 @@ public static partial class ApiHostingExtensions
                 return authFailure;
             }
 
-            var triggerId = string.IsNullOrWhiteSpace(request.TriggerId)
-                ? $"{request.JobKey}:{request.CronExpression}"
-                : request.TriggerId;
-
             var scope = new PartitionScope(jobKey.TenantId, jobKey.EnvironmentTag);
 
             var metadata = ToReadOnly(request.Metadata);
@@ -232,12 +227,12 @@ public static partial class ApiHostingExtensions
                 metadata);
 
             var trigger = new TriggerDefinition(
-                triggerId,
+                validation.TriggerId,
                 jobKey.Value,
-                request.CronExpression,
+                validation.ScheduleExpression,
                 scope,
-                request.StartAtUtc,
-                request.EndAtUtc,
+                validation.StartAtUtc,
+                validation.EndAtUtc,
                 request.Enabled,
                 metadata);
 

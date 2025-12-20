@@ -2,7 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
-using Croniq.Core.Options;
+using Croniq.Options;
 using Croniq.Sdk;
 using Microsoft.Extensions.Options;
 

@@ -4,6 +4,8 @@ using Croniq.Auth.Abstractions;
 using Croniq.Core.Execution;
 using Croniq.Core.Jobs;
 using Croniq.Core.Policies;
+using Croniq.Core.Scheduling;
+using Croniq.Options;
 using Croniq.Persistence.Abstractions;
 using Croniq.Rpc;
 using Grpc.Core;
@@ -111,30 +113,36 @@ internal sealed class SchedulerGrpcService : Scheduler.SchedulerBase
         using var activity = ActivitySource.StartActivity("Croniq.Grpc.UpsertSchedule", ActivityKind.Server);
         try
         {
-            if (string.IsNullOrWhiteSpace(request.JobKey) || string.IsNullOrWhiteSpace(request.CronExpression))
-            {
-                throw new RpcException(new Status(StatusCode.InvalidArgument, "job_key and cron_expression are required."));
-            }
+            var (startAt, endAt) = ParseScheduleWindow(request.StartAtUtc, request.EndAtUtc);
+            var enabled = request.HasEnabled ? request.Enabled : true;
 
-            if (!JobKey.TryParse(request.JobKey, out var jobKey))
-            {
-                throw new RpcException(new Status(StatusCode.InvalidArgument, "job_key must follow the Croniq format."));
-            }
-
-            EnrichActivityForJob(activity, jobKey);
-            EnsureTenantOrThrow(TenantGuard.EnsureJobScope(_callerAccessor, jobKey, CroniqScopes.SchedulesWrite));
-
-            var triggerId = string.IsNullOrWhiteSpace(request.TriggerId)
-                ? $"{request.JobKey}:{request.CronExpression}"
-                : request.TriggerId;
-
-            var scope = new PartitionScope(jobKey.TenantId, jobKey.EnvironmentTag);
             var metadata = request.Metadata.Count == 0
                 ? null
                 : new Dictionary<string, string>(request.Metadata, StringComparer.OrdinalIgnoreCase);
 
-            var (startAt, endAt) = ParseScheduleWindow(request.StartAtUtc, request.EndAtUtc);
-            var enabled = request.HasEnabled ? request.Enabled : true;
+            var definition = new CroniqTriggerSeedDefinition
+            {
+                JobKey = request.JobKey ?? string.Empty,
+                TriggerId = request.TriggerId,
+                CronExpression = request.CronExpression ?? string.Empty,
+                StartAtUtc = startAt,
+                EndAtUtc = endAt,
+                Enabled = enabled,
+                Metadata = metadata,
+                Description = request.Description
+            };
+
+            if (!TriggerDefinitionValidator.TryValidate(definition, scope: null, out var validation, out var error))
+            {
+                throw new RpcException(new Status(StatusCode.InvalidArgument, error ?? "invalid schedule request"));
+            }
+
+            var jobKey = validation.JobKey;
+
+            EnrichActivityForJob(activity, jobKey);
+            EnsureTenantOrThrow(TenantGuard.EnsureJobScope(_callerAccessor, jobKey, CroniqScopes.SchedulesWrite));
+
+            var scope = new PartitionScope(jobKey.TenantId, jobKey.EnvironmentTag);
 
             var job = new JobDefinition(
                 jobKey.Value,
@@ -145,12 +153,12 @@ internal sealed class SchedulerGrpcService : Scheduler.SchedulerBase
                 metadata);
 
             var trigger = new TriggerDefinition(
-                triggerId,
+                validation.TriggerId,
                 jobKey.Value,
-                request.CronExpression,
+                validation.ScheduleExpression,
                 scope,
-                startAt,
-                endAt,
+                validation.StartAtUtc,
+                validation.EndAtUtc,
                 enabled,
                 metadata);
 

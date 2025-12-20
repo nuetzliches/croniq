@@ -5,7 +5,7 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Croniq.Core.Jobs;
-using Croniq.Core.Options;
+using Croniq.Options;
 using Croniq.Core.Scheduling;
 using Croniq.Persistence.Abstractions;
 using Microsoft.Extensions.Configuration;
@@ -243,77 +243,21 @@ public sealed class CroniqTriggerSeedingHostedService : IHostedService
             var definition = definitions[i];
             var label = BuildLabel(definition, i);
 
-            var jobKeyValue = definition.JobKey?.Trim();
-            if (string.IsNullOrWhiteSpace(jobKeyValue))
+            if (!TriggerDefinitionValidator.TryValidate(definition, scope, out var validation, out var error))
             {
-                errors.Add($"{label}: JobKey is required.");
+                errors.Add($"{label}: {error}");
                 continue;
             }
 
-            if (!JobKey.TryParse(jobKeyValue, out var jobKey))
+            if (!_jobs.TryGet(validation.JobKey, out var descriptor))
             {
-                errors.Add($"{label}: JobKey '{jobKeyValue}' is invalid.");
+                errors.Add($"{label}: JobKey '{validation.JobKey.Value}' is not registered. Call AddCroniqJob<T>() or AddCroniqJob(...) for the job.");
                 continue;
             }
 
-            if (!MatchesScope(jobKey, scope))
+            if (!seenTriggerIds.Add(validation.TriggerId))
             {
-                errors.Add($"{label}: JobKey '{jobKeyValue}' must match tenant '{scope.TenantId}' and environment '{scope.EnvironmentTag}'.");
-                continue;
-            }
-
-            if (!_jobs.TryGet(jobKey, out var descriptor))
-            {
-                errors.Add($"{label}: JobKey '{jobKeyValue}' is not registered. Call AddCroniqJob<T>() or AddCroniqJob(...) for the job.");
-                continue;
-            }
-
-            var cronExpression = definition.CronExpression?.Trim();
-            if (string.IsNullOrWhiteSpace(cronExpression))
-            {
-                errors.Add($"{label}: CronExpression is required.");
-                continue;
-            }
-
-            string summary;
-            if (TriggerSchedule.IsOnceExpression(cronExpression))
-            {
-                summary = BuildOnceSummary(definition.StartAtUtc);
-            }
-            else
-            {
-                try
-                {
-                    var cron = new CronExpression(cronExpression);
-                    summary = NormalizeSummary(cron.GetExpressionSummary());
-                }
-                catch (Exception ex)
-                {
-                    errors.Add($"{label}: CronExpression '{cronExpression}' is invalid ({ex.Message}).");
-                    continue;
-                }
-            }
-
-            if (definition.StartAtUtc.HasValue && definition.EndAtUtc.HasValue
-                && definition.StartAtUtc.Value > definition.EndAtUtc.Value)
-            {
-                errors.Add($"{label}: StartAtUtc must be before EndAtUtc.");
-                continue;
-            }
-
-            var triggerId = string.IsNullOrWhiteSpace(definition.TriggerId)
-                ? $"{jobKey.Value}:{cronExpression}"
-                : definition.TriggerId.Trim();
-
-            if (string.IsNullOrWhiteSpace(triggerId))
-            {
-                errors.Add($"{label}: TriggerId is required.");
-                continue;
-            }
-
-            if (!seenTriggerIds.Add(triggerId))
-            {
-                errors.Add($"{label}: TriggerId '{triggerId}' is duplicated.");
+                errors.Add($"{label}: TriggerId '{validation.TriggerId}' is duplicated.");
                 continue;
             }
 
@@ -325,28 +269,25 @@ public sealed class CroniqTriggerSeedingHostedService : IHostedService
             }
 
             var metadata = BuildMetadata(definition, managedBy);
-            var startAtUtc = definition.StartAtUtc?.ToUniversalTime();
-            var endAtUtc = definition.EndAtUtc?.ToUniversalTime();
-
             var triggerDefinition = new TriggerDefinition(
-                triggerId,
-                jobKey.Value,
-                cronExpression,
+                validation.TriggerId,
+                validation.JobKey.Value,
+                validation.ScheduleExpression,
                 scope,
-                startAtUtc,
-                endAtUtc,
+                validation.StartAtUtc,
+                validation.EndAtUtc,
                 definition.Enabled,
                 metadata);
 
             var jobDefinition = new JobDefinition(
-                jobKey.Value,
+                validation.JobKey.Value,
                 descriptor.Attribute.NamespaceSegment,
                 descriptor.Attribute.JobName,
                 descriptor.Attribute.Variant,
                 descriptor.JobType.Name,
                 Metadata: null);
 
-            plans.Add(new SeedPlan(jobKey, triggerDefinition, jobDefinition, summary, managedBy));
+            plans.Add(new SeedPlan(validation.JobKey, triggerDefinition, jobDefinition, validation.Summary, managedBy));
         }
 
         if (errors.Count > 0)
@@ -402,12 +343,6 @@ public sealed class CroniqTriggerSeedingHostedService : IHostedService
         throw new InvalidOperationException($"Croniq seeding mode '{mode}' is invalid. Valid values: Off, CreateIfMissing, ForceUpdate.");
     }
 
-    private static bool MatchesScope(JobKey jobKey, PartitionScope scope)
-    {
-        return string.Equals(jobKey.TenantId, scope.TenantId, StringComparison.OrdinalIgnoreCase)
-            && string.Equals(jobKey.EnvironmentTag, scope.EnvironmentTag, StringComparison.OrdinalIgnoreCase);
-    }
-
     private static string BuildLabel(CroniqTriggerSeedDefinition definition, int index)
     {
         if (!string.IsNullOrWhiteSpace(definition.TriggerId))
@@ -426,29 +361,6 @@ public sealed class CroniqTriggerSeedingHostedService : IHostedService
     private static bool IsMapKey(string key)
     {
         return !int.TryParse(key, NumberStyles.Integer, CultureInfo.InvariantCulture, out _);
-    }
-
-    private static string NormalizeSummary(string summary)
-    {
-        if (string.IsNullOrWhiteSpace(summary))
-        {
-            return "cron summary unavailable";
-        }
-
-        return summary
-            .Replace("\r", string.Empty, StringComparison.Ordinal)
-            .Replace("\n", "; ", StringComparison.Ordinal)
-            .Trim();
-    }
-
-    private static string BuildOnceSummary(DateTimeOffset? startAtUtc)
-    {
-        if (startAtUtc.HasValue)
-        {
-            return $"once at {startAtUtc.Value:O}";
-        }
-
-        return "once";
     }
 
     private static string? ResolveManagedBy(CroniqTriggerSeedDefinition definition)

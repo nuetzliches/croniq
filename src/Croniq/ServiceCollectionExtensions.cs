@@ -3,7 +3,7 @@ using System.Reflection;
 using Croniq.Core;
 using Croniq.Core.Hosting;
 using Croniq.Core.Jobs;
-using Croniq.Core.Options;
+using Croniq.Options;
 using Croniq.Core.Policies;
 using Croniq.JobStore.InMemory;
 using Croniq.Providers.Default;
@@ -156,6 +156,13 @@ public static class ServiceCollectionExtensions
     public static IServiceCollection AddCroniqJobsFromEntryAssembly(this IServiceCollection services)
     {
         return Core.ServiceCollectionExtensions.AddCroniqJobsFromEntryAssembly(services);
+    }
+
+    public static IServiceCollection AddCroniqHealthChecks(
+        this IServiceCollection services,
+        Action<CroniqHealthCheckOptions>? configure = null)
+    {
+        return Core.ServiceCollectionExtensions.AddCroniqHealthChecks(services, configure);
     }
 
     public static CroniqJobBuilder AddCroniqJob(

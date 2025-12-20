@@ -1,6 +1,6 @@
 using System.Collections.Generic;
 using Croniq.Core;
-using Croniq.Core.Options;
+using Croniq.Options;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;

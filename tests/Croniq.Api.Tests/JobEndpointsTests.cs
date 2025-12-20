@@ -5,6 +5,7 @@ using System.Net.Http.Json;
 using Croniq.Api.Models;
 using Croniq.Api.Tests.Infrastructure;
 using Croniq.Core.Jobs;
+using Croniq.Options;
 using Shouldly;
 using Xunit;
 
@@ -98,15 +99,17 @@ public sealed class JobEndpointsTests : IClassFixture<WebhookApiTestHost>
     private async Task UpsertScheduleAsync(string jobKey, string triggerSuffix)
     {
         var triggerId = $"{jobKey}:{triggerSuffix}";
-        var request = new UpsertScheduleRequest(
-            JobKey: jobKey,
-            CronExpression: "0 */5 * * * ?",
-            TriggerId: triggerId,
-            StartAtUtc: null,
-            EndAtUtc: null,
-            Enabled: true,
-            Description: null,
-            Metadata: null);
+        var request = new CroniqTriggerSeedDefinition
+        {
+            JobKey = jobKey,
+            CronExpression = "0 */5 * * * ?",
+            TriggerId = triggerId,
+            StartAtUtc = null,
+            EndAtUtc = null,
+            Enabled = true,
+            Description = null,
+            Metadata = null
+        };
 
         var response = await _host.Client.PostAsJsonAsync($"/tenants/{WebhookApiTestHost.TenantId}/schedules", request);
         response.StatusCode.ShouldBe(HttpStatusCode.Created);

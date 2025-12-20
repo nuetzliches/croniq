@@ -66,7 +66,7 @@ Problem heute: Quartz-User lieben „Job Summary“. Croniq sollte das out-of-th
 - [ ] **Facade-Paket als Entry-Point (empfohlen)**: neues Projekt `Croniq`, das:
   - [x] die „Happy Path“-API in `Croniq` bündelt (`AddCroniqWorker(...)`, optional Builder/Fluent API).
   - [x] Dependencies bündelt (Core + DefaultProviders + JobStore), sodass Consumer idealerweise nur 1 Package referenzieren.
-  - [ ] Options/Model-Typen (die Consumer konfigurieren sollen) nicht im `Croniq.Core.*` Namespace „versteckt“.
+  - [x] Options/Model-Typen (die Consumer konfigurieren sollen) nicht im `Croniq.Core.*` Namespace „versteckt“.
 - [ ] **Optional: Global Usings (opt-in)**: separates Package `Croniq.Usings` (NuGet `buildTransitive` `.props` mit `<Using Include="..." />`) statt „magisch“ in Core/Worker.
 - [ ] **Docs + Copy/Paste Snippets**: Minimal WorkerHost Setup (InMemory) in 10–15 Zeilen, ohne versteckte prerequisites.
 
@@ -77,7 +77,7 @@ Problem heute: Quartz-User lieben „Job Summary“. Croniq sollte das out-of-th
 
 ## 8) Trigger-API konsistent mit Core (mittel)
 
-- [ ] **API/Grpc/Config nutzen dieselben DTOs/Validatoren** wie das Core-Trigger-Model.
+- [x] **API/Grpc/Config nutzen dieselben DTOs/Validatoren** wie das Core-Trigger-Model.
 - [ ] **No-surprises**: API-Änderungen dürfen nicht beim nächsten Worker-Start "weg-geupsertet" werden (nur bei ForceUpdate + managedBy).
 
 ## 9) Job Registration UX (wichtig)
@@ -92,7 +92,7 @@ Problem heute: Jobs müssen häufig einzeln registriert werden; das erhöht Boil
 
 - [x] **ValidateOnStart**: Core/Worker-Defaults sollen fehlende Pflichtwerte sofort mit klarer Message abbrechen (statt „mysteriöser“ Runtime-Effekte).
 - [x] **„Validate only“ Mode**: `Croniq:Startup:Mode = Run|Validate` (lädt/bindet/validiert Config + Triggers, startet aber keine Worker-Loops).
-- [ ] **Health/Readiness**: Optional `AddCroniqHealthChecks()` (z.B. „JobStore erreichbar“, „Trigger geladen“, „Worker lease ok“).
+- [x] **Health/Readiness**: Optional `AddCroniqHealthChecks()` (z.B. „JobStore erreichbar“, „Trigger geladen“, „Worker lease ok“).
 
 ## 11) Templates & Tooling (nice-to-have)
 

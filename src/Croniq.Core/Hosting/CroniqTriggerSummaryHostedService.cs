@@ -3,7 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
-using Croniq.Core.Options;
+using Croniq.Options;
 using Croniq.Core.Scheduling;
 using Croniq.Persistence.Abstractions;
 using Microsoft.Extensions.Hosting;

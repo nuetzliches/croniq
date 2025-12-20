@@ -1,5 +1,5 @@
 using Croniq.Core.Execution;
-using Croniq.Core.Options;
+using Croniq.Options;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;

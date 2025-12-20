@@ -3,7 +3,7 @@ using Croniq.Auth.Abstractions;
 using Croniq.Auth.Core;
 using Croniq.Auth.SqlServer;
 using Croniq.Core;
-using Croniq.Core.Options;
+using Croniq.Options;
 using Croniq.Core.Policies;
 using Croniq.Data.SqlServer;
 using Croniq.JobStore.InMemory;
