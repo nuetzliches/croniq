@@ -91,6 +91,8 @@ curl -X POST https://localhost:5001/tenants/dev-sandbox/schedules \
       }"
 ```
 
+`managedBy` is reserved for config/fluent seeding and is rejected by the schedule API.
+
 ## One-off triggers
 
 Use `@once` in schedules or trigger a single run directly:

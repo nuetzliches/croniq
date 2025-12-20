@@ -1,0 +1,7 @@
+<Project>
+  <ItemGroup>
+    <Using Include="Croniq" />
+    <Using Include="Croniq.Options" />
+    <Using Include="Croniq.Sdk" />
+  </ItemGroup>
+</Project>

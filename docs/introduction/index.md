@@ -25,6 +25,29 @@ Whenever you need implementation details (dev stack bootstrap, CI/CD, troublesho
 5. Use the SDK reference (coming soon) for detailed descriptions of `IJob`, `IJobExecutionContext`, and helper attributes.
 6. Need diagnostics, observability, or CI internals? Follow the "Learn more" links that point into `/deep-dive/*` (for example, the Docker dev stack lives in `/deep-dive/devstack.md`).
 
+## Minimal Worker Host (InMemory)
+
+```csharp
+using Croniq;
+using Croniq.Sdk;
+
+var builder = WebApplication.CreateBuilder(args);
+
+builder.Services
+    .AddCroniq(builder.Configuration)
+    .AddCroniqJob("samples", "ping", (context, _) =>
+    {
+        context.Logger.LogInformation("Ping from {JobKey}", context.JobKey);
+        return Task.CompletedTask;
+    })
+    .AddTrigger("@once");
+
+var app = builder.Build();
+app.Run();
+```
+
+Want fewer `using` statements? Install the optional `Croniq.Usings` package for opt-in global usings.
+
 ## Placeholder Topics
 
 - [Quickstart: first job & schedule](./quickstart.md)

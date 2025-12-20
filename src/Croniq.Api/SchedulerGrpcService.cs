@@ -113,6 +113,11 @@ internal sealed class SchedulerGrpcService : Scheduler.SchedulerBase
         using var activity = ActivitySource.StartActivity("Croniq.Grpc.UpsertSchedule", ActivityKind.Server);
         try
         {
+            if (ContainsManagedBy(request.Metadata))
+            {
+                throw new RpcException(new Status(StatusCode.InvalidArgument, "managed_by is reserved for config/fluent seeding"));
+            }
+
             var (startAt, endAt) = ParseScheduleWindow(request.StartAtUtc, request.EndAtUtc);
             var enabled = request.HasEnabled ? request.Enabled : true;
 
@@ -185,6 +190,25 @@ internal sealed class SchedulerGrpcService : Scheduler.SchedulerBase
             activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
             throw new RpcException(new Status(StatusCode.Internal, ex.Message));
         }
+    }
+
+    private static bool ContainsManagedBy(
+        Google.Protobuf.Collections.MapField<string, string>? metadata)
+    {
+        if (metadata is null || metadata.Count == 0)
+        {
+            return false;
+        }
+
+        foreach (var pair in metadata)
+        {
+            if (string.Equals(pair.Key, "managedBy", StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     public override async Task<DeleteScheduleResponse> DeleteSchedule(DeleteScheduleRequest request, ServerCallContext context)

@@ -58,6 +58,11 @@
 - [x] Execution-Übersicht fertiggestellt: `GET /tenants/{tenantId}/executions` + `GET /tenants/{tenantId}/executions/{executionId}` listen bzw. liefern Execution-Snapshots mit Filteroptionen, abgesichert über `executions:read` Scope [src/Croniq.Api/ApiHostingExtensions.cs#L200-L330](src/Croniq.Api/ApiHostingExtensions.cs#L200-L330). Die Daten kommen aus dem neuen `IExecutionHistoryReader` + File-basiertem Reader, der NDJSON-Starts/Completions auswertet [src/Croniq.Core/Execution/FileExecutionHistoryReader.cs](src/Croniq.Core/Execution/FileExecutionHistoryReader.cs); Tests decken Reader und API ab [tests/Croniq.Core.Tests/Execution/FileExecutionHistoryReaderTests.cs](tests/Croniq.Core.Tests/Execution/FileExecutionHistoryReaderTests.cs), [tests/Croniq.Api.Tests/ExecutionEndpointsTests.cs](tests/Croniq.Api.Tests/ExecutionEndpointsTests.cs).
 - [x] API-Clients & Tokens: CRUD (`GET/POST/DELETE /tenants/{tenantId}/api-clients`) plus Token-Issuing (`POST /tenants/{tenantId}/tokens`, `/api-clients/{clientId}/tokens`) und `/me` ausgeliefert inkl. Tests/Docs [src/Croniq.Api/ApiHostingExtensions.cs#L163-L1294](src/Croniq.Api/ApiHostingExtensions.cs#L163-L1294), [tests/Croniq.Api.Tests/ApiKeyAdminIntegrationTests.cs#L19-L210](tests/Croniq.Api.Tests/ApiKeyAdminIntegrationTests.cs#L19-L210), [docs/deep-dive/auth.md#L32-L160](docs/deep-dive/auth.md#L32-L160).
 
+## Templates & Tooling
+
+- [ ] dotnet templates: `dotnet new croniq-worker` / `dotnet new croniq-platform` inkl. minimaler `appsettings.json`.
+- [ ] CLI/Dev-Tool (optional): Trigger-Liste, "next runs", config validate, export/import (z.B. `dotnet tool`).
+
 ## Deferred: Remote Persistence (Hosted)
 
 - [ ] Architekturskizze `Croniq.Persistence.Remote` (Client) + `Croniq.Persistence.Remote.Service` (Service-Seite): Transport, Auth (ApiKey/Bearer), Throttling, Tenant-Isolation.

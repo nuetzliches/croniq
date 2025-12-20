@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using Croniq.Auth.Abstractions;
@@ -196,6 +197,15 @@ public static partial class ApiHostingExtensions
                 return Results.BadRequest(new { error = "invalid-request", message = error });
             }
 
+            if (ContainsManagedBy(request))
+            {
+                return Results.BadRequest(new
+                {
+                    error = "managed-by-reserved",
+                    message = "ManagedBy is reserved for config/fluent seeding. Omit managedBy from schedule API requests."
+                });
+            }
+
             var jobKey = validation.JobKey;
 
             if (!string.Equals(jobKey.TenantId, tenantId, StringComparison.OrdinalIgnoreCase))
@@ -347,5 +357,33 @@ public static partial class ApiHostingExtensions
             return Results.NoContent();
         })
         .WithDocs("Schedules_Delete", "Delete schedule", "Deletes the persisted trigger for the tenant/environment scope.");
+    }
+
+    private static bool ContainsManagedBy(CroniqTriggerSeedDefinition request)
+    {
+        if (!string.IsNullOrWhiteSpace(request.ManagedBy))
+        {
+            return true;
+        }
+
+        return ContainsMetadataKey(request.Metadata, "managedBy");
+    }
+
+    private static bool ContainsMetadataKey(IDictionary<string, string>? metadata, string key)
+    {
+        if (metadata is null || metadata.Count == 0)
+        {
+            return false;
+        }
+
+        foreach (var pair in metadata)
+        {
+            if (string.Equals(pair.Key, key, StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 }
