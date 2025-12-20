@@ -1,5 +1,7 @@
 using System;
 using System.Linq;
+using System.Reflection;
+using System.Reflection.Emit;
 using System.Threading;
 using System.Threading.Tasks;
 using Croniq.Core;
@@ -105,6 +107,28 @@ public class ServiceCollectionExtensionsTests
         provider.GetRequiredService<Microsoft.Extensions.Options.IOptions<WorkerHostOptions>>().Value.BatchSize.ShouldBe(123);
     }
 
+    [Fact]
+    public void AddCroniqJobsFromAssembly_registers_scanned_jobs()
+    {
+        var services = new ServiceCollection();
+        services.AddCroniqCore(options =>
+        {
+            options.TenantId = "t";
+            options.EnvironmentTag = "dev";
+        });
+        services.AddLogging();
+        services.AddSingleton<StubJobStore>();
+        services.AddSingleton<IJobStore>(sp => sp.GetRequiredService<StubJobStore>());
+        services.AddSingleton<IJobPersistenceProvider>(sp => sp.GetRequiredService<StubJobStore>());
+
+        var assembly = BuildDynamicJobAssembly(("scan", "job", null));
+        services.AddCroniqJobsFromAssembly(assembly);
+
+        var provider = services.BuildServiceProvider();
+        var registry = provider.GetRequiredService<IJobRegistry>();
+        registry.TryGet(JobKey.Create("t", "dev", "scan", "job"), out _).ShouldBeTrue();
+    }
+
     [CroniqJob("core", "sample")]
     private sealed class SampleJob : IJob
     {
@@ -114,6 +138,54 @@ public class ServiceCollectionExtensionsTests
     private sealed class JobWithoutAttribute : IJob
     {
         public Task ExecuteAsync(IJobExecutionContext context, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    }
+
+    private static Assembly BuildDynamicJobAssembly(params (string NamespaceSegment, string JobName, string? Variant)[] specs)
+    {
+        var assemblyName = new AssemblyName($"Croniq.Dynamic.{Guid.NewGuid():N}");
+        var assemblyBuilder = AssemblyBuilder.DefineDynamicAssembly(assemblyName, AssemblyBuilderAccess.Run);
+        var moduleBuilder = assemblyBuilder.DefineDynamicModule("Main");
+        var jobInterface = typeof(IJob);
+        var executeMethod = jobInterface.GetMethod(nameof(IJob.ExecuteAsync));
+        var attributeConstructor = typeof(CroniqJobAttribute).GetConstructor(new[] { typeof(string), typeof(string), typeof(string) });
+        var completedTaskGetter = typeof(Task).GetProperty(nameof(Task.CompletedTask), BindingFlags.Public | BindingFlags.Static)?.GetGetMethod();
+
+        foreach (var (namespaceSegment, jobName, variant) in specs)
+        {
+            var typeBuilder = moduleBuilder.DefineType($"DynamicJob_{Guid.NewGuid():N}", TypeAttributes.Public | TypeAttributes.Class);
+            typeBuilder.AddInterfaceImplementation(jobInterface);
+
+            if (attributeConstructor is null)
+            {
+                throw new InvalidOperationException("CroniqJobAttribute constructor not found.");
+            }
+
+            typeBuilder.SetCustomAttribute(new CustomAttributeBuilder(attributeConstructor, new object?[] { namespaceSegment, jobName, variant }));
+
+            var methodBuilder = typeBuilder.DefineMethod(
+                nameof(IJob.ExecuteAsync),
+                MethodAttributes.Public | MethodAttributes.Virtual,
+                typeof(Task),
+                new[] { typeof(IJobExecutionContext), typeof(CancellationToken) });
+
+            var il = methodBuilder.GetILGenerator();
+            if (completedTaskGetter is null)
+            {
+                throw new InvalidOperationException("Task.CompletedTask getter not found.");
+            }
+
+            il.Emit(OpCodes.Call, completedTaskGetter);
+            il.Emit(OpCodes.Ret);
+
+            if (executeMethod is not null)
+            {
+                typeBuilder.DefineMethodOverride(methodBuilder, executeMethod);
+            }
+
+            _ = typeBuilder.CreateType();
+        }
+
+        return assemblyBuilder;
     }
 
     private sealed class StubJobStore : IJobPersistenceProvider

@@ -85,8 +85,8 @@ Problem heute: Quartz-User lieben „Job Summary“. Croniq sollte das out-of-th
 Problem heute: Jobs müssen häufig einzeln registriert werden; das erhöht Boilerplate und ist fehleranfällig.
 
 - [x] **Inline Job Registration**: `AddCroniqJob("namespace", "name", handler)` fuer delegate-based Jobs.
-- [ ] **Assembly-Scanning**: `services.AddCroniqJobsFromAssembly(Assembly)` / `AddCroniqJobsFromEntryAssembly()` (scan nach `CroniqJobAttribute` + auto `AddCroniqJob<T>`).
-- [ ] **Gute Fehlermeldungen**: Bei Duplicate JobKeys/fehlenden Attributen klare Errors inkl. Vorschlag.
+- [x] **Assembly-Scanning**: `services.AddCroniqJobsFromAssembly(Assembly)` / `AddCroniqJobsFromEntryAssembly()` (scan nach `CroniqJobAttribute` + auto `AddCroniqJob<T>`).
+- [x] **Gute Fehlermeldungen**: Bei Duplicate JobKeys/fehlenden Attributen klare Errors inkl. Vorschlag.
 - [ ] **Optional: Source Generator** (später): Compile-time Registrierung für „zero reflection“ + bessere DX.
 
 ## 10) Fail-fast Options/Config UX (wichtig)

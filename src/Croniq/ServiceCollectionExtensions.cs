@@ -1,4 +1,5 @@
 using System;
+using System.Reflection;
 using Croniq.Core;
 using Croniq.Core.Hosting;
 using Croniq.Core.Jobs;
@@ -143,6 +144,16 @@ public static class ServiceCollectionExtensions
         where TJob : class, IJob
     {
         return Core.ServiceCollectionExtensions.AddCroniqJob<TJob>(services);
+    }
+
+    public static IServiceCollection AddCroniqJobsFromAssembly(this IServiceCollection services, Assembly assembly)
+    {
+        return Core.ServiceCollectionExtensions.AddCroniqJobsFromAssembly(services, assembly);
+    }
+
+    public static IServiceCollection AddCroniqJobsFromEntryAssembly(this IServiceCollection services)
+    {
+        return Core.ServiceCollectionExtensions.AddCroniqJobsFromEntryAssembly(services);
     }
 
     public static CroniqJobBuilder AddCroniqJob(

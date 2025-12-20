@@ -82,14 +82,144 @@ public static class ServiceCollectionExtensions
     public static IServiceCollection AddCroniqJob<TJob>(this IServiceCollection services)
         where TJob : class, IJob
     {
-        var attribute = typeof(TJob).GetCustomAttribute<CroniqJobAttribute>();
-        if (attribute is null)
+        return AddCroniqJob(services, typeof(TJob));
+    }
+
+    public static IServiceCollection AddCroniqJob(this IServiceCollection services, Type jobType)
+    {
+        ArgumentNullException.ThrowIfNull(services);
+        ArgumentNullException.ThrowIfNull(jobType);
+
+        if (!typeof(IJob).IsAssignableFrom(jobType))
         {
-            throw new InvalidOperationException($"Type {typeof(TJob).FullName} is missing CroniqJobAttribute.");
+            throw new InvalidOperationException($"Type {jobType.FullName ?? jobType.Name} must implement IJob.");
         }
 
-        services.AddTransient<TJob>();
-        services.TryAddEnumerable(ServiceDescriptor.Singleton<JobRegistration, JobRegistration<TJob>>());
+        var attribute = jobType.GetCustomAttribute<CroniqJobAttribute>();
+        if (attribute is null)
+        {
+            throw new InvalidOperationException(
+                $"Type {jobType.FullName ?? jobType.Name} is missing [CroniqJob]. " +
+                "Add [CroniqJob(\"namespace\", \"name\")] or register via AddCroniqJob(namespace, name, handler).");
+        }
+
+        services.AddTransient(jobType);
+        services.TryAddEnumerable(ServiceDescriptor.Singleton<JobRegistration>(new JobRegistration(jobType)));
         return services;
     }
+
+    public static IServiceCollection AddCroniqJobsFromAssembly(this IServiceCollection services, Assembly assembly)
+    {
+        ArgumentNullException.ThrowIfNull(services);
+        ArgumentNullException.ThrowIfNull(assembly);
+
+        var errors = new List<string>();
+        var jobs = CollectCroniqJobTypes(assembly, errors);
+        var duplicates = jobs
+            .GroupBy(job => BuildAttributeKey(job.Attribute), StringComparer.OrdinalIgnoreCase)
+            .Where(group => group.Count() > 1)
+            .ToArray();
+
+        if (duplicates.Length > 0)
+        {
+            foreach (var duplicate in duplicates)
+            {
+                var types = string.Join(", ", duplicate.Select(entry => entry.JobType.FullName ?? entry.JobType.Name));
+                errors.Add($"Job '{duplicate.Key}' is declared by multiple types: {types}. Use unique [CroniqJob] values.");
+            }
+        }
+
+        if (errors.Count > 0)
+        {
+            throw new InvalidOperationException("Croniq job scan failed:\n" + string.Join("\n", errors));
+        }
+
+        foreach (var job in jobs)
+        {
+            services.AddCroniqJob(job.JobType);
+        }
+
+        return services;
+    }
+
+    public static IServiceCollection AddCroniqJobsFromEntryAssembly(this IServiceCollection services)
+    {
+        ArgumentNullException.ThrowIfNull(services);
+
+        var assembly = Assembly.GetEntryAssembly();
+        if (assembly is null)
+        {
+            throw new InvalidOperationException("Entry assembly could not be resolved. Use AddCroniqJobsFromAssembly(...) instead.");
+        }
+
+        return services.AddCroniqJobsFromAssembly(assembly);
+    }
+
+    private static IReadOnlyList<ScannedJob> CollectCroniqJobTypes(Assembly assembly, List<string> errors)
+    {
+        var jobs = new List<ScannedJob>();
+        Type[] types;
+
+        try
+        {
+            types = assembly.GetTypes();
+        }
+        catch (ReflectionTypeLoadException ex)
+        {
+            types = ex.Types.Where(type => type is not null).Select(type => type!).ToArray();
+            if (ex.LoaderExceptions is { Length: > 0 })
+            {
+                foreach (var loaderException in ex.LoaderExceptions)
+                {
+                    if (loaderException is not null)
+                    {
+                        errors.Add(loaderException.Message);
+                    }
+                }
+            }
+        }
+
+        foreach (var type in types)
+        {
+            var attribute = type.GetCustomAttribute<CroniqJobAttribute>();
+            if (attribute is null)
+            {
+                continue;
+            }
+
+            if (!type.IsClass || type.IsAbstract)
+            {
+                errors.Add($"Type {type.FullName ?? type.Name} is marked with [CroniqJob] but is not a concrete class.");
+                continue;
+            }
+
+            if (type.ContainsGenericParameters)
+            {
+                errors.Add($"Type {type.FullName ?? type.Name} is marked with [CroniqJob] but is an open generic type.");
+                continue;
+            }
+
+            if (!typeof(IJob).IsAssignableFrom(type))
+            {
+                errors.Add($"Type {type.FullName ?? type.Name} is marked with [CroniqJob] but does not implement IJob.");
+                continue;
+            }
+
+            jobs.Add(new ScannedJob(type, attribute));
+        }
+
+        return jobs;
+    }
+
+    private static string BuildAttributeKey(CroniqJobAttribute attribute)
+    {
+        if (string.IsNullOrWhiteSpace(attribute.Variant))
+        {
+            return $"{attribute.NamespaceSegment}:{attribute.JobName}";
+        }
+
+        return $"{attribute.NamespaceSegment}:{attribute.JobName}:{attribute.Variant}";
+    }
+
+    private sealed record ScannedJob(Type JobType, CroniqJobAttribute Attribute);
 }

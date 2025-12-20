@@ -40,14 +40,18 @@ public sealed class JobRegistry : IJobRegistry
         var attribute = attributeOverride ?? jobType.GetCustomAttribute<CroniqJobAttribute>();
         if (attribute is null)
         {
-            throw new InvalidOperationException($"Type {jobType.FullName} is missing CroniqJobAttribute.");
+            throw new InvalidOperationException(
+                $"Type {jobType.FullName ?? jobType.Name} is missing [CroniqJob]. " +
+                "Add [CroniqJob(\"namespace\", \"name\")] or register via AddCroniqJob(namespace, name, handler).");
         }
 
         var jobKey = JobKey.Create(options.TenantId, options.EnvironmentTag, attribute.NamespaceSegment, attribute.JobName, attribute.Variant);
 
-        if (_descriptors.ContainsKey(jobKey.Value))
+        if (_descriptors.TryGetValue(jobKey.Value, out var existing))
         {
-            throw new InvalidOperationException($"JobKey {jobKey} is already registered.");
+            throw new InvalidOperationException(
+                $"JobKey '{jobKey.Value}' is already registered by {existing.JobType.FullName ?? existing.JobType.Name}. " +
+                $"Remove the duplicate or change [CroniqJob] values on {jobType.FullName ?? jobType.Name}.");
         }
 
         _descriptors[jobKey.Value] = new JobDescriptor(jobType, attribute, jobKey);
