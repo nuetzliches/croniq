@@ -159,15 +159,15 @@ This document extends the quality vision captured in `architecture.md` and descr
 
 ## Implementation Checklist
 
-| Status | Item                                                         | Evidence / Next Step                                                                                                      |
-| ------ | ------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------- |
-| ✅     | Coverlet instrumentation enabled for every `*.Tests` project | `Directory.Build.props` sets `CollectCoverage=true` and wires `coverlet.msbuild`.                                         |
-| ✅     | PR workflow runs lint/build/unit suites with coverage gates  | `.github/workflows/ci-pr.yml` executes all current unit suites, aggregates coverage, and enforces ≥73% core / ≥75% overall + ≥55% branch thresholds.   |
-| ✅     | Observability suite covered in CI                            | `Run Croniq.Observability.Tests` step in `ci-pr.yml` validates OTLP wiring on every PR.                                   |
-| ✅     | Smoke harness available for manual/Nightly use               | `scripts/test-e2e.cmd` orchestrates Docker Compose + `tests/Croniq.Api.Smoke`.                                            |
-| ✅     | Croniq.TestKit shared fixtures committed                     | `tests/Croniq.TestKit/` now ships SQL Server fixtures, log collectors, and canonical trait constants.                     |
-| ✅     | Contract suites for SqlServer providers run in CI            | `tests/Croniq.Persistence.SqlServer.Tests` exercises the EF provider and is wired into `.github/workflows/ci-pr.yml`.     |
-| ✅     | Nightly workflow with Compose E2E + SBOM/Trivy               | `.github/workflows/nightly.yml` now runs the dev stack and a compliance job (Syft SBOM + Trivy scan) with blocking gates. |
-| ❌     | Release workflow for packaging, signing, compliance          | `.github/workflows/release.yml` is absent; add the tag-triggered workflow with NuGet/container publishing and scans.      |
+| Status | Item                                                         | Evidence / Next Step                                                                                                                                    |
+| ------ | ------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| DONE   | Coverlet instrumentation enabled for every `*.Tests` project | `Directory.Build.props` sets `CollectCoverage=true` and wires `coverlet.msbuild`.                                                                       |
+| DONE   | PR workflow runs lint/build/unit suites with coverage gates  | `.github/workflows/ci-pr.yml` executes all current unit suites, aggregates coverage, and enforces >=73% core / >=75% overall + >=55% branch thresholds. |
+| DONE   | Observability suite covered in CI                            | `Run Croniq.Observability.Tests` step in `ci-pr.yml` validates OTLP wiring on every PR.                                                                 |
+| DONE   | Smoke harness available for manual/Nightly use               | `scripts/test-e2e.cmd` orchestrates Docker Compose + `tests/Croniq.Api.Smoke`.                                                                          |
+| DONE   | Croniq.TestKit shared fixtures committed                     | `tests/Croniq.TestKit/` now ships SQL Server fixtures, log collectors, and canonical trait constants.                                                   |
+| DONE   | Contract suites for SqlServer providers run in CI            | `tests/Croniq.Persistence.SqlServer.Tests` exercises the EF provider and is wired into `.github/workflows/ci-pr.yml`.                                   |
+| DONE   | Nightly workflow with Compose E2E + SBOM/Trivy               | `.github/workflows/nightly.yml` now runs the dev stack and a compliance job (Syft SBOM + Trivy scan) with blocking gates.                               |
+| TODO   | Release workflow for packaging, signing, compliance          | `.github/workflows/release.yml` is absent; add the tag-triggered workflow with NuGet/container publishing and scans.                                    |
 
 Once these backlog items close, the “Teststrategie-Dokument” entry in `CHECKLIST.md` can move to **done**.
