@@ -108,7 +108,8 @@ public sealed class InMemoryJobStore : IJobPersistenceProvider, IJobDeadLetterSt
         cancellationToken.ThrowIfCancellationRequested();
 
         var isOnce = TriggerSchedule.IsOnceExpression(trigger.ScheduleExpression);
-        var schedule = isOnce ? null : new CronSchedule(trigger.ScheduleExpression);
+        var timeZone = ResolveTimeZone(trigger.TimeZoneId);
+        var schedule = isOnce ? null : new CronSchedule(trigger.ScheduleExpression, timeZone);
         var now = UtcNow();
         var nextFire = ComputeNextFire(trigger, schedule, now);
 
@@ -441,6 +442,23 @@ public sealed class InMemoryJobStore : IJobPersistenceProvider, IJobDeadLetterSt
         }
 
         return next;
+    }
+
+    private static TimeZoneInfo ResolveTimeZone(string? timeZoneId)
+    {
+        if (string.IsNullOrWhiteSpace(timeZoneId))
+        {
+            return TimeZoneInfo.Utc;
+        }
+
+        try
+        {
+            return TimeZoneInfo.FindSystemTimeZoneById(timeZoneId);
+        }
+        catch
+        {
+            return TimeZoneInfo.Utc;
+        }
     }
 
     private string? SerializeMetadata(IReadOnlyDictionary<string, string>? metadata)

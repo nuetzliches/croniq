@@ -111,7 +111,8 @@ public sealed class DefaultJobTrigger : IJobTrigger
             startAtUtc,
             EndAtUtc: null,
             Enabled: true,
-            Metadata: metadata);
+            Metadata: metadata,
+            TimeZoneId: TimeZoneInfo.Utc.Id);
 
         await _store.UpsertTriggerAsync(trigger, cancellationToken).ConfigureAwait(false);
     }

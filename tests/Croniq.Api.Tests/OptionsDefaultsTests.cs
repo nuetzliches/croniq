@@ -17,6 +17,8 @@ public class OptionsDefaultsTests
         options.AnonymousPathPrefixes.ShouldNotBeNull();
         options.TenantRateLimits.ShouldNotBeNull();
         options.TenantRateLimits.Comparer.ShouldBe(StringComparer.OrdinalIgnoreCase);
+        options.RateLimiterCacheRetention.ShouldBe(TimeSpan.FromMinutes(10));
+        options.RateLimiterCacheCleanupInterval.ShouldBe(TimeSpan.FromMinutes(2));
 
         var tenantOptions = new TenantRateLimitOptions();
         tenantOptions.RequestsPerMinute.ShouldBe(60);

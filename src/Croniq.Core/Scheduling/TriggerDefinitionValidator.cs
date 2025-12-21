@@ -1,4 +1,6 @@
 using System;
+using System.Security.Cryptography;
+using System.Text;
 using Croniq.Core.Jobs;
 using Croniq.Options;
 using Croniq.Persistence.Abstractions;
@@ -44,6 +46,12 @@ public static class TriggerDefinitionValidator
 
         var startAtUtc = definition.StartAtUtc?.ToUniversalTime();
         var endAtUtc = definition.EndAtUtc?.ToUniversalTime();
+        var timeZoneId = NormalizeTimeZoneId(definition.TimeZoneId, out var timeZoneError);
+        if (timeZoneError is not null)
+        {
+            error = timeZoneError;
+            return false;
+        }
 
         string summary;
         if (TriggerSchedule.IsOnceExpression(cronExpression))
@@ -71,7 +79,7 @@ public static class TriggerDefinitionValidator
         }
 
         var triggerId = string.IsNullOrWhiteSpace(definition.TriggerId)
-            ? $"{jobKey.Value}:{cronExpression}"
+            ? BuildTriggerId(jobKey.Value, cronExpression, timeZoneId)
             : definition.TriggerId.Trim();
 
         if (string.IsNullOrWhiteSpace(triggerId))
@@ -86,6 +94,7 @@ public static class TriggerDefinitionValidator
             cronExpression,
             startAtUtc,
             endAtUtc,
+            timeZoneId,
             summary);
 
         return true;
@@ -119,6 +128,55 @@ public static class TriggerDefinitionValidator
 
         return "once";
     }
+
+    private static string BuildTriggerId(string jobKey, string cronExpression, string? timeZoneId)
+    {
+        const int maxTriggerIdLength = 512;
+        var encodedCron = EncodeSegment(cronExpression);
+        var candidate = string.IsNullOrWhiteSpace(timeZoneId)
+            ? $"{jobKey}:{encodedCron}"
+            : $"{jobKey}:{encodedCron}:{EncodeSegment(timeZoneId!)}";
+
+        if (candidate.Length <= maxTriggerIdLength)
+        {
+            return candidate;
+        }
+
+        var hash = ComputeStableHash($"{cronExpression}|{timeZoneId}");
+        return $"{jobKey}:hash-{hash}";
+    }
+
+    private static string EncodeSegment(string value)
+    {
+        var bytes = Encoding.UTF8.GetBytes(value);
+        var encoded = Convert.ToBase64String(bytes);
+        return encoded.TrimEnd('=').Replace('+', '-').Replace('/', '_');
+    }
+
+    private static string ComputeStableHash(string value)
+    {
+        var bytes = Encoding.UTF8.GetBytes(value);
+        var hash = SHA256.HashData(bytes);
+        return Convert.ToHexString(hash).ToLowerInvariant();
+    }
+
+    private static string? NormalizeTimeZoneId(string? timeZoneId, out string? error)
+    {
+        error = null;
+        if (string.IsNullOrWhiteSpace(timeZoneId))
+        {
+            return null;
+        }
+
+        var trimmed = timeZoneId.Trim();
+        if (!TimeZoneUtil.TryFindTimeZoneById(trimmed, out var resolved))
+        {
+            error = $"TimeZoneId '{trimmed}' is invalid.";
+            return null;
+        }
+
+        return resolved!.Id;
+    }
 }
 
 public sealed record TriggerDefinitionValidationResult(
@@ -127,4 +185,5 @@ public sealed record TriggerDefinitionValidationResult(
     string ScheduleExpression,
     DateTimeOffset? StartAtUtc,
     DateTimeOffset? EndAtUtc,
+    string? TimeZoneId,
     string Summary);

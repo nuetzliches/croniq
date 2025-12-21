@@ -110,6 +110,71 @@ public class FileExecutionLogStoreTests : IDisposable
         files.Single().ShouldContain("wf-001");
     }
 
+    [Fact]
+    public async Task Stops_tracking_completed_executions_when_retention_zero()
+    {
+        var options = new FileExecutionLogStoreOptions
+        {
+            BasePath = _tempDir,
+            ExecutionCacheRetention = TimeSpan.Zero,
+            ExecutionCacheCleanupInterval = TimeSpan.Zero
+        };
+        using var store = new FileExecutionLogStore(options);
+
+        var record = new ExecutionRecord(
+            "exec-cleanup",
+            ExecutionKind.Job,
+            null,
+            "t:dev:ns:job",
+            "t",
+            "dev",
+            "tr-1",
+            DateTimeOffset.UtcNow,
+            DateTimeOffset.UtcNow,
+            "instance-1",
+            null,
+            null,
+            null);
+
+        await store.OnExecutionStartedAsync(record, CancellationToken.None);
+
+        var entries = new List<ExecutionLogEntry>
+        {
+            new(
+                record.ExecutionId,
+                DateTimeOffset.UtcNow,
+                LogLevel.Information,
+                "cleanup",
+                "cleanup",
+                null,
+                new Dictionary<string, object?>(),
+                null,
+                null,
+                null,
+                1)
+        };
+
+        await store.AppendAsync(record.ExecutionId, entries, CancellationToken.None);
+
+        var completion = new ExecutionCompletion(
+            record.ExecutionId,
+            DateTimeOffset.UtcNow,
+            ExecutionStatus.Succeeded,
+            1,
+            null,
+            null);
+
+        await store.OnExecutionCompletedAsync(completion, CancellationToken.None);
+
+        var file = Directory.GetFiles(_tempDir, "*.ndjson", SearchOption.AllDirectories).Single();
+        var before = await File.ReadAllLinesAsync(file);
+
+        await store.AppendAsync(record.ExecutionId, entries, CancellationToken.None);
+
+        var after = await File.ReadAllLinesAsync(file);
+        after.Length.ShouldBe(before.Length);
+    }
+
     public void Dispose()
     {
         try

@@ -33,7 +33,8 @@ public sealed record ScheduleResponse(
     DateTimeOffset? StartAtUtc,
     DateTimeOffset? EndAtUtc,
     bool Enabled,
-    IReadOnlyDictionary<string, string>? Metadata);
+    IReadOnlyDictionary<string, string>? Metadata,
+    string? TimeZoneId);
 
 public sealed record ScheduleDeadLetterResponse(
     long Id,

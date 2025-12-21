@@ -1,5 +1,7 @@
 using Croniq.Auth.Abstractions;
 using Microsoft.Extensions.Options;
+using System.Security.Cryptography;
+using System.Text;
 
 namespace Croniq.Api.Security;
 
@@ -12,7 +14,7 @@ internal sealed class TenantRateLimitDecider
         _apiOptions = apiOptions ?? throw new ArgumentNullException(nameof(apiOptions));
     }
 
-    public string GetPartitionId(ICallerContext? caller, string fallback)
+    public string GetPartitionId(ICallerContext? caller, string? fallback)
     {
         if (caller is not null && !string.IsNullOrWhiteSpace(caller.TenantId))
         {
@@ -23,7 +25,7 @@ internal sealed class TenantRateLimitDecider
 
         if (!string.IsNullOrWhiteSpace(fallback))
         {
-            return $"anonymous:{fallback.Trim()}";
+            return $"anonymous:{HashPartitionKey(fallback)}";
         }
 
         return "anonymous:";
@@ -46,5 +48,12 @@ internal sealed class TenantRateLimitDecider
         }
 
         return Math.Max(1, options.RequestsPerMinute);
+    }
+
+    private static string HashPartitionKey(string value)
+    {
+        var bytes = Encoding.UTF8.GetBytes(value);
+        var hash = SHA256.HashData(bytes);
+        return Convert.ToHexString(hash).ToLowerInvariant();
     }
 }

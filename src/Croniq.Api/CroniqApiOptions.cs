@@ -22,6 +22,16 @@ public sealed class CroniqApiOptions
     /// Optional per-tenant overrides keyed by TenantId.
     /// </summary>
     public Dictionary<string, TenantRateLimitOptions> TenantRateLimits { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// How long to keep rate limiter entries without activity. Default: 10 minutes.
+    /// </summary>
+    public TimeSpan RateLimiterCacheRetention { get; set; } = TimeSpan.FromMinutes(10);
+
+    /// <summary>
+    /// How often to sweep stale rate limiter entries. Default: 2 minutes.
+    /// </summary>
+    public TimeSpan RateLimiterCacheCleanupInterval { get; set; } = TimeSpan.FromMinutes(2);
 }
 
 public sealed class TenantRateLimitOptions

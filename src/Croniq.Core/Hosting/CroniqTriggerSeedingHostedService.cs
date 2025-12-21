@@ -222,7 +222,8 @@ public sealed class CroniqTriggerSeedingHostedService : IHostedService
                 EndAtUtc = registration.EndAtUtc,
                 Enabled = registration.Enabled,
                 Metadata = metadata,
-                ManagedBy = registration.ManagedBy
+                ManagedBy = registration.ManagedBy,
+                TimeZoneId = registration.TimeZoneId
             });
         }
 
@@ -277,7 +278,8 @@ public sealed class CroniqTriggerSeedingHostedService : IHostedService
                 validation.StartAtUtc,
                 validation.EndAtUtc,
                 definition.Enabled,
-                metadata);
+                metadata,
+                validation.TimeZoneId);
 
             var jobDefinition = new JobDefinition(
                 validation.JobKey.Value,

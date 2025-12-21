@@ -244,13 +244,14 @@ public static partial class ApiHostingExtensions
                 validation.StartAtUtc,
                 validation.EndAtUtc,
                 request.Enabled,
-                metadata);
+                metadata,
+                validation.TimeZoneId);
 
             await store.UpsertJobAsync(job, cancellationToken).ConfigureAwait(false);
             await store.UpsertTriggerAsync(trigger, cancellationToken).ConfigureAwait(false);
             ApiMetrics.RecordScheduleUpsert(jobKey.TenantId, jobKey.EnvironmentTag, jobKey.Value);
 
-            return Results.Created($"/tenants/{tenantId}/schedules/{trigger.TriggerId}", new { trigger.TriggerId, trigger.JobKey, trigger.ScheduleExpression });
+            return Results.Created($"/tenants/{tenantId}/schedules/{Uri.EscapeDataString(trigger.TriggerId)}", new { trigger.TriggerId, trigger.JobKey, trigger.ScheduleExpression });
         })
         .WithDocs("Schedules_Upsert", "Create or update a schedule", "Registers a Cron-based trigger for the specified tenant-scoped job key.");
 

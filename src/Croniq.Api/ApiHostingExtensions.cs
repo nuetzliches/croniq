@@ -399,11 +399,11 @@ public static partial class ApiHostingExtensions
             options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
             options.GlobalLimiter = PartitionedRateLimiter.Create<HttpContext, string>(context =>
             {
-                var configured = context.RequestServices.GetRequiredService<IOptions<CroniqApiOptions>>().Value;
                 var decider = context.RequestServices.GetRequiredService<TenantRateLimitDecider>();
                 var callerAccessor = context.RequestServices.GetRequiredService<ICallerContextAccessor>();
                 var caller = callerAccessor.Current;
-                var key = decider.GetPartitionId(caller, context.Request.Headers["X-Croniq-Key"].FirstOrDefault() ?? "anonymous");
+                var fallbackKey = context.Request.Headers["X-Croniq-Key"].FirstOrDefault();
+                var key = decider.GetPartitionId(caller, fallbackKey);
                 var permits = decider.GetPermitLimit(caller);
 
                 return RateLimitPartition.GetFixedWindowLimiter(key, _ => new FixedWindowRateLimiterOptions
@@ -527,7 +527,8 @@ public static partial class ApiHostingExtensions
             definition.StartAtUtc,
             definition.EndAtUtc,
             definition.Enabled,
-            metadata);
+            metadata,
+            definition.TimeZoneId);
     }
 
     private static ScheduleDeadLetterResponse ToScheduleDeadLetterResponse(JobDeadLetterEntry entry)

@@ -29,4 +29,6 @@ public sealed class CroniqTriggerSeedRegistration
     public Dictionary<string, string>? Metadata { get; set; }
 
     public string? ManagedBy { get; set; }
+
+    public string? TimeZoneId { get; set; }
 }

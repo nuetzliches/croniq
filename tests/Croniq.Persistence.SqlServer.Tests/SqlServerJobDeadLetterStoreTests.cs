@@ -95,6 +95,33 @@ public sealed class SqlServerJobDeadLetterStoreTests : IAsyncLifetime
         entry.Metadata!.ShouldContainKeyAndValue("initiator", "test");
     }
 
+    [Fact]
+    [Trait(TestCategories.Category, TestCategories.Contract)]
+    public async Task ReleaseAsync_Persists_deadletter_when_reason_provided()
+    {
+        var scope = new PartitionScope("tenant-release", "dev");
+        var jobKey = JobKey.Create(scope.TenantId, scope.EnvironmentTag, "ops", "release");
+        var triggerId = $"{jobKey.Value}:t1";
+
+        await _persistence!.UpsertJobAsync(
+            new JobDefinition(jobKey.Value, jobKey.NamespaceSegment, jobKey.JobName, jobKey.Variant, "demo", null),
+            CancellationToken.None);
+
+        await _persistence.UpsertTriggerAsync(
+            new TriggerDefinition(triggerId, jobKey.Value, "0/5 * * * * ?", scope),
+            CancellationToken.None);
+
+        var leases = await _persistence.AcquireAsync(
+            new TriggerAcquireRequest(scope, "deadletter-test", DateTimeOffset.UtcNow.AddHours(1), 1),
+            CancellationToken.None);
+        var lease = leases.Single();
+
+        await _persistence.ReleaseAsync(new TriggerReleaseRequest(lease, false, NextFireTimeUtc: null, DeadLetterReason: "release-failed"), CancellationToken.None);
+
+        var entries = await _deadLetters!.ListAsync(scope, CancellationToken.None);
+        entries.ShouldContain(entry => entry.TriggerId == triggerId && entry.Reason == "release-failed");
+    }
+
     private async Task<long> SeedDeadLetterAsync(PartitionScope scope, string jobName, string triggerSuffix)
     {
         var jobKey = JobKey.Create(scope.TenantId, scope.EnvironmentTag, "ops", jobName);

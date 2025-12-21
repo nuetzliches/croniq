@@ -12,11 +12,15 @@ namespace Croniq.Core.Execution;
 /// <summary>
 /// Simple filesystem-backed execution log store that writes NDJSON per execution.
 /// </summary>
-public sealed class FileExecutionLogStore : IExecutionLogStore
+public sealed class FileExecutionLogStore : IExecutionLogStore, IDisposable
 {
     private readonly FileExecutionLogStoreOptions _options;
     private readonly ConcurrentDictionary<string, string> _executionFiles = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<string, SemaphoreSlim> _locks = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, DateTimeOffset> _completedAt = new(StringComparer.OrdinalIgnoreCase);
+    private long _lastCleanupTicks;
+    private readonly Timer? _cleanupTimer;
+    private bool _disposed;
     private readonly JsonSerializerOptions _jsonOptions = new(JsonSerializerDefaults.Web)
     {
         DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull
@@ -25,6 +29,10 @@ public sealed class FileExecutionLogStore : IExecutionLogStore
     public FileExecutionLogStore(FileExecutionLogStoreOptions options)
     {
         _options = options ?? throw new ArgumentNullException(nameof(options));
+        if (_options.ExecutionCacheCleanupInterval > TimeSpan.Zero)
+        {
+            _cleanupTimer = new Timer(_ => TryCleanup(DateTimeOffset.UtcNow), null, _options.ExecutionCacheCleanupInterval, _options.ExecutionCacheCleanupInterval);
+        }
     }
 
     public Task OnExecutionStartedAsync(ExecutionRecord record, CancellationToken cancellationToken)
@@ -66,15 +74,15 @@ public sealed class FileExecutionLogStore : IExecutionLogStore
         return WriteBatchAsync(path, executionId, entries, cancellationToken);
     }
 
-    public Task OnExecutionCompletedAsync(ExecutionCompletion completion, CancellationToken cancellationToken)
+    public async Task OnExecutionCompletedAsync(ExecutionCompletion completion, CancellationToken cancellationToken)
     {
         if (completion is null) throw new ArgumentNullException(nameof(completion));
         if (!_executionFiles.TryGetValue(completion.ExecutionId, out var path))
         {
-            return Task.CompletedTask;
+            return;
         }
 
-        return WriteLineAsync(path, new
+        await WriteLineAsync(path, new
         {
             type = "completion",
             completion.ExecutionId,
@@ -83,7 +91,9 @@ public sealed class FileExecutionLogStore : IExecutionLogStore
             completion.DurationMs,
             completion.ErrorType,
             completion.ErrorMessage
-        }, completion.ExecutionId, cancellationToken);
+        }, completion.ExecutionId, cancellationToken).ConfigureAwait(false);
+
+        TrackCompletion(completion.ExecutionId, completion.CompletedAtUtc);
     }
 
     private async Task WriteBatchAsync(string path, string executionId, System.Collections.Generic.IReadOnlyCollection<ExecutionLogEntry> entries, CancellationToken cancellationToken)
@@ -137,6 +147,8 @@ public sealed class FileExecutionLogStore : IExecutionLogStore
         {
             semaphore.Release();
         }
+
+        TryCleanup(DateTimeOffset.UtcNow);
     }
 
     private string ResolvePath(ExecutionRecord record)
@@ -157,5 +169,68 @@ public sealed class FileExecutionLogStore : IExecutionLogStore
             day,
             shard,
             $"{record.ExecutionId}.ndjson");
+    }
+
+    private void TrackCompletion(string executionId, DateTimeOffset completedAtUtc)
+    {
+        _completedAt[executionId] = completedAtUtc;
+
+        if (_options.ExecutionCacheRetention <= TimeSpan.Zero)
+        {
+            CleanupExecution(executionId);
+        }
+    }
+
+    private void TryCleanup(DateTimeOffset nowUtc)
+    {
+        var interval = _options.ExecutionCacheCleanupInterval;
+        if (interval <= TimeSpan.Zero)
+        {
+            return;
+        }
+
+        var nowTicks = nowUtc.UtcTicks;
+        var lastTicks = Interlocked.Read(ref _lastCleanupTicks);
+        if (nowTicks - lastTicks < interval.Ticks)
+        {
+            return;
+        }
+
+        if (Interlocked.CompareExchange(ref _lastCleanupTicks, nowTicks, lastTicks) != lastTicks)
+        {
+            return;
+        }
+
+        var retention = _options.ExecutionCacheRetention;
+        foreach (var entry in _completedAt)
+        {
+            if (retention > TimeSpan.Zero && nowUtc - entry.Value < retention)
+            {
+                continue;
+            }
+
+            CleanupExecution(entry.Key);
+        }
+    }
+
+    private void CleanupExecution(string executionId)
+    {
+        _completedAt.TryRemove(executionId, out _);
+        _executionFiles.TryRemove(executionId, out _);
+        if (_locks.TryRemove(executionId, out var semaphore))
+        {
+            semaphore.Dispose();
+        }
+    }
+
+    public void Dispose()
+    {
+        if (_disposed)
+        {
+            return;
+        }
+
+        _disposed = true;
+        _cleanupTimer?.Dispose();
     }
 }

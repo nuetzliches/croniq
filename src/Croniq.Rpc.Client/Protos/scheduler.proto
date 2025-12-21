@@ -39,12 +39,14 @@ message UpsertScheduleRequest {
   optional bool enabled = 6;
   map<string, string> metadata = 7;
   string description = 8;
+  string time_zone_id = 9;
 }
 
 message UpsertScheduleResponse {
   string trigger_id = 1;
   string job_key = 2;
   string schedule_expression = 3;
+  string time_zone_id = 4;
 }
 
 message DeleteScheduleRequest {

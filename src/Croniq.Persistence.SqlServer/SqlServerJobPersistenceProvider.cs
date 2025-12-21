@@ -131,7 +131,8 @@ public sealed class SqlServerJobPersistenceProvider : IJobPersistenceProvider
         var job = await db.Jobs.FirstOrDefaultAsync(j => j.JobKey == trigger.JobKey, cancellationToken).ConfigureAwait(false)
             ?? throw new InvalidOperationException($"Job '{trigger.JobKey}' must be created before triggers can be added.");
 
-        var timeZoneId = TryExtractTimeZone(trigger.TriggerId) ?? "UTC";
+        var timeZoneId = ResolveTimeZoneId(trigger.TimeZoneId, trigger.TriggerId);
+        timeZoneId = ResolveTimeZone(timeZoneId).Id;
         var nextFire = ComputeNextFireUtc(
             trigger.ScheduleExpression,
             timeZoneId,
@@ -195,7 +196,8 @@ public sealed class SqlServerJobPersistenceProvider : IJobPersistenceProvider
                 row.StartAtUtc is null ? null : new DateTimeOffset(DateTime.SpecifyKind(row.StartAtUtc.Value, DateTimeKind.Utc)),
                 row.EndAtUtc is null ? null : new DateTimeOffset(DateTime.SpecifyKind(row.EndAtUtc.Value, DateTimeKind.Utc)),
                 row.Enabled,
-                DeserializeMetadata(row.MetadataJson)));
+                DeserializeMetadata(row.MetadataJson),
+                row.TimeZoneId));
         }
 
         return result;
@@ -335,11 +337,30 @@ public sealed class SqlServerJobPersistenceProvider : IJobPersistenceProvider
             throw new InvalidOperationException($"Lease '{request.Lease.LeaseId}' is not active for trigger '{request.Lease.TriggerId}'.");
         }
 
+        var nowUtc = DateTime.UtcNow;
+        var deadLetterReason = string.IsNullOrWhiteSpace(request.DeadLetterReason)
+            ? null
+            : TruncateReason(request.DeadLetterReason);
+
         trigger.LeaseId = null;
         trigger.LeaseInstanceId = null;
         trigger.LeaseExpiresAtUtc = null;
-        trigger.LastCompletedAtUtc = DateTime.UtcNow;
-        trigger.LastResult = request.DeadLetterReason;
+        trigger.LastCompletedAtUtc = nowUtc;
+        trigger.LastResult = deadLetterReason;
+
+        if (!string.IsNullOrWhiteSpace(deadLetterReason))
+        {
+            db.DeadLetters.Add(new DeadLetterEntity
+            {
+                TriggerId = trigger.Id,
+                FireAtUtc = request.Lease.FireAtUtc.UtcDateTime,
+                Reason = deadLetterReason,
+                Payload = request.Lease.Payload ?? string.Empty,
+                MetadataJson = null,
+                CreatedAtUtc = nowUtc,
+                ExpiresAtUtc = nowUtc.AddDays(_options.DeadLetterRetentionDays)
+            });
+        }
 
         if (TriggerSchedule.IsOnceExpression(trigger.CronExpression))
         {
@@ -507,6 +528,17 @@ public sealed class SqlServerJobPersistenceProvider : IJobPersistenceProvider
         string? Payload,
         IReadOnlyDictionary<string, string>? Metadata,
         string Reason);
+
+    private static string ResolveTimeZoneId(string? explicitTimeZoneId, string triggerKey)
+    {
+        if (!string.IsNullOrWhiteSpace(explicitTimeZoneId))
+        {
+            return explicitTimeZoneId.Trim();
+        }
+
+        var extracted = TryExtractTimeZone(triggerKey);
+        return string.IsNullOrWhiteSpace(extracted) ? "UTC" : extracted;
+    }
 
     private static string? TryExtractTimeZone(string triggerKey)
     {

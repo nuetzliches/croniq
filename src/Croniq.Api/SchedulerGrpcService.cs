@@ -134,7 +134,8 @@ internal sealed class SchedulerGrpcService : Scheduler.SchedulerBase
                 EndAtUtc = endAt,
                 Enabled = enabled,
                 Metadata = metadata,
-                Description = request.Description
+                Description = request.Description,
+                TimeZoneId = request.TimeZoneId
             };
 
             if (!TriggerDefinitionValidator.TryValidate(definition, scope: null, out var validation, out var error))
@@ -165,7 +166,8 @@ internal sealed class SchedulerGrpcService : Scheduler.SchedulerBase
                 validation.StartAtUtc,
                 validation.EndAtUtc,
                 enabled,
-                metadata);
+                metadata,
+                validation.TimeZoneId);
 
             await _store.UpsertJobAsync(job, context.CancellationToken).ConfigureAwait(false);
             await _store.UpsertTriggerAsync(trigger, context.CancellationToken).ConfigureAwait(false);
@@ -176,7 +178,8 @@ internal sealed class SchedulerGrpcService : Scheduler.SchedulerBase
             {
                 TriggerId = trigger.TriggerId,
                 JobKey = trigger.JobKey,
-                ScheduleExpression = trigger.ScheduleExpression
+                ScheduleExpression = trigger.ScheduleExpression,
+                TimeZoneId = trigger.TimeZoneId ?? string.Empty
             };
         }
         catch (RpcException)

@@ -2164,8 +2164,7 @@ public class CronExpression : IDeserializationCallback, ISerializable
     /// <returns></returns>
     public virtual DateTimeOffset? GetTimeBefore(DateTimeOffset? endTime)
     {
-        // TODO: implement
-        return null;
+        throw new NotSupportedException("CronExpression.GetTimeBefore is not supported.");
     }
 
     /// <summary>
@@ -2175,8 +2174,7 @@ public class CronExpression : IDeserializationCallback, ISerializable
     /// <returns></returns>
     public virtual DateTimeOffset? GetFinalFireTime()
     {
-        // TODO: implement the upstream lenient day-of-week handling (issue 423 equivalent)
-        return null;
+        throw new NotSupportedException("CronExpression.GetFinalFireTime is not supported.");
     }
 
     /// <summary>

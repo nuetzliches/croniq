@@ -103,6 +103,7 @@ public sealed class CroniqTriggerSummaryHostedService : IHostedService
             trigger.ScheduleExpression,
             referenceUtc,
             trigger.StartAtUtc,
-            trigger.EndAtUtc);
+            trigger.EndAtUtc,
+            TimeZoneUtil.ResolveTimeZone(trigger.TimeZoneId));
     }
 }

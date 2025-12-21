@@ -125,6 +125,28 @@ public sealed class SqlServerJobPersistenceProviderTests : IAsyncLifetime
 
     [Fact]
     [Trait(TestCategories.Category, TestCategories.Contract)]
+    public async Task UpsertTriggerAsync_Persists_time_zone_id()
+    {
+        var jobKey = JobKey.Create("tenant-tz", "dev", "ops", "clock");
+        var scope = new PartitionScope(jobKey.TenantId, jobKey.EnvironmentTag);
+
+        await _persistence!.UpsertJobAsync(
+            new JobDefinition(jobKey.Value, jobKey.NamespaceSegment, jobKey.JobName, jobKey.Variant, "demo", null),
+            CancellationToken.None);
+
+        var trigger = new TriggerDefinition($"{jobKey.Value}:tz", jobKey.Value, "0 0 * * * ?", scope, TimeZoneId: "UTC");
+        await _persistence.UpsertTriggerAsync(trigger, CancellationToken.None);
+
+        var triggers = await _persistence.ListTriggersAsync(scope, CancellationToken.None);
+        triggers.Single().TimeZoneId.ShouldBe("UTC");
+
+        await using var context = await _dbFactory!.CreateDbContextAsync();
+        var entity = await context.Triggers.SingleAsync(t => t.TriggerKey == trigger.TriggerId);
+        entity.TimeZoneId.ShouldBe("UTC");
+    }
+
+    [Fact]
+    [Trait(TestCategories.Category, TestCategories.Contract)]
     public async Task AcquireAsync_ReturnsDueTriggerWithinScope()
     {
         var jobKey = JobKey.Create("tenant-b", "qa", "billing", "invoice");

@@ -2,6 +2,7 @@ using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Diagnostics.Metrics;
 using System.Linq;
 using System.Threading;
 using System.Threading.Channels;
@@ -24,9 +25,12 @@ public sealed class ExecutionLogSinkProvider : ILoggerProvider, ISupportExternal
     private readonly Channel<ExecutionLogEntry> _channel;
     private readonly CancellationTokenSource _cts = new();
     private readonly Task _background;
-    private readonly ConcurrentDictionary<string, long> _sequences = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, SequenceState> _sequences = new(StringComparer.OrdinalIgnoreCase);
+    private long _lastSequenceCleanupTicks;
     private IExternalScopeProvider? _scopeProvider;
     private static readonly string ExporterCategory = typeof(LoggerExecutionLogExporter).FullName ?? "Croniq.Core.Execution.LoggerExecutionLogExporter";
+    private static readonly Meter Meter = new("Croniq.Core.Execution.ExecutionLogSink");
+    private static readonly Counter<long> DroppedEntries = Meter.CreateCounter<long>("croniq.execution_log.dropped");
 
     public ExecutionLogSinkProvider(
         IExecutionLogStore store,
@@ -96,7 +100,12 @@ public sealed class ExecutionLogSinkProvider : ILoggerProvider, ISupportExternal
         properties["category"] = category;
         properties["eventId"] = eventId.Id;
 
-        var sequence = _sequences.AddOrUpdate(executionId, 1, (_, current) => current + 1);
+        var sequence = _sequences.AddOrUpdate(
+            executionId,
+            _ => new SequenceState(1, now),
+            (_, current) => new SequenceState(current.Value + 1, now)).Value;
+
+        TryCleanupSequences(now);
 
         var entry = new ExecutionLogEntry(
             executionId,
@@ -111,7 +120,13 @@ public sealed class ExecutionLogSinkProvider : ILoggerProvider, ISupportExternal
             TryGetCorrelation(properties),
             sequence);
 
-        return _channel.Writer.TryWrite(entry);
+        if (!_channel.Writer.TryWrite(entry))
+        {
+            DroppedEntries.Add(1);
+            return false;
+        }
+
+        return true;
     }
 
     private async Task BackgroundLoopAsync()
@@ -138,6 +153,8 @@ public sealed class ExecutionLogSinkProvider : ILoggerProvider, ISupportExternal
                         await FlushAsync(batch).ConfigureAwait(false);
                         batch.Clear();
                     }
+
+                    TryCleanupSequences(DateTimeOffset.UtcNow);
                 }
             }
             catch (OperationCanceledException)
@@ -243,6 +260,45 @@ public sealed class ExecutionLogSinkProvider : ILoggerProvider, ISupportExternal
 
         return null;
     }
+
+    private void TryCleanupSequences(DateTimeOffset nowUtc)
+    {
+        var interval = _options.SequenceCleanupInterval;
+        if (interval <= TimeSpan.Zero)
+        {
+            return;
+        }
+
+        var nowTicks = nowUtc.UtcTicks;
+        var lastTicks = Interlocked.Read(ref _lastSequenceCleanupTicks);
+        if (nowTicks - lastTicks < interval.Ticks)
+        {
+            return;
+        }
+
+        if (Interlocked.CompareExchange(ref _lastSequenceCleanupTicks, nowTicks, lastTicks) != lastTicks)
+        {
+            return;
+        }
+
+        var retention = _options.SequenceRetention;
+        if (retention <= TimeSpan.Zero)
+        {
+            return;
+        }
+
+        foreach (var entry in _sequences)
+        {
+            if (nowUtc - entry.Value.LastSeenUtc < retention)
+            {
+                continue;
+            }
+
+            _sequences.TryRemove(entry.Key, out _);
+        }
+    }
+
+    private sealed record SequenceState(long Value, DateTimeOffset LastSeenUtc);
 
     private sealed class ExecutionLogger : ILogger
     {

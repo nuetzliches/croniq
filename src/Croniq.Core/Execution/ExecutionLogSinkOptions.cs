@@ -27,4 +27,14 @@ public sealed class ExecutionLogSinkOptions
     /// Periodic flush interval.
     /// </summary>
     public TimeSpan FlushInterval { get; set; } = TimeSpan.FromMilliseconds(500);
+
+    /// <summary>
+    /// How long to keep per-execution sequence counters. Default: 10 minutes.
+    /// </summary>
+    public TimeSpan SequenceRetention { get; set; } = TimeSpan.FromMinutes(10);
+
+    /// <summary>
+    /// How often to sweep stale sequence counters. Default: 2 minutes.
+    /// </summary>
+    public TimeSpan SequenceCleanupInterval { get; set; } = TimeSpan.FromMinutes(2);
 }
