@@ -53,7 +53,7 @@ export class Shell {
   logout(): void {
     this.passwordAuth
       .logout()
-      .pipe(finalize(() => void this.router.navigate(['/login'])))
+      .pipe(finalize(() => void this.router.navigate(['/auth', 'login'])))
       .subscribe();
   }
 

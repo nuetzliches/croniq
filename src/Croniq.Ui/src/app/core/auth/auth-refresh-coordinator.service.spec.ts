@@ -158,7 +158,7 @@ describe('AuthRefreshCoordinator', () => {
         const token = await firstValueFrom(coordinator.forceRefresh());
 
         expect(token).toBe('access-2');
-        expect(router.navigate).toHaveBeenCalledWith(['/change-password']);
+        expect(router.navigate).toHaveBeenCalledWith(['/auth', 'change-password']);
     });
 
     it('clears auth state and navigates to /login when refresh fails', async () => {
@@ -169,6 +169,6 @@ describe('AuthRefreshCoordinator', () => {
 
         expect(token).toBe(null);
         expect(authSession.clearAuthState).toHaveBeenCalled();
-        expect(router.navigate).toHaveBeenCalledWith(['/login']);
+        expect(router.navigate).toHaveBeenCalledWith(['/auth', 'login']);
     });
 });

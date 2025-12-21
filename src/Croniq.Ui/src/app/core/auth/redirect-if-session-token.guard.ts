@@ -10,8 +10,17 @@ export const redirectIfSessionTokenGuard: CanActivateFn = (route) => {
         return true;
     }
 
+    if (authSession.passwordChangeRequired()) {
+        return router.parseUrl('/auth/change-password');
+    }
+
     const returnUrl = (route.queryParamMap.get('returnUrl') ?? '').trim();
-    if (!returnUrl || returnUrl === '/' || returnUrl.startsWith('/login')) {
+    if (
+        !returnUrl ||
+        returnUrl === '/' ||
+        returnUrl.startsWith('/login') ||
+        returnUrl.startsWith('/auth')
+    ) {
         return router.parseUrl('/');
     }
 

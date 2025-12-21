@@ -11,6 +11,7 @@ class AuthSessionStub {
     readonly sessionToken = signal<{ value: string } | null>(null);
     readonly sessionTokenExpired = signal(false);
     readonly refreshToken = signal<string | null>(null);
+    readonly passwordChangeRequired = signal(false);
 
     getSessionToken(): string | null {
         return this.sessionToken()?.value ?? null;
@@ -66,14 +67,14 @@ describe('LoginPage', () => {
         expect(component).toBeTruthy();
     });
 
-    it('redirects away from /login when already authenticated', async () => {
+    it('redirects away from /auth/login when already authenticated', async () => {
         authSession.sessionToken.set({ value: 'access-token' });
 
         const result = TestBed.runInInjectionContext(() =>
             redirectIfSessionTokenGuard({
                 queryParamMap: convertToParamMap({ returnUrl: '/jobs' }),
             } as never,
-                { url: '/login' } as never),
+                { url: '/auth/login' } as never),
         );
 
         expect(result).toBeInstanceOf(UrlTree);
@@ -115,6 +116,6 @@ describe('LoginPage', () => {
         component.loginModel.set({ username: 'admin', password: 'admin' });
         component.login();
 
-        expect(navigateSpy).toHaveBeenCalledWith('/change-password');
+        expect(navigateSpy).toHaveBeenCalledWith('/auth/change-password');
     });
 });

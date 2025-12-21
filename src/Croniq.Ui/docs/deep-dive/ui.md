@@ -13,6 +13,12 @@ This document describes the current Croniq UI implementation (Angular 21 + Tailw
   - `projects/telemetry`: telemetry helpers
   - `projects/ui-kit`: UI primitives
 
+## Language Policy
+
+- The UI language is **English only**.
+- This includes all user-facing copy in templates, UI-kit components, command palette labels, and accessibility text (`aria-*`, `sr-only`).
+- Avoid introducing German strings in the Angular application; keep internal identifiers and API field names unchanged.
+
 Auth notes and guardrails live in `docs/deep-dive/AUTH.md`.
 
 Detail surface patterns (Dialog / Slide‑In) live in `docs/deep-dive/designs/detail-surfaces.md`.

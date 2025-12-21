@@ -4,8 +4,8 @@
     <div class="space-y-2">
       <h1 class="text-3xl font-semibold text-text">Login</h1>
       <p class="text-sm text-text-muted">
-        Zum Testen der API mit Username/Passwort anmelden. Der Access Token wird nur in
-        <span class="font-semibold">sessionStorage</span> gespeichert.
+        Sign in with a username/password to test the API. The access token is stored only in
+        <span class="font-semibold">sessionStorage</span>.
       </p>
     </div>
   </header>
@@ -13,17 +13,17 @@
   <article class="space-y-4 rounded-2xl border border-white/10 bg-surface/40 p-6">
     <div class="flex flex-wrap items-start justify-between gap-4" aria-live="polite">
       <div class="space-y-1">
-        <div class="text-xs uppercase tracking-[0.35em] text-text-muted">Aktueller Token</div>
+        <div class="text-xs uppercase tracking-[0.35em] text-text-muted">Current token</div>
         <div class="text-base font-semibold text-text">{{ maskedSessionToken() }}</div>
         @if (sessionTokenExpired()) {
-        <div class="text-sm text-danger">Token ist abgelaufen und wurde entfernt.</div>
+        <div class="text-sm text-danger">Token expired and was cleared.</div>
         }
       </div>
       <a
         class="rounded-full border border-white/20 px-4 py-2 text-xs font-semibold uppercase tracking-wide text-text transition hover:border-accent/50 hover:text-accent"
         [routerLink]="['/dashboard']"
       >
-        Zur Übersicht
+        Back to dashboard
       </a>
     </div>
 
@@ -51,9 +51,9 @@
         />
       </label>
 
-      <p id="login-username-hint" class="sr-only">Bitte den Username eingeben.</p>
+      <p id="login-username-hint" class="sr-only">Enter your username.</p>
       @if (showValidation() && usernameEmpty()) {
-      <p id="login-username-error" class="text-sm text-danger">Bitte Username angeben.</p>
+      <p id="login-username-error" class="text-sm text-danger">Username is required.</p>
       }
 
       <label class="space-y-1 text-text-muted">
@@ -72,9 +72,9 @@
         />
       </label>
 
-      <p id="login-password-hint" class="sr-only">Bitte das Passwort eingeben.</p>
+      <p id="login-password-hint" class="sr-only">Enter your password.</p>
       @if (showValidation() && passwordEmpty()) {
-      <p id="login-password-error" class="text-sm text-danger">Bitte Passwort angeben.</p>
+      <p id="login-password-error" class="text-sm text-danger">Password is required.</p>
       }
 
       <div class="flex flex-wrap gap-2">
@@ -84,7 +84,7 @@
           [disabled]="busy()"
           [attr.aria-disabled]="busy()"
         >
-          @if (busy()) { Anmelden… } @else { Login }
+          @if (busy()) { Signing in… } @else { Login }
         </button>
 
         <button
@@ -112,8 +112,7 @@
       }
 
       <p class="text-xs text-text-muted">
-        Hinweis: TenantId und EnvironmentTag werden serverseitig konfiguriert und im Login-Request
-        nicht gesetzt.
+        Note: The environment context is derived server-side and is not set in the login request.
       </p>
     </form>
   </article>

@@ -7,10 +7,10 @@ import { finalize } from 'rxjs';
 const ACCOUNT_COMMANDS: ReadonlyArray<CommandPaletteCommand> = [
     {
         id: 'account-change-password',
-        label: 'Account · Passwort ändern',
-        path: 'change-password',
-        description: 'Aktuelles Passwort durch ein neues ersetzen',
-        keywords: ['password', 'passwort', 'security', 'konto'],
+        label: 'Account · Change password',
+        path: 'account/change-password',
+        description: 'Replace your current password with a new one',
+        keywords: ['password', 'security', 'account'],
     },
 ];
 
@@ -27,12 +27,12 @@ export const ACCOUNT_COMMANDS_PROVIDER: Provider = {
                 id: 'account-logout',
                 label: 'Account · Logout',
                 path: 'login',
-                description: 'Abmelden und zurück zum Login',
-                keywords: ['logout', 'abmelden', 'sign out', 'session'],
+                description: 'Sign out and return to login',
+                keywords: ['logout', 'sign out', 'session'],
                 execute: () => {
                     passwordAuth
                         .logout()
-                        .pipe(finalize(() => void router.navigate(['/login'])))
+                        .pipe(finalize(() => void router.navigate(['/auth', 'login'])))
                         .subscribe();
                 },
             },

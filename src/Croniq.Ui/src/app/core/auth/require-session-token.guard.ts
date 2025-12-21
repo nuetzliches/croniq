@@ -8,15 +8,11 @@ export const requireSessionTokenGuard: CanActivateFn = (_route, state) => {
 
   const token = authSession.getSessionToken();
   if (!token) {
-    return router.createUrlTree(['/login'], {
+    return router.createUrlTree(['/auth', 'login'], {
       queryParams: {
         returnUrl: state.url,
       },
     });
-  }
-
-  if (authSession.passwordChangeRequired() && !state.url.startsWith('/change-password')) {
-    return router.createUrlTree(['/change-password']);
   }
 
   return true;

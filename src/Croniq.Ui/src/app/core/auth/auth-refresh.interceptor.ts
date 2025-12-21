@@ -40,7 +40,7 @@ export const authRefreshInterceptor: HttpInterceptorFn = (req, next) => {
                             switchMap((refreshed) => {
                                 if (!refreshed) {
                                     const returnUrl = router.url;
-                                    void router.navigate(['/login'], {
+                                    void router.navigate(['/auth', 'login'], {
                                         queryParams: returnUrl ? { returnUrl } : undefined,
                                     });
                                     return throwError(() => error);

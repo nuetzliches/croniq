@@ -60,7 +60,7 @@ public/
 
 1. **Shell & Layout**
 
-   - Persistent command rail on the left with tenant selector + status beacons (cluster health, clock skew, policy alerts).
+   - Persistent command rail on the left with environment selector + status beacons (cluster health, clock skew, policy alerts).
    - Main canvas uses a page-local two-pane layout: summary column on the left and tabbed detail panel on the right (Angular Aria tabs) to emphasize live metrics.
    - Global command palette (Ctrl+K) surfaces job search, quick trigger, and navigation actions.
 
@@ -70,7 +70,7 @@ public/
    - `schedules`: list + detail editing surface with JSON diff viewer so operators can see policy deltas before saving.
    - `jobs`: registry browser, ability to trigger jobs manually, show last N executions.
    - `webhooks`: ingress status, secret rotation controls, IP allow-list grid.
-   - `tenants & API keys`: manage quotas, rotate keys, view policy overrides.
+   - `API keys`: manage quotas, rotate keys, view policy overrides.
 
 3. **Data Access**
 
@@ -118,7 +118,7 @@ Optional future additions (only when implemented): Playwright E2E, Storybook.
    - Produce wireframes + updated design tokens.
    - Finalize Tailwind theme + typography approvals with stakeholders.
 2. **Scaffolding & Auth** (1 sprint)
-   - Initialize Angular workspace, configure MCP tasks, hook up login bootstrap stub + tenant switcher.
+   - Initialize Angular workspace, configure MCP tasks, hook up login bootstrap stub + environment switcher.
 3. **MVP Data Surfaces** (2 sprints)
    - Dashboard metrics (stubbed), schedules read-only grid, job registry view.
 4. **Admin Controls** (2 sprints)

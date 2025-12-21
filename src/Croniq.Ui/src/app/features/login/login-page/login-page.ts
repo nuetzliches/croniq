@@ -65,8 +65,8 @@ export class LoginPage {
     });
 
     readonly loginForm = form(this.loginModel, (fieldPath) => {
-        required(fieldPath.username, { message: 'Bitte Username angeben.' });
-        required(fieldPath.password, { message: 'Bitte Passwort angeben.' });
+        required(fieldPath.username, { message: 'Username is required.' });
+        required(fieldPath.password, { message: 'Password is required.' });
     });
 
     login(): void {
@@ -77,7 +77,7 @@ export class LoginPage {
         this.submitAttempted.set(true);
 
         if (this.loginForm().invalid()) {
-            this.lastAction.set('Bitte Username und Passwort angeben.');
+            this.lastAction.set('Please enter your username and password.');
             this.lastActionTone.set('error');
             return;
         }
@@ -85,7 +85,7 @@ export class LoginPage {
         const username = this.loginModel().username.trim();
         const password = this.loginModel().password;
         if (!username || !password) {
-            this.lastAction.set('Bitte Username und Passwort angeben.');
+            this.lastAction.set('Please enter your username and password.');
             this.lastActionTone.set('error');
             return;
         }
@@ -110,17 +110,17 @@ export class LoginPage {
                         }
                     }
                     this.loginModel.update((model) => ({ ...model, password: '' }));
-                    this.lastAction.set('Login erfolgreich.');
+                    this.lastAction.set('Signed in successfully.');
                     this.lastActionTone.set('success');
 
                     if (result.passwordChangeRequired) {
-                        void this.router.navigateByUrl('/change-password');
+                        void this.router.navigateByUrl('/auth/change-password');
                     } else {
                         void this.router.navigateByUrl(this.resolveReturnUrl());
                     }
                 },
                 error: (error: unknown) => {
-                    this.lastAction.set(error instanceof Error ? error.message : 'Login fehlgeschlagen.');
+                    this.lastAction.set(error instanceof Error ? error.message : 'Sign-in failed.');
                     this.lastActionTone.set('error');
                 },
             });
@@ -128,10 +128,15 @@ export class LoginPage {
 
     private resolveReturnUrl(): string {
         const fromQuery = (this.route.snapshot.queryParamMap.get('returnUrl') ?? '').trim();
-        const fromHistory = (this.router.getCurrentNavigation()?.previousNavigation?.finalUrl?.toString() ?? '').trim();
+        const fromHistory = (this.router.currentNavigation()?.previousNavigation?.finalUrl?.toString() ?? '').trim();
         const candidate = fromQuery || fromHistory;
 
-        if (!candidate || candidate === '/' || candidate.startsWith('/login')) {
+        if (
+            !candidate ||
+            candidate === '/' ||
+            candidate.startsWith('/login') ||
+            candidate.startsWith('/auth')
+        ) {
             return '/';
         }
 
@@ -140,7 +145,7 @@ export class LoginPage {
 
     clearToken(): void {
         this.authSession.clearAuthState();
-        this.lastAction.set('Token entfernt.');
+        this.lastAction.set('Token cleared.');
         this.lastActionTone.set('info');
     }
 

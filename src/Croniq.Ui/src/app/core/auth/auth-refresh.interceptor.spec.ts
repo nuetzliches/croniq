@@ -158,6 +158,6 @@ describe('authRefreshInterceptor', () => {
             firstValueFrom(TestBed.runInInjectionContext(() => authRefreshInterceptor(req, next))),
         ).rejects.toBeInstanceOf(HttpErrorResponse);
 
-        expect(router.navigate).toHaveBeenCalledWith(['/login'], { queryParams: { returnUrl: '/jobs' } });
+        expect(router.navigate).toHaveBeenCalledWith(['/auth', 'login'], { queryParams: { returnUrl: '/jobs' } });
     });
 });

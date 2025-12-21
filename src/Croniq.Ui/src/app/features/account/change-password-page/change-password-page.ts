@@ -32,8 +32,8 @@ export class ChangePasswordPage {
     );
 
     readonly changePasswordForm = form(this.model, (fieldPath) => {
-        required(fieldPath.currentPassword, { message: 'Bitte aktuelles Passwort angeben.' });
-        required(fieldPath.newPassword, { message: 'Bitte neues Passwort angeben.' });
+        required(fieldPath.currentPassword, { message: 'Current password is required.' });
+        required(fieldPath.newPassword, { message: 'New password is required.' });
     });
 
     submit(): void {
@@ -44,7 +44,7 @@ export class ChangePasswordPage {
         this.submitAttempted.set(true);
 
         if (this.changePasswordForm().invalid()) {
-            this.lastAction.set('Bitte aktuelles und neues Passwort angeben.');
+            this.lastAction.set('Please enter your current password and a new password.');
             this.lastActionTone.set('error');
             return;
         }
@@ -61,12 +61,12 @@ export class ChangePasswordPage {
             .pipe(finalize(() => this.busy.set(false)))
             .subscribe({
                 next: () => {
-                    this.lastAction.set('Passwort geändert. Bitte neu einloggen.');
+                    this.lastAction.set('Password changed. Please sign in again.');
                     this.lastActionTone.set('success');
-                    void this.router.navigateByUrl('/login');
+                    void this.router.navigateByUrl('/auth/login');
                 },
                 error: (error: unknown) => {
-                    this.lastAction.set(error instanceof Error ? error.message : 'Passwort ändern fehlgeschlagen.');
+                    this.lastAction.set(error instanceof Error ? error.message : 'Change password failed.');
                     this.lastActionTone.set('error');
                 },
             });

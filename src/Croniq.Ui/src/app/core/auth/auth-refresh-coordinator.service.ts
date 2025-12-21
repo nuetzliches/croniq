@@ -45,13 +45,13 @@ export class AuthRefreshCoordinator {
         this.inFlight$ = defer(() => this.passwordAuth.refresh()).pipe(
             map((result) => {
                 if (result.passwordChangeRequired) {
-                    void this.router.navigate(['/change-password']);
+                    void this.router.navigate(['/auth', 'change-password']);
                 }
                 return result.token;
             }),
             catchError(() => {
                 this.authSession.clearAuthState();
-                void this.router.navigate(['/login']);
+                void this.router.navigate(['/auth', 'login']);
                 return of(null);
             }),
             shareReplay({ bufferSize: 1, refCount: false }),

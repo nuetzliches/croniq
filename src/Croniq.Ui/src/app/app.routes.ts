@@ -1,5 +1,8 @@
 import { Routes } from '@angular/router';
+import { blockAuthPopstateGuard } from './core/auth/block-auth-popstate.guard';
+import { blockIfPasswordChangeRequiredGuard } from './core/auth/block-if-password-change-required.guard';
 import { redirectIfSessionTokenGuard } from './core/auth/redirect-if-session-token.guard';
+import { requirePasswordChangeGuard } from './core/auth/require-password-change.guard';
 import { requireSessionTokenGuard } from './core/auth/require-session-token.guard';
 
 export const appRoutes: Routes = [
@@ -10,13 +13,43 @@ export const appRoutes: Routes = [
     },
     {
         path: 'login',
-        canActivate: [redirectIfSessionTokenGuard],
-        loadComponent: () =>
-            import('./features/login/login-page/login-page').then((m) => m.LoginPage),
+        pathMatch: 'full',
+        redirectTo: 'auth/login',
+    },
+    {
+        path: 'change-password',
+        pathMatch: 'full',
+        redirectTo: 'account/change-password',
+    },
+    {
+        path: 'auth',
+        children: [
+            {
+                path: '',
+                pathMatch: 'full',
+                redirectTo: 'login',
+            },
+            {
+                path: 'login',
+                canActivate: [redirectIfSessionTokenGuard],
+                canDeactivate: [blockAuthPopstateGuard],
+                loadComponent: () =>
+                    import('./features/login/login-page/login-page').then((m) => m.LoginPage),
+            },
+            {
+                path: 'change-password',
+                canActivate: [requireSessionTokenGuard, requirePasswordChangeGuard],
+                canDeactivate: [blockAuthPopstateGuard],
+                loadComponent: () =>
+                    import('./features/account/change-password-page/change-password-page').then(
+                        (m) => m.ChangePasswordPage,
+                    ),
+            },
+        ],
     },
     {
         path: '',
-        canActivate: [requireSessionTokenGuard],
+        canActivate: [requireSessionTokenGuard, blockIfPasswordChangeRequiredGuard],
         loadComponent: () => import('./shell/shell/shell').then((m) => m.Shell),
         children: [
             {
@@ -40,11 +73,16 @@ export const appRoutes: Routes = [
                     import('./features/webhooks/webhooks-page/webhooks-page').then((m) => m.WebhooksPage),
             },
             {
-                path: 'change-password',
+                path: 'account/change-password',
                 loadComponent: () =>
                     import('./features/account/change-password-page/change-password-page').then(
                         (m) => m.ChangePasswordPage,
                     ),
+            },
+            {
+                path: 'change-password',
+                pathMatch: 'full',
+                redirectTo: 'account/change-password',
             },
         ],
     },
