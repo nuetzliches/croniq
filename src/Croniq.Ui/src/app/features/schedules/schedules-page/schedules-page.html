@@ -132,7 +132,6 @@
                   <thead class="text-left text-xs uppercase tracking-[0.3em] text-text-muted">
                     <tr>
                       <th class="px-4 py-3">Schedule</th>
-                      <th class="px-4 py-3">Tenant</th>
                       <th class="px-4 py-3">Owner</th>
                       <th class="px-4 py-3">Next run</th>
                       <th class="px-4 py-3">Last duration</th>
@@ -163,7 +162,6 @@
                             }
                           </div>
                         </td>
-                        <td class="px-4 py-4"><p class="font-medium">{{ schedule.tenant }}</p></td>
                         <td class="px-4 py-4"><p class="font-medium">{{ schedule.owner }}</p></td>
                         <td class="px-4 py-4"><p class="font-medium">{{ schedule.nextFire | date: 'short' }}</p></td>
                         <td class="px-4 py-4"><p class="font-medium">{{ formatDuration(schedule.lastDurationMs) }}</p></td>
@@ -204,7 +202,7 @@
               @if (scheduleDeadLettersLoading()) {
                 <p class="text-sm text-text-muted">Loading dead letters…</p>
               } @else if (scheduleDeadLetters().length === 0) {
-                <p class="text-sm text-text-muted">No schedule dead letters found for the current tenant/environment.</p>
+                <p class="text-sm text-text-muted">No schedule dead letters found for the current environment.</p>
               } @else {
                 <div class="overflow-x-auto">
                   <table class="min-w-full divide-y divide-white/10 text-sm text-text">

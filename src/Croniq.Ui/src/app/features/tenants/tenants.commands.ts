@@ -3,14 +3,14 @@ import { CommandPaletteCommand, provideCommandPaletteCommands } from '@shared/co
 const TENANTS_COMMANDS: ReadonlyArray<CommandPaletteCommand> = [
     {
         id: 'tenants-add',
-        label: 'Tenants · Add tenant',
+        label: 'API keys · Add client',
         path: 'tenants',
-        description: 'Launch the tenant onboarding flow',
-        keywords: ['tenant', 'add', 'onboard'],
+        description: 'Launch the onboarding flow',
+        keywords: ['client', 'add', 'onboard'],
     },
     {
         id: 'tenants-rotate-keys',
-        label: 'Tenants · Rotate API keys',
+        label: 'API keys · Rotate API keys',
         path: 'tenants',
         description: 'Jump to API key rotation panel',
         keywords: ['keys', 'rotation', 'security'],

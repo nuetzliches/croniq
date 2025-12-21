@@ -32,7 +32,7 @@ export function authFailureFromError(error: unknown, messages: AuthFailureMessag
     return {
       kind: 'forbidden',
       status: 403,
-      message: messages.forbidden ?? 'Forbidden (403) — your token is missing permissions for this tenant.',
+      message: messages.forbidden ?? 'Forbidden (403) — your token is missing permissions.',
     };
   }
 

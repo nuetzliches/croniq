@@ -52,7 +52,7 @@ export class SchedulesStore {
             if (!tenantId) {
                 const fallback = createFallbackResponse();
                 this.hydrate(fallback);
-                this.error.set('TenantId is not set — select a tenant to load schedules.');
+                this.error.set('Required context is missing — unable to load schedules.');
                 return of(fallback);
             }
 
@@ -66,7 +66,7 @@ export class SchedulesStore {
                     console.error('Failed to load schedules', error);
                     const authFailure = authFailureFromError(error, {
                         forbidden:
-                            'Forbidden (403) — your token is missing schedules permissions for this tenant.',
+                            'Forbidden (403) — your token is missing schedules permissions.',
                     });
                     if (authFailure) {
                         this.error.set(authFailure.message);
@@ -113,7 +113,7 @@ export class SchedulesStore {
             const tenantId = params.tenantId.trim();
             const environment = params.environment.trim();
             if (!tenantId) {
-                this.scheduleDetailErrorSignal.set('TenantId is not set — select a tenant to load schedule detail.');
+                this.scheduleDetailErrorSignal.set('Required context is missing — unable to load schedule detail.');
                 this.scheduleDetailSignal.set(null);
                 return of(null);
             }
@@ -135,7 +135,7 @@ export class SchedulesStore {
                 catchError((error: unknown) => {
                     console.error('Failed to load schedule detail', error);
                     const authFailure = authFailureFromError(error, {
-                        forbidden: 'Forbidden (403) — your token is missing schedules permissions for this tenant.',
+                        forbidden: 'Forbidden (403) — your token is missing schedules permissions.',
                     });
                     if (authFailure) {
                         this.scheduleDetailErrorSignal.set(authFailure.message);
@@ -242,7 +242,7 @@ export class SchedulesStore {
 
         const { tenantId, environment } = this.tenantContext.snapshot();
         if (!tenantId.trim()) {
-            this.deleteScheduleErrorSignal.set('TenantId is not set — select a tenant to delete schedules.');
+            this.deleteScheduleErrorSignal.set('Required context is missing — unable to delete schedules.');
             return;
         }
         if (!environment.trim()) {
@@ -273,7 +273,7 @@ export class SchedulesStore {
                 catchError((error: unknown) => {
                     console.error('Failed to delete schedule', error);
                     const authFailure = authFailureFromError(error, {
-                        forbidden: 'Forbidden (403) — your token is missing schedules permissions for this tenant.',
+                        forbidden: 'Forbidden (403) — your token is missing schedules permissions.',
                     });
                     if (authFailure) {
                         this.deleteScheduleErrorSignal.set(authFailure.message);
@@ -298,7 +298,7 @@ export class SchedulesStore {
     upsertSchedule(payload: UpsertScheduleRequest): void {
         const { tenantId, environment } = this.tenantContext.snapshot();
         if (!tenantId.trim()) {
-            this.upsertScheduleErrorSignal.set('TenantId is not set — select a tenant to upsert schedules.');
+            this.upsertScheduleErrorSignal.set('Required context is missing — unable to save schedules.');
             return;
         }
         if (!environment.trim()) {
@@ -338,7 +338,7 @@ export class SchedulesStore {
                 catchError((error: unknown) => {
                     console.error('Failed to upsert schedule', error);
                     const authFailure = authFailureFromError(error, {
-                        forbidden: 'Forbidden (403) — your token is missing schedules permissions for this tenant.',
+                        forbidden: 'Forbidden (403) — your token is missing schedules permissions.',
                     });
                     if (authFailure) {
                         this.upsertScheduleErrorSignal.set(authFailure.message);
@@ -359,7 +359,7 @@ export class SchedulesStore {
     replayScheduleDeadLetter(deadLetterId: number): void {
         const { tenantId, environment } = this.tenantContext.snapshot();
         if (!tenantId.trim()) {
-            this.scheduleDeadLettersErrorSignal.set('TenantId is not set — select a tenant to replay dead letters.');
+            this.scheduleDeadLettersErrorSignal.set('Required context is missing — unable to replay dead letters.');
             return;
         }
         if (!environment.trim()) {
@@ -483,7 +483,7 @@ function createFallbackSchedules(): ReadonlyArray<ScheduleSummary> {
         },
         {
             id: 'ff0e71b5-5c3c-436b-9116-5e7bbf5e3a6e',
-            name: 'Tenant usage snapshot',
+            name: 'Usage snapshot',
             tenant: 'northwind',
             cron: '15 * * * *',
             timezone: 'America/Chicago',

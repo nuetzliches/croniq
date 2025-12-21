@@ -24,6 +24,7 @@ export const CroniqTriggerSeedDefinition = z
         metadata: z.record(z.string(), z.string()).nullable(),
         description: z.string().nullable(),
         managedBy: z.string().nullable(),
+        timeZoneId: z.string().nullable(),
     })
     .partial();
 export type CroniqTriggerSeedDefinition = z.infer<

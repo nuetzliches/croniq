@@ -21,7 +21,7 @@
         <div class="flex flex-wrap items-center justify-between gap-3">
           <div>
             <h2 class="text-sm uppercase tracking-[0.3em] text-text-muted">Registry</h2>
-            <p class="mt-2 text-lg font-semibold text-text">Tenant job catalog</p>
+            <p class="mt-2 text-lg font-semibold text-text">Job catalog</p>
           </div>
           <button
             type="button"
@@ -34,8 +34,7 @@
         </div>
 
         <p class="mt-3 text-sm text-text-muted">
-          Read-only feed from <span class="font-mono">GET /tenants/:tenantId/jobs</span>. Manual triggers remain available as the
-          operational fallback.
+          Read-only job feed. Manual triggers remain available as the operational fallback.
         </p>
 
         @if (jobRegistryError()) {
@@ -43,7 +42,7 @@
         }
 
         @if (jobRegistry().length === 0) {
-          <p class="mt-4 text-sm text-text-muted">No jobs reported for the current tenant scope.</p>
+          <p class="mt-4 text-sm text-text-muted">No jobs reported for the current environment.</p>
         } @else {
           <ul class="mt-4 space-y-2 text-sm">
             @for (job of jobRegistry(); track job.jobKey) {
@@ -125,7 +124,7 @@
                   <button
                     type="button"
                     class="rounded-full border border-white/15 px-4 py-2 text-xs font-semibold uppercase tracking-wider text-text-muted"
-                    (click)="setMetadataSource('tenant=cron-lab\nsource=ui')"
+                    (click)="setMetadataSource('source=ui')"
                   >
                     Reset metadata
                   </button>

@@ -27,7 +27,7 @@ export class DashboardPage {
   }
 
   readonly summaryCards = signal<ReadonlyArray<SummaryCard>>([
-    { label: 'Active schedules', value: '128', description: 'Enabled policies across tenants' },
+    { label: 'Active schedules', value: '128', description: 'Enabled policies in the current environment' },
     { label: 'Queue depth', value: '42', description: 'Waiting jobs in the last minute' },
     { label: 'Misfires today', value: '3', description: 'Automatically retried triggers' },
     { label: 'Avg. webhook latency', value: '210 ms', description: 'p95 delivery round trip' },

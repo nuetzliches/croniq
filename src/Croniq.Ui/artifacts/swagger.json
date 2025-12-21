@@ -1645,6 +1645,10 @@
           "managedBy": {
             "type": "string",
             "nullable": true
+          },
+          "timeZoneId": {
+            "type": "string",
+            "nullable": true
           }
         },
         "additionalProperties": false

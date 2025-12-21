@@ -1,7 +1,7 @@
 <section class="space-y-5 rounded-2xl border border-white/10 bg-white/5 p-6 text-sm text-text">
   <header class="space-y-1">
-    <p class="text-xs uppercase tracking-[0.35em] text-text-muted">Tenant context</p>
-    <h2 class="text-2xl font-semibold text-white">{{ tenantLabel() }}</h2>
+    <p class="text-xs uppercase tracking-[0.35em] text-text-muted">Environment</p>
+    <h2 class="text-2xl font-semibold text-white">{{ snapshot().environment | uppercase }}</h2>
     <p class="text-xs text-text-muted">
       Blueprint {{ snapshot().blueprintVersion }} · {{ snapshot().region | uppercase }} · audited
       {{ snapshot().lastAuditedAt | date : 'short' }}
@@ -9,42 +9,6 @@
   </header>
 
   <section class="space-y-3 rounded-2xl border border-white/10 bg-white/5 p-4">
-    <h3 class="text-xs uppercase tracking-[0.35em] text-text-muted">Switch tenant</h3>
-    <form
-      class="grid gap-2 text-xs"
-      (submit)="$event.preventDefault(); updateTenantIdentity(tenantIdInput, tenantNameInput);"
-    >
-      <label class="space-y-1 text-xs uppercase tracking-[0.3em] text-text-muted">
-        Tenant ID
-        <input
-          #tenantIdInput
-          type="text"
-          maxlength="80"
-          class="w-full rounded-xl border border-white/15 bg-surface/40 px-3 py-2 text-sm text-text"
-          [value]="snapshot().tenantId"
-          placeholder="tenant-id"
-        />
-      </label>
-      <label class="space-y-1 text-xs uppercase tracking-[0.3em] text-text-muted">
-        Tenant name (optional)
-        <input
-          #tenantNameInput
-          type="text"
-          maxlength="120"
-          class="w-full rounded-xl border border-white/15 bg-surface/40 px-3 py-2 text-sm text-text"
-          [value]="snapshot().tenantName"
-          placeholder="Display name"
-        />
-      </label>
-      <div>
-        <button
-          type="submit"
-          class="rounded-full border border-accent/40 bg-accent/15 px-4 py-2 text-xs font-semibold uppercase tracking-wide text-accent"
-        >
-          Apply tenant
-        </button>
-      </div>
-    </form>
     <div class="space-y-2">
       <p class="text-xs uppercase tracking-[0.35em] text-text-muted">Environment</p>
       <div class="flex flex-wrap gap-2">
@@ -67,10 +31,6 @@
   <dl
     class="grid gap-4 rounded-2xl border border-white/10 bg-white/2 p-4 text-xs uppercase tracking-wide text-text-muted sm:grid-cols-2"
   >
-    <div class="space-y-1">
-      <dt>Tenant ID</dt>
-      <dd class="text-base normal-case text-text">{{ snapshot().tenantId }}</dd>
-    </div>
     <div class="space-y-1">
       <dt>Region</dt>
       <dd class="text-base normal-case text-text">{{ snapshot().region }}</dd>

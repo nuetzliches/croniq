@@ -59,7 +59,7 @@ export class JobsStore {
             const environment = params.environment.trim();
 
             if (!tenantId) {
-                this.jobRegistryErrorSignal.set('TenantId is not set — select a tenant to load jobs.');
+                this.jobRegistryErrorSignal.set('Required context is missing — unable to load jobs.');
                 this.jobRegistrySignal.set([]);
                 return of([]);
             }
@@ -79,7 +79,7 @@ export class JobsStore {
                 catchError((error: unknown) => {
                     console.error('Failed to load job registry', error);
                     const authFailure = authFailureFromError(error, {
-                        forbidden: 'Forbidden (403) — your token is missing jobs permissions for this tenant.',
+                        forbidden: 'Forbidden (403) — your token is missing jobs permissions.',
                     });
                     if (authFailure) {
                         this.jobRegistryErrorSignal.set(authFailure.message);
@@ -123,7 +123,7 @@ export class JobsStore {
             const environment = params.environment.trim();
 
             if (!tenantId) {
-                this.executionsErrorSignal.set('TenantId is not set — select a tenant to load executions.');
+                this.executionsErrorSignal.set('Required context is missing — unable to load executions.');
                 this.executionsSignal.set([]);
                 return of([]);
             }
@@ -152,7 +152,7 @@ export class JobsStore {
                     console.error('Failed to load executions', error);
                     const authFailure = authFailureFromError(error, {
                         forbidden:
-                            'Forbidden (403) — your token is missing executions permissions for this tenant.',
+                            'Forbidden (403) — your token is missing executions permissions.',
                     });
                     if (authFailure) {
                         this.executionsErrorSignal.set(authFailure.message);
@@ -193,7 +193,7 @@ export class JobsStore {
             const tenantId = params.tenantId.trim();
             const environment = params.environment.trim();
             if (!tenantId) {
-                this.jobDetailErrorSignal.set('TenantId is not set — select a tenant to load job detail.');
+                this.jobDetailErrorSignal.set('Required context is missing — unable to load job detail.');
                 this.jobDetailSignal.set(null);
                 return of(null);
             }
@@ -213,7 +213,7 @@ export class JobsStore {
                 catchError((error: unknown) => {
                     console.error('Failed to load job detail', error);
                     const authFailure = authFailureFromError(error, {
-                        forbidden: 'Forbidden (403) — your token is missing jobs permissions for this tenant.',
+                        forbidden: 'Forbidden (403) — your token is missing jobs permissions.',
                     });
                     if (authFailure) {
                         this.jobDetailErrorSignal.set(authFailure.message);
@@ -297,7 +297,7 @@ export class JobsStore {
 
         const { tenantId, environment } = this.tenantContext.snapshot();
         if (!tenantId.trim()) {
-            this.deleteJobErrorSignal.set('TenantId is not set — select a tenant to delete jobs.');
+            this.deleteJobErrorSignal.set('Required context is missing — unable to delete jobs.');
             return;
         }
         if (!environment.trim()) {
@@ -330,7 +330,7 @@ export class JobsStore {
                 catchError((error: unknown) => {
                     console.error('Failed to delete job', error);
                     const authFailure = authFailureFromError(error, {
-                        forbidden: 'Forbidden (403) — your token is missing jobs permissions for this tenant.',
+                        forbidden: 'Forbidden (403) — your token is missing jobs permissions.',
                     });
                     if (authFailure) {
                         this.deleteJobErrorSignal.set(authFailure.message);
@@ -423,7 +423,7 @@ function seedManualTriggers(): ReadonlyArray<ManualTriggerEntry> {
         {
             id: createEntryId(),
             jobKey: 'nightly-billing-sweep',
-            metadata: { tenant: 'cron-lab', source: 'ui-seed' },
+            metadata: { source: 'ui-seed' },
             status: 'success',
             startedAt: isoFromEpochMs(now - 1000 * 60 * 45),
             completedAt: isoFromEpochMs(now - 1000 * 60 * 44),
@@ -431,7 +431,7 @@ function seedManualTriggers(): ReadonlyArray<ManualTriggerEntry> {
         {
             id: createEntryId(),
             jobKey: 'webhook-retry',
-            metadata: { tenant: 'northwind', retries: '3' },
+            metadata: { retries: '3' },
             status: 'error',
             startedAt: isoFromEpochMs(now - 1000 * 60 * 120),
             completedAt: isoFromEpochMs(now - 1000 * 60 * 119),

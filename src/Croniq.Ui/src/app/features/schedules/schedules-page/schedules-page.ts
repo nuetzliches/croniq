@@ -91,7 +91,7 @@ export class SchedulesPage {
     if (triggerId?.trim()) {
       return `Trigger id: ${triggerId}`;
     }
-    return 'Create a new schedule for the current tenant/environment.';
+    return 'Create a new schedule for the current environment.';
   });
 
   readonly draft = signal<ScheduleDraft>(createEmptyDraft());

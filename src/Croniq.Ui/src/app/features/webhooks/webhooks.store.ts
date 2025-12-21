@@ -182,7 +182,7 @@ export class WebhooksStore {
         const tenantId = params.tenantId.trim();
         const environment = params.environment.trim();
         if (!tenantId) {
-            this.lastErrorSignal.set('TenantId is not set — select a tenant to load webhooks.');
+            this.lastErrorSignal.set('Required context is missing — unable to load webhooks.');
             return;
         }
         if (!environment) {

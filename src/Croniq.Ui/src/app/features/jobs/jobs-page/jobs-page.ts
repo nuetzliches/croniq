@@ -39,7 +39,7 @@ export class JobsPage {
   readonly jobRegistryError = this.store.jobRegistryError;
 
   readonly jobKey = signal('nightly-billing-sweep');
-  readonly metadataSource = signal('tenant=cron-lab\nsource=ui');
+  readonly metadataSource = signal('source=ui');
 
   readonly metadataPreview = computed(() =>
     Object.entries(this.parseMetadata(this.metadataSource()))

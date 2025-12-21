@@ -33,8 +33,7 @@ export class TenantContextService {
     readonly snapshot = this.state.asReadonly();
     readonly tenantLabel = computed(() => {
         const ctx = this.state();
-        const name = ctx.tenantName?.trim() || ctx.tenantId?.trim() || '—';
-        return `${name} · ${ctx.environment}`;
+        return ctx.environment?.trim() || '—';
     });
     readonly tenantId = computed(() => this.state().tenantId);
     readonly environment = computed(() => this.state().environment);

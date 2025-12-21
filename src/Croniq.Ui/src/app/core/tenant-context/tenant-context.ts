@@ -14,12 +14,7 @@ export class TenantContext {
 
   readonly snapshot = this.tenantContext.snapshot;
   readonly flags = this.tenantContext.featureFlags;
-  readonly tenantLabel = this.tenantContext.tenantLabel;
   readonly environments: ReadonlyArray<TenantEnvironment> = ['dev', 'staging', 'production'];
-
-  updateTenantIdentity(tenantIdInput: HTMLInputElement, tenantNameInput: HTMLInputElement): void {
-    this.tenantContext.setTenantIdentity(tenantIdInput.value, tenantNameInput.value);
-  }
 
   selectEnvironment(environment: TenantEnvironment): void {
     this.tenantContext.setEnvironment(environment);

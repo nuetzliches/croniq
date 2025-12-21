@@ -28,7 +28,7 @@
           sync with manual tasks (dead letters, allow lists, signature enforcement).
         </p>
         <ul class="mt-4 space-y-2 text-xs text-text-muted">
-          <li>Tenant · {{ tenantId() }} · Env {{ environment() || '—' }}</li>
+          <li>Env {{ environment() || '—' }}</li>
           <li>Selected hook · {{ hookKey() }}</li>
         </ul>
         <div class="mt-4 grid gap-3 text-sm text-text-muted sm:grid-cols-2">
@@ -326,7 +326,7 @@
                   </header>
 
                   @if (deadLetters().length === 0) {
-                    <p class="mt-3 text-sm text-text-muted">No dead letters reported for this tenant/environment.</p>
+                    <p class="mt-3 text-sm text-text-muted">No dead letters reported for this environment.</p>
                   } @else {
                     <div class="mt-3 overflow-x-auto">
                       <table class="min-w-full divide-y divide-white/10 text-sm text-text">
@@ -383,13 +383,13 @@
               <header class="flex flex-wrap items-center justify-between gap-3 border-b border-white/10 p-5 text-sm text-text">
                 <div>
                   <p class="text-xs uppercase tracking-[0.3em] text-text-muted">Endpoints</p>
-                  <p class="text-base font-semibold text-text">Tenant catalog</p>
+                  <p class="text-base font-semibold text-text">Endpoint catalog</p>
                 </div>
                 <p class="text-xs text-text-muted">{{ endpoints().length }} entries</p>
               </header>
 
               @if (endpoints().length === 0) {
-                <p class="p-6 text-sm text-text-muted">No webhook endpoints recorded for this tenant.</p>
+                <p class="p-6 text-sm text-text-muted">No webhook endpoints recorded for this environment.</p>
               } @else {
                 <div class="overflow-x-auto">
                   <table class="min-w-full divide-y divide-white/10 text-sm text-text">
