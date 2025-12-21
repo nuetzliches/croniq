@@ -8,6 +8,7 @@ set "COMPOSE_ARGS=-f infra\docker\docker-compose.yml -f infra\docker\docker-comp
 set "DEFAULT_PROFILES=--profile api --profile worker"
 set "PROFILE_ARGS=%DEFAULT_PROFILES%"
 set "DOWN_ARGS="
+set "STOP_UI=0"
 
 REM Help / usage
 if /I "%~1"=="--help" goto help
@@ -19,15 +20,21 @@ if "%~1"=="" goto run
 if /I "%~1"=="--help" goto help
 if /I "%~1"=="-h" goto help
 if /I "%~1"=="/?" goto help
-if /I "%~1"=="--ui" goto ignore_ui
-if /I "%~1"=="--no-ui" goto ignore_ui
+if /I "%~1"=="--ui" goto enable_ui_stop
+if /I "%~1"=="--no-ui" goto disable_ui_stop
 if /I "%~1"=="--sample" goto ignore_sample
 if /I "%~1"=="--profile" goto handle_profile
 set "DOWN_ARGS=%DOWN_ARGS% %~1"
 shift
 goto parse
 
-:ignore_ui
+:enable_ui_stop
+set "STOP_UI=1"
+shift
+goto parse
+
+:disable_ui_stop
+set "STOP_UI=0"
 shift
 goto parse
 
@@ -57,7 +64,8 @@ set DOCKER_EXIT=%ERRORLEVEL%
 REM Stop optional host-run samples (best-effort).
 :after_compose
 call :stop_sample_apihost
-call :stop_ui
+call :cleanup_ui_pid_file
+if "%STOP_UI%"=="1" call :stop_ui
 
 exit /b %DOCKER_EXIT%
 
@@ -117,12 +125,41 @@ if defined INVALID_PID (
   goto stop_ui_delete
 )
 
-echo [devstack] Stopping UI terminal (PID %UI_PID%)...
-taskkill /PID %UI_PID% /F >nul 2>&1
+echo [devstack] Stopping UI process tree (PID %UI_PID%)...
+taskkill /PID %UI_PID% /T /F >nul 2>&1
+if errorlevel 1 (
+  echo [devstack] Warning: Failed to terminate UI process tree for PID %UI_PID%.
+)
 
 :stop_ui_delete
 del /q "%PID_FILE%" >nul 2>&1
 :stop_ui_done
+endlocal & exit /b 0
+
+:cleanup_ui_pid_file
+setlocal
+set "PID_FILE=artifacts\devstack\ui.pid"
+if not exist "%PID_FILE%" goto cleanup_ui_done
+
+set "UI_PID="
+set /p UI_PID=<"%PID_FILE%"
+
+if "%UI_PID%"=="" goto cleanup_ui_delete
+
+set "INVALID_PID="
+for /f "delims=0123456789" %%A in ("%UI_PID%") do set "INVALID_PID=1"
+
+if defined INVALID_PID goto cleanup_ui_delete
+
+REM Only delete the pid file if the process is not running anymore.
+for /f "usebackq tokens=*" %%L in (`tasklist /FI "PID eq %UI_PID%" ^| findstr /I /R "^[A-Za-z].* %UI_PID% "`) do (
+  goto cleanup_ui_done
+)
+
+:cleanup_ui_delete
+del /q "%PID_FILE%" >nul 2>&1
+
+:cleanup_ui_done
 endlocal & exit /b 0
 
 :help
@@ -135,9 +172,12 @@ echo.
 echo Notes:
 echo   - Profiles are forwarded to docker compose.
 echo   - This script also stops host-run processes started via devstack-up.cmd (best-effort).
+echo   - The UI process is NOT stopped by default. Pass --ui to stop it.
+echo   - Note: stopping a process does not close VS Code terminal tabs automatically.
 echo.
 echo Examples:
 echo   scripts\devstack-down.cmd
+echo   scripts\devstack-down.cmd --ui
 echo   scripts\devstack-down.cmd --profile api --remove-orphans -v
 echo.
 exit /b 0

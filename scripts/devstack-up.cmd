@@ -388,14 +388,14 @@ REM Stop previous UI instance if pid file exists.
 if exist "%PID_FILE%" (
     for /f "usebackq delims=" %%P in ("%PID_FILE%") do set OLD_PID=%%P
     if not "%OLD_PID%"=="" (
-        powershell -NoProfile -Command "try { Stop-Process -Id %OLD_PID% -Force -ErrorAction SilentlyContinue } catch {}" >nul 2>&1
+        taskkill /PID %OLD_PID% /T /F >nul 2>&1
     )
     del /q "%PID_FILE%" >nul 2>&1
 )
 
 REM UI endpoint (Angular default).
 if "%CRONIQ_UI_HTTP_PORT%"=="" set CRONIQ_UI_HTTP_PORT=5081
-echo [devstack] Starting UI (Angular) in a new terminal tab: http://localhost:%CRONIQ_UI_HTTP_PORT% ...
+echo [devstack] Starting UI (Angular) in a separate terminal/window: http://localhost:%CRONIQ_UI_HTTP_PORT% ...
 
 set "UI_SCRIPT=scripts\devstack-ui.ps1"
 if not exist "%UI_SCRIPT%" (
