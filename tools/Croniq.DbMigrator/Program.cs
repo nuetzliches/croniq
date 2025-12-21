@@ -123,6 +123,10 @@ static async Task SeedAdminAsync(IServiceProvider provider, CancellationToken to
     var tenantName = (Environment.GetEnvironmentVariable("CRONIQ_SEED_TENANT_NAME") ?? "Default").Trim();
     var username = (Environment.GetEnvironmentVariable("CRONIQ_SEED_ADMIN_USERNAME") ?? "admin").Trim();
     var password = (Environment.GetEnvironmentVariable("CRONIQ_SEED_ADMIN_PASSWORD") ?? "admin").Trim();
+    var passwordChangeRequired = Environment.GetEnvironmentVariable("CRONIQ_SEED_ADMIN_PASSWORD_CHANGE_REQUIRED");
+    var isPasswordChangeRequired = string.IsNullOrWhiteSpace(passwordChangeRequired)
+        || string.Equals(passwordChangeRequired, "true", StringComparison.OrdinalIgnoreCase)
+        || string.Equals(passwordChangeRequired, "1", StringComparison.OrdinalIgnoreCase);
     var overwrite = string.Equals(Environment.GetEnvironmentVariable("CRONIQ_SEED_ADMIN_OVERWRITE"), "true", StringComparison.OrdinalIgnoreCase)
         || string.Equals(Environment.GetEnvironmentVariable("CRONIQ_SEED_ADMIN_OVERWRITE"), "1", StringComparison.OrdinalIgnoreCase);
 
@@ -143,23 +147,6 @@ static async Task SeedAdminAsync(IServiceProvider provider, CancellationToken to
     var existing = await users.FindByUsernameAsync(tenant.TenantId, username, token).ConfigureAwait(false);
     if (existing is not null && !overwrite)
     {
-        if (!existing.PasswordChangeRequired)
-        {
-            await users.UpsertAsync(new PasswordUserUpsertRequest(
-                tenant.TenantId,
-                username,
-                existing.PasswordHash,
-                existing.Scopes,
-                IsActive: existing.IsActive,
-                PasswordChangeRequired: true), token).ConfigureAwait(false);
-
-            logger.LogInformation(
-                "Admin user already exists for tenant '{TenantReference}' but PasswordChangeRequired was false; updated to true.",
-                tenant.Reference);
-
-            return;
-        }
-
         logger.LogInformation(
             "Admin user already exists for tenant '{TenantReference}'; skipping (set CRONIQ_SEED_ADMIN_OVERWRITE=true to reset).",
             tenant.Reference);
@@ -191,9 +178,13 @@ static async Task SeedAdminAsync(IServiceProvider provider, CancellationToken to
         hash,
         scopes,
         IsActive: true,
-        PasswordChangeRequired: true), token).ConfigureAwait(false);
+        PasswordChangeRequired: isPasswordChangeRequired), token).ConfigureAwait(false);
 
-    logger.LogInformation("Seeded admin user '{Username}' for tenant '{TenantReference}' (PasswordChangeRequired=true).", username, tenant.Reference);
+    logger.LogInformation(
+        "Seeded admin user '{Username}' for tenant '{TenantReference}' (PasswordChangeRequired={PasswordChangeRequired}).",
+        username,
+        tenant.Reference,
+        isPasswordChangeRequired);
 }
 
 static bool IsDatabaseProvisioningError(SqlException exception)
