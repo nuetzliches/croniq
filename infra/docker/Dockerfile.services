@@ -12,6 +12,7 @@ COPY Directory.Build.props .
 # If a build fails with MSB3202 (project not found), add the missing *.csproj COPY here.
 
 COPY src/Croniq.Api/Croniq.Api.csproj src/Croniq.Api/
+COPY src/Croniq/Croniq.csproj src/Croniq/
 COPY src/Croniq.Auth.Abstractions/Croniq.Auth.Abstractions.csproj src/Croniq.Auth.Abstractions/
 COPY src/Croniq.Auth.Core/Croniq.Auth.Core.csproj src/Croniq.Auth.Core/
 COPY src/Croniq.Auth.SqlServer/Croniq.Auth.SqlServer.csproj src/Croniq.Auth.SqlServer/
