@@ -27,17 +27,6 @@ public static partial class ApiHostingExtensions
             [FromServices] IJobDeadLetterStore? deadLetterStore,
             CancellationToken cancellationToken) =>
         {
-            if (string.IsNullOrWhiteSpace(environment))
-            {
-                return Results.BadRequest(new { error = "missing-environment", message = "Query parameter 'environment' is required." });
-            }
-
-            var authFailure = TenantGuard.EnsureTenant(callerContextAccessor, tenantId, environment, CroniqScopes.SchedulesDeadLetter);
-            if (authFailure is not null)
-            {
-                return authFailure;
-            }
-
             if (deadLetterStore is null)
             {
                 return Results.Problem(statusCode: StatusCodes.Status503ServiceUnavailable, title: "deadletter-unavailable", detail: "Dead-letter store not configured.");
@@ -48,7 +37,8 @@ public static partial class ApiHostingExtensions
             var response = entries.Select(ToScheduleDeadLetterResponse).ToList();
             return Results.Ok(response);
         })
-        .WithDocs("ScheduleDeadLetters_List", "List schedule dead letters", "Enumerates failed trigger executions for investigation or replay.");
+        .WithDocs("ScheduleDeadLetters_List", "List schedule dead letters", "Enumerates failed trigger executions for investigation or replay.")
+        .RequireCroniqTenantScope(CroniqScopes.SchedulesDeadLetter);
 
         app.MapPost("/tenants/{tenantId}/schedules/deadletters/{deadLetterId}/replay", async (
             string tenantId,
@@ -62,17 +52,6 @@ public static partial class ApiHostingExtensions
             [FromServices] ILogger<ScheduleDeadLetterApiMarker> logger,
             CancellationToken cancellationToken) =>
         {
-            if (string.IsNullOrWhiteSpace(environment))
-            {
-                return Results.BadRequest(new { error = "missing-environment", message = "Query parameter 'environment' is required." });
-            }
-
-            var authFailure = TenantGuard.EnsureTenant(callerContextAccessor, tenantId, environment, CroniqScopes.SchedulesDeadLetter);
-            if (authFailure is not null)
-            {
-                return authFailure;
-            }
-
             if (deadLetterStore is null)
             {
                 return Results.Problem(statusCode: StatusCodes.Status503ServiceUnavailable, title: "deadletter-unavailable", detail: "Dead-letter store not configured.");
@@ -130,7 +109,8 @@ public static partial class ApiHostingExtensions
                 return Results.Problem(statusCode: StatusCodes.Status500InternalServerError, title: "replay-failed", detail: ex.Message);
             }
         })
-        .WithDocs("ScheduleDeadLetters_Replay", "Replay schedule dead letter", "Re-dispatches a failed trigger execution via the job execution pipeline.");
+        .WithDocs("ScheduleDeadLetters_Replay", "Replay schedule dead letter", "Re-dispatches a failed trigger execution via the job execution pipeline.")
+        .RequireCroniqTenantScope(CroniqScopes.SchedulesDeadLetter);
     }
 
     private sealed class ScheduleDeadLetterApiMarker

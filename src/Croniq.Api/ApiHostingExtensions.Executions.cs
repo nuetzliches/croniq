@@ -28,11 +28,6 @@ public static partial class ApiHostingExtensions
             [FromServices] IExecutionHistoryReader historyReader,
             CancellationToken cancellationToken) =>
         {
-            if (string.IsNullOrWhiteSpace(environment))
-            {
-                return Results.BadRequest(new { error = "missing-environment", message = "Query parameter 'environment' is required." });
-            }
-
             if (startedAfterUtc.HasValue && startedBeforeUtc.HasValue && startedAfterUtc.Value >= startedBeforeUtc.Value)
             {
                 return Results.BadRequest(new { error = "invalid-range", message = "startedAfterUtc must be earlier than startedBeforeUtc." });
@@ -52,12 +47,6 @@ public static partial class ApiHostingExtensions
                 }
             }
 
-            var authFailure = TenantGuard.EnsureTenant(callerContextAccessor, tenantId, environment, CroniqScopes.ExecutionsRead);
-            if (authFailure is not null)
-            {
-                return authFailure;
-            }
-
             var scope = new PartitionScope(tenantId, environment);
             var query = new ExecutionHistoryQuery
             {
@@ -72,7 +61,8 @@ public static partial class ApiHostingExtensions
             var payload = summaries.Select(ToExecutionResponse).ToArray();
             return Results.Ok(payload);
         })
-        .WithDocs("Executions_List", "List executions", "Returns execution summaries for the tenant/environment scope with optional filters.");
+        .WithDocs("Executions_List", "List executions", "Returns execution summaries for the tenant/environment scope with optional filters.")
+        .RequireCroniqTenantScope(CroniqScopes.ExecutionsRead);
 
         app.MapGet("/tenants/{tenantId}/executions/{executionId}", async (
             string tenantId,
@@ -82,17 +72,6 @@ public static partial class ApiHostingExtensions
             [FromServices] IExecutionHistoryReader historyReader,
             CancellationToken cancellationToken) =>
         {
-            if (string.IsNullOrWhiteSpace(environment))
-            {
-                return Results.BadRequest(new { error = "missing-environment", message = "Query parameter 'environment' is required." });
-            }
-
-            var authFailure = TenantGuard.EnsureTenant(callerContextAccessor, tenantId, environment, CroniqScopes.ExecutionsRead);
-            if (authFailure is not null)
-            {
-                return authFailure;
-            }
-
             var summary = await historyReader.GetExecutionAsync(executionId, cancellationToken).ConfigureAwait(false);
             if (summary is null
                 || !string.Equals(summary.TenantId, tenantId, StringComparison.OrdinalIgnoreCase)
@@ -103,6 +82,7 @@ public static partial class ApiHostingExtensions
 
             return Results.Ok(ToExecutionResponse(summary));
         })
-        .WithDocs("Executions_Get", "Get execution", "Returns metadata for a single execution in the tenant/environment scope.");
+        .WithDocs("Executions_Get", "Get execution", "Returns metadata for a single execution in the tenant/environment scope.")
+        .RequireCroniqTenantScope(CroniqScopes.ExecutionsRead);
     }
 }

@@ -20,6 +20,7 @@ public static partial class ApiHostingExtensions
             string tenantId,
             string? environment,
             IssueTokenRequest request,
+            HttpContext httpContext,
             [FromServices] ICallerContextAccessor callerContextAccessor,
             [FromServices] IApiKeyStore apiKeyStore,
             [FromServices] ICroniqTokenIssuer tokenIssuer,
@@ -31,20 +32,22 @@ public static partial class ApiHostingExtensions
                     environment,
                     routeClientId: null,
                     request,
-                    callerContextAccessor,
+                    httpContext,
                     apiKeyStore,
                     tokenIssuer,
                     logger,
                     cancellationToken)
                 .ConfigureAwait(false);
         })
-        .WithDocs("Tokens_Issue_Tenant", "Issue tenant token", "Mints a Croniq-signed bearer token for the specified client (tenant-level variant).");
+        .WithDocs("Tokens_Issue_Tenant", "Issue tenant token", "Mints a Croniq-signed bearer token for the specified client (tenant-level variant).")
+        .RequireCroniqTokenIssueScopes(CroniqScopes.ApiKeysManage);
 
         app.MapPost("/tenants/{tenantId}/api-clients/{clientId}/tokens", async (
             string tenantId,
             string clientId,
             string? environment,
             IssueTokenRequest request,
+            HttpContext httpContext,
             [FromServices] ICallerContextAccessor callerContextAccessor,
             [FromServices] IApiKeyStore apiKeyStore,
             [FromServices] ICroniqTokenIssuer tokenIssuer,
@@ -56,14 +59,15 @@ public static partial class ApiHostingExtensions
                     environment,
                     clientId,
                     request,
-                    callerContextAccessor,
+                    httpContext,
                     apiKeyStore,
                     tokenIssuer,
                     logger,
                     cancellationToken)
                 .ConfigureAwait(false);
         })
-        .WithDocs("Tokens_Issue_Client", "Issue client token", "Same payload as the tenant route but infers the clientId from the path.");
+        .WithDocs("Tokens_Issue_Client", "Issue client token", "Same payload as the tenant route but infers the clientId from the path.")
+        .RequireCroniqTokenIssueScopes(CroniqScopes.ApiKeysManage);
     }
 
     private static async Task<IResult> IssueTokenAsync(
@@ -71,7 +75,7 @@ public static partial class ApiHostingExtensions
         string? environment,
         string? routeClientId,
         IssueTokenRequest request,
-        ICallerContextAccessor callerContextAccessor,
+        HttpContext httpContext,
         IApiKeyStore apiKeyStore,
         ICroniqTokenIssuer tokenIssuer,
         ILogger<ApiKeyAdminApiMarker> logger,
@@ -88,7 +92,16 @@ public static partial class ApiHostingExtensions
             return Results.BadRequest(new { error = "invalid-ttl", message = "TtlMinutes must be greater than zero." });
         }
 
-        var client = await apiKeyStore.GetClientAsync(tenantId, clientId, cancellationToken).ConfigureAwait(false);
+        ApiClientDescriptor? client = null;
+        if (httpContext.Items.TryGetValue(typeof(ApiClientDescriptor), out var cached)
+            && cached is ApiClientDescriptor cachedClient
+            && string.Equals(cachedClient.TenantId, tenantId, StringComparison.OrdinalIgnoreCase)
+            && string.Equals(cachedClient.ClientId, clientId, StringComparison.OrdinalIgnoreCase))
+        {
+            client = cachedClient;
+        }
+
+        client ??= await apiKeyStore.GetClientAsync(tenantId, clientId, cancellationToken).ConfigureAwait(false);
         if (client is null)
         {
             return Results.NotFound(new { error = "api-client-not-found", clientId });
@@ -107,11 +120,6 @@ public static partial class ApiHostingExtensions
         }
 
         var guardEnvironment = environment ?? client.EnvironmentTag;
-        var authFailure = WebhookAuthorization.Ensure(callerContextAccessor, tenantId, guardEnvironment, CroniqScopes.ApiKeysManage);
-        if (authFailure is not null)
-        {
-            return authFailure;
-        }
 
         var allowedScopes = client.Scopes ?? Array.Empty<string>();
         var requestedScopes = NormalizeScopes(request.Scopes);

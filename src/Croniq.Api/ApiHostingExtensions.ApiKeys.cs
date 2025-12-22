@@ -21,12 +21,6 @@ public static partial class ApiHostingExtensions
             [FromServices] ILogger<ApiKeyAdminApiMarker> logger,
             CancellationToken cancellationToken) =>
         {
-            var authFailure = WebhookAuthorization.Ensure(callerContextAccessor, tenantId, request.EnvironmentTag, CroniqScopes.ApiKeysManage);
-            if (authFailure is not null)
-            {
-                return authFailure;
-            }
-
             if (string.IsNullOrWhiteSpace(request.ClientId))
             {
                 return Results.BadRequest(new { error = "client-required", message = "ClientId is required." });
@@ -52,7 +46,8 @@ public static partial class ApiHostingExtensions
                 return Results.Problem(statusCode: StatusCodes.Status500InternalServerError, title: "api-key-issue-failed", detail: ex.Message);
             }
         })
-        .WithDocs("ApiKeys_Issue", "Issue API key", "Creates a new API key for the specified tenant client and returns the plaintext once.");
+        .WithDocs("ApiKeys_Issue", "Issue API key", "Creates a new API key for the specified tenant client and returns the plaintext once.")
+        .RequireCroniqTenantScopeFromBody<IssueApiKeyRequest>(request => request.EnvironmentTag, CroniqScopes.ApiKeysManage);
 
         app.MapPost("/tenants/{tenantId}/api-keys/{keyId}/rotate", async (
             string tenantId,
@@ -63,12 +58,6 @@ public static partial class ApiHostingExtensions
             [FromServices] ILogger<ApiKeyAdminApiMarker> logger,
             CancellationToken cancellationToken) =>
         {
-            var authFailure = WebhookAuthorization.Ensure(callerContextAccessor, tenantId, environment, CroniqScopes.ApiKeysManage);
-            if (authFailure is not null)
-            {
-                return authFailure;
-            }
-
             try
             {
                 var result = await apiKeyStore.RotateAsync(tenantId, keyId, cancellationToken).ConfigureAwait(false);
@@ -85,7 +74,8 @@ public static partial class ApiHostingExtensions
                 return Results.Problem(statusCode: StatusCodes.Status500InternalServerError, title: "api-key-rotation-failed", detail: ex.Message);
             }
         })
-        .WithDocs("ApiKeys_Rotate", "Rotate API key", "Revokes an existing API key and returns a fresh secret for the same client.");
+        .WithDocs("ApiKeys_Rotate", "Rotate API key", "Revokes an existing API key and returns a fresh secret for the same client.")
+        .RequireCroniqTenantScope(requireEnvironment: false, CroniqScopes.ApiKeysManage);
 
         app.MapDelete("/tenants/{tenantId}/api-keys/{keyId}", async (
             string tenantId,
@@ -95,12 +85,6 @@ public static partial class ApiHostingExtensions
             [FromServices] IApiKeyStore apiKeyStore,
             CancellationToken cancellationToken) =>
         {
-            var authFailure = WebhookAuthorization.Ensure(callerContextAccessor, tenantId, environment, CroniqScopes.ApiKeysManage);
-            if (authFailure is not null)
-            {
-                return authFailure;
-            }
-
             var revoked = await apiKeyStore.RevokeAsync(tenantId, keyId, cancellationToken).ConfigureAwait(false);
             if (!revoked)
             {
@@ -109,6 +93,7 @@ public static partial class ApiHostingExtensions
 
             return Results.NoContent();
         })
-        .WithDocs("ApiKeys_Delete", "Revoke API key", "Immediately revokes an API key for the tenant.");
+        .WithDocs("ApiKeys_Delete", "Revoke API key", "Immediately revokes an API key for the tenant.")
+        .RequireCroniqTenantScope(requireEnvironment: false, CroniqScopes.ApiKeysManage);
     }
 }

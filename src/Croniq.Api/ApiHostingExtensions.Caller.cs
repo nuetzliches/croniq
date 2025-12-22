@@ -14,14 +14,9 @@ public static partial class ApiHostingExtensions
 
         app.MapGet("/me", ([FromServices] ICallerContextAccessor callerContextAccessor) =>
         {
-            var caller = callerContextAccessor.Current;
-            if (caller is null || !caller.IsActive)
-            {
-                return Results.Unauthorized();
-            }
-
-            return Results.Ok(ToCallerInfoResponse(caller));
+            return Results.Ok(ToCallerInfoResponse(callerContextAccessor.Current!));
         })
-        .WithDocs("Caller_Get", "Inspect caller", "Returns the current caller context (tenant, environment, scopes) after authentication.");
+        .WithDocs("Caller_Get", "Inspect caller", "Returns the current caller context (tenant, environment, scopes) after authentication.")
+        .RequireCroniqCaller();
     }
 }

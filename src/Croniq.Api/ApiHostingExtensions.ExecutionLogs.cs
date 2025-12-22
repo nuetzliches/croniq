@@ -1,5 +1,6 @@
 using System;
 using Croniq.Auth.Abstractions;
+using Croniq.Auth.Core;
 using Croniq.Core.Execution;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
@@ -49,7 +50,7 @@ public static partial class ApiHostingExtensions
                 return;
             }
 
-            var authFailure = TenantGuard.EnsureTenant(callerContextAccessor, logTenantId!, environmentTag, Array.Empty<string>());
+            var authFailure = TenantGuard.EnsureTenant(callerContextAccessor, logTenantId!, environmentTag, CroniqScopes.ExecutionsRead);
             if (authFailure is not null)
             {
                 await authFailure.ExecuteAsync(httpContext).ConfigureAwait(false);
@@ -67,6 +68,7 @@ public static partial class ApiHostingExtensions
                 await response.WriteAsync("\n", cancellationToken).ConfigureAwait(false);
             }
         })
-        .WithDocs("Executions_GetLogs", "Stream execution logs", "Streams NDJSON execution logs for a tenant-scoped execution after authorizing tenant scope.");
+        .WithDocs("Executions_GetLogs", "Stream execution logs", "Streams NDJSON execution logs for a tenant-scoped execution after authorizing tenant scope.")
+        .RequireCroniqCaller();
     }
 }

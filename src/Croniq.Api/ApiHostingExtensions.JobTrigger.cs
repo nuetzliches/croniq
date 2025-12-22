@@ -6,6 +6,7 @@ using Croniq.Auth.Abstractions;
 using Croniq.Auth.Core;
 using Croniq.Core.Jobs;
 using Croniq.Sdk;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 
 namespace Croniq.Api;
@@ -18,20 +19,19 @@ public static partial class ApiHostingExtensions
 
         app.MapPost("/jobs/trigger", async (
             TriggerJobRequest request,
+            HttpContext httpContext,
             [FromServices] IJobRegistry registry,
             [FromServices] IJobTrigger jobTrigger,
             [FromServices] ICallerContextAccessor callerContextAccessor,
             CancellationToken cancellationToken) =>
         {
-            if (!JobKey.TryParse(request.JobKey, out var jobKey))
+            if (!httpContext.Items.TryGetValue(typeof(JobKey), out var cached)
+                || cached is not JobKey jobKey)
             {
-                return Results.BadRequest(new { error = "invalid-job-key", message = "JobKey must follow the Croniq format." });
-            }
-
-            var authFailure = TenantGuard.EnsureJobScope(callerContextAccessor, jobKey, CroniqScopes.JobsTrigger);
-            if (authFailure is not null)
-            {
-                return authFailure;
+                if (!JobKey.TryParse(request.JobKey, out jobKey))
+                {
+                    return Results.BadRequest(new { error = "invalid-job-key", message = "JobKey must follow the Croniq format." });
+                }
             }
 
             if (!registry.TryGet(jobKey, out _))
@@ -78,6 +78,7 @@ public static partial class ApiHostingExtensions
                 throw;
             }
         })
-        .WithDocs("Jobs_Trigger", "Trigger a job manually", "Executes a job immediately or schedules a one-off run when DelaySeconds is provided.");
+        .WithDocs("Jobs_Trigger", "Trigger a job manually", "Executes a job immediately or schedules a one-off run when DelaySeconds is provided.")
+        .RequireCroniqJobScopeFromBody<TriggerJobRequest>(request => request.JobKey, CroniqScopes.JobsTrigger);
     }
 }

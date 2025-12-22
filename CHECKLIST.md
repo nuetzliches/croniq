@@ -145,4 +145,4 @@
   - [ ] CodeQL-Code-Scanning Workflow hinzufügen (optional; abhängig von GHAS/Repo-Settings)
   - [ ] SonarQube/SonarCloud evaluieren (Signal/Noise, Kosten, Gate-Policy)
   - [ ] Roslyn-Analyzer-Set/Ruleset prüfen (z.B. .editorconfig/Directory.Build.props) und nur High-Signal-Regeln aktivieren
-- [ ] Aktuell haben wir in den Endpunkten (src\Croniq.Api) unterschiedliches Auth-Handling in den Extensions. Bitte normalisieren, gerne auch per FluentExtension und mit Scope Filter (multiple).
+- [x] Aktuell haben wir in den Endpunkten (src\Croniq.Api) unterschiedliches Auth-Handling in den Extensions. Bitte normalisieren, gerne auch per FluentExtension und mit Scope Filter (multiple). (2025-12-22)

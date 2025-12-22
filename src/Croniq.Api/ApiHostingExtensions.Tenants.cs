@@ -20,12 +20,6 @@ public static partial class ApiHostingExtensions
             [FromServices] ICallerContextAccessor callerContextAccessor,
             CancellationToken cancellationToken) =>
         {
-            var authFailure = TenantGuard.EnsureAdminScopes(callerContextAccessor, CroniqScopes.TenantsAdmin);
-            if (authFailure is not null)
-            {
-                return authFailure;
-            }
-
             if (request is null || string.IsNullOrWhiteSpace(request.Reference) || string.IsNullOrWhiteSpace(request.Name))
             {
                 return Results.BadRequest(new { error = "invalid-request", message = "Reference and name are required." });
@@ -34,7 +28,8 @@ public static partial class ApiHostingExtensions
             var descriptor = await tenantStore.CreateAsync(request.Reference, request.Name, cancellationToken).ConfigureAwait(false);
             return Results.Created($"/tenants/{descriptor.TenantId}", ToTenantResponse(descriptor));
         })
-        .WithDocs("Tenants_Create", "Create tenant", "Creates or updates a tenant record based on the provided reference and name.");
+        .WithDocs("Tenants_Create", "Create tenant", "Creates or updates a tenant record based on the provided reference and name.")
+        .RequireCroniqAdminScopes(CroniqScopes.TenantsAdmin);
 
         app.MapGet("/tenants", async (
             string? state,
@@ -42,12 +37,6 @@ public static partial class ApiHostingExtensions
             [FromServices] ICallerContextAccessor callerContextAccessor,
             CancellationToken cancellationToken) =>
         {
-            var authFailure = TenantGuard.EnsureAdminScopes(callerContextAccessor, CroniqScopes.TenantsAdmin);
-            if (authFailure is not null)
-            {
-                return authFailure;
-            }
-
             var normalizedState = string.IsNullOrWhiteSpace(state) ? "active" : state.Trim();
             if (!string.Equals(normalizedState, "active", StringComparison.OrdinalIgnoreCase)
                 && !string.Equals(normalizedState, "all", StringComparison.OrdinalIgnoreCase))
@@ -62,7 +51,8 @@ public static partial class ApiHostingExtensions
             var payload = filtered.Select(ToTenantResponse).ToArray();
             return Results.Ok(payload);
         })
-        .WithDocs("Tenants_List", "List tenants", "Returns tenant metadata. Use state=all to include inactive tenants.");
+        .WithDocs("Tenants_List", "List tenants", "Returns tenant metadata. Use state=all to include inactive tenants.")
+        .RequireCroniqAdminScopes(CroniqScopes.TenantsAdmin);
 
         app.MapGet("/tenants/{tenantId}", async (
             string tenantId,
@@ -70,12 +60,6 @@ public static partial class ApiHostingExtensions
             [FromServices] ICallerContextAccessor callerContextAccessor,
             CancellationToken cancellationToken) =>
         {
-            var authFailure = TenantGuard.EnsureAdminScopes(callerContextAccessor, CroniqScopes.TenantsAdmin);
-            if (authFailure is not null)
-            {
-                return authFailure;
-            }
-
             if (string.IsNullOrWhiteSpace(tenantId))
             {
                 return Results.BadRequest(new { error = "missing-tenant", message = "TenantId is required." });
@@ -89,7 +73,8 @@ public static partial class ApiHostingExtensions
 
             return Results.Ok(ToTenantResponse(descriptor));
         })
-        .WithDocs("Tenants_Get", "Get tenant", "Returns tenant metadata for the provided tenant identifier.");
+        .WithDocs("Tenants_Get", "Get tenant", "Returns tenant metadata for the provided tenant identifier.")
+        .RequireCroniqAdminScopes(CroniqScopes.TenantsAdmin);
 
         app.MapDelete("/tenants/{tenantId}", async (
             string tenantId,
@@ -97,12 +82,6 @@ public static partial class ApiHostingExtensions
             [FromServices] ICallerContextAccessor callerContextAccessor,
             CancellationToken cancellationToken) =>
         {
-            var authFailure = TenantGuard.EnsureAdminScopes(callerContextAccessor, CroniqScopes.TenantsAdmin);
-            if (authFailure is not null)
-            {
-                return authFailure;
-            }
-
             if (string.IsNullOrWhiteSpace(tenantId))
             {
                 return Results.BadRequest(new { error = "missing-tenant", message = "TenantId is required." });
@@ -116,6 +95,7 @@ public static partial class ApiHostingExtensions
 
             return Results.NoContent();
         })
-        .WithDocs("Tenants_Deactivate", "Deactivate tenant", "Marks the tenant as inactive without deleting historical data.");
+        .WithDocs("Tenants_Deactivate", "Deactivate tenant", "Marks the tenant as inactive without deleting historical data.")
+        .RequireCroniqAdminScopes(CroniqScopes.TenantsAdmin);
     }
 }

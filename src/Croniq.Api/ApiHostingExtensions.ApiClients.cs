@@ -20,17 +20,12 @@ public static partial class ApiHostingExtensions
             [FromServices] IApiKeyStore apiKeyStore,
             CancellationToken cancellationToken) =>
         {
-            var authFailure = WebhookAuthorization.Ensure(callerContextAccessor, tenantId, environment, CroniqScopes.ApiKeysManage);
-            if (authFailure is not null)
-            {
-                return authFailure;
-            }
-
             var clients = await apiKeyStore.ListClientsAsync(tenantId, environment, cancellationToken).ConfigureAwait(false);
             var payload = clients.Select(ToApiClientResponse).ToArray();
             return Results.Ok(payload);
         })
-        .WithDocs("ApiClients_List", "List API clients", "Returns all registered API clients for the tenant, optionally filtered by environment.");
+        .WithDocs("ApiClients_List", "List API clients", "Returns all registered API clients for the tenant, optionally filtered by environment.")
+        .RequireCroniqTenantScope(requireEnvironment: false, CroniqScopes.ApiKeysManage);
 
         app.MapPost("/tenants/{tenantId}/api-clients", async (
             string tenantId,
@@ -56,12 +51,6 @@ public static partial class ApiHostingExtensions
             var scopes = NormalizeScopes(request.Scopes);
             var isActive = request.IsActive ?? true;
 
-            var authFailure = WebhookAuthorization.Ensure(callerContextAccessor, tenantId, effectiveEnvironment, CroniqScopes.ApiKeysManage);
-            if (authFailure is not null)
-            {
-                return authFailure;
-            }
-
             var upsert = new ApiClientUpsertRequest(
                 tenantId,
                 request.ClientId,
@@ -73,7 +62,8 @@ public static partial class ApiHostingExtensions
             var descriptor = await apiKeyStore.UpsertClientAsync(upsert, cancellationToken).ConfigureAwait(false);
             return Results.Ok(ToApiClientResponse(descriptor));
         })
-        .WithDocs("ApiClients_Upsert", "Create or update API client", "Creates a tenant-scoped API client or updates metadata/scopes when the client already exists.");
+        .WithDocs("ApiClients_Upsert", "Create or update API client", "Creates a tenant-scoped API client or updates metadata/scopes when the client already exists.")
+        .RequireCroniqTenantScopeFromBodyOrQuery<UpsertApiClientRequest>(request => request.EnvironmentTag, requireEnvironment: false, CroniqScopes.ApiKeysManage);
 
         app.MapDelete("/tenants/{tenantId}/api-clients/{clientId}", async (
             string tenantId,
@@ -83,12 +73,6 @@ public static partial class ApiHostingExtensions
             [FromServices] IApiKeyStore apiKeyStore,
             CancellationToken cancellationToken) =>
         {
-            var authFailure = WebhookAuthorization.Ensure(callerContextAccessor, tenantId, environment, CroniqScopes.ApiKeysManage);
-            if (authFailure is not null)
-            {
-                return authFailure;
-            }
-
             var deleted = await apiKeyStore.DeleteClientAsync(tenantId, clientId, cancellationToken).ConfigureAwait(false);
             if (!deleted)
             {
@@ -97,7 +81,8 @@ public static partial class ApiHostingExtensions
 
             return Results.NoContent();
         })
-        .WithDocs("ApiClients_Delete", "Delete API client", "Deletes the API client metadata and revokes any associated API keys.");
+        .WithDocs("ApiClients_Delete", "Delete API client", "Deletes the API client metadata and revokes any associated API keys.")
+        .RequireCroniqTenantScope(requireEnvironment: false, CroniqScopes.ApiKeysManage);
 
         app.MapGet("/tenants/{tenantId}/api-clients/{clientId}", async (
             string tenantId,
@@ -107,12 +92,6 @@ public static partial class ApiHostingExtensions
             [FromServices] IApiKeyStore apiKeyStore,
             CancellationToken cancellationToken) =>
         {
-            var authFailure = WebhookAuthorization.Ensure(callerContextAccessor, tenantId, environment, CroniqScopes.ApiKeysManage);
-            if (authFailure is not null)
-            {
-                return authFailure;
-            }
-
             var client = await apiKeyStore.GetClientAsync(tenantId, clientId, cancellationToken).ConfigureAwait(false);
             if (client is null)
             {
@@ -121,6 +100,7 @@ public static partial class ApiHostingExtensions
 
             return Results.Ok(ToApiClientResponse(client));
         })
-        .WithDocs("ApiClients_Get", "Get API client", "Returns metadata about a tenant-scoped API client, including scopes and activity flags.");
+        .WithDocs("ApiClients_Get", "Get API client", "Returns metadata about a tenant-scoped API client, including scopes and activity flags.")
+        .RequireCroniqTenantScope(requireEnvironment: false, CroniqScopes.ApiKeysManage);
     }
 }
