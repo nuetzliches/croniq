@@ -32,7 +32,7 @@ $trxFile = "$sanitizedName.trx"
 Write-Host "::group::Running tests for $DisplayName"
 & dotnet test $Project `
     --configuration $Configuration `
-    --no-build `
+    --no-restore `
     --logger "trx;LogFileName=$trxFile" `
     --results-directory $ResultsDirectory `
     -p:CollectCoverage=true `

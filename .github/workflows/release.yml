@@ -45,7 +45,7 @@ jobs:
         run: dotnet build croniq.slnx --configuration Release --no-restore
 
       - name: Run full test suite
-        run: dotnet test croniq.slnx --configuration Release --no-build --logger "trx;LogFileName=release-tests.trx"
+        run: dotnet test croniq.slnx --configuration Release --no-restore --logger "trx;LogFileName=release-tests.trx"
 
       - name: Upload test results
         if: always()
