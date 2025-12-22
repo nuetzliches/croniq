@@ -1,4 +1,4 @@
-using Croniq.Core;
+using Croniq;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace Croniq.Sample.Jobs;

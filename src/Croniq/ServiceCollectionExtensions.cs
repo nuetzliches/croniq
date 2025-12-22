@@ -148,10 +148,23 @@ public static class ServiceCollectionExtensions
         return services;
     }
 
-    public static IServiceCollection AddCroniqJob<TJob>(this IServiceCollection services)
+    public static CroniqJobBuilder AddCroniqJob<TJob>(this IServiceCollection services)
         where TJob : class, IJob
     {
-        return Core.ServiceCollectionExtensions.AddCroniqJob<TJob>(services);
+        ArgumentNullException.ThrowIfNull(services);
+
+        Core.ServiceCollectionExtensions.AddCroniqJob<TJob>(services);
+
+        var attribute = typeof(TJob).GetCustomAttribute<CroniqJobAttribute>();
+        if (attribute is null)
+        {
+            throw new InvalidOperationException(
+                $"Type {typeof(TJob).FullName ?? typeof(TJob).Name} is missing [CroniqJob]. " +
+                "Add [CroniqJob(\"namespace\", \"name\")] or register via AddCroniqJob(namespace, name, handler)."
+            );
+        }
+
+        return new CroniqJobBuilder(services, attribute);
     }
 
     public static IServiceCollection AddCroniqJobsFromAssembly(this IServiceCollection services, Assembly assembly)

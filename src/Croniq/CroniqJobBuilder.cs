@@ -16,6 +16,10 @@ public sealed class CroniqJobBuilder
         _attribute = attribute ?? throw new ArgumentNullException(nameof(attribute));
     }
 
+    public IServiceCollection Services => _services;
+
+    public IServiceCollection And() => _services;
+
     public CroniqJobBuilder AddTrigger(string cronExpression, Action<CroniqTriggerSeedRegistration>? configure = null)
     {
         if (string.IsNullOrWhiteSpace(cronExpression))
