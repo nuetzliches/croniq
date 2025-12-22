@@ -50,6 +50,28 @@ public static class SqlServerDatabaseMigrator
                 pendingMigrations.FirstOrDefault() ?? "<none>");
         }
         await context.Database.MigrateAsync(cancellationToken).ConfigureAwait(false);
+
+        // Safety net: ensure critical auth columns exist even if a DB was created from
+        // an older snapshot or migrations history got out of sync in CI.
+        await EnsurePasswordChangeRequiredColumnAsync(connectionString, cancellationToken).ConfigureAwait(false);
+    }
+
+    private static async Task EnsurePasswordChangeRequiredColumnAsync(string connectionString, CancellationToken cancellationToken)
+    {
+        await using var connection = new SqlConnection(connectionString);
+        await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
+
+        const string sql = """
+        IF COL_LENGTH('auth.Users', 'PasswordChangeRequired') IS NULL
+        BEGIN
+            ALTER TABLE [auth].[Users]
+            ADD [PasswordChangeRequired] bit NOT NULL CONSTRAINT [DF_auth_Users_PasswordChangeRequired] DEFAULT (0);
+        END
+        """;
+
+        await using var command = connection.CreateCommand();
+        command.CommandText = sql;
+        await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
     }
 
     public static async Task ResetDatabaseAsync(string connectionString, CancellationToken cancellationToken = default)

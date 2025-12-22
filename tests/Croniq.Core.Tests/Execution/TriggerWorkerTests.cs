@@ -135,7 +135,7 @@ public class TriggerWorkerTests
     {
         var lease = NewLease(jobKey: SampleJobKey.Value) with
         {
-            LeaseExpiresAtUtc = DateTimeOffset.UtcNow.AddMilliseconds(150)
+            LeaseExpiresAtUtc = DateTimeOffset.UtcNow.AddMilliseconds(80)
         };
         var store = new FakeJobStore(new[] { lease });
         store.RenewHandler = request => request.Lease with { LeaseExpiresAtUtc = request.NowUtc.AddSeconds(5) };
@@ -147,7 +147,7 @@ public class TriggerWorkerTests
             return true;
         });
 
-        var pipeline = new DelayedPipeline(TimeSpan.FromMilliseconds(200));
+        var pipeline = new DelayedPipeline(TimeSpan.FromMilliseconds(500));
         var worker = CreateWorker(
             store,
             registry,

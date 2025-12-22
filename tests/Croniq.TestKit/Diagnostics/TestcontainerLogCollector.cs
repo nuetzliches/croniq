@@ -89,10 +89,34 @@ public static class TestcontainerLogCollector
     private static string Sanitize(string value)
     {
         var invalid = Path.GetInvalidFileNameChars();
+        // Ensure deterministic artifact names across OSes by also excluding characters
+        // that are illegal on Windows file systems (even when running on Linux/macOS).
+        // See: < > : " / \ | ? *
+        ReadOnlySpan<char> crossPlatformInvalid = ['<', '>', ':', '"', '/', '\\', '|', '?', '*'];
+
         var builder = new StringBuilder(value.Length);
-        foreach (var c in value)
+        var previousWasDash = false;
+
+        foreach (var raw in value)
         {
-            builder.Append(invalid.Contains(c) ? '-' : char.ToLowerInvariant(c));
+            var c = char.ToLowerInvariant(raw);
+            var isInvalid = invalid.Contains(raw)
+                            || raw < 32
+                            || crossPlatformInvalid.Contains(raw);
+
+            if (isInvalid)
+            {
+                if (!previousWasDash)
+                {
+                    builder.Append('-');
+                    previousWasDash = true;
+                }
+
+                continue;
+            }
+
+            builder.Append(c);
+            previousWasDash = c == '-';
         }
 
         var sanitized = builder.ToString().Trim('-');

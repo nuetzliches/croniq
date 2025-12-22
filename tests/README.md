@@ -1,5 +1,6 @@
 ## Testing Guidance
 
+- Prefer running the suites individually via `pwsh ./scripts/run-tests-individual.ps1` (or Windows PowerShell: `powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\run-tests-individual.ps1`) from the repo root. This avoids VS Code hangs caused by streaming large solution-wide `dotnet test croniq.slnx` output.
 - Run the full solution suite via `pwsh ./scripts/run-tests.ps1 -Configuration Debug` from the repo root. The script wires required env vars (`CRONIQ_SQL`, coverage reporting, binlogs) and executes `dotnet test croniq.slnx` outside of the VS Code extension host.
 - If you need to run `dotnet test croniq.slnx` manually, do so from an external (preferably elevated) terminal instead of the VS Code Test Explorer. This avoids the GitHub Copilot Chat log-rotation issue that can freeze the editor when large test outputs are streamed inside VS Code.
 
@@ -18,6 +19,12 @@ This folder contains all automated test suites that back the Croniq quality stra
 ```cmd
 :: Unit + contract suites (fast)
 dotnet test croniq.slnx --filter Category!=E2E
+
+:: Run all test projects individually (recommended inside VS Code)
+pwsh ./scripts/run-tests-individual.ps1
+
+:: Windows PowerShell alternative (no pwsh required)
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\run-tests-individual.ps1
 
 :: Observability smoke test (no Docker required)
 dotnet test tests\Croniq.Observability.Tests\Croniq.Observability.Tests.csproj
