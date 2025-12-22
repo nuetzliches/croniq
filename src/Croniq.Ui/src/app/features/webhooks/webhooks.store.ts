@@ -1,7 +1,7 @@
 import { Injectable, computed, inject, signal } from '@angular/core';
 import { tenantRxResource } from '@core/resource/tenant-rx-resource';
 import { TenantContextService } from '@core/tenant-context/tenant-context.service';
-import { isoFromEpochMs, nowIso, nowMs, tryIsoFromUnknown } from '@core/time/clock';
+import { nowIso, nowMs, tryIsoFromUnknown } from '@core/time/clock';
 import { CreateWebhookIpRuleRequest, RotateWebhookSecretRequest, UpsertWebhookEndpointRequest } from '@croniq/api-schema';
 import { CRONIQ_API_CLIENT, CroniqApiClient, TenantDeadLetterParams, TenantEnvironmentParams, TenantWebhookParams, TenantWebhookRuleParams, TenantWebhookUpsertParams, WebhookInvocationParams } from 'data-access';
 import { EMPTY, catchError, map, of, tap } from 'rxjs';
@@ -65,7 +65,7 @@ export class WebhooksStore {
 
             const tenantId = params.tenantId.trim();
             const environment = params.environment.trim();
-            if (!tenantId || !environment) {
+            if (!tenantId) {
                 return of(this.endpointsSignal());
             }
 
@@ -107,7 +107,7 @@ export class WebhooksStore {
         stream: ({ params, requestOptions }) => {
             const tenantId = params.tenantId.trim();
             const environment = params.environment.trim();
-            if (!tenantId || !environment) {
+            if (!tenantId) {
                 return of(this.deadLettersSignal().length);
             }
 
@@ -136,7 +136,7 @@ export class WebhooksStore {
             const tenantId = params.tenantId.trim();
             const environment = params.environment.trim();
             const hookKey = params.hookKey.trim();
-            if (!tenantId || !environment || !hookKey) {
+            if (!tenantId || !hookKey) {
                 return of(this.ipRulesSignal());
             }
 
@@ -180,13 +180,8 @@ export class WebhooksStore {
 
     refreshEndpoints(params: TenantEnvironmentParams): void {
         const tenantId = params.tenantId.trim();
-        const environment = params.environment.trim();
         if (!tenantId) {
             this.lastErrorSignal.set('Required context is missing — unable to load webhooks.');
-            return;
-        }
-        if (!environment) {
-            this.lastErrorSignal.set('Environment is not set — select an environment to load webhooks.');
             return;
         }
 

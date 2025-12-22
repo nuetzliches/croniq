@@ -117,13 +117,6 @@ export class SchedulesStore {
                 this.scheduleDetailSignal.set(null);
                 return of(null);
             }
-            if (!environment) {
-                this.scheduleDetailErrorSignal.set(
-                    'Environment is not set — select an environment to load schedule detail.',
-                );
-                this.scheduleDetailSignal.set(null);
-                return of(null);
-            }
 
             const request$ = this.api.getSchedule({ tenantId, environment, triggerId: trimmedId }, requestOptions);
 
@@ -176,7 +169,7 @@ export class SchedulesStore {
 
                 const tenantId = params.tenantId.trim();
                 const environment = params.environment.trim();
-                if (!tenantId || !environment) {
+                if (!tenantId) {
                     this.scheduleDeadLettersSignal.set([]);
                     return of([]);
                 }
@@ -245,10 +238,6 @@ export class SchedulesStore {
             this.deleteScheduleErrorSignal.set('Required context is missing — unable to delete schedules.');
             return;
         }
-        if (!environment.trim()) {
-            this.deleteScheduleErrorSignal.set('Environment is not set — select an environment to delete schedules.');
-            return;
-        }
 
         this.deleteScheduleLoadingSignal.set(true);
         this.deleteScheduleErrorSignal.set(null);
@@ -299,10 +288,6 @@ export class SchedulesStore {
         const { tenantId, environment } = this.tenantContext.snapshot();
         if (!tenantId.trim()) {
             this.upsertScheduleErrorSignal.set('Required context is missing — unable to save schedules.');
-            return;
-        }
-        if (!environment.trim()) {
-            this.upsertScheduleErrorSignal.set('Environment is not set — select an environment to upsert schedules.');
             return;
         }
 
@@ -360,10 +345,6 @@ export class SchedulesStore {
         const { tenantId, environment } = this.tenantContext.snapshot();
         if (!tenantId.trim()) {
             this.scheduleDeadLettersErrorSignal.set('Required context is missing — unable to replay dead letters.');
-            return;
-        }
-        if (!environment.trim()) {
-            this.scheduleDeadLettersErrorSignal.set('Environment is not set — select an environment to replay dead letters.');
             return;
         }
         if (!Number.isFinite(deadLetterId)) {

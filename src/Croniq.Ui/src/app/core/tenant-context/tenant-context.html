@@ -1,13 +1,16 @@
 <section class="space-y-5 rounded-2xl border border-white/10 bg-white/5 p-6 text-sm text-text">
   <header class="space-y-1">
+    @if (snapshot().environment.trim()) {
     <p class="text-xs uppercase tracking-[0.35em] text-text-muted">Environment</p>
     <h2 class="text-2xl font-semibold text-white">{{ snapshot().environment | uppercase }}</h2>
+    }
     <p class="text-xs text-text-muted">
       Blueprint {{ snapshot().blueprintVersion }} · {{ snapshot().region | uppercase }} · audited
       {{ snapshot().lastAuditedAt | date : 'short' }}
     </p>
   </header>
 
+  @if (snapshot().environment.trim()) {
   <section class="space-y-3 rounded-2xl border border-white/10 bg-white/5 p-4">
     <div class="space-y-2">
       <p class="text-xs uppercase tracking-[0.35em] text-text-muted">Environment</p>
@@ -27,6 +30,7 @@
       </div>
     </div>
   </section>
+  }
 
   <dl
     class="grid gap-4 rounded-2xl border border-white/10 bg-white/2 p-4 text-xs uppercase tracking-wide text-text-muted sm:grid-cols-2"

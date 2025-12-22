@@ -63,11 +63,6 @@ export class JobsStore {
                 this.jobRegistrySignal.set([]);
                 return of([]);
             }
-            if (!environment) {
-                this.jobRegistryErrorSignal.set('Environment is not set — select an environment to load jobs.');
-                this.jobRegistrySignal.set([]);
-                return of([]);
-            }
 
             const request$ = this.api.listJobs({ tenantId, environment }, requestOptions);
 
@@ -124,11 +119,6 @@ export class JobsStore {
 
             if (!tenantId) {
                 this.executionsErrorSignal.set('Required context is missing — unable to load executions.');
-                this.executionsSignal.set([]);
-                return of([]);
-            }
-            if (!environment) {
-                this.executionsErrorSignal.set('Environment is not set — select an environment to load executions.');
                 this.executionsSignal.set([]);
                 return of([]);
             }
@@ -194,11 +184,6 @@ export class JobsStore {
             const environment = params.environment.trim();
             if (!tenantId) {
                 this.jobDetailErrorSignal.set('Required context is missing — unable to load job detail.');
-                this.jobDetailSignal.set(null);
-                return of(null);
-            }
-            if (!environment) {
-                this.jobDetailErrorSignal.set('Environment is not set — select an environment to load job detail.');
                 this.jobDetailSignal.set(null);
                 return of(null);
             }
@@ -298,10 +283,6 @@ export class JobsStore {
         const { tenantId, environment } = this.tenantContext.snapshot();
         if (!tenantId.trim()) {
             this.deleteJobErrorSignal.set('Required context is missing — unable to delete jobs.');
-            return;
-        }
-        if (!environment.trim()) {
-            this.deleteJobErrorSignal.set('Environment is not set — select an environment to delete jobs.');
             return;
         }
 
