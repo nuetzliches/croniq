@@ -6,7 +6,6 @@
     <IsPackable>true</IsPackable>
     <IncludeBuildOutput>false</IncludeBuildOutput>
     <SuppressDependenciesWhenPacking>true</SuppressDependenciesWhenPacking>
-    <NoBuild>true</NoBuild>
   </PropertyGroup>
   <ItemGroup>
     <None Include="buildTransitive/Croniq.Usings.props" Pack="true"
