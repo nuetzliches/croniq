@@ -1,7 +1,7 @@
 import { Injectable, computed, inject, signal } from '@angular/core';
 import { tenantRxResource } from '@core/resource/tenant-rx-resource';
 import { TenantContextService } from '@core/tenant-context/tenant-context.service';
-import { isoFromEpochMs, nowIso, nowMs } from '@core/time/clock';
+import { nowIso, nowMs } from '@core/time/clock';
 import { IssueApiKeyRequest, IssueTokenRequest } from '@croniq/api-schema';
 import { CRONIQ_API_CLIENT, CroniqApiClient, TenantApiClientParams, TenantApiKeyParams, TenantScopedParams } from 'data-access';
 import { EMPTY, catchError, finalize, map, of, tap, type Observable } from 'rxjs';
@@ -33,7 +33,7 @@ export class TenantsStore {
     private readonly api = inject<CroniqApiClient>(CRONIQ_API_CLIENT);
     private readonly tenantContext = inject(TenantContextService);
 
-    private readonly activityLog = signal<ReadonlyArray<ApiKeyActivityEntry>>(seedActivity());
+    private readonly activityLog = signal<ReadonlyArray<ApiKeyActivityEntry>>([]);
     private readonly busySignal = signal(false);
     private readonly lastErrorSignal = signal<string | null>(null);
 
@@ -83,14 +83,26 @@ export class TenantsStore {
     readonly lastError = this.lastErrorSignal.asReadonly();
 
     issueApiKey(params: TenantScopedParams, payload: IssueApiKeyRequest): void {
-        const entry = this.appendActivity(params.tenantId, payload.environmentTag ?? null, 'issue');
+        const tenantId = this.resolveTenantId(params.tenantId);
+        if (!tenantId) {
+            this.lastErrorSignal.set('No tenant context available. Sign in again and retry.');
+            return;
+        }
+
+        const resolvedEnvironment = this.resolveEnvironmentTag(payload.environmentTag);
+        const resolvedPayload: IssueApiKeyRequest = {
+            ...payload,
+            environmentTag: resolvedEnvironment,
+        };
+
+        const entry = this.appendActivity(tenantId, resolvedEnvironment ?? null, 'issue');
         const requestOptions = this.tenantContext.createRequestOptions('tenants.issue-api-key', {
-            tenantId: params.tenantId,
-            environment: payload.environmentTag ?? undefined,
+            tenantId,
+            environment: resolvedEnvironment ?? undefined,
         });
 
         this.runWithBusy(
-            this.api.issueTenantApiKey(params, payload, requestOptions).pipe(
+            this.api.issueTenantApiKey({ tenantId }, resolvedPayload, requestOptions).pipe(
                 tap((response) => {
                     this.patchActivity(entry.id, {
                         status: 'success',
@@ -112,14 +124,21 @@ export class TenantsStore {
     }
 
     issueApiClientToken(params: TenantApiClientParams, payload: IssueTokenRequest): void {
-        const entry = this.appendActivity(params.tenantId, params.environment ?? null, 'issue-token');
+        const tenantId = this.resolveTenantId(params.tenantId);
+        if (!tenantId) {
+            this.lastErrorSignal.set('No tenant context available. Sign in again and retry.');
+            return;
+        }
+
+        const resolvedEnvironment = this.resolveEnvironmentTag(params.environment ?? null);
+        const entry = this.appendActivity(tenantId, resolvedEnvironment ?? null, 'issue-token');
         const requestOptions = this.tenantContext.createRequestOptions('tenants.issue-api-client-token', {
-            tenantId: params.tenantId,
-            environment: params.environment ?? undefined,
+            tenantId,
+            environment: resolvedEnvironment ?? undefined,
         });
 
         this.runWithBusy(
-            this.api.issueApiClientToken(params, payload, requestOptions).pipe(
+            this.api.issueApiClientToken({ ...params, tenantId, environment: resolvedEnvironment ?? undefined }, payload, requestOptions).pipe(
                 tap((response) => {
                     this.patchActivity(entry.id, {
                         status: 'success',
@@ -141,14 +160,21 @@ export class TenantsStore {
     }
 
     rotateApiKey(params: TenantApiKeyParams): void {
-        const entry = this.appendActivity(params.tenantId, params.environment ?? null, 'rotate');
+        const tenantId = this.resolveTenantId(params.tenantId);
+        if (!tenantId) {
+            this.lastErrorSignal.set('No tenant context available. Sign in again and retry.');
+            return;
+        }
+
+        const resolvedEnvironment = this.resolveEnvironmentTag(params.environment ?? null);
+        const entry = this.appendActivity(tenantId, resolvedEnvironment ?? null, 'rotate');
         this.runWithBusy(
             this.api
                 .rotateTenantApiKey(
-                    params,
+                    { ...params, tenantId, environment: resolvedEnvironment ?? undefined },
                     this.tenantContext.createRequestOptions('tenants.rotate-api-key', {
-                        tenantId: params.tenantId,
-                        environment: params.environment ?? undefined,
+                        tenantId,
+                        environment: resolvedEnvironment ?? undefined,
                     }),
                 )
                 .pipe(
@@ -170,14 +196,21 @@ export class TenantsStore {
     }
 
     deleteApiKey(params: TenantApiKeyParams): void {
-        const entry = this.appendActivity(params.tenantId, params.environment ?? null, 'delete');
+        const tenantId = this.resolveTenantId(params.tenantId);
+        if (!tenantId) {
+            this.lastErrorSignal.set('No tenant context available. Sign in again and retry.');
+            return;
+        }
+
+        const resolvedEnvironment = this.resolveEnvironmentTag(params.environment ?? null);
+        const entry = this.appendActivity(tenantId, resolvedEnvironment ?? null, 'delete');
         this.runWithBusy(
             this.api
                 .deleteTenantApiKey(
-                    params,
+                    { ...params, tenantId, environment: resolvedEnvironment ?? undefined },
                     this.tenantContext.createRequestOptions('tenants.delete-api-key', {
-                        tenantId: params.tenantId,
-                        environment: params.environment ?? undefined,
+                        tenantId,
+                        environment: resolvedEnvironment ?? undefined,
                     }),
                 )
                 .pipe(
@@ -199,13 +232,38 @@ export class TenantsStore {
     }
 
     lookupApiClient(params: TenantApiClientParams): void {
+        const tenantId = this.resolveTenantId(params.tenantId);
+        if (!tenantId) {
+            this.lastErrorSignal.set('No tenant context available. Sign in again and retry.');
+            return;
+        }
+
+        const resolvedEnvironment = this.resolveEnvironmentTag(params.environment ?? null);
+
         this.apiClientLookupParamsSignal.set({
             trigger: nowMs(),
-            tenantId: params.tenantId,
+            tenantId,
             clientId: params.clientId,
-            environment: params.environment ?? null,
+            environment: resolvedEnvironment ?? null,
         });
         this.apiClientLookupResource.reload();
+    }
+
+    private resolveTenantId(explicitTenantId: string | null | undefined): string {
+        const fromParams = explicitTenantId?.trim() ?? '';
+        if (fromParams) {
+            return fromParams;
+        }
+        return this.tenantContext.snapshot().tenantId.trim();
+    }
+
+    private resolveEnvironmentTag(explicitEnvironment: string | null | undefined): string | null {
+        const fromParams = explicitEnvironment?.trim() ?? '';
+        if (fromParams) {
+            return fromParams;
+        }
+        const fromContext = this.tenantContext.snapshot().environment?.trim() ?? '';
+        return fromContext || null;
     }
 
     private appendActivity(
@@ -244,30 +302,6 @@ export class TenantsStore {
             .subscribe();
     }
 
-}
-
-function seedActivity(): ReadonlyArray<ApiKeyActivityEntry> {
-    const now = nowMs();
-    return [
-        {
-            id: createEntryId(),
-            tenantId: 'cron-lab',
-            environment: 'production',
-            action: 'issue',
-            status: 'success',
-            detail: 'Key issued via CLI',
-            recordedAt: isoFromEpochMs(now - 1000 * 60 * 90),
-        },
-        {
-            id: createEntryId(),
-            tenantId: 'northwind',
-            environment: 'staging',
-            action: 'rotate',
-            status: 'error',
-            detail: 'Scope mismatch',
-            recordedAt: isoFromEpochMs(now - 1000 * 60 * 200),
-        },
-    ];
 }
 
 function createEntryId(): string {

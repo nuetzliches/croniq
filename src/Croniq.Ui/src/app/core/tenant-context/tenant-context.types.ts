@@ -1,4 +1,4 @@
-export type TenantEnvironment = 'dev' | 'staging' | 'production';
+export type TenantEnvironment = string;
 
 export type TenantContextState = {
     tenantId: string;

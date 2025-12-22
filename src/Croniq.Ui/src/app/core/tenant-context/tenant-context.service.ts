@@ -1,4 +1,5 @@
-import { Injectable, computed, effect, signal } from '@angular/core';
+import { Injectable, computed, effect, inject, signal } from '@angular/core';
+import { AuthSessionService } from '@core/auth/auth-session.service';
 import { nowIso } from '@core/time/clock';
 import { CallerContext, CroniqRequestOptions } from 'data-access';
 import { TenantContextState, TenantEnvironment } from './tenant-context.types';
@@ -6,7 +7,7 @@ import { TenantContextState, TenantEnvironment } from './tenant-context.types';
 const DEFAULT_TENANT_CONTEXT: TenantContextState = {
     tenantId: '',
     tenantName: '',
-    environment: 'staging',
+    environment: '',
     region: '',
     blueprintVersion: '',
     policyCount: 0,
@@ -19,11 +20,27 @@ const TENANT_STORAGE_KEY = 'croniq.ui.tenant-context';
 
 @Injectable({ providedIn: 'root' })
 export class TenantContextService {
+    private readonly authSession = inject(AuthSessionService);
     private readonly state = signal<TenantContextState>(loadStoredTenantContext() ?? DEFAULT_TENANT_CONTEXT);
 
     constructor() {
         // Intentionally empty: tenant presets were removed.
         // Tenant context is now operator-controlled and/or API-backed.
+        effect(() => {
+            const token = this.authSession.sessionToken()?.value ?? '';
+            const envFromToken = tryExtractEnvironmentFromJwt(token);
+            if (!envFromToken) {
+                return;
+            }
+
+            const current = this.state();
+            if ((current.environment ?? '').trim() === envFromToken) {
+                return;
+            }
+
+            this.setEnvironment(envFromToken);
+        });
+
         effect(() => {
             // keep effect hook so future derived syncing can be added without changing structure
             void this.state();
@@ -155,11 +172,11 @@ function loadStoredTenantContext(): TenantContextState | null {
 }
 
 function ensureTenantEnvironment(value: unknown): TenantEnvironment | null {
-    return isTenantEnvironment(value) ? value : null;
+    return isTenantEnvironment(value) ? value.trim() : null;
 }
 
 function isTenantEnvironment(value: unknown): value is TenantEnvironment {
-    return value === 'dev' || value === 'staging' || value === 'production';
+    return typeof value === 'string' && value.trim().length > 0;
 }
 
 function normalizeFeatureFlags(value: unknown): ReadonlyArray<string> {
@@ -179,5 +196,37 @@ function persistTenantContext(state: TenantContextState): void {
         window.localStorage.setItem(TENANT_STORAGE_KEY, JSON.stringify(state));
     } catch {
         // ignore persistence failures
+    }
+}
+
+function tryExtractEnvironmentFromJwt(token: string): string | null {
+    const trimmed = token.trim();
+    const parts = trimmed.split('.');
+    if (parts.length !== 3) {
+        return null;
+    }
+
+    const payloadJson = base64UrlDecodeToString(parts[1]);
+    if (!payloadJson) {
+        return null;
+    }
+
+    try {
+        const payload = JSON.parse(payloadJson) as Record<string, unknown>;
+        const env = payload['env'];
+        return typeof env === 'string' && env.trim().length > 0 ? env.trim() : null;
+    } catch {
+        return null;
+    }
+}
+
+function base64UrlDecodeToString(value: string): string | null {
+    const normalized = value.replace(/-/g, '+').replace(/_/g, '/');
+    const padLength = (4 - (normalized.length % 4)) % 4;
+    const padded = normalized + '='.repeat(padLength);
+    try {
+        return atob(padded);
+    } catch {
+        return null;
     }
 }

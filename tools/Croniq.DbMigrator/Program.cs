@@ -7,6 +7,7 @@ using Microsoft.AspNetCore.Identity;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using System.Linq;
+using System.Reflection;
 
 var connectionString = Environment.GetEnvironmentVariable("CRONIQ_SQL_CONNECTION");
 if (string.IsNullOrWhiteSpace(connectionString))
@@ -130,6 +131,8 @@ static async Task SeedAdminAsync(IServiceProvider provider, CancellationToken to
     var overwrite = string.Equals(Environment.GetEnvironmentVariable("CRONIQ_SEED_ADMIN_OVERWRITE"), "true", StringComparison.OrdinalIgnoreCase)
         || string.Equals(Environment.GetEnvironmentVariable("CRONIQ_SEED_ADMIN_OVERWRITE"), "1", StringComparison.OrdinalIgnoreCase);
 
+    var seedScopesRaw = (Environment.GetEnvironmentVariable("CRONIQ_SEED_ADMIN_SCOPES") ?? string.Empty).Trim();
+
     if (string.IsNullOrWhiteSpace(tenantReference))
     {
         logger.LogWarning("Admin seeding enabled but CRONIQ_SEED_TENANT_REFERENCE is empty; skipping.");
@@ -153,20 +156,8 @@ static async Task SeedAdminAsync(IServiceProvider provider, CancellationToken to
         return;
     }
 
-    var scopes = new[]
-    {
-        CroniqScopes.SchedulesWrite,
-        CroniqScopes.JobsRead,
-        CroniqScopes.JobsWrite,
-        CroniqScopes.JobsTrigger,
-        CroniqScopes.ExecutionsRead,
-        CroniqScopes.WebhooksRead,
-        CroniqScopes.WebhooksWrite,
-        CroniqScopes.WebhooksRotate,
-        CroniqScopes.WebhooksDeadLetter,
-        CroniqScopes.ApiKeysManage,
-        CroniqScopes.TenantsAdmin
-    };
+    var scopes = ResolveSeedAdminScopes(seedScopesRaw, logger);
+    logger.LogInformation("Admin seeding scopes: {Scopes}", string.Join(", ", scopes));
 
     // PasswordHasher does not incorporate the user object by default.
     var hasher = new PasswordHasher<object>();
@@ -185,6 +176,64 @@ static async Task SeedAdminAsync(IServiceProvider provider, CancellationToken to
         username,
         tenant.Reference,
         isPasswordChangeRequired);
+}
+
+static IReadOnlyCollection<string> ResolveSeedAdminScopes(string seedScopesRaw, ILogger logger)
+{
+    var fallback = new[]
+    {
+        CroniqScopes.SchedulesWrite,
+        CroniqScopes.JobsRead,
+        CroniqScopes.JobsWrite,
+        CroniqScopes.JobsTrigger,
+        CroniqScopes.ExecutionsRead,
+        CroniqScopes.WebhooksRead,
+        CroniqScopes.WebhooksWrite,
+        CroniqScopes.WebhooksRotate,
+        CroniqScopes.WebhooksDeadLetter,
+        CroniqScopes.ApiKeysManage,
+        CroniqScopes.TenantsAdmin
+    };
+
+    var allKnown = GetAllKnownScopes();
+
+    if (string.IsNullOrWhiteSpace(seedScopesRaw))
+    {
+        return fallback;
+    }
+
+    if (string.Equals(seedScopesRaw, "all", StringComparison.OrdinalIgnoreCase))
+    {
+        logger.LogInformation("Admin seeding: CRONIQ_SEED_ADMIN_SCOPES=all -> granting all scopes ({ScopeCount}).", allKnown.Count);
+        return allKnown;
+    }
+
+    var parsed = seedScopesRaw
+        .Split(new[] { ' ', '\t', '\r', '\n', ',' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+        .Distinct(StringComparer.OrdinalIgnoreCase)
+        .OrderBy(scope => scope, StringComparer.OrdinalIgnoreCase)
+        .ToArray();
+
+    if (parsed.Length == 0)
+    {
+        logger.LogWarning("Admin seeding: CRONIQ_SEED_ADMIN_SCOPES was set but empty after parsing; falling back to default scope set.");
+        return fallback;
+    }
+
+    logger.LogInformation("Admin seeding: using custom scope set ({ScopeCount}).", parsed.Length);
+    return parsed;
+}
+
+static IReadOnlyCollection<string> GetAllKnownScopes()
+{
+    // Keep 'all' in sync with CroniqScopes without duplicating the list in multiple places.
+    return typeof(CroniqScopes)
+        .GetFields(BindingFlags.Public | BindingFlags.Static)
+        .Where(field => field is { IsLiteral: true, IsInitOnly: false } && field.FieldType == typeof(string))
+        .Select(field => (string)field.GetRawConstantValue()!)
+        .Distinct(StringComparer.OrdinalIgnoreCase)
+        .OrderBy(scope => scope, StringComparer.OrdinalIgnoreCase)
+        .ToArray();
 }
 
 static bool IsDatabaseProvisioningError(SqlException exception)

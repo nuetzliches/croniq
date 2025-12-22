@@ -73,3 +73,5 @@ services:
       CRONIQ_SEED_ADMIN_USERNAME: ${CRONIQ_SEED_ADMIN_USERNAME:-admin}
       CRONIQ_SEED_ADMIN_PASSWORD: ${CRONIQ_SEED_ADMIN_PASSWORD:-admin}
       CRONIQ_SEED_ADMIN_PASSWORD_CHANGE_REQUIRED: ${CRONIQ_SEED_ADMIN_PASSWORD_CHANGE_REQUIRED:-true}
+      # Optional: override scopes for the seeded admin. Supports comma/whitespace separators or "all".
+      CRONIQ_SEED_ADMIN_SCOPES: ${CRONIQ_SEED_ADMIN_SCOPES:-}

@@ -12,7 +12,7 @@
     <div class="space-y-2">
       <p class="text-xs uppercase tracking-[0.35em] text-text-muted">Environment</p>
       <div class="flex flex-wrap gap-2">
-        @for (environment of environments; track environment) {
+        @for (environment of environments(); track environment) {
         <button
           type="button"
           class="rounded-full border px-3 py-1 text-xs font-semibold uppercase tracking-wide"

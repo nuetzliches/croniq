@@ -32,6 +32,8 @@ public sealed class CroniqApiOptions
     /// How often to sweep stale rate limiter entries. Default: 2 minutes.
     /// </summary>
     public TimeSpan RateLimiterCacheCleanupInterval { get; set; } = TimeSpan.FromMinutes(2);
+
+    // Intentionally no "known environments" list: environment selection is token-bound and not discoverable via API.
 }
 
 public sealed class TenantRateLimitOptions

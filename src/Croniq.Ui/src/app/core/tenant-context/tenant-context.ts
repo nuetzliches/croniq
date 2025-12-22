@@ -1,5 +1,5 @@
 import { DatePipe, UpperCasePipe } from '@angular/common';
-import { ChangeDetectionStrategy, Component, inject } from '@angular/core';
+import { ChangeDetectionStrategy, Component, computed, inject } from '@angular/core';
 import { TenantContextService } from './tenant-context.service';
 import { TenantEnvironment } from './tenant-context.types';
 
@@ -14,7 +14,9 @@ export class TenantContext {
 
   readonly snapshot = this.tenantContext.snapshot;
   readonly flags = this.tenantContext.featureFlags;
-  readonly environments: ReadonlyArray<TenantEnvironment> = ['dev', 'staging', 'production'];
+
+  // Environment selection is token-bound; without a discovery endpoint we only show the current environment.
+  readonly environments = computed<ReadonlyArray<TenantEnvironment>>(() => [this.snapshot().environment]);
 
   selectEnvironment(environment: TenantEnvironment): void {
     this.tenantContext.setEnvironment(environment);
