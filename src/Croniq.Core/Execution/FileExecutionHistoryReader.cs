@@ -62,13 +62,13 @@ public sealed class FileExecutionHistoryReader : IExecutionHistoryReader
             }
 
             results.Add(summary);
-            if (results.Count >= normalized.Limit)
-            {
-                break;
-            }
         }
 
-        return results;
+        return results
+            .OrderByDescending(summary => summary.StartedAtUtc)
+            .ThenByDescending(summary => summary.ExecutionId, StringComparer.OrdinalIgnoreCase)
+            .Take(normalized.Limit)
+            .ToArray();
     }
 
     public async Task<ExecutionSummary?> GetExecutionAsync(string executionId, CancellationToken cancellationToken)
