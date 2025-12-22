@@ -14,6 +14,7 @@ internal static class EndpointAuthExtensions
     {
         _ = builder ?? throw new ArgumentNullException(nameof(builder));
 
+        builder.WithMetadata(new CroniqAuthEndpointGuardMetadata(CroniqAuthGuardKind.Caller));
         return builder.AddEndpointFilter(new CroniqCallerEndpointFilter());
     }
 
@@ -21,6 +22,7 @@ internal static class EndpointAuthExtensions
     {
         _ = builder ?? throw new ArgumentNullException(nameof(builder));
 
+        builder.WithMetadata(new CroniqAuthEndpointGuardMetadata(CroniqAuthGuardKind.AdminScopes, requiredScopes ?? Array.Empty<string>()));
         return builder.AddEndpointFilter(new CroniqAdminScopesEndpointFilter(requiredScopes ?? Array.Empty<string>()));
     }
 
@@ -36,6 +38,7 @@ internal static class EndpointAuthExtensions
     {
         _ = builder ?? throw new ArgumentNullException(nameof(builder));
 
+        builder.WithMetadata(new CroniqAuthEndpointGuardMetadata(CroniqAuthGuardKind.TenantScope, requiredScopes ?? Array.Empty<string>(), requireEnvironment));
         return builder.AddEndpointFilter(new CroniqTenantScopeEndpointFilter(
             tenantRouteKey: "tenantId",
             environmentQueryKey: "environment",
@@ -51,6 +54,7 @@ internal static class EndpointAuthExtensions
         _ = builder ?? throw new ArgumentNullException(nameof(builder));
         _ = environmentSelector ?? throw new ArgumentNullException(nameof(environmentSelector));
 
+        builder.WithMetadata(new CroniqAuthEndpointGuardMetadata(CroniqAuthGuardKind.TenantScopeFromBody, requiredScopes ?? Array.Empty<string>(), false));
         return builder.AddEndpointFilter(new CroniqTenantScopeFromBodyEndpointFilter<TRequest>(
             tenantRouteKey: "tenantId",
             environmentQueryKey: null,
@@ -68,6 +72,7 @@ internal static class EndpointAuthExtensions
         _ = builder ?? throw new ArgumentNullException(nameof(builder));
         _ = environmentSelector ?? throw new ArgumentNullException(nameof(environmentSelector));
 
+        builder.WithMetadata(new CroniqAuthEndpointGuardMetadata(CroniqAuthGuardKind.TenantScopeFromBodyOrQuery, requiredScopes ?? Array.Empty<string>(), requireEnvironment));
         return builder.AddEndpointFilter(new CroniqTenantScopeFromBodyEndpointFilter<TRequest>(
             tenantRouteKey: "tenantId",
             environmentQueryKey: "environment",
@@ -80,6 +85,7 @@ internal static class EndpointAuthExtensions
     {
         _ = builder ?? throw new ArgumentNullException(nameof(builder));
 
+        builder.WithMetadata(new CroniqAuthEndpointGuardMetadata(CroniqAuthGuardKind.TokenIssue, requiredScopes ?? Array.Empty<string>(), false));
         return builder.AddEndpointFilter(new CroniqTokenIssueEndpointFilter(requiredScopes ?? Array.Empty<string>()));
     }
 
@@ -91,7 +97,44 @@ internal static class EndpointAuthExtensions
         _ = builder ?? throw new ArgumentNullException(nameof(builder));
         _ = jobKeySelector ?? throw new ArgumentNullException(nameof(jobKeySelector));
 
+        builder.WithMetadata(new CroniqAuthEndpointGuardMetadata(CroniqAuthGuardKind.JobScopeFromBody, requiredScopes ?? Array.Empty<string>(), false));
         return builder.AddEndpointFilter(new CroniqJobScopeFromBodyEndpointFilter<TRequest>(jobKeySelector, requiredScopes ?? Array.Empty<string>()));
+    }
+
+    internal enum CroniqAuthGuardKind
+    {
+        Caller = 0,
+        AdminScopes = 1,
+        TenantScope = 2,
+        TenantScopeFromBody = 3,
+        TenantScopeFromBodyOrQuery = 4,
+        TokenIssue = 5,
+        JobScopeFromBody = 6,
+        TenantScopeDerived = 7,
+        JobScopeDerived = 8
+    }
+
+    internal interface ICroniqAuthEndpointGuardMetadata
+    {
+        CroniqAuthGuardKind Kind { get; }
+        bool RequireEnvironment { get; }
+        string[] RequiredScopes { get; }
+    }
+
+    internal sealed record CroniqAuthEndpointGuardMetadata(
+        CroniqAuthGuardKind Kind,
+        string[] RequiredScopes,
+        bool RequireEnvironment) : ICroniqAuthEndpointGuardMetadata
+    {
+        public CroniqAuthEndpointGuardMetadata(CroniqAuthGuardKind kind)
+            : this(kind, Array.Empty<string>(), false)
+        {
+        }
+
+        public CroniqAuthEndpointGuardMetadata(CroniqAuthGuardKind kind, string[] requiredScopes)
+            : this(kind, requiredScopes ?? Array.Empty<string>(), false)
+        {
+        }
     }
 
     private sealed class CroniqCallerEndpointFilter : IEndpointFilter

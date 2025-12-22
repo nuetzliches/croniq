@@ -69,6 +69,10 @@ public static partial class ApiHostingExtensions
             }
         })
         .WithDocs("Executions_GetLogs", "Stream execution logs", "Streams NDJSON execution logs for a tenant-scoped execution after authorizing tenant scope.")
+        .WithMetadata(new EndpointAuthExtensions.CroniqAuthEndpointGuardMetadata(
+            EndpointAuthExtensions.CroniqAuthGuardKind.TenantScopeDerived,
+            new[] { CroniqScopes.ExecutionsRead },
+            false))
         .RequireCroniqCaller();
     }
 }

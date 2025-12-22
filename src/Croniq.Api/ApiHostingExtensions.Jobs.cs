@@ -213,7 +213,11 @@ public static partial class ApiHostingExtensions
 
             return Results.Created($"/tenants/{tenantId}/schedules/{Uri.EscapeDataString(trigger.TriggerId)}", new { trigger.TriggerId, trigger.JobKey, trigger.ScheduleExpression });
         })
-        .WithDocs("Schedules_Upsert", "Create or update a schedule", "Registers a Cron-based trigger for the specified tenant-scoped job key.");
+        .WithDocs("Schedules_Upsert", "Create or update a schedule", "Registers a Cron-based trigger for the specified tenant-scoped job key.")
+        .WithMetadata(new EndpointAuthExtensions.CroniqAuthEndpointGuardMetadata(
+            EndpointAuthExtensions.CroniqAuthGuardKind.JobScopeDerived,
+            new[] { CroniqScopes.SchedulesWrite },
+            false));
 
         app.MapGet("/tenants/{tenantId}/schedules", async (
             string tenantId,
