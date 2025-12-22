@@ -4,6 +4,11 @@ setlocal enabledelayedexpansion
 set ROOT=%~dp0..
 cd /d "%ROOT%" || exit /b 1
 
+if /I "%CRONIQ_DEVSTACK_TRACE%"=="1" (
+    echo [devstack] TRACE enabled.
+    echo on
+)
+
 REM Help / usage
 if /I "%~1"=="--help" goto help
 if /I "%~1"=="-h" goto help
@@ -24,7 +29,7 @@ if not exist ".env" (
 )
 
 set COMPOSE_ARGS=-f infra\docker\docker-compose.yml -f infra\docker\docker-compose.dev.yml -f infra\docker\docker-compose.observability.yml
-set DEFAULT_PROFILES=--profile worker
+set DEFAULT_PROFILES=--profile api --profile worker
 
 if "%CRONIQ_API_HTTP_PORT%"=="" set CRONIQ_API_HTTP_PORT=5080
 if "%CRONIQ_API_BASEURL%"=="" set CRONIQ_API_BASEURL=http://localhost:%CRONIQ_API_HTTP_PORT%
@@ -109,8 +114,9 @@ goto parse
 
 :parsed
 
-REM Avoid duplicate worker profile if the user already passed it explicitly.
-echo %USER_PROFILES% | find /I "--profile worker" >nul
+REM If the user passes any explicit --profile flags, do not apply defaults.
+REM This prevents surprising behavior when callers want full control.
+echo %USER_PROFILES% | find /I "--profile" >nul
 if not errorlevel 1 set DEFAULT_PROFILES=
 
 if not "%CRONIQ_DEVSTACK_PROFILES%"=="" (
@@ -241,19 +247,26 @@ if errorlevel 1 (
 call :wait_for_migrator "%COMPOSE_ARGS%"
 if errorlevel 1 exit /b 1
 
+if /I "%CRONIQ_DEVSTACK_TRACE%"=="1" echo [devstack] Step: maybe_wait_for_api
 call :maybe_wait_for_api "%PROFILE_ARGS%" "%HEALTH_URL%" "%RUN_SAMPLE%"
 if errorlevel 1 exit /b 1
 
+if /I "%CRONIQ_DEVSTACK_TRACE%"=="1" echo [devstack] Step: maybe_start_sample
+
 call :maybe_start_sample "%RUN_SAMPLE%" "%HEALTH_URL%" "%PROFILE_ARGS%"
 if errorlevel 1 exit /b 1
+
+if /I "%CRONIQ_DEVSTACK_TRACE%"=="1" echo [devstack] Step: maybe_start_ui
 
 call :maybe_start_ui "%UI_ENABLED%"
 if errorlevel 1 exit /b 1
 
 echo [devstack] Croniq dev stack is ready.
 
-call :maybe_follow_sample "%RUN_SAMPLE%" "%FOLLOW_SAMPLE%"
-if errorlevel 1 exit /b 1
+if not "%RUN_SAMPLE%"=="" if "%FOLLOW_SAMPLE%"=="1" (
+    call :maybe_follow_sample "%RUN_SAMPLE%" "%FOLLOW_SAMPLE%"
+    if errorlevel 1 exit /b 1
+)
 
 exit /b 0
 
@@ -363,70 +376,94 @@ endlocal & exit /b 0
 setlocal EnableExtensions DisableDelayedExpansion
 set "ENABLE=%~1"
 
-if not "%ENABLE%"=="1" (endlocal & exit /b 0)
+if not "%ENABLE%"=="1" goto maybe_start_ui_done
 
 REM We start the UI in a separate PowerShell window (dev-only).
 set "UI_DIR=src\Croniq.Ui"
-if not exist "%UI_DIR%\package.json" (
-    echo [devstack] UI not started: %UI_DIR%\package.json not found.
-    endlocal & exit /b 0
-)
+if not exist "%UI_DIR%\package.json" goto ui_not_found
 
 REM Best-effort check for npm.
 where npm >nul 2>&1
-if errorlevel 1 (
-    echo [devstack] UI not started: npm not found on PATH.
-    echo [devstack] Install Node.js + npm, then rerun devstack-up.
-    endlocal & exit /b 0
-)
+if errorlevel 1 goto npm_missing
 
 set "PID_DIR=artifacts\devstack"
 if not exist "%PID_DIR%" mkdir "%PID_DIR%" >nul 2>&1
 set "PID_FILE=%PID_DIR%\ui.pid"
 
-REM Stop previous UI instance if pid file exists.
-if exist "%PID_FILE%" (
-    for /f "usebackq delims=" %%P in ("%PID_FILE%") do set OLD_PID=%%P
-    if not "%OLD_PID%"=="" (
-        taskkill /PID %OLD_PID% /T /F >nul 2>&1
-    )
-    del /q "%PID_FILE%" >nul 2>&1
-)
+REM If a PID file exists, validate and check whether the UI terminal is still running.
+if not exist "%PID_FILE%" goto ui_pid_checked
+
+set "OLD_PID="
+set /p OLD_PID=<"%PID_FILE%"
+if "%OLD_PID%"=="" goto ui_delete_pidfile
+
+REM If any non-digit characters are present, treat as stale.
+for /f "delims=0123456789" %%A in ("%OLD_PID%") do goto ui_delete_pidfile
+
+tasklist /FI "PID eq %OLD_PID%" | findstr /I /R "^[A-Za-z].* %OLD_PID% " >nul 2>&1
+if not errorlevel 1 goto ui_already_running
+
+:ui_delete_pidfile
+del /q "%PID_FILE%" >nul 2>&1
+
+:ui_pid_checked
 
 REM UI endpoint (Angular default).
 if "%CRONIQ_UI_HTTP_PORT%"=="" set CRONIQ_UI_HTTP_PORT=5081
 echo [devstack] Starting UI (Angular) in a separate terminal/window: http://localhost:%CRONIQ_UI_HTTP_PORT% ...
 
 set "UI_SCRIPT=scripts\devstack-ui.ps1"
-if not exist "%UI_SCRIPT%" (
-    echo [devstack] UI not started: %UI_SCRIPT% not found.
-    endlocal & exit /b 0
-)
+if not exist "%UI_SCRIPT%" goto ui_script_missing
 
 REM Prefer Windows Terminal new-tab when running inside Windows Terminal.
 where wt >nul 2>&1
-if not errorlevel 1 (
-    if not "%WT_SESSION%"=="" (
-        wt -w 0 new-tab --title "Croniq UI" -d "%CD%" powershell -NoProfile -NoExit -ExecutionPolicy Bypass -File "%CD%\%UI_SCRIPT%" -UiPort %CRONIQ_UI_HTTP_PORT% >nul 2>&1
-        goto wait_for_ui_pid
-    )
-)
+if errorlevel 1 goto ui_start_ps
+if "%WT_SESSION%"=="" goto ui_start_ps
 
+wt -w 0 new-tab --title "Croniq UI" -d "%CD%" powershell -NoProfile -NoExit -ExecutionPolicy Bypass -File "%CD%\%UI_SCRIPT%" -UiPort %CRONIQ_UI_HTTP_PORT% >nul 2>&1
+goto wait_for_ui_pid
+
+:ui_start_ps
 REM Fallback: start a separate PowerShell window.
-powershell -NoProfile -Command "$root=(Resolve-Path '.'); $script=Join-Path $root '%UI_SCRIPT%'; $args=@('-NoProfile','-NoExit','-ExecutionPolicy','Bypass','-File',$script,'-UiPort','%CRONIQ_UI_HTTP_PORT%'); Start-Process -FilePath 'powershell' -ArgumentList $args -WorkingDirectory $root | Out-Null" >nul 2>&1
+start "Croniq UI" powershell -NoProfile -NoExit -ExecutionPolicy Bypass -File "%CD%\%UI_SCRIPT%" -UiPort %CRONIQ_UI_HTTP_PORT% >nul 2>&1
 
 :wait_for_ui_pid
 REM Wait briefly for PID file to be created by scripts/devstack-ui.ps1.
-for /L %%I in (1,1,20) do (
-    if exist "%PID_FILE%" goto ui_pid_ok
-    timeout /t 1 >nul
-)
+set /a UI_WAIT=0
+:ui_wait_loop
+set /a UI_WAIT+=1
+if %UI_WAIT% gtr 20 goto ui_pid_warn
+if exist "%PID_FILE%" goto ui_pid_ok
+timeout /t 1 >nul
+goto ui_wait_loop
 
+:ui_pid_warn
 echo [devstack] Warning: UI PID file was not created. UI may still be running.
-endlocal & exit /b 0
+goto maybe_start_ui_done
 
 :ui_pid_ok
 echo [devstack] UI PID written to %PID_FILE%
+goto maybe_start_ui_done
+
+:ui_not_found
+echo [devstack] UI not started: %UI_DIR%\package.json not found.
+goto maybe_start_ui_done
+
+:npm_missing
+echo [devstack] UI not started: npm not found on PATH.
+echo [devstack] Install Node.js + npm, then rerun devstack-up.
+goto maybe_start_ui_done
+
+:ui_script_missing
+echo [devstack] UI not started: %UI_SCRIPT% not found.
+goto maybe_start_ui_done
+
+:ui_already_running
+echo [devstack] UI already running (PID %OLD_PID%). Skipping UI start.
+echo [devstack] To stop it, run: scripts\devstack-down.cmd --ui
+goto maybe_start_ui_done
+
+:maybe_start_ui_done
 endlocal & exit /b 0
 
 :maybe_wait_for_api
@@ -475,7 +512,9 @@ set /a ATTEMPTS=0
 :poll
 set /a ATTEMPTS+=1
 if !ATTEMPTS! gtr 60 (endlocal & exit /b 1)
-curl --silent --fail "%URL%" >nul 2>&1 && (endlocal & exit /b 0)
+if /I "%CRONIQ_DEVSTACK_TRACE%"=="1" echo [devstack] Health probe attempt !ATTEMPTS!: %URL%
+curl.exe --max-time 2 --silent --fail "%URL%" >nul 2>&1
+if not errorlevel 1 (endlocal & exit /b 0)
 timeout /t 2 >nul
 goto poll
 

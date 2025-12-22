@@ -281,6 +281,22 @@ public static partial class ApiHostingExtensions
         return builder;
     }
 
+    private static IResult MissingEnvironment(string key = "environment")
+    {
+        return Results.BadRequest(new { error = "missing-environment", message = $"Query parameter '{key}' is required." });
+    }
+
+    private static string? ResolveEnvironmentTag(string? environment, ICallerContextAccessor callerContextAccessor)
+    {
+        if (!string.IsNullOrWhiteSpace(environment))
+        {
+            return environment.Trim();
+        }
+
+        var callerEnvironment = callerContextAccessor.Current?.EnvironmentTag;
+        return string.IsNullOrWhiteSpace(callerEnvironment) ? null : callerEnvironment.Trim();
+    }
+
     private static Func<RouteHandlerBuilder, string, string?, RouteHandlerBuilder>? CreateOpenApiSummaryApplier()
     {
         var operationType = Type.GetType("Microsoft.OpenApi.Models.OpenApiOperation, Microsoft.OpenApi");

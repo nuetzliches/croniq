@@ -180,7 +180,7 @@ public sealed class CallerContextFactory : ICallerContextFactory
                 return null;
             }
 
-            var environment = FindFirst(principal, tokenOptions.EnvironmentClaim, fallbacks: null);
+            var environment = FindFirst(principal, tokenOptions.EnvironmentClaim, fallbacks: null) ?? tokenOptions.DefaultEnvironment;
             var callerId = FindFirst(principal, tokenOptions.ClientClaim, fallbacks: new[] { "sub" })
                 ?? principal.Identity?.Name
                 ?? "croniq-user";

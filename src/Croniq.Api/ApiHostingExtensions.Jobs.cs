@@ -22,12 +22,18 @@ public static partial class ApiHostingExtensions
     {
         app.MapGet("/tenants/{tenantId}/jobs", async (
             string tenantId,
-            string environment,
+            string? environment,
             [FromServices] ICallerContextAccessor callerContextAccessor,
             [FromServices] IJobPersistenceProvider store,
             CancellationToken cancellationToken) =>
         {
-            var scope = new PartitionScope(tenantId, environment);
+            var resolvedEnvironment = ResolveEnvironmentTag(environment, callerContextAccessor);
+            if (string.IsNullOrWhiteSpace(resolvedEnvironment))
+            {
+                return MissingEnvironment();
+            }
+
+            var scope = new PartitionScope(tenantId, resolvedEnvironment);
             var jobs = await store.ListJobsAsync(scope, cancellationToken).ConfigureAwait(false);
             var payload = jobs.Select(ToJobResponse).ToArray();
             return Results.Ok(payload);
@@ -38,18 +44,24 @@ public static partial class ApiHostingExtensions
         app.MapGet("/tenants/{tenantId}/jobs/{jobId}", async (
             string tenantId,
             string jobId,
-            string environment,
+            string? environment,
             [FromServices] ICallerContextAccessor callerContextAccessor,
             [FromServices] IJobPersistenceProvider store,
             CancellationToken cancellationToken) =>
         {
+            var resolvedEnvironment = ResolveEnvironmentTag(environment, callerContextAccessor);
+            if (string.IsNullOrWhiteSpace(resolvedEnvironment))
+            {
+                return MissingEnvironment();
+            }
+
             if (!JobKey.TryParse(jobId, out var jobKey))
             {
                 return Results.BadRequest(new { error = "invalid-job-key", message = "JobKey must follow the Croniq format." });
             }
 
             if (!string.Equals(jobKey.TenantId, tenantId, StringComparison.OrdinalIgnoreCase)
-                || !string.Equals(jobKey.EnvironmentTag, environment, StringComparison.OrdinalIgnoreCase))
+                || !string.Equals(jobKey.EnvironmentTag, resolvedEnvironment, StringComparison.OrdinalIgnoreCase))
             {
                 return Results.Problem(statusCode: StatusCodes.Status403Forbidden, title: "scope-mismatch", detail: "JobKey tenant/environment must match the request scope.");
             }
@@ -67,19 +79,25 @@ public static partial class ApiHostingExtensions
 
         app.MapPost("/tenants/{tenantId}/jobs", async (
             string tenantId,
-            string environment,
+            string? environment,
             UpsertJobRequest request,
             [FromServices] ICallerContextAccessor callerContextAccessor,
             [FromServices] IJobPersistenceProvider store,
             CancellationToken cancellationToken) =>
         {
+            var resolvedEnvironment = ResolveEnvironmentTag(environment, callerContextAccessor);
+            if (string.IsNullOrWhiteSpace(resolvedEnvironment))
+            {
+                return MissingEnvironment();
+            }
+
             if (!JobKey.TryParse(request.JobKey, out var jobKey))
             {
                 return Results.BadRequest(new { error = "invalid-job-key", message = "JobKey must follow the Croniq format." });
             }
 
             if (!string.Equals(jobKey.TenantId, tenantId, StringComparison.OrdinalIgnoreCase)
-                || !string.Equals(jobKey.EnvironmentTag, environment, StringComparison.OrdinalIgnoreCase))
+                || !string.Equals(jobKey.EnvironmentTag, resolvedEnvironment, StringComparison.OrdinalIgnoreCase))
             {
                 return Results.Problem(statusCode: StatusCodes.Status403Forbidden, title: "scope-mismatch", detail: "JobKey tenant/environment must match the request scope.");
             }
@@ -118,23 +136,29 @@ public static partial class ApiHostingExtensions
         app.MapDelete("/tenants/{tenantId}/jobs/{jobId}", async (
             string tenantId,
             string jobId,
-            string environment,
+            string? environment,
             [FromServices] ICallerContextAccessor callerContextAccessor,
             [FromServices] IJobPersistenceProvider store,
             CancellationToken cancellationToken) =>
         {
+            var resolvedEnvironment = ResolveEnvironmentTag(environment, callerContextAccessor);
+            if (string.IsNullOrWhiteSpace(resolvedEnvironment))
+            {
+                return MissingEnvironment();
+            }
+
             if (!JobKey.TryParse(jobId, out var jobKey))
             {
                 return Results.BadRequest(new { error = "invalid-job-key", message = "JobKey must follow the Croniq format." });
             }
 
             if (!string.Equals(jobKey.TenantId, tenantId, StringComparison.OrdinalIgnoreCase)
-                || !string.Equals(jobKey.EnvironmentTag, environment, StringComparison.OrdinalIgnoreCase))
+                || !string.Equals(jobKey.EnvironmentTag, resolvedEnvironment, StringComparison.OrdinalIgnoreCase))
             {
                 return Results.Problem(statusCode: StatusCodes.Status403Forbidden, title: "scope-mismatch", detail: "JobKey tenant/environment must match the request scope.");
             }
 
-            var scope = new PartitionScope(tenantId, environment);
+            var scope = new PartitionScope(tenantId, resolvedEnvironment);
             await store.DeleteJobAsync(jobKey.Value, scope, cancellationToken).ConfigureAwait(false);
             return Results.NoContent();
         })
@@ -221,12 +245,18 @@ public static partial class ApiHostingExtensions
 
         app.MapGet("/tenants/{tenantId}/schedules", async (
             string tenantId,
-            string environment,
+            string? environment,
             string? jobKey,
             [FromServices] ICallerContextAccessor callerContextAccessor,
             [FromServices] IJobPersistenceProvider store,
             CancellationToken cancellationToken) =>
         {
+            var resolvedEnvironment = ResolveEnvironmentTag(environment, callerContextAccessor);
+            if (string.IsNullOrWhiteSpace(resolvedEnvironment))
+            {
+                return MissingEnvironment();
+            }
+
             if (!string.IsNullOrWhiteSpace(jobKey))
             {
                 if (!JobKey.TryParse(jobKey, out var parsed))
@@ -235,13 +265,13 @@ public static partial class ApiHostingExtensions
                 }
 
                 if (!string.Equals(parsed.TenantId, tenantId, StringComparison.OrdinalIgnoreCase)
-                    || !string.Equals(parsed.EnvironmentTag, environment, StringComparison.OrdinalIgnoreCase))
+                    || !string.Equals(parsed.EnvironmentTag, resolvedEnvironment, StringComparison.OrdinalIgnoreCase))
                 {
                     return Results.Problem(statusCode: StatusCodes.Status403Forbidden, title: "scope-mismatch", detail: "JobKey tenant/environment must match the request scope.");
                 }
             }
 
-            var scope = new PartitionScope(tenantId, environment);
+            var scope = new PartitionScope(tenantId, resolvedEnvironment);
             var triggers = await store.ListTriggersAsync(scope, cancellationToken).ConfigureAwait(false);
 
             if (!string.IsNullOrWhiteSpace(jobKey))
@@ -260,12 +290,18 @@ public static partial class ApiHostingExtensions
         app.MapGet("/tenants/{tenantId}/schedules/{triggerId}", async (
             string tenantId,
             string triggerId,
-            string environment,
+            string? environment,
             [FromServices] ICallerContextAccessor callerContextAccessor,
             [FromServices] IJobPersistenceProvider store,
             CancellationToken cancellationToken) =>
         {
-            var scope = new PartitionScope(tenantId, environment);
+            var resolvedEnvironment = ResolveEnvironmentTag(environment, callerContextAccessor);
+            if (string.IsNullOrWhiteSpace(resolvedEnvironment))
+            {
+                return MissingEnvironment();
+            }
+
+            var scope = new PartitionScope(tenantId, resolvedEnvironment);
             var triggers = await store.ListTriggersAsync(scope, cancellationToken).ConfigureAwait(false);
             var match = triggers.FirstOrDefault(t => string.Equals(t.TriggerId, triggerId, StringComparison.OrdinalIgnoreCase));
             if (match is null)
@@ -281,12 +317,18 @@ public static partial class ApiHostingExtensions
         app.MapDelete("/tenants/{tenantId}/schedules/{triggerId}", async (
             string tenantId,
             string triggerId,
-            string environment,
+            string? environment,
             [FromServices] ICallerContextAccessor callerContextAccessor,
             [FromServices] IJobPersistenceProvider store,
             CancellationToken cancellationToken) =>
         {
-            var scope = new PartitionScope(tenantId, environment);
+            var resolvedEnvironment = ResolveEnvironmentTag(environment, callerContextAccessor);
+            if (string.IsNullOrWhiteSpace(resolvedEnvironment))
+            {
+                return MissingEnvironment();
+            }
+
+            var scope = new PartitionScope(tenantId, resolvedEnvironment);
             await store.DeleteTriggerAsync(triggerId, scope, cancellationToken).ConfigureAwait(false);
             return Results.NoContent();
         })

@@ -27,7 +27,7 @@ public static partial class ApiHostingExtensions
 
         app.MapGet("/tenants/{tenantId}/webhooks", async (
             string tenantId,
-            string environment,
+            string? environment,
             [FromServices] ICallerContextAccessor callerContextAccessor,
             [FromServices] IWebhookPersistenceProvider? webhookStore,
             CancellationToken cancellationToken) =>
@@ -37,7 +37,13 @@ public static partial class ApiHostingExtensions
                 return Results.Problem(statusCode: StatusCodes.Status503ServiceUnavailable, title: "webhooks-unavailable", detail: "Webhook persistence provider not configured.");
             }
 
-            var scope = new PartitionScope(tenantId, environment);
+            var resolvedEnvironment = ResolveEnvironmentTag(environment, callerContextAccessor);
+            if (string.IsNullOrWhiteSpace(resolvedEnvironment))
+            {
+                return MissingEnvironment();
+            }
+
+            var scope = new PartitionScope(tenantId, resolvedEnvironment);
             var endpoints = await webhookStore.ListAsync(scope, cancellationToken).ConfigureAwait(false);
             var response = endpoints.Select(def => ToWebhookResponse(def)).ToList();
             return Results.Ok(response);
@@ -47,7 +53,7 @@ public static partial class ApiHostingExtensions
 
         app.MapPost("/tenants/{tenantId}/webhooks", async (
             string tenantId,
-            string environment,
+            string? environment,
             bool allowUnsigned,
             UpsertWebhookEndpointRequest request,
             [FromServices] ICallerContextAccessor callerContextAccessor,
@@ -61,13 +67,19 @@ public static partial class ApiHostingExtensions
                 return Results.Problem(statusCode: StatusCodes.Status503ServiceUnavailable, title: "webhooks-unavailable", detail: "Webhook persistence provider not configured.");
             }
 
+            var resolvedEnvironment = ResolveEnvironmentTag(environment, callerContextAccessor);
+            if (string.IsNullOrWhiteSpace(resolvedEnvironment))
+            {
+                return MissingEnvironment();
+            }
+
             if (!JobKey.TryParse(request.JobKey, out var jobKey))
             {
                 return Results.BadRequest(new { error = "invalid-job-key", message = "JobKey must follow the Croniq format." });
             }
 
             if (!string.Equals(jobKey.TenantId, tenantId, StringComparison.OrdinalIgnoreCase)
-                || !string.Equals(jobKey.EnvironmentTag, environment, StringComparison.OrdinalIgnoreCase))
+                || !string.Equals(jobKey.EnvironmentTag, resolvedEnvironment, StringComparison.OrdinalIgnoreCase))
             {
                 return Results.BadRequest(new { error = "scope-mismatch", message = "JobKey tenant/environment must match the request scope." });
             }
@@ -93,7 +105,7 @@ public static partial class ApiHostingExtensions
                 request.HookKey,
                 request.JobKey,
                 tenantId,
-                environment,
+                resolvedEnvironment,
                 request.Enabled,
                 request.RequireSignature,
                 rpm,
@@ -126,7 +138,7 @@ public static partial class ApiHostingExtensions
         app.MapDelete("/tenants/{tenantId}/webhooks/{hookKey}", async (
             string tenantId,
             string hookKey,
-            string environment,
+            string? environment,
             [FromServices] ICallerContextAccessor callerContextAccessor,
             [FromServices] IWebhookPersistenceProvider? webhookStore,
             CancellationToken cancellationToken) =>
@@ -136,7 +148,13 @@ public static partial class ApiHostingExtensions
                 return Results.Problem(statusCode: StatusCodes.Status503ServiceUnavailable, title: "webhooks-unavailable", detail: "Webhook persistence provider not configured.");
             }
 
-            var scope = new PartitionScope(tenantId, environment);
+            var resolvedEnvironment = ResolveEnvironmentTag(environment, callerContextAccessor);
+            if (string.IsNullOrWhiteSpace(resolvedEnvironment))
+            {
+                return MissingEnvironment();
+            }
+
+            var scope = new PartitionScope(tenantId, resolvedEnvironment);
             await webhookStore.DeleteAsync(hookKey, scope, cancellationToken).ConfigureAwait(false);
             return Results.NoContent();
         })
@@ -146,7 +164,7 @@ public static partial class ApiHostingExtensions
         app.MapPost("/tenants/{tenantId}/webhooks/{hookKey}/rotate-secret", async (
             string tenantId,
             string hookKey,
-            string environment,
+            string? environment,
             RotateWebhookSecretRequest request,
             [FromServices] IWebhookPersistenceProvider? webhookStore,
             [FromServices] ICallerContextAccessor callerContextAccessor,
@@ -157,6 +175,12 @@ public static partial class ApiHostingExtensions
                 return Results.Problem(statusCode: StatusCodes.Status503ServiceUnavailable, title: "webhooks-unavailable", detail: "Webhook persistence provider not configured.");
             }
 
+            var resolvedEnvironment = ResolveEnvironmentTag(environment, callerContextAccessor);
+            if (string.IsNullOrWhiteSpace(resolvedEnvironment))
+            {
+                return MissingEnvironment();
+            }
+
             var caller = callerContextAccessor.Current;
             var rotatedBy = caller is null
                 ? "cronq.api"
@@ -165,7 +189,7 @@ public static partial class ApiHostingExtensions
             var rotate = new WebhookSecretRotate(
                 hookKey,
                 tenantId,
-                environment,
+                resolvedEnvironment,
                 request.ActivateInSeconds,
                 request.GracePeriodSeconds,
                 rotatedBy,
@@ -193,7 +217,7 @@ public static partial class ApiHostingExtensions
         app.MapGet("/tenants/{tenantId}/webhooks/{hookKey}/ip-rules", async (
             string tenantId,
             string hookKey,
-            string environment,
+            string? environment,
             [FromServices] ICallerContextAccessor callerContextAccessor,
             [FromServices] IWebhookPersistenceProvider? webhookStore,
             CancellationToken cancellationToken) =>
@@ -203,7 +227,13 @@ public static partial class ApiHostingExtensions
                 return Results.Problem(statusCode: StatusCodes.Status503ServiceUnavailable, title: "webhooks-unavailable", detail: "Webhook persistence provider not configured.");
             }
 
-            var scope = new PartitionScope(tenantId, environment);
+            var resolvedEnvironment = ResolveEnvironmentTag(environment, callerContextAccessor);
+            if (string.IsNullOrWhiteSpace(resolvedEnvironment))
+            {
+                return MissingEnvironment();
+            }
+
+            var scope = new PartitionScope(tenantId, resolvedEnvironment);
             var rules = await webhookStore.ListIpRulesAsync(hookKey, scope, cancellationToken).ConfigureAwait(false);
             var payload = rules.Select(ToWebhookIpRuleResponse).ToList();
             return Results.Ok(payload);
@@ -214,7 +244,7 @@ public static partial class ApiHostingExtensions
         app.MapPost("/tenants/{tenantId}/webhooks/{hookKey}/ip-rules", async (
             string tenantId,
             string hookKey,
-            string environment,
+            string? environment,
             CreateWebhookIpRuleRequest request,
             [FromServices] ICallerContextAccessor callerContextAccessor,
             [FromServices] IWebhookPersistenceProvider? webhookStore,
@@ -224,6 +254,12 @@ public static partial class ApiHostingExtensions
             if (webhookStore is null)
             {
                 return Results.Problem(statusCode: StatusCodes.Status503ServiceUnavailable, title: "webhooks-unavailable", detail: "Webhook persistence provider not configured.");
+            }
+
+            var resolvedEnvironment = ResolveEnvironmentTag(environment, callerContextAccessor);
+            if (string.IsNullOrWhiteSpace(resolvedEnvironment))
+            {
+                return MissingEnvironment();
             }
 
             if (!IpNetwork.TryParse(request.Cidr, out var network, out var error))
@@ -237,7 +273,7 @@ public static partial class ApiHostingExtensions
             var create = new WebhookIpRuleCreate(
                 hookKey,
                 tenantId,
-                environment,
+                resolvedEnvironment,
                 network!.ToString(),
                 request.Description,
                 createdBy,
@@ -260,7 +296,7 @@ public static partial class ApiHostingExtensions
             string tenantId,
             string hookKey,
             long ruleId,
-            string environment,
+            string? environment,
             [FromServices] ICallerContextAccessor callerContextAccessor,
             [FromServices] IWebhookPersistenceProvider? webhookStore,
             HttpContext httpContext,
@@ -273,7 +309,13 @@ public static partial class ApiHostingExtensions
                 return Results.Problem(statusCode: StatusCodes.Status503ServiceUnavailable, title: "webhooks-unavailable", detail: "Webhook persistence provider not configured.");
             }
 
-            var scope = new PartitionScope(tenantId, environment);
+            var resolvedEnvironment = ResolveEnvironmentTag(environment, callerContextAccessor);
+            if (string.IsNullOrWhiteSpace(resolvedEnvironment))
+            {
+                return MissingEnvironment();
+            }
+
+            var scope = new PartitionScope(tenantId, resolvedEnvironment);
             var deletedBy = ResolveCallerIdentity(callerContextAccessor);
             var correlationId = ResolveCorrelationId(httpContext);
             await webhookStore.DeleteIpRuleAsync(ruleId, scope, deletedBy, correlationId, cancellationToken).ConfigureAwait(false);
@@ -284,7 +326,7 @@ public static partial class ApiHostingExtensions
 
         app.MapGet("/tenants/{tenantId}/webhooks/deadletters", async (
             string tenantId,
-            string environment,
+            string? environment,
             [FromServices] ICallerContextAccessor callerContextAccessor,
             [FromServices] IWebhookDeadLetterStore? deadLetterStore,
             CancellationToken cancellationToken) =>
@@ -294,7 +336,13 @@ public static partial class ApiHostingExtensions
                 return Results.Problem(statusCode: StatusCodes.Status503ServiceUnavailable, title: "webhook-deadletter-unavailable", detail: "Webhook dead-letter store not configured.");
             }
 
-            var scope = new PartitionScope(tenantId, environment);
+            var resolvedEnvironment = ResolveEnvironmentTag(environment, callerContextAccessor);
+            if (string.IsNullOrWhiteSpace(resolvedEnvironment))
+            {
+                return MissingEnvironment();
+            }
+
+            var scope = new PartitionScope(tenantId, resolvedEnvironment);
             var entries = await deadLetterStore.ListAsync(scope, cancellationToken).ConfigureAwait(false);
             var response = entries.Select(ToWebhookDeadLetterResponse).ToList();
             return Results.Ok(response);
@@ -305,7 +353,7 @@ public static partial class ApiHostingExtensions
         app.MapPost("/tenants/{tenantId}/webhooks/deadletters/{deadLetterId}/replay", async (
             string tenantId,
             long deadLetterId,
-            string environment,
+            string? environment,
             [FromServices] ICallerContextAccessor callerContextAccessor,
             [FromServices] IWebhookDeadLetterStore? deadLetterStore,
             [FromServices] IJobRegistry registry,
@@ -319,7 +367,13 @@ public static partial class ApiHostingExtensions
                 return Results.Problem(statusCode: StatusCodes.Status503ServiceUnavailable, title: "webhook-deadletter-unavailable", detail: "Webhook dead-letter store not configured.");
             }
 
-            var scope = new PartitionScope(tenantId, environment);
+            var resolvedEnvironment = ResolveEnvironmentTag(environment, callerContextAccessor);
+            if (string.IsNullOrWhiteSpace(resolvedEnvironment))
+            {
+                return MissingEnvironment();
+            }
+
+            var scope = new PartitionScope(tenantId, resolvedEnvironment);
             var entry = await deadLetterStore.FindAsync(deadLetterId, scope, cancellationToken).ConfigureAwait(false);
             if (entry is null)
             {

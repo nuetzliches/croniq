@@ -22,7 +22,7 @@ public static partial class ApiHostingExtensions
     {
         app.MapGet("/tenants/{tenantId}/schedules/deadletters", async (
             string tenantId,
-            string environment,
+            string? environment,
             [FromServices] ICallerContextAccessor callerContextAccessor,
             [FromServices] IJobDeadLetterStore? deadLetterStore,
             CancellationToken cancellationToken) =>
@@ -32,7 +32,13 @@ public static partial class ApiHostingExtensions
                 return Results.Problem(statusCode: StatusCodes.Status503ServiceUnavailable, title: "deadletter-unavailable", detail: "Dead-letter store not configured.");
             }
 
-            var scope = new PartitionScope(tenantId, environment);
+            var resolvedEnvironment = ResolveEnvironmentTag(environment, callerContextAccessor);
+            if (string.IsNullOrWhiteSpace(resolvedEnvironment))
+            {
+                return MissingEnvironment();
+            }
+
+            var scope = new PartitionScope(tenantId, resolvedEnvironment);
             var entries = await deadLetterStore.ListAsync(scope, cancellationToken).ConfigureAwait(false);
             var response = entries.Select(ToScheduleDeadLetterResponse).ToList();
             return Results.Ok(response);
@@ -43,7 +49,7 @@ public static partial class ApiHostingExtensions
         app.MapPost("/tenants/{tenantId}/schedules/deadletters/{deadLetterId}/replay", async (
             string tenantId,
             long deadLetterId,
-            string environment,
+            string? environment,
             [FromServices] ICallerContextAccessor callerContextAccessor,
             [FromServices] IJobDeadLetterStore? deadLetterStore,
             [FromServices] IJobRegistry registry,
@@ -57,7 +63,13 @@ public static partial class ApiHostingExtensions
                 return Results.Problem(statusCode: StatusCodes.Status503ServiceUnavailable, title: "deadletter-unavailable", detail: "Dead-letter store not configured.");
             }
 
-            var scope = new PartitionScope(tenantId, environment);
+            var resolvedEnvironment = ResolveEnvironmentTag(environment, callerContextAccessor);
+            if (string.IsNullOrWhiteSpace(resolvedEnvironment))
+            {
+                return MissingEnvironment();
+            }
+
+            var scope = new PartitionScope(tenantId, resolvedEnvironment);
             var entry = await deadLetterStore.FindAsync(deadLetterId, scope, cancellationToken).ConfigureAwait(false);
             if (entry is null)
             {

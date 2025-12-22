@@ -24,6 +24,12 @@ public sealed class CroniqTokenOptions
     /// <summary>Claim name for the environment tag.</summary>
     public string EnvironmentClaim { get; set; } = "env";
 
+    /// <summary>
+    /// Optional default environment tag used when tokens omit the environment claim.
+    /// This enables UI flows where the client does not select an environment and the server applies a default.
+    /// </summary>
+    public string? DefaultEnvironment { get; set; }
+
     /// <summary>Claim name for the client identifier.</summary>
     public string ClientClaim { get; set; } = "cid";
 

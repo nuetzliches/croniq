@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Linq;
 using Croniq.Auth.Abstractions;
+using Croniq.Options;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -14,6 +15,7 @@ public sealed class PasswordAuthService
     private readonly IRefreshTokenStore _refreshTokens;
     private readonly ICroniqTokenIssuer _tokenIssuer;
     private readonly IOptionsMonitor<PasswordAuthOptions> _options;
+    private readonly IOptionsMonitor<CroniqOptions> _coreOptions;
     private readonly ILogger<PasswordAuthService> _logger;
     private readonly TimeProvider _timeProvider;
     private readonly PasswordHasher<PasswordAuthUser> _passwordHasher = new();
@@ -23,6 +25,7 @@ public sealed class PasswordAuthService
         IRefreshTokenStore refreshTokens,
         ICroniqTokenIssuer tokenIssuer,
         IOptionsMonitor<PasswordAuthOptions> options,
+        IOptionsMonitor<CroniqOptions> coreOptions,
         ILogger<PasswordAuthService> logger,
         TimeProvider? timeProvider = null)
     {
@@ -30,6 +33,7 @@ public sealed class PasswordAuthService
         _refreshTokens = refreshTokens ?? throw new ArgumentNullException(nameof(refreshTokens));
         _tokenIssuer = tokenIssuer ?? throw new ArgumentNullException(nameof(tokenIssuer));
         _options = options ?? throw new ArgumentNullException(nameof(options));
+        _coreOptions = coreOptions ?? throw new ArgumentNullException(nameof(coreOptions));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         _timeProvider = timeProvider ?? TimeProvider.System;
     }
@@ -51,6 +55,11 @@ public sealed class PasswordAuthService
         if (string.IsNullOrWhiteSpace(tenantId)) throw new ArgumentNullException(nameof(tenantId));
         if (string.IsNullOrWhiteSpace(username)) throw new ArgumentNullException(nameof(username));
         if (string.IsNullOrWhiteSpace(password)) throw new ArgumentNullException(nameof(password));
+
+        if (string.IsNullOrWhiteSpace(environmentTag))
+        {
+            environmentTag = _coreOptions.CurrentValue?.EnvironmentTag;
+        }
 
         var user = await _users.FindByUsernameAsync(tenantId, username, cancellationToken).ConfigureAwait(false);
         if (user is null)
@@ -157,6 +166,11 @@ public sealed class PasswordAuthService
 
         if (string.IsNullOrWhiteSpace(tenantId)) throw new ArgumentNullException(nameof(tenantId));
         if (string.IsNullOrWhiteSpace(refreshToken)) throw new ArgumentNullException(nameof(refreshToken));
+
+        if (string.IsNullOrWhiteSpace(environmentTag))
+        {
+            environmentTag = _coreOptions.CurrentValue?.EnvironmentTag;
+        }
 
         var refreshHash = HashRefreshToken(refreshToken);
         var existing = await _refreshTokens.FindActiveByHashAsync(tenantId, refreshHash, cancellationToken).ConfigureAwait(false);

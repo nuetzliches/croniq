@@ -1,8 +1,11 @@
 using System;
+using System.Collections.Generic;
 using System.Net;
 using System.Net.Http.Json;
 using Croniq.Api.Models;
 using Croniq.Api.Tests.Infrastructure;
+using Croniq.Auth.Abstractions;
+using Croniq.Auth.Core;
 using Croniq.Options;
 using Shouldly;
 using Xunit;
@@ -35,6 +38,42 @@ public sealed class ScheduleEndpointsTests : IClassFixture<WebhookApiTestHost>
         payload[0].JobKey.ShouldBe(jobKey);
         payload[0].TenantId.ShouldBe(WebhookApiTestHost.TenantId);
         payload[0].EnvironmentTag.ShouldBe(WebhookApiTestHost.Environment);
+    }
+
+    [Fact]
+    public async Task ListSchedulesWithoutEnvironmentUsesCallerEnvironment()
+    {
+        _host.Reset();
+
+        var response = await _host.Client.GetAsync($"/tenants/{WebhookApiTestHost.TenantId}/schedules");
+        response.StatusCode.ShouldBe(HttpStatusCode.OK);
+
+        var payload = await response.Content.ReadFromJsonAsync<ScheduleResponse[]>();
+        payload.ShouldNotBeNull();
+        payload.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task ListSchedulesWithoutEnvironmentAndCallerEnvironmentReturnsBadRequest()
+    {
+        _host.Reset();
+
+        const string tenantOnlyKey = "ak_tenant_only";
+        var tenantOnlyContext = new CallerContext(
+            WebhookApiTestHost.TenantId,
+            EnvironmentTag: null,
+            CallerType.ApiKey,
+            CallerId: "tenant-only-client",
+            Scopes: new[] { CroniqScopes.SchedulesWrite });
+        _host.CallerFactory.AddContext(tenantOnlyKey, tenantOnlyContext);
+        SetCallerApiKey(tenantOnlyKey);
+
+        var response = await _host.Client.GetAsync($"/tenants/{WebhookApiTestHost.TenantId}/schedules");
+        response.StatusCode.ShouldBe(HttpStatusCode.BadRequest);
+
+        var payload = await response.Content.ReadFromJsonAsync<Dictionary<string, string>>();
+        payload.ShouldNotBeNull();
+        payload["error"].ShouldBe("missing-environment");
     }
 
     [Fact]
@@ -109,5 +148,11 @@ public sealed class ScheduleEndpointsTests : IClassFixture<WebhookApiTestHost>
         var response = await _host.Client.PostAsJsonAsync($"/tenants/{WebhookApiTestHost.TenantId}/schedules", request);
         response.StatusCode.ShouldBe(HttpStatusCode.Created);
         return identifier;
+    }
+
+    private void SetCallerApiKey(string apiKey)
+    {
+        _host.Client.DefaultRequestHeaders.Remove("X-Croniq-Key");
+        _host.Client.DefaultRequestHeaders.Add("X-Croniq-Key", apiKey);
     }
 }

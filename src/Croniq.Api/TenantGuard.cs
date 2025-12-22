@@ -35,9 +35,11 @@ internal static class TenantGuard
                 detail: "Caller tenant does not match the requested tenant scope.");
         }
 
+        // If the caller is restricted to a single environment, allow missing query environment
+        // and implicitly use the caller environment.
         if (!string.IsNullOrWhiteSpace(caller.EnvironmentTag)
-            && (string.IsNullOrWhiteSpace(environment)
-                || !string.Equals(caller.EnvironmentTag, environment, StringComparison.OrdinalIgnoreCase)))
+            && !string.IsNullOrWhiteSpace(environment)
+            && !string.Equals(caller.EnvironmentTag, environment, StringComparison.OrdinalIgnoreCase))
         {
             return Results.Problem(
                 statusCode: StatusCodes.Status403Forbidden,

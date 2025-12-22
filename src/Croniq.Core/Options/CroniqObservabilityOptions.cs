@@ -62,6 +62,12 @@ public sealed class CroniqObservabilityOptions
     public bool EnableConsoleLogging { get; set; } = true;
 
     /// <summary>
+    /// Console log format when <see cref="EnableConsoleLogging"/> is enabled.
+    /// Supported values: "json" (default) or "text".
+    /// </summary>
+    public string ConsoleLogFormat { get; set; } = "json";
+
+    /// <summary>
     /// Enables OTLP log export via Serilog sink when true (default).
     /// </summary>
     public bool EnableOtlpLogExport { get; set; } = true;

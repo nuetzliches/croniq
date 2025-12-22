@@ -18,7 +18,7 @@ public static partial class ApiHostingExtensions
     {
         app.MapGet("/tenants/{tenantId}/executions", async (
             string tenantId,
-            string environment,
+            string? environment,
             string? jobKey,
             ExecutionStatus? status,
             DateTimeOffset? startedAfterUtc,
@@ -28,6 +28,12 @@ public static partial class ApiHostingExtensions
             [FromServices] IExecutionHistoryReader historyReader,
             CancellationToken cancellationToken) =>
         {
+            var resolvedEnvironment = ResolveEnvironmentTag(environment, callerContextAccessor);
+            if (string.IsNullOrWhiteSpace(resolvedEnvironment))
+            {
+                return MissingEnvironment();
+            }
+
             if (startedAfterUtc.HasValue && startedBeforeUtc.HasValue && startedAfterUtc.Value >= startedBeforeUtc.Value)
             {
                 return Results.BadRequest(new { error = "invalid-range", message = "startedAfterUtc must be earlier than startedBeforeUtc." });
@@ -41,13 +47,13 @@ public static partial class ApiHostingExtensions
                 }
 
                 if (!string.Equals(parsed.TenantId, tenantId, StringComparison.OrdinalIgnoreCase)
-                    || !string.Equals(parsed.EnvironmentTag, environment, StringComparison.OrdinalIgnoreCase))
+                    || !string.Equals(parsed.EnvironmentTag, resolvedEnvironment, StringComparison.OrdinalIgnoreCase))
                 {
                     return Results.Problem(statusCode: StatusCodes.Status403Forbidden, title: "scope-mismatch", detail: "JobKey tenant/environment must match the request scope.");
                 }
             }
 
-            var scope = new PartitionScope(tenantId, environment);
+            var scope = new PartitionScope(tenantId, resolvedEnvironment);
             var query = new ExecutionHistoryQuery
             {
                 JobKey = jobKey,
@@ -67,15 +73,21 @@ public static partial class ApiHostingExtensions
         app.MapGet("/tenants/{tenantId}/executions/{executionId}", async (
             string tenantId,
             string executionId,
-            string environment,
+            string? environment,
             [FromServices] ICallerContextAccessor callerContextAccessor,
             [FromServices] IExecutionHistoryReader historyReader,
             CancellationToken cancellationToken) =>
         {
+            var resolvedEnvironment = ResolveEnvironmentTag(environment, callerContextAccessor);
+            if (string.IsNullOrWhiteSpace(resolvedEnvironment))
+            {
+                return MissingEnvironment();
+            }
+
             var summary = await historyReader.GetExecutionAsync(executionId, cancellationToken).ConfigureAwait(false);
             if (summary is null
                 || !string.Equals(summary.TenantId, tenantId, StringComparison.OrdinalIgnoreCase)
-                || !string.Equals(summary.EnvironmentTag, environment, StringComparison.OrdinalIgnoreCase))
+                || !string.Equals(summary.EnvironmentTag, resolvedEnvironment, StringComparison.OrdinalIgnoreCase))
             {
                 return Results.NotFound(new { error = "execution-not-found", executionId });
             }

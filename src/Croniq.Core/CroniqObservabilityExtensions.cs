@@ -217,7 +217,14 @@ public static class CroniqObservabilityExtensions
 
         if (options.EnableConsoleLogging)
         {
-            loggerConfiguration.WriteTo.Console(new JsonFormatter());
+            if (string.Equals(options.ConsoleLogFormat, "text", StringComparison.OrdinalIgnoreCase))
+            {
+                loggerConfiguration.WriteTo.Console();
+            }
+            else
+            {
+                loggerConfiguration.WriteTo.Console(new JsonFormatter());
+            }
         }
 
         if (options.EnableOtlpLogExport)

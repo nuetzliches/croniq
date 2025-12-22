@@ -209,16 +209,19 @@ internal static class EndpointAuthExtensions
             var environment = httpContext.Request.Query.TryGetValue(_environmentQueryKey, out var envValues)
                 ? envValues.FirstOrDefault()
                 : null;
-
-            if (_requireEnvironment && string.IsNullOrWhiteSpace(environment))
-            {
-                return ValueTask.FromResult<object?>(Results.BadRequest(new { error = "missing-environment", message = $"Query parameter '{_environmentQueryKey}' is required." }));
-            }
-
             var callerAccessor = httpContext.RequestServices.GetService(typeof(ICallerContextAccessor)) as ICallerContextAccessor;
             if (callerAccessor is null)
             {
                 return ValueTask.FromResult<object?>(Results.Problem(statusCode: StatusCodes.Status500InternalServerError, title: "caller-context-missing", detail: "Caller context accessor not registered."));
+            }
+
+            if (_requireEnvironment && string.IsNullOrWhiteSpace(environment))
+            {
+                environment = callerAccessor.Current?.EnvironmentTag;
+                if (string.IsNullOrWhiteSpace(environment))
+                {
+                    return ValueTask.FromResult<object?>(Results.BadRequest(new { error = "missing-environment", message = $"Query parameter '{_environmentQueryKey}' is required." }));
+                }
             }
 
             var failure = TenantGuard.EnsureTenant(callerAccessor, tenantId, environment, _requiredScopes);
@@ -272,17 +275,20 @@ internal static class EndpointAuthExtensions
             {
                 environment = envValues.FirstOrDefault();
             }
-
-            if (_requireEnvironment && string.IsNullOrWhiteSpace(environment))
-            {
-                var key = string.IsNullOrWhiteSpace(_environmentQueryKey) ? "environment" : _environmentQueryKey;
-                return ValueTask.FromResult<object?>(Results.BadRequest(new { error = "missing-environment", message = $"Query parameter '{key}' is required." }));
-            }
-
             var callerAccessor = httpContext.RequestServices.GetService(typeof(ICallerContextAccessor)) as ICallerContextAccessor;
             if (callerAccessor is null)
             {
                 return ValueTask.FromResult<object?>(Results.Problem(statusCode: StatusCodes.Status500InternalServerError, title: "caller-context-missing", detail: "Caller context accessor not registered."));
+            }
+
+            if (_requireEnvironment && string.IsNullOrWhiteSpace(environment))
+            {
+                environment = callerAccessor.Current?.EnvironmentTag;
+                if (string.IsNullOrWhiteSpace(environment))
+                {
+                    var key = string.IsNullOrWhiteSpace(_environmentQueryKey) ? "environment" : _environmentQueryKey;
+                    return ValueTask.FromResult<object?>(Results.BadRequest(new { error = "missing-environment", message = $"Query parameter '{key}' is required." }));
+                }
             }
 
             var failure = TenantGuard.EnsureTenant(callerAccessor, tenantId, environment, _requiredScopes);

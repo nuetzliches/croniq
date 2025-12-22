@@ -72,9 +72,15 @@ public sealed class CroniqTokenIssuer : ICroniqTokenIssuer
             [JwtRegisteredClaimNames.Jti] = Guid.NewGuid().ToString("N")
         };
 
-        if (!string.IsNullOrWhiteSpace(request.EnvironmentTag))
+        var resolvedEnvironment = request.EnvironmentTag;
+        if (string.IsNullOrWhiteSpace(resolvedEnvironment))
         {
-            claims[options.EnvironmentClaim] = request.EnvironmentTag!;
+            resolvedEnvironment = options.DefaultEnvironment;
+        }
+
+        if (!string.IsNullOrWhiteSpace(resolvedEnvironment))
+        {
+            claims[options.EnvironmentClaim] = resolvedEnvironment!;
         }
 
         var normalizedScopes = request.Scopes is { Count: > 0 }

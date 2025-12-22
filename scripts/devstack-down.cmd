@@ -4,6 +4,11 @@ setlocal EnableExtensions DisableDelayedExpansion
 set ROOT=%~dp0..
 cd /d "%ROOT%" || exit /b 1
 
+if /I "%CRONIQ_DEVSTACK_TRACE%"=="1" (
+  echo [devstack] TRACE enabled.
+  echo on
+)
+
 set "COMPOSE_ARGS=-f infra\docker\docker-compose.yml -f infra\docker\docker-compose.dev.yml -f infra\docker\docker-compose.observability.yml"
 set "DEFAULT_PROFILES=--profile api --profile worker"
 set "PROFILE_ARGS=%DEFAULT_PROFILES%"
@@ -52,20 +57,25 @@ goto parse
 
 :run
 echo [devstack] Stopping Croniq services...
+if /I "%CRONIQ_DEVSTACK_TRACE%"=="1" echo [devstack] Step: ensure_docker_engine
 call :ensure_docker_engine
 if errorlevel 1 (
   set DOCKER_EXIT=1
   goto after_compose
 )
 
+if /I "%CRONIQ_DEVSTACK_TRACE%"=="1" echo [devstack] Step: docker compose down
+
 docker.exe compose %COMPOSE_ARGS% %PROFILE_ARGS% down %DOWN_ARGS%
 set DOCKER_EXIT=%ERRORLEVEL%
 
 REM Stop optional host-run samples (best-effort).
 :after_compose
+if /I "%CRONIQ_DEVSTACK_TRACE%"=="1" echo [devstack] Step: stop_sample_apihost
 call :stop_sample_apihost
-call :cleanup_ui_pid_file
 if "%STOP_UI%"=="1" call :stop_ui
+if /I "%CRONIQ_DEVSTACK_TRACE%"=="1" echo [devstack] Step: cleanup_ui_pid_file
+call :cleanup_ui_pid_file
 
 exit /b %DOCKER_EXIT%
 
@@ -152,9 +162,12 @@ for /f "delims=0123456789" %%A in ("%UI_PID%") do set "INVALID_PID=1"
 if defined INVALID_PID goto cleanup_ui_delete
 
 REM Only delete the pid file if the process is not running anymore.
-for /f "usebackq tokens=*" %%L in (`tasklist /FI "PID eq %UI_PID%" ^| findstr /I /R "^[A-Za-z].* %UI_PID% "`) do (
-  goto cleanup_ui_done
-)
+tasklist /FI "PID eq %UI_PID%" | findstr /I /R "^[A-Za-z].* %UI_PID% " >nul 2>&1
+if errorlevel 1 goto cleanup_ui_delete
+
+echo [devstack] UI still running (PID %UI_PID%). Keeping %PID_FILE%.
+echo [devstack] To stop it, run: scripts\devstack-down.cmd --ui
+goto cleanup_ui_done
 
 :cleanup_ui_delete
 del /q "%PID_FILE%" >nul 2>&1
