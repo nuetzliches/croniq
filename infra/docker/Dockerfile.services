@@ -64,7 +64,7 @@ COPY --from=publish-api /app/publish .
 ENV ASPNETCORE_URLS=http://+:8080
 ENTRYPOINT ["dotnet", "Croniq.Sample.ApiHost.dll"]
 
-FROM mcr.microsoft.com/dotnet/runtime:${DOTNET_VERSION} AS worker
+FROM mcr.microsoft.com/dotnet/aspnet:${DOTNET_VERSION} AS worker
 WORKDIR /app
 COPY --from=publish-worker /app/publish .
 ENTRYPOINT ["dotnet", "Croniq.Sample.WorkerHost.dll"]

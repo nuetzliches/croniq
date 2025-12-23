@@ -185,7 +185,11 @@ export const TenantsApi: EndpointDefinition[] = [
         requestFormat: 'json',
         parameters: [
             { name: 'tenantId', type: 'Path', schema: z.string() },
-            { name: 'environment', type: 'Query', schema: z.string() },
+            {
+                name: 'environment',
+                type: 'Query',
+                schema: z.string().optional(),
+            },
             { name: 'jobKey', type: 'Query', schema: z.string().optional() },
             {
                 name: 'status',
@@ -220,7 +224,11 @@ export const TenantsApi: EndpointDefinition[] = [
         parameters: [
             { name: 'tenantId', type: 'Path', schema: z.string() },
             { name: 'executionId', type: 'Path', schema: z.string() },
-            { name: 'environment', type: 'Query', schema: z.string() },
+            {
+                name: 'environment',
+                type: 'Query',
+                schema: z.string().optional(),
+            },
         ],
         response: z.void(),
     },
@@ -242,7 +250,11 @@ export const TenantsApi: EndpointDefinition[] = [
         requestFormat: 'json',
         parameters: [
             { name: 'tenantId', type: 'Path', schema: z.string() },
-            { name: 'environment', type: 'Query', schema: z.string() },
+            {
+                name: 'environment',
+                type: 'Query',
+                schema: z.string().optional(),
+            },
         ],
         response: z.void(),
     },
@@ -254,7 +266,11 @@ export const TenantsApi: EndpointDefinition[] = [
         parameters: [
             { name: 'body', type: 'Body', schema: UpsertJobRequest },
             { name: 'tenantId', type: 'Path', schema: z.string() },
-            { name: 'environment', type: 'Query', schema: z.string() },
+            {
+                name: 'environment',
+                type: 'Query',
+                schema: z.string().optional(),
+            },
         ],
         response: z.void(),
     },
@@ -266,7 +282,11 @@ export const TenantsApi: EndpointDefinition[] = [
         parameters: [
             { name: 'tenantId', type: 'Path', schema: z.string() },
             { name: 'jobId', type: 'Path', schema: z.string() },
-            { name: 'environment', type: 'Query', schema: z.string() },
+            {
+                name: 'environment',
+                type: 'Query',
+                schema: z.string().optional(),
+            },
         ],
         response: z.void(),
     },
@@ -278,7 +298,11 @@ export const TenantsApi: EndpointDefinition[] = [
         parameters: [
             { name: 'tenantId', type: 'Path', schema: z.string() },
             { name: 'jobId', type: 'Path', schema: z.string() },
-            { name: 'environment', type: 'Query', schema: z.string() },
+            {
+                name: 'environment',
+                type: 'Query',
+                schema: z.string().optional(),
+            },
         ],
         response: z.void(),
     },
@@ -289,7 +313,11 @@ export const TenantsApi: EndpointDefinition[] = [
         requestFormat: 'json',
         parameters: [
             { name: 'tenantId', type: 'Path', schema: z.string() },
-            { name: 'environment', type: 'Query', schema: z.string() },
+            {
+                name: 'environment',
+                type: 'Query',
+                schema: z.string().optional(),
+            },
             { name: 'jobKey', type: 'Query', schema: z.string().optional() },
         ],
         response: z.void(),
@@ -318,7 +346,11 @@ export const TenantsApi: EndpointDefinition[] = [
         parameters: [
             { name: 'tenantId', type: 'Path', schema: z.string() },
             { name: 'triggerId', type: 'Path', schema: z.string() },
-            { name: 'environment', type: 'Query', schema: z.string() },
+            {
+                name: 'environment',
+                type: 'Query',
+                schema: z.string().optional(),
+            },
         ],
         response: z.void(),
     },
@@ -330,7 +362,11 @@ export const TenantsApi: EndpointDefinition[] = [
         parameters: [
             { name: 'tenantId', type: 'Path', schema: z.string() },
             { name: 'triggerId', type: 'Path', schema: z.string() },
-            { name: 'environment', type: 'Query', schema: z.string() },
+            {
+                name: 'environment',
+                type: 'Query',
+                schema: z.string().optional(),
+            },
         ],
         response: z.void(),
     },
@@ -341,7 +377,11 @@ export const TenantsApi: EndpointDefinition[] = [
         requestFormat: 'json',
         parameters: [
             { name: 'tenantId', type: 'Path', schema: z.string() },
-            { name: 'environment', type: 'Query', schema: z.string() },
+            {
+                name: 'environment',
+                type: 'Query',
+                schema: z.string().optional(),
+            },
         ],
         response: z.void(),
     },
@@ -353,7 +393,11 @@ export const TenantsApi: EndpointDefinition[] = [
         parameters: [
             { name: 'tenantId', type: 'Path', schema: z.string() },
             { name: 'deadLetterId', type: 'Path', schema: z.number().int() },
-            { name: 'environment', type: 'Query', schema: z.string() },
+            {
+                name: 'environment',
+                type: 'Query',
+                schema: z.string().optional(),
+            },
         ],
         response: z.void(),
     },
@@ -380,7 +424,11 @@ export const TenantsApi: EndpointDefinition[] = [
         requestFormat: 'json',
         parameters: [
             { name: 'tenantId', type: 'Path', schema: z.string() },
-            { name: 'environment', type: 'Query', schema: z.string() },
+            {
+                name: 'environment',
+                type: 'Query',
+                schema: z.string().optional(),
+            },
         ],
         response: z.void(),
     },
@@ -396,7 +444,11 @@ export const TenantsApi: EndpointDefinition[] = [
                 schema: UpsertWebhookEndpointRequest,
             },
             { name: 'tenantId', type: 'Path', schema: z.string() },
-            { name: 'environment', type: 'Query', schema: z.string() },
+            {
+                name: 'environment',
+                type: 'Query',
+                schema: z.string().optional(),
+            },
             { name: 'allowUnsigned', type: 'Query', schema: z.boolean() },
         ],
         response: z.void(),
@@ -409,7 +461,11 @@ export const TenantsApi: EndpointDefinition[] = [
         parameters: [
             { name: 'tenantId', type: 'Path', schema: z.string() },
             { name: 'hookKey', type: 'Path', schema: z.string() },
-            { name: 'environment', type: 'Query', schema: z.string() },
+            {
+                name: 'environment',
+                type: 'Query',
+                schema: z.string().optional(),
+            },
         ],
         response: z.void(),
     },
@@ -421,7 +477,11 @@ export const TenantsApi: EndpointDefinition[] = [
         parameters: [
             { name: 'tenantId', type: 'Path', schema: z.string() },
             { name: 'hookKey', type: 'Path', schema: z.string() },
-            { name: 'environment', type: 'Query', schema: z.string() },
+            {
+                name: 'environment',
+                type: 'Query',
+                schema: z.string().optional(),
+            },
         ],
         response: z.void(),
     },
@@ -434,7 +494,11 @@ export const TenantsApi: EndpointDefinition[] = [
             { name: 'body', type: 'Body', schema: CreateWebhookIpRuleRequest },
             { name: 'tenantId', type: 'Path', schema: z.string() },
             { name: 'hookKey', type: 'Path', schema: z.string() },
-            { name: 'environment', type: 'Query', schema: z.string() },
+            {
+                name: 'environment',
+                type: 'Query',
+                schema: z.string().optional(),
+            },
         ],
         response: z.void(),
     },
@@ -447,7 +511,11 @@ export const TenantsApi: EndpointDefinition[] = [
             { name: 'tenantId', type: 'Path', schema: z.string() },
             { name: 'hookKey', type: 'Path', schema: z.string() },
             { name: 'ruleId', type: 'Path', schema: z.number().int() },
-            { name: 'environment', type: 'Query', schema: z.string() },
+            {
+                name: 'environment',
+                type: 'Query',
+                schema: z.string().optional(),
+            },
         ],
         response: z.void(),
     },
@@ -460,7 +528,11 @@ export const TenantsApi: EndpointDefinition[] = [
             { name: 'body', type: 'Body', schema: RotateWebhookSecretRequest },
             { name: 'tenantId', type: 'Path', schema: z.string() },
             { name: 'hookKey', type: 'Path', schema: z.string() },
-            { name: 'environment', type: 'Query', schema: z.string() },
+            {
+                name: 'environment',
+                type: 'Query',
+                schema: z.string().optional(),
+            },
         ],
         response: z.void(),
     },
@@ -471,7 +543,11 @@ export const TenantsApi: EndpointDefinition[] = [
         requestFormat: 'json',
         parameters: [
             { name: 'tenantId', type: 'Path', schema: z.string() },
-            { name: 'environment', type: 'Query', schema: z.string() },
+            {
+                name: 'environment',
+                type: 'Query',
+                schema: z.string().optional(),
+            },
         ],
         response: z.void(),
     },
@@ -483,7 +559,11 @@ export const TenantsApi: EndpointDefinition[] = [
         parameters: [
             { name: 'tenantId', type: 'Path', schema: z.string() },
             { name: 'deadLetterId', type: 'Path', schema: z.number().int() },
-            { name: 'environment', type: 'Query', schema: z.string() },
+            {
+                name: 'environment',
+                type: 'Query',
+                schema: z.string().optional(),
+            },
         ],
         response: z.void(),
     },

@@ -167,7 +167,6 @@
           {
             "name": "environment",
             "in": "query",
-            "required": true,
             "schema": {
               "type": "string"
             }
@@ -198,7 +197,6 @@
           {
             "name": "environment",
             "in": "query",
-            "required": true,
             "schema": {
               "type": "string"
             }
@@ -249,7 +247,6 @@
           {
             "name": "environment",
             "in": "query",
-            "required": true,
             "schema": {
               "type": "string"
             }
@@ -288,7 +285,6 @@
           {
             "name": "environment",
             "in": "query",
-            "required": true,
             "schema": {
               "type": "string"
             }
@@ -321,7 +317,6 @@
           {
             "name": "environment",
             "in": "query",
-            "required": true,
             "schema": {
               "type": "string"
             }
@@ -400,7 +395,6 @@
           {
             "name": "environment",
             "in": "query",
-            "required": true,
             "schema": {
               "type": "string"
             }
@@ -473,7 +467,6 @@
           {
             "name": "environment",
             "in": "query",
-            "required": true,
             "schema": {
               "type": "string"
             }
@@ -521,7 +514,6 @@
           {
             "name": "environment",
             "in": "query",
-            "required": true,
             "schema": {
               "type": "string"
             }
@@ -560,7 +552,6 @@
           {
             "name": "environment",
             "in": "query",
-            "required": true,
             "schema": {
               "type": "string"
             }
@@ -593,7 +584,6 @@
           {
             "name": "environment",
             "in": "query",
-            "required": true,
             "schema": {
               "type": "string"
             }
@@ -635,7 +625,6 @@
           {
             "name": "environment",
             "in": "query",
-            "required": true,
             "schema": {
               "type": "string"
             }
@@ -668,7 +657,6 @@
           {
             "name": "environment",
             "in": "query",
-            "required": true,
             "schema": {
               "type": "string"
             }
@@ -699,7 +687,6 @@
           {
             "name": "environment",
             "in": "query",
-            "required": true,
             "schema": {
               "type": "string"
             }
@@ -758,7 +745,6 @@
           {
             "name": "environment",
             "in": "query",
-            "required": true,
             "schema": {
               "type": "string"
             }
@@ -799,7 +785,6 @@
           {
             "name": "environment",
             "in": "query",
-            "required": true,
             "schema": {
               "type": "string"
             }
@@ -850,7 +835,6 @@
           {
             "name": "environment",
             "in": "query",
-            "required": true,
             "schema": {
               "type": "string"
             }
@@ -889,7 +873,6 @@
           {
             "name": "environment",
             "in": "query",
-            "required": true,
             "schema": {
               "type": "string"
             }
@@ -949,7 +932,6 @@
           {
             "name": "environment",
             "in": "query",
-            "required": true,
             "schema": {
               "type": "string"
             }
@@ -982,7 +964,6 @@
           {
             "name": "environment",
             "in": "query",
-            "required": true,
             "schema": {
               "type": "string"
             }
@@ -1024,7 +1005,6 @@
           {
             "name": "environment",
             "in": "query",
-            "required": true,
             "schema": {
               "type": "string"
             }

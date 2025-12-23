@@ -21,20 +21,11 @@ builder.Services.AddCroniqSampleJobs();
 builder.Services.AddCroniqObservability(
     builder.Configuration,
     builder.Logging,
-    "Croniq.Worker");
+    "Croniq.Worker",
+    options => options.ConsoleLogFormat = "text");
 
 builder.Services.AddCroniqFileExecutionLogStore();
 builder.Services.Configure<ExecutionLogRetentionOptions>(builder.Configuration.GetSection("Croniq:Logging:Execution:Retention"));
 builder.Services.AddHostedService<ExecutionLogRetentionService>();
-builder.Services.AddLogging(logging =>
-{
-    logging.SetMinimumLevel(LogLevel.Information);
-    logging.AddCroniqExecutionLogSink();
-    logging.AddSimpleConsole(options =>
-    {
-        options.SingleLine = true;
-        options.TimestampFormat = "HH:mm:ss ";
-    });
-});
 
 await builder.Build().RunAsync();

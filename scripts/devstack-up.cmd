@@ -29,7 +29,7 @@ if not exist ".env" (
 )
 
 set COMPOSE_ARGS=-f infra\docker\docker-compose.yml -f infra\docker\docker-compose.dev.yml -f infra\docker\docker-compose.observability.yml
-set DEFAULT_PROFILES=--profile api --profile worker
+set DEFAULT_PROFILES=--profile worker
 
 if "%CRONIQ_API_HTTP_PORT%"=="" set CRONIQ_API_HTTP_PORT=5080
 if "%CRONIQ_API_BASEURL%"=="" set CRONIQ_API_BASEURL=http://localhost:%CRONIQ_API_HTTP_PORT%
@@ -263,9 +263,10 @@ if errorlevel 1 exit /b 1
 
 echo [devstack] Croniq dev stack is ready.
 
-if not "%RUN_SAMPLE%"=="" if "%FOLLOW_SAMPLE%"=="1" (
-    call :maybe_follow_sample "%RUN_SAMPLE%" "%FOLLOW_SAMPLE%"
-    if errorlevel 1 exit /b 1
+call :detect_profiles "%PROFILE_ARGS%"
+if "!HAS_WORKER_PROFILE!"=="1" (
+    echo [devstack] Following worker logs (Ctrl+C to stop following; containers keep running^)...
+    docker compose %COMPOSE_ARGS% logs -f croniq-worker
 )
 
 exit /b 0
@@ -286,66 +287,69 @@ if "%CRONIQ_SAMPLE_APIHOST_HTTP_PORT%"=="" set CRONIQ_SAMPLE_APIHOST_HTTP_PORT=%
 set PID_DIR=artifacts\devstack
 if not exist "%PID_DIR%" mkdir "%PID_DIR%" >nul 2>&1
 set PID_FILE=%PID_DIR%\sample-apihost.pid
-set OUT_LOG=%PID_DIR%\sample-apihost.out.log
-set ERR_LOG=%PID_DIR%\sample-apihost.err.log
-set START_LOG=%PID_DIR%\sample-apihost.start.log
 
 REM Stop previous instance if pid file exists.
 if exist "%PID_FILE%" (
     for /f "usebackq delims=" %%P in ("%PID_FILE%") do set OLD_PID=%%P
     if not "%OLD_PID%"=="" (
-        powershell -NoProfile -Command "try { Stop-Process -Id %OLD_PID% -Force -ErrorAction SilentlyContinue } catch {}" >nul 2>&1
+        taskkill /PID %OLD_PID% /T /F >nul 2>&1
     )
     del /q "%PID_FILE%" >nul 2>&1
 )
 
 echo [devstack] Starting sample ApiHost via dotnet run on http://localhost:%CRONIQ_SAMPLE_APIHOST_HTTP_PORT% ...
-REM Build host connection string in PowerShell to avoid delayed-expansion issues with '!' in passwords.
 
 REM If observability profile is enabled, prefer localhost OTLP endpoint for host-run processes.
-set CRONIQ_HOST_OTLP_ENDPOINT=
+set "OTLP_ARGS="
 call :detect_profiles "%PROFILE_ARGS%"
 if "!HAS_OBS_PROFILE!"=="1" (
     if "%CRONIQ_OTLP_GRPC_PORT%"=="" set CRONIQ_OTLP_GRPC_PORT=4317
-    set CRONIQ_HOST_OTLP_ENDPOINT=http://localhost:%CRONIQ_OTLP_GRPC_PORT%
-)
-
-REM Use PowerShell to set env vars + capture PID reliably.
-del /q "%START_LOG%" >nul 2>&1
-del /q "%OUT_LOG%" >nul 2>&1
-del /q "%ERR_LOG%" >nul 2>&1
-
-set "PS_WINDOW_ARGS="
-if "%NO_SAMPLE_WINDOW%"=="1" set "PS_WINDOW_ARGS=-WindowStyle Hidden"
-
-set PS_EXIT=0
-setlocal DisableDelayedExpansion
-powershell -NoProfile -Command "$env:ASPNETCORE_URLS='http://0.0.0.0:%CRONIQ_SAMPLE_APIHOST_HTTP_PORT%'; if ($env:CRONIQ_DOTNET_ENVIRONMENT) { $env:DOTNET_ENVIRONMENT=$env:CRONIQ_DOTNET_ENVIRONMENT }; $env:Croniq__Auth__Mode=$env:CRONIQ_AUTH_MODE; $env:Croniq__Auth__InMemory__ApiKey=$env:CRONIQ_SMOKE_API_KEY; $env:Croniq__Auth__InMemory__TenantId=$env:CRONIQ_CORE_TENANT_ID; $env:Croniq__Auth__InMemory__EnvironmentTag=$env:CRONIQ_CORE_ENVIRONMENT; $env:Croniq__Persistence__Mode='SqlServer'; $env:Croniq__Api__RequestsPerMinute=$env:CRONIQ_API_REQUESTS_PER_MINUTE; $env:Croniq__Core__TenantId=$env:CRONIQ_CORE_TENANT_ID; $env:Croniq__Core__EnvironmentTag=$env:CRONIQ_CORE_ENVIRONMENT; $env:Croniq__Core__InstanceId=$env:CRONIQ_API_INSTANCE_ID; $dotenv=@{}; if (Test-Path '.env') { Get-Content '.env' | ForEach-Object { $l=$_.Trim(); if (!$l -or $l.StartsWith('#')) { return }; $parts=$l -split '=',2; if ($parts.Count -eq 2) { $dotenv[$parts[0].Trim()]=$parts[1].Trim() } } }; function Get-EnvOrDotenv([string]$k,[string]$fallback) { $v=[Environment]::GetEnvironmentVariable($k); if ($v) { return $v }; if ($dotenv.ContainsKey($k) -and $dotenv[$k]) { return $dotenv[$k] }; return $fallback }; $sqlPort = Get-EnvOrDotenv 'CRONIQ_SQL_HOST_PORT' '11433'; $sqlDb = Get-EnvOrDotenv 'CRONIQ_SQL_DATABASE' 'CroniqDev'; $sqlPw = Get-EnvOrDotenv 'CRONIQ_SQL_PASSWORD' 'CroniqSqlP@ssw0rd!'; $env:Croniq__SqlServer__ConnectionString = ('Server=localhost,' + $sqlPort + ';Database=' + $sqlDb + ';User Id=sa;Password=' + $sqlPw + ';Encrypt=False;TrustServerCertificate=True;'); if ('%CRONIQ_HOST_OTLP_ENDPOINT%') { $env:Croniq__Observability__OtlpEndpoint='%CRONIQ_HOST_OTLP_ENDPOINT%'; $env:Croniq__Observability__OtlpProtocol=$env:CRONIQ_OBS_OTLP_PROTOCOL }; $p = Start-Process -FilePath 'dotnet' -ArgumentList @('run','--project','samples\Croniq.Sample.ApiHost\Croniq.Sample.ApiHost.csproj') -WorkingDirectory (Resolve-Path '.') %PS_WINDOW_ARGS% -RedirectStandardOutput '%OUT_LOG%' -RedirectStandardError '%ERR_LOG%' -PassThru; $p.Id | Out-File -FilePath '%PID_FILE%' -Encoding ascii" > "%START_LOG%" 2>&1
-set PS_EXIT=%ERRORLEVEL%
-endlocal & set PS_EXIT=%PS_EXIT%
-
-if not "%PS_EXIT%"=="0" (
-    echo [devstack] Failed to start sample ApiHost.
-    if exist "%START_LOG%" (
-        echo [devstack] Last lines from %START_LOG%:
-        powershell -NoProfile -Command "if (Test-Path '%START_LOG%') { Get-Content -Encoding UTF8 -Path '%START_LOG%' -Tail 60 }" 2>nul
+    set "OTLP_ARGS=-OtlpEndpoint http://localhost:!CRONIQ_OTLP_GRPC_PORT!"
+    if not "%CRONIQ_OBS_OTLP_PROTOCOL%"=="" (
+        set "OTLP_ARGS=!OTLP_ARGS! -OtlpProtocol %CRONIQ_OBS_OTLP_PROTOCOL%"
     )
-    endlocal & exit /b 1
 )
 
+set "API_SCRIPT=scripts\devstack-apihost.ps1"
+if not exist "%API_SCRIPT%" (
+    echo [devstack] ApiHost script not found: %API_SCRIPT%
+    exit /b 1
+)
+
+REM Prefer Windows Terminal new-tab when running inside Windows Terminal.
+where wt >nul 2>&1
+if errorlevel 1 goto api_start_ps
+if "%WT_SESSION%"=="" goto api_start_ps
+
+wt -w 0 new-tab --title "Croniq ApiHost" -d "%CD%" powershell -NoProfile -NoExit -ExecutionPolicy Bypass -File "%CD%\%API_SCRIPT%" -Port %CRONIQ_SAMPLE_APIHOST_HTTP_PORT% -PidFile "%PID_FILE%" %OTLP_ARGS% >nul 2>&1
+goto wait_for_api_pid
+
+:api_start_ps
+REM Fallback: start a separate PowerShell window.
+start "Croniq ApiHost" powershell -NoProfile -NoExit -ExecutionPolicy Bypass -File "%CD%\%API_SCRIPT%" -Port %CRONIQ_SAMPLE_APIHOST_HTTP_PORT% -PidFile "%PID_FILE%" %OTLP_ARGS% >nul 2>&1
+
+:wait_for_api_pid
+REM Wait briefly for PID file to be created by scripts/devstack-apihost.ps1.
+set /a API_WAIT=0
+:api_wait_loop
+set /a API_WAIT+=1
+if %API_WAIT% gtr 20 goto api_pid_warn
+if exist "%PID_FILE%" goto api_pid_ok
+timeout /t 1 >nul
+goto api_wait_loop
+
+:api_pid_warn
+echo [devstack] Warning: ApiHost PID file was not created. It may still be running.
+goto api_pid_checked
+
+:api_pid_ok
 echo [devstack] Sample ApiHost PID written to %PID_FILE%
+
+:api_pid_checked
 echo [devstack] Waiting for host ApiHost at %HEALTH_URL% ...
 call :wait_for_health "%HEALTH_URL%"
 if errorlevel 1 (
     echo [devstack] Host ApiHost did not become healthy in time.
-    if exist "%ERR_LOG%" (
-        echo [devstack] Last lines from %ERR_LOG%:
-        powershell -NoProfile -Command "if (Test-Path '%ERR_LOG%') { Get-Content -Encoding UTF8 -Path '%ERR_LOG%' -Tail 80 }" 2>nul
-    )
-    if exist "%OUT_LOG%" (
-        echo [devstack] Last lines from %OUT_LOG%:
-        powershell -NoProfile -Command "if (Test-Path '%OUT_LOG%') { Get-Content -Encoding UTF8 -Path '%OUT_LOG%' -Tail 80 }" 2>nul
-    )
     endlocal & exit /b 1
 )
 endlocal & exit /b 0
@@ -400,7 +404,8 @@ if "%OLD_PID%"=="" goto ui_delete_pidfile
 REM If any non-digit characters are present, treat as stale.
 for /f "delims=0123456789" %%A in ("%OLD_PID%") do goto ui_delete_pidfile
 
-tasklist /FI "PID eq %OLD_PID%" | findstr /I /R "^[A-Za-z].* %OLD_PID% " >nul 2>&1
+REM Check if the process is still running AND is a PowerShell process.
+tasklist /FI "PID eq %OLD_PID%" | findstr /I "powershell pwsh" >nul 2>&1
 if not errorlevel 1 goto ui_already_running
 
 :ui_delete_pidfile
@@ -499,11 +504,12 @@ for %%T in (!ARGS!) do (
     if /I "!PREV!"=="--profile" (
         if /I "%%T"=="api" set HAS_API=1
         if /I "%%T"=="obs" set HAS_OBS=1
+        if /I "%%T"=="worker" set HAS_WORKER=1
     )
     set PREV=%%T
 )
 
-endlocal & set "HAS_API_PROFILE=%HAS_API%" & set "HAS_OBS_PROFILE=%HAS_OBS%" & exit /b 0
+endlocal & set "HAS_API_PROFILE=%HAS_API%" & set "HAS_OBS_PROFILE=%HAS_OBS%" & set "HAS_WORKER_PROFILE=%HAS_WORKER%" & exit /b 0
 
 :wait_for_health
 setlocal
