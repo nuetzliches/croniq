@@ -86,7 +86,8 @@ public sealed class WebhookApiTestHost : IAsyncLifetime
         builder.Services.Configure<CroniqApiOptions>(builder.Configuration.GetSection("Croniq:Api"));
         builder.Services.Configure<CroniqOptions>(options =>
         {
-            options.TenantReference = TenantId;
+            options.TenantMode = TenantMode.Multi;
+            options.TenantId = TenantId;
             options.EnvironmentTag = Environment;
             options.InstanceId = "itest";
         });

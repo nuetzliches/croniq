@@ -13,6 +13,14 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
+# Avoid stale compiler/build server processes holding file locks.
+try {
+    & dotnet build-server shutdown | Out-Null
+}
+catch {
+    # best-effort only
+}
+
 function New-SafeName {
     param([string] $Name)
     return ($Name -replace '[^A-Za-z0-9._-]', '_')
@@ -36,6 +44,10 @@ Write-Host "::group::Running tests for $DisplayName"
     --logger "trx;LogFileName=$trxFile" `
     --results-directory $ResultsDirectory `
     -p:CollectCoverage=true `
+    -p:BuildInParallel=false `
+    -p:UseSharedCompilation=false `
+    -m:1 `
+    -nodeReuse:false `
     -p:CoverletOutput="../../coverage/$sanitizedName/" `
     -p:CoverletOutputFormat=cobertura
 Write-Host "::endgroup::"

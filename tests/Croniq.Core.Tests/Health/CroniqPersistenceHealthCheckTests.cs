@@ -14,6 +14,8 @@ namespace Croniq.Core.Tests.Health;
 
 public sealed class CroniqPersistenceHealthCheckTests
 {
+    private const string TestTenantId = "00000000-0000-0000-0000-000000000001";
+
     [Fact]
     public async Task Uses_persistence_health_probe_when_available()
     {
@@ -24,7 +26,8 @@ public sealed class CroniqPersistenceHealthCheckTests
 
         var options = Microsoft.Extensions.Options.Options.Create(new CroniqOptions
         {
-            TenantReference = "t",
+            TenantMode = TenantMode.Multi,
+            TenantId = TestTenantId,
             EnvironmentTag = "dev",
             InstanceId = "i1"
         });
@@ -49,7 +52,8 @@ public sealed class CroniqPersistenceHealthCheckTests
 
         var options = Microsoft.Extensions.Options.Options.Create(new CroniqOptions
         {
-            TenantReference = "t",
+            TenantMode = TenantMode.Multi,
+            TenantId = TestTenantId,
             EnvironmentTag = "dev",
             InstanceId = "i1"
         });
@@ -73,7 +77,8 @@ public sealed class CroniqPersistenceHealthCheckTests
 
         var options = Microsoft.Extensions.Options.Options.Create(new CroniqOptions
         {
-            TenantReference = "t",
+            TenantMode = TenantMode.Multi,
+            TenantId = TestTenantId,
             EnvironmentTag = "dev",
             InstanceId = "i1"
         });
@@ -84,7 +89,7 @@ public sealed class CroniqPersistenceHealthCheckTests
 
         result.Status.ShouldBe(HealthStatus.Healthy);
         await store.Received(1).ListTriggersAsync(
-            Arg.Is<PartitionScope>(scope => scope.TenantId == "t" && scope.EnvironmentTag == "dev"),
+            Arg.Is<PartitionScope>(scope => scope.TenantId == TestTenantId && scope.EnvironmentTag == "dev"),
             Arg.Any<CancellationToken>());
     }
 
@@ -98,7 +103,8 @@ public sealed class CroniqPersistenceHealthCheckTests
 
         var options = Microsoft.Extensions.Options.Options.Create(new CroniqOptions
         {
-            TenantReference = "t",
+            TenantMode = TenantMode.Multi,
+            TenantId = TestTenantId,
             EnvironmentTag = "dev",
             InstanceId = "i1"
         });

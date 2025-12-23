@@ -62,7 +62,8 @@ public static class SqlServerDatabaseMigrator
         await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
 
         const string sql = """
-        IF COL_LENGTH('auth.Users', 'PasswordChangeRequired') IS NULL
+        IF OBJECT_ID(N'[auth].[Users]', 'U') IS NOT NULL
+           AND COL_LENGTH('auth.Users', 'PasswordChangeRequired') IS NULL
         BEGIN
             ALTER TABLE [auth].[Users]
             ADD [PasswordChangeRequired] bit NOT NULL CONSTRAINT [DF_auth_Users_PasswordChangeRequired] DEFAULT (0);
@@ -84,22 +85,54 @@ public static class SqlServerDatabaseMigrator
         await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
 
         const string sql = """
-        DELETE FROM [auth].[RefreshTokens];
-        DELETE FROM [auth].[Users];
-        DELETE FROM [croniq].[WebhookSecretHistory];
-        DELETE FROM [croniq].[WebhookEndpointEvents];
-        DELETE FROM [croniq].[WebhookDeadLetters];
-        DELETE FROM [croniq].[WebhookEndpoints];
-        DELETE FROM [croniq].[DeadLetters];
-        DELETE FROM [croniq].[Triggers];
-        DELETE FROM [croniq].[Jobs];
-        DELETE FROM [croniq].[ApiKeys];
-        DELETE FROM [croniq].[ApiClients];
-        DELETE FROM [croniq].[Tenants];
+        IF OBJECT_ID(N'[auth].[RefreshTokens]', 'U') IS NOT NULL DELETE FROM [auth].[RefreshTokens];
+        IF OBJECT_ID(N'[auth].[Users]', 'U') IS NOT NULL DELETE FROM [auth].[Users];
+        IF OBJECT_ID(N'[croniq].[WebhookSecretHistory]', 'U') IS NOT NULL DELETE FROM [croniq].[WebhookSecretHistory];
+        IF OBJECT_ID(N'[croniq].[WebhookEndpointEvents]', 'U') IS NOT NULL DELETE FROM [croniq].[WebhookEndpointEvents];
+        IF OBJECT_ID(N'[croniq].[WebhookDeadLetters]', 'U') IS NOT NULL DELETE FROM [croniq].[WebhookDeadLetters];
+        IF OBJECT_ID(N'[croniq].[WebhookEndpoints]', 'U') IS NOT NULL DELETE FROM [croniq].[WebhookEndpoints];
+        IF OBJECT_ID(N'[croniq].[DeadLetters]', 'U') IS NOT NULL DELETE FROM [croniq].[DeadLetters];
+        IF OBJECT_ID(N'[croniq].[Triggers]', 'U') IS NOT NULL DELETE FROM [croniq].[Triggers];
+        IF OBJECT_ID(N'[croniq].[Jobs]', 'U') IS NOT NULL DELETE FROM [croniq].[Jobs];
+        IF OBJECT_ID(N'[croniq].[ApiKeys]', 'U') IS NOT NULL DELETE FROM [croniq].[ApiKeys];
+        IF OBJECT_ID(N'[croniq].[ApiClients]', 'U') IS NOT NULL DELETE FROM [croniq].[ApiClients];
+        IF OBJECT_ID(N'[croniq].[Tenants]', 'U') IS NOT NULL DELETE FROM [croniq].[Tenants];
         """;
 
         await using var command = connection.CreateCommand();
         command.CommandText = sql;
+        await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    public static async Task EnsureTenantExistsAsync(
+        string connectionString,
+        string tenantId,
+        string? name = null,
+        CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(connectionString)) throw new ArgumentException("Connection string is required.", nameof(connectionString));
+        if (string.IsNullOrWhiteSpace(tenantId)) throw new ArgumentException("TenantId is required.", nameof(tenantId));
+
+        await ApplyMigrationsAsync(connectionString, cancellationToken).ConfigureAwait(false);
+
+        var resolvedTenantId = tenantId.Trim();
+        var resolvedName = string.IsNullOrWhiteSpace(name) ? resolvedTenantId : name.Trim();
+
+        await using var connection = new SqlConnection(connectionString);
+        await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
+
+        const string sql = """
+        IF NOT EXISTS (SELECT 1 FROM [croniq].[Tenants] WHERE [TenantId] = @tenantId)
+        BEGIN
+            INSERT INTO [croniq].[Tenants] ([TenantId], [Name], [IsActive])
+            VALUES (@tenantId, @name, 1);
+        END
+        """;
+
+        await using var command = connection.CreateCommand();
+        command.CommandText = sql;
+        command.Parameters.AddWithValue("@tenantId", resolvedTenantId);
+        command.Parameters.AddWithValue("@name", resolvedName);
         await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
     }
 
@@ -109,7 +142,7 @@ public static class SqlServerDatabaseMigrator
         {
             TrustServerCertificate = true,
             Encrypt = false,
-            MultipleActiveResultSets = true,
+            MultipleActiveResultSets = false,
             ApplicationName = "Croniq.TestKit.SqlServerMigrator"
         };
 
@@ -119,10 +152,15 @@ public static class SqlServerDatabaseMigrator
             builder.AddSimpleConsole(options => options.SingleLine = true);
             builder.SetMinimumLevel(LogLevel.Warning);
         });
-        services.AddCroniqSqlServerDbContext(options =>
+        // Important: do NOT enable SqlServer retry-on-failure for migrations.
+        // If a transient error occurs mid-migration, retries can replay DDL (CREATE TABLE ...)
+        // and fail with "There is already an object named ...".
+        services.AddDbContext<SqlServerDbContext>(options =>
         {
-            options.ConnectionString = builder.ConnectionString;
-            options.MigrationsAssembly ??= typeof(SqlServerDbContext).Assembly.GetName().Name;
+            options.UseSqlServer(builder.ConnectionString, sql =>
+            {
+                sql.MigrationsAssembly(typeof(SqlServerDbContext).Assembly.GetName().Name);
+            });
         });
 
         return services.BuildServiceProvider();

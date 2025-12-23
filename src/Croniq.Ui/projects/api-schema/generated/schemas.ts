@@ -1,6 +1,5 @@
 import { z } from 'zod';
 export const UpsertTenantRequest = z.object({
-    reference: z.string().min(1),
     name: z.string().min(1),
 });
 export type UpsertTenantRequest = z.infer<typeof UpsertTenantRequest>;
@@ -88,27 +87,27 @@ export const PasswordLoginRequest = z
     .object({
         username: z.string().nullable(),
         password: z.string().nullable(),
+        tenantId: z.string().nullable(),
         environmentTag: z.string().nullable(),
         scopes: z.array(z.string()).nullable(),
         audience: z.string().nullable(),
-        tenantReference: z.string().nullable(),
     })
     .partial();
 export type PasswordLoginRequest = z.infer<typeof PasswordLoginRequest>;
 export const PasswordRefreshRequest = z
     .object({
         refreshToken: z.string().nullable(),
+        tenantId: z.string().nullable(),
         environmentTag: z.string().nullable(),
         scopes: z.array(z.string()).nullable(),
         audience: z.string().nullable(),
-        tenantReference: z.string().nullable(),
     })
     .partial();
 export type PasswordRefreshRequest = z.infer<typeof PasswordRefreshRequest>;
 export const PasswordLogoutRequest = z
     .object({
         refreshToken: z.string().nullable(),
-        tenantReference: z.string().nullable(),
+        tenantId: z.string().nullable(),
     })
     .partial();
 export type PasswordLogoutRequest = z.infer<typeof PasswordLogoutRequest>;

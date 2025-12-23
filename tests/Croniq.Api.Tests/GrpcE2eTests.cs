@@ -33,7 +33,7 @@ public sealed class GrpcE2eTests
         });
 
         var apiKey = "ak_grpc_e2e";
-        var tenantId = "tenant-e2e";
+        var tenantId = "00000000-0000-0000-0000-000000000002";
         var environmentTag = "dev";
 
         builder.Configuration.AddInMemoryCollection(new Dictionary<string, string?>
@@ -41,7 +41,7 @@ public sealed class GrpcE2eTests
             ["Croniq:Api:RequestsPerMinute"] = "0",
             ["Croniq:Auth:Mode"] = "InMemory",
             ["Croniq:Auth:InMemory:ApiKey"] = apiKey,
-            ["Croniq:Auth:InMemory:TenantReference"] = tenantId,
+            ["Croniq:Auth:InMemory:TenantId"] = tenantId,
             ["Croniq:Auth:InMemory:EnvironmentTag"] = environmentTag
         });
 

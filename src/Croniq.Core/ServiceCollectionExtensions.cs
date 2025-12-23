@@ -21,7 +21,7 @@ public static class ServiceCollectionExtensions
     public static IServiceCollection AddCroniqCore(this IServiceCollection services, Action<CroniqOptions>? configure = null)
     {
         services.AddOptions<CroniqOptions>()
-            .Validate(ValidateCroniqOptions, "Croniq:Core must set TenantReference, EnvironmentTag, and InstanceId.")
+            .Validate(ValidateCroniqOptions, "Croniq:Core must set a valid tenant configuration, EnvironmentTag, and InstanceId.")
             .ValidateOnStart();
         services.AddOptions<CroniqStartupOptions>()
             .Validate(ValidateStartupOptions, "Croniq:Startup:Mode must be Run or Validate.")
@@ -51,6 +51,23 @@ public static class ServiceCollectionExtensions
         services.TryAddSingleton<IExecutionLogReader, NoOpExecutionLogReader>();
         services.TryAddSingleton<IExecutionHistoryReader, NoOpExecutionHistoryReader>();
         services.TryAddSingleton<TriggerWorker>();
+
+        // Explicit env var overrides (do not require .NET configuration key mapping)
+        services.PostConfigure<CroniqOptions>(core =>
+        {
+            var rawMode = Environment.GetEnvironmentVariable("CRONIQ_CORE_TENANT_MODE");
+            if (!string.IsNullOrWhiteSpace(rawMode)
+                && Enum.TryParse<TenantMode>(rawMode.Trim(), ignoreCase: true, out var parsed))
+            {
+                core.TenantMode = parsed;
+            }
+
+            var rawTenantId = Environment.GetEnvironmentVariable("CRONIQ_CORE_TENANT_ID");
+            if (!string.IsNullOrWhiteSpace(rawTenantId))
+            {
+                core.TenantId = rawTenantId.Trim();
+            }
+        });
 
         return services;
     }
@@ -261,9 +278,29 @@ public static class ServiceCollectionExtensions
 
     private static bool ValidateCroniqOptions(CroniqOptions options)
     {
-        return !string.IsNullOrWhiteSpace(options.TenantReference)
-            && !string.IsNullOrWhiteSpace(options.EnvironmentTag)
-            && !string.IsNullOrWhiteSpace(options.InstanceId);
+        if (options is null)
+        {
+            return false;
+        }
+
+        if (string.IsNullOrWhiteSpace(options.EnvironmentTag) || string.IsNullOrWhiteSpace(options.InstanceId))
+        {
+            return false;
+        }
+
+        if (options.TenantMode == TenantMode.Single)
+        {
+            return true;
+        }
+
+        if (string.IsNullOrWhiteSpace(options.TenantId))
+        {
+            return false;
+        }
+
+        var trimmed = options.TenantId.Trim();
+        return string.Equals(trimmed, CroniqOptions.SingleTenantId, StringComparison.OrdinalIgnoreCase)
+               || Guid.TryParse(trimmed, out _);
     }
 
     private static bool ValidateWorkerHostOptions(WorkerHostOptions options)

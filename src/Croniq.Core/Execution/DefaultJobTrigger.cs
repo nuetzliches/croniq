@@ -126,7 +126,7 @@ public sealed class DefaultJobTrigger : IJobTrigger
     private PartitionScope GetScope()
     {
         var current = _options.Value ?? new CroniqOptions();
-        return new PartitionScope(current.TenantReference, current.EnvironmentTag);
+        return new PartitionScope(current.GetEffectiveTenantId(), current.EnvironmentTag);
     }
 
     private static IReadOnlyDictionary<string, string>? NormalizeMetadata(IReadOnlyDictionary<string, string>? metadata)

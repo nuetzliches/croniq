@@ -51,7 +51,7 @@ describe('PasswordAuthService', () => {
         expect(apiClient.passwordLogin).toHaveBeenCalledWith({
             username: 'alice',
             password: 'secret',
-            tenantReference: null,
+            tenantId: 'default',
             environmentTag: null,
             scopes: null,
             audience: null,
@@ -66,7 +66,7 @@ describe('PasswordAuthService', () => {
         expect(result.refreshTokenPresent).toBe(true);
         expect(result.passwordChangeRequired).toBe(false);
         expect(result.tenantId).toBe(null);
-        expect(result.tenantReference).toBe(null);
+        expect(result.tenantId).toBeTruthy();
 
         vi.useRealTimers();
     });
@@ -84,7 +84,7 @@ describe('PasswordAuthService', () => {
         expect(result.refreshTokenPresent).toBe(false);
         expect(result.passwordChangeRequired).toBe(false);
         expect(result.tenantId).toBe(null);
-        expect(result.tenantReference).toBe(null);
+        expect(result.tenantId).toBeTruthy();
     });
 
     it('throws when response does not contain an access token', async () => {

@@ -24,6 +24,6 @@ public sealed class SqlServerAuthOptions
 public sealed class InMemoryAuthOptions
 {
     public string ApiKey { get; set; } = "dev-key";
-    public string TenantReference { get; set; } = "dev";
+    public string TenantId { get; set; } = "default";
     public string EnvironmentTag { get; set; } = "dev";
 }

@@ -33,6 +33,10 @@ public sealed class SqlServerJobDeadLetterStoreTests : IAsyncLifetime
     public async Task InitializeAsync()
     {
         await _sql.ResetDatabaseAsync();
+        await SqlServerDatabaseMigrator.EnsureTenantExistsAsync(_sql.ConnectionString, "tenant-deadletters");
+        await SqlServerDatabaseMigrator.EnsureTenantExistsAsync(_sql.ConnectionString, "tenant-resolve");
+        await SqlServerDatabaseMigrator.EnsureTenantExistsAsync(_sql.ConnectionString, "tenant-find");
+        await SqlServerDatabaseMigrator.EnsureTenantExistsAsync(_sql.ConnectionString, "tenant-release");
         _provider = BuildServiceProvider(_sql.ConnectionString);
         _persistence = _provider.GetRequiredService<IJobPersistenceProvider>();
         _deadLetters = _provider.GetRequiredService<IJobDeadLetterStore>();

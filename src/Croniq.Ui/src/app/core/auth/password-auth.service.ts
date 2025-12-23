@@ -25,7 +25,6 @@ const passwordLoginResponseSchema = z
                 // Backend currently returns `expiresIn` (seconds). Keep `expiresInSeconds` for compatibility.
                 expiresIn: z.number().int().positive().optional(),
                 expiresInSeconds: z.number().int().positive().optional(),
-                tenantReference: z.string().trim().min(1).optional().nullable(),
                 tenantId: z.string().trim().min(1).optional().nullable(),
                 passwordChangeRequired: z.boolean().optional(),
             })
@@ -50,7 +49,7 @@ const passwordLoginResponseSchema = z
                     accessToken: resolvedAccessToken,
                     refreshToken: data.refreshToken ?? null,
                     expiresAt: expiryFromField ?? expiryFromSeconds,
-                    tenantReference: (data.tenantReference ?? data.tenantId ?? null) as string | null,
+                    tenantId: (data.tenantId ?? null) as string | null,
                     passwordChangeRequired: Boolean(data.passwordChangeRequired),
                     raw: data as unknown,
                 };
@@ -62,7 +61,7 @@ type PasswordLoginResponse = z.infer<typeof passwordLoginResponseSchema>;
 export interface PasswordLoginParams {
     username: string;
     password: string;
-    tenantReference?: string | null;
+    tenantId: string;
     scopes?: string[];
     audience?: string | null;
 }
@@ -74,7 +73,6 @@ export interface PasswordLoginResult {
     refreshTokenPresent: boolean;
     passwordChangeRequired: boolean;
     tenantId: string | null;
-    tenantReference: string | null;
     raw: unknown;
 }
 
@@ -101,8 +99,7 @@ export class PasswordAuthService {
         const payload: PasswordLoginRequest = {
             username: params.username,
             password: params.password,
-            // Per new auth concept: tenant/environment are server-configured.
-            tenantReference: params.tenantReference ?? null,
+            tenantId: params.tenantId,
             environmentTag: null,
             scopes: params.scopes && params.scopes.length ? params.scopes : null,
             audience: params.audience ?? null,
@@ -125,7 +122,7 @@ export class PasswordAuthService {
                     this.authSession.clearRefreshToken();
                 }
 
-                const tenantId = tryExtractTenantIdFromJwt(parsed.accessToken);
+                const tenantId = parsed.tenantId ?? tryExtractTenantIdFromJwt(parsed.accessToken);
 
                 return {
                     storedInSession: true,
@@ -134,7 +131,6 @@ export class PasswordAuthService {
                     refreshTokenPresent: Boolean(parsed.refreshToken),
                     passwordChangeRequired: parsed.passwordChangeRequired,
                     tenantId,
-                    tenantReference: parsed.tenantReference ?? null,
                     raw: parsed.raw,
                 };
             }),
@@ -143,11 +139,12 @@ export class PasswordAuthService {
 
     logout(): Observable<void> {
         const refreshToken = this.authSession.refreshToken()?.trim() ?? '';
+        const tenantId = (tryExtractTenantIdFromJwt(this.authSession.sessionToken()?.value ?? '') ?? '').trim();
 
         if (refreshToken) {
             const payload: PasswordLogoutRequest = {
                 refreshToken,
-                tenantReference: null,
+                tenantId: tenantId || 'default',
             };
 
             return this.apiClient.passwordLogout(payload).pipe(
@@ -170,10 +167,12 @@ export class PasswordAuthService {
             return throwError(() => new Error('Refresh failed: missing refresh token.'));
         }
 
+        const tenantId = (tryExtractTenantIdFromJwt(this.authSession.sessionToken()?.value ?? '') ?? '').trim();
+
         return this.apiClient
             .passwordRefresh({
                 refreshToken,
-                tenantReference: null,
+                tenantId: tenantId || 'default',
                 environmentTag: null,
                 scopes: null,
                 audience: null,

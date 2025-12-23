@@ -40,7 +40,7 @@ public sealed class CroniqWorkerHostedService : BackgroundService
             return;
         }
 
-        _logger.LogInformation("Croniq worker starting for tenant {Tenant} / env {Environment} (instance {Instance})", _options.TenantReference, _options.EnvironmentTag, _options.InstanceId);
+        _logger.LogInformation("Croniq worker starting for tenant {Tenant} / env {Environment} (instance {Instance})", _options.GetEffectiveTenantId(), _options.EnvironmentTag, _options.InstanceId);
 
         while (!stoppingToken.IsCancellationRequested)
         {

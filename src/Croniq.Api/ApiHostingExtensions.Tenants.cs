@@ -20,15 +20,15 @@ public static partial class ApiHostingExtensions
             [FromServices] ICallerContextAccessor callerContextAccessor,
             CancellationToken cancellationToken) =>
         {
-            if (request is null || string.IsNullOrWhiteSpace(request.Reference) || string.IsNullOrWhiteSpace(request.Name))
+            if (request is null || string.IsNullOrWhiteSpace(request.Name))
             {
-                return Results.BadRequest(new { error = "invalid-request", message = "Reference and name are required." });
+                return Results.BadRequest(new { error = "invalid-request", message = "Name is required." });
             }
 
-            var descriptor = await tenantStore.CreateAsync(request.Reference, request.Name, cancellationToken).ConfigureAwait(false);
+            var descriptor = await tenantStore.CreateAsync(new TenantCreateRequest(request.Name), cancellationToken).ConfigureAwait(false);
             return Results.Created($"/tenants/{descriptor.TenantId}", ToTenantResponse(descriptor));
         })
-        .WithDocs("Tenants_Create", "Create tenant", "Creates or updates a tenant record based on the provided reference and name.")
+        .WithDocs("Tenants_Create", "Create tenant", "Creates a tenant record and returns the assigned tenantId.")
         .RequireCroniqAdminScopes(CroniqScopes.TenantsAdmin);
 
         app.MapGet("/tenants", async (

@@ -64,20 +64,19 @@ The rest of this document describes Option A as the baseline, and outlines Optio
 
 - `POST /auth/login`
 
-  - Body: `{ tenantId?, tenantReference?, username, password, environmentTag?, audience?, scopes? }`
-  - In V1, `tenantId`/`tenantReference` are typically omitted.
+  - Body: `{ tenantId, username, password, environmentTag?, audience?, scopes? }`
   - Returns: `{ tenantId, accessToken, tokenType: "Bearer", expiresIn, refreshToken }`
 
 - `POST /auth/refresh`
 
   - Rotates refresh token.
-  - Body: `{ tenantId?, refreshToken, environmentTag?, audience?, scopes? }`
+  - Body: `{ tenantId, refreshToken, environmentTag?, audience?, scopes? }`
   - Returns: `{ accessToken, tokenType: "Bearer", expiresIn, refreshToken }`
 
 - `POST /auth/logout`
 
   - Revokes refresh token (server-side).
-  - Body: `{ tenantId?, refreshToken }`
+  - Body: `{ tenantId, refreshToken }`
 
 - `POST /auth/change-password`
 
@@ -189,15 +188,9 @@ Minimal tables (names illustrative):
 
 ## Configuration (V1)
 
-### Default tenant
+### Tenant selection
 
-To make tenant selection optional for end users, configure a default tenant reference:
-
-- `Croniq:Auth:Password:DefaultTenant`
-  - Must be a **tenant reference** (not an id).
-  - Used when `/auth/login`, `/auth/refresh`, or `/auth/logout` omit tenant information.
-
-Note: Password auth user records are tenant-scoped; without a default tenant the server cannot resolve a tenant from `username` alone.
+Password auth is tenant-scoped. Callers must always provide `tenantId` for `/auth/login`, `/auth/refresh`, and `/auth/logout`.
 
 ### Environment tag semantics
 
@@ -211,14 +204,14 @@ Note: Password auth user records are tenant-scoped; without a default tenant the
 
 ### Stand jetzt (V1)
 
-- Tenant can be omitted for password endpoints if `Croniq:Auth:Password:DefaultTenant` is configured.
+- `tenantId` is required for password endpoints.
 - `environmentTag` is treated as a partition/preset and is carried in the access token.
 - Refresh can switch environments by passing a different `environmentTag`.
 
 ### Open decisions
 
 - Bind refresh tokens to environments (force re-login on env switch) vs allow env switch via refresh.
-- Require explicit tenant selection even in single-tenant installs vs rely on default tenant.
+- Require explicit tenant selection even in single-tenant installs vs rely on a fixed `default` tenant id.
 - Add dedicated audit events when environment switches happen via refresh.
 
 ## Tenants & Scopes

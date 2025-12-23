@@ -28,6 +28,7 @@ public sealed class SqlServerApiKeyStoreTests : IAsyncLifetime
     public async Task InitializeAsync()
     {
         await _sql.ResetDatabaseAsync();
+        await SqlServerDatabaseMigrator.EnsureTenantExistsAsync(_sql.ConnectionString, "tenant-sql");
         var services = new ServiceCollection();
         services.AddLogging(TestLogging.Configure);
         services.AddCroniqAuthSqlServer(options => options.ConnectionString = _sql.ConnectionString);
@@ -143,15 +144,15 @@ public sealed class SqlServerApiKeyStoreTests : IAsyncLifetime
     [Trait(TestCategories.Category, TestCategories.Contract)]
     public async Task Tenant_create_list_roundtrip_succeeds()
     {
-        var reference = $"tenant-{Guid.NewGuid():N}";
-        var descriptor = await _tenants!.CreateAsync(reference, "Sql Corp");
+        var tenantId = Guid.NewGuid().ToString("D");
+        var descriptor = await _tenants!.CreateAsync(new TenantCreateRequest("Sql Corp", tenantId));
 
-        descriptor.Reference.ShouldBe(reference);
+        descriptor.TenantId.ShouldBe(tenantId);
         descriptor.IsActive.ShouldBeTrue();
 
-        var byReference = await _tenants.GetByReferenceAsync(reference);
-        byReference.ShouldNotBeNull();
-        byReference!.TenantId.ShouldBe(descriptor.TenantId);
+        var fetched = await _tenants.GetByIdAsync(tenantId);
+        fetched.ShouldNotBeNull();
+        fetched!.TenantId.ShouldBe(descriptor.TenantId);
 
         var listed = await _tenants.ListAsync();
         listed.ShouldContain(tenant => tenant.TenantId == descriptor.TenantId);
@@ -161,8 +162,8 @@ public sealed class SqlServerApiKeyStoreTests : IAsyncLifetime
     [Trait(TestCategories.Category, TestCategories.Contract)]
     public async Task Tenant_deactivate_marks_row_inactive()
     {
-        var reference = $"tenant-{Guid.NewGuid():N}";
-        var descriptor = await _tenants!.CreateAsync(reference, "Inactive Corp");
+        var tenantId = Guid.NewGuid().ToString("D");
+        var descriptor = await _tenants!.CreateAsync(new TenantCreateRequest("Inactive Corp", tenantId));
 
         var deactivated = await _tenants.DeactivateAsync(descriptor.TenantId);
         deactivated.ShouldBeTrue();

@@ -90,7 +90,7 @@ describe('LoginPage', () => {
             refreshTokenPresent: false,
             passwordChangeRequired: false,
             tenantId: null,
-            tenantReference: null,
+            tenantId: 'default',
             raw: {},
         }));
 
@@ -109,7 +109,7 @@ describe('LoginPage', () => {
             refreshTokenPresent: false,
             passwordChangeRequired: true,
             tenantId: null,
-            tenantReference: null,
+            tenantId: 'default',
             raw: {},
         }));
 

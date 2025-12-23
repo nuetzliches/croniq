@@ -276,7 +276,7 @@ This launches Prometheus (`http://localhost:9090`), Tempo, and Grafana (`http://
    setx Croniq__Observability__OtlpProtocol grpc
    rem optional overrides
    setx Croniq__Core__EnvironmentTag dev
-   setx Croniq__Core__TenantReference default
+   setx Croniq__Core__TenantId default
    ```
 
    Restart the application so the new environment variables take effect. The defaults already point at `otel-collector:4317` inside Docker, so these overrides are only needed when you run the app on your host machine.

@@ -16,6 +16,8 @@ namespace Croniq.Core.Tests.Hosting;
 
 public sealed class CroniqTriggerSeedingHostedServiceTests
 {
+    private const string TestTenantId = "00000000-0000-0000-0000-000000000001";
+
     [Fact]
     public async Task Returns_when_seeding_off_in_run_mode()
     {
@@ -27,7 +29,7 @@ public sealed class CroniqTriggerSeedingHostedServiceTests
             store,
             registry,
             System.Array.Empty<CroniqTriggerSeedRegistration>(),
-            Microsoft.Extensions.Options.Options.Create(new CroniqOptions { TenantReference = "t", EnvironmentTag = "dev", InstanceId = "i1" }),
+            Microsoft.Extensions.Options.Options.Create(new CroniqOptions { TenantMode = TenantMode.Multi, TenantId = TestTenantId, EnvironmentTag = "dev", InstanceId = "i1" }),
             Microsoft.Extensions.Options.Options.Create(new CroniqSeedingOptions { Mode = "Off" }),
             Microsoft.Extensions.Options.Options.Create(new CroniqStartupOptions { Mode = "Run" }),
             NullLogger<CroniqTriggerSeedingHostedService>.Instance);
@@ -49,7 +51,7 @@ public sealed class CroniqTriggerSeedingHostedServiceTests
             store,
             registry,
             System.Array.Empty<CroniqTriggerSeedRegistration>(),
-            Microsoft.Extensions.Options.Options.Create(new CroniqOptions { TenantReference = "t", EnvironmentTag = "dev", InstanceId = "i1" }),
+            Microsoft.Extensions.Options.Options.Create(new CroniqOptions { TenantMode = TenantMode.Multi, TenantId = TestTenantId, EnvironmentTag = "dev", InstanceId = "i1" }),
             Microsoft.Extensions.Options.Options.Create(new CroniqSeedingOptions { Mode = "CreateIfMissing" }),
             Microsoft.Extensions.Options.Options.Create(new CroniqStartupOptions { Mode = "Validate" }),
             NullLogger<CroniqTriggerSeedingHostedService>.Instance);
@@ -80,7 +82,7 @@ public sealed class CroniqTriggerSeedingHostedServiceTests
             store,
             registry,
             System.Array.Empty<CroniqTriggerSeedRegistration>(),
-            Microsoft.Extensions.Options.Options.Create(new CroniqOptions { TenantReference = "t", EnvironmentTag = "dev", InstanceId = "i1" }),
+            Microsoft.Extensions.Options.Options.Create(new CroniqOptions { TenantMode = TenantMode.Multi, TenantId = TestTenantId, EnvironmentTag = "dev", InstanceId = "i1" }),
             Microsoft.Extensions.Options.Options.Create(new CroniqSeedingOptions { Mode = "CreateIfMissing" }),
             Microsoft.Extensions.Options.Options.Create(new CroniqStartupOptions { Mode = "Run" }),
             NullLogger<CroniqTriggerSeedingHostedService>.Instance);
@@ -89,7 +91,7 @@ public sealed class CroniqTriggerSeedingHostedServiceTests
 
         await store.Received(1).UpsertJobAsync(
             Arg.Is<JobDefinition>(job => job.JobKey == "samples:job"),
-            Arg.Is<PartitionScope>(scope => scope.TenantId == "t" && scope.EnvironmentTag == "dev"),
+            Arg.Is<PartitionScope>(scope => scope.TenantId == TestTenantId && scope.EnvironmentTag == "dev"),
             Arg.Any<CancellationToken>());
         await store.Received(1).UpsertTriggerAsync(
             Arg.Is<TriggerDefinition>(trigger => trigger.TriggerId == "seed-trigger"),
@@ -114,7 +116,7 @@ public sealed class CroniqTriggerSeedingHostedServiceTests
 
     private static IJobRegistry BuildRegistry()
     {
-        var options = Microsoft.Extensions.Options.Options.Create(new CroniqOptions { TenantReference = "t", EnvironmentTag = "dev", InstanceId = "i1" });
+        var options = Microsoft.Extensions.Options.Options.Create(new CroniqOptions { TenantMode = TenantMode.Multi, TenantId = TestTenantId, EnvironmentTag = "dev", InstanceId = "i1" });
         var registrations = new[] { new JobRegistration(typeof(SampleJob)) };
         return new JobRegistry(options, registrations);
     }

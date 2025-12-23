@@ -16,7 +16,8 @@
   </ItemGroup>
   <PropertyGroup Condition="$([System.String]::Copy('$(MSBuildProjectName)').Contains('.Tests'))">
     <IsTestProject>true</IsTestProject>
-    <CollectCoverage>true</CollectCoverage>
+    <!-- Coverage is opt-in to avoid intermittent file locking issues when coverlet rewrites assemblies on Windows. -->
+    <CollectCoverage Condition="'$(CollectCoverage)' == ''">false</CollectCoverage>
     <CoverletOutputFormat>cobertura</CoverletOutputFormat>
     <CoverletOutput>$(MSBuildProjectDirectory)\TestResults\coverage\$(MSBuildProjectName)\coverage</CoverletOutput>
     <ExcludeByFile>**\bin\**,**\obj\**,**/bin/**,**/obj/**,**/Migrations/**/*.cs,**\Migrations\**\*.cs,**/Program.cs,**\Program.cs,**/CronExpression.cs,**\CronExpression.cs</ExcludeByFile>

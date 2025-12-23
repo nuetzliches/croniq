@@ -31,10 +31,12 @@ public sealed class SqlServerContainerFixture : IAsyncLifetime
 
     private MsSqlTestcontainer? _container;
     private bool _usingExternal;
+    private string? _ownedDatabaseName;
+    private string? _ownedDatabaseServerConnectionString;
     private string? _cliContainerId;
     private string? _cliContainerName;
     private int _cliHostPort;
-    private static readonly TimeSpan ContainerStartupTimeout = TimeSpan.FromSeconds(90);
+    private static readonly TimeSpan ContainerStartupTimeout = GetStartupTimeout();
 
     public string ConnectionString { get; private set; } = string.Empty;
 
@@ -50,7 +52,7 @@ public sealed class SqlServerContainerFixture : IAsyncLifetime
         if (!string.IsNullOrWhiteSpace(external))
         {
             _usingExternal = true;
-            ConnectionString = external;
+            ConnectionString = await BuildExternalConnectionStringAsync(external, runtime.DatabaseName).ConfigureAwait(false);
             await SqlServerDatabaseMigrator.ApplyMigrationsAsync(ConnectionString).ConfigureAwait(false);
             return;
         }
@@ -68,6 +70,33 @@ public sealed class SqlServerContainerFixture : IAsyncLifetime
             ThrowDockerUnavailableSkip(dockerMissing);
         }
 
+        // On Windows, Docker.DotNet/Testcontainers can fail when attaching to container streams
+        // ("cannot hijack chunked or content length stream"). Prefer the docker CLI path.
+        var forceTestcontainers = string.Equals(
+            Environment.GetEnvironmentVariable("CRONIQ_SQL_FORCE_TESTCONTAINERS"),
+            "true",
+            StringComparison.OrdinalIgnoreCase);
+
+        if (OperatingSystem.IsWindows() && !forceTestcontainers)
+        {
+            try
+            {
+                if (await TryStartDockerCliContainerAsync(runtime, throwOnFailure: true).ConfigureAwait(false))
+                {
+                    return;
+                }
+            }
+            catch (Exception ex)
+            {
+                if (await TryInitializeLocalDbFallbackAsync(ex).ConfigureAwait(false))
+                {
+                    return;
+                }
+
+                ThrowDockerUnavailableSkip(ex);
+            }
+        }
+
         try
         {
             await StartTestcontainerAsync(runtime).ConfigureAwait(false);
@@ -75,7 +104,7 @@ public sealed class SqlServerContainerFixture : IAsyncLifetime
         catch (Exception ex) when (IsDockerAvailabilityIssue(ex))
         {
             Console.WriteLine($"[SqlServerContainerFixture] Testcontainers start failed: {ex.Message}");
-            if (dockerTransportDetected && await TryStartDockerCliContainerAsync(runtime).ConfigureAwait(false))
+            if (dockerTransportDetected && await TryStartDockerCliContainerAsync(runtime, throwOnFailure: false).ConfigureAwait(false))
             {
                 return;
             }
@@ -120,7 +149,93 @@ public sealed class SqlServerContainerFixture : IAsyncLifetime
             return;
         }
 
+        if (_ownedDatabaseName is not null && _ownedDatabaseServerConnectionString is not null)
+        {
+            await TryDropOwnedDatabaseAsync(_ownedDatabaseServerConnectionString, _ownedDatabaseName).ConfigureAwait(false);
+            _ownedDatabaseName = null;
+            _ownedDatabaseServerConnectionString = null;
+        }
+
         LogArtifactPath = null;
+    }
+
+    private async Task<string> BuildExternalConnectionStringAsync(string externalConnectionString, string ownedDatabaseName)
+    {
+        var reuse = Environment.GetEnvironmentVariable("CRONIQ_SQL_REUSE_DATABASE");
+        var reuseDatabase = string.Equals(reuse, "true", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(reuse, "1", StringComparison.OrdinalIgnoreCase);
+
+        var builder = new SqlConnectionStringBuilder(externalConnectionString)
+        {
+            Encrypt = false,
+            TrustServerCertificate = true,
+            MultipleActiveResultSets = false
+        };
+
+        if (reuseDatabase)
+        {
+            return builder.ConnectionString;
+        }
+
+        var masterBuilder = new SqlConnectionStringBuilder(builder.ConnectionString)
+        {
+            InitialCatalog = "master",
+            ConnectTimeout = Math.Max(builder.ConnectTimeout, 15)
+        };
+
+        try
+        {
+            await EnsureDatabaseExistsAsync(masterBuilder.ConnectionString, ownedDatabaseName).ConfigureAwait(false);
+            _ownedDatabaseName = ownedDatabaseName;
+            _ownedDatabaseServerConnectionString = masterBuilder.ConnectionString;
+
+            builder.InitialCatalog = ownedDatabaseName;
+            return builder.ConnectionString;
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine(
+                $"[SqlServerContainerFixture] External SQL database isolation failed ({ex.Message}). " +
+                "Falling back to the provided CRONIQ_SQL database. " +
+                "Set CRONIQ_SQL_REUSE_DATABASE=true to silence this, or grant CREATE DATABASE permissions to enable isolation.");
+            return builder.ConnectionString;
+        }
+    }
+
+    private static async Task EnsureDatabaseExistsAsync(string serverConnectionString, string databaseName)
+    {
+        var safeName = databaseName.Replace("]", "]]", StringComparison.Ordinal);
+        var sql = $"IF DB_ID(N'{databaseName.Replace("'", "''", StringComparison.Ordinal)}') IS NULL CREATE DATABASE [{safeName}];";
+
+        await using var connection = new SqlConnection(serverConnectionString);
+        await connection.OpenAsync().ConfigureAwait(false);
+        await using var command = connection.CreateCommand();
+        command.CommandText = sql;
+        await command.ExecuteNonQueryAsync().ConfigureAwait(false);
+    }
+
+    private static async Task TryDropOwnedDatabaseAsync(string serverConnectionString, string databaseName)
+    {
+        try
+        {
+            var safeName = databaseName.Replace("]", "]]", StringComparison.Ordinal);
+            var escaped = databaseName.Replace("'", "''", StringComparison.Ordinal);
+            var sql = $@"IF DB_ID(N'{escaped}') IS NOT NULL
+BEGIN
+    ALTER DATABASE [{safeName}] SET SINGLE_USER WITH ROLLBACK IMMEDIATE;
+    DROP DATABASE [{safeName}];
+END";
+
+            await using var connection = new SqlConnection(serverConnectionString);
+            await connection.OpenAsync().ConfigureAwait(false);
+            await using var command = connection.CreateCommand();
+            command.CommandText = sql;
+            await command.ExecuteNonQueryAsync().ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[SqlServerContainerFixture] Failed to drop owned database '{databaseName}': {ex.Message}");
+        }
     }
 
     public Task ResetDatabaseAsync(CancellationToken cancellationToken = default)
@@ -167,6 +282,9 @@ public sealed class SqlServerContainerFixture : IAsyncLifetime
             .WithDatabase(configuration)
             .WithEnvironment("ACCEPT_EULA", "Y")
             .WithEnvironment("MSSQL_PID", runtime.SqlPid)
+            // The MsSqlTestcontainer default wait strategy may attach to logs. On some Windows Docker setups,
+            // Docker.DotNet fails to hijack the log stream. Waiting for port availability avoids that attach.
+            .WithWaitStrategy(Wait.ForUnixContainer().UntilPortIsAvailable(1433))
             .WithCleanUp(true)
             .Build();
 
@@ -249,6 +367,12 @@ public sealed class SqlServerContainerFixture : IAsyncLifetime
         {
             _usingExternal = true;
             ConnectionString = builder.ConnectionString;
+            _ownedDatabaseName = builder.InitialCatalog;
+            var serverBuilder = new SqlConnectionStringBuilder(builder.ConnectionString)
+            {
+                InitialCatalog = "master"
+            };
+            _ownedDatabaseServerConnectionString = serverBuilder.ConnectionString;
             await SqlServerDatabaseMigrator.ApplyMigrationsAsync(ConnectionString).ConfigureAwait(false);
             return true;
         }
@@ -260,11 +384,11 @@ public sealed class SqlServerContainerFixture : IAsyncLifetime
         }
     }
 
-    private async Task<bool> TryStartDockerCliContainerAsync(SqlServerRuntimeOptions runtime)
+    private async Task<bool> TryStartDockerCliContainerAsync(SqlServerRuntimeOptions runtime, bool throwOnFailure)
     {
         try
         {
-            var hostPort = GetAvailableTcpPort();
+            var hostPort = TryGetConfiguredHostPort() ?? GetAvailableTcpPort();
             var containerName = $"croniq-sql-cli-{Guid.NewGuid():N}";
             var runArgs = new StringBuilder()
                 .Append("run -d ")
@@ -279,13 +403,36 @@ public sealed class SqlServerContainerFixture : IAsyncLifetime
             var result = await RunDockerCliAsync(runArgs, CancellationToken.None).ConfigureAwait(false);
             if (result.ExitCode != 0)
             {
-                Console.WriteLine($"[SqlServerContainerFixture] docker run failed: {result.StdErr}");
+                var failure = new InvalidOperationException(
+                    $"docker run failed (exitCode={result.ExitCode}). stdout='{Truncate(result.StdOut)}' stderr='{Truncate(result.StdErr)}'");
+                if (throwOnFailure)
+                {
+                    throw failure;
+                }
+
+                Console.WriteLine($"[SqlServerContainerFixture] {failure.Message}");
                 return false;
             }
 
             var containerId = result.StdOut.Trim();
             if (string.IsNullOrWhiteSpace(containerId))
             {
+                // If stdout capture failed, the container might still have been created. Clean up by name.
+                try
+                {
+                    await RunDockerCliAsync($"rm -f {containerName}", CancellationToken.None).ConfigureAwait(false);
+                }
+                catch
+                {
+                    // ignore cleanup failures
+                }
+                var failure = new InvalidOperationException(
+                    $"docker run did not return a container id. stdout='{Truncate(result.StdOut)}' stderr='{Truncate(result.StdErr)}'");
+                if (throwOnFailure)
+                {
+                    throw failure;
+                }
+
                 return false;
             }
 
@@ -297,12 +444,13 @@ public sealed class SqlServerContainerFixture : IAsyncLifetime
             var readinessBuilder = new SqlConnectionStringBuilder(connectionString)
             {
                 InitialCatalog = "master",
+                ConnectTimeout = 5,
                 Encrypt = false,
                 TrustServerCertificate = true
             };
 
             Console.WriteLine($"[SqlServerContainerFixture] Waiting for docker CLI SQL container (port {hostPort}) to become ready...");
-            await WaitForSqlServerAsync(readinessBuilder.ConnectionString, TimeSpan.FromSeconds(90)).ConfigureAwait(false);
+            await WaitForSqlServerAsync(readinessBuilder.ConnectionString, ContainerStartupTimeout).ConfigureAwait(false);
 
             ConnectionString = connectionString;
             await SqlServerDatabaseMigrator.ApplyMigrationsAsync(ConnectionString).ConfigureAwait(false);
@@ -311,12 +459,27 @@ public sealed class SqlServerContainerFixture : IAsyncLifetime
         catch (Win32Exception)
         {
             // docker CLI not available on PATH
+            if (throwOnFailure)
+            {
+                throw;
+            }
+
             return false;
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"[SqlServerContainerFixture] docker CLI fallback failed: {ex}");
+            var diagnostics = await TryGetCliContainerDiagnosticsAsync(CancellationToken.None).ConfigureAwait(false);
+            var failure = new InvalidOperationException(
+                $"docker CLI fallback failed. {diagnostics}",
+                ex);
+
+            Console.WriteLine($"[SqlServerContainerFixture] {failure}");
             await StopCliContainerAsync().ConfigureAwait(false);
+            if (throwOnFailure)
+            {
+                throw failure;
+            }
+
             return false;
         }
     }
@@ -331,11 +494,73 @@ public sealed class SqlServerContainerFixture : IAsyncLifetime
             Password = runtime.Password,
             TrustServerCertificate = true,
             Encrypt = false,
-            ConnectTimeout = 30,
-            MultipleActiveResultSets = true
+            ConnectTimeout = 15,
+            MultipleActiveResultSets = false
         };
 
         return builder.ConnectionString;
+    }
+
+    private static int? TryGetConfiguredHostPort()
+    {
+        var raw = Environment.GetEnvironmentVariable("CRONIQ_SQL_HOST_PORT");
+        if (int.TryParse(raw, out var port) && port is > 0 and < 65536)
+        {
+            return port;
+        }
+
+        return null;
+    }
+
+    private async Task<string> TryGetCliContainerDiagnosticsAsync(CancellationToken cancellationToken)
+    {
+        if (_cliContainerId is null)
+        {
+            return "No CLI container id was recorded.";
+        }
+
+        var sb = new StringBuilder();
+        try
+        {
+            var ps = await RunDockerCliAsync($"ps -a --no-trunc --filter id={_cliContainerId}", cancellationToken).ConfigureAwait(false);
+            if (ps.ExitCode == 0 && !string.IsNullOrWhiteSpace(ps.StdOut))
+            {
+                sb.Append("docker ps: ").AppendLine(Truncate(ps.StdOut));
+            }
+        }
+        catch
+        {
+            // ignore diagnostics failures
+        }
+
+        try
+        {
+            var logs = await RunDockerCliAsync($"logs --tail 200 {_cliContainerId}", cancellationToken).ConfigureAwait(false);
+            if (logs.ExitCode == 0 && !string.IsNullOrWhiteSpace(logs.StdOut))
+            {
+                sb.Append("docker logs (tail): ").AppendLine(Truncate(logs.StdOut));
+            }
+            else if (logs.ExitCode != 0 && !string.IsNullOrWhiteSpace(logs.StdErr))
+            {
+                sb.Append("docker logs stderr: ").AppendLine(Truncate(logs.StdErr));
+            }
+        }
+        catch
+        {
+            // ignore diagnostics failures
+        }
+
+        return sb.Length == 0 ? "No docker diagnostics were available." : sb.ToString();
+    }
+
+    private static string Truncate(string? value, int maxLength = 2000)
+    {
+        if (string.IsNullOrEmpty(value))
+        {
+            return string.Empty;
+        }
+
+        return value.Length <= maxLength ? value : value.Substring(0, maxLength) + "…";
     }
 
     private async Task StopCliContainerAsync()
@@ -413,6 +638,19 @@ public sealed class SqlServerContainerFixture : IAsyncLifetime
         }
     }
 
+    private static TimeSpan GetStartupTimeout()
+    {
+        // The first SQL Server container start can be slow on Windows (image pull, volume init).
+        // Keep this configurable for CI and local troubleshooting.
+        var raw = Environment.GetEnvironmentVariable("CRONIQ_SQL_STARTUP_TIMEOUT_SECONDS");
+        if (int.TryParse(raw, out var seconds) && seconds > 0)
+        {
+            return TimeSpan.FromSeconds(seconds);
+        }
+
+        return TimeSpan.FromSeconds(180);
+    }
+
     private static int GetAvailableTcpPort()
     {
         var listener = new TcpListener(IPAddress.Loopback, 0);
@@ -435,42 +673,28 @@ public sealed class SqlServerContainerFixture : IAsyncLifetime
         };
 
         using var process = new Process { StartInfo = startInfo };
-        var stdout = new StringBuilder();
-        var stderr = new StringBuilder();
-
-        process.OutputDataReceived += (_, e) =>
-        {
-            if (e.Data is not null)
-            {
-                stdout.AppendLine(e.Data);
-            }
-        };
-
-        process.ErrorDataReceived += (_, e) =>
-        {
-            if (e.Data is not null)
-            {
-                stderr.AppendLine(e.Data);
-            }
-        };
-
         if (!process.Start())
         {
             throw new InvalidOperationException("Failed to start docker CLI.");
         }
 
-        process.BeginOutputReadLine();
-        process.BeginErrorReadLine();
+        var stdoutTask = process.StandardOutput.ReadToEndAsync();
+        var stderrTask = process.StandardError.ReadToEndAsync();
         await process.WaitForExitAsync(cancellationToken).ConfigureAwait(false);
 
-        return (process.ExitCode, stdout.ToString(), stderr.ToString());
+        var stdout = await stdoutTask.ConfigureAwait(false);
+        var stderr = await stderrTask.ConfigureAwait(false);
+        return (process.ExitCode, stdout, stderr);
     }
 
     private static SqlServerRuntimeOptions CreateRuntimeOptions()
     {
         var password = Environment.GetEnvironmentVariable("CRONIQ_SQL_PASSWORD") ?? "YourStrong(!)Password1";
         var image = Environment.GetEnvironmentVariable("CRONIQ_SQL_IMAGE") ?? "mcr.microsoft.com/mssql/server:2022-latest";
-        var database = Environment.GetEnvironmentVariable("CRONIQ_SQL_DATABASE") ?? $"CroniqTests_{Environment.ProcessId}_{Guid.NewGuid():N}";
+        var databasePrefix = Environment.GetEnvironmentVariable("CRONIQ_SQL_DATABASE") ?? "CroniqTests";
+        // Always isolate contract tests from dev/prod DB names like "CroniqDev".
+        // Even if a prefix is provided, append process + GUID for uniqueness.
+        var database = $"{databasePrefix}_{Environment.ProcessId}_{Guid.NewGuid():N}";
         var pid = Environment.GetEnvironmentVariable("CRONIQ_SQL_PID") ?? "Developer";
         return new SqlServerRuntimeOptions(image, password, database, pid);
     }

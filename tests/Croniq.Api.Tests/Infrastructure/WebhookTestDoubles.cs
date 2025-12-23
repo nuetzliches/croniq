@@ -716,55 +716,39 @@ public sealed class TestTenantStore : ITenantStore
 {
     private readonly object _sync = new();
     private readonly Dictionary<string, TenantDescriptor> _tenants = new(StringComparer.OrdinalIgnoreCase);
-    private readonly Dictionary<string, string> _references = new(StringComparer.OrdinalIgnoreCase);
 
     public TestTenantStore()
     {
         Reset();
     }
 
-    public Task<TenantDescriptor> CreateAsync(string reference, string name, CancellationToken cancellationToken = default)
+    public Task<TenantDescriptor> CreateAsync(TenantCreateRequest request, CancellationToken cancellationToken = default)
     {
-        if (string.IsNullOrWhiteSpace(reference)) throw new ArgumentException("Reference is required", nameof(reference));
-        if (string.IsNullOrWhiteSpace(name)) throw new ArgumentException("Name is required", nameof(name));
+        if (request is null) throw new ArgumentNullException(nameof(request));
+        if (string.IsNullOrWhiteSpace(request.Name)) throw new ArgumentException("Name is required", nameof(request));
 
-        var normalizedReference = Normalize(reference);
-        var trimmedReference = reference.Trim();
-        var trimmedName = name.Trim();
+        var tenantId = string.IsNullOrWhiteSpace(request.TenantId)
+            ? GenerateTenantId()
+            : request.TenantId.Trim();
+
+        var trimmedName = request.Name.Trim();
         TenantDescriptor descriptor;
 
         lock (_sync)
         {
-            if (_references.TryGetValue(normalizedReference, out var tenantId) && _tenants.TryGetValue(tenantId, out var existing))
+            if (_tenants.TryGetValue(tenantId, out var existing))
             {
                 descriptor = existing with { Name = trimmedName, IsActive = true };
                 _tenants[tenantId] = descriptor;
             }
             else
             {
-                descriptor = new TenantDescriptor(GenerateTenantId(), trimmedReference, trimmedName, true, DateTimeOffset.UtcNow);
+                descriptor = new TenantDescriptor(tenantId, trimmedName, true, DateTimeOffset.UtcNow);
                 _tenants[descriptor.TenantId] = descriptor;
-                _references[normalizedReference] = descriptor.TenantId;
             }
         }
 
         return Task.FromResult(descriptor);
-    }
-
-    public Task<TenantDescriptor?> GetByReferenceAsync(string reference, CancellationToken cancellationToken = default)
-    {
-        if (string.IsNullOrWhiteSpace(reference)) throw new ArgumentException("Reference is required", nameof(reference));
-
-        var normalized = Normalize(reference);
-        lock (_sync)
-        {
-            if (_references.TryGetValue(normalized, out var tenantId) && _tenants.TryGetValue(tenantId, out var descriptor))
-            {
-                return Task.FromResult<TenantDescriptor?>(descriptor);
-            }
-        }
-
-        return Task.FromResult<TenantDescriptor?>(null);
     }
 
     public Task<TenantDescriptor?> GetByIdAsync(string tenantId, CancellationToken cancellationToken = default)
@@ -788,7 +772,7 @@ public sealed class TestTenantStore : ITenantStore
         lock (_sync)
         {
             snapshot = _tenants.Values
-                .OrderBy(tenant => tenant.Reference, StringComparer.OrdinalIgnoreCase)
+                .OrderBy(tenant => tenant.TenantId, StringComparer.OrdinalIgnoreCase)
                 .ToArray();
         }
 
@@ -821,21 +805,16 @@ public sealed class TestTenantStore : ITenantStore
         lock (_sync)
         {
             _tenants.Clear();
-            _references.Clear();
 
             var descriptor = new TenantDescriptor(
-                TestCallerContextFactory.DefaultTenantId,
                 TestCallerContextFactory.DefaultTenantId,
                 "Integration Tenant",
                 true,
                 DateTimeOffset.UtcNow);
 
             _tenants[descriptor.TenantId] = descriptor;
-            _references[Normalize(descriptor.Reference)] = descriptor.TenantId;
         }
     }
-
-    private static string Normalize(string reference) => reference.Trim().ToLowerInvariant();
 
     private static string GenerateTenantId() => $"tn_{Guid.NewGuid():N}";
 }

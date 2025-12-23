@@ -83,7 +83,6 @@ public sealed class PasswordAuthApiTestHost : IAsyncLifetime
             ["Croniq:Auth:Tokens:DefaultAudience"] = "cronqi-api",
             ["Croniq:Auth:Tokens:SigningKey"] = "Y3JvbmlxLWl0ZXN0LXNpZ25pbmcta2V5LTEyMzQ1Njc4OTA=",
             ["Croniq:Auth:Password:Enabled"] = "true",
-            ["Croniq:Auth:Password:DefaultTenant"] = TenantId,
             ["Croniq:Auth:Password:MaxFailedAccessAttempts"] = "2",
             ["Croniq:Auth:Password:LockoutMinutes"] = "15",
             ["Croniq:Auth:Password:AccessTokenLifetimeMinutes"] = "15",

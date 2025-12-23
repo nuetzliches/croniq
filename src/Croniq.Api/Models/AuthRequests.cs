@@ -3,21 +3,21 @@ namespace Croniq.Api.Models;
 public sealed record PasswordLoginRequest(
     string Username,
     string Password,
+    string TenantId,
     string? EnvironmentTag,
     IReadOnlyCollection<string>? Scopes,
-    string? Audience,
-    string? TenantReference = null);
+    string? Audience);
 
 public sealed record PasswordRefreshRequest(
     string RefreshToken,
+    string TenantId,
     string? EnvironmentTag,
     IReadOnlyCollection<string>? Scopes,
-    string? Audience,
-    string? TenantReference = null);
+    string? Audience);
 
 public sealed record PasswordLogoutRequest(
     string RefreshToken,
-    string? TenantReference = null);
+    string TenantId);
 
 public sealed record PasswordChangePasswordRequest(
     string CurrentPassword,

@@ -195,6 +195,16 @@ public sealed class SqlServerWebhookPersistenceProvider : IWebhookPersistencePro
 
         if (entity is null)
         {
+            var existsInOtherEnvironment = await db.WebhookEndpoints
+                .AsNoTracking()
+                .AnyAsync(x => x.HookKey == hookKey && x.TenantId == scope.TenantId, cancellationToken)
+                .ConfigureAwait(false);
+
+            if (existsInOtherEnvironment)
+            {
+                throw new InvalidOperationException($"Webhook {hookKey} does not belong to scope '{scope.EnvironmentTag}'.");
+            }
+
             return;
         }
 

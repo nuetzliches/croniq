@@ -1,6 +1,7 @@
 using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
 namespace Croniq.Data.SqlServer;
@@ -39,6 +40,15 @@ public static class DependencyInjectionExtensions
 
             builder.EnableDetailedErrors(options.EnableDetailedErrors);
             builder.EnableSensitiveDataLogging(options.EnableSensitiveDataLogging);
+
+            if (options.SuppressMarsSavepointWarning)
+            {
+                builder.ConfigureWarnings(warnings =>
+                    // EF Core warning: "Savepoints are disabled because Multiple Active Result Sets (MARS) is enabled".
+                    // We intentionally suppress it in tests to keep output clean.
+                    // 30004 is the EventId emitted for this warning by EF Core.
+                    warnings.Ignore(new EventId(30004, "SavepointsDisabledBecauseOfMARS")));
+            }
         }
 
         services.AddDbContext<SqlServerDbContext>(

@@ -83,7 +83,7 @@ public class TriggerWorkerMisfireTests
 
     private static IJobRegistry BuildRegistry()
     {
-        var options = Microsoft.Extensions.Options.Options.Create(new CroniqOptions { TenantReference = "t", EnvironmentTag = "dev" });
+        var options = Microsoft.Extensions.Options.Options.Create(new CroniqOptions { EnvironmentTag = "dev" });
         var registrations = new[] { new JobRegistration(typeof(SampleJob)) };
         return new JobRegistry(options, registrations);
     }
@@ -104,7 +104,7 @@ public class TriggerWorkerMisfireTests
                 Microsoft.Extensions.Options.Options.Create(new MisfirePolicyOptions { MaxMisfireDelay = TimeSpan.FromMinutes(5), DeadLetterOnMisfire = true }),
                 Microsoft.Extensions.Options.Options.Create(new ExecutionPolicyOptions()),
                 Microsoft.Extensions.Options.Options.Create(new PolicyOverrideOptions())),
-            Microsoft.Extensions.Options.Options.Create(new CroniqOptions { TenantReference = "t", EnvironmentTag = "dev", InstanceId = "i1" }),
+            Microsoft.Extensions.Options.Options.Create(new CroniqOptions { EnvironmentTag = "dev", InstanceId = "i1" }),
             Microsoft.Extensions.Options.Options.Create(new WorkerHostOptions { LeaseRenewalLeadTime = TimeSpan.Zero }),
             new InMemoryQuotaGuard(),
             new NoOpExecutionLogStore(),
@@ -136,7 +136,7 @@ public class TriggerWorkerMisfireTests
                 Microsoft.Extensions.Options.Options.Create(new MisfirePolicyOptions { MaxMisfireDelay = TimeSpan.FromMinutes(5) }),
                 Microsoft.Extensions.Options.Options.Create(new ExecutionPolicyOptions()),
                 Microsoft.Extensions.Options.Options.Create(new PolicyOverrideOptions())),
-            Microsoft.Extensions.Options.Options.Create(new CroniqOptions { TenantReference = "t", EnvironmentTag = "dev", InstanceId = "i1" }),
+            Microsoft.Extensions.Options.Options.Create(new CroniqOptions { EnvironmentTag = "dev", InstanceId = "i1" }),
             Microsoft.Extensions.Options.Options.Create(new WorkerHostOptions { LeaseRenewalLeadTime = TimeSpan.Zero }),
             new InMemoryQuotaGuard(),
             new NoOpExecutionLogStore(),
@@ -185,7 +185,7 @@ public class TriggerWorkerMisfireTests
                 Microsoft.Extensions.Options.Options.Create(new MisfirePolicyOptions { MaxMisfireDelay = TimeSpan.FromMinutes(5) }),
                 Microsoft.Extensions.Options.Options.Create(new ExecutionPolicyOptions()),
                 Microsoft.Extensions.Options.Options.Create(quotaOverrides)),
-            Microsoft.Extensions.Options.Options.Create(new CroniqOptions { TenantReference = "t", EnvironmentTag = "dev", InstanceId = "i1" }),
+            Microsoft.Extensions.Options.Options.Create(new CroniqOptions { EnvironmentTag = "dev", InstanceId = "i1" }),
             Microsoft.Extensions.Options.Options.Create(new WorkerHostOptions { LeaseRenewalLeadTime = TimeSpan.Zero }),
             new InMemoryQuotaGuard(),
             new NoOpExecutionLogStore(),
@@ -247,7 +247,7 @@ public class TriggerWorkerMisfireTests
                 Microsoft.Extensions.Options.Options.Create(new MisfirePolicyOptions { MaxMisfireDelay = TimeSpan.FromMinutes(5) }),
                 Microsoft.Extensions.Options.Options.Create(new ExecutionPolicyOptions { DeadLetter = new DeadLetterPolicyOptions { Enabled = true } }),
                 Microsoft.Extensions.Options.Options.Create(overrides)),
-            Microsoft.Extensions.Options.Options.Create(new CroniqOptions { TenantReference = "t", EnvironmentTag = "dev", InstanceId = "i1" }),
+            Microsoft.Extensions.Options.Options.Create(new CroniqOptions { EnvironmentTag = "dev", InstanceId = "i1" }),
             Microsoft.Extensions.Options.Options.Create(new WorkerHostOptions { LeaseRenewalLeadTime = TimeSpan.Zero }),
             new InMemoryQuotaGuard(),
             new NoOpExecutionLogStore(),

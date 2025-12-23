@@ -8,7 +8,6 @@ namespace Croniq.Auth.Core;
 
 public sealed record TenantSeed(
     string TenantId,
-    string Reference,
     string Name,
     bool IsActive = true,
     DateTimeOffset? CreatedAtUtc = null);
@@ -16,7 +15,6 @@ public sealed record TenantSeed(
 public sealed class InMemoryTenantStore : ITenantStore
 {
     private readonly ConcurrentDictionary<string, TenantRecord> _tenantsById = new(StringComparer.OrdinalIgnoreCase);
-    private readonly ConcurrentDictionary<string, string> _referenceIndex = new(StringComparer.OrdinalIgnoreCase);
     private readonly object _sync = new();
 
     public InMemoryTenantStore(IEnumerable<TenantSeed>? seeds = null)
@@ -28,64 +26,48 @@ public sealed class InMemoryTenantStore : ITenantStore
 
         foreach (var seed in seeds)
         {
-            if (string.IsNullOrWhiteSpace(seed.TenantId) || string.IsNullOrWhiteSpace(seed.Reference) || string.IsNullOrWhiteSpace(seed.Name))
+            if (string.IsNullOrWhiteSpace(seed.TenantId) || string.IsNullOrWhiteSpace(seed.Name))
             {
                 continue;
             }
 
             var descriptor = new TenantRecord(
                 seed.TenantId.Trim(),
-                seed.Reference.Trim(),
                 seed.Name.Trim(),
                 seed.IsActive,
                 seed.CreatedAtUtc ?? DateTimeOffset.UtcNow);
 
             _tenantsById[descriptor.TenantId] = descriptor;
-            _referenceIndex[NormalizeReference(descriptor.Reference)] = descriptor.TenantId;
         }
     }
 
-    public Task<TenantDescriptor> CreateAsync(string reference, string name, CancellationToken cancellationToken = default)
+    public Task<TenantDescriptor> CreateAsync(TenantCreateRequest request, CancellationToken cancellationToken = default)
     {
-        if (string.IsNullOrWhiteSpace(reference)) throw new ArgumentException("Reference is required", nameof(reference));
-        if (string.IsNullOrWhiteSpace(name)) throw new ArgumentException("Name is required", nameof(name));
+        if (request is null) throw new ArgumentNullException(nameof(request));
+        if (string.IsNullOrWhiteSpace(request.Name)) throw new ArgumentException("Name is required", nameof(request));
 
-        var normalizedReference = NormalizeReference(reference);
-        var trimmedName = name.Trim();
+        var trimmedName = request.Name.Trim();
         TenantRecord record;
+
+        var tenantId = string.IsNullOrWhiteSpace(request.TenantId)
+            ? GenerateTenantId()
+            : request.TenantId.Trim();
 
         lock (_sync)
         {
-            if (_referenceIndex.TryGetValue(normalizedReference, out var tenantId)
-                && _tenantsById.TryGetValue(tenantId, out var existing))
+            if (_tenantsById.TryGetValue(tenantId, out var existing))
             {
                 record = existing with { Name = trimmedName, IsActive = true };
                 _tenantsById[tenantId] = record;
             }
             else
             {
-                var newTenantId = GenerateTenantId();
-                record = new TenantRecord(newTenantId, reference.Trim(), trimmedName, true, DateTimeOffset.UtcNow);
-                _tenantsById[newTenantId] = record;
-                _referenceIndex[normalizedReference] = newTenantId;
+                record = new TenantRecord(tenantId, trimmedName, true, DateTimeOffset.UtcNow);
+                _tenantsById[tenantId] = record;
             }
         }
 
         return Task.FromResult(ToDescriptor(record));
-    }
-
-    public Task<TenantDescriptor?> GetByReferenceAsync(string reference, CancellationToken cancellationToken = default)
-    {
-        if (string.IsNullOrWhiteSpace(reference)) throw new ArgumentException("Reference is required", nameof(reference));
-
-        var normalized = NormalizeReference(reference);
-        if (_referenceIndex.TryGetValue(normalized, out var tenantId)
-            && _tenantsById.TryGetValue(tenantId, out var record))
-        {
-            return Task.FromResult<TenantDescriptor?>(ToDescriptor(record));
-        }
-
-        return Task.FromResult<TenantDescriptor?>(null);
     }
 
     public Task<TenantDescriptor?> GetByIdAsync(string tenantId, CancellationToken cancellationToken = default)
@@ -104,7 +86,7 @@ public sealed class InMemoryTenantStore : ITenantStore
     {
         var descriptors = _tenantsById.Values
             .Select(ToDescriptor)
-            .OrderBy(d => d.Reference, StringComparer.OrdinalIgnoreCase)
+            .OrderBy(d => d.TenantId, StringComparer.OrdinalIgnoreCase)
             .ToArray();
 
         return Task.FromResult<IReadOnlyCollection<TenantDescriptor>>(descriptors);
@@ -130,19 +112,15 @@ public sealed class InMemoryTenantStore : ITenantStore
     {
         return new TenantDescriptor(
             record.TenantId,
-            record.Reference,
             record.Name,
             record.IsActive,
             record.CreatedAtUtc);
     }
 
-    private static string NormalizeReference(string reference) => reference.Trim().ToLowerInvariant();
-
-    private static string GenerateTenantId() => $"tn_{Guid.NewGuid():N}";
+    private static string GenerateTenantId() => Guid.NewGuid().ToString("D");
 
     private sealed record TenantRecord(
         string TenantId,
-        string Reference,
         string Name,
         bool IsActive,
         DateTimeOffset CreatedAtUtc);

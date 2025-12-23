@@ -38,7 +38,7 @@ The UI therefore parses the response defensively.
 The backend implementation lives in `src/Croniq.Api/ApiHostingExtensions.PasswordAuth.cs` and currently returns:
 
 - `POST /auth/login` → `200 OK`
-  - `tenantReference: string | null`
+  - `tenantId: string | null`
   - `accessToken: string`
   - `tokenType: "Bearer"`
   - `expiresIn: number` (seconds)
@@ -56,17 +56,15 @@ The UI computes a best-effort `expiresAt` from `expiresIn` when the backend does
 
 ### Tenant / Environment resolution
 
-- Tenant and environment are configured server-side.
-- The UI therefore does not send `tenantId` in requests.
-- If tenant selection is ever required, the UI uses **`tenantReference`** (displayable) rather than `tenantId`.
+- The UI provides `tenantId` for password auth requests.
 - The UI also does not set `environmentTag` in login/refresh; environment selection is part of the UI shell context.
-- Tenant selection remains part of the UI shell context, but is not required for authentication.
+- Tenant selection remains part of the UI shell context.
 
 Current UI scope (single-tenant):
 
 - The **Tenants** feature module is intentionally **excluded from the UI navigation** (no menu entries / command palette shortcuts).
 - The UI still needs a tenant identifier for tenant-scoped API routes (e.g. `/tenants/:tenantId/*`).
-- Per the root documentation, this value should be treated as a **tenant reference** (human/display-friendly) and may be provided by the backend (e.g. `tenantReference` in the login response) or by server-side defaults.
+- Per the root documentation, this value should be treated as a **tenant id** and may be provided by the backend (e.g. `tenantId` in the login response) or by server-side defaults.
 
 ## Tenant Context in the UI
 

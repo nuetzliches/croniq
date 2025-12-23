@@ -32,7 +32,7 @@ All AI-generated contributions must align with the architectural ground rules do
 5. **Auth Direction (V1)**
 
    - The initial target is **self-hosted, private-network, single-tenant** deployments.
-   - For password auth, treat tenant selection as optional via `Croniq:Auth:Password:DefaultTenant` (tenant reference).
+   - For password auth, require explicit `tenantId` (no `DefaultTenant`/tenant reference fallback).
    - Do not introduce new external identity provider flows or user/tenant membership models unless explicitly requested; federated login is deferred to later versions (see `CLOUD-CONCEPT.md` / `CLOUD-REPO-SPLIT.md`).
 
 6. **Breaking Changes Before GA**

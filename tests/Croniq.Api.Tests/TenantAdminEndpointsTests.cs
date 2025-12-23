@@ -24,12 +24,12 @@ public sealed class TenantAdminEndpointsTests : IClassFixture<WebhookApiTestHost
     {
         _host.Reset();
 
-        var createResponse = await _host.Client.PostAsJsonAsync("/tenants", new UpsertTenantRequest("tenant-acme", "Acme Corp"));
+        var createResponse = await _host.Client.PostAsJsonAsync("/tenants", new UpsertTenantRequest("Acme Corp"));
         createResponse.StatusCode.ShouldBe(HttpStatusCode.Created);
 
         var created = await createResponse.Content.ReadFromJsonAsync<TenantResponse>();
         created.ShouldNotBeNull();
-        created!.Reference.ShouldBe("tenant-acme");
+        created!.TenantId.ShouldNotBeNullOrWhiteSpace();
         created.Name.ShouldBe("Acme Corp");
         created.IsActive.ShouldBeTrue();
 
@@ -39,7 +39,7 @@ public sealed class TenantAdminEndpointsTests : IClassFixture<WebhookApiTestHost
         var fetched = await getResponse.Content.ReadFromJsonAsync<TenantResponse>();
         fetched.ShouldNotBeNull();
         fetched!.TenantId.ShouldBe(created.TenantId);
-        fetched.Reference.ShouldBe("tenant-acme");
+        fetched.Name.ShouldBe("Acme Corp");
     }
 
     [Fact]
@@ -47,8 +47,8 @@ public sealed class TenantAdminEndpointsTests : IClassFixture<WebhookApiTestHost
     {
         _host.Reset();
 
-        var active = await CreateTenantAsync("tenant-active", "Active Corp");
-        var inactive = await CreateTenantAsync("tenant-inactive", "Inactive Corp");
+        var active = await CreateTenantAsync("Active Corp");
+        var inactive = await CreateTenantAsync("Inactive Corp");
 
         var deleteResponse = await _host.Client.DeleteAsync($"/tenants/{inactive.TenantId}");
         deleteResponse.StatusCode.ShouldBe(HttpStatusCode.NoContent);
@@ -88,7 +88,7 @@ public sealed class TenantAdminEndpointsTests : IClassFixture<WebhookApiTestHost
         SetCallerApiKey(limitedKey);
         try
         {
-            var response = await _host.Client.PostAsJsonAsync("/tenants", new UpsertTenantRequest("blocked", "Blocked"));
+            var response = await _host.Client.PostAsJsonAsync("/tenants", new UpsertTenantRequest("Blocked"));
             response.StatusCode.ShouldBe(HttpStatusCode.Forbidden);
         }
         finally
@@ -97,9 +97,9 @@ public sealed class TenantAdminEndpointsTests : IClassFixture<WebhookApiTestHost
         }
     }
 
-    private async Task<TenantResponse> CreateTenantAsync(string reference, string name)
+    private async Task<TenantResponse> CreateTenantAsync(string name)
     {
-        var response = await _host.Client.PostAsJsonAsync("/tenants", new UpsertTenantRequest(reference, name));
+        var response = await _host.Client.PostAsJsonAsync("/tenants", new UpsertTenantRequest(name));
         response.StatusCode.ShouldBe(HttpStatusCode.Created);
         var tenant = await response.Content.ReadFromJsonAsync<TenantResponse>();
         tenant.ShouldNotBeNull();

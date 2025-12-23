@@ -58,7 +58,7 @@ public sealed class CroniqPersistenceHealthCheck : IHealthCheck
 
         try
         {
-            var scope = new PartitionScope(_options.TenantReference, _options.EnvironmentTag);
+            var scope = new PartitionScope(_options.GetEffectiveTenantId(), _options.EnvironmentTag);
             _ = await _store.ListTriggersAsync(scope, cancellationToken).ConfigureAwait(false);
             return HealthCheckResult.Healthy("persistence reachable", data: new Dictionary<string, object>
             {

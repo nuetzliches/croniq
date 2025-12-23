@@ -398,7 +398,6 @@ public static partial class ApiHostingExtensions
     {
         return new TenantResponse(
             descriptor.TenantId,
-            descriptor.Reference,
             descriptor.Name,
             descriptor.IsActive,
             descriptor.CreatedAt);

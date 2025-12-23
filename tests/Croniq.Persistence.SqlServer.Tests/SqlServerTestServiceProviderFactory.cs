@@ -17,6 +17,7 @@ internal static class SqlServerTestServiceProviderFactory
             var verboseEf = TestLogging.EnableVerboseEfDiagnostics();
             sql.EnableDetailedErrors = verboseEf;
             sql.EnableSensitiveDataLogging = verboseEf;
+            sql.SuppressMarsSavepointWarning = true;
         });
 
         return services.BuildServiceProvider();

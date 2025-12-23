@@ -121,6 +121,14 @@ if ($LASTEXITCODE -ne 0) {
     throw "dotnet tool restore failed with exit code $LASTEXITCODE."
 }
 
+# Avoid stale compiler/build server processes holding file locks on Windows.
+try {
+    & dotnet build-server shutdown | Out-Null
+}
+catch {
+    # best-effort only
+}
+
 $envOverrides = @{
     "CRONIQ_SQL"                                       = $SqlConnection
     "DOTNET_NOLOGO"                                    = "1"
@@ -158,6 +166,14 @@ try {
     }
     else {
         $dotnetArgs += "/p:CollectCoverage=true"
+        # Coverlet instruments assemblies by rewriting files in the output folder.
+        # When MSBuild builds projects in parallel, file locks can cause intermittent
+        # "Unable to instrument module ... because it is being used by another process" warnings.
+        $dotnetArgs += "/p:BuildInParallel=false"
+        $dotnetArgs += "/p:UseSharedCompilation=false"
+        # Further reduce file lock races (MSBuild node reuse can keep handles around briefly).
+        $dotnetArgs += "/m:1"
+        $dotnetArgs += "-nodeReuse:false"
     }
 
     if ($AdditionalDotnetArguments.Count -gt 0) {

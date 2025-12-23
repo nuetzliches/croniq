@@ -22,26 +22,27 @@ public sealed class SqlServerTenantStore : ITenantStore
         _timeProvider = timeProvider ?? TimeProvider.System;
     }
 
-    public async Task<TenantDescriptor> CreateAsync(string reference, string name, CancellationToken cancellationToken = default)
+    public async Task<TenantDescriptor> CreateAsync(TenantCreateRequest request, CancellationToken cancellationToken = default)
     {
-        if (string.IsNullOrWhiteSpace(reference)) throw new ArgumentException("Reference is required", nameof(reference));
-        if (string.IsNullOrWhiteSpace(name)) throw new ArgumentException("Name is required", nameof(name));
+        if (request is null) throw new ArgumentNullException(nameof(request));
+        if (string.IsNullOrWhiteSpace(request.Name)) throw new ArgumentException("Name is required", nameof(request));
 
-        var trimmedReference = reference.Trim();
-        var trimmedName = name.Trim();
+        var tenantId = string.IsNullOrWhiteSpace(request.TenantId)
+            ? Guid.NewGuid().ToString("D")
+            : request.TenantId.Trim();
+        var trimmedName = request.Name.Trim();
         await using var db = await _dbContextFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
         var now = _timeProvider.GetUtcNow().UtcDateTime;
 
         var entity = await db.Tenants
-            .FirstOrDefaultAsync(t => t.Reference == trimmedReference, cancellationToken)
+            .FirstOrDefaultAsync(t => t.TenantId == tenantId, cancellationToken)
             .ConfigureAwait(false);
 
         if (entity is null)
         {
             entity = new TenantEntity
             {
-                TenantId = trimmedReference,
-                Reference = trimmedReference,
+                TenantId = tenantId,
                 Name = trimmedName,
                 IsActive = true,
                 CreatedAtUtc = now,
@@ -51,13 +52,6 @@ public sealed class SqlServerTenantStore : ITenantStore
         }
         else
         {
-            if (!string.Equals(entity.TenantId, trimmedReference, StringComparison.OrdinalIgnoreCase))
-            {
-                throw new InvalidOperationException(
-                    $"Tenant reference '{trimmedReference}' already exists with TenantId '{entity.TenantId}'. " +
-                    "This setup is no longer supported; reset the database or migrate tenants so TenantId equals Reference.");
-            }
-
             entity.Name = trimmedName;
             entity.IsActive = true;
             entity.UpdatedAtUtc = now;
@@ -65,19 +59,6 @@ public sealed class SqlServerTenantStore : ITenantStore
 
         await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
         return ToDescriptor(entity);
-    }
-
-    public async Task<TenantDescriptor?> GetByReferenceAsync(string reference, CancellationToken cancellationToken = default)
-    {
-        if (string.IsNullOrWhiteSpace(reference)) throw new ArgumentException("Reference is required", nameof(reference));
-
-        await using var db = await _dbContextFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
-        var entity = await db.Tenants
-            .AsNoTracking()
-            .FirstOrDefaultAsync(t => t.Reference == reference.Trim(), cancellationToken)
-            .ConfigureAwait(false);
-
-        return entity is null ? null : ToDescriptor(entity);
     }
 
     public async Task<TenantDescriptor?> GetByIdAsync(string tenantId, CancellationToken cancellationToken = default)
@@ -132,7 +113,6 @@ public sealed class SqlServerTenantStore : ITenantStore
         var createdAt = DateTime.SpecifyKind(entity.CreatedAtUtc, DateTimeKind.Utc);
         return new TenantDescriptor(
             entity.TenantId,
-            entity.Reference,
             entity.Name,
             entity.IsActive,
             new DateTimeOffset(createdAt));

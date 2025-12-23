@@ -29,6 +29,7 @@ public sealed class SqlServerWebhookEndpointChangefeedTests : IAsyncLifetime
     public async Task InitializeAsync()
     {
         await _sql.ResetDatabaseAsync();
+        await SqlServerDatabaseMigrator.EnsureTenantExistsAsync(_sql.ConnectionString, "tenant-changefeed-tests");
         _provider = SqlServerTestServiceProviderFactory.Create(_sql.ConnectionString);
         _changefeed = _provider.GetRequiredService<IWebhookEndpointChangefeed>();
         _webhooks = _provider.GetRequiredService<IWebhookPersistenceProvider>();

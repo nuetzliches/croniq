@@ -18,7 +18,7 @@ public class CroniqObservabilityExtensionsTests
         var settings = new Dictionary<string, string?>
         {
             ["Croniq:Core:EnvironmentTag"] = "prod",
-            ["Croniq:Core:TenantReference"] = "acme",
+            ["Croniq:Core:TenantId"] = "acme",
             ["Croniq:Observability:OtlpEndpoint"] = "http://localhost:4317",
             ["Croniq:Observability:OtlpProtocol"] = "grpc",
             ["Croniq:Observability:EnableHttp2UnencryptedSupport"] = "true"

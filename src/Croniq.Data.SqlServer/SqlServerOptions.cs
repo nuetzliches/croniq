@@ -16,4 +16,10 @@ public sealed class SqlServerOptions
 
     /// <summary>Enable EF Core sensitive data logging (defaults to false).</summary>
     public bool EnableSensitiveDataLogging { get; set; }
+
+    /// <summary>
+    /// Suppresses the EF Core warning "Savepoints are disabled because Multiple Active Result Sets (MARS) is enabled".
+    /// This is mainly useful in tests where MARS is enabled but the warning is considered noise.
+    /// </summary>
+    public bool SuppressMarsSavepointWarning { get; set; }
 }

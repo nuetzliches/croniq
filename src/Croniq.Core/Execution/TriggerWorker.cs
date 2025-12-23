@@ -68,13 +68,13 @@ public sealed class TriggerWorker
     public async Task<int> ProcessBatchAsync(DateTimeOffset nowUtc, int batchSize, CancellationToken cancellationToken)
     {
         var acquireRequest = new TriggerAcquireRequest(
-            new PartitionScope(_options.TenantReference, _options.EnvironmentTag),
+            new PartitionScope(_options.GetEffectiveTenantId(), _options.EnvironmentTag),
             _options.InstanceId,
             nowUtc,
             batchSize);
 
         using var acquireActivity = _activitySource.StartActivity("Croniq.Trigger.Acquire", ActivityKind.Internal);
-        acquireActivity?.SetTag("croniq.tenant_id", _options.TenantReference);
+        acquireActivity?.SetTag("croniq.tenant_id", _options.GetEffectiveTenantId());
         acquireActivity?.SetTag("croniq.environment", _options.EnvironmentTag);
         acquireActivity?.SetTag("croniq.batch.size", batchSize);
 

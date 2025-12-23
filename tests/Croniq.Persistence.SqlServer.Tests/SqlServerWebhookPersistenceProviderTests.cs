@@ -35,6 +35,17 @@ public sealed class SqlServerWebhookPersistenceProviderTests : IAsyncLifetime
     public async Task InitializeAsync()
     {
         await _sql.ResetDatabaseAsync();
+        await SqlServerDatabaseMigrator.EnsureTenantExistsAsync(_sql.ConnectionString, "tenant-hooks");
+        await SqlServerDatabaseMigrator.EnsureTenantExistsAsync(_sql.ConnectionString, "tenant-scope");
+        await SqlServerDatabaseMigrator.EnsureTenantExistsAsync(_sql.ConnectionString, "tenant-delete");
+        await SqlServerDatabaseMigrator.EnsureTenantExistsAsync(_sql.ConnectionString, "tenant-rotate");
+        await SqlServerDatabaseMigrator.EnsureTenantExistsAsync(_sql.ConnectionString, "tenant-rotate-delay");
+        await SqlServerDatabaseMigrator.EnsureTenantExistsAsync(_sql.ConnectionString, "tenant-rotate-limit");
+        await SqlServerDatabaseMigrator.EnsureTenantExistsAsync(_sql.ConnectionString, "tenant-future-only");
+        await SqlServerDatabaseMigrator.EnsureTenantExistsAsync(_sql.ConnectionString, "tenant-active-secrets");
+        await SqlServerDatabaseMigrator.EnsureTenantExistsAsync(_sql.ConnectionString, "tenant-changefeed");
+        await SqlServerDatabaseMigrator.EnsureTenantExistsAsync(_sql.ConnectionString, "tenant-changefeed-delete");
+        await SqlServerDatabaseMigrator.EnsureTenantExistsAsync(_sql.ConnectionString, "tenant-iprules-audit");
         _provider = SqlServerTestServiceProviderFactory.Create(_sql.ConnectionString);
         _persistence = _provider.GetRequiredService<IWebhookPersistenceProvider>();
         _dbFactory = _provider.GetRequiredService<IDbContextFactory<SqlServerDbContext>>();

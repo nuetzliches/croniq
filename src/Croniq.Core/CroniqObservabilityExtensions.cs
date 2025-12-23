@@ -103,7 +103,7 @@ public static class CroniqObservabilityExtensions
 
         options.ServiceName = serviceName;
         options.Environment = configuration[$"{CoreSectionPath}:EnvironmentTag"] ?? options.Environment;
-        options.TenantId = configuration[$"{CoreSectionPath}:TenantReference"] ?? options.TenantId;
+        options.TenantId = configuration[$"{CoreSectionPath}:TenantId"] ?? options.TenantId;
         options.ServiceInstanceId ??= configuration[$"{CoreSectionPath}:InstanceId"];
         options.ServiceVersion ??= Assembly.GetEntryAssembly()?.GetName().Version?.ToString() ?? "dev";
         options.OtlpEndpoint ??= "http://otel-collector:4317";

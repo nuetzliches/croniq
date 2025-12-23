@@ -34,6 +34,9 @@ public sealed class SqlServerWebhookDeadLetterStoreTests : IAsyncLifetime
     public async Task InitializeAsync()
     {
         await _sql.ResetDatabaseAsync();
+        await SqlServerDatabaseMigrator.EnsureTenantExistsAsync(_sql.ConnectionString, "tenant-deadletters");
+        await SqlServerDatabaseMigrator.EnsureTenantExistsAsync(_sql.ConnectionString, "tenant-replay");
+        await SqlServerDatabaseMigrator.EnsureTenantExistsAsync(_sql.ConnectionString, "tenant-resolve");
         _provider = BuildServiceProvider(_sql.ConnectionString);
         _store = _provider.GetRequiredService<IWebhookDeadLetterStore>();
         _dbFactory = _provider.GetRequiredService<IDbContextFactory<SqlServerDbContext>>();

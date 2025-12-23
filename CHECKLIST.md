@@ -136,7 +136,7 @@
 - [x] (akut) `WithDocs` wird in Swagger nicht angezeigt: sicherstellen, dass OpenAPI Summary/Description im UI sichtbar sind (z.B. via `WithOpenApi(...)`-Integration bzw. korrigierte Fallback-Strategie).
 - [x] Username/Passwort Login für BearerTokens: Konzept + Implementierung (Tenant-Isolation, Scopes, RateLimits, Lockout, Refresh-Token-Rotation)
   - [x] Entscheidung: Standard-Login über HTTPS (Ja, bereits entschieden) (Server verifiziert Password) vs. PAKE (OPAQUE/SRP) wenn "Passwort nie übertragen" zwingend ist
-  - [x] Implementiert: `/auth/login`, `/auth/refresh`, `/auth/logout` inkl. Refresh-Token-Rotation, Lockout, DefaultTenant-Auflösung und `tenantReference` (Tests: `PasswordAuthEndpointsTests`)
+  - [x] Implementiert: `/auth/login`, `/auth/refresh`, `/auth/logout` inkl. Refresh-Token-Rotation, Lockout und `tenantId` (Tests: `PasswordAuthEndpointsTests`)
   - [x] Konzept-Doku: `docs/deep-dive/password-auth.md` (Option A baseline, Option B PAKE outline)
   - [x] Persistenz/Seed: `PasswordChangeRequired` im User-Record + Seed `admin/admin` mit `PasswordChangeRequired=true`
   - [x] "Change password" Endpoint + Flow: `POST /auth/change-password` (oder ähnlich) inkl. Enforcement + UI-Flow

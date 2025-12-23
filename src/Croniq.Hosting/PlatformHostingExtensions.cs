@@ -111,7 +111,7 @@ public static class PlatformHostingExtensions
                 options.ApiKeys.Add(new ApiKeySeed(
                     KeyId: "default",
                     Secret: apiKey,
-                    TenantId: authOpts.InMemory.TenantReference,
+                    TenantId: authOpts.InMemory.TenantId,
                     EnvironmentTag: authOpts.InMemory.EnvironmentTag,
                     Scopes: new[]
                     {
@@ -131,9 +131,8 @@ public static class PlatformHostingExtensions
                     ClientId: "default"));
 
                 options.Tenants.Add(new TenantSeed(
-                    TenantId: authOpts.InMemory.TenantReference,
-                    Reference: authOpts.InMemory.TenantReference,
-                    Name: $"{authOpts.InMemory.TenantReference} (in-memory)",
+                    TenantId: authOpts.InMemory.TenantId,
+                    Name: $"{authOpts.InMemory.TenantId} (in-memory)",
                     IsActive: true,
                     CreatedAtUtc: DateTimeOffset.UtcNow));
             });

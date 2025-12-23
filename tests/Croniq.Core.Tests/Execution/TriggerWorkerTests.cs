@@ -374,7 +374,7 @@ public class TriggerWorkerTests
 
         jobLogStore ??= Substitute.For<IExecutionLogStore>();
 
-        var options = Microsoft.Extensions.Options.Options.Create(new CroniqOptions { TenantReference = "t1", EnvironmentTag = "dev", InstanceId = "test" });
+        var options = Microsoft.Extensions.Options.Options.Create(new CroniqOptions { EnvironmentTag = "dev", InstanceId = "test" });
         var workerOptions = Microsoft.Extensions.Options.Options.Create(hostOptions ?? new WorkerHostOptions { LeaseRenewalLeadTime = TimeSpan.Zero });
 
         return new TriggerWorker(

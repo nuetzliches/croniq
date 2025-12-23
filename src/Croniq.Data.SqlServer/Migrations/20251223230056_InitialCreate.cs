@@ -23,7 +23,6 @@ namespace Croniq.Data.SqlServer.Migrations
                 columns: table => new
                 {
                     TenantId = table.Column<string>(type: "nvarchar(64)", maxLength: 64, nullable: false),
-                    Reference = table.Column<string>(type: "nvarchar(64)", maxLength: 64, nullable: false),
                     Name = table.Column<string>(type: "nvarchar(256)", maxLength: 256, nullable: false),
                     IsActive = table.Column<bool>(type: "bit", nullable: false),
                     CreatedAtUtc = table.Column<DateTime>(type: "datetime2", nullable: false, defaultValueSql: "sysutcdatetime()"),
@@ -94,6 +93,32 @@ namespace Croniq.Data.SqlServer.Migrations
                 });
 
             migrationBuilder.CreateTable(
+                name: "RefreshTokens",
+                schema: "auth",
+                columns: table => new
+                {
+                    TokenId = table.Column<string>(type: "nvarchar(64)", maxLength: 64, nullable: false),
+                    TenantId = table.Column<string>(type: "nvarchar(64)", maxLength: 64, nullable: false),
+                    UserId = table.Column<string>(type: "nvarchar(64)", maxLength: 64, nullable: false),
+                    TokenHash = table.Column<string>(type: "nvarchar(256)", maxLength: 256, nullable: false),
+                    ExpiresAtUtc = table.Column<DateTime>(type: "datetime2", nullable: false),
+                    RevokedAtUtc = table.Column<DateTime>(type: "datetime2", nullable: true),
+                    ReplacedByTokenId = table.Column<string>(type: "nvarchar(64)", maxLength: 64, nullable: true),
+                    CreatedAtUtc = table.Column<DateTime>(type: "datetime2", nullable: false, defaultValueSql: "sysutcdatetime()")
+                },
+                constraints: table =>
+                {
+                    table.PrimaryKey("PK_RefreshTokens", x => x.TokenId);
+                    table.ForeignKey(
+                        name: "FK_RefreshTokens_Tenants_TenantId",
+                        column: x => x.TenantId,
+                        principalSchema: "croniq",
+                        principalTable: "Tenants",
+                        principalColumn: "TenantId",
+                        onDelete: ReferentialAction.Restrict);
+                });
+
+            migrationBuilder.CreateTable(
                 name: "Users",
                 schema: "auth",
                 columns: table => new
@@ -116,6 +141,41 @@ namespace Croniq.Data.SqlServer.Migrations
                     table.PrimaryKey("PK_Users", x => x.UserId);
                     table.ForeignKey(
                         name: "FK_Users_Tenants_TenantId",
+                        column: x => x.TenantId,
+                        principalSchema: "croniq",
+                        principalTable: "Tenants",
+                        principalColumn: "TenantId",
+                        onDelete: ReferentialAction.Restrict);
+                });
+
+            migrationBuilder.CreateTable(
+                name: "WebhookDeadLetters",
+                schema: "croniq",
+                columns: table => new
+                {
+                    Id = table.Column<long>(type: "bigint", nullable: false)
+                        .Annotation("SqlServer:Identity", "1, 1"),
+                    HookKey = table.Column<string>(type: "nvarchar(128)", maxLength: 128, nullable: false),
+                    JobKey = table.Column<string>(type: "nvarchar(256)", maxLength: 256, nullable: false),
+                    TenantId = table.Column<string>(type: "nvarchar(64)", maxLength: 64, nullable: false),
+                    EnvironmentTag = table.Column<string>(type: "nvarchar(64)", maxLength: 64, nullable: false),
+                    Payload = table.Column<string>(type: "nvarchar(max)", nullable: false),
+                    HeadersJson = table.Column<string>(type: "nvarchar(max)", nullable: true),
+                    MetadataJson = table.Column<string>(type: "nvarchar(max)", nullable: true),
+                    FailureReason = table.Column<string>(type: "nvarchar(128)", maxLength: 128, nullable: false),
+                    ErrorDetails = table.Column<string>(type: "nvarchar(2048)", maxLength: 2048, nullable: true),
+                    StatusCode = table.Column<int>(type: "int", nullable: true),
+                    Attempts = table.Column<int>(type: "int", nullable: false),
+                    CreatedAtUtc = table.Column<DateTime>(type: "datetime2", nullable: false, defaultValueSql: "sysutcdatetime()"),
+                    LastAttemptAtUtc = table.Column<DateTime>(type: "datetime2", nullable: true),
+                    NextAttemptAtUtc = table.Column<DateTime>(type: "datetime2", nullable: true),
+                    ExpiresAtUtc = table.Column<DateTime>(type: "datetime2", nullable: true)
+                },
+                constraints: table =>
+                {
+                    table.PrimaryKey("PK_WebhookDeadLetters", x => x.Id);
+                    table.ForeignKey(
+                        name: "FK_WebhookDeadLetters_Tenants_TenantId",
                         column: x => x.TenantId,
                         principalSchema: "croniq",
                         principalTable: "Tenants",
@@ -227,81 +287,6 @@ namespace Croniq.Data.SqlServer.Migrations
                         principalTable: "Jobs",
                         principalColumn: "Id",
                         onDelete: ReferentialAction.Cascade);
-                });
-
-            migrationBuilder.CreateTable(
-                name: "RefreshTokens",
-                schema: "auth",
-                columns: table => new
-                {
-                    TokenId = table.Column<string>(type: "nvarchar(64)", maxLength: 64, nullable: false),
-                    TenantId = table.Column<string>(type: "nvarchar(64)", maxLength: 64, nullable: false),
-                    UserId = table.Column<string>(type: "nvarchar(64)", maxLength: 64, nullable: false),
-                    TokenHash = table.Column<string>(type: "nvarchar(256)", maxLength: 256, nullable: false),
-                    ExpiresAtUtc = table.Column<DateTime>(type: "datetime2", nullable: false),
-                    RevokedAtUtc = table.Column<DateTime>(type: "datetime2", nullable: true),
-                    ReplacedByTokenId = table.Column<string>(type: "nvarchar(64)", maxLength: 64, nullable: true),
-                    CreatedAtUtc = table.Column<DateTime>(type: "datetime2", nullable: false, defaultValueSql: "sysutcdatetime()")
-                },
-                constraints: table =>
-                {
-                    table.PrimaryKey("PK_RefreshTokens", x => x.TokenId);
-                    table.ForeignKey(
-                        name: "FK_RefreshTokens_Tenants_TenantId",
-                        column: x => x.TenantId,
-                        principalSchema: "croniq",
-                        principalTable: "Tenants",
-                        principalColumn: "TenantId",
-                        onDelete: ReferentialAction.Restrict);
-                    table.ForeignKey(
-                        name: "FK_RefreshTokens_Users_UserId",
-                        column: x => x.UserId,
-                        principalSchema: "auth",
-                        principalTable: "Users",
-                        principalColumn: "UserId",
-                        onDelete: ReferentialAction.Restrict);
-                });
-
-            migrationBuilder.CreateTable(
-                name: "WebhookDeadLetters",
-                schema: "croniq",
-                columns: table => new
-                {
-                    Id = table.Column<long>(type: "bigint", nullable: false)
-                        .Annotation("SqlServer:Identity", "1, 1"),
-                    HookKey = table.Column<string>(type: "nvarchar(128)", maxLength: 128, nullable: false),
-                    JobKey = table.Column<string>(type: "nvarchar(256)", maxLength: 256, nullable: false),
-                    TenantId = table.Column<string>(type: "nvarchar(64)", maxLength: 64, nullable: false),
-                    EnvironmentTag = table.Column<string>(type: "nvarchar(64)", maxLength: 64, nullable: false),
-                    Payload = table.Column<string>(type: "nvarchar(max)", nullable: false),
-                    HeadersJson = table.Column<string>(type: "nvarchar(max)", nullable: true),
-                    MetadataJson = table.Column<string>(type: "nvarchar(max)", nullable: true),
-                    FailureReason = table.Column<string>(type: "nvarchar(128)", maxLength: 128, nullable: false),
-                    ErrorDetails = table.Column<string>(type: "nvarchar(2048)", maxLength: 2048, nullable: true),
-                    StatusCode = table.Column<int>(type: "int", nullable: true),
-                    Attempts = table.Column<int>(type: "int", nullable: false),
-                    CreatedAtUtc = table.Column<DateTime>(type: "datetime2", nullable: false, defaultValueSql: "sysutcdatetime()"),
-                    LastAttemptAtUtc = table.Column<DateTime>(type: "datetime2", nullable: true),
-                    NextAttemptAtUtc = table.Column<DateTime>(type: "datetime2", nullable: true),
-                    ExpiresAtUtc = table.Column<DateTime>(type: "datetime2", nullable: true)
-                },
-                constraints: table =>
-                {
-                    table.PrimaryKey("PK_WebhookDeadLetters", x => x.Id);
-                    table.ForeignKey(
-                        name: "FK_WebhookDeadLetters_Tenants_TenantId",
-                        column: x => x.TenantId,
-                        principalSchema: "croniq",
-                        principalTable: "Tenants",
-                        principalColumn: "TenantId",
-                        onDelete: ReferentialAction.Restrict);
-                    table.ForeignKey(
-                        name: "FK_WebhookDeadLetters_WebhookEndpoints_TenantId_EnvironmentTag_HookKey",
-                        columns: x => new { x.TenantId, x.EnvironmentTag, x.HookKey },
-                        principalSchema: "croniq",
-                        principalTable: "WebhookEndpoints",
-                        principalColumns: new[] { "TenantId", "EnvironmentTag", "HookKey" },
-                        onDelete: ReferentialAction.Restrict);
                 });
 
             migrationBuilder.CreateTable(
@@ -482,17 +467,17 @@ namespace Croniq.Data.SqlServer.Migrations
                 column: "TriggerId");
 
             migrationBuilder.CreateIndex(
-                name: "IX_Jobs_JobKey",
-                schema: "croniq",
-                table: "Jobs",
-                column: "JobKey",
-                unique: true);
-
-            migrationBuilder.CreateIndex(
                 name: "IX_Jobs_TenantId_EnvironmentTag",
                 schema: "croniq",
                 table: "Jobs",
                 columns: new[] { "TenantId", "EnvironmentTag" });
+
+            migrationBuilder.CreateIndex(
+                name: "IX_Jobs_TenantId_EnvironmentTag_JobKey",
+                schema: "croniq",
+                table: "Jobs",
+                columns: new[] { "TenantId", "EnvironmentTag", "JobKey" },
+                unique: true);
 
             migrationBuilder.CreateIndex(
                 name: "IX_RefreshTokens_ExpiresAtUtc",
@@ -512,19 +497,6 @@ namespace Croniq.Data.SqlServer.Migrations
                 schema: "auth",
                 table: "RefreshTokens",
                 columns: new[] { "TenantId", "UserId" });
-
-            migrationBuilder.CreateIndex(
-                name: "IX_RefreshTokens_UserId",
-                schema: "auth",
-                table: "RefreshTokens",
-                column: "UserId");
-
-            migrationBuilder.CreateIndex(
-                name: "IX_Tenants_Reference",
-                schema: "croniq",
-                table: "Tenants",
-                column: "Reference",
-                unique: true);
 
             migrationBuilder.CreateIndex(
                 name: "IX_Triggers_JobId_Enabled_NextFireAtUtc",
@@ -569,12 +541,6 @@ namespace Croniq.Data.SqlServer.Migrations
                 schema: "croniq",
                 table: "WebhookDeadLetters",
                 columns: new[] { "TenantId", "EnvironmentTag", "CreatedAtUtc" });
-
-            migrationBuilder.CreateIndex(
-                name: "IX_WebhookDeadLetters_TenantId_EnvironmentTag_HookKey",
-                schema: "croniq",
-                table: "WebhookDeadLetters",
-                columns: new[] { "TenantId", "EnvironmentTag", "HookKey" });
 
             migrationBuilder.CreateIndex(
                 name: "IX_WebhookEndpointEvents_HookKey",
@@ -660,6 +626,10 @@ namespace Croniq.Data.SqlServer.Migrations
                 schema: "auth");
 
             migrationBuilder.DropTable(
+                name: "Users",
+                schema: "auth");
+
+            migrationBuilder.DropTable(
                 name: "WebhookDeadLetters",
                 schema: "croniq");
 
@@ -682,10 +652,6 @@ namespace Croniq.Data.SqlServer.Migrations
             migrationBuilder.DropTable(
                 name: "Triggers",
                 schema: "croniq");
-
-            migrationBuilder.DropTable(
-                name: "Users",
-                schema: "auth");
 
             migrationBuilder.DropTable(
                 name: "WebhookEndpoints",

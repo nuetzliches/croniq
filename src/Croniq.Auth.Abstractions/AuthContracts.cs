@@ -35,10 +35,13 @@ public enum CallerType
 
 public sealed record TenantDescriptor(
     string TenantId,
-    string Reference,
     string Name,
     bool IsActive,
     DateTimeOffset CreatedAt);
+
+public sealed record TenantCreateRequest(
+    string Name,
+    string? TenantId = null);
 
 public sealed record UserDescriptor(
     string UserId,
@@ -107,8 +110,7 @@ public sealed record CroniqTokenIssueResult(
 /// <summary>Tenant CRUD for admin flows.</summary>
 public interface ITenantStore
 {
-    Task<TenantDescriptor> CreateAsync(string reference, string name, CancellationToken cancellationToken = default);
-    Task<TenantDescriptor?> GetByReferenceAsync(string reference, CancellationToken cancellationToken = default);
+    Task<TenantDescriptor> CreateAsync(TenantCreateRequest request, CancellationToken cancellationToken = default);
     Task<TenantDescriptor?> GetByIdAsync(string tenantId, CancellationToken cancellationToken = default);
     Task<IReadOnlyCollection<TenantDescriptor>> ListAsync(CancellationToken cancellationToken = default);
     Task<bool> DeactivateAsync(string tenantId, CancellationToken cancellationToken = default);

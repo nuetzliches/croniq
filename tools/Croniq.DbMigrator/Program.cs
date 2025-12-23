@@ -1,6 +1,7 @@
 using Croniq.Data.SqlServer;
 using Croniq.Auth.Abstractions;
 using Croniq.Auth.SqlServer;
+using Croniq.Options;
 using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.AspNetCore.Identity;
@@ -35,7 +36,7 @@ await using var provider = services.BuildServiceProvider();
 
 try
 {
-    await ApplyMigrationsAsync(provider, token).ConfigureAwait(false);
+    await ApplyMigrationsAsync(provider, connectionString, token).ConfigureAwait(false);
     Console.WriteLine("Croniq SQL Server migrations applied successfully.");
 
     try
@@ -64,7 +65,7 @@ catch (Exception ex)
     return 1;
 }
 
-static async Task ApplyMigrationsAsync(IServiceProvider provider, CancellationToken token)
+static async Task ApplyMigrationsAsync(IServiceProvider provider, string connectionString, CancellationToken token)
 {
     var loggerFactory = provider.GetRequiredService<ILoggerFactory>();
     var logger = loggerFactory.CreateLogger("Croniq.DbMigrator");
@@ -87,7 +88,21 @@ static async Task ApplyMigrationsAsync(IServiceProvider provider, CancellationTo
                 return;
             }
 
-            await context.Database.MigrateAsync(token).ConfigureAwait(false);
+            try
+            {
+                await context.Database.MigrateAsync(token).ConfigureAwait(false);
+            }
+            catch (SqlException ex) when (IsObjectAlreadyExistsError(ex))
+            {
+                // Migration squashing support:
+                // If the database already contains Croniq tables from older migrations (kept in the volume),
+                // applying the new squashed baseline migration would fail with "object already exists".
+                // In that case we "baseline" by inserting the new migration id into __EFMigrationsHistory.
+                if (!await TryBaselineSquashedInitialCreateAsync(connectionString, pendingMigrations, logger, token).ConfigureAwait(false))
+                {
+                    throw;
+                }
+            }
             return;
         }
         catch (SqlException ex) when (IsDatabaseProvisioningError(ex) && attempt < maxAttempts)
@@ -102,6 +117,125 @@ static async Task ApplyMigrationsAsync(IServiceProvider provider, CancellationTo
             throw;
         }
     }
+}
+
+static bool IsObjectAlreadyExistsError(SqlException exception)
+{
+    foreach (SqlError error in exception.Errors)
+    {
+        if (error.Number is 2714)
+        {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+static async Task<bool> TryBaselineSquashedInitialCreateAsync(
+    string connectionString,
+    IEnumerable<string> pendingMigrations,
+    ILogger logger,
+    CancellationToken token)
+{
+    var pending = pendingMigrations as string[] ?? pendingMigrations.ToArray();
+    if (pending.Length != 1)
+    {
+        return false;
+    }
+
+    var migrationId = pending[0];
+    if (!migrationId.EndsWith("_InitialCreate", StringComparison.OrdinalIgnoreCase))
+    {
+        return false;
+    }
+
+    await using var connection = new SqlConnection(connectionString);
+    await connection.OpenAsync(token).ConfigureAwait(false);
+
+    // Only baseline if this looks like an existing Croniq database.
+    var tenantsTableId = await ExecuteScalarAsync<int?>(
+        connection,
+        "SELECT OBJECT_ID(N'[croniq].[Tenants]');",
+        token).ConfigureAwait(false);
+    if (tenantsTableId is null)
+    {
+        return false;
+    }
+
+    var historyTableId = await ExecuteScalarAsync<int?>(
+        connection,
+        "SELECT OBJECT_ID(N'[__EFMigrationsHistory]');",
+        token).ConfigureAwait(false);
+    if (historyTableId is null)
+    {
+        return false;
+    }
+
+    var historyCount = await ExecuteScalarAsync<int>(
+        connection,
+        "SELECT COUNT(*) FROM [__EFMigrationsHistory];",
+        token).ConfigureAwait(false);
+    if (historyCount == 0)
+    {
+        return false;
+    }
+
+    var exists = await ExecuteScalarAsync<int>(
+        connection,
+        "SELECT CASE WHEN EXISTS (SELECT 1 FROM [__EFMigrationsHistory] WHERE [MigrationId] = @id) THEN 1 ELSE 0 END;",
+        token,
+        new SqlParameter("@id", migrationId)).ConfigureAwait(false);
+    if (exists == 1)
+    {
+        logger.LogInformation("Baseline migration '{MigrationId}' is already recorded in __EFMigrationsHistory.", migrationId);
+        return true;
+    }
+
+    var productVersion = typeof(DbContext).Assembly.GetName().Version?.ToString(3) ?? "unknown";
+    logger.LogWarning(
+        "Detected existing Croniq schema with legacy migration history. Recording squashed baseline migration '{MigrationId}' (ProductVersion={ProductVersion}) without applying DDL.",
+        migrationId,
+        productVersion);
+
+    await ExecuteNonQueryAsync(
+        connection,
+        "INSERT INTO [__EFMigrationsHistory] ([MigrationId], [ProductVersion]) VALUES (@id, @pv);",
+        token,
+        new SqlParameter("@id", migrationId),
+        new SqlParameter("@pv", productVersion)).ConfigureAwait(false);
+
+    return true;
+}
+
+static async Task<T> ExecuteScalarAsync<T>(SqlConnection connection, string sql, CancellationToken token, params SqlParameter[] parameters)
+{
+    await using var command = connection.CreateCommand();
+    command.CommandText = sql;
+    foreach (var parameter in parameters)
+    {
+        command.Parameters.Add(parameter);
+    }
+
+    var result = await command.ExecuteScalarAsync(token).ConfigureAwait(false);
+    if (result is null || result is DBNull)
+    {
+        return default!;
+    }
+
+    return (T)result;
+}
+
+static async Task ExecuteNonQueryAsync(SqlConnection connection, string sql, CancellationToken token, params SqlParameter[] parameters)
+{
+    await using var command = connection.CreateCommand();
+    command.CommandText = sql;
+    foreach (var parameter in parameters)
+    {
+        command.Parameters.Add(parameter);
+    }
+
+    await command.ExecuteNonQueryAsync(token).ConfigureAwait(false);
 }
 
 static async Task SeedAdminAsync(IServiceProvider provider, CancellationToken token)
@@ -120,7 +254,12 @@ static async Task SeedAdminAsync(IServiceProvider provider, CancellationToken to
     var tenants = scope.ServiceProvider.GetRequiredService<ITenantStore>();
     var users = scope.ServiceProvider.GetRequiredService<IPasswordUserStore>();
 
-    var tenantReference = (Environment.GetEnvironmentVariable("CRONIQ_SEED_TENANT_REFERENCE") ?? "default").Trim();
+    // In Single-tenant mode the effective tenant id is always "default".
+    // Keep seeding consistent by defaulting to "default" when no explicit seed tenant id is provided.
+    var tenantIdRaw = Environment.GetEnvironmentVariable("CRONIQ_SEED_TENANT_ID");
+    var tenantId = string.IsNullOrWhiteSpace(tenantIdRaw)
+        ? CroniqOptions.SingleTenantId
+        : tenantIdRaw.Trim();
     var tenantName = (Environment.GetEnvironmentVariable("CRONIQ_SEED_TENANT_NAME") ?? "Default").Trim();
     var username = (Environment.GetEnvironmentVariable("CRONIQ_SEED_ADMIN_USERNAME") ?? "admin").Trim();
     var password = (Environment.GetEnvironmentVariable("CRONIQ_SEED_ADMIN_PASSWORD") ?? "admin").Trim();
@@ -133,9 +272,9 @@ static async Task SeedAdminAsync(IServiceProvider provider, CancellationToken to
 
     var seedScopesRaw = (Environment.GetEnvironmentVariable("CRONIQ_SEED_ADMIN_SCOPES") ?? string.Empty).Trim();
 
-    if (string.IsNullOrWhiteSpace(tenantReference))
+    if (tenantIdRaw is not null && string.IsNullOrWhiteSpace(tenantIdRaw))
     {
-        logger.LogWarning("Admin seeding enabled but CRONIQ_SEED_TENANT_REFERENCE is empty; skipping.");
+        logger.LogWarning("Admin seeding enabled but CRONIQ_SEED_TENANT_ID is empty; skipping.");
         return;
     }
 
@@ -145,14 +284,14 @@ static async Task SeedAdminAsync(IServiceProvider provider, CancellationToken to
         return;
     }
 
-    var tenant = await tenants.CreateAsync(tenantReference, tenantName, token).ConfigureAwait(false);
+    var tenant = await tenants.CreateAsync(new TenantCreateRequest(tenantName, tenantId), token).ConfigureAwait(false);
 
     var existing = await users.FindByUsernameAsync(tenant.TenantId, username, token).ConfigureAwait(false);
     if (existing is not null && !overwrite)
     {
         logger.LogInformation(
-            "Admin user already exists for tenant '{TenantReference}'; skipping (set CRONIQ_SEED_ADMIN_OVERWRITE=true to reset).",
-            tenant.Reference);
+            "Admin user already exists for tenant '{TenantId}'; skipping (set CRONIQ_SEED_ADMIN_OVERWRITE=true to reset).",
+            tenant.TenantId);
         return;
     }
 
@@ -172,9 +311,9 @@ static async Task SeedAdminAsync(IServiceProvider provider, CancellationToken to
         PasswordChangeRequired: isPasswordChangeRequired), token).ConfigureAwait(false);
 
     logger.LogInformation(
-        "Seeded admin user '{Username}' for tenant '{TenantReference}' (PasswordChangeRequired={PasswordChangeRequired}).",
+        "Seeded admin user '{Username}' for tenant '{TenantId}' (PasswordChangeRequired={PasswordChangeRequired}).",
         username,
-        tenant.Reference,
+        tenant.TenantId,
         isPasswordChangeRequired);
 }
 

@@ -15,7 +15,7 @@ public class CroniqHostingOptionsTests
         options.SqlServer.ShouldNotBeNull();
         options.InMemory.ShouldNotBeNull();
         options.InMemory.ApiKey.ShouldBe("dev-key");
-        options.InMemory.TenantReference.ShouldBe("dev");
+        options.InMemory.TenantId.ShouldBe("default");
         options.InMemory.EnvironmentTag.ShouldBe("dev");
     }
 

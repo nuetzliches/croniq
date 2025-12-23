@@ -1380,7 +1380,7 @@
           "Croniq.Sample.ApiHost"
         ],
         "summary": "Password login",
-        "description": "Authenticates a username/password and issues access + refresh tokens. Tenant can be provided via tenantReference; it can be omitted if a default tenant is configured.",
+        "description": "Authenticates a username/password and issues access + refresh tokens. Tenant must be provided via tenantId.",
         "operationId": "Auth_Login",
         "requestBody": {
           "content": {
@@ -1737,7 +1737,7 @@
             "type": "string",
             "nullable": true
           },
-          "tenantReference": {
+          "tenantId": {
             "type": "string",
             "nullable": true
           }
@@ -1751,7 +1751,7 @@
             "type": "string",
             "nullable": true
           },
-          "tenantReference": {
+          "tenantId": {
             "type": "string",
             "nullable": true
           }
@@ -1780,7 +1780,7 @@
             "type": "string",
             "nullable": true
           },
-          "tenantReference": {
+          "tenantId": {
             "type": "string",
             "nullable": true
           }

@@ -40,6 +40,7 @@ public sealed class PasswordAuthEndpointsTests : IClassFixture<PasswordAuthApiTe
         var login = new PasswordLoginRequest(
             username,
             password,
+            PasswordAuthApiTestHost.TenantId,
             PasswordAuthApiTestHost.Environment,
             Scopes: new[] { CroniqScopes.TenantsAdmin },
             Audience: null);
@@ -84,6 +85,7 @@ public sealed class PasswordAuthEndpointsTests : IClassFixture<PasswordAuthApiTe
         var loginResponse = await _host.Client.PostAsJsonAsync("/auth/login", new PasswordLoginRequest(
             username,
             password,
+            PasswordAuthApiTestHost.TenantId,
             PasswordAuthApiTestHost.Environment,
             Scopes: null,
             Audience: null));
@@ -97,6 +99,7 @@ public sealed class PasswordAuthEndpointsTests : IClassFixture<PasswordAuthApiTe
 
         var refreshResponse = await _host.Client.PostAsJsonAsync("/auth/refresh", new PasswordRefreshRequest(
             firstRefresh!,
+            PasswordAuthApiTestHost.TenantId,
             PasswordAuthApiTestHost.Environment,
             Scopes: null,
             Audience: null));
@@ -108,6 +111,7 @@ public sealed class PasswordAuthEndpointsTests : IClassFixture<PasswordAuthApiTe
 
         var secondAttempt = await _host.Client.PostAsJsonAsync("/auth/refresh", new PasswordRefreshRequest(
             firstRefresh!,
+            PasswordAuthApiTestHost.TenantId,
             PasswordAuthApiTestHost.Environment,
             Scopes: null,
             Audience: null));
@@ -135,6 +139,7 @@ public sealed class PasswordAuthEndpointsTests : IClassFixture<PasswordAuthApiTe
         var first = await _host.Client.PostAsJsonAsync("/auth/login", new PasswordLoginRequest(
             username,
             "wrong",
+            PasswordAuthApiTestHost.TenantId,
             PasswordAuthApiTestHost.Environment,
             Scopes: null,
             Audience: null));
@@ -144,6 +149,7 @@ public sealed class PasswordAuthEndpointsTests : IClassFixture<PasswordAuthApiTe
         var second = await _host.Client.PostAsJsonAsync("/auth/login", new PasswordLoginRequest(
             username,
             "wrong",
+            PasswordAuthApiTestHost.TenantId,
             PasswordAuthApiTestHost.Environment,
             Scopes: null,
             Audience: null));
@@ -171,6 +177,7 @@ public sealed class PasswordAuthEndpointsTests : IClassFixture<PasswordAuthApiTe
         var first = await _host.Client.PostAsJsonAsync("/auth/login", new PasswordLoginRequest(
             username,
             "wrong",
+            PasswordAuthApiTestHost.TenantId,
             PasswordAuthApiTestHost.Environment,
             Scopes: null,
             Audience: null));
@@ -185,6 +192,7 @@ public sealed class PasswordAuthEndpointsTests : IClassFixture<PasswordAuthApiTe
         var second = await _host.Client.PostAsJsonAsync("/auth/login", new PasswordLoginRequest(
             username,
             "wrong",
+            PasswordAuthApiTestHost.TenantId,
             PasswordAuthApiTestHost.Environment,
             Scopes: null,
             Audience: null));
@@ -217,6 +225,7 @@ public sealed class PasswordAuthEndpointsTests : IClassFixture<PasswordAuthApiTe
         var wrong = await _host.Client.PostAsJsonAsync("/auth/login", new PasswordLoginRequest(
             username,
             "wrong",
+            PasswordAuthApiTestHost.TenantId,
             PasswordAuthApiTestHost.Environment,
             Scopes: null,
             Audience: null));
@@ -231,6 +240,7 @@ public sealed class PasswordAuthEndpointsTests : IClassFixture<PasswordAuthApiTe
         var ok = await _host.Client.PostAsJsonAsync("/auth/login", new PasswordLoginRequest(
             username,
             password,
+            PasswordAuthApiTestHost.TenantId,
             PasswordAuthApiTestHost.Environment,
             Scopes: null,
             Audience: null));
@@ -268,6 +278,7 @@ public sealed class PasswordAuthEndpointsTests : IClassFixture<PasswordAuthApiTe
         var loginResponse = await _host.Client.PostAsJsonAsync("/auth/login", new PasswordLoginRequest(
             username,
             oldPassword,
+            PasswordAuthApiTestHost.TenantId,
             PasswordAuthApiTestHost.Environment,
             Scopes: null,
             Audience: null));
@@ -290,6 +301,7 @@ public sealed class PasswordAuthEndpointsTests : IClassFixture<PasswordAuthApiTe
 
         var refreshAfterChange = await _host.Client.PostAsJsonAsync("/auth/refresh", new PasswordRefreshRequest(
             login.RefreshToken!,
+            PasswordAuthApiTestHost.TenantId,
             PasswordAuthApiTestHost.Environment,
             Scopes: null,
             Audience: null));
@@ -300,6 +312,7 @@ public sealed class PasswordAuthEndpointsTests : IClassFixture<PasswordAuthApiTe
         var oldLoginAttempt = await _host.Client.PostAsJsonAsync("/auth/login", new PasswordLoginRequest(
             username,
             oldPassword,
+            PasswordAuthApiTestHost.TenantId,
             PasswordAuthApiTestHost.Environment,
             Scopes: null,
             Audience: null));
@@ -309,6 +322,7 @@ public sealed class PasswordAuthEndpointsTests : IClassFixture<PasswordAuthApiTe
         var newLoginAttempt = await _host.Client.PostAsJsonAsync("/auth/login", new PasswordLoginRequest(
             username,
             newPassword,
+            PasswordAuthApiTestHost.TenantId,
             PasswordAuthApiTestHost.Environment,
             Scopes: null,
             Audience: null));

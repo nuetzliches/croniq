@@ -94,20 +94,17 @@ export class LoginPage {
         this.lastAction.set(null);
         this.lastActionTone.set(null);
 
+        const tenantId = this.tenantContext.snapshot().tenantId.trim() || 'default';
+
         this.passwordAuth
-            .login({ username, password })
+            .login({ username, password, tenantId })
             .pipe(finalize(() => this.busy.set(false)))
             .subscribe({
                 next: (result) => {
-                    const tenantId = this.tenantContext.snapshot().tenantId.trim();
+                    const currentTenantId = this.tenantContext.snapshot().tenantId.trim();
                     const resolvedTenantId = result.tenantId?.trim();
-                    const tenantReference = result.tenantReference?.trim();
-                    if (!tenantId) {
-                        if (resolvedTenantId) {
-                            this.tenantContext.setTenantIdentity(resolvedTenantId);
-                        } else if (tenantReference) {
-                            this.tenantContext.setTenantIdentity(tenantReference);
-                        }
+                    if (!currentTenantId && resolvedTenantId) {
+                        this.tenantContext.setTenantIdentity(resolvedTenantId);
                     }
                     this.loginModel.update((model) => ({ ...model, password: '' }));
                     this.lastAction.set('Signed in successfully.');

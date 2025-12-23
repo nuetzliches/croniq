@@ -33,7 +33,7 @@ public class OptionsDefaultsTests
         options.SqlServer.ShouldNotBeNull();
         options.InMemory.ShouldNotBeNull();
         options.InMemory.ApiKey.ShouldBe("dev-key");
-        options.InMemory.TenantReference.ShouldBe("dev");
+        options.InMemory.TenantId.ShouldBe("default");
         options.InMemory.EnvironmentTag.ShouldBe("dev");
         options.Oidc.ShouldNotBeNull();
     }
@@ -93,6 +93,6 @@ public class OptionsDefaultsTests
         var request = new PasswordLogoutRequest("refresh", "tenant-1");
 
         request.RefreshToken.ShouldBe("refresh");
-        request.TenantReference.ShouldBe("tenant-1");
+        request.TenantId.ShouldBe("tenant-1");
     }
 }

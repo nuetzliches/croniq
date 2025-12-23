@@ -729,6 +729,6 @@ public static class AuthCoreServiceCollectionExtensions
             .Select(seed => seed.TenantId)
             .Where(id => !string.IsNullOrWhiteSpace(id))
             .Distinct(StringComparer.OrdinalIgnoreCase)
-            .Select(id => new TenantSeed(id!, id!.Trim(), id!.Trim(), true, now));
+            .Select(id => new TenantSeed(id!, id!.Trim(), true, now));
     }
 }

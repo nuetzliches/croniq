@@ -44,7 +44,6 @@ public sealed class SqlServerDbContext(DbContextOptions<SqlServerDbContext> opti
     {
         builder.ToTable("Tenants", "croniq");
         builder.HasKey(x => x.TenantId);
-        builder.HasIndex(x => x.Reference).IsUnique();
         builder.Property(x => x.CreatedAtUtc).HasDefaultValueSql("sysutcdatetime()");
         builder.Property(x => x.UpdatedAtUtc).HasDefaultValueSql("sysutcdatetime()");
     }
@@ -52,7 +51,7 @@ public sealed class SqlServerDbContext(DbContextOptions<SqlServerDbContext> opti
     private static void ConfigureJobs(EntityTypeBuilder<JobEntity> builder)
     {
         builder.ToTable("Jobs", "croniq");
-        builder.HasIndex(x => x.JobKey).IsUnique();
+        builder.HasIndex(x => new { x.TenantId, x.EnvironmentTag, x.JobKey }).IsUnique();
         builder.HasIndex(x => new { x.TenantId, x.EnvironmentTag });
         builder.HasOne<TenantEntity>()
             .WithMany()
@@ -136,11 +135,6 @@ public sealed class SqlServerDbContext(DbContextOptions<SqlServerDbContext> opti
             .WithMany()
             .HasForeignKey(x => x.TenantId)
             .OnDelete(DeleteBehavior.Restrict);
-        builder.HasOne<WebhookEndpointEntity>()
-            .WithMany()
-            .HasForeignKey(x => new { x.TenantId, x.EnvironmentTag, x.HookKey })
-            .HasPrincipalKey(x => new { x.TenantId, x.EnvironmentTag, x.HookKey })
-            .OnDelete(DeleteBehavior.Restrict);
         builder.Property(x => x.CreatedAtUtc).HasDefaultValueSql("sysutcdatetime()");
     }
 
@@ -221,10 +215,6 @@ public sealed class SqlServerDbContext(DbContextOptions<SqlServerDbContext> opti
         builder.HasOne<TenantEntity>()
             .WithMany()
             .HasForeignKey(x => x.TenantId)
-            .OnDelete(DeleteBehavior.Restrict);
-        builder.HasOne<PasswordUserEntity>()
-            .WithMany()
-            .HasForeignKey(x => x.UserId)
             .OnDelete(DeleteBehavior.Restrict);
         builder.Property(x => x.CreatedAtUtc).HasDefaultValueSql("sysutcdatetime()");
     }

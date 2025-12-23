@@ -42,7 +42,7 @@ public class JobRegistryTests
     [Fact]
     public void Registers_jobs_with_composed_job_key()
     {
-        var options = Microsoft.Extensions.Options.Options.Create(new CroniqOptions { TenantReference = "t1", EnvironmentTag = "dev" });
+        var options = Microsoft.Extensions.Options.Options.Create(new CroniqOptions { EnvironmentTag = "dev" });
         var registrations = new List<JobRegistration>
         {
             new JobRegistration(typeof(SampleJob.Handler))
@@ -71,7 +71,7 @@ public class JobRegistryTests
     [Fact]
     public void Throws_on_duplicate_job_keys()
     {
-        var options = Microsoft.Extensions.Options.Options.Create(new CroniqOptions { TenantReference = "t1", EnvironmentTag = "dev" });
+        var options = Microsoft.Extensions.Options.Options.Create(new CroniqOptions { EnvironmentTag = "dev" });
         var registrations = new List<JobRegistration>
         {
             new JobRegistration(typeof(SampleJob.Handler)),

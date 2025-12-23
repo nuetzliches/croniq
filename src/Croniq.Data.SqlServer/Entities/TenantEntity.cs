@@ -13,10 +13,6 @@ public sealed class TenantEntity
     public string TenantId { get; set; } = string.Empty;
 
     [Required]
-    [MaxLength(64)]
-    public string Reference { get; set; } = string.Empty;
-
-    [Required]
     [MaxLength(256)]
     public string Name { get; set; } = string.Empty;
 

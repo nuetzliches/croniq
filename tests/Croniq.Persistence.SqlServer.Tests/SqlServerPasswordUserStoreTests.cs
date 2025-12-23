@@ -27,6 +27,7 @@ public sealed class SqlServerPasswordUserStoreTests : IAsyncLifetime
     public async Task InitializeAsync()
     {
         await _sql.ResetDatabaseAsync();
+        await SqlServerDatabaseMigrator.EnsureTenantExistsAsync(_sql.ConnectionString, "tenant-auth");
         var services = new ServiceCollection();
         services.AddLogging(TestLogging.Configure);
         services.AddCroniqAuthSqlServer(options => options.ConnectionString = _sql.ConnectionString);

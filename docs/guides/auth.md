@@ -38,14 +38,14 @@ You can switch between modes (or enable both) by changing configuration—no cod
 | `Croniq__Auth__Mode`                                      | Always                | `InMemory` or `SqlServer`.                                                      |
 | `Croniq__Auth__SqlServer__ConnectionString`               | When `SqlServer` mode | Overrides the default Croniq SQL connection if needed.                          |
 | `Croniq__Auth__InMemory__ApiKey`                          | When `InMemory` mode  | Single dev key used by all callers.                                             |
-| `Croniq__Core__TenantReference` / `Croniq__Core__EnvironmentTag` | Optional         | Embedded in every issued key so rate limiting and auditing remain tenant-aware. |
+| `Croniq__Core__TenantId` / `Croniq__Core__EnvironmentTag` | Optional              | Embedded in every issued key so rate limiting and auditing remain tenant-aware. |
 
 Example local `.cmd` snippet:
 
 ```cmd
 set Croniq__Auth__Mode=InMemory
 set Croniq__Auth__InMemory__ApiKey=crq_dev_local_sample
-set Croniq__Core__TenantReference=dev-sandbox
+set Croniq__Core__TenantId=dev-sandbox
 set Croniq__Core__EnvironmentTag=dev-jane
 ```
 
@@ -60,7 +60,7 @@ set Croniq__Core__EnvironmentTag=dev-jane
 Croniq can expose a username/password login for self-hosted deployments.
 
 - Endpoints: `/auth/login`, `/auth/refresh`, `/auth/logout`, `/auth/change-password`
-- Configure default tenant resolution via `Croniq:Auth:Password:DefaultTenant`.
+- Callers must provide `tenantId`.
 - Stand jetzt: the API returns `refreshToken` in the JSON response body and expects it in the request body for refresh/logout.
 - Password changes revoke existing refresh tokens; clients must re-login.
 
@@ -71,7 +71,7 @@ See [docs/deep-dive/password-auth.md](../deep-dive/password-auth.md) for details
 | Task                      | Tip                                                                                                                                                     |
 | ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Use a single shared key   | Keep `Croniq__Auth__Mode=InMemory` for local runs and place the key in `.env`. Scripts in `scripts/` already load `.env` when they start the dev stack. |
-| Simulate multiple tenants | Override `Croniq__Core__TenantReference` and `Croniq__Core__EnvironmentTag` per terminal session to see how rate limiting and observability labels change. |
+| Simulate multiple tenants | Override `Croniq__Core__TenantId` and `Croniq__Core__EnvironmentTag` per terminal session to see how rate limiting and observability labels change.     |
 
 ## FAQs
 

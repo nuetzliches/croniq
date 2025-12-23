@@ -29,7 +29,6 @@ public class ServiceCollectionExtensionsTests
 
         services.AddCroniqCore(options =>
         {
-            options.TenantReference = "t";
             options.EnvironmentTag = "dev";
         });
         services.AddLogging();
@@ -113,7 +112,6 @@ public class ServiceCollectionExtensionsTests
         var services = new ServiceCollection();
         services.AddCroniqCore(options =>
         {
-            options.TenantReference = "t";
             options.EnvironmentTag = "dev";
         });
         services.AddLogging();

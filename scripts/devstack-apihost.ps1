@@ -50,13 +50,14 @@ $authMode = Get-EnvOrDotenv 'CRONIQ_AUTH_MODE' ''
 if ($authMode) { $env:Croniq__Auth__Mode = $authMode }
 
 $env:Croniq__Auth__InMemory__ApiKey = Get-EnvOrDotenv 'CRONIQ_SMOKE_API_KEY' ''
-$env:Croniq__Auth__InMemory__TenantReference = Get-EnvOrDotenv 'CRONIQ_CORE_TENANT_REFERENCE' ''
+$env:Croniq__Auth__InMemory__TenantId = Get-EnvOrDotenv 'CRONIQ_CORE_TENANT_ID' 'default'
 $env:Croniq__Auth__InMemory__EnvironmentTag = Get-EnvOrDotenv 'CRONIQ_CORE_ENVIRONMENT' ''
 
 $env:Croniq__Persistence__Mode = 'SqlServer'
 
 $env:Croniq__Api__RequestsPerMinute = Get-EnvOrDotenv 'CRONIQ_API_REQUESTS_PER_MINUTE' ''
-$env:Croniq__Core__TenantReference = Get-EnvOrDotenv 'CRONIQ_CORE_TENANT_REFERENCE' ''
+$env:Croniq__Core__TenantId = Get-EnvOrDotenv 'CRONIQ_CORE_TENANT_ID' 'default'
+$env:Croniq__Core__TenantMode = Get-EnvOrDotenv 'CRONIQ_CORE_TENANT_MODE' ''
 $env:Croniq__Core__EnvironmentTag = Get-EnvOrDotenv 'CRONIQ_CORE_ENVIRONMENT' ''
 $env:Croniq__Core__InstanceId = Get-EnvOrDotenv 'CRONIQ_API_INSTANCE_ID' ''
 

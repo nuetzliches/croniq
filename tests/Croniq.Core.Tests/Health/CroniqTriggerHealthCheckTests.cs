@@ -23,7 +23,8 @@ public sealed class CroniqTriggerHealthCheckTests
 
         var options = Microsoft.Extensions.Options.Options.Create(new CroniqOptions
         {
-            TenantReference = "t",
+            TenantMode = TenantMode.Multi,
+            TenantId = "00000000-0000-0000-0000-000000000001",
             EnvironmentTag = "dev",
             InstanceId = "i1"
         });
@@ -47,7 +48,8 @@ public sealed class CroniqTriggerHealthCheckTests
 
         var options = Microsoft.Extensions.Options.Options.Create(new CroniqOptions
         {
-            TenantReference = "t",
+            TenantMode = TenantMode.Multi,
+            TenantId = "00000000-0000-0000-0000-000000000001",
             EnvironmentTag = "dev",
             InstanceId = "i1"
         });
