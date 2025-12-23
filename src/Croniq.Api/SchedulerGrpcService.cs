@@ -75,8 +75,21 @@ internal sealed class SchedulerGrpcService : Scheduler.SchedulerBase
                 throw new RpcException(new Status(StatusCode.InvalidArgument, "job_key must follow the Croniq format."));
             }
 
-            EnrichActivityForJob(activity, jobKey);
-            EnsureTenantOrThrow(TenantGuard.EnsureJobScope(_callerAccessor, jobKey, CroniqScopes.JobsTrigger));
+            var caller = _callerAccessor.Current;
+            if (caller is null)
+            {
+                throw new RpcException(new Status(StatusCode.Unauthenticated, "caller context is not available."));
+            }
+
+            var environment = caller.EnvironmentTag;
+            if (string.IsNullOrWhiteSpace(environment))
+            {
+                throw new RpcException(new Status(StatusCode.InvalidArgument, "environment_tag is required for TriggerJob."));
+            }
+
+            var scope = new PartitionScope(caller.TenantId, environment.Trim());
+            EnrichActivityForJob(activity, jobKey, scope);
+            EnsureTenantOrThrow(TenantGuard.EnsureJobScope(_callerAccessor, scope, CroniqScopes.JobsTrigger));
 
             if (!_registry.TryGet(jobKey, out var descriptor))
             {
@@ -87,9 +100,9 @@ internal sealed class SchedulerGrpcService : Scheduler.SchedulerBase
                 ? new Dictionary<string, string>()
                 : new Dictionary<string, string>(request.Metadata, StringComparer.OrdinalIgnoreCase);
 
-            var executionOptions = _policyResolver.ResolveExecution(jobKey);
+            var executionOptions = _policyResolver.ResolveExecution(jobKey, scope);
             var executionId = Guid.NewGuid().ToString("N");
-            var execRequest = new JobExecutionRequest(executionId, jobKey, descriptor, executionOptions, metadata, activitySource: null);
+            var execRequest = new JobExecutionRequest(executionId, jobKey, scope, descriptor, executionOptions, metadata, activitySource: null);
 
             await _pipeline.ExecuteAsync(execRequest, context.CancellationToken).ConfigureAwait(false);
             activity?.SetStatus(ActivityStatusCode.Ok);
@@ -145,10 +158,21 @@ internal sealed class SchedulerGrpcService : Scheduler.SchedulerBase
 
             var jobKey = validation.JobKey;
 
-            EnrichActivityForJob(activity, jobKey);
-            EnsureTenantOrThrow(TenantGuard.EnsureJobScope(_callerAccessor, jobKey, CroniqScopes.SchedulesWrite));
+            var caller = _callerAccessor.Current;
+            if (caller is null)
+            {
+                throw new RpcException(new Status(StatusCode.Unauthenticated, "caller context is not available."));
+            }
 
-            var scope = new PartitionScope(jobKey.TenantId, jobKey.EnvironmentTag);
+            var environment = caller.EnvironmentTag;
+            if (string.IsNullOrWhiteSpace(environment))
+            {
+                throw new RpcException(new Status(StatusCode.InvalidArgument, "environment_tag is required for UpsertSchedule."));
+            }
+
+            var scope = new PartitionScope(caller.TenantId, environment.Trim());
+            EnrichActivityForJob(activity, jobKey, scope);
+            EnsureTenantOrThrow(TenantGuard.EnsureJobScope(_callerAccessor, scope, CroniqScopes.SchedulesWrite));
 
             var job = new JobDefinition(
                 jobKey.Value,
@@ -169,7 +193,7 @@ internal sealed class SchedulerGrpcService : Scheduler.SchedulerBase
                 metadata,
                 validation.TimeZoneId);
 
-            await _store.UpsertJobAsync(job, context.CancellationToken).ConfigureAwait(false);
+            await _store.UpsertJobAsync(job, scope, context.CancellationToken).ConfigureAwait(false);
             await _store.UpsertTriggerAsync(trigger, context.CancellationToken).ConfigureAwait(false);
 
             activity?.SetTag("croniq.trigger.id", trigger.TriggerId);
@@ -297,7 +321,7 @@ internal sealed class SchedulerGrpcService : Scheduler.SchedulerBase
         throw new RpcException(new Status(status, detail));
     }
 
-    private static void EnrichActivityForJob(Activity? activity, JobKey jobKey)
+    private static void EnrichActivityForJob(Activity? activity, JobKey jobKey, PartitionScope? scope = null)
     {
         if (activity is null)
         {
@@ -305,8 +329,11 @@ internal sealed class SchedulerGrpcService : Scheduler.SchedulerBase
         }
 
         activity.SetTag("croniq.job.key", jobKey.Value);
-        activity.SetTag("croniq.tenant_id", jobKey.TenantId);
-        activity.SetTag("croniq.environment", jobKey.EnvironmentTag);
+        if (scope.HasValue)
+        {
+            activity.SetTag("croniq.tenant_id", scope.Value.TenantId);
+            activity.SetTag("croniq.environment", scope.Value.EnvironmentTag);
+        }
         activity.SetTag("croniq.job.namespace", jobKey.NamespaceSegment);
         activity.SetTag("croniq.job.name", jobKey.JobName);
         if (!string.IsNullOrWhiteSpace(jobKey.Variant))

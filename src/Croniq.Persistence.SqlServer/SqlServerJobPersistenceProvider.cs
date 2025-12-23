@@ -35,7 +35,7 @@ public sealed class SqlServerJobPersistenceProvider : IJobPersistenceProvider
         _options.Normalize();
     }
 
-    public async Task UpsertJobAsync(JobDefinition job, CancellationToken cancellationToken)
+    public async Task UpsertJobAsync(JobDefinition job, PartitionScope scope, CancellationToken cancellationToken)
     {
         if (job is null) throw new ArgumentNullException(nameof(job));
         if (!JobKey.TryParse(job.JobKey, out var jobKey))
@@ -44,7 +44,11 @@ public sealed class SqlServerJobPersistenceProvider : IJobPersistenceProvider
         }
 
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
-        var existing = await db.Jobs.FirstOrDefaultAsync(j => j.JobKey == job.JobKey, cancellationToken).ConfigureAwait(false);
+        var existing = await db.Jobs.FirstOrDefaultAsync(
+            j => j.JobKey == job.JobKey
+                 && j.TenantId == scope.TenantId
+                 && j.EnvironmentTag == scope.EnvironmentTag,
+            cancellationToken).ConfigureAwait(false);
         var now = DateTime.UtcNow;
 
         if (existing is null)
@@ -52,8 +56,8 @@ public sealed class SqlServerJobPersistenceProvider : IJobPersistenceProvider
             existing = new JobEntity
             {
                 JobKey = job.JobKey,
-                TenantId = jobKey.TenantId,
-                EnvironmentTag = jobKey.EnvironmentTag,
+                TenantId = scope.TenantId,
+                EnvironmentTag = scope.EnvironmentTag,
                 NamespaceSegment = job.Namespace,
                 Name = job.Name,
                 Variant = job.Variant,
@@ -93,12 +97,14 @@ public sealed class SqlServerJobPersistenceProvider : IJobPersistenceProvider
         return result;
     }
 
-    public async Task<JobDefinition?> GetJobAsync(string jobKey, CancellationToken cancellationToken)
+    public async Task<JobDefinition?> GetJobAsync(string jobKey, PartitionScope scope, CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(jobKey)) throw new ArgumentNullException(nameof(jobKey));
 
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
-        var entity = await db.Jobs.FirstOrDefaultAsync(j => j.JobKey == jobKey, cancellationToken).ConfigureAwait(false);
+        var entity = await db.Jobs
+            .FirstOrDefaultAsync(j => j.JobKey == jobKey && j.TenantId == scope.TenantId && j.EnvironmentTag == scope.EnvironmentTag, cancellationToken)
+            .ConfigureAwait(false);
         return entity is null ? null : ToJobDefinition(entity);
     }
 
@@ -107,16 +113,12 @@ public sealed class SqlServerJobPersistenceProvider : IJobPersistenceProvider
         if (string.IsNullOrWhiteSpace(jobKey)) throw new ArgumentNullException(nameof(jobKey));
 
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
-        var entity = await db.Jobs.FirstOrDefaultAsync(j => j.JobKey == jobKey, cancellationToken).ConfigureAwait(false);
+        var entity = await db.Jobs
+            .FirstOrDefaultAsync(j => j.JobKey == jobKey && j.TenantId == scope.TenantId && j.EnvironmentTag == scope.EnvironmentTag, cancellationToken)
+            .ConfigureAwait(false);
         if (entity is null)
         {
             return;
-        }
-
-        if (!string.Equals(entity.TenantId, scope.TenantId, StringComparison.OrdinalIgnoreCase)
-            || !string.Equals(entity.EnvironmentTag, scope.EnvironmentTag, StringComparison.OrdinalIgnoreCase))
-        {
-            throw new InvalidOperationException("Job scope does not match requested scope.");
         }
 
         db.Jobs.Remove(entity);
@@ -128,7 +130,9 @@ public sealed class SqlServerJobPersistenceProvider : IJobPersistenceProvider
         if (trigger is null) throw new ArgumentNullException(nameof(trigger));
 
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
-        var job = await db.Jobs.FirstOrDefaultAsync(j => j.JobKey == trigger.JobKey, cancellationToken).ConfigureAwait(false)
+        var job = await db.Jobs
+            .FirstOrDefaultAsync(j => j.JobKey == trigger.JobKey && j.TenantId == trigger.Scope.TenantId && j.EnvironmentTag == trigger.Scope.EnvironmentTag, cancellationToken)
+            .ConfigureAwait(false)
             ?? throw new InvalidOperationException($"Job '{trigger.JobKey}' must be created before triggers can be added.");
 
         var timeZoneId = ResolveTimeZoneId(trigger.TimeZoneId, trigger.TriggerId);

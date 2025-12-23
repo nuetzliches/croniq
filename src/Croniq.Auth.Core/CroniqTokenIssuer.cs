@@ -92,6 +92,21 @@ public sealed class CroniqTokenIssuer : ICroniqTokenIssuer
             claims[options.ScopeClaim] = normalizedScopes;
         }
 
+        if (request.AdditionalClaims is not null)
+        {
+            foreach (var (key, value) in request.AdditionalClaims)
+            {
+                if (string.IsNullOrWhiteSpace(key) || value is null)
+                {
+                    continue;
+                }
+
+                // Let callers attach additional, non-core claims.
+                // Callers are expected to avoid overriding core claim names.
+                claims[key] = value;
+            }
+        }
+
         return claims;
     }
 

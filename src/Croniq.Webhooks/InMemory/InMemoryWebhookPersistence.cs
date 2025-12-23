@@ -16,10 +16,16 @@ public sealed class InMemoryWebhookPersistenceProvider : IWebhookPersistenceProv
     private long _ipRuleIdentity;
     private readonly object _ipRuleLock = new();
 
-    public WebhookEndpointDefinition? Find(string hookKey)
+    private static string BuildKey(string hookKey, PartitionScope scope)
+    {
+        if (string.IsNullOrWhiteSpace(hookKey)) throw new ArgumentNullException(nameof(hookKey));
+        return $"{scope.TenantId}:{scope.EnvironmentTag}:{hookKey}";
+    }
+
+    public WebhookEndpointDefinition? Find(string hookKey, PartitionScope scope)
     {
         _ = hookKey ?? throw new ArgumentNullException(nameof(hookKey));
-        return _store.TryGetValue(hookKey, out var definition) ? definition : null;
+        return _store.TryGetValue(BuildKey(hookKey, scope), out var definition) ? definition : null;
     }
 
     public WebhookEndpointDefinition Seed(
@@ -54,13 +60,13 @@ public sealed class InMemoryWebhookPersistenceProvider : IWebhookPersistenceProv
             now,
             now);
 
-        _store[hookKey] = definition;
+        _store[BuildKey(hookKey, scope)] = definition;
         return definition;
     }
 
-    public Task<WebhookEndpointDefinition?> FindByHookKeyAsync(string hookKey, CancellationToken cancellationToken)
+    public Task<WebhookEndpointDefinition?> FindByHookKeyAsync(string hookKey, PartitionScope scope, CancellationToken cancellationToken)
     {
-        return Task.FromResult(Find(hookKey));
+        return Task.FromResult(Find(hookKey, scope));
     }
 
     public Task<IReadOnlyCollection<WebhookEndpointDefinition>> ListAsync(PartitionScope scope, CancellationToken cancellationToken)
@@ -78,8 +84,9 @@ public sealed class InMemoryWebhookPersistenceProvider : IWebhookPersistenceProv
         var now = DateTimeOffset.UtcNow;
         var metadata = request.Metadata is null ? null : new Dictionary<string, string>(request.Metadata, StringComparer.OrdinalIgnoreCase);
 
+        var scope = new PartitionScope(request.TenantId, request.EnvironmentTag);
         _store.AddOrUpdate(
-            request.HookKey,
+            BuildKey(request.HookKey, scope),
             _ => new WebhookEndpointDefinition(
                 request.HookKey,
                 request.JobKey,
@@ -111,10 +118,10 @@ public sealed class InMemoryWebhookPersistenceProvider : IWebhookPersistenceProv
         return Task.CompletedTask;
     }
 
-    public Task DeleteAsync(string hookKey, PartitionScope scope, CancellationToken cancellationToken)
+    public Task DeleteAsync(string hookKey, PartitionScope scope, bool hardDelete, CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(hookKey)) throw new ArgumentNullException(nameof(hookKey));
-        _store.TryRemove(hookKey, out _);
+        _store.TryRemove(BuildKey(hookKey, scope), out _);
         return Task.CompletedTask;
     }
 
@@ -122,7 +129,8 @@ public sealed class InMemoryWebhookPersistenceProvider : IWebhookPersistenceProv
     {
         if (request is null) throw new ArgumentNullException(nameof(request));
 
-        if (!_store.TryGetValue(request.HookKey, out var current))
+        var scope = new PartitionScope(request.TenantId, request.EnvironmentTag);
+        if (!_store.TryGetValue(BuildKey(request.HookKey, scope), out var current))
         {
             throw new InvalidOperationException($"webhook {request.HookKey} not found");
         }
@@ -130,7 +138,7 @@ public sealed class InMemoryWebhookPersistenceProvider : IWebhookPersistenceProv
         var nowOffset = DateTimeOffset.UtcNow;
         var secret = GenerateSecret();
         var updated = current with { Secret = secret, UpdatedAtUtc = nowOffset };
-        _store[request.HookKey] = updated;
+        _store[BuildKey(request.HookKey, scope)] = updated;
 
         var activated = DateTime.UtcNow;
         var result = new WebhookSecretRotationResult(
@@ -142,10 +150,10 @@ public sealed class InMemoryWebhookPersistenceProvider : IWebhookPersistenceProv
         return Task.FromResult(result);
     }
 
-    public Task<IReadOnlyCollection<WebhookSecretMaterial>> GetActiveSecretsAsync(string hookKey, CancellationToken cancellationToken)
+    public Task<IReadOnlyCollection<WebhookSecretMaterial>> GetActiveSecretsAsync(string hookKey, PartitionScope scope, CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(hookKey)) throw new ArgumentNullException(nameof(hookKey));
-        if (!_store.TryGetValue(hookKey, out var definition))
+        if (!_store.TryGetValue(BuildKey(hookKey, scope), out var definition))
         {
             return Task.FromResult<IReadOnlyCollection<WebhookSecretMaterial>>(Array.Empty<WebhookSecretMaterial>());
         }
@@ -166,7 +174,7 @@ public sealed class InMemoryWebhookPersistenceProvider : IWebhookPersistenceProv
     {
         if (string.IsNullOrWhiteSpace(hookKey)) throw new ArgumentNullException(nameof(hookKey));
 
-        if (!_store.TryGetValue(hookKey, out var definition))
+        if (!_store.TryGetValue(BuildKey(hookKey, scope), out var definition))
         {
             return Task.FromResult<IReadOnlyCollection<WebhookIpRuleDefinition>>(Array.Empty<WebhookIpRuleDefinition>());
         }
@@ -182,7 +190,8 @@ public sealed class InMemoryWebhookPersistenceProvider : IWebhookPersistenceProv
     public Task<WebhookIpRuleDefinition> AddIpRuleAsync(WebhookIpRuleCreate request, CancellationToken cancellationToken)
     {
         if (request is null) throw new ArgumentNullException(nameof(request));
-        if (!_store.TryGetValue(request.HookKey, out var definition))
+        var scope = new PartitionScope(request.TenantId, request.EnvironmentTag);
+        if (!_store.TryGetValue(BuildKey(request.HookKey, scope), out var definition))
         {
             throw new InvalidOperationException($"webhook {request.HookKey} not found");
         }
@@ -218,7 +227,7 @@ public sealed class InMemoryWebhookPersistenceProvider : IWebhookPersistenceProv
                 .OrderBy(r => r.Cidr, StringComparer.OrdinalIgnoreCase)
                 .ToArray();
 
-            _store[request.HookKey] = definition with { IpRules = updated };
+            _store[BuildKey(request.HookKey, scope)] = definition with { IpRules = updated };
             return Task.FromResult(rule);
         }
     }

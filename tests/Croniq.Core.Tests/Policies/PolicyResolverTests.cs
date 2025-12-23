@@ -1,6 +1,7 @@
 using System;
 using Croniq.Core.Jobs;
 using Croniq.Core.Policies;
+using Croniq.Persistence.Abstractions;
 using Shouldly;
 using Xunit;
 
@@ -43,8 +44,9 @@ public class PolicyResolverTests
                 }
             }));
 
-        var jobKey = new JobKey("t1", "dev", "billing", "invoice");
-        var resolved = resolver.ResolveMisfire(jobKey);
+        var scope = new PartitionScope("t1", "dev");
+        var jobKey = new JobKey("billing", "invoice");
+        var resolved = resolver.ResolveMisfire(jobKey, scope);
 
         resolved.MaxMisfireDelay.ShouldBe(TimeSpan.FromMinutes(1));
         resolved.DeadLetterOnMisfire.ShouldBeTrue();
@@ -76,8 +78,9 @@ public class PolicyResolverTests
                 }
             }));
 
-        var jobKey = new JobKey("t1", "dev", "billing", "invoice");
-        var resolved = resolver.ResolveQuota(jobKey);
+        var scope = new PartitionScope("t1", "dev");
+        var jobKey = new JobKey("billing", "invoice");
+        var resolved = resolver.ResolveQuota(jobKey, scope);
 
         resolved.MaxTriggersPerMinute.ShouldBe(50);
         resolved.MaxParallelExecutionsPerJob.ShouldBe(3);
@@ -166,8 +169,9 @@ public class PolicyResolverTests
                 }
             }));
 
-        var jobKey = new JobKey("t1", "prod", "billing", "invoice");
-        var resolved = resolver.ResolveExecution(jobKey);
+        var scope = new PartitionScope("t1", "prod");
+        var jobKey = new JobKey("billing", "invoice");
+        var resolved = resolver.ResolveExecution(jobKey, scope);
 
         resolved.Retry.MaxAttempts.ShouldBe(6);
         resolved.Retry.BackoffStrategy.ShouldBe(RetryBackoffStrategy.Exponential);

@@ -22,12 +22,12 @@ Use this checklist to diagnose the most common issues developers hit while worki
 
 ## 3. Jobs Do Not Run
 
-| Symptom                    | Likely Cause                          | Fix                                                                                                                                                                     |
-| -------------------------- | ------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Manual triggers return 404 | Wrong `jobKey` namespace or tenant    | Ensure the job registration uses the same tenant/environment as the trigger payload. Use `JobKey.From("namespace", "name")` in code and align with the trigger request. |
-| Job stuck in waiting state | Custom prerequisites never satisfied  | Log additional detail within the job handler and watch the Croniq Log Pulse dashboard. Validate external dependencies (queues, APIs) before requeuing.                  |
-| Schedules never fire       | Worker host offline or policy blocked | Confirm the worker container/service is running. Check scheduler logs for policy rejections (quota, concurrency).                                                       |
-| Dead-lettered executions   | Exceptions bubble from handler        | Review Serilog logs or Grafana panels for the job. Add retries/policies as needed.                                                                                      |
+| Symptom                    | Likely Cause                          | Fix                                                                                                                                                                                 |
+| -------------------------- | ------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Manual triggers return 404 | Wrong `jobKey` namespace/name         | Ensure the job registration matches the requested job key (format `namespace:name[:variant]`). Use `JobKey.Create("namespace", "name")` in code and align with the trigger request. |
+| Job stuck in waiting state | Custom prerequisites never satisfied  | Log additional detail within the job handler and watch the Croniq Log Pulse dashboard. Validate external dependencies (queues, APIs) before requeuing.                              |
+| Schedules never fire       | Worker host offline or policy blocked | Confirm the worker container/service is running. Check scheduler logs for policy rejections (quota, concurrency).                                                                   |
+| Dead-lettered executions   | Exceptions bubble from handler        | Review Serilog logs or Grafana panels for the job. Add retries/policies as needed.                                                                                                  |
 
 ## 4. Observability & Telemetry
 

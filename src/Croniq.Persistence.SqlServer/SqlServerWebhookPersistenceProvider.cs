@@ -30,14 +30,17 @@ public sealed class SqlServerWebhookPersistenceProvider : IWebhookPersistencePro
         _changeNotifiers = changeNotifiers?.ToArray() ?? Array.Empty<IWebhookEndpointChangeNotifier>();
     }
 
-    public async Task<WebhookEndpointDefinition?> FindByHookKeyAsync(string hookKey, CancellationToken cancellationToken)
+    public async Task<WebhookEndpointDefinition?> FindByHookKeyAsync(string hookKey, PartitionScope scope, CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(hookKey)) throw new ArgumentNullException(nameof(hookKey));
 
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
         var entity = await db.WebhookEndpoints
             .AsNoTracking()
-            .FirstOrDefaultAsync(x => x.HookKey == hookKey, cancellationToken)
+            .FirstOrDefaultAsync(x => x.HookKey == hookKey
+                                     && x.TenantId == scope.TenantId
+                                     && x.EnvironmentTag == scope.EnvironmentTag
+                                     && !x.IsDeleted, cancellationToken)
             .ConfigureAwait(false);
 
         if (entity is null)
@@ -47,7 +50,10 @@ public sealed class SqlServerWebhookPersistenceProvider : IWebhookPersistencePro
 
         var rules = await db.WebhookEndpointIpRules
             .AsNoTracking()
-            .Where(x => x.HookKey == hookKey && !x.IsDeleted)
+            .Where(x => x.HookKey == hookKey
+                        && x.TenantId == scope.TenantId
+                        && x.EnvironmentTag == scope.EnvironmentTag
+                        && !x.IsDeleted)
             .OrderBy(x => x.Cidr)
             .ToListAsync(cancellationToken)
             .ConfigureAwait(false);
@@ -60,7 +66,7 @@ public sealed class SqlServerWebhookPersistenceProvider : IWebhookPersistencePro
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
         var rows = await db.WebhookEndpoints
             .AsNoTracking()
-            .Where(x => x.TenantId == scope.TenantId && x.EnvironmentTag == scope.EnvironmentTag)
+            .Where(x => x.TenantId == scope.TenantId && x.EnvironmentTag == scope.EnvironmentTag && !x.IsDeleted)
             .OrderBy(x => x.HookKey)
             .ToListAsync(cancellationToken)
             .ConfigureAwait(false);
@@ -107,15 +113,11 @@ public sealed class SqlServerWebhookPersistenceProvider : IWebhookPersistencePro
             throw new InvalidOperationException($"JobKey '{request.JobKey}' is invalid.");
         }
 
-        if (!string.Equals(jobKey.TenantId, request.TenantId, StringComparison.OrdinalIgnoreCase)
-            || !string.Equals(jobKey.EnvironmentTag, request.EnvironmentTag, StringComparison.OrdinalIgnoreCase))
-        {
-            throw new InvalidOperationException("JobKey tenant/environment must match webhook scope.");
-        }
-
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
         var entity = await db.WebhookEndpoints
-            .FirstOrDefaultAsync(x => x.HookKey == request.HookKey, cancellationToken)
+            .FirstOrDefaultAsync(x => x.HookKey == request.HookKey
+                                      && x.TenantId == request.TenantId
+                                      && x.EnvironmentTag == request.EnvironmentTag, cancellationToken)
             .ConfigureAwait(false);
 
         var now = DateTime.UtcNow;
@@ -137,6 +139,7 @@ public sealed class SqlServerWebhookPersistenceProvider : IWebhookPersistencePro
                 RequireSignature = request.RequireSignature,
                 SignatureVersion = request.SignatureVersion,
                 MetadataJson = SerializeMetadata(request.Metadata),
+                IsDeleted = false,
                 CreatedAtUtc = now,
                 UpdatedAtUtc = now
             };
@@ -146,10 +149,9 @@ public sealed class SqlServerWebhookPersistenceProvider : IWebhookPersistencePro
         }
         else
         {
-            if (!string.Equals(entity.TenantId, request.TenantId, StringComparison.OrdinalIgnoreCase)
-                || !string.Equals(entity.EnvironmentTag, request.EnvironmentTag, StringComparison.OrdinalIgnoreCase))
+            if (entity.IsDeleted)
             {
-                throw new InvalidOperationException("Webhook scope mismatch.");
+                entity.IsDeleted = false;
             }
 
             entity.JobKey = request.JobKey;
@@ -177,16 +179,18 @@ public sealed class SqlServerWebhookPersistenceProvider : IWebhookPersistencePro
         }
 
         await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
-        NotifyEndpointChanged(request.HookKey);
+        NotifyEndpointChanged(request.HookKey, new PartitionScope(request.TenantId, request.EnvironmentTag));
     }
 
-    public async Task DeleteAsync(string hookKey, PartitionScope scope, CancellationToken cancellationToken)
+    public async Task DeleteAsync(string hookKey, PartitionScope scope, bool hardDelete, CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(hookKey)) throw new ArgumentNullException(nameof(hookKey));
 
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
         var entity = await db.WebhookEndpoints
-            .FirstOrDefaultAsync(x => x.HookKey == hookKey, cancellationToken)
+            .FirstOrDefaultAsync(x => x.HookKey == hookKey
+                                      && x.TenantId == scope.TenantId
+                                      && x.EnvironmentTag == scope.EnvironmentTag, cancellationToken)
             .ConfigureAwait(false);
 
         if (entity is null)
@@ -194,17 +198,47 @@ public sealed class SqlServerWebhookPersistenceProvider : IWebhookPersistencePro
             return;
         }
 
-        if (!string.Equals(entity.TenantId, scope.TenantId, StringComparison.OrdinalIgnoreCase)
-            || !string.Equals(entity.EnvironmentTag, scope.EnvironmentTag, StringComparison.OrdinalIgnoreCase))
+        var now = DateTime.UtcNow;
+
+        if (hardDelete)
         {
-            throw new InvalidOperationException("Webhook scope mismatch.");
+            // purge dependents first (DeleteBehavior is expected to be Restrict)
+            var ipRules = await db.WebhookEndpointIpRules
+                .Where(x => x.HookKey == hookKey && x.TenantId == scope.TenantId && x.EnvironmentTag == scope.EnvironmentTag)
+                .ToListAsync(cancellationToken)
+                .ConfigureAwait(false);
+            db.WebhookEndpointIpRules.RemoveRange(ipRules);
+
+            var secrets = await db.WebhookSecretHistory
+                .Where(x => x.HookKey == hookKey && x.TenantId == scope.TenantId && x.EnvironmentTag == scope.EnvironmentTag)
+                .ToListAsync(cancellationToken)
+                .ConfigureAwait(false);
+            db.WebhookSecretHistory.RemoveRange(secrets);
+
+            var deadLetters = await db.WebhookDeadLetters
+                .Where(x => x.HookKey == hookKey && x.TenantId == scope.TenantId && x.EnvironmentTag == scope.EnvironmentTag)
+                .ToListAsync(cancellationToken)
+                .ConfigureAwait(false);
+            db.WebhookDeadLetters.RemoveRange(deadLetters);
+
+            var events = await db.WebhookEndpointEvents
+                .Where(x => x.HookKey == hookKey && x.TenantId == scope.TenantId && x.EnvironmentTag == scope.EnvironmentTag)
+                .ToListAsync(cancellationToken)
+                .ConfigureAwait(false);
+            db.WebhookEndpointEvents.RemoveRange(events);
+
+            db.WebhookEndpoints.Remove(entity);
+        }
+        else
+        {
+            entity.IsDeleted = true;
+            entity.Enabled = false;
+            entity.UpdatedAtUtc = now;
+            db.WebhookEndpointEvents.Add(CreateEvent(entity.HookKey, entity.TenantId, entity.EnvironmentTag, WebhookEndpointEventTypes.Deleted, now));
         }
 
-        var now = DateTime.UtcNow;
-        db.WebhookEndpoints.Remove(entity);
-        db.WebhookEndpointEvents.Add(CreateEvent(entity.HookKey, entity.TenantId, entity.EnvironmentTag, WebhookEndpointEventTypes.Deleted, now));
         await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
-        NotifyEndpointChanged(hookKey);
+        NotifyEndpointChanged(hookKey, scope);
     }
 
     public async Task<WebhookSecretRotationResult> RotateSecretAsync(WebhookSecretRotate request, CancellationToken cancellationToken)
@@ -217,18 +251,15 @@ public sealed class SqlServerWebhookPersistenceProvider : IWebhookPersistencePro
 
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
         var entity = await db.WebhookEndpoints
-            .FirstOrDefaultAsync(x => x.HookKey == request.HookKey, cancellationToken)
+            .FirstOrDefaultAsync(x => x.HookKey == request.HookKey
+                                      && x.TenantId == request.TenantId
+                                      && x.EnvironmentTag == request.EnvironmentTag
+                                      && !x.IsDeleted, cancellationToken)
             .ConfigureAwait(false);
 
         if (entity is null)
         {
             throw new InvalidOperationException($"Webhook {request.HookKey} not found.");
-        }
-
-        if (!string.Equals(entity.TenantId, request.TenantId, StringComparison.OrdinalIgnoreCase)
-            || !string.Equals(entity.EnvironmentTag, request.EnvironmentTag, StringComparison.OrdinalIgnoreCase))
-        {
-            throw new InvalidOperationException("Webhook scope mismatch.");
         }
 
         var now = DateTime.UtcNow;
@@ -251,7 +282,7 @@ public sealed class SqlServerWebhookPersistenceProvider : IWebhookPersistencePro
         await ApplySecretAsync(db, entity, secret, activatedAtUtc, gracePeriod, request.RotatedBy ?? "system:rotate", request.Notes, cancellationToken).ConfigureAwait(false);
         entity.UpdatedAtUtc = now;
         await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
-        NotifyEndpointChanged(request.HookKey);
+        NotifyEndpointChanged(request.HookKey, new PartitionScope(request.TenantId, request.EnvironmentTag));
 
         return new WebhookSecretRotationResult(
             entity.HookKey,
@@ -261,7 +292,7 @@ public sealed class SqlServerWebhookPersistenceProvider : IWebhookPersistencePro
             null);
     }
 
-    public async Task<IReadOnlyCollection<WebhookSecretMaterial>> GetActiveSecretsAsync(string hookKey, CancellationToken cancellationToken)
+    public async Task<IReadOnlyCollection<WebhookSecretMaterial>> GetActiveSecretsAsync(string hookKey, PartitionScope scope, CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(hookKey)) throw new ArgumentNullException(nameof(hookKey));
 
@@ -270,6 +301,8 @@ public sealed class SqlServerWebhookPersistenceProvider : IWebhookPersistencePro
         var rows = await db.WebhookSecretHistory
             .AsNoTracking()
             .Where(x => x.HookKey == hookKey
+                        && x.TenantId == scope.TenantId
+                        && x.EnvironmentTag == scope.EnvironmentTag
                         && x.ActivatedAtUtc <= now
                         && (x.ExpiresAtUtc == null || x.ExpiresAtUtc > now))
             .OrderBy(x => x.ActivatedAtUtc)
@@ -360,7 +393,7 @@ public sealed class SqlServerWebhookPersistenceProvider : IWebhookPersistencePro
             request.CreatedBy,
             request.CorrelationId));
         await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
-        NotifyEndpointChanged(request.HookKey);
+        NotifyEndpointChanged(request.HookKey, new PartitionScope(endpoint.TenantId, endpoint.EnvironmentTag));
 
         return MapIpRule(entity);
     }
@@ -389,7 +422,7 @@ public sealed class SqlServerWebhookPersistenceProvider : IWebhookPersistencePro
             deletedBy,
             correlationId));
         await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
-        NotifyEndpointChanged(entity.HookKey);
+        NotifyEndpointChanged(entity.HookKey, new PartitionScope(entity.TenantId, entity.EnvironmentTag));
     }
 
     private static void EnsureScope(string tenantId, string environmentTag, PartitionScope scope)
@@ -470,7 +503,7 @@ public sealed class SqlServerWebhookPersistenceProvider : IWebhookPersistencePro
         });
     }
 
-    private void NotifyEndpointChanged(string hookKey)
+    private void NotifyEndpointChanged(string hookKey, PartitionScope scope)
     {
         if (_changeNotifiers.Count == 0 || string.IsNullOrWhiteSpace(hookKey))
         {
@@ -479,7 +512,7 @@ public sealed class SqlServerWebhookPersistenceProvider : IWebhookPersistencePro
 
         foreach (var notifier in _changeNotifiers)
         {
-            notifier.NotifyChanged(hookKey);
+            notifier.NotifyChanged(hookKey, scope);
         }
     }
 

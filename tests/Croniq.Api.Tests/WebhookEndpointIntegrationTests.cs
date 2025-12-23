@@ -69,7 +69,7 @@ public sealed class WebhookEndpointIntegrationTests : IClassFixture<WebhookApiTe
         body.Metadata.ShouldNotBeNull();
         body.Metadata!.ContainsKey("team").ShouldBeTrue();
 
-        var persisted = _host.Webhooks.Find("hook-invoices");
+        var persisted = _host.Webhooks.Find("hook-invoices", _host.DefaultScope);
         persisted.ShouldNotBeNull();
         persisted!.RequireSignature.ShouldBeFalse();
         persisted.Secret.ShouldBe("whsec_custom");
@@ -84,7 +84,7 @@ public sealed class WebhookEndpointIntegrationTests : IClassFixture<WebhookApiTe
 
         var response = await _host.Client.DeleteAsync($"/tenants/{WebhookApiTestHost.TenantId}/webhooks/hook-shipment?environment={WebhookApiTestHost.Environment}");
         response.StatusCode.ShouldBe(HttpStatusCode.NoContent);
-        _host.Webhooks.Find("hook-shipment").ShouldBeNull();
+        _host.Webhooks.Find("hook-shipment", _host.DefaultScope).ShouldBeNull();
     }
 
     [Fact]
@@ -104,7 +104,7 @@ public sealed class WebhookEndpointIntegrationTests : IClassFixture<WebhookApiTe
         payload!.Secret.ShouldNotBe(seeded.Secret);
         payload.ExpiresAtUtc.ShouldNotBeNull();
 
-        var current = _host.Webhooks.Find(seeded.HookKey);
+        var current = _host.Webhooks.Find(seeded.HookKey, _host.DefaultScope);
         current.ShouldNotBeNull();
         current!.Secret.ShouldBe(payload.Secret);
     }
@@ -187,6 +187,6 @@ public sealed class WebhookEndpointIntegrationTests : IClassFixture<WebhookApiTe
 
     private static string BuildJobKey(string namespaceSegment, string jobName)
     {
-        return $"{WebhookApiTestHost.TenantId}:{WebhookApiTestHost.Environment}:{namespaceSegment}:{jobName}";
+        return $"{namespaceSegment}:{jobName}";
     }
 }

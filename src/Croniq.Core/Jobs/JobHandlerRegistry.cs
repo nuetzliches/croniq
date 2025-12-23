@@ -39,12 +39,7 @@ public sealed class JobHandlerRegistry : IJobHandlerRegistry
         foreach (var registration in registrations ?? Enumerable.Empty<JobHandlerRegistration>())
         {
             var attribute = registration.Attribute;
-            var jobKey = JobKey.Create(
-                options.Value.TenantId,
-                options.Value.EnvironmentTag,
-                attribute.NamespaceSegment,
-                attribute.JobName,
-                attribute.Variant);
+            var jobKey = JobKey.Create(attribute.NamespaceSegment, attribute.JobName, attribute.Variant);
 
             if (_handlers.ContainsKey(jobKey.Value))
             {

@@ -98,9 +98,9 @@ public static partial class ApiHostingExtensions
             metadata["deadletter:id"] = entry.Id.ToString(CultureInfo.InvariantCulture);
             metadata["deadletter:replay_at"] = DateTimeOffset.UtcNow.ToString("O", CultureInfo.InvariantCulture);
 
-            var executionOptions = policyResolver.ResolveExecution(jobKey);
+            var executionOptions = policyResolver.ResolveExecution(jobKey, scope);
             var executionId = Guid.NewGuid().ToString("N");
-            var execRequest = new JobExecutionRequest(executionId, jobKey, descriptor, executionOptions, metadata, TriggerActivitySource);
+            var execRequest = new JobExecutionRequest(executionId, jobKey, scope, descriptor, executionOptions, metadata, TriggerActivitySource);
 
             using var replayActivity = TriggerActivitySource.StartActivity("Croniq.Api.ScheduleDeadLetterReplay", ActivityKind.Server);
             replayActivity?.SetTag("croniq.deadletter.id", entry.Id);

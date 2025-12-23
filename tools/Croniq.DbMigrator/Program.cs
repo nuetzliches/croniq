@@ -183,6 +183,7 @@ static IReadOnlyCollection<string> ResolveSeedAdminScopes(string seedScopesRaw, 
     var fallback = new[]
     {
         CroniqScopes.SchedulesWrite,
+        CroniqScopes.SchedulesDeadLetter,
         CroniqScopes.JobsRead,
         CroniqScopes.JobsWrite,
         CroniqScopes.JobsTrigger,

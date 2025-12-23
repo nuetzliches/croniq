@@ -6,8 +6,9 @@ namespace Croniq.Persistence.Abstractions;
 public interface IWebhookEndpointChangeNotifier
 {
     /// <summary>
-    /// Signals that the webhook endpoint identified by <paramref name="hookKey"/> has changed.
+    /// Signals that the webhook endpoint identified by <paramref name="hookKey"/> has changed within the specified scope.
     /// </summary>
-    /// <param name="hookKey">The unique hook key that changed.</param>
-    void NotifyChanged(string hookKey);
+    /// <param name="hookKey">The hook key that changed.</param>
+    /// <param name="scope">Tenant/environment scope of the webhook endpoint.</param>
+    void NotifyChanged(string hookKey, PartitionScope scope);
 }

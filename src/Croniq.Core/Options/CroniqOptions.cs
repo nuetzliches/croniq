@@ -4,7 +4,7 @@ namespace Croniq.Options;
 
 public sealed class CroniqOptions
 {
-    public string TenantId { get; set; } = "default";
+    public string TenantReference { get; set; } = "default";
 
     public string EnvironmentTag { get; set; } = "dev";
 

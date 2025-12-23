@@ -5,9 +5,12 @@ using Croniq.Api.Telemetry;
 using Croniq.Auth.Abstractions;
 using Croniq.Auth.Core;
 using Croniq.Core.Jobs;
+using Croniq.Options;
+using Croniq.Persistence.Abstractions;
 using Croniq.Sdk;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Options;
 
 namespace Croniq.Api;
 
@@ -23,6 +26,7 @@ public static partial class ApiHostingExtensions
             [FromServices] IJobRegistry registry,
             [FromServices] IJobTrigger jobTrigger,
             [FromServices] ICallerContextAccessor callerContextAccessor,
+            [FromServices] IOptions<CroniqOptions> options,
             CancellationToken cancellationToken) =>
         {
             if (!httpContext.Items.TryGetValue(typeof(JobKey), out var cached)
@@ -49,10 +53,13 @@ public static partial class ApiHostingExtensions
                 : (TimeSpan?)null;
             var metadata = ToReadOnly(request.Metadata);
 
+            var currentOptions = options.Value ?? new CroniqOptions();
+            var scope = new PartitionScope(currentOptions.TenantReference, currentOptions.EnvironmentTag);
+
             using var triggerActivity = TriggerActivitySource.StartActivity("Croniq.Api.TriggerJob", ActivityKind.Server);
             triggerActivity?.SetTag("croniq.job.key", jobKey.Value);
-            triggerActivity?.SetTag("croniq.tenant_id", jobKey.TenantId);
-            triggerActivity?.SetTag("croniq.environment", jobKey.EnvironmentTag);
+            triggerActivity?.SetTag("croniq.tenant_id", scope.TenantId);
+            triggerActivity?.SetTag("croniq.environment", scope.EnvironmentTag);
             triggerActivity?.SetTag("croniq.job.namespace", jobKey.NamespaceSegment);
             triggerActivity?.SetTag("croniq.job.name", jobKey.JobName);
             if (delay.HasValue && delay.Value > TimeSpan.Zero)
@@ -67,7 +74,7 @@ public static partial class ApiHostingExtensions
             try
             {
                 await jobTrigger.TriggerOnceAsync(jobKey.Value, metadata, delay, cancellationToken).ConfigureAwait(false);
-                ApiMetrics.RecordManualTrigger(jobKey);
+                ApiMetrics.RecordManualTrigger(jobKey, scope);
                 triggerActivity?.SetStatus(ActivityStatusCode.Ok);
                 var status = delay.HasValue && delay.Value > TimeSpan.Zero ? "scheduled" : "triggered";
                 return Results.Accepted(value: new { status, request.JobKey });

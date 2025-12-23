@@ -46,11 +46,7 @@ public static partial class ApiHostingExtensions
                     return Results.BadRequest(new { error = "invalid-job-key", message = "JobKey must follow the Croniq format." });
                 }
 
-                if (!string.Equals(parsed.TenantId, tenantId, StringComparison.OrdinalIgnoreCase)
-                    || !string.Equals(parsed.EnvironmentTag, resolvedEnvironment, StringComparison.OrdinalIgnoreCase))
-                {
-                    return Results.Problem(statusCode: StatusCodes.Status403Forbidden, title: "scope-mismatch", detail: "JobKey tenant/environment must match the request scope.");
-                }
+                jobKey = parsed.Value;
             }
 
             var scope = new PartitionScope(tenantId, resolvedEnvironment);

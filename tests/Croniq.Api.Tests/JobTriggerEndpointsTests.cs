@@ -23,7 +23,7 @@ public sealed class JobTriggerEndpointsTests : IClassFixture<WebhookApiTestHost>
     public async Task TriggerJob_WithDelay_SchedulesOnceTrigger()
     {
         _host.Reset();
-        var jobKey = $"{WebhookApiTestHost.TenantId}:{WebhookApiTestHost.Environment}:ops:delayed";
+        const string jobKey = "ops:delayed";
         _host.EnsureJob(jobKey);
 
         var request = new TriggerJobRequest(

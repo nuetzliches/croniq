@@ -83,7 +83,7 @@ public class TriggerWorkerMisfireTests
 
     private static IJobRegistry BuildRegistry()
     {
-        var options = Microsoft.Extensions.Options.Options.Create(new CroniqOptions { TenantId = "t", EnvironmentTag = "dev" });
+        var options = Microsoft.Extensions.Options.Options.Create(new CroniqOptions { TenantReference = "t", EnvironmentTag = "dev" });
         var registrations = new[] { new JobRegistration(typeof(SampleJob)) };
         return new JobRegistry(options, registrations);
     }
@@ -92,7 +92,7 @@ public class TriggerWorkerMisfireTests
     public async Task Skips_misfire_and_deadletters()
     {
         var now = DateTimeOffset.UtcNow;
-        var lease = new TriggerLease("l1", "tr1", "t:dev:test:job", new PartitionScope("t", "dev"), now.AddMinutes(-10), now, null);
+        var lease = new TriggerLease("l1", "tr1", "test:job", new PartitionScope("t", "dev"), now.AddMinutes(-10), now, null);
         var store = new StubJobStore(new[] { lease });
         var pipeline = new StubPipeline();
         var worker = new TriggerWorker(
@@ -104,7 +104,7 @@ public class TriggerWorkerMisfireTests
                 Microsoft.Extensions.Options.Options.Create(new MisfirePolicyOptions { MaxMisfireDelay = TimeSpan.FromMinutes(5), DeadLetterOnMisfire = true }),
                 Microsoft.Extensions.Options.Options.Create(new ExecutionPolicyOptions()),
                 Microsoft.Extensions.Options.Options.Create(new PolicyOverrideOptions())),
-            Microsoft.Extensions.Options.Options.Create(new CroniqOptions { TenantId = "t", EnvironmentTag = "dev", InstanceId = "i1" }),
+            Microsoft.Extensions.Options.Options.Create(new CroniqOptions { TenantReference = "t", EnvironmentTag = "dev", InstanceId = "i1" }),
             Microsoft.Extensions.Options.Options.Create(new WorkerHostOptions { LeaseRenewalLeadTime = TimeSpan.Zero }),
             new InMemoryQuotaGuard(),
             new NoOpExecutionLogStore(),
@@ -124,7 +124,7 @@ public class TriggerWorkerMisfireTests
     public async Task Executes_when_not_misfired()
     {
         var now = DateTimeOffset.UtcNow;
-        var lease = new TriggerLease("l1", "tr1", "t:dev:test:job", new PartitionScope("t", "dev"), now.AddSeconds(-10), now.AddMinutes(1), null);
+        var lease = new TriggerLease("l1", "tr1", "test:job", new PartitionScope("t", "dev"), now.AddSeconds(-10), now.AddMinutes(1), null);
         var store = new StubJobStore(new[] { lease });
         var pipeline = new StubPipeline();
         var worker = new TriggerWorker(
@@ -136,7 +136,7 @@ public class TriggerWorkerMisfireTests
                 Microsoft.Extensions.Options.Options.Create(new MisfirePolicyOptions { MaxMisfireDelay = TimeSpan.FromMinutes(5) }),
                 Microsoft.Extensions.Options.Options.Create(new ExecutionPolicyOptions()),
                 Microsoft.Extensions.Options.Options.Create(new PolicyOverrideOptions())),
-            Microsoft.Extensions.Options.Options.Create(new CroniqOptions { TenantId = "t", EnvironmentTag = "dev", InstanceId = "i1" }),
+            Microsoft.Extensions.Options.Options.Create(new CroniqOptions { TenantReference = "t", EnvironmentTag = "dev", InstanceId = "i1" }),
             Microsoft.Extensions.Options.Options.Create(new WorkerHostOptions { LeaseRenewalLeadTime = TimeSpan.Zero }),
             new InMemoryQuotaGuard(),
             new NoOpExecutionLogStore(),
@@ -156,8 +156,8 @@ public class TriggerWorkerMisfireTests
     public async Task Applies_quota_limit_and_reschedules()
     {
         var now = DateTimeOffset.UtcNow;
-        var lease1 = new TriggerLease("l1", "tr1", "t:dev:test:job", new PartitionScope("t", "dev"), now.AddSeconds(-5), now, null);
-        var lease2 = new TriggerLease("l2", "tr2", "t:dev:test:job", new PartitionScope("t", "dev"), now.AddSeconds(-5), now, null);
+        var lease1 = new TriggerLease("l1", "tr1", "test:job", new PartitionScope("t", "dev"), now.AddSeconds(-5), now, null);
+        var lease2 = new TriggerLease("l2", "tr2", "test:job", new PartitionScope("t", "dev"), now.AddSeconds(-5), now, null);
         var store = new StubJobStore(new[] { lease1, lease2 });
         var pipeline = new StubPipeline();
 
@@ -185,7 +185,7 @@ public class TriggerWorkerMisfireTests
                 Microsoft.Extensions.Options.Options.Create(new MisfirePolicyOptions { MaxMisfireDelay = TimeSpan.FromMinutes(5) }),
                 Microsoft.Extensions.Options.Options.Create(new ExecutionPolicyOptions()),
                 Microsoft.Extensions.Options.Options.Create(quotaOverrides)),
-            Microsoft.Extensions.Options.Options.Create(new CroniqOptions { TenantId = "t", EnvironmentTag = "dev", InstanceId = "i1" }),
+            Microsoft.Extensions.Options.Options.Create(new CroniqOptions { TenantReference = "t", EnvironmentTag = "dev", InstanceId = "i1" }),
             Microsoft.Extensions.Options.Options.Create(new WorkerHostOptions { LeaseRenewalLeadTime = TimeSpan.Zero }),
             new InMemoryQuotaGuard(),
             new NoOpExecutionLogStore(),
@@ -211,7 +211,7 @@ public class TriggerWorkerMisfireTests
     public async Task Deadletters_when_execution_pipeline_fails()
     {
         var now = DateTimeOffset.UtcNow;
-        var lease = new TriggerLease("l-fail", "t:dev:test:job", "t:dev:test:job", new PartitionScope("t", "dev"), now.AddSeconds(-5), now, "{\"input\":true}");
+        var lease = new TriggerLease("l-fail", "tr-fail", "test:job", new PartitionScope("t", "dev"), now.AddSeconds(-5), now, "{\"input\":true}");
         var store = new StubJobStore(new[] { lease });
         var pipeline = new FailingPipeline(new InvalidOperationException("boom"));
 
@@ -247,7 +247,7 @@ public class TriggerWorkerMisfireTests
                 Microsoft.Extensions.Options.Options.Create(new MisfirePolicyOptions { MaxMisfireDelay = TimeSpan.FromMinutes(5) }),
                 Microsoft.Extensions.Options.Options.Create(new ExecutionPolicyOptions { DeadLetter = new DeadLetterPolicyOptions { Enabled = true } }),
                 Microsoft.Extensions.Options.Options.Create(overrides)),
-            Microsoft.Extensions.Options.Options.Create(new CroniqOptions { TenantId = "t", EnvironmentTag = "dev", InstanceId = "i1" }),
+            Microsoft.Extensions.Options.Options.Create(new CroniqOptions { TenantReference = "t", EnvironmentTag = "dev", InstanceId = "i1" }),
             Microsoft.Extensions.Options.Options.Create(new WorkerHostOptions { LeaseRenewalLeadTime = TimeSpan.Zero }),
             new InMemoryQuotaGuard(),
             new NoOpExecutionLogStore(),

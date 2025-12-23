@@ -31,11 +31,7 @@ public static class TriggerDefinitionValidator
             return false;
         }
 
-        if (scope.HasValue && !MatchesScope(jobKey, scope.Value))
-        {
-            error = $"JobKey '{jobKeyValue}' must match tenant '{scope.Value.TenantId}' and environment '{scope.Value.EnvironmentTag}'.";
-            return false;
-        }
+        _ = scope;
 
         var cronExpression = definition.CronExpression?.Trim();
         if (string.IsNullOrWhiteSpace(cronExpression))
@@ -98,12 +94,6 @@ public static class TriggerDefinitionValidator
             summary);
 
         return true;
-    }
-
-    private static bool MatchesScope(JobKey jobKey, PartitionScope scope)
-    {
-        return string.Equals(jobKey.TenantId, scope.TenantId, StringComparison.OrdinalIgnoreCase)
-            && string.Equals(jobKey.EnvironmentTag, scope.EnvironmentTag, StringComparison.OrdinalIgnoreCase);
     }
 
     private static string NormalizeSummary(string summary)

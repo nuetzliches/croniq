@@ -77,7 +77,7 @@ public static class ServiceCollectionExtensions
                 {
                     if (!string.IsNullOrWhiteSpace(options.TenantId))
                     {
-                        core.TenantId = options.TenantId!;
+                        core.TenantReference = options.TenantId!;
                     }
 
                     if (!string.IsNullOrWhiteSpace(options.EnvironmentTag))

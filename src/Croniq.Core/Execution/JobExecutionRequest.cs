@@ -4,6 +4,7 @@ using System.Collections.ObjectModel;
 using System.Diagnostics;
 using Croniq.Core.Jobs;
 using Croniq.Core.Policies;
+using Croniq.Persistence.Abstractions;
 
 namespace Croniq.Core.Execution;
 
@@ -15,6 +16,7 @@ public sealed class JobExecutionRequest
     public JobExecutionRequest(
         string executionId,
         JobKey jobKey,
+        PartitionScope scope,
         JobDescriptor descriptor,
         ExecutionPolicyOptions? executionOptions = null,
         IReadOnlyDictionary<string, string>? metadata = null,
@@ -24,6 +26,7 @@ public sealed class JobExecutionRequest
             ? throw new ArgumentException("ExecutionId must be provided", nameof(executionId))
             : executionId;
         JobKey = jobKey;
+        Scope = scope;
         Descriptor = descriptor;
         ExecutionOptions = executionOptions;
         Metadata = metadata ?? EmptyMetadata;
@@ -33,6 +36,8 @@ public sealed class JobExecutionRequest
     public string ExecutionId { get; }
 
     public JobKey JobKey { get; }
+
+    public PartitionScope Scope { get; }
 
     public JobDescriptor Descriptor { get; }
 

@@ -19,13 +19,15 @@ namespace Croniq.Api.Tests;
 
 public class WebhookEndpointResolverTests
 {
+    private static readonly PartitionScope DefaultScope = new("tenant", "env");
+
     [Fact]
     public async Task ResolveAsync_UsesStoreAndCachesDescriptor()
     {
         var store = new StubWebhookStore();
         store.Definition = new WebhookEndpointDefinition(
             HookKey: "hook-a",
-            JobKey: "tenant:env:ns:job",
+            JobKey: "ns:job",
             Secret: "fallback",
             Enabled: true,
             RequireSignature: true,
@@ -50,9 +52,9 @@ public class WebhookEndpointResolverTests
         var options = new CroniqWebhookOptions { RequestsPerMinute = 10 };
         var resolver = CreateResolver(store, options);
 
-        var descriptor = await ResolveAsync(resolver, "hook-a");
+        var descriptor = await ResolveAsync(resolver, "hook-a", DefaultScope);
         descriptor.ShouldNotBeNull();
-        Get<string>(descriptor, "JobKey").ShouldBe("tenant:env:ns:job");
+        Get<string>(descriptor, "JobKey").ShouldBe("ns:job");
         Get<int>(descriptor, "RequestsPerMinute").ShouldBe(25); // from definition
 
         var secrets = Get<IReadOnlyList<string>>(descriptor, "ActiveSecrets");
@@ -64,12 +66,12 @@ public class WebhookEndpointResolverTests
         InvokeBool(descriptor, "IsIpAllowed", IPAddress.Parse("10.0.0.1")).ShouldBeFalse();
 
         // cached retrieval
-        var cached = Invoke<object?>(resolver, "TryGetCached", "hook-a");
+        var cached = Invoke<object?>(resolver, "TryGetCached", DefaultScope, "hook-a");
         cached.ShouldNotBeNull();
 
         // invalidation clears cache
-        Invoke<object?>(resolver, "Invalidate", "hook-a");
-        Invoke<object?>(resolver, "TryGetCached", "hook-a").ShouldBeNull();
+        Invoke<object?>(resolver, "Invalidate", DefaultScope, "hook-a");
+        Invoke<object?>(resolver, "TryGetCached", DefaultScope, "hook-a").ShouldBeNull();
     }
 
     [Fact]
@@ -83,7 +85,7 @@ public class WebhookEndpointResolverTests
         options.Endpoints.Add(new WebhookEndpointOptions
         {
             HookKey = "cfg-hook",
-            JobKey = "tenant:env:ns:job-cfg",
+            JobKey = "ns:job-cfg",
             RequireSignature = false,
             Secret = "cfg-secret",
             RequestsPerMinute = -5,
@@ -91,7 +93,7 @@ public class WebhookEndpointResolverTests
         });
 
         var resolver = CreateResolver(store: null, options);
-        var descriptor = await ResolveAsync(resolver, "cfg-hook");
+        var descriptor = await ResolveAsync(resolver, "cfg-hook", DefaultScope);
 
         descriptor.ShouldNotBeNull();
         Get<int>(descriptor, "RequestsPerMinute").ShouldBe(1); // normalized from negative + default
@@ -105,10 +107,10 @@ public class WebhookEndpointResolverTests
         var notifierType = typeof(WebhookHostingExtensions).GetNestedType("WebhookEndpointCacheNotifier", BindingFlags.NonPublic)!;
         var notifier = Activator.CreateInstance(notifierType, cache)!;
 
-        var cacheKey = GetCacheKey("hook-cache");
+        var cacheKey = GetCacheKey(DefaultScope, "hook-cache");
         cache.Set(cacheKey, new object());
 
-        Invoke<object?>(notifier, "NotifyChanged", "hook-cache");
+        Invoke<object?>(notifier, "NotifyChanged", "hook-cache", DefaultScope);
         cache.TryGetValue(cacheKey, out _).ShouldBeFalse();
     }
 
@@ -127,7 +129,7 @@ public class WebhookEndpointResolverTests
         };
 
         var resolver = CreateResolver(store: null, options, cache);
-        var cacheKey = GetCacheKey("hook-feed");
+        var cacheKey = GetCacheKey(DefaultScope, "hook-feed");
         cache.Set(cacheKey, new object());
 
         var changefeed = new StubChangefeed(new[]
@@ -153,9 +155,9 @@ public class WebhookEndpointResolverTests
         return Activator.CreateInstance(resolverType, store, monitor, cache)!;
     }
 
-    private static async Task<object?> ResolveAsync(object resolver, string hookKey)
+    private static async Task<object?> ResolveAsync(object resolver, string hookKey, PartitionScope scope)
     {
-        var task = (Task)Invoke<object?>(resolver, "ResolveAsync", hookKey, CancellationToken.None)!;
+        var task = (Task)Invoke<object?>(resolver, "ResolveAsync", hookKey, scope, CancellationToken.None)!;
         await task.ConfigureAwait(false);
         var resultProperty = task.GetType().GetProperty("Result", BindingFlags.Instance | BindingFlags.Public);
         return resultProperty?.GetValue(task);
@@ -176,11 +178,11 @@ public class WebhookEndpointResolverTests
         return (T?)mi.Invoke(target, args);
     }
 
-    private static string GetCacheKey(string hookKey)
+    private static string GetCacheKey(PartitionScope scope, string hookKey)
     {
         var buildKey = typeof(WebhookHostingExtensions)
             .GetMethod("BuildEndpointCacheKey", BindingFlags.Static | BindingFlags.NonPublic)!;
-        return (string)buildKey.Invoke(null, new object[] { hookKey })!;
+        return (string)buildKey.Invoke(null, new object[] { scope, hookKey })!;
     }
 
     private static BackgroundService CreateCacheInvalidationService(
@@ -213,7 +215,7 @@ public class WebhookEndpointResolverTests
         public WebhookEndpointDefinition? Definition { get; set; }
         public IReadOnlyCollection<WebhookSecretMaterial> ActiveSecrets { get; set; } = Array.Empty<WebhookSecretMaterial>();
 
-        public Task<WebhookEndpointDefinition?> FindByHookKeyAsync(string hookKey, CancellationToken cancellationToken)
+        public Task<WebhookEndpointDefinition?> FindByHookKeyAsync(string hookKey, PartitionScope scope, CancellationToken cancellationToken)
             => Task.FromResult<WebhookEndpointDefinition?>(Definition);
 
         public Task<IReadOnlyCollection<WebhookEndpointDefinition>> ListAsync(PartitionScope scope, CancellationToken cancellationToken)
@@ -222,13 +224,13 @@ public class WebhookEndpointResolverTests
         public Task UpsertAsync(WebhookEndpointUpsert request, CancellationToken cancellationToken)
             => Task.CompletedTask;
 
-        public Task DeleteAsync(string hookKey, PartitionScope scope, CancellationToken cancellationToken)
+        public Task DeleteAsync(string hookKey, PartitionScope scope, bool hardDelete, CancellationToken cancellationToken)
             => Task.CompletedTask;
 
         public Task<WebhookSecretRotationResult> RotateSecretAsync(WebhookSecretRotate request, CancellationToken cancellationToken)
             => Task.FromResult(new WebhookSecretRotationResult(request.HookKey, "secret", "hash", DateTime.UtcNow, null));
 
-        public Task<IReadOnlyCollection<WebhookSecretMaterial>> GetActiveSecretsAsync(string hookKey, CancellationToken cancellationToken)
+        public Task<IReadOnlyCollection<WebhookSecretMaterial>> GetActiveSecretsAsync(string hookKey, PartitionScope scope, CancellationToken cancellationToken)
             => Task.FromResult(ActiveSecrets);
 
         public Task<IReadOnlyCollection<WebhookIpRuleDefinition>> ListIpRulesAsync(string hookKey, PartitionScope scope, CancellationToken cancellationToken)

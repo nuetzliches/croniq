@@ -3,7 +3,7 @@ using Microsoft.Extensions.Logging;
 
 namespace Croniq.Sample.Jobs;
 
-[CroniqJob("samples", "smoke")]
+[CroniqJob("samples", "logging-job")]
 public sealed class LoggingSampleJob : IJob
 {
     public Task ExecuteAsync(IJobExecutionContext context, CancellationToken cancellationToken)

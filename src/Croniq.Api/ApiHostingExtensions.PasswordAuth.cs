@@ -258,6 +258,7 @@ public static partial class ApiHostingExtensions
             return Results.NoContent();
         })
         .WithDocs("Auth_ChangePassword", "Change password", "Changes the password for the currently authenticated password user. Requires a valid access token.")
+        .AllowPasswordChangeRequired()
         .RequireCroniqCaller();
     }
 

@@ -56,7 +56,8 @@ public sealed class SqlServerWebhookPersistenceProviderTests : IAsyncLifetime
     [Trait(TestCategories.Category, TestCategories.Contract)]
     public async Task UpsertAsync_CreatesAndUpdatesWebhook()
     {
-        var jobKey = JobKey.Create("tenant-hooks", "dev", "webhooks", "dispatch");
+        var scope = new PartitionScope("tenant-hooks", "dev");
+        var jobKey = JobKey.Create("webhooks", "dispatch");
         var hookKey = "tenant-hooks-dev-dispatch";
         var metadata = new Dictionary<string, string> { ["source"] = "billing" };
 
@@ -64,8 +65,8 @@ public sealed class SqlServerWebhookPersistenceProviderTests : IAsyncLifetime
             new WebhookEndpointUpsert(
                 hookKey,
                 jobKey.Value,
-                jobKey.TenantId,
-                jobKey.EnvironmentTag,
+                scope.TenantId,
+                scope.EnvironmentTag,
                 Enabled: true,
                 RequireSignature: true,
                 RequestsPerMinute: 120,
@@ -88,8 +89,8 @@ public sealed class SqlServerWebhookPersistenceProviderTests : IAsyncLifetime
             new WebhookEndpointUpsert(
                 hookKey,
                 jobKey.Value,
-                jobKey.TenantId,
-                jobKey.EnvironmentTag,
+                scope.TenantId,
+                scope.EnvironmentTag,
                 Enabled: false,
                 RequireSignature: false,
                 RequestsPerMinute: 60,
@@ -111,8 +112,8 @@ public sealed class SqlServerWebhookPersistenceProviderTests : IAsyncLifetime
             new WebhookEndpointUpsert(
                 hookKey,
                 jobKey.Value,
-                jobKey.TenantId,
-                jobKey.EnvironmentTag,
+                scope.TenantId,
+                scope.EnvironmentTag,
                 Enabled: true,
                 RequireSignature: true,
                 RequestsPerMinute: 200,
@@ -144,9 +145,9 @@ public sealed class SqlServerWebhookPersistenceProviderTests : IAsyncLifetime
         var hookB = "tenant-scope-dev-beta";
         var hookC = "tenant-scope-qa";
 
-        await UpsertEndpointAsync(hookA, tenantScope, JobKey.Create("tenant-scope", "dev", "ops", "alpha"));
-        await UpsertEndpointAsync(hookB, tenantScope, JobKey.Create("tenant-scope", "dev", "ops", "beta"));
-        await UpsertEndpointAsync(hookC, otherScope, JobKey.Create("tenant-scope", "qa", "ops", "qa"));
+        await UpsertEndpointAsync(hookA, tenantScope, JobKey.Create("ops", "alpha"));
+        await UpsertEndpointAsync(hookB, tenantScope, JobKey.Create("ops", "beta"));
+        await UpsertEndpointAsync(hookC, otherScope, JobKey.Create("ops", "qa"));
 
         var results = await _persistence!.ListAsync(tenantScope, CancellationToken.None);
 
@@ -162,24 +163,26 @@ public sealed class SqlServerWebhookPersistenceProviderTests : IAsyncLifetime
     public async Task DeleteAsync_RemovesEndpointForScope()
     {
         var scope = new PartitionScope("tenant-delete", "dev");
-        var jobKey = JobKey.Create(scope.TenantId, scope.EnvironmentTag, "ops", "cleanup");
+        var jobKey = JobKey.Create("ops", "cleanup");
         var hookKey = "tenant-delete-dev-hook";
 
         await UpsertEndpointAsync(hookKey, scope, jobKey);
 
-        await _persistence!.DeleteAsync(hookKey, scope, CancellationToken.None);
+        await _persistence!.DeleteAsync(hookKey, scope, hardDelete: false, CancellationToken.None);
 
         await using (var context = await _dbFactory!.CreateDbContextAsync())
         {
-            var exists = await context.WebhookEndpoints.AnyAsync(x => x.HookKey == hookKey);
-            exists.ShouldBeFalse();
+            var endpoint = await context.WebhookEndpoints.SingleOrDefaultAsync(x => x.HookKey == hookKey);
+            endpoint.ShouldNotBeNull();
+            endpoint!.IsDeleted.ShouldBeTrue();
+            endpoint.Enabled.ShouldBeFalse();
         }
 
         await UpsertEndpointAsync("tenant-delete-dev-hook-2", scope, jobKey);
 
         var wrongScope = new PartitionScope("tenant-delete", "qa");
         await Should.ThrowAsync<InvalidOperationException>(() =>
-            _persistence.DeleteAsync("tenant-delete-dev-hook-2", wrongScope, CancellationToken.None));
+            _persistence.DeleteAsync("tenant-delete-dev-hook-2", wrongScope, hardDelete: false, CancellationToken.None));
     }
 
     [Fact]
@@ -187,7 +190,7 @@ public sealed class SqlServerWebhookPersistenceProviderTests : IAsyncLifetime
     public async Task RotateSecretAsync_AppendsHistoryAndKeepsPreviousActive()
     {
         var scope = new PartitionScope("tenant-rotate", "dev");
-        var jobKey = JobKey.Create(scope.TenantId, scope.EnvironmentTag, "ops", "hook");
+        var jobKey = JobKey.Create("ops", "hook");
         var hookKey = "tenant-rotate-dev-hook";
         await UpsertEndpointAsync(hookKey, scope, jobKey);
 
@@ -222,7 +225,7 @@ public sealed class SqlServerWebhookPersistenceProviderTests : IAsyncLifetime
     public async Task RotateSecretAsync_WithDelayedActivation_LeavesCurrentSecretActive()
     {
         var scope = new PartitionScope("tenant-rotate-delay", "dev");
-        var jobKey = JobKey.Create(scope.TenantId, scope.EnvironmentTag, "ops", "hook");
+        var jobKey = JobKey.Create("ops", "hook");
         var hookKey = "tenant-rotate-delay-dev-hook";
         await UpsertEndpointAsync(hookKey, scope, jobKey);
 
@@ -242,7 +245,7 @@ public sealed class SqlServerWebhookPersistenceProviderTests : IAsyncLifetime
         rotateResult.HookKey.ShouldBe(hookKey);
         rotateResult.ActivatedAtUtc.ShouldBeGreaterThan(DateTime.UtcNow);
 
-        var activeSecrets = await _persistence.GetActiveSecretsAsync(hookKey, CancellationToken.None);
+        var activeSecrets = await _persistence.GetActiveSecretsAsync(hookKey, scope, CancellationToken.None);
         activeSecrets.Count().ShouldBe(1);
         var remainingSecret = activeSecrets.Single();
         remainingSecret.ExpiresAtUtc.ShouldNotBeNull();
@@ -268,7 +271,7 @@ public sealed class SqlServerWebhookPersistenceProviderTests : IAsyncLifetime
     public async Task RotateSecretAsync_WithActivationDelayBeyondLimit_Throws()
     {
         var scope = new PartitionScope("tenant-rotate-limit", "dev");
-        var jobKey = JobKey.Create(scope.TenantId, scope.EnvironmentTag, "ops", "hook");
+        var jobKey = JobKey.Create("ops", "hook");
         var hookKey = "tenant-rotate-limit-dev-hook";
         await UpsertEndpointAsync(hookKey, scope, jobKey);
 
@@ -294,7 +297,7 @@ public sealed class SqlServerWebhookPersistenceProviderTests : IAsyncLifetime
     public async Task GetActiveSecretsAsync_WhenOnlyFutureSecretsExist_ReturnsEmpty()
     {
         var scope = new PartitionScope("tenant-future-only", "dev");
-        var jobKey = JobKey.Create(scope.TenantId, scope.EnvironmentTag, "ops", "hook");
+        var jobKey = JobKey.Create("ops", "hook");
         var hookKey = "tenant-future-only-dev-hook";
         await UpsertEndpointAsync(hookKey, scope, jobKey);
 
@@ -321,7 +324,7 @@ public sealed class SqlServerWebhookPersistenceProviderTests : IAsyncLifetime
             await context.SaveChangesAsync();
         }
 
-        var secrets = await _persistence!.GetActiveSecretsAsync(hookKey, CancellationToken.None);
+        var secrets = await _persistence!.GetActiveSecretsAsync(hookKey, scope, CancellationToken.None);
         secrets.ShouldBeEmpty();
     }
 
@@ -330,7 +333,7 @@ public sealed class SqlServerWebhookPersistenceProviderTests : IAsyncLifetime
     public async Task GetActiveSecretsAsync_ReturnsCurrentAndPreviousWithinGrace()
     {
         var scope = new PartitionScope("tenant-active-secrets", "dev");
-        var jobKey = JobKey.Create(scope.TenantId, scope.EnvironmentTag, "ops", "hook");
+        var jobKey = JobKey.Create("ops", "hook");
         var hookKey = "tenant-active-dev-hook";
         await UpsertEndpointAsync(hookKey, scope, jobKey);
 
@@ -345,7 +348,7 @@ public sealed class SqlServerWebhookPersistenceProviderTests : IAsyncLifetime
                 Notes: null),
             CancellationToken.None);
 
-        var secrets = await _persistence.GetActiveSecretsAsync(hookKey, CancellationToken.None);
+        var secrets = await _persistence.GetActiveSecretsAsync(hookKey, scope, CancellationToken.None);
         secrets.Count().ShouldBe(2);
         secrets.Last().ExpiresAtUtc.ShouldBeNull();
         secrets.First().ExpiresAtUtc.ShouldNotBeNull();
@@ -356,7 +359,7 @@ public sealed class SqlServerWebhookPersistenceProviderTests : IAsyncLifetime
     public async Task UpsertAsync_WritesChangefeedEvents()
     {
         var scope = new PartitionScope("tenant-changefeed", "dev");
-        var jobKey = JobKey.Create(scope.TenantId, scope.EnvironmentTag, "ops", "delta");
+        var jobKey = JobKey.Create("ops", "delta");
         var hookKey = "tenant-changefeed-dev-delta";
 
         await UpsertEndpointAsync(hookKey, scope, jobKey);
@@ -390,11 +393,11 @@ public sealed class SqlServerWebhookPersistenceProviderTests : IAsyncLifetime
     public async Task DeleteAsync_WritesChangefeedEvent()
     {
         var scope = new PartitionScope("tenant-changefeed-delete", "dev");
-        var jobKey = JobKey.Create(scope.TenantId, scope.EnvironmentTag, "ops", "omega");
+        var jobKey = JobKey.Create("ops", "omega");
         var hookKey = "tenant-changefeed-delete-dev";
 
         await UpsertEndpointAsync(hookKey, scope, jobKey);
-        await _persistence!.DeleteAsync(hookKey, scope, CancellationToken.None);
+        await _persistence!.DeleteAsync(hookKey, scope, hardDelete: false, CancellationToken.None);
 
         await using var context = await _dbFactory!.CreateDbContextAsync();
         var evt = await context.WebhookEndpointEvents
@@ -410,7 +413,7 @@ public sealed class SqlServerWebhookPersistenceProviderTests : IAsyncLifetime
     public async Task IpRuleMutations_RecordActorAndCorrelation()
     {
         var scope = new PartitionScope("tenant-iprules-audit", "dev");
-        var jobKey = JobKey.Create(scope.TenantId, scope.EnvironmentTag, "ops", "audit");
+        var jobKey = JobKey.Create("ops", "audit");
         var hookKey = "tenant-iprules-audit-dev";
         await UpsertEndpointAsync(hookKey, scope, jobKey);
 

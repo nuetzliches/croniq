@@ -6,6 +6,7 @@ using System.Threading.Tasks;
 using Croniq.Core.Execution;
 using Croniq.Core.Jobs;
 using Croniq.Core.Policies;
+using Croniq.Persistence.Abstractions;
 using Croniq.Sdk;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -28,7 +29,7 @@ public class DefaultJobExecutionPipelineTests
 
         var scopeFactory = provider.GetRequiredService<IServiceScopeFactory>();
         var policyResolver = Substitute.For<IPolicyResolver>();
-        policyResolver.ResolveExecution(Arg.Any<JobKey>()).Returns(new ExecutionPolicyOptions());
+        policyResolver.ResolveExecution(Arg.Any<JobKey>(), Arg.Any<PartitionScope?>()).Returns(new ExecutionPolicyOptions());
 
         var pipelineProvider = Substitute.For<IExecutionPolicyPipelineProvider>();
         pipelineProvider.Get(Arg.Any<JobKey>(), Arg.Any<ExecutionPolicyOptions>())
@@ -41,14 +42,15 @@ public class DefaultJobExecutionPipelineTests
             pipelineProvider,
             NullLogger<DefaultJobExecutionPipeline>.Instance);
 
-        var jobKey = JobKey.Create("tenant", "env", "ns", "job");
+        var jobKey = JobKey.Create("ns", "job");
+        var scope = new PartitionScope("tenant", "env");
         var descriptor = new JobDescriptor(typeof(TestJob), new CroniqJobAttribute("ns", "job"), jobKey);
         var metadata = new Dictionary<string, string>
         {
             { "trigger_id", "t-1" },
             { "initiator", "user" }
         };
-        var request = new JobExecutionRequest("exec-123", jobKey, descriptor, null, metadata, new ActivitySource("job"));
+        var request = new JobExecutionRequest("exec-123", jobKey, scope, descriptor, null, metadata, new ActivitySource("job"));
 
         await pipeline.ExecuteAsync(request, CancellationToken.None);
 
@@ -71,7 +73,7 @@ public class DefaultJobExecutionPipelineTests
 
         var scopeFactory = provider.GetRequiredService<IServiceScopeFactory>();
         var policyResolver = Substitute.For<IPolicyResolver>();
-        policyResolver.ResolveExecution(Arg.Any<JobKey>()).Returns(new ExecutionPolicyOptions());
+        policyResolver.ResolveExecution(Arg.Any<JobKey>(), Arg.Any<PartitionScope?>()).Returns(new ExecutionPolicyOptions());
 
         var pipelineProvider = Substitute.For<IExecutionPolicyPipelineProvider>();
         pipelineProvider.Get(Arg.Any<JobKey>(), Arg.Any<ExecutionPolicyOptions>())
@@ -84,9 +86,10 @@ public class DefaultJobExecutionPipelineTests
             pipelineProvider,
             NullLogger<DefaultJobExecutionPipeline>.Instance);
 
-        var jobKey = JobKey.Create("tenant", "env", "ns", "faulty");
+        var jobKey = JobKey.Create("ns", "faulty");
+        var scope = new PartitionScope("tenant", "env");
         var descriptor = new JobDescriptor(typeof(FaultyJob), new CroniqJobAttribute("ns", "faulty"), jobKey);
-        var request = new JobExecutionRequest("exec-faulty", jobKey, descriptor, null, new Dictionary<string, string>(), new ActivitySource("job"));
+        var request = new JobExecutionRequest("exec-faulty", jobKey, scope, descriptor, null, new Dictionary<string, string>(), new ActivitySource("job"));
 
         await Should.ThrowAsync<InvalidOperationException>(() => pipeline.ExecuteAsync(request, CancellationToken.None));
     }

@@ -25,7 +25,7 @@ builder.Services
     {
         trigger.TriggerId = "samples-smoke-every-5s";
         trigger.ManagedBy = "Croniq.Sample";
-        trigger.StartAtUtc = DateTimeOffset.UtcNow;
+        trigger.StartAtUtc = DateTimeOffset.UtcNow.AddSeconds(10);
         trigger.Metadata = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
         {
             ["seededBy"] = "Croniq.Sample"
@@ -35,7 +35,7 @@ builder.Services
     {
         trigger.TriggerId = "samples-smoke-once";
         trigger.ManagedBy = "Croniq.Sample";
-        trigger.StartAtUtc = DateTimeOffset.UtcNow.AddSeconds(10);
+        trigger.StartAtUtc = DateTimeOffset.UtcNow;
         trigger.Metadata = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
         {
             ["seededBy"] = "Croniq.Sample",

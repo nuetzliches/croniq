@@ -129,13 +129,21 @@ public sealed class PasswordAuthService
 
         var accessTokenLifetime = ResolveAccessTokenLifetime(_options.CurrentValue);
 
+        // Include PasswordChangeRequired directly in the access token so API endpoints can enforce it
+        // without a DB lookup.
+        // TODO (2FA): When adding MFA/2FA, consider also embedding the auth method / MFA state in the token
+        // (e.g. via AMR or a dedicated claim) and update enforcement to allow MFA completion flows.
         var token = await _tokenIssuer.IssueAsync(new CroniqTokenIssueRequest(
             tenantId,
             ClientId: user.UserId,
             environmentTag,
             scopes,
             audience,
-            accessTokenLifetime),
+            accessTokenLifetime,
+            AdditionalClaims: new Dictionary<string, object?>
+            {
+                [CroniqClaimNames.PasswordChangeRequired] = user.PasswordChangeRequired,
+            }),
             cancellationToken).ConfigureAwait(false);
 
         var (refreshToken, refreshTokenHash) = CreateRefreshToken();
@@ -198,7 +206,11 @@ public sealed class PasswordAuthService
             environmentTag,
             scopes,
             audience,
-            accessTokenLifetime),
+            accessTokenLifetime,
+            AdditionalClaims: new Dictionary<string, object?>
+            {
+                [CroniqClaimNames.PasswordChangeRequired] = user.PasswordChangeRequired,
+            }),
             cancellationToken).ConfigureAwait(false);
 
         var (newRefreshToken, newHash) = CreateRefreshToken();

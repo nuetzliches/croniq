@@ -22,8 +22,8 @@ public sealed class ExecutionEndpointsTests : IClassFixture<WebhookApiTestHost>
     public async Task ListExecutionsFiltersByJobKey()
     {
         _host.Reset();
-        var match = CreateSummary(jobKey: $"{WebhookApiTestHost.TenantId}:{WebhookApiTestHost.Environment}:ops:match", status: ExecutionStatus.Failed, startedOffsetMinutes: -1);
-        var other = CreateSummary(jobKey: $"{WebhookApiTestHost.TenantId}:{WebhookApiTestHost.Environment}:ops:other", status: ExecutionStatus.Succeeded, startedOffsetMinutes: -5);
+        var match = CreateSummary(jobKey: "ops:match", status: ExecutionStatus.Failed, startedOffsetMinutes: -1);
+        var other = CreateSummary(jobKey: "ops:other", status: ExecutionStatus.Succeeded, startedOffsetMinutes: -5);
         _host.ExecutionHistory.SetExecutions(new[] { match, other });
 
         var response = await _host.Client.GetAsync($"/tenants/{WebhookApiTestHost.TenantId}/executions?environment={WebhookApiTestHost.Environment}&jobKey={Uri.EscapeDataString(match.JobKey)}");
@@ -57,7 +57,7 @@ public sealed class ExecutionEndpointsTests : IClassFixture<WebhookApiTestHost>
     {
         var startedAt = DateTimeOffset.UtcNow.AddMinutes(startedOffsetMinutes);
         var execution = executionId ?? Guid.NewGuid().ToString("N");
-        var job = jobKey ?? $"{WebhookApiTestHost.TenantId}:{WebhookApiTestHost.Environment}:ops:job";
+        var job = jobKey ?? "ops:job";
         return new ExecutionSummary(
             execution,
             ExecutionKind.Job,

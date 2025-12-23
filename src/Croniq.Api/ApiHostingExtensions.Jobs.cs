@@ -60,13 +60,8 @@ public static partial class ApiHostingExtensions
                 return Results.BadRequest(new { error = "invalid-job-key", message = "JobKey must follow the Croniq format." });
             }
 
-            if (!string.Equals(jobKey.TenantId, tenantId, StringComparison.OrdinalIgnoreCase)
-                || !string.Equals(jobKey.EnvironmentTag, resolvedEnvironment, StringComparison.OrdinalIgnoreCase))
-            {
-                return Results.Problem(statusCode: StatusCodes.Status403Forbidden, title: "scope-mismatch", detail: "JobKey tenant/environment must match the request scope.");
-            }
-
-            var job = await store.GetJobAsync(jobKey.Value, cancellationToken).ConfigureAwait(false);
+            var scope = new PartitionScope(tenantId, resolvedEnvironment);
+            var job = await store.GetJobAsync(jobKey.Value, scope, cancellationToken).ConfigureAwait(false);
             if (job is null)
             {
                 return Results.NotFound(new { error = "job-not-found", jobId });
@@ -96,11 +91,7 @@ public static partial class ApiHostingExtensions
                 return Results.BadRequest(new { error = "invalid-job-key", message = "JobKey must follow the Croniq format." });
             }
 
-            if (!string.Equals(jobKey.TenantId, tenantId, StringComparison.OrdinalIgnoreCase)
-                || !string.Equals(jobKey.EnvironmentTag, resolvedEnvironment, StringComparison.OrdinalIgnoreCase))
-            {
-                return Results.Problem(statusCode: StatusCodes.Status403Forbidden, title: "scope-mismatch", detail: "JobKey tenant/environment must match the request scope.");
-            }
+            var scope = new PartitionScope(tenantId, resolvedEnvironment);
 
             if (!string.Equals(jobKey.NamespaceSegment, request.Namespace, StringComparison.OrdinalIgnoreCase))
             {
@@ -127,7 +118,7 @@ public static partial class ApiHostingExtensions
                 request.Description,
                 ToReadOnly(request.Metadata));
 
-            await store.UpsertJobAsync(job, cancellationToken).ConfigureAwait(false);
+            await store.UpsertJobAsync(job, scope, cancellationToken).ConfigureAwait(false);
             return Results.Created($"/tenants/{tenantId}/jobs/{Uri.EscapeDataString(job.JobKey)}", ToJobResponse(job));
         })
         .WithDocs("Jobs_Upsert", "Create or update job", "Creates or updates the job definition for the specified job key.")
@@ -150,12 +141,6 @@ public static partial class ApiHostingExtensions
             if (!JobKey.TryParse(jobId, out var jobKey))
             {
                 return Results.BadRequest(new { error = "invalid-job-key", message = "JobKey must follow the Croniq format." });
-            }
-
-            if (!string.Equals(jobKey.TenantId, tenantId, StringComparison.OrdinalIgnoreCase)
-                || !string.Equals(jobKey.EnvironmentTag, resolvedEnvironment, StringComparison.OrdinalIgnoreCase))
-            {
-                return Results.Problem(statusCode: StatusCodes.Status403Forbidden, title: "scope-mismatch", detail: "JobKey tenant/environment must match the request scope.");
             }
 
             var scope = new PartitionScope(tenantId, resolvedEnvironment);
@@ -192,24 +177,19 @@ public static partial class ApiHostingExtensions
 
             var jobKey = validation.JobKey;
 
-            if (!string.Equals(jobKey.TenantId, tenantId, StringComparison.OrdinalIgnoreCase))
+            var resolvedEnvironment = ResolveEnvironmentTag(environment, callerContextAccessor);
+            if (string.IsNullOrWhiteSpace(resolvedEnvironment))
             {
-                return Results.StatusCode(StatusCodes.Status403Forbidden);
+                return MissingEnvironment();
             }
 
-            if (!string.IsNullOrWhiteSpace(environment)
-                && !string.Equals(jobKey.EnvironmentTag, environment, StringComparison.OrdinalIgnoreCase))
-            {
-                return Results.Problem(statusCode: StatusCodes.Status403Forbidden, title: "scope-mismatch", detail: "JobKey tenant/environment must match the request scope.");
-            }
-
-            var authFailure = TenantGuard.EnsureJobScope(callerContextAccessor, jobKey, CroniqScopes.SchedulesWrite);
+            var authFailure = TenantGuard.EnsureTenant(callerContextAccessor, tenantId, resolvedEnvironment, CroniqScopes.SchedulesWrite);
             if (authFailure is not null)
             {
                 return authFailure;
             }
 
-            var scope = new PartitionScope(jobKey.TenantId, jobKey.EnvironmentTag);
+            var scope = new PartitionScope(tenantId, resolvedEnvironment);
 
             var metadata = ToReadOnly(request.Metadata);
             var job = new JobDefinition(
@@ -231,9 +211,9 @@ public static partial class ApiHostingExtensions
                 metadata,
                 validation.TimeZoneId);
 
-            await store.UpsertJobAsync(job, cancellationToken).ConfigureAwait(false);
+            await store.UpsertJobAsync(job, scope, cancellationToken).ConfigureAwait(false);
             await store.UpsertTriggerAsync(trigger, cancellationToken).ConfigureAwait(false);
-            ApiMetrics.RecordScheduleUpsert(jobKey.TenantId, jobKey.EnvironmentTag, jobKey.Value);
+            ApiMetrics.RecordScheduleUpsert(scope.TenantId, scope.EnvironmentTag, jobKey.Value);
 
             return Results.Created($"/tenants/{tenantId}/schedules/{Uri.EscapeDataString(trigger.TriggerId)}", new { trigger.TriggerId, trigger.JobKey, trigger.ScheduleExpression });
         })
@@ -262,12 +242,6 @@ public static partial class ApiHostingExtensions
                 if (!JobKey.TryParse(jobKey, out var parsed))
                 {
                     return Results.BadRequest(new { error = "invalid-job-key", message = "JobKey must follow the Croniq format." });
-                }
-
-                if (!string.Equals(parsed.TenantId, tenantId, StringComparison.OrdinalIgnoreCase)
-                    || !string.Equals(parsed.EnvironmentTag, resolvedEnvironment, StringComparison.OrdinalIgnoreCase))
-                {
-                    return Results.Problem(statusCode: StatusCodes.Status403Forbidden, title: "scope-mismatch", detail: "JobKey tenant/environment must match the request scope.");
                 }
             }
 

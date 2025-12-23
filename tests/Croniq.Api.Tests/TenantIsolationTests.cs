@@ -25,14 +25,14 @@ public sealed class TenantIsolationTests : IClassFixture<WebhookApiTestHost>
         _host.Reset();
         var request = new CroniqTriggerSeedDefinition
         {
-            JobKey = $"other-tenant:{WebhookApiTestHost.Environment}:ops:job",
+            JobKey = "ops:job",
             CronExpression = "0 0/5 * * * ?",
             TriggerId = null,
             StartAtUtc = null,
             EndAtUtc = null
         };
 
-        var response = await _host.Client.PostAsJsonAsync($"/tenants/{WebhookApiTestHost.TenantId}/schedules", request);
+        var response = await _host.Client.PostAsJsonAsync("/tenants/other-tenant/schedules", request);
         response.StatusCode.ShouldBe(HttpStatusCode.Forbidden);
     }
 
@@ -42,14 +42,14 @@ public sealed class TenantIsolationTests : IClassFixture<WebhookApiTestHost>
         _host.Reset();
         var request = new CroniqTriggerSeedDefinition
         {
-            JobKey = $"{WebhookApiTestHost.TenantId}:prod:ops:job",
+            JobKey = "ops:job",
             CronExpression = "0 0/5 * * * ?",
             TriggerId = null,
             StartAtUtc = null,
             EndAtUtc = null
         };
 
-        var response = await _host.Client.PostAsJsonAsync($"/tenants/{WebhookApiTestHost.TenantId}/schedules", request);
+        var response = await _host.Client.PostAsJsonAsync($"/tenants/{WebhookApiTestHost.TenantId}/schedules?environment=prod", request);
         response.StatusCode.ShouldBe(HttpStatusCode.Forbidden);
     }
 
@@ -60,7 +60,7 @@ public sealed class TenantIsolationTests : IClassFixture<WebhookApiTestHost>
         var request = new TriggerJobRequest($"{WebhookApiTestHost.TenantId}-other:{WebhookApiTestHost.Environment}:ops:job");
 
         var response = await _host.Client.PostAsJsonAsync("/jobs/trigger", request);
-        response.StatusCode.ShouldBe(HttpStatusCode.Forbidden);
+        response.StatusCode.ShouldBe(HttpStatusCode.BadRequest);
     }
 
     [Fact]
@@ -79,7 +79,7 @@ public sealed class TenantIsolationTests : IClassFixture<WebhookApiTestHost>
         _host.Client.DefaultRequestHeaders.Remove("X-Croniq-Key");
         _host.Client.DefaultRequestHeaders.Add("X-Croniq-Key", limitedKey);
 
-        var request = new TriggerJobRequest($"{WebhookApiTestHost.TenantId}:{WebhookApiTestHost.Environment}:ops:job");
+        var request = new TriggerJobRequest("ops:job");
         var response = await _host.Client.PostAsJsonAsync("/jobs/trigger", request);
         response.StatusCode.ShouldBe(HttpStatusCode.Forbidden);
     }

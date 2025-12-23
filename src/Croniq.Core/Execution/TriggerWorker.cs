@@ -68,13 +68,13 @@ public sealed class TriggerWorker
     public async Task<int> ProcessBatchAsync(DateTimeOffset nowUtc, int batchSize, CancellationToken cancellationToken)
     {
         var acquireRequest = new TriggerAcquireRequest(
-            new PartitionScope(_options.TenantId, _options.EnvironmentTag),
+            new PartitionScope(_options.TenantReference, _options.EnvironmentTag),
             _options.InstanceId,
             nowUtc,
             batchSize);
 
         using var acquireActivity = _activitySource.StartActivity("Croniq.Trigger.Acquire", ActivityKind.Internal);
-        acquireActivity?.SetTag("croniq.tenant_id", _options.TenantId);
+        acquireActivity?.SetTag("croniq.tenant_id", _options.TenantReference);
         acquireActivity?.SetTag("croniq.environment", _options.EnvironmentTag);
         acquireActivity?.SetTag("croniq.batch.size", batchSize);
 
@@ -94,7 +94,7 @@ public sealed class TriggerWorker
                 continue;
             }
 
-            SchedulerMetrics.AdjustQueueDepth(jobKey, 1);
+            SchedulerMetrics.AdjustQueueDepth(jobKey, 1, lease.Scope);
             using var leaseActivity = _activitySource.StartActivity("Croniq.Trigger.Dispatch", ActivityKind.Internal);
             leaseActivity?.SetTag("croniq.job.key", jobKey.Value);
             leaseActivity?.SetTag("croniq.trigger.lease_id", lease.LeaseId);
@@ -102,12 +102,12 @@ public sealed class TriggerWorker
 
             try
             {
-                var misfireOptions = _policyResolver.ResolveMisfire(jobKey);
+                var misfireOptions = _policyResolver.ResolveMisfire(jobKey, lease.Scope);
                 var misfire = _misfirePolicy.Evaluate(lease, misfireOptions, nowUtc);
                 if (misfire.IsMisfire)
                 {
                     _logger.LogWarning("Misfire detected for lease {LeaseId} at {FireAt}, reason {Reason}", lease.LeaseId, lease.FireAtUtc, misfire.Reason);
-                    SchedulerMetrics.RecordMisfire(jobKey, misfire.Reason ?? "unknown");
+                    SchedulerMetrics.RecordMisfire(jobKey, misfire.Reason ?? "unknown", lease.Scope);
                     leaseActivity?.SetStatus(ActivityStatusCode.Error, "misfire");
                     await ReleaseAsync(
                         lease,
@@ -118,11 +118,11 @@ public sealed class TriggerWorker
                     continue;
                 }
 
-                var quotaOptions = _policyResolver.ResolveQuota(jobKey);
+                var quotaOptions = _policyResolver.ResolveQuota(jobKey, lease.Scope);
                 if (!_quotaGuard.TryAcquire(jobKey, quotaOptions, nowUtc, out var retryAt))
                 {
                     _logger.LogWarning("Quota limit reached for {JobKey}; lease {LeaseId} will be rescheduled", lease.JobKey, lease.LeaseId);
-                    SchedulerMetrics.RecordQuotaReschedule(jobKey);
+                    SchedulerMetrics.RecordQuotaReschedule(jobKey, lease.Scope);
                     leaseActivity?.SetStatus(ActivityStatusCode.Error, "quota-limit");
                     await ReleaseAsync(
                         lease,
@@ -133,7 +133,7 @@ public sealed class TriggerWorker
                     continue;
                 }
 
-                var executionOptions = _policyResolver.ResolveExecution(jobKey);
+                var executionOptions = _policyResolver.ResolveExecution(jobKey, lease.Scope);
                 var metadata = BuildExecutionMetadata(lease);
 
                 var executionId = Guid.NewGuid().ToString("N");
@@ -146,7 +146,7 @@ public sealed class TriggerWorker
 
                 try
                 {
-                    var request = new JobExecutionRequest(executionId, jobKey, descriptor, executionOptions, metadata, _activitySource);
+                    var request = new JobExecutionRequest(executionId, jobKey, lease.Scope, descriptor, executionOptions, metadata, _activitySource);
                     executionTimer = Stopwatch.StartNew();
                     await _pipeline.ExecuteAsync(request, jobCancellation.Token).ConfigureAwait(false);
 
@@ -154,14 +154,14 @@ public sealed class TriggerWorker
                     var leaseLost = await CompleteLeaseRenewalAsync(renewTask, jobCancellation).ConfigureAwait(false);
                     if (leaseLost)
                     {
-                        SchedulerMetrics.RecordJobExecution(jobKey, succeeded: false, elapsedMs);
+                        SchedulerMetrics.RecordJobExecution(jobKey, succeeded: false, elapsedMs, lease.Scope);
                         leaseActivity?.SetStatus(ActivityStatusCode.Error, "lease-lost");
                         await TryStoreExecutionCompletedAsync(executionId, ExecutionStatus.Canceled, elapsedMs, null, cancellationToken).ConfigureAwait(false);
                         _logger.LogWarning("Lease {LeaseId} for job {JobKey} was lost; skipping release.", lease.LeaseId, lease.JobKey);
                     }
                     else
                     {
-                        SchedulerMetrics.RecordJobExecution(jobKey, succeeded: true, elapsedMs);
+                        SchedulerMetrics.RecordJobExecution(jobKey, succeeded: true, elapsedMs, lease.Scope);
                         leaseActivity?.SetStatus(ActivityStatusCode.Ok);
                         await TryStoreExecutionCompletedAsync(executionId, ExecutionStatus.Succeeded, elapsedMs, null, cancellationToken).ConfigureAwait(false);
 
@@ -174,7 +174,7 @@ public sealed class TriggerWorker
                     var elapsedMs = executionTimer?.Elapsed.TotalMilliseconds ?? 0d;
                     var leaseLost = await CompleteLeaseRenewalAsync(renewTask, jobCancellation).ConfigureAwait(false);
                     var canceled = IsCancellation(ex, jobCancellation.Token);
-                    SchedulerMetrics.RecordJobExecution(jobKey, succeeded: false, elapsedMs);
+                    SchedulerMetrics.RecordJobExecution(jobKey, succeeded: false, elapsedMs, lease.Scope);
                     if (canceled)
                     {
                         leaseActivity?.SetStatus(ActivityStatusCode.Error, "canceled");
@@ -228,7 +228,7 @@ public sealed class TriggerWorker
             }
             finally
             {
-                SchedulerMetrics.AdjustQueueDepth(jobKey, -1);
+                SchedulerMetrics.AdjustQueueDepth(jobKey, -1, lease.Scope);
             }
         }
 
@@ -253,7 +253,7 @@ public sealed class TriggerWorker
                 jobKey.Value,
                 request.Lease.LeaseId,
                 reason);
-            PolicyMetrics.RecordDeadLetter(jobKey, reason);
+            PolicyMetrics.RecordDeadLetter(jobKey, reason, request.Lease.Scope);
         }
         catch (Exception ex)
         {

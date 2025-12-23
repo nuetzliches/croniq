@@ -18,7 +18,7 @@
   - `RotatedBy` (string up to 128 chars)
   - `Notes` (nullable)
 - Unique filtered index `(HookKey, TenantId, EnvironmentTag)` with `ExpiresAtUtc IS NULL OR ExpiresAtUtc > sysutcdatetime()` to guarantee max two active rows (current + grace).
-- EF entity + migration `20251210103000_AddWebhookSecretHistory` to create table + indexes.
+- EF entity + migration to create the table + indexes.
 
 ## Persistence Flow
 

@@ -13,7 +13,7 @@ namespace Croniq.Core.Tests.Execution;
 
 public class ExecutionPolicyPipelineProviderTests
 {
-    private static readonly JobKey SampleJob = JobKey.Create("tenant", "dev", "ns", "job");
+    private static readonly JobKey SampleJob = JobKey.Create("ns", "job");
 
     [Fact]
     public async Task Retries_until_attempt_limit_is_hit()

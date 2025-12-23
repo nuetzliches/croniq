@@ -54,6 +54,10 @@ public sealed class SqlServerDbContext(DbContextOptions<SqlServerDbContext> opti
         builder.ToTable("Jobs", "croniq");
         builder.HasIndex(x => x.JobKey).IsUnique();
         builder.HasIndex(x => new { x.TenantId, x.EnvironmentTag });
+        builder.HasOne<TenantEntity>()
+            .WithMany()
+            .HasForeignKey(x => x.TenantId)
+            .OnDelete(DeleteBehavior.Restrict);
         builder.Property(x => x.CreatedAtUtc).HasDefaultValueSql("sysutcdatetime()");
         builder.Property(x => x.UpdatedAtUtc).HasDefaultValueSql("sysutcdatetime()");
     }
@@ -87,6 +91,10 @@ public sealed class SqlServerDbContext(DbContextOptions<SqlServerDbContext> opti
     {
         builder.ToTable("ApiClients", "croniq");
         builder.HasIndex(x => new { x.TenantId, x.ClientId }).IsUnique();
+        builder.HasOne<TenantEntity>()
+            .WithMany()
+            .HasForeignKey(x => x.TenantId)
+            .OnDelete(DeleteBehavior.Restrict);
         builder.Property(x => x.CreatedAtUtc).HasDefaultValueSql("sysutcdatetime()");
         builder.Property(x => x.UpdatedAtUtc).HasDefaultValueSql("sysutcdatetime()");
     }
@@ -107,8 +115,13 @@ public sealed class SqlServerDbContext(DbContextOptions<SqlServerDbContext> opti
     private static void ConfigureWebhookEndpoints(EntityTypeBuilder<WebhookEndpointEntity> builder)
     {
         builder.ToTable("WebhookEndpoints", "croniq");
-        builder.HasIndex(x => x.HookKey).IsUnique();
-        builder.HasIndex(x => new { x.TenantId, x.EnvironmentTag, x.Enabled });
+        builder.HasAlternateKey(x => new { x.TenantId, x.EnvironmentTag, x.HookKey });
+        builder.HasIndex(x => new { x.TenantId, x.EnvironmentTag, x.Enabled, x.IsDeleted });
+        builder.HasIndex(x => new { x.TenantId, x.EnvironmentTag, x.HookKey, x.IsDeleted });
+        builder.HasOne<TenantEntity>()
+            .WithMany()
+            .HasForeignKey(x => x.TenantId)
+            .OnDelete(DeleteBehavior.Restrict);
         builder.Property(x => x.CreatedAtUtc).HasDefaultValueSql("sysutcdatetime()");
         builder.Property(x => x.UpdatedAtUtc).HasDefaultValueSql("sysutcdatetime()");
     }
@@ -119,6 +132,15 @@ public sealed class SqlServerDbContext(DbContextOptions<SqlServerDbContext> opti
         builder.HasIndex(x => new { x.TenantId, x.EnvironmentTag, x.CreatedAtUtc });
         builder.HasIndex(x => x.HookKey);
         builder.HasIndex(x => x.NextAttemptAtUtc);
+        builder.HasOne<TenantEntity>()
+            .WithMany()
+            .HasForeignKey(x => x.TenantId)
+            .OnDelete(DeleteBehavior.Restrict);
+        builder.HasOne<WebhookEndpointEntity>()
+            .WithMany()
+            .HasForeignKey(x => new { x.TenantId, x.EnvironmentTag, x.HookKey })
+            .HasPrincipalKey(x => new { x.TenantId, x.EnvironmentTag, x.HookKey })
+            .OnDelete(DeleteBehavior.Restrict);
         builder.Property(x => x.CreatedAtUtc).HasDefaultValueSql("sysutcdatetime()");
     }
 
@@ -127,6 +149,15 @@ public sealed class SqlServerDbContext(DbContextOptions<SqlServerDbContext> opti
         builder.ToTable("WebhookEndpointEvents", "croniq");
         builder.HasIndex(x => x.OccurredAtUtc);
         builder.HasIndex(x => x.HookKey);
+        builder.HasOne<TenantEntity>()
+            .WithMany()
+            .HasForeignKey(x => x.TenantId)
+            .OnDelete(DeleteBehavior.Restrict);
+        builder.HasOne<WebhookEndpointEntity>()
+            .WithMany()
+            .HasForeignKey(x => new { x.TenantId, x.EnvironmentTag, x.HookKey })
+            .HasPrincipalKey(x => new { x.TenantId, x.EnvironmentTag, x.HookKey })
+            .OnDelete(DeleteBehavior.Restrict);
         builder.Property(x => x.OccurredAtUtc).HasDefaultValueSql("sysutcdatetime()");
     }
 
@@ -135,6 +166,15 @@ public sealed class SqlServerDbContext(DbContextOptions<SqlServerDbContext> opti
         builder.ToTable("WebhookSecretHistory", "croniq");
         builder.HasIndex(x => new { x.HookKey, x.TenantId, x.EnvironmentTag, x.ActivatedAtUtc });
         builder.HasIndex(x => new { x.HookKey, x.ExpiresAtUtc });
+        builder.HasOne<TenantEntity>()
+            .WithMany()
+            .HasForeignKey(x => x.TenantId)
+            .OnDelete(DeleteBehavior.Restrict);
+        builder.HasOne<WebhookEndpointEntity>()
+            .WithMany()
+            .HasForeignKey(x => new { x.TenantId, x.EnvironmentTag, x.HookKey })
+            .HasPrincipalKey(x => new { x.TenantId, x.EnvironmentTag, x.HookKey })
+            .OnDelete(DeleteBehavior.Restrict);
         builder.Property(x => x.ActivatedAtUtc).HasDefaultValueSql("sysutcdatetime()");
     }
 
@@ -143,7 +183,16 @@ public sealed class SqlServerDbContext(DbContextOptions<SqlServerDbContext> opti
         builder.ToTable("WebhookEndpointIpRules", "croniq");
         builder.HasIndex(x => new { x.HookKey, x.TenantId, x.EnvironmentTag });
         builder.HasIndex(x => new { x.TenantId, x.EnvironmentTag });
-        builder.HasIndex(x => new { x.HookKey, x.Cidr }).IsUnique();
+        builder.HasIndex(x => new { x.TenantId, x.EnvironmentTag, x.HookKey, x.Cidr }).IsUnique();
+        builder.HasOne<TenantEntity>()
+            .WithMany()
+            .HasForeignKey(x => x.TenantId)
+            .OnDelete(DeleteBehavior.Restrict);
+        builder.HasOne<WebhookEndpointEntity>()
+            .WithMany()
+            .HasForeignKey(x => new { x.TenantId, x.EnvironmentTag, x.HookKey })
+            .HasPrincipalKey(x => new { x.TenantId, x.EnvironmentTag, x.HookKey })
+            .OnDelete(DeleteBehavior.Restrict);
         builder.Property(x => x.CreatedAtUtc).HasDefaultValueSql("sysutcdatetime()");
         builder.Property(x => x.UpdatedAtUtc).HasDefaultValueSql("sysutcdatetime()");
     }
@@ -154,6 +203,10 @@ public sealed class SqlServerDbContext(DbContextOptions<SqlServerDbContext> opti
         builder.HasKey(x => x.UserId);
         builder.HasIndex(x => new { x.TenantId, x.UsernameNormalized }).IsUnique();
         builder.HasIndex(x => new { x.TenantId, x.IsActive });
+        builder.HasOne<TenantEntity>()
+            .WithMany()
+            .HasForeignKey(x => x.TenantId)
+            .OnDelete(DeleteBehavior.Restrict);
         builder.Property(x => x.CreatedAtUtc).HasDefaultValueSql("sysutcdatetime()");
         builder.Property(x => x.UpdatedAtUtc).HasDefaultValueSql("sysutcdatetime()");
     }
@@ -165,6 +218,14 @@ public sealed class SqlServerDbContext(DbContextOptions<SqlServerDbContext> opti
         builder.HasIndex(x => new { x.TenantId, x.TokenHash }).IsUnique();
         builder.HasIndex(x => new { x.TenantId, x.UserId });
         builder.HasIndex(x => x.ExpiresAtUtc);
+        builder.HasOne<TenantEntity>()
+            .WithMany()
+            .HasForeignKey(x => x.TenantId)
+            .OnDelete(DeleteBehavior.Restrict);
+        builder.HasOne<PasswordUserEntity>()
+            .WithMany()
+            .HasForeignKey(x => x.UserId)
+            .OnDelete(DeleteBehavior.Restrict);
         builder.Property(x => x.CreatedAtUtc).HasDefaultValueSql("sysutcdatetime()");
     }
 }

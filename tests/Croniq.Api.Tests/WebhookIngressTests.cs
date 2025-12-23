@@ -22,7 +22,9 @@ namespace Croniq.Api.Tests;
 public class WebhookIngressTests
 {
     private const string HookKey = "hook-ingress";
-    private const string JobKeyValue = "tenant:env:ns:job";
+    private const string JobKeyValue = "ns:job";
+    private const string TenantId = "tenant";
+    private const string EnvironmentTag = "env";
     private const string Secret = "super-secret";
 
     [Fact]
@@ -32,7 +34,7 @@ public class WebhookIngressTests
         var payload = "{\"hello\":\"world\"}";
         var signature = ComputeSignature(Secret, payload);
 
-        var response = await client.PostAsync($"/webhooks/{HookKey}", new StringContent(payload, Encoding.UTF8, "application/json")
+        var response = await client.PostAsync($"/tenants/{TenantId}/environments/{EnvironmentTag}/webhooks/{HookKey}", new StringContent(payload, Encoding.UTF8, "application/json")
         {
             Headers = { { "X-Croniq-Signature", signature } }
         });
@@ -47,7 +49,7 @@ public class WebhookIngressTests
         var (client, pipeline) = CreateClient();
         var payload = "{}";
 
-        var response = await client.PostAsJsonAsync($"/webhooks/{HookKey}", payload);
+        var response = await client.PostAsJsonAsync($"/tenants/{TenantId}/environments/{EnvironmentTag}/webhooks/{HookKey}", payload);
 
         response.StatusCode.ShouldBe(HttpStatusCode.Unauthorized);
         pipeline.Executed.ShouldBeFalse();
@@ -132,8 +134,10 @@ public class WebhookIngressTests
 
     private sealed class StubPolicies : IPolicyResolver
     {
-        public ExecutionPolicyOptions ResolveExecution(JobKey jobKey) => new();
-        public MisfirePolicyOptions ResolveMisfire(JobKey jobKey) => new();
-        public QuotaOptions ResolveQuota(JobKey jobKey) => new();
+        public ExecutionPolicyOptions ResolveExecution(JobKey jobKey, PartitionScope? scope = null) => new();
+
+        public MisfirePolicyOptions ResolveMisfire(JobKey jobKey, PartitionScope? scope = null) => new();
+
+        public QuotaOptions ResolveQuota(JobKey jobKey, PartitionScope? scope = null) => new();
     }
 }

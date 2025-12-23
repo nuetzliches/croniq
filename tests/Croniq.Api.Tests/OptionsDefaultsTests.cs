@@ -33,7 +33,7 @@ public class OptionsDefaultsTests
         options.SqlServer.ShouldNotBeNull();
         options.InMemory.ShouldNotBeNull();
         options.InMemory.ApiKey.ShouldBe("dev-key");
-        options.InMemory.TenantId.ShouldBe("dev");
+        options.InMemory.TenantReference.ShouldBe("dev");
         options.InMemory.EnvironmentTag.ShouldBe("dev");
         options.Oidc.ShouldNotBeNull();
     }

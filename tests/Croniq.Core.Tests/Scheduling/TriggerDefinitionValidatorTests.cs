@@ -14,7 +14,7 @@ public sealed class TriggerDefinitionValidatorTests
     {
         var definition = new CroniqTriggerSeedDefinition
         {
-            JobKey = "tenant:dev:ops:job",
+            JobKey = "ops:job",
             CronExpression = "0 */5 * * * ?",
             TimeZoneId = "Not/A/Zone"
         };
@@ -28,7 +28,7 @@ public sealed class TriggerDefinitionValidatorTests
     [Fact]
     public void TryValidate_Generates_url_safe_trigger_id()
     {
-        var jobKey = "tenant:dev:ops:job";
+        var jobKey = "ops:job";
         var definition = new CroniqTriggerSeedDefinition
         {
             JobKey = jobKey,
@@ -54,7 +54,7 @@ public sealed class TriggerDefinitionValidatorTests
             .GetMethod("BuildTriggerId", BindingFlags.NonPublic | BindingFlags.Static);
         method.ShouldNotBeNull("BuildTriggerId should exist for hashing fallback.");
 
-        var jobKey = "tenant:dev:ops:job";
+        var jobKey = "ops:job";
         var longExpression = new string('x', 700);
         var triggerId = (string)method!.Invoke(null, new object?[] { jobKey, longExpression, null })!;
 

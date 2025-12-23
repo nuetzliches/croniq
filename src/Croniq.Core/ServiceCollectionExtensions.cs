@@ -21,7 +21,7 @@ public static class ServiceCollectionExtensions
     public static IServiceCollection AddCroniqCore(this IServiceCollection services, Action<CroniqOptions>? configure = null)
     {
         services.AddOptions<CroniqOptions>()
-            .Validate(ValidateCroniqOptions, "Croniq:Core must set TenantId, EnvironmentTag, and InstanceId.")
+            .Validate(ValidateCroniqOptions, "Croniq:Core must set TenantReference, EnvironmentTag, and InstanceId.")
             .ValidateOnStart();
         services.AddOptions<CroniqStartupOptions>()
             .Validate(ValidateStartupOptions, "Croniq:Startup:Mode must be Run or Validate.")
@@ -261,7 +261,7 @@ public static class ServiceCollectionExtensions
 
     private static bool ValidateCroniqOptions(CroniqOptions options)
     {
-        return !string.IsNullOrWhiteSpace(options.TenantId)
+        return !string.IsNullOrWhiteSpace(options.TenantReference)
             && !string.IsNullOrWhiteSpace(options.EnvironmentTag)
             && !string.IsNullOrWhiteSpace(options.InstanceId);
     }

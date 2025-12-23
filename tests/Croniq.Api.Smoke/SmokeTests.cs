@@ -344,7 +344,7 @@ public sealed class SmokeTests
         return SendAsync(async () =>
         {
             var payloadJson = JsonSerializer.Serialize(payload);
-            using var request = new HttpRequestMessage(HttpMethod.Post, $"webhooks/{hookKey}")
+            using var request = new HttpRequestMessage(HttpMethod.Post, $"tenants/{Config.TenantId}/environments/{Config.EnvironmentTag}/webhooks/{hookKey}")
             {
                 Content = new StringContent(payloadJson, Encoding.UTF8, "application/json")
             };

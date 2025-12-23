@@ -1,6 +1,6 @@
 using System.Linq;
 using Croniq.Auth.Abstractions;
-using Croniq.Core.Jobs;
+using Croniq.Persistence.Abstractions;
 using Microsoft.AspNetCore.Http;
 
 namespace Croniq.Api;
@@ -91,12 +91,12 @@ internal static class TenantGuard
 
     internal static IResult? EnsureJobScope(
         ICallerContextAccessor callerAccessor,
-        JobKey jobKey,
+        PartitionScope scope,
         params string[] requiredScopes)
     {
         if (callerAccessor is null) throw new ArgumentNullException(nameof(callerAccessor));
 
-        return EnsureTenant(callerAccessor, jobKey.TenantId, jobKey.EnvironmentTag, requiredScopes);
+        return EnsureTenant(callerAccessor, scope.TenantId, scope.EnvironmentTag, requiredScopes);
     }
 
     private static bool HasAllScopes(ICallerContext caller, params string[] scopes)

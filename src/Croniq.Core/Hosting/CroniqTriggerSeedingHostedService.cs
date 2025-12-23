@@ -69,7 +69,7 @@ public sealed class CroniqTriggerSeedingHostedService : IHostedService
             return;
         }
 
-        var scope = new PartitionScope(_coreOptions.TenantId, _coreOptions.EnvironmentTag);
+        var scope = new PartitionScope(_coreOptions.TenantReference, _coreOptions.EnvironmentTag);
         var plans = BuildPlans(definitions, scope, mode);
         if (plans.Count == 0)
         {
@@ -85,7 +85,7 @@ public sealed class CroniqTriggerSeedingHostedService : IHostedService
             _logger.LogInformation(
                 "Croniq trigger validation completed with {Count} trigger definitions for {TenantId}/{EnvironmentTag}.",
                 plans.Count,
-                _coreOptions.TenantId,
+                _coreOptions.TenantReference,
                 _coreOptions.EnvironmentTag);
             return;
         }
@@ -94,10 +94,10 @@ public sealed class CroniqTriggerSeedingHostedService : IHostedService
             "Croniq trigger seeding starting (Mode={Mode}) with {Count} trigger definitions for {TenantId}/{EnvironmentTag}.",
             mode,
             plans.Count,
-            _coreOptions.TenantId,
+            _coreOptions.TenantReference,
             _coreOptions.EnvironmentTag);
 
-        await EnsureJobsAsync(plans, cancellationToken).ConfigureAwait(false);
+        await EnsureJobsAsync(plans, scope, cancellationToken).ConfigureAwait(false);
 
         var existing = await _store.ListTriggersAsync(scope, cancellationToken).ConfigureAwait(false);
         var existingById = existing.ToDictionary(t => t.TriggerId, StringComparer.OrdinalIgnoreCase);
@@ -203,8 +203,6 @@ public sealed class CroniqTriggerSeedingHostedService : IHostedService
         foreach (var registration in _fluentRegistrations)
         {
             var jobKey = JobKey.Create(
-                _coreOptions.TenantId,
-                _coreOptions.EnvironmentTag,
                 registration.JobAttribute.NamespaceSegment,
                 registration.JobAttribute.JobName,
                 registration.JobAttribute.Variant);
@@ -300,7 +298,7 @@ public sealed class CroniqTriggerSeedingHostedService : IHostedService
         return plans;
     }
 
-    private async Task EnsureJobsAsync(IReadOnlyList<SeedPlan> plans, CancellationToken cancellationToken)
+    private async Task EnsureJobsAsync(IReadOnlyList<SeedPlan> plans, PartitionScope scope, CancellationToken cancellationToken)
     {
         var jobDefinitions = new Dictionary<string, JobDefinition>(StringComparer.OrdinalIgnoreCase);
         foreach (var plan in plans)
@@ -313,10 +311,10 @@ public sealed class CroniqTriggerSeedingHostedService : IHostedService
 
         foreach (var job in jobDefinitions.Values)
         {
-            var existing = await _store.GetJobAsync(job.JobKey, cancellationToken).ConfigureAwait(false);
+            var existing = await _store.GetJobAsync(job.JobKey, scope, cancellationToken).ConfigureAwait(false);
             if (existing is null)
             {
-                await _store.UpsertJobAsync(job, cancellationToken).ConfigureAwait(false);
+                await _store.UpsertJobAsync(job, scope, cancellationToken).ConfigureAwait(false);
             }
         }
     }

@@ -42,7 +42,7 @@ public class JobRegistryTests
     [Fact]
     public void Registers_jobs_with_composed_job_key()
     {
-        var options = Microsoft.Extensions.Options.Options.Create(new CroniqOptions { TenantId = "t1", EnvironmentTag = "dev" });
+        var options = Microsoft.Extensions.Options.Options.Create(new CroniqOptions { TenantReference = "t1", EnvironmentTag = "dev" });
         var registrations = new List<JobRegistration>
         {
             new JobRegistration(typeof(SampleJob.Handler))
@@ -51,9 +51,9 @@ public class JobRegistryTests
         var registry = new JobRegistry(options, registrations);
 
         registry.Descriptors.ShouldHaveSingleItem();
-        registry.TryGet(JobKey.Create("t1", "dev", "samples", "demo"), out var descriptor).ShouldBeTrue();
+        registry.TryGet(JobKey.Create("samples", "demo"), out var descriptor).ShouldBeTrue();
         descriptor!.JobType.ShouldBe(typeof(SampleJob.Handler));
-        descriptor.JobKey.Value.ShouldBe("t1:dev:samples:demo");
+        descriptor.JobKey.Value.ShouldBe("samples:demo");
     }
 
     [Fact]
@@ -71,7 +71,7 @@ public class JobRegistryTests
     [Fact]
     public void Throws_on_duplicate_job_keys()
     {
-        var options = Microsoft.Extensions.Options.Options.Create(new CroniqOptions { TenantId = "t1", EnvironmentTag = "dev" });
+        var options = Microsoft.Extensions.Options.Options.Create(new CroniqOptions { TenantReference = "t1", EnvironmentTag = "dev" });
         var registrations = new List<JobRegistration>
         {
             new JobRegistration(typeof(SampleJob.Handler)),

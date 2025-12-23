@@ -78,12 +78,6 @@ public static partial class ApiHostingExtensions
                 return Results.BadRequest(new { error = "invalid-job-key", message = "JobKey must follow the Croniq format." });
             }
 
-            if (!string.Equals(jobKey.TenantId, tenantId, StringComparison.OrdinalIgnoreCase)
-                || !string.Equals(jobKey.EnvironmentTag, resolvedEnvironment, StringComparison.OrdinalIgnoreCase))
-            {
-                return Results.BadRequest(new { error = "scope-mismatch", message = "JobKey tenant/environment must match the request scope." });
-            }
-
             var defaultLimit = configuration.GetValue<int?>("Croniq:Webhooks:RequestsPerMinute") ?? 60;
             var rpm = request.RequestsPerMinute ?? defaultLimit;
             if (rpm <= 0)
@@ -123,7 +117,7 @@ public static partial class ApiHostingExtensions
                 return Results.Problem(statusCode: StatusCodes.Status500InternalServerError, title: "webhook-upsert-failed", detail: ex.Message);
             }
 
-            var persisted = await webhookStore.FindByHookKeyAsync(request.HookKey, cancellationToken).ConfigureAwait(false);
+            var persisted = await webhookStore.FindByHookKeyAsync(request.HookKey, new PartitionScope(tenantId, resolvedEnvironment), cancellationToken).ConfigureAwait(false);
             if (persisted is null)
             {
                 return Results.Problem(statusCode: StatusCodes.Status500InternalServerError, title: "webhook-not-persisted", detail: "Webhook endpoint could not be read after upsert.");
@@ -141,7 +135,8 @@ public static partial class ApiHostingExtensions
             string? environment,
             [FromServices] ICallerContextAccessor callerContextAccessor,
             [FromServices] IWebhookPersistenceProvider? webhookStore,
-            CancellationToken cancellationToken) =>
+            CancellationToken cancellationToken,
+            bool hardDelete = false) =>
         {
             if (webhookStore is null)
             {
@@ -155,7 +150,7 @@ public static partial class ApiHostingExtensions
             }
 
             var scope = new PartitionScope(tenantId, resolvedEnvironment);
-            await webhookStore.DeleteAsync(hookKey, scope, cancellationToken).ConfigureAwait(false);
+            await webhookStore.DeleteAsync(hookKey, scope, hardDelete, cancellationToken).ConfigureAwait(false);
             return Results.NoContent();
         })
         .WithDocs("Webhooks_Delete", "Delete a webhook", "Removes a webhook endpoint and its metadata for the tenant/environment scope.")
@@ -405,9 +400,9 @@ public static partial class ApiHostingExtensions
             metadata["webhook:deadletter:attempts"] = entry.Attempts.ToString(CultureInfo.InvariantCulture);
             metadata["webhook:deadletter:replay_at"] = DateTimeOffset.UtcNow.ToString("O", CultureInfo.InvariantCulture);
 
-            var executionOptions = policyResolver.ResolveExecution(jobKey);
+            var executionOptions = policyResolver.ResolveExecution(jobKey, scope);
             var executionId = Guid.NewGuid().ToString("N");
-            var execRequest = new JobExecutionRequest(executionId, jobKey, descriptor, executionOptions, metadata, TriggerActivitySource);
+            var execRequest = new JobExecutionRequest(executionId, jobKey, scope, descriptor, executionOptions, metadata, TriggerActivitySource);
 
             using var replayActivity = TriggerActivitySource.StartActivity("Croniq.Api.WebhookReplay", ActivityKind.Server);
             replayActivity?.SetTag("croniq.webhook.deadletter", entry.Id);

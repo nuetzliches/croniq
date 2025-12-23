@@ -24,7 +24,7 @@ public sealed class CroniqPersistenceHealthCheckTests
 
         var options = Microsoft.Extensions.Options.Options.Create(new CroniqOptions
         {
-            TenantId = "t",
+            TenantReference = "t",
             EnvironmentTag = "dev",
             InstanceId = "i1"
         });
@@ -49,7 +49,7 @@ public sealed class CroniqPersistenceHealthCheckTests
 
         var options = Microsoft.Extensions.Options.Options.Create(new CroniqOptions
         {
-            TenantId = "t",
+            TenantReference = "t",
             EnvironmentTag = "dev",
             InstanceId = "i1"
         });
@@ -73,7 +73,7 @@ public sealed class CroniqPersistenceHealthCheckTests
 
         var options = Microsoft.Extensions.Options.Options.Create(new CroniqOptions
         {
-            TenantId = "t",
+            TenantReference = "t",
             EnvironmentTag = "dev",
             InstanceId = "i1"
         });
@@ -98,7 +98,7 @@ public sealed class CroniqPersistenceHealthCheckTests
 
         var options = Microsoft.Extensions.Options.Options.Create(new CroniqOptions
         {
-            TenantId = "t",
+            TenantReference = "t",
             EnvironmentTag = "dev",
             InstanceId = "i1"
         });

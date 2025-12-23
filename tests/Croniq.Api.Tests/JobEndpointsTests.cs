@@ -24,7 +24,7 @@ public sealed class JobEndpointsTests : IClassFixture<WebhookApiTestHost>
     public async Task ListJobsReturnsPersistedEntries()
     {
         _host.Reset();
-        var jobKey = $"{WebhookApiTestHost.TenantId}:{WebhookApiTestHost.Environment}:ops:list";
+        var jobKey = "ops:list";
         await UpsertJobAsync(jobKey, description: "list job");
 
         var response = await _host.Client.GetAsync($"/tenants/{WebhookApiTestHost.TenantId}/jobs?environment={WebhookApiTestHost.Environment}");
@@ -41,7 +41,7 @@ public sealed class JobEndpointsTests : IClassFixture<WebhookApiTestHost>
     public async Task GetJobReturnsSingleEntry()
     {
         _host.Reset();
-        var jobKey = $"{WebhookApiTestHost.TenantId}:{WebhookApiTestHost.Environment}:ops:get";
+        var jobKey = "ops:get";
         var metadata = new Dictionary<string, string> { ["owner"] = "ops" };
         await UpsertJobAsync(jobKey, description: "get job", metadata: metadata);
 
@@ -59,7 +59,7 @@ public sealed class JobEndpointsTests : IClassFixture<WebhookApiTestHost>
     public async Task DeleteJobRemovesAssociatedSchedules()
     {
         _host.Reset();
-        var jobKey = $"{WebhookApiTestHost.TenantId}:{WebhookApiTestHost.Environment}:ops:delete";
+        var jobKey = "ops:delete";
         await UpsertJobAsync(jobKey);
         await UpsertScheduleAsync(jobKey, "t-delete");
 
@@ -92,7 +92,7 @@ public sealed class JobEndpointsTests : IClassFixture<WebhookApiTestHost>
             Description: description,
             Metadata: metadata);
 
-        var response = await _host.Client.PostAsJsonAsync($"/tenants/{parsed.TenantId}/jobs?environment={parsed.EnvironmentTag}", request);
+        var response = await _host.Client.PostAsJsonAsync($"/tenants/{WebhookApiTestHost.TenantId}/jobs?environment={WebhookApiTestHost.Environment}", request);
         response.StatusCode.ShouldBe(HttpStatusCode.Created);
     }
 

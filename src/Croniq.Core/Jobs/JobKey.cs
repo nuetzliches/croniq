@@ -4,21 +4,15 @@ namespace Croniq.Core.Jobs;
 
 public readonly record struct JobKey
 {
-    public JobKey(string tenantId, string environmentTag, string namespaceSegment, string jobName, string? variant = null)
+    public JobKey(string namespaceSegment, string jobName, string? variant = null)
     {
-        TenantId = Normalize(tenantId, nameof(tenantId));
-        EnvironmentTag = Normalize(environmentTag, nameof(environmentTag));
         NamespaceSegment = Normalize(namespaceSegment, nameof(namespaceSegment));
         JobName = Normalize(jobName, nameof(jobName));
-        Variant = variant?.Trim();
+        Variant = string.IsNullOrWhiteSpace(variant) ? null : variant.Trim();
         Value = Variant is null
-            ? $"{TenantId}:{EnvironmentTag}:{NamespaceSegment}:{JobName}"
-            : $"{TenantId}:{EnvironmentTag}:{NamespaceSegment}:{JobName}:{Variant}";
+            ? $"{NamespaceSegment}:{JobName}"
+            : $"{NamespaceSegment}:{JobName}:{Variant}";
     }
-
-    public string TenantId { get; }
-
-    public string EnvironmentTag { get; }
 
     public string NamespaceSegment { get; }
 
@@ -30,9 +24,9 @@ public readonly record struct JobKey
 
     public override string ToString() => Value;
 
-    public static JobKey Create(string tenantId, string environmentTag, string namespaceSegment, string jobName, string? variant = null)
+    public static JobKey Create(string namespaceSegment, string jobName, string? variant = null)
     {
-        return new JobKey(tenantId, environmentTag, namespaceSegment, jobName, variant);
+        return new JobKey(namespaceSegment, jobName, variant);
     }
 
     public static bool TryParse(string value, out JobKey jobKey)
@@ -44,15 +38,18 @@ public readonly record struct JobKey
         }
 
         var parts = value.Split(':');
-        if (parts.Length is < 4 or > 5)
+        if (parts.Length is < 2 or > 3)
         {
             return false;
         }
 
-        var variant = parts.Length == 5 ? parts[4] : null;
+        // Format: namespace:name[:variant]
+        var namespaceSegment = parts[0];
+        var jobName = parts[1];
+        var variant = parts.Length == 3 ? parts[2] : null;
         try
         {
-            jobKey = new JobKey(parts[0], parts[1], parts[2], parts[3], variant);
+            jobKey = new JobKey(namespaceSegment, jobName, variant);
             return true;
         }
         catch

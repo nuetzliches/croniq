@@ -6,7 +6,9 @@ using Croniq.Core.Jobs;
 using Croniq.Core.Policies;
 using Croniq.Core.Scheduling;
 using Croniq.Persistence.Abstractions;
+using Croniq.Options;
 using Croniq.Sdk;
+using Microsoft.Extensions.Options;
 
 namespace Croniq.Core.Execution;
 
@@ -16,17 +18,20 @@ public sealed class DefaultJobTrigger : IJobTrigger
     private readonly IJobExecutionPipeline _pipeline;
     private readonly IPolicyResolver _policyResolver;
     private readonly IJobPersistenceProvider _store;
+    private readonly IOptions<CroniqOptions> _options;
 
     public DefaultJobTrigger(
         IJobRegistry registry,
         IJobExecutionPipeline pipeline,
         IPolicyResolver policyResolver,
-        IJobPersistenceProvider store)
+        IJobPersistenceProvider store,
+        IOptions<CroniqOptions> options)
     {
         _registry = registry ?? throw new ArgumentNullException(nameof(registry));
         _pipeline = pipeline ?? throw new ArgumentNullException(nameof(pipeline));
         _policyResolver = policyResolver ?? throw new ArgumentNullException(nameof(policyResolver));
         _store = store ?? throw new ArgumentNullException(nameof(store));
+        _options = options ?? throw new ArgumentNullException(nameof(options));
     }
 
     public async Task TriggerOnceAsync(
@@ -72,9 +77,10 @@ public sealed class DefaultJobTrigger : IJobTrigger
         IReadOnlyDictionary<string, string>? metadata,
         CancellationToken cancellationToken)
     {
-        var executionOptions = _policyResolver.ResolveExecution(jobKey);
+        var scope = GetScope();
+        var executionOptions = _policyResolver.ResolveExecution(jobKey, scope);
         var executionId = Guid.NewGuid().ToString("N");
-        var request = new JobExecutionRequest(executionId, jobKey, descriptor, executionOptions, metadata, activitySource: null);
+        var request = new JobExecutionRequest(executionId, jobKey, scope, descriptor, executionOptions, metadata, activitySource: null);
         await _pipeline.ExecuteAsync(request, cancellationToken).ConfigureAwait(false);
     }
 
@@ -85,7 +91,8 @@ public sealed class DefaultJobTrigger : IJobTrigger
         TimeSpan delay,
         CancellationToken cancellationToken)
     {
-        var existing = await _store.GetJobAsync(jobKey.Value, cancellationToken).ConfigureAwait(false);
+        var scope = GetScope();
+        var existing = await _store.GetJobAsync(jobKey.Value, scope, cancellationToken).ConfigureAwait(false);
         if (existing is null)
         {
             var jobDefinition = new JobDefinition(
@@ -96,12 +103,11 @@ public sealed class DefaultJobTrigger : IJobTrigger
                 Description: null,
                 Metadata: null);
 
-            await _store.UpsertJobAsync(jobDefinition, cancellationToken).ConfigureAwait(false);
+            await _store.UpsertJobAsync(jobDefinition, scope, cancellationToken).ConfigureAwait(false);
         }
 
         var triggerId = $"{jobKey.Value}:once-{Guid.NewGuid():N}";
         var startAtUtc = DateTimeOffset.UtcNow.Add(delay);
-        var scope = new PartitionScope(jobKey.TenantId, jobKey.EnvironmentTag);
 
         var trigger = new TriggerDefinition(
             triggerId,
@@ -115,6 +121,12 @@ public sealed class DefaultJobTrigger : IJobTrigger
             TimeZoneId: TimeZoneInfo.Utc.Id);
 
         await _store.UpsertTriggerAsync(trigger, cancellationToken).ConfigureAwait(false);
+    }
+
+    private PartitionScope GetScope()
+    {
+        var current = _options.Value ?? new CroniqOptions();
+        return new PartitionScope(current.TenantReference, current.EnvironmentTag);
     }
 
     private static IReadOnlyDictionary<string, string>? NormalizeMetadata(IReadOnlyDictionary<string, string>? metadata)

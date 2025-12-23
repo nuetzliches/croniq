@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using Croniq.Core.Jobs;
+using Croniq.Persistence.Abstractions;
 using Microsoft.Extensions.Options;
 
 namespace Croniq.Core.Policies;
@@ -29,11 +30,11 @@ public sealed class PolicyResolver : IPolicyResolver
         _executionOverrides = ov.Execution?.ToList() ?? [];
     }
 
-    public MisfirePolicyOptions ResolveMisfire(JobKey jobKey)
+    public MisfirePolicyOptions ResolveMisfire(JobKey jobKey, PartitionScope? scope = null)
     {
         var result = Clone(_defaultMisfire);
         var match = _misfireOverrides
-            .Where(o => Matches(o, jobKey))
+            .Where(o => Matches(o, jobKey, scope))
             .OrderByDescending(GetSpecificity)
             .FirstOrDefault();
 
@@ -45,12 +46,12 @@ public sealed class PolicyResolver : IPolicyResolver
         return result;
     }
 
-    public QuotaOptions ResolveQuota(JobKey jobKey)
+    public QuotaOptions ResolveQuota(JobKey jobKey, PartitionScope? scope = null)
     {
         var result = Clone(_defaultQuota);
 
         // apply all matching overrides, choosing the most restrictive (min) values
-        var matches = _quotaOverrides.Where(o => Matches(o, jobKey));
+        var matches = _quotaOverrides.Where(o => Matches(o, jobKey, scope));
         foreach (var match in matches)
         {
             result.MaxTriggersPerMinute = Math.Min(result.MaxTriggersPerMinute, match.Options.MaxTriggersPerMinute);
@@ -60,11 +61,11 @@ public sealed class PolicyResolver : IPolicyResolver
         return result;
     }
 
-    public ExecutionPolicyOptions ResolveExecution(JobKey jobKey)
+    public ExecutionPolicyOptions ResolveExecution(JobKey jobKey, PartitionScope? scope = null)
     {
         var result = Clone(_defaultExecution);
         var match = _executionOverrides
-            .Where(o => Matches(o, jobKey))
+            .Where(o => Matches(o, jobKey, scope))
             .OrderByDescending(GetSpecificity)
             .FirstOrDefault();
 
@@ -142,12 +143,18 @@ public sealed class PolicyResolver : IPolicyResolver
         target.DeadLetter = source.DeadLetter;
     }
 
-    private static bool Matches(MisfirePolicyOverride o, JobKey jobKey)
+    private static bool Matches(MisfirePolicyOverride o, JobKey jobKey, PartitionScope? scope)
     {
-        if (o.TenantId is not null && !string.Equals(o.TenantId, jobKey.TenantId, StringComparison.OrdinalIgnoreCase))
-            return false;
-        if (o.EnvironmentTag is not null && !string.Equals(o.EnvironmentTag, jobKey.EnvironmentTag, StringComparison.OrdinalIgnoreCase))
-            return false;
+        if (o.TenantId is not null)
+        {
+            if (!scope.HasValue || !string.Equals(o.TenantId, scope.Value.TenantId, StringComparison.OrdinalIgnoreCase))
+                return false;
+        }
+        if (o.EnvironmentTag is not null)
+        {
+            if (!scope.HasValue || !string.Equals(o.EnvironmentTag, scope.Value.EnvironmentTag, StringComparison.OrdinalIgnoreCase))
+                return false;
+        }
         if (o.NamespaceSegment is not null && !string.Equals(o.NamespaceSegment, jobKey.NamespaceSegment, StringComparison.OrdinalIgnoreCase))
             return false;
         if (o.JobName is not null && !string.Equals(o.JobName, jobKey.JobName, StringComparison.OrdinalIgnoreCase))
@@ -175,12 +182,18 @@ public sealed class PolicyResolver : IPolicyResolver
         return score;
     }
 
-    private static bool Matches(QuotaOverride o, JobKey jobKey)
+    private static bool Matches(QuotaOverride o, JobKey jobKey, PartitionScope? scope)
     {
-        if (o.TenantId is not null && !string.Equals(o.TenantId, jobKey.TenantId, StringComparison.OrdinalIgnoreCase))
-            return false;
-        if (o.EnvironmentTag is not null && !string.Equals(o.EnvironmentTag, jobKey.EnvironmentTag, StringComparison.OrdinalIgnoreCase))
-            return false;
+        if (o.TenantId is not null)
+        {
+            if (!scope.HasValue || !string.Equals(o.TenantId, scope.Value.TenantId, StringComparison.OrdinalIgnoreCase))
+                return false;
+        }
+        if (o.EnvironmentTag is not null)
+        {
+            if (!scope.HasValue || !string.Equals(o.EnvironmentTag, scope.Value.EnvironmentTag, StringComparison.OrdinalIgnoreCase))
+                return false;
+        }
         if (o.NamespaceSegment is not null && !string.Equals(o.NamespaceSegment, jobKey.NamespaceSegment, StringComparison.OrdinalIgnoreCase))
             return false;
         if (o.JobName is not null && !string.Equals(o.JobName, jobKey.JobName, StringComparison.OrdinalIgnoreCase))
@@ -188,12 +201,18 @@ public sealed class PolicyResolver : IPolicyResolver
         return true;
     }
 
-    private static bool Matches(ExecutionPolicyOverride o, JobKey jobKey)
+    private static bool Matches(ExecutionPolicyOverride o, JobKey jobKey, PartitionScope? scope)
     {
-        if (o.TenantId is not null && !string.Equals(o.TenantId, jobKey.TenantId, StringComparison.OrdinalIgnoreCase))
-            return false;
-        if (o.EnvironmentTag is not null && !string.Equals(o.EnvironmentTag, jobKey.EnvironmentTag, StringComparison.OrdinalIgnoreCase))
-            return false;
+        if (o.TenantId is not null)
+        {
+            if (!scope.HasValue || !string.Equals(o.TenantId, scope.Value.TenantId, StringComparison.OrdinalIgnoreCase))
+                return false;
+        }
+        if (o.EnvironmentTag is not null)
+        {
+            if (!scope.HasValue || !string.Equals(o.EnvironmentTag, scope.Value.EnvironmentTag, StringComparison.OrdinalIgnoreCase))
+                return false;
+        }
         if (o.NamespaceSegment is not null && !string.Equals(o.NamespaceSegment, jobKey.NamespaceSegment, StringComparison.OrdinalIgnoreCase))
             return false;
         if (o.JobName is not null && !string.Equals(o.JobName, jobKey.JobName, StringComparison.OrdinalIgnoreCase))

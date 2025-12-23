@@ -26,7 +26,7 @@ Worker hosts can seed schedules on startup:
     "Triggers": [
       {
         "TriggerId": "samples-smoke-every-5s",
-        "JobKey": "default:dev:samples:smoke",
+        "JobKey": "samples:smoke",
         "CronExpression": "0/5 * * * * ?",
         "ManagedBy": "Croniq.Sample",
         "Enabled": true
@@ -40,16 +40,16 @@ Worker hosts can seed schedules on startup:
 
 `Croniq:Triggers` accepts either a JSON array or an object keyed by trigger id. When you use the map form, the key becomes `TriggerId` if the field is omitted.
 
-| Field | Required | Notes |
-| --- | --- | --- |
-| TriggerId | No | Defaults to `{JobKey}:{CronExpression}` when omitted. |
-| JobKey | Yes | Must match the host tenant/environment. |
-| CronExpression | Yes | 7-field cron expression, or `@once` for a one-off trigger. |
-| StartAtUtc | No | Optional UTC start bound (ISO-8601). |
-| EndAtUtc | No | Optional UTC end bound (ISO-8601). |
-| Enabled | No | Defaults to `true`. |
-| ManagedBy | No | Required when `Croniq:Seeding:Mode=ForceUpdate`; also stored as `metadata.managedBy`. |
-| Metadata | No | String dictionary stored with the trigger definition and exposed via `IJobExecutionContext.Metadata`. |
+| Field          | Required | Notes                                                                                                                                          |
+| -------------- | -------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| TriggerId      | No       | Defaults to `{JobKey}:{CronExpression}` when omitted.                                                                                          |
+| JobKey         | Yes      | Must follow the Croniq job key format (`namespace:name[:variant]`). Tenant/environment are taken from the hosting scope, not from the job key. |
+| CronExpression | Yes      | 7-field cron expression, or `@once` for a one-off trigger.                                                                                     |
+| StartAtUtc     | No       | Optional UTC start bound (ISO-8601).                                                                                                           |
+| EndAtUtc       | No       | Optional UTC end bound (ISO-8601).                                                                                                             |
+| Enabled        | No       | Defaults to `true`.                                                                                                                            |
+| ManagedBy      | No       | Required when `Croniq:Seeding:Mode=ForceUpdate`; also stored as `metadata.managedBy`.                                                          |
+| Metadata       | No       | String dictionary stored with the trigger definition and exposed via `IJobExecutionContext.Metadata`.                                          |
 
 ### Metadata conventions
 
@@ -82,10 +82,11 @@ builder.Services
 
 ```bash
 curl -X POST https://localhost:5001/tenants/dev-sandbox/schedules \
+  "?environment=dev-local" \
   -H "Content-Type: application/json" \
   -H "X-Croniq-Key: <your-dev-key>" \
   -d "{
-        \"jobKey\": \"dev-sandbox:dev-local:samples:HelloWorld\",
+        \"jobKey\": \"samples:HelloWorld\",
         \"cronExpression\": \"0 * * * * ?\",
         \"enabled\": true
       }"
@@ -99,7 +100,7 @@ Use `@once` in schedules or trigger a single run directly:
 
 ```csharp
 await jobTrigger.TriggerOnceAsync(
-    "dev-sandbox:dev-local:samples:HelloWorld",
+  "samples:HelloWorld",
     new Dictionary<string, string> { ["reason"] = "manual" },
     delay: TimeSpan.FromMinutes(5));
 ```
@@ -109,7 +110,7 @@ curl -X POST https://localhost:5001/jobs/trigger \
   -H "Content-Type: application/json" \
   -H "X-Croniq-Key: <your-dev-key>" \
   -d "{
-        \"jobKey\": \"dev-sandbox:dev-local:samples:HelloWorld\",
+        \"jobKey\": \"samples:HelloWorld\",
         \"delaySeconds\": 300,
         \"metadata\": { \"reason\": \"manual\" }
       }"

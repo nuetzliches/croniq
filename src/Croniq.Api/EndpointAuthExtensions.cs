@@ -15,7 +15,20 @@ internal static class EndpointAuthExtensions
         _ = builder ?? throw new ArgumentNullException(nameof(builder));
 
         builder.WithMetadata(new CroniqAuthEndpointGuardMetadata(CroniqAuthGuardKind.Caller));
+
+        builder.AddEndpointFilter(new PasswordChangeRequiredEndpointFilter());
         return builder.AddEndpointFilter(new CroniqCallerEndpointFilter());
+    }
+
+    /// <summary>
+    /// Marks an endpoint as callable even when the authenticated user must change their password.
+    /// </summary>
+    internal static RouteHandlerBuilder AllowPasswordChangeRequired(this RouteHandlerBuilder builder)
+    {
+        _ = builder ?? throw new ArgumentNullException(nameof(builder));
+
+        builder.WithMetadata(new PasswordChangeRequiredBypassMetadata());
+        return builder;
     }
 
     internal static RouteHandlerBuilder RequireCroniqAdminScopes(this RouteHandlerBuilder builder, params string[] requiredScopes)
@@ -23,6 +36,8 @@ internal static class EndpointAuthExtensions
         _ = builder ?? throw new ArgumentNullException(nameof(builder));
 
         builder.WithMetadata(new CroniqAuthEndpointGuardMetadata(CroniqAuthGuardKind.AdminScopes, requiredScopes ?? Array.Empty<string>()));
+
+        builder.AddEndpointFilter(new PasswordChangeRequiredEndpointFilter());
         return builder.AddEndpointFilter(new CroniqAdminScopesEndpointFilter(requiredScopes ?? Array.Empty<string>()));
     }
 
@@ -39,6 +54,8 @@ internal static class EndpointAuthExtensions
         _ = builder ?? throw new ArgumentNullException(nameof(builder));
 
         builder.WithMetadata(new CroniqAuthEndpointGuardMetadata(CroniqAuthGuardKind.TenantScope, requiredScopes ?? Array.Empty<string>(), requireEnvironment));
+
+        builder.AddEndpointFilter(new PasswordChangeRequiredEndpointFilter());
         return builder.AddEndpointFilter(new CroniqTenantScopeEndpointFilter(
             tenantRouteKey: "tenantId",
             environmentQueryKey: "environment",
@@ -55,6 +72,8 @@ internal static class EndpointAuthExtensions
         _ = environmentSelector ?? throw new ArgumentNullException(nameof(environmentSelector));
 
         builder.WithMetadata(new CroniqAuthEndpointGuardMetadata(CroniqAuthGuardKind.TenantScopeFromBody, requiredScopes ?? Array.Empty<string>(), false));
+
+        builder.AddEndpointFilter(new PasswordChangeRequiredEndpointFilter());
         return builder.AddEndpointFilter(new CroniqTenantScopeFromBodyEndpointFilter<TRequest>(
             tenantRouteKey: "tenantId",
             environmentQueryKey: null,
@@ -73,6 +92,8 @@ internal static class EndpointAuthExtensions
         _ = environmentSelector ?? throw new ArgumentNullException(nameof(environmentSelector));
 
         builder.WithMetadata(new CroniqAuthEndpointGuardMetadata(CroniqAuthGuardKind.TenantScopeFromBodyOrQuery, requiredScopes ?? Array.Empty<string>(), requireEnvironment));
+
+        builder.AddEndpointFilter(new PasswordChangeRequiredEndpointFilter());
         return builder.AddEndpointFilter(new CroniqTenantScopeFromBodyEndpointFilter<TRequest>(
             tenantRouteKey: "tenantId",
             environmentQueryKey: "environment",
@@ -86,6 +107,8 @@ internal static class EndpointAuthExtensions
         _ = builder ?? throw new ArgumentNullException(nameof(builder));
 
         builder.WithMetadata(new CroniqAuthEndpointGuardMetadata(CroniqAuthGuardKind.TokenIssue, requiredScopes ?? Array.Empty<string>(), false));
+
+        builder.AddEndpointFilter(new PasswordChangeRequiredEndpointFilter());
         return builder.AddEndpointFilter(new CroniqTokenIssueEndpointFilter(requiredScopes ?? Array.Empty<string>()));
     }
 
@@ -98,6 +121,8 @@ internal static class EndpointAuthExtensions
         _ = jobKeySelector ?? throw new ArgumentNullException(nameof(jobKeySelector));
 
         builder.WithMetadata(new CroniqAuthEndpointGuardMetadata(CroniqAuthGuardKind.JobScopeFromBody, requiredScopes ?? Array.Empty<string>(), false));
+
+        builder.AddEndpointFilter(new PasswordChangeRequiredEndpointFilter());
         return builder.AddEndpointFilter(new CroniqJobScopeFromBodyEndpointFilter<TRequest>(jobKeySelector, requiredScopes ?? Array.Empty<string>()));
     }
 
@@ -119,6 +144,45 @@ internal static class EndpointAuthExtensions
         CroniqAuthGuardKind Kind { get; }
         bool RequireEnvironment { get; }
         string[] RequiredScopes { get; }
+    }
+
+    private sealed record PasswordChangeRequiredBypassMetadata;
+
+    private sealed class PasswordChangeRequiredEndpointFilter : IEndpointFilter
+    {
+        public ValueTask<object?> InvokeAsync(EndpointFilterInvocationContext context, EndpointFilterDelegate next)
+        {
+            var httpContext = context.HttpContext;
+
+            var endpoint = httpContext.GetEndpoint();
+            if (endpoint?.Metadata.GetMetadata<PasswordChangeRequiredBypassMetadata>() is not null)
+            {
+                return next(context);
+            }
+
+            var claim = httpContext.User?.FindFirst(CroniqClaimNames.PasswordChangeRequired);
+            if (claim is null)
+            {
+                return next(context);
+            }
+
+            var raw = claim.Value;
+            var required = string.Equals(raw, "true", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(raw, "1", StringComparison.OrdinalIgnoreCase);
+
+            if (!required)
+            {
+                return next(context);
+            }
+
+            // When password change is required, block access to protected endpoints.
+            // TODO (2FA): When adding MFA/2FA, ensure this does not block 2FA enrollment/verification endpoints.
+            // Those should be explicitly allowed similar to /auth/change-password.
+            return ValueTask.FromResult<object?>(Results.Problem(
+                statusCode: StatusCodes.Status403Forbidden,
+                title: "password-change-required",
+                detail: "Password change required before accessing this endpoint."));
+        }
     }
 
     internal sealed record CroniqAuthEndpointGuardMetadata(
@@ -406,7 +470,7 @@ internal static class EndpointAuthExtensions
 
             httpContext.Items[typeof(JobKey)] = jobKey;
 
-            var failure = TenantGuard.EnsureJobScope(callerAccessor, jobKey, _requiredScopes);
+            var failure = TenantGuard.EnsureAdminScopes(callerAccessor, _requiredScopes);
             return failure is not null
                 ? ValueTask.FromResult<object?>(failure)
                 : next(context);

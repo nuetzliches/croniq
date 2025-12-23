@@ -96,7 +96,8 @@ public sealed record CroniqTokenIssueRequest(
     string? EnvironmentTag,
     IReadOnlyCollection<string> Scopes,
     string? Audience,
-    TimeSpan? Lifetime);
+    TimeSpan? Lifetime,
+    IReadOnlyDictionary<string, object?>? AdditionalClaims = null);
 
 public sealed record CroniqTokenIssueResult(
     string AccessToken,

@@ -62,7 +62,7 @@ Configure triggers via `Croniq:Triggers` as a list:
     "Triggers": [
       {
         "TriggerId": "samples-smoke-every-5s",
-        "JobKey": "default:dev:samples:smoke",
+        "JobKey": "samples:smoke",
         "CronExpression": "0/5 * * * * ?",
         "StartAtUtc": "2025-01-01T00:00:00Z",
         "Enabled": true,
@@ -81,7 +81,7 @@ Or via a map keyed by trigger id:
   "Croniq": {
     "Triggers": {
       "samples-smoke-every-5s": {
-        "JobKey": "default:dev:samples:smoke",
+        "JobKey": "samples:smoke",
         "CronExpression": "0/5 * * * * ?",
         "ManagedBy": "Croniq.Sample"
       }
@@ -90,7 +90,7 @@ Or via a map keyed by trigger id:
 }
 ```
 
-Invalid cron expressions, missing job registrations, or tenant/environment mismatches fail fast on startup and log a readable summary of the cron expression.
+Invalid cron expressions, invalid job keys, or missing job registrations fail fast on startup and log a readable summary.
 
 Prefer config for shared environments and use the fluent builder for inline setup:
 
@@ -120,7 +120,7 @@ See [`auth.md`](../guides/auth.md) for the end-to-end authentication story and w
 | `Croniq__Persistence__Mode`                        | Yes                                                               | `InMemory` for demo workloads or `SqlServer` for durable persistence.                      | `SqlServer`                                        |
 | `Croniq__Persistence__SqlServer__ConnectionString` | When `Persistence.Mode = SqlServer`                               | Connection string for the scheduler persistence schema.                                    | `Server=.;Database=Croniq;Trusted_Connection=True` |
 | `Croniq__SqlServer__ConnectionString`              | Optional                                                          | Shared fallback connection string used when specific auth/persistence strings are omitted. | `Server=.;Database=Croniq;...`                     |
-| `Croniq__Core__TenantId`                           | Optional                                                          | Overrides the default tenant id baked into job keys.                                       | `dev-sandbox`                                      |
+| `Croniq__Core__TenantReference`                    | Optional                                                          | Overrides the default tenant reference baked into job keys.                                | `dev-sandbox`                                      |
 | `Croniq__Core__EnvironmentTag`                     | Optional                                                          | Distinguishes environments/instances (helps multi-dev setups).                             | `dev-alice`                                        |
 | `Croniq__Api__RequestsPerMinute`                   | Optional                                                          | Per-key fixed-window rate limit enforced by `AddCroniqApiRateLimiter`.                     | `120`                                              |
 
@@ -142,7 +142,7 @@ Quick sample (PowerShell):
 ```powershell
 $Env:Croniq__Auth__Mode = "SqlServer"
 $Env:Croniq__Auth__SqlServer__ConnectionString = "Server=.;Database=CroniqAuth;Trusted_Connection=True"
-$Env:Croniq__Core__TenantId = "prod"
+$Env:Croniq__Core__TenantReference = "prod"
 $Env:Croniq__Core__EnvironmentTag = "prod-cluster"
 ```
 
@@ -166,7 +166,7 @@ See [docs/deep-dive/password-auth.md](../deep-dive/password-auth.md) for the ful
 ```cmd
 set Croniq__Auth__Mode=InMemory
 set Croniq__Auth__InMemory__ApiKey=crq_dev_local_sample
-set Croniq__Core__TenantId=dev-sandbox
+set Croniq__Core__TenantReference=dev-sandbox
 set Croniq__Core__EnvironmentTag=dev-alice
 set Croniq__Api__RequestsPerMinute=60
 ```
@@ -207,7 +207,7 @@ Only override the values you truly need—everything else continues to flow from
 
 - **Missing connection string:** When either `Auth.Mode` or `Persistence.Mode` is `SqlServer`, the extension throws if it cannot find a connection string on the domain-specific section or the shared `Croniq__SqlServer__ConnectionString` key.
 - **Missing API key:** When `Auth.Mode = InMemory`, you must provide `Croniq__Auth__InMemory__ApiKey`. Otherwise startup throws `InvalidOperationException`.
-- **Unexpected tenant scope:** Verify `Croniq__Core__TenantId`/`EnvironmentTag` when multiple developers work on the same database to avoid job collisions.
+- **Unexpected tenant scope:** Verify `Croniq__Core__TenantReference`/`EnvironmentTag` when multiple developers work on the same database to avoid job collisions.
 - **Rate limiter rejecting calls:** Increase `Croniq__Api__RequestsPerMinute` or tailor the limiter via `AddCroniqApiRateLimiter` options.
 
 Need a bigger checklist? Jump to [`troubleshooting.md`](../ops/troubleshooting.md) for Docker/dev-stack, observability, and CLI-specific fixes.

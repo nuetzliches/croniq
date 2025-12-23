@@ -40,7 +40,7 @@ public sealed class CroniqTriggerSummaryHostedService : IHostedService
             return;
         }
 
-        var scope = new PartitionScope(_options.TenantId, _options.EnvironmentTag);
+        var scope = new PartitionScope(_options.TenantReference, _options.EnvironmentTag);
         using var logScope = _logger.BeginScope(new Dictionary<string, object?>
         {
             ["tenantId"] = scope.TenantId,

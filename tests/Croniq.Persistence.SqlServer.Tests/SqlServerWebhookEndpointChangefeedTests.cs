@@ -52,7 +52,7 @@ public sealed class SqlServerWebhookEndpointChangefeedTests : IAsyncLifetime
     {
         var scope = new PartitionScope("tenant-changefeed-tests", "dev");
         var hookKey = "tenant-changefeed-tests-dev-alpha";
-        var jobKey = JobKey.Create(scope.TenantId, scope.EnvironmentTag, "ops", "alpha");
+        var jobKey = JobKey.Create("ops", "alpha");
 
         await _webhooks!.UpsertAsync(
             new WebhookEndpointUpsert(

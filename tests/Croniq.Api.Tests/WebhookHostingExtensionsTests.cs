@@ -65,7 +65,7 @@ public class WebhookHostingExtensionsTests
             {
                 ["Croniq:Auth:Mode"] = "InMemory",
                 ["Croniq:Webhooks:Endpoints:0:HookKey"] = "hook-1",
-                ["Croniq:Webhooks:Endpoints:0:JobKey"] = "tenant:env:ns:job",
+                ["Croniq:Webhooks:Endpoints:0:JobKey"] = "ns:job",
                 ["Croniq:Webhooks:Endpoints:0:RequireSignature"] = "false",
                 ["Croniq:Webhooks:Security:AllowUnsignedHooks"] = "false"
             })
@@ -87,7 +87,7 @@ public class WebhookHostingExtensionsTests
             {
                 ["Croniq:Auth:Mode"] = "InMemory",
                 ["Croniq:Webhooks:Endpoints:0:HookKey"] = "hook-1",
-                ["Croniq:Webhooks:Endpoints:0:JobKey"] = "tenant:env:ns:job",
+                ["Croniq:Webhooks:Endpoints:0:JobKey"] = "ns:job",
                 ["Croniq:Webhooks:Endpoints:0:RequireSignature"] = "false",
                 ["Croniq:Webhooks:Security:AllowUnsignedHooks"] = "true"
             })

@@ -111,14 +111,16 @@ public static class PlatformHostingExtensions
                 options.ApiKeys.Add(new ApiKeySeed(
                     KeyId: "default",
                     Secret: apiKey,
-                    TenantId: authOpts.InMemory.TenantId,
+                    TenantId: authOpts.InMemory.TenantReference,
                     EnvironmentTag: authOpts.InMemory.EnvironmentTag,
                     Scopes: new[]
                     {
                         CroniqScopes.SchedulesWrite,
                         CroniqScopes.SchedulesDeadLetter,
                         CroniqScopes.JobsRead,
+                        CroniqScopes.JobsWrite,
                         CroniqScopes.JobsTrigger,
+                        CroniqScopes.ExecutionsRead,
                         CroniqScopes.WebhooksRead,
                         CroniqScopes.WebhooksWrite,
                         CroniqScopes.WebhooksRotate,
@@ -129,9 +131,9 @@ public static class PlatformHostingExtensions
                     ClientId: "default"));
 
                 options.Tenants.Add(new TenantSeed(
-                    TenantId: authOpts.InMemory.TenantId,
-                    Reference: authOpts.InMemory.TenantId,
-                    Name: $"{authOpts.InMemory.TenantId} (in-memory)",
+                    TenantId: authOpts.InMemory.TenantReference,
+                    Reference: authOpts.InMemory.TenantReference,
+                    Name: $"{authOpts.InMemory.TenantReference} (in-memory)",
                     IsActive: true,
                     CreatedAtUtc: DateTimeOffset.UtcNow));
             });

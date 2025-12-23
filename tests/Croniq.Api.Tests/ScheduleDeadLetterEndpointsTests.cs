@@ -23,7 +23,7 @@ public sealed class ScheduleDeadLetterEndpointsTests : IClassFixture<WebhookApiT
     public async Task List_returns_schedule_deadletters()
     {
         _host.Reset();
-        var jobKey = $"{WebhookApiTestHost.TenantId}:{WebhookApiTestHost.Environment}:ops:deadletter";
+        const string jobKey = "ops:deadletter";
         var entry = _host.JobDeadLetters.Add(new JobDeadLetterEntry(
             Id: 0,
             TriggerId: "trigger-1",
@@ -52,7 +52,7 @@ public sealed class ScheduleDeadLetterEndpointsTests : IClassFixture<WebhookApiT
     public async Task Replay_executes_job_and_resolves_entry()
     {
         _host.Reset();
-        var jobKey = $"{WebhookApiTestHost.TenantId}:{WebhookApiTestHost.Environment}:ops:replay";
+        const string jobKey = "ops:replay";
         _host.EnsureJob(jobKey);
 
         var entry = _host.JobDeadLetters.Add(new JobDeadLetterEntry(

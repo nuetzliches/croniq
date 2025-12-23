@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Diagnostics.Metrics;
 using Croniq.Core.Jobs;
+using Croniq.Persistence.Abstractions;
 
 namespace Croniq.Core.Execution;
 
@@ -24,34 +25,34 @@ internal static class SchedulerMetrics
         "cronijob_queue_depth",
         description: "Active jobs currently being processed by the scheduler.");
 
-    public static void RecordJobExecution(JobKey jobKey, bool succeeded, double durationMs)
+    public static void RecordJobExecution(JobKey jobKey, bool succeeded, double durationMs, PartitionScope? scope = null)
     {
-        var tags = BuildJobTags(jobKey);
+        var tags = BuildJobTags(jobKey, scope);
         tags.Add("result", succeeded ? "success" : "failure");
         JobExecutions.Add(1, tags);
         JobExecutionDuration.Record(Math.Max(durationMs, 0d), tags);
     }
 
-    public static void RecordMisfire(JobKey jobKey, string reason)
+    public static void RecordMisfire(JobKey jobKey, string reason, PartitionScope? scope = null)
     {
-        var tags = BuildJobTags(jobKey);
+        var tags = BuildJobTags(jobKey, scope);
         tags.Add("reason", string.IsNullOrWhiteSpace(reason) ? "unknown" : reason);
         TriggerMisfires.Add(1, tags);
     }
 
-    public static void RecordQuotaReschedule(JobKey jobKey)
+    public static void RecordQuotaReschedule(JobKey jobKey, PartitionScope? scope = null)
     {
-        TriggerQuotaReschedules.Add(1, BuildJobTags(jobKey));
+        TriggerQuotaReschedules.Add(1, BuildJobTags(jobKey, scope));
     }
 
-    public static void AdjustQueueDepth(JobKey jobKey, long delta)
+    public static void AdjustQueueDepth(JobKey jobKey, long delta, PartitionScope? scope = null)
     {
-        QueueDepth.Add(delta, BuildScopeTags(jobKey));
+        QueueDepth.Add(delta, BuildScopeTags(scope));
     }
 
-    private static TagList BuildJobTags(JobKey jobKey)
+    private static TagList BuildJobTags(JobKey jobKey, PartitionScope? scope)
     {
-        var tags = BuildScopeTags(jobKey);
+        var tags = BuildScopeTags(scope);
         tags.Add("job", jobKey.Value);
         tags.Add("namespace", jobKey.NamespaceSegment);
         tags.Add("name", jobKey.JobName);
@@ -63,14 +64,17 @@ internal static class SchedulerMetrics
         return tags;
     }
 
-    private static TagList BuildScopeTags(JobKey jobKey)
+    private static TagList BuildScopeTags(PartitionScope? scope)
     {
-        var tags = new TagList
+        if (!scope.HasValue)
         {
-            { "tenant", jobKey.TenantId },
-            { "env", jobKey.EnvironmentTag }
-        };
+            return new TagList();
+        }
 
-        return tags;
+        return new TagList
+        {
+            { "tenant", scope.Value.TenantId },
+            { "env", scope.Value.EnvironmentTag }
+        };
     }
 }

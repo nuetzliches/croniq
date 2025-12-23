@@ -45,7 +45,7 @@ public sealed class JobRegistry : IJobRegistry
                 "Add [CroniqJob(\"namespace\", \"name\")] or register via AddCroniqJob(namespace, name, handler).");
         }
 
-        var jobKey = JobKey.Create(options.TenantId, options.EnvironmentTag, attribute.NamespaceSegment, attribute.JobName, attribute.Variant);
+        var jobKey = JobKey.Create(attribute.NamespaceSegment, attribute.JobName, attribute.Variant);
 
         if (_descriptors.TryGetValue(jobKey.Value, out var existing))
         {

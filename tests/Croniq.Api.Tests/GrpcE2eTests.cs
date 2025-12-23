@@ -41,7 +41,7 @@ public sealed class GrpcE2eTests
             ["Croniq:Api:RequestsPerMinute"] = "0",
             ["Croniq:Auth:Mode"] = "InMemory",
             ["Croniq:Auth:InMemory:ApiKey"] = apiKey,
-            ["Croniq:Auth:InMemory:TenantId"] = tenantId,
+            ["Croniq:Auth:InMemory:TenantReference"] = tenantId,
             ["Croniq:Auth:InMemory:EnvironmentTag"] = environmentTag
         });
 
@@ -85,7 +85,7 @@ public sealed class GrpcE2eTests
         using var channel = GrpcChannel.ForAddress(address, new GrpcChannelOptions { HttpClient = httpClient });
         var client = new Scheduler.SchedulerClient(channel);
 
-        var jobKey = $"{tenantId}:{environmentTag}:ops:grpc-e2e";
+        var jobKey = "ops:grpc-e2e";
         registry.EnsureJob(jobKey);
 
         var upsert = await client.UpsertScheduleAsync(new UpsertScheduleRequest
@@ -101,7 +101,7 @@ public sealed class GrpcE2eTests
         var trigger = await client.TriggerJobAsync(new TriggerJobRequest { JobKey = jobKey });
         trigger.Status.ShouldBe("triggered");
         pipeline.Executions.Count.ShouldBe(1);
-        pipeline.Executions[0].JobKey.ShouldBe(JobKey.Create(tenantId, environmentTag, "ops", "grpc-e2e"));
+        pipeline.Executions[0].JobKey.ShouldBe(JobKey.Create("ops", "grpc-e2e"));
 
         await app.StopAsync();
     }

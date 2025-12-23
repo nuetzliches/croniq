@@ -40,7 +40,7 @@ public sealed class SqlServerTenantStore : ITenantStore
         {
             entity = new TenantEntity
             {
-                TenantId = GenerateTenantId(),
+                TenantId = trimmedReference,
                 Reference = trimmedReference,
                 Name = trimmedName,
                 IsActive = true,
@@ -51,6 +51,13 @@ public sealed class SqlServerTenantStore : ITenantStore
         }
         else
         {
+            if (!string.Equals(entity.TenantId, trimmedReference, StringComparison.OrdinalIgnoreCase))
+            {
+                throw new InvalidOperationException(
+                    $"Tenant reference '{trimmedReference}' already exists with TenantId '{entity.TenantId}'. " +
+                    "This setup is no longer supported; reset the database or migrate tenants so TenantId equals Reference.");
+            }
+
             entity.Name = trimmedName;
             entity.IsActive = true;
             entity.UpdatedAtUtc = now;
@@ -119,8 +126,6 @@ public sealed class SqlServerTenantStore : ITenantStore
         await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
         return true;
     }
-
-    private static string GenerateTenantId() => $"tn_{Guid.NewGuid():N}";
 
     private static TenantDescriptor ToDescriptor(TenantEntity entity)
     {

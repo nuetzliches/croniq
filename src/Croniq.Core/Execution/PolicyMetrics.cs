@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Diagnostics.Metrics;
 using Croniq.Core.Jobs;
+using Croniq.Persistence.Abstractions;
 
 namespace Croniq.Core.Execution;
 
@@ -11,33 +12,37 @@ internal static class PolicyMetrics
     private static readonly Counter<long> CircuitOpened = Meter.CreateCounter<long>("cronipolicy_circuit_open", description: "Number of times the execution circuit breaker entered the open state.");
     private static readonly Counter<long> DeadLetterTotal = Meter.CreateCounter<long>("cronipolicy_deadletter_total", description: "Number of executions routed to the dead-letter store.");
 
-    public static void RecordRetry(JobKey jobKey)
+    public static void RecordRetry(JobKey jobKey, PartitionScope? scope = null)
     {
-        RetryAttempts.Add(1, BuildTags(jobKey));
+        RetryAttempts.Add(1, BuildTags(jobKey, scope));
     }
 
-    public static void RecordCircuitOpened(JobKey jobKey)
+    public static void RecordCircuitOpened(JobKey jobKey, PartitionScope? scope = null)
     {
-        CircuitOpened.Add(1, BuildTags(jobKey));
+        CircuitOpened.Add(1, BuildTags(jobKey, scope));
     }
 
-    public static void RecordDeadLetter(JobKey jobKey, string reason)
+    public static void RecordDeadLetter(JobKey jobKey, string reason, PartitionScope? scope = null)
     {
-        var tags = BuildTags(jobKey);
+        var tags = BuildTags(jobKey, scope);
         tags.Add("reason", string.IsNullOrWhiteSpace(reason) ? "unknown" : reason);
         DeadLetterTotal.Add(1, tags);
     }
 
-    private static TagList BuildTags(JobKey jobKey)
+    private static TagList BuildTags(JobKey jobKey, PartitionScope? scope)
     {
         var tags = new TagList
         {
             { "job", jobKey.Value },
-            { "tenant", jobKey.TenantId },
-            { "env", jobKey.EnvironmentTag },
             { "namespace", jobKey.NamespaceSegment },
             { "name", jobKey.JobName }
         };
+
+        if (scope.HasValue)
+        {
+            tags.Add("tenant", scope.Value.TenantId);
+            tags.Add("env", scope.Value.EnvironmentTag);
+        }
 
         if (!string.IsNullOrWhiteSpace(jobKey.Variant))
         {

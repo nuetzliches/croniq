@@ -9,11 +9,11 @@ namespace Croniq.Persistence.Abstractions;
 /// </summary>
 public interface IJobPersistenceProvider : IJobStore
 {
-    Task UpsertJobAsync(JobDefinition job, CancellationToken cancellationToken);
+    Task UpsertJobAsync(JobDefinition job, PartitionScope scope, CancellationToken cancellationToken);
 
     Task<IReadOnlyCollection<JobDefinition>> ListJobsAsync(PartitionScope scope, CancellationToken cancellationToken);
 
-    Task<JobDefinition?> GetJobAsync(string jobKey, CancellationToken cancellationToken);
+    Task<JobDefinition?> GetJobAsync(string jobKey, PartitionScope scope, CancellationToken cancellationToken);
 
     Task DeleteJobAsync(string jobKey, PartitionScope scope, CancellationToken cancellationToken);
 

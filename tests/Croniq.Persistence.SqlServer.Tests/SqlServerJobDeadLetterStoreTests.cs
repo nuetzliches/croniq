@@ -100,11 +100,12 @@ public sealed class SqlServerJobDeadLetterStoreTests : IAsyncLifetime
     public async Task ReleaseAsync_Persists_deadletter_when_reason_provided()
     {
         var scope = new PartitionScope("tenant-release", "dev");
-        var jobKey = JobKey.Create(scope.TenantId, scope.EnvironmentTag, "ops", "release");
+        var jobKey = JobKey.Create("ops", "release");
         var triggerId = $"{jobKey.Value}:t1";
 
         await _persistence!.UpsertJobAsync(
             new JobDefinition(jobKey.Value, jobKey.NamespaceSegment, jobKey.JobName, jobKey.Variant, "demo", null),
+            scope,
             CancellationToken.None);
 
         await _persistence.UpsertTriggerAsync(
@@ -124,11 +125,12 @@ public sealed class SqlServerJobDeadLetterStoreTests : IAsyncLifetime
 
     private async Task<long> SeedDeadLetterAsync(PartitionScope scope, string jobName, string triggerSuffix)
     {
-        var jobKey = JobKey.Create(scope.TenantId, scope.EnvironmentTag, "ops", jobName);
+        var jobKey = JobKey.Create("ops", jobName);
         var triggerId = $"{jobKey.Value}:{triggerSuffix}";
 
         await _persistence!.UpsertJobAsync(
             new JobDefinition(jobKey.Value, jobKey.NamespaceSegment, jobKey.JobName, jobKey.Variant, "demo", null),
+            scope,
             CancellationToken.None);
 
         await _persistence.UpsertTriggerAsync(

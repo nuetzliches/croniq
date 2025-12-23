@@ -55,7 +55,8 @@ public sealed class SqlServerJobPersistenceProviderTests : IAsyncLifetime
     [Trait(TestCategories.Category, TestCategories.Contract)]
     public async Task UpsertJobAsync_PersistsMetadata()
     {
-        var jobKey = JobKey.Create("tenant-a", "dev", "scheduler", "demo", "v1");
+        var scope = new PartitionScope("tenant-a", "dev");
+        var jobKey = JobKey.Create("scheduler", "demo", "v1");
         var metadata = new Dictionary<string, string>
         {
             ["owner"] = "platform",
@@ -64,11 +65,13 @@ public sealed class SqlServerJobPersistenceProviderTests : IAsyncLifetime
 
         await _persistence!.UpsertJobAsync(
             new JobDefinition(jobKey.Value, jobKey.NamespaceSegment, "DemoJob", jobKey.Variant, "original", metadata),
+            scope,
             CancellationToken.None);
 
         await using (var context = await _dbFactory!.CreateDbContextAsync())
         {
-            var entity = await context.Jobs.SingleAsync(j => j.JobKey == jobKey.Value);
+            var entity = await context.Jobs.SingleAsync(j =>
+                j.TenantId == scope.TenantId && j.EnvironmentTag == scope.EnvironmentTag && j.JobKey == jobKey.Value);
             entity.NamespaceSegment.ShouldBe(jobKey.NamespaceSegment);
             entity.Description.ShouldBe("original");
             JsonDocument.Parse(entity.MetadataJson!).RootElement.GetProperty("owner").GetString().ShouldBe("platform");
@@ -77,10 +80,12 @@ public sealed class SqlServerJobPersistenceProviderTests : IAsyncLifetime
         var updatedMetadata = new Dictionary<string, string> { ["owner"] = "sre" };
         await _persistence.UpsertJobAsync(
             new JobDefinition(jobKey.Value, jobKey.NamespaceSegment, "DemoJob", jobKey.Variant, "updated", updatedMetadata),
+            scope,
             CancellationToken.None);
 
         await using var reloaded = await _dbFactory.CreateDbContextAsync();
-        var row = await reloaded.Jobs.SingleAsync(j => j.JobKey == jobKey.Value);
+        var row = await reloaded.Jobs.SingleAsync(j =>
+            j.TenantId == scope.TenantId && j.EnvironmentTag == scope.EnvironmentTag && j.JobKey == jobKey.Value);
         row.Description.ShouldBe("updated");
         JsonDocument.Parse(row.MetadataJson!).RootElement.GetProperty("owner").GetString().ShouldBe("sre");
     }
@@ -89,17 +94,22 @@ public sealed class SqlServerJobPersistenceProviderTests : IAsyncLifetime
     [Trait(TestCategories.Category, TestCategories.Contract)]
     public async Task ListJobsAsync_Returns_matches_for_scope()
     {
-        var devJob = JobKey.Create("tenant-c", "dev", "ops", "notify");
-        var qaJob = JobKey.Create("tenant-c", "qa", "ops", "notify");
+        var jobKey = JobKey.Create("ops", "notify");
+        var scope = new PartitionScope("tenant-c", "dev");
+        var otherScope = new PartitionScope("tenant-c", "qa");
 
-        await _persistence!.UpsertJobAsync(new JobDefinition(devJob.Value, devJob.NamespaceSegment, devJob.JobName, devJob.Variant, "dev job", null), CancellationToken.None);
-        await _persistence.UpsertJobAsync(new JobDefinition(qaJob.Value, qaJob.NamespaceSegment, qaJob.JobName, qaJob.Variant, "qa job", null), CancellationToken.None);
-
-        var scope = new PartitionScope(devJob.TenantId, devJob.EnvironmentTag);
+        await _persistence!.UpsertJobAsync(
+            new JobDefinition(jobKey.Value, jobKey.NamespaceSegment, jobKey.JobName, jobKey.Variant, "dev job", null),
+            scope,
+            CancellationToken.None);
+        await _persistence.UpsertJobAsync(
+            new JobDefinition(jobKey.Value, jobKey.NamespaceSegment, jobKey.JobName, jobKey.Variant, "qa job", null),
+            otherScope,
+            CancellationToken.None);
         var jobs = await _persistence.ListJobsAsync(scope, CancellationToken.None);
 
         jobs.Count.ShouldBe(1);
-        jobs.Single().JobKey.ShouldBe(devJob.Value);
+        jobs.Single().JobKey.ShouldBe(jobKey.Value);
         jobs.Single().Description.ShouldBe("dev job");
     }
 
@@ -107,10 +117,13 @@ public sealed class SqlServerJobPersistenceProviderTests : IAsyncLifetime
     [Trait(TestCategories.Category, TestCategories.Contract)]
     public async Task DeleteJobAsync_Removes_job_and_triggers()
     {
-        var jobKey = JobKey.Create("tenant-d", "dev", "billing", "cleanup");
-        var scope = new PartitionScope(jobKey.TenantId, jobKey.EnvironmentTag);
+        var scope = new PartitionScope("tenant-d", "dev");
+        var jobKey = JobKey.Create("billing", "cleanup");
 
-        await _persistence!.UpsertJobAsync(new JobDefinition(jobKey.Value, jobKey.NamespaceSegment, jobKey.JobName, jobKey.Variant, null, null), CancellationToken.None);
+        await _persistence!.UpsertJobAsync(
+            new JobDefinition(jobKey.Value, jobKey.NamespaceSegment, jobKey.JobName, jobKey.Variant, null, null),
+            scope,
+            CancellationToken.None);
         var trigger = new TriggerDefinition($"{jobKey.Value}:nightly", jobKey.Value, "0 0 * * * ?", scope);
         await _persistence.UpsertTriggerAsync(trigger, CancellationToken.None);
 
@@ -127,11 +140,12 @@ public sealed class SqlServerJobPersistenceProviderTests : IAsyncLifetime
     [Trait(TestCategories.Category, TestCategories.Contract)]
     public async Task UpsertTriggerAsync_Persists_time_zone_id()
     {
-        var jobKey = JobKey.Create("tenant-tz", "dev", "ops", "clock");
-        var scope = new PartitionScope(jobKey.TenantId, jobKey.EnvironmentTag);
+        var scope = new PartitionScope("tenant-tz", "dev");
+        var jobKey = JobKey.Create("ops", "clock");
 
         await _persistence!.UpsertJobAsync(
             new JobDefinition(jobKey.Value, jobKey.NamespaceSegment, jobKey.JobName, jobKey.Variant, "demo", null),
+            scope,
             CancellationToken.None);
 
         var trigger = new TriggerDefinition($"{jobKey.Value}:tz", jobKey.Value, "0 0 * * * ?", scope, TimeZoneId: "UTC");
@@ -149,11 +163,12 @@ public sealed class SqlServerJobPersistenceProviderTests : IAsyncLifetime
     [Trait(TestCategories.Category, TestCategories.Contract)]
     public async Task AcquireAsync_ReturnsDueTriggerWithinScope()
     {
-        var jobKey = JobKey.Create("tenant-b", "qa", "billing", "invoice");
-        var scope = new PartitionScope(jobKey.TenantId, jobKey.EnvironmentTag);
+        var scope = new PartitionScope("tenant-b", "qa");
+        var jobKey = JobKey.Create("billing", "invoice");
 
         await _persistence!.UpsertJobAsync(
             new JobDefinition(jobKey.Value, jobKey.NamespaceSegment, "Invoicing", jobKey.Variant, null, null),
+            scope,
             CancellationToken.None);
 
         var trigger = new TriggerDefinition(
@@ -196,11 +211,12 @@ public sealed class SqlServerJobPersistenceProviderTests : IAsyncLifetime
     [Trait(TestCategories.Category, TestCategories.Contract)]
     public async Task TryRenewLeaseAsync_ExtendsLease()
     {
-        var jobKey = JobKey.Create("tenant-renew", "dev", "billing", "renew");
-        var scope = new PartitionScope(jobKey.TenantId, jobKey.EnvironmentTag);
+        var scope = new PartitionScope("tenant-renew", "dev");
+        var jobKey = JobKey.Create("billing", "renew");
 
         await _persistence!.UpsertJobAsync(
             new JobDefinition(jobKey.Value, jobKey.NamespaceSegment, "RenewJob", jobKey.Variant, null, null),
+            scope,
             CancellationToken.None);
 
         var trigger = new TriggerDefinition(
@@ -240,11 +256,12 @@ public sealed class SqlServerJobPersistenceProviderTests : IAsyncLifetime
     [Trait(TestCategories.Category, TestCategories.Contract)]
     public async Task UpsertTriggerAsync_AllowsOnceExpression()
     {
-        var jobKey = JobKey.Create("tenant-once", "dev", "ops", "once");
-        var scope = new PartitionScope(jobKey.TenantId, jobKey.EnvironmentTag);
+        var scope = new PartitionScope("tenant-once", "dev");
+        var jobKey = JobKey.Create("ops", "once");
 
         await _persistence!.UpsertJobAsync(
             new JobDefinition(jobKey.Value, jobKey.NamespaceSegment, jobKey.JobName, jobKey.Variant, null, null),
+            scope,
             CancellationToken.None);
 
         var startAt = DateTimeOffset.UtcNow.AddMinutes(5);

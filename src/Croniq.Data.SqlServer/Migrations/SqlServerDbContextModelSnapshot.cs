@@ -347,6 +347,8 @@ namespace Croniq.Data.SqlServer.Migrations
 
                     b.HasIndex("ExpiresAtUtc");
 
+                    b.HasIndex("UserId");
+
                     b.HasIndex("TenantId", "TokenHash")
                         .IsUnique();
 
@@ -563,6 +565,8 @@ namespace Croniq.Data.SqlServer.Migrations
 
                     b.HasIndex("TenantId", "EnvironmentTag", "CreatedAtUtc");
 
+                    b.HasIndex("TenantId", "EnvironmentTag", "HookKey");
+
                     b.ToTable("WebhookDeadLetters", "croniq");
                 });
 
@@ -591,6 +595,9 @@ namespace Croniq.Data.SqlServer.Migrations
                         .IsRequired()
                         .HasMaxLength(128)
                         .HasColumnType("nvarchar(128)");
+
+                    b.Property<bool>("IsDeleted")
+                        .HasColumnType("bit");
 
                     b.Property<string>("JobKey")
                         .IsRequired()
@@ -631,10 +638,9 @@ namespace Croniq.Data.SqlServer.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("HookKey")
-                        .IsUnique();
+                    b.HasIndex("TenantId", "EnvironmentTag", "Enabled", "IsDeleted");
 
-                    b.HasIndex("TenantId", "EnvironmentTag", "Enabled");
+                    b.HasIndex("TenantId", "EnvironmentTag", "HookKey", "IsDeleted");
 
                     b.ToTable("WebhookEndpoints", "croniq");
                 });
@@ -685,6 +691,8 @@ namespace Croniq.Data.SqlServer.Migrations
                     b.HasIndex("HookKey");
 
                     b.HasIndex("OccurredAtUtc");
+
+                    b.HasIndex("TenantId", "EnvironmentTag", "HookKey");
 
                     b.ToTable("WebhookEndpointEvents", "croniq");
                 });
@@ -740,12 +748,12 @@ namespace Croniq.Data.SqlServer.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("HookKey", "Cidr")
-                        .IsUnique();
-
                     b.HasIndex("TenantId", "EnvironmentTag");
 
                     b.HasIndex("HookKey", "TenantId", "EnvironmentTag");
+
+                    b.HasIndex("TenantId", "EnvironmentTag", "HookKey", "Cidr")
+                        .IsUnique();
 
                     b.ToTable("WebhookEndpointIpRules", "croniq");
                 });
@@ -803,9 +811,20 @@ namespace Croniq.Data.SqlServer.Migrations
 
                     b.HasIndex("HookKey", "ExpiresAtUtc");
 
+                    b.HasIndex("TenantId", "EnvironmentTag", "HookKey");
+
                     b.HasIndex("HookKey", "TenantId", "EnvironmentTag", "ActivatedAtUtc");
 
                     b.ToTable("WebhookSecretHistory", "croniq");
+                });
+
+            modelBuilder.Entity("Croniq.Data.SqlServer.Entities.ApiClientEntity", b =>
+                {
+                    b.HasOne("Croniq.Data.SqlServer.Entities.TenantEntity", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
                 });
 
             modelBuilder.Entity("Croniq.Data.SqlServer.Entities.ApiKeyEntity", b =>
@@ -830,6 +849,39 @@ namespace Croniq.Data.SqlServer.Migrations
                     b.Navigation("Trigger");
                 });
 
+            modelBuilder.Entity("Croniq.Data.SqlServer.Entities.JobEntity", b =>
+                {
+                    b.HasOne("Croniq.Data.SqlServer.Entities.TenantEntity", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Croniq.Data.SqlServer.Entities.PasswordUserEntity", b =>
+                {
+                    b.HasOne("Croniq.Data.SqlServer.Entities.TenantEntity", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Croniq.Data.SqlServer.Entities.RefreshTokenEntity", b =>
+                {
+                    b.HasOne("Croniq.Data.SqlServer.Entities.TenantEntity", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("Croniq.Data.SqlServer.Entities.PasswordUserEntity", null)
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
             modelBuilder.Entity("Croniq.Data.SqlServer.Entities.TriggerEntity", b =>
                 {
                     b.HasOne("Croniq.Data.SqlServer.Entities.JobEntity", "Job")
@@ -839,6 +891,79 @@ namespace Croniq.Data.SqlServer.Migrations
                         .IsRequired();
 
                     b.Navigation("Job");
+                });
+
+            modelBuilder.Entity("Croniq.Data.SqlServer.Entities.WebhookDeadLetterEntity", b =>
+                {
+                    b.HasOne("Croniq.Data.SqlServer.Entities.TenantEntity", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("Croniq.Data.SqlServer.Entities.WebhookEndpointEntity", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId", "EnvironmentTag", "HookKey")
+                        .HasPrincipalKey("TenantId", "EnvironmentTag", "HookKey")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Croniq.Data.SqlServer.Entities.WebhookEndpointEntity", b =>
+                {
+                    b.HasOne("Croniq.Data.SqlServer.Entities.TenantEntity", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Croniq.Data.SqlServer.Entities.WebhookEndpointEventEntity", b =>
+                {
+                    b.HasOne("Croniq.Data.SqlServer.Entities.TenantEntity", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("Croniq.Data.SqlServer.Entities.WebhookEndpointEntity", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId", "EnvironmentTag", "HookKey")
+                        .HasPrincipalKey("TenantId", "EnvironmentTag", "HookKey")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Croniq.Data.SqlServer.Entities.WebhookEndpointIpRuleEntity", b =>
+                {
+                    b.HasOne("Croniq.Data.SqlServer.Entities.TenantEntity", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("Croniq.Data.SqlServer.Entities.WebhookEndpointEntity", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId", "EnvironmentTag", "HookKey")
+                        .HasPrincipalKey("TenantId", "EnvironmentTag", "HookKey")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Croniq.Data.SqlServer.Entities.WebhookSecretHistoryEntity", b =>
+                {
+                    b.HasOne("Croniq.Data.SqlServer.Entities.TenantEntity", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("Croniq.Data.SqlServer.Entities.WebhookEndpointEntity", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId", "EnvironmentTag", "HookKey")
+                        .HasPrincipalKey("TenantId", "EnvironmentTag", "HookKey")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
                 });
 
             modelBuilder.Entity("Croniq.Data.SqlServer.Entities.ApiClientEntity", b =>

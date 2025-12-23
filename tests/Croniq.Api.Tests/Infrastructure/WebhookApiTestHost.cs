@@ -7,6 +7,7 @@ using Croniq.Auth.Core;
 using Croniq.Core.Execution;
 using Croniq.Core.Jobs;
 using Croniq.Core.Policies;
+using Croniq.Options;
 using Croniq.Persistence.Abstractions;
 using Croniq.Sdk;
 using Croniq.Webhooks.InMemory;
@@ -83,6 +84,12 @@ public sealed class WebhookApiTestHost : IAsyncLifetime
         builder.Services.AddRouting();
         builder.Services.AddOptions();
         builder.Services.Configure<CroniqApiOptions>(builder.Configuration.GetSection("Croniq:Api"));
+        builder.Services.Configure<CroniqOptions>(options =>
+        {
+            options.TenantReference = TenantId;
+            options.EnvironmentTag = Environment;
+            options.InstanceId = "itest";
+        });
         builder.Services.Configure<CroniqTokenOptions>(builder.Configuration.GetSection("Croniq:Auth:Tokens"));
         builder.Services.AddCroniqApiRateLimiter();
         builder.Services.AddSingleton<TenantRateLimitDecider>();

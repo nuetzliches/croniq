@@ -30,14 +30,14 @@ public sealed class InMemoryJobStore : IJobPersistenceProvider, IJobDeadLetterSt
         _options.Normalize();
     }
 
-    public Task UpsertJobAsync(JobDefinition job, CancellationToken cancellationToken)
+    public Task UpsertJobAsync(JobDefinition job, PartitionScope scope, CancellationToken cancellationToken)
     {
         if (job is null) throw new ArgumentNullException(nameof(job));
         cancellationToken.ThrowIfCancellationRequested();
 
         lock (_lock)
         {
-            _jobs[job.JobKey] = CloneJob(job);
+            _jobs[BuildJobIdentity(scope, job.JobKey)] = CloneJob(job);
         }
 
         return Task.CompletedTask;
@@ -49,23 +49,24 @@ public sealed class InMemoryJobStore : IJobPersistenceProvider, IJobDeadLetterSt
 
         lock (_lock)
         {
-            var matches = _jobs.Values
-                .Where(job => JobMatchesScope(job.JobKey, scope))
-                .Select(CloneJob)
+            var prefix = BuildScopePrefix(scope);
+            var matches = _jobs
+                .Where(pair => pair.Key.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                .Select(pair => CloneJob(pair.Value))
                 .ToArray();
 
             return Task.FromResult<IReadOnlyCollection<JobDefinition>>(matches);
         }
     }
 
-    public Task<JobDefinition?> GetJobAsync(string jobKey, CancellationToken cancellationToken)
+    public Task<JobDefinition?> GetJobAsync(string jobKey, PartitionScope scope, CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(jobKey)) throw new ArgumentNullException(nameof(jobKey));
         cancellationToken.ThrowIfCancellationRequested();
 
         lock (_lock)
         {
-            if (!_jobs.TryGetValue(jobKey, out var job))
+            if (!_jobs.TryGetValue(BuildJobIdentity(scope, jobKey), out var job))
             {
                 return Task.FromResult<JobDefinition?>(null);
             }
@@ -81,12 +82,13 @@ public sealed class InMemoryJobStore : IJobPersistenceProvider, IJobDeadLetterSt
 
         lock (_lock)
         {
-            if (!_jobs.TryGetValue(jobKey, out var existing) || !JobMatchesScope(existing.JobKey, scope))
+            var identity = BuildJobIdentity(scope, jobKey);
+            if (!_jobs.TryGetValue(identity, out var existing))
             {
                 return Task.CompletedTask;
             }
 
-            _jobs.Remove(jobKey);
+            _jobs.Remove(identity);
 
             var triggerKeys = _triggers
                 .Where(pair => string.Equals(pair.Value.Definition.JobKey, jobKey, StringComparison.OrdinalIgnoreCase))
@@ -100,6 +102,16 @@ public sealed class InMemoryJobStore : IJobPersistenceProvider, IJobDeadLetterSt
         }
 
         return Task.CompletedTask;
+    }
+
+    private static string BuildScopePrefix(PartitionScope scope)
+    {
+        return $"{scope.TenantId}\u001F{scope.EnvironmentTag}\u001F";
+    }
+
+    private static string BuildJobIdentity(PartitionScope scope, string jobKey)
+    {
+        return $"{BuildScopePrefix(scope)}{jobKey}";
     }
 
     public Task UpsertTriggerAsync(TriggerDefinition trigger, CancellationToken cancellationToken)
@@ -398,17 +410,6 @@ public sealed class InMemoryJobStore : IJobPersistenceProvider, IJobDeadLetterSt
     {
         return string.Equals(a.TenantId, b.TenantId, StringComparison.OrdinalIgnoreCase)
             && string.Equals(a.EnvironmentTag, b.EnvironmentTag, StringComparison.OrdinalIgnoreCase);
-    }
-
-    private static bool JobMatchesScope(string jobKey, PartitionScope scope)
-    {
-        if (!JobKey.TryParse(jobKey, out var key))
-        {
-            return false;
-        }
-
-        return string.Equals(key.TenantId, scope.TenantId, StringComparison.OrdinalIgnoreCase)
-            && string.Equals(key.EnvironmentTag, scope.EnvironmentTag, StringComparison.OrdinalIgnoreCase);
     }
 
     private static JobDefinition CloneJob(JobDefinition job)

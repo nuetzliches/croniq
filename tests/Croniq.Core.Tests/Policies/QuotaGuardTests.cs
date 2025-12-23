@@ -8,7 +8,7 @@ namespace Croniq.Core.Tests.Policies;
 
 public class QuotaGuardTests
 {
-    private static readonly JobKey Job = new("t", "dev", "ns", "job");
+    private static readonly JobKey Job = new("ns", "job");
 
     [Fact]
     public void Enforces_rate_limit_per_minute()

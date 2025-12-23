@@ -5,6 +5,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Croniq.Core.Jobs;
 using Croniq.Core.Policies;
+using Croniq.Persistence.Abstractions;
 using Croniq.Sdk;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
@@ -48,7 +49,7 @@ public sealed class DefaultJobExecutionPipeline : IJobExecutionPipeline
         var jobLogger = loggerFactory?.CreateLogger(request.Descriptor.JobType) ?? _logger;
         var metadata = request.Metadata ?? new Dictionary<string, string>();
         var activitySource = request.ActivitySource ?? _activitySource;
-        using var logScope = jobLogger.BeginScope(BuildLogScope(request.JobKey, request.ExecutionId, metadata));
+        using var logScope = jobLogger.BeginScope(BuildLogScope(request.JobKey, request.Scope, request.ExecutionId, metadata));
 
         using var activity = activitySource.StartActivity("Croniq.Job.Execute");
         activity?.SetTag("croniq.execution_id", request.ExecutionId);
@@ -59,12 +60,14 @@ public sealed class DefaultJobExecutionPipeline : IJobExecutionPipeline
         {
             activity?.SetTag("croniq.job.variant", request.JobKey.Variant);
         }
-        activity?.SetTag("croniq.tenant_id", request.JobKey.TenantId);
-        activity?.SetTag("croniq.environment", request.JobKey.EnvironmentTag);
+        activity?.SetTag("croniq.tenant_id", request.Scope.TenantId);
+        activity?.SetTag("croniq.environment", request.Scope.EnvironmentTag);
         var stopwatch = Stopwatch.StartNew();
-        jobLogger.LogInformation("Trigger {JobKey} started", request.JobKey.Value);
+        metadata.TryGetValue(TriggerIdMetadataKey, out var triggerId);
+        var triggerIdOrUnknown = !string.IsNullOrWhiteSpace(triggerId) ? triggerId : "<unknown>";
+        jobLogger.LogInformation("Trigger {TriggerId} for {JobKey} started", triggerIdOrUnknown, request.JobKey.Value);
 
-        var executionOptions = request.ExecutionOptions ?? _policyResolver.ResolveExecution(request.JobKey);
+        var executionOptions = request.ExecutionOptions ?? _policyResolver.ResolveExecution(request.JobKey, request.Scope);
         var pipeline = _pipelineProvider.Get(request.JobKey, executionOptions);
 
         var context = new JobExecutionContext(request.ExecutionId, request.JobKey.ToString(), metadata, jobLogger, activitySource);
@@ -78,49 +81,49 @@ public sealed class DefaultJobExecutionPipeline : IJobExecutionPipeline
             }, cancellationToken).ConfigureAwait(false);
             stopwatch.Stop();
             activity?.SetStatus(ActivityStatusCode.Ok);
-            jobLogger.LogInformation("Trigger {JobKey} completed in {ElapsedMilliseconds} ms", request.JobKey.Value, stopwatch.ElapsedMilliseconds);
+            jobLogger.LogInformation("Trigger {TriggerId} for {JobKey} completed in {ElapsedMilliseconds} ms", triggerIdOrUnknown, request.JobKey.Value, stopwatch.ElapsedMilliseconds);
         }
         catch (Exception ex)
         {
             stopwatch.Stop();
             activity?.SetStatus(ActivityStatusCode.Error);
-            jobLogger.LogError(ex, "Trigger {JobKey} failed after {ElapsedMilliseconds} ms", request.JobKey.Value, stopwatch.ElapsedMilliseconds);
+            jobLogger.LogError(ex, "Trigger {TriggerId} for {JobKey} failed after {ElapsedMilliseconds} ms", triggerIdOrUnknown, request.JobKey.Value, stopwatch.ElapsedMilliseconds);
             throw;
         }
     }
 
-    private static IReadOnlyCollection<KeyValuePair<string, object?>> BuildLogScope(JobKey jobKey, string executionId, IReadOnlyDictionary<string, string> metadata)
+    private static IReadOnlyCollection<KeyValuePair<string, object?>> BuildLogScope(JobKey jobKey, PartitionScope scope, string executionId, IReadOnlyDictionary<string, string> metadata)
     {
-        var scope = new List<KeyValuePair<string, object?>>
+        var items = new List<KeyValuePair<string, object?>>
         {
             new("croniq.execution_id", executionId),
             new("croniq.job.key", jobKey.Value),
             new("croniq.job.namespace", jobKey.NamespaceSegment),
             new("croniq.job.name", jobKey.JobName),
-            new("croniq.tenant_id", jobKey.TenantId),
-            new("croniq.environment", jobKey.EnvironmentTag)
+            new("croniq.tenant_id", scope.TenantId),
+            new("croniq.environment", scope.EnvironmentTag)
         };
 
         if (!string.IsNullOrWhiteSpace(jobKey.Variant))
         {
-            scope.Add(new KeyValuePair<string, object?>("croniq.job.variant", jobKey.Variant));
+            items.Add(new KeyValuePair<string, object?>("croniq.job.variant", jobKey.Variant));
         }
 
         if (metadata.TryGetValue(TriggerIdMetadataKey, out var triggerId) && !string.IsNullOrWhiteSpace(triggerId))
         {
-            scope.Add(new KeyValuePair<string, object?>("croniq.trigger.id", triggerId));
+            items.Add(new KeyValuePair<string, object?>("croniq.trigger.id", triggerId));
         }
 
         if (metadata.TryGetValue(InitiatorMetadataKey, out var initiator) && !string.IsNullOrWhiteSpace(initiator))
         {
-            scope.Add(new KeyValuePair<string, object?>("croniq.trigger.initiator", initiator));
+            items.Add(new KeyValuePair<string, object?>("croniq.trigger.initiator", initiator));
         }
 
         if (metadata.TryGetValue(CorrelationIdMetadataKey, out var correlationId) && !string.IsNullOrWhiteSpace(correlationId))
         {
-            scope.Add(new KeyValuePair<string, object?>("croniq.correlation_id", correlationId));
+            items.Add(new KeyValuePair<string, object?>("croniq.correlation_id", correlationId));
         }
 
-        return scope;
+        return items;
     }
 }

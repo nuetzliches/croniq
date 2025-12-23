@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Diagnostics.Metrics;
 using Croniq.Core.Jobs;
+using Croniq.Persistence.Abstractions;
 
 namespace Croniq.Api.Telemetry;
 
@@ -26,17 +27,17 @@ internal static class ApiMetrics
         ScheduleUpserts.Add(1, tags);
     }
 
-    public static void RecordManualTrigger(JobKey jobKey)
+    public static void RecordManualTrigger(JobKey jobKey, PartitionScope scope)
     {
-        ManualTriggers.Add(1, BuildJobTags(jobKey));
+        ManualTriggers.Add(1, BuildJobTags(jobKey, scope));
     }
 
-    private static TagList BuildJobTags(JobKey jobKey)
+    private static TagList BuildJobTags(JobKey jobKey, PartitionScope scope)
     {
         var tags = new TagList
         {
-            { "tenant", jobKey.TenantId },
-            { "env", jobKey.EnvironmentTag },
+            { "tenant", scope.TenantId },
+            { "env", scope.EnvironmentTag },
             { "job", jobKey.Value },
             { "namespace", jobKey.NamespaceSegment },
             { "name", jobKey.JobName }

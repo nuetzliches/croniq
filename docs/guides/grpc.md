@@ -20,7 +20,7 @@ try
 {
     var upsert = await client.UpsertScheduleSafeAsync(new UpsertScheduleRequest
     {
-        JobKey = "tenant:dev:ops:demo",
+        JobKey = "ops:demo",
         CronExpression = "0/5 * * * * ?"
     });
 
@@ -39,7 +39,7 @@ catch (CroniqRpcException ex)
 
 ## Proto Semantik
 
-- `UpsertScheduleRequest`: `job_key` (Tenant:Env:Namespace:Job[:Variant]), `cron_expression`, optional `trigger_id`, `description`, `metadata`, optional `enabled`.
+- `UpsertScheduleRequest`: `job_key` (`namespace:name[:variant]`), `cron_expression`, optional `trigger_id`, `description`, `metadata`, optional `enabled`.
 - `DeleteScheduleRequest`: `trigger_id`, `tenant_id`, `environment_tag` erforderlich.
 - `TriggerJobRequest`: `job_key`, optional `metadata`.
 

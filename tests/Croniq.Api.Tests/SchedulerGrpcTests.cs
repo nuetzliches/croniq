@@ -49,32 +49,35 @@ public sealed class SchedulerGrpcTests
     [Fact]
     public async Task TriggerJob_Executes_WhenTenantMatches()
     {
-        var jobKey = $"{TestCallerContextFactory.DefaultTenantId}:{TestCallerContextFactory.DefaultEnvironment}:ops:smoke";
+        var jobKey = "ops:smoke";
         _registry.EnsureJob(jobKey);
 
         var response = await _service.TriggerJob(new TriggerJobRequest { JobKey = jobKey }, CreateContext());
 
         response.Status.ShouldBe("triggered");
         _pipeline.Executions.Count.ShouldBe(1);
-        _pipeline.Executions[0].JobKey.ShouldBe(JobKey.Create("tenant-itest", "dev", "ops", "smoke"));
+        _pipeline.Executions[0].JobKey.ShouldBe(JobKey.Create("ops", "smoke"));
     }
 
     [Fact]
-    public async Task TriggerJob_DeniesCrossTenant()
+    public async Task TriggerJob_Executes_ForDifferentTenantScope()
     {
-        var jobKey = $"{TestCallerContextFactory.DefaultTenantId}:{TestCallerContextFactory.DefaultEnvironment}:ops:smoke";
+        var jobKey = "ops:smoke";
         _registry.EnsureJob(jobKey);
         _callerAccessor.Current = new CallerContext("other", TestCallerContextFactory.DefaultEnvironment, CallerType.ApiKey, "client", new[] { CroniqScopes.JobsTrigger });
 
-        var ex = await Should.ThrowAsync<RpcException>(async () =>
-            await _service.TriggerJob(new TriggerJobRequest { JobKey = jobKey }, CreateContext()));
-        ex.StatusCode.ShouldBe(StatusCode.PermissionDenied);
+        var response = await _service.TriggerJob(new TriggerJobRequest { JobKey = jobKey }, CreateContext());
+
+        response.Status.ShouldBe("triggered");
+        _pipeline.Executions.Count.ShouldBe(1);
+        _pipeline.Executions[0].Scope.TenantId.ShouldBe("other");
+        _pipeline.Executions[0].Scope.EnvironmentTag.ShouldBe(TestCallerContextFactory.DefaultEnvironment);
     }
 
     [Fact]
     public async Task UpsertSchedule_Succeeds_WithTenantMatch()
     {
-        var jobKey = $"{TestCallerContextFactory.DefaultTenantId}:{TestCallerContextFactory.DefaultEnvironment}:ops:plan";
+        var jobKey = "ops:plan";
         _registry.EnsureJob(jobKey);
 
         var response = await _service.UpsertSchedule(new UpsertScheduleRequest

@@ -140,6 +140,8 @@
   - [x] Konzept-Doku: `docs/deep-dive/password-auth.md` (Option A baseline, Option B PAKE outline)
   - [x] Persistenz/Seed: `PasswordChangeRequired` im User-Record + Seed `admin/admin` mit `PasswordChangeRequired=true`
   - [x] "Change password" Endpoint + Flow: `POST /auth/change-password` (oder ähnlich) inkl. Enforcement + UI-Flow
+- [ ] Data Retention: Croniq-internen Job + Trigger seeden, der konfigurierbar Daten bereinigt (pauschal für relevante Tabellen wie `auth.RefreshTokens`, aber explizit nicht für `auth.Users`).
+- [ ] Job Catalog Seeding: opt-in `JobCatalogSeedingHostedService`, der pro Host-Partition (`Croniq:Core` Tenant/Environment) alle registrierten Jobs (aus `IJobRegistry`) als Job-Definitionen in der Persistenz upsertet (ohne Trigger anzulegen, ohne Deletes), gated über `Croniq:Seeding`/separaten Config-Schalter.
 - [ ] (nice-to-have) Solutionweit usings aufräumen?
 - [ ] CI Static Analysis / SAST: entscheiden und ggf. integrieren
   - [ ] CodeQL-Code-Scanning Workflow hinzufügen (optional; abhängig von GHAS/Repo-Settings)

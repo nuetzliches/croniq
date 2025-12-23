@@ -18,7 +18,7 @@ public class JobHandlerRegistryTests
     [Fact]
     public async Task TryGet_ReturnsRegisteredHandler()
     {
-        var options = Microsoft.Extensions.Options.Options.Create(new CroniqOptions { TenantId = "tenant", EnvironmentTag = "dev" });
+        var options = Microsoft.Extensions.Options.Options.Create(new CroniqOptions { TenantReference = "tenant", EnvironmentTag = "dev" });
         var attribute = new CroniqJobAttribute("samples", "demo");
         var handled = false;
         Func<IServiceProvider, IJobExecutionContext, CancellationToken, Task> handler = (_, _, _) =>
@@ -32,7 +32,7 @@ public class JobHandlerRegistryTests
             new JobHandlerRegistration(attribute, handler)
         });
 
-        var jobKey = JobKey.Create("tenant", "dev", "samples", "demo").Value;
+        var jobKey = JobKey.Create("samples", "demo").Value;
         registry.TryGet(jobKey, out var resolved).ShouldBeTrue();
 
         var context = new TestExecutionContext(jobKey);
@@ -53,7 +53,7 @@ public class JobHandlerRegistryTests
     [Fact]
     public void Throws_OnDuplicateJobKeys()
     {
-        var options = Microsoft.Extensions.Options.Options.Create(new CroniqOptions { TenantId = "tenant", EnvironmentTag = "dev" });
+        var options = Microsoft.Extensions.Options.Options.Create(new CroniqOptions { TenantReference = "tenant", EnvironmentTag = "dev" });
         var attribute = new CroniqJobAttribute("samples", "demo");
         var handler = new Func<IServiceProvider, IJobExecutionContext, CancellationToken, Task>((_, _, _) => Task.CompletedTask);
 

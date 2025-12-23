@@ -33,7 +33,8 @@ public static class WebhookHostingExtensions
     private static readonly ActivitySource ActivitySource = new("Croniq.Webhooks.Ingress");
     private static readonly ConcurrentDictionary<string, byte> UnsignedWarningCache = new(StringComparer.OrdinalIgnoreCase);
     private const string WebhookOptionsSectionName = "Croniq:Webhooks";
-    private static string BuildEndpointCacheKey(string hookKey) => $"webhook:endpoint:{hookKey.ToLowerInvariant()}";
+    private static string BuildEndpointCacheKey(PartitionScope scope, string hookKey)
+        => $"webhook:endpoint:{scope.TenantId.ToLowerInvariant()}:{scope.EnvironmentTag.ToLowerInvariant()}:{hookKey.ToLowerInvariant()}";
 
     public static IServiceCollection AddCroniqWebhookPersistence(this IServiceCollection services, IConfiguration configuration, string sectionName = WebhookOptionsSectionName)
     {
@@ -140,10 +141,23 @@ public static class WebhookHostingExtensions
                 var hookKey = context.Request.RouteValues.TryGetValue("hookKey", out var raw)
                     ? raw?.ToString() ?? string.Empty
                     : string.Empty;
+                var tenantId = context.Request.RouteValues.TryGetValue("tenantId", out var rawTenant)
+                    ? rawTenant?.ToString() ?? string.Empty
+                    : string.Empty;
+                var environmentTag = context.Request.RouteValues.TryGetValue("environmentTag", out var rawEnv)
+                    ? rawEnv?.ToString() ?? string.Empty
+                    : string.Empty;
+
                 var resolver = context.RequestServices.GetRequiredService<WebhookEndpointResolver>();
-                var descriptor = resolver.TryGetCached(hookKey);
+                WebhookEndpointDescriptor? descriptor = null;
+                if (!string.IsNullOrWhiteSpace(tenantId) && !string.IsNullOrWhiteSpace(environmentTag) && !string.IsNullOrWhiteSpace(hookKey))
+                {
+                    descriptor = resolver.TryGetCached(new PartitionScope(tenantId, environmentTag), hookKey);
+                }
                 var limit = descriptor?.RequestsPerMinute ?? resolver.GetDefaultRequestsPerMinute();
-                var partitionKey = string.IsNullOrEmpty(hookKey) ? "webhooks:global" : $"webhooks:{hookKey}";
+                var partitionKey = string.IsNullOrEmpty(hookKey)
+                    ? "webhooks:global"
+                    : $"webhooks:{tenantId}:{environmentTag}:{hookKey}";
 
                 if (limit <= 0)
                 {
@@ -183,12 +197,9 @@ public static class WebhookHostingExtensions
                 try
                 {
                     var result = await health.CheckAsync(ct).ConfigureAwait(false);
-                    if (result.IsHealthy)
-                    {
-                        return Results.Ok(new { status = "ok", provider = providerName, db = "reachable" });
-                    }
-
-                    return Results.Problem(statusCode: StatusCodes.Status503ServiceUnavailable, title: "db-unhealthy", detail: result.Detail);
+                    return result.IsHealthy
+                        ? Results.Ok(new { status = "ok", provider = providerName, db = "reachable" })
+                        : Results.Problem(statusCode: StatusCodes.Status503ServiceUnavailable, title: "db-unhealthy", detail: result.Detail);
                 }
                 catch (Exception ex)
                 {
@@ -197,7 +208,9 @@ public static class WebhookHostingExtensions
             });
         }
 
-        app.MapPost("/webhooks/{hookKey}", async (
+        app.MapPost("/tenants/{tenantId}/environments/{environmentTag}/webhooks/{hookKey}", async (
+            string tenantId,
+            string environmentTag,
             string hookKey,
             HttpRequest request,
             IJobRegistry registry,
@@ -210,7 +223,8 @@ public static class WebhookHostingExtensions
             ILogger<WebhookRequestHandlerMarker> logger,
             CancellationToken cancellationToken) =>
         {
-            var endpoint = await endpointResolver.ResolveAsync(hookKey, cancellationToken).ConfigureAwait(false);
+            var scope = new PartitionScope(tenantId, environmentTag);
+            var endpoint = await endpointResolver.ResolveAsync(hookKey, scope, cancellationToken).ConfigureAwait(false);
             if (endpoint is null || !endpoint.Enabled)
             {
                 logger.LogWarning("webhook {HookKey} not configured", hookKey);
@@ -237,7 +251,7 @@ public static class WebhookHostingExtensions
             if (!registry.TryGet(jobKey, out var descriptor))
             {
                 logger.LogWarning("job {JobKey} not registered for webhook {HookKey}", endpoint.JobKey, hookKey);
-                await deadLetterRecorder.TryRecordAsync(jobKey, endpoint, payload, headers, metadata: null, failureReason: "job-not-registered", statusCode: StatusCodes.Status404NotFound, errorDetails: "job not registered", cancellationToken).ConfigureAwait(false);
+                await deadLetterRecorder.TryRecordAsync(jobKey, scope, endpoint, payload, headers, metadata: null, failureReason: "job-not-registered", statusCode: StatusCodes.Status404NotFound, errorDetails: "job not registered", cancellationToken: cancellationToken).ConfigureAwait(false);
                 return Results.NotFound(new { error = "job-not-registered", endpoint.JobKey });
             }
 
@@ -255,7 +269,7 @@ public static class WebhookHostingExtensions
                 var provided = request.Headers["X-Croniq-Signature"].FirstOrDefault();
                 if (string.IsNullOrWhiteSpace(provided))
                 {
-                    await deadLetterRecorder.TryRecordAsync(jobKey, endpoint, payload, headers, metadata: null, failureReason: "signature-missing", statusCode: StatusCodes.Status401Unauthorized, errorDetails: "missing signature header", cancellationToken).ConfigureAwait(false);
+                    await deadLetterRecorder.TryRecordAsync(jobKey, scope, endpoint, payload, headers, metadata: null, failureReason: "signature-missing", statusCode: StatusCodes.Status401Unauthorized, errorDetails: "missing signature header", cancellationToken: cancellationToken).ConfigureAwait(false);
                     return Results.StatusCode(StatusCodes.Status401Unauthorized);
                 }
 
@@ -273,7 +287,7 @@ public static class WebhookHostingExtensions
                 if (!accepted)
                 {
                     logger.LogWarning("signature mismatch for webhook {HookKey}", hookKey);
-                    await deadLetterRecorder.TryRecordAsync(jobKey, endpoint, payload, headers, metadata: null, failureReason: "signature-invalid", statusCode: StatusCodes.Status401Unauthorized, errorDetails: "signature mismatch", cancellationToken).ConfigureAwait(false);
+                    await deadLetterRecorder.TryRecordAsync(jobKey, scope, endpoint, payload, headers, metadata: null, failureReason: "signature-invalid", statusCode: StatusCodes.Status401Unauthorized, errorDetails: "signature mismatch", cancellationToken: cancellationToken).ConfigureAwait(false);
                     return Results.StatusCode(StatusCodes.Status401Unauthorized);
                 }
             }
@@ -286,15 +300,15 @@ public static class WebhookHostingExtensions
             }
 
             var metadata = metadataFactory.Create(endpoint, payload);
-            var executionOptions = policyResolver.ResolveExecution(jobKey);
+            var executionOptions = policyResolver.ResolveExecution(jobKey, scope);
             var executionId = Guid.NewGuid().ToString("N");
-            var execRequest = new JobExecutionRequest(executionId, jobKey, descriptor, executionOptions, metadata, ActivitySource);
+            var execRequest = new JobExecutionRequest(executionId, jobKey, scope, descriptor, executionOptions, metadata, ActivitySource);
 
             using var activity = ActivitySource.StartActivity("Croniq.Webhooks.Trigger", ActivityKind.Server);
             activity?.SetTag("croniq.webhook.key", endpoint.HookKey);
             activity?.SetTag("croniq.job.key", jobKey.Value);
-            activity?.SetTag("croniq.tenant_id", jobKey.TenantId);
-            activity?.SetTag("croniq.environment", jobKey.EnvironmentTag);
+            activity?.SetTag("croniq.tenant_id", scope.TenantId);
+            activity?.SetTag("croniq.environment", scope.EnvironmentTag);
 
             try
             {
@@ -306,7 +320,7 @@ public static class WebhookHostingExtensions
             {
                 activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
                 logger.LogError(ex, "error executing job {JobKey} for webhook {HookKey}", endpoint.JobKey, endpoint.HookKey);
-                await deadLetterRecorder.TryRecordAsync(jobKey, endpoint, payload, headers, metadata, failureReason: "execution-error", statusCode: StatusCodes.Status500InternalServerError, errorDetails: ex.Message, cancellationToken).ConfigureAwait(false);
+                await deadLetterRecorder.TryRecordAsync(jobKey, scope, endpoint, payload, headers, metadata, failureReason: "execution-error", statusCode: StatusCodes.Status500InternalServerError, errorDetails: ex.Message, cancellationToken: cancellationToken).ConfigureAwait(false);
                 throw;
             }
         }).RequireRateLimiting("cronq-webhooks");
@@ -451,6 +465,7 @@ public static class WebhookHostingExtensions
 
         public async Task TryRecordAsync(
             JobKey jobKey,
+            PartitionScope scope,
             WebhookEndpointDescriptor endpoint,
             string payload,
             IReadOnlyDictionary<string, string> headers,
@@ -480,8 +495,8 @@ public static class WebhookHostingExtensions
                 var create = new WebhookDeadLetterCreate(
                     endpoint.HookKey,
                     jobKey.Value,
-                    jobKey.TenantId,
-                    jobKey.EnvironmentTag,
+                    scope.TenantId,
+                    scope.EnvironmentTag,
                     payload ?? string.Empty,
                     headers,
                     metadata,
@@ -550,7 +565,7 @@ public static class WebhookHostingExtensions
 
                     foreach (var evt in batch)
                     {
-                        _resolver.Invalidate(evt.HookKey);
+                        _resolver.Invalidate(new PartitionScope(evt.TenantId, evt.EnvironmentTag), evt.HookKey);
                         _cursor = Math.Max(_cursor, evt.Id);
                         _logger.LogDebug("Invalidated webhook cache for {HookKey} due to {EventType}", evt.HookKey, evt.EventType);
                     }
@@ -598,14 +613,14 @@ public static class WebhookHostingExtensions
             return configured <= 0 ? 1 : configured;
         }
 
-        public WebhookEndpointDescriptor? TryGetCached(string hookKey)
+        public WebhookEndpointDescriptor? TryGetCached(PartitionScope scope, string hookKey)
         {
             if (string.IsNullOrWhiteSpace(hookKey))
             {
                 return null;
             }
 
-            if (_cache.TryGetValue(BuildEndpointCacheKey(hookKey), out var cached) && cached is WebhookEndpointDescriptor descriptor)
+            if (_cache.TryGetValue(BuildEndpointCacheKey(scope, hookKey), out var cached) && cached is WebhookEndpointDescriptor descriptor)
             {
                 return descriptor;
             }
@@ -613,60 +628,62 @@ public static class WebhookHostingExtensions
             return null;
         }
 
-        public async Task<WebhookEndpointDescriptor?> ResolveAsync(string hookKey, CancellationToken cancellationToken)
+        public async Task<WebhookEndpointDescriptor?> ResolveAsync(string hookKey, PartitionScope scope, CancellationToken cancellationToken)
         {
             if (string.IsNullOrWhiteSpace(hookKey))
             {
                 return null;
             }
 
-            if (_cache.TryGetValue(BuildEndpointCacheKey(hookKey), out var cached) && cached is WebhookEndpointDescriptor descriptor)
+            if (_cache.TryGetValue(BuildEndpointCacheKey(scope, hookKey), out var cached) && cached is WebhookEndpointDescriptor descriptor)
             {
                 return descriptor;
             }
 
             if (_store is not null)
             {
-                var persisted = await _store.FindByHookKeyAsync(hookKey, cancellationToken).ConfigureAwait(false);
+                var persisted = await _store.FindByHookKeyAsync(hookKey, scope, cancellationToken).ConfigureAwait(false);
                 if (persisted is not null)
                 {
-                    var secrets = await ResolveActiveSecretsAsync(persisted, cancellationToken).ConfigureAwait(false);
+                    var secrets = await ResolveActiveSecretsAsync(persisted, new PartitionScope(persisted.TenantId, persisted.EnvironmentTag), cancellationToken).ConfigureAwait(false);
                     descriptor = WebhookEndpointDescriptor.FromDefinition(persisted, secrets);
-                    _cache.Set(BuildEndpointCacheKey(hookKey), descriptor, TimeSpan.FromMinutes(1));
+                    _cache.Set(BuildEndpointCacheKey(scope, hookKey), descriptor, TimeSpan.FromMinutes(1));
                     return descriptor;
                 }
             }
 
             var options = _options.CurrentValue;
-            var config = options.Endpoints.FirstOrDefault(e => e.Enabled && string.Equals(e.HookKey, hookKey, StringComparison.OrdinalIgnoreCase));
+            var config = options.Endpoints
+                .Where(e => e.Enabled && string.Equals(e.HookKey, hookKey, StringComparison.OrdinalIgnoreCase))
+                .FirstOrDefault(e => JobKey.TryParse(e.JobKey, out _));
             if (config is not null)
             {
                 descriptor = WebhookEndpointDescriptor.FromOptions(config, options.RequestsPerMinute, options.Security);
-                _cache.Set(BuildEndpointCacheKey(hookKey), descriptor, TimeSpan.FromSeconds(30));
+                _cache.Set(BuildEndpointCacheKey(scope, hookKey), descriptor, TimeSpan.FromSeconds(30));
                 return descriptor;
             }
 
             return null;
         }
 
-        public void Invalidate(string hookKey)
+        public void Invalidate(PartitionScope scope, string hookKey)
         {
             if (string.IsNullOrWhiteSpace(hookKey))
             {
                 return;
             }
 
-            _cache.Remove(BuildEndpointCacheKey(hookKey));
+            _cache.Remove(BuildEndpointCacheKey(scope, hookKey));
         }
 
-        private async Task<IReadOnlyList<string>> ResolveActiveSecretsAsync(WebhookEndpointDefinition definition, CancellationToken cancellationToken)
+        private async Task<IReadOnlyList<string>> ResolveActiveSecretsAsync(WebhookEndpointDefinition definition, PartitionScope scope, CancellationToken cancellationToken)
         {
             if (_store is null)
             {
                 return NormalizeSecrets(null, definition.Secret);
             }
 
-            var materials = await _store.GetActiveSecretsAsync(definition.HookKey, cancellationToken).ConfigureAwait(false);
+            var materials = await _store.GetActiveSecretsAsync(definition.HookKey, scope, cancellationToken).ConfigureAwait(false);
             if (materials.Count == 0)
             {
                 return NormalizeSecrets(null, definition.Secret);
@@ -723,14 +740,14 @@ public static class WebhookHostingExtensions
             _cache = cache;
         }
 
-        public void NotifyChanged(string hookKey)
+        public void NotifyChanged(string hookKey, PartitionScope scope)
         {
             if (string.IsNullOrWhiteSpace(hookKey))
             {
                 return;
             }
 
-            _cache.Remove(BuildEndpointCacheKey(hookKey));
+            _cache.Remove(BuildEndpointCacheKey(scope, hookKey));
         }
     }
 

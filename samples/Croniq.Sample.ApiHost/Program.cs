@@ -9,6 +9,8 @@ using Croniq.Data.SqlServer;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
+using System.Linq;
+using System.Reflection;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -93,7 +95,54 @@ if (app.Environment.IsDevelopment())
 
         var seedSection = config.GetSection("Croniq:Sample:Auth:Password");
 
-        var tenantReference = seedSection["TenantReference"]?.Trim();
+        static string? Env(string name)
+        {
+            var value = Environment.GetEnvironmentVariable(name);
+            return string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+        }
+
+        static IReadOnlyCollection<string> ResolveSeedScopes(string? raw)
+        {
+            if (string.IsNullOrWhiteSpace(raw))
+            {
+                return new[]
+                {
+                    CroniqScopes.SchedulesWrite,
+                    CroniqScopes.SchedulesDeadLetter,
+                    CroniqScopes.JobsRead,
+                    CroniqScopes.JobsWrite,
+                    CroniqScopes.JobsTrigger,
+                    CroniqScopes.ExecutionsRead,
+                    CroniqScopes.WebhooksRead,
+                    CroniqScopes.WebhooksWrite,
+                    CroniqScopes.WebhooksRotate,
+                    CroniqScopes.WebhooksDeadLetter,
+                    CroniqScopes.ApiKeysManage,
+                    CroniqScopes.TenantsAdmin,
+                };
+            }
+
+            if (string.Equals(raw, "all", StringComparison.OrdinalIgnoreCase))
+            {
+                return typeof(CroniqScopes)
+                    .GetFields(BindingFlags.Public | BindingFlags.Static)
+                    .Where(field => field is { IsLiteral: true, IsInitOnly: false } && field.FieldType == typeof(string))
+                    .Select(field => (string)field.GetRawConstantValue()!)
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .OrderBy(scope => scope, StringComparer.OrdinalIgnoreCase)
+                    .ToArray();
+            }
+
+            return raw
+                .Split(new[] { ' ', '\t', '\r', '\n', ',' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .OrderBy(scope => scope, StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+        }
+
+        // Prefer CRONIQ_SEED_* env vars so Sample.ApiHost and devstack db-migrator seed the same tenant/user by default.
+        // This avoids ending up with both 'default' and 'dev' tenants unless explicitly desired.
+        var tenantReference = Env("CRONIQ_SEED_TENANT_REFERENCE") ?? seedSection["TenantReference"]?.Trim();
         if (string.IsNullOrWhiteSpace(tenantReference))
         {
             tenantReference = passwordAuthOptions.DefaultTenant?.Trim();
@@ -101,14 +150,16 @@ if (app.Environment.IsDevelopment())
 
         tenantReference ??= "dev";
 
-        var tenantName = seedSection["TenantName"]?.Trim();
+        var tenantName = Env("CRONIQ_SEED_TENANT_NAME") ?? seedSection["TenantName"]?.Trim();
         tenantName ??= "Croniq Dev";
 
-        var username = seedSection["Username"]?.Trim();
+        var username = Env("CRONIQ_SEED_ADMIN_USERNAME") ?? seedSection["Username"]?.Trim();
         username ??= "admin";
 
-        var password = seedSection["Password"];
+        var password = Env("CRONIQ_SEED_ADMIN_PASSWORD") ?? seedSection["Password"];
         password ??= "admin";
+
+        var scopes = ResolveSeedScopes(Env("CRONIQ_SEED_ADMIN_SCOPES"));
 
         var tenants = services.GetRequiredService<ITenantStore>();
         var tenant = await tenants.GetByReferenceAsync(tenantReference) ?? await tenants.CreateAsync(tenantReference, tenantName);
@@ -126,18 +177,7 @@ if (app.Environment.IsDevelopment())
             tenant.TenantId,
             username,
             passwordHash,
-            new[]
-            {
-                CroniqScopes.SchedulesWrite,
-                CroniqScopes.JobsRead,
-                CroniqScopes.JobsTrigger,
-                CroniqScopes.WebhooksRead,
-                CroniqScopes.WebhooksWrite,
-                CroniqScopes.WebhooksRotate,
-                CroniqScopes.WebhooksDeadLetter,
-                CroniqScopes.ApiKeysManage,
-                CroniqScopes.TenantsAdmin,
-            },
+            scopes,
             IsActive: true,
             PasswordChangeRequired: true));
     }

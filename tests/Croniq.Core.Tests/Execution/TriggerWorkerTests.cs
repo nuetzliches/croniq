@@ -21,7 +21,7 @@ namespace Croniq.Core.Tests.Execution;
 public class TriggerWorkerTests
 {
     private static readonly CroniqJobAttribute SampleJobAttribute = new("samples", "demo");
-    private static readonly JobKey SampleJobKey = JobKey.Create("t1", "dev", "samples", "demo");
+    private static readonly JobKey SampleJobKey = JobKey.Create("samples", "demo");
     private static readonly JobDescriptor SampleDescriptor = new(typeof(SampleJob), SampleJobAttribute, SampleJobKey);
 
     [Fact]
@@ -29,7 +29,7 @@ public class TriggerWorkerTests
     {
         var store = new FakeJobStore(new[]
         {
-            NewLease(jobKey: "t1:dev:samples:missing")
+            NewLease(jobKey: "samples:missing")
         });
 
         var registry = Substitute.For<IJobRegistry>();
@@ -63,9 +63,9 @@ public class TriggerWorkerTests
             .Returns(new MisfireDecision(true, "late"));
 
         var policyResolver = Substitute.For<IPolicyResolver>();
-        policyResolver.ResolveMisfire(SampleJobKey).Returns(new MisfirePolicyOptions { DeadLetterOnMisfire = true });
-        policyResolver.ResolveQuota(SampleJobKey).Returns(new QuotaOptions());
-        policyResolver.ResolveExecution(SampleJobKey).Returns(new ExecutionPolicyOptions());
+        policyResolver.ResolveMisfire(SampleJobKey, Arg.Any<PartitionScope?>()).Returns(new MisfirePolicyOptions { DeadLetterOnMisfire = true });
+        policyResolver.ResolveQuota(SampleJobKey, Arg.Any<PartitionScope?>()).Returns(new QuotaOptions());
+        policyResolver.ResolveExecution(SampleJobKey, Arg.Any<PartitionScope?>()).Returns(new ExecutionPolicyOptions());
 
         var quotaGuard = Substitute.For<IQuotaGuard>();
         quotaGuard.TryAcquire(Arg.Any<JobKey>(), Arg.Any<QuotaOptions>(), Arg.Any<DateTimeOffset>(), out Arg.Any<DateTimeOffset?>())
@@ -102,9 +102,9 @@ public class TriggerWorkerTests
             .Returns(new MisfireDecision(false, null));
 
         var policyResolver = Substitute.For<IPolicyResolver>();
-        policyResolver.ResolveMisfire(SampleJobKey).Returns(new MisfirePolicyOptions());
-        policyResolver.ResolveQuota(SampleJobKey).Returns(new QuotaOptions());
-        policyResolver.ResolveExecution(SampleJobKey).Returns(new ExecutionPolicyOptions());
+        policyResolver.ResolveMisfire(SampleJobKey, Arg.Any<PartitionScope?>()).Returns(new MisfirePolicyOptions());
+        policyResolver.ResolveQuota(SampleJobKey, Arg.Any<PartitionScope?>()).Returns(new QuotaOptions());
+        policyResolver.ResolveExecution(SampleJobKey, Arg.Any<PartitionScope?>()).Returns(new ExecutionPolicyOptions());
 
         var quotaGuard = Substitute.For<IQuotaGuard>();
         quotaGuard.TryAcquire(Arg.Any<JobKey>(), Arg.Any<QuotaOptions>(), Arg.Any<DateTimeOffset>(), out Arg.Any<DateTimeOffset?>())
@@ -256,9 +256,9 @@ public class TriggerWorkerTests
             .Returns(new MisfireDecision(false, null));
 
         var policyResolver = Substitute.For<IPolicyResolver>();
-        policyResolver.ResolveMisfire(SampleJobKey).Returns(new MisfirePolicyOptions());
-        policyResolver.ResolveQuota(SampleJobKey).Returns(new QuotaOptions());
-        policyResolver.ResolveExecution(SampleJobKey).Returns(new ExecutionPolicyOptions());
+        policyResolver.ResolveMisfire(SampleJobKey, Arg.Any<PartitionScope?>()).Returns(new MisfirePolicyOptions());
+        policyResolver.ResolveQuota(SampleJobKey, Arg.Any<PartitionScope?>()).Returns(new QuotaOptions());
+        policyResolver.ResolveExecution(SampleJobKey, Arg.Any<PartitionScope?>()).Returns(new ExecutionPolicyOptions());
 
         var quotaGuard = Substitute.For<IQuotaGuard>();
         quotaGuard.TryAcquire(Arg.Any<JobKey>(), Arg.Any<QuotaOptions>(), Arg.Any<DateTimeOffset>(), out Arg.Any<DateTimeOffset?>())
@@ -300,9 +300,9 @@ public class TriggerWorkerTests
             .Returns(new MisfireDecision(false, null));
 
         var policyResolver = Substitute.For<IPolicyResolver>();
-        policyResolver.ResolveMisfire(SampleJobKey).Returns(new MisfirePolicyOptions());
-        policyResolver.ResolveQuota(SampleJobKey).Returns(new QuotaOptions());
-        policyResolver.ResolveExecution(SampleJobKey).Returns(new ExecutionPolicyOptions());
+        policyResolver.ResolveMisfire(SampleJobKey, Arg.Any<PartitionScope?>()).Returns(new MisfirePolicyOptions());
+        policyResolver.ResolveQuota(SampleJobKey, Arg.Any<PartitionScope?>()).Returns(new QuotaOptions());
+        policyResolver.ResolveExecution(SampleJobKey, Arg.Any<PartitionScope?>()).Returns(new ExecutionPolicyOptions());
 
         var quotaGuard = Substitute.For<IQuotaGuard>();
         quotaGuard.TryAcquire(Arg.Any<JobKey>(), Arg.Any<QuotaOptions>(), Arg.Any<DateTimeOffset>(), out Arg.Any<DateTimeOffset?>())
@@ -346,9 +346,9 @@ public class TriggerWorkerTests
         if (policyResolver is null)
         {
             policyResolver = Substitute.For<IPolicyResolver>();
-            policyResolver.ResolveMisfire(Arg.Any<JobKey>()).Returns(new MisfirePolicyOptions());
-            policyResolver.ResolveQuota(Arg.Any<JobKey>()).Returns(new QuotaOptions());
-            policyResolver.ResolveExecution(Arg.Any<JobKey>()).Returns(new ExecutionPolicyOptions());
+            policyResolver.ResolveMisfire(Arg.Any<JobKey>(), Arg.Any<PartitionScope?>()).Returns(new MisfirePolicyOptions());
+            policyResolver.ResolveQuota(Arg.Any<JobKey>(), Arg.Any<PartitionScope?>()).Returns(new QuotaOptions());
+            policyResolver.ResolveExecution(Arg.Any<JobKey>(), Arg.Any<PartitionScope?>()).Returns(new ExecutionPolicyOptions());
         }
 
         if (misfirePolicy is null)
@@ -374,7 +374,7 @@ public class TriggerWorkerTests
 
         jobLogStore ??= Substitute.For<IExecutionLogStore>();
 
-        var options = Microsoft.Extensions.Options.Options.Create(new CroniqOptions { TenantId = "t1", EnvironmentTag = "dev", InstanceId = "test" });
+        var options = Microsoft.Extensions.Options.Options.Create(new CroniqOptions { TenantReference = "t1", EnvironmentTag = "dev", InstanceId = "test" });
         var workerOptions = Microsoft.Extensions.Options.Options.Create(hostOptions ?? new WorkerHostOptions { LeaseRenewalLeadTime = TimeSpan.Zero });
 
         return new TriggerWorker(

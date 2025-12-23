@@ -25,7 +25,7 @@ public sealed class ScheduleEndpointsTests : IClassFixture<WebhookApiTestHost>
     public async Task ListSchedulesReturnsPersistedEntries()
     {
         _host.Reset();
-        var jobKey = $"{WebhookApiTestHost.TenantId}:{WebhookApiTestHost.Environment}:ops:list";
+        const string jobKey = "ops:list";
         var triggerId = await UpsertScheduleAsync(jobKey);
 
         var response = await _host.Client.GetAsync($"/tenants/{WebhookApiTestHost.TenantId}/schedules?environment={WebhookApiTestHost.Environment}");
@@ -80,7 +80,7 @@ public sealed class ScheduleEndpointsTests : IClassFixture<WebhookApiTestHost>
     public async Task GetScheduleReturnsSingleEntry()
     {
         _host.Reset();
-        var jobKey = $"{WebhookApiTestHost.TenantId}:{WebhookApiTestHost.Environment}:ops:get";
+        const string jobKey = "ops:get";
         var triggerId = await UpsertScheduleAsync(jobKey);
 
         var response = await _host.Client.GetAsync($"/tenants/{WebhookApiTestHost.TenantId}/schedules/{Uri.EscapeDataString(triggerId)}?environment={WebhookApiTestHost.Environment}");
@@ -96,7 +96,7 @@ public sealed class ScheduleEndpointsTests : IClassFixture<WebhookApiTestHost>
     public async Task DeleteScheduleRemovesTrigger()
     {
         _host.Reset();
-        var jobKey = $"{WebhookApiTestHost.TenantId}:{WebhookApiTestHost.Environment}:ops:delete";
+        const string jobKey = "ops:delete";
         var triggerId = await UpsertScheduleAsync(jobKey);
 
         var deleteResponse = await _host.Client.DeleteAsync($"/tenants/{WebhookApiTestHost.TenantId}/schedules/{Uri.EscapeDataString(triggerId)}?environment={WebhookApiTestHost.Environment}");
@@ -113,7 +113,7 @@ public sealed class ScheduleEndpointsTests : IClassFixture<WebhookApiTestHost>
     public async Task UpsertScheduleRejectsEnvironmentQueryMismatch()
     {
         _host.Reset();
-        var jobKey = $"{WebhookApiTestHost.TenantId}:{WebhookApiTestHost.Environment}:ops:env";
+        const string jobKey = "ops:env";
         var request = new CroniqTriggerSeedDefinition
         {
             JobKey = jobKey,

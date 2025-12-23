@@ -99,11 +99,11 @@ cd HelloCroniq
 ```
 
 ```cmd
-curl -X POST https://localhost:5001/tenants/dev-sandbox/schedules \
+curl -X POST https://localhost:5001/tenants/dev-sandbox/schedules?environment=dev-local \
      -H "Content-Type: application/json" \
      -H "X-Croniq-Key: <your-dev-key>" \
      -d "{
-           \"jobKey\": \"dev-sandbox:dev-local:samples:HelloWorld\",
+           \"jobKey\": \"samples:HelloWorld\",
            \"cronExpression\": \"0 * * * * ?\",
            \"metadata\": { \"initiator\": \"quickstart\" }
          }"
@@ -143,7 +143,7 @@ Add a matching configuration block (e.g., in `appsettings.Development.json`). Po
       "Endpoints": [
         {
           "HookKey": "hello-world",
-          "JobKey": "dev-sandbox:dev-local:samples:HelloWorld",
+          "JobKey": "samples:HelloWorld",
           "Secret": "dev-webhook-secret",
           "Metadata": {
             "source": "quickstart"
@@ -248,7 +248,7 @@ curl -X POST https://localhost:5001/jobs/trigger \
      -H "Content-Type: application/json" \
      -H "X-Croniq-Key: <your-dev-key>" \
      -d "{
-           \"jobKey\": \"dev-sandbox:dev-local:samples:HelloWorld\",
+           \"jobKey\": \"samples:HelloWorld\",
            \"metadata\": { \"initiator\": \"manual\" }
          }"
 ```
@@ -276,7 +276,7 @@ This launches Prometheus (`http://localhost:9090`), Tempo, and Grafana (`http://
    setx Croniq__Observability__OtlpProtocol grpc
    rem optional overrides
    setx Croniq__Core__EnvironmentTag dev
-   setx Croniq__Core__TenantId samples
+   setx Croniq__Core__TenantReference default
    ```
 
    Restart the application so the new environment variables take effect. The defaults already point at `otel-collector:4317` inside Docker, so these overrides are only needed when you run the app on your host machine.

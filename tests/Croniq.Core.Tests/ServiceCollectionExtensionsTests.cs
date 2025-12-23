@@ -29,7 +29,7 @@ public class ServiceCollectionExtensionsTests
 
         services.AddCroniqCore(options =>
         {
-            options.TenantId = "t";
+            options.TenantReference = "t";
             options.EnvironmentTag = "dev";
         });
         services.AddLogging();
@@ -44,7 +44,7 @@ public class ServiceCollectionExtensionsTests
         provider.GetRequiredService<IJobExecutionPipeline>().ShouldBeOfType<DefaultJobExecutionPipeline>();
         provider.GetRequiredService<IJobTrigger>().ShouldBeOfType<DefaultJobTrigger>();
         provider.GetRequiredService<IMisfirePolicy>().ShouldBeOfType<DefaultMisfirePolicy>();
-        provider.GetRequiredService<IJobRegistry>().TryGet(JobKey.Create("t", "dev", "core", "sample"), out _).ShouldBeTrue();
+        provider.GetRequiredService<IJobRegistry>().TryGet(JobKey.Create("core", "sample"), out _).ShouldBeTrue();
     }
 
     [Fact]
@@ -113,7 +113,7 @@ public class ServiceCollectionExtensionsTests
         var services = new ServiceCollection();
         services.AddCroniqCore(options =>
         {
-            options.TenantId = "t";
+            options.TenantReference = "t";
             options.EnvironmentTag = "dev";
         });
         services.AddLogging();
@@ -126,7 +126,7 @@ public class ServiceCollectionExtensionsTests
 
         var provider = services.BuildServiceProvider();
         var registry = provider.GetRequiredService<IJobRegistry>();
-        registry.TryGet(JobKey.Create("t", "dev", "scan", "job"), out _).ShouldBeTrue();
+        registry.TryGet(JobKey.Create("scan", "job"), out _).ShouldBeTrue();
     }
 
     [CroniqJob("core", "sample")]
@@ -200,12 +200,12 @@ public class ServiceCollectionExtensionsTests
 
         public Task MoveToDeadLetterAsync(DeadLetterRequest request, CancellationToken cancellationToken) => Task.CompletedTask;
 
-        public Task UpsertJobAsync(JobDefinition job, CancellationToken cancellationToken) => Task.CompletedTask;
+        public Task UpsertJobAsync(JobDefinition job, PartitionScope scope, CancellationToken cancellationToken) => Task.CompletedTask;
 
         public Task<IReadOnlyCollection<JobDefinition>> ListJobsAsync(PartitionScope scope, CancellationToken cancellationToken) =>
             Task.FromResult<IReadOnlyCollection<JobDefinition>>(Array.Empty<JobDefinition>());
 
-        public Task<JobDefinition?> GetJobAsync(string jobKey, CancellationToken cancellationToken) =>
+        public Task<JobDefinition?> GetJobAsync(string jobKey, PartitionScope scope, CancellationToken cancellationToken) =>
             Task.FromResult<JobDefinition?>(null);
 
         public Task DeleteJobAsync(string jobKey, PartitionScope scope, CancellationToken cancellationToken) => Task.CompletedTask;
