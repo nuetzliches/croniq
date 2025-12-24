@@ -29,7 +29,7 @@ public sealed class CroniqTriggerHealthCheck : IHealthCheck
     {
         try
         {
-            var scope = new PartitionScope(_options.GetEffectiveTenantId(), _options.EnvironmentTag);
+            var scope = new PartitionScope(_options.TenantId.Trim(), _options.EnvironmentTag);
             var triggers = await _store.ListTriggersAsync(scope, cancellationToken).ConfigureAwait(false);
             var data = new Dictionary<string, object>
             {

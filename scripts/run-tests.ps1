@@ -4,6 +4,7 @@ param(
     [string]$Solution = "croniq.slnx",
     [string]$SqlConnection = "Server=localhost,11433;Database=CroniqDev;User Id=sa;Password=CroniqSqlP@ssw0rd!;Encrypt=False;TrustServerCertificate=True;",
     [switch]$DisableCoverage,
+    [string]$ArtifactsDirectory,
     [string[]]$AdditionalDotnetArguments = @()
 )
 
@@ -97,12 +98,15 @@ $originalLocation = Get-Location
 $repoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
 Set-Location $repoRoot
 
-if ([System.String]::Equals($SqlConnection, $defaultDevstackSql, [System.StringComparison]::OrdinalIgnoreCase)) {
-    Ensure-DevstackSql -ConnectionString $SqlConnection -RepoRoot $repoRoot
+$artifactsRoot = Join-Path $repoRoot "artifacts"
+$ciRoot = if ([string]::IsNullOrWhiteSpace($ArtifactsDirectory)) {
+    Join-Path $artifactsRoot "ci"
+}
+else {
+    $ArtifactsDirectory
 }
 
-$artifactsRoot = Join-Path $repoRoot "artifacts"
-$ciRoot = Join-Path $artifactsRoot "ci"
+$null = New-Item -ItemType Directory -Path $ciRoot -Force
 $testResultsDir = Join-Path $ciRoot "tests"
 $coverageReportDir = Join-Path $ciRoot "coverage-report"
 $historyDir = Join-Path $coverageReportDir "history"
@@ -114,6 +118,26 @@ $null = New-Item -ItemType Directory -Path $historyDir -Force
 $binlogPath = Join-Path $ciRoot "dotnet-test.binlog"
 $vstestDiagPath = Join-Path $ciRoot "vstest.diag"
 $trxName = "Croniq.Tests.trx"
+$dotnetConsoleLogPath = Join-Path $ciRoot "dotnet-test.console.log"
+$runSummaryPath = Join-Path $ciRoot "run-summary.txt"
+$runStartedAt = Get-Date
+
+@(
+    "Croniq test run summary",
+    "StartedAt: $($runStartedAt.ToString('O'))",
+    "Status:    Running",
+    "ArtifactsRoot: $ciRoot"
+) | Set-Content -Path $runSummaryPath -Encoding UTF8 -Force
+
+$runningInVsCode = $false
+try {
+    if (-not [string]::IsNullOrWhiteSpace($env:VSCODE_PID)) { $runningInVsCode = $true }
+    elseif (-not [string]::IsNullOrWhiteSpace($env:VSCODE_IPC_HOOK_CLI)) { $runningInVsCode = $true }
+    elseif ([string]::Equals($env:TERM_PROGRAM, "vscode", [System.StringComparison]::OrdinalIgnoreCase)) { $runningInVsCode = $true }
+}
+catch {
+    $runningInVsCode = $false
+}
 
 Write-Host "Restoring local dotnet tools..." -ForegroundColor Cyan
 & dotnet tool restore
@@ -148,6 +172,13 @@ foreach ($entry in $envOverrides.GetEnumerator()) {
 }
 
 try {
+    $testExitCode = $null
+    $reportExitCode = $null
+
+    if ([System.String]::Equals($SqlConnection, $defaultDevstackSql, [System.StringComparison]::OrdinalIgnoreCase)) {
+        Ensure-DevstackSql -ConnectionString $SqlConnection -RepoRoot $repoRoot
+    }
+
     $dotnetArgs = @(
         "test",
         $Solution,
@@ -181,8 +212,21 @@ try {
     }
 
     Write-Host "Running dotnet $($dotnetArgs -join ' ')" -ForegroundColor Cyan
-    & dotnet @dotnetArgs
-    $testExitCode = $LASTEXITCODE
+    try {
+        if ($runningInVsCode) {
+            Write-Warning "Detected VS Code terminal environment. Redirecting dotnet test output to '$dotnetConsoleLogPath' to avoid editor freezes."
+            & dotnet @dotnetArgs *> $dotnetConsoleLogPath
+        }
+        else {
+            & dotnet @dotnetArgs
+        }
+
+        $testExitCode = $LASTEXITCODE
+    }
+    catch {
+        $testExitCode = 1
+        throw
+    }
 
     if ($testExitCode -ne 0) {
         Write-Warning "dotnet test exited with code $testExitCode"
@@ -221,6 +265,49 @@ try {
     exit $testExitCode
 }
 finally {
+    try {
+        $sanitizedSql = $SqlConnection
+        try {
+            $builder = New-Object System.Data.SqlClient.SqlConnectionStringBuilder $SqlConnection
+            if (-not [string]::IsNullOrWhiteSpace($builder.Password)) {
+                $builder.Password = "***"
+            }
+            $sanitizedSql = $builder.ConnectionString
+        }
+        catch {
+            # best-effort only
+        }
+
+        $endedAt = Get-Date
+        $duration = $endedAt - $runStartedAt
+        $lines = @(
+            "Croniq test run summary",
+            "StartedAt: $($runStartedAt.ToString('O'))",
+            "EndedAt:   $($endedAt.ToString('O'))",
+            "Duration:  $duration",
+            "ExitCode:  $testExitCode",
+            "Configuration: $Configuration",
+            "Solution:       $Solution",
+            "DisableCoverage: $DisableCoverage",
+            "RunningInVsCode: $runningInVsCode",
+            "SqlConnection:  $sanitizedSql",
+            "",
+            "ArtifactsRoot:  $ciRoot",
+            "ResultsDir:     $testResultsDir",
+            "TRX:            $(Join-Path $testResultsDir $trxName)",
+            "VSTestDiag:     $vstestDiagPath",
+            "Binlog:         $binlogPath",
+            "ConsoleLog:     $dotnetConsoleLogPath",
+            "CoverageReport: $coverageReportDir",
+            "ReportExitCode: $reportExitCode"
+        )
+
+        $lines | Set-Content -Path $runSummaryPath -Encoding UTF8 -Force
+    }
+    catch {
+        # best-effort only
+    }
+
     foreach ($key in $previousEnv.Keys) {
         [Environment]::SetEnvironmentVariable($key, $previousEnv[$key], "Process")
     }

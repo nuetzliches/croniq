@@ -83,9 +83,9 @@ export class TenantsStore {
     readonly lastError = this.lastErrorSignal.asReadonly();
 
     issueApiKey(params: TenantScopedParams, payload: IssueApiKeyRequest): void {
-        const tenantId = this.resolveTenantId(params.tenantId);
+        const tenantId = (params.tenantId ?? '').trim();
         if (!tenantId) {
-            this.lastErrorSignal.set('No tenant context available. Sign in again and retry.');
+            this.lastErrorSignal.set('Missing tenantId. Sign in again and retry.');
             return;
         }
 
@@ -124,9 +124,9 @@ export class TenantsStore {
     }
 
     issueApiClientToken(params: TenantApiClientParams, payload: IssueTokenRequest): void {
-        const tenantId = this.resolveTenantId(params.tenantId);
+        const tenantId = (params.tenantId ?? '').trim();
         if (!tenantId) {
-            this.lastErrorSignal.set('No tenant context available. Sign in again and retry.');
+            this.lastErrorSignal.set('Missing tenantId. Sign in again and retry.');
             return;
         }
 
@@ -160,9 +160,9 @@ export class TenantsStore {
     }
 
     rotateApiKey(params: TenantApiKeyParams): void {
-        const tenantId = this.resolveTenantId(params.tenantId);
+        const tenantId = (params.tenantId ?? '').trim();
         if (!tenantId) {
-            this.lastErrorSignal.set('No tenant context available. Sign in again and retry.');
+            this.lastErrorSignal.set('Missing tenantId. Sign in again and retry.');
             return;
         }
 
@@ -196,9 +196,9 @@ export class TenantsStore {
     }
 
     deleteApiKey(params: TenantApiKeyParams): void {
-        const tenantId = this.resolveTenantId(params.tenantId);
+        const tenantId = (params.tenantId ?? '').trim();
         if (!tenantId) {
-            this.lastErrorSignal.set('No tenant context available. Sign in again and retry.');
+            this.lastErrorSignal.set('Missing tenantId. Sign in again and retry.');
             return;
         }
 
@@ -232,9 +232,9 @@ export class TenantsStore {
     }
 
     lookupApiClient(params: TenantApiClientParams): void {
-        const tenantId = this.resolveTenantId(params.tenantId);
+        const tenantId = (params.tenantId ?? '').trim();
         if (!tenantId) {
-            this.lastErrorSignal.set('No tenant context available. Sign in again and retry.');
+            this.lastErrorSignal.set('Missing tenantId. Sign in again and retry.');
             return;
         }
 
@@ -247,14 +247,6 @@ export class TenantsStore {
             environment: resolvedEnvironment ?? null,
         });
         this.apiClientLookupResource.reload();
-    }
-
-    private resolveTenantId(explicitTenantId: string | null | undefined): string {
-        const fromParams = explicitTenantId?.trim() ?? '';
-        if (fromParams) {
-            return fromParams;
-        }
-        return this.tenantContext.snapshot().tenantId.trim();
     }
 
     private resolveEnvironmentTag(explicitEnvironment: string | null | undefined): string | null {

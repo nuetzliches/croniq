@@ -94,7 +94,7 @@ export class LoginPage {
         this.lastAction.set(null);
         this.lastActionTone.set(null);
 
-        const tenantId = this.tenantContext.snapshot().tenantId.trim() || 'default';
+        const tenantId = this.tenantContext.snapshot().tenantId.trim();
 
         this.passwordAuth
             .login({ username, password, tenantId })

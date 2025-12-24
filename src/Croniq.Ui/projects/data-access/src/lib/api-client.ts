@@ -1,6 +1,6 @@
 import { HttpClient } from '@angular/common/http';
 import { EnvironmentProviders, InjectionToken, Provider, inject, makeEnvironmentProviders } from '@angular/core';
-import { AuthApi, CreateWebhookIpRuleRequest, HealthApi, IssueApiKeyRequest, IssueTokenRequest, JobsApi, MeApi, PasswordChangePasswordRequest, PasswordLoginRequest, PasswordLogoutRequest, PasswordRefreshRequest, RotateWebhookSecretRequest, ScheduleListResponse, TenantsApi, TriggerJobRequest, UpsertApiClientRequest, UpsertJobRequest, UpsertScheduleRequest, UpsertTenantRequest, UpsertWebhookEndpointRequest, WebhooksApi, scheduleListResponseSchema, type EndpointDefinition } from '@croniq/api-schema';
+import { AuthApi, CreateWebhookIpRuleRequest, HealthApi, IssueApiKeyRequest, IssueTokenRequest, JobsApi, MeApi, PasswordChangePasswordRequest, PasswordLoginRequest, PasswordLogoutRequest, PasswordRefreshRequest, RotateWebhookSecretRequest, ScheduleListResponse, TenantsApi, TriggerJobRequest, UpsertApiClientRequest, UpsertJobRequest, UpsertScheduleRequest, UpsertTenantRequest, UpsertWebhookEndpointRequest, scheduleListResponseSchema, type EndpointDefinition } from '@croniq/api-schema';
 import type { Observable } from 'rxjs';
 import type { CroniqCredentialSupplier, CroniqRequestOptions, ExecutionLogParams, ExecutionParams, TenantApiClientParams, TenantApiClientTokenParams, TenantApiKeyParams, TenantDeadLetterParams, TenantEnvironmentParams, TenantScheduleParams, TenantScopedParams, TenantUpsertApiClientParams, TenantWebhookParams, TenantWebhookRuleParams, TenantWebhookUpsertParams, WebhookInvocationParams } from './api-client.types';
 import type { EndpointCallConfig } from './endpoint-executor';
@@ -77,7 +77,11 @@ const TENANT_ENDPOINTS = {
     ),
 };
 
-const INVOKE_WEBHOOK_ENDPOINT = requireEndpoint(WebhooksApi, 'post', '/webhooks/:hookKey');
+const INVOKE_WEBHOOK_ENDPOINT = requireEndpoint(
+    TenantsApi,
+    'post',
+    '/tenants/:tenantId/environments/:environmentTag/webhooks/:hookKey',
+);
 const EXECUTION_LOG_ENDPOINT = requireEndpoint(
     TenantsApi,
     'get',
@@ -758,10 +762,20 @@ class HttpCroniqApiClient implements CroniqApiClient {
     }
 
     invokeWebhook(params: WebhookInvocationParams, options?: CroniqRequestOptions): Observable<void> {
+        const tenantId = options?.context?.tenantId?.trim() ?? '';
+        const environmentTag = options?.context?.environment?.trim() ?? '';
+        if (!tenantId || !environmentTag)
+        {
+            throw new Error('invokeWebhook requires request options with tenantId + environment in context.');
+        }
         return this.execute$(
             INVOKE_WEBHOOK_ENDPOINT,
             {
-                path: { hookKey: params.hookKey },
+                path: {
+                    tenantId,
+                    environmentTag,
+                    hookKey: params.hookKey,
+                },
             },
             options,
         );

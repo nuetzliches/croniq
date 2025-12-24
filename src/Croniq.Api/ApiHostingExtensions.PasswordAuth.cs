@@ -40,7 +40,8 @@ public static partial class ApiHostingExtensions
                 return Results.BadRequest(new { error = "missing-tenant", message = "tenantId is required." });
             }
 
-            var tenant = await tenants.GetByIdAsync(request.TenantId, cancellationToken).ConfigureAwait(false);
+            var tenantId = request.TenantId.Trim();
+            var tenant = await tenants.GetByIdAsync(tenantId, cancellationToken).ConfigureAwait(false);
             if (tenant is null || !tenant.IsActive)
             {
                 // Do not leak whether the tenant exists.
@@ -116,7 +117,8 @@ public static partial class ApiHostingExtensions
                 return Results.BadRequest(new { error = "missing-tenant", message = "tenantId is required." });
             }
 
-            var tenant = await tenants.GetByIdAsync(request.TenantId, cancellationToken).ConfigureAwait(false);
+            var tenantId = request.TenantId.Trim();
+            var tenant = await tenants.GetByIdAsync(tenantId, cancellationToken).ConfigureAwait(false);
             if (tenant is null || !tenant.IsActive)
             {
                 // Do not leak whether the tenant exists.
@@ -182,7 +184,8 @@ public static partial class ApiHostingExtensions
                 return Results.BadRequest(new { error = "missing-tenant", message = "tenantId is required." });
             }
 
-            var tenant = await tenants.GetByIdAsync(request.TenantId, cancellationToken).ConfigureAwait(false);
+            var tenantId = request.TenantId.Trim();
+            var tenant = await tenants.GetByIdAsync(tenantId, cancellationToken).ConfigureAwait(false);
             if (tenant is null || !tenant.IsActive)
             {
                 // Do not leak whether the tenant exists.

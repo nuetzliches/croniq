@@ -122,7 +122,12 @@ export class PasswordAuthService {
                     this.authSession.clearRefreshToken();
                 }
 
-                const tenantId = parsed.tenantId ?? tryExtractTenantIdFromJwt(parsed.accessToken);
+                const tenantId = parsed.tenantId;
+                if (!tenantId) {
+                    throw new Error('Login failed: missing tenantId in response.');
+                }
+
+                this.authSession.storeTenantId(tenantId);
 
                 return {
                     storedInSession: true,
@@ -139,12 +144,18 @@ export class PasswordAuthService {
 
     logout(): Observable<void> {
         const refreshToken = this.authSession.refreshToken()?.trim() ?? '';
-        const tenantId = (tryExtractTenantIdFromJwt(this.authSession.sessionToken()?.value ?? '') ?? '').trim();
+        const tenantId = this.authSession.tenantId()?.trim() ?? '';
 
         if (refreshToken) {
+            if (!tenantId) {
+                // Best-effort: if we can't resolve tenantId, clear local state without calling the server.
+                this.authSession.clearAuthState();
+                return of(undefined);
+            }
+
             const payload: PasswordLogoutRequest = {
                 refreshToken,
-                tenantId: tenantId || 'default',
+                tenantId,
             };
 
             return this.apiClient.passwordLogout(payload).pipe(
@@ -167,12 +178,15 @@ export class PasswordAuthService {
             return throwError(() => new Error('Refresh failed: missing refresh token.'));
         }
 
-        const tenantId = (tryExtractTenantIdFromJwt(this.authSession.sessionToken()?.value ?? '') ?? '').trim();
+        const tenantId = this.authSession.tenantId()?.trim() ?? '';
+        if (!tenantId) {
+            return throwError(() => new Error('Refresh failed: missing tenantId.'));
+        }
 
         return this.apiClient
             .passwordRefresh({
                 refreshToken,
-                tenantId: tenantId || 'default',
+                tenantId,
                 environmentTag: null,
                 scopes: null,
                 audience: null,
@@ -224,27 +238,6 @@ export class PasswordAuthService {
     private extract(response: unknown): PasswordLoginResponse | null {
         const parsed = passwordLoginResponseSchema.safeParse(response);
         return parsed.success ? parsed.data : null;
-    }
-}
-
-function tryExtractTenantIdFromJwt(token: string): string | null {
-    const trimmed = token.trim();
-    const parts = trimmed.split('.');
-    if (parts.length !== 3) {
-        return null;
-    }
-
-    const payloadJson = base64UrlDecodeToString(parts[1]);
-    if (!payloadJson) {
-        return null;
-    }
-
-    try {
-        const payload = JSON.parse(payloadJson) as Record<string, unknown>;
-        const tenant = payload['tenant'];
-        return typeof tenant === 'string' && tenant.trim().length > 0 ? tenant.trim() : null;
-    } catch {
-        return null;
     }
 }
 

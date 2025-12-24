@@ -54,7 +54,7 @@ public static partial class ApiHostingExtensions
             var metadata = ToReadOnly(request.Metadata);
 
             var currentOptions = options.Value ?? new CroniqOptions();
-            var scope = new PartitionScope(currentOptions.GetEffectiveTenantId(), currentOptions.EnvironmentTag);
+            var scope = new PartitionScope(currentOptions.TenantId.Trim(), currentOptions.EnvironmentTag);
 
             using var triggerActivity = TriggerActivitySource.StartActivity("Croniq.Api.TriggerJob", ActivityKind.Server);
             triggerActivity?.SetTag("croniq.job.key", jobKey.Value);

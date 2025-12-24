@@ -120,8 +120,8 @@ See [`auth.md`](../guides/auth.md) for the end-to-end authentication story and w
 | `Croniq__Persistence__Mode`                        | Yes                                                               | `InMemory` for demo workloads or `SqlServer` for durable persistence.                      | `SqlServer`                                        |
 | `Croniq__Persistence__SqlServer__ConnectionString` | When `Persistence.Mode = SqlServer`                               | Connection string for the scheduler persistence schema.                                    | `Server=.;Database=Croniq;Trusted_Connection=True` |
 | `Croniq__SqlServer__ConnectionString`              | Optional                                                          | Shared fallback connection string used when specific auth/persistence strings are omitted. | `Server=.;Database=Croniq;...`                     |
-| `Croniq__Core__TenantId`                           | Optional                                                          | Tenant id baked into job keys when running in multi-tenant mode.                           | `dev-sandbox`                                      |
-| `Croniq__Core__TenantMode`                         | Optional                                                          | Tenant mode (`Single` or `Multi`). Default is `Single`.                                    | `Multi`                                            |
+| `Croniq__Core__TenantId`                           | Optional                                                          | Tenant id used for partitioning/scoping. Default is `default`.                             | `dev-sandbox`                                      |
+| `Croniq__Core__TenantMode`                         | Optional                                                          | Informational only (does not change tenant resolution). Default is `Single`.               | `Multi`                                            |
 | `Croniq__Core__EnvironmentTag`                     | Optional                                                          | Distinguishes environments/instances (helps multi-dev setups).                             | `dev-alice`                                        |
 | `Croniq__Api__RequestsPerMinute`                   | Optional                                                          | Per-key fixed-window rate limit enforced by `AddCroniqApiRateLimiter`.                     | `120`                                              |
 
@@ -208,7 +208,7 @@ Only override the values you truly need—everything else continues to flow from
 
 - **Missing connection string:** When either `Auth.Mode` or `Persistence.Mode` is `SqlServer`, the extension throws if it cannot find a connection string on the domain-specific section or the shared `Croniq__SqlServer__ConnectionString` key.
 - **Missing API key:** When `Auth.Mode = InMemory`, you must provide `Croniq__Auth__InMemory__ApiKey`. Otherwise startup throws `InvalidOperationException`.
-- **Unexpected tenant scope:** Verify `Croniq__Core__TenantId`/`TenantMode`/`EnvironmentTag` when multiple developers work on the same database to avoid job collisions.
+- **Unexpected tenant scope:** Verify `Croniq__Core__TenantId`/`EnvironmentTag` when multiple developers work on the same database to avoid job collisions.
 - **Rate limiter rejecting calls:** Increase `Croniq__Api__RequestsPerMinute` or tailor the limiter via `AddCroniqApiRateLimiter` options.
 
 Need a bigger checklist? Jump to [`troubleshooting.md`](../ops/troubleshooting.md) for Docker/dev-stack, observability, and CLI-specific fixes.

@@ -254,11 +254,11 @@ static async Task SeedAdminAsync(IServiceProvider provider, CancellationToken to
     var tenants = scope.ServiceProvider.GetRequiredService<ITenantStore>();
     var users = scope.ServiceProvider.GetRequiredService<IPasswordUserStore>();
 
-    // In Single-tenant mode the effective tenant id is always "default".
-    // Keep seeding consistent by defaulting to "default" when no explicit seed tenant id is provided.
+    // Keep seeding consistent by defaulting to CroniqOptions' default tenant id ("default")
+    // when no explicit seed tenant id is provided.
     var tenantIdRaw = Environment.GetEnvironmentVariable("CRONIQ_SEED_TENANT_ID");
     var tenantId = string.IsNullOrWhiteSpace(tenantIdRaw)
-        ? CroniqOptions.SingleTenantId
+        ? new CroniqOptions().TenantId.Trim()
         : tenantIdRaw.Trim();
     var tenantName = (Environment.GetEnvironmentVariable("CRONIQ_SEED_TENANT_NAME") ?? "Default").Trim();
     var username = (Environment.GetEnvironmentVariable("CRONIQ_SEED_ADMIN_USERNAME") ?? "admin").Trim();

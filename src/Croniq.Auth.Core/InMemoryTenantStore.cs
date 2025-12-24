@@ -45,13 +45,12 @@ public sealed class InMemoryTenantStore : ITenantStore
     {
         if (request is null) throw new ArgumentNullException(nameof(request));
         if (string.IsNullOrWhiteSpace(request.Name)) throw new ArgumentException("Name is required", nameof(request));
+        if (string.IsNullOrWhiteSpace(request.TenantId)) throw new ArgumentException("TenantId is required", nameof(request));
 
         var trimmedName = request.Name.Trim();
         TenantRecord record;
 
-        var tenantId = string.IsNullOrWhiteSpace(request.TenantId)
-            ? GenerateTenantId()
-            : request.TenantId.Trim();
+        var tenantId = request.TenantId.Trim();
 
         lock (_sync)
         {
@@ -116,8 +115,6 @@ public sealed class InMemoryTenantStore : ITenantStore
             record.IsActive,
             record.CreatedAtUtc);
     }
-
-    private static string GenerateTenantId() => Guid.NewGuid().ToString("D");
 
     private sealed record TenantRecord(
         string TenantId,

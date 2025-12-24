@@ -26,10 +26,9 @@ public sealed class SqlServerTenantStore : ITenantStore
     {
         if (request is null) throw new ArgumentNullException(nameof(request));
         if (string.IsNullOrWhiteSpace(request.Name)) throw new ArgumentException("Name is required", nameof(request));
+        if (string.IsNullOrWhiteSpace(request.TenantId)) throw new ArgumentException("TenantId is required", nameof(request));
 
-        var tenantId = string.IsNullOrWhiteSpace(request.TenantId)
-            ? Guid.NewGuid().ToString("D")
-            : request.TenantId.Trim();
+        var tenantId = request.TenantId.Trim();
         var trimmedName = request.Name.Trim();
         await using var db = await _dbContextFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
         var now = _timeProvider.GetUtcNow().UtcDateTime;

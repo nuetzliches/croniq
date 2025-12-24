@@ -288,19 +288,7 @@ public static class ServiceCollectionExtensions
             return false;
         }
 
-        if (options.TenantMode == TenantMode.Single)
-        {
-            return true;
-        }
-
-        if (string.IsNullOrWhiteSpace(options.TenantId))
-        {
-            return false;
-        }
-
-        var trimmed = options.TenantId.Trim();
-        return string.Equals(trimmed, CroniqOptions.SingleTenantId, StringComparison.OrdinalIgnoreCase)
-               || Guid.TryParse(trimmed, out _);
+        return !string.IsNullOrWhiteSpace(options.TenantId);
     }
 
     private static bool ValidateWorkerHostOptions(WorkerHostOptions options)

@@ -1,5 +1,6 @@
 import { z } from 'zod';
 export const UpsertTenantRequest = z.object({
+    tenantId: z.string().min(1),
     name: z.string().min(1),
 });
 export type UpsertTenantRequest = z.infer<typeof UpsertTenantRequest>;

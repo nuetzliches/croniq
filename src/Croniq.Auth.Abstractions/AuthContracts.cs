@@ -41,7 +41,7 @@ public sealed record TenantDescriptor(
 
 public sealed record TenantCreateRequest(
     string Name,
-    string? TenantId = null);
+    string TenantId);
 
 public sealed record UserDescriptor(
     string UserId,

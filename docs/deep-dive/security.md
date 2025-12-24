@@ -59,8 +59,8 @@ This document specifies the authentication, authorization, and rate limiting des
    Forward-looking, hosted-oriented details live in `CLOUD-CONCEPT.md`.
 
 2. **Caller Context**: `ICallerContextFactory.FromBearerTokenAsync` validates JWTs via issuer metadata, caches configuration, and maps Croniq-specific fields:
-   - Tenant ID resolved from `TenantClaim` (default `tenant`) falling back to `tid` or other configured claims.
-   - Environment tag derived from `EnvironmentClaim` with optional fallbacks/defaults.
+   - Tenant ID resolved from `TenantClaim` (default `tenant`) or another explicitly configured claim.
+   - Environment tag derived from `EnvironmentClaim` (optional).
    - Scopes gathered from `scope`/`scp` style claims, normalized to lowercase when configured; required scopes are enforced before a caller context is emitted.
 3. **Route Protection**: The API middleware now inspects `Authorization: Bearer` before falling back to `X-Croniq-Key`. A valid bearer token seeds `ICallerContext` as `CallerType.User`, while API keys remain the default for automation. This keeps both flows consistent without duplicating route attributes yet.
 4. **Samples & Docs**: Provide configuration examples for Entra ID and Auth0 in `docs/configuration.md` once the implementation lands.
@@ -75,7 +75,7 @@ This document specifies the authentication, authorization, and rate limiting des
 - `ICallerContext` lives in scoped DI via `ICallerContextAccessor`. Downstream components (Persistence, JobStore) fetch it to derive `PartitionScope` (TenantId + EnvironmentTag).
 - `TenantGuard` enforces caller tenant/environment across REST routes (webhooks CRUD, schedules, manual triggers) and rejects cross-tenant attempts with 403 before persistence/pipeline execution. The execution-log endpoint now inspects the first log entry to validate tenant/environment metadata before streaming; the gRPC surface will reuse the same guard once the Scheduler RPC host is exposed.
 - Scope naming convention mirrors REST permissions: `schedules:write`, `jobs:trigger`, `tenants:admin`, `api-keys:manage`, `cluster:read`.
-- Bearer tokens must carry the configured tenant claim (or fallback) and any required scopes; missing claims/scopes yield 401/403. API keys remain single-tenant because validation bakes the tenant into the emitted caller context.
+- Bearer tokens must carry the configured tenant claim and any required scopes; missing claims/scopes yield 401/403. API keys remain single-tenant because validation bakes the tenant into the emitted caller context.
 - gRPC Scheduler: the Scheduler service is hosted in `Croniq.Api` (mapped via `MapCroniqSchedulerGrpc`). Calls use the same middleware/guards as HTTP; clients must send `x-croniq-key` (or Bearer) metadata and align `tenant_id`/`environment_tag` (required on `DeleteSchedule`). The proto lives under `src/Croniq.Rpc.Client/Protos/scheduler.proto`; `Croniq.Sample.GrpcClient` shows usage with `Croniq.Rpc.Client` and the DI helper `AddCroniqSchedulerClient`. Safe wrappers emit `CroniqRpcException` to avoid direct coupling zu `Grpc.Core`.
 - Admin APIs verify both caller scope and tenant match (e.g., only Tenant Admins can mutate their key space). Cross-tenant actions require service-level credentials flagged with `CallerType = ApiKey` and `Scopes` containing `system:*`.
 

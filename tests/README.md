@@ -1,7 +1,12 @@
 ## Testing Guidance
 
 - Run the full solution suite via `pwsh ./scripts/run-tests.ps1 -Configuration Debug` from the repo root. The script wires required env vars (`CRONIQ_SQL`, coverage reporting, binlogs) and executes `dotnet test croniq.slnx` outside of the VS Code extension host.
-- If you need to run `dotnet test croniq.slnx` manually, do so from an external (preferably elevated) terminal instead of the VS Code Test Explorer. This avoids the GitHub Copilot Chat log-rotation issue that can freeze the editor when large test outputs are streamed inside VS Code.
+- If VS Code freezes during a full run, prefer launching the suite in a separate terminal window via `pwsh ./scripts/run-tests-external.ps1 -Configuration Debug`. This avoids editor hangs when large test outputs are streamed inside VS Code.
+- If you want a "sandbox" run that survives a VS Code freeze and keeps artifacts per run, use `pwsh ./scripts/run-tests-sandbox.ps1 -Name full -Configuration Debug`. Each run writes to `artifacts/runs/<name>/<timestamp>/` (TRX, diag, binlog, console log).
+  - Add `-Wait` to wait for completion, print `run-summary.txt`, and return the same exit code as the test run.
+  - Example with filter: `pwsh ./scripts/run-tests-sandbox.ps1 -Name quick -Configuration Debug -DisableCoverage -Filter "Category!=E2E"`
+- Every `run-tests.ps1` invocation also writes a quick `run-summary.txt` into the same artifacts folder so you can resume debugging after an editor freeze.
+- If you need to run `dotnet test croniq.slnx` manually, do so from an external (preferably elevated) terminal instead of the VS Code Test Explorer.
 
 # Croniq Test Harness
 

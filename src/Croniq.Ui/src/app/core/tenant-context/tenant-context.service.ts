@@ -5,7 +5,7 @@ import { CallerContext, CroniqRequestOptions } from 'data-access';
 import { TenantContextState, TenantEnvironment } from './tenant-context.types';
 
 const DEFAULT_TENANT_CONTEXT: TenantContextState = {
-    tenantId: '',
+    tenantId: 'default',
     tenantName: '',
     environment: '',
     region: '',

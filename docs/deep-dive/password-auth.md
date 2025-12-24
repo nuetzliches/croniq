@@ -12,12 +12,12 @@ It complements (not replaces) the existing authentication modes documented in [d
 - Preserve tenant isolation: users are bound to tenants and scopes; isolation is enforced end-to-end.
 - Keep dependencies compatible with the repo policy (MIT/Apache/BSD).
 
-## V1 Scope (Self-hosted Single Tenant)
+## V1 Scope (Self-hosted, tenant-scoped)
 
-The initial implementation target is a **self-hosted deployment inside a private network** with a focus on **one tenant**.
+The initial implementation target is a **self-hosted deployment inside a private network**.
 
-- Tenant selection should be **optional** for end users.
-- The server resolves the tenant via a configured default.
+- Tenant selection is **explicit**: clients must always provide `tenantId`.
+- The server does not apply mode-based tenant fallbacks or server-side tenant defaults for password auth.
 - Federated/IdP-backed human authentication is explicitly deferred to a later phase.
 
 ## Non-Goals
@@ -211,7 +211,7 @@ Password auth is tenant-scoped. Callers must always provide `tenantId` for `/aut
 ### Open decisions
 
 - Bind refresh tokens to environments (force re-login on env switch) vs allow env switch via refresh.
-- Require explicit tenant selection even in single-tenant installs vs rely on a fixed `default` tenant id.
+- Require explicit tenant selection in clients vs provide a UI-level tenant picker.
 - Add dedicated audit events when environment switches happen via refresh.
 
 ## Tenants & Scopes

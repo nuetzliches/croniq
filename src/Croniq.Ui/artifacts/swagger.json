@@ -58,7 +58,7 @@
           "Croniq.Sample.ApiHost"
         ],
         "summary": "Create tenant",
-        "description": "Creates or updates a tenant record based on the provided reference and name.",
+        "description": "Creates or updates a tenant record for the provided tenantId.",
         "operationId": "Tenants_Create",
         "requestBody": {
           "content": {
@@ -747,6 +747,14 @@
             "in": "query",
             "schema": {
               "type": "string"
+            }
+          },
+          {
+            "name": "hardDelete",
+            "in": "query",
+            "schema": {
+              "type": "boolean",
+              "default": false
             }
           }
         ],
@@ -1540,12 +1548,28 @@
         }
       }
     },
-    "/webhooks/{hookKey}": {
+    "/tenants/{tenantId}/environments/{environmentTag}/webhooks/{hookKey}": {
       "post": {
         "tags": [
           "Croniq.Sample.ApiHost"
         ],
         "parameters": [
+          {
+            "name": "tenantId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "environmentTag",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
           {
             "name": "hookKey",
             "in": "path",
@@ -1559,8 +1583,7 @@
           "200": {
             "description": "OK"
           }
-        },
-        "security": []
+        }
       }
     }
   },
@@ -1722,6 +1745,10 @@
             "type": "string",
             "nullable": true
           },
+          "tenantId": {
+            "type": "string",
+            "nullable": true
+          },
           "environmentTag": {
             "type": "string",
             "nullable": true
@@ -1734,10 +1761,6 @@
             "nullable": true
           },
           "audience": {
-            "type": "string",
-            "nullable": true
-          },
-          "tenantId": {
             "type": "string",
             "nullable": true
           }
@@ -1765,6 +1788,10 @@
             "type": "string",
             "nullable": true
           },
+          "tenantId": {
+            "type": "string",
+            "nullable": true
+          },
           "environmentTag": {
             "type": "string",
             "nullable": true
@@ -1777,10 +1804,6 @@
             "nullable": true
           },
           "audience": {
-            "type": "string",
-            "nullable": true
-          },
-          "tenantId": {
             "type": "string",
             "nullable": true
           }
@@ -1905,11 +1928,11 @@
       "UpsertTenantRequest": {
         "required": [
           "name",
-          "reference"
+          "tenantId"
         ],
         "type": "object",
         "properties": {
-          "reference": {
+          "tenantId": {
             "minLength": 1,
             "type": "string"
           },

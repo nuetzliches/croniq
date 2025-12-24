@@ -69,7 +69,7 @@ public sealed class CroniqTriggerSeedingHostedService : IHostedService
             return;
         }
 
-        var scope = new PartitionScope(_coreOptions.GetEffectiveTenantId(), _coreOptions.EnvironmentTag);
+        var scope = new PartitionScope(_coreOptions.TenantId.Trim(), _coreOptions.EnvironmentTag);
         var plans = BuildPlans(definitions, scope, mode);
         if (plans.Count == 0)
         {
@@ -85,7 +85,7 @@ public sealed class CroniqTriggerSeedingHostedService : IHostedService
             _logger.LogInformation(
                 "Croniq trigger validation completed with {Count} trigger definitions for {TenantId}/{EnvironmentTag}.",
                 plans.Count,
-                _coreOptions.GetEffectiveTenantId(),
+                _coreOptions.TenantId.Trim(),
                 _coreOptions.EnvironmentTag);
             return;
         }
@@ -94,7 +94,7 @@ public sealed class CroniqTriggerSeedingHostedService : IHostedService
             "Croniq trigger seeding starting (Mode={Mode}) with {Count} trigger definitions for {TenantId}/{EnvironmentTag}.",
             mode,
             plans.Count,
-            _coreOptions.GetEffectiveTenantId(),
+            _coreOptions.TenantId.Trim(),
             _coreOptions.EnvironmentTag);
 
         await EnsureJobsAsync(plans, scope, cancellationToken).ConfigureAwait(false);

@@ -60,11 +60,12 @@ The UI computes a best-effort `expiresAt` from `expiresIn` when the backend does
 - The UI also does not set `environmentTag` in login/refresh; environment selection is part of the UI shell context.
 - Tenant selection remains part of the UI shell context.
 
-Current UI scope (single-tenant):
+Current UI scope:
 
 - The **Tenants** feature module is intentionally **excluded from the UI navigation** (no menu entries / command palette shortcuts).
 - The UI still needs a tenant identifier for tenant-scoped API routes (e.g. `/tenants/:tenantId/*`).
-- Per the root documentation, this value should be treated as a **tenant id** and may be provided by the backend (e.g. `tenantId` in the login response) or by server-side defaults.
+- The tenant id must be treated as an explicit identifier: the UI must not rely on server-side defaults or mode-specific fallbacks.
+- The UI persists the tenant id from the login response in `sessionStorage` (see `AuthSessionService`). Refresh/logout use that stored value.
 
 ## Tenant Context in the UI
 

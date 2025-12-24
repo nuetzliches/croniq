@@ -10,6 +10,24 @@ namespace Croniq.Api.Tests;
 public sealed class InMemoryTenantStoreTests
 {
     [Fact]
+    public async Task Create_throws_when_tenant_id_missing()
+    {
+        var store = new InMemoryTenantStore();
+
+        await Should.ThrowAsync<ArgumentException>(() =>
+            store.CreateAsync(new TenantCreateRequest("Acme", " ")));
+    }
+
+    [Fact]
+    public async Task Create_throws_when_name_missing()
+    {
+        var store = new InMemoryTenantStore();
+
+        await Should.ThrowAsync<ArgumentException>(() =>
+            store.CreateAsync(new TenantCreateRequest(" ", Guid.NewGuid().ToString("D"))));
+    }
+
+    [Fact]
     public async Task Create_upserts_by_tenant_id()
     {
         var store = new InMemoryTenantStore();

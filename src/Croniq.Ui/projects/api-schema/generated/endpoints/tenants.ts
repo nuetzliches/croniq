@@ -32,7 +32,7 @@ export const TenantsApi: EndpointDefinition[] = [
     {
         method: 'post',
         path: '/tenants',
-        description: `Creates or updates a tenant record based on the provided reference and name.`,
+        description: `Creates or updates a tenant record for the provided tenantId.`,
         requestFormat: 'json',
         parameters: [
             { name: 'body', type: 'Body', schema: UpsertTenantRequest },
@@ -175,6 +175,17 @@ export const TenantsApi: EndpointDefinition[] = [
                 type: 'Query',
                 schema: z.string().optional(),
             },
+        ],
+        response: z.void(),
+    },
+    {
+        method: 'post',
+        path: '/tenants/:tenantId/environments/:environmentTag/webhooks/:hookKey',
+        requestFormat: 'json',
+        parameters: [
+            { name: 'tenantId', type: 'Path', schema: z.string() },
+            { name: 'environmentTag', type: 'Path', schema: z.string() },
+            { name: 'hookKey', type: 'Path', schema: z.string() },
         ],
         response: z.void(),
     },
@@ -465,6 +476,11 @@ export const TenantsApi: EndpointDefinition[] = [
                 name: 'environment',
                 type: 'Query',
                 schema: z.string().optional(),
+            },
+            {
+                name: 'hardDelete',
+                type: 'Query',
+                schema: z.boolean().optional().default(false),
             },
         ],
         response: z.void(),
