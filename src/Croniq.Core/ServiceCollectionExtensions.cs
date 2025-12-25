@@ -30,6 +30,9 @@ public static class ServiceCollectionExtensions
         services.AddOptions<CroniqSeedingOptions>()
             .Validate(ValidateSeedingOptions, "Croniq:Seeding:Mode must be Off, CreateIfMissing, or ForceUpdate.")
             .ValidateOnStart();
+        services.AddOptions<CroniqJobRegistrySyncOptions>()
+            .Validate(ValidateJobRegistrySyncOptions, "Croniq:JobRegistrySync:Mode must be Off, CreateIfMissing, or ForceUpdate.")
+            .ValidateOnStart();
         services.AddOptions<CroniqRetentionOptions>()
             .Validate(ValidateRetentionOptions, "Croniq:Retention must define a valid schedule and retention settings.")
             .ValidateOnStart();
@@ -359,6 +362,12 @@ public static class ServiceCollectionExtensions
     }
 
     private static bool ValidateSeedingOptions(CroniqSeedingOptions options)
+    {
+        return string.IsNullOrWhiteSpace(options.Mode)
+            || Enum.TryParse<CroniqSeedingMode>(options.Mode, ignoreCase: true, out _);
+    }
+
+    private static bool ValidateJobRegistrySyncOptions(CroniqJobRegistrySyncOptions options)
     {
         return string.IsNullOrWhiteSpace(options.Mode)
             || Enum.TryParse<CroniqSeedingMode>(options.Mode, ignoreCase: true, out _);

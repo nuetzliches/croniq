@@ -31,7 +31,7 @@ Croniq inspects headers per request: `Authorization: Bearer ...` first, then `X-
 - Bearer tokens and Croniq-minted tokens carry tenant/environment/scope claims.
 - API keys record both tenant and optional environment tag when issued.
 
-Forward-looking notes about federated login are tracked in `CLOUD-CONCEPT.md`.
+Forward-looking notes about federated login are intentionally out of scope for these public docs.
 
 ## API & Admin Endpoints
 
@@ -121,7 +121,7 @@ Alle Summaries/Beschreibungen aus der Tabelle landen wortgleich in den neuen Ope
 - API keys follow the format `crq_<segment>_<keyId>_<secret>`; only `keyId` + hashed secret are stored.
 - Hashing: HMAC SHA-256 with per-key salt. Secrets never leave memory after issuance.
 - Rotation stores audit events (table `auth.AuditLog`, backlog item) for compliance.
-- `ISecretProvider` allows binding API keys or connection strings to external secret stores in hosted deployments.
+- `ISecretProvider` allows binding API keys or connection strings to external secret stores in production deployments.
 
 ## Rate Limiting & Quotas
 

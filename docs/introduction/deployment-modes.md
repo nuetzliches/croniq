@@ -1,0 +1,71 @@
+---
+layout: doc
+---
+
+# Deployment modes
+
+Croniq can be operated at different maturity levels. These are not different products; they are different compositions of hosts, persistence, and optional features.
+
+## 1) Minimal (samples / local development)
+
+Goal: get started fast with little configuration and few running components.
+
+- Typical: run the `Croniq.Sample` project as a single process.
+- Default persistence: in-memory job store (no database required).
+- Features: keep the baseline small; additional surfaces are opt-in (API/UI, gRPC, webhooks, observability, durable SqlServer persistence).
+- Trade-off: without durable persistence, jobs and schedules are not a stable, shared “source of truth” across restarts and scaling.
+
+When it fits:
+
+- local development, PoCs, small single-machine automations, demos.
+
+## 2) Platform (self-hosted, separated components)
+
+Goal: durable, operable, and UI/management-first.
+
+Typical separation:
+
+- API host (REST, optionally UI)
+- Worker host (job execution)
+- Webhook host (optional)
+- gRPC clients (from applications or services)
+
+In this repo, the platform-style samples are split across dedicated projects (for example `Croniq.Sample.ApiHost` and `Croniq.Sample.WorkerHost`).
+
+Baseline requirements:
+
+- durable persistence (SqlServer)
+- more configuration, in exchange for predictable operations and full management capabilities
+
+Why it matters:
+
+- Once operators expect “full management in the UI”, Croniq needs a server-side source of truth (persistence), not only an in-process registry.
+
+---
+
+# Job catalog vs schedules (why cataloging is necessary)
+
+Conceptually, Croniq distinguishes between:
+
+- Job catalog (job definitions): “Which jobs exist in this tenant/environment?” including metadata (JobKey, display name, description, owner, capabilities).
+- Schedules/triggers: “When should a job run?” (cron/interval/webhook/event) and with which policies.
+
+For UI/management the crucial point is:
+
+- Jobs must exist independently of schedules.
+  - Otherwise the UI cannot show/manage jobs that exist but have not been scheduled yet.
+- Ownership signaled by a client/host (for a given JobKey) makes cataloging mandatory.
+  - The UI can then reliably show ownership, lifecycle, and enforce scope/policy rules even when no schedules exist.
+
+## Recommended baseline
+
+- Platform mode: enable opt-in “Job Catalog Seeding” on host startup to upsert job definitions per tenant/environment.
+  - No schedule creation, no deletions.
+- Minimal mode: keep it off by default, enable it when you want UI/management completeness.
+
+Why opt-in (instead of implicit):
+
+- It avoids unexpected writes to persistence on startup (principle of least surprise).
+- It avoids requiring DB permissions/schema in scenarios that are intentionally “no database”.
+- It makes ownership explicit: multiple hosts can register the same JobKey, so seeding needs clear rules for how metadata/owner is set and how conflicts are resolved.
+- It keeps failure modes obvious: if seeding fails (DB down/misconfigured), you get a clear startup error only when you opted into that dependency.

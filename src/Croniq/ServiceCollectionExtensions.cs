@@ -21,6 +21,7 @@ public static class ServiceCollectionExtensions
     private const string WorkerHostSectionPath = "Croniq:WorkerHost";
     private const string InMemoryJobStoreSectionPath = "Croniq:JobStore:InMemory";
     private const string SeedingSectionPath = "Croniq:Seeding";
+    private const string JobRegistrySyncSectionPath = "Croniq:JobRegistrySync";
     private const string MisfirePolicySectionPath = "Croniq:Policies:Misfire";
     private const string ExecutionPolicySectionPath = "Croniq:Policies:Execution";
     private const string PolicyOverridesSectionPath = "Croniq:Policies:Overrides";
@@ -60,6 +61,7 @@ public static class ServiceCollectionExtensions
         services.Configure<WorkerHostOptions>(configuration.GetSection(WorkerHostSectionPath));
         services.Configure<InMemoryJobStoreOptions>(configuration.GetSection(InMemoryJobStoreSectionPath));
         services.Configure<CroniqSeedingOptions>(configuration.GetSection(SeedingSectionPath));
+        services.Configure<CroniqJobRegistrySyncOptions>(configuration.GetSection(JobRegistrySyncSectionPath));
         services.Configure<MisfirePolicyOptions>(configuration.GetSection(MisfirePolicySectionPath));
         services.Configure<ExecutionPolicyOptions>(configuration.GetSection(ExecutionPolicySectionPath));
         services.Configure<PolicyOverrideOptions>(configuration.GetSection(PolicyOverridesSectionPath));
@@ -142,6 +144,7 @@ public static class ServiceCollectionExtensions
         services.AddCroniqDefaultProviders();
         services.AddCroniqCore();
         services.AddCroniqInMemoryJobStore();
+        services.AddHostedService<CroniqJobRegistrySyncHostedService>();
         services.AddHostedService<CroniqTriggerSeedingHostedService>();
         services.AddHostedService<CroniqTriggerSummaryHostedService>();
         services.AddCroniqWorkerHost();

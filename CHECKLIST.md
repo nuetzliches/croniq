@@ -130,6 +130,8 @@
 
 # Prüfen, beantworten, ggf. umsetzen
 
+- Hinweis (2025-12-26): Es gibt aktuell keine externen Konsumenten. Änderungen/Umbenennungen können ohne Legacy-Bridges/Abwärtskompatibilität durchgeführt werden (Breaking Changes sind ok).
+
 - [x] Können wir die Konfiguration des `otelBuilder` in `samples\Croniq.Sample.WorkerHost\Program.cs` so vereinfachen wie in `samples\Croniq.Sample.ApiHost\Program.cs`?
 - [x] `src\Croniq.Core\Execution\IJobExecutionPipeline.cs` Naming-Check abgeschlossen: Für das aktuelle Scope bleibt das Interface job-spezifisch; Workflows würden ein eigenes Interface (`IWorkflowExecutionPipeline`) oder einen generischen `IExecutionPipeline` erhalten, sobald das Feature gestartet wird. Kein sofortiger Umbau nötig.
 - [x] Route `/me` in `/profile` umbenennen? (Entscheidung: nein. `/me` bleibt bestehen, da bereits von Clients/Docs genutzt; Umbenennung wäre unnötiger Breaking-Change.)
@@ -140,8 +142,42 @@
   - [x] Konzept-Doku: `docs/deep-dive/password-auth.md` (Option A baseline, Option B PAKE outline)
   - [x] Persistenz/Seed: `PasswordChangeRequired` im User-Record + Seed `admin/admin` mit `PasswordChangeRequired=true`
   - [x] "Change password" Endpoint + Flow: `POST /auth/change-password` (oder ähnlich) inkl. Enforcement + UI-Flow
-- [ ] Data Retention: Croniq-internen Job + Trigger seeden, der konfigurierbar Daten bereinigt (pauschal für relevante Tabellen wie `auth.RefreshTokens`, aber explizit nicht für `auth.Users`).
-- [ ] Job Catalog Seeding: opt-in `JobCatalogSeedingHostedService`, der pro Host-Partition (`Croniq:Core` Tenant/Environment) alle registrierten Jobs (aus `IJobRegistry`) als Job-Definitionen in der Persistenz upsertet (ohne Trigger anzulegen, ohne Deletes), gated über `Croniq:Seeding`/separaten Config-Schalter.
+- [x] Data Retention: Croniq-internen Job + Trigger seeden, der konfigurierbar Daten bereinigt (relevante Tabellen inkl. RefreshTokens/DeadLetters/Webhook-Daten; explizit nicht für `auth.Users`) – umgesetzt 2025-12-25.
+- [ ] Job Registry Sync: minimal-first.
+  - Ziel: Im Einsatzgebiet "minimal" sollen Jobs ohne UI/Datenpflege sichtbar/verwaltbar sein (registriert aus Code/Registry, ohne manuelle Vorarbeit).
+  - Platform-Pfad: opt-in `JobRegistrySyncHostedService`, der pro Host-Partition (`Croniq:Core` Tenant/Environment) alle registrierten Jobs (aus `IJobRegistry`) als Job-Definitionen in der Persistenz upsertet.
+    - Ohne Trigger anzulegen, ohne Deletes (nur idempotente Upserts).
+    - Konflikt-/Owner-Regeln explizit definieren (kein Flapping bei mehreren Hosts/rolling deploys).
+    - Umsetzung (Scope):
+      - Core: `CroniqJobRegistrySyncHostedService` + Optionen (`Croniq:JobRegistrySync`), Default = Off.
+      - Semantik: CreateIfMissing vs ForceUpdate (Update nur bei passendem `managedBy`, sonst skip).
+      - Samples: Platform Samples (ApiHost/WorkerHost) aktivieren sync per config; Namings/ManagedBy stabil (nicht InstanceId-basiert).
+      - Tests: Core-HostedService Tests analog Trigger-Seeding (Off/Validate/CreateIfMissing/ForceUpdate + managedBy-mismatch).
+      - Docs: technische Doku (außerhalb `docs/`) wenn nötig; public docs bleiben Englisch-only und ohne Cloud-Bezug.
+- [ ] Runner Identity + Availability (für verteilte Runner): Modell/Schema für Runner-Identität (z.B. RunnerId + RunnerSecret/ApiKey) und Online/Offline-Status (Heartbeat/Lease), damit UI/Operatoren sehen, welche Runner gerade verfügbar sind.
+- [ ] Fremdsprachige Clients als Job-Runner (Go/Node/Python): Lösungsweg definieren und planen.
+
+  - Option A (früh): Delegate-/Adapter-Jobs (Croniq Job ruft externen HTTP/gRPC-Service auf; Sprachen sind "Job-Services").
+  - Option B (später): echtes Worker-Protokoll (Claim/Heartbeat/Ack/Logs) + SDKs, damit fremdsprachige Prozesse Jobs direkt ausführen können.
+  - Abhängigkeiten: Runner-Identität/Secrets, Availability-Status, Policy/Lease-Semantik, Tenant/Environment-Scoping.
+
+- [ ] Zielbild: echtes polyglottes Worker-Modell (Go/Node/Python Worker können Jobs direkt ausführen, nicht nur triggern).
+  - Protokoll/Contract:
+    - Worker-API (gRPC + HTTP) definieren: Register/Connect, PollWork (Claim), work-scoped lease deadlines (keine globalen Heartbeats), AckSuccess/AckFailure, PushLogs/Events.
+    - AuthN/AuthZ: RunnerIdentity (RunnerId + RunnerSecret/ApiKey/Bearer) + tenant/environment scoping; least-privilege Scopes.
+    - Idempotenz: Claim/Ack mit ExecutionId; Exactly-once best effort (at-least-once + dedupe) dokumentieren.
+  - Persistenz & Schema:
+    - Tabellen/Modelle: Runner, RunnerLease/Heartbeat, WorkItem/ExecutionClaim, RunnerCapabilities/Tags.
+    - Online/Offline Status: Heartbeat + TTL/Lease; UI-Readmodel für "available runners".
+  - Scheduling/Execution Integration:
+    - Work-Dispatch Layer (Server): Execution -> WorkItem -> Claim -> Ack -> DeadLetter/Retry.
+    - Policy/Lease: Timeout/Retry/Misfire sauber mit worker lease semantics integrieren.
+  - SDKs & Samples:
+    - Minimal Worker SDK pro Sprache (Go/Node/Python): auth, claim loop (HTTP long-poll oder gRPC stream), ack, structured logs.
+    - Samples aktualisieren/ergänzen: mind. ein polyglot worker sample + naming cleanup der bestehenden Samples falls nötig.
+  - Tests:
+    - Contract tests für gRPC messages; end-to-end tests für claim/heartbeat/ack + retry/deadletter.
+    - Concurrency tests: mehrere worker, rolling deploy, duplicate claims verhindern.
 - [ ] (nice-to-have) Solutionweit usings aufräumen?
 - [ ] CI Static Analysis / SAST: entscheiden und ggf. integrieren
   - [ ] CodeQL-Code-Scanning Workflow hinzufügen (optional; abhängig von GHAS/Repo-Settings)

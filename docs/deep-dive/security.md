@@ -56,7 +56,7 @@ This document specifies the authentication, authorization, and rate limiting des
 ### Bearer Tokens (Users)
 
 1. **Support**: Croniq can validate bearer tokens and map tenant/environment/scopes from claims.
-   Forward-looking, hosted-oriented details live in `CLOUD-CONCEPT.md`.
+   Forward-looking federated-login details are intentionally out of scope for these public docs.
 
 2. **Caller Context**: `ICallerContextFactory.FromBearerTokenAsync` validates JWTs via issuer metadata, caches configuration, and maps Croniq-specific fields:
    - Tenant ID resolved from `TenantClaim` (default `tenant`) or another explicitly configured claim.
@@ -76,7 +76,7 @@ This document specifies the authentication, authorization, and rate limiting des
 - `TenantGuard` enforces caller tenant/environment across REST routes (webhooks CRUD, schedules, manual triggers) and rejects cross-tenant attempts with 403 before persistence/pipeline execution. The execution-log endpoint now inspects the first log entry to validate tenant/environment metadata before streaming; the gRPC surface will reuse the same guard once the Scheduler RPC host is exposed.
 - Scope naming convention mirrors REST permissions: `schedules:write`, `jobs:trigger`, `tenants:admin`, `api-keys:manage`, `cluster:read`.
 - Bearer tokens must carry the configured tenant claim and any required scopes; missing claims/scopes yield 401/403. API keys remain single-tenant because validation bakes the tenant into the emitted caller context.
-- gRPC Scheduler: the Scheduler service is hosted in `Croniq.Api` (mapped via `MapCroniqSchedulerGrpc`). Calls use the same middleware/guards as HTTP; clients must send `x-croniq-key` (or Bearer) metadata and align `tenant_id`/`environment_tag` (required on `DeleteSchedule`). The proto lives under `src/Croniq.Rpc.Client/Protos/scheduler.proto`; `Croniq.Sample.GrpcClient` shows usage with `Croniq.Rpc.Client` and the DI helper `AddCroniqSchedulerClient`. Safe wrappers emit `CroniqRpcException` to avoid direct coupling zu `Grpc.Core`.
+- gRPC Scheduler: the Scheduler service runs in `Croniq.Api` (mapped via `MapCroniqSchedulerGrpc`). Calls use the same middleware/guards as HTTP; clients must send `x-croniq-key` (or Bearer) metadata and align `tenant_id`/`environment_tag` (required on `DeleteSchedule`). The proto lives under `src/Croniq.Rpc.Client/Protos/scheduler.proto`; `Croniq.Sample.GrpcClient` shows usage with `Croniq.Rpc.Client` and the DI helper `AddCroniqSchedulerClient`. Safe wrappers emit `CroniqRpcException` to avoid direct coupling zu `Grpc.Core`.
 - Admin APIs verify both caller scope and tenant match (e.g., only Tenant Admins can mutate their key space). Cross-tenant actions require service-level credentials flagged with `CallerType = ApiKey` and `Scopes` containing `system:*`.
 
 ## Inbound Webhook Security

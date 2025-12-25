@@ -26,6 +26,7 @@ public static class WorkerHostingExtensions
         services.Configure<WorkerHostOptions>(configuration.GetSection("Croniq:WorkerHost"));
         services.Configure<InMemoryJobStoreOptions>(configuration.GetSection("Croniq:JobStore:InMemory"));
         services.Configure<CroniqSeedingOptions>(configuration.GetSection("Croniq:Seeding"));
+        services.Configure<CroniqJobRegistrySyncOptions>(configuration.GetSection("Croniq:JobRegistrySync"));
         services.Configure<MisfirePolicyOptions>(configuration.GetSection("Croniq:Policies:Misfire"));
         services.Configure<ExecutionPolicyOptions>(configuration.GetSection("Croniq:Policies:Execution"));
         services.Configure<PolicyOverrideOptions>(configuration.GetSection("Croniq:Policies:Overrides"));
@@ -36,6 +37,7 @@ public static class WorkerHostingExtensions
         services.AddCroniqCore();
         services.AddCroniqDefaultProviders();
         services.AddCroniqInMemoryJobStore();
+        services.AddHostedService<CroniqJobRegistrySyncHostedService>();
         services.AddHostedService<CroniqTriggerSeedingHostedService>();
         services.AddHostedService<CroniqTriggerSummaryHostedService>();
         services.AddCroniqWorkerHost();
