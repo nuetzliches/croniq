@@ -7,6 +7,7 @@ using Croniq.Core.Hosting;
 using Croniq.Core.Jobs;
 using Croniq.Options;
 using Croniq.Core.Policies;
+using Croniq.Core.Scheduling;
 using Croniq.Sdk;
 using Croniq.Persistence.Abstractions;
 using Microsoft.Extensions.DependencyInjection;
@@ -28,6 +29,9 @@ public static class ServiceCollectionExtensions
             .ValidateOnStart();
         services.AddOptions<CroniqSeedingOptions>()
             .Validate(ValidateSeedingOptions, "Croniq:Seeding:Mode must be Off, CreateIfMissing, or ForceUpdate.")
+            .ValidateOnStart();
+        services.AddOptions<CroniqRetentionOptions>()
+            .Validate(ValidateRetentionOptions, "Croniq:Retention must define a valid schedule and retention settings.")
             .ValidateOnStart();
         services.AddOptions<WorkerHostOptions>();
         if (configure is not null)
@@ -70,6 +74,60 @@ public static class ServiceCollectionExtensions
         });
 
         return services;
+    }
+
+    private static bool ValidateRetentionOptions(CroniqRetentionOptions options)
+    {
+        if (options is null)
+        {
+            return false;
+        }
+
+        if (options.RefreshTokensRetentionDays < -1)
+        {
+            return false;
+        }
+
+        if (options.JobDeadLettersExpiryOffsetDays < -1)
+        {
+            return false;
+        }
+
+        if (options.WebhookDeadLettersExpiryOffsetDays < -1)
+        {
+            return false;
+        }
+
+        if (options.WebhookEndpointEventsRetentionDays < -1)
+        {
+            return false;
+        }
+
+        if (options.WebhookSecretHistoryExpiryOffsetDays < -1)
+        {
+            return false;
+        }
+
+        if (!options.Enabled)
+        {
+            return true;
+        }
+
+        if (string.IsNullOrWhiteSpace(options.ScheduleCron))
+        {
+            return false;
+        }
+
+        try
+        {
+            _ = new CronSchedule(options.ScheduleCron.Trim(), TimeZoneUtil.ResolveTimeZone(options.TimeZoneId));
+        }
+        catch
+        {
+            return false;
+        }
+
+        return true;
     }
 
     public static IServiceCollection AddCroniqFileExecutionLogStore(this IServiceCollection services, Action<FileExecutionLogStoreOptions>? configure = null)

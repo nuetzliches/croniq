@@ -1,4 +1,6 @@
 using System;
+using System.Reflection;
+using Croniq.Auth.SqlServer;
 using Croniq.Core;
 using Croniq.Core.Hosting;
 using Croniq.Options;
@@ -29,6 +31,7 @@ public static class WorkerHostingExtensions
         services.Configure<PolicyOverrideOptions>(configuration.GetSection("Croniq:Policies:Overrides"));
         services.Configure<CroniqPersistenceOptions>(configuration.GetSection("Croniq:Persistence"));
         services.Configure<SqlServerOptions>(configuration.GetSection("Croniq:SqlServer"));
+        services.Configure<CroniqRetentionOptions>(configuration.GetSection("Croniq:Retention"));
 
         services.AddCroniqCore();
         services.AddCroniqDefaultProviders();
@@ -75,6 +78,30 @@ public static class WorkerHostingExtensions
                     persistenceOptions.DeadLetterReasonMaxLength = persistenceOpts.SqlServer.DeadLetterReasonMaxLength.Value;
                 }
             });
+
+            var retention = configuration.GetSection("Croniq:Retention").Get<CroniqRetentionOptions>() ?? new CroniqRetentionOptions();
+            if (retention.Enabled)
+            {
+                services.AddCroniqJob<RetentionCleanupJob>();
+
+                var attribute = typeof(RetentionCleanupJob).GetCustomAttribute<Croniq.Sdk.CroniqJobAttribute>();
+                if (attribute is null)
+                {
+                    throw new InvalidOperationException("RetentionCleanupJob is missing [CroniqJob] attribute.");
+                }
+
+                var triggerId = string.IsNullOrWhiteSpace(retention.TriggerId)
+                    ? "croniq.retention.cleanup"
+                    : retention.TriggerId.Trim();
+
+                services.AddSingleton(new CroniqTriggerSeedRegistration(attribute, retention.ScheduleCron)
+                {
+                    TriggerId = triggerId,
+                    ManagedBy = "croniq-retention",
+                    TimeZoneId = retention.TimeZoneId,
+                    Enabled = true
+                });
+            }
         }
 
         return services;

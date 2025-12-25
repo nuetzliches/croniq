@@ -139,6 +139,21 @@ catch {
     $runningInVsCode = $false
 }
 
+# Only redirect dotnet test console output when explicitly requested (e.g., automated agents),
+# so normal developer runs in VS Code keep streaming output.
+$redirectDotnetConsoleOutput = $false
+try {
+    if (-not [string]::IsNullOrWhiteSpace($env:CRONIQ_AGENT_TERMINAL)) {
+        $value = $env:CRONIQ_AGENT_TERMINAL.Trim()
+        if ($value -eq "1" -or [string]::Equals($value, "true", [System.StringComparison]::OrdinalIgnoreCase)) {
+            $redirectDotnetConsoleOutput = $true
+        }
+    }
+}
+catch {
+    $redirectDotnetConsoleOutput = $false
+}
+
 Write-Host "Restoring local dotnet tools..." -ForegroundColor Cyan
 & dotnet tool restore
 if ($LASTEXITCODE -ne 0) {
@@ -213,8 +228,8 @@ try {
 
     Write-Host "Running dotnet $($dotnetArgs -join ' ')" -ForegroundColor Cyan
     try {
-        if ($runningInVsCode) {
-            Write-Warning "Detected VS Code terminal environment. Redirecting dotnet test output to '$dotnetConsoleLogPath' to avoid editor freezes."
+        if ($redirectDotnetConsoleOutput -and $runningInVsCode) {
+            Write-Warning "Redirecting dotnet test output to '$dotnetConsoleLogPath' (CRONIQ_AGENT_TERMINAL=1) to avoid editor freezes."
             & dotnet @dotnetArgs *> $dotnetConsoleLogPath
         }
         else {
@@ -290,6 +305,7 @@ finally {
             "Solution:       $Solution",
             "DisableCoverage: $DisableCoverage",
             "RunningInVsCode: $runningInVsCode",
+            "RedirectDotnetConsoleOutput: $redirectDotnetConsoleOutput",
             "SqlConnection:  $sanitizedSql",
             "",
             "ArtifactsRoot:  $ciRoot",
