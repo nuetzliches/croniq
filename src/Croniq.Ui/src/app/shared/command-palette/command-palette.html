@@ -13,11 +13,11 @@
       class="rounded-2xl border border-white/10 bg-surface-alt/95 shadow-2xl ring-1 ring-black/50"
       role="document"
     >
-      <header class="flex items-center justify-between px-5 pb-3 text-sm text-text-muted">
+      <header class="flex items-center justify-between px-5 pb-3 text-sm text-muted">
         <span id="commandPaletteLabel">Quick actions</span>
         <button
           type="button"
-          class="rounded-md border border-white/10 px-3 py-1 text-xs font-semibold text-text"
+          class="rounded-md border border-white/10 px-3 py-1 text-xs font-semibold text-primary"
           (click)="close()"
           aria-label="Close command palette"
         >
@@ -31,7 +31,7 @@
           #commandPaletteInput
           id="commandPaletteQuery"
           type="text"
-          class="w-full bg-transparent text-base text-text placeholder:text-text-muted focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
+          class="w-full bg-transparent text-base text-primary placeholder:text-muted focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
           [value]="query()"
           (input)="onSearch(commandPaletteInput.value)"
           placeholder="Type a command or route"
@@ -48,13 +48,13 @@
         [attr.aria-activedescendant]="activeDescendantId() ?? undefined"
       >
         @if (results().length === 0) {
-        <li class="px-5 py-4 text-sm text-text-muted">No commands match "{{ query() }}".</li>
+        <li class="px-5 py-4 text-sm text-muted">No commands match "{{ query() }}".</li>
         } @else { @for (cmd of results(); track cmd.id; let idx = $index) {
         <li>
           <button
             type="button"
             role="option"
-            class="flex w-full items-baseline justify-between gap-4 px-5 py-3 text-left text-sm font-medium text-text transition-colors hover:bg-accent/10"
+            class="flex w-full items-baseline justify-between gap-4 px-5 py-3 text-left text-sm font-medium text-primary transition-colors hover:bg-accent/10"
             [class.bg-accent/20]="idx === activeIndex()"
             [class.text-white]="idx === activeIndex()"
             [attr.aria-selected]="idx === activeIndex()"
@@ -62,7 +62,7 @@
             (click)="execute(cmd, idx)"
           >
             <span>{{ cmd.label }}</span>
-            <small class="text-xs text-text-muted">{{ cmd.description ?? (cmd.path ? '/' + cmd.path : '') }}</small>
+            <small class="text-xs text-muted">{{ cmd.description ?? (cmd.path ? '/' + cmd.path : '') }}</small>
           </button>
         </li>
         } }

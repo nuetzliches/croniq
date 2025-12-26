@@ -43,9 +43,9 @@ let nextDetailSurfaceId = 0;
             >
               <header class="flex items-start justify-between gap-3 border-b border-white/10 px-5 py-4">
                 <div class="space-y-1">
-                  <h2 class="text-sm font-semibold text-text" [id]="titleId()">{{ title() }}</h2>
+                  <h2 class="text-sm font-semibold text-primary" [id]="titleId()">{{ title() }}</h2>
                   @if (subtitle()) {
-                    <p class="text-xs text-text-muted">{{ subtitle() }}</p>
+                    <p class="text-xs text-muted">{{ subtitle() }}</p>
                   }
                 </div>
 
@@ -53,7 +53,7 @@ let nextDetailSurfaceId = 0;
                   <ng-content select="[cqDetailSurfaceHeader]"></ng-content>
                   <button
                     type="button"
-                    class="rounded-md border border-white/10 px-3 py-1 text-xs font-semibold text-text"
+                    class="rounded-md border border-white/10 px-3 py-1 text-xs font-semibold text-primary"
                     (click)="requestClose()"
                     [attr.aria-label]="closeAriaLabel()"
                   >

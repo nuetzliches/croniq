@@ -1,67 +1,78 @@
-<div class="grid min-h-screen grid-cols-[250px_1fr] bg-surface text-text">
+<div class="grid min-h-screen grid-cols-[250px_1fr] bg-surface text-primary">
   <aside class="flex flex-col gap-6 border-r border-white/10 bg-surface-alt/95 px-6 py-6">
     <cq-app-brand />
 
-    @if (hasEnvironment()) {
-    <div class="rounded-xl border border-white/10 bg-white/5 px-4 py-3" aria-live="polite">
-      <div class="text-xs uppercase tracking-wide text-text-muted">Environment</div>
-      <div class="text-base font-medium">{{ tenantDisplay() }}</div>
+    <div class="space-y-2">
+      <div class="rounded-xl border border-white/10 bg-white/5 px-4 py-3" aria-live="polite">
+        <div class="text-xs uppercase tracking-wide text-muted">Tenant</div>
+        <div class="text-base font-medium">{{ tenantDisplay() }}</div>
+      </div>
+      @if (hasEnvironment()) {
+      <div class="rounded-xl border border-white/10 bg-white/5 px-4 py-3" aria-live="polite">
+        <div class="text-xs uppercase tracking-wide text-muted">Environment</div>
+        <div class="text-base font-medium">{{ environmentDisplay() }}</div>
+      </div>
+      }
     </div>
-    }
 
-    <nav class="flex flex-1 flex-col gap-2" aria-label="Primary">
-      @for (item of navItems(); track item.path) {
-      <a
-        [routerLink]="['/', item.path]"
-        routerLinkActive="border-accent bg-accent/10 text-white"
-        class="rounded-xl border border-transparent px-4 py-3 text-sm font-semibold text-text transition hover:border-accent/50 hover:bg-accent/5"
-        [attr.aria-label]="item.label"
-      >
-        <span class="font-semibold">{{ item.label }}</span>
-        <small class="block text-xs text-text-muted">{{ item.description }}</small>
-      </a>
+    <nav class="flex flex-1 flex-col gap-6 overflow-y-auto" aria-label="Primary">
+      @for (section of navSections(); track section.label) {
+      <div class="space-y-2">
+        <div class="px-2 text-xs font-bold uppercase tracking-wider text-muted/70">
+          {{ section.label }}
+        </div>
+        <div class="flex flex-col gap-1">
+          @for (item of section.items; track item.path) {
+          <a
+            [routerLink]="['/', item.path]"
+            routerLinkActive="bg-accent/10 text-accent border-accent/20"
+            class="group flex items-center justify-between rounded-lg border border-transparent px-3 py-2 text-sm font-medium text-muted transition hover:bg-white/5 hover:text-primary"
+            [attr.aria-label]="item.label"
+          >
+            <span>{{ item.label }}</span>
+          </a>
+          }
+        </div>
+      </div>
       }
     </nav>
 
-    <div class="flex flex-col gap-2" aria-label="Account">
-      <a
-        [routerLink]="['/', 'auth', 'change-password']"
-        routerLinkActive="border-accent bg-accent/10 text-white"
-        class="rounded-xl border border-transparent px-4 py-3 text-sm font-semibold text-text transition hover:border-accent/50 hover:bg-accent/5"
-        aria-label="Change password"
-      >
-        Change password
-      </a>
-      <button
-        class="rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-left text-sm font-semibold text-text transition hover:border-accent hover:text-accent"
-        type="button"
-        (click)="logout()"
-      >
-        Logout
-      </button>
+    <div class="flex flex-col gap-2 border-t border-white/10 pt-4" aria-label="Account">
+      <div class="flex items-center justify-between px-2">
+        <div class="text-sm font-medium text-primary">User</div>
+        <button class="text-xs text-muted hover:text-primary" type="button" (click)="logout()">
+          Logout
+        </button>
+      </div>
     </div>
-
-    <button
-      class="inline-flex items-center justify-between rounded-lg border border-white/10 bg-white/5 px-4 py-2 text-sm font-semibold text-text transition hover:border-accent hover:text-accent"
-      type="button"
-      (click)="openCommandPalette()"
-      [attr.aria-pressed]="commandPaletteOpen()"
-    >
-      Command
-      <span class="rounded border border-white/20 px-2 py-0.5 text-xs">⌘K</span>
-    </button>
   </aside>
 
   <section
     class="flex min-h-screen flex-col bg-gradient-to-b from-surface via-surface/80 to-surface/40"
   >
     <header
-      class="flex flex-wrap gap-4 border-b border-white/10 bg-surface/80 px-6 py-4 backdrop-blur"
-      aria-label="System status"
+      class="flex items-center justify-between border-b border-white/10 bg-surface/80 px-6 py-3 backdrop-blur"
+      aria-label="Top Bar"
     >
-      @for (status of statusCards(); track status.label) {
-      <cq-status-beacon [label]="status.label" [value]="status.value" [intent]="status.intent" />
-      }
+      <div class="text-sm text-muted">Croniq / <span class="text-primary">Dashboard</span></div>
+
+      <div class="flex items-center gap-4">
+        <button
+          class="inline-flex items-center gap-2 rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-sm text-muted transition hover:border-accent hover:text-accent"
+          type="button"
+          (click)="openCommandPalette()"
+          [attr.aria-pressed]="commandPaletteOpen()"
+        >
+          <span>Search</span>
+          <kbd class="rounded border border-white/20 px-1.5 text-[10px] font-sans">⌘K</kbd>
+        </button>
+
+        <div class="h-4 w-px bg-white/10"></div>
+
+        @for (status of statusCards(); track status.label) {
+        <cq-status-beacon [label]="status.label" [value]="status.value" [intent]="status.intent" />
+        }
+      </div>
     </header>
     <main class="flex-1 p-6">
       <router-outlet />

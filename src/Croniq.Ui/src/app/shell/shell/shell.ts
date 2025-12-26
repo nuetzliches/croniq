@@ -1,7 +1,7 @@
 import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@angular/core';
 import { Router, RouterLink, RouterLinkActive, RouterOutlet } from '@angular/router';
 import { PasswordAuthService } from '@core/auth/password-auth.service';
-import { NavItem, PRIMARY_NAV_ITEMS } from '@core/navigation/nav-items';
+import { NAV_SECTIONS, NavSection } from '@core/navigation/nav-items';
 import { TenantContextService } from '@core/tenant-context/tenant-context.service';
 import { AppBrand } from '@shared/app-brand/app-brand';
 import { CommandPalette } from '@shared/command-palette/command-palette';
@@ -33,8 +33,9 @@ export class Shell {
   private readonly router = inject(Router);
 
   readonly tenantDisplay = this.tenantContext.tenantLabel;
+  readonly environmentDisplay = this.tenantContext.environment;
   readonly hasEnvironment = computed(() => (this.tenantContext.environment() ?? '').trim().length > 0);
-  readonly navItems = signal<ReadonlyArray<NavItem>>(PRIMARY_NAV_ITEMS);
+  readonly navSections = signal<ReadonlyArray<NavSection>>(NAV_SECTIONS);
 
   readonly statusCards = signal<ReadonlyArray<StatusCard>>([
     { label: 'Cluster', value: 'Healthy', intent: 'success' },
@@ -46,6 +47,7 @@ export class Shell {
   openCommandPalette(): void {
     this.commandPalette.open();
   }
+
 
   closeCommandPalette(): void {
     this.commandPalette.close();

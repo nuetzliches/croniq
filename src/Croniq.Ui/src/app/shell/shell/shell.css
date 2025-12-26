@@ -2,17 +2,17 @@
   display: grid;
   grid-template-columns: 260px 1fr;
   min-height: 100vh;
-  background: var(--cq-surface, #0f172a);
-  color: var(--cq-text, #f8fafc);
+  background: var(--cq-surface);
+  color: var(--cq-text-primary);
 }
 
 .rail {
-  background: var(--cq-surface-alt, #111a2d);
+  background: var(--cq-surface-alt);
   padding: 1.5rem;
   display: flex;
   flex-direction: column;
   gap: 1.5rem;
-  border-right: 1px solid var(--cq-border, rgba(248, 250, 252, 0.08));
+  border-right: 1px solid var(--cq-border);
 }
 
 .logo {
@@ -24,7 +24,7 @@
 
 .tenant-label {
   font-size: 0.75rem;
-  color: var(--cq-text-muted, #94a3b8);
+  color: var(--cq-text-secondary);
 }
 
 .tenant-value {
@@ -52,7 +52,7 @@ nav {
 
 .nav-item:hover,
 .nav-item.active {
-  border-color: var(--cq-accent, #27d2ff);
+  border-color: var(--cq-accent);
   background: rgba(39, 210, 255, 0.08);
 }
 
@@ -79,7 +79,7 @@ nav {
   display: flex;
   gap: 1rem;
   padding: 1.25rem 1.5rem;
-  border-bottom: 1px solid var(--cq-border, rgba(248, 250, 252, 0.08));
+  border-bottom: 1px solid var(--cq-border);
   background: rgba(15, 23, 42, 0.8);
   backdrop-filter: blur(8px);
 }

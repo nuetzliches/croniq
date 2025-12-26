@@ -1,58 +1,93 @@
-<section class="space-y-8">
-  <section class="grid gap-6 lg:grid-cols-[360px_1fr]">
-    <aside class="space-y-6">
-      <header class="space-y-3">
-        <h1 class="text-3xl font-semibold text-text">Operations dashboard</h1>
-        <p class="text-base text-text-muted">
-          Live glimpse into schedule execution, queue health, and webhook latency.
-        </p>
-      </header>
-    </aside>
-
-    <article class="rounded-2xl border border-white/10 bg-white/5 shadow-xl" ngTabs>
-      <header class="border-b border-white/10 p-4">
-        <div
-          ngTabList
-          [wrap]="true"
-          selectionMode="follow"
-          [selectedTab]="selectedTab()"
-          (selectedTabChange)="setSelectedTab($event)"
-          class="flex flex-wrap gap-2"
-          aria-label="Dashboard detail"
-        >
-          @for (tab of detailTabs; track tab.id) {
-            <button
-              type="button"
-              ngTab
-              [value]="tab.id"
-              class="rounded-full px-4 py-2 text-xs font-semibold uppercase tracking-wide transition"
-              [class.bg-accent/20]="selectedTab() === tab.id"
-              [class.text-white]="selectedTab() === tab.id"
-              [class.text-text-muted]="selectedTab() !== tab.id"
-            >
-              {{ tab.label }}
-            </button>
+<div class="space-y-6">
+  <!-- Metrics Row -->
+  <section class="grid gap-6 md:grid-cols-3">
+    @for (metric of metrics(); track metric.label) {
+      <article class="rounded-xl border border-white/10 bg-surface-alt p-5 shadow-card">
+        <div class="flex items-start justify-between">
+          <h3 class="text-sm font-medium text-muted">{{ metric.label }}</h3>
+          @if (metric.status) {
+            <span class="flex h-2 w-2 rounded-full"
+              [class.bg-success]="metric.status === 'healthy'"
+              [class.bg-warning]="metric.status === 'warning'"
+              [class.bg-danger]="metric.status === 'critical'">
+            </span>
           }
         </div>
-      </header>
-
-      <section class="p-5">
-        <div ngTabPanel value="metrics" [preserveContent]="false">
-          <ng-template ngTabContent>
-            <section class="grid gap-4 md:grid-cols-2 xl:grid-cols-4" aria-label="Key metrics">
-              @for (card of summaryCards(); track card.label) {
-                <article
-                  class="flex min-h-[150px] flex-col justify-between rounded-2xl border border-white/10 bg-gradient-to-br from-white/10 via-white/5 to-white/0 p-5 shadow-lg"
-                >
-                  <span class="text-xs uppercase tracking-[0.35em] text-text-muted">{{ card.label }}</span>
-                  <span class="text-4xl font-semibold text-text">{{ card.value }}</span>
-                  <span class="text-sm text-text-muted">{{ card.description }}</span>
-                </article>
-              }
-            </section>
-          </ng-template>
+        <div class="mt-4 flex items-baseline gap-2">
+          <span class="text-3xl font-semibold text-primary">{{ metric.value }}</span>
+          @if (metric.trend) {
+            <span class="text-xs font-medium text-success">{{ metric.trend }}</span>
+          }
         </div>
-      </section>
+        @if (metric.subtext) {
+          <p class="mt-1 text-xs text-muted">{{ metric.subtext }}</p>
+        }
+      </article>
+    }
+  </section>
+
+  <!-- Bottom Row -->
+  <section class="grid gap-6 lg:grid-cols-2">
+    <!-- Recent Failures -->
+    <article class="flex flex-col rounded-xl border border-white/10 bg-surface-alt shadow-card">
+      <header class="flex items-center justify-between border-b border-white/10 px-6 py-4">
+        <h2 class="text-base font-semibold text-primary">Recent Failures (Dead Letters)</h2>
+      </header>
+      <div class="flex-1 p-0">
+        <table class="w-full text-left text-sm">
+          <thead class="bg-white/5 text-xs uppercase text-muted">
+            <tr>
+              <th class="px-6 py-3 font-medium">Job</th>
+              <th class="px-6 py-3 font-medium">Reason</th>
+              <th class="px-6 py-3 font-medium">Time</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-white/10">
+            @for (failure of recentFailures(); track failure.jobKey + failure.time) {
+              <tr class="hover:bg-white/5">
+                <td class="px-6 py-3 font-medium text-primary">{{ failure.jobKey }}</td>
+                <td class="px-6 py-3 text-danger">{{ failure.reason }}</td>
+                <td class="px-6 py-3 text-muted">{{ failure.time }}</td>
+              </tr>
+            }
+          </tbody>
+        </table>
+      </div>
+      <footer class="border-t border-white/10 px-6 py-3">
+        <a routerLink="/schedules" class="text-sm font-medium text-accent hover:text-accent-hover">
+          View All Dead Letters →
+        </a>
+      </footer>
+    </article>
+
+    <!-- Upcoming Schedules -->
+    <article class="flex flex-col rounded-xl border border-white/10 bg-surface-alt shadow-card">
+      <header class="flex items-center justify-between border-b border-white/10 px-6 py-4">
+        <h2 class="text-base font-semibold text-primary">Upcoming Schedules</h2>
+      </header>
+      <div class="flex-1 p-0">
+        <table class="w-full text-left text-sm">
+          <thead class="bg-white/5 text-xs uppercase text-muted">
+            <tr>
+              <th class="px-6 py-3 font-medium">Job</th>
+              <th class="px-6 py-3 font-medium">Fire Time</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-white/10">
+            @for (schedule of upcomingSchedules(); track schedule.jobKey) {
+              <tr class="hover:bg-white/5">
+                <td class="px-6 py-3 font-medium text-primary">{{ schedule.jobKey }}</td>
+                <td class="px-6 py-3 text-muted">{{ schedule.fireTime }}</td>
+              </tr>
+            }
+          </tbody>
+        </table>
+      </div>
+      <footer class="border-t border-white/10 px-6 py-3">
+        <a routerLink="/schedules" class="text-sm font-medium text-accent hover:text-accent-hover">
+          View Calendar →
+        </a>
+      </footer>
     </article>
   </section>
-</section>
+</div>

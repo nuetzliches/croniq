@@ -1,119 +1,117 @@
-<section class="mx-auto max-w-2xl space-y-6">
-  <header class="space-y-4">
-    <cq-app-brand />
-    <div class="space-y-2">
-      <h1 class="text-3xl font-semibold text-text">Login</h1>
-      <p class="text-sm text-text-muted">
-        Sign in with a username/password to test the API. The access token is stored only in
-        <span class="font-semibold">sessionStorage</span>.
-      </p>
+<div class="flex min-h-screen flex-col items-center justify-center bg-surface p-6">
+  <div class="w-full max-w-md space-y-8">
+    <div class="flex flex-col items-center space-y-2 text-center">
+      <cq-app-brand class="scale-125" />
+      <h1 class="mt-4 text-2xl tracking-tight text-primary">Welcome back</h1>
+      <p class="text-sm text-muted">Sign in to your account to continue</p>
     </div>
-  </header>
 
-  <article class="space-y-4 rounded-2xl border border-white/10 bg-surface/40 p-6">
-    <div class="flex flex-wrap items-start justify-between gap-4" aria-live="polite">
-      <div class="space-y-1">
-        <div class="text-xs uppercase tracking-[0.35em] text-text-muted">Current token</div>
-        <div class="text-base font-semibold text-text">{{ maskedSessionToken() }}</div>
-        @if (sessionTokenExpired()) {
-        <div class="text-sm text-danger">Token expired and was cleared.</div>
-        }
-      </div>
-      <a
-        class="rounded-full border border-white/20 px-4 py-2 text-xs font-semibold uppercase tracking-wide text-text transition hover:border-accent/50 hover:text-accent"
-        [routerLink]="['/dashboard']"
+    <div class="rounded-2xl border border-white/10 bg-surface-alt/50 p-8 shadow-xl backdrop-blur-sm">
+      <form
+        class="space-y-6"
+        novalidate
+        [attr.aria-busy]="busy()"
+        (submit)="$event.preventDefault(); login()"
       >
-        Back to dashboard
-      </a>
-    </div>
+        <div class="space-y-2">
+          <label for="login-username" class="text-xs font-semibold uppercase tracking-wide text-muted">
+            Username
+          </label>
+          <input
+            id="login-username"
+            type="text"
+            [field]="loginForm.username"
+            class="w-full rounded-lg border border-white/10 bg-white/5 px-4 py-2.5 text-sm text-primary placeholder-white/20 transition focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+            placeholder="Enter your username"
+            autocomplete="username"
+            autocapitalize="none"
+            spellcheck="false"
+            autofocus
+            aria-required="true"
+            [attr.aria-invalid]="showValidation() && usernameEmpty() ? 'true' : null"
+            [attr.aria-describedby]="usernameDescribedBy()"
+            (input)="onCredentialEdit()"
+          />
+          <p id="login-username-hint" class="sr-only">Enter your username.</p>
+          @if (showValidation() && usernameEmpty()) {
+          <p id="login-username-error" class="text-xs text-danger">Username is required.</p>
+          }
+        </div>
 
-    <form
-      class="space-y-4"
-      novalidate
-      [attr.aria-busy]="busy()"
-      (submit)="$event.preventDefault(); login()"
-    >
-      <label class="space-y-1 text-text-muted">
-        Username
-        <input
-          id="login-username"
-          type="text"
-          [field]="loginForm.username"
-          class="w-full rounded-xl border border-white/15 bg-white/5 px-3 py-2 text-sm text-text"
-          autocomplete="username"
-          autocapitalize="none"
-          spellcheck="false"
-          autofocus
-          aria-required="true"
-          [attr.aria-invalid]="showValidation() && usernameEmpty() ? 'true' : null"
-          [attr.aria-describedby]="usernameDescribedBy()"
-          (input)="onCredentialEdit()"
-        />
-      </label>
+        <div class="space-y-2">
+          <label for="login-password" class="text-xs font-semibold uppercase tracking-wide text-muted">
+            Password
+          </label>
+          <input
+            id="login-password"
+            type="password"
+            [field]="loginForm.password"
+            class="w-full rounded-lg border border-white/10 bg-white/5 px-4 py-2.5 text-sm text-primary placeholder-white/20 transition focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+            placeholder="Enter your password"
+            autocomplete="current-password"
+            aria-required="true"
+            [attr.aria-invalid]="showValidation() && passwordEmpty() ? 'true' : null"
+            [attr.aria-describedby]="passwordDescribedBy()"
+            enterkeyhint="go"
+            (input)="onCredentialEdit()"
+          />
+          <p id="login-password-hint" class="sr-only">Enter your password.</p>
+          @if (showValidation() && passwordEmpty()) {
+          <p id="login-password-error" class="text-xs text-danger">Password is required.</p>
+          }
+        </div>
 
-      <p id="login-username-hint" class="sr-only">Enter your username.</p>
-      @if (showValidation() && usernameEmpty()) {
-      <p id="login-username-error" class="text-sm text-danger">Username is required.</p>
-      }
+        @if (lastAction()) {
+        <div
+          class="rounded-lg border px-4 py-3 text-sm"
+          [class.border-danger]="lastActionTone() === 'error'"
+          [class.bg-danger/10]="lastActionTone() === 'error'"
+          [class.text-danger]="lastActionTone() === 'error'"
+          [class.border-white/10]="lastActionTone() !== 'error'"
+          [class.text-primary]="lastActionTone() !== 'error'"
+          aria-live="polite"
+        >
+          {{ lastAction() }}
+        </div>
+        }
 
-      <label class="space-y-1 text-text-muted">
-        Password
-        <input
-          id="login-password"
-          type="password"
-          [field]="loginForm.password"
-          class="w-full rounded-xl border border-white/15 bg-white/5 px-3 py-2 text-sm text-text"
-          autocomplete="current-password"
-          aria-required="true"
-          [attr.aria-invalid]="showValidation() && passwordEmpty() ? 'true' : null"
-          [attr.aria-describedby]="passwordDescribedBy()"
-          enterkeyhint="go"
-          (input)="onCredentialEdit()"
-        />
-      </label>
-
-      <p id="login-password-hint" class="sr-only">Enter your password.</p>
-      @if (showValidation() && passwordEmpty()) {
-      <p id="login-password-error" class="text-sm text-danger">Password is required.</p>
-      }
-
-      <div class="flex flex-wrap gap-2">
         <button
           type="submit"
-          class="rounded-full border border-accent/40 bg-accent/15 px-4 py-2 text-xs font-semibold uppercase tracking-wide text-accent"
+          class="w-full rounded-lg bg-accent px-4 py-2.5 text-sm font-semibold text-white shadow-lg shadow-accent/20 transition hover:bg-accent-hover disabled:opacity-50 disabled:shadow-none"
           [disabled]="busy()"
-          [attr.aria-disabled]="busy()"
         >
-          @if (busy()) { Signing in… } @else { Login }
+          @if (busy()) {
+          <span class="inline-flex items-center gap-2">
+            <svg class="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none">
+              <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+              <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+            </svg>
+            Signing in...
+          </span>
+          } @else {
+          Sign in
+          }
         </button>
+      </form>
+    </div>
 
-        <button
-          type="button"
-          class="rounded-full border border-white/20 px-4 py-2 text-xs font-semibold uppercase tracking-wide text-text"
-          [disabled]="busy() || !sessionToken()"
-          [attr.aria-disabled]="busy() || !sessionToken()"
-          (click)="clearToken()"
-        >
-          Clear
-        </button>
-      </div>
-
-      @if (lastAction()) {
-      <p
-        class="text-sm"
-        [class.text-danger]="lastActionTone() === 'error'"
-        [class.text-accent]="lastActionTone() === 'success'"
-        [class.text-text-muted]="lastActionTone() === 'info' || !lastActionTone()"
-        [attr.role]="lastActionTone() === 'error' ? 'alert' : null"
-        [attr.aria-live]="lastActionTone() === 'error' ? 'assertive' : 'polite'"
+    @if (sessionToken()) {
+    <div class="flex flex-col items-center gap-2 text-center">
+      <a
+        routerLink="/dashboard"
+        class="text-sm font-semibold text-accent hover:text-accent-hover hover:underline"
       >
-        {{ lastAction() }}
-      </p>
-      }
+        Go to Dashboard
+      </a>
+      <button
+        type="button"
+        class="text-xs text-muted hover:text-primary hover:underline"
+        (click)="clearToken()"
+      >
+        Clear existing session
+      </button>
+    </div>
+    }
+  </div>
+</div>
 
-      <p class="text-xs text-text-muted">
-        Note: The environment context is derived server-side and is not set in the login request.
-      </p>
-    </form>
-  </article>
-</section>

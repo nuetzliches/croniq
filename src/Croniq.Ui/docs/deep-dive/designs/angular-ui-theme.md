@@ -24,37 +24,37 @@ Define CSS variables on `:root[data-theme="ops-light"]` and `:root[data-theme="o
 
 ### Light Theme (`ops-light`)
 
-| Token                | Value (Hex) | Usage                  |
-| -------------------- | ----------- | ---------------------- |
-| `--cq-surface`       | `#F8FAFC`   | Page background.       |
-| `--cq-surface-alt`   | `#EEF2F7`   | Cards, tables.         |
-| `--cq-border`        | `#CBD2DF`   | Dividers, grid lines.  |
-| `--cq-text`          | `#1A1F2B`   | Primary text.          |
-| `--cq-text-muted`    | `#4B5568`   | Secondary text.        |
-| `--cq-accent`        | `#00B1D2`   | Primary buttons, KPIs. |
-| `--cq-accent-strong` | `#0084A3`   | Hover/active.          |
-| `--cq-danger`        | `#F05252`   | Alerts, failed jobs.   |
-| `--cq-warning`       | `#F4B740`   | Misfire warnings.      |
-| `--cq-success`       | `#1FAD66`   | Healthy queues.        |
-| `--cq-graph-1`       | `#1D4ED8`   | Sparklines (queues).   |
-| `--cq-graph-2`       | `#DD2590`   | Sparklines (policies). |
+| Token                 | Value (Hex) | Usage                  |
+| --------------------- | ----------- | ---------------------- |
+| `--cq-surface`        | `#F8FAFC`   | Page background.       |
+| `--cq-surface-alt`    | `#EEF2F7`   | Cards, tables.         |
+| `--cq-border`         | `#CBD2DF`   | Dividers, grid lines.  |
+| `--cq-text-primary`   | `#1A1F2B`   | Primary text.          |
+| `--cq-text-secondary` | `#4B5568`   | Secondary text.        |
+| `--cq-accent`         | `#7C3AED`   | Primary buttons, KPIs. |
+| `--cq-accent-strong`  | `#6D28D9`   | Hover/active.          |
+| `--cq-danger`         | `#F05252`   | Alerts, failed jobs.   |
+| `--cq-warning`        | `#F4B740`   | Misfire warnings.      |
+| `--cq-success`        | `#1FAD66`   | Healthy queues.        |
+| `--cq-graph-1`        | `#1D4ED8`   | Sparklines (queues).   |
+| `--cq-graph-2`        | `#DD2590`   | Sparklines (policies). |
 
 ### Dark Theme (`ops-dark`)
 
-| Token                | Value (Hex) | Usage |
-| -------------------- | ----------- | ----- |
-| `--cq-surface`       | `#0F172A`   |
-| `--cq-surface-alt`   | `#1E2A3F`   |
-| `--cq-border`        | `#27344D`   |
-| `--cq-text`          | `#F8FAFC`   |
-| `--cq-text-muted`    | `#94A3B8`   |
-| `--cq-accent`        | `#27D2FF`   |
-| `--cq-accent-strong` | `#14B8F9`   |
-| `--cq-danger`        | `#FB7181`   |
-| `--cq-warning`       | `#FACC15`   |
-| `--cq-success`       | `#34D399`   |
-| `--cq-graph-1`       | `#93C5FD`   |
-| `--cq-graph-2`       | `#F9A8D4`   |
+| Token                 | Value (Hex) | Usage |
+| --------------------- | ----------- | ----- |
+| `--cq-surface`        | `#0F172A`   |
+| `--cq-surface-alt`    | `#1E2A3F`   |
+| `--cq-border`         | `#27344D`   |
+| `--cq-text-primary`   | `#F8FAFC`   |
+| `--cq-text-secondary` | `#94A3B8`   |
+| `--cq-accent`         | `#A78BFA`   |
+| `--cq-accent-strong`  | `#8B5CF6`   |
+| `--cq-danger`         | `#FB7181`   |
+| `--cq-warning`        | `#FACC15`   |
+| `--cq-success`        | `#34D399`   |
+| `--cq-graph-1`        | `#93C5FD`   |
+| `--cq-graph-2`        | `#F9A8D4`   |
 
 ## Spacing & Layout
 
@@ -91,13 +91,24 @@ module.exports = {
           DEFAULT: 'var(--cq-surface)',
           alt: 'var(--cq-surface-alt)',
         },
-        text: {
-          DEFAULT: 'var(--cq-text)',
-          muted: 'var(--cq-text-muted)',
-        },
+        primary: 'var(--cq-text-primary)',
+        muted: 'var(--cq-text-secondary)',
+        border: 'var(--cq-border)',
         accent: {
           DEFAULT: 'var(--cq-accent)',
+          hover: 'var(--cq-accent-strong)',
         },
+        danger: 'var(--cq-danger)',
+        warning: 'var(--cq-warning)',
+        success: 'var(--cq-success)',
+        graph: {
+          1: 'var(--cq-graph-1)',
+          2: 'var(--cq-graph-2)',
+        },
+      },
+      borderRadius: {
+        sm: 'var(--cq-radius-sm)',
+        lg: 'var(--cq-radius-lg)',
       },
     },
   },

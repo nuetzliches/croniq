@@ -73,6 +73,30 @@ export const appRoutes: Routes = [
                     import('./features/webhooks/webhooks-page/webhooks-page').then((m) => m.WebhooksPage),
             },
             {
+                path: 'executions',
+                loadComponent: () =>
+                    import('./features/executions/executions-page/executions-page').then(
+                        (m) => m.ExecutionsPage,
+                    ),
+            },
+            {
+                path: 'runners',
+                loadComponent: () =>
+                    import('./features/runners/runners-page/runners-page').then((m) => m.RunnersPage),
+            },
+            {
+                path: 'api-access',
+                loadComponent: () =>
+                    import('./features/api-access/api-access-page/api-access-page').then(
+                        (m) => m.ApiAccessPage,
+                    ),
+            },
+            {
+                path: 'settings',
+                loadComponent: () =>
+                    import('./features/settings/settings-page/settings-page').then((m) => m.SettingsPage),
+            },
+            {
                 path: 'account/change-password',
                 loadComponent: () =>
                     import('./features/account/change-password-page/change-password-page').then(

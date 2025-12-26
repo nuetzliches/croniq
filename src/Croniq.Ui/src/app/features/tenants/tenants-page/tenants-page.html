@@ -1,12 +1,12 @@
 <section class="space-y-8">
   <header class="space-y-3">
-    <p class="text-sm uppercase tracking-[0.35em] text-text-muted">API keys</p>
-    <h1 class="text-3xl font-semibold text-text">API key control room</h1>
-    <p class="text-base text-text-muted">
+    <p class="text-sm uppercase tracking-[0.35em] text-muted">API keys</p>
+    <h1 class="text-3xl font-semibold text-primary">API key control room</h1>
+    <p class="text-base text-muted">
       Centralize onboarding, quota controls, and rotation workflows. These forms already call the
       Croniq API client, so we can validate flows before layering the final UX shell.
     </p>
-    <p class="text-xs text-text-muted">
+    <p class="text-xs text-muted">
       @if (busy()) {
         <span class="text-amber-100">Processing request…</span>
       } @else {
@@ -20,24 +20,24 @@
 
   <div class="grid gap-6 lg:grid-cols-2">
     <article class="rounded-2xl border border-white/10 bg-white/5 p-5">
-      <h2 class="text-sm uppercase tracking-[0.3em] text-text-muted">Quota dashboard</h2>
-      <p class="mt-3 text-lg font-semibold text-text">Density preview in development</p>
-      <p class="text-sm text-text-muted">
+      <h2 class="text-sm uppercase tracking-[0.3em] text-muted">Quota dashboard</h2>
+      <p class="mt-3 text-lg font-semibold text-primary">Density preview in development</p>
+      <p class="text-sm text-muted">
         We are modeling quota bands and alerts so platform ops can see saturation at a glance.
         Inputs on the right stay hot so we can dovetail telemetry once the backend broadcast
         is ready.
       </p>
-      <p class="mt-4 text-xs text-text-muted">
-        Env: <span class="font-semibold text-text">{{ environment() || '—' }}</span>
+      <p class="mt-4 text-xs text-muted">
+        Env: <span class="font-semibold text-primary">{{ environment() || '—' }}</span>
       </p>
     </article>
 
     <article class="rounded-2xl border border-dashed border-white/20 bg-white/5 p-5">
-      <h2 class="text-sm uppercase tracking-[0.3em] text-text-muted">Key automation</h2>
-      <form class="mt-4 space-y-4 text-sm text-text" (submit)="$event.preventDefault(); issueApiKey();">
+      <h2 class="text-sm uppercase tracking-[0.3em] text-muted">Key automation</h2>
+      <form class="mt-4 space-y-4 text-sm text-primary" (submit)="$event.preventDefault(); issueApiKey();">
         <div class="grid gap-4 sm:grid-cols-2">
           <label class="space-y-1">
-            <span class="text-text-muted">Client ID</span>
+            <span class="text-muted">Client ID</span>
             <input
               #clientInput
               type="text"
@@ -47,7 +47,7 @@
             />
           </label>
           <label class="space-y-1">
-            <span class="text-text-muted">TTL (hours)</span>
+            <span class="text-muted">TTL (hours)</span>
             <input
               #ttlInput
               type="number"
@@ -59,7 +59,7 @@
           </label>
         </div>
         <label class="space-y-1">
-          <span class="text-text-muted">Scopes (comma separated)</span>
+          <span class="text-muted">Scopes (comma separated)</span>
           <textarea
             #scopesField
             rows="3"
@@ -68,7 +68,7 @@
             (input)="setScopes(scopesField.value)"
           ></textarea>
         </label>
-        <p class="text-xs text-text-muted">Parsed scopes: {{ scopesPreview() || '—' }}</p>
+        <p class="text-xs text-muted">Parsed scopes: {{ scopesPreview() || '—' }}</p>
         <div class="flex flex-wrap gap-3">
           <button
             type="submit"
@@ -79,7 +79,7 @@
           </button>
           <button
             type="button"
-            class="rounded-full border border-white/15 px-4 py-2 text-xs font-semibold uppercase tracking-wider text-text-muted"
+            class="rounded-full border border-white/15 px-4 py-2 text-xs font-semibold uppercase tracking-wider text-muted"
             (click)="lookupApiClient()"
             [disabled]="busy()"
           >
@@ -87,9 +87,9 @@
           </button>
         </div>
       </form>
-      <div class="mt-6 grid gap-3 text-xs text-text">
+      <div class="mt-6 grid gap-3 text-xs text-primary">
         <label class="space-y-1">
-          <span class="text-text-muted">API key ID</span>
+          <span class="text-muted">API key ID</span>
           <input
             #keyInput
             type="text"
@@ -102,7 +102,7 @@
         <div class="flex flex-wrap gap-3">
           <button
             type="button"
-            class="rounded-full border border-white/15 px-4 py-2 text-xs font-semibold uppercase tracking-wider text-text transition hover:border-accent hover:text-accent disabled:opacity-60"
+            class="rounded-full border border-white/15 px-4 py-2 text-xs font-semibold uppercase tracking-wider text-primary transition hover:border-accent hover:text-accent disabled:opacity-60"
             (click)="rotateApiKey()"
             [disabled]="busy()"
           >
@@ -122,20 +122,20 @@
   </div>
 
   <section class="rounded-2xl border border-white/10 bg-white/5 shadow-xl">
-    <header class="flex flex-wrap items-center justify-between gap-3 border-b border-white/10 p-5 text-sm text-text">
+    <header class="flex flex-wrap items-center justify-between gap-3 border-b border-white/10 p-5 text-sm text-primary">
       <div>
-        <p class="text-xs uppercase tracking-[0.3em] text-text-muted">Activity feed</p>
-        <p class="text-base font-semibold text-text">API key history</p>
+        <p class="text-xs uppercase tracking-[0.3em] text-muted">Activity feed</p>
+        <p class="text-base font-semibold text-primary">API key history</p>
       </div>
-      <p class="text-xs text-text-muted">{{ activity().length }} entries</p>
+      <p class="text-xs text-muted">{{ activity().length }} entries</p>
     </header>
 
     @if (activity().length === 0) {
-      <p class="p-6 text-sm text-text-muted">No API key actions recorded yet.</p>
+      <p class="p-6 text-sm text-muted">No API key actions recorded yet.</p>
     } @else {
       <div class="overflow-x-auto">
-        <table class="min-w-full divide-y divide-white/10 text-sm text-text">
-          <thead class="text-left text-xs uppercase tracking-[0.3em] text-text-muted">
+        <table class="min-w-full divide-y divide-white/10 text-sm text-primary">
+          <thead class="text-left text-xs uppercase tracking-[0.3em] text-muted">
             <tr>
               <th class="px-4 py-3">Action</th>
               <th class="px-4 py-3">Status</th>
@@ -159,7 +159,7 @@
                     {{ entry.status }}
                   </span>
                 </td>
-                <td class="px-4 py-4 text-xs text-text-muted">{{ entry.detail || '—' }}</td>
+                <td class="px-4 py-4 text-xs text-muted">{{ entry.detail || '—' }}</td>
               </tr>
             }
           </tbody>
@@ -171,12 +171,12 @@
   <section class="rounded-2xl border border-white/10 bg-white/5 p-5">
     <div class="flex items-center justify-between">
       <div>
-        <p class="text-xs uppercase tracking-[0.3em] text-text-muted">API client snapshot</p>
-        <p class="text-base font-semibold text-text">Latest lookup</p>
+        <p class="text-xs uppercase tracking-[0.3em] text-muted">API client snapshot</p>
+        <p class="text-base font-semibold text-primary">Latest lookup</p>
       </div>
       <button
         type="button"
-        class="rounded-full border border-white/15 px-4 py-2 text-xs font-semibold uppercase tracking-wider text-text transition hover:border-accent hover:text-accent"
+        class="rounded-full border border-white/15 px-4 py-2 text-xs font-semibold uppercase tracking-wider text-primary transition hover:border-accent hover:text-accent"
         (click)="lookupApiClient()"
         [disabled]="busy()"
       >
@@ -184,15 +184,15 @@
       </button>
     </div>
     @if (lastLookup()) {
-      <div class="mt-4 space-y-2 text-xs text-text-muted">
+      <div class="mt-4 space-y-2 text-xs text-muted">
         <p>
-          Client <span class="text-text">{{ lastLookup()?.clientId }}</span>
+          Client <span class="text-primary">{{ lastLookup()?.clientId }}</span>
         </p>
         <p>Fetched {{ lastLookup()?.fetchedAt | date: 'short' }}</p>
         <pre class="overflow-auto rounded-xl border border-white/10 bg-black/20 p-4 text-[11px] text-emerald-100">{{ lastLookup()?.payload | json }}</pre>
       </div>
     } @else {
-      <p class="mt-4 text-sm text-text-muted">Lookup a client to see the raw payload here.</p>
+      <p class="mt-4 text-sm text-muted">Lookup a client to see the raw payload here.</p>
     }
   </section>
 </section>

@@ -1,28 +1,51 @@
 import { CommandPaletteCommand, provideCommandPaletteCommands } from '@shared/command-palette/command-palette.controller';
 
-type NavItem = {
+export type NavItem = {
     path: string;
     label: string;
     description: string;
 };
 
-export const PRIMARY_NAV_ITEMS: ReadonlyArray<NavItem> = [
-    { path: 'dashboard', label: 'Dashboard', description: 'Queue depth, misfires, hooks' },
-    { path: 'schedules', label: 'Schedules', description: 'Cron + policy inventory' },
-    { path: 'jobs', label: 'Jobs', description: 'Registry browser & triggers' },
-    { path: 'webhooks', label: 'Webhooks', description: 'Ingress status & secrets' },
+export type NavSection = {
+    label: string;
+    items: NavItem[];
+};
+
+export const NAV_SECTIONS: ReadonlyArray<NavSection> = [
+    {
+        label: 'CORE',
+        items: [
+            { path: 'dashboard', label: 'Dashboard', description: 'Overview' },
+            { path: 'jobs', label: 'Jobs', description: 'Registry' },
+            { path: 'schedules', label: 'Schedules', description: 'Triggers' },
+            { path: 'executions', label: 'Executions', description: 'History' },
+        ],
+    },
+    {
+        label: 'INFRA',
+        items: [
+            { path: 'runners', label: 'Runners', description: 'Workers' },
+            { path: 'webhooks', label: 'Webhooks', description: 'Ingress' },
+            { path: 'api-access', label: 'API Access', description: 'Clients & Keys' },
+        ],
+    },
+    {
+        label: 'SYS',
+        items: [{ path: 'settings', label: 'Settings', description: 'Tenant config' }],
+    },
 ];
 
-export const PRIMARY_NAV_COMMANDS: ReadonlyArray<CommandPaletteCommand> = PRIMARY_NAV_ITEMS.map(
-    (item) => ({
-        id: item.path,
-        label: item.label,
-        path: item.path,
-        description: item.description,
-    })
+export const PRIMARY_NAV_COMMANDS: ReadonlyArray<CommandPaletteCommand> = NAV_SECTIONS.flatMap(
+    (section) =>
+        section.items.map((item) => ({
+            id: item.path,
+            label: item.label,
+            path: item.path,
+            description: item.description,
+            category: section.label,
+        })),
 );
 
 export const PRIMARY_NAV_COMMANDS_PROVIDER = provideCommandPaletteCommands(PRIMARY_NAV_COMMANDS);
 
-export type { NavItem };
 

@@ -2,10 +2,10 @@ import { ChangeDetectionStrategy, Component } from '@angular/core';
 
 @Component({
     selector: 'cq-app-brand',
-    templateUrl: './app-brand.html',
-    changeDetection: ChangeDetectionStrategy.OnPush,
+    template: `Croniq`,
     host: {
-        class: 'text-lg font-semibold uppercase tracking-[0.35em] text-text',
+        class: 'text-lg font-bold uppercase tracking-[0.35em] text-primary',
     },
+    changeDetection: ChangeDetectionStrategy.OnPush
 })
 export class AppBrand { }

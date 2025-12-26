@@ -1,0 +1,73 @@
+<div class="flex h-full flex-col space-y-8">
+  <!-- Header -->
+  <header>
+    <h1 class="text-lg font-semibold text-primary">Tenant Settings</h1>
+    <p class="text-sm text-muted">Manage your organization profile and preferences.</p>
+  </header>
+
+  <!-- General Settings -->
+  <section class="space-y-4">
+    <h2 class="text-sm font-medium uppercase text-muted">General Information</h2>
+    <div class="rounded-xl border border-white/10 bg-surface-alt p-6">
+      <div class="grid gap-6 sm:grid-cols-2">
+        <div class="space-y-2">
+          <label class="text-sm font-medium text-primary">Tenant Name</label>
+          <input
+            type="text"
+            class="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-primary focus:border-accent focus:outline-none"
+            [value]="tenant().name"
+            readonly
+          />
+        </div>
+        <div class="space-y-2">
+          <label class="text-sm font-medium text-primary">Tenant ID</label>
+          <div class="flex items-center gap-2">
+            <code class="flex-1 rounded-lg border border-white/10 bg-white/5 px-3 py-2 font-mono text-sm text-muted">{{ tenant().id }}</code>
+            <button class="text-xs font-medium text-accent hover:text-accent-hover">Copy</button>
+          </div>
+        </div>
+        <div class="space-y-2">
+          <label class="text-sm font-medium text-primary">Owner Email</label>
+          <input
+            type="email"
+            class="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-primary focus:border-accent focus:outline-none"
+            [value]="tenant().ownerEmail"
+            readonly
+          />
+        </div>
+        <div class="space-y-2">
+          <label class="text-sm font-medium text-primary">Plan</label>
+          <div class="flex items-center">
+            <span class="rounded-full bg-accent/10 px-3 py-1 text-sm font-medium text-accent">{{ tenant().plan }}</span>
+          </div>
+        </div>
+      </div>
+      <div class="mt-6 flex justify-end">
+        <button (click)="updateTenant()" class="rounded-lg bg-white/5 px-4 py-2 text-sm font-semibold text-primary hover:bg-white/10">
+          Edit Details
+        </button>
+      </div>
+    </div>
+  </section>
+
+  <!-- Danger Zone -->
+  <section class="space-y-4">
+    <h2 class="text-sm font-medium uppercase text-error">Danger Zone</h2>
+    <div class="rounded-xl border border-error/20 bg-error/5 p-6">
+      <div class="flex items-center justify-between">
+        <div>
+          <h3 class="text-base font-medium text-primary">Deactivate Tenant</h3>
+          <p class="mt-1 text-sm text-muted">
+            This will suspend all job executions and API access immediately. This action cannot be undone easily.
+          </p>
+        </div>
+        <button
+          (click)="deactivateTenant()"
+          class="rounded-lg bg-error px-4 py-2 text-sm font-semibold text-white transition hover:bg-error-hover"
+        >
+          Deactivate Tenant
+        </button>
+      </div>
+    </div>
+  </section>
+</div>

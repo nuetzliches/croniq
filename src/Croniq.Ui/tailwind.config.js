@@ -5,17 +5,28 @@ module.exports = {
         extend: {
             colors: {
                 surface: {
-                    DEFAULT: 'var(--cq-surface, #070d1a)',
-                    alt: 'var(--cq-surface-alt, #111a2d)',
+                    DEFAULT: 'var(--cq-surface)',
+                    alt: 'var(--cq-surface-alt)',
                 },
-                text: {
-                    DEFAULT: 'var(--cq-text, #f8fafc)',
-                    muted: 'var(--cq-text-muted, #94a3b8)',
-                },
+                primary: 'var(--cq-text-primary)',
+                muted: 'var(--cq-text-secondary)',
+                border: 'var(--cq-border)',
                 accent: {
-                    DEFAULT: 'var(--cq-accent, #27d2ff)',
+                    DEFAULT: 'var(--cq-accent)',
+                    hover: 'var(--cq-accent-strong)',
                 },
+                danger: 'var(--cq-danger)',
+                warning: 'var(--cq-warning)',
+                success: 'var(--cq-success)',
+                graph: {
+                    1: 'var(--cq-graph-1)',
+                    2: 'var(--cq-graph-2)',
+                }
             },
+            borderRadius: {
+                sm: 'var(--cq-radius-sm)',
+                lg: 'var(--cq-radius-lg)',
+            }
         },
     },
     plugins: [],

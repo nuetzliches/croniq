@@ -1,6 +1,6 @@
 :host {
   display: block;
-  color: var(--cq-text, #f8fafc);
+  color: var(--cq-text-primary);
 }
 
 .page {
@@ -16,7 +16,7 @@
 
 .page-header p {
   margin: 0.25rem 0 0;
-  color: var(--cq-text-muted, #94a3b8);
+  color: var(--cq-text-secondary);
 }
 
 .grid {
@@ -28,8 +28,8 @@
 .metric-card {
   padding: 1.25rem;
   border-radius: 1rem;
-  background: rgba(15, 23, 42, 0.85);
-  border: 1px solid rgba(148, 163, 184, 0.2);
+  background: var(--cq-surface-alt);
+  border: 1px solid var(--cq-border);
   min-height: 140px;
   display: flex;
   flex-direction: column;
@@ -40,7 +40,7 @@
   font-size: 0.85rem;
   text-transform: uppercase;
   letter-spacing: 0.08em;
-  color: var(--cq-text-muted, #94a3b8);
+  color: var(--cq-text-secondary);
 }
 
 .metric-value {

@@ -1,35 +1,47 @@
-import { Tab, TabContent, TabList, TabPanel, Tabs } from '@angular/aria/tabs';
 import { ChangeDetectionStrategy, Component, signal } from '@angular/core';
+import { RouterLink } from '@angular/router';
 
-type DetailTab = {
-  id: 'metrics';
-  label: string;
-};
-
-type SummaryCard = {
+type MetricCard = {
   label: string;
   value: string;
-  description: string;
+  trend?: string;
+  status?: 'healthy' | 'warning' | 'critical';
+  subtext?: string;
+};
+
+type DeadLetter = {
+  jobKey: string;
+  reason: string;
+  time: string;
+};
+
+type UpcomingSchedule = {
+  jobKey: string;
+  fireTime: string;
 };
 
 @Component({
   selector: 'cq-dashboard-page',
-  imports: [Tabs, TabList, Tab, TabPanel, TabContent],
+  imports: [RouterLink],
   templateUrl: './dashboard-page.html',
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class DashboardPage {
-  readonly detailTabs: ReadonlyArray<DetailTab> = [{ id: 'metrics', label: 'Metrics' }];
-  readonly selectedTab = signal<string>(this.detailTabs[0]?.id ?? '');
+  readonly metrics = signal<ReadonlyArray<MetricCard>>([
+    { label: 'Active Runners', value: '8', status: 'healthy', subtext: 'All systems operational' },
+    { label: 'Throughput (RPM)', value: '1,240', trend: '↑ 12%', subtext: 'vs last hour' },
+    { label: 'Error Rate (1h)', value: '0.05%', status: 'healthy', subtext: 'Below threshold' },
+  ]);
 
-  setSelectedTab(nextTab: string | null | undefined): void {
-    this.selectedTab.set(nextTab ?? this.detailTabs[0]?.id ?? '');
-  }
+  readonly recentFailures = signal<ReadonlyArray<DeadLetter>>([
+    { jobKey: 'payment-sync', reason: 'Timeout', time: '2m ago' },
+    { jobKey: 'email-send', reason: '500 Error', time: '15m ago' },
+    { jobKey: 'data-export', reason: 'Connection Refused', time: '1h ago' },
+  ]);
 
-  readonly summaryCards = signal<ReadonlyArray<SummaryCard>>([
-    { label: 'Active schedules', value: '128', description: 'Enabled policies in the current environment' },
-    { label: 'Queue depth', value: '42', description: 'Waiting jobs in the last minute' },
-    { label: 'Misfires today', value: '3', description: 'Automatically retried triggers' },
-    { label: 'Avg. webhook latency', value: '210 ms', description: 'p95 delivery round trip' },
+  readonly upcomingSchedules = signal<ReadonlyArray<UpcomingSchedule>>([
+    { jobKey: 'daily-report', fireTime: 'in 5m' },
+    { jobKey: 'cleanup-logs', fireTime: 'in 1h' },
+    { jobKey: 'billing-cycle', fireTime: 'Tomorrow 00:00' },
   ]);
 }

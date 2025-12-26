@@ -1,0 +1,100 @@
+<div class="flex h-full flex-col space-y-6">
+  <!-- Header / Controls -->
+  <header class="flex flex-wrap items-center justify-between gap-4">
+    <h1 class="text-lg font-semibold text-primary">Executions</h1>
+    
+    <div class="flex flex-wrap items-center gap-3">
+      <!-- Search -->
+      <div class="relative">
+        <input
+          #searchInput
+          type="text"
+          placeholder="Search executions..."
+          class="h-9 w-64 rounded-lg border border-white/10 bg-surface-alt px-3 text-sm text-primary placeholder-muted focus:border-accent focus:outline-none"
+          [value]="searchQuery()"
+          (input)="searchQuery.set(searchInput.value)"
+        />
+      </div>
+
+      <!-- Status Filter -->
+      <select
+        #statusSelect
+        class="h-9 rounded-lg border border-white/10 bg-surface-alt px-3 text-sm text-primary focus:border-accent focus:outline-none"
+        [value]="statusFilter()"
+        (change)="statusFilter.set(statusSelect.value)"
+      >
+        <option value="All">All Statuses</option>
+        <option value="Success">Success</option>
+        <option value="Failed">Failed</option>
+        <option value="Running">Running</option>
+        <option value="Pending">Pending</option>
+      </select>
+
+      <!-- Date Range Filter -->
+      <select
+        #dateSelect
+        class="h-9 rounded-lg border border-white/10 bg-surface-alt px-3 text-sm text-primary focus:border-accent focus:outline-none"
+        [value]="dateRangeFilter()"
+        (change)="dateRangeFilter.set(dateSelect.value)"
+      >
+        <option value="24h">Last 24h</option>
+        <option value="7d">Last 7 Days</option>
+        <option value="30d">Last 30 Days</option>
+      </select>
+    </div>
+  </header>
+
+  <!-- Content -->
+  <div class="flex-1 overflow-hidden rounded-xl border border-white/10 bg-surface-alt shadow-card">
+    <div class="overflow-x-auto">
+      <table class="w-full text-left text-sm">
+        <thead class="bg-white/5 text-xs uppercase text-muted">
+          <tr>
+            <th class="px-6 py-3 font-medium">ID</th>
+            <th class="px-6 py-3 font-medium">Job Name</th>
+            <th class="px-6 py-3 font-medium">Status</th>
+            <th class="px-6 py-3 font-medium">Start Time</th>
+            <th class="px-6 py-3 font-medium">Duration</th>
+            <th class="px-6 py-3 font-medium">Trigger</th>
+            <th class="px-6 py-3 font-medium text-right">Actions</th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-white/10">
+          @for (exec of executions(); track exec.id) {
+            <tr class="hover:bg-white/5">
+              <td class="px-6 py-4 font-mono text-xs text-muted">{{ exec.id }}</td>
+              <td class="px-6 py-4 font-medium text-primary">{{ exec.jobName }}</td>
+              <td class="px-6 py-4">
+                @switch (exec.status) {
+                  @case ('Success') {
+                    <span class="inline-flex items-center rounded-full bg-success/10 px-2 py-0.5 text-xs font-medium text-success">Success</span>
+                  }
+                  @case ('Failed') {
+                    <span class="inline-flex items-center rounded-full bg-error/10 px-2 py-0.5 text-xs font-medium text-error">Failed</span>
+                  }
+                  @case ('Running') {
+                    <span class="inline-flex items-center rounded-full bg-accent/10 px-2 py-0.5 text-xs font-medium text-accent">Running</span>
+                  }
+                  @case ('Pending') {
+                    <span class="inline-flex items-center rounded-full bg-warning/10 px-2 py-0.5 text-xs font-medium text-warning">Pending</span>
+                  }
+                }
+              </td>
+              <td class="px-6 py-4 text-muted">{{ exec.startTime | date:'short' }}</td>
+              <td class="px-6 py-4 text-muted">{{ exec.duration }}</td>
+              <td class="px-6 py-4 text-muted">{{ exec.trigger }}</td>
+              <td class="px-6 py-4 text-right">
+                <div class="flex justify-end gap-2">
+                  <button (click)="viewLogs(exec.id)" class="text-xs font-medium text-muted hover:text-primary">Logs</button>
+                  @if (exec.status === 'Running') {
+                    <button (click)="cancelExecution(exec.id)" class="text-xs font-medium text-error hover:text-error-hover">Cancel</button>
+                  }
+                </div>
+              </td>
+            </tr>
+          }
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
