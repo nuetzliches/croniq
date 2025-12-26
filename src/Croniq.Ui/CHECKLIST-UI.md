@@ -59,11 +59,12 @@ Derived from [docs/deep-dive/designs/angular-ui-concept.md](docs/deep-dive/desig
 - [x] Command palette: extract a headless controller (signals + keyboard orchestration) with ARIA-compliant wrappers so we can skin it via Tailwind without duplicating logic. _(Headless controller + utilities live in [src/app/shared/command-palette/command-palette.controller.ts](src/app/shared/command-palette/command-palette.controller.ts) and the Tailwind template in [src/app/shared/command-palette/command-palette.html](src/app/shared/command-palette/command-palette.html).)_
 - [x] Implement split-pane layout pattern (summary cards + tabbed detail panes) per page using Angular Aria tabs (no shared page-sized component).
 - [ ] Deliver feature modules:
-  - [ ] Dashboard – queue depth spark lines, upcoming triggers list, misfire heat map.
-  - [ ] Schedules – list/detail views with JSON diff preview for policy delta inspection.
-  - [ ] Jobs – registry browser, manual trigger action, last-N execution view.
-  - [ ] Webhooks – ingress status, secret rotation UI, IP allow-list grid.
-  - [ ] Tenants & API keys – intentionally excluded (single-tenant UI); no menu/command entries. Tenant reference is still required for tenant-scoped API routes.
+  - [ ] Dashboard - queue depth spark lines, upcoming triggers list, misfire heat map.
+  - [ ] Schedules - list/detail views with JSON diff preview for policy delta inspection.
+  - [ ] Jobs - registry browser, manual trigger action, last-N execution view.
+  - [ ] Webhooks - ingress status, secret rotation UI, IP allow-list grid.
+  - [ ] Runners - availability read-model (available runners list + heartbeat status).
+  - [ ] Tenants & API keys - intentionally excluded (single-tenant UI); no menu/command entries. Tenant reference is still required for tenant-scoped API routes.
 
 ## Data Access & State
 

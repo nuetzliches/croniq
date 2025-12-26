@@ -59,6 +59,13 @@ This is a good candidate for a separate repo/module when it starts to drive depe
 - Remote persistence options for **SaaS** volumes (e.g., object storage for logs/attachments) and lifecycle rules.
 - Migration strategy and versioned schemas for always-on upgrades.
 
+### Deferred: Remote Persistence (Hosted)
+
+- [ ] Architekturskizze `Croniq.Persistence.Remote` (Client) + `Croniq.Persistence.Remote.Service` (Service-Seite): Transport, Auth (ApiKey/Bearer), Throttling, Tenant-Isolation.
+- [ ] Evaluieren, ob vorhandene `Croniq.Api`-Endpoints erweitert werden oder ein separates Service-Repo nötig ist; Migrationsplan dokumentieren.
+- [ ] Sicherheits-/Governance-Aspekte festhalten (Tenant-Isolation, SLAs, Secrets, Observability).
+- [ ] Betriebs- und Provisionierungs-Runbook (Deploy-Topologie, Monitoring, Kostenkontrolle).
+
 ### Tenancy model
 
 - Formalize **multi-tenant** onboarding and isolation guarantees (partition keys, encryption boundaries, audit).

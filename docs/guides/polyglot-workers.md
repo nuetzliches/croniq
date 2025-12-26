@@ -102,6 +102,37 @@ A minimal worker loop that polls/renews/acks is available at:
 - `samples/worker-sdk-node`
 - `samples/worker-sdk-python`
 
+## SDK/Worker Integration (Recommended)
+
+Keep the SDK configuration explicit and stable, and document it for operators:
+
+- Required config (as used in the samples):
+  - `CRONIQ_API_BASEURL` (HTTP base URL)
+  - `CRONIQ_TENANT_ID`
+  - `CRONIQ_ENVIRONMENT`
+  - `CRONIQ_API_KEY` or bearer token
+  - `CRONIQ_RUNNER_ID` (must match API client id)
+- Optional SDK knobs (exposed via config or flags):
+  - poll batch size + long-poll wait
+  - max inflight (for gRPC stream)
+  - lease-renew lead time or renewal interval
+  - request timeout + retry backoff/jitter
+
+Failover/offline strategy:
+
+- If polling fails due to transient network errors, back off with jitter and retry; do not spin.
+- Keep renewing active leases while work is running; if renew fails with a conflict or missing lease, cancel the job and stop acking (the server may have reassigned).
+- Treat ack and event publishing as idempotent. Retry on transient failures; stop on `409 lease-conflict` or `404` (lease no longer valid).
+- If auth fails (`401/403` or runner mismatch), treat it as a fatal configuration error.
+
+Local persistence fallback (outgoing queue):
+
+- Persist outgoing acks/events locally so a worker restart or brief outage does not lose results.
+- Replay the queue in order; drop entries that conflict with server state (lease expired/conflict) and move on.
+- Do not execute new work offline; only process work that was already leased before the outage.
+
+More detail: see `docs/deep-dive/sdk-worker-integration.md`.
+
 ## Issue a Worker API Key (SQL auth)
 
 For SQL-backed auth, you can use the helper script to create an API client and key with the worker scopes:

@@ -63,14 +63,6 @@
 - [ ] dotnet templates: `dotnet new croniq-worker` / `dotnet new croniq-platform` inkl. minimaler `appsettings.json`.
 - [ ] CLI/Dev-Tool (optional): Trigger-Liste, "next runs", config validate, export/import (z.B. `dotnet tool`).
 
-## Deferred: Remote Persistence (Hosted)
-
-- [ ] Architekturskizze `Croniq.Persistence.Remote` (Client) + `Croniq.Persistence.Remote.Service` (Service-Seite): Transport, Auth (ApiKey/Bearer), Throttling, Tenant-Isolation.
-- [ ] Evaluieren, ob vorhandene `Croniq.Api`-Endpoints erweitert werden oder ein separates Service-Repo nötig ist; Migrationsplan dokumentieren.
-- [ ] Sicherheits-/Governance-Aspekte festhalten (Tenant-Isolation, SLAs, Secrets, Observability).
-- [ ] Betriebs- und Provisionierungs-Runbook (Deploy-Topologie, Monitoring, Kostenkontrolle).
-- [ ] SDK/Worker-Integration definieren (Konfig, Failover/Offline-Strategie, Fallback auf lokale Persistence).
-
 ## Next Focus
 
 1. (Done 2025-12-09) Webhook-CRUD/API abgesichert: Authz-Scopes vereinheitlicht, Integrationstests für CRUD/Rotate/Dead-Letter-Endpunkte laufen über den neuen TestHost.
@@ -160,7 +152,7 @@
   - Echtes Worker-Protokoll (Claim/Heartbeat/Ack/Logs) + SDKs, damit fremdsprachige Prozesse Jobs direkt ausführen können.
   - Abhängigkeiten: Runner-Identität/Secrets, Availability-Status, Policy/Lease-Semantik, Tenant/Environment-Scoping.
 
-- [ ] Zielbild: echtes polyglottes Worker-Modell (Go/Node/Python Worker können Jobs direkt ausführen, nicht nur triggern).
+- [x] Zielbild: echtes polyglottes Worker-Modell (Go/Node/Python Worker können Jobs direkt ausführen, nicht nur triggern).
   - [x] HTTP Work-Endpoints (Lease-basiert) vorhanden: `/work/poll`, `/work/renew`, `/work/ack` inkl. `work:poll|work:renew|work:ack|work:events` Scopes sowie Python-Sample + Guide.
   - Protokoll/Contract:
     - [x] Worker-API (gRPC + HTTP) definiert: Register/Connect, PollWork (Claim), work-scoped lease deadlines (keine globalen Heartbeats), AckSuccess/AckFailure, PushLogs/Events. Siehe `docs/deep-dive/designs/polyglot-worker-protocol.md`.
@@ -170,13 +162,13 @@
     - [x] Tabellen/Modelle: Runner, RunnerLease/Heartbeat, WorkItem/ExecutionClaim, RunnerCapabilities/Tags.
     - [x] Work-Assignments in HTTP/gRPC schreiben WorkItems/WorkClaims (Claim/Renew/Ack).
     - [x] Online/Offline Status: Heartbeat + TTL/Lease.
-    - [ ] UI-Readmodel für "available runners".
   - Scheduling/Execution Integration:
     - [x] Work-Dispatch Layer (Server): Execution -> WorkItem -> Claim -> Ack -> DeadLetter/Retry.
   - [x] Policy/Lease: Timeout/Retry/Misfire sauber mit worker lease semantics integrieren.
   - SDKs & Samples:
     - [x] Minimal Worker SDK pro Sprache (Go/Node/Python): auth, claim loop (HTTP long-poll oder gRPC stream), ack, structured logs.
     - [x] Samples aktualisieren/ergänzen: mind. ein polyglot worker sample + naming cleanup der bestehenden Samples falls nötig.
+    - [x] SDK/Worker-Integration definieren (Konfig, Failover/Offline-Strategie, Fallback auf lokale Persistence).
   - Tests:
     - [x] Contract tests fuer gRPC messages (hello, runner mismatch, assign/ack).
     - [x] End-to-end tests fuer claim/heartbeat/ack + retry.
