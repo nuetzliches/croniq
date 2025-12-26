@@ -109,6 +109,13 @@ docs/
 - If renewals are disabled or a lease is lost, another worker may pick up the same trigger while the original handler is still running, so long-running jobs must remain idempotent.
 - Keep execution timeouts aligned: `Croniq:Policies:Execution:Timeout:Timeout` defaults to 5 minutes and should remain higher than the lease duration. For long-running jobs, increase/disable the timeout and ensure `LeaseRenewalLeadTime` is comfortably smaller than the lease (e.g., 10s lead on a 60s lease).
 
+## Runner Identity & Availability
+
+- A runner represents a **worker process instance**, not a single job. One runner can execute many jobs over time.
+- `runnerId` is a stable identifier (for example `hostname + process`) and is used as the lease owner. Renew/ack requests must use the same `runnerId` that claimed the lease.
+- Authentication stays on the regular Croniq auth paths (API keys or bearer tokens) with the `work:execute` scope. `runnerId` itself is **not** a secret.
+- Availability is tracked via heartbeats (`POST /tenants/{tenantId}/runners/heartbeat`) and listed via `GET /tenants/{tenantId}/runners`. The TTL is controlled by `RunnerStoreOptions.OnlineTtl`. Availability is informational and does not affect lease correctness.
+
 ## Job Store & Provider Model
 
 - In-memory JobStore (`Croniq.JobStore.InMemory`) stays the default for dev/test while all operations flow through `IJobPersistenceProvider` contracts.

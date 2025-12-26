@@ -121,7 +121,7 @@ public sealed class SqlServerJobDeadLetterStoreTests : IAsyncLifetime
             CancellationToken.None);
         var lease = leases.Single();
 
-        await _persistence.ReleaseAsync(new TriggerReleaseRequest(lease, false, NextFireTimeUtc: null, DeadLetterReason: "release-failed"), CancellationToken.None);
+        await _persistence.ReleaseAsync(new TriggerReleaseRequest(lease, "deadletter-test", false, NextFireTimeUtc: null, DeadLetterReason: "release-failed"), CancellationToken.None);
 
         var entries = await _deadLetters!.ListAsync(scope, CancellationToken.None);
         entries.ShouldContain(entry => entry.TriggerId == triggerId && entry.Reason == "release-failed");

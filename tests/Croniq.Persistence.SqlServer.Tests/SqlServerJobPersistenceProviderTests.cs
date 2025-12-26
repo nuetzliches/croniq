@@ -261,6 +261,43 @@ public sealed class SqlServerJobPersistenceProviderTests : IAsyncLifetime
 
     [Fact]
     [Trait(TestCategories.Category, TestCategories.Contract)]
+    public async Task ReleaseAsync_Rejects_instance_mismatch()
+    {
+        var scope = new PartitionScope("tenant-renew", "dev");
+        var jobKey = JobKey.Create("billing", "release-guard");
+
+        await _persistence!.UpsertJobAsync(
+            new JobDefinition(jobKey.Value, jobKey.NamespaceSegment, jobKey.JobName, jobKey.Variant, null, null),
+            scope,
+            CancellationToken.None);
+
+        var trigger = new TriggerDefinition(
+            TriggerId: $"{jobKey.Value}:trigger",
+            JobKey: jobKey.Value,
+            ScheduleExpression: "0/5 * * * * ?",
+            Scope: scope,
+            Enabled: true);
+
+        await _persistence.UpsertTriggerAsync(trigger, CancellationToken.None);
+
+        await using (var context = await _dbFactory!.CreateDbContextAsync())
+        {
+            var entity = await context.Triggers.SingleAsync(t => t.TriggerKey == trigger.TriggerId);
+            entity.NextFireAtUtc = DateTime.UtcNow.AddSeconds(-30);
+            entity.Enabled = true;
+            await context.SaveChangesAsync();
+        }
+
+        var lease = (await _persistence.AcquireAsync(
+            new TriggerAcquireRequest(scope, "instance-1", DateTimeOffset.UtcNow, BatchSize: 1),
+            CancellationToken.None)).Single();
+
+        await Should.ThrowAsync<InvalidOperationException>(() =>
+            _persistence.ReleaseAsync(new TriggerReleaseRequest(lease, "instance-2", true, null), CancellationToken.None));
+    }
+
+    [Fact]
+    [Trait(TestCategories.Category, TestCategories.Contract)]
     public async Task UpsertTriggerAsync_AllowsOnceExpression()
     {
         var scope = new PartitionScope("tenant-once", "dev");

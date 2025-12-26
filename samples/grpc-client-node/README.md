@@ -12,7 +12,7 @@ Run:
 ```bash
 CRONIQ_ENDPOINT=localhost:5080 \
 CRONIQ_API_KEY=dev-key \
-node index.js
+npm start
 ```
 
 Notes:

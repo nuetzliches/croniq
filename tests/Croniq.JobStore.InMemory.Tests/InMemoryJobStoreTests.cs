@@ -32,12 +32,29 @@ public class InMemoryJobStoreTests
         lease.FireAtUtc.ShouldBe(now.AddMinutes(1));
         lease.LeaseExpiresAtUtc.ShouldBe(now.AddMinutes(1).AddSeconds(45));
 
-        await store.ReleaseAsync(new TriggerReleaseRequest(lease, true, null), CancellationToken.None);
+        await store.ReleaseAsync(new TriggerReleaseRequest(lease, acquire.InstanceId, true, null), CancellationToken.None);
 
         var reacquire = new TriggerAcquireRequest(DefaultScope, acquire.InstanceId, now.AddMinutes(2), 5);
         var leases2 = await store.AcquireAsync(reacquire, CancellationToken.None);
         var lease2 = leases2.ShouldHaveSingleItem();
         lease2.FireAtUtc.ShouldBeGreaterThan(lease.FireAtUtc);
+    }
+
+    [Fact]
+    public async Task Release_throws_when_instance_id_mismatch()
+    {
+        var now = new DateTimeOffset(2025, 1, 1, 0, 0, 0, TimeSpan.Zero);
+        var store = CreateStore(now, 30);
+
+        var jobKey = "samples:owner";
+        await store.UpsertJobAsync(new JobDefinition(jobKey, "samples", "owner", null, "sample", null), DefaultScope, CancellationToken.None);
+        await store.UpsertTriggerAsync(new TriggerDefinition(jobKey, jobKey, "0 * * * * ?", DefaultScope), CancellationToken.None);
+
+        var lease = (await store.AcquireAsync(new TriggerAcquireRequest(DefaultScope, "instance-1", now.AddMinutes(1), 1), CancellationToken.None))
+            .ShouldHaveSingleItem();
+
+        await Should.ThrowAsync<InvalidOperationException>(async () =>
+            await store.ReleaseAsync(new TriggerReleaseRequest(lease, "instance-2", true, null), CancellationToken.None));
     }
 
     [Fact]
@@ -81,7 +98,7 @@ public class InMemoryJobStoreTests
         var lease = (await store.AcquireAsync(new TriggerAcquireRequest(DefaultScope, "instance-1", now.AddSeconds(30), 5), CancellationToken.None)).First();
 
         var retryAt = lease.FireAtUtc.AddSeconds(15);
-        await store.ReleaseAsync(new TriggerReleaseRequest(lease, false, retryAt, "boom"), CancellationToken.None);
+        await store.ReleaseAsync(new TriggerReleaseRequest(lease, "instance-1", false, retryAt, "boom"), CancellationToken.None);
 
         var reacquired = await store.AcquireAsync(new TriggerAcquireRequest(DefaultScope, "instance-1", retryAt.AddSeconds(1), 5), CancellationToken.None);
         var nextLease = reacquired.ShouldHaveSingleItem();
@@ -106,7 +123,7 @@ public class InMemoryJobStoreTests
         var lease = (await store.AcquireAsync(new TriggerAcquireRequest(DefaultScope, "instance-1", now, 1), CancellationToken.None))
             .ShouldHaveSingleItem();
 
-        await store.ReleaseAsync(new TriggerReleaseRequest(lease, true, null), CancellationToken.None);
+        await store.ReleaseAsync(new TriggerReleaseRequest(lease, "instance-1", true, null), CancellationToken.None);
 
         var reacquire = await store.AcquireAsync(new TriggerAcquireRequest(DefaultScope, "instance-1", now.AddMinutes(1), 1), CancellationToken.None);
         reacquire.ShouldBeEmpty();

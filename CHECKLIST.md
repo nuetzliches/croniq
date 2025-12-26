@@ -143,7 +143,7 @@
   - [x] Persistenz/Seed: `PasswordChangeRequired` im User-Record + Seed `admin/admin` mit `PasswordChangeRequired=true`
   - [x] "Change password" Endpoint + Flow: `POST /auth/change-password` (oder ähnlich) inkl. Enforcement + UI-Flow
 - [x] Data Retention: Croniq-internen Job + Trigger seeden, der konfigurierbar Daten bereinigt (relevante Tabellen inkl. RefreshTokens/DeadLetters/Webhook-Daten; explizit nicht für `auth.Users`) – umgesetzt 2025-12-25.
-- [ ] Job Registry Sync: minimal-first.
+- [x] Job Registry Sync: minimal-first (2025-12-26).
   - Ziel: Im Einsatzgebiet "minimal" sollen Jobs ohne UI/Datenpflege sichtbar/verwaltbar sein (registriert aus Code/Registry, ohne manuelle Vorarbeit).
   - Platform-Pfad: opt-in `JobRegistrySyncHostedService`, der pro Host-Partition (`Croniq:Core` Tenant/Environment) alle registrierten Jobs (aus `IJobRegistry`) als Job-Definitionen in der Persistenz upsertet.
     - Ohne Trigger anzulegen, ohne Deletes (nur idempotente Upserts).
@@ -154,11 +154,10 @@
       - Samples: Platform Samples (ApiHost/WorkerHost) aktivieren sync per config; Namings/ManagedBy stabil (nicht InstanceId-basiert).
       - Tests: Core-HostedService Tests analog Trigger-Seeding (Off/Validate/CreateIfMissing/ForceUpdate + managedBy-mismatch).
       - Docs: technische Doku (außerhalb `docs/`) wenn nötig; public docs bleiben Englisch-only und ohne Cloud-Bezug.
-- [ ] Runner Identity + Availability (für verteilte Runner): Modell/Schema für Runner-Identität (z.B. RunnerId + RunnerSecret/ApiKey) und Online/Offline-Status (Heartbeat/Lease), damit UI/Operatoren sehen, welche Runner gerade verfügbar sind.
-- [ ] Fremdsprachige Clients als Job-Runner (Go/Node/Python): Lösungsweg definieren und planen.
+- [x] Runner Identity + Availability (für verteilte Runner): Modell/Schema für Runner-Identität (z.B. RunnerId + RunnerSecret/ApiKey) und Online/Offline-Status (Heartbeat/Lease), damit UI/Operatoren sehen, welche Runner gerade verfügbar sind. (2025-12-26)
+- [x] Fremdsprachige Clients als Job-Runner (Go/Node/Python): Lösungsweg definieren und planen. (2025-12-26)
 
-  - Option A (früh): Delegate-/Adapter-Jobs (Croniq Job ruft externen HTTP/gRPC-Service auf; Sprachen sind "Job-Services").
-  - Option B (später): echtes Worker-Protokoll (Claim/Heartbeat/Ack/Logs) + SDKs, damit fremdsprachige Prozesse Jobs direkt ausführen können.
+  - Echtes Worker-Protokoll (Claim/Heartbeat/Ack/Logs) + SDKs, damit fremdsprachige Prozesse Jobs direkt ausführen können.
   - Abhängigkeiten: Runner-Identität/Secrets, Availability-Status, Policy/Lease-Semantik, Tenant/Environment-Scoping.
 
 - [ ] Zielbild: echtes polyglottes Worker-Modell (Go/Node/Python Worker können Jobs direkt ausführen, nicht nur triggern).

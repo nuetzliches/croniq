@@ -341,6 +341,11 @@ public sealed class SqlServerJobPersistenceProvider : IJobPersistenceProvider
             throw new InvalidOperationException($"Lease '{request.Lease.LeaseId}' is not active for trigger '{request.Lease.TriggerId}'.");
         }
 
+        if (!string.Equals(trigger.LeaseInstanceId, request.InstanceId, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException($"Lease '{request.Lease.LeaseId}' is owned by another instance.");
+        }
+
         var nowUtc = DateTime.UtcNow;
         var deadLetterReason = string.IsNullOrWhiteSpace(request.DeadLetterReason)
             ? null

@@ -55,6 +55,29 @@ The seeding mode is controlled by `Croniq:Seeding:Mode`:
 
 Invalid cron expressions, missing job registrations, or scope mismatches fail fast at startup.
 
+## Job Registry Sync
+
+Job registry sync is an opt-in hosted service that upserts job definitions from `IJobRegistry` into the persistence store. It is intended for minimal deployments where you want job metadata visible without manually creating jobs or schedules.
+
+Key behavior:
+
+- **No triggers** are created and **no deletes** are issued.
+- `Mode = CreateIfMissing` only creates missing jobs.
+- `Mode = ForceUpdate` updates existing jobs only when their `metadata.managedBy` matches the configured `ManagedBy` value.
+
+Example configuration:
+
+```json
+{
+  "Croniq": {
+    "JobRegistrySync": {
+      "Mode": "CreateIfMissing",
+      "ManagedBy": "Croniq.Sample"
+    }
+  }
+}
+```
+
 ## Execution Context
 
 `IJobExecutionContext` provides:

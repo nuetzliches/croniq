@@ -108,6 +108,31 @@ builder.Services
     });
 ```
 
+### Job Registry Sync (Optional)
+
+Job registry sync persists the jobs registered in `IJobRegistry` into the persistence store so UIs or operators can see them even when no schedules exist yet. It never creates triggers or deletes jobs.
+
+Modes:
+
+- `Croniq:JobRegistrySync:Mode = Off` disables sync (default).
+- `Croniq:JobRegistrySync:Mode = CreateIfMissing` upserts only when a job is missing.
+- `Croniq:JobRegistrySync:Mode = ForceUpdate` updates existing jobs **only** when their `metadata.managedBy` matches the configured `ManagedBy` value.
+
+Example:
+
+```json
+{
+  "Croniq": {
+    "JobRegistrySync": {
+      "Mode": "CreateIfMissing",
+      "ManagedBy": "Croniq.Sample"
+    }
+  }
+}
+```
+
+Use a stable `ManagedBy` value (not instance-id based) to avoid flapping in rolling deployments.
+
 ## 4. Key Environment Variables
 
 See [`auth.md`](../guides/auth.md) for the end-to-end authentication story and when to prefer API keys vs bearer tokens.

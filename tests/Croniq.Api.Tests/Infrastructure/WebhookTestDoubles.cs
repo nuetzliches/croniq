@@ -201,6 +201,11 @@ public sealed class NoopJobPersistenceProvider : IJobPersistenceProvider, IPersi
             if (_leases.TryGetValue(lease.TriggerId, out var state)
                 && string.Equals(state.LeaseId, lease.LeaseId, StringComparison.OrdinalIgnoreCase))
             {
+                if (!string.Equals(state.OwnerInstanceId, request.InstanceId, StringComparison.OrdinalIgnoreCase))
+                {
+                    throw new InvalidOperationException($"Lease '{lease.LeaseId}' is owned by another instance.");
+                }
+
                 _leases.Remove(lease.TriggerId);
             }
 

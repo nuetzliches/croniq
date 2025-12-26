@@ -16,6 +16,10 @@ Authentication supports both:
 - `Authorization: Bearer ...`
 - `X-Croniq-Key: <api-key>`
 
+## Runner Identity
+
+`runnerId` is treated as the lease owner. A runner represents a worker process instance and can execute many jobs over time. Use a stable value (for example `hostname + process`) and reuse the same `runnerId` for polling, renewing, and acknowledging work. If the `runnerId` does not match the active lease owner, the server rejects the request with `409 lease-conflict`.
+
 ## Endpoints
 
 ### Poll
@@ -66,6 +70,17 @@ Request body:
 
 ## Sample
 
-A minimal Python worker loop that polls/renews/acks is available at:
+A minimal worker loop that polls/renews/acks is available at:
 
-- `samples/http-worker-python`
+- `samples/worker-sdk-go`
+- `samples/worker-sdk-node`
+- `samples/worker-sdk-python`
+
+## Runner Presence (Optional)
+
+If you need runner availability for dashboards or ops tooling, use the runner heartbeat endpoints:
+
+- `POST /tenants/{tenantId}/runners/heartbeat?environment=dev`
+- `GET /tenants/{tenantId}/runners?environment=dev`
+
+Heartbeat payloads accept `runnerId`, optional `seenAtUtc`, and optional `metadataJson` for tags or capabilities. Presence is derived from the configured TTL; it does not affect lease correctness.

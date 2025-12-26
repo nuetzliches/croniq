@@ -7,6 +7,7 @@ namespace Croniq.Persistence.Abstractions;
 /// </summary>
 public sealed record TriggerReleaseRequest(
     TriggerLease Lease,
+    string InstanceId,
     bool Succeeded,
     DateTimeOffset? NextFireTimeUtc,
     string? DeadLetterReason = null);

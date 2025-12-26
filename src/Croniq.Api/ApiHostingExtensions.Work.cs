@@ -153,17 +153,26 @@ public static partial class ApiHostingExtensions
             }
 
             var scope = new PartitionScope(tenantId.Trim(), resolvedEnvironment);
+            var runnerId = request.RunnerId.Trim();
             var lease = FromToken(scope, request.Lease);
             var deadLetterReason = request.Succeeded ? null : (string.IsNullOrWhiteSpace(request.DeadLetterReason) ? "work-failed" : request.DeadLetterReason);
 
             var release = new TriggerReleaseRequest(
                 lease,
+                runnerId,
                 request.Succeeded,
                 request.NextFireTimeUtc,
                 deadLetterReason);
 
-            await jobStore.ReleaseAsync(release, cancellationToken).ConfigureAwait(false);
-            return Results.NoContent();
+            try
+            {
+                await jobStore.ReleaseAsync(release, cancellationToken).ConfigureAwait(false);
+                return Results.NoContent();
+            }
+            catch (InvalidOperationException ex)
+            {
+                return Results.Conflict(new { error = "lease-conflict", message = ex.Message });
+            }
         })
         .WithDocs("Work_Ack", "Acknowledge work result", "Acknowledges work completion and releases the trigger lease.")
         .RequireCroniqTenantScopeFromBodyOrQuery<WorkAckRequest>(r => r.EnvironmentTag, requireEnvironment: true, CroniqScopes.WorkExecute);

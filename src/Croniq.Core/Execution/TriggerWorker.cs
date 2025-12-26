@@ -237,7 +237,7 @@ public sealed class TriggerWorker
 
     private Task ReleaseAsync(TriggerLease lease, bool succeeded, string? deadLetterReason, DateTimeOffset? nextFireTimeUtc, CancellationToken cancellationToken)
     {
-        var release = new TriggerReleaseRequest(lease, succeeded, nextFireTimeUtc, deadLetterReason);
+        var release = new TriggerReleaseRequest(lease, _options.InstanceId, succeeded, nextFireTimeUtc, deadLetterReason);
         return _jobStore.ReleaseAsync(release, cancellationToken);
     }
 

@@ -274,6 +274,11 @@ public sealed class InMemoryJobStore : IJobPersistenceProvider, IJobDeadLetterSt
                 throw new InvalidOperationException($"Lease '{request.Lease.LeaseId}' is not active for trigger '{request.Lease.TriggerId}'.");
             }
 
+            if (!string.Equals(entry.Lease.InstanceId, request.InstanceId, StringComparison.Ordinal))
+            {
+                throw new InvalidOperationException($"Lease '{request.Lease.LeaseId}' is owned by another instance.");
+            }
+
             if (!string.IsNullOrWhiteSpace(request.DeadLetterReason))
             {
                 var id = Interlocked.Increment(ref _deadLetterSequence);

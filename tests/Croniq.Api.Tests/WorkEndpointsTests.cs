@@ -64,6 +64,46 @@ public sealed class WorkEndpointsTests : IClassFixture<WebhookApiTestHost>
     }
 
     [Fact]
+    public async Task Ack_WithWrongRunner_ReturnsConflict()
+    {
+        _host.Reset();
+        const string jobKey = "ops:work";
+        _host.EnsureJob(jobKey);
+
+        await SeedDueTriggerAsync(jobKey, startAtUtc: DateTimeOffset.UtcNow.AddMinutes(-1));
+
+        var poll = new WorkPollRequest(
+            EnvironmentTag: WebhookApiTestHost.Environment,
+            RunnerId: "runner-1",
+            BatchSize: 1);
+
+        var pollResponse = await _host.Client.PostAsJsonAsync($"/tenants/{WebhookApiTestHost.TenantId}/work/poll", poll);
+        pollResponse.StatusCode.ShouldBe(HttpStatusCode.OK);
+
+        var pollPayload = await pollResponse.Content.ReadFromJsonAsync<WorkPollResponse>();
+        pollPayload.ShouldNotBeNull();
+        pollPayload.Leases.Length.ShouldBe(1);
+
+        var wrongAck = new WorkAckRequest(
+            EnvironmentTag: WebhookApiTestHost.Environment,
+            RunnerId: "runner-2",
+            Lease: pollPayload.Leases[0],
+            Succeeded: true);
+
+        var wrongAckResponse = await _host.Client.PostAsJsonAsync($"/tenants/{WebhookApiTestHost.TenantId}/work/ack", wrongAck);
+        wrongAckResponse.StatusCode.ShouldBe(HttpStatusCode.Conflict);
+
+        var ack = new WorkAckRequest(
+            EnvironmentTag: WebhookApiTestHost.Environment,
+            RunnerId: "runner-1",
+            Lease: pollPayload.Leases[0],
+            Succeeded: true);
+
+        var ackResponse = await _host.Client.PostAsJsonAsync($"/tenants/{WebhookApiTestHost.TenantId}/work/ack", ack);
+        ackResponse.StatusCode.ShouldBe(HttpStatusCode.NoContent);
+    }
+
+    [Fact]
     public async Task Poll_WithoutEnvironmentAndCallerEnvironment_ReturnsBadRequest()
     {
         _host.Reset();
