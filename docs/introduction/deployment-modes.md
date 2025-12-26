@@ -43,7 +43,7 @@ Why it matters:
 
 ---
 
-# Job catalog vs schedules (why cataloging is necessary)
+## Job catalog vs schedules (why cataloging is necessary)
 
 Conceptually, Croniq distinguishes between:
 
