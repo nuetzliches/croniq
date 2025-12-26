@@ -1,0 +1,15 @@
+using System.Collections.Generic;
+using System.Threading;
+using System.Threading.Tasks;
+using Croniq.Persistence.Abstractions;
+
+namespace Croniq.Core;
+
+public sealed class NoOpRunnerStore : IRunnerStore
+{
+    public Task UpsertHeartbeatAsync(RunnerHeartbeat heartbeat, CancellationToken cancellationToken)
+        => Task.CompletedTask;
+
+    public Task<IReadOnlyCollection<RunnerStatus>> ListAsync(RunnerQuery query, CancellationToken cancellationToken)
+        => Task.FromResult<IReadOnlyCollection<RunnerStatus>>(System.Array.Empty<RunnerStatus>());
+}

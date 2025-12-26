@@ -148,6 +148,8 @@ public static partial class ApiHostingExtensions
         MapPasswordAuthEndpoints(app);
         MapExecutionLogEndpoints(app);
         MapJobTriggerEndpoints(app);
+        MapWorkEndpoints(app);
+        MapRunnerEndpoints(app);
 
         return app;
     }

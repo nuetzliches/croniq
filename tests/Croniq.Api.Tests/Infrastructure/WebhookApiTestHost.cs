@@ -7,6 +7,7 @@ using Croniq.Auth.Core;
 using Croniq.Core.Execution;
 using Croniq.Core.Jobs;
 using Croniq.Core.Policies;
+using Croniq.JobStore.InMemory;
 using Croniq.Options;
 using Croniq.Persistence.Abstractions;
 using Croniq.Sdk;
@@ -129,7 +130,10 @@ public sealed class WebhookApiTestHost : IAsyncLifetime
 
         builder.Services.AddSingleton(JobStore);
         builder.Services.AddSingleton<IJobPersistenceProvider>(sp => sp.GetRequiredService<NoopJobPersistenceProvider>());
+        builder.Services.AddSingleton<IJobStore>(sp => sp.GetRequiredService<NoopJobPersistenceProvider>());
         builder.Services.AddSingleton<IPersistenceHealth>(sp => sp.GetRequiredService<NoopJobPersistenceProvider>());
+
+        builder.Services.AddSingleton<IRunnerStore, InMemoryRunnerStore>();
 
         builder.Services.AddSingleton(ApiKeys);
         builder.Services.AddSingleton<IApiKeyStore>(sp => sp.GetRequiredService<FakeApiKeyStore>());

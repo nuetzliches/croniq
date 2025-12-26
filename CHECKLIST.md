@@ -162,6 +162,7 @@
   - Abhängigkeiten: Runner-Identität/Secrets, Availability-Status, Policy/Lease-Semantik, Tenant/Environment-Scoping.
 
 - [ ] Zielbild: echtes polyglottes Worker-Modell (Go/Node/Python Worker können Jobs direkt ausführen, nicht nur triggern).
+  - [x] HTTP Work-Endpoints (Lease-basiert) vorhanden: `/work/poll`, `/work/renew`, `/work/ack` inkl. `work:execute` Scope sowie Python-Sample + Guide.
   - Protokoll/Contract:
     - Worker-API (gRPC + HTTP) definieren: Register/Connect, PollWork (Claim), work-scoped lease deadlines (keine globalen Heartbeats), AckSuccess/AckFailure, PushLogs/Events.
     - AuthN/AuthZ: RunnerIdentity (RunnerId + RunnerSecret/ApiKey/Bearer) + tenant/environment scoping; least-privilege Scopes.

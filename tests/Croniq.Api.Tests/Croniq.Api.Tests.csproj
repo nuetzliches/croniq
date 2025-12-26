@@ -9,6 +9,7 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\Croniq.Api\Croniq.Api.csproj" />
     <ProjectReference Include="..\..\src\Croniq.Auth.Core\Croniq.Auth.Core.csproj" />
+    <ProjectReference Include="..\..\src\Croniq.JobStore.InMemory\Croniq.JobStore.InMemory.csproj" />
     <ProjectReference Include="..\..\src\Croniq.Webhooks\Croniq.Webhooks.csproj" />
   </ItemGroup>
   <ItemGroup>

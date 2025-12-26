@@ -37,6 +37,7 @@ public static class ServiceCollectionExtensions
             .Validate(ValidateRetentionOptions, "Croniq:Retention must define a valid schedule and retention settings.")
             .ValidateOnStart();
         services.AddOptions<WorkerHostOptions>();
+        services.AddOptions<RunnerStoreOptions>();
         if (configure is not null)
         {
             services.Configure(configure);
@@ -57,6 +58,7 @@ public static class ServiceCollectionExtensions
         services.TryAddSingleton<IExecutionLogExporter, LoggerExecutionLogExporter>();
         services.TryAddSingleton<IExecutionLogReader, NoOpExecutionLogReader>();
         services.TryAddSingleton<IExecutionHistoryReader, NoOpExecutionHistoryReader>();
+        services.TryAddSingleton<IRunnerStore, NoOpRunnerStore>();
         services.TryAddSingleton<TriggerWorker>();
 
         // Explicit env var overrides (do not require .NET configuration key mapping)

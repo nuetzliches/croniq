@@ -62,6 +62,8 @@ public sealed class CroniqJobRegistrySyncHostedServiceTests
         var store = Substitute.For<IJobPersistenceProvider>();
         store.GetJobAsync(Arg.Any<string>(), Arg.Any<PartitionScope>(), Arg.Any<CancellationToken>())
             .Returns(Task.FromResult<JobDefinition?>(null));
+        store.UpsertJobAsync(Arg.Any<JobDefinition>(), Arg.Any<PartitionScope>(), Arg.Any<CancellationToken>())
+            .Returns(Task.CompletedTask);
 
         var registry = BuildRegistry();
 
@@ -104,6 +106,72 @@ public sealed class CroniqJobRegistrySyncHostedServiceTests
         await service.StartAsync(CancellationToken.None);
 
         await store.DidNotReceive().UpsertJobAsync(Arg.Any<JobDefinition>(), Arg.Any<PartitionScope>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task Force_update_skips_when_existing_job_has_no_managedBy_metadata()
+    {
+        var store = Substitute.For<IJobPersistenceProvider>();
+        store.ListJobsAsync(Arg.Any<PartitionScope>(), Arg.Any<CancellationToken>()).Returns(
+            Task.FromResult<IReadOnlyCollection<JobDefinition>>(new[]
+            {
+                new JobDefinition("samples:job", "samples", "job", null, Description: "custom", Metadata: new Dictionary<string, string>())
+            }));
+
+        var registry = BuildRegistry();
+
+        var service = new CroniqJobRegistrySyncHostedService(
+            store,
+            registry,
+            Microsoft.Extensions.Options.Options.Create(new CroniqOptions { TenantMode = TenantMode.Multi, TenantId = TestTenantId, EnvironmentTag = "dev", InstanceId = "i1" }),
+            Microsoft.Extensions.Options.Options.Create(new CroniqJobRegistrySyncOptions { Mode = "ForceUpdate", ManagedBy = "tests" }),
+            Microsoft.Extensions.Options.Options.Create(new CroniqStartupOptions { Mode = "Run" }),
+            NullLogger<CroniqJobRegistrySyncHostedService>.Instance);
+
+        await service.StartAsync(CancellationToken.None);
+
+        await store.DidNotReceive().UpsertJobAsync(Arg.Any<JobDefinition>(), Arg.Any<PartitionScope>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task Force_update_updates_when_managedBy_matches_and_preserves_description()
+    {
+        var store = Substitute.For<IJobPersistenceProvider>();
+        store.ListJobsAsync(Arg.Any<PartitionScope>(), Arg.Any<CancellationToken>()).Returns(
+            Task.FromResult<IReadOnlyCollection<JobDefinition>>(new[]
+            {
+                new JobDefinition(
+                    "samples:job",
+                    "samples",
+                    "job",
+                    null,
+                    Description: "custom-description",
+                    Metadata: new Dictionary<string, string> { ["managedBy"] = "tests", ["custom"] = "keep" })
+            }));
+        store.UpsertJobAsync(Arg.Any<JobDefinition>(), Arg.Any<PartitionScope>(), Arg.Any<CancellationToken>())
+            .Returns(Task.CompletedTask);
+
+        var registry = BuildRegistry();
+
+        var service = new CroniqJobRegistrySyncHostedService(
+            store,
+            registry,
+            Microsoft.Extensions.Options.Options.Create(new CroniqOptions { TenantMode = TenantMode.Multi, TenantId = TestTenantId, EnvironmentTag = "dev", InstanceId = "i1" }),
+            Microsoft.Extensions.Options.Options.Create(new CroniqJobRegistrySyncOptions { Mode = "ForceUpdate", ManagedBy = "tests" }),
+            Microsoft.Extensions.Options.Options.Create(new CroniqStartupOptions { Mode = "Run" }),
+            NullLogger<CroniqJobRegistrySyncHostedService>.Instance);
+
+        await service.StartAsync(CancellationToken.None);
+
+        await store.Received(1).UpsertJobAsync(
+            Arg.Is<JobDefinition>(job =>
+                job.JobKey == "samples:job"
+                && job.Description == "custom-description"
+                && job.Metadata != null
+                && job.Metadata.ContainsKey("managedBy") && job.Metadata["managedBy"] == "tests"
+                && job.Metadata.ContainsKey("custom") && job.Metadata["custom"] == "keep"),
+            Arg.Is<PartitionScope>(scope => scope.TenantId == TestTenantId && scope.EnvironmentTag == "dev"),
+            Arg.Any<CancellationToken>());
     }
 
     private static IJobRegistry BuildRegistry()

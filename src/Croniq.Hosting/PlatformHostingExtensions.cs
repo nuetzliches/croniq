@@ -3,6 +3,7 @@ using Croniq.Auth.Abstractions;
 using Croniq.Auth.Core;
 using Croniq.Auth.SqlServer;
 using Croniq.Core;
+using Croniq.Core.Hosting;
 using Croniq.Options;
 using Croniq.Core.Policies;
 using Croniq.Data.SqlServer;
@@ -22,6 +23,7 @@ public static class PlatformHostingExtensions
     {
         services.Configure<CroniqOptions>(configuration.GetSection("Croniq:Core"));
         services.Configure<CroniqStartupOptions>(configuration.GetSection("Croniq:Startup"));
+        services.Configure<CroniqJobRegistrySyncOptions>(configuration.GetSection("Croniq:JobRegistrySync"));
         services.Configure<CroniqAuthOptions>(configuration.GetSection("Croniq:Auth"));
         services.Configure<CroniqOidcOptions>(configuration.GetSection("Croniq:Auth:Oidc"));
         services.Configure<CroniqTokenOptions>(configuration.GetSection("Croniq:Auth:Tokens"));
@@ -40,6 +42,7 @@ public static class PlatformHostingExtensions
         var sharedSqlServer = configuration.GetSection("Croniq:SqlServer").Get<SqlServerOptions>() ?? new SqlServerOptions();
 
         services.AddCroniqInMemoryJobStore();
+        services.AddHostedService<CroniqJobRegistrySyncHostedService>();
 
         if (string.Equals(persistenceOpts.Mode, "SqlServer", StringComparison.OrdinalIgnoreCase))
         {
@@ -120,6 +123,7 @@ public static class PlatformHostingExtensions
                         CroniqScopes.JobsRead,
                         CroniqScopes.JobsWrite,
                         CroniqScopes.JobsTrigger,
+                        CroniqScopes.WorkExecute,
                         CroniqScopes.ExecutionsRead,
                         CroniqScopes.WebhooksRead,
                         CroniqScopes.WebhooksWrite,

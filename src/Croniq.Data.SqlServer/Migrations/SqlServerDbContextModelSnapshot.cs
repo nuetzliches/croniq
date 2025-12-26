@@ -355,6 +355,58 @@ namespace Croniq.Data.SqlServer.Migrations
                     b.ToTable("RefreshTokens", "auth");
                 });
 
+            modelBuilder.Entity("Croniq.Data.SqlServer.Entities.RunnerEntity", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("Id"));
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("datetime2")
+                        .HasDefaultValueSql("sysutcdatetime()");
+
+                    b.Property<string>("EnvironmentTag")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
+                    b.Property<DateTime>("ExpiresAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<DateTime>("LastSeenAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("MetadataJson")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("RunnerId")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("nvarchar(256)");
+
+                    b.Property<string>("TenantId")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
+                    b.Property<DateTime>("UpdatedAtUtc")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("datetime2")
+                        .HasDefaultValueSql("sysutcdatetime()");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ExpiresAtUtc");
+
+                    b.HasIndex("TenantId", "EnvironmentTag", "RunnerId")
+                        .IsUnique();
+
+                    b.ToTable("Runners", "croniq");
+                });
+
             modelBuilder.Entity("Croniq.Data.SqlServer.Entities.TenantEntity", b =>
                 {
                     b.Property<string>("TenantId")
@@ -856,6 +908,15 @@ namespace Croniq.Data.SqlServer.Migrations
                 });
 
             modelBuilder.Entity("Croniq.Data.SqlServer.Entities.RefreshTokenEntity", b =>
+                {
+                    b.HasOne("Croniq.Data.SqlServer.Entities.TenantEntity", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Croniq.Data.SqlServer.Entities.RunnerEntity", b =>
                 {
                     b.HasOne("Croniq.Data.SqlServer.Entities.TenantEntity", null)
                         .WithMany()

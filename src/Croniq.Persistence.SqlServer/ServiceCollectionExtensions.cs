@@ -35,6 +35,7 @@ public static class ServiceCollectionExtensions
 
         services.AddCroniqSqlServerDbContext(configureSql);
         services.AddOptions<SqlServerPersistenceOptions>();
+        services.AddOptions<RunnerStoreOptions>();
         if (configurePersistence is not null)
         {
             services.Configure(configurePersistence);
@@ -46,6 +47,7 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<IWebhookPersistenceProvider, SqlServerWebhookPersistenceProvider>();
         services.AddSingleton<IWebhookDeadLetterStore, SqlServerWebhookDeadLetterStore>();
         services.AddSingleton<IWebhookEndpointChangefeed, SqlServerWebhookEndpointChangefeed>();
+        services.AddSingleton<IRunnerStore, SqlServerRunnerStore>();
 
         return services;
     }

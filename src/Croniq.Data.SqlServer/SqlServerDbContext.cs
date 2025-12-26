@@ -12,6 +12,7 @@ public sealed class SqlServerDbContext(DbContextOptions<SqlServerDbContext> opti
     public DbSet<JobEntity> Jobs => Set<JobEntity>();
     public DbSet<TriggerEntity> Triggers => Set<TriggerEntity>();
     public DbSet<DeadLetterEntity> DeadLetters => Set<DeadLetterEntity>();
+    public DbSet<RunnerEntity> Runners => Set<RunnerEntity>();
     public DbSet<ApiClientEntity> ApiClients => Set<ApiClientEntity>();
     public DbSet<ApiKeyEntity> ApiKeys => Set<ApiKeyEntity>();
     public DbSet<WebhookEndpointEntity> WebhookEndpoints => Set<WebhookEndpointEntity>();
@@ -29,6 +30,7 @@ public sealed class SqlServerDbContext(DbContextOptions<SqlServerDbContext> opti
         ConfigureJobs(modelBuilder.Entity<JobEntity>());
         ConfigureTriggers(modelBuilder.Entity<TriggerEntity>());
         ConfigureDeadLetters(modelBuilder.Entity<DeadLetterEntity>());
+        ConfigureRunners(modelBuilder.Entity<RunnerEntity>());
         ConfigureApiClients(modelBuilder.Entity<ApiClientEntity>());
         ConfigureApiKeys(modelBuilder.Entity<ApiKeyEntity>());
         ConfigureWebhookEndpoints(modelBuilder.Entity<WebhookEndpointEntity>());
@@ -84,6 +86,22 @@ public sealed class SqlServerDbContext(DbContextOptions<SqlServerDbContext> opti
             .WithMany(t => t.DeadLetters)
             .HasForeignKey(x => x.TriggerId)
             .OnDelete(DeleteBehavior.Cascade);
+    }
+
+    private static void ConfigureRunners(EntityTypeBuilder<RunnerEntity> builder)
+    {
+        builder.ToTable("Runners", "croniq");
+        builder.HasIndex(x => new { x.TenantId, x.EnvironmentTag, x.RunnerId }).IsUnique();
+        builder.HasIndex(x => x.ExpiresAtUtc);
+        builder.HasOne<TenantEntity>()
+            .WithMany()
+            .HasForeignKey(x => x.TenantId)
+            .OnDelete(DeleteBehavior.Restrict);
+        builder.Property(x => x.RunnerId).HasMaxLength(256);
+        builder.Property(x => x.EnvironmentTag).HasMaxLength(64);
+        builder.Property(x => x.TenantId).HasMaxLength(64);
+        builder.Property(x => x.CreatedAtUtc).HasDefaultValueSql("sysutcdatetime()");
+        builder.Property(x => x.UpdatedAtUtc).HasDefaultValueSql("sysutcdatetime()");
     }
 
     private static void ConfigureApiClients(EntityTypeBuilder<ApiClientEntity> builder)

@@ -91,18 +91,136 @@ public sealed class NoopJobPersistenceProvider : IJobPersistenceProvider, IPersi
     private readonly object _sync = new();
     private readonly Dictionary<string, JobDefinition> _jobs = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, TriggerDefinition> _triggers = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, LeaseState> _leases = new(StringComparer.OrdinalIgnoreCase);
+    private long _leaseSequence;
+
+    private static readonly TimeSpan DefaultLeaseDuration = TimeSpan.FromSeconds(60);
+
+    private sealed record LeaseState(
+        string LeaseId,
+        string OwnerInstanceId,
+        DateTimeOffset ExpiresAtUtc);
 
     public Task<IReadOnlyCollection<TriggerLease>> AcquireAsync(TriggerAcquireRequest request, CancellationToken cancellationToken)
     {
-        return Task.FromResult<IReadOnlyCollection<TriggerLease>>(Array.Empty<TriggerLease>());
+        if (request is null) throw new ArgumentNullException(nameof(request));
+
+        cancellationToken.ThrowIfCancellationRequested();
+
+        lock (_sync)
+        {
+            var now = request.NowUtc;
+            var scope = request.Scope;
+            var matches = _triggers.Values
+                .Where(t => string.Equals(t.Scope.TenantId, scope.TenantId, StringComparison.OrdinalIgnoreCase)
+                            && string.Equals(t.Scope.EnvironmentTag, scope.EnvironmentTag, StringComparison.OrdinalIgnoreCase)
+                            && t.Enabled
+                            && (t.StartAtUtc is null || t.StartAtUtc <= now))
+                .OrderBy(t => t.StartAtUtc ?? DateTimeOffset.MinValue)
+                .ThenBy(t => t.TriggerId, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            var leases = new List<TriggerLease>(Math.Min(request.BatchSize, matches.Count));
+
+            foreach (var trigger in matches)
+            {
+                if (leases.Count >= request.BatchSize)
+                {
+                    break;
+                }
+
+                if (_leases.TryGetValue(trigger.TriggerId, out var existing)
+                    && existing.ExpiresAtUtc > now)
+                {
+                    continue;
+                }
+
+                var leaseId = $"l_{Interlocked.Increment(ref _leaseSequence)}";
+                var expiresAt = now.Add(DefaultLeaseDuration);
+                _leases[trigger.TriggerId] = new LeaseState(leaseId, request.InstanceId, expiresAt);
+
+                leases.Add(new TriggerLease(
+                    leaseId,
+                    trigger.TriggerId,
+                    trigger.JobKey,
+                    trigger.Scope,
+                    FireAtUtc: trigger.StartAtUtc ?? now,
+                    LeaseExpiresAtUtc: expiresAt,
+                    Payload: null));
+            }
+
+            return Task.FromResult<IReadOnlyCollection<TriggerLease>>(leases);
+        }
     }
 
     public Task<TriggerLease?> TryRenewLeaseAsync(TriggerLeaseRenewRequest request, CancellationToken cancellationToken)
     {
-        return Task.FromResult<TriggerLease?>(null);
+        if (request is null) throw new ArgumentNullException(nameof(request));
+
+        cancellationToken.ThrowIfCancellationRequested();
+
+        lock (_sync)
+        {
+            var lease = request.Lease;
+            if (!_leases.TryGetValue(lease.TriggerId, out var state))
+            {
+                return Task.FromResult<TriggerLease?>(null);
+            }
+
+            if (!string.Equals(state.LeaseId, lease.LeaseId, StringComparison.OrdinalIgnoreCase))
+            {
+                return Task.FromResult<TriggerLease?>(null);
+            }
+
+            if (!string.Equals(state.OwnerInstanceId, request.InstanceId, StringComparison.OrdinalIgnoreCase))
+            {
+                return Task.FromResult<TriggerLease?>(null);
+            }
+
+            if (state.ExpiresAtUtc <= request.NowUtc)
+            {
+                _leases.Remove(lease.TriggerId);
+                return Task.FromResult<TriggerLease?>(null);
+            }
+
+            var extended = request.NowUtc.Add(DefaultLeaseDuration);
+            _leases[lease.TriggerId] = state with { ExpiresAtUtc = extended };
+            return Task.FromResult<TriggerLease?>(lease with { LeaseExpiresAtUtc = extended });
+        }
     }
 
-    public Task ReleaseAsync(TriggerReleaseRequest request, CancellationToken cancellationToken) => Task.CompletedTask;
+    public Task ReleaseAsync(TriggerReleaseRequest request, CancellationToken cancellationToken)
+    {
+        if (request is null) throw new ArgumentNullException(nameof(request));
+
+        cancellationToken.ThrowIfCancellationRequested();
+
+        lock (_sync)
+        {
+            var lease = request.Lease;
+            if (_leases.TryGetValue(lease.TriggerId, out var state)
+                && string.Equals(state.LeaseId, lease.LeaseId, StringComparison.OrdinalIgnoreCase))
+            {
+                _leases.Remove(lease.TriggerId);
+            }
+
+            if (_triggers.TryGetValue(lease.TriggerId, out var trigger)
+                && string.Equals(trigger.Scope.TenantId, lease.Scope.TenantId, StringComparison.OrdinalIgnoreCase)
+                && string.Equals(trigger.Scope.EnvironmentTag, lease.Scope.EnvironmentTag, StringComparison.OrdinalIgnoreCase))
+            {
+                if (request.NextFireTimeUtc is null)
+                {
+                    _triggers.Remove(lease.TriggerId);
+                }
+                else
+                {
+                    _triggers[lease.TriggerId] = trigger with { StartAtUtc = request.NextFireTimeUtc };
+                }
+            }
+        }
+
+        return Task.CompletedTask;
+    }
 
     public Task MoveToDeadLetterAsync(DeadLetterRequest request, CancellationToken cancellationToken) => Task.CompletedTask;
 
@@ -384,6 +502,7 @@ public sealed class TestCallerContextFactory : ICallerContextFactory
                 CroniqScopes.ExecutionsRead,
                 CroniqScopes.JobsWrite,
                 CroniqScopes.JobsTrigger,
+                CroniqScopes.WorkExecute,
                 CroniqScopes.WebhooksRead,
                 CroniqScopes.WebhooksWrite,
                 CroniqScopes.WebhooksRotate,
