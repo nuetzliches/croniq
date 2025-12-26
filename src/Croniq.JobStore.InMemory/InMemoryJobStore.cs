@@ -197,6 +197,7 @@ public sealed class InMemoryJobStore : IJobPersistenceProvider, IJobDeadLetterSt
                 }
 
                 var leaseId = Interlocked.Increment(ref _leaseSequence).ToString();
+                var executionId = Guid.NewGuid().ToString("N");
                 var expiresAt = now.Add(leaseDuration);
                 entry.Lease = new LeaseInfo(leaseId, request.InstanceId, expiresAt, entry.NextFireAtUtc.Value);
 
@@ -207,7 +208,8 @@ public sealed class InMemoryJobStore : IJobPersistenceProvider, IJobDeadLetterSt
                     entry.Definition.Scope,
                     entry.NextFireAtUtc.Value,
                     expiresAt,
-                    SerializeMetadata(entry.Definition.Metadata)));
+                    SerializeMetadata(entry.Definition.Metadata),
+                    executionId));
 
                 if (leases.Count >= request.BatchSize)
                 {

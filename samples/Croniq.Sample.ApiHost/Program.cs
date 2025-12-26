@@ -112,6 +112,12 @@ if (app.Environment.IsDevelopment())
                     CroniqScopes.JobsRead,
                     CroniqScopes.JobsWrite,
                     CroniqScopes.JobsTrigger,
+                    CroniqScopes.WorkPoll,
+                    CroniqScopes.WorkRenew,
+                    CroniqScopes.WorkAck,
+                    CroniqScopes.WorkEvents,
+                    CroniqScopes.RunnersHeartbeat,
+                    CroniqScopes.RunnersRead,
                     CroniqScopes.ExecutionsRead,
                     CroniqScopes.WebhooksRead,
                     CroniqScopes.WebhooksWrite,
@@ -184,6 +190,7 @@ app.UseCroniqApiSwaggerUi(builder.Configuration);
 app.UseCors(corsPolicyName);
 app.UseCroniqApi();
 app.MapCroniqSchedulerGrpc();
+app.MapCroniqWorkerGrpc();
 app.UseCroniqWebhooks(mapHealthEndpoints: false);
 
 app.Run();

@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.ComponentModel.DataAnnotations;
 
 namespace Croniq.Api.Models;
@@ -10,6 +11,7 @@ public sealed record WorkPollRequest(
     int? WaitForMs = null);
 
 public sealed record WorkLeaseToken(
+    [property: Required] string ExecutionId,
     [property: Required] string LeaseId,
     [property: Required] string TriggerId,
     [property: Required] string JobKey,
@@ -36,3 +38,16 @@ public sealed record WorkAckRequest(
     bool Succeeded,
     DateTimeOffset? NextFireTimeUtc = null,
     string? DeadLetterReason = null);
+
+public sealed record WorkEventsRequest(
+    string? EnvironmentTag,
+    [property: Required] string RunnerId,
+    [property: Required] WorkLeaseToken Lease,
+    WorkEventEntry[]? Events);
+
+public sealed record WorkEventEntry(
+    [property: Required] string Message,
+    string? Level = null,
+    DateTimeOffset? TimestampUtc = null,
+    Dictionary<string, string>? Properties = null,
+    string? EventType = null);

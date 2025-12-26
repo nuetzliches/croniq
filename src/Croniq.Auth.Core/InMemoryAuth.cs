@@ -505,7 +505,7 @@ public sealed class InMemoryApiKeyStore : IApiKeyStore
                     true,
                     record.TenantId,
                     record.EnvironmentTag,
-                    keyId,
+                    record.ClientId,
                     record.Scopes,
                     null));
             }

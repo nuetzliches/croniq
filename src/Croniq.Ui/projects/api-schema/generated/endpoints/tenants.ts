@@ -10,6 +10,13 @@ import {
     UpsertApiClientRequest,
     IssueApiKeyRequest,
     IssueTokenRequest,
+    WorkPollRequest,
+    WorkLeaseToken,
+    WorkRenewRequest,
+    WorkAckRequest,
+    WorkEventEntry,
+    WorkEventsRequest,
+    RunnerHeartbeatRequest,
     ExecutionStatus,
     PasswordChangePasswordRequest,
     PasswordLoginRequest,
@@ -319,6 +326,37 @@ export const TenantsApi: EndpointDefinition[] = [
     },
     {
         method: 'get',
+        path: '/tenants/:tenantId/runners',
+        description: `Lists active runners for the tenant/environment.`,
+        requestFormat: 'json',
+        parameters: [
+            { name: 'tenantId', type: 'Path', schema: z.string() },
+            {
+                name: 'environment',
+                type: 'Query',
+                schema: z.string().optional(),
+            },
+        ],
+        response: z.void(),
+    },
+    {
+        method: 'post',
+        path: '/tenants/:tenantId/runners/heartbeat',
+        description: `Records a runner heartbeat to track availability.`,
+        requestFormat: 'json',
+        parameters: [
+            { name: 'body', type: 'Body', schema: RunnerHeartbeatRequest },
+            { name: 'tenantId', type: 'Path', schema: z.string() },
+            {
+                name: 'environment',
+                type: 'Query',
+                schema: z.string().optional(),
+            },
+        ],
+        response: z.void(),
+    },
+    {
+        method: 'get',
         path: '/tenants/:tenantId/schedules',
         description: `Returns all persisted schedules for the tenant/environment scope, optionally filtered by job key.`,
         requestFormat: 'json',
@@ -575,6 +613,71 @@ export const TenantsApi: EndpointDefinition[] = [
         parameters: [
             { name: 'tenantId', type: 'Path', schema: z.string() },
             { name: 'deadLetterId', type: 'Path', schema: z.number().int() },
+            {
+                name: 'environment',
+                type: 'Query',
+                schema: z.string().optional(),
+            },
+        ],
+        response: z.void(),
+    },
+    {
+        method: 'post',
+        path: '/tenants/:tenantId/work/:executionId:events',
+        description: `Pushes execution-scoped log/events for a running work item.`,
+        requestFormat: 'json',
+        parameters: [
+            { name: 'body', type: 'Body', schema: WorkEventsRequest },
+            { name: 'tenantId', type: 'Path', schema: z.string() },
+            { name: 'executionId', type: 'Path', schema: z.string() },
+            {
+                name: 'environment',
+                type: 'Query',
+                schema: z.string().optional(),
+            },
+        ],
+        response: z.void(),
+    },
+    {
+        method: 'post',
+        path: '/tenants/:tenantId/work/ack',
+        description: `Acknowledges work completion and releases the trigger lease.`,
+        requestFormat: 'json',
+        parameters: [
+            { name: 'body', type: 'Body', schema: WorkAckRequest },
+            { name: 'tenantId', type: 'Path', schema: z.string() },
+            {
+                name: 'environment',
+                type: 'Query',
+                schema: z.string().optional(),
+            },
+        ],
+        response: z.void(),
+    },
+    {
+        method: 'post',
+        path: '/tenants/:tenantId/work/poll',
+        description: `Claims due trigger leases for execution (HTTP long-poll style).`,
+        requestFormat: 'json',
+        parameters: [
+            { name: 'body', type: 'Body', schema: WorkPollRequest },
+            { name: 'tenantId', type: 'Path', schema: z.string() },
+            {
+                name: 'environment',
+                type: 'Query',
+                schema: z.string().optional(),
+            },
+        ],
+        response: z.void(),
+    },
+    {
+        method: 'post',
+        path: '/tenants/:tenantId/work/renew',
+        description: `Renews an existing trigger lease for a running work item.`,
+        requestFormat: 'json',
+        parameters: [
+            { name: 'body', type: 'Body', schema: WorkRenewRequest },
+            { name: 'tenantId', type: 'Path', schema: z.string() },
             {
                 name: 'environment',
                 type: 'Query',

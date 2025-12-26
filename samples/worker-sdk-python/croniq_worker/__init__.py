@@ -3,6 +3,7 @@ from .client import (
     Lease,
     LeaseConflictError,
     LeaseNotFoundError,
+    WorkEvent,
     WorkerClient,
 )
 
@@ -11,5 +12,6 @@ __all__ = [
     "Lease",
     "LeaseConflictError",
     "LeaseNotFoundError",
+    "WorkEvent",
     "WorkerClient",
 ]

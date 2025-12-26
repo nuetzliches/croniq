@@ -33,7 +33,7 @@ public sealed class WorkEndpointsTests : IClassFixture<WebhookApiTestHost>
 
         var poll = new WorkPollRequest(
             EnvironmentTag: WebhookApiTestHost.Environment,
-            RunnerId: "runner-1",
+            RunnerId: "itest-client",
             BatchSize: 10);
 
         var pollResponse = await _host.Client.PostAsJsonAsync($"/tenants/{WebhookApiTestHost.TenantId}/work/poll", poll);
@@ -43,10 +43,11 @@ public sealed class WorkEndpointsTests : IClassFixture<WebhookApiTestHost>
         pollPayload.ShouldNotBeNull();
         pollPayload.Leases.Length.ShouldBe(1);
         pollPayload.Leases[0].JobKey.ShouldBe(jobKey);
+        pollPayload.Leases[0].ExecutionId.ShouldNotBeNullOrWhiteSpace();
 
         var ack = new WorkAckRequest(
             EnvironmentTag: WebhookApiTestHost.Environment,
-            RunnerId: "runner-1",
+            RunnerId: "itest-client",
             Lease: pollPayload.Leases[0],
             Succeeded: true);
 
@@ -64,14 +65,112 @@ public sealed class WorkEndpointsTests : IClassFixture<WebhookApiTestHost>
     }
 
     [Fact]
-    public async Task Ack_WithWrongRunner_ReturnsConflict()
+    public async Task Renew_Succeeds_ForActiveLease()
     {
         _host.Reset();
-        const string jobKey = "ops:work";
+        const string jobKey = "ops:work-renew";
         _host.EnsureJob(jobKey);
 
         await SeedDueTriggerAsync(jobKey, startAtUtc: DateTimeOffset.UtcNow.AddMinutes(-1));
 
+        var poll = new WorkPollRequest(
+            EnvironmentTag: WebhookApiTestHost.Environment,
+            RunnerId: "itest-client",
+            BatchSize: 1);
+
+        var pollResponse = await _host.Client.PostAsJsonAsync($"/tenants/{WebhookApiTestHost.TenantId}/work/poll", poll);
+        pollResponse.StatusCode.ShouldBe(HttpStatusCode.OK);
+
+        var pollPayload = await pollResponse.Content.ReadFromJsonAsync<WorkPollResponse>();
+        pollPayload.ShouldNotBeNull();
+        pollPayload.Leases.Length.ShouldBe(1);
+
+        var lease = pollPayload.Leases[0];
+        var renew = new WorkRenewRequest(
+            EnvironmentTag: WebhookApiTestHost.Environment,
+            RunnerId: "itest-client",
+            Lease: lease);
+
+        var renewResponse = await _host.Client.PostAsJsonAsync($"/tenants/{WebhookApiTestHost.TenantId}/work/renew", renew);
+        renewResponse.StatusCode.ShouldBe(HttpStatusCode.OK);
+
+        var renewPayload = await renewResponse.Content.ReadFromJsonAsync<WorkRenewResponse>();
+        renewPayload.ShouldNotBeNull();
+        renewPayload.Renewed.ShouldBeTrue();
+        renewPayload.Lease.ShouldNotBeNull();
+        renewPayload.Lease!.LeaseId.ShouldBe(lease.LeaseId);
+        (renewPayload.Lease!.LeaseExpiresAtUtc >= lease.LeaseExpiresAtUtc).ShouldBeTrue();
+    }
+
+    [Fact]
+    public async Task Ack_WithNextFireTime_ReschedulesTrigger()
+    {
+        _host.Reset();
+        const string jobKey = "ops:work-retry";
+        _host.EnsureJob(jobKey);
+
+        await SeedDueTriggerAsync(jobKey, startAtUtc: DateTimeOffset.UtcNow.AddMinutes(-1));
+
+        var poll = new WorkPollRequest(
+            EnvironmentTag: WebhookApiTestHost.Environment,
+            RunnerId: "itest-client",
+            BatchSize: 1);
+
+        var pollResponse = await _host.Client.PostAsJsonAsync($"/tenants/{WebhookApiTestHost.TenantId}/work/poll", poll);
+        pollResponse.StatusCode.ShouldBe(HttpStatusCode.OK);
+
+        var pollPayload = await pollResponse.Content.ReadFromJsonAsync<WorkPollResponse>();
+        pollPayload.ShouldNotBeNull();
+        pollPayload.Leases.Length.ShouldBe(1);
+
+        var retryAt = DateTimeOffset.UtcNow.AddMinutes(3);
+        var ack = new WorkAckRequest(
+            EnvironmentTag: WebhookApiTestHost.Environment,
+            RunnerId: "itest-client",
+            Lease: pollPayload.Leases[0],
+            Succeeded: false,
+            NextFireTimeUtc: retryAt,
+            DeadLetterReason: "retry");
+
+        var ackResponse = await _host.Client.PostAsJsonAsync($"/tenants/{WebhookApiTestHost.TenantId}/work/ack", ack);
+        ackResponse.StatusCode.ShouldBe(HttpStatusCode.NoContent);
+
+        var triggers = await _host.JobStore.ListTriggersAsync(_host.DefaultScope, CancellationToken.None);
+        triggers.Count.ShouldBe(1);
+        var trigger = triggers.Single();
+        trigger.TriggerId.ShouldBe(pollPayload.Leases[0].TriggerId);
+        trigger.StartAtUtc.ShouldNotBeNull();
+        var startAt = trigger.StartAtUtc.GetValueOrDefault();
+        startAt.ShouldBeInRange(retryAt.AddSeconds(-1), retryAt.AddSeconds(1));
+    }
+
+    [Fact]
+    public async Task Poll_DoesNotAssignActiveLeaseToAnotherRunner()
+    {
+        _host.Reset();
+        const string jobKey = "ops:work-concurrent";
+        _host.EnsureJob(jobKey);
+
+        await SeedDueTriggerAsync(jobKey, startAtUtc: DateTimeOffset.UtcNow.AddMinutes(-1));
+
+        const string runnerOneKey = "ak_runner_one_claim";
+        const string runnerTwoKey = "ak_runner_two_claim";
+        var runnerOneContext = new CallerContext(
+            WebhookApiTestHost.TenantId,
+            WebhookApiTestHost.Environment,
+            CallerType.ApiKey,
+            CallerId: "runner-1",
+            Scopes: new[] { CroniqScopes.WorkPoll });
+        var runnerTwoContext = new CallerContext(
+            WebhookApiTestHost.TenantId,
+            WebhookApiTestHost.Environment,
+            CallerType.ApiKey,
+            CallerId: "runner-2",
+            Scopes: new[] { CroniqScopes.WorkPoll });
+        _host.CallerFactory.AddContext(runnerOneKey, runnerOneContext);
+        _host.CallerFactory.AddContext(runnerTwoKey, runnerTwoContext);
+
+        SetCallerApiKey(runnerOneKey);
         var poll = new WorkPollRequest(
             EnvironmentTag: WebhookApiTestHost.Environment,
             RunnerId: "runner-1",
@@ -84,23 +183,142 @@ public sealed class WorkEndpointsTests : IClassFixture<WebhookApiTestHost>
         pollPayload.ShouldNotBeNull();
         pollPayload.Leases.Length.ShouldBe(1);
 
-        var wrongAck = new WorkAckRequest(
+        SetCallerApiKey(runnerTwoKey);
+        var secondPoll = new WorkPollRequest(
             EnvironmentTag: WebhookApiTestHost.Environment,
             RunnerId: "runner-2",
-            Lease: pollPayload.Leases[0],
-            Succeeded: true);
+            BatchSize: 1);
 
-        var wrongAckResponse = await _host.Client.PostAsJsonAsync($"/tenants/{WebhookApiTestHost.TenantId}/work/ack", wrongAck);
-        wrongAckResponse.StatusCode.ShouldBe(HttpStatusCode.Conflict);
+        var secondResponse = await _host.Client.PostAsJsonAsync($"/tenants/{WebhookApiTestHost.TenantId}/work/poll", secondPoll);
+        secondResponse.StatusCode.ShouldBe(HttpStatusCode.OK);
 
-        var ack = new WorkAckRequest(
+        var secondPayload = await secondResponse.Content.ReadFromJsonAsync<WorkPollResponse>();
+        secondPayload.ShouldNotBeNull();
+        secondPayload.Leases.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task Ack_WithWrongRunner_ReturnsConflict()
+    {
+        _host.Reset();
+        const string jobKey = "ops:work";
+        _host.EnsureJob(jobKey);
+
+        await SeedDueTriggerAsync(jobKey, startAtUtc: DateTimeOffset.UtcNow.AddMinutes(-1));
+
+        const string runnerOneKey = "ak_runner_one";
+        const string runnerTwoKey = "ak_runner_two";
+        var runnerOneContext = new CallerContext(
+            WebhookApiTestHost.TenantId,
+            WebhookApiTestHost.Environment,
+            CallerType.ApiKey,
+            CallerId: "runner-1",
+            Scopes: new[] { CroniqScopes.WorkPoll, CroniqScopes.WorkAck });
+        var runnerTwoContext = new CallerContext(
+            WebhookApiTestHost.TenantId,
+            WebhookApiTestHost.Environment,
+            CallerType.ApiKey,
+            CallerId: "runner-2",
+            Scopes: new[] { CroniqScopes.WorkPoll, CroniqScopes.WorkAck });
+        _host.CallerFactory.AddContext(runnerOneKey, runnerOneContext);
+        _host.CallerFactory.AddContext(runnerTwoKey, runnerTwoContext);
+
+        SetCallerApiKey(runnerTwoKey);
+        var poll = new WorkPollRequest(
+            EnvironmentTag: WebhookApiTestHost.Environment,
+            RunnerId: "runner-2",
+            BatchSize: 1);
+
+        var pollResponse = await _host.Client.PostAsJsonAsync($"/tenants/{WebhookApiTestHost.TenantId}/work/poll", poll);
+        pollResponse.StatusCode.ShouldBe(HttpStatusCode.OK);
+
+        var pollPayload = await pollResponse.Content.ReadFromJsonAsync<WorkPollResponse>();
+        pollPayload.ShouldNotBeNull();
+        pollPayload.Leases.Length.ShouldBe(1);
+        pollPayload.Leases[0].ExecutionId.ShouldNotBeNullOrWhiteSpace();
+
+        var wrongAck = new WorkAckRequest(
             EnvironmentTag: WebhookApiTestHost.Environment,
             RunnerId: "runner-1",
             Lease: pollPayload.Leases[0],
             Succeeded: true);
 
+        SetCallerApiKey(runnerOneKey);
+        var wrongAckResponse = await _host.Client.PostAsJsonAsync($"/tenants/{WebhookApiTestHost.TenantId}/work/ack", wrongAck);
+        wrongAckResponse.StatusCode.ShouldBe(HttpStatusCode.Conflict);
+
+        var ack = new WorkAckRequest(
+            EnvironmentTag: WebhookApiTestHost.Environment,
+            RunnerId: "runner-2",
+            Lease: pollPayload.Leases[0],
+            Succeeded: true);
+
+        SetCallerApiKey(runnerTwoKey);
         var ackResponse = await _host.Client.PostAsJsonAsync($"/tenants/{WebhookApiTestHost.TenantId}/work/ack", ack);
         ackResponse.StatusCode.ShouldBe(HttpStatusCode.NoContent);
+    }
+
+    [Fact]
+    public async Task Poll_WithRunnerMismatch_ReturnsForbidden()
+    {
+        _host.Reset();
+
+        var poll = new WorkPollRequest(
+            EnvironmentTag: WebhookApiTestHost.Environment,
+            RunnerId: "runner-1",
+            BatchSize: 1);
+
+        var response = await _host.Client.PostAsJsonAsync($"/tenants/{WebhookApiTestHost.TenantId}/work/poll", poll);
+        response.StatusCode.ShouldBe(HttpStatusCode.Forbidden);
+    }
+
+    [Fact]
+    public async Task Renew_WithoutScope_ReturnsForbidden()
+    {
+        _host.Reset();
+        const string jobKey = "ops:work-renew-scope";
+        _host.EnsureJob(jobKey);
+
+        await SeedDueTriggerAsync(jobKey, startAtUtc: DateTimeOffset.UtcNow.AddMinutes(-1));
+
+        const string pollKey = "ak_runner_poll";
+        const string renewKey = "ak_runner_no_renew";
+        var pollContext = new CallerContext(
+            WebhookApiTestHost.TenantId,
+            WebhookApiTestHost.Environment,
+            CallerType.ApiKey,
+            CallerId: "runner-1",
+            Scopes: new[] { CroniqScopes.WorkPoll, CroniqScopes.WorkRenew });
+        var renewContext = new CallerContext(
+            WebhookApiTestHost.TenantId,
+            WebhookApiTestHost.Environment,
+            CallerType.ApiKey,
+            CallerId: "runner-1",
+            Scopes: new[] { CroniqScopes.WorkPoll });
+        _host.CallerFactory.AddContext(pollKey, pollContext);
+        _host.CallerFactory.AddContext(renewKey, renewContext);
+
+        SetCallerApiKey(pollKey);
+        var poll = new WorkPollRequest(
+            EnvironmentTag: WebhookApiTestHost.Environment,
+            RunnerId: "runner-1",
+            BatchSize: 1);
+
+        var pollResponse = await _host.Client.PostAsJsonAsync($"/tenants/{WebhookApiTestHost.TenantId}/work/poll", poll);
+        pollResponse.StatusCode.ShouldBe(HttpStatusCode.OK);
+
+        var pollPayload = await pollResponse.Content.ReadFromJsonAsync<WorkPollResponse>();
+        pollPayload.ShouldNotBeNull();
+        pollPayload.Leases.Length.ShouldBe(1);
+
+        SetCallerApiKey(renewKey);
+        var renew = new WorkRenewRequest(
+            EnvironmentTag: WebhookApiTestHost.Environment,
+            RunnerId: "runner-1",
+            Lease: pollPayload.Leases[0]);
+
+        var renewResponse = await _host.Client.PostAsJsonAsync($"/tenants/{WebhookApiTestHost.TenantId}/work/renew", renew);
+        renewResponse.StatusCode.ShouldBe(HttpStatusCode.Forbidden);
     }
 
     [Fact]
@@ -114,13 +332,13 @@ public sealed class WorkEndpointsTests : IClassFixture<WebhookApiTestHost>
             EnvironmentTag: null,
             CallerType.ApiKey,
             CallerId: "tenant-only-client",
-            Scopes: new[] { CroniqScopes.WorkExecute });
+            Scopes: new[] { CroniqScopes.WorkPoll });
         _host.CallerFactory.AddContext(tenantOnlyKey, tenantOnlyContext);
         SetCallerApiKey(tenantOnlyKey);
 
         var poll = new WorkPollRequest(
             EnvironmentTag: null,
-            RunnerId: "runner-1",
+            RunnerId: "tenant-only-client",
             BatchSize: 1);
 
         var response = await _host.Client.PostAsJsonAsync($"/tenants/{WebhookApiTestHost.TenantId}/work/poll", poll);
@@ -148,7 +366,7 @@ public sealed class WorkEndpointsTests : IClassFixture<WebhookApiTestHost>
 
         var poll = new WorkPollRequest(
             EnvironmentTag: WebhookApiTestHost.Environment,
-            RunnerId: "runner-1",
+            RunnerId: "no-work-scope",
             BatchSize: 1);
 
         var response = await _host.Client.PostAsJsonAsync($"/tenants/{WebhookApiTestHost.TenantId}/work/poll", poll);

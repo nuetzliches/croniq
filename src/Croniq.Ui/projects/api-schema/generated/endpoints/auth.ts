@@ -11,11 +11,18 @@ import {
     IssueApiKeyRequest,
     IssueTokenRequest,
     RotateWebhookSecretRequest,
+    RunnerHeartbeatRequest,
     TriggerJobRequest,
     UpsertApiClientRequest,
     UpsertJobRequest,
     UpsertTenantRequest,
     UpsertWebhookEndpointRequest,
+    WorkLeaseToken,
+    WorkAckRequest,
+    WorkEventEntry,
+    WorkEventsRequest,
+    WorkPollRequest,
+    WorkRenewRequest,
 } from '../schemas';
 
 export const AuthApi: EndpointDefinition[] = [

@@ -1,13 +1,16 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
 using System.Threading.Tasks;
 using Croniq.Api.Models;
 using Croniq.Auth.Abstractions;
+using Croniq.Core.Execution;
 using Croniq.Persistence.Abstractions;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Logging;
 
 namespace Croniq.Api;
 
@@ -23,6 +26,10 @@ public static partial class ApiHostingExtensions
             WorkPollRequest request,
             [FromServices] ICallerContextAccessor callerContextAccessor,
             [FromServices] IJobStore jobStore,
+            [FromServices] IExecutionLogStore executionLogStore,
+            [FromServices] IWorkItemStore workItemStore,
+            [FromServices] ILoggerFactory loggerFactory,
+            HttpContext httpContext,
             CancellationToken cancellationToken) =>
         {
             if (request is null)
@@ -41,6 +48,13 @@ public static partial class ApiHostingExtensions
                 return Results.BadRequest(new { error = "runner-required", message = "RunnerId is required." });
             }
 
+            var runnerId = request.RunnerId.Trim();
+            var runnerFailure = EnsureRunnerIdentity(callerContextAccessor, runnerId);
+            if (runnerFailure is not null)
+            {
+                return runnerFailure;
+            }
+
             var batchSize = request.BatchSize.GetValueOrDefault(1);
             if (batchSize <= 0 || batchSize > 250)
             {
@@ -54,7 +68,6 @@ public static partial class ApiHostingExtensions
             }
 
             var scope = new PartitionScope(tenantId.Trim(), resolvedEnvironment);
-            var runnerId = request.RunnerId.Trim();
             var deadlineUtc = waitForMs > 0
                 ? DateTimeOffset.UtcNow.AddMilliseconds(waitForMs)
                 : DateTimeOffset.UtcNow;
@@ -87,10 +100,13 @@ public static partial class ApiHostingExtensions
                 .Select(ToToken)
                 .ToArray();
 
+            var trackingLogger = loggerFactory.CreateLogger("Croniq.Api.WorkTracking");
+            await TryTrackAssignmentsAsync(payload, scope, runnerId, workItemStore, trackingLogger, cancellationToken).ConfigureAwait(false);
+            await TryStoreExecutionStartsAsync(payload, scope, runnerId, executionLogStore, httpContext, cancellationToken).ConfigureAwait(false);
             return Results.Ok(new WorkPollResponse(payload));
         })
         .WithDocs("Work_Poll", "Poll work", "Claims due trigger leases for execution (HTTP long-poll style).")
-        .RequireCroniqTenantScopeFromBodyOrQuery<WorkPollRequest>(r => r.EnvironmentTag, requireEnvironment: true, CroniqScopes.WorkExecute);
+        .RequireCroniqTenantScopeFromBodyOrQuery<WorkPollRequest>(r => r.EnvironmentTag, requireEnvironment: true, CroniqScopes.WorkPoll);
 
         app.MapPost("/tenants/{tenantId}/work/renew", async (
             string tenantId,
@@ -98,6 +114,8 @@ public static partial class ApiHostingExtensions
             WorkRenewRequest request,
             [FromServices] ICallerContextAccessor callerContextAccessor,
             [FromServices] IJobStore jobStore,
+            [FromServices] IWorkItemStore workItemStore,
+            [FromServices] ILoggerFactory loggerFactory,
             CancellationToken cancellationToken) =>
         {
             if (request is null)
@@ -116,17 +134,37 @@ public static partial class ApiHostingExtensions
                 return Results.BadRequest(new { error = "runner-required", message = "RunnerId is required." });
             }
 
+            var runnerId = request.RunnerId.Trim();
+            var runnerFailure = EnsureRunnerIdentity(callerContextAccessor, runnerId);
+            if (runnerFailure is not null)
+            {
+                return runnerFailure;
+            }
+
             var scope = new PartitionScope(tenantId.Trim(), resolvedEnvironment);
             var lease = FromToken(scope, request.Lease);
-            var renew = new TriggerLeaseRenewRequest(lease, request.RunnerId.Trim(), DateTimeOffset.UtcNow);
+            var renew = new TriggerLeaseRenewRequest(lease, runnerId, DateTimeOffset.UtcNow);
             var updated = await jobStore.TryRenewLeaseAsync(renew, cancellationToken).ConfigureAwait(false);
 
-            return updated is null
-                ? Results.NotFound(new WorkRenewResponse(Renewed: false, Lease: null))
-                : Results.Ok(new WorkRenewResponse(Renewed: true, Lease: ToToken(updated)));
+            if (updated is null)
+            {
+                return Results.NotFound(new WorkRenewResponse(Renewed: false, Lease: null));
+            }
+
+            var token = ToToken(updated);
+            var trackingLogger = loggerFactory.CreateLogger("Croniq.Api.WorkTracking");
+            var renewal = new WorkLeaseRenewal(
+                token.LeaseId,
+                runnerId,
+                token.LeaseExpiresAtUtc,
+                DateTimeOffset.UtcNow,
+                token.ExecutionId);
+            await TryTrackRenewalAsync(renewal, workItemStore, trackingLogger, cancellationToken).ConfigureAwait(false);
+
+            return Results.Ok(new WorkRenewResponse(Renewed: true, Lease: token));
         })
         .WithDocs("Work_Renew", "Renew work lease", "Renews an existing trigger lease for a running work item.")
-        .RequireCroniqTenantScopeFromBodyOrQuery<WorkRenewRequest>(r => r.EnvironmentTag, requireEnvironment: true, CroniqScopes.WorkExecute);
+        .RequireCroniqTenantScopeFromBodyOrQuery<WorkRenewRequest>(r => r.EnvironmentTag, requireEnvironment: true, CroniqScopes.WorkRenew);
 
         app.MapPost("/tenants/{tenantId}/work/ack", async (
             string tenantId,
@@ -134,6 +172,10 @@ public static partial class ApiHostingExtensions
             WorkAckRequest request,
             [FromServices] ICallerContextAccessor callerContextAccessor,
             [FromServices] IJobStore jobStore,
+            [FromServices] IExecutionLogStore executionLogStore,
+            [FromServices] IWorkItemStore workItemStore,
+            [FromServices] ILoggerFactory loggerFactory,
+            HttpContext httpContext,
             CancellationToken cancellationToken) =>
         {
             if (request is null)
@@ -152,10 +194,19 @@ public static partial class ApiHostingExtensions
                 return Results.BadRequest(new { error = "runner-required", message = "RunnerId is required." });
             }
 
-            var scope = new PartitionScope(tenantId.Trim(), resolvedEnvironment);
             var runnerId = request.RunnerId.Trim();
+            var runnerFailure = EnsureRunnerIdentity(callerContextAccessor, runnerId);
+            if (runnerFailure is not null)
+            {
+                return runnerFailure;
+            }
+
+            var scope = new PartitionScope(tenantId.Trim(), resolvedEnvironment);
             var lease = FromToken(scope, request.Lease);
-            var deadLetterReason = request.Succeeded ? null : (string.IsNullOrWhiteSpace(request.DeadLetterReason) ? "work-failed" : request.DeadLetterReason);
+            var reschedule = !request.Succeeded && request.NextFireTimeUtc.HasValue;
+            var deadLetterReason = request.Succeeded || reschedule
+                ? null
+                : (string.IsNullOrWhiteSpace(request.DeadLetterReason) ? "work-failed" : request.DeadLetterReason);
 
             var release = new TriggerReleaseRequest(
                 lease,
@@ -167,6 +218,16 @@ public static partial class ApiHostingExtensions
             try
             {
                 await jobStore.ReleaseAsync(release, cancellationToken).ConfigureAwait(false);
+                await TryStoreExecutionCompletionAsync(lease.ExecutionId, request.Succeeded, deadLetterReason, executionLogStore, cancellationToken).ConfigureAwait(false);
+                var trackingLogger = loggerFactory.CreateLogger("Croniq.Api.WorkTracking");
+                var completion = new WorkCompletion(
+                    lease.LeaseId,
+                    runnerId,
+                    request.Succeeded,
+                    DateTimeOffset.UtcNow,
+                    deadLetterReason,
+                    lease.ExecutionId);
+                await TryTrackCompletionAsync(completion, workItemStore, trackingLogger, cancellationToken).ConfigureAwait(false);
                 return Results.NoContent();
             }
             catch (InvalidOperationException ex)
@@ -175,17 +236,109 @@ public static partial class ApiHostingExtensions
             }
         })
         .WithDocs("Work_Ack", "Acknowledge work result", "Acknowledges work completion and releases the trigger lease.")
-        .RequireCroniqTenantScopeFromBodyOrQuery<WorkAckRequest>(r => r.EnvironmentTag, requireEnvironment: true, CroniqScopes.WorkExecute);
+        .RequireCroniqTenantScopeFromBodyOrQuery<WorkAckRequest>(r => r.EnvironmentTag, requireEnvironment: true, CroniqScopes.WorkAck);
+
+        app.MapPost("/tenants/{tenantId}/work/{executionId}:events", async (
+            string tenantId,
+            string executionId,
+            string? environment,
+            WorkEventsRequest request,
+            [FromServices] ICallerContextAccessor callerContextAccessor,
+            [FromServices] IJobStore jobStore,
+            [FromServices] IWorkItemStore workItemStore,
+            [FromServices] ILoggerFactory loggerFactory,
+            CancellationToken cancellationToken) =>
+        {
+            if (request is null)
+            {
+                return Results.BadRequest(new { error = "invalid-request" });
+            }
+
+            var resolvedEnvironment = ResolveEnvironmentTag(request.EnvironmentTag ?? environment, callerContextAccessor);
+            if (string.IsNullOrWhiteSpace(resolvedEnvironment))
+            {
+                return MissingEnvironment();
+            }
+
+            if (string.IsNullOrWhiteSpace(request.RunnerId))
+            {
+                return Results.BadRequest(new { error = "runner-required", message = "RunnerId is required." });
+            }
+
+            var runnerId = request.RunnerId.Trim();
+            var runnerFailure = EnsureRunnerIdentity(callerContextAccessor, runnerId);
+            if (runnerFailure is not null)
+            {
+                return runnerFailure;
+            }
+
+            if (request.Lease is null)
+            {
+                return Results.BadRequest(new { error = "lease-required", message = "Lease is required." });
+            }
+
+            if (request.Events is null || request.Events.Length == 0)
+            {
+                return Results.NoContent();
+            }
+
+            var scope = new PartitionScope(tenantId.Trim(), resolvedEnvironment);
+            var lease = FromToken(scope, request.Lease);
+            lease = EnsureExecutionId(lease);
+
+            if (!string.Equals(executionId, lease.ExecutionId, StringComparison.OrdinalIgnoreCase))
+            {
+                return Results.BadRequest(new { error = "execution-mismatch", message = "ExecutionId does not match the lease." });
+            }
+
+            var renewRequest = new TriggerLeaseRenewRequest(lease, runnerId, DateTimeOffset.UtcNow);
+            var renewed = await jobStore.TryRenewLeaseAsync(renewRequest, cancellationToken).ConfigureAwait(false);
+            if (renewed is null)
+            {
+                return Results.Conflict(new { error = "lease-conflict", message = "Lease is not active for this runner." });
+            }
+
+            var trackingLogger = loggerFactory.CreateLogger("Croniq.Api.WorkTracking");
+            var renewal = new WorkLeaseRenewal(
+                renewed.LeaseId,
+                runnerId,
+                renewed.LeaseExpiresAtUtc,
+                DateTimeOffset.UtcNow,
+                renewed.ExecutionId);
+            await TryTrackRenewalAsync(renewal, workItemStore, trackingLogger, cancellationToken).ConfigureAwait(false);
+
+            var logger = loggerFactory.CreateLogger("Croniq.Api.WorkEvents");
+            var baseScope = BuildWorkEventScope(lease, runnerId, resolvedEnvironment, scope.TenantId);
+            foreach (var entry in request.Events)
+            {
+                if (entry is null || string.IsNullOrWhiteSpace(entry.Message))
+                {
+                    continue;
+                }
+
+                var scopeValues = MergeEventScope(baseScope, entry);
+                using var scopeHandle = logger.BeginScope(scopeValues);
+                logger.Log(ParseLogLevel(entry.Level), "{WorkerEvent}", entry.Message);
+            }
+
+            return Results.NoContent();
+        })
+        .WithDocs("Work_Events", "Push work events", "Pushes execution-scoped log/events for a running work item.")
+        .RequireCroniqTenantScopeFromBodyOrQuery<WorkEventsRequest>(r => r.EnvironmentTag, requireEnvironment: true, CroniqScopes.WorkEvents);
     }
 
     private static WorkLeaseToken ToToken(TriggerLease lease)
-        => new(
-            lease.LeaseId,
-            lease.TriggerId,
-            lease.JobKey,
-            lease.FireAtUtc,
-            lease.LeaseExpiresAtUtc,
-            lease.Payload);
+    {
+        var normalized = EnsureExecutionId(lease);
+        return new WorkLeaseToken(
+            normalized.ExecutionId ?? string.Empty,
+            normalized.LeaseId,
+            normalized.TriggerId,
+            normalized.JobKey,
+            normalized.FireAtUtc,
+            normalized.LeaseExpiresAtUtc,
+            normalized.Payload);
+    }
 
     private static TriggerLease FromToken(PartitionScope scope, WorkLeaseToken token)
     {
@@ -201,6 +354,230 @@ public static partial class ApiHostingExtensions
             scope,
             token.FireAtUtc,
             token.LeaseExpiresAtUtc,
-            token.Payload);
+            token.Payload,
+            token.ExecutionId);
+    }
+
+    private static TriggerLease EnsureExecutionId(TriggerLease lease)
+    {
+        if (!string.IsNullOrWhiteSpace(lease.ExecutionId))
+        {
+            return lease;
+        }
+
+        return lease with { ExecutionId = Guid.NewGuid().ToString("N") };
+    }
+
+    private static async Task TryStoreExecutionStartsAsync(
+        IReadOnlyCollection<WorkLeaseToken> leases,
+        PartitionScope scope,
+        string runnerId,
+        IExecutionLogStore executionLogStore,
+        HttpContext httpContext,
+        CancellationToken cancellationToken)
+    {
+        if (leases.Count == 0)
+        {
+            return;
+        }
+
+        var nowUtc = DateTimeOffset.UtcNow;
+        var activity = Activity.Current;
+        var correlationId = ResolveCorrelationId(httpContext);
+
+        foreach (var lease in leases)
+        {
+            if (string.IsNullOrWhiteSpace(lease.ExecutionId))
+            {
+                continue;
+            }
+
+            var record = new ExecutionRecord(
+                lease.ExecutionId,
+                ExecutionKind.Job,
+                null,
+                lease.JobKey,
+                scope.TenantId,
+                scope.EnvironmentTag,
+                lease.TriggerId,
+                lease.FireAtUtc,
+                nowUtc,
+                runnerId,
+                activity?.TraceId.ToString(),
+                activity?.SpanId.ToString(),
+                correlationId);
+
+            try
+            {
+                await executionLogStore.OnExecutionStartedAsync(record, cancellationToken).ConfigureAwait(false);
+            }
+            catch
+            {
+                // best-effort: work leases should not fail if logging storage is unavailable
+            }
+        }
+    }
+
+    private static async Task TryStoreExecutionCompletionAsync(
+        string? executionId,
+        bool succeeded,
+        string? errorMessage,
+        IExecutionLogStore executionLogStore,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(executionId))
+        {
+            return;
+        }
+
+        var completion = new ExecutionCompletion(
+            executionId,
+            DateTimeOffset.UtcNow,
+            succeeded ? ExecutionStatus.Succeeded : ExecutionStatus.Failed,
+            DurationMs: null,
+            ErrorType: succeeded ? null : "work-failed",
+            ErrorMessage: succeeded ? null : errorMessage);
+
+        try
+        {
+            await executionLogStore.OnExecutionCompletedAsync(completion, cancellationToken).ConfigureAwait(false);
+        }
+        catch
+        {
+            // best-effort: work ack should not fail if logging storage is unavailable
+        }
+    }
+
+    private static async Task TryTrackAssignmentsAsync(
+        IReadOnlyCollection<WorkLeaseToken> leases,
+        PartitionScope scope,
+        string runnerId,
+        IWorkItemStore workItemStore,
+        ILogger logger,
+        CancellationToken cancellationToken)
+    {
+        if (leases.Count == 0)
+        {
+            return;
+        }
+
+        var assignedAtUtc = DateTimeOffset.UtcNow;
+        foreach (var lease in leases)
+        {
+            if (string.IsNullOrWhiteSpace(lease.ExecutionId))
+            {
+                continue;
+            }
+
+            var assignment = new WorkAssignment(
+                scope,
+                lease.ExecutionId,
+                lease.JobKey,
+                lease.TriggerId,
+                Attempt: 1,
+                RunnerId: runnerId,
+                LeaseId: lease.LeaseId,
+                LeaseExpiresAtUtc: lease.LeaseExpiresAtUtc,
+                Payload: lease.Payload,
+                AssignedAtUtc: assignedAtUtc);
+
+            try
+            {
+                await workItemStore.UpsertAssignmentAsync(assignment, cancellationToken).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                logger.LogWarning(ex, "Failed to track work assignment {ExecutionId}", lease.ExecutionId);
+            }
+        }
+    }
+
+    private static async Task TryTrackRenewalAsync(
+        WorkLeaseRenewal renewal,
+        IWorkItemStore workItemStore,
+        ILogger logger,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            await workItemStore.TryRenewAsync(renewal, cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Failed to track work lease renewal {LeaseId}", renewal.LeaseId);
+        }
+    }
+
+    private static async Task TryTrackCompletionAsync(
+        WorkCompletion completion,
+        IWorkItemStore workItemStore,
+        ILogger logger,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            await workItemStore.TryCompleteAsync(completion, cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Failed to track work completion {LeaseId}", completion.LeaseId);
+        }
+    }
+
+    private static Dictionary<string, object?> BuildWorkEventScope(TriggerLease lease, string runnerId, string environmentTag, string tenantId)
+    {
+        return new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["croniq.execution_id"] = lease.ExecutionId,
+            ["croniq.job.key"] = lease.JobKey,
+            ["croniq.trigger.id"] = lease.TriggerId,
+            ["croniq.tenant_id"] = tenantId,
+            ["croniq.environment"] = environmentTag,
+            ["croniq.runner_id"] = runnerId
+        };
+    }
+
+    private static Dictionary<string, object?> MergeEventScope(
+        Dictionary<string, object?> baseScope,
+        WorkEventEntry entry)
+    {
+        var scope = new Dictionary<string, object?>(baseScope, StringComparer.OrdinalIgnoreCase);
+
+        if (!string.IsNullOrWhiteSpace(entry.EventType))
+        {
+            scope["croniq.event.type"] = entry.EventType;
+        }
+
+        if (entry.TimestampUtc.HasValue)
+        {
+            scope["event.timestamp_utc"] = entry.TimestampUtc.Value;
+        }
+
+        if (entry.Properties is not null)
+        {
+            foreach (var pair in entry.Properties)
+            {
+                if (string.IsNullOrWhiteSpace(pair.Key))
+                {
+                    continue;
+                }
+
+                scope[$"event.{pair.Key}"] = pair.Value;
+            }
+        }
+
+        return scope;
+    }
+
+    private static LogLevel ParseLogLevel(string? level)
+    {
+        if (string.IsNullOrWhiteSpace(level))
+        {
+            return LogLevel.Information;
+        }
+
+        return Enum.TryParse<LogLevel>(level, ignoreCase: true, out var parsed)
+            ? parsed
+            : LogLevel.Information;
     }
 }

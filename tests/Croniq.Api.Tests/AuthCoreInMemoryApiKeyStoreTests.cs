@@ -28,7 +28,7 @@ public sealed class AuthCoreInMemoryApiKeyStoreTests
         context!.TenantId.ShouldBe("tenant-1");
         context.EnvironmentTag.ShouldBe("dev");
         context.CallerType.ShouldBe(CallerType.ApiKey);
-        context.CallerId.ShouldBe(issued.KeyId);
+        context.CallerId.ShouldBe(issued.ClientId);
         context.Scopes.ShouldContain("schedules:read");
     }
 
@@ -59,7 +59,7 @@ public sealed class AuthCoreInMemoryApiKeyStoreTests
         var newValidation = await store.ValidateAsync(rotated!.PlaintextSecret);
         newValidation.IsValid.ShouldBeTrue();
         newValidation.TenantId.ShouldBe("tenant-1");
-        newValidation.CallerId.ShouldBe(rotated.KeyId);
+        newValidation.CallerId.ShouldBe(rotated.ClientId);
         newValidation.Scopes.ShouldContain("x");
     }
 

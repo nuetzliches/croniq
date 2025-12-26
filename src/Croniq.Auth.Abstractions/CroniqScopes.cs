@@ -8,7 +8,13 @@ public static class CroniqScopes
     public const string JobsRead = "jobs:read";
     public const string JobsWrite = "jobs:write";
     public const string JobsTrigger = "jobs:trigger";
+    public const string WorkPoll = "work:poll";
+    public const string WorkRenew = "work:renew";
+    public const string WorkAck = "work:ack";
+    public const string WorkEvents = "work:events";
     public const string WorkExecute = "work:execute";
+    public const string RunnersHeartbeat = "runners:heartbeat";
+    public const string RunnersRead = "runners:read";
     public const string ExecutionsRead = "executions:read";
     public const string WebhooksRead = "webhooks:read";
     public const string WebhooksWrite = "webhooks:write";

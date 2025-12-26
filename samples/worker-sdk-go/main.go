@@ -27,7 +27,7 @@ func main() {
 		log.Fatal(err)
 	}
 
-	runnerID := env("CRONIQ_RUNNER_ID", fmt.Sprintf("go-%s-%d", hostName(), os.Getpid()))
+	runnerID := env("CRONIQ_RUNNER_ID", "default")
 	batchSize := 1
 	waitFor := 25 * time.Second
 
@@ -51,6 +51,17 @@ func main() {
 		for _, lease := range leases {
 			log.Printf("claimed lease: jobKey=%s triggerId=%s leaseId=%s", lease.JobKey, lease.TriggerId, lease.LeaseId)
 
+			events := []croniqworker.WorkEvent{
+				{
+					Message:   fmt.Sprintf("processing execution %s", lease.ExecutionId),
+					Level:     "Information",
+					EventType: "worker",
+				},
+			}
+			if err := client.Events(ctx, runnerID, lease, events); err != nil {
+				log.Fatalf("events failed: %v", err)
+			}
+
 			if err := client.Ack(ctx, runnerID, lease, true, nil, ""); err != nil {
 				log.Fatalf("ack failed: %v", err)
 			}
@@ -66,12 +77,4 @@ func env(key, fallback string) string {
 		return fallback
 	}
 	return value
-}
-
-func hostName() string {
-	name, err := os.Hostname()
-	if err != nil {
-		return "unknown"
-	}
-	return name
 }

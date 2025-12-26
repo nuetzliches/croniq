@@ -136,6 +136,7 @@ public sealed class NoopJobPersistenceProvider : IJobPersistenceProvider, IPersi
                 }
 
                 var leaseId = $"l_{Interlocked.Increment(ref _leaseSequence)}";
+                var executionId = Guid.NewGuid().ToString("N");
                 var expiresAt = now.Add(DefaultLeaseDuration);
                 _leases[trigger.TriggerId] = new LeaseState(leaseId, request.InstanceId, expiresAt);
 
@@ -146,7 +147,8 @@ public sealed class NoopJobPersistenceProvider : IJobPersistenceProvider, IPersi
                     trigger.Scope,
                     FireAtUtc: trigger.StartAtUtc ?? now,
                     LeaseExpiresAtUtc: expiresAt,
-                    Payload: null));
+                    Payload: null,
+                    ExecutionId: executionId));
             }
 
             return Task.FromResult<IReadOnlyCollection<TriggerLease>>(leases);
@@ -507,7 +509,12 @@ public sealed class TestCallerContextFactory : ICallerContextFactory
                 CroniqScopes.ExecutionsRead,
                 CroniqScopes.JobsWrite,
                 CroniqScopes.JobsTrigger,
-                CroniqScopes.WorkExecute,
+                CroniqScopes.WorkPoll,
+                CroniqScopes.WorkRenew,
+                CroniqScopes.WorkAck,
+                CroniqScopes.WorkEvents,
+                CroniqScopes.RunnersHeartbeat,
+                CroniqScopes.RunnersRead,
                 CroniqScopes.WebhooksRead,
                 CroniqScopes.WebhooksWrite,
                 CroniqScopes.WebhooksRotate,
@@ -943,39 +950,144 @@ public sealed class TestTenantStore : ITenantStore
     private static string GenerateTenantId() => $"tn_{Guid.NewGuid():N}";
 }
 
-public sealed class TestExecutionLogReader : IExecutionLogReader
+public sealed class TestExecutionLogReader : IExecutionLogReader, IExecutionLogStore
 {
-    private readonly Dictionary<string, List<string>> _logs = new(StringComparer.OrdinalIgnoreCase);
-    private readonly JsonSerializerOptions _jsonOptions = new(JsonSerializerDefaults.Web);
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, List<string>> _logs = new(StringComparer.OrdinalIgnoreCase);
+    private readonly JsonSerializerOptions _jsonOptions = new(JsonSerializerDefaults.Web)
+    {
+        DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull
+    };
 
     public void SetLog(string executionId, string tenantId, string? environmentTag)
     {
         if (string.IsNullOrWhiteSpace(executionId)) throw new ArgumentException("ExecutionId is required", nameof(executionId));
         if (string.IsNullOrWhiteSpace(tenantId)) throw new ArgumentException("TenantId is required", nameof(tenantId));
 
-        var start = new
-        {
-            type = "start",
+        var start = new ExecutionRecord(
             executionId,
+            ExecutionKind.Job,
+            null,
+            $"{tenantId}:{environmentTag}:tests:job",
             tenantId,
-            environmentTag,
-            jobKey = $"{tenantId}:{environmentTag}:tests:job"
-        };
+            environmentTag ?? string.Empty,
+            TriggerId: null,
+            FireAtUtc: DateTimeOffset.UtcNow,
+            StartedAtUtc: DateTimeOffset.UtcNow,
+            InstanceId: "itest",
+            TraceId: null,
+            SpanId: null,
+            CorrelationId: null);
 
-        _logs[executionId] = new List<string> { JsonSerializer.Serialize(start, _jsonOptions) };
+        WriteStartLine(start);
     }
 
     public void Clear() => _logs.Clear();
 
     public async IAsyncEnumerable<string> ReadLinesAsync(string executionId, [EnumeratorCancellation] CancellationToken cancellationToken)
     {
-        if (_logs.TryGetValue(executionId, out var lines))
+        if (!_logs.TryGetValue(executionId, out var lines))
         {
-            foreach (var line in lines)
+            yield break;
+        }
+
+        List<string> snapshot;
+        lock (lines)
+        {
+            snapshot = new List<string>(lines);
+        }
+
+        foreach (var line in snapshot)
+        {
+            yield return line;
+            await Task.Yield();
+        }
+    }
+
+    public Task OnExecutionStartedAsync(ExecutionRecord record, CancellationToken cancellationToken)
+    {
+        if (record is null) throw new ArgumentNullException(nameof(record));
+        WriteStartLine(record);
+        return Task.CompletedTask;
+    }
+
+    public Task AppendAsync(string executionId, IReadOnlyCollection<ExecutionLogEntry> entries, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(executionId)) throw new ArgumentException("ExecutionId is required", nameof(executionId));
+        if (entries is null) throw new ArgumentNullException(nameof(entries));
+
+        var lines = _logs.GetOrAdd(executionId, _ => new List<string>());
+        lock (lines)
+        {
+            foreach (var entry in entries)
             {
-                yield return line;
-                await Task.Yield();
+                lines.Add(JsonSerializer.Serialize(new
+                {
+                    type = "log",
+                    entry.ExecutionId,
+                    entry.TimestampUtc,
+                    entry.Level,
+                    entry.MessageTemplate,
+                    entry.RenderedMessage,
+                    entry.Exception,
+                    entry.Properties,
+                    entry.TraceId,
+                    entry.SpanId,
+                    entry.CorrelationId,
+                    entry.Sequence
+                }, _jsonOptions));
             }
+        }
+
+        return Task.CompletedTask;
+    }
+
+    public Task OnExecutionCompletedAsync(ExecutionCompletion completion, CancellationToken cancellationToken)
+    {
+        if (completion is null) throw new ArgumentNullException(nameof(completion));
+
+        var lines = _logs.GetOrAdd(completion.ExecutionId, _ => new List<string>());
+        lock (lines)
+        {
+            lines.Add(JsonSerializer.Serialize(new
+            {
+                type = "completion",
+                completion.ExecutionId,
+                completion.CompletedAtUtc,
+                completion.Status,
+                completion.DurationMs,
+                completion.ErrorType,
+                completion.ErrorMessage
+            }, _jsonOptions));
+        }
+
+        return Task.CompletedTask;
+    }
+
+    private void WriteStartLine(ExecutionRecord record)
+    {
+        var line = JsonSerializer.Serialize(new
+        {
+            type = "start",
+            record.ExecutionId,
+            record.Kind,
+            record.WorkflowId,
+            record.JobKey,
+            record.TenantId,
+            record.EnvironmentTag,
+            record.TriggerId,
+            record.FireAtUtc,
+            record.StartedAtUtc,
+            record.InstanceId,
+            record.TraceId,
+            record.SpanId,
+            record.CorrelationId
+        }, _jsonOptions);
+
+        var lines = _logs.GetOrAdd(record.ExecutionId, _ => new List<string>());
+        lock (lines)
+        {
+            lines.Clear();
+            lines.Add(line);
         }
     }
 }

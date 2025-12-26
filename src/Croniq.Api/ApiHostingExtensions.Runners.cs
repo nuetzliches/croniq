@@ -41,15 +41,22 @@ public static partial class ApiHostingExtensions
                 return Results.BadRequest(new { error = "runner-required", message = "RunnerId is required." });
             }
 
+            var runnerId = request.RunnerId.Trim();
+            var runnerFailure = EnsureRunnerIdentity(callerContextAccessor, runnerId);
+            if (runnerFailure is not null)
+            {
+                return runnerFailure;
+            }
+
             var scope = new PartitionScope(tenantId.Trim(), resolvedEnvironment);
             var seenAtUtc = request.SeenAtUtc ?? DateTimeOffset.UtcNow;
-            var heartbeat = new RunnerHeartbeat(scope, request.RunnerId.Trim(), seenAtUtc, request.MetadataJson);
+            var heartbeat = new RunnerHeartbeat(scope, runnerId, seenAtUtc, request.MetadataJson);
             await runnerStore.UpsertHeartbeatAsync(heartbeat, cancellationToken).ConfigureAwait(false);
 
             return Results.NoContent();
         })
         .WithDocs("Runners_Heartbeat", "Runner heartbeat", "Records a runner heartbeat to track availability.")
-        .RequireCroniqTenantScopeFromBodyOrQuery<RunnerHeartbeatRequest>(r => r.EnvironmentTag, requireEnvironment: true, CroniqScopes.WorkExecute);
+        .RequireCroniqTenantScopeFromBodyOrQuery<RunnerHeartbeatRequest>(r => r.EnvironmentTag, requireEnvironment: true, CroniqScopes.RunnersHeartbeat);
 
         app.MapGet("/tenants/{tenantId}/runners", async (
             string tenantId,
@@ -75,6 +82,6 @@ public static partial class ApiHostingExtensions
             return Results.Ok(new RunnerListResponse(payload));
         })
         .WithDocs("Runners_List", "List runners", "Lists active runners for the tenant/environment.")
-        .RequireCroniqTenantScope(requireEnvironment: true, CroniqScopes.WorkExecute);
+        .RequireCroniqTenantScope(requireEnvironment: true, CroniqScopes.RunnersRead);
     }
 }

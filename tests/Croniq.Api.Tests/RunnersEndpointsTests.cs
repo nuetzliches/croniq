@@ -26,7 +26,7 @@ public sealed class RunnersEndpointsTests : IClassFixture<WebhookApiTestHost>
 
         var heartbeat = new RunnerHeartbeatRequest(
             EnvironmentTag: WebhookApiTestHost.Environment,
-            RunnerId: "runner-1",
+            RunnerId: "itest-client",
             SeenAtUtc: DateTimeOffset.UtcNow,
             MetadataJson: "{\"kind\":\"http\"}");
 
@@ -39,7 +39,7 @@ public sealed class RunnersEndpointsTests : IClassFixture<WebhookApiTestHost>
         var payload = await listResponse.Content.ReadFromJsonAsync<RunnerListResponse>();
         payload.ShouldNotBeNull();
         payload.Runners.Length.ShouldBe(1);
-        payload.Runners[0].RunnerId.ShouldBe("runner-1");
+        payload.Runners[0].RunnerId.ShouldBe("itest-client");
         payload.Runners[0].IsOnline.ShouldBeTrue();
         payload.Runners[0].MetadataJson.ShouldBe("{\"kind\":\"http\"}");
     }
@@ -55,13 +55,13 @@ public sealed class RunnersEndpointsTests : IClassFixture<WebhookApiTestHost>
             EnvironmentTag: null,
             CallerType.ApiKey,
             CallerId: "tenant-only-client",
-            Scopes: new[] { CroniqScopes.WorkExecute });
+            Scopes: new[] { CroniqScopes.RunnersHeartbeat });
         _host.CallerFactory.AddContext(tenantOnlyKey, tenantOnlyContext);
         SetCallerApiKey(tenantOnlyKey);
 
         var heartbeat = new RunnerHeartbeatRequest(
             EnvironmentTag: null,
-            RunnerId: "runner-1",
+            RunnerId: "tenant-only-client",
             SeenAtUtc: DateTimeOffset.UtcNow);
 
         var response = await _host.Client.PostAsJsonAsync($"/tenants/{WebhookApiTestHost.TenantId}/runners/heartbeat", heartbeat);
@@ -89,7 +89,7 @@ public sealed class RunnersEndpointsTests : IClassFixture<WebhookApiTestHost>
 
         var heartbeat = new RunnerHeartbeatRequest(
             EnvironmentTag: WebhookApiTestHost.Environment,
-            RunnerId: "runner-1",
+            RunnerId: "no-runner-scope",
             SeenAtUtc: DateTimeOffset.UtcNow);
 
         var response = await _host.Client.PostAsJsonAsync($"/tenants/{WebhookApiTestHost.TenantId}/runners/heartbeat", heartbeat);
@@ -103,7 +103,7 @@ public sealed class RunnersEndpointsTests : IClassFixture<WebhookApiTestHost>
 
         var heartbeat = new RunnerHeartbeatRequest(
             EnvironmentTag: WebhookApiTestHost.Environment,
-            RunnerId: "runner-old",
+            RunnerId: "itest-client",
             SeenAtUtc: DateTimeOffset.UtcNow.AddMinutes(-5));
 
         var hbResponse = await _host.Client.PostAsJsonAsync($"/tenants/{WebhookApiTestHost.TenantId}/runners/heartbeat", heartbeat);

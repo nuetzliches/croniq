@@ -17,5 +17,6 @@ public static class TestTraits
         public const string SqlPersistenceDeadLetters = "Persistence.SqlServer.WebhookDeadLetters";
         public const string SqlPersistenceChangefeed = "Persistence.SqlServer.WebhookChangefeed";
         public const string SqlPersistenceRunners = "Persistence.SqlServer.Runners";
+        public const string SqlPersistenceWorkItems = "Persistence.SqlServer.WorkItems";
     }
 }

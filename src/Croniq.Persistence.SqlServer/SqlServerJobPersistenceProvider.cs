@@ -266,6 +266,7 @@ public sealed class SqlServerJobPersistenceProvider : IJobPersistenceProvider
             foreach (var trigger in due)
             {
                 var leaseId = Guid.NewGuid().ToString("N");
+                var executionId = Guid.NewGuid().ToString("N");
                 trigger.LeaseId = leaseId;
                 trigger.LeaseInstanceId = request.InstanceId;
                 trigger.LeaseExpiresAtUtc = expiresAt;
@@ -282,7 +283,8 @@ public sealed class SqlServerJobPersistenceProvider : IJobPersistenceProvider
                     scope,
                     new DateTimeOffset(DateTime.SpecifyKind(fireAt, DateTimeKind.Utc)),
                     new DateTimeOffset(DateTime.SpecifyKind(trigger.LeaseExpiresAtUtc!.Value, DateTimeKind.Utc)),
-                    trigger.MetadataJson));
+                    trigger.MetadataJson,
+                    executionId));
             }
 
             await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);

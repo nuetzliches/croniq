@@ -1,4 +1,5 @@
 export type Lease = {
+  executionId: string;
   leaseId: string;
   triggerId: string;
   jobKey: string;
@@ -24,6 +25,20 @@ export type AckRequest = {
   succeeded: boolean;
   nextFireTimeUtc?: string;
   deadLetterReason?: string;
+};
+
+export type WorkEvent = {
+  message: string;
+  level?: string;
+  timestampUtc?: string;
+  properties?: Record<string, string>;
+  eventType?: string;
+};
+
+export type EventsRequest = {
+  runnerId: string;
+  lease: Lease;
+  events: WorkEvent[];
 };
 
 export type WorkerClientConfig = {
@@ -144,6 +159,12 @@ export class WorkerClient {
       body.deadLetterReason = deadLetterReason;
     }
     await this.postJson(`/work/ack`, body);
+  }
+
+  async events({ runnerId, lease, events }: EventsRequest): Promise<void> {
+    const body: EventsRequest = { runnerId, lease, events };
+    const path = `/work/${encodeURIComponent(lease.executionId)}:events`;
+    await this.postJson(path, body);
   }
 
   private buildUrl(path: string): string {

@@ -1,7 +1,5 @@
 import os
-import socket
-
-from croniq_worker import WorkerClient
+from croniq_worker import WorkEvent, WorkerClient
 
 
 def env(key: str, default: str) -> str:
@@ -18,7 +16,7 @@ def main() -> None:
     api_key = env("CRONIQ_API_KEY", "")
     runner_id = env(
         "CRONIQ_RUNNER_ID",
-        f"py-{socket.gethostname()}-{os.getpid()}",
+        "default",
     )
 
     client = WorkerClient(
@@ -39,6 +37,17 @@ def main() -> None:
         for lease in leases:
             print(
                 f"claimed lease: jobKey={lease.job_key} triggerId={lease.trigger_id} leaseId={lease.lease_id}"
+            )
+            client.events(
+                runner_id=runner_id,
+                lease=lease,
+                events=[
+                    WorkEvent(
+                        message=f"processing execution {lease.execution_id}",
+                        level="Information",
+                        event_type="worker",
+                    )
+                ],
             )
             client.ack(runner_id=runner_id, lease=lease, succeeded=True)
             print(f"acked lease: leaseId={lease.lease_id}")

@@ -197,6 +197,33 @@ public static partial class ApiHostingExtensions
         return string.IsNullOrWhiteSpace(callerEnvironment) ? null : callerEnvironment.Trim();
     }
 
+    private static IResult? EnsureRunnerIdentity(ICallerContextAccessor callerContextAccessor, string runnerId)
+    {
+        if (callerContextAccessor is null)
+        {
+            throw new ArgumentNullException(nameof(callerContextAccessor));
+        }
+
+        var caller = callerContextAccessor.Current;
+        if (caller is null)
+        {
+            return Results.Problem(
+                statusCode: StatusCodes.Status401Unauthorized,
+                title: "unauthorized",
+                detail: "Caller context is not available for this request.");
+        }
+
+        if (!string.Equals(caller.CallerId, runnerId, StringComparison.OrdinalIgnoreCase))
+        {
+            return Results.Problem(
+                statusCode: StatusCodes.Status403Forbidden,
+                title: "runner-mismatch",
+                detail: "RunnerId must match the authenticated caller identity.");
+        }
+
+        return null;
+    }
+
     private static Func<RouteHandlerBuilder, string, string?, RouteHandlerBuilder>? CreateOpenApiSummaryApplier()
     {
         var operationType = Type.GetType("Microsoft.OpenApi.Models.OpenApiOperation, Microsoft.OpenApi");
@@ -337,6 +364,12 @@ public static partial class ApiHostingExtensions
     public static WebApplication MapCroniqSchedulerGrpc(this WebApplication app)
     {
         app.MapGrpcService<SchedulerGrpcService>();
+        return app;
+    }
+
+    public static WebApplication MapCroniqWorkerGrpc(this WebApplication app)
+    {
+        app.MapGrpcService<WorkerGrpcService>();
         return app;
     }
 

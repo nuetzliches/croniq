@@ -13,6 +13,9 @@ public sealed class SqlServerDbContext(DbContextOptions<SqlServerDbContext> opti
     public DbSet<TriggerEntity> Triggers => Set<TriggerEntity>();
     public DbSet<DeadLetterEntity> DeadLetters => Set<DeadLetterEntity>();
     public DbSet<RunnerEntity> Runners => Set<RunnerEntity>();
+    public DbSet<RunnerCapabilityEntity> RunnerCapabilities => Set<RunnerCapabilityEntity>();
+    public DbSet<WorkItemEntity> WorkItems => Set<WorkItemEntity>();
+    public DbSet<WorkClaimEntity> WorkClaims => Set<WorkClaimEntity>();
     public DbSet<ApiClientEntity> ApiClients => Set<ApiClientEntity>();
     public DbSet<ApiKeyEntity> ApiKeys => Set<ApiKeyEntity>();
     public DbSet<WebhookEndpointEntity> WebhookEndpoints => Set<WebhookEndpointEntity>();
@@ -31,6 +34,9 @@ public sealed class SqlServerDbContext(DbContextOptions<SqlServerDbContext> opti
         ConfigureTriggers(modelBuilder.Entity<TriggerEntity>());
         ConfigureDeadLetters(modelBuilder.Entity<DeadLetterEntity>());
         ConfigureRunners(modelBuilder.Entity<RunnerEntity>());
+        ConfigureRunnerCapabilities(modelBuilder.Entity<RunnerCapabilityEntity>());
+        ConfigureWorkItems(modelBuilder.Entity<WorkItemEntity>());
+        ConfigureWorkClaims(modelBuilder.Entity<WorkClaimEntity>());
         ConfigureApiClients(modelBuilder.Entity<ApiClientEntity>());
         ConfigureApiKeys(modelBuilder.Entity<ApiKeyEntity>());
         ConfigureWebhookEndpoints(modelBuilder.Entity<WebhookEndpointEntity>());
@@ -100,6 +106,58 @@ public sealed class SqlServerDbContext(DbContextOptions<SqlServerDbContext> opti
         builder.Property(x => x.RunnerId).HasMaxLength(256);
         builder.Property(x => x.EnvironmentTag).HasMaxLength(64);
         builder.Property(x => x.TenantId).HasMaxLength(64);
+        builder.Property(x => x.CreatedAtUtc).HasDefaultValueSql("sysutcdatetime()");
+        builder.Property(x => x.UpdatedAtUtc).HasDefaultValueSql("sysutcdatetime()");
+    }
+
+    private static void ConfigureRunnerCapabilities(EntityTypeBuilder<RunnerCapabilityEntity> builder)
+    {
+        builder.ToTable("RunnerCapabilities", "croniq");
+        builder.HasIndex(x => new { x.TenantId, x.EnvironmentTag, x.RunnerId }).IsUnique();
+        builder.HasIndex(x => x.UpdatedAtUtc);
+        builder.HasOne<TenantEntity>()
+            .WithMany()
+            .HasForeignKey(x => x.TenantId)
+            .OnDelete(DeleteBehavior.Restrict);
+        builder.Property(x => x.RunnerId).HasMaxLength(256);
+        builder.Property(x => x.EnvironmentTag).HasMaxLength(64);
+        builder.Property(x => x.TenantId).HasMaxLength(64);
+        builder.Property(x => x.CreatedAtUtc).HasDefaultValueSql("sysutcdatetime()");
+        builder.Property(x => x.UpdatedAtUtc).HasDefaultValueSql("sysutcdatetime()");
+    }
+
+    private static void ConfigureWorkItems(EntityTypeBuilder<WorkItemEntity> builder)
+    {
+        builder.ToTable("WorkItems", "croniq");
+        builder.HasIndex(x => x.ExecutionId).IsUnique();
+        builder.HasIndex(x => new { x.TenantId, x.EnvironmentTag, x.Status, x.CreatedAtUtc });
+        builder.HasIndex(x => new { x.TenantId, x.EnvironmentTag, x.JobKey });
+        builder.HasOne<TenantEntity>()
+            .WithMany()
+            .HasForeignKey(x => x.TenantId)
+            .OnDelete(DeleteBehavior.Restrict);
+        builder.Property(x => x.ExecutionId).HasMaxLength(64);
+        builder.Property(x => x.JobKey).HasMaxLength(256);
+        builder.Property(x => x.TriggerId).HasMaxLength(512);
+        builder.Property(x => x.Status).HasMaxLength(32);
+        builder.Property(x => x.EnvironmentTag).HasMaxLength(64);
+        builder.Property(x => x.TenantId).HasMaxLength(64);
+        builder.Property(x => x.CreatedAtUtc).HasDefaultValueSql("sysutcdatetime()");
+        builder.Property(x => x.UpdatedAtUtc).HasDefaultValueSql("sysutcdatetime()");
+    }
+
+    private static void ConfigureWorkClaims(EntityTypeBuilder<WorkClaimEntity> builder)
+    {
+        builder.ToTable("WorkClaims", "croniq");
+        builder.HasKey(x => x.WorkItemId);
+        builder.HasIndex(x => x.LeaseId).IsUnique();
+        builder.HasIndex(x => x.LeaseExpiresAtUtc);
+        builder.HasOne(x => x.WorkItem)
+            .WithOne(w => w.Claim)
+            .HasForeignKey<WorkClaimEntity>(x => x.WorkItemId)
+            .OnDelete(DeleteBehavior.Cascade);
+        builder.Property(x => x.LeaseId).HasMaxLength(64);
+        builder.Property(x => x.RunnerId).HasMaxLength(256);
         builder.Property(x => x.CreatedAtUtc).HasDefaultValueSql("sysutcdatetime()");
         builder.Property(x => x.UpdatedAtUtc).HasDefaultValueSql("sysutcdatetime()");
     }

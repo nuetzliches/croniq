@@ -48,6 +48,7 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<IWebhookDeadLetterStore, SqlServerWebhookDeadLetterStore>();
         services.AddSingleton<IWebhookEndpointChangefeed, SqlServerWebhookEndpointChangefeed>();
         services.AddSingleton<IRunnerStore, SqlServerRunnerStore>();
+        services.AddSingleton<IWorkItemStore, SqlServerWorkItemStore>();
 
         return services;
     }

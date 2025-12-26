@@ -1,12 +1,10 @@
-import * as os from "node:os";
 import { WorkerClient } from "./index";
 
 const baseUrl = process.env.CRONIQ_API_BASEURL || "http://localhost:5080";
 const tenantId = process.env.CRONIQ_TENANT_ID || "default";
 const environment = process.env.CRONIQ_ENVIRONMENT || "dev";
 const apiKey = process.env.CRONIQ_API_KEY || "";
-const runnerId =
-  process.env.CRONIQ_RUNNER_ID || `node-${os.hostname()}-${process.pid}`;
+const runnerId = process.env.CRONIQ_RUNNER_ID || "default";
 
 const client = new WorkerClient({
   baseUrl,
@@ -33,6 +31,17 @@ async function loop() {
       console.log(
         `claimed lease: jobKey=${lease.jobKey} triggerId=${lease.triggerId} leaseId=${lease.leaseId}`
       );
+      await client.events({
+        runnerId,
+        lease,
+        events: [
+          {
+            message: `processing execution ${lease.executionId}`,
+            level: "Information",
+            eventType: "worker",
+          },
+        ],
+      });
       await client.ack({ runnerId, lease, succeeded: true });
       console.log(`acked lease: leaseId=${lease.leaseId}`);
     }

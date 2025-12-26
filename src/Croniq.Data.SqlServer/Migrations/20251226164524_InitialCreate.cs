@@ -119,6 +119,60 @@ namespace Croniq.Data.SqlServer.Migrations
                 });
 
             migrationBuilder.CreateTable(
+                name: "RunnerCapabilities",
+                schema: "croniq",
+                columns: table => new
+                {
+                    Id = table.Column<long>(type: "bigint", nullable: false)
+                        .Annotation("SqlServer:Identity", "1, 1"),
+                    TenantId = table.Column<string>(type: "nvarchar(64)", maxLength: 64, nullable: false),
+                    EnvironmentTag = table.Column<string>(type: "nvarchar(64)", maxLength: 64, nullable: false),
+                    RunnerId = table.Column<string>(type: "nvarchar(256)", maxLength: 256, nullable: false),
+                    CapabilitiesJson = table.Column<string>(type: "nvarchar(max)", nullable: true),
+                    CreatedAtUtc = table.Column<DateTime>(type: "datetime2", nullable: false, defaultValueSql: "sysutcdatetime()"),
+                    UpdatedAtUtc = table.Column<DateTime>(type: "datetime2", nullable: false, defaultValueSql: "sysutcdatetime()")
+                },
+                constraints: table =>
+                {
+                    table.PrimaryKey("PK_RunnerCapabilities", x => x.Id);
+                    table.ForeignKey(
+                        name: "FK_RunnerCapabilities_Tenants_TenantId",
+                        column: x => x.TenantId,
+                        principalSchema: "croniq",
+                        principalTable: "Tenants",
+                        principalColumn: "TenantId",
+                        onDelete: ReferentialAction.Restrict);
+                });
+
+            migrationBuilder.CreateTable(
+                name: "Runners",
+                schema: "croniq",
+                columns: table => new
+                {
+                    Id = table.Column<long>(type: "bigint", nullable: false)
+                        .Annotation("SqlServer:Identity", "1, 1"),
+                    TenantId = table.Column<string>(type: "nvarchar(64)", maxLength: 64, nullable: false),
+                    EnvironmentTag = table.Column<string>(type: "nvarchar(64)", maxLength: 64, nullable: false),
+                    RunnerId = table.Column<string>(type: "nvarchar(256)", maxLength: 256, nullable: false),
+                    LastSeenAtUtc = table.Column<DateTime>(type: "datetime2", nullable: false),
+                    ExpiresAtUtc = table.Column<DateTime>(type: "datetime2", nullable: false),
+                    MetadataJson = table.Column<string>(type: "nvarchar(max)", nullable: true),
+                    CreatedAtUtc = table.Column<DateTime>(type: "datetime2", nullable: false, defaultValueSql: "sysutcdatetime()"),
+                    UpdatedAtUtc = table.Column<DateTime>(type: "datetime2", nullable: false, defaultValueSql: "sysutcdatetime()")
+                },
+                constraints: table =>
+                {
+                    table.PrimaryKey("PK_Runners", x => x.Id);
+                    table.ForeignKey(
+                        name: "FK_Runners_Tenants_TenantId",
+                        column: x => x.TenantId,
+                        principalSchema: "croniq",
+                        principalTable: "Tenants",
+                        principalColumn: "TenantId",
+                        onDelete: ReferentialAction.Restrict);
+                });
+
+            migrationBuilder.CreateTable(
                 name: "Users",
                 schema: "auth",
                 columns: table => new
@@ -211,6 +265,36 @@ namespace Croniq.Data.SqlServer.Migrations
                     table.UniqueConstraint("AK_WebhookEndpoints_TenantId_EnvironmentTag_HookKey", x => new { x.TenantId, x.EnvironmentTag, x.HookKey });
                     table.ForeignKey(
                         name: "FK_WebhookEndpoints_Tenants_TenantId",
+                        column: x => x.TenantId,
+                        principalSchema: "croniq",
+                        principalTable: "Tenants",
+                        principalColumn: "TenantId",
+                        onDelete: ReferentialAction.Restrict);
+                });
+
+            migrationBuilder.CreateTable(
+                name: "WorkItems",
+                schema: "croniq",
+                columns: table => new
+                {
+                    WorkItemId = table.Column<long>(type: "bigint", nullable: false)
+                        .Annotation("SqlServer:Identity", "1, 1"),
+                    ExecutionId = table.Column<string>(type: "nvarchar(64)", maxLength: 64, nullable: false),
+                    TenantId = table.Column<string>(type: "nvarchar(64)", maxLength: 64, nullable: false),
+                    EnvironmentTag = table.Column<string>(type: "nvarchar(64)", maxLength: 64, nullable: false),
+                    JobKey = table.Column<string>(type: "nvarchar(256)", maxLength: 256, nullable: false),
+                    TriggerId = table.Column<string>(type: "nvarchar(512)", maxLength: 512, nullable: true),
+                    Attempt = table.Column<int>(type: "int", nullable: false),
+                    Status = table.Column<string>(type: "nvarchar(32)", maxLength: 32, nullable: false),
+                    PayloadJson = table.Column<string>(type: "nvarchar(max)", nullable: true),
+                    CreatedAtUtc = table.Column<DateTime>(type: "datetime2", nullable: false, defaultValueSql: "sysutcdatetime()"),
+                    UpdatedAtUtc = table.Column<DateTime>(type: "datetime2", nullable: false, defaultValueSql: "sysutcdatetime()")
+                },
+                constraints: table =>
+                {
+                    table.PrimaryKey("PK_WorkItems", x => x.WorkItemId);
+                    table.ForeignKey(
+                        name: "FK_WorkItems_Tenants_TenantId",
                         column: x => x.TenantId,
                         principalSchema: "croniq",
                         principalTable: "Tenants",
@@ -396,6 +480,31 @@ namespace Croniq.Data.SqlServer.Migrations
                 });
 
             migrationBuilder.CreateTable(
+                name: "WorkClaims",
+                schema: "croniq",
+                columns: table => new
+                {
+                    WorkItemId = table.Column<long>(type: "bigint", nullable: false),
+                    LeaseId = table.Column<string>(type: "nvarchar(64)", maxLength: 64, nullable: false),
+                    RunnerId = table.Column<string>(type: "nvarchar(256)", maxLength: 256, nullable: false),
+                    LeaseExpiresAtUtc = table.Column<DateTime>(type: "datetime2", nullable: false),
+                    LastHeartbeatAtUtc = table.Column<DateTime>(type: "datetime2", nullable: true),
+                    CreatedAtUtc = table.Column<DateTime>(type: "datetime2", nullable: false, defaultValueSql: "sysutcdatetime()"),
+                    UpdatedAtUtc = table.Column<DateTime>(type: "datetime2", nullable: false, defaultValueSql: "sysutcdatetime()")
+                },
+                constraints: table =>
+                {
+                    table.PrimaryKey("PK_WorkClaims", x => x.WorkItemId);
+                    table.ForeignKey(
+                        name: "FK_WorkClaims_WorkItems_WorkItemId",
+                        column: x => x.WorkItemId,
+                        principalSchema: "croniq",
+                        principalTable: "WorkItems",
+                        principalColumn: "WorkItemId",
+                        onDelete: ReferentialAction.Cascade);
+                });
+
+            migrationBuilder.CreateTable(
                 name: "DeadLetters",
                 schema: "croniq",
                 columns: table => new
@@ -497,6 +606,32 @@ namespace Croniq.Data.SqlServer.Migrations
                 schema: "auth",
                 table: "RefreshTokens",
                 columns: new[] { "TenantId", "UserId" });
+
+            migrationBuilder.CreateIndex(
+                name: "IX_RunnerCapabilities_TenantId_EnvironmentTag_RunnerId",
+                schema: "croniq",
+                table: "RunnerCapabilities",
+                columns: new[] { "TenantId", "EnvironmentTag", "RunnerId" },
+                unique: true);
+
+            migrationBuilder.CreateIndex(
+                name: "IX_RunnerCapabilities_UpdatedAtUtc",
+                schema: "croniq",
+                table: "RunnerCapabilities",
+                column: "UpdatedAtUtc");
+
+            migrationBuilder.CreateIndex(
+                name: "IX_Runners_ExpiresAtUtc",
+                schema: "croniq",
+                table: "Runners",
+                column: "ExpiresAtUtc");
+
+            migrationBuilder.CreateIndex(
+                name: "IX_Runners_TenantId_EnvironmentTag_RunnerId",
+                schema: "croniq",
+                table: "Runners",
+                columns: new[] { "TenantId", "EnvironmentTag", "RunnerId" },
+                unique: true);
 
             migrationBuilder.CreateIndex(
                 name: "IX_Triggers_JobId_Enabled_NextFireAtUtc",
@@ -608,6 +743,38 @@ namespace Croniq.Data.SqlServer.Migrations
                 schema: "croniq",
                 table: "WebhookSecretHistory",
                 columns: new[] { "TenantId", "EnvironmentTag", "HookKey" });
+
+            migrationBuilder.CreateIndex(
+                name: "IX_WorkClaims_LeaseExpiresAtUtc",
+                schema: "croniq",
+                table: "WorkClaims",
+                column: "LeaseExpiresAtUtc");
+
+            migrationBuilder.CreateIndex(
+                name: "IX_WorkClaims_LeaseId",
+                schema: "croniq",
+                table: "WorkClaims",
+                column: "LeaseId",
+                unique: true);
+
+            migrationBuilder.CreateIndex(
+                name: "IX_WorkItems_ExecutionId",
+                schema: "croniq",
+                table: "WorkItems",
+                column: "ExecutionId",
+                unique: true);
+
+            migrationBuilder.CreateIndex(
+                name: "IX_WorkItems_TenantId_EnvironmentTag_JobKey",
+                schema: "croniq",
+                table: "WorkItems",
+                columns: new[] { "TenantId", "EnvironmentTag", "JobKey" });
+
+            migrationBuilder.CreateIndex(
+                name: "IX_WorkItems_TenantId_EnvironmentTag_Status_CreatedAtUtc",
+                schema: "croniq",
+                table: "WorkItems",
+                columns: new[] { "TenantId", "EnvironmentTag", "Status", "CreatedAtUtc" });
         }
 
         /// <inheritdoc />
@@ -624,6 +791,14 @@ namespace Croniq.Data.SqlServer.Migrations
             migrationBuilder.DropTable(
                 name: "RefreshTokens",
                 schema: "auth");
+
+            migrationBuilder.DropTable(
+                name: "RunnerCapabilities",
+                schema: "croniq");
+
+            migrationBuilder.DropTable(
+                name: "Runners",
+                schema: "croniq");
 
             migrationBuilder.DropTable(
                 name: "Users",
@@ -646,6 +821,10 @@ namespace Croniq.Data.SqlServer.Migrations
                 schema: "croniq");
 
             migrationBuilder.DropTable(
+                name: "WorkClaims",
+                schema: "croniq");
+
+            migrationBuilder.DropTable(
                 name: "ApiClients",
                 schema: "croniq");
 
@@ -655,6 +834,10 @@ namespace Croniq.Data.SqlServer.Migrations
 
             migrationBuilder.DropTable(
                 name: "WebhookEndpoints",
+                schema: "croniq");
+
+            migrationBuilder.DropTable(
+                name: "WorkItems",
                 schema: "croniq");
 
             migrationBuilder.DropTable(

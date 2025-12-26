@@ -127,6 +127,60 @@ export const TriggerJobRequest = z.object({
     delaySeconds: z.number().int().nullish(),
 });
 export type TriggerJobRequest = z.infer<typeof TriggerJobRequest>;
+export const WorkPollRequest = z.object({
+    environmentTag: z.string().nullish(),
+    runnerId: z.string().min(1),
+    batchSize: z.number().int().nullish(),
+    waitForMs: z.number().int().nullish(),
+});
+export type WorkPollRequest = z.infer<typeof WorkPollRequest>;
+export const WorkLeaseToken = z.object({
+    executionId: z.string().min(1),
+    leaseId: z.string().min(1),
+    triggerId: z.string().min(1),
+    jobKey: z.string().min(1),
+    fireAtUtc: z.iso.datetime({ offset: true }).optional(),
+    leaseExpiresAtUtc: z.iso.datetime({ offset: true }).optional(),
+    payload: z.string().nullish(),
+});
+export type WorkLeaseToken = z.infer<typeof WorkLeaseToken>;
+export const WorkRenewRequest = z.object({
+    environmentTag: z.string().nullish(),
+    runnerId: z.string().min(1),
+    lease: WorkLeaseToken,
+});
+export type WorkRenewRequest = z.infer<typeof WorkRenewRequest>;
+export const WorkAckRequest = z.object({
+    environmentTag: z.string().nullish(),
+    runnerId: z.string().min(1),
+    lease: WorkLeaseToken,
+    succeeded: z.boolean().optional(),
+    nextFireTimeUtc: z.iso.datetime({ offset: true }).nullish(),
+    deadLetterReason: z.string().nullish(),
+});
+export type WorkAckRequest = z.infer<typeof WorkAckRequest>;
+export const WorkEventEntry = z.object({
+    message: z.string().min(1),
+    level: z.string().nullish(),
+    timestampUtc: z.iso.datetime({ offset: true }).nullish(),
+    properties: z.record(z.string(), z.string()).nullish(),
+    eventType: z.string().nullish(),
+});
+export type WorkEventEntry = z.infer<typeof WorkEventEntry>;
+export const WorkEventsRequest = z.object({
+    environmentTag: z.string().nullish(),
+    runnerId: z.string().min(1),
+    lease: WorkLeaseToken,
+    events: z.array(WorkEventEntry).nullish(),
+});
+export type WorkEventsRequest = z.infer<typeof WorkEventsRequest>;
+export const RunnerHeartbeatRequest = z.object({
+    environmentTag: z.string().nullish(),
+    runnerId: z.string().min(1),
+    seenAtUtc: z.iso.datetime({ offset: true }).nullish(),
+    metadataJson: z.string().nullish(),
+});
+export type RunnerHeartbeatRequest = z.infer<typeof RunnerHeartbeatRequest>;
 export const ExecutionStatus = z.union([
     z.literal(0),
     z.literal(1),
@@ -148,6 +202,13 @@ export const schemas = {
     PasswordLogoutRequest,
     PasswordChangePasswordRequest,
     TriggerJobRequest,
+    WorkPollRequest,
+    WorkLeaseToken,
+    WorkRenewRequest,
+    WorkAckRequest,
+    WorkEventEntry,
+    WorkEventsRequest,
+    RunnerHeartbeatRequest,
     ExecutionStatus,
 };
 export type HttpMethod =

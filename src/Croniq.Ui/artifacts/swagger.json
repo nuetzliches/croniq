@@ -1548,6 +1548,256 @@
         }
       }
     },
+    "/tenants/{tenantId}/work/poll": {
+      "post": {
+        "tags": [
+          "Croniq.Sample.ApiHost"
+        ],
+        "summary": "Poll work",
+        "description": "Claims due trigger leases for execution (HTTP long-poll style).",
+        "operationId": "Work_Poll",
+        "parameters": [
+          {
+            "name": "tenantId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "environment",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WorkPollRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/tenants/{tenantId}/work/renew": {
+      "post": {
+        "tags": [
+          "Croniq.Sample.ApiHost"
+        ],
+        "summary": "Renew work lease",
+        "description": "Renews an existing trigger lease for a running work item.",
+        "operationId": "Work_Renew",
+        "parameters": [
+          {
+            "name": "tenantId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "environment",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WorkRenewRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/tenants/{tenantId}/work/ack": {
+      "post": {
+        "tags": [
+          "Croniq.Sample.ApiHost"
+        ],
+        "summary": "Acknowledge work result",
+        "description": "Acknowledges work completion and releases the trigger lease.",
+        "operationId": "Work_Ack",
+        "parameters": [
+          {
+            "name": "tenantId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "environment",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WorkAckRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/tenants/{tenantId}/work/{executionId}:events": {
+      "post": {
+        "tags": [
+          "Croniq.Sample.ApiHost"
+        ],
+        "summary": "Push work events",
+        "description": "Pushes execution-scoped log/events for a running work item.",
+        "operationId": "Work_Events",
+        "parameters": [
+          {
+            "name": "tenantId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "executionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "environment",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WorkEventsRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/tenants/{tenantId}/runners/heartbeat": {
+      "post": {
+        "tags": [
+          "Croniq.Sample.ApiHost"
+        ],
+        "summary": "Runner heartbeat",
+        "description": "Records a runner heartbeat to track availability.",
+        "operationId": "Runners_Heartbeat",
+        "parameters": [
+          {
+            "name": "tenantId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "environment",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RunnerHeartbeatRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/tenants/{tenantId}/runners": {
+      "get": {
+        "tags": [
+          "Croniq.Sample.ApiHost"
+        ],
+        "summary": "List runners",
+        "description": "Lists active runners for the tenant/environment.",
+        "operationId": "Runners_List",
+        "parameters": [
+          {
+            "name": "tenantId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "environment",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
     "/tenants/{tenantId}/environments/{environmentTag}/webhooks/{hookKey}": {
       "post": {
         "tags": [
@@ -1830,6 +2080,32 @@
         },
         "additionalProperties": false
       },
+      "RunnerHeartbeatRequest": {
+        "required": [
+          "runnerId"
+        ],
+        "type": "object",
+        "properties": {
+          "environmentTag": {
+            "type": "string",
+            "nullable": true
+          },
+          "runnerId": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "seenAtUtc": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "metadataJson": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "additionalProperties": false
+      },
       "TriggerJobRequest": {
         "required": [
           "jobKey"
@@ -1983,6 +2259,188 @@
           "signatureVersion": {
             "type": "integer",
             "format": "int32"
+          }
+        },
+        "additionalProperties": false
+      },
+      "WorkAckRequest": {
+        "required": [
+          "lease",
+          "runnerId"
+        ],
+        "type": "object",
+        "properties": {
+          "environmentTag": {
+            "type": "string",
+            "nullable": true
+          },
+          "runnerId": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "lease": {
+            "$ref": "#/components/schemas/WorkLeaseToken"
+          },
+          "succeeded": {
+            "type": "boolean"
+          },
+          "nextFireTimeUtc": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "deadLetterReason": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "additionalProperties": false
+      },
+      "WorkEventEntry": {
+        "required": [
+          "message"
+        ],
+        "type": "object",
+        "properties": {
+          "message": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "level": {
+            "type": "string",
+            "nullable": true
+          },
+          "timestampUtc": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "properties": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "nullable": true
+          },
+          "eventType": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "additionalProperties": false
+      },
+      "WorkEventsRequest": {
+        "required": [
+          "lease",
+          "runnerId"
+        ],
+        "type": "object",
+        "properties": {
+          "environmentTag": {
+            "type": "string",
+            "nullable": true
+          },
+          "runnerId": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "lease": {
+            "$ref": "#/components/schemas/WorkLeaseToken"
+          },
+          "events": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WorkEventEntry"
+            },
+            "nullable": true
+          }
+        },
+        "additionalProperties": false
+      },
+      "WorkLeaseToken": {
+        "required": [
+          "executionId",
+          "jobKey",
+          "leaseId",
+          "triggerId"
+        ],
+        "type": "object",
+        "properties": {
+          "executionId": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "leaseId": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "triggerId": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "jobKey": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "fireAtUtc": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "leaseExpiresAtUtc": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "payload": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "additionalProperties": false
+      },
+      "WorkPollRequest": {
+        "required": [
+          "runnerId"
+        ],
+        "type": "object",
+        "properties": {
+          "environmentTag": {
+            "type": "string",
+            "nullable": true
+          },
+          "runnerId": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "batchSize": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "waitForMs": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          }
+        },
+        "additionalProperties": false
+      },
+      "WorkRenewRequest": {
+        "required": [
+          "lease",
+          "runnerId"
+        ],
+        "type": "object",
+        "properties": {
+          "environmentTag": {
+            "type": "string",
+            "nullable": true
+          },
+          "runnerId": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "lease": {
+            "$ref": "#/components/schemas/WorkLeaseToken"
           }
         },
         "additionalProperties": false

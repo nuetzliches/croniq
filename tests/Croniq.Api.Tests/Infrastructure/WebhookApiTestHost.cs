@@ -1,9 +1,11 @@
+using System;
 using System.Collections.Generic;
 using System.Net.Http;
 using Croniq.Api;
 using Croniq.Api.Security;
 using Croniq.Auth.Abstractions;
 using Croniq.Auth.Core;
+using Croniq.Core;
 using Croniq.Core.Execution;
 using Croniq.Core.Jobs;
 using Croniq.Core.Policies;
@@ -81,7 +83,12 @@ public sealed class WebhookApiTestHost : IAsyncLifetime
             ["Croniq:Auth:Tokens:SigningKey"] = "Y3JvbmlxLWl0ZXN0LXNpZ25pbmcta2V5LTEyMzQ1Njc4OTA="
         });
 
-        builder.Services.AddLogging();
+        builder.Services.AddLogging(logging =>
+            logging.AddCroniqExecutionLogSink(options =>
+            {
+                options.BatchSize = 1;
+                options.FlushInterval = TimeSpan.FromMilliseconds(25);
+            }));
         builder.Services.AddRouting();
         builder.Services.AddOptions();
         builder.Services.Configure<CroniqApiOptions>(builder.Configuration.GetSection("Croniq:Api"));
@@ -115,9 +122,12 @@ public sealed class WebhookApiTestHost : IAsyncLifetime
 
         builder.Services.AddSingleton(ExecutionLogs);
         builder.Services.AddSingleton<IExecutionLogReader>(sp => sp.GetRequiredService<TestExecutionLogReader>());
+        builder.Services.AddSingleton<IExecutionLogStore>(sp => sp.GetRequiredService<TestExecutionLogReader>());
 
         builder.Services.AddSingleton(ExecutionHistory);
         builder.Services.AddSingleton<IExecutionHistoryReader>(sp => sp.GetRequiredService<TestExecutionHistoryReader>());
+
+        builder.Services.AddSingleton<IWorkItemStore, NoOpWorkItemStore>();
 
         builder.Services.AddSingleton(JobDeadLetters);
         builder.Services.AddSingleton<IJobDeadLetterStore>(sp => sp.GetRequiredService<InMemoryJobDeadLetterStore>());

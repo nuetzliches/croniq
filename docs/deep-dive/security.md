@@ -15,7 +15,7 @@ This document specifies the authentication, authorization, and rate limiting des
 
 1. **Provisioning**: Keys are created via `IApiKeyStore.IssueAsync` (backed by the EF-Core provider in `Croniq.Auth.SqlServer`). In-memory mode seeds keys via `Croniq:Auth:InMemory:ApiKey` for samples/tests only.
 2. **Persistence**: SQL Server stores only hashed secrets (HMAC SHA-256 + per-key salt). The plaintext is returned once to the operator and never persisted.
-3. **Request Flow**: Callers send the key in `X-Croniq-Key`. Middleware resolves the key via `ICallerContextFactory.FromApiKeyAsync`, creating an `ICallerContext` with TenantId, EnvironmentTag, CallerId, and Scopes.
+3. **Request Flow**: Callers send the key in `X-Croniq-Key`. Middleware resolves the key via `ICallerContextFactory.FromApiKeyAsync`, creating an `ICallerContext` with TenantId, EnvironmentTag, CallerId (API client id), and Scopes.
 4. **Admin APIs**: Tenant-scoped routes now expose key lifecycle operations behind `api-keys:manage`:
 
    - `POST /tenants/{tenantId}/api-keys` issues a key for a given client/environment scope and returns the plaintext secret once.

@@ -7,7 +7,7 @@ The HTTP work endpoints expose the same lease lifecycle so non-.NET (“polyglot
 
 All work endpoints:
 
-- Require the `work:execute` scope.
+- Require a least-privilege work scope per endpoint (`work:poll`, `work:renew`, `work:ack`, `work:events`).
 - Are tenant-scoped via the route: `/tenants/{tenantId}/...`.
 - Require an `environment` (query) or `environmentTag` (body).
 
@@ -18,7 +18,7 @@ Authentication supports both:
 
 ## Runner Identity
 
-`runnerId` is treated as the lease owner. A runner represents a worker process instance and can execute many jobs over time. Use a stable value (for example `hostname + process`) and reuse the same `runnerId` for polling, renewing, and acknowledging work. If the `runnerId` does not match the active lease owner, the server rejects the request with `409 lease-conflict`.
+`runnerId` is treated as the lease owner and must match the authenticated caller identity (API client id for API keys or subject for bearer tokens). A runner represents a worker process instance and can execute many jobs over time. Use a stable value (for example `hostname + process`) and reuse the same `runnerId` for polling, renewing, and acknowledging work. If the `runnerId` does not match the active lease owner, the server rejects the request with `409 lease-conflict`.
 
 ## Endpoints
 
@@ -27,6 +27,8 @@ Authentication supports both:
 `POST /tenants/{tenantId}/work/poll?environment=dev`
 
 Claims due trigger leases for the caller.
+
+Scope: `work:poll`
 
 Request body:
 
@@ -37,12 +39,15 @@ Request body:
 Response:
 
 - `leases`: array of lease tokens.
+  - `executionId`: execution identifier for logs/events.
 
 ### Renew
 
 `POST /tenants/{tenantId}/work/renew?environment=dev`
 
 Renews a lease while a work item is still being processed.
+
+Scope: `work:renew`
 
 Request body:
 
@@ -60,13 +65,34 @@ Response:
 
 Acknowledges completion and releases the lease.
 
+Scope: `work:ack`
+
 Request body:
 
 - `runnerId` (string, required)
 - `lease` (token, required)
 - `succeeded` (bool, required)
 - `nextFireTimeUtc` (optional): when set, the trigger is rescheduled.
-- `deadLetterReason` (optional): set for failed work.
+- `deadLetterReason` (optional): set for failed work when no reschedule is requested.
+
+### Events / Logs
+
+`POST /tenants/{tenantId}/work/{executionId}:events?environment=dev`
+
+Pushes execution-scoped events that are persisted via the execution log sink.
+
+Scope: `work:events`
+
+Request body:
+
+- `runnerId` (string, required)
+- `lease` (token, required)
+- `events` (array):
+  - `message` (string, required)
+  - `level` (string, optional): `Trace|Debug|Information|Warning|Error|Critical`
+  - `eventType` (string, optional)
+  - `timestampUtc` (optional)
+  - `properties` (optional)
 
 ## Sample
 
@@ -76,6 +102,16 @@ A minimal worker loop that polls/renews/acks is available at:
 - `samples/worker-sdk-node`
 - `samples/worker-sdk-python`
 
+## Issue a Worker API Key (SQL auth)
+
+For SQL-backed auth, you can use the helper script to create an API client and key with the worker scopes:
+
+```powershell
+./scripts/issue-worker-api-key.ps1 -TenantId default -ClientId worker-dev -Environment dev -EmitEnv
+```
+
+Use the emitted `CRONIQ_API_KEY` and set `CRONIQ_RUNNER_ID` to the same client id.
+
 ## Runner Presence (Optional)
 
 If you need runner availability for dashboards or ops tooling, use the runner heartbeat endpoints:
@@ -83,4 +119,13 @@ If you need runner availability for dashboards or ops tooling, use the runner he
 - `POST /tenants/{tenantId}/runners/heartbeat?environment=dev`
 - `GET /tenants/{tenantId}/runners?environment=dev`
 
+Scopes:
+
+- `runners:heartbeat` for posting heartbeats
+- `runners:read` for listing runners
+
 Heartbeat payloads accept `runnerId`, optional `seenAtUtc`, and optional `metadataJson` for tags or capabilities. Presence is derived from the configured TTL; it does not affect lease correctness.
+
+## Protocol Roadmap
+
+The longer-term gRPC streaming protocol, work-item schema, and event/log ingestion plan are tracked in `docs/deep-dive/designs/polyglot-worker-protocol.md`.

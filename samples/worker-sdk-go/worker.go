@@ -33,12 +33,21 @@ type Client struct {
 }
 
 type Lease struct {
+	ExecutionId       string    `json:"executionId"`
 	LeaseId           string    `json:"leaseId"`
 	TriggerId         string    `json:"triggerId"`
 	JobKey            string    `json:"jobKey"`
 	FireAtUtc         time.Time `json:"fireAtUtc"`
 	LeaseExpiresAtUtc time.Time `json:"leaseExpiresAtUtc"`
 	Payload           *string   `json:"payload,omitempty"`
+}
+
+type WorkEvent struct {
+	Message      string            `json:"message"`
+	Level        string            `json:"level,omitempty"`
+	TimestampUtc *time.Time        `json:"timestampUtc,omitempty"`
+	Properties   map[string]string `json:"properties,omitempty"`
+	EventType    string            `json:"eventType,omitempty"`
 }
 
 type ApiError struct {
@@ -183,6 +192,24 @@ func (c *Client) Ack(
 	return c.post(ctx, "/work/ack", request, nil)
 }
 
+func (c *Client) Events(ctx context.Context, runnerId string, lease Lease, events []WorkEvent) error
+{
+	if strings.TrimSpace(runnerId) == "" {
+		return errors.New("runner id is required")
+	}
+	if strings.TrimSpace(lease.ExecutionId) == "" {
+		return errors.New("execution id is required")
+	}
+
+	request := eventsRequest{
+		RunnerId: strings.TrimSpace(runnerId),
+		Lease:    lease,
+		Events:   events,
+	}
+
+	return c.post(ctx, fmt.Sprintf("/work/%s:events", url.PathEscape(lease.ExecutionId)), request, nil)
+}
+
 func (c *Client) post(ctx context.Context, suffix string, body any, out any) error
 {
 	endpoint, err := c.buildURL(fmt.Sprintf("/tenants/%s%s", url.PathEscape(c.tenantID), suffix))
@@ -287,4 +314,11 @@ type ackRequest struct {
 	Succeeded       bool       `json:"succeeded"`
 	NextFireTimeUtc *time.Time `json:"nextFireTimeUtc,omitempty"`
 	DeadLetterReason string    `json:"deadLetterReason,omitempty"`
+}
+
+type eventsRequest struct {
+	EnvironmentTag string      `json:"environmentTag,omitempty"`
+	RunnerId       string      `json:"runnerId"`
+	Lease          Lease       `json:"lease"`
+	Events         []WorkEvent `json:"events"`
 }

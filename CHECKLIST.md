@@ -161,23 +161,27 @@
   - Abhängigkeiten: Runner-Identität/Secrets, Availability-Status, Policy/Lease-Semantik, Tenant/Environment-Scoping.
 
 - [ ] Zielbild: echtes polyglottes Worker-Modell (Go/Node/Python Worker können Jobs direkt ausführen, nicht nur triggern).
-  - [x] HTTP Work-Endpoints (Lease-basiert) vorhanden: `/work/poll`, `/work/renew`, `/work/ack` inkl. `work:execute` Scope sowie Python-Sample + Guide.
+  - [x] HTTP Work-Endpoints (Lease-basiert) vorhanden: `/work/poll`, `/work/renew`, `/work/ack` inkl. `work:poll|work:renew|work:ack|work:events` Scopes sowie Python-Sample + Guide.
   - Protokoll/Contract:
-    - Worker-API (gRPC + HTTP) definieren: Register/Connect, PollWork (Claim), work-scoped lease deadlines (keine globalen Heartbeats), AckSuccess/AckFailure, PushLogs/Events.
-    - AuthN/AuthZ: RunnerIdentity (RunnerId + RunnerSecret/ApiKey/Bearer) + tenant/environment scoping; least-privilege Scopes.
-    - Idempotenz: Claim/Ack mit ExecutionId; Exactly-once best effort (at-least-once + dedupe) dokumentieren.
+    - [x] Worker-API (gRPC + HTTP) definiert: Register/Connect, PollWork (Claim), work-scoped lease deadlines (keine globalen Heartbeats), AckSuccess/AckFailure, PushLogs/Events. Siehe `docs/deep-dive/designs/polyglot-worker-protocol.md`.
+    - [x] AuthN/AuthZ: RunnerIdentity (RunnerId + RunnerSecret/ApiKey/Bearer) + tenant/environment scoping; least-privilege Scopes.
+    - [x] Idempotenz: Claim/Ack mit ExecutionId; Exactly-once best effort (at-least-once + dedupe) dokumentieren.
   - Persistenz & Schema:
-    - Tabellen/Modelle: Runner, RunnerLease/Heartbeat, WorkItem/ExecutionClaim, RunnerCapabilities/Tags.
-    - Online/Offline Status: Heartbeat + TTL/Lease; UI-Readmodel für "available runners".
+    - [x] Tabellen/Modelle: Runner, RunnerLease/Heartbeat, WorkItem/ExecutionClaim, RunnerCapabilities/Tags.
+    - [x] Work-Assignments in HTTP/gRPC schreiben WorkItems/WorkClaims (Claim/Renew/Ack).
+    - [x] Online/Offline Status: Heartbeat + TTL/Lease.
+    - [ ] UI-Readmodel für "available runners".
   - Scheduling/Execution Integration:
-    - Work-Dispatch Layer (Server): Execution -> WorkItem -> Claim -> Ack -> DeadLetter/Retry.
-    - Policy/Lease: Timeout/Retry/Misfire sauber mit worker lease semantics integrieren.
+    - [x] Work-Dispatch Layer (Server): Execution -> WorkItem -> Claim -> Ack -> DeadLetter/Retry.
+  - [x] Policy/Lease: Timeout/Retry/Misfire sauber mit worker lease semantics integrieren.
   - SDKs & Samples:
-    - Minimal Worker SDK pro Sprache (Go/Node/Python): auth, claim loop (HTTP long-poll oder gRPC stream), ack, structured logs.
-    - Samples aktualisieren/ergänzen: mind. ein polyglot worker sample + naming cleanup der bestehenden Samples falls nötig.
+    - [x] Minimal Worker SDK pro Sprache (Go/Node/Python): auth, claim loop (HTTP long-poll oder gRPC stream), ack, structured logs.
+    - [x] Samples aktualisieren/ergänzen: mind. ein polyglot worker sample + naming cleanup der bestehenden Samples falls nötig.
   - Tests:
-    - Contract tests für gRPC messages; end-to-end tests für claim/heartbeat/ack + retry/deadletter.
-    - Concurrency tests: mehrere worker, rolling deploy, duplicate claims verhindern.
+    - [x] Contract tests fuer gRPC messages (hello, runner mismatch, assign/ack).
+    - [x] End-to-end tests fuer claim/heartbeat/ack + retry.
+    - [x] Deadletter coverage fuer failed ack paths.
+    - [x] Concurrency tests: mehrere worker, rolling deploy, duplicate claims verhindern.
 - [ ] (nice-to-have) Solutionweit usings aufräumen?
 - [ ] CI Static Analysis / SAST: entscheiden und ggf. integrieren
   - [ ] CodeQL-Code-Scanning Workflow hinzufügen (optional; abhängig von GHAS/Repo-Settings)

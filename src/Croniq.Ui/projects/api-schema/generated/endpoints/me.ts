@@ -11,11 +11,18 @@ import {
     PasswordLogoutRequest,
     PasswordRefreshRequest,
     RotateWebhookSecretRequest,
+    RunnerHeartbeatRequest,
     TriggerJobRequest,
     UpsertApiClientRequest,
     UpsertJobRequest,
     UpsertTenantRequest,
     UpsertWebhookEndpointRequest,
+    WorkLeaseToken,
+    WorkAckRequest,
+    WorkEventEntry,
+    WorkEventsRequest,
+    WorkPollRequest,
+    WorkRenewRequest,
 } from '../schemas';
 
 export const MeApi: EndpointDefinition[] = [

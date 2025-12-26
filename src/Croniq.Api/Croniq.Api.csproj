@@ -34,5 +34,7 @@
   <ItemGroup>
     <Protobuf Include="..\Croniq.Rpc.Client\Protos\scheduler.proto" GrpcServices="Both"
       Link="Protos\scheduler.proto" />
+    <Protobuf Include="..\Croniq.Rpc.Client\Protos\worker.proto" GrpcServices="Both"
+      Link="Protos\worker.proto" />
   </ItemGroup>
 </Project>

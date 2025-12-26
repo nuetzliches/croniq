@@ -31,6 +31,10 @@ You can switch between modes (or enable both) by changing configuration—no cod
 3. **Distribute the plaintext** once. Operators copy it into CI/CD variables or `.env.local`. Croniq never stores the plaintext value.
 4. **Call the API** with the header `X-Croniq-Key: <your-secret>`.
 
+### API Client IDs
+
+API keys are issued for an **API client** (`ClientId`). The client id is the logical identity used for rate limiting and appears as the `CallerId` in logs. If you run polyglot workers, set `CRONIQ_RUNNER_ID` to the same client id so runner identity and authentication stay aligned.
+
 ### Configuration Checklist
 
 | Setting                                                   | Required?             | Description                                                                     |

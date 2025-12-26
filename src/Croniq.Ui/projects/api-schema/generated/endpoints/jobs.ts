@@ -12,10 +12,17 @@ import {
     PasswordLogoutRequest,
     PasswordRefreshRequest,
     RotateWebhookSecretRequest,
+    RunnerHeartbeatRequest,
     UpsertApiClientRequest,
     UpsertJobRequest,
     UpsertTenantRequest,
     UpsertWebhookEndpointRequest,
+    WorkLeaseToken,
+    WorkAckRequest,
+    WorkEventEntry,
+    WorkEventsRequest,
+    WorkPollRequest,
+    WorkRenewRequest,
 } from '../schemas';
 
 export const JobsApi: EndpointDefinition[] = [

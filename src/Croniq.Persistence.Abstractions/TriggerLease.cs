@@ -12,4 +12,5 @@ public sealed record TriggerLease(
     PartitionScope Scope,
     DateTimeOffset FireAtUtc,
     DateTimeOffset LeaseExpiresAtUtc,
-    string? Payload);
+    string? Payload,
+    string? ExecutionId = null);

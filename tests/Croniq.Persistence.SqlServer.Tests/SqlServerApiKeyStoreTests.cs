@@ -60,7 +60,7 @@ public sealed class SqlServerApiKeyStoreTests : IAsyncLifetime
         validation.IsValid.ShouldBeTrue();
         validation.TenantId.ShouldBe("tenant-sql");
         validation.EnvironmentTag.ShouldBe("dev");
-        validation.CallerId.ShouldBe(issued.KeyId);
+        validation.CallerId.ShouldBe(issued.ClientId);
         validation.Scopes.ShouldContain("schedules:read");
     }
 
@@ -95,7 +95,7 @@ public sealed class SqlServerApiKeyStoreTests : IAsyncLifetime
         newValidation.IsValid.ShouldBeTrue();
         newValidation.TenantId.ShouldBe("tenant-sql");
         newValidation.EnvironmentTag.ShouldBe("qa");
-        newValidation.CallerId.ShouldBe(rotated.KeyId);
+        newValidation.CallerId.ShouldBe(rotated.ClientId);
         newValidation.Scopes.ShouldContain("x");
     }
 

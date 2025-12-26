@@ -59,6 +59,7 @@ public static class ServiceCollectionExtensions
         services.TryAddSingleton<IExecutionLogReader, NoOpExecutionLogReader>();
         services.TryAddSingleton<IExecutionHistoryReader, NoOpExecutionHistoryReader>();
         services.TryAddSingleton<IRunnerStore, NoOpRunnerStore>();
+        services.TryAddSingleton<IWorkItemStore, NoOpWorkItemStore>();
         services.TryAddSingleton<TriggerWorker>();
 
         // Explicit env var overrides (do not require .NET configuration key mapping)

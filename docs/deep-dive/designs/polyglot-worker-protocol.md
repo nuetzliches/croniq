@@ -22,7 +22,9 @@
 - Croniq has tenant/env scoping (`TenantId`, `EnvironmentTag`) and a worker host that executes jobs.
 - gRPC exists for scheduler-facing operations (e.g. `Scheduler` service).
 - Long-running execution already uses a lease/extend model internally.
-- There is no public protocol that allows external processes to claim and execute work items.
+- The HTTP work endpoints (`/work/poll`, `/work/renew`, `/work/ack`, `/work/{executionId}:events`) expose the lease lifecycle for polyglot workers.
+- A gRPC worker service skeleton (`Worker.Connect`) exists for the streaming handshake.
+- Minimal worker SDK samples exist for Go/Node/Python under `samples/worker-sdk-*`.
 
 ## Core Concepts
 
@@ -37,7 +39,7 @@ A **Runner** is a worker process instance that can claim and execute jobs.
 
 A **Work Item** is an assignment representing a single execution attempt.
 
-- `execution_id`: stable identifier for the execution (server-generated).
+- `execution_id`: stable identifier for the execution (server-generated) and included in HTTP lease tokens for log/event correlation.
 - `job_key`: identifies the job.
 - `attempt`: monotonic attempt number for retry cycles.
 - `lease_token`: opaque token proving current ownership.
@@ -64,8 +66,8 @@ This keeps the protocol focused on correctness (ownership) rather than presence.
 
 All state transitions must be idempotent using:
 
-- `(execution_id, attempt)` as the idempotency key for acknowledgements.
-- `lease_token` as the authorization guard for “current owner”.
+- `(execution_id, attempt)` as the idempotency key for acknowledgements when available.
+- `lease_token` as the authorization guard for "current owner" (current HTTP API).
 
 Rules:
 
@@ -78,55 +80,66 @@ Rules:
 - Runner declares a maximum in-flight limit (`max_inflight`).
 - Server should not assign more than this to that runner.
 
-## HTTP API (Reference Shape)
+## HTTP API (Current Shape)
 
 ### Poll for work (long-poll)
 
-`POST /tenants/{tenantId}/work:poll?environment={environmentTag}`
+`POST /tenants/{tenantId}/work/poll?environment={environmentTag}`
 
 Request:
 
 - `runnerId` (string, required)
-- `capabilities` (map<string,string> or list<string>, optional)
-- `maxItems` (int, default 1)
-- `maxInflight` (int, optional)
-- `waitSeconds` (int, default e.g. 25; server may cap)
+- `batchSize` (int, default 1; max 250)
+- `waitForMs` (int, default 0; max 30000)
+- `environmentTag` (string, optional, overrides query)
 
 Response:
 
-- `items`: array of work items (possibly empty)
+- `leases`: array of lease tokens (possibly empty)
   - `executionId`
+  - `leaseId`
   - `jobKey`
-  - `attempt`
-  - `leaseToken`
+  - `triggerId`
+  - `fireAtUtc`
   - `leaseExpiresAtUtc`
   - `payload` (optional; job input)
 
 Notes:
 
-- If no work is available, server may return an empty list after `waitSeconds`.
+- If no work is available, the server may return an empty list after `waitForMs`.
 - This is compatible with simple SDK loops and avoids WebSocket requirements.
 
-### Ack success
+### Renew
 
-`POST /tenants/{tenantId}/work/{executionId}:ack-success?environment={environmentTag}`
-
-Request:
-
-- `attempt` (int, required)
-- `leaseToken` (string, required)
-- `result` (optional)
-
-### Ack failure
-
-`POST /tenants/{tenantId}/work/{executionId}:ack-failure?environment={environmentTag}`
+`POST /tenants/{tenantId}/work/renew?environment={environmentTag}`
 
 Request:
 
-- `attempt` (int, required)
-- `leaseToken` (string, required)
-- `errorType` / `errorMessage` (optional)
-- `retryHint` (optional)
+- `runnerId` (string, required)
+- `lease` (object, required)
+
+Response:
+
+- `renewed` (bool)
+- `lease` (updated token when renewed)
+
+### Ack (success or failure)
+
+`POST /tenants/{tenantId}/work/ack?environment={environmentTag}`
+
+Request:
+
+- `runnerId` (string, required)
+- `lease` (object, required)
+- `succeeded` (bool, required)
+- `nextFireTimeUtc` (optional)
+- `deadLetterReason` (optional)
+
+Notes:
+
+- If `runnerId` does not match the lease owner, the server returns a conflict.
+- When `nextFireTimeUtc` is set, the server reschedules the trigger and ignores `deadLetterReason`.
+- Ack is idempotent; clients may retry on transient failures.
 
 ### Push events/logs (optional)
 
@@ -134,9 +147,8 @@ Request:
 
 Request:
 
-- `attempt` (int)
-- `leaseToken` (string)
-- `sequence` (long, optional)
+- `runnerId` (string)
+- `lease` (token)
 - `events` (array)
 
 ## gRPC API (Reference Shape)
@@ -149,6 +161,7 @@ Request:
 - First message is `Hello` (runner id, capabilities, max inflight).
 - Server sends `WorkAssigned` messages.
 - Runner sends `AckSuccess`/`AckFailure` and optionally `Events`.
+- `AckFailure` may include `next_fire_time_utc` to reschedule without dead-lettering.
 
 Disconnect handling:
 
@@ -177,16 +190,64 @@ Unary RPCs can mirror HTTP endpoints if needed, but the key goal is identical se
 - Runners authenticate using an access token (e.g. bearer) that encodes:
   - tenant scope (single-tenant)
   - allowed environments (or environment passed explicitly)
-  - least-privilege scopes (e.g. `work:poll`, `work:ack`, `work:events`)
+  - least-privilege scopes (e.g. `work:poll`, `work:renew`, `work:ack`, `work:events`)
 
 The API must enforce that:
 
 - a runner cannot access other tenants.
 - a runner cannot ack work it does not own (`lease_token` guard).
+- `runner_id` must match the authenticated caller identity (API client id for API keys or subject for bearer tokens).
 
 ## Operational Notes
 
-- Without global heartbeats, “Runner availability” becomes an ops/UI concern:
+- Without global heartbeats, "Runner availability" becomes an ops/UI concern:
   - streaming transport provides presence information naturally.
-  - HTTP long-poll provides “recently active” signals but is not strict presence.
+  - HTTP long-poll provides "recently active" signals but is not strict presence.
 - Correctness does not depend on presence; leases + idempotent acks are the source of truth.
+
+## Persistence & Schema
+
+WorkItems/WorkClaims/RunnerCapabilities are now part of the SqlServer schema and are updated by the HTTP/gRPC work endpoints when assignments are claimed, renewed, and acknowledged. WorkEvents are still optional; events are currently streamed into the execution log store.
+
+The current HTTP endpoints reuse trigger leases. For polyglot execution telemetry, we will introduce explicit work items and claims.
+
+Planned tables (SqlServer):
+
+- `croniq.WorkItems`
+  - `WorkItemId` (PK)
+  - `ExecutionId` (unique)
+  - `TenantId`, `EnvironmentTag`
+  - `JobKey`, `TriggerId`
+  - `Attempt`, `PayloadJson`
+  - `Status` (queued, leased, succeeded, failed, deadletter)
+  - `CreatedAtUtc`, `UpdatedAtUtc`
+- `croniq.WorkClaims`
+  - `WorkItemId` (FK), `LeaseId`
+  - `RunnerId` (owner)
+  - `LeaseExpiresAtUtc`
+  - `LastHeartbeatAtUtc` (optional, only if we add work-scoped heartbeats)
+- `croniq.RunnerCapabilities`
+  - `RunnerId`, `TenantId`, `EnvironmentTag`
+  - `CapabilitiesJson` (tags or kv pairs)
+  - `UpdatedAtUtc`
+- `croniq.WorkEvents` (optional; not yet materialized in SQL Server)
+  - `ExecutionId`, `Attempt`, `Sequence`
+  - `EventType`, `PayloadJson`
+  - `OccurredAtUtc`
+
+The existing `croniq.Runners` table remains the availability view (TTL-based) and does not gate leasing.
+
+## Integration Plan
+
+1. Add `executionId` to the lease token and propagate it through Acquire/Renew/Ack so events/logs can correlate reliably. (Implemented for HTTP.)
+2. Introduce a work event endpoint (`/work/{executionId}:events`) that writes to the execution log store or a dedicated `WorkEvents` table. (Implemented against the execution log store.)
+3. Add a gRPC `WorkerService` with the same semantics as HTTP (Connect stream + Ack + Events). (Skeleton + hello handshake implemented.)
+4. Add optional runner capability routing (filter by capability tags during poll).
+5. Unify internal worker host and external workers on the same work item model (server creates work items, workers claim/ack them).
+
+## Testing Plan
+
+- Contract tests for HTTP work endpoints (poll/renew/ack/events), including invalid runner, stale lease, and idempotent retry cases.
+- gRPC streaming contract tests: Hello -> WorkAssigned -> AckSuccess/AckFailure, reconnect behavior.
+- Concurrency tests: multiple runners polling, lease expiration, duplicate claim prevention.
+- Persistence tests: WorkItems/WorkClaims CRUD, lease expiry, and dead-letter transitions.

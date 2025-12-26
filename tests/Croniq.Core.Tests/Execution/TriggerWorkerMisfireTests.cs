@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Threading;
 using System.Threading.Tasks;
+using Croniq.Core;
 using Croniq.Core.Execution;
 using Croniq.Core.Jobs;
 using Croniq.Options;
@@ -108,6 +109,7 @@ public class TriggerWorkerMisfireTests
             Microsoft.Extensions.Options.Options.Create(new WorkerHostOptions { LeaseRenewalLeadTime = TimeSpan.Zero }),
             new InMemoryQuotaGuard(),
             new NoOpExecutionLogStore(),
+            new NoOpWorkItemStore(),
             NullLogger<TriggerWorker>.Instance,
             new ActivitySource("test"));
 
@@ -140,6 +142,7 @@ public class TriggerWorkerMisfireTests
             Microsoft.Extensions.Options.Options.Create(new WorkerHostOptions { LeaseRenewalLeadTime = TimeSpan.Zero }),
             new InMemoryQuotaGuard(),
             new NoOpExecutionLogStore(),
+            new NoOpWorkItemStore(),
             NullLogger<TriggerWorker>.Instance,
             new ActivitySource("test"));
 
@@ -189,6 +192,7 @@ public class TriggerWorkerMisfireTests
             Microsoft.Extensions.Options.Options.Create(new WorkerHostOptions { LeaseRenewalLeadTime = TimeSpan.Zero }),
             new InMemoryQuotaGuard(),
             new NoOpExecutionLogStore(),
+            new NoOpWorkItemStore(),
             NullLogger<TriggerWorker>.Instance,
             new ActivitySource("test"));
 
@@ -251,6 +255,7 @@ public class TriggerWorkerMisfireTests
             Microsoft.Extensions.Options.Options.Create(new WorkerHostOptions { LeaseRenewalLeadTime = TimeSpan.Zero }),
             new InMemoryQuotaGuard(),
             new NoOpExecutionLogStore(),
+            new NoOpWorkItemStore(),
             NullLogger<TriggerWorker>.Instance,
             new ActivitySource("test"));
 

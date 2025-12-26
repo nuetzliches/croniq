@@ -113,8 +113,15 @@ docs/
 
 - A runner represents a **worker process instance**, not a single job. One runner can execute many jobs over time.
 - `runnerId` is a stable identifier (for example `hostname + process`) and is used as the lease owner. Renew/ack requests must use the same `runnerId` that claimed the lease.
-- Authentication stays on the regular Croniq auth paths (API keys or bearer tokens) with the `work:execute` scope. `runnerId` itself is **not** a secret.
+- Authentication stays on the regular Croniq auth paths (API keys or bearer tokens) with least-privilege work scopes (`work:poll`, `work:renew`, `work:ack`, `work:events`). `runnerId` itself is **not** a secret, but it must match the authenticated caller identity.
 - Availability is tracked via heartbeats (`POST /tenants/{tenantId}/runners/heartbeat`) and listed via `GET /tenants/{tenantId}/runners`. The TTL is controlled by `RunnerStoreOptions.OnlineTtl`. Availability is informational and does not affect lease correctness.
+
+## Polyglot Worker Protocol
+
+- The current HTTP work surface (`/work/poll`, `/work/renew`, `/work/ack`) exposes the lease lifecycle so non-.NET workers can claim and execute jobs.
+- The gRPC worker handshake (`Worker.Connect`) is implemented as a skeleton for streaming integrations.
+- The longer-term gRPC streaming contract and planned work-item schema are captured in `docs/deep-dive/designs/polyglot-worker-protocol.md`.
+- Protocol design avoids global heartbeats; ownership and liveness are derived from lease deadlines and acknowledgements.
 
 ## Job Store & Provider Model
 

@@ -23,6 +23,7 @@ class LeaseNotFoundError(CroniqError):
 
 @dataclass(frozen=True)
 class Lease:
+    execution_id: str
     lease_id: str
     trigger_id: str
     job_key: str
@@ -33,6 +34,7 @@ class Lease:
     @staticmethod
     def from_dict(data: Dict[str, Any]) -> "Lease":
         return Lease(
+            execution_id=data["executionId"],
             lease_id=data["leaseId"],
             trigger_id=data["triggerId"],
             job_key=data["jobKey"],
@@ -43,6 +45,7 @@ class Lease:
 
     def to_dict(self) -> Dict[str, Any]:
         return {
+            "executionId": self.execution_id,
             "leaseId": self.lease_id,
             "triggerId": self.trigger_id,
             "jobKey": self.job_key,
@@ -50,6 +53,27 @@ class Lease:
             "leaseExpiresAtUtc": self.lease_expires_at_utc,
             "payload": self.payload,
         }
+
+
+@dataclass(frozen=True)
+class WorkEvent:
+    message: str
+    level: Optional[str] = None
+    timestamp_utc: Optional[str] = None
+    properties: Optional[Dict[str, str]] = None
+    event_type: Optional[str] = None
+
+    def to_dict(self) -> Dict[str, Any]:
+        payload: Dict[str, Any] = {"message": self.message}
+        if self.level:
+            payload["level"] = self.level
+        if self.timestamp_utc:
+            payload["timestampUtc"] = self.timestamp_utc
+        if self.properties:
+            payload["properties"] = self.properties
+        if self.event_type:
+            payload["eventType"] = self.event_type
+        return payload
 
 
 class WorkerClient:
@@ -114,6 +138,14 @@ class WorkerClient:
         if dead_letter_reason:
             payload["deadLetterReason"] = dead_letter_reason
         self._post("/work/ack", payload)
+
+    def events(self, runner_id: str, lease: Lease, events: List[WorkEvent]) -> None:
+        payload = {
+            "runnerId": runner_id,
+            "lease": lease.to_dict(),
+            "events": [event.to_dict() for event in events],
+        }
+        self._post(f"/work/{lease.execution_id}:events", payload)
 
     def _post(self, suffix: str, payload: Dict[str, Any]) -> requests.Response:
         url = self._build_url(suffix)

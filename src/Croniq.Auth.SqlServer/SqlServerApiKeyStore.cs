@@ -196,7 +196,7 @@ public sealed class SqlServerApiKeyStore : IApiKeyStore
 
         var scopes = ParseScopes(entity.ScopesJson, entity.Client.ScopesJson);
         var environment = entity.EnvironmentTag ?? entity.Client.EnvironmentTag;
-        return new ApiKeyValidationResult(true, entity.Client.TenantId, environment, entity.KeyId, scopes, null);
+        return new ApiKeyValidationResult(true, entity.Client.TenantId, environment, entity.Client.ClientId, scopes, null);
     }
 
     public async Task<ApiClientDescriptor?> GetClientAsync(string tenantId, string clientId, CancellationToken cancellationToken = default)
