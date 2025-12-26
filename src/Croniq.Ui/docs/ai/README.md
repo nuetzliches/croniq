@@ -4,6 +4,9 @@ This document captures the actionable pieces from https://next.angular.dev/ai/de
 
 ## 1. Instruction & Rules Files
 
+- **Angular Guidelines**: [angular.instructions.md](angular.instructions.md) - Standards for Components, Signals, and Forms.
+- **Zod & Validation**: [zod.instructions.md](zod.instructions.md) - Guidelines for schema validation.
+- **Accessibility**: [aria.md](aria.md) - Accessibility standards.
 - VS Code / Windsurf: already configured via [../.instructions.md](../../.instructions.md). Surface this file when prompting Copilot-like tools.
 - GitHub Copilot platform: mirror the same content inside `.github/copilot-instructions.md` if you want GitHub.com chat to follow the rules.
 - Cursor / JetBrains / Firebase Studio: Angular provides ready-made templates (cursor.md, guidelines.md, airules.md). Pull the latest versions from https://next.angular.dev/assets/context/ when needed and adapt with Croniq-specific guidance.

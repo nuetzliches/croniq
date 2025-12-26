@@ -1,8 +1,8 @@
 import { HttpClient } from '@angular/common/http';
 import { EnvironmentProviders, InjectionToken, Provider, inject, makeEnvironmentProviders } from '@angular/core';
-import { AuthApi, CreateWebhookIpRuleRequest, HealthApi, IssueApiKeyRequest, IssueTokenRequest, JobsApi, MeApi, PasswordChangePasswordRequest, PasswordLoginRequest, PasswordLogoutRequest, PasswordRefreshRequest, RotateWebhookSecretRequest, ScheduleListResponse, TenantsApi, TriggerJobRequest, UpsertApiClientRequest, UpsertJobRequest, UpsertScheduleRequest, UpsertTenantRequest, UpsertWebhookEndpointRequest, scheduleListResponseSchema, type EndpointDefinition } from '@croniq/api-schema';
+import { AuthApi, CreateWebhookIpRuleRequest, HealthApi, IssueApiKeyRequest, IssueTokenRequest, JobsApi, MeApi, PasswordChangePasswordRequest, PasswordLoginRequest, PasswordLogoutRequest, PasswordRefreshRequest, RotateWebhookSecretRequest, RunnerHeartbeatRequest, ScheduleListResponse, TenantsApi, TriggerJobRequest, UpsertApiClientRequest, UpsertJobRequest, UpsertScheduleRequest, UpsertTenantRequest, UpsertWebhookEndpointRequest, WorkAckRequest, WorkEventsRequest, WorkPollRequest, WorkRenewRequest, scheduleListResponseSchema, type EndpointDefinition } from '@croniq/api-schema';
 import type { Observable } from 'rxjs';
-import type { CroniqCredentialSupplier, CroniqRequestOptions, ExecutionLogParams, ExecutionParams, TenantApiClientParams, TenantApiClientTokenParams, TenantApiKeyParams, TenantDeadLetterParams, TenantEnvironmentParams, TenantScheduleParams, TenantScopedParams, TenantUpsertApiClientParams, TenantWebhookParams, TenantWebhookRuleParams, TenantWebhookUpsertParams, WebhookInvocationParams } from './api-client.types';
+import type { CroniqCredentialSupplier, CroniqRequestOptions, ExecutionLogParams, ExecutionParams, TenantApiClientParams, TenantApiClientTokenParams, TenantApiKeyParams, TenantDeadLetterParams, TenantEnvironmentOptionalParams, TenantEnvironmentParams, TenantScheduleParams, TenantScopedParams, TenantUpsertApiClientParams, TenantWebhookParams, TenantWebhookRuleParams, TenantWebhookUpsertParams, WebhookInvocationParams, WorkEventsParams } from './api-client.types';
 import type { EndpointCallConfig } from './endpoint-executor';
 import { EndpointExecutor, requireEndpoint } from './endpoint-executor';
 
@@ -75,6 +75,13 @@ const TENANT_ENDPOINTS = {
         'post',
         '/tenants/:tenantId/schedules/deadletters/:deadLetterId/replay',
     ),
+    listRunners: requireEndpoint(TenantsApi, 'get', '/tenants/:tenantId/runners'),
+    runnerHeartbeat: requireEndpoint(TenantsApi, 'post', '/tenants/:tenantId/runners/heartbeat'),
+    issueToken: requireEndpoint(TenantsApi, 'post', '/tenants/:tenantId/tokens'),
+    workEvents: requireEndpoint(TenantsApi, 'post', '/tenants/:tenantId/work/:executionId:events'),
+    workAck: requireEndpoint(TenantsApi, 'post', '/tenants/:tenantId/work/ack'),
+    workPoll: requireEndpoint(TenantsApi, 'post', '/tenants/:tenantId/work/poll'),
+    workRenew: requireEndpoint(TenantsApi, 'post', '/tenants/:tenantId/work/renew'),
 };
 
 const INVOKE_WEBHOOK_ENDPOINT = requireEndpoint(
@@ -183,6 +190,39 @@ export interface CroniqApiClient {
 
     listTenantScheduleDeadLetters(params: TenantEnvironmentParams, options?: CroniqRequestOptions): Observable<unknown>;
     replayTenantScheduleDeadLetter(params: TenantDeadLetterParams, options?: CroniqRequestOptions): Observable<void>;
+
+    listRunners(params: TenantEnvironmentOptionalParams, options?: CroniqRequestOptions): Observable<unknown>;
+    runnerHeartbeat(
+        params: TenantEnvironmentOptionalParams,
+        payload: RunnerHeartbeatRequest,
+        options?: CroniqRequestOptions,
+    ): Observable<void>;
+    issueToken(
+        params: TenantEnvironmentOptionalParams,
+        payload: IssueTokenRequest,
+        options?: CroniqRequestOptions,
+    ): Observable<unknown>;
+    workEvents(
+        params: WorkEventsParams,
+        payload: WorkEventsRequest,
+        options?: CroniqRequestOptions,
+    ): Observable<void>;
+    workAck(
+        params: TenantEnvironmentOptionalParams,
+        payload: WorkAckRequest,
+        options?: CroniqRequestOptions,
+    ): Observable<void>;
+    workPoll(
+        params: TenantEnvironmentOptionalParams,
+        payload: WorkPollRequest,
+        options?: CroniqRequestOptions,
+    ): Observable<unknown>;
+    workRenew(
+        params: TenantEnvironmentOptionalParams,
+        payload: WorkRenewRequest,
+        options?: CroniqRequestOptions,
+    ): Observable<unknown>;
+
     fetchExecutionLogs(params: ExecutionLogParams, options?: CroniqRequestOptions): Observable<string>;
     checkServiceHealth(options?: CroniqRequestOptions): Observable<void>;
     checkPersistenceHealth(options?: CroniqRequestOptions): Observable<void>;
@@ -761,11 +801,120 @@ class HttpCroniqApiClient implements CroniqApiClient {
         );
     }
 
+    listRunners(params: TenantEnvironmentOptionalParams, options?: CroniqRequestOptions): Observable<unknown> {
+        return this.execute$(
+            TENANT_ENDPOINTS.listRunners,
+            {
+                path: { tenantId: params.tenantId },
+                query: { environment: params.environment ?? undefined },
+            },
+            options,
+        );
+    }
+
+    runnerHeartbeat(
+        params: TenantEnvironmentOptionalParams,
+        payload: RunnerHeartbeatRequest,
+        options?: CroniqRequestOptions,
+    ): Observable<void> {
+        return this.execute$(
+            TENANT_ENDPOINTS.runnerHeartbeat,
+            {
+                path: { tenantId: params.tenantId },
+                query: { environment: params.environment ?? undefined },
+                body: payload,
+            },
+            options,
+        );
+    }
+
+    issueToken(
+        params: TenantEnvironmentOptionalParams,
+        payload: IssueTokenRequest,
+        options?: CroniqRequestOptions,
+    ): Observable<unknown> {
+        return this.execute$(
+            TENANT_ENDPOINTS.issueToken,
+            {
+                path: { tenantId: params.tenantId },
+                query: { environment: params.environment ?? undefined },
+                body: payload,
+            },
+            options,
+        );
+    }
+
+    workEvents(
+        params: WorkEventsParams,
+        payload: WorkEventsRequest,
+        options?: CroniqRequestOptions,
+    ): Observable<void> {
+        return this.execute$(
+            TENANT_ENDPOINTS.workEvents,
+            {
+                path: {
+                    tenantId: params.tenantId,
+                    executionId: params.executionId,
+                },
+                query: { environment: params.environment ?? undefined },
+                body: payload,
+            },
+            options,
+        );
+    }
+
+    workAck(
+        params: TenantEnvironmentOptionalParams,
+        payload: WorkAckRequest,
+        options?: CroniqRequestOptions,
+    ): Observable<void> {
+        return this.execute$(
+            TENANT_ENDPOINTS.workAck,
+            {
+                path: { tenantId: params.tenantId },
+                query: { environment: params.environment ?? undefined },
+                body: payload,
+            },
+            options,
+        );
+    }
+
+    workPoll(
+        params: TenantEnvironmentOptionalParams,
+        payload: WorkPollRequest,
+        options?: CroniqRequestOptions,
+    ): Observable<unknown> {
+        return this.execute$(
+            TENANT_ENDPOINTS.workPoll,
+            {
+                path: { tenantId: params.tenantId },
+                query: { environment: params.environment ?? undefined },
+                body: payload,
+            },
+            options,
+        );
+    }
+
+    workRenew(
+        params: TenantEnvironmentOptionalParams,
+        payload: WorkRenewRequest,
+        options?: CroniqRequestOptions,
+    ): Observable<unknown> {
+        return this.execute$(
+            TENANT_ENDPOINTS.workRenew,
+            {
+                path: { tenantId: params.tenantId },
+                query: { environment: params.environment ?? undefined },
+                body: payload,
+            },
+            options,
+        );
+    }
+
     invokeWebhook(params: WebhookInvocationParams, options?: CroniqRequestOptions): Observable<void> {
         const tenantId = options?.context?.tenantId?.trim() ?? '';
         const environmentTag = options?.context?.environment?.trim() ?? '';
-        if (!tenantId || !environmentTag)
-        {
+        if (!tenantId || !environmentTag) {
             throw new Error('invokeWebhook requires request options with tenantId + environment in context.');
         }
         return this.execute$(

@@ -1,184 +1,200 @@
 # Croniq UI Wireframes
 
-Text-based wireframes and component inventory for the Angular 21 + Tailwind admin UI. Use these as the blueprint when translating into Figma or Storybook stories.
+This document defines the structural and functional design of the Croniq Admin UI.
+It serves as the blueprint for the Angular implementation.
 
-## Notation
+## Design Philosophy
 
-- `[]` denotes actionable controls (button, toggle, link).
-- `{}` denotes dynamic data (numbers, tags, environment names).
-- `---` indicates split panes or section dividers.
-- All layouts assume the global shell described below.
-
-## Scope & Context (Auth vs UI)
-
-- **Environment** is the only user-visible “scope” in the UI. Users can switch it via the global env switcher.
-- **Tenant** is _not_ visible in the UI. It is required only for tenant-scoped API routes and is always derived from the authenticated token.
-- Wireframes must not introduce tenant selectors, tenant lists, or tenant labels.
+- **Density**: High. This is an admin tool for engineers.
+- **Navigation**: Sidebar-first with breadcrumb trails for deep navigation.
+- **Context**: Explicit Tenant and Environment context.
+- **Interactivity**: Optimistic UI updates, real-time status indicators.
 
 ## Global Shell
 
+The application uses a persistent sidebar layout.
+
 ```
-┌──────────────────────────────────────────────────────────────────────────────┐
-│ Croniq Logo        Env: [{env} ▾]      [Command ⌘K] [User ▾]   │
-├───────────┬──────────────────────────────────────────────────────────────────┤
-│ Nav Rail  │  Status Strip: Cluster {healthy/warn} · Queue {value} · Clock Δ  │
-│ - Dashboard                                                                   │
-│ - Schedules                                                                   │
-│ - Jobs                                                                        │
-│ - Webhooks                                                                    │
-│ - API Keys                                                              │
-│ - Observability                                                               │
-│ - Settings                                                                    │
-├───────────┴──────────────────────────────────────────────────────────────────┤
-│ Notification Toast Region (top-right)                                         │
-└──────────────────────────────────────────────────────────────────────────────┘
+┌───────────┬──────────────────────────────────────────────────────────────────┐
+│ CRONIQ    │ [Breadcrumbs / Path]                     [Search ⌘K] [User ▾]    │
+│           │                                                                  │
+│ [Tenant ▾]│                                                                  │
+│ [Env ▾]   │                                                                  │
+│           │                                                                  │
+│ ── CORE ──│                                                                  │
+│ Dashboard │                                                                  │
+│ Jobs      │                                                                  │
+│ Schedules │                                                                  │
+│ Executions│                                                                  │
+│           │                                                                  │
+│ ── INFRA ─│                                                                  │
+│ Runners   │                                                                  │
+│ Webhooks  │                                                                  │
+│ API Access│                                                                  │
+│           │                                                                  │
+│ ── SYS ── │                                                                  │
+│ Settings  │                                                                  │
+└───────────┴──────────────────────────────────────────────────────────────────┘
 ```
 
-## Dashboard
+### Context Switchers
+
+- **Tenant Switcher**: Dropdown to switch the active tenant context. Derived from `listTenants`.
+- **Environment Switcher**: Dropdown to switch between `dev`, `prod`, etc.
+
+## 1. Dashboard
+
+High-level overview of the system health and activity.
 
 ```
 ┌──────────────────────────┬──────────────────────────┬──────────────────────────┐
-│ Queue Depth (sparkline)  │ Trigger Throughput       │ Policy Alerts            │
-│ {current}  {trend}       │ {per min}                │ {count} w/ severity pill │
+│ Active Runners           │ Throughput (RPM)         │ Error Rate (Last 1h)     │
+│ {count} [Healthy]        │ {value} {trend}          │ {value}%                 │
 └──────────────────────────┴──────────────────────────┴──────────────────────────┘
-┌───────────────────────────────┬──────────────────────────────────────────────┐
-│ Upcoming Triggers (table)     │ Misfire Heat Map (calendar grid)            │
-│ Job        Next Fire   SLA    │   color-coded per day, tooltip on hover     │
-│ ---------- -------------- ----│                                              │
-│ {jobKey}   {timestamp}   OK   │                                              │
-└───────────────────────────────┴──────────────────────────────────────────────┘
-┌───────────────────────────────┬──────────────────────────────────────────────┐
-│ Dead-Letter Queue Snapshot    │ Webhook Health                              │
-│ {count} items  [View →]       │ {active}/{failed} · Signature status        │
-└───────────────────────────────┴──────────────────────────────────────────────┘
+
+┌───────────────────────────────────────────────┬────────────────────────────────┐
+│ Recent Failures (Dead Letters)                │ Upcoming Schedules             │
+│ ┌─────────────┬──────────────┬──────────────┐ │ ┌─────────────┬──────────────┐ │
+│ │ Job         │ Reason       │ Time         │ │ │ Job         │ Fire Time    │ │
+│ ├─────────────┼──────────────┼──────────────┤ │ ├─────────────┼──────────────┤ │
+│ │ payment-sync│ Timeout      │ 2m ago       │ │ │ daily-report│ in 5m        │ │
+│ │ email-send  │ 500 Error    │ 15m ago      │ │ │ cleanup     │ in 1h        │ │
+│ └─────────────┴──────────────┴──────────────┘ │ └─────────────┴──────────────┘ │
+│ [View All Dead Letters →]                     │ [View Calendar →]              │
+└───────────────────────────────────────────────┴────────────────────────────────┘
 ```
 
-## Schedules
+## 2. Jobs
 
-```
-┌──────────────────────────────┬──────────────────────────────────────────────┐
-│ Filters: [Search job/key] [Status ▾] [Owner ▾]                              │
-│ Table:                                                              [Create]│
-│ ┌────────────┬─────────────┬───────────┬─────────────┬───────────┐           │
-│ │ Job Key    │ Cron Expr   │ Next Fire │ Policy Set  │ Status    │           │
-│ └────────────┴─────────────┴───────────┴─────────────┴───────────┘           │
-│ Row actions: [View], [Clone], [Disable]                                     │
-├──────────────────────────────┴──────────────────────────────────────────────┤
-│ Detail Pane (tabs)                                                           │
-│ Tabs: Overview | Timeline | Policy Diff | Audit                             │
-│ Overview: metadata, tags, owner, last run stats                              │
-│ Policy Diff: side-by-side JSON diff (current vs draft)                      │
-│ Timeline: executions list w/ status chips                                    │
-└──────────────────────────────────────────────────────────────────────────────┘
-```
-
-## Jobs
-
-```
-┌───────────────────────┬──────────────────────────────────────────────────────┐
-│ Facets: Provider, Tag │                                                       │
-│ Search: [job name]    │  Job Registry Cards                                  │
-│                       │  ┌────────────────────────────┐ ┌──────────────────┐  │
-│                       │  │ Job: {name}                │ │ Job: {name}      │  │
-│                       │  │ Lock: {partition}          │ │ ...              │  │
-│                       │  │ Next: {timestamp}          │ │                  │  │
-│                       │  │ [Trigger Now] [View Logs]  │ │ [Trigger Now]    │  │
-│                       │  └────────────────────────────┘ └──────────────────┘  │
-├───────────────────────┴──────────────────────────────────────────────────────┤
-│ Job Drawer (opens from right)                                                │
-│ Sections: Metadata · Last Executions · Telemetry                             │
-│ Last Executions table with `View Trace` links                                │
-└──────────────────────────────────────────────────────────────────────────────┘
-```
-
-## Webhooks
+Registry of all defined jobs.
 
 ```
 ┌──────────────────────────────────────────────────────────────────────────────┐
-│ Metrics Strip: Requests/min · Success % · Dead-Letter count                  │
-├──────────────────────────────┬──────────────────────────────────────────────┤
-│ Hook List (grid)             │ Detail Pane                                  │
-│ ┌───────────┬──────┬──────┐ │ Header: {hookKey} [{env}] [Rotate Secret]     │
-│ │ Hook Key  │ Mode │ Auth │ │ Tabs: Overview | IP Rules | History | Payload │
-│ └───────────┴──────┴──────┘ │ Overview: endpoints, rate limits, last call   │
-│ Row chips: Signature opt-out │ IP Rules: editable table w/ CIDR + notes     │
-│ indicator, Secret age, Alerts│ History: secret rotations timeline           │
-└──────────────────────────────┴──────────────────────────────────────────────┘
-```
-
-## Webhook Dead-Letters
-
-```
-┌──────────────────────────────────────────────────────────────────────────────┐
-│ Dead-Letters                                                                 │
-│ Filters: [Search] [Status ▾] [Hook Key ▾]                                    │
-│ Table:                                                                       │
-│ ┌──────────────┬───────────┬───────────────┬───────────────┬──────────────┐  │
-│ │ DeadLetterId │ Hook Key   │ Received      │ Last Error    │ Status       │  │
-│ └──────────────┴───────────┴───────────────┴───────────────┴──────────────┘  │
-│ Row actions: [View Payload] [Replay]                                         │
-└──────────────────────────────────────────────────────────────────────────────┘
-```
-
-## API Keys
-
-```
-┌──────────────────────────────────────────────────────────────────────────────┐
-│ API Keys                                                                      │
-│ Scope: Env [{env} ▾]  (tenant is derived from auth token; not shown)          │
+│ Filters: [Search Name] [Namespace ▾]                                [Create] │
 ├──────────────────────────────────────────────────────────────────────────────┤
-│ Tabs: API Keys | API Clients | Tokens | Policies | Audit                       │
-│                                                                              │
-│ API Keys tab:                                                                │
-│ ┌───────────┬─────────┬─────────────┬──────────────┐                         │
-│ │ Key Name  │ Scope   │ Last Rotated│ Status       │                         │
-│ └───────────┴─────────┴─────────────┴──────────────┘                         │
-│ Row actions: [Rotate] [Disable] [Copy]                                       │
-│                                                                              │
-│ API Clients tab:                                                             │
-│ [Upsert Client]                                                              │
-│ ┌───────────┬──────────────┬───────────────┬───────────────┬──────────────┐  │
-│ │ Client Id │ Name          │ Scopes        │ Last Issued   │ Status       │  │
-│ └───────────┴──────────────┴───────────────┴───────────────┴──────────────┘  │
-│ Row actions: [Issue Token] [Delete]                                          │
-│                                                                              │
-│ Tokens tab:                                                                  │
-│ [Issue Token]                                                                │
-│ Output: one-time token display w/ [Copy]                                     │
+│ ┌──────────────┬─────────────┬───────────────┬───────────────┬─────────────┐ │
+│ │ Job Key      │ Namespace   │ Triggers      │ Last Run      │ Actions     │ │
+│ ├──────────────┼─────────────┼───────────────┼───────────────┼─────────────┤ │
+│ │ invoice-gen  │ billing     │ 2 Schedules   │ {status}      │ [Trigger]   │ │
+│ │              │             │               │               │ [Edit]      │ │
+│ └──────────────┴─────────────┴───────────────┴───────────────┴─────────────┘ │
 └──────────────────────────────────────────────────────────────────────────────┘
 ```
 
-## Execution Viewer (shared)
+### Job Details (Drawer/Page)
+
+- **Metadata**: Description, Default Configuration.
+- **Triggers**: List of associated Schedules.
+- **History**: List of recent Executions for this job.
+- **Definition**: JSON/YAML view of the job definition.
+
+## 3. Schedules
+
+Time-based triggers management.
 
 ```
 ┌──────────────────────────────────────────────────────────────────────────────┐
-│ Execution Details                                                            │
-│ Header: {executionId} · {status} · {started} → {finished}                    │
+│ View: [List] [Calendar]                                             [Create] │
 ├──────────────────────────────────────────────────────────────────────────────┤
-│ Tabs: Summary | Logs                                                          │
-│ Summary: job key, schedule trigger id, retry/misfire metadata                 │
-│ Logs: scrollable text view with [Copy] / [Download]                           │
+│ ┌──────────────┬─────────────┬───────────────┬───────────────┬─────────────┐ │
+│ │ Trigger ID   │ Job Key     │ Cron          │ Next Fire     │ Status      │ │
+│ ├──────────────┼─────────────┼───────────────┼───────────────┼─────────────┤ │
+│ │ t-12345      │ invoice-gen │ 0 0 * * *     │ Tomorrow 00:00│ [Enabled]   │ │
+│ └──────────────┴─────────────┴───────────────┴───────────────┴─────────────┘ │
 └──────────────────────────────────────────────────────────────────────────────┘
 ```
 
-## Component Checklist
+## 4. Executions
 
-| Surface        | Components Needed                                                                                                       | Notes                                                 |
-| -------------- | ----------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------- |
-| Global         | Command rail, env selector, status beacons, command palette modal, toast stack                                          | Palette triggered via `Ctrl/Cmd+K`, tie into router.  |
-| Dashboard      | Metric cards, sparkline widget, table, calendar heat map, inline alerts                                                 | Sparkline + heat map should accept live data streams. |
-| Schedules      | Data grid, filter chips, tabbed detail pane, JSON diff viewer, timeline list, form drawer                               | Diff viewer should highlight policy overrides.        |
-| Jobs           | Faceted search, card grid, slide-over drawer, execution timeline, trace link badge                                      | Drawer shares components with schedules timeline.     |
-| Webhooks       | KPI strip, grid with status pills, detail tabs, editable table (IP rules), timeline of secret rotations, action buttons | Secret rotation CTA reuses admin action modal.        |
-| API Keys       | Tabbed layout, API key table, quota visualizations                                                                      | Tenant is auth-derived and never shown in UI.         |
-| API Clients    | Master-detail tab, client table, token issuance flow (one-time token display), confirm delete                           | Maps to `api-clients/*` + `api-clients/*/tokens`.     |
-| Dead-Letters   | Table, payload viewer, replay action with confirmation                                                                  | Maps to `webhooks/deadletters/*`.                     |
-| Executions     | Execution detail viewer, logs viewer, navigation from schedules/jobs timelines                                          | Maps to `executions/*` + `executions/*/logs`.         |
-| Observability  | Grafana embed wrapper, log pulse chart, filter bar                                                                      | Inline vs deep-link decision tracked in checklist.    |
-| Modals/Dialogs | Confirm dialogs, rotation wizard, JSON editor, impersonation banner                                                     | All dialogs share focus management + telemetry hooks. |
+Global execution history and status.
 
-## Next Steps
+```
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ Filters: [Job Key] [Status ▾] [Date Range]                                   │
+├──────────────────────────────────────────────────────────────────────────────┤
+│ ┌──────────────┬─────────────┬───────────────┬───────────────┬─────────────┐ │
+│ │ Execution ID │ Job Key     │ Started       │ Duration      │ Status      │ │
+│ ├──────────────┼─────────────┼───────────────┼───────────────┼─────────────┤ │
+│ │ exec-abc     │ invoice-gen │ 10:00:01      │ 2.5s          │ [Success]   │ │
+│ │ exec-xyz     │ email-send  │ 10:05:00      │ -             │ [Running]   │ │
+│ └──────────────┴─────────────┴───────────────┴───────────────┴─────────────┘ │
+└──────────────────────────────────────────────────────────────────────────────┘
+```
 
-1. Translate each wireframe into high-fidelity Figma boards, reusing the Croniq tokens.
-2. Update `CHECKLIST-UI.md` once the wireframes and token inventory are approved.
-3. Feed these layouts into Storybook tickets so component work can begin in parallel with scaffolding.
+### Execution Details
+
+- **Summary**: ID, Job, Trigger, Timestamps, Runner ID.
+- **Logs**: Live-streaming logs (NDJSON).
+- **Events**: Structured events (WorkEvents).
+- **Payload**: Input payload (if any).
+
+## 5. Runners (New)
+
+Infrastructure view of connected workers.
+
+```
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ Active Runners: {count}                                                      │
+├──────────────────────────────────────────────────────────────────────────────┤
+│ ┌──────────────┬─────────────┬───────────────┬───────────────┐               │
+│ │ Runner ID    │ Last Seen   │ Metadata      │ Status        │               │
+│ ├──────────────┼─────────────┼───────────────┼───────────────┤               │
+│ │ worker-01    │ Just now    │ v1.2.0, us-e1 │ [Active]      │               │
+│ │ worker-02    │ 5m ago      │ v1.1.0, eu-w1 │ [Warning]     │               │
+│ └──────────────┴─────────────┴───────────────┴───────────────┘               │
+└──────────────────────────────────────────────────────────────────────────────┘
+```
+
+## 6. Webhooks
+
+Inbound webhook management.
+
+```
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ [Register Endpoint]                                                          │
+├──────────────────────────────────────────────────────────────────────────────┤
+│ ┌──────────────┬─────────────┬───────────────┬───────────────┐               │
+│ │ Hook Key     │ Target Job  │ Security      │ Actions       │               │
+│ ├──────────────┼─────────────┼───────────────┼───────────────┤               │
+│ │ stripe-in    │ payment-proc│ Signed        │ [Rotate Secret]               │
+│ │              │             │ IP Whitelist  │ [IP Rules]    │               │
+│ └──────────────┴─────────────┴───────────────┴───────────────┘               │
+└──────────────────────────────────────────────────────────────────────────────┘
+```
+
+### Webhook Details
+
+- **Overview**: Endpoint URL, Secret management.
+- **IP Rules**: CIDR allow-list management.
+- **Dead Letters**: Failed webhook deliveries (Replay capability).
+
+## 7. API Access
+
+Management of programmatic access.
+
+### API Clients
+
+- List of registered clients.
+- **Actions**: Issue Token, Revoke, Manage Scopes.
+
+### API Keys
+
+- List of long-lived API keys.
+- **Actions**: Issue New Key, Rotate Key, Revoke.
+
+## 8. Settings / Tenant
+
+- **Tenant Metadata**: Name, ID.
+- **Deactivate Tenant**: Danger zone.
+
+## Component Inventory
+
+| Component         | Usage                                                     |
+| ----------------- | --------------------------------------------------------- |
+| **StatusBadge**   | Visual indicator for Success, Failure, Running, Warning.  |
+| **CodeBlock**     | For displaying JSON payloads, Logs, and Cron expressions. |
+| **DataTable**     | Sortable, filterable table with row actions.              |
+| **Drawer**        | Slide-over panel for details (Jobs, Executions).          |
+| **ConfirmDialog** | For destructive actions (Delete, Revoke).                 |
+| **MetricCard**    | Dashboard summary widgets.                                |
+| **LogViewer**     | Virtualized list for execution logs.                      |

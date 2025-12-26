@@ -2,7 +2,7 @@ export interface TenantScopedParams {
     tenantId: string;
 }
 
-interface TenantEnvironmentOptionalParams extends TenantScopedParams {
+export interface TenantEnvironmentOptionalParams extends TenantScopedParams {
     environment?: string | null;
 }
 
@@ -44,6 +44,10 @@ export interface WebhookInvocationParams {
 
 export interface ExecutionLogParams extends TenantScopedParams {
     executionId: string;
+}
+
+export interface WorkEventsParams extends ExecutionLogParams {
+    environment?: string | null;
 }
 
 export interface ExecutionParams extends TenantEnvironmentParams {
