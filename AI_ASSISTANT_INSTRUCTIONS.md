@@ -33,7 +33,7 @@ All AI-generated contributions must align with the architectural ground rules do
 
    - The initial target is **self-hosted, private-network, single-tenant** deployments.
    - For password auth, require explicit `tenantId` (no `DefaultTenant`/tenant reference fallback).
-   - Do not introduce new external identity provider flows or user/tenant membership models unless explicitly requested; federated login is deferred to later versions (see `CLOUD-CONCEPT.md` / `CLOUD-REPO-SPLIT.md`).
+   - Do not introduce new external identity provider flows or user/tenant membership models unless explicitly requested; federated login is deferred to later versions.
 
 6. **Breaking Changes Before GA**
 

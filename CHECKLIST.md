@@ -145,7 +145,7 @@
       - Semantik: CreateIfMissing vs ForceUpdate (Update nur bei passendem `managedBy`, sonst skip).
       - Samples: Platform Samples (ApiHost/WorkerHost) aktivieren sync per config; Namings/ManagedBy stabil (nicht InstanceId-basiert).
       - Tests: Core-HostedService Tests analog Trigger-Seeding (Off/Validate/CreateIfMissing/ForceUpdate + managedBy-mismatch).
-      - Docs: technische Doku (außerhalb `docs/`) wenn nötig; public docs bleiben Englisch-only und ohne Cloud-Bezug.
+      - Docs: technische Doku (außerhalb `docs/`) wenn nötig; public docs bleiben Englisch-only.
 - [x] Runner Identity + Availability (für verteilte Runner): Modell/Schema für Runner-Identität (z.B. RunnerId + RunnerSecret/ApiKey) und Online/Offline-Status (Heartbeat/Lease), damit UI/Operatoren sehen, welche Runner gerade verfügbar sind. (2025-12-26)
 - [x] Fremdsprachige Clients als Job-Runner (Go/Node/Python): Lösungsweg definieren und planen. (2025-12-26)
 
@@ -177,6 +177,6 @@
 - [ ] (nice-to-have) Solutionweit usings aufräumen?
 - [ ] CI Static Analysis / SAST: entscheiden und ggf. integrieren
   - [ ] CodeQL-Code-Scanning Workflow hinzufügen (optional; abhängig von GHAS/Repo-Settings)
-  - [ ] SonarQube/SonarCloud evaluieren (Signal/Noise, Kosten, Gate-Policy)
+  - [ ] SonarQube evaluieren (Signal/Noise, Kosten, Gate-Policy)
   - [ ] Roslyn-Analyzer-Set/Ruleset prüfen (z.B. .editorconfig/Directory.Build.props) und nur High-Signal-Regeln aktivieren
 - [x] Aktuell haben wir in den Endpunkten (src\Croniq.Api) unterschiedliches Auth-Handling in den Extensions. Bitte normalisieren, gerne auch per FluentExtension und mit Scope Filter (multiple). (2025-12-22)
