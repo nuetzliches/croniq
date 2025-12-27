@@ -52,6 +52,8 @@ public sealed class SqlServerDbContext(DbContextOptions<SqlServerDbContext> opti
     {
         builder.ToTable("Tenants", "croniq");
         builder.HasKey(x => x.TenantId);
+        builder.Property(x => x.Reference).IsRequired().HasMaxLength(64);
+        builder.HasIndex(x => x.Reference).IsUnique();
         builder.Property(x => x.CreatedAtUtc).HasDefaultValueSql("sysutcdatetime()");
         builder.Property(x => x.UpdatedAtUtc).HasDefaultValueSql("sysutcdatetime()");
     }

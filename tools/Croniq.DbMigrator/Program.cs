@@ -254,13 +254,14 @@ static async Task SeedAdminAsync(IServiceProvider provider, CancellationToken to
     var tenants = scope.ServiceProvider.GetRequiredService<ITenantStore>();
     var users = scope.ServiceProvider.GetRequiredService<IPasswordUserStore>();
 
-    // Keep seeding consistent by defaulting to CroniqOptions' default tenant id ("default")
-    // when no explicit seed tenant id is provided.
-    var tenantIdRaw = Environment.GetEnvironmentVariable("CRONIQ_SEED_TENANT_ID");
-    var tenantId = string.IsNullOrWhiteSpace(tenantIdRaw)
-        ? new CroniqOptions().TenantId.Trim()
-        : tenantIdRaw.Trim();
-    var tenantName = (Environment.GetEnvironmentVariable("CRONIQ_SEED_TENANT_NAME") ?? "Default").Trim();
+    var tenantId = ResolveEnv("CRONIQ_SEED_TENANT_ID")
+        ?? ResolveEnv("CRONIQ_CORE_TENANT_ID")
+        ?? new CroniqOptions().TenantId.Trim();
+    var tenantName = ResolveEnv("CRONIQ_SEED_TENANT_NAME")
+        ?? ResolveEnv("CRONIQ_CORE_TENANT_NAME")
+        ?? tenantId;
+    var tenantReference = ResolveEnv("CRONIQ_SEED_TENANT_REFERENCE")
+        ?? tenantId;
     var username = (Environment.GetEnvironmentVariable("CRONIQ_SEED_ADMIN_USERNAME") ?? "admin").Trim();
     var password = (Environment.GetEnvironmentVariable("CRONIQ_SEED_ADMIN_PASSWORD") ?? "admin").Trim();
     var passwordChangeRequired = Environment.GetEnvironmentVariable("CRONIQ_SEED_ADMIN_PASSWORD_CHANGE_REQUIRED");
@@ -272,9 +273,9 @@ static async Task SeedAdminAsync(IServiceProvider provider, CancellationToken to
 
     var seedScopesRaw = (Environment.GetEnvironmentVariable("CRONIQ_SEED_ADMIN_SCOPES") ?? string.Empty).Trim();
 
-    if (tenantIdRaw is not null && string.IsNullOrWhiteSpace(tenantIdRaw))
+    if (string.IsNullOrWhiteSpace(tenantId))
     {
-        logger.LogWarning("Admin seeding enabled but CRONIQ_SEED_TENANT_ID is empty; skipping.");
+        logger.LogWarning("Admin seeding enabled but tenant id could not be resolved; set CRONIQ_SEED_TENANT_ID or CRONIQ_CORE_TENANT_ID. Skipping.");
         return;
     }
 
@@ -284,7 +285,7 @@ static async Task SeedAdminAsync(IServiceProvider provider, CancellationToken to
         return;
     }
 
-    var tenant = await tenants.CreateAsync(new TenantCreateRequest(tenantName, tenantId), token).ConfigureAwait(false);
+    var tenant = await tenants.CreateAsync(new TenantCreateRequest(tenantName, tenantId, tenantReference), token).ConfigureAwait(false);
 
     var existing = await users.FindByUsernameAsync(tenant.TenantId, username, token).ConfigureAwait(false);
     if (existing is not null && !overwrite)
@@ -380,6 +381,17 @@ static IReadOnlyCollection<string> GetAllKnownScopes()
         .Distinct(StringComparer.OrdinalIgnoreCase)
         .OrderBy(scope => scope, StringComparer.OrdinalIgnoreCase)
         .ToArray();
+}
+
+static string? ResolveEnv(string name)
+{
+    var raw = Environment.GetEnvironmentVariable(name);
+    if (string.IsNullOrWhiteSpace(raw))
+    {
+        return null;
+    }
+
+    return raw.Trim();
 }
 
 static bool IsDatabaseProvisioningError(SqlException exception)

@@ -32,6 +32,9 @@ public sealed class SqlServerTenantStore : ITenantStore
         var trimmedName = request.Name.Trim();
         await using var db = await _dbContextFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
         var now = _timeProvider.GetUtcNow().UtcDateTime;
+        var reference = string.IsNullOrWhiteSpace(request.Reference)
+            ? tenantId
+            : request.Reference.Trim();
 
         var entity = await db.Tenants
             .FirstOrDefaultAsync(t => t.TenantId == tenantId, cancellationToken)
@@ -42,6 +45,7 @@ public sealed class SqlServerTenantStore : ITenantStore
             entity = new TenantEntity
             {
                 TenantId = tenantId,
+                Reference = reference,
                 Name = trimmedName,
                 IsActive = true,
                 CreatedAtUtc = now,
@@ -52,6 +56,7 @@ public sealed class SqlServerTenantStore : ITenantStore
         else
         {
             entity.Name = trimmedName;
+            entity.Reference = reference;
             entity.IsActive = true;
             entity.UpdatedAtUtc = now;
         }
@@ -114,6 +119,7 @@ public sealed class SqlServerTenantStore : ITenantStore
             entity.TenantId,
             entity.Name,
             entity.IsActive,
-            new DateTimeOffset(createdAt));
+            new DateTimeOffset(createdAt),
+            entity.Reference);
     }
 }

@@ -23,6 +23,7 @@ namespace Croniq.Data.SqlServer.Migrations
                 columns: table => new
                 {
                     TenantId = table.Column<string>(type: "nvarchar(64)", maxLength: 64, nullable: false),
+                    Reference = table.Column<string>(type: "nvarchar(64)", maxLength: 64, nullable: false),
                     Name = table.Column<string>(type: "nvarchar(256)", maxLength: 256, nullable: false),
                     IsActive = table.Column<bool>(type: "bit", nullable: false),
                     CreatedAtUtc = table.Column<DateTime>(type: "datetime2", nullable: false, defaultValueSql: "sysutcdatetime()"),
@@ -32,6 +33,13 @@ namespace Croniq.Data.SqlServer.Migrations
                 {
                     table.PrimaryKey("PK_Tenants", x => x.TenantId);
                 });
+
+            migrationBuilder.CreateIndex(
+                name: "IX_Tenants_Reference",
+                schema: "croniq",
+                table: "Tenants",
+                column: "Reference",
+                unique: true);
 
             migrationBuilder.CreateTable(
                 name: "ApiClients",

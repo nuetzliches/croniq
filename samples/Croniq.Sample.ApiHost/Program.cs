@@ -147,11 +147,18 @@ if (app.Environment.IsDevelopment())
         }
 
         // Prefer CRONIQ_SEED_* env vars so Sample.ApiHost and devstack db-migrator seed the same tenant/user by default.
-        var tenantId = Env("CRONIQ_SEED_TENANT_ID") ?? seedSection["TenantId"]?.Trim();
-        tenantId ??= "default";
+        var tenantId = Env("CRONIQ_SEED_TENANT_ID")
+            ?? Env("CRONIQ_CORE_TENANT_ID")
+            ?? seedSection["TenantId"]?.Trim();
+        tenantId = string.IsNullOrWhiteSpace(tenantId) ? "default" : tenantId;
 
-        var tenantName = Env("CRONIQ_SEED_TENANT_NAME") ?? seedSection["TenantName"]?.Trim();
-        tenantName ??= "Croniq Dev";
+        var tenantName = Env("CRONIQ_SEED_TENANT_NAME")
+            ?? Env("CRONIQ_CORE_TENANT_NAME")
+            ?? seedSection["TenantName"]?.Trim();
+        tenantName = string.IsNullOrWhiteSpace(tenantName) ? tenantId : tenantName;
+
+        var tenantReference = Env("CRONIQ_SEED_TENANT_REFERENCE")
+            ?? tenantId;
 
         var username = Env("CRONIQ_SEED_ADMIN_USERNAME") ?? seedSection["Username"]?.Trim();
         username ??= "admin";
@@ -162,7 +169,7 @@ if (app.Environment.IsDevelopment())
         var scopes = ResolveSeedScopes(Env("CRONIQ_SEED_ADMIN_SCOPES"));
 
         var tenants = services.GetRequiredService<ITenantStore>();
-        var tenant = await tenants.CreateAsync(new TenantCreateRequest(tenantName, tenantId));
+        var tenant = await tenants.CreateAsync(new TenantCreateRequest(tenantName, tenantId, tenantReference));
 
         var hasher = new PasswordHasher<object>();
         var passwordHash = hasher.HashPassword(new object(), password);

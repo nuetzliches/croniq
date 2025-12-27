@@ -37,11 +37,13 @@ public sealed record TenantDescriptor(
     string TenantId,
     string Name,
     bool IsActive,
-    DateTimeOffset CreatedAt);
+    DateTimeOffset CreatedAt,
+    string Reference = "");
 
 public sealed record TenantCreateRequest(
     string Name,
-    string TenantId);
+    string TenantId,
+    string? Reference = null);
 
 public sealed record UserDescriptor(
     string UserId,

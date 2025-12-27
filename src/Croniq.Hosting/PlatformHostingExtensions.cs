@@ -143,7 +143,8 @@ public static class PlatformHostingExtensions
                     TenantId: authOpts.InMemory.TenantId,
                     Name: $"{authOpts.InMemory.TenantId} (in-memory)",
                     IsActive: true,
-                    CreatedAtUtc: DateTimeOffset.UtcNow));
+                    CreatedAtUtc: DateTimeOffset.UtcNow,
+                    Reference: authOpts.InMemory.TenantId));
             });
         }
 

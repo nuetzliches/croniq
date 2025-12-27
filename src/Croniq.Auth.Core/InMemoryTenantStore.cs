@@ -10,7 +10,8 @@ public sealed record TenantSeed(
     string TenantId,
     string Name,
     bool IsActive = true,
-    DateTimeOffset? CreatedAtUtc = null);
+    DateTimeOffset? CreatedAtUtc = null,
+    string? Reference = null);
 
 public sealed class InMemoryTenantStore : ITenantStore
 {
@@ -34,6 +35,7 @@ public sealed class InMemoryTenantStore : ITenantStore
             var descriptor = new TenantRecord(
                 seed.TenantId.Trim(),
                 seed.Name.Trim(),
+                seed.Reference?.Trim() ?? seed.TenantId.Trim(),
                 seed.IsActive,
                 seed.CreatedAtUtc ?? DateTimeOffset.UtcNow);
 
@@ -51,17 +53,20 @@ public sealed class InMemoryTenantStore : ITenantStore
         TenantRecord record;
 
         var tenantId = request.TenantId.Trim();
+        var reference = string.IsNullOrWhiteSpace(request.Reference)
+            ? tenantId
+            : request.Reference.Trim();
 
         lock (_sync)
         {
             if (_tenantsById.TryGetValue(tenantId, out var existing))
             {
-                record = existing with { Name = trimmedName, IsActive = true };
+                record = existing with { Name = trimmedName, Reference = reference, IsActive = true };
                 _tenantsById[tenantId] = record;
             }
             else
             {
-                record = new TenantRecord(tenantId, trimmedName, true, DateTimeOffset.UtcNow);
+                record = new TenantRecord(tenantId, trimmedName, reference, true, DateTimeOffset.UtcNow);
                 _tenantsById[tenantId] = record;
             }
         }
@@ -113,12 +118,14 @@ public sealed class InMemoryTenantStore : ITenantStore
             record.TenantId,
             record.Name,
             record.IsActive,
-            record.CreatedAtUtc);
+            record.CreatedAtUtc,
+            record.Reference);
     }
 
     private sealed record TenantRecord(
         string TenantId,
         string Name,
+        string Reference,
         bool IsActive,
         DateTimeOffset CreatedAtUtc);
 }

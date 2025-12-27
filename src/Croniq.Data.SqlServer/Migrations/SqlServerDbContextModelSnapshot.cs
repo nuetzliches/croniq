@@ -459,6 +459,11 @@ namespace Croniq.Data.SqlServer.Migrations
                         .HasMaxLength(64)
                         .HasColumnType("nvarchar(64)");
 
+                    b.Property<string>("Reference")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
                     b.Property<DateTime>("CreatedAtUtc")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("datetime2")
@@ -478,6 +483,9 @@ namespace Croniq.Data.SqlServer.Migrations
                         .HasDefaultValueSql("sysutcdatetime()");
 
                     b.HasKey("TenantId");
+
+                    b.HasIndex("Reference")
+                        .IsUnique();
 
                     b.ToTable("Tenants", "croniq");
                 });

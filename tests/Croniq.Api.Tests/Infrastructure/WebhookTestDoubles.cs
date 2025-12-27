@@ -861,6 +861,9 @@ public sealed class TestTenantStore : ITenantStore
         var tenantId = string.IsNullOrWhiteSpace(request.TenantId)
             ? GenerateTenantId()
             : request.TenantId.Trim();
+        var reference = string.IsNullOrWhiteSpace(request.Reference)
+            ? tenantId
+            : request.Reference.Trim();
 
         var trimmedName = request.Name.Trim();
         TenantDescriptor descriptor;
@@ -869,12 +872,12 @@ public sealed class TestTenantStore : ITenantStore
         {
             if (_tenants.TryGetValue(tenantId, out var existing))
             {
-                descriptor = existing with { Name = trimmedName, IsActive = true };
+                descriptor = existing with { Name = trimmedName, Reference = reference, IsActive = true };
                 _tenants[tenantId] = descriptor;
             }
             else
             {
-                descriptor = new TenantDescriptor(tenantId, trimmedName, true, DateTimeOffset.UtcNow);
+                descriptor = new TenantDescriptor(tenantId, trimmedName, true, DateTimeOffset.UtcNow, reference);
                 _tenants[descriptor.TenantId] = descriptor;
             }
         }
@@ -941,7 +944,8 @@ public sealed class TestTenantStore : ITenantStore
                 TestCallerContextFactory.DefaultTenantId,
                 "Integration Tenant",
                 true,
-                DateTimeOffset.UtcNow);
+                DateTimeOffset.UtcNow,
+                TestCallerContextFactory.DefaultTenantId);
 
             _tenants[descriptor.TenantId] = descriptor;
         }
