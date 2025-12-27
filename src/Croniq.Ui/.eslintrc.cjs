@@ -28,6 +28,17 @@ module.exports = {
       ],
       rules: {
         '@angular-eslint/component-class-suffix': 'off',
+        '@angular-eslint/prefer-standalone': 'off',
+        '@angular-eslint/contextual-lifecycle': 'error',
+        '@angular-eslint/no-conflicting-lifecycle': 'error',
+        '@angular-eslint/no-input-rename': 'error',
+        '@angular-eslint/no-inputs-metadata-property': 'error',
+        '@angular-eslint/no-output-native': 'error',
+        '@angular-eslint/no-output-on-prefix': 'error',
+        '@angular-eslint/no-output-rename': 'error',
+        '@angular-eslint/no-outputs-metadata-property': 'error',
+        '@angular-eslint/use-lifecycle-interface': 'error',
+        '@angular-eslint/use-pipe-transform-interface': 'error',
         '@typescript-eslint/no-floating-promises': 'error',
         '@typescript-eslint/no-misused-promises': 'error',
         '@typescript-eslint/no-unused-vars': [
@@ -36,6 +47,10 @@ module.exports = {
         ],
         'no-restricted-syntax': [
           'error',
+          {
+            selector: "Property[key.name='standalone'][value.value=true]",
+            message: 'The "standalone" property is true by default in Angular v19+ and should not be explicitly set.',
+          },
           {
             selector:
               "MethodDefinition[key.name='ngOnInit'],MethodDefinition[key.name='ngOnDestroy'],MethodDefinition[key.name='ngOnChanges'],MethodDefinition[key.name='ngAfterViewInit'],MethodDefinition[key.name='ngAfterViewChecked'],MethodDefinition[key.name='ngAfterContentInit'],MethodDefinition[key.name='ngAfterContentChecked'],MethodDefinition[key.name='ngDoCheck'],MethodDefinition[key.name='ngDoBootstrap']",

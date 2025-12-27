@@ -25,6 +25,7 @@
     </div>
     <button
       type="button"
+      (click)="createSchedule()"
       class="rounded-lg bg-accent px-4 py-2 text-sm font-semibold text-white transition hover:bg-accent-hover"
     >
       Create Schedule
@@ -43,37 +44,61 @@
               <th class="px-6 py-3 font-medium">Cron</th>
               <th class="px-6 py-3 font-medium">Next Fire</th>
               <th class="px-6 py-3 font-medium">Status</th>
+              <th class="px-6 py-3 font-medium text-right">Actions</th>
             </tr>
           </thead>
           <tbody class="divide-y divide-white/10">
             @if (loading()) {
               <tr>
-                <td colspan="5" class="px-6 py-8 text-center text-muted">Loading schedules...</td>
+                <td colspan="6" class="px-6 py-8 text-center text-muted">Loading schedules...</td>
               </tr>
             } @else if (schedules().length === 0) {
               <tr>
-                <td colspan="5" class="px-6 py-8 text-center text-muted">No schedules found.</td>
+                <td colspan="6" class="px-6 py-8 text-center text-muted">No schedules found.</td>
               </tr>
             } @else {
-              @for (schedule of schedules(); track schedule.triggerId) {
-                <tr class="hover:bg-white/5">
-                  <td class="px-6 py-4 font-medium text-primary">{{ schedule.triggerId }}</td>
-                  <td class="px-6 py-4 text-muted">{{ schedule.jobKey }}</td>
-                  <td class="px-6 py-4 font-mono text-xs text-muted">{{ schedule.cronExpression }}</td>
+              @for (schedule of schedules(); track schedule.id) {
+                <tr class="hover:bg-white/5 group">
+                  <td class="px-6 py-4 font-medium text-primary">{{ schedule.id }}</td>
+                  <td class="px-6 py-4 text-muted">{{ schedule.name }}</td>
+                  <td class="px-6 py-4 font-mono text-xs text-muted">{{ schedule.cron }}</td>
                   <td class="px-6 py-4 text-muted">
-                    <!-- Mock data for now -->
-                    Tomorrow 00:00
+                    {{ schedule.nextFire | date:'short' }}
                   </td>
                   <td class="px-6 py-4">
                     <span
                       class="inline-flex items-center rounded-full px-2 py-1 text-xs font-medium"
-                      [class.bg-success/10]="schedule.enabled"
-                      [class.text-success]="schedule.enabled"
-                      [class.bg-white/10]="!schedule.enabled"
-                      [class.text-muted]="!schedule.enabled"
+                      [class.bg-success/10]="schedule.state === 'active'"
+                      [class.text-success]="schedule.state === 'active'"
+                      [class.bg-white/10]="schedule.state !== 'active'"
+                      [class.text-muted]="schedule.state !== 'active'"
                     >
-                      {{ schedule.enabled ? 'Enabled' : 'Disabled' }}
+                      {{ schedule.state }}
                     </span>
+                  </td>
+                  <td class="px-6 py-4 text-right">
+                    <div class="flex items-center justify-end gap-2 opacity-0 transition group-hover:opacity-100">
+                      <button
+                        type="button"
+                        (click)="editSchedule(schedule)"
+                        class="rounded p-1 text-muted hover:bg-white/10 hover:text-white"
+                        title="Edit"
+                      >
+                        <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                        </svg>
+                      </button>
+                      <button
+                        type="button"
+                        (click)="deleteSchedule(schedule.id)"
+                        class="rounded p-1 text-muted hover:bg-danger/10 hover:text-danger"
+                        title="Delete"
+                      >
+                        <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                        </svg>
+                      </button>
+                    </div>
                   </td>
                 </tr>
               }
@@ -88,3 +113,11 @@
     }
   </div>
 </div>
+
+@if (showDialog()) {
+  <app-schedule-dialog
+    [schedule]="editingSchedule()"
+    (save)="onSave($event)"
+    (closeDialog)="onCancel()"
+  ></app-schedule-dialog>
+}

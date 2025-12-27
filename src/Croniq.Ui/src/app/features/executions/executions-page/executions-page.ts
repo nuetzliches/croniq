@@ -1,5 +1,5 @@
+import { DatePipe } from '@angular/common';
 import { ChangeDetectionStrategy, Component, signal } from '@angular/core';
-import { CommonModule } from '@angular/common';
 
 interface Execution {
   id: string;
@@ -12,8 +12,7 @@ interface Execution {
 
 @Component({
   selector: 'cq-executions-page',
-  standalone: true,
-  imports: [CommonModule],
+  imports: [DatePipe],
   templateUrl: './executions-page.html',
   changeDetection: ChangeDetectionStrategy.OnPush,
 })

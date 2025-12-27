@@ -1,5 +1,5 @@
-import { ChangeDetectionStrategy, Component, signal, computed } from '@angular/core';
-import { CommonModule } from '@angular/common';
+import { DatePipe } from '@angular/common';
+import { ChangeDetectionStrategy, Component, computed, signal } from '@angular/core';
 
 interface Runner {
   id: string;
@@ -13,8 +13,7 @@ interface Runner {
 
 @Component({
   selector: 'cq-runners-page',
-  standalone: true,
-  imports: [CommonModule],
+  imports: [DatePipe],
   templateUrl: './runners-page.html',
   changeDetection: ChangeDetectionStrategy.OnPush,
 })

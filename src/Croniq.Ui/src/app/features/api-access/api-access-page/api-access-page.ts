@@ -1,5 +1,5 @@
+import { DatePipe } from '@angular/common';
 import { ChangeDetectionStrategy, Component, signal } from '@angular/core';
-import { CommonModule } from '@angular/common';
 
 interface ApiKey {
   id: string;
@@ -12,8 +12,7 @@ interface ApiKey {
 
 @Component({
   selector: 'cq-api-access-page',
-  standalone: true,
-  imports: [CommonModule],
+  imports: [DatePipe],
   templateUrl: './api-access-page.html',
   changeDetection: ChangeDetectionStrategy.OnPush,
 })

@@ -1,10 +1,8 @@
 import { ChangeDetectionStrategy, Component, signal } from '@angular/core';
-import { CommonModule } from '@angular/common';
 
 @Component({
   selector: 'cq-settings-page',
-  standalone: true,
-  imports: [CommonModule],
+  imports: [],
   templateUrl: './settings-page.html',
   changeDetection: ChangeDetectionStrategy.OnPush,
 })

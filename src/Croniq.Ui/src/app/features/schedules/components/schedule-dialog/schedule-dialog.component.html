@@ -1,0 +1,107 @@
+<div
+  class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm"
+  role="dialog"
+  aria-modal="true"
+>
+  <div class="w-full max-w-lg rounded-xl border border-white/10 bg-surface shadow-2xl">
+    <form (submit)="onSubmit()">
+      <!-- Header -->
+      <div class="flex items-center justify-between border-b border-white/10 px-6 py-4">
+        <h2 class="text-lg font-semibold text-white">
+          {{ isEditMode() ? 'Edit Schedule' : 'Create Schedule' }}
+        </h2>
+        <button type="button" (click)="onCancel()" class="text-muted hover:text-white">
+          <span class="sr-only">Close</span>
+          <svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              stroke-width="2"
+              d="M6 18L18 6M6 6l12 12"
+            />
+          </svg>
+        </button>
+      </div>
+
+      <!-- Body -->
+      <div class="space-y-4 px-6 py-6">
+        <!-- Job Key -->
+        <div>
+          <label for="jobKey" class="mb-1 block text-sm font-medium text-muted">Job Key</label>
+          <input
+            type="text"
+            id="jobKey"
+            [field]="myForm.jobKey"
+            class="w-full rounded-lg border border-white/10 bg-surface-alt px-3 py-2 text-sm text-white placeholder-muted focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+            placeholder="e.g. billing:invoice-generation"
+          />
+        </div>
+
+        <!-- Cron Expression -->
+        <div>
+          <label for="cronExpression" class="mb-1 block text-sm font-medium text-muted"
+            >Cron Expression</label
+          >
+          <input
+            type="text"
+            id="cronExpression"
+            [field]="myForm.cronExpression"
+            class="w-full rounded-lg border border-white/10 bg-surface-alt px-3 py-2 text-sm text-white placeholder-muted focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+            placeholder="e.g. 0 0 * * *"
+          />
+          <p class="mt-1 text-xs text-muted">
+            Standard cron syntax (min hour day month day-of-week)
+          </p>
+        </div>
+
+        <!-- Description -->
+        <div>
+          <label for="description" class="mb-1 block text-sm font-medium text-muted"
+            >Description</label
+          >
+          <textarea
+            id="description"
+            [field]="myForm.description"
+            rows="3"
+            class="w-full rounded-lg border border-white/10 bg-surface-alt px-3 py-2 text-sm text-white placeholder-muted focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+            placeholder="Optional description..."
+          ></textarea>
+        </div>
+
+        <!-- Enabled Toggle -->
+        <div class="flex items-center gap-2">
+          <input
+            type="checkbox"
+            id="enabled"
+            [field]="myForm.enabled"
+            class="h-4 w-4 rounded border-white/10 bg-surface-alt text-accent focus:ring-accent"
+          />
+          <label for="enabled" class="text-sm font-medium text-white">Enabled</label>
+        </div>
+
+        <!-- Hidden Trigger ID for Edit Mode -->
+        <input type="hidden" [field]="myForm.triggerId" />
+      </div>
+
+      <!-- Footer -->
+      <div
+        class="flex items-center justify-end gap-3 border-t border-white/10 px-6 py-4 bg-surface-alt/50 rounded-b-xl"
+      >
+        <button
+          type="button"
+          (click)="onCancel()"
+          class="rounded-lg px-4 py-2 text-sm font-medium text-muted hover:bg-white/5 hover:text-white transition"
+        >
+          Cancel
+        </button>
+        <button
+          type="submit"
+          [disabled]="myForm().invalid()"
+          class="rounded-lg bg-accent px-4 py-2 text-sm font-semibold text-white transition hover:bg-accent-hover disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          {{ isEditMode() ? 'Save Changes' : 'Create Schedule' }}
+        </button>
+      </div>
+    </form>
+  </div>
+</div>
