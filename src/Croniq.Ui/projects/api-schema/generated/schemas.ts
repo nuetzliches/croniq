@@ -30,6 +30,56 @@ export const CroniqTriggerSeedDefinition = z
 export type CroniqTriggerSeedDefinition = z.infer<
     typeof CroniqTriggerSeedDefinition
 >;
+export const ScheduleUpsertResult = z
+    .object({
+        triggerId: z.string().nullable(),
+        jobKey: z.string().nullable(),
+        scheduleExpression: z.string().nullable(),
+    })
+    .partial();
+export type ScheduleUpsertResult = z.infer<typeof ScheduleUpsertResult>;
+export const ScheduleResponse = z
+    .object({
+        triggerId: z.string().nullable(),
+        jobKey: z.string().nullable(),
+        cronExpression: z.string().nullable(),
+        tenantId: z.string().nullable(),
+        environmentTag: z.string().nullable(),
+        startAtUtc: z.iso.datetime({ offset: true }).nullable(),
+        endAtUtc: z.iso.datetime({ offset: true }).nullable(),
+        enabled: z.boolean(),
+        metadata: z.record(z.string(), z.string()).nullable(),
+        timeZoneId: z.string().nullable(),
+    })
+    .partial();
+export type ScheduleResponse = z.infer<typeof ScheduleResponse>;
+export const ScheduleDeadLetterResponse = z
+    .object({
+        id: z.number().int(),
+        triggerId: z.string().nullable(),
+        jobKey: z.string().nullable(),
+        tenantId: z.string().nullable(),
+        environmentTag: z.string().nullable(),
+        fireAtUtc: z.iso.datetime({ offset: true }),
+        reason: z.string().nullable(),
+        payload: z.string().nullable(),
+        metadata: z.record(z.string(), z.string()).nullable(),
+        createdAtUtc: z.iso.datetime({ offset: true }),
+        expiresAtUtc: z.iso.datetime({ offset: true }).nullable(),
+    })
+    .partial();
+export type ScheduleDeadLetterResponse = z.infer<
+    typeof ScheduleDeadLetterResponse
+>;
+export const ScheduleReplayResult = z
+    .object({
+        status: z.string().nullable(),
+        id: z.number().int(),
+        jobKey: z.string().nullable(),
+        triggerId: z.string().nullable(),
+    })
+    .partial();
+export type ScheduleReplayResult = z.infer<typeof ScheduleReplayResult>;
 export const UpsertWebhookEndpointRequest = z.object({
     hookKey: z.string().min(1),
     jobKey: z.string().min(1),
@@ -191,6 +241,10 @@ export const schemas = {
     UpsertTenantRequest,
     UpsertJobRequest,
     CroniqTriggerSeedDefinition,
+    ScheduleUpsertResult,
+    ScheduleResponse,
+    ScheduleDeadLetterResponse,
+    ScheduleReplayResult,
     UpsertWebhookEndpointRequest,
     RotateWebhookSecretRequest,
     CreateWebhookIpRuleRequest,

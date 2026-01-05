@@ -48,3 +48,14 @@ public sealed record ScheduleDeadLetterResponse(
     IReadOnlyDictionary<string, string>? Metadata,
     DateTimeOffset CreatedAtUtc,
     DateTimeOffset? ExpiresAtUtc);
+
+public sealed record ScheduleUpsertResult(
+    string TriggerId,
+    string JobKey,
+    string ScheduleExpression);
+
+public sealed record ScheduleReplayResult(
+    string Status,
+    long Id,
+    string JobKey,
+    string TriggerId);

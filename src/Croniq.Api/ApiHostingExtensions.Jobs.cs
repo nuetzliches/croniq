@@ -215,9 +215,11 @@ public static partial class ApiHostingExtensions
             await store.UpsertTriggerAsync(trigger, cancellationToken).ConfigureAwait(false);
             ApiMetrics.RecordScheduleUpsert(scope.TenantId, scope.EnvironmentTag, jobKey.Value);
 
-            return Results.Created($"/tenants/{tenantId}/schedules/{Uri.EscapeDataString(trigger.TriggerId)}", new { trigger.TriggerId, trigger.JobKey, trigger.ScheduleExpression });
+            return Results.Created($"/tenants/{tenantId}/schedules/{Uri.EscapeDataString(trigger.TriggerId)}", new ScheduleUpsertResult(trigger.TriggerId, trigger.JobKey, trigger.ScheduleExpression));
         })
         .WithDocs("Schedules_Upsert", "Create or update a schedule", "Registers a Cron-based trigger for the specified tenant-scoped job key.")
+        .Produces<ScheduleUpsertResult>(StatusCodes.Status201Created)
+        .Produces(StatusCodes.Status400BadRequest)
         .WithMetadata(new EndpointAuthExtensions.CroniqAuthEndpointGuardMetadata(
             EndpointAuthExtensions.CroniqAuthGuardKind.JobScopeDerived,
             new[] { CroniqScopes.SchedulesWrite },
@@ -259,6 +261,7 @@ public static partial class ApiHostingExtensions
             return Results.Ok(payload);
         })
         .WithDocs("Schedules_List", "List schedules", "Returns all persisted schedules for the tenant/environment scope, optionally filtered by job key.")
+        .Produces<ScheduleResponse[]>(StatusCodes.Status200OK)
         .RequireCroniqTenantScope(CroniqScopes.SchedulesWrite);
 
         app.MapGet("/tenants/{tenantId}/schedules/{triggerId}", async (
@@ -286,6 +289,8 @@ public static partial class ApiHostingExtensions
             return Results.Ok(ToScheduleResponse(match));
         })
         .WithDocs("Schedules_Get", "Get schedule", "Returns the persisted schedule metadata for the requested trigger identifier.")
+        .Produces<ScheduleResponse>(StatusCodes.Status200OK)
+        .Produces(StatusCodes.Status404NotFound)
         .RequireCroniqTenantScope(CroniqScopes.SchedulesWrite);
 
         app.MapDelete("/tenants/{tenantId}/schedules/{triggerId}", async (
@@ -307,6 +312,7 @@ public static partial class ApiHostingExtensions
             return Results.NoContent();
         })
         .WithDocs("Schedules_Delete", "Delete schedule", "Deletes the persisted trigger for the tenant/environment scope.")
+        .Produces(StatusCodes.Status204NoContent)
         .RequireCroniqTenantScope(CroniqScopes.SchedulesWrite);
     }
 

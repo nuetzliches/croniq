@@ -44,6 +44,7 @@ public static partial class ApiHostingExtensions
             return Results.Ok(response);
         })
         .WithDocs("ScheduleDeadLetters_List", "List schedule dead letters", "Enumerates failed trigger executions for investigation or replay.")
+        .Produces<List<ScheduleDeadLetterResponse>>(StatusCodes.Status200OK)
         .RequireCroniqTenantScope(CroniqScopes.SchedulesDeadLetter);
 
         app.MapPost("/tenants/{tenantId}/schedules/deadletters/{deadLetterId}/replay", async (
@@ -112,7 +113,7 @@ public static partial class ApiHostingExtensions
                 await pipeline.ExecuteAsync(execRequest, cancellationToken).ConfigureAwait(false);
                 await deadLetterStore.ResolveAsync(deadLetterId, scope, cancellationToken).ConfigureAwait(false);
                 replayActivity?.SetStatus(ActivityStatusCode.Ok);
-                return Results.Ok(new { status = "replayed", entry.Id, entry.JobKey, entry.TriggerId });
+                return Results.Ok(new ScheduleReplayResult("replayed", entry.Id, entry.JobKey, entry.TriggerId));
             }
             catch (Exception ex)
             {
@@ -122,6 +123,9 @@ public static partial class ApiHostingExtensions
             }
         })
         .WithDocs("ScheduleDeadLetters_Replay", "Replay schedule dead letter", "Re-dispatches a failed trigger execution via the job execution pipeline.")
+        .Produces<ScheduleReplayResult>(StatusCodes.Status200OK)
+        .Produces(StatusCodes.Status404NotFound)
+        .Produces(StatusCodes.Status500InternalServerError)
         .RequireCroniqTenantScope(CroniqScopes.SchedulesDeadLetter);
     }
 

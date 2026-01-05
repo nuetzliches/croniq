@@ -3,7 +3,11 @@ import type { EndpointDefinition } from '../schemas';
 import {
     UpsertTenantRequest,
     UpsertJobRequest,
+    ScheduleResponse,
     CroniqTriggerSeedDefinition,
+    ScheduleUpsertResult,
+    ScheduleDeadLetterResponse,
+    ScheduleReplayResult,
     UpsertWebhookEndpointRequest,
     RotateWebhookSecretRequest,
     CreateWebhookIpRuleRequest,
@@ -369,7 +373,7 @@ export const TenantsApi: EndpointDefinition[] = [
             },
             { name: 'jobKey', type: 'Query', schema: z.string().optional() },
         ],
-        response: z.void(),
+        response: z.array(ScheduleResponse),
     },
     {
         method: 'post',
@@ -385,7 +389,8 @@ export const TenantsApi: EndpointDefinition[] = [
                 schema: z.string().optional(),
             },
         ],
-        response: z.void(),
+        response: ScheduleUpsertResult,
+        errors: [{ status: 400, description: `Bad Request`, schema: z.void() }],
     },
     {
         method: 'get',
@@ -401,7 +406,8 @@ export const TenantsApi: EndpointDefinition[] = [
                 schema: z.string().optional(),
             },
         ],
-        response: z.void(),
+        response: ScheduleResponse,
+        errors: [{ status: 404, description: `Not Found`, schema: z.void() }],
     },
     {
         method: 'delete',
@@ -432,7 +438,7 @@ export const TenantsApi: EndpointDefinition[] = [
                 schema: z.string().optional(),
             },
         ],
-        response: z.void(),
+        response: z.array(ScheduleDeadLetterResponse),
     },
     {
         method: 'post',
@@ -448,7 +454,15 @@ export const TenantsApi: EndpointDefinition[] = [
                 schema: z.string().optional(),
             },
         ],
-        response: z.void(),
+        response: ScheduleReplayResult,
+        errors: [
+            { status: 404, description: `Not Found`, schema: z.void() },
+            {
+                status: 500,
+                description: `Internal Server Error`,
+                schema: z.void(),
+            },
+        ],
     },
     {
         method: 'post',

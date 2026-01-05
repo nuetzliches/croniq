@@ -40,7 +40,7 @@ Derived from [docs/deep-dive/designs/angular-ui-concept.md](docs/deep-dive/desig
     - `triggerId` in body is optional; if missing it defaults to `{jobKey}:{cronExpression}`.
     - If `triggerId` is provided, create/update is keyed by this id.
     - Important: if `cronExpression` changes and UI omits `triggerId`, the server will create a new trigger.
-  - [ ] OpenAPI responses are modeled (avoid `z.void()` for critical flows): schedules list/detail, upsert result (at least persisted `triggerId`), dead-letters list, replay result.
+  - [x] OpenAPI responses are modeled (avoid `z.void()` for critical flows): schedules list/detail, upsert result (at least persisted `triggerId`), dead-letters list, replay result.
   - [ ] Error behavior is stable and documented: `400` validation, `401/403`, `404`, and idempotency expectations for replay.
 - [ ] Document hosting decision (static assets behind Croniq.Api vs. dedicated `Croniq.Ui` container) and readiness/liveness expectations.
 - [ ] Validate new npm dependencies meet the MIT/Apache/BSD policy and record any exceptions before merge.
