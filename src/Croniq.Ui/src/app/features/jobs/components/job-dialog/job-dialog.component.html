@@ -1,0 +1,126 @@
+<div
+  class="flex h-full w-[500px] flex-col overflow-hidden rounded-xl border border-white/10 bg-surface shadow-2xl"
+>
+  <!-- Header -->
+  <header
+    class="flex items-center justify-between border-b border-white/10 bg-surface-alt px-6 py-4"
+  >
+    <h2 class="text-lg font-semibold text-primary">
+      {{ isEdit ? 'Edit Job' : 'Create Job' }}
+    </h2>
+    <button (click)="close()" class="text-muted hover:text-primary">
+      <span class="sr-only">Close</span>
+      <svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        <path
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          stroke-width="2"
+          d="M6 18L18 6M6 6l12 12"
+        />
+      </svg>
+    </button>
+  </header>
+
+  <!-- Body -->
+  <div class="flex-1 overflow-y-auto p-6">
+    <form class="space-y-4" (submit)="$event.preventDefault(); save()">
+      <!-- Job Key -->
+      <div class="space-y-1">
+        <label for="jobKey" class="text-sm font-medium text-muted">Job Key</label>
+        @if (isEdit) {
+        <div
+          class="w-full rounded-lg border border-white/10 bg-surface-alt px-3 py-2 text-sm text-muted opacity-50"
+        >
+          {{ jobModel().jobKey }}
+        </div>
+        } @else {
+        <input
+          id="jobKey"
+          type="text"
+          [field]="jobForm.jobKey"
+          class="w-full rounded-lg border border-white/10 bg-surface-alt px-3 py-2 text-sm text-primary placeholder:text-muted focus:border-accent focus:outline-none"
+          placeholder="e.g. billing-sync"
+        />
+        @if (submitAttempted() && jobKeyInvalid()) {
+        <p class="text-xs text-danger">Job Key is required.</p>
+        } }
+      </div>
+
+      <!-- Namespace -->
+      <div class="space-y-1">
+        <label for="namespace" class="text-sm font-medium text-muted">Namespace</label>
+        <input
+          id="namespace"
+          type="text"
+          [field]="jobForm.namespace"
+          class="w-full rounded-lg border border-white/10 bg-surface-alt px-3 py-2 text-sm text-primary placeholder:text-muted focus:border-accent focus:outline-none"
+          placeholder="e.g. default"
+        />
+        @if (submitAttempted() && namespaceInvalid()) {
+        <p class="text-xs text-danger">Namespace is required.</p>
+        }
+      </div>
+
+      <!-- Name -->
+      <div class="space-y-1">
+        <label for="name" class="text-sm font-medium text-muted">Name</label>
+        <input
+          id="name"
+          type="text"
+          [field]="jobForm.name"
+          class="w-full rounded-lg border border-white/10 bg-surface-alt px-3 py-2 text-sm text-primary placeholder:text-muted focus:border-accent focus:outline-none"
+          placeholder="Display name"
+        />
+        @if (submitAttempted() && nameInvalid()) {
+        <p class="text-xs text-danger">Name is required.</p>
+        }
+      </div>
+
+      <!-- Variant -->
+      <div class="space-y-1">
+        <label for="variant" class="text-sm font-medium text-muted">Variant (Optional)</label>
+        <input
+          id="variant"
+          type="text"
+          [field]="jobForm.variant"
+          class="w-full rounded-lg border border-white/10 bg-surface-alt px-3 py-2 text-sm text-primary placeholder:text-muted focus:border-accent focus:outline-none"
+          placeholder="e.g. v1"
+        />
+      </div>
+
+      <!-- Description -->
+      <div class="space-y-1">
+        <label for="description" class="text-sm font-medium text-muted"
+          >Description (Optional)</label
+        >
+        <textarea
+          id="description"
+          [field]="jobForm.description"
+          rows="3"
+          class="w-full rounded-lg border border-white/10 bg-surface-alt px-3 py-2 text-sm text-primary placeholder:text-muted focus:border-accent focus:outline-none"
+          placeholder="Describe what this job does..."
+        ></textarea>
+      </div>
+    </form>
+  </div>
+
+  <!-- Footer -->
+  <footer
+    class="flex items-center justify-end gap-3 border-t border-white/10 bg-surface-alt px-6 py-4"
+  >
+    <button
+      type="button"
+      (click)="close()"
+      class="rounded-lg px-4 py-2 text-sm font-medium text-muted hover:bg-white/5 hover:text-primary"
+    >
+      Cancel
+    </button>
+    <button
+      type="button"
+      (click)="save()"
+      class="rounded-lg bg-accent px-4 py-2 text-sm font-semibold text-white transition hover:bg-accent-hover disabled:opacity-50"
+    >
+      Save
+    </button>
+  </footer>
+</div>

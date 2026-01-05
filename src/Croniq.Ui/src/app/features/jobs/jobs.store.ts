@@ -5,7 +5,8 @@ import { tenantRxResource } from '@core/resource/tenant-rx-resource';
 import { TenantContextService } from '@core/tenant-context/tenant-context.service';
 import { isoFromEpochMs, nowIso, nowMs } from '@core/time/clock';
 import { CRONIQ_API_CLIENT, CallerContext, CroniqApiClient } from 'data-access';
-import { EMPTY, catchError, finalize, map, of, tap } from 'rxjs';
+import { EMPTY, catchError, finalize, map, of, tap, forkJoin } from 'rxjs';
+import { JobResponse, ScheduleResponse, ExecutionResponse, UpsertJobRequest } from '@croniq/api-schema';
 
 export type ManualTriggerStatus = 'pending' | 'success' | 'error';
 export type ManualTriggerEntry = {
@@ -20,7 +21,16 @@ export type ManualTriggerEntry = {
 
 export type JobRegistryEntry = {
     jobKey: string;
+    namespace?: string;
+    name?: string;
+    variant?: string;
     description?: string;
+    metadata?: Record<string, string>;
+    scheduleCount: number;
+    lastExecution?: {
+        status: string;
+        time: string;
+    };
 };
 
 export type ExecutionSummary = {
@@ -45,9 +55,12 @@ export class JobsStore {
     private readonly jobRegistrySignal = signal<ReadonlyArray<JobRegistryEntry>>([]);
     private readonly jobRegistryErrorSignal = signal<string | null>(null);
 
-    private readonly jobRegistryResource = tenantRxResource<ReadonlyArray<JobRegistryEntry>, { tenantId: string; environment: string }>({
+    private readonly jobRegistryResource = tenantRxResource<
+        { jobs: JobResponse[]; schedules: ScheduleResponse[]; executions: ExecutionResponse[] },
+        { tenantId: string; environment: string }
+    >({
         command: 'jobs.list',
-        defaultValue: [],
+        defaultValue: { jobs: [], schedules: [], executions: [] },
         params: () => {
             const { tenantId, environment } = this.tenantContext.snapshot();
             return { tenantId, environment };
@@ -61,15 +74,33 @@ export class JobsStore {
             if (!tenantId) {
                 this.jobRegistryErrorSignal.set('Required context is missing — unable to load jobs.');
                 this.jobRegistrySignal.set([]);
-                return of([]);
+                return of({ jobs: [], schedules: [], executions: [] });
             }
 
-            const request$ = this.api.listJobs({ tenantId, environment }, requestOptions);
+            const jobs$ = this.api.listJobs({ tenantId, environment }, requestOptions).pipe(
+                map(res => Array.isArray(res) ? res as JobResponse[] : []),
+                catchError(() => of([] as JobResponse[]))
+            );
 
-            return request$.pipe(
-                map((response) => normalizeJobRegistry(response)),
-                tap((normalized) => {
+            const schedules$ = this.api.getSchedules({ tenantId, environment }, requestOptions).pipe(
+                catchError(() => of([] as ScheduleResponse[]))
+            );
+
+            // Fetch recent executions to correlate last run status
+            const executions$ = this.api.listExecutions({ tenantId, environment, limit: 100 }, requestOptions).pipe(
+                map(res => Array.isArray(res) ? res as ExecutionResponse[] : []),
+                catchError(() => of([] as ExecutionResponse[]))
+            );
+
+            return forkJoin({
+                jobs: jobs$,
+                schedules: schedules$,
+                executions: executions$
+            }).pipe(
+                map(data => {
+                    const normalized = normalizeJobRegistry(data.jobs, data.schedules, data.executions);
                     this.jobRegistrySignal.set(normalized);
+                    return data;
                 }),
                 catchError((error: unknown) => {
                     console.error('Failed to load job registry', error);
@@ -78,13 +109,11 @@ export class JobsStore {
                     });
                     if (authFailure) {
                         this.jobRegistryErrorSignal.set(authFailure.message);
-                        this.jobRegistrySignal.set([]);
-                        return of([]);
+                    } else {
+                        this.jobRegistryErrorSignal.set('Unable to load jobs from API.');
                     }
-
-                    this.jobRegistryErrorSignal.set('Unable to load jobs from API.');
                     this.jobRegistrySignal.set([]);
-                    return of([]);
+                    return of({ jobs: [], schedules: [], executions: [] });
                 }),
             );
         },
@@ -221,6 +250,9 @@ export class JobsStore {
     private readonly deleteJobLoadingSignal = signal(false);
     private readonly deleteJobErrorSignal = signal<string | null>(null);
 
+    private readonly upsertJobLoadingSignal = signal(false);
+    private readonly upsertJobErrorSignal = signal<string | null>(null);
+
     private readonly lastErrorSignal = signal<string | null>(null);
 
     readonly manualTriggers = this.triggerLog.asReadonly();
@@ -240,12 +272,56 @@ export class JobsStore {
     readonly jobDetailError = this.jobDetailErrorSignal.asReadonly();
     readonly deleteJobLoading = this.deleteJobLoadingSignal.asReadonly();
     readonly deleteJobError = this.deleteJobErrorSignal.asReadonly();
+    readonly upsertJobLoading = this.upsertJobLoadingSignal.asReadonly();
+    readonly upsertJobError = this.upsertJobErrorSignal.asReadonly();
 
     constructor() {
         queueMicrotask(() => {
             this.refreshJobRegistry();
             this.refreshExecutions();
         });
+    }
+
+    upsertJob(payload: UpsertJobRequest): void {
+        const { tenantId, environment } = this.tenantContext.snapshot();
+        if (!tenantId.trim()) {
+            this.upsertJobErrorSignal.set('Required context is missing — unable to upsert job.');
+            return;
+        }
+
+        this.upsertJobLoadingSignal.set(true);
+        this.upsertJobErrorSignal.set(null);
+
+        this.api
+            .upsertJob(
+                { tenantId, environment },
+                payload,
+                this.tenantContext.createRequestOptions('jobs.upsert', {
+                    tenantId,
+                    environment,
+                }),
+            )
+            .pipe(
+                tap(() => {
+                    this.refreshJobRegistry();
+                }),
+                catchError((error: unknown) => {
+                    console.error('Failed to upsert job', error);
+                    const authFailure = authFailureFromError(error, {
+                        forbidden: 'Forbidden (403) — your token is missing jobs permissions.',
+                    });
+                    if (authFailure) {
+                        this.upsertJobErrorSignal.set(authFailure.message);
+                        return EMPTY;
+                    }
+                    this.upsertJobErrorSignal.set('Unable to upsert job via API.');
+                    return EMPTY;
+                }),
+                finalize(() => {
+                    this.upsertJobLoadingSignal.set(false);
+                }),
+            )
+            .subscribe();
     }
 
     refreshExecutions(params: { jobKey?: string; limit?: number } = {}): void {
@@ -427,26 +503,67 @@ function createEntryId(): string {
         : `${nowMs()}-${Math.round(Math.random() * 1000)}`;
 }
 
-function normalizeJobRegistry(value: unknown): ReadonlyArray<JobRegistryEntry> {
-    if (!Array.isArray(value)) {
+function normalizeJobRegistry(
+    jobs: JobResponse[],
+    schedules: ScheduleResponse[],
+    executions: ExecutionResponse[]
+): ReadonlyArray<JobRegistryEntry> {
+    if (!Array.isArray(jobs)) {
         return [];
     }
 
     const entries: JobRegistryEntry[] = [];
-    for (const item of value) {
-        if (typeof item !== 'object' || item === null) {
-            continue;
+
+    // Index schedules by jobKey
+    const schedulesByJob = new Map<string, number>();
+    for (const s of schedules) {
+        if (s.jobKey) {
+            const count = schedulesByJob.get(s.jobKey) || 0;
+            schedulesByJob.set(s.jobKey, count + 1);
         }
-        const record = item as Record<string, unknown>;
-        const jobKey = typeof record['jobKey'] === 'string' ? record['jobKey'].trim() : '';
-        if (!jobKey) {
-            continue;
+    }
+
+    // Index latest execution by jobKey
+    const latestExecutionByJob = new Map<string, { status: string; time: string }>();
+    // Sort executions by time desc first (assuming they might not be sorted)
+    const sortedExecutions = [...executions].sort((a, b) => {
+        const tA = new Date(a.startedAtUtc || 0).getTime();
+        const tB = new Date(b.startedAtUtc || 0).getTime();
+        return tB - tA;
+    });
+
+    for (const ex of sortedExecutions) {
+        if (ex.jobKey && !latestExecutionByJob.has(ex.jobKey)) {
+            latestExecutionByJob.set(ex.jobKey, {
+                status: mapExecutionStatus(ex.status),
+                time: ex.startedAtUtc || ''
+            });
         }
-        const description = typeof record['description'] === 'string' ? record['description'].trim() : undefined;
-        entries.push({ jobKey, description: description || undefined });
+    }
+
+    for (const job of jobs) {
+        if (!job.jobKey) continue;
+
+        entries.push({
+            jobKey: job.jobKey,
+            namespace: job.namespace || undefined,
+            name: job.name || undefined,
+            variant: job.variant || undefined,
+            description: job.description || undefined,
+            metadata: job.metadata || undefined,
+            scheduleCount: schedulesByJob.get(job.jobKey) || 0,
+            lastExecution: latestExecutionByJob.get(job.jobKey)
+        });
     }
 
     return entries;
+}
+
+function mapExecutionStatus(status: any): string {
+    if (status === 1 || status === '1' || status === 'Success') return 'Success';
+    if (status === 2 || status === '2' || status === 'Failure') return 'Failure';
+    if (status === 0 || status === '0' || status === 'Pending') return 'Pending';
+    return 'Unknown';
 }
 
 function normalizeExecutions(value: unknown): ReadonlyArray<ExecutionSummary> {

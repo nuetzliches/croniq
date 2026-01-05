@@ -1,15 +1,21 @@
+import { Dialog } from '@angular/cdk/dialog';
+import { DatePipe } from '@angular/common';
 import { ChangeDetectionStrategy, Component, inject, signal } from '@angular/core';
-import { JobsStore } from '@features/jobs/jobs.store';
+import { UpsertJobRequest } from '@croniq/api-schema';
+import { JobDialogComponent } from '@features/jobs/components/job-dialog/job-dialog.component';
+import { JobRegistryEntry, JobsStore } from '@features/jobs/jobs.store';
+import { filter } from 'rxjs';
 
 @Component({
   selector: 'cq-jobs-page',
-  imports: [],
+  imports: [DatePipe],
   providers: [JobsStore],
   templateUrl: './jobs-page.html',
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class JobsPage {
   private readonly store = inject(JobsStore);
+  private readonly dialog = inject(Dialog);
 
   readonly jobs = this.store.jobRegistry;
   readonly loading = this.store.jobRegistryLoading;
@@ -28,5 +34,33 @@ export class JobsPage {
 
   refresh(): void {
     void this.store.refreshJobRegistry();
+  }
+
+  triggerJob(jobKey: string): void {
+    this.store.triggerJob(jobKey, {});
+  }
+
+  openJobDialog(job?: JobRegistryEntry): void {
+    const data: UpsertJobRequest | undefined = job
+      ? {
+        jobKey: job.jobKey,
+        namespace: job.namespace || 'default',
+        name: job.name || job.jobKey,
+        variant: job.variant || undefined,
+        description: job.description || undefined,
+        metadata: job.metadata || undefined,
+      }
+      : undefined;
+
+    this.dialog
+      .open<UpsertJobRequest>(JobDialogComponent, {
+        data,
+        disableClose: true,
+        panelClass: 'dialog-panel', // Ensure this class is defined in global styles or component styles
+      })
+      .closed.pipe(filter((result): result is UpsertJobRequest => !!result))
+      .subscribe((payload) => {
+        this.store.upsertJob(payload);
+      });
   }
 }

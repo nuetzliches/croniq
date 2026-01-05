@@ -22,6 +22,7 @@
     </div>
     <button
       type="button"
+      (click)="openJobDialog()"
       class="rounded-lg bg-accent px-4 py-2 text-sm font-semibold text-white transition hover:bg-accent-hover"
     >
       Create Job
@@ -43,37 +44,56 @@
         </thead>
         <tbody class="divide-y divide-white/10">
           @if (loading()) {
-            <tr>
-              <td colspan="5" class="px-6 py-8 text-center text-muted">Loading jobs...</td>
-            </tr>
+          <tr>
+            <td colspan="5" class="px-6 py-8 text-center text-muted">Loading jobs...</td>
+          </tr>
           } @else if (jobs().length === 0) {
-            <tr>
-              <td colspan="5" class="px-6 py-8 text-center text-muted">No jobs found.</td>
-            </tr>
-          } @else {
-            @for (job of jobs(); track job.jobKey) {
-              <tr class="group hover:bg-white/5">
-                <td class="px-6 py-4 font-medium text-primary">{{ job.jobKey }}</td>
-                <td class="px-6 py-4 text-muted">default</td>
-                <td class="px-6 py-4 text-muted">
-                  <!-- Mock data for now -->
-                  2 Schedules
-                </td>
-                <td class="px-6 py-4">
-                  <span class="inline-flex items-center gap-1.5 rounded-full bg-success/10 px-2 py-1 text-xs font-medium text-success">
-                    Success
-                  </span>
-                  <span class="ml-2 text-xs text-muted">2m ago</span>
-                </td>
-                <td class="px-6 py-4 text-right">
-                  <div class="flex justify-end gap-2 opacity-0 transition group-hover:opacity-100">
-                    <button class="text-xs font-medium text-accent hover:text-accent-hover">Trigger</button>
-                    <button class="text-xs font-medium text-muted hover:text-primary">Edit</button>
-                  </div>
-                </td>
-              </tr>
-            }
-          }
+          <tr>
+            <td colspan="5" class="px-6 py-8 text-center text-muted">No jobs found.</td>
+          </tr>
+          } @else { @for (job of jobs(); track job.jobKey) {
+          <tr class="group hover:bg-white/5">
+            <td class="px-6 py-4 font-medium text-primary">{{ job.jobKey }}</td>
+            <td class="px-6 py-4 text-muted">{{ job.namespace || 'default' }}</td>
+            <td class="px-6 py-4 text-muted">{{ job.scheduleCount }} Schedules</td>
+            <td class="px-6 py-4">
+              @if (job.lastExecution) {
+              <span
+                class="inline-flex items-center gap-1.5 rounded-full px-2 py-1 text-xs font-medium"
+                [class.bg-success-10]="job.lastExecution.status === 'Success'"
+                [class.text-success]="job.lastExecution.status === 'Success'"
+                [class.bg-danger-10]="job.lastExecution.status === 'Failure'"
+                [class.text-danger]="job.lastExecution.status === 'Failure'"
+                [class.bg-warning-10]="job.lastExecution.status === 'Pending'"
+                [class.text-warning]="job.lastExecution.status === 'Pending'"
+              >
+                {{ job.lastExecution.status }}
+              </span>
+              <span class="ml-2 text-xs text-muted">{{
+                job.lastExecution.time | date : 'short'
+              }}</span>
+              } @else {
+              <span class="text-xs text-muted">No runs yet</span>
+              }
+            </td>
+            <td class="px-6 py-4 text-right">
+              <div class="flex justify-end gap-2 opacity-0 transition group-hover:opacity-100">
+                <button
+                  (click)="triggerJob(job.jobKey)"
+                  class="text-xs font-medium text-accent hover:text-accent-hover"
+                >
+                  Trigger
+                </button>
+                <button
+                  (click)="openJobDialog(job)"
+                  class="text-xs font-medium text-muted hover:text-primary"
+                >
+                  Edit
+                </button>
+              </div>
+            </td>
+          </tr>
+          } }
         </tbody>
       </table>
     </div>
