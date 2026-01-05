@@ -1,5 +1,5 @@
 import { DatePipe } from '@angular/common';
-import { ChangeDetectionStrategy, Component, inject, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, effect, inject, signal } from '@angular/core';
 import { ScheduleSummary, UpsertScheduleRequest } from '@croniq/api-schema';
 import { ScheduleDialogComponent } from '@features/schedules/components/schedule-dialog/schedule-dialog.component';
 import { SchedulesStore } from './schedules.store';
@@ -30,6 +30,31 @@ export class SchedulesPage {
   // Dialog State
   showDialog = signal(false);
   editingSchedule = signal<UpsertScheduleRequest | null>(null);
+  loadingDetailId = signal<string | null>(null);
+
+  constructor() {
+    effect(() => {
+      const loadingId = this.loadingDetailId();
+      const detail = this.store.scheduleDetail();
+      const isLoading = this.store.scheduleDetailLoading();
+
+      if (loadingId && !isLoading && detail && detail.triggerId === loadingId) {
+        // Detail loaded, open dialog
+        const request: UpsertScheduleRequest = {
+          triggerId: detail.triggerId,
+          jobKey: detail.jobKey,
+          cronExpression: detail.cronExpression,
+          enabled: detail.enabled,
+          description: detail.description,
+          startAtUtc: detail.startAtUtc,
+          endAtUtc: detail.endAtUtc,
+        };
+        this.editingSchedule.set(request);
+        this.showDialog.set(true);
+        this.loadingDetailId.set(null);
+      }
+    });
+  }
 
   // Actions
   setViewMode(mode: 'list' | 'calendar' | 'dead-letters' | 'logs') {
@@ -42,17 +67,8 @@ export class SchedulesPage {
   }
 
   editSchedule(schedule: ScheduleSummary) {
-    // Map schedule to UpsertScheduleRequest
-    // Note: Some fields like jobKey are missing in summary and should ideally be fetched via detail
-    const request: UpsertScheduleRequest = {
-      triggerId: schedule.id,
-      jobKey: schedule.name, // Fallback to name for now, assuming it might be the key
-      cronExpression: schedule.cron,
-      enabled: schedule.state === 'active',
-      description: '',
-    };
-    this.editingSchedule.set(request);
-    this.showDialog.set(true);
+    this.loadingDetailId.set(schedule.id);
+    this.store.refreshScheduleDetail(schedule.id);
   }
 
   deleteSchedule(triggerId: string) {

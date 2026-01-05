@@ -10,7 +10,7 @@ describe('PasswordAuthService', () => {
     let apiClient: Pick<CroniqApiClient, 'passwordLogin'>;
     let authSession: Pick<
         AuthSessionService,
-        'storeSessionToken' | 'storeRefreshToken' | 'clearRefreshToken'
+        'storeSessionToken' | 'storeRefreshToken' | 'clearRefreshToken' | 'storeTenantId'
     >;
 
     beforeEach(() => {
@@ -22,6 +22,7 @@ describe('PasswordAuthService', () => {
             storeSessionToken: vi.fn(),
             storeRefreshToken: vi.fn(),
             clearRefreshToken: vi.fn(),
+            storeTenantId: vi.fn(),
         };
 
         TestBed.configureTestingModule({
@@ -41,12 +42,13 @@ describe('PasswordAuthService', () => {
             accessToken: 'access-123',
             expiresIn: 120,
             refreshToken: 'refresh-xyz',
+            tenantId: 'default',
         }));
 
         vi.useFakeTimers();
         vi.setSystemTime(new Date('2025-12-17T00:00:00.000Z'));
 
-        const result = await firstValueFrom(service.login({ username: 'alice', password: 'secret' }));
+        const result = await firstValueFrom(service.login({ username: 'alice', password: 'secret', tenantId: 'default' }));
 
         expect(apiClient.passwordLogin).toHaveBeenCalledWith({
             username: 'alice',
@@ -65,26 +67,37 @@ describe('PasswordAuthService', () => {
         expect(result.token).toBe('access-123');
         expect(result.refreshTokenPresent).toBe(true);
         expect(result.passwordChangeRequired).toBe(false);
-        expect(result.tenantId).toBe(null);
-        expect(result.tenantId).toBeTruthy();
+        expect(result.tenantId).toBe('default');
 
         vi.useRealTimers();
     });
 
     it('accepts plain string responses and clears refresh token', async () => {
-        (apiClient.passwordLogin as unknown as ReturnType<typeof vi.fn>).mockReturnValue(of('access-token-string'));
+        // Mock response must include tenantId claim or property if the service requires it.
+        // Since the service throws "missing tenantId in response" if not present,
+        // and "plain string" response usually implies just the token, we might need to mock the token decoding
+        // OR the service logic handles plain string by decoding it.
+        // Looking at the service code (not fully visible but implied), it calls `this.extract(response)`.
+        // If response is string, it treats it as token. Then it tries to get tenantId from it.
+        // So we need a token that has a tenant claim.
 
-        const result = await firstValueFrom(service.login({ username: 'alice', password: 'secret' }));
+        const tokenWithTenant =
+            'eyJhbGciOiJub25lIiwidHlwIjoiSldUIn0.' +
+            'eyJ0ZW5hbnQiOiJkZWZhdWx0In0.' + // tenant: default
+            'signature';
 
-        expect(authSession.storeSessionToken).toHaveBeenCalledWith('access-token-string', {
+        (apiClient.passwordLogin as unknown as ReturnType<typeof vi.fn>).mockReturnValue(of(tokenWithTenant));
+
+        const result = await firstValueFrom(service.login({ username: 'alice', password: 'secret', tenantId: 'default' }));
+
+        expect(authSession.storeSessionToken).toHaveBeenCalledWith(tokenWithTenant, {
             expiresAt: null,
             passwordChangeRequired: false,
         });
         expect(authSession.clearRefreshToken).toHaveBeenCalled();
         expect(result.refreshTokenPresent).toBe(false);
         expect(result.passwordChangeRequired).toBe(false);
-        expect(result.tenantId).toBe(null);
-        expect(result.tenantId).toBeTruthy();
+        expect(result.tenantId).toBe('default');
     });
 
     it('throws when response does not contain an access token', async () => {
@@ -92,7 +105,7 @@ describe('PasswordAuthService', () => {
             expiresIn: 60,
         }));
 
-        await expect(firstValueFrom(service.login({ username: 'alice', password: 'secret' }))).rejects.toThrow(
+        await expect(firstValueFrom(service.login({ username: 'alice', password: 'secret', tenantId: 'default' }))).rejects.toThrow(
             /unsupported response shape/i,
         );
 
@@ -112,7 +125,7 @@ describe('PasswordAuthService', () => {
             expiresIn: 120,
         }));
 
-        const result = await firstValueFrom(service.login({ username: 'alice', password: 'secret' }));
+        const result = await firstValueFrom(service.login({ username: 'alice', password: 'secret', tenantId: 'default' }));
 
         expect(result.tenantId).toBe('tn_test');
     });

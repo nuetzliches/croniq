@@ -89,7 +89,6 @@ describe('LoginPage', () => {
             expiresAt: null,
             refreshTokenPresent: false,
             passwordChangeRequired: false,
-            tenantId: null,
             tenantId: 'default',
             raw: {},
         }));
@@ -108,7 +107,6 @@ describe('LoginPage', () => {
             expiresAt: null,
             refreshTokenPresent: false,
             passwordChangeRequired: true,
-            tenantId: null,
             tenantId: 'default',
             raw: {},
         }));

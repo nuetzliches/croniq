@@ -110,15 +110,8 @@
             <input type="hidden" [field]="myForm.triggerId" />
           </div>
         } @else {
-          <div class="space-y-4">
-            <div class="rounded-lg border border-white/10 bg-surface-alt p-4">
-              <pre class="overflow-x-auto text-xs font-mono text-muted">{{ model() | json }}</pre>
-            </div>
-            @if (isEditMode()) {
-              <p class="text-xs text-muted">
-                Showing current form state. Original values are preserved until saved.
-              </p>
-            }
+          <div class="h-64 overflow-auto rounded-lg bg-surface-alt p-4">
+            <pre class="font-mono text-xs text-muted">{{ jsonPreview() }}</pre>
           </div>
         }
       </div>

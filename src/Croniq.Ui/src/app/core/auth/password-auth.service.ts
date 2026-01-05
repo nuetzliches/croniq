@@ -122,7 +122,11 @@ export class PasswordAuthService {
                     this.authSession.clearRefreshToken();
                 }
 
-                const tenantId = parsed.tenantId;
+                let tenantId = parsed.tenantId;
+                if (!tenantId && parsed.accessToken) {
+                    tenantId = extractTenantIdFromToken(parsed.accessToken);
+                }
+
                 if (!tenantId) {
                     throw new Error('Login failed: missing tenantId in response.');
                 }
@@ -247,6 +251,23 @@ function base64UrlDecodeToString(value: string): string | null {
     const padded = normalized + '='.repeat(padLength);
     try {
         return atob(padded);
+    } catch {
+        return null;
+    }
+}
+
+function extractTenantIdFromToken(token: string): string | null {
+    const parts = token.split('.');
+    if (parts.length !== 3) {
+        return null;
+    }
+    const payloadJson = base64UrlDecodeToString(parts[1]);
+    if (!payloadJson) {
+        return null;
+    }
+    try {
+        const payload = JSON.parse(payloadJson);
+        return (payload.tenantId || payload.tenant || null) as string | null;
     } catch {
         return null;
     }

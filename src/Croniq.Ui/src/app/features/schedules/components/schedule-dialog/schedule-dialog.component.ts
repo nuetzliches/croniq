@@ -38,7 +38,7 @@ const getScheduleFormModel = (schedule?: UpsertScheduleRequest | null): Schedule
 
 @Component({
     selector: 'app-schedule-dialog',
-    imports: [Field, JsonPipe],
+    imports: [Field],
     templateUrl: './schedule-dialog.component.html',
     changeDetection: ChangeDetectionStrategy.OnPush,
 })
@@ -53,6 +53,11 @@ export class ScheduleDialogComponent {
     readonly isEditMode = computed(() => !!this.schedule());
 
     readonly model = linkedSignal(() => getScheduleFormModel(this.schedule()));
+
+    readonly jsonPreview = computed(() => {
+        const model = this.model();
+        return JSON.stringify(model, null, 2);
+    });
 
     readonly myForm = form(this.model, (f) => {
         required(f.jobKey);
