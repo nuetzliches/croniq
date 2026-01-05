@@ -59,7 +59,7 @@ Note: not all SDKs implement these env vars yet; this is the target contract.
 
 Suggested queue record (JSONL):
 
-```
+```json
 { "type": "ack", "runner_id": "...", "lease_id": "...", "execution_id": "...", "payload": { ... }, "created_at_utc": "..." }
 { "type": "events", "runner_id": "...", "lease_id": "...", "execution_id": "...", "payload": { ... }, "created_at_utc": "..." }
 ```
@@ -70,4 +70,3 @@ Suggested queue record (JSONL):
 - `401/403`: fatal, stop worker and fix credentials.
 - `404/409`: lease invalid, drop local queue item.
 - `429/5xx`: retry with backoff.
-
