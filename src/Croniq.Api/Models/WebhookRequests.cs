@@ -43,6 +43,11 @@ public sealed record WebhookDeadLetterResponse(
     DateTimeOffset? NextAttemptAtUtc,
     DateTimeOffset? ExpiresAtUtc);
 
+public sealed record WebhookReplayResult(
+    string Status,
+    string Hook,
+    string Job);
+
 public sealed record RotateWebhookSecretRequest(
     int? ActivateInSeconds = null,
     int? GracePeriodSeconds = null,

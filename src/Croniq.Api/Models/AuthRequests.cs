@@ -22,3 +22,11 @@ public sealed record PasswordLogoutRequest(
 public sealed record PasswordChangePasswordRequest(
     string CurrentPassword,
     string NewPassword);
+
+public sealed record PasswordAuthResponse(
+    string TenantId,
+    string AccessToken,
+    string TokenType,
+    int? ExpiresIn,
+    string RefreshToken,
+    bool PasswordChangeRequired);

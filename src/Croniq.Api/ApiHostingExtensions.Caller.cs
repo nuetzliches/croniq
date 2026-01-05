@@ -1,4 +1,5 @@
 using System;
+using Croniq.Api.Models;
 using Croniq.Auth.Abstractions;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
@@ -17,6 +18,7 @@ public static partial class ApiHostingExtensions
             return Results.Ok(ToCallerInfoResponse(callerContextAccessor.Current!));
         })
         .WithDocs("Caller_Get", "Inspect caller", "Returns the current caller context (tenant, environment, scopes) after authentication.")
+        .Produces<CallerInfoResponse>(StatusCodes.Status200OK)
         .RequireCroniqCaller();
     }
 }

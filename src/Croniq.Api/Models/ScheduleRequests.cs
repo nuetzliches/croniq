@@ -8,6 +8,10 @@ public sealed record TriggerJobRequest(
     IDictionary<string, string>? Metadata = null,
     int? DelaySeconds = null);
 
+public sealed record TriggerJobResponse(
+    string Status,
+    string JobKey);
+
 public sealed record JobResponse(
     string JobKey,
     string Namespace,

@@ -39,6 +39,7 @@ public static partial class ApiHostingExtensions
             return Results.Ok(payload);
         })
         .WithDocs("Jobs_List", "List jobs", "Returns all job definitions for the tenant/environment scope.")
+        .Produces<JobResponse[]>(StatusCodes.Status200OK)
         .RequireCroniqTenantScope(CroniqScopes.JobsRead);
 
         app.MapGet("/tenants/{tenantId}/jobs/{jobId}", async (
@@ -70,6 +71,9 @@ public static partial class ApiHostingExtensions
             return Results.Ok(ToJobResponse(job));
         })
         .WithDocs("Jobs_Get", "Get job", "Returns the job definition for the specified job key.")
+        .Produces<JobResponse>(StatusCodes.Status200OK)
+        .Produces(StatusCodes.Status400BadRequest)
+        .Produces(StatusCodes.Status404NotFound)
         .RequireCroniqTenantScope(CroniqScopes.JobsRead);
 
         app.MapPost("/tenants/{tenantId}/jobs", async (
@@ -122,6 +126,8 @@ public static partial class ApiHostingExtensions
             return Results.Created($"/tenants/{tenantId}/jobs/{Uri.EscapeDataString(job.JobKey)}", ToJobResponse(job));
         })
         .WithDocs("Jobs_Upsert", "Create or update job", "Creates or updates the job definition for the specified job key.")
+        .Produces<JobResponse>(StatusCodes.Status201Created)
+        .Produces(StatusCodes.Status400BadRequest)
         .RequireCroniqTenantScope(CroniqScopes.JobsWrite);
 
         app.MapDelete("/tenants/{tenantId}/jobs/{jobId}", async (
@@ -148,6 +154,8 @@ public static partial class ApiHostingExtensions
             return Results.NoContent();
         })
         .WithDocs("Jobs_Delete", "Delete job", "Deletes the job definition and associated triggers within the tenant/environment scope.")
+        .Produces(StatusCodes.Status204NoContent)
+        .Produces(StatusCodes.Status400BadRequest)
         .RequireCroniqTenantScope(CroniqScopes.JobsWrite);
     }
 

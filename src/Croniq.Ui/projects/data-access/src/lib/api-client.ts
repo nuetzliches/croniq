@@ -1,7 +1,8 @@
 import { HttpClient } from '@angular/common/http';
 import { EnvironmentProviders, InjectionToken, Provider, inject, makeEnvironmentProviders } from '@angular/core';
-import { AuthApi, CreateWebhookIpRuleRequest, HealthApi, IssueApiKeyRequest, IssueTokenRequest, JobsApi, MeApi, PasswordChangePasswordRequest, PasswordLoginRequest, PasswordLogoutRequest, PasswordRefreshRequest, RotateWebhookSecretRequest, RunnerHeartbeatRequest, ScheduleListResponse, TenantsApi, TriggerJobRequest, UpsertApiClientRequest, UpsertJobRequest, UpsertScheduleRequest, UpsertTenantRequest, UpsertWebhookEndpointRequest, WorkAckRequest, WorkEventsRequest, WorkPollRequest, WorkRenewRequest, scheduleListResponseSchema, type EndpointDefinition } from '@croniq/api-schema';
+import { AuthApi, CreateWebhookIpRuleRequest, HealthApi, IssueApiKeyRequest, IssueTokenRequest, JobsApi, MeApi, PasswordChangePasswordRequest, PasswordLoginRequest, PasswordLogoutRequest, PasswordRefreshRequest, RotateWebhookSecretRequest, RunnerHeartbeatRequest, ScheduleResponse, ScheduleUpsertResult, TenantsApi, TriggerJobRequest, UpsertApiClientRequest, UpsertJobRequest, UpsertScheduleRequest, UpsertTenantRequest, UpsertWebhookEndpointRequest, WorkAckRequest, WorkEventsRequest, WorkPollRequest, WorkRenewRequest, type EndpointDefinition } from '@croniq/api-schema';
 import type { Observable } from 'rxjs';
+import { z } from 'zod';
 import type { CroniqCredentialSupplier, CroniqRequestOptions, ExecutionLogParams, ExecutionParams, TenantApiClientParams, TenantApiClientTokenParams, TenantApiKeyParams, TenantDeadLetterParams, TenantEnvironmentOptionalParams, TenantEnvironmentParams, TenantScheduleParams, TenantScopedParams, TenantUpsertApiClientParams, TenantWebhookParams, TenantWebhookRuleParams, TenantWebhookUpsertParams, WebhookInvocationParams, WorkEventsParams } from './api-client.types';
 import type { EndpointCallConfig } from './endpoint-executor';
 import { EndpointExecutor, requireEndpoint } from './endpoint-executor';
@@ -9,10 +10,15 @@ import { EndpointExecutor, requireEndpoint } from './endpoint-executor';
 const TENANT_LIST_SCHEDULES_ENDPOINT = requireEndpoint(TenantsApi, 'get', '/tenants/:tenantId/schedules');
 const LIST_SCHEDULES_ENDPOINT: EndpointDefinition = {
     ...TENANT_LIST_SCHEDULES_ENDPOINT,
-    response: scheduleListResponseSchema,
+    response: z.array(ScheduleResponse),
 };
 
 const UPSERT_SCHEDULE_ENDPOINT = requireEndpoint(TenantsApi, 'post', '/tenants/:tenantId/schedules');
+const UPSERT_SCHEDULE_WITH_RESPONSE_ENDPOINT: EndpointDefinition = {
+    ...UPSERT_SCHEDULE_ENDPOINT,
+    response: ScheduleUpsertResult,
+};
+
 const TRIGGER_JOB_ENDPOINT = requireEndpoint(JobsApi, 'post', '/jobs/trigger');
 
 const ME_ENDPOINT = requireEndpoint(MeApi, 'get', '/me');
@@ -110,12 +116,12 @@ export interface CroniqApiClient {
     getSchedules(
         params: TenantScopedParams & { environment?: string | null; jobKey?: string | null },
         options?: CroniqRequestOptions,
-    ): Observable<ScheduleListResponse>;
+    ): Observable<ScheduleResponse[]>;
     upsertSchedule(
         params: TenantEnvironmentParams,
         payload: UpsertScheduleRequest,
         options?: CroniqRequestOptions,
-    ): Observable<void>;
+    ): Observable<ScheduleUpsertResult>;
     triggerJob(payload: TriggerJobRequest, options?: CroniqRequestOptions): Observable<void>;
 
     getMe(options?: CroniqRequestOptions): Observable<unknown>;
@@ -251,8 +257,8 @@ class HttpCroniqApiClient implements CroniqApiClient {
     getSchedules(
         params: TenantScopedParams & { environment?: string | null; jobKey?: string | null },
         options?: CroniqRequestOptions,
-    ): Observable<ScheduleListResponse> {
-        return this.execute$<ScheduleListResponse>(
+    ): Observable<ScheduleResponse[]> {
+        return this.execute$<ScheduleResponse[]>(
             LIST_SCHEDULES_ENDPOINT,
             {
                 path: { tenantId: params.tenantId },
@@ -260,7 +266,7 @@ class HttpCroniqApiClient implements CroniqApiClient {
                     environment: params.environment ?? options?.context?.environment ?? undefined,
                     jobKey: params.jobKey ?? undefined,
                 },
-                responseSchema: scheduleListResponseSchema,
+                responseSchema: z.array(ScheduleResponse),
             },
             options,
         );
@@ -270,13 +276,14 @@ class HttpCroniqApiClient implements CroniqApiClient {
         params: TenantEnvironmentParams,
         payload: UpsertScheduleRequest,
         options?: CroniqRequestOptions,
-    ): Observable<void> {
-        return this.execute$(
-            UPSERT_SCHEDULE_ENDPOINT,
+    ): Observable<ScheduleUpsertResult> {
+        return this.execute$<ScheduleUpsertResult>(
+            UPSERT_SCHEDULE_WITH_RESPONSE_ENDPOINT,
             {
                 path: { tenantId: params.tenantId },
                 query: { environment: params.environment },
                 body: payload,
+                responseSchema: ScheduleUpsertResult,
             },
             options,
         );

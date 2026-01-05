@@ -106,6 +106,8 @@ public static partial class ApiHostingExtensions
             return Results.Ok(new WorkPollResponse(payload));
         })
         .WithDocs("Work_Poll", "Poll work", "Claims due trigger leases for execution (HTTP long-poll style).")
+        .Produces<WorkPollResponse>(StatusCodes.Status200OK)
+        .Produces(StatusCodes.Status400BadRequest)
         .RequireCroniqTenantScopeFromBodyOrQuery<WorkPollRequest>(r => r.EnvironmentTag, requireEnvironment: true, CroniqScopes.WorkPoll);
 
         app.MapPost("/tenants/{tenantId}/work/renew", async (
@@ -164,6 +166,9 @@ public static partial class ApiHostingExtensions
             return Results.Ok(new WorkRenewResponse(Renewed: true, Lease: token));
         })
         .WithDocs("Work_Renew", "Renew work lease", "Renews an existing trigger lease for a running work item.")
+        .Produces<WorkRenewResponse>(StatusCodes.Status200OK)
+        .Produces<WorkRenewResponse>(StatusCodes.Status404NotFound)
+        .Produces(StatusCodes.Status400BadRequest)
         .RequireCroniqTenantScopeFromBodyOrQuery<WorkRenewRequest>(r => r.EnvironmentTag, requireEnvironment: true, CroniqScopes.WorkRenew);
 
         app.MapPost("/tenants/{tenantId}/work/ack", async (
@@ -236,6 +241,9 @@ public static partial class ApiHostingExtensions
             }
         })
         .WithDocs("Work_Ack", "Acknowledge work result", "Acknowledges work completion and releases the trigger lease.")
+        .Produces(StatusCodes.Status204NoContent)
+        .Produces(StatusCodes.Status400BadRequest)
+        .Produces(StatusCodes.Status409Conflict)
         .RequireCroniqTenantScopeFromBodyOrQuery<WorkAckRequest>(r => r.EnvironmentTag, requireEnvironment: true, CroniqScopes.WorkAck);
 
         app.MapPost("/tenants/{tenantId}/work/{executionId}:events", async (
@@ -324,6 +332,9 @@ public static partial class ApiHostingExtensions
             return Results.NoContent();
         })
         .WithDocs("Work_Events", "Push work events", "Pushes execution-scoped log/events for a running work item.")
+        .Produces(StatusCodes.Status204NoContent)
+        .Produces(StatusCodes.Status400BadRequest)
+        .Produces(StatusCodes.Status409Conflict)
         .RequireCroniqTenantScopeFromBodyOrQuery<WorkEventsRequest>(r => r.EnvironmentTag, requireEnvironment: true, CroniqScopes.WorkEvents);
     }
 

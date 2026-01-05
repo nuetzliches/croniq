@@ -47,6 +47,9 @@ public static partial class ApiHostingExtensions
             }
         })
         .WithDocs("ApiKeys_Issue", "Issue API key", "Creates a new API key for the specified tenant client and returns the plaintext once.")
+        .Produces<IssueApiKeyResponse>(StatusCodes.Status200OK)
+        .Produces(StatusCodes.Status400BadRequest)
+        .Produces(StatusCodes.Status500InternalServerError)
         .RequireCroniqTenantScopeFromBody<IssueApiKeyRequest>(request => request.EnvironmentTag, CroniqScopes.ApiKeysManage);
 
         app.MapPost("/tenants/{tenantId}/api-keys/{keyId}/rotate", async (
@@ -75,6 +78,9 @@ public static partial class ApiHostingExtensions
             }
         })
         .WithDocs("ApiKeys_Rotate", "Rotate API key", "Revokes an existing API key and returns a fresh secret for the same client.")
+        .Produces<IssueApiKeyResponse>(StatusCodes.Status200OK)
+        .Produces(StatusCodes.Status404NotFound)
+        .Produces(StatusCodes.Status500InternalServerError)
         .RequireCroniqTenantScope(requireEnvironment: false, CroniqScopes.ApiKeysManage);
 
         app.MapDelete("/tenants/{tenantId}/api-keys/{keyId}", async (
@@ -94,6 +100,8 @@ public static partial class ApiHostingExtensions
             return Results.NoContent();
         })
         .WithDocs("ApiKeys_Delete", "Revoke API key", "Immediately revokes an API key for the tenant.")
+        .Produces(StatusCodes.Status204NoContent)
+        .Produces(StatusCodes.Status404NotFound)
         .RequireCroniqTenantScope(requireEnvironment: false, CroniqScopes.ApiKeysManage);
     }
 }

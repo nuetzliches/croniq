@@ -1,6 +1,7 @@
 using System;
 using System.Linq;
 using System.Threading;
+using Croniq.Api.Models;
 using Croniq.Auth.Abstractions;
 using Croniq.Auth.Core;
 using Croniq.Core.Execution;
@@ -64,6 +65,8 @@ public static partial class ApiHostingExtensions
             return Results.Ok(payload);
         })
         .WithDocs("Executions_List", "List executions", "Returns execution summaries for the tenant/environment scope with optional filters.")
+        .Produces<ExecutionResponse[]>(StatusCodes.Status200OK)
+        .Produces(StatusCodes.Status400BadRequest)
         .RequireCroniqTenantScope(CroniqScopes.ExecutionsRead);
 
         app.MapGet("/tenants/{tenantId}/executions/{executionId}", async (
@@ -91,6 +94,8 @@ public static partial class ApiHostingExtensions
             return Results.Ok(ToExecutionResponse(summary));
         })
         .WithDocs("Executions_Get", "Get execution", "Returns metadata for a single execution in the tenant/environment scope.")
+        .Produces<ExecutionResponse>(StatusCodes.Status200OK)
+        .Produces(StatusCodes.Status404NotFound)
         .RequireCroniqTenantScope(CroniqScopes.ExecutionsRead);
     }
 }

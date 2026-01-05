@@ -2,31 +2,53 @@ import { z } from 'zod';
 import type { EndpointDefinition } from '../schemas';
 import {
     PasswordLoginRequest,
+    PasswordAuthResponse,
     PasswordRefreshRequest,
     PasswordLogoutRequest,
     PasswordChangePasswordRequest,
+    ApiClientResponse,
+    CallerType,
+    CallerInfoResponse,
     CreateWebhookIpRuleRequest,
     CroniqTriggerSeedDefinition,
+    ExecutionKind,
     ExecutionStatus,
+    ExecutionResponse,
+    HealthStatusResponse,
     IssueApiKeyRequest,
+    IssueApiKeyResponse,
     IssueTokenRequest,
+    IssueTokenResponse,
+    JobResponse,
+    PersistenceHealthResponse,
     RotateWebhookSecretRequest,
+    RotateWebhookSecretResponse,
     RunnerHeartbeatRequest,
+    RunnerStatusModel,
+    RunnerListResponse,
     ScheduleDeadLetterResponse,
     ScheduleReplayResult,
     ScheduleResponse,
     ScheduleUpsertResult,
+    TenantResponse,
     TriggerJobRequest,
+    TriggerJobResponse,
     UpsertApiClientRequest,
     UpsertJobRequest,
     UpsertTenantRequest,
     UpsertWebhookEndpointRequest,
+    WebhookDeadLetterResponse,
+    WebhookIpRuleResponse,
+    WebhookEndpointResponse,
+    WebhookReplayResult,
     WorkLeaseToken,
     WorkAckRequest,
     WorkEventEntry,
     WorkEventsRequest,
     WorkPollRequest,
+    WorkPollResponse,
     WorkRenewRequest,
+    WorkRenewResponse,
 } from '../schemas';
 
 export const AuthApi: EndpointDefinition[] = [
@@ -43,6 +65,11 @@ export const AuthApi: EndpointDefinition[] = [
             },
         ],
         response: z.void(),
+        errors: [
+            { status: 401, description: `Unauthorized`, schema: z.void() },
+            { status: 403, description: `Forbidden`, schema: z.void() },
+            { status: 404, description: `Not Found`, schema: z.void() },
+        ],
     },
     {
         method: 'post',
@@ -52,7 +79,18 @@ export const AuthApi: EndpointDefinition[] = [
         parameters: [
             { name: 'body', type: 'Body', schema: PasswordLoginRequest },
         ],
-        response: z.void(),
+        response: PasswordAuthResponse,
+        errors: [
+            { status: 400, description: `Bad Request`, schema: z.void() },
+            { status: 401, description: `Unauthorized`, schema: z.void() },
+            { status: 403, description: `Forbidden`, schema: z.void() },
+            { status: 404, description: `Not Found`, schema: z.void() },
+            {
+                status: 500,
+                description: `Internal Server Error`,
+                schema: z.void(),
+            },
+        ],
     },
     {
         method: 'post',
@@ -63,6 +101,11 @@ export const AuthApi: EndpointDefinition[] = [
             { name: 'body', type: 'Body', schema: PasswordLogoutRequest },
         ],
         response: z.void(),
+        errors: [
+            { status: 400, description: `Bad Request`, schema: z.void() },
+            { status: 401, description: `Unauthorized`, schema: z.void() },
+            { status: 404, description: `Not Found`, schema: z.void() },
+        ],
     },
     {
         method: 'post',
@@ -72,7 +115,17 @@ export const AuthApi: EndpointDefinition[] = [
         parameters: [
             { name: 'body', type: 'Body', schema: PasswordRefreshRequest },
         ],
-        response: z.void(),
+        response: PasswordAuthResponse,
+        errors: [
+            { status: 400, description: `Bad Request`, schema: z.void() },
+            { status: 401, description: `Unauthorized`, schema: z.void() },
+            { status: 404, description: `Not Found`, schema: z.void() },
+            {
+                status: 500,
+                description: `Internal Server Error`,
+                schema: z.void(),
+            },
+        ],
     },
 ] as const;
 

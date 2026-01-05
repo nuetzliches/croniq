@@ -40,6 +40,10 @@ public static partial class ApiHostingExtensions
                 .ConfigureAwait(false);
         })
         .WithDocs("Tokens_Issue_Tenant", "Issue tenant token", "Mints a Croniq-signed bearer token for the specified client (tenant-level variant).")
+        .Produces<IssueTokenResponse>(StatusCodes.Status200OK)
+        .Produces(StatusCodes.Status400BadRequest)
+        .Produces(StatusCodes.Status404NotFound)
+        .Produces(StatusCodes.Status500InternalServerError)
         .RequireCroniqTokenIssueScopes(CroniqScopes.ApiKeysManage);
 
         app.MapPost("/tenants/{tenantId}/api-clients/{clientId}/tokens", async (
@@ -67,6 +71,10 @@ public static partial class ApiHostingExtensions
                 .ConfigureAwait(false);
         })
         .WithDocs("Tokens_Issue_Client", "Issue client token", "Same payload as the tenant route but infers the clientId from the path.")
+        .Produces<IssueTokenResponse>(StatusCodes.Status200OK)
+        .Produces(StatusCodes.Status400BadRequest)
+        .Produces(StatusCodes.Status404NotFound)
+        .Produces(StatusCodes.Status500InternalServerError)
         .RequireCroniqTokenIssueScopes(CroniqScopes.ApiKeysManage);
     }
 

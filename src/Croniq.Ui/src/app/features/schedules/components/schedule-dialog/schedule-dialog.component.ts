@@ -1,4 +1,5 @@
-import { ChangeDetectionStrategy, Component, computed, input, linkedSignal, output } from '@angular/core';
+import { JsonPipe } from '@angular/common';
+import { ChangeDetectionStrategy, Component, computed, input, linkedSignal, output, signal } from '@angular/core';
 import { Field, form, required } from '@angular/forms/signals';
 import { UpsertScheduleRequest } from '@croniq/api-schema';
 
@@ -37,7 +38,7 @@ const getScheduleFormModel = (schedule?: UpsertScheduleRequest | null): Schedule
 
 @Component({
     selector: 'app-schedule-dialog',
-    imports: [Field],
+    imports: [Field, JsonPipe],
     templateUrl: './schedule-dialog.component.html',
     changeDetection: ChangeDetectionStrategy.OnPush,
 })
@@ -46,6 +47,8 @@ export class ScheduleDialogComponent {
 
     readonly save = output<UpsertScheduleRequest>();
     readonly closeDialog = output<void>();
+
+    readonly activeTab = signal<'form' | 'json'>('form');
 
     readonly isEditMode = computed(() => !!this.schedule());
 

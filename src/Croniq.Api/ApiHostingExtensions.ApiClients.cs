@@ -25,6 +25,7 @@ public static partial class ApiHostingExtensions
             return Results.Ok(payload);
         })
         .WithDocs("ApiClients_List", "List API clients", "Returns all registered API clients for the tenant, optionally filtered by environment.")
+        .Produces<ApiClientResponse[]>(StatusCodes.Status200OK)
         .RequireCroniqTenantScope(requireEnvironment: false, CroniqScopes.ApiKeysManage);
 
         app.MapPost("/tenants/{tenantId}/api-clients", async (
@@ -63,6 +64,8 @@ public static partial class ApiHostingExtensions
             return Results.Ok(ToApiClientResponse(descriptor));
         })
         .WithDocs("ApiClients_Upsert", "Create or update API client", "Creates a tenant-scoped API client or updates metadata/scopes when the client already exists.")
+        .Produces<ApiClientResponse>(StatusCodes.Status200OK)
+        .Produces(StatusCodes.Status400BadRequest)
         .RequireCroniqTenantScopeFromBodyOrQuery<UpsertApiClientRequest>(request => request.EnvironmentTag, requireEnvironment: false, CroniqScopes.ApiKeysManage);
 
         app.MapDelete("/tenants/{tenantId}/api-clients/{clientId}", async (
@@ -82,6 +85,8 @@ public static partial class ApiHostingExtensions
             return Results.NoContent();
         })
         .WithDocs("ApiClients_Delete", "Delete API client", "Deletes the API client metadata and revokes any associated API keys.")
+        .Produces(StatusCodes.Status204NoContent)
+        .Produces(StatusCodes.Status404NotFound)
         .RequireCroniqTenantScope(requireEnvironment: false, CroniqScopes.ApiKeysManage);
 
         app.MapGet("/tenants/{tenantId}/api-clients/{clientId}", async (
@@ -101,6 +106,8 @@ public static partial class ApiHostingExtensions
             return Results.Ok(ToApiClientResponse(client));
         })
         .WithDocs("ApiClients_Get", "Get API client", "Returns metadata about a tenant-scoped API client, including scopes and activity flags.")
+        .Produces<ApiClientResponse>(StatusCodes.Status200OK)
+        .Produces(StatusCodes.Status404NotFound)
         .RequireCroniqTenantScope(requireEnvironment: false, CroniqScopes.ApiKeysManage);
     }
 }

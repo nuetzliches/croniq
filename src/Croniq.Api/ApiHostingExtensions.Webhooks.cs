@@ -49,6 +49,8 @@ public static partial class ApiHostingExtensions
             return Results.Ok(response);
         })
         .WithDocs("Webhooks_List", "List webhook endpoints", "Returns all webhook endpoints for the specified tenant/environment scope.")
+        .Produces<List<WebhookEndpointResponse>>(StatusCodes.Status200OK)
+        .Produces(StatusCodes.Status503ServiceUnavailable)
         .RequireCroniqTenantScope(CroniqScopes.WebhooksRead);
 
         app.MapPost("/tenants/{tenantId}/webhooks", async (
@@ -127,6 +129,10 @@ public static partial class ApiHostingExtensions
             return Results.Ok(response);
         })
         .WithDocs("Webhooks_Upsert", "Create or update a webhook", "Registers a webhook endpoint for a tenant/environment, optionally overriding rate limits and signatures.")
+        .Produces<WebhookEndpointResponse>(StatusCodes.Status200OK)
+        .Produces(StatusCodes.Status400BadRequest)
+        .Produces(StatusCodes.Status500InternalServerError)
+        .Produces(StatusCodes.Status503ServiceUnavailable)
         .RequireCroniqTenantScope(CroniqScopes.WebhooksWrite);
 
         app.MapDelete("/tenants/{tenantId}/webhooks/{hookKey}", async (
@@ -154,6 +160,8 @@ public static partial class ApiHostingExtensions
             return Results.NoContent();
         })
         .WithDocs("Webhooks_Delete", "Delete a webhook", "Removes a webhook endpoint and its metadata for the tenant/environment scope.")
+        .Produces(StatusCodes.Status204NoContent)
+        .Produces(StatusCodes.Status503ServiceUnavailable)
         .RequireCroniqTenantScope(CroniqScopes.WebhooksWrite);
 
         app.MapPost("/tenants/{tenantId}/webhooks/{hookKey}/rotate-secret", async (
@@ -207,6 +215,9 @@ public static partial class ApiHostingExtensions
             }
         })
         .WithDocs("Webhooks_RotateSecret", "Rotate webhook secret", "Schedules or immediately rotates a webhook secret and returns the new plaintext.")
+        .Produces<RotateWebhookSecretResponse>(StatusCodes.Status200OK)
+        .Produces(StatusCodes.Status500InternalServerError)
+        .Produces(StatusCodes.Status503ServiceUnavailable)
         .RequireCroniqTenantScope(CroniqScopes.WebhooksRotate);
 
         app.MapGet("/tenants/{tenantId}/webhooks/{hookKey}/ip-rules", async (
@@ -234,6 +245,8 @@ public static partial class ApiHostingExtensions
             return Results.Ok(payload);
         })
         .WithDocs("WebhookIpRules_List", "List webhook IP rules", "Returns the CIDR allow-list associated with a webhook endpoint.")
+        .Produces<List<WebhookIpRuleResponse>>(StatusCodes.Status200OK)
+        .Produces(StatusCodes.Status503ServiceUnavailable)
         .RequireCroniqTenantScope(CroniqScopes.WebhooksRead);
 
         app.MapPost("/tenants/{tenantId}/webhooks/{hookKey}/ip-rules", async (
@@ -285,6 +298,10 @@ public static partial class ApiHostingExtensions
             }
         })
         .WithDocs("WebhookIpRules_Create", "Add webhook IP rule", "Adds a CIDR block to the allow-list for the webhook endpoint.")
+        .Produces<WebhookIpRuleResponse>(StatusCodes.Status200OK)
+        .Produces(StatusCodes.Status400BadRequest)
+        .Produces(StatusCodes.Status500InternalServerError)
+        .Produces(StatusCodes.Status503ServiceUnavailable)
         .RequireCroniqTenantScope(CroniqScopes.WebhooksWrite);
 
         app.MapDelete("/tenants/{tenantId}/webhooks/{hookKey}/ip-rules/{ruleId:long}", async (
@@ -317,6 +334,8 @@ public static partial class ApiHostingExtensions
             return Results.NoContent();
         })
         .WithDocs("WebhookIpRules_Delete", "Delete webhook IP rule", "Removes a CIDR allow-list entry from the webhook endpoint.")
+        .Produces(StatusCodes.Status204NoContent)
+        .Produces(StatusCodes.Status503ServiceUnavailable)
         .RequireCroniqTenantScope(CroniqScopes.WebhooksWrite);
 
         app.MapGet("/tenants/{tenantId}/webhooks/deadletters", async (
@@ -343,6 +362,8 @@ public static partial class ApiHostingExtensions
             return Results.Ok(response);
         })
         .WithDocs("WebhookDeadLetters_List", "List webhook dead letters", "Enumerates failed webhook deliveries for investigation or replay.")
+        .Produces<List<WebhookDeadLetterResponse>>(StatusCodes.Status200OK)
+        .Produces(StatusCodes.Status503ServiceUnavailable)
         .RequireCroniqTenantScope(CroniqScopes.WebhooksDeadLetter);
 
         app.MapPost("/tenants/{tenantId}/webhooks/deadletters/{deadLetterId}/replay", async (
@@ -414,7 +435,7 @@ public static partial class ApiHostingExtensions
                 await pipeline.ExecuteAsync(execRequest, cancellationToken).ConfigureAwait(false);
                 await deadLetterStore.ResolveAsync(deadLetterId, scope, cancellationToken).ConfigureAwait(false);
                 replayActivity?.SetStatus(ActivityStatusCode.Ok);
-                return Results.Ok(new { status = "replayed", hook = entry.HookKey, job = entry.JobKey });
+                return Results.Ok(new WebhookReplayResult("replayed", entry.HookKey, entry.JobKey));
             }
             catch (Exception ex)
             {
@@ -425,6 +446,10 @@ public static partial class ApiHostingExtensions
             }
         })
         .WithDocs("WebhookDeadLetters_Replay", "Replay webhook dead letter", "Re-dispatches a failed webhook payload via the job execution pipeline.")
+        .Produces<WebhookReplayResult>(StatusCodes.Status200OK)
+        .Produces(StatusCodes.Status404NotFound)
+        .Produces(StatusCodes.Status500InternalServerError)
+        .Produces(StatusCodes.Status503ServiceUnavailable)
         .RequireCroniqTenantScope(CroniqScopes.WebhooksDeadLetter);
     }
 }

@@ -1,9 +1,57 @@
 import { z } from 'zod';
+export const HealthStatusResponse = z
+    .object({ status: z.string().nullable() })
+    .partial();
+export type HealthStatusResponse = z.infer<typeof HealthStatusResponse>;
+export const PersistenceHealthResponse = z
+    .object({
+        status: z.string().nullable(),
+        provider: z.string().nullable(),
+        note: z.string().nullable(),
+        db: z.string().nullable(),
+    })
+    .partial();
+export type PersistenceHealthResponse = z.infer<
+    typeof PersistenceHealthResponse
+>;
+export const CallerType = z.union([z.literal(0), z.literal(1)]);
+export type CallerType = z.infer<typeof CallerType>;
+export const CallerInfoResponse = z
+    .object({
+        tenantId: z.string().nullable(),
+        environmentTag: z.string().nullable(),
+        callerId: z.string().nullable(),
+        callerType: CallerType,
+        scopes: z.array(z.string()).nullable(),
+        isActive: z.boolean(),
+    })
+    .partial();
+export type CallerInfoResponse = z.infer<typeof CallerInfoResponse>;
 export const UpsertTenantRequest = z.object({
     tenantId: z.string().min(1),
     name: z.string().min(1),
 });
 export type UpsertTenantRequest = z.infer<typeof UpsertTenantRequest>;
+export const TenantResponse = z
+    .object({
+        tenantId: z.string().nullable(),
+        name: z.string().nullable(),
+        isActive: z.boolean(),
+        createdAtUtc: z.iso.datetime({ offset: true }),
+    })
+    .partial();
+export type TenantResponse = z.infer<typeof TenantResponse>;
+export const JobResponse = z
+    .object({
+        jobKey: z.string().nullable(),
+        namespace: z.string().nullable(),
+        name: z.string().nullable(),
+        variant: z.string().nullable(),
+        description: z.string().nullable(),
+        metadata: z.record(z.string(), z.string()).nullable(),
+    })
+    .partial();
+export type JobResponse = z.infer<typeof JobResponse>;
 export const UpsertJobRequest = z.object({
     jobKey: z.string().min(1),
     namespace: z.string().min(1),
@@ -13,6 +61,35 @@ export const UpsertJobRequest = z.object({
     metadata: z.record(z.string(), z.string()).nullish(),
 });
 export type UpsertJobRequest = z.infer<typeof UpsertJobRequest>;
+export const ExecutionKind = z.union([z.literal(0), z.literal(1)]);
+export type ExecutionKind = z.infer<typeof ExecutionKind>;
+export const ExecutionStatus = z.union([
+    z.literal(0),
+    z.literal(1),
+    z.literal(2),
+]);
+export type ExecutionStatus = z.infer<typeof ExecutionStatus>;
+export const ExecutionResponse = z
+    .object({
+        executionId: z.string().nullable(),
+        jobKey: z.string().nullable(),
+        tenantId: z.string().nullable(),
+        environmentTag: z.string().nullable(),
+        kind: ExecutionKind,
+        status: ExecutionStatus,
+        fireAtUtc: z.iso.datetime({ offset: true }),
+        startedAtUtc: z.iso.datetime({ offset: true }),
+        completedAtUtc: z.iso.datetime({ offset: true }).nullable(),
+        durationMs: z.number().nullable(),
+        triggerId: z.string().nullable(),
+        instanceId: z.string().nullable(),
+        traceId: z.string().nullable(),
+        correlationId: z.string().nullable(),
+        errorType: z.string().nullable(),
+        errorMessage: z.string().nullable(),
+    })
+    .partial();
+export type ExecutionResponse = z.infer<typeof ExecutionResponse>;
 export const CroniqTriggerSeedDefinition = z
     .object({
         triggerId: z.string().nullable(),
@@ -80,6 +157,32 @@ export const ScheduleReplayResult = z
     })
     .partial();
 export type ScheduleReplayResult = z.infer<typeof ScheduleReplayResult>;
+export const WebhookIpRuleResponse = z
+    .object({
+        id: z.number().int(),
+        cidr: z.string().nullable(),
+        description: z.string().nullable(),
+        createdBy: z.string().nullable(),
+        createdAtUtc: z.iso.datetime({ offset: true }),
+        updatedAtUtc: z.iso.datetime({ offset: true }),
+    })
+    .partial();
+export type WebhookIpRuleResponse = z.infer<typeof WebhookIpRuleResponse>;
+export const WebhookEndpointResponse = z
+    .object({
+        hookKey: z.string().nullable(),
+        jobKey: z.string().nullable(),
+        enabled: z.boolean(),
+        requireSignature: z.boolean(),
+        requestsPerMinute: z.number().int(),
+        metadata: z.record(z.string(), z.string()).nullable(),
+        ipRules: z.array(WebhookIpRuleResponse).nullable(),
+        createdAtUtc: z.iso.datetime({ offset: true }),
+        updatedAtUtc: z.iso.datetime({ offset: true }),
+        secret: z.string().nullable(),
+    })
+    .partial();
+export type WebhookEndpointResponse = z.infer<typeof WebhookEndpointResponse>;
 export const UpsertWebhookEndpointRequest = z.object({
     hookKey: z.string().min(1),
     jobKey: z.string().min(1),
@@ -103,6 +206,18 @@ export const RotateWebhookSecretRequest = z
 export type RotateWebhookSecretRequest = z.infer<
     typeof RotateWebhookSecretRequest
 >;
+export const RotateWebhookSecretResponse = z
+    .object({
+        hookKey: z.string().nullable(),
+        activatedAtUtc: z.iso.datetime({ offset: true }),
+        expiresAtUtc: z.iso.datetime({ offset: true }).nullable(),
+        secret: z.string().nullable(),
+        secretHash: z.string().nullable(),
+    })
+    .partial();
+export type RotateWebhookSecretResponse = z.infer<
+    typeof RotateWebhookSecretResponse
+>;
 export const CreateWebhookIpRuleRequest = z.object({
     cidr: z.string().min(1),
     description: z.string().nullish(),
@@ -110,6 +225,49 @@ export const CreateWebhookIpRuleRequest = z.object({
 export type CreateWebhookIpRuleRequest = z.infer<
     typeof CreateWebhookIpRuleRequest
 >;
+export const WebhookDeadLetterResponse = z
+    .object({
+        id: z.number().int(),
+        hookKey: z.string().nullable(),
+        jobKey: z.string().nullable(),
+        tenantId: z.string().nullable(),
+        environmentTag: z.string().nullable(),
+        payload: z.string().nullable(),
+        headers: z.record(z.string(), z.string()).nullable(),
+        metadata: z.record(z.string(), z.string()).nullable(),
+        failureReason: z.string().nullable(),
+        attempts: z.number().int(),
+        statusCode: z.number().int().nullable(),
+        errorDetails: z.string().nullable(),
+        createdAtUtc: z.iso.datetime({ offset: true }),
+        lastAttemptAtUtc: z.iso.datetime({ offset: true }).nullable(),
+        nextAttemptAtUtc: z.iso.datetime({ offset: true }).nullable(),
+        expiresAtUtc: z.iso.datetime({ offset: true }).nullable(),
+    })
+    .partial();
+export type WebhookDeadLetterResponse = z.infer<
+    typeof WebhookDeadLetterResponse
+>;
+export const WebhookReplayResult = z
+    .object({
+        status: z.string().nullable(),
+        hook: z.string().nullable(),
+        job: z.string().nullable(),
+    })
+    .partial();
+export type WebhookReplayResult = z.infer<typeof WebhookReplayResult>;
+export const ApiClientResponse = z
+    .object({
+        clientId: z.string().nullable(),
+        tenantId: z.string().nullable(),
+        name: z.string().nullable(),
+        environmentTag: z.string().nullable(),
+        scopes: z.array(z.string()).nullable(),
+        isActive: z.boolean(),
+        expiresAtUtc: z.iso.datetime({ offset: true }).nullable(),
+    })
+    .partial();
+export type ApiClientResponse = z.infer<typeof ApiClientResponse>;
 export const UpsertApiClientRequest = z.object({
     clientId: z.string().min(1),
     name: z.string().nullish(),
@@ -125,6 +283,17 @@ export const IssueApiKeyRequest = z.object({
     ttlHours: z.number().int().nullish(),
 });
 export type IssueApiKeyRequest = z.infer<typeof IssueApiKeyRequest>;
+export const IssueApiKeyResponse = z
+    .object({
+        clientId: z.string().nullable(),
+        tenantId: z.string().nullable(),
+        keyId: z.string().nullable(),
+        plaintextSecret: z.string().nullable(),
+        expiresAtUtc: z.iso.datetime({ offset: true }).nullable(),
+        environmentTag: z.string().nullable(),
+    })
+    .partial();
+export type IssueApiKeyResponse = z.infer<typeof IssueApiKeyResponse>;
 export const IssueTokenRequest = z
     .object({
         clientId: z.string().nullable(),
@@ -134,6 +303,14 @@ export const IssueTokenRequest = z
     })
     .partial();
 export type IssueTokenRequest = z.infer<typeof IssueTokenRequest>;
+export const IssueTokenResponse = z
+    .object({
+        accessToken: z.string().nullable(),
+        tokenType: z.string().nullable(),
+        expiresIn: z.number().int(),
+    })
+    .partial();
+export type IssueTokenResponse = z.infer<typeof IssueTokenResponse>;
 export const PasswordLoginRequest = z
     .object({
         username: z.string().nullable(),
@@ -145,6 +322,17 @@ export const PasswordLoginRequest = z
     })
     .partial();
 export type PasswordLoginRequest = z.infer<typeof PasswordLoginRequest>;
+export const PasswordAuthResponse = z
+    .object({
+        tenantId: z.string().nullable(),
+        accessToken: z.string().nullable(),
+        tokenType: z.string().nullable(),
+        expiresIn: z.number().int().nullable(),
+        refreshToken: z.string().nullable(),
+        passwordChangeRequired: z.boolean(),
+    })
+    .partial();
+export type PasswordAuthResponse = z.infer<typeof PasswordAuthResponse>;
 export const PasswordRefreshRequest = z
     .object({
         refreshToken: z.string().nullable(),
@@ -177,6 +365,10 @@ export const TriggerJobRequest = z.object({
     delaySeconds: z.number().int().nullish(),
 });
 export type TriggerJobRequest = z.infer<typeof TriggerJobRequest>;
+export const TriggerJobResponse = z
+    .object({ status: z.string().nullable(), jobKey: z.string().nullable() })
+    .partial();
+export type TriggerJobResponse = z.infer<typeof TriggerJobResponse>;
 export const WorkPollRequest = z.object({
     environmentTag: z.string().nullish(),
     runnerId: z.string().min(1),
@@ -194,12 +386,20 @@ export const WorkLeaseToken = z.object({
     payload: z.string().nullish(),
 });
 export type WorkLeaseToken = z.infer<typeof WorkLeaseToken>;
+export const WorkPollResponse = z
+    .object({ leases: z.array(WorkLeaseToken).nullable() })
+    .partial();
+export type WorkPollResponse = z.infer<typeof WorkPollResponse>;
 export const WorkRenewRequest = z.object({
     environmentTag: z.string().nullish(),
     runnerId: z.string().min(1),
     lease: WorkLeaseToken,
 });
 export type WorkRenewRequest = z.infer<typeof WorkRenewRequest>;
+export const WorkRenewResponse = z
+    .object({ renewed: z.boolean(), lease: WorkLeaseToken })
+    .partial();
+export type WorkRenewResponse = z.infer<typeof WorkRenewResponse>;
 export const WorkAckRequest = z.object({
     environmentTag: z.string().nullish(),
     runnerId: z.string().min(1),
@@ -231,39 +431,67 @@ export const RunnerHeartbeatRequest = z.object({
     metadataJson: z.string().nullish(),
 });
 export type RunnerHeartbeatRequest = z.infer<typeof RunnerHeartbeatRequest>;
-export const ExecutionStatus = z.union([
-    z.literal(0),
-    z.literal(1),
-    z.literal(2),
-]);
-export type ExecutionStatus = z.infer<typeof ExecutionStatus>;
+export const RunnerStatusModel = z.object({
+    runnerId: z.string().min(1),
+    lastSeenAtUtc: z.iso.datetime({ offset: true }).optional(),
+    expiresAtUtc: z.iso.datetime({ offset: true }).optional(),
+    isOnline: z.boolean().optional(),
+    metadataJson: z.string().nullish(),
+});
+export type RunnerStatusModel = z.infer<typeof RunnerStatusModel>;
+export const RunnerListResponse = z
+    .object({ runners: z.array(RunnerStatusModel).nullable() })
+    .partial();
+export type RunnerListResponse = z.infer<typeof RunnerListResponse>;
 export const schemas = {
+    HealthStatusResponse,
+    PersistenceHealthResponse,
+    CallerType,
+    CallerInfoResponse,
     UpsertTenantRequest,
+    TenantResponse,
+    JobResponse,
     UpsertJobRequest,
+    ExecutionKind,
+    ExecutionStatus,
+    ExecutionResponse,
     CroniqTriggerSeedDefinition,
     ScheduleUpsertResult,
     ScheduleResponse,
     ScheduleDeadLetterResponse,
     ScheduleReplayResult,
+    WebhookIpRuleResponse,
+    WebhookEndpointResponse,
     UpsertWebhookEndpointRequest,
     RotateWebhookSecretRequest,
+    RotateWebhookSecretResponse,
     CreateWebhookIpRuleRequest,
+    WebhookDeadLetterResponse,
+    WebhookReplayResult,
+    ApiClientResponse,
     UpsertApiClientRequest,
     IssueApiKeyRequest,
+    IssueApiKeyResponse,
     IssueTokenRequest,
+    IssueTokenResponse,
     PasswordLoginRequest,
+    PasswordAuthResponse,
     PasswordRefreshRequest,
     PasswordLogoutRequest,
     PasswordChangePasswordRequest,
     TriggerJobRequest,
+    TriggerJobResponse,
     WorkPollRequest,
     WorkLeaseToken,
+    WorkPollResponse,
     WorkRenewRequest,
+    WorkRenewResponse,
     WorkAckRequest,
     WorkEventEntry,
     WorkEventsRequest,
     RunnerHeartbeatRequest,
-    ExecutionStatus,
+    RunnerStatusModel,
+    RunnerListResponse,
 };
 export type HttpMethod =
     | 'get'

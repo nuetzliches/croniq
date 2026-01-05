@@ -29,6 +29,8 @@ public static partial class ApiHostingExtensions
             return Results.Created($"/tenants/{descriptor.TenantId}", ToTenantResponse(descriptor));
         })
         .WithDocs("Tenants_Create", "Create tenant", "Creates or updates a tenant record for the provided tenantId.")
+        .Produces<TenantResponse>(StatusCodes.Status201Created)
+        .Produces(StatusCodes.Status400BadRequest)
         .RequireCroniqAdminScopes(CroniqScopes.TenantsAdmin);
 
         app.MapGet("/tenants", async (
@@ -52,6 +54,8 @@ public static partial class ApiHostingExtensions
             return Results.Ok(payload);
         })
         .WithDocs("Tenants_List", "List tenants", "Returns tenant metadata. Use state=all to include inactive tenants.")
+        .Produces<TenantResponse[]>(StatusCodes.Status200OK)
+        .Produces(StatusCodes.Status400BadRequest)
         .RequireCroniqAdminScopes(CroniqScopes.TenantsAdmin);
 
         app.MapGet("/tenants/{tenantId}", async (
@@ -74,6 +78,9 @@ public static partial class ApiHostingExtensions
             return Results.Ok(ToTenantResponse(descriptor));
         })
         .WithDocs("Tenants_Get", "Get tenant", "Returns tenant metadata for the provided tenant identifier.")
+        .Produces<TenantResponse>(StatusCodes.Status200OK)
+        .Produces(StatusCodes.Status400BadRequest)
+        .Produces(StatusCodes.Status404NotFound)
         .RequireCroniqAdminScopes(CroniqScopes.TenantsAdmin);
 
         app.MapDelete("/tenants/{tenantId}", async (
@@ -96,6 +103,9 @@ public static partial class ApiHostingExtensions
             return Results.NoContent();
         })
         .WithDocs("Tenants_Deactivate", "Deactivate tenant", "Marks the tenant as inactive without deleting historical data.")
+        .Produces(StatusCodes.Status204NoContent)
+        .Produces(StatusCodes.Status400BadRequest)
+        .Produces(StatusCodes.Status404NotFound)
         .RequireCroniqAdminScopes(CroniqScopes.TenantsAdmin);
     }
 }

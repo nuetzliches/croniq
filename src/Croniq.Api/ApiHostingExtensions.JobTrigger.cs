@@ -77,7 +77,7 @@ public static partial class ApiHostingExtensions
                 ApiMetrics.RecordManualTrigger(jobKey, scope);
                 triggerActivity?.SetStatus(ActivityStatusCode.Ok);
                 var status = delay.HasValue && delay.Value > TimeSpan.Zero ? "scheduled" : "triggered";
-                return Results.Accepted(value: new { status, request.JobKey });
+                return Results.Accepted(value: new TriggerJobResponse(status, request.JobKey));
             }
             catch
             {
@@ -86,6 +86,7 @@ public static partial class ApiHostingExtensions
             }
         })
         .WithDocs("Jobs_Trigger", "Trigger a job manually", "Executes a job immediately or schedules a one-off run when DelaySeconds is provided.")
+        .Produces<TriggerJobResponse>(StatusCodes.Status202Accepted)
         .RequireCroniqJobScopeFromBody<TriggerJobRequest>(request => request.JobKey, CroniqScopes.JobsTrigger);
     }
 }

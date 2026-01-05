@@ -77,17 +77,29 @@ public static partial class ApiHostingExtensions
                 return Results.Unauthorized();
             }
 
-            return Results.Ok(new
+            if (string.IsNullOrWhiteSpace(result.AccessToken) || string.IsNullOrWhiteSpace(result.RefreshToken))
             {
-                tenantId = tenant.TenantId,
-                accessToken = result.AccessToken,
-                tokenType = "Bearer",
-                expiresIn = result.ExpiresInSeconds,
-                refreshToken = result.RefreshToken,
-                passwordChangeRequired = result.PasswordChangeRequired
-            });
+                return Results.Problem(
+                    statusCode: StatusCodes.Status500InternalServerError,
+                    title: "auth-token-missing",
+                    detail: "Authentication token response was incomplete.");
+            }
+
+            return Results.Ok(new PasswordAuthResponse(
+                tenant.TenantId,
+                result.AccessToken,
+                "Bearer",
+                result.ExpiresInSeconds,
+                result.RefreshToken,
+                result.PasswordChangeRequired));
         })
-        .WithDocs("Auth_Login", "Password login", "Authenticates a username/password and issues access + refresh tokens. Tenant must be provided via tenantId.");
+        .WithDocs("Auth_Login", "Password login", "Authenticates a username/password and issues access + refresh tokens. Tenant must be provided via tenantId.")
+        .Produces<PasswordAuthResponse>(StatusCodes.Status200OK)
+        .Produces(StatusCodes.Status400BadRequest)
+        .Produces(StatusCodes.Status401Unauthorized)
+        .Produces(StatusCodes.Status403Forbidden)
+        .Produces(StatusCodes.Status404NotFound)
+        .Produces(StatusCodes.Status500InternalServerError);
 
         app.MapPost("/auth/refresh", async (
             PasswordRefreshRequest request,
@@ -144,17 +156,28 @@ public static partial class ApiHostingExtensions
                 return Results.Unauthorized();
             }
 
-            return Results.Ok(new
+            if (string.IsNullOrWhiteSpace(result.AccessToken) || string.IsNullOrWhiteSpace(result.RefreshToken))
             {
-                tenantId = tenant.TenantId,
-                accessToken = result.AccessToken,
-                tokenType = "Bearer",
-                expiresIn = result.ExpiresInSeconds,
-                refreshToken = result.RefreshToken,
-                passwordChangeRequired = result.PasswordChangeRequired
-            });
+                return Results.Problem(
+                    statusCode: StatusCodes.Status500InternalServerError,
+                    title: "auth-token-missing",
+                    detail: "Authentication token response was incomplete.");
+            }
+
+            return Results.Ok(new PasswordAuthResponse(
+                tenant.TenantId,
+                result.AccessToken,
+                "Bearer",
+                result.ExpiresInSeconds,
+                result.RefreshToken,
+                result.PasswordChangeRequired));
         })
-        .WithDocs("Auth_Refresh", "Refresh access token", "Rotates the refresh token and returns a new access token.");
+        .WithDocs("Auth_Refresh", "Refresh access token", "Rotates the refresh token and returns a new access token.")
+        .Produces<PasswordAuthResponse>(StatusCodes.Status200OK)
+        .Produces(StatusCodes.Status400BadRequest)
+        .Produces(StatusCodes.Status401Unauthorized)
+        .Produces(StatusCodes.Status404NotFound)
+        .Produces(StatusCodes.Status500InternalServerError);
 
         app.MapPost("/auth/logout", async (
             PasswordLogoutRequest request,
@@ -205,7 +228,11 @@ public static partial class ApiHostingExtensions
 
             return Results.NoContent();
         })
-        .WithDocs("Auth_Logout", "Logout", "Revokes the provided refresh token.");
+        .WithDocs("Auth_Logout", "Logout", "Revokes the provided refresh token.")
+        .Produces(StatusCodes.Status204NoContent)
+        .Produces(StatusCodes.Status400BadRequest)
+        .Produces(StatusCodes.Status401Unauthorized)
+        .Produces(StatusCodes.Status404NotFound);
 
         app.MapPost("/auth/change-password", async (
             PasswordChangePasswordRequest request,
@@ -257,6 +284,10 @@ public static partial class ApiHostingExtensions
             return Results.NoContent();
         })
         .WithDocs("Auth_ChangePassword", "Change password", "Changes the password for the currently authenticated password user. Requires a valid access token.")
+        .Produces(StatusCodes.Status204NoContent)
+        .Produces(StatusCodes.Status401Unauthorized)
+        .Produces(StatusCodes.Status403Forbidden)
+        .Produces(StatusCodes.Status404NotFound)
         .AllowPasswordChangeRequired()
         .RequireCroniqCaller();
     }

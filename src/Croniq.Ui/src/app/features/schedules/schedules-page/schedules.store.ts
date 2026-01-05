@@ -4,7 +4,7 @@ import { authFailureFromError } from '@core/auth/auth-failure';
 import { tenantRxResource } from '@core/resource/tenant-rx-resource';
 import { TenantContextService } from '@core/tenant-context/tenant-context.service';
 import { isoFromEpochMs, nowIso, nowMs } from '@core/time/clock';
-import { ScheduleListResponse, ScheduleSummary, UpsertScheduleRequest, scheduleListResponseSchema } from '@croniq/api-schema';
+import { ScheduleResponse, ScheduleSummary, UpsertScheduleRequest } from '@croniq/api-schema';
 import { CRONIQ_API_CLIENT, CroniqApiClient } from 'data-access';
 import { EMPTY, catchError, finalize, map, of, tap } from 'rxjs';
 
@@ -39,9 +39,9 @@ export class SchedulesStore {
     private readonly lastUpdatedSignal = signal<string>(nowIso());
     readonly error = signal<string | null>(null);
 
-    private readonly schedulesResource = tenantRxResource<ScheduleListResponse, { tenantId: string }>({
+    private readonly schedulesResource = tenantRxResource<ScheduleResponse[], { tenantId: string }>({
         command: 'schedules.refresh',
-        defaultValue: createFallbackResponse(),
+        defaultValue: [],
         params: () => ({
             tenantId: this.tenantContext.snapshot().tenantId,
         }),
@@ -50,10 +50,9 @@ export class SchedulesStore {
 
             const tenantId = params.tenantId.trim();
             if (!tenantId) {
-                const fallback = createFallbackResponse();
-                this.hydrate(fallback);
+                this.hydrate([]);
                 this.error.set('Required context is missing — unable to load schedules.');
-                return of(fallback);
+                return of([]);
             }
 
             const request$ = this.api.getSchedules({ tenantId }, requestOptions);
@@ -70,15 +69,15 @@ export class SchedulesStore {
                     });
                     if (authFailure) {
                         this.error.set(authFailure.message);
-                        const empty = createEmptyResponse();
-                        this.hydrate(empty);
-                        return of(empty);
+                        this.hydrate([]);
+                        return of([]);
                     }
 
                     this.error.set('Unable to load schedules from API — showing fallback data.');
-                    const fallback = createFallbackResponse();
-                    this.hydrate(fallback);
-                    return of(fallback);
+                    const fallback = createFallbackSchedules();
+                    this.schedulesSignal.set(fallback);
+                    this.lastUpdatedSignal.set(nowIso());
+                    return of([]);
                 }),
             );
         },
@@ -206,7 +205,7 @@ export class SchedulesStore {
     readonly scheduleDeadLetterCount = computed(() => this.scheduleDeadLettersSignal().length);
 
     constructor() {
-        this.hydrate(createFallbackResponse());
+        this.schedulesSignal.set(createFallbackSchedules());
     }
 
     refresh(): void {
@@ -313,9 +312,10 @@ export class SchedulesStore {
                 }),
             )
             .pipe(
-                tap(() => {
+                tap((result) => {
                     this.refresh();
-                    const triggerId = safePayload.triggerId;
+                    // If we have a result with a triggerId, use it. Otherwise fall back to payload.
+                    const triggerId = result?.triggerId || safePayload.triggerId;
                     if (triggerId) {
                         this.refreshScheduleDetail(triggerId);
                     }
@@ -373,10 +373,27 @@ export class SchedulesStore {
             .subscribe();
     }
 
-    private hydrate(response: ScheduleListResponse): void {
-        this.schedulesSignal.set(response.items);
-        this.lastUpdatedSignal.set(response.updatedAt);
+    private hydrate(response: ScheduleResponse[]): void {
+        const summaries = response.map(mapToSummary);
+        this.schedulesSignal.set(summaries);
+        this.lastUpdatedSignal.set(nowIso());
     }
+}
+
+function mapToSummary(response: ScheduleResponse): ScheduleSummary {
+    return {
+        id: response.triggerId ?? '',
+        name: response.jobKey ?? response.triggerId ?? 'Unknown Job',
+        tenant: response.tenantId ?? '',
+        cron: response.cronExpression ?? '',
+        timezone: response.timeZoneId ?? 'UTC',
+        owner: 'System',
+        state: response.enabled ? 'active' : 'paused',
+        nextFire: response.startAtUtc ?? '',
+        lastDurationMs: 0,
+        alerts: 0,
+        tags: [],
+    };
 }
 
 function normalizeScheduleDeadLettersResponse(value: unknown): ReadonlyArray<ScheduleDeadLetterView> {
@@ -414,23 +431,6 @@ function normalizeScheduleDeadLettersResponse(value: unknown): ReadonlyArray<Sch
     }
 
     return entries;
-}
-
-function createFallbackResponse(): ScheduleListResponse {
-    const items = createFallbackSchedules();
-    return scheduleListResponseSchema.parse({
-        items,
-        total: items.length,
-        updatedAt: nowIso(),
-    });
-}
-
-function createEmptyResponse(): ScheduleListResponse {
-    return scheduleListResponseSchema.parse({
-        items: [],
-        total: 0,
-        updatedAt: nowIso(),
-    });
 }
 
 function createFallbackSchedules(): ReadonlyArray<ScheduleSummary> {

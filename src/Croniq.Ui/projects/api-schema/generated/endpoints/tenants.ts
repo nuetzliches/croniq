@@ -1,32 +1,54 @@
 import { z } from 'zod';
 import type { EndpointDefinition } from '../schemas';
 import {
+    TenantResponse,
     UpsertTenantRequest,
+    JobResponse,
     UpsertJobRequest,
+    ExecutionKind,
+    ExecutionStatus,
+    ExecutionResponse,
     ScheduleResponse,
     CroniqTriggerSeedDefinition,
     ScheduleUpsertResult,
     ScheduleDeadLetterResponse,
     ScheduleReplayResult,
+    WebhookIpRuleResponse,
+    WebhookEndpointResponse,
     UpsertWebhookEndpointRequest,
     RotateWebhookSecretRequest,
+    RotateWebhookSecretResponse,
     CreateWebhookIpRuleRequest,
+    WebhookDeadLetterResponse,
+    WebhookReplayResult,
+    ApiClientResponse,
     UpsertApiClientRequest,
     IssueApiKeyRequest,
+    IssueApiKeyResponse,
     IssueTokenRequest,
+    IssueTokenResponse,
     WorkPollRequest,
     WorkLeaseToken,
+    WorkPollResponse,
     WorkRenewRequest,
+    WorkRenewResponse,
     WorkAckRequest,
     WorkEventEntry,
     WorkEventsRequest,
     RunnerHeartbeatRequest,
-    ExecutionStatus,
+    RunnerStatusModel,
+    RunnerListResponse,
+    CallerType,
+    CallerInfoResponse,
+    HealthStatusResponse,
+    PasswordAuthResponse,
     PasswordChangePasswordRequest,
     PasswordLoginRequest,
     PasswordLogoutRequest,
     PasswordRefreshRequest,
+    PersistenceHealthResponse,
     TriggerJobRequest,
+    TriggerJobResponse,
 } from '../schemas';
 
 export const TenantsApi: EndpointDefinition[] = [
@@ -38,7 +60,8 @@ export const TenantsApi: EndpointDefinition[] = [
         parameters: [
             { name: 'state', type: 'Query', schema: z.string().optional() },
         ],
-        response: z.void(),
+        response: z.array(TenantResponse),
+        errors: [{ status: 400, description: `Bad Request`, schema: z.void() }],
     },
     {
         method: 'post',
@@ -48,7 +71,8 @@ export const TenantsApi: EndpointDefinition[] = [
         parameters: [
             { name: 'body', type: 'Body', schema: UpsertTenantRequest },
         ],
-        response: z.void(),
+        response: TenantResponse,
+        errors: [{ status: 400, description: `Bad Request`, schema: z.void() }],
     },
     {
         method: 'get',
@@ -56,7 +80,11 @@ export const TenantsApi: EndpointDefinition[] = [
         description: `Returns tenant metadata for the provided tenant identifier.`,
         requestFormat: 'json',
         parameters: [{ name: 'tenantId', type: 'Path', schema: z.string() }],
-        response: z.void(),
+        response: TenantResponse,
+        errors: [
+            { status: 400, description: `Bad Request`, schema: z.void() },
+            { status: 404, description: `Not Found`, schema: z.void() },
+        ],
     },
     {
         method: 'delete',
@@ -65,6 +93,10 @@ export const TenantsApi: EndpointDefinition[] = [
         requestFormat: 'json',
         parameters: [{ name: 'tenantId', type: 'Path', schema: z.string() }],
         response: z.void(),
+        errors: [
+            { status: 400, description: `Bad Request`, schema: z.void() },
+            { status: 404, description: `Not Found`, schema: z.void() },
+        ],
     },
     {
         method: 'get',
@@ -79,7 +111,7 @@ export const TenantsApi: EndpointDefinition[] = [
                 schema: z.string().optional(),
             },
         ],
-        response: z.void(),
+        response: z.array(ApiClientResponse),
     },
     {
         method: 'post',
@@ -95,7 +127,8 @@ export const TenantsApi: EndpointDefinition[] = [
                 schema: z.string().optional(),
             },
         ],
-        response: z.void(),
+        response: ApiClientResponse,
+        errors: [{ status: 400, description: `Bad Request`, schema: z.void() }],
     },
     {
         method: 'get',
@@ -111,7 +144,8 @@ export const TenantsApi: EndpointDefinition[] = [
                 schema: z.string().optional(),
             },
         ],
-        response: z.void(),
+        response: ApiClientResponse,
+        errors: [{ status: 404, description: `Not Found`, schema: z.void() }],
     },
     {
         method: 'delete',
@@ -128,6 +162,7 @@ export const TenantsApi: EndpointDefinition[] = [
             },
         ],
         response: z.void(),
+        errors: [{ status: 404, description: `Not Found`, schema: z.void() }],
     },
     {
         method: 'post',
@@ -144,7 +179,16 @@ export const TenantsApi: EndpointDefinition[] = [
                 schema: z.string().optional(),
             },
         ],
-        response: z.void(),
+        response: IssueTokenResponse,
+        errors: [
+            { status: 400, description: `Bad Request`, schema: z.void() },
+            { status: 404, description: `Not Found`, schema: z.void() },
+            {
+                status: 500,
+                description: `Internal Server Error`,
+                schema: z.void(),
+            },
+        ],
     },
     {
         method: 'post',
@@ -155,7 +199,15 @@ export const TenantsApi: EndpointDefinition[] = [
             { name: 'body', type: 'Body', schema: IssueApiKeyRequest },
             { name: 'tenantId', type: 'Path', schema: z.string() },
         ],
-        response: z.void(),
+        response: IssueApiKeyResponse,
+        errors: [
+            { status: 400, description: `Bad Request`, schema: z.void() },
+            {
+                status: 500,
+                description: `Internal Server Error`,
+                schema: z.void(),
+            },
+        ],
     },
     {
         method: 'delete',
@@ -172,6 +224,7 @@ export const TenantsApi: EndpointDefinition[] = [
             },
         ],
         response: z.void(),
+        errors: [{ status: 404, description: `Not Found`, schema: z.void() }],
     },
     {
         method: 'post',
@@ -187,7 +240,15 @@ export const TenantsApi: EndpointDefinition[] = [
                 schema: z.string().optional(),
             },
         ],
-        response: z.void(),
+        response: IssueApiKeyResponse,
+        errors: [
+            { status: 404, description: `Not Found`, schema: z.void() },
+            {
+                status: 500,
+                description: `Internal Server Error`,
+                schema: z.void(),
+            },
+        ],
     },
     {
         method: 'post',
@@ -236,7 +297,8 @@ export const TenantsApi: EndpointDefinition[] = [
                 schema: z.number().int().optional(),
             },
         ],
-        response: z.void(),
+        response: z.array(ExecutionResponse),
+        errors: [{ status: 400, description: `Bad Request`, schema: z.void() }],
     },
     {
         method: 'get',
@@ -252,7 +314,8 @@ export const TenantsApi: EndpointDefinition[] = [
                 schema: z.string().optional(),
             },
         ],
-        response: z.void(),
+        response: ExecutionResponse,
+        errors: [{ status: 404, description: `Not Found`, schema: z.void() }],
     },
     {
         method: 'get',
@@ -278,7 +341,7 @@ export const TenantsApi: EndpointDefinition[] = [
                 schema: z.string().optional(),
             },
         ],
-        response: z.void(),
+        response: z.array(JobResponse),
     },
     {
         method: 'post',
@@ -294,7 +357,8 @@ export const TenantsApi: EndpointDefinition[] = [
                 schema: z.string().optional(),
             },
         ],
-        response: z.void(),
+        response: JobResponse,
+        errors: [{ status: 400, description: `Bad Request`, schema: z.void() }],
     },
     {
         method: 'get',
@@ -310,7 +374,11 @@ export const TenantsApi: EndpointDefinition[] = [
                 schema: z.string().optional(),
             },
         ],
-        response: z.void(),
+        response: JobResponse,
+        errors: [
+            { status: 400, description: `Bad Request`, schema: z.void() },
+            { status: 404, description: `Not Found`, schema: z.void() },
+        ],
     },
     {
         method: 'delete',
@@ -327,6 +395,7 @@ export const TenantsApi: EndpointDefinition[] = [
             },
         ],
         response: z.void(),
+        errors: [{ status: 400, description: `Bad Request`, schema: z.void() }],
     },
     {
         method: 'get',
@@ -341,7 +410,7 @@ export const TenantsApi: EndpointDefinition[] = [
                 schema: z.string().optional(),
             },
         ],
-        response: z.void(),
+        response: RunnerListResponse,
     },
     {
         method: 'post',
@@ -358,6 +427,7 @@ export const TenantsApi: EndpointDefinition[] = [
             },
         ],
         response: z.void(),
+        errors: [{ status: 400, description: `Bad Request`, schema: z.void() }],
     },
     {
         method: 'get',
@@ -478,7 +548,16 @@ export const TenantsApi: EndpointDefinition[] = [
                 schema: z.string().optional(),
             },
         ],
-        response: z.void(),
+        response: IssueTokenResponse,
+        errors: [
+            { status: 400, description: `Bad Request`, schema: z.void() },
+            { status: 404, description: `Not Found`, schema: z.void() },
+            {
+                status: 500,
+                description: `Internal Server Error`,
+                schema: z.void(),
+            },
+        ],
     },
     {
         method: 'get',
@@ -493,7 +572,14 @@ export const TenantsApi: EndpointDefinition[] = [
                 schema: z.string().optional(),
             },
         ],
-        response: z.void(),
+        response: z.array(WebhookEndpointResponse),
+        errors: [
+            {
+                status: 503,
+                description: `Service Unavailable`,
+                schema: z.void(),
+            },
+        ],
     },
     {
         method: 'post',
@@ -514,7 +600,20 @@ export const TenantsApi: EndpointDefinition[] = [
             },
             { name: 'allowUnsigned', type: 'Query', schema: z.boolean() },
         ],
-        response: z.void(),
+        response: WebhookEndpointResponse,
+        errors: [
+            { status: 400, description: `Bad Request`, schema: z.void() },
+            {
+                status: 500,
+                description: `Internal Server Error`,
+                schema: z.void(),
+            },
+            {
+                status: 503,
+                description: `Service Unavailable`,
+                schema: z.void(),
+            },
+        ],
     },
     {
         method: 'delete',
@@ -536,6 +635,13 @@ export const TenantsApi: EndpointDefinition[] = [
             },
         ],
         response: z.void(),
+        errors: [
+            {
+                status: 503,
+                description: `Service Unavailable`,
+                schema: z.void(),
+            },
+        ],
     },
     {
         method: 'get',
@@ -551,7 +657,14 @@ export const TenantsApi: EndpointDefinition[] = [
                 schema: z.string().optional(),
             },
         ],
-        response: z.void(),
+        response: z.array(WebhookIpRuleResponse),
+        errors: [
+            {
+                status: 503,
+                description: `Service Unavailable`,
+                schema: z.void(),
+            },
+        ],
     },
     {
         method: 'post',
@@ -568,7 +681,20 @@ export const TenantsApi: EndpointDefinition[] = [
                 schema: z.string().optional(),
             },
         ],
-        response: z.void(),
+        response: WebhookIpRuleResponse,
+        errors: [
+            { status: 400, description: `Bad Request`, schema: z.void() },
+            {
+                status: 500,
+                description: `Internal Server Error`,
+                schema: z.void(),
+            },
+            {
+                status: 503,
+                description: `Service Unavailable`,
+                schema: z.void(),
+            },
+        ],
     },
     {
         method: 'delete',
@@ -586,6 +712,13 @@ export const TenantsApi: EndpointDefinition[] = [
             },
         ],
         response: z.void(),
+        errors: [
+            {
+                status: 503,
+                description: `Service Unavailable`,
+                schema: z.void(),
+            },
+        ],
     },
     {
         method: 'post',
@@ -602,7 +735,19 @@ export const TenantsApi: EndpointDefinition[] = [
                 schema: z.string().optional(),
             },
         ],
-        response: z.void(),
+        response: RotateWebhookSecretResponse,
+        errors: [
+            {
+                status: 500,
+                description: `Internal Server Error`,
+                schema: z.void(),
+            },
+            {
+                status: 503,
+                description: `Service Unavailable`,
+                schema: z.void(),
+            },
+        ],
     },
     {
         method: 'get',
@@ -617,7 +762,14 @@ export const TenantsApi: EndpointDefinition[] = [
                 schema: z.string().optional(),
             },
         ],
-        response: z.void(),
+        response: z.array(WebhookDeadLetterResponse),
+        errors: [
+            {
+                status: 503,
+                description: `Service Unavailable`,
+                schema: z.void(),
+            },
+        ],
     },
     {
         method: 'post',
@@ -633,7 +785,20 @@ export const TenantsApi: EndpointDefinition[] = [
                 schema: z.string().optional(),
             },
         ],
-        response: z.void(),
+        response: WebhookReplayResult,
+        errors: [
+            { status: 404, description: `Not Found`, schema: z.void() },
+            {
+                status: 500,
+                description: `Internal Server Error`,
+                schema: z.void(),
+            },
+            {
+                status: 503,
+                description: `Service Unavailable`,
+                schema: z.void(),
+            },
+        ],
     },
     {
         method: 'post',
@@ -651,6 +816,10 @@ export const TenantsApi: EndpointDefinition[] = [
             },
         ],
         response: z.void(),
+        errors: [
+            { status: 400, description: `Bad Request`, schema: z.void() },
+            { status: 409, description: `Conflict`, schema: z.void() },
+        ],
     },
     {
         method: 'post',
@@ -667,6 +836,10 @@ export const TenantsApi: EndpointDefinition[] = [
             },
         ],
         response: z.void(),
+        errors: [
+            { status: 400, description: `Bad Request`, schema: z.void() },
+            { status: 409, description: `Conflict`, schema: z.void() },
+        ],
     },
     {
         method: 'post',
@@ -682,7 +855,8 @@ export const TenantsApi: EndpointDefinition[] = [
                 schema: z.string().optional(),
             },
         ],
-        response: z.void(),
+        response: WorkPollResponse,
+        errors: [{ status: 400, description: `Bad Request`, schema: z.void() }],
     },
     {
         method: 'post',
@@ -698,7 +872,15 @@ export const TenantsApi: EndpointDefinition[] = [
                 schema: z.string().optional(),
             },
         ],
-        response: z.void(),
+        response: WorkRenewResponse,
+        errors: [
+            { status: 400, description: `Bad Request`, schema: z.void() },
+            {
+                status: 404,
+                description: `Not Found`,
+                schema: WorkRenewResponse,
+            },
+        ],
     },
 ] as const;
 

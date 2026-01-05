@@ -56,6 +56,8 @@ public static partial class ApiHostingExtensions
             return Results.NoContent();
         })
         .WithDocs("Runners_Heartbeat", "Runner heartbeat", "Records a runner heartbeat to track availability.")
+        .Produces(StatusCodes.Status204NoContent)
+        .Produces(StatusCodes.Status400BadRequest)
         .RequireCroniqTenantScopeFromBodyOrQuery<RunnerHeartbeatRequest>(r => r.EnvironmentTag, requireEnvironment: true, CroniqScopes.RunnersHeartbeat);
 
         app.MapGet("/tenants/{tenantId}/runners", async (
@@ -82,6 +84,7 @@ public static partial class ApiHostingExtensions
             return Results.Ok(new RunnerListResponse(payload));
         })
         .WithDocs("Runners_List", "List runners", "Lists active runners for the tenant/environment.")
+        .Produces<RunnerListResponse>(StatusCodes.Status200OK)
         .RequireCroniqTenantScope(requireEnvironment: true, CroniqScopes.RunnersRead);
     }
 }

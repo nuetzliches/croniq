@@ -17,15 +17,8 @@ export const scheduleSummarySchema = z.object({
     tags: z.array(z.string()).default([]),
 });
 
-export const scheduleListResponseSchema = z.object({
-    items: z.array(scheduleSummarySchema),
-    total: z.number().int().nonnegative(),
-    updatedAt: z.iso.datetime(),
-});
-
 export const upsertScheduleRequestSchema = CroniqTriggerSeedDefinition;
 
 export type ScheduleState = z.infer<typeof scheduleStateSchema>;
 export type ScheduleSummary = z.infer<typeof scheduleSummarySchema>;
-export type ScheduleListResponse = z.infer<typeof scheduleListResponseSchema>;
 export type UpsertScheduleRequest = z.infer<typeof upsertScheduleRequestSchema>;
