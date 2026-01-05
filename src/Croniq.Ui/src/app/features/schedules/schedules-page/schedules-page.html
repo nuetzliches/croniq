@@ -22,6 +22,26 @@
       >
         Calendar
       </button>
+      <button
+        type="button"
+        class="rounded-md px-3 py-1.5 text-sm font-medium transition"
+        [class.bg-white/10]="viewMode() === 'dead-letters'"
+        [class.text-primary]="viewMode() === 'dead-letters'"
+        [class.text-muted]="viewMode() !== 'dead-letters'"
+        (click)="setViewMode('dead-letters')"
+      >
+        Dead Letters
+      </button>
+      <button
+        type="button"
+        class="rounded-md px-3 py-1.5 text-sm font-medium transition"
+        [class.bg-white/10]="viewMode() === 'logs'"
+        [class.text-primary]="viewMode() === 'logs'"
+        [class.text-muted]="viewMode() !== 'logs'"
+        (click)="setViewMode('logs')"
+      >
+        Logs
+      </button>
     </div>
     <button
       type="button"
@@ -100,6 +120,100 @@
                       </button>
                     </div>
                   </td>
+                </tr>
+              }
+            }
+          </tbody>
+        </table>
+      </div>
+    } @else if (viewMode() === 'dead-letters') {
+      <div class="overflow-x-auto">
+        <table class="w-full text-left text-sm">
+          <thead class="bg-white/5 text-xs uppercase text-muted">
+            <tr>
+              <th class="px-6 py-3 font-medium">ID</th>
+              <th class="px-6 py-3 font-medium">Trigger ID</th>
+              <th class="px-6 py-3 font-medium">Job Key</th>
+              <th class="px-6 py-3 font-medium">Occurred At</th>
+              <th class="px-6 py-3 font-medium">Detail</th>
+              <th class="px-6 py-3 font-medium text-right">Actions</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-white/10">
+            @if (deadLettersLoading()) {
+              <tr>
+                <td colspan="6" class="px-6 py-8 text-center text-muted">Loading dead letters...</td>
+              </tr>
+            } @else if (deadLetters().length === 0) {
+              <tr>
+                <td colspan="6" class="px-6 py-8 text-center text-muted">No dead letters found.</td>
+              </tr>
+            } @else {
+              @for (dl of deadLetters(); track dl.id) {
+                <tr class="hover:bg-white/5 group">
+                  <td class="px-6 py-4 font-mono text-xs text-muted">{{ dl.id }}</td>
+                  <td class="px-6 py-4 font-mono text-xs text-primary">{{ dl.triggerId }}</td>
+                  <td class="px-6 py-4 text-muted">{{ dl.jobKey }}</td>
+                  <td class="px-6 py-4 text-muted">{{ dl.occurredAtUtc | date:'short' }}</td>
+                  <td class="px-6 py-4 text-muted truncate max-w-xs" title="{{ dl.detail }}">{{ dl.detail }}</td>
+                  <td class="px-6 py-4 text-right">
+                    <button
+                      type="button"
+                      (click)="replayDeadLetter(dl.id)"
+                      class="rounded px-2 py-1 text-xs font-medium text-accent hover:bg-accent/10 transition"
+                    >
+                      Replay
+                    </button>
+                  </td>
+                </tr>
+              }
+            }
+          </tbody>
+        </table>
+      </div>
+    } @else if (viewMode() === 'logs') {
+      <div class="overflow-x-auto">
+        <table class="w-full text-left text-sm">
+          <thead class="bg-white/5 text-xs uppercase text-muted">
+            <tr>
+              <th class="px-6 py-3 font-medium">ID</th>
+              <th class="px-6 py-3 font-medium">Job Key</th>
+              <th class="px-6 py-3 font-medium">Status</th>
+              <th class="px-6 py-3 font-medium">Start Time</th>
+              <th class="px-6 py-3 font-medium">Duration (ms)</th>
+              <th class="px-6 py-3 font-medium">Trigger</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-white/10">
+            @if (executionsLoading()) {
+              <tr>
+                <td colspan="6" class="px-6 py-8 text-center text-muted">Loading logs...</td>
+              </tr>
+            } @else if (executions().length === 0) {
+              <tr>
+                <td colspan="6" class="px-6 py-8 text-center text-muted">No logs found.</td>
+              </tr>
+            } @else {
+              @for (exec of executions(); track exec.id) {
+                <tr class="hover:bg-white/5">
+                  <td class="px-6 py-4 font-mono text-xs text-muted">{{ exec.id }}</td>
+                  <td class="px-6 py-4 font-medium text-primary">{{ exec.jobKey }}</td>
+                  <td class="px-6 py-4">
+                    <span
+                      class="inline-flex items-center rounded-full px-2 py-1 text-xs font-medium"
+                      [class.bg-success/10]="exec.status === 'Success'"
+                      [class.text-success]="exec.status === 'Success'"
+                      [class.bg-danger/10]="exec.status === 'Failed'"
+                      [class.text-danger]="exec.status === 'Failed'"
+                      [class.bg-white/10]="exec.status !== 'Success' && exec.status !== 'Failed'"
+                      [class.text-muted]="exec.status !== 'Success' && exec.status !== 'Failed'"
+                    >
+                      {{ exec.status }}
+                    </span>
+                  </td>
+                  <td class="px-6 py-4 text-muted">{{ exec.startAtUtc | date:'short' }}</td>
+                  <td class="px-6 py-4 text-muted">{{ exec.durationMs }}</td>
+                  <td class="px-6 py-4 text-muted">{{ exec.trigger }}</td>
                 </tr>
               }
             }

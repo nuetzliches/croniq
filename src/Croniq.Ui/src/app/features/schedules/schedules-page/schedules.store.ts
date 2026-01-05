@@ -30,6 +30,15 @@ export type ScheduleDeadLetterView = {
     detail?: string;
 };
 
+export type ExecutionSummary = {
+    id: string;
+    jobKey: string;
+    status: string;
+    startAtUtc: string;
+    durationMs: number;
+    trigger: string;
+};
+
 @Injectable()
 export class SchedulesStore {
     private readonly api = inject<CroniqApiClient>(CRONIQ_API_CLIENT);
@@ -187,6 +196,38 @@ export class SchedulesStore {
         },
     );
 
+    private readonly executionsSignal = signal<ReadonlyArray<ExecutionSummary>>([]);
+    private readonly executionsErrorSignal = signal<string | null>(null);
+    private readonly executionsResource = tenantRxResource<ReadonlyArray<ExecutionSummary>, { tenantId: string; environment: string }>({
+        command: 'schedules.list-executions',
+        defaultValue: [],
+        params: () => {
+            const { tenantId, environment } = this.tenantContext.snapshot();
+            return { tenantId, environment };
+        },
+        stream: ({ params, requestOptions }) => {
+            this.executionsErrorSignal.set(null);
+            const tenantId = params.tenantId.trim();
+            const environment = params.environment.trim();
+            if (!tenantId) {
+                this.executionsSignal.set([]);
+                return of([]);
+            }
+
+            // Note: We might want to filter by 'trigger=schedule' if the API supports it,
+            // but for now we list all executions as requested.
+            return this.api.listExecutions({ tenantId, environment }, requestOptions).pipe(
+                map((response) => normalizeExecutionsResponse(response)),
+                tap((entries) => this.executionsSignal.set(entries)),
+                catchError((error: unknown) => {
+                    console.error('Failed to load executions', error);
+                    this.executionsErrorSignal.set('Unable to load executions from API.');
+                    return of([]);
+                }),
+            );
+        },
+    });
+
     readonly schedules = this.schedulesSignal.asReadonly();
     readonly lastUpdated = this.lastUpdatedSignal.asReadonly();
 
@@ -204,12 +245,18 @@ export class SchedulesStore {
     readonly scheduleDeadLettersError = this.scheduleDeadLettersErrorSignal.asReadonly();
     readonly scheduleDeadLetterCount = computed(() => this.scheduleDeadLettersSignal().length);
 
+    readonly executions = this.executionsSignal.asReadonly();
+    readonly executionsLoading = computed(() => this.executionsResource.isLoading());
+    readonly executionsError = this.executionsErrorSignal.asReadonly();
+
     constructor() {
         this.schedulesSignal.set(createFallbackSchedules());
     }
 
     refresh(): void {
         this.schedulesResource.reload();
+        this.scheduleDeadLettersResource.reload();
+        this.executionsResource.reload();
     }
 
     refreshScheduleDetail(triggerId: string): void {
@@ -536,4 +583,27 @@ function normalizeScheduleDetail(value: unknown, fallbackId: string): ScheduleDe
         timezone: timezone || undefined,
         state: state || undefined,
     };
+}
+
+function normalizeExecutionsResponse(value: unknown): ReadonlyArray<ExecutionSummary> {
+    if (!Array.isArray(value)) {
+        return [];
+    }
+
+    const entries: ExecutionSummary[] = [];
+    for (const [index, item] of value.entries()) {
+        if (!item || typeof item !== 'object') {
+            continue;
+        }
+        const record = item as Record<string, unknown>;
+        const id = typeof record['id'] === 'string' ? record['id'] : `exec-${index}`;
+        const jobKey = typeof record['jobKey'] === 'string' ? record['jobKey'] : 'Unknown Job';
+        const status = typeof record['status'] === 'string' ? record['status'] : 'Unknown';
+        const startAtUtc = typeof record['startAtUtc'] === 'string' ? record['startAtUtc'] : '';
+        const durationMs = typeof record['durationMs'] === 'number' ? record['durationMs'] : 0;
+        const trigger = typeof record['trigger'] === 'string' ? record['trigger'] : 'Schedule';
+
+        entries.push({ id, jobKey, status, startAtUtc, durationMs, trigger });
+    }
+    return entries;
 }

@@ -15,18 +15,24 @@ export class SchedulesPage {
   private readonly store = inject(SchedulesStore);
 
   // View State
-  viewMode = signal<'list' | 'calendar'>('list');
+  viewMode = signal<'list' | 'calendar' | 'dead-letters' | 'logs'>('list');
 
   // Data
   loading = this.store.loading;
   schedules = this.store.schedules;
+
+  deadLetters = this.store.scheduleDeadLetters;
+  deadLettersLoading = this.store.scheduleDeadLettersLoading;
+
+  executions = this.store.executions;
+  executionsLoading = this.store.executionsLoading;
 
   // Dialog State
   showDialog = signal(false);
   editingSchedule = signal<UpsertScheduleRequest | null>(null);
 
   // Actions
-  setViewMode(mode: 'list' | 'calendar') {
+  setViewMode(mode: 'list' | 'calendar' | 'dead-letters' | 'logs') {
     this.viewMode.set(mode);
   }
 
@@ -53,6 +59,10 @@ export class SchedulesPage {
     if (confirm('Are you sure you want to delete this schedule?')) {
       this.store.deleteSchedule(triggerId);
     }
+  }
+
+  replayDeadLetter(id: number) {
+    this.store.replayScheduleDeadLetter(id);
   }
 
   onSave(request: UpsertScheduleRequest) {
