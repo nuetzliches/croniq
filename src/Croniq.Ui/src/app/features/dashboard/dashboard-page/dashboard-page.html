@@ -2,27 +2,29 @@
   <!-- Metrics Row -->
   <section class="grid gap-6 md:grid-cols-3">
     @for (metric of metrics(); track metric.label) {
-      <article class="rounded-xl border border-white/10 bg-surface-alt p-5 shadow-card">
-        <div class="flex items-start justify-between">
-          <h3 class="text-sm font-medium text-muted">{{ metric.label }}</h3>
-          @if (metric.status) {
-            <span class="flex h-2 w-2 rounded-full"
-              [class.bg-success]="metric.status === 'healthy'"
-              [class.bg-warning]="metric.status === 'warning'"
-              [class.bg-danger]="metric.status === 'critical'">
-            </span>
-          }
-        </div>
-        <div class="mt-4 flex items-baseline gap-2">
-          <span class="text-3xl font-semibold text-primary">{{ metric.value }}</span>
-          @if (metric.trend) {
-            <span class="text-xs font-medium text-success">{{ metric.trend }}</span>
-          }
-        </div>
-        @if (metric.subtext) {
-          <p class="mt-1 text-xs text-muted">{{ metric.subtext }}</p>
+    <article class="rounded-xl border border-white/10 bg-surface-alt p-5 shadow-card">
+      <div class="flex items-start justify-between">
+        <h3 class="text-sm font-medium text-muted">{{ metric.label }}</h3>
+        @if (metric.status) {
+        <span
+          class="flex h-2 w-2 rounded-full"
+          [class.bg-success]="metric.status === 'healthy'"
+          [class.bg-warning]="metric.status === 'warning'"
+          [class.bg-danger]="metric.status === 'critical'"
+        >
+        </span>
         }
-      </article>
+      </div>
+      <div class="mt-4 flex items-baseline gap-2">
+        <span class="text-3xl font-semibold text-primary">{{ metric.value }}</span>
+        @if (metric.trend) {
+        <span class="text-xs font-medium text-success">{{ metric.trend }}</span>
+        }
+      </div>
+      @if (metric.subtext) {
+      <p class="mt-1 text-xs text-muted">{{ metric.subtext }}</p>
+      }
+    </article>
     }
   </section>
 
@@ -43,18 +45,22 @@
             </tr>
           </thead>
           <tbody class="divide-y divide-white/10">
-            @for (failure of recentFailures(); track failure.jobKey + failure.time) {
-              <tr class="hover:bg-white/5">
-                <td class="px-6 py-3 font-medium text-primary">{{ failure.jobKey }}</td>
-                <td class="px-6 py-3 text-danger">{{ failure.reason }}</td>
-                <td class="px-6 py-3 text-muted">{{ failure.time }}</td>
-              </tr>
+            @for (failure of recentFailures(); track failure.id) {
+            <tr class="hover:bg-white/5">
+              <td class="px-6 py-3 font-medium text-primary">{{ failure.jobKey }}</td>
+              <td class="px-6 py-3 text-danger">{{ failure.reason }}</td>
+              <td class="px-6 py-3 text-muted">{{ failure.time | date : 'short' }}</td>
+            </tr>
             }
           </tbody>
         </table>
       </div>
       <footer class="border-t border-white/10 px-6 py-3">
-        <a routerLink="/schedules" class="text-sm font-medium text-accent hover:text-accent-hover">
+        <a
+          routerLink="/schedules"
+          [queryParams]="{ view: 'dead-letters' }"
+          class="text-sm font-medium text-accent hover:text-accent-hover"
+        >
           View All Dead Letters →
         </a>
       </footer>
@@ -75,16 +81,23 @@
           </thead>
           <tbody class="divide-y divide-white/10">
             @for (schedule of upcomingSchedules(); track schedule.jobKey) {
-              <tr class="hover:bg-white/5">
-                <td class="px-6 py-3 font-medium text-primary">{{ schedule.jobKey }}</td>
-                <td class="px-6 py-3 text-muted">{{ schedule.fireTime }}</td>
-              </tr>
+            <tr class="hover:bg-white/5">
+              <td class="px-6 py-3 font-medium text-primary">
+                {{ schedule.jobKey }}
+                <span class="block text-xs text-muted font-mono">{{ schedule.cron }}</span>
+              </td>
+              <td class="px-6 py-3 text-muted">{{ schedule.fireTime | date : 'short' }}</td>
+            </tr>
             }
           </tbody>
         </table>
       </div>
       <footer class="border-t border-white/10 px-6 py-3">
-        <a routerLink="/schedules" class="text-sm font-medium text-accent hover:text-accent-hover">
+        <a
+          routerLink="/schedules"
+          [queryParams]="{ view: 'calendar' }"
+          class="text-sm font-medium text-accent hover:text-accent-hover"
+        >
           View Calendar →
         </a>
       </footer>
