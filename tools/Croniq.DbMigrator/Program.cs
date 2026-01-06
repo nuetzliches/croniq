@@ -81,6 +81,7 @@ static async Task ApplyMigrationsAsync(IServiceProvider provider, string connect
 
         try
         {
+            await EnsureDatabaseExistsAsync(connectionString, logger, token).ConfigureAwait(false);
             var pendingMigrations = await context.Database.GetPendingMigrationsAsync(token).ConfigureAwait(false);
             if (!pendingMigrations.Any())
             {
@@ -119,11 +120,73 @@ static async Task ApplyMigrationsAsync(IServiceProvider provider, string connect
     }
 }
 
+static async Task EnsureDatabaseExistsAsync(string connectionString, ILogger logger, CancellationToken token)
+{
+    var builder = new SqlConnectionStringBuilder(connectionString);
+    var databaseName = builder.InitialCatalog;
+    if (string.IsNullOrWhiteSpace(databaseName))
+    {
+        logger.LogWarning("Croniq SQL connection string has no database name; skipping database creation.");
+        return;
+    }
+
+    if (string.Equals(databaseName, "master", StringComparison.OrdinalIgnoreCase))
+    {
+        return;
+    }
+
+    var masterBuilder = new SqlConnectionStringBuilder(builder.ConnectionString)
+    {
+        InitialCatalog = "master"
+    };
+
+    await using var connection = new SqlConnection(masterBuilder.ConnectionString);
+    await connection.OpenAsync(token).ConfigureAwait(false);
+
+    var exists = await ExecuteScalarAsync<int?>(
+        connection,
+        "SELECT DB_ID(@name);",
+        token,
+        new SqlParameter("@name", databaseName)).ConfigureAwait(false);
+    if (exists is not null)
+    {
+        return;
+    }
+
+    logger.LogInformation("Croniq SQL Server database '{Database}' not found. Creating...", databaseName);
+    try
+    {
+        await ExecuteNonQueryAsync(
+            connection,
+            "DECLARE @sql nvarchar(max) = N'CREATE DATABASE ' + QUOTENAME(@name); EXEC(@sql);",
+            token,
+            new SqlParameter("@name", databaseName)).ConfigureAwait(false);
+        logger.LogInformation("Croniq SQL Server database '{Database}' created.", databaseName);
+    }
+    catch (SqlException ex) when (IsDatabaseAlreadyExistsError(ex))
+    {
+        logger.LogInformation("Croniq SQL Server database '{Database}' already exists.", databaseName);
+    }
+}
+
 static bool IsObjectAlreadyExistsError(SqlException exception)
 {
     foreach (SqlError error in exception.Errors)
     {
         if (error.Number is 2714)
+        {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+static bool IsDatabaseAlreadyExistsError(SqlException exception)
+{
+    foreach (SqlError error in exception.Errors)
+    {
+        if (error.Number is 1801)
         {
             return true;
         }
