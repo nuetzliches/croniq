@@ -34,7 +34,7 @@ cd HelloCroniq
  dotnet add package Croniq.Api --version <latest>
 ```
 
-> Always install the latest stable version (see `AI_ASSISTANT_INSTRUCTIONS.md`). For local development before packages exist, add project references to `src/Croniq` and `src/Croniq.Api` instead of NuGet packages.
+> Always install the latest stable version (see `AGENTS.md`). For local development before packages exist, add project references to `src/Croniq` and `src/Croniq.Api` instead of NuGet packages.
 
 ## 3. Register a Job Class
 

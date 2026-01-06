@@ -128,6 +128,7 @@ public static class WebhookHostingExtensions
         services.TryAddSingleton<WebhookEndpointResolver>();
         services.TryAddEnumerable(ServiceDescriptor.Singleton<IWebhookEndpointChangeNotifier, WebhookEndpointCacheNotifier>());
         services.TryAddSingleton<WebhookDeadLetterRecorder>();
+        services.AddHostedService<WebhookConfigurationWarningService>();
         services.AddHostedService<WebhookEndpointCacheInvalidationService>();
         return services;
     }
@@ -589,6 +590,35 @@ public static class WebhookHostingExtensions
             var delay = TimeSpan.FromSeconds(Math.Max(1, seconds));
             return Task.Delay(delay, cancellationToken);
         }
+    }
+
+    private sealed class WebhookConfigurationWarningService : IHostedService
+    {
+        private readonly IOptionsMonitor<CroniqWebhookOptions> _options;
+        private readonly ILogger<WebhookConfigurationWarningService> _logger;
+
+        public WebhookConfigurationWarningService(
+            IOptionsMonitor<CroniqWebhookOptions> options,
+            ILogger<WebhookConfigurationWarningService> logger)
+        {
+            _options = options;
+            _logger = logger;
+        }
+
+        public Task StartAsync(CancellationToken cancellationToken)
+        {
+            var options = _options.CurrentValue;
+            if (options.Mode == WebhookPersistenceMode.SqlServer && options.Endpoints.Count > 0)
+            {
+                _logger.LogWarning(
+                    "Croniq:Webhooks:Endpoints is configured while Mode=SqlServer; persisted webhooks take precedence and config-defined endpoints are used only when no persisted hook exists for the same key. Configured endpoints: {Count}",
+                    options.Endpoints.Count);
+            }
+
+            return Task.CompletedTask;
+        }
+
+        public Task StopAsync(CancellationToken cancellationToken) => Task.CompletedTask;
     }
 
     private sealed class WebhookEndpointResolver

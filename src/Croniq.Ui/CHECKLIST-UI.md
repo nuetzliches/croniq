@@ -138,7 +138,7 @@ This checklist intentionally avoids duplicating how-tos.
 - When the backend contract changes: run `npm run snapshot:swagger`, then `npm run generate:api`.
 - Keep OpenAPI responses in sync with the backend (ideally add response schemas for `/auth/*` upstream so generation no longer yields `z.void()` responses).
 - Keep `tenantId` / `environmentTag` unset in the login payload (server-configured defaults).
-- For tenant-scoped API routes (`/tenants/:tenantId/*`), pass the **tenant reference** (see root docs: `docs/deep-dive/password-auth.md` and `AI_ASSISTANT_INSTRUCTIONS.md`).
+- For tenant-scoped API routes (`/tenants/:tenantId/*`), pass the **tenant reference** (see root docs: `docs/deep-dive/password-auth.md` and `AGENTS.md`).
 - Decide CI policy for OpenAPI sync (snapshot commit vs. live/staging generation) and implement it.
 - Establish Angular Query + Signals boilerplate shared across feature modules.
 

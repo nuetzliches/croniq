@@ -12,6 +12,7 @@ export const croniqUiRuntimeConfigSchema = z
     .object({
         apiBaseUrl: urlLikeSchema.optional(),
         swaggerUiUrl: urlLikeSchema.optional(),
+        webhooksAllowUnsignedHooks: z.boolean().optional(),
     })
     .strict();
 

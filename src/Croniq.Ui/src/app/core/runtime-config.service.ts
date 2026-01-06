@@ -42,4 +42,8 @@ export class RuntimeConfigService {
     get swaggerUiUrl(): string {
         return resolveSwaggerUiUrl(this.apiBaseUrl, this.config.swaggerUiUrl);
     }
+
+    get webhooksAllowUnsignedHooks(): boolean {
+        return this.config.webhooksAllowUnsignedHooks ?? false;
+    }
 }

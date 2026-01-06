@@ -38,5 +38,5 @@ npm install
 Write-Host "[devstack] Running: npm run generate:api:server:snapshot" -ForegroundColor DarkGray
 npm run generate:api:server:snapshot
 
-Write-Host "[devstack] Starting: ng serve --port $UiPort" -ForegroundColor DarkGray
-& .\node_modules\.bin\ng serve --port $UiPort
+Write-Host "[devstack] Starting: npm start -- --port $UiPort" -ForegroundColor DarkGray
+npm start "--" --port $UiPort

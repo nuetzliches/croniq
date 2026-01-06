@@ -4,6 +4,7 @@
     <h1 class="text-lg font-semibold text-primary">Webhook Endpoints</h1>
     <button
       type="button"
+      (click)="openWebhookDialog()"
       class="rounded-lg bg-accent px-4 py-2 text-sm font-semibold text-white transition hover:bg-accent-hover"
     >
       Register Endpoint
@@ -24,42 +25,52 @@
         </thead>
         <tbody class="divide-y divide-white/10">
           @if (loading()) {
-            <tr>
-              <td colspan="4" class="px-6 py-8 text-center text-muted">Loading endpoints...</td>
-            </tr>
+          <tr>
+            <td colspan="4" class="px-6 py-8 text-center text-muted">Loading endpoints...</td>
+          </tr>
           } @else if (endpoints().length === 0) {
-            <tr>
-              <td colspan="4" class="px-6 py-8 text-center text-muted">No endpoints found.</td>
-            </tr>
-          } @else {
-            @for (endpoint of endpoints(); track endpoint.hookKey) {
-              <tr class="hover:bg-white/5">
-                <td class="px-6 py-4 font-medium text-primary">{{ endpoint.hookKey }}</td>
-                <td class="px-6 py-4 text-muted">{{ endpoint.jobKey }}</td>
-                <td class="px-6 py-4">
-                  <div class="flex flex-col gap-1">
-                    @if (endpoint.requireSignature) {
-                      <span class="inline-flex w-fit items-center rounded-full bg-success/10 px-2 py-0.5 text-xs font-medium text-success">
-                        Signed
-                      </span>
-                    } @else {
-                      <span class="inline-flex w-fit items-center rounded-full bg-warning/10 px-2 py-0.5 text-xs font-medium text-warning">
-                        Unsigned
-                      </span>
-                    }
-                    <!-- Mock IP Whitelist status -->
-                    <span class="text-xs text-muted">IP Whitelist: Enabled</span>
-                  </div>
-                </td>
-                <td class="px-6 py-4 text-right">
-                  <div class="flex justify-end gap-2">
-                    <button class="text-xs font-medium text-accent hover:text-accent-hover">Rotate Secret</button>
-                    <button class="text-xs font-medium text-muted hover:text-primary">IP Rules</button>
-                  </div>
-                </td>
-              </tr>
-            }
-          }
+          <tr>
+            <td colspan="4" class="px-6 py-8 text-center text-muted">No endpoints found.</td>
+          </tr>
+          } @else { @for (endpoint of endpoints(); track endpoint.hookKey) {
+          <tr class="hover:bg-white/5">
+            <td class="px-6 py-4 font-medium text-primary">{{ endpoint.hookKey }}</td>
+            <td class="px-6 py-4 text-muted">{{ endpoint.jobKey }}</td>
+            <td class="px-6 py-4">
+              <div class="flex flex-col gap-1">
+                @if (endpoint.requireSignature) {
+                <span
+                  class="inline-flex w-fit items-center rounded-full bg-success/10 px-2 py-0.5 text-xs font-medium text-success"
+                >
+                  Signed
+                </span>
+                } @else {
+                <span
+                  class="inline-flex w-fit items-center rounded-full bg-warning/10 px-2 py-0.5 text-xs font-medium text-warning"
+                >
+                  Unsigned
+                </span>
+                }
+                <!-- Mock IP Whitelist status -->
+                <span class="text-xs text-muted">IP Whitelist: Enabled</span>
+              </div>
+            </td>
+            <td class="px-6 py-4 text-right">
+              <div class="flex justify-end gap-2">
+                <button
+                  (click)="openWebhookDialog(endpoint)"
+                  class="text-xs font-medium text-primary hover:text-accent"
+                >
+                  Edit
+                </button>
+                <button class="text-xs font-medium text-accent hover:text-accent-hover">
+                  Rotate Secret
+                </button>
+                <button class="text-xs font-medium text-muted hover:text-primary">IP Rules</button>
+              </div>
+            </td>
+          </tr>
+          } }
         </tbody>
       </table>
     </div>

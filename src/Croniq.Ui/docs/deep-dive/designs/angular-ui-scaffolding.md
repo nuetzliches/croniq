@@ -123,7 +123,7 @@ Status: the workspace is already scaffolded. Treat this document as a plan/histo
     }
   }
   ```
-- When prompting GPT agents, attach Angular's best-practices context from [https://next.angular.dev/assets/context/best-practices.md](https://next.angular.dev/assets/context/best-practices.md) alongside `AI_ASSISTANT_INSTRUCTIONS.md` so generated code honors the "Develop with AI" guidance.
+- When prompting GPT agents, attach Angular's best-practices context from [https://next.angular.dev/assets/context/best-practices.md](https://next.angular.dev/assets/context/best-practices.md) alongside `AGENTS.md` so generated code honors the "Develop with AI" guidance.
 
 Example shell skeleton (Angular standalone component):
 

@@ -1,0 +1,151 @@
+<div
+  class="flex h-full w-[500px] flex-col overflow-hidden rounded-xl border border-white/10 bg-surface shadow-2xl"
+>
+  <!-- Header -->
+  <header
+    class="flex items-center justify-between border-b border-white/10 bg-surface-alt px-6 py-4"
+  >
+    <h2 class="text-lg font-semibold text-primary">
+      {{ isEdit ? 'Edit Webhook' : 'Register Webhook' }}
+    </h2>
+    <button (click)="close()" class="text-muted hover:text-primary">
+      <span class="sr-only">Close</span>
+      <svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        <path
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          stroke-width="2"
+          d="M6 18L18 6M6 6l12 12"
+        />
+      </svg>
+    </button>
+  </header>
+
+  <!-- Body -->
+  <div class="flex-1 overflow-y-auto p-6">
+    <form class="space-y-4" (submit)="$event.preventDefault(); save()">
+      <!-- Hook Key -->
+      <div class="space-y-1">
+        <label for="hookKey" class="text-sm font-medium text-muted">Hook Key</label>
+        @if (isEdit) {
+        <div
+          class="w-full rounded-lg border border-white/10 bg-surface-alt px-3 py-2 text-sm text-muted opacity-50"
+        >
+          {{ webhookModel().hookKey }}
+        </div>
+        } @else {
+        <input
+          id="hookKey"
+          type="text"
+          [field]="webhookForm.hookKey"
+          class="w-full rounded-lg border border-white/10 bg-surface-alt px-3 py-2 text-sm text-primary placeholder:text-muted focus:border-accent focus:outline-none"
+          placeholder="e.g. stripe-events"
+        />
+        @if (submitAttempted() && hookKeyInvalid()) {
+        <p class="text-xs text-danger">Hook Key is required.</p>
+        } }
+      </div>
+
+      <!-- Target Job -->
+      <div class="space-y-1">
+        <label for="jobKey" class="text-sm font-medium text-muted">Target Job</label>
+        <input
+          id="jobKey"
+          type="text"
+          [field]="webhookForm.jobKey"
+          class="w-full rounded-lg border border-white/10 bg-surface-alt px-3 py-2 text-sm text-primary placeholder:text-muted focus:border-accent focus:outline-none"
+          placeholder="e.g. billing-sync"
+        />
+        @if (submitAttempted() && jobKeyInvalid()) {
+        <p class="text-xs text-danger">Target Job is required.</p>
+        }
+      </div>
+
+      <!-- Secret (Create Only) -->
+      @if (!isEdit) {
+      <div class="space-y-1">
+        <label for="secret" class="text-sm font-medium text-muted">Signing Secret</label>
+        <input
+          id="secret"
+          type="text"
+          [field]="webhookForm.secret"
+          class="w-full rounded-lg border border-white/10 bg-surface-alt px-3 py-2 text-sm text-primary placeholder:text-muted focus:border-accent focus:outline-none"
+          placeholder="Enter a strong secret..."
+        />
+        @if (submitAttempted() && secretInvalid()) {
+        <p class="text-xs text-danger">Secret is required for new endpoints.</p>
+        }
+      </div>
+      }
+
+      <!-- Description -->
+      <div class="space-y-1">
+        <label for="description" class="text-sm font-medium text-muted"
+          >Description (Optional)</label
+        >
+        <textarea
+          id="description"
+          [field]="webhookForm.description"
+          rows="3"
+          class="w-full rounded-lg border border-white/10 bg-surface-alt px-3 py-2 text-sm text-primary placeholder:text-muted focus:border-accent focus:outline-none"
+          placeholder="Describe this webhook endpoint..."
+        ></textarea>
+      </div>
+
+      <!-- Rate Limit -->
+      <div class="space-y-1">
+        <label for="requestsPerMinute" class="text-sm font-medium text-muted"
+          >Rate Limit (Req/Min)</label
+        >
+        <input
+          id="requestsPerMinute"
+          type="number"
+          [field]="$any(webhookForm.requestsPerMinute)"
+          class="w-full rounded-lg border border-white/10 bg-surface-alt px-3 py-2 text-sm text-primary placeholder:text-muted focus:border-accent focus:outline-none"
+          placeholder="Optional (e.g. 60)"
+        />
+      </div>
+
+      <!-- Toggles -->
+      <div class="flex flex-col gap-3 pt-2">
+        <label class="flex items-center gap-3">
+          <input
+            type="checkbox"
+            [field]="webhookForm.enabled"
+            class="h-4 w-4 rounded border-white/10 bg-surface-alt text-accent focus:ring-accent"
+          />
+          <span class="text-sm font-medium text-primary">Enabled</span>
+        </label>
+
+        <label class="flex items-center gap-3">
+          <input
+            type="checkbox"
+            [field]="webhookForm.requireSignature"
+            class="h-4 w-4 rounded border-white/10 bg-surface-alt text-accent focus:ring-accent"
+          />
+          <span class="text-sm font-medium text-primary">Require Signature</span>
+        </label>
+      </div>
+    </form>
+  </div>
+
+  <!-- Footer -->
+  <footer
+    class="flex items-center justify-end gap-3 border-t border-white/10 bg-surface-alt px-6 py-4"
+  >
+    <button
+      type="button"
+      (click)="close()"
+      class="rounded-lg px-4 py-2 text-sm font-medium text-muted hover:bg-white/5 hover:text-primary"
+    >
+      Cancel
+    </button>
+    <button
+      type="button"
+      (click)="save()"
+      class="rounded-lg bg-accent px-4 py-2 text-sm font-semibold text-white transition hover:bg-accent-hover disabled:opacity-50"
+    >
+      Save
+    </button>
+  </footer>
+</div>

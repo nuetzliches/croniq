@@ -29,7 +29,7 @@
 - [x] Webhook-Persistenz hardenen (EF-Migration `AddWebhookEndpoints`, DbMigrator, CRUD-Tests) - Plan siehe `docs/deep-dive/architecture.md`
 - [x] Webhook-Operations ausbauen: Changefeed-basierte Cache-Invalidierung, Dual-Secret-Rotation (WebhookSecretHistory) plus CLI/SDK-Helfer dokumentieren (Dead-Letter-Tabelle + Replay-API umgesetzt)
 - [x] FluentAssertions -> Shouldly Migration (MIT-only policy)
-  - [x] MIT-kompatible Lizenzvorgabe in AI_ASSISTANT_INSTRUCTIONS.md dokumentiert (2025-12-11)
+  - [x] MIT-kompatible Lizenzvorgabe in AGENTS.md dokumentiert (2025-12-11)
   - [x] Croniq.Sdk.Tests auf Shouldly portiert und FluentAssertions-Paket entfernt
   - [x] Restliche Testprojekte iterativ migrieren (Croniq.Api.Smoke, Providers.Default, JobStore.InMemory, Observability, Persistence.SqlServer, Api.Tests, Core – abgeschlossen 2025-12-12)
   - [x] CI-License-Scan (Syft + Allowlist + nightly/release gating) hinzugefügen und in docs/deep-dive/supplychain.md beschreiben (2025-12-12)

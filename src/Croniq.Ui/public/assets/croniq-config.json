@@ -1,3 +1,5 @@
 {
-  "apiBaseUrl": "http://localhost:5080"
+  "apiBaseUrl": "http://localhost:5080",
+  "swaggerUiUrl": "http://localhost:5080/swagger",
+  "webhooksAllowUnsignedHooks": true
 }
