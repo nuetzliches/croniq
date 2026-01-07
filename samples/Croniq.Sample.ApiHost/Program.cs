@@ -57,7 +57,10 @@ builder.Services.AddCors(options =>
 
 // Persist execution logs locally for the sample host; production can swap to object storage or disable this.
 builder.Logging.AddCroniqExecutionLogSink();
-builder.Services.AddCroniqFileExecutionLogStore();
+builder.Services.AddCroniqFileExecutionLogStore(options =>
+{
+    builder.Configuration.GetSection("Croniq:Logging:Execution").Bind(options);
+});
 builder.Services.Configure<ExecutionLogRetentionOptions>(builder.Configuration.GetSection("Croniq:Logging:Execution:Retention"));
 builder.Services.AddHostedService<ExecutionLogRetentionService>();
 

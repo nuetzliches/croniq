@@ -24,7 +24,10 @@ builder.Services.AddCroniqObservability(
     "Croniq.Worker",
     options => options.ConsoleLogFormat = "text");
 
-builder.Services.AddCroniqFileExecutionLogStore();
+builder.Services.AddCroniqFileExecutionLogStore(options =>
+{
+    builder.Configuration.GetSection("Croniq:Logging:Execution").Bind(options);
+});
 builder.Services.Configure<ExecutionLogRetentionOptions>(builder.Configuration.GetSection("Croniq:Logging:Execution:Retention"));
 builder.Services.AddHostedService<ExecutionLogRetentionService>();
 

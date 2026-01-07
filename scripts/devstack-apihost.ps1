@@ -60,6 +60,7 @@ $env:Croniq__Core__TenantId = Get-EnvOrDotenv 'CRONIQ_CORE_TENANT_ID' 'default'
 $env:Croniq__Core__TenantMode = Get-EnvOrDotenv 'CRONIQ_CORE_TENANT_MODE' ''
 $env:Croniq__Core__EnvironmentTag = Get-EnvOrDotenv 'CRONIQ_CORE_ENVIRONMENT' ''
 $env:Croniq__Core__InstanceId = Get-EnvOrDotenv 'CRONIQ_API_INSTANCE_ID' ''
+$env:Croniq__Logging__Execution__BasePath = (Join-Path $repoRoot 'logs')
 
 # Construct SQL Connection String
 $sqlPort = Get-EnvOrDotenv 'CRONIQ_SQL_HOST_PORT' '11433'

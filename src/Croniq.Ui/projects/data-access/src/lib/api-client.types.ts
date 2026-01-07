@@ -50,9 +50,10 @@ export interface WorkEventsParams extends ExecutionLogParams {
     environment?: string | null;
 }
 
-export interface ExecutionParams extends TenantEnvironmentParams {
+export interface ExecutionParams extends TenantEnvironmentOptionalParams {
     jobKey?: string | null;
     status?: number | null;
+    executionId?: string | null;
     startedAfterUtc?: string | null;
     startedBeforeUtc?: string | null;
     limit?: number | null;

@@ -2,7 +2,7 @@
   <!-- Header / Controls -->
   <header class="flex flex-wrap items-center justify-between gap-4">
     <h1 class="text-lg font-semibold text-primary">Executions</h1>
-    
+
     <div class="flex flex-wrap items-center gap-3">
       <!-- Search -->
       <div class="relative">
@@ -60,39 +60,41 @@
           </tr>
         </thead>
         <tbody class="divide-y divide-white/10">
-          @for (exec of executions(); track exec.id) {
-            <tr class="hover:bg-white/5">
-              <td class="px-6 py-4 font-mono text-xs text-muted">{{ exec.id }}</td>
-              <td class="px-6 py-4 font-medium text-primary">{{ exec.jobName }}</td>
-              <td class="px-6 py-4">
-                @switch (exec.status) {
-                  @case ('Success') {
-                    <span class="inline-flex items-center rounded-full bg-success/10 px-2 py-0.5 text-xs font-medium text-success">Success</span>
-                  }
-                  @case ('Failed') {
-                    <span class="inline-flex items-center rounded-full bg-error/10 px-2 py-0.5 text-xs font-medium text-error">Failed</span>
-                  }
-                  @case ('Running') {
-                    <span class="inline-flex items-center rounded-full bg-accent/10 px-2 py-0.5 text-xs font-medium text-accent">Running</span>
-                  }
-                  @case ('Pending') {
-                    <span class="inline-flex items-center rounded-full bg-warning/10 px-2 py-0.5 text-xs font-medium text-warning">Pending</span>
-                  }
-                }
-              </td>
-              <td class="px-6 py-4 text-muted">{{ exec.startTime | date:'short' }}</td>
-              <td class="px-6 py-4 text-muted">{{ exec.duration }}</td>
-              <td class="px-6 py-4 text-muted">{{ exec.trigger }}</td>
-              <td class="px-6 py-4 text-right">
-                <div class="flex justify-end gap-2">
-                  <button (click)="viewLogs(exec.id)" class="text-xs font-medium text-muted hover:text-primary">Logs</button>
-                  @if (exec.status === 'Running') {
-                    <button (click)="cancelExecution(exec.id)" class="text-xs font-medium text-error hover:text-error-hover">Cancel</button>
-                  }
-                </div>
-              </td>
-            </tr>
-          }
+          @if (isLoading()) {
+          <tr>
+            <td colspan="7" class="px-6 py-8 text-center text-muted">Loading executions...</td>
+          </tr>
+          } @else { @for (exec of executions(); track exec.executionId) {
+          <tr class="hover:bg-white/5">
+            <td class="px-6 py-4 font-mono text-xs text-muted">{{ exec.executionId }}</td>
+            <td class="px-6 py-4 font-medium text-primary">{{ exec.jobKey }}</td>
+            <td class="px-6 py-4">
+              <!-- Status mapping: 0=Pending, 1=Running, 2=Completed/Success? Need to check Enum -->
+              <!-- Actually Response has `status: ExecutionStatus` which is union 0|1|2 -->
+              <!-- Let's map it roughly or show raw for now -->
+              <span
+                class="inline-flex items-center rounded-full bg-white/5 px-2 py-0.5 text-xs font-medium text-zinc-300"
+              >
+                {{ exec.status }}
+              </span>
+            </td>
+            <td class="px-6 py-4 text-muted">{{ exec.startedAtUtc | date : 'short' }}</td>
+            <td class="px-6 py-4 text-muted">
+              {{ exec.durationMs ? exec.durationMs + 'ms' : '-' }}
+            </td>
+            <td class="px-6 py-4 text-muted">{{ exec.triggerId || 'Manual' }}</td>
+            <td class="px-6 py-4 text-right">
+              <div class="flex justify-end gap-2">
+                <button
+                  (click)="viewLogs(exec.executionId!)"
+                  class="text-xs font-medium text-muted hover:text-primary"
+                >
+                  Logs
+                </button>
+              </div>
+            </td>
+          </tr>
+          } }
         </tbody>
       </table>
     </div>

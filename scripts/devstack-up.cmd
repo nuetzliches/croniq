@@ -37,6 +37,23 @@ set HEALTH_URL=%CRONIQ_API_BASEURL%
 if not "%HEALTH_URL:~-1%"=="/" set HEALTH_URL=%HEALTH_URL%/
 set HEALTH_URL=%HEALTH_URL%health
 
+REM Seed defaults for the migrator when CRONIQ_SEED_* is omitted.
+if "%CRONIQ_SEED_TENANT_ID%"=="" (
+    if not "%CRONIQ_CORE_TENANT_ID%"=="" (
+        set "CRONIQ_SEED_TENANT_ID=%CRONIQ_CORE_TENANT_ID%"
+    ) else (
+        set "CRONIQ_SEED_TENANT_ID=default"
+    )
+)
+if "%CRONIQ_SEED_TENANT_NAME%"=="" (
+    if not "%CRONIQ_CORE_TENANT_NAME%"=="" (
+        set "CRONIQ_SEED_TENANT_NAME=%CRONIQ_CORE_TENANT_NAME%"
+    ) else (
+        set "CRONIQ_SEED_TENANT_NAME=%CRONIQ_SEED_TENANT_ID%"
+    )
+)
+if "%CRONIQ_SEED_TENANT_REFERENCE%"=="" set "CRONIQ_SEED_TENANT_REFERENCE=%CRONIQ_SEED_TENANT_ID%"
+
 REM Parse args: we keep passing through profiles, but optionally run a host sample.
 set USER_PROFILES=
 :parse
@@ -235,17 +252,24 @@ if "%UI_ENABLED%"=="1" (
 set BUILD_ARG=--build
 if "%DO_BUILD%"=="0" set BUILD_ARG=
 
-echo [devstack] Starting Croniq services (%PROFILE_ARGS%)...
+echo [devstack] Starting DB + migrator first...
 call :ensure_docker_engine
 if errorlevel 1 exit /b 1
+docker compose %COMPOSE_ARGS% up %BUILD_ARG% -d mssql-22 croniq-db-migrator
+if errorlevel 1 (
+    echo [devstack] docker compose up failed for db/migrator.
+    exit /b 1
+)
+
+call :wait_for_migrator
+if errorlevel 1 exit /b 1
+
+echo [devstack] Starting Croniq services (%PROFILE_ARGS%)...
 docker compose %COMPOSE_ARGS% %PROFILE_ARGS% up %BUILD_ARG% -d
 if errorlevel 1 (
     echo [devstack] docker compose up failed.
     exit /b 1
 )
-
-call :wait_for_migrator "%COMPOSE_ARGS%"
-if errorlevel 1 exit /b 1
 
 if /I "%CRONIQ_DEVSTACK_TRACE%"=="1" echo [devstack] Step: maybe_wait_for_api
 call :maybe_wait_for_api "%PROFILE_ARGS%" "%HEALTH_URL%" "%RUN_SAMPLE%"
@@ -526,7 +550,6 @@ goto poll
 
 :wait_for_migrator
 setlocal enabledelayedexpansion
-set COMPOSE_ARGS=%~1
 
 echo [devstack] Waiting for DB migrator to complete...
 

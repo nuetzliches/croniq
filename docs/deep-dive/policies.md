@@ -72,9 +72,16 @@ Croniq binds policy options via `IOptions<T>` so hosts can drive behavior from `
           "InitialDelay": "00:00:02",
           "MaxDelay": "00:00:30",
           "JitterFactor": 0.25,
-          "RetryableExceptions": [ "System.TimeoutException", "System.IO.IOException" ]
+          "RetryableExceptions": [
+            "System.TimeoutException",
+            "System.IO.IOException"
+          ]
         },
-        "Timeout": { "Enabled": true, "Timeout": "00:02:00", "CancelExecutionOnTimeout": true },
+        "Timeout": {
+          "Enabled": true,
+          "Timeout": "00:02:00",
+          "CancelExecutionOnTimeout": true
+        },
         "CircuitBreaker": {
           "Enabled": true,
           "FailureThreshold": 10,
@@ -82,33 +89,62 @@ Croniq binds policy options via `IOptions<T>` so hosts can drive behavior from `
           "BreakDuration": "00:00:30",
           "MinimumThroughput": 20
         },
-        "DeadLetter": { "Enabled": true, "Retention": "30.00:00:00", "OperatorHint": "check downstream API" }
+        "DeadLetter": {
+          "Enabled": true,
+          "Retention": "30.00:00:00",
+          "OperatorHint": "check downstream API"
+        }
       },
       "Overrides": {
         "Execution": [
           {
-            "TenantId": "1",
+            "TenantId": "default",
             "NamespaceSegment": "payments",
             "Options": {
-              "Retry": { "MaxAttempts": 2, "RetryableExceptions": [ "System.InvalidOperationException" ] },
-              "CircuitBreaker": { "Enabled": true, "FailureThreshold": 25, "SamplingWindow": "00:00:30", "BreakDuration": "00:00:20" }
+              "Retry": {
+                "MaxAttempts": 2,
+                "RetryableExceptions": ["System.InvalidOperationException"]
+              },
+              "CircuitBreaker": {
+                "Enabled": true,
+                "FailureThreshold": 25,
+                "SamplingWindow": "00:00:30",
+                "BreakDuration": "00:00:20"
+              }
             }
           },
           {
-            "TenantId": "1",
+            "TenantId": "default",
             "EnvironmentTag": "prod",
             "JobName": "invoice",
             "Options": {
               "Timeout": { "Timeout": "00:00:30" },
-              "DeadLetter": { "OperatorHint": "review invoice payload before replay" }
+              "DeadLetter": {
+                "OperatorHint": "review invoice payload before replay"
+              }
             }
           }
         ],
         "Quotas": [
-          { "TenantId": "1", "NamespaceSegment": "payments", "Options": { "MaxTriggersPerMinute": 30, "MaxParallelExecutionsPerJob": 2 } }
+          {
+            "TenantId": "default",
+            "NamespaceSegment": "payments",
+            "Options": {
+              "MaxTriggersPerMinute": 30,
+              "MaxParallelExecutionsPerJob": 2
+            }
+          }
         ],
         "Misfire": [
-          { "TenantId": "1", "NamespaceSegment": "billing", "Options": { "MaxMisfireDelay": "00:02:00", "DeadLetterOnMisfire": false, "RescheduleBackoff": "00:00:10" } }
+          {
+            "TenantId": "default",
+            "NamespaceSegment": "billing",
+            "Options": {
+              "MaxMisfireDelay": "00:02:00",
+              "DeadLetterOnMisfire": false,
+              "RescheduleBackoff": "00:00:10"
+            }
+          }
         ]
       }
     }

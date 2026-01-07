@@ -4,24 +4,26 @@ import { nowIso } from '@core/time/clock';
 import { CallerContext, CroniqRequestOptions } from 'data-access';
 import { TenantContextState, TenantEnvironment } from './tenant-context.types';
 
-const DEFAULT_TENANT_CONTEXT: TenantContextState = {
-    tenantId: 'default',
-    tenantName: '',
-    environment: '',
-    region: '',
-    blueprintVersion: '',
-    policyCount: 0,
-    lastAuditedAt: nowIso(),
-    featureFlags: [],
-    source: 'manual',
-};
-
 const TENANT_STORAGE_KEY = 'croniq.ui.tenant-context';
+
+function createFallbackContext(): TenantContextState {
+    return {
+        tenantId: 'default',
+        tenantName: '',
+        environment: '',
+        region: '',
+        blueprintVersion: '',
+        policyCount: 0,
+        lastAuditedAt: nowIso(),
+        featureFlags: [],
+        source: 'manual',
+    };
+}
 
 @Injectable({ providedIn: 'root' })
 export class TenantContextService {
     private readonly authSession = inject(AuthSessionService);
-    private readonly state = signal<TenantContextState>(loadStoredTenantContext() ?? DEFAULT_TENANT_CONTEXT);
+    private readonly state = signal<TenantContextState>(loadStoredTenantContext() ?? createFallbackContext());
 
     constructor() {
         // Intentionally empty: tenant presets were removed.
@@ -160,10 +162,11 @@ function loadStoredTenantContext(): TenantContextState | null {
     }
     try {
         const parsed = JSON.parse(rawValue) as Partial<TenantContextState>;
+        const fallback = createFallbackContext();
         return {
-            ...DEFAULT_TENANT_CONTEXT,
+            ...fallback,
             ...parsed,
-            environment: ensureTenantEnvironment(parsed.environment) ?? DEFAULT_TENANT_CONTEXT.environment,
+            environment: ensureTenantEnvironment(parsed.environment) ?? fallback.environment,
             featureFlags: normalizeFeatureFlags(parsed.featureFlags),
         };
     } catch {
@@ -181,7 +184,7 @@ function isTenantEnvironment(value: unknown): value is TenantEnvironment {
 
 function normalizeFeatureFlags(value: unknown): ReadonlyArray<string> {
     if (!Array.isArray(value)) {
-        return DEFAULT_TENANT_CONTEXT.featureFlags;
+        return [];
     }
     return value
         .map((entry) => (typeof entry === 'string' ? entry.trim() : ''))

@@ -1,42 +1,47 @@
+import { Dialog } from '@angular/cdk/dialog';
 import { DatePipe } from '@angular/common';
-import { ChangeDetectionStrategy, Component, signal } from '@angular/core';
-
-interface Execution {
-  id: string;
-  jobName: string;
-  status: 'Success' | 'Failed' | 'Running' | 'Pending';
-  startTime: Date;
-  duration: string;
-  trigger: string;
-}
+import { ChangeDetectionStrategy, Component, inject, signal } from '@angular/core';
+import { LogViewerDialogComponent } from '@features/executions/components/log-viewer-dialog/log-viewer-dialog.component';
+import { ExecutionsStore } from '@features/executions/executions.store';
 
 @Component({
   selector: 'cq-executions-page',
   imports: [DatePipe],
   templateUrl: './executions-page.html',
   changeDetection: ChangeDetectionStrategy.OnPush,
+  providers: [ExecutionsStore],
 })
 export class ExecutionsPage {
+  private readonly store = inject(ExecutionsStore);
+  private readonly dialog = inject(Dialog);
+
   // Filters
   searchQuery = signal('');
   statusFilter = signal<string>('All');
   dateRangeFilter = signal<string>('24h');
 
   // Data
-  executions = signal<Execution[]>([
-    { id: 'exec-123', jobName: 'billing-sync', status: 'Success', startTime: new Date(), duration: '45s', trigger: 'Schedule' },
-    { id: 'exec-124', jobName: 'email-digest', status: 'Running', startTime: new Date(), duration: '12s', trigger: 'Manual' },
-    { id: 'exec-125', jobName: 'data-backup', status: 'Failed', startTime: new Date(), duration: '2m', trigger: 'Schedule' },
-    { id: 'exec-126', jobName: 'report-gen', status: 'Pending', startTime: new Date(), duration: '-', trigger: 'Webhook' },
-    { id: 'exec-127', jobName: 'cleanup-logs', status: 'Success', startTime: new Date(Date.now() - 3600000), duration: '1m 20s', trigger: 'Schedule' },
-  ]);
+  readonly executions = this.store.executions;
+  readonly isLoading = this.store.isLoading;
 
   // Actions
   viewLogs(id: string) {
-    console.log('View logs for', id);
+    this.dialog.open(LogViewerDialogComponent, {
+      data: { executionId: id },
+      width: '800px',
+      panelClass: 'bg-transparent'
+    });
   }
 
   cancelExecution(id: string) {
-    console.log('Cancel execution', id);
+    // Not implemented yet on backend/store side fully?
+    // We only have `deleteJob` and `deleteSchedule`. 
+    // `api-client.ts` has `workAck`, `workPoll`... no `cancelExecution`?
+    // Let's check `api-client.ts` again. 
+    // Ah, `deleteTenantApiClient`... `deactivateTenant`...
+    // Actually, `deleteJob` usually stops schedule. 
+    // Cancelling a running execution might not be exposed in API yet or I missed it.
+    // For now, let's leave log only.
+    console.log('Cancel execution not accessible yet', id);
   }
 }

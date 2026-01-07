@@ -23,12 +23,16 @@ Derived from [docs/deep-dive/designs/angular-ui-concept.md](docs/deep-dive/desig
 - [ ] Admin Controls – implement CRUD for schedules, webhooks, and API keys, including dead-letter replay wiring.
   - [x] Schedules (CRUD + Dead Letter Replay)
   - [x] Webhooks (CRUD)
-  - [ ] API Access (CRUD)
+  - [x] API Access (CRUD)
     - [x] List View + Revoke Action (Store wired)
     - [x] Create Dialog (Component implemented)
     - [x] Handle creation result (show secret to user)
     - [x] Issue Key mechanism (secondary action)
 - [ ] Observability & Polish – embed Grafana/log pulse views and complete the accessibility plus localization review.
+  - [x] Log Pulse (Execution Logs)
+  - [ ] Metrics Embed (Grafana)
+  - [ ] Accessibility Review
+  - [ ] Localization Review
 
 ## Guardrails & Dependencies
 

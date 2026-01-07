@@ -9,6 +9,7 @@ using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using System.Globalization;
 using System.Linq;
 using System.Reflection;
 
@@ -295,7 +296,18 @@ static async Task<T> ExecuteScalarAsync<T>(SqlConnection connection, string sql,
         return default!;
     }
 
-    return (T)result;
+    if (result is T typed)
+    {
+        return typed;
+    }
+
+    var targetType = Nullable.GetUnderlyingType(typeof(T)) ?? typeof(T);
+    if (targetType.IsEnum)
+    {
+        return (T)Enum.ToObject(targetType, result);
+    }
+
+    return (T)Convert.ChangeType(result, targetType, CultureInfo.InvariantCulture);
 }
 
 static async Task ExecuteNonQueryAsync(SqlConnection connection, string sql, CancellationToken token, params SqlParameter[] parameters)
