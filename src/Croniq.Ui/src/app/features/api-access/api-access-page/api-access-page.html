@@ -17,38 +17,58 @@
         <thead class="bg-white/5 text-xs uppercase text-muted">
           <tr>
             <th class="px-6 py-3 font-medium">Name</th>
-            <th class="px-6 py-3 font-medium">Key Prefix</th>
-            <th class="px-6 py-3 font-medium">Created</th>
-            <th class="px-6 py-3 font-medium">Last Used</th>
+            <th class="px-6 py-3 font-medium">Client ID</th>
+            <th class="px-6 py-3 font-medium">Environment</th>
+            <th class="px-6 py-3 font-medium">Expires</th>
             <th class="px-6 py-3 font-medium">Scopes</th>
             <th class="px-6 py-3 font-medium text-right">Actions</th>
           </tr>
         </thead>
         <tbody class="divide-y divide-white/10">
-          @for (key of apiKeys(); track key.id) {
-            <tr class="hover:bg-white/5">
-              <td class="px-6 py-4 font-medium text-primary">{{ key.name }}</td>
-              <td class="px-6 py-4 font-mono text-xs text-muted">{{ key.prefix }}</td>
-              <td class="px-6 py-4 text-muted">{{ key.createdAt | date:'mediumDate' }}</td>
-              <td class="px-6 py-4 text-muted">
-                @if (key.lastUsed) {
-                  {{ key.lastUsed | date:'medium' }}
-                } @else {
-                  <span class="italic text-muted/50">Never</span>
+          @if (isLoading()) {
+          <tr>
+            <td colspan="6" class="px-6 py-8 text-center text-muted">Loading API clients...</td>
+          </tr>
+          } @else if (clients().length === 0) {
+          <tr>
+            <td colspan="6" class="px-6 py-8 text-center text-muted">No API clients found.</td>
+          </tr>
+          } @else { @for (client of clients(); track client.clientId) {
+          <tr class="hover:bg-white/5">
+            <td class="px-6 py-4 font-medium text-primary">
+              {{ client.name }}
+              @if (!client.isActive) {
+              <span class="ml-2 rounded bg-danger/10 px-1.5 py-0.5 text-xs text-danger"
+                >Inactive</span
+              >
+              }
+            </td>
+            <td class="px-6 py-4 font-mono text-xs text-muted">{{ client.clientId }}</td>
+            <td class="px-6 py-4 text-muted">{{ client.environmentTag || '-' }}</td>
+            <td class="px-6 py-4 text-muted">
+              @if (client.expiresAtUtc) {
+              {{ client.expiresAtUtc | date : 'mediumDate' }}
+              } @else {
+              <span class="italic text-muted/50">Never</span>
+              }
+            </td>
+            <td class="px-6 py-4">
+              <div class="flex flex-wrap gap-1">
+                @for (scope of client.scopes || []; track scope) {
+                <span class="rounded bg-white/5 px-1.5 py-0.5 text-xs text-muted">{{ scope }}</span>
                 }
-              </td>
-              <td class="px-6 py-4">
-                <div class="flex flex-wrap gap-1">
-                  @for (scope of key.scopes; track scope) {
-                    <span class="rounded bg-white/5 px-1.5 py-0.5 text-xs text-muted">{{ scope }}</span>
-                  }
-                </div>
-              </td>
-              <td class="px-6 py-4 text-right">
-                <button (click)="revokeKey(key.id)" class="text-xs font-medium text-error hover:text-error-hover">Revoke</button>
-              </td>
-            </tr>
-          }
+              </div>
+            </td>
+            <td class="px-6 py-4 text-right">
+              <button
+                (click)="revokeKey(client.clientId!)"
+                class="text-xs font-medium text-danger hover:text-danger-hover"
+              >
+                Revoke
+              </button>
+            </td>
+          </tr>
+          } }
         </tbody>
       </table>
     </div>

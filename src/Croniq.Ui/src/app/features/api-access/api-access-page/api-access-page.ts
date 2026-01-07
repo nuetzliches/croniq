@@ -1,35 +1,43 @@
 import { DatePipe } from '@angular/common';
-import { ChangeDetectionStrategy, Component, signal } from '@angular/core';
-
-interface ApiKey {
-  id: string;
-  name: string;
-  prefix: string;
-  createdAt: Date;
-  lastUsed: Date | null;
-  scopes: string[];
-}
+import { ChangeDetectionStrategy, Component, inject } from '@angular/core';
+import { ApiAccessStore } from '@features/api-access/api-access.store';
+import { Dialog } from '@angular/cdk/dialog';
+import { ApiAccessDialogComponent } from '@features/api-access/components/api-access-dialog/api-access-dialog.component';
+import { UpsertApiClientRequest } from '@croniq/api-schema';
 
 @Component({
   selector: 'cq-api-access-page',
   imports: [DatePipe],
   templateUrl: './api-access-page.html',
   changeDetection: ChangeDetectionStrategy.OnPush,
+  providers: [ApiAccessStore],
 })
 export class ApiAccessPage {
+  private readonly store = inject(ApiAccessStore);
+  private readonly dialog = inject(Dialog);
+
   // Data
-  apiKeys = signal<ApiKey[]>([
-    { id: 'key-1', name: 'CI/CD Pipeline', prefix: 'cq_live_8f...', createdAt: new Date('2023-01-15'), lastUsed: new Date(), scopes: ['jobs:write', 'deployments:read'] },
-    { id: 'key-2', name: 'Developer Local', prefix: 'cq_test_9a...', createdAt: new Date('2023-03-10'), lastUsed: new Date(Date.now() - 86400000), scopes: ['*'] },
-    { id: 'key-3', name: 'Monitoring Service', prefix: 'cq_live_7b...', createdAt: new Date('2023-02-20'), lastUsed: null, scopes: ['metrics:read'] },
-  ]);
+  readonly clients = this.store.clients;
+  readonly isLoading = this.store.isLoading;
 
   // Actions
   generateKey() {
-    console.log('Generate new key');
+    const ref = this.dialog.open<UpsertApiClientRequest>(ApiAccessDialogComponent, {
+      data: null,
+      width: '500px',
+      panelClass: 'bg-transparent' // Tailwind classes on component
+    });
+
+    ref.closed.subscribe(result => {
+      if (result) {
+        this.store.upsertClient(result);
+      }
+    });
   }
 
-  revokeKey(id: string) {
-    console.log('Revoke key', id);
+  revokeKey(clientId: string) {
+    if (confirm('Are you sure you want to revoke this API Client? This action cannot be undone.')) {
+      this.store.deleteClient(clientId);
+    }
   }
 }

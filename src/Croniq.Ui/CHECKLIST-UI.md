@@ -21,6 +21,13 @@ Derived from [docs/deep-dive/designs/angular-ui-concept.md](docs/deep-dive/desig
   - [x] Operator impersonation vs. delegated auth: document the interim plan (manual tenant/operator context vs. delegated auth) and revisit once backend signals GA for full delegated auth. _(Plan recorded in [docs/deep-dive/AUTH.md](docs/deep-dive/AUTH.md).)_
 - [x] MVP Data Surfaces – deliver the dashboard metrics (stubbed), schedules read-only grid, and job registry view.
 - [ ] Admin Controls – implement CRUD for schedules, webhooks, and API keys, including dead-letter replay wiring.
+  - [x] Schedules (CRUD + Dead Letter Replay)
+  - [x] Webhooks (CRUD)
+  - [ ] API Access (CRUD)
+    - [x] List View + Revoke Action (Store wired)
+    - [x] Create Dialog (Component implemented)
+    - [ ] Handle creation result (show secret to user)
+    - [ ] Issue Key mechanism (secondary action)
 - [ ] Observability & Polish – embed Grafana/log pulse views and complete the accessibility plus localization review.
 
 ## Guardrails & Dependencies
@@ -60,9 +67,9 @@ Derived from [docs/deep-dive/designs/angular-ui-concept.md](docs/deep-dive/desig
 - [x] Implement split-pane layout pattern (summary cards + tabbed detail panes) per page using Angular Aria tabs (no shared page-sized component).
 - [ ] Deliver feature modules:
   - [ ] Dashboard - queue depth spark lines, upcoming triggers list, misfire heat map.
-  - [ ] Schedules - list/detail views with JSON diff preview for policy delta inspection.
-  - [ ] Jobs - registry browser, manual trigger action, last-N execution view.
-  - [ ] Webhooks - ingress status, secret rotation UI, IP allow-list grid.
+  - [x] Schedules - list/detail views with JSON diff preview for policy delta inspection.
+  - [x] Jobs - registry browser, manual trigger action, last-N execution view.
+  - [x] Webhooks - ingress status, secret rotation UI, IP allow-list grid.
   - [ ] Runners - availability read-model (available runners list + heartbeat status).
   - [ ] Tenants & API keys - intentionally excluded (single-tenant UI); no menu/command entries. Tenant reference is still required for tenant-scoped API routes.
 
@@ -74,12 +81,12 @@ Derived from [docs/deep-dive/designs/angular-ui-concept.md](docs/deep-dive/desig
 - [ ] Decide CI policy for OpenAPI sync: keep committing `artifacts/swagger.json` snapshots vs. generating from a live/staging swagger endpoint (and how to avoid flaky builds when the endpoint is unavailable).
 - [ ] Wire newly generated endpoints into the relevant feature stores (no new UX):
   - [ ] tenants list/create/deactivate (deferred: tenant feature excluded in single-tenant UI)
-  - [ ] tenant api-clients list/upsert/delete (deferred: tenant feature excluded in single-tenant UI)
+  - [x] tenant api-clients list/upsert/delete
   - [x] executions list
   - [x] jobs list (registry)
   - [x] jobs get/delete
   - [x] schedule get/delete
-  - [ ] schedules upsert (POST Upsert) + schedule dead-letters list/replay (no new UX beyond the existing admin controls scope)
+  - [x] schedules upsert (POST Upsert) + schedule dead-letters list/replay
   - [x] token issuance endpoints
 - [ ] Configure Angular Query caches, refetch policies, and tenant/env scoping helpers.
 - [ ] Persist non-sensitive preferences (theme, table density) per tenant using IndexedDB with optional encryption.
