@@ -23,7 +23,7 @@
 
   <!-- Body -->
   <div class="flex-1 overflow-y-auto p-6">
-    <form class="space-y-4" (submit)="$event.preventDefault(); save()">
+    <form id="webhookForm" class="space-y-4" (submit)="onSubmit($event)">
       <!-- Hook Key -->
       <div class="space-y-1">
         <label for="hookKey" class="text-sm font-medium text-muted">Hook Key</label>
@@ -141,8 +141,8 @@
       Cancel
     </button>
     <button
-      type="button"
-      (click)="save()"
+      type="submit"
+      form="webhookForm"
       class="rounded-lg bg-accent px-4 py-2 text-sm font-semibold text-white transition hover:bg-accent-hover disabled:opacity-50"
     >
       Save

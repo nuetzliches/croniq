@@ -1,5 +1,5 @@
 import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@angular/core';
-import { Field, form, required } from '@angular/forms/signals';
+import { Field, form, required, submit } from '@angular/forms/signals';
 import { DialogRef, DIALOG_DATA } from '@angular/cdk/dialog';
 import { UpsertJobRequest } from '@croniq/api-schema';
 
@@ -50,23 +50,22 @@ export class JobDialogComponent {
         this.dialogRef.close();
     }
 
-    save(): void {
+    async onSubmit(event: SubmitEvent) {
+        event.preventDefault();
         this.submitAttempted.set(true);
 
-        if (this.jobForm().invalid()) {
-            return;
-        }
+        await submit(this.jobForm, async () => {
+            const model = this.jobModel();
+            const payload: UpsertJobRequest = {
+                jobKey: model.jobKey,
+                namespace: model.namespace,
+                name: model.name,
+                variant: model.variant || undefined,
+                description: model.description || undefined,
+                metadata: this.data?.metadata,
+            };
 
-        const model = this.jobModel();
-        const payload: UpsertJobRequest = {
-            jobKey: model.jobKey,
-            namespace: model.namespace,
-            name: model.name,
-            variant: model.variant || undefined,
-            description: model.description || undefined,
-            metadata: this.data?.metadata,
-        };
-
-        this.dialogRef.close(payload);
+            this.dialogRef.close(payload);
+        });
     }
 }

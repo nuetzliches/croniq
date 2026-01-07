@@ -1,5 +1,5 @@
 import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@angular/core';
-import { disabled, Field, form, required } from '@angular/forms/signals';
+import { disabled, Field, form, required, submit } from '@angular/forms/signals';
 import { DialogRef, DIALOG_DATA } from '@angular/cdk/dialog';
 import { UpsertWebhookEndpointRequest } from '@croniq/api-schema';
 import { RuntimeConfigService } from '@core/runtime-config.service';
@@ -63,29 +63,28 @@ export class WebhookDialogComponent {
         this.dialogRef.close();
     }
 
-    save(): void {
+    async onSubmit(event: SubmitEvent) {
+        event.preventDefault();
         this.submitAttempted.set(true);
 
-        if (this.webhookForm().invalid()) {
-            return;
-        }
+        await submit(this.webhookForm, async () => {
+            const model = this.webhookModel();
 
-        const model = this.webhookModel();
+            // Coerce requestsPerMinute to number or null, as HTML input might return a string
+            const rawRpm = model.requestsPerMinute as unknown;
+            const requestsPerMinute = rawRpm === null || rawRpm === '' ? null : Number(rawRpm);
 
-        // Coerce requestsPerMinute to number or null, as HTML input might return a string
-        const rawRpm = model.requestsPerMinute as unknown;
-        const requestsPerMinute = rawRpm === null || rawRpm === '' ? null : Number(rawRpm);
+            const payload: UpsertWebhookEndpointRequest = {
+                hookKey: model.hookKey,
+                jobKey: model.jobKey,
+                enabled: model.enabled,
+                requireSignature: this.signatureToggleDisabled ? true : model.requireSignature,
+                requestsPerMinute,
+                metadata: model.description ? { description: model.description } : undefined,
+                secret: model.secret || undefined,
+            };
 
-        const payload: UpsertWebhookEndpointRequest = {
-            hookKey: model.hookKey,
-            jobKey: model.jobKey,
-            enabled: model.enabled,
-            requireSignature: this.signatureToggleDisabled ? true : model.requireSignature,
-            requestsPerMinute,
-            metadata: model.description ? { description: model.description } : undefined,
-            secret: model.secret || undefined,
-        };
-
-        this.dialogRef.close(payload);
+            this.dialogRef.close(payload);
+        });
     }
 }

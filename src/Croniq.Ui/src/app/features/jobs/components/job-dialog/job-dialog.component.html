@@ -23,7 +23,7 @@
 
   <!-- Body -->
   <div class="flex-1 overflow-y-auto p-6">
-    <form class="space-y-4" (submit)="$event.preventDefault(); save()">
+    <form id="jobForm" class="space-y-4" (submit)="onSubmit($event)">
       <!-- Job Key -->
       <div class="space-y-1">
         <label for="jobKey" class="text-sm font-medium text-muted">Job Key</label>
@@ -116,8 +116,8 @@
       Cancel
     </button>
     <button
-      type="button"
-      (click)="save()"
+      type="submit"
+      form="jobForm"
       class="rounded-lg bg-accent px-4 py-2 text-sm font-semibold text-white transition hover:bg-accent-hover disabled:opacity-50"
     >
       Save

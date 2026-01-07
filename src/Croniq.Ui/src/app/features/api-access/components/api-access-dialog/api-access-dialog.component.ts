@@ -1,5 +1,5 @@
 import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@angular/core';
-import { Field, form, required } from '@angular/forms/signals';
+import { Field, form, required, submit } from '@angular/forms/signals';
 import { DialogRef, DIALOG_DATA } from '@angular/cdk/dialog';
 import { UpsertApiClientRequest } from '@croniq/api-schema';
 
@@ -48,27 +48,26 @@ export class ApiAccessDialogComponent {
         this.dialogRef.close();
     }
 
-    save(): void {
+    async onSubmit(event: SubmitEvent) {
+        event.preventDefault();
         this.submitAttempted.set(true);
 
-        if (this.form().invalid()) {
-            return;
-        }
+        await submit(this.form, async () => {
+            const model = this.model();
+            const scopes = this.scopesInput()
+                .split(',')
+                .map(s => s.trim())
+                .filter(s => !!s);
 
-        const model = this.model();
-        const scopes = this.scopesInput()
-            .split(',')
-            .map(s => s.trim())
-            .filter(s => !!s);
+            const payload: UpsertApiClientRequest = {
+                clientId: model.clientId,
+                name: model.name || null,
+                environmentTag: model.environmentTag || null,
+                scopes: scopes.length ? scopes : null,
+                isActive: true
+            };
 
-        const payload: UpsertApiClientRequest = {
-            clientId: model.clientId,
-            name: model.name || null,
-            environmentTag: model.environmentTag || null,
-            scopes: scopes.length ? scopes : null,
-            isActive: true
-        };
-
-        this.dialogRef.close(payload);
+            this.dialogRef.close(payload);
+        });
     }
 }

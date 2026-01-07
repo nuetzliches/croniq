@@ -1,5 +1,5 @@
 import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@angular/core';
-import { Field, form, required } from '@angular/forms/signals';
+import { Field, form, required, submit } from '@angular/forms/signals';
 import { Router, RouterLink } from '@angular/router';
 import { PasswordAuthService } from '@core/auth/password-auth.service';
 import { AppBrand } from '@shared/app-brand/app-brand';
@@ -37,40 +37,38 @@ export class ChangePasswordPage {
         required(fieldPath.newPassword, { message: 'New password is required.' });
     });
 
-    submit(): void {
+    async onSubmit(event: SubmitEvent) {
+        event.preventDefault();
+
         if (this.busy()) {
             return;
         }
 
         this.submitAttempted.set(true);
 
-        if (this.changePasswordForm().invalid()) {
-            this.lastAction.set('Please enter your current password and a new password.');
-            this.lastActionTone.set('error');
-            return;
-        }
+        await submit(this.changePasswordForm, async () => {
+            const currentPassword = this.model().currentPassword;
+            const newPassword = this.model().newPassword;
 
-        const currentPassword = this.model().currentPassword;
-        const newPassword = this.model().newPassword;
+            this.busy.set(true);
+            this.lastAction.set(null);
+            this.lastActionTone.set(null);
 
-        this.busy.set(true);
-        this.lastAction.set(null);
-        this.lastActionTone.set(null);
-
-        this.auth
-            .changePassword({ currentPassword, newPassword })
-            .pipe(finalize(() => this.busy.set(false)))
-            .subscribe({
-                next: () => {
-                    this.lastAction.set('Password changed. Please sign in again.');
-                    this.lastActionTone.set('success');
-                    void this.router.navigateByUrl('/auth/login');
-                },
-                error: (error: unknown) => {
-                    this.lastAction.set(error instanceof Error ? error.message : 'Change password failed.');
-                    this.lastActionTone.set('error');
-                },
-            });
+            this.auth
+                .changePassword({ currentPassword, newPassword })
+                .pipe(finalize(() => this.busy.set(false)))
+                .subscribe({
+                    next: () => {
+                        this.lastAction.set('Password changed. Please sign in again.');
+                        this.lastActionTone.set('success');
+                        void this.router.navigateByUrl('/auth/login');
+                    },
+                    error: (error: unknown) => {
+                        this.lastAction.set(error instanceof Error ? error.message : 'Change password failed.');
+                        this.lastActionTone.set('error');
+                    },
+                });
+        });
     }
 
     onEdit(): void {

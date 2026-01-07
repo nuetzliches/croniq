@@ -22,7 +22,10 @@
         <div class="space-y-2">
           <label class="text-sm font-medium text-primary">Tenant ID</label>
           <div class="flex items-center gap-2">
-            <code class="flex-1 rounded-lg border border-white/10 bg-white/5 px-3 py-2 font-mono text-sm text-muted">{{ tenant().id }}</code>
+            <code
+              class="flex-1 rounded-lg border border-white/10 bg-white/5 px-3 py-2 font-mono text-sm text-muted"
+              >{{ tenant().id }}</code
+            >
             <button class="text-xs font-medium text-accent hover:text-accent-hover">Copy</button>
           </div>
         </div>
@@ -38,12 +41,17 @@
         <div class="space-y-2">
           <label class="text-sm font-medium text-primary">Plan</label>
           <div class="flex items-center">
-            <span class="rounded-full bg-accent/10 px-3 py-1 text-sm font-medium text-accent">{{ tenant().plan }}</span>
+            <span class="rounded-full bg-accent/10 px-3 py-1 text-sm font-medium text-accent">{{
+              tenant().plan
+            }}</span>
           </div>
         </div>
       </div>
       <div class="mt-6 flex justify-end">
-        <button (click)="updateTenant()" class="rounded-lg bg-white/5 px-4 py-2 text-sm font-semibold text-primary hover:bg-white/10">
+        <button
+          (click)="updateTenant()"
+          class="rounded-lg bg-white/5 px-4 py-2 text-sm font-semibold text-primary hover:bg-white/10"
+        >
           Edit Details
         </button>
       </div>
@@ -58,7 +66,8 @@
         <div>
           <h3 class="text-base font-medium text-primary">Deactivate Tenant</h3>
           <p class="mt-1 text-sm text-muted">
-            This will suspend all job executions and API access immediately. This action cannot be undone easily.
+            This will suspend all job executions and API access immediately. This action cannot be
+            undone easily.
           </p>
         </div>
         <button

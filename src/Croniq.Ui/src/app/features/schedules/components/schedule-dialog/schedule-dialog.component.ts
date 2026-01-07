@@ -1,6 +1,5 @@
-import { JsonPipe } from '@angular/common';
-import { ChangeDetectionStrategy, Component, computed, input, linkedSignal, output, signal } from '@angular/core';
-import { Field, form, required } from '@angular/forms/signals';
+import { ChangeDetectionStrategy, Component, computed, input, linkedSignal, output } from '@angular/core';
+import { Field, form, required, submit } from '@angular/forms/signals';
 import { UpsertScheduleRequest } from '@croniq/api-schema';
 
 interface ScheduleFormModel {
@@ -48,31 +47,22 @@ export class ScheduleDialogComponent {
     readonly save = output<UpsertScheduleRequest>();
     readonly closeDialog = output<void>();
 
-    readonly activeTab = signal<'form' | 'json'>('form');
-
     readonly isEditMode = computed(() => !!this.schedule());
 
     readonly model = linkedSignal(() => getScheduleFormModel(this.schedule()));
 
-    readonly jsonPreview = computed(() => {
-        const model = this.model();
-        return JSON.stringify(model, null, 2);
-    });
-
-    readonly myForm = form(this.model, (f) => {
+    readonly scheduleForm = form(this.model, (f) => {
         required(f.jobKey);
         required(f.cronExpression);
     });
 
-    onSubmit() {
-        if (this.myForm().valid()) {
-            const formValue = this.model();
-            const request: UpsertScheduleRequest = {
-                ...formValue,
-                triggerId: formValue.triggerId || null,
-            };
+    async onSubmit(event: SubmitEvent) {
+        event.preventDefault();
+
+        await submit(this.scheduleForm, async () => {
+            const request = this.model();
             this.save.emit(request);
-        }
+        });
     }
 
     onCancel() {

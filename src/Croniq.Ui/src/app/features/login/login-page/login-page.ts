@@ -1,5 +1,5 @@
 import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@angular/core';
-import { Field, form, required } from '@angular/forms/signals';
+import { Field, form, required, submit } from '@angular/forms/signals';
 import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 import { AuthSessionService } from '@core/auth/auth-session.service';
 import { PasswordAuthService } from '@core/auth/password-auth.service';
@@ -69,58 +69,50 @@ export class LoginPage {
         required(fieldPath.password, { message: 'Password is required.' });
     });
 
-    login(): void {
+    async onSubmit(event: SubmitEvent) {
+        event.preventDefault();
+
         if (this.busy()) {
             return;
         }
 
         this.submitAttempted.set(true);
 
-        if (this.loginForm().invalid()) {
-            this.lastAction.set('Please enter your username and password.');
-            this.lastActionTone.set('error');
-            return;
-        }
+        await submit(this.loginForm, async () => {
+            const username = this.loginModel().username.trim();
+            const password = this.loginModel().password;
+            const tenantId = this.tenantContext.snapshot().tenantId.trim();
 
-        const username = this.loginModel().username.trim();
-        const password = this.loginModel().password;
-        if (!username || !password) {
-            this.lastAction.set('Please enter your username and password.');
-            this.lastActionTone.set('error');
-            return;
-        }
+            this.busy.set(true);
+            this.lastAction.set(null);
+            this.lastActionTone.set(null);
 
-        this.busy.set(true);
-        this.lastAction.set(null);
-        this.lastActionTone.set(null);
+            this.passwordAuth
+                .login({ username, password, tenantId })
+                .pipe(finalize(() => this.busy.set(false)))
+                .subscribe({
+                    next: (result) => {
+                        const currentTenantId = this.tenantContext.snapshot().tenantId.trim();
+                        const resolvedTenantId = result.tenantId?.trim();
+                        if (!currentTenantId && resolvedTenantId) {
+                            this.tenantContext.setTenantIdentity(resolvedTenantId);
+                        }
+                        this.loginModel.update((model) => ({ ...model, password: '' }));
+                        this.lastAction.set('Signed in successfully.');
+                        this.lastActionTone.set('success');
 
-        const tenantId = this.tenantContext.snapshot().tenantId.trim();
-
-        this.passwordAuth
-            .login({ username, password, tenantId })
-            .pipe(finalize(() => this.busy.set(false)))
-            .subscribe({
-                next: (result) => {
-                    const currentTenantId = this.tenantContext.snapshot().tenantId.trim();
-                    const resolvedTenantId = result.tenantId?.trim();
-                    if (!currentTenantId && resolvedTenantId) {
-                        this.tenantContext.setTenantIdentity(resolvedTenantId);
-                    }
-                    this.loginModel.update((model) => ({ ...model, password: '' }));
-                    this.lastAction.set('Signed in successfully.');
-                    this.lastActionTone.set('success');
-
-                    if (result.passwordChangeRequired) {
-                        void this.router.navigateByUrl('/auth/change-password');
-                    } else {
-                        void this.router.navigateByUrl(this.resolveReturnUrl());
-                    }
-                },
-                error: (error: unknown) => {
-                    this.lastAction.set(error instanceof Error ? error.message : 'Sign-in failed.');
-                    this.lastActionTone.set('error');
-                },
-            });
+                        if (result.passwordChangeRequired) {
+                            void this.router.navigateByUrl('/auth/change-password');
+                        } else {
+                            void this.router.navigateByUrl(this.resolveReturnUrl());
+                        }
+                    },
+                    error: (error: unknown) => {
+                        this.lastAction.set(error instanceof Error ? error.message : 'Sign-in failed.');
+                        this.lastActionTone.set('error');
+                    },
+                });
+        });
     }
 
     private resolveReturnUrl(): string {
