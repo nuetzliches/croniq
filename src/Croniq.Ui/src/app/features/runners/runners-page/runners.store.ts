@@ -20,13 +20,13 @@ export interface Runner {
 export class RunnersStore {
     private readonly api = inject<CroniqApiClient>(CRONIQ_API_CLIENT);
     private readonly tenantContext = inject(TenantContextService);
-    
+
     readonly runnersResource = tenantRxResource<Runner[], { tenantId: string; environment: string }>({
         command: 'runners.list',
         defaultValue: [],
         params: () => {
-             const { tenantId, environment } = this.tenantContext.snapshot();
-             return { tenantId, environment };
+            const { tenantId, environment } = this.tenantContext.snapshot();
+            return { tenantId, environment };
         },
         stream: ({ params, requestOptions }) => {
             const { tenantId, environment } = params;

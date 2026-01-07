@@ -2,10 +2,11 @@
   <!-- Header -->
   <header class="flex items-center justify-between">
     <h1 class="text-lg font-semibold text-primary">Runners</h1>
-    <button 
+    <button
       (click)="refresh()"
       class="rounded-lg bg-white/5 px-4 py-2 text-sm font-semibold text-primary hover:bg-white/10"
-      [disabled]="loading()">
+      [disabled]="loading()"
+    >
       {{ loading() ? 'Refreshing...' : 'Refresh' }}
     </button>
   </header>
@@ -43,47 +44,65 @@
         </thead>
         <tbody class="divide-y divide-white/10">
           @for (runner of runners(); track runner.id) {
-            <tr class="hover:bg-white/5">
-              <td class="px-6 py-4 font-mono text-xs text-muted">{{ runner.id }}</td>
-              <td class="px-6 py-4 font-medium text-primary">{{ runner.hostname }}</td>
-              <td class="px-6 py-4">
-                @switch (runner.status) {
-                  @case ('Online') {
-                    <span class="inline-flex items-center rounded-full bg-success/10 px-2 py-0.5 text-xs font-medium text-success">Online</span>
-                  }
-                  @case ('Offline') {
-                    <span class="inline-flex items-center rounded-full bg-error/10 px-2 py-0.5 text-xs font-medium text-error">Offline</span>
-                  }
-                  @case ('Draining') {
-                    <span class="inline-flex items-center rounded-full bg-warning/10 px-2 py-0.5 text-xs font-medium text-warning">Draining</span>
-                  }
+          <tr class="hover:bg-white/5">
+            <td class="px-6 py-4 font-mono text-xs text-muted">{{ runner.id }}</td>
+            <td class="px-6 py-4 font-medium text-primary">{{ runner.hostname }}</td>
+            <td class="px-6 py-4">
+              @switch (runner.status) { @case ('Online') {
+              <span
+                class="inline-flex items-center rounded-full bg-success/10 px-2 py-0.5 text-xs font-medium text-success"
+                >Online</span
+              >
+              } @case ('Offline') {
+              <span
+                class="inline-flex items-center rounded-full bg-error/10 px-2 py-0.5 text-xs font-medium text-error"
+                >Offline</span
+              >
+              } @case ('Draining') {
+              <span
+                class="inline-flex items-center rounded-full bg-warning/10 px-2 py-0.5 text-xs font-medium text-warning"
+                >Draining</span
+              >
+              } }
+            </td>
+            <td class="px-6 py-4 text-muted">{{ runner.lastHeartbeatAt | date : 'medium' }}</td>
+            <td class="px-6 py-4 text-muted">
+              <div class="flex items-center gap-2">
+                <div class="h-1.5 w-16 rounded-full bg-white/10">
+                  <div
+                    class="h-full rounded-full bg-accent"
+                    [style.width.%]="(runner.activeJobs / runner.capacity) * 100"
+                  ></div>
+                </div>
+                <span class="text-xs">{{ runner.activeJobs }}/{{ runner.capacity }}</span>
+              </div>
+            </td>
+            <td class="px-6 py-4">
+              <div class="flex flex-wrap gap-1">
+                @for (tag of runner.tags; track tag) {
+                <span class="rounded bg-white/5 px-1.5 py-0.5 text-xs text-muted">{{ tag }}</span>
                 }
-              </td>
-              <td class="px-6 py-4 text-muted">{{ runner.lastHeartbeatAt | date:'medium' }}</td>
-              <td class="px-6 py-4 text-muted">
-                <div class="flex items-center gap-2">
-                  <div class="h-1.5 w-16 rounded-full bg-white/10">
-                    <div class="h-full rounded-full bg-accent" [style.width.%]="(runner.activeJobs / runner.capacity) * 100"></div>
-                  </div>
-                  <span class="text-xs">{{ runner.activeJobs }}/{{ runner.capacity }}</span>
-                </div>
-              </td>
-              <td class="px-6 py-4">
-                <div class="flex flex-wrap gap-1">
-                  @for (tag of runner.tags; track tag) {
-                    <span class="rounded bg-white/5 px-1.5 py-0.5 text-xs text-muted">{{ tag }}</span>
-                  }
-                </div>
-              </td>
-              <td class="px-6 py-4 text-right">
-                <div class="flex justify-end gap-2">
-                  @if (runner.status !== 'Draining') {
-                    <button (click)="drainRunner(runner.id)" class="text-xs font-medium text-warning hover:text-warning-hover">Drain</button>
-                  }
-                  <button (click)="deregisterRunner(runner.id)" class="text-xs font-medium text-error hover:text-error-hover">Deregister</button>
-                </div>
-              </td>
-            </tr>
+              </div>
+            </td>
+            <td class="px-6 py-4 text-right">
+              <div class="flex justify-end gap-2">
+                @if (runner.status !== 'Draining') {
+                <button
+                  (click)="drainRunner(runner.id)"
+                  class="text-xs font-medium text-warning hover:text-warning-hover"
+                >
+                  Drain
+                </button>
+                }
+                <button
+                  (click)="deregisterRunner(runner.id)"
+                  class="text-xs font-medium text-error hover:text-error-hover"
+                >
+                  Deregister
+                </button>
+              </div>
+            </td>
+          </tr>
           }
         </tbody>
       </table>

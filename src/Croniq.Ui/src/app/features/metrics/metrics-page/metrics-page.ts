@@ -3,9 +3,9 @@ import { DomSanitizer, SafeResourceUrl } from '@angular/platform-browser';
 import { RuntimeConfigService } from '@core/runtime-config.service';
 
 @Component({
-  selector: 'cq-metrics-page',
-  standalone: true,
-  template: `
+    selector: 'cq-metrics-page',
+    standalone: true,
+    template: `
     <div class="h-full flex flex-col space-y-4">
       <header class="flex items-center justify-between">
         <h1 class="text-lg font-semibold text-primary">System Metrics</h1>
@@ -35,19 +35,19 @@ import { RuntimeConfigService } from '@core/runtime-config.service';
       </div>
     </div>
   `,
-  changeDetection: ChangeDetectionStrategy.OnPush,
+    changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class MetricsPage {
-  private readonly config = inject(RuntimeConfigService);
-  private readonly sanitizer = inject(DomSanitizer);
+    private readonly config = inject(RuntimeConfigService);
+    private readonly sanitizer = inject(DomSanitizer);
 
-  readonly grafanaUrl = computed(() => this.config.snapshot.grafanaUrl);
-  
-  readonly safeUrl = computed<SafeResourceUrl | null>(() => {
-    const url = this.grafanaUrl();
-    if (!url) return null;
-    // Append minimal params if needed, e.g. &kiosk
-    const embedUrl = url.includes('?') ? `${url}&kiosk` : `${url}?kiosk`;
-    return this.sanitizer.bypassSecurityTrustResourceUrl(embedUrl);
-  });
+    readonly grafanaUrl = computed(() => this.config.snapshot.grafanaUrl);
+
+    readonly safeUrl = computed<SafeResourceUrl | null>(() => {
+        const url = this.grafanaUrl();
+        if (!url) return null;
+        // Append minimal params if needed, e.g. &kiosk
+        const embedUrl = url.includes('?') ? `${url}&kiosk` : `${url}?kiosk`;
+        return this.sanitizer.bypassSecurityTrustResourceUrl(embedUrl);
+    });
 }

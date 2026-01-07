@@ -23,8 +23,18 @@
           }
         </div>
         @if (metric.sparkline) {
-        <svg class="h-8 w-24 text-primary opacity-50" viewBox="0 0 100 30" preserveAspectRatio="none">
-           <path [attr.d]="getSparklinePath(metric.sparkline)" fill="none" stroke="currentColor" stroke-width="2" vector-effect="non-scaling-stroke" />
+        <svg
+          class="h-8 w-24 text-primary opacity-50"
+          viewBox="0 0 100 30"
+          preserveAspectRatio="none"
+        >
+          <path
+            [attr.d]="getSparklinePath(metric.sparkline)"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            vector-effect="non-scaling-stroke"
+          />
         </svg>
         }
       </div>
@@ -44,17 +54,19 @@
     </header>
     <div class="flex items-end gap-1 h-16 w-full">
       @for (count of misfireHeatmap(); track $index) {
-        <div 
-          class="flex-1 rounded-sm bg-danger transition-all hover:opacity-80 relative group"
-          [style.height.%]="(count / 5) * 100 || 5"
-          [style.opacity]="count === 0 ? 0.1 : 1"
-          [title]="count + ' misfires at ' + $index + ':00'"
+      <div
+        class="flex-1 rounded-sm bg-danger transition-all hover:opacity-80 relative group"
+        [style.height.%]="(count / 5) * 100 || 5"
+        [style.opacity]="count === 0 ? 0.1 : 1"
+        [title]="count + ' misfires at ' + $index + ':00'"
+      >
+        <!-- Tooltip -->
+        <div
+          class="absolute bottom-full left-1/2 mb-2 hidden -translate-x-1/2 whitespace-nowrap rounded bg-surface px-2 py-1 text-xs text-white shadow-lg group-hover:block border border-white/10"
         >
-          <!-- Tooltip -->
-          <div class="absolute bottom-full left-1/2 mb-2 hidden -translate-x-1/2 whitespace-nowrap rounded bg-surface px-2 py-1 text-xs text-white shadow-lg group-hover:block border border-white/10">
-            {{ $index }}:00 — {{ count }} misfires
-          </div>
+          {{ $index }}:00 — {{ count }} misfires
         </div>
+      </div>
       }
     </div>
     <div class="mt-2 flex justify-between text-xs text-muted font-mono">

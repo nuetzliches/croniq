@@ -132,7 +132,7 @@ export class DashboardStore {
             {
                 label: 'Queue Depth',
                 value: '12',
-                status: 'healthy', 
+                status: 'healthy',
                 subtext: 'Jobs pending',
                 sparkline: [5, 12, 8, 15, 20, 10, 5, 2, 4, 12]
             },
@@ -187,17 +187,17 @@ export class DashboardStore {
     private setFallbackData() {
         this.metricsSignal.set([
             { label: 'Active Runners', value: '8', status: 'healthy', subtext: 'All systems operational' },
-            { 
-                label: 'Throughput (RPM)', 
-                value: '1,240', 
-                trend: '↑ 12%', 
+            {
+                label: 'Throughput (RPM)',
+                value: '1,240',
+                trend: '↑ 12%',
                 subtext: 'vs last hour',
                 sparkline: [20, 25, 30, 28, 35, 40, 42, 38, 45, 50]
             },
             {
                 label: 'Queue Depth',
                 value: '24',
-                status: 'warning', 
+                status: 'warning',
                 subtext: 'Jobs pending',
                 sparkline: [10, 15, 24, 20, 15, 12, 18, 24, 22, 24]
             },
@@ -215,7 +215,7 @@ export class DashboardStore {
             { jobKey: 'cleanup-logs', fireTime: 'in 1h', cron: '0 1 * * *' },
             { jobKey: 'billing-cycle', fireTime: 'Tomorrow 00:00', cron: '0 0 1 * *' },
         ]);
-        
+
         // Mock 24h heatmap (mostly zeros, some spikes)
         const heatmap = new Array(24).fill(0).map((_, i) => (i === 14 || i === 15) ? Math.floor(Math.random() * 5) + 1 : 0);
         this.misfireHeatmapSignal.set(heatmap);
