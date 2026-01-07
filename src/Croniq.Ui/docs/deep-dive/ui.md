@@ -21,8 +21,6 @@ This document describes the current Croniq UI implementation (Angular 21 + Tailw
 
 Auth notes and guardrails live in `docs/deep-dive/AUTH.md`.
 
-Detail surface patterns (Dialog / Slide‑In) live in `docs/deep-dive/designs/detail-surfaces.md`.
-
 ## Repository Layout (current)
 
 ```

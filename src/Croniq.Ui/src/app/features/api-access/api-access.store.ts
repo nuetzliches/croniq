@@ -1,9 +1,9 @@
 import { Injectable, computed, inject } from '@angular/core';
 import { tenantRxResource } from '@core/resource/tenant-rx-resource';
 import { TenantContextService } from '@core/tenant-context/tenant-context.service';
-import { ApiClientResponse, UpsertApiClientRequest } from '@croniq/api-schema';
+import { ApiClientResponse, IssueApiKeyRequest, IssueApiKeyResponse, UpsertApiClientRequest } from '@croniq/api-schema';
 import { CRONIQ_API_CLIENT, CroniqApiClient } from 'data-access';
-import { map, of, tap } from 'rxjs';
+import { Observable, map, of, tap } from 'rxjs';
 
 @Injectable()
 export class ApiAccessStore {
@@ -30,18 +30,29 @@ export class ApiAccessStore {
     readonly isLoading = this.clientsResource.isLoading;
     readonly error = this.clientsResource.error;
 
-    upsertClient(request: UpsertApiClientRequest) {
+    upsertClient(request: UpsertApiClientRequest): Observable<UpsertApiClientRequest | null> {
         const tenant = this.tenantContext.tenantId();
-        if (!tenant) return;
+        if (!tenant) return of(null);
 
-        this.api.upsertTenantApiClient(
+        return this.api.upsertTenantApiClient(
             { tenantId: tenant },
             request
-        )
-            .pipe(
-                tap(() => this.clientsResource.reload())
-            )
-            .subscribe();
+        ).pipe(
+            tap(() => this.clientsResource.reload()),
+            map(() => request)
+        );
+    }
+
+    issueApiKey(request: IssueApiKeyRequest): Observable<IssueApiKeyResponse | null> {
+        const tenant = this.tenantContext.tenantId();
+        if (!tenant) return of(null);
+
+        return this.api.issueTenantApiKey(
+            { tenantId: tenant },
+            request
+        ).pipe(
+            map(res => res as IssueApiKeyResponse)
+        );
     }
 
     deleteClient(clientId: string) {

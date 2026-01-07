@@ -61,8 +61,15 @@
             </td>
             <td class="px-6 py-4 text-right">
               <button
+                (click)="issueKey(client)"
+                class="mr-4 text-xs font-medium text-indigo-400 hover:text-indigo-300 transition-colors"
+                title="Issue new key"
+              >
+                Issue Key
+              </button>
+              <button
                 (click)="revokeKey(client.clientId!)"
-                class="text-xs font-medium text-danger hover:text-danger-hover"
+                class="text-xs font-medium text-danger hover:text-danger-hover transition-colors"
               >
                 Revoke
               </button>

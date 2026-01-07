@@ -26,8 +26,8 @@ Derived from [docs/deep-dive/designs/angular-ui-concept.md](docs/deep-dive/desig
   - [ ] API Access (CRUD)
     - [x] List View + Revoke Action (Store wired)
     - [x] Create Dialog (Component implemented)
-    - [ ] Handle creation result (show secret to user)
-    - [ ] Issue Key mechanism (secondary action)
+    - [x] Handle creation result (show secret to user)
+    - [x] Issue Key mechanism (secondary action)
 - [ ] Observability & Polish – embed Grafana/log pulse views and complete the accessibility plus localization review.
 
 ## Guardrails & Dependencies
