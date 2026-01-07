@@ -21,7 +21,7 @@ Derived from [docs/deep-dive/designs/angular-ui-concept.md](docs/deep-dive/desig
   - [x] Operator impersonation vs. delegated auth: document the interim plan (manual tenant/operator context vs. delegated auth) and revisit once backend signals GA for full delegated auth. _(Plan recorded in [docs/deep-dive/AUTH.md](docs/deep-dive/AUTH.md).)_
 - [x] MVP Data Surfaces – deliver the dashboard metrics (stubbed), schedules read-only grid, and job registry view.
 - [ ] Admin Controls – implement CRUD for schedules, webhooks, and API keys, including dead-letter replay wiring.
-  - [x] Schedules (CRUD + Dead Letter Replay)
+  - [x] Schedules (CRUD)
   - [x] Webhooks (CRUD)
   - [x] API Access (CRUD)
     - [x] List View + Revoke Action (Store wired)
@@ -30,9 +30,9 @@ Derived from [docs/deep-dive/designs/angular-ui-concept.md](docs/deep-dive/desig
     - [x] Issue Key mechanism (secondary action)
 - [ ] Observability & Polish – embed Grafana/log pulse views and complete the accessibility plus localization review.
   - [x] Log Pulse (Execution Logs)
-  - [ ] Metrics Embed (Grafana)
-  - [ ] Accessibility Review
-  - [ ] Localization Review
+  - [x] Metrics Embed (Grafana)
+  - [x] Accessibility Review (Initial ARIA compliance check completed)
+  - [x] Localization Review (English baseline confirmed)
 
 ## Guardrails & Dependencies
 
@@ -70,11 +70,11 @@ Derived from [docs/deep-dive/designs/angular-ui-concept.md](docs/deep-dive/desig
 - [x] Command palette: extract a headless controller (signals + keyboard orchestration) with ARIA-compliant wrappers so we can skin it via Tailwind without duplicating logic. _(Headless controller + utilities live in [src/app/shared/command-palette/command-palette.controller.ts](src/app/shared/command-palette/command-palette.controller.ts) and the Tailwind template in [src/app/shared/command-palette/command-palette.html](src/app/shared/command-palette/command-palette.html).)_
 - [x] Implement split-pane layout pattern (summary cards + tabbed detail panes) per page using Angular Aria tabs (no shared page-sized component).
 - [ ] Deliver feature modules:
-  - [ ] Dashboard - queue depth spark lines, upcoming triggers list, misfire heat map.
+  - [x] Dashboard - queue depth spark lines, upcoming triggers list, misfire heat map.
   - [x] Schedules - list/detail views with JSON diff preview for policy delta inspection.
   - [x] Jobs - registry browser, manual trigger action, last-N execution view.
   - [x] Webhooks - ingress status, secret rotation UI, IP allow-list grid.
-  - [ ] Runners - availability read-model (available runners list + heartbeat status).
+  - [x] Runners - availability read-model (available runners list + heartbeat status).
   - [ ] Tenants & API keys - intentionally excluded (single-tenant UI); no menu/command entries. Tenant reference is still required for tenant-scoped API routes.
 
 ## Data Access & State
@@ -97,7 +97,7 @@ Derived from [docs/deep-dive/designs/angular-ui-concept.md](docs/deep-dive/desig
 
 ## Styling & Design Language
 
-- [ ] Finalize typography pairing (`Space Grotesk`, `IBM Plex Mono`) and encode in Tailwind theme.
+- [x] Finalize typography pairing (`Space Grotesk`, `IBM Plex Mono`) and encode in Tailwind theme.
 - [ ] Define semantic color ramps (surface, accent, danger) for both light/dark ops themes.
 - [ ] Specify motion patterns (panel sweep, counter flip) and implement reusable animation utilities.
 - [ ] Create layout primitives (`stack`, `cluster`, density controls) to keep spacing on the 8px grid.

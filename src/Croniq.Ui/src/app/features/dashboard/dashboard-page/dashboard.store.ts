@@ -13,6 +13,7 @@ export type MetricCard = {
     trend?: string;
     status?: 'healthy' | 'warning' | 'critical';
     subtext?: string;
+    sparkline?: number[];
 };
 
 export type DeadLetter = {
@@ -36,6 +37,7 @@ export class DashboardStore {
     private readonly metricsSignal = signal<ReadonlyArray<MetricCard>>([]);
     private readonly recentFailuresSignal = signal<ReadonlyArray<DeadLetter>>([]);
     private readonly upcomingSchedulesSignal = signal<ReadonlyArray<UpcomingSchedule>>([]);
+    private readonly misfireHeatmapSignal = signal<ReadonlyArray<number>>([]); // 24h counters
 
     readonly error = signal<string | null>(null);
 
@@ -106,6 +108,7 @@ export class DashboardStore {
     readonly metrics = this.metricsSignal.asReadonly();
     readonly recentFailures = this.recentFailuresSignal.asReadonly();
     readonly upcomingSchedules = this.upcomingSchedulesSignal.asReadonly();
+    readonly misfireHeatmap = this.misfireHeatmapSignal.asReadonly();
 
     private updateMetrics(runners: any[]) {
         // Active Runners
@@ -123,7 +126,15 @@ export class DashboardStore {
                 label: 'Throughput (RPM)',
                 value: '1,240',
                 trend: '↑ 12%',
-                subtext: 'vs last hour'
+                subtext: 'vs last hour',
+                sparkline: [20, 25, 30, 28, 35, 40, 42, 38, 45, 50]
+            },
+            {
+                label: 'Queue Depth',
+                value: '12',
+                status: 'healthy', 
+                subtext: 'Jobs pending',
+                sparkline: [5, 12, 8, 15, 20, 10, 5, 2, 4, 12]
             },
             {
                 label: 'Error Rate (1h)',
@@ -176,7 +187,20 @@ export class DashboardStore {
     private setFallbackData() {
         this.metricsSignal.set([
             { label: 'Active Runners', value: '8', status: 'healthy', subtext: 'All systems operational' },
-            { label: 'Throughput (RPM)', value: '1,240', trend: '↑ 12%', subtext: 'vs last hour' },
+            { 
+                label: 'Throughput (RPM)', 
+                value: '1,240', 
+                trend: '↑ 12%', 
+                subtext: 'vs last hour',
+                sparkline: [20, 25, 30, 28, 35, 40, 42, 38, 45, 50]
+            },
+            {
+                label: 'Queue Depth',
+                value: '24',
+                status: 'warning', 
+                subtext: 'Jobs pending',
+                sparkline: [10, 15, 24, 20, 15, 12, 18, 24, 22, 24]
+            },
             { label: 'Error Rate (1h)', value: '0.05%', status: 'healthy', subtext: 'Below threshold' },
         ]);
 
@@ -191,5 +215,9 @@ export class DashboardStore {
             { jobKey: 'cleanup-logs', fireTime: 'in 1h', cron: '0 1 * * *' },
             { jobKey: 'billing-cycle', fireTime: 'Tomorrow 00:00', cron: '0 0 1 * *' },
         ]);
+        
+        // Mock 24h heatmap (mostly zeros, some spikes)
+        const heatmap = new Array(24).fill(0).map((_, i) => (i === 14 || i === 15) ? Math.floor(Math.random() * 5) + 1 : 0);
+        this.misfireHeatmapSignal.set(heatmap);
     }
 }

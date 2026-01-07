@@ -26,7 +26,11 @@ module.exports = {
             borderRadius: {
                 sm: 'var(--cq-radius-sm)',
                 lg: 'var(--cq-radius-lg)',
-            }
+            },
+            fontFamily: {
+                sans: ['"Space Grotesk"', 'sans-serif'],
+                mono: ['"IBM Plex Mono"', 'monospace'],
+            },
         },
     },
     plugins: [],

@@ -11,6 +11,10 @@ export class RuntimeConfigService {
 
     private config: CroniqUiRuntimeConfig = {};
 
+    get snapshot(): CroniqUiRuntimeConfig {
+        return this.config;
+    }
+
     load(): Observable<void> {
         return this.http.get<unknown>('assets/croniq-config.json').pipe(
             map((raw) => croniqUiRuntimeConfigSchema.parse(raw)),

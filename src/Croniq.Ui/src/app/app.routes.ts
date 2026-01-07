@@ -80,6 +80,11 @@ export const appRoutes: Routes = [
                     ),
             },
             {
+                path: 'metrics',
+                loadComponent: () =>
+                    import('./features/metrics/metrics-page/metrics-page').then((m) => m.MetricsPage),
+            },
+            {
                 path: 'runners',
                 loadComponent: () =>
                     import('./features/runners/runners-page/runners-page').then((m) => m.RunnersPage),

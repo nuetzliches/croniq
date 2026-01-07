@@ -1,35 +1,29 @@
 import { DatePipe } from '@angular/common';
-import { ChangeDetectionStrategy, Component, computed, signal } from '@angular/core';
-
-interface Runner {
-  id: string;
-  hostname: string;
-  status: 'Online' | 'Offline' | 'Draining';
-  lastHeartbeat: Date;
-  activeJobs: number;
-  capacity: number;
-  tags: string[];
-}
+import { ChangeDetectionStrategy, Component, inject } from '@angular/core';
+import { RunnersStore } from './runners.store';
 
 @Component({
   selector: 'cq-runners-page',
   imports: [DatePipe],
   templateUrl: './runners-page.html',
   changeDetection: ChangeDetectionStrategy.OnPush,
+  providers: [RunnersStore],
 })
 export class RunnersPage {
+  private readonly store = inject(RunnersStore);
+
   // Data
-  runners = signal<Runner[]>([
-    { id: 'run-01', hostname: 'worker-prod-01', status: 'Online', lastHeartbeat: new Date(), activeJobs: 3, capacity: 10, tags: ['linux', 'gpu'] },
-    { id: 'run-02', hostname: 'worker-prod-02', status: 'Online', lastHeartbeat: new Date(), activeJobs: 8, capacity: 10, tags: ['linux'] },
-    { id: 'run-03', hostname: 'worker-prod-03', status: 'Draining', lastHeartbeat: new Date(Date.now() - 5000), activeJobs: 1, capacity: 10, tags: ['windows'] },
-    { id: 'run-04', hostname: 'worker-prod-04', status: 'Offline', lastHeartbeat: new Date(Date.now() - 3600000), activeJobs: 0, capacity: 10, tags: ['linux'] },
-  ]);
+  readonly runners = this.store.runners;
+  readonly loading = this.store.loading;
 
   // Metrics
-  activeRunnersCount = computed(() => this.runners().filter(r => r.status === 'Online').length);
-  totalCapacity = computed(() => this.runners().reduce((acc, r) => acc + r.capacity, 0));
-  busyThreads = computed(() => this.runners().reduce((acc, r) => acc + r.activeJobs, 0));
+  readonly activeRunnersCount = this.store.activeRunnersCount;
+  readonly totalCapacity = this.store.totalCapacity;
+  readonly busyThreads = this.store.busyThreads;
+
+  refresh() {
+    this.store.refresh();
+  }
 
   // Actions
   drainRunner(id: string) {

@@ -2,8 +2,11 @@
   <!-- Header -->
   <header class="flex items-center justify-between">
     <h1 class="text-lg font-semibold text-primary">Runners</h1>
-    <button class="rounded-lg bg-white/5 px-4 py-2 text-sm font-semibold text-primary hover:bg-white/10">
-      Refresh
+    <button 
+      (click)="refresh()"
+      class="rounded-lg bg-white/5 px-4 py-2 text-sm font-semibold text-primary hover:bg-white/10"
+      [disabled]="loading()">
+      {{ loading() ? 'Refreshing...' : 'Refresh' }}
     </button>
   </header>
 
@@ -56,7 +59,7 @@
                   }
                 }
               </td>
-              <td class="px-6 py-4 text-muted">{{ runner.lastHeartbeat | date:'mediumTime' }}</td>
+              <td class="px-6 py-4 text-muted">{{ runner.lastHeartbeatAt | date:'medium' }}</td>
               <td class="px-6 py-4 text-muted">
                 <div class="flex items-center gap-2">
                   <div class="h-1.5 w-16 rounded-full bg-white/10">
