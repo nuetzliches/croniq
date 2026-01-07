@@ -4,6 +4,8 @@ using Croniq.Auth.SqlServer;
 using Croniq.Options;
 using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
@@ -27,6 +29,7 @@ services.AddCroniqSqlServerDbContext(options =>
     options.ConnectionString = connectionString;
     options.EnableDetailedErrors = true;
     options.EnableSensitiveDataLogging = true;
+    options.MigrationsAssembly = typeof(SqlServerDbContext).Assembly.GetName().Name;
 });
 
 services.AddSingleton<ITenantStore, SqlServerTenantStore>();
@@ -82,6 +85,12 @@ static async Task ApplyMigrationsAsync(IServiceProvider provider, string connect
         try
         {
             await EnsureDatabaseExistsAsync(connectionString, logger, token).ConfigureAwait(false);
+            var migrationsAssembly = context.GetService<IMigrationsAssembly>();
+            if (migrationsAssembly.Migrations.Count == 0)
+            {
+                throw new InvalidOperationException(
+                    $"No EF Core migrations were discovered for '{migrationsAssembly.Assembly.GetName().Name}'.");
+            }
             var pendingMigrations = await context.Database.GetPendingMigrationsAsync(token).ConfigureAwait(false);
             if (!pendingMigrations.Any())
             {
