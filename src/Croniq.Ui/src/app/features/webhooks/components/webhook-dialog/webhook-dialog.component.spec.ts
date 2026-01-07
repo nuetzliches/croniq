@@ -35,17 +35,17 @@ describe('WebhookDialogComponent', () => {
         expect(component.webhookModel().hookKey).toBe('');
     });
 
-    it('should validate required fields', () => {
-        component.save();
+    it('should validate required fields', async () => {
+        await component.onSubmit(new SubmitEvent('submit'));
         expect(component.submitAttempted()).toBe(true);
         expect(dialogRefMock.close).not.toHaveBeenCalled();
     });
 
-    it('should close with data when valid', () => {
+    it('should close with data when valid', async () => {
         component.webhookModel.update(m => ({ ...m, hookKey: 'test-hook', jobKey: 'test-job', secret: 'my-secret' }));
         fixture.detectChanges();
 
-        component.save();
+        await component.onSubmit(new SubmitEvent('submit'));
 
         expect(dialogRefMock.close).toHaveBeenCalledWith(expect.objectContaining({
             hookKey: 'test-hook',
@@ -54,7 +54,7 @@ describe('WebhookDialogComponent', () => {
         }));
     });
 
-    it('should convert string requestsPerMinute to number', () => {
+    it('should convert string requestsPerMinute to number', async () => {
         component.webhookModel.update(m => ({
             ...m,
             hookKey: 'test-hook',
@@ -64,14 +64,14 @@ describe('WebhookDialogComponent', () => {
         }));
         fixture.detectChanges();
 
-        component.save();
+        await component.onSubmit(new SubmitEvent('submit'));
 
         expect(dialogRefMock.close).toHaveBeenCalledWith(expect.objectContaining({
             requestsPerMinute: 60
         }));
     });
 
-    it('should handle empty string requestsPerMinute as null', () => {
+    it('should handle empty string requestsPerMinute as null', async () => {
         component.webhookModel.update(m => ({
             ...m,
             hookKey: 'test-hook',
@@ -81,7 +81,7 @@ describe('WebhookDialogComponent', () => {
         }));
         fixture.detectChanges();
 
-        component.save();
+        await component.onSubmit(new SubmitEvent('submit'));
 
         expect(dialogRefMock.close).toHaveBeenCalledWith(expect.objectContaining({
             requestsPerMinute: null

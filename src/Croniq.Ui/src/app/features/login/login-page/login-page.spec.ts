@@ -94,7 +94,7 @@ describe('LoginPage', () => {
         }));
 
         component.loginModel.set({ username: 'admin', password: 'admin' });
-        component.login();
+        await component.onSubmit(new SubmitEvent('submit'));
 
         expect(navigateSpy).toHaveBeenCalledWith('/jobs');
     });
@@ -112,7 +112,7 @@ describe('LoginPage', () => {
         }));
 
         component.loginModel.set({ username: 'admin', password: 'admin' });
-        component.login();
+        await component.onSubmit(new SubmitEvent('submit'));
 
         expect(navigateSpy).toHaveBeenCalledWith('/auth/change-password');
     });

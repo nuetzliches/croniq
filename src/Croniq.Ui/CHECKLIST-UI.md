@@ -20,7 +20,7 @@ Derived from [docs/deep-dive/designs/angular-ui-concept.md](docs/deep-dive/desig
   - [x] External login expansion: leave hooks for a PKCE-based login bootstrap (deferred) so we can swap session auth for standards-based login once backend is ready.
   - [x] Operator impersonation vs. delegated auth: document the interim plan (manual tenant/operator context vs. delegated auth) and revisit once backend signals GA for full delegated auth. _(Plan recorded in [docs/deep-dive/AUTH.md](docs/deep-dive/AUTH.md).)_
 - [x] MVP Data Surfaces – deliver the dashboard metrics (stubbed), schedules read-only grid, and job registry view.
-- [ ] Admin Controls – implement CRUD for schedules, webhooks, and API keys, including dead-letter replay wiring.
+- [x] Admin Controls – implement CRUD for schedules, webhooks, and API keys, including dead-letter replay wiring.
   - [x] Schedules (CRUD)
   - [x] Webhooks (CRUD)
   - [x] API Access (CRUD)
@@ -28,11 +28,17 @@ Derived from [docs/deep-dive/designs/angular-ui-concept.md](docs/deep-dive/desig
     - [x] Create Dialog (Component implemented)
     - [x] Handle creation result (show secret to user)
     - [x] Issue Key mechanism (secondary action)
-- [ ] Observability & Polish – embed Grafana/log pulse views and complete the accessibility plus localization review.
+- [x] Observability & Polish – embed Grafana/log pulse views and complete the accessibility plus localization review.
   - [x] Log Pulse (Execution Logs)
   - [x] Metrics Embed (Grafana)
   - [x] Accessibility Review (Initial ARIA compliance check completed)
   - [x] Localization Review (English baseline confirmed)
+
+## Production Readiness
+
+- [x] Build Budgets: configured in `angular.json` (Warning: 1MB, Error: 2MB).
+- [x] Unit Tests: Fixed recently refactored specs (`test:once` passing).
+- [x] Strict Forms: All dialogs upgraded to explicit submit handlers.
 
 ## Guardrails & Dependencies
 

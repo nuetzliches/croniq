@@ -13,6 +13,7 @@ describe('DashboardPage', () => {
     metrics: signal([]),
     recentFailures: signal([]),
     upcomingSchedules: signal([]),
+    misfireHeatmap: signal([]),
   };
 
   beforeEach(async () => {
