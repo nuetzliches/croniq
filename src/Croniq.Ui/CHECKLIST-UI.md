@@ -153,6 +153,10 @@ This checklist intentionally avoids duplicating how-tos.
 - Decide CI policy for OpenAPI sync (snapshot commit vs. live/staging generation) and implement it.
 - Establish Angular Query + Signals boilerplate shared across feature modules.
 
+# Technical Debt & Optimizations
+
+- [ ] **Optimize Read Models:** The Jobs Store currently fetches jobs, schedules, and executions separately and joins them client-side. This should be replaced by a backend query projection (e.g. `GET /jobs?include=summary`) to avoid over-fetching and enable proper server-side pagination.
+
 # Prüfen / Nachbessern
 
 - [x] Zod-Modelle/Generator-Ausgabe geprüft; `passthrough()` ist in Zod v4 nicht deprecated. Kurzer Leitfaden in `docs/ai/zod.instructions.md`.
