@@ -368,6 +368,8 @@ internal sealed class WorkerGrpcService : Worker.WorkerBase
 
         var logger = _loggerFactory.CreateLogger("Croniq.Api.WorkerEvents");
         var baseScope = BuildWorkEventScope(lease, runnerId, scope);
+        var executionId = lease.ExecutionId;
+        List<ExecutionLogEntry>? entries = null;
 
         foreach (var entry in events.Events)
         {
@@ -376,8 +378,45 @@ internal sealed class WorkerGrpcService : Worker.WorkerBase
                 continue;
             }
 
-            using var scopeHandle = logger.BeginScope(MergeEventScope(baseScope, entry));
-            logger.Log(ParseLogLevel(entry.Level), "{WorkerEvent}", entry.Message);
+            var scopeValues = MergeEventScope(baseScope, entry);
+            scopeValues["croniq.execution_log.skip"] = true;
+            using var scopeHandle = logger.BeginScope(scopeValues);
+            var level = ParseLogLevel(entry.Level);
+            logger.Log(level, "{WorkerEvent}", entry.Message);
+
+            if (!string.IsNullOrWhiteSpace(executionId))
+            {
+                entries ??= new List<ExecutionLogEntry>(events.Events.Count);
+                var properties = new Dictionary<string, object?>(scopeValues, StringComparer.OrdinalIgnoreCase);
+                properties.Remove("croniq.execution_log.skip");
+                properties["category"] = "Croniq.Api.WorkerEvents";
+                properties["eventId"] = 0;
+
+                entries.Add(new ExecutionLogEntry(
+                    executionId,
+                    entry.TimestampUtc > 0 ? DateTimeOffset.FromUnixTimeMilliseconds(entry.TimestampUtc) : DateTimeOffset.UtcNow,
+                    level,
+                    entry.Message,
+                    entry.Message,
+                    Exception: null,
+                    properties,
+                    Activity.Current?.TraceId.ToString(),
+                    Activity.Current?.SpanId.ToString(),
+                    CorrelationId: null,
+                    DateTimeOffset.UtcNow.UtcTicks));
+            }
+        }
+
+        if (entries is { Count: > 0 })
+        {
+            try
+            {
+                await _executionLogStore.AppendAsync(executionId!, entries, cancellationToken).ConfigureAwait(false);
+            }
+            catch
+            {
+                // best-effort: work events should not fail if logging storage is unavailable
+            }
         }
     }
 

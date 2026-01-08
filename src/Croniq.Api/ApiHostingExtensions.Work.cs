@@ -253,8 +253,10 @@ public static partial class ApiHostingExtensions
             WorkEventsRequest request,
             [FromServices] ICallerContextAccessor callerContextAccessor,
             [FromServices] IJobStore jobStore,
+            [FromServices] IExecutionLogStore executionLogStore,
             [FromServices] IWorkItemStore workItemStore,
             [FromServices] ILoggerFactory loggerFactory,
+            HttpContext httpContext,
             CancellationToken cancellationToken) =>
         {
             if (request is null)
@@ -317,6 +319,9 @@ public static partial class ApiHostingExtensions
 
             var logger = loggerFactory.CreateLogger("Croniq.Api.WorkEvents");
             var baseScope = BuildWorkEventScope(lease, runnerId, resolvedEnvironment, scope.TenantId);
+            var leaseExecutionId = lease.ExecutionId;
+            var correlationId = ResolveCorrelationId(httpContext);
+            List<ExecutionLogEntry>? entries = null;
             foreach (var entry in request.Events)
             {
                 if (entry is null || string.IsNullOrWhiteSpace(entry.Message))
@@ -325,8 +330,49 @@ public static partial class ApiHostingExtensions
                 }
 
                 var scopeValues = MergeEventScope(baseScope, entry);
+                scopeValues["croniq.execution_log.skip"] = true;
                 using var scopeHandle = logger.BeginScope(scopeValues);
-                logger.Log(ParseLogLevel(entry.Level), "{WorkerEvent}", entry.Message);
+                var level = ParseLogLevel(entry.Level);
+                logger.Log(level, "{WorkerEvent}", entry.Message);
+
+                if (!string.IsNullOrWhiteSpace(leaseExecutionId))
+                {
+                    entries ??= new List<ExecutionLogEntry>(request.Events.Length);
+                    var properties = new Dictionary<string, object?>(scopeValues, StringComparer.OrdinalIgnoreCase);
+                    properties.Remove("croniq.execution_log.skip");
+                    properties["category"] = "Croniq.Api.WorkEvents";
+                    properties["eventId"] = 0;
+
+                    if (!string.IsNullOrWhiteSpace(correlationId))
+                    {
+                        properties["croniq.correlation_id"] = correlationId;
+                    }
+
+                    entries.Add(new ExecutionLogEntry(
+                        leaseExecutionId,
+                        entry.TimestampUtc ?? DateTimeOffset.UtcNow,
+                        level,
+                        entry.Message,
+                        entry.Message,
+                        Exception: null,
+                        properties,
+                        Activity.Current?.TraceId.ToString(),
+                        Activity.Current?.SpanId.ToString(),
+                        correlationId,
+                        DateTimeOffset.UtcNow.UtcTicks));
+                }
+            }
+
+            if (entries is { Count: > 0 })
+            {
+                try
+                {
+                    await executionLogStore.AppendAsync(leaseExecutionId!, entries, cancellationToken).ConfigureAwait(false);
+                }
+                catch
+                {
+                    // best-effort: work events should not fail if logging storage is unavailable
+                }
             }
 
             return Results.NoContent();

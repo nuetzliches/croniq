@@ -21,6 +21,7 @@ import {
     CreateWebhookIpRuleRequest,
     WebhookDeadLetterResponse,
     WebhookReplayResult,
+    WebhookDeadLetterFailureRequest,
     ApiClientResponse,
     UpsertApiClientRequest,
     IssueApiKeyRequest,
@@ -763,6 +764,58 @@ export const TenantsApi: EndpointDefinition[] = [
             },
         ],
         response: z.array(WebhookDeadLetterResponse),
+        errors: [
+            {
+                status: 503,
+                description: `Service Unavailable`,
+                schema: z.void(),
+            },
+        ],
+    },
+    {
+        method: 'post',
+        path: '/tenants/:tenantId/webhooks/deadletters/:deadLetterId:fail',
+        description: `Stores a failure update for a webhook dead letter without replaying it.`,
+        requestFormat: 'json',
+        parameters: [
+            {
+                name: 'body',
+                type: 'Body',
+                schema: WebhookDeadLetterFailureRequest,
+            },
+            { name: 'tenantId', type: 'Path', schema: z.string() },
+            { name: 'deadLetterId', type: 'Path', schema: z.number().int() },
+            {
+                name: 'environment',
+                type: 'Query',
+                schema: z.string().optional(),
+            },
+        ],
+        response: z.void(),
+        errors: [
+            { status: 400, description: `Bad Request`, schema: z.void() },
+            {
+                status: 503,
+                description: `Service Unavailable`,
+                schema: z.void(),
+            },
+        ],
+    },
+    {
+        method: 'post',
+        path: '/tenants/:tenantId/webhooks/deadletters/:deadLetterId:resolve',
+        description: `Marks a webhook dead letter as resolved without replaying it.`,
+        requestFormat: 'json',
+        parameters: [
+            { name: 'tenantId', type: 'Path', schema: z.string() },
+            { name: 'deadLetterId', type: 'Path', schema: z.number().int() },
+            {
+                name: 'environment',
+                type: 'Query',
+                schema: z.string().optional(),
+            },
+        ],
+        response: z.void(),
         errors: [
             {
                 status: 503,

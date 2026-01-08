@@ -256,6 +256,15 @@ export const WebhookReplayResult = z
     })
     .partial();
 export type WebhookReplayResult = z.infer<typeof WebhookReplayResult>;
+export const WebhookDeadLetterFailureRequest = z.object({
+    failureReason: z.string().min(1),
+    statusCode: z.number().int().nullish(),
+    errorDetails: z.string().nullish(),
+    nextAttemptAtUtc: z.iso.datetime({ offset: true }).nullish(),
+});
+export type WebhookDeadLetterFailureRequest = z.infer<
+    typeof WebhookDeadLetterFailureRequest
+>;
 export const ApiClientResponse = z
     .object({
         clientId: z.string().nullable(),
@@ -468,6 +477,7 @@ export const schemas = {
     CreateWebhookIpRuleRequest,
     WebhookDeadLetterResponse,
     WebhookReplayResult,
+    WebhookDeadLetterFailureRequest,
     ApiClientResponse,
     UpsertApiClientRequest,
     IssueApiKeyRequest,

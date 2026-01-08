@@ -301,7 +301,16 @@ public sealed class InMemoryJobStore : IJobPersistenceProvider, IJobDeadLetterSt
 
             if (TriggerSchedule.IsOnceExpression(entry.Definition.ScheduleExpression))
             {
-                entry.NextFireAtUtc = request.NextFireTimeUtc;
+                if (request.NextFireTimeUtc.HasValue)
+                {
+                    entry.Definition = entry.Definition with { StartAtUtc = request.NextFireTimeUtc, Enabled = true };
+                    entry.NextFireAtUtc = request.NextFireTimeUtc;
+                }
+                else
+                {
+                    entry.Definition = entry.Definition with { Enabled = false };
+                    entry.NextFireAtUtc = null;
+                }
                 return Task.CompletedTask;
             }
 
@@ -504,7 +513,7 @@ public sealed class InMemoryJobStore : IJobPersistenceProvider, IJobDeadLetterSt
             NextFireAtUtc = nextFireAtUtc;
         }
 
-        public TriggerDefinition Definition { get; }
+        public TriggerDefinition Definition { get; set; }
         public CronSchedule? Schedule { get; }
         public DateTimeOffset? NextFireAtUtc { get; set; }
         public LeaseInfo? Lease { get; set; }

@@ -361,6 +361,8 @@ public sealed class NoopJobPersistenceProvider : IJobPersistenceProvider, IPersi
         {
             _jobs.Clear();
             _triggers.Clear();
+            _leases.Clear();
+            _leaseSequence = 0;
         }
     }
 

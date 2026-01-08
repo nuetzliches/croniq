@@ -88,6 +88,18 @@ public sealed class ExecutionLogSinkProvider : ILoggerProvider, ISupportExternal
 
         var now = DateTimeOffset.UtcNow;
         var (executionId, properties) = ExtractScope();
+        if (properties is not null && properties.TryGetValue("croniq.execution_log.skip", out var skipValue))
+        {
+            if (skipValue is bool skip && skip)
+            {
+                return false;
+            }
+
+            if (skipValue is string skipText && bool.TryParse(skipText, out var parsed) && parsed)
+            {
+                return false;
+            }
+        }
         if (string.IsNullOrWhiteSpace(executionId))
         {
             return false;

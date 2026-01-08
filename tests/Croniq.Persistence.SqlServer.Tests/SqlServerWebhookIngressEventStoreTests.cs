@@ -74,7 +74,9 @@ public sealed class SqlServerWebhookIngressEventStoreTests : IAsyncLifetime
         entity.TenantId.ShouldBe("tenant-ingress");
         entity.EnvironmentTag.ShouldBe("dev");
         entity.Payload.ShouldBe("{\"hello\":\"world\"}");
+        entity.HeadersJson.ShouldNotBeNullOrWhiteSpace();
         entity.HeadersJson.ShouldContain("x-test");
+        entity.MetadataJson.ShouldNotBeNullOrWhiteSpace();
         entity.MetadataJson.ShouldContain("sample");
         entity.Status.ShouldBe("Pending");
         entity.AttemptCount.ShouldBe(0);

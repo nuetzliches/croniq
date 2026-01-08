@@ -10,7 +10,7 @@ using Croniq.Persistence.Abstractions;
 
 namespace Croniq.Webhooks.Remote;
 
-internal sealed class RemoteWebhookClient
+public sealed class RemoteWebhookClient
 {
     private readonly HttpClient _httpClient;
     private readonly JsonSerializerOptions _jsonOptions = new(JsonSerializerDefaults.Web);
@@ -225,7 +225,7 @@ internal sealed class RemoteWebhookClient
             entry.RequestsPerMinute,
             scope.TenantId,
             scope.EnvironmentTag,
-            entry.Metadata,
+            ToReadOnlyDictionary(entry.Metadata),
             ipRules,
             SignatureVersion: 1,
             entry.CreatedAtUtc,
@@ -255,8 +255,8 @@ internal sealed class RemoteWebhookClient
             entry.TenantId,
             entry.EnvironmentTag,
             entry.Payload,
-            entry.Headers,
-            entry.Metadata,
+            ToReadOnlyDictionary(entry.Headers),
+            ToReadOnlyDictionary(entry.Metadata),
             entry.FailureReason,
             entry.Attempts,
             entry.StatusCode,
@@ -265,6 +265,16 @@ internal sealed class RemoteWebhookClient
             entry.LastAttemptAtUtc,
             entry.NextAttemptAtUtc,
             entry.ExpiresAtUtc);
+    }
+
+    private static IReadOnlyDictionary<string, string>? ToReadOnlyDictionary(IDictionary<string, string>? values)
+    {
+        if (values is null || values.Count == 0)
+        {
+            return null;
+        }
+
+        return new Dictionary<string, string>(values);
     }
 
     private sealed record UpsertWebhookEndpointRequestDto(

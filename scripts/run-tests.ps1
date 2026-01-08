@@ -249,6 +249,8 @@ try {
 
     if (-not $DisableCoverage) {
         $coverageFiles = Get-ChildItem -Path $repoRoot -Filter "coverage.cobertura.xml" -Recurse -ErrorAction SilentlyContinue
+        $coverageCutoff = $runStartedAt.AddMinutes(-1)
+        $coverageFiles = @($coverageFiles | Where-Object { $_.LastWriteTime -ge $coverageCutoff })
         if ($coverageFiles.Count -gt 0) {
             $reportsArg = ($coverageFiles.FullName -join ";")
             Write-Host "Generating coverage report from $($coverageFiles.Count) cobertura file(s)..." -ForegroundColor Cyan
@@ -273,7 +275,7 @@ try {
             }
         }
         else {
-            Write-Warning "No coverage.cobertura.xml files were produced."
+            Write-Warning "No coverage.cobertura.xml files were produced for this run."
         }
     }
 

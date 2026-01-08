@@ -37,6 +37,7 @@ import {
     UpsertJobRequest,
     UpsertTenantRequest,
     UpsertWebhookEndpointRequest,
+    WebhookDeadLetterFailureRequest,
     WebhookDeadLetterResponse,
     WebhookIpRuleResponse,
     WebhookEndpointResponse,

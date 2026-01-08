@@ -563,6 +563,10 @@ public sealed class GrpcWorkerTests
         {
             return null;
         }
+        catch (RpcException ex) when (ex.StatusCode == StatusCode.Cancelled || ex.StatusCode == StatusCode.DeadlineExceeded)
+        {
+            return null;
+        }
 
         return null;
     }

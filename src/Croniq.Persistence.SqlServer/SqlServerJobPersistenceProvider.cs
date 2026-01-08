@@ -377,7 +377,9 @@ public sealed class SqlServerJobPersistenceProvider : IJobPersistenceProvider
         {
             if (request.NextFireTimeUtc.HasValue)
             {
-                trigger.NextFireAtUtc = request.NextFireTimeUtc.Value.UtcDateTime;
+                var nextFireUtc = request.NextFireTimeUtc.Value.UtcDateTime;
+                trigger.StartAtUtc = nextFireUtc;
+                trigger.NextFireAtUtc = nextFireUtc;
                 trigger.Enabled = true;
             }
             else

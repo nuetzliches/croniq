@@ -9,7 +9,7 @@
     <ProjectReference Include="..\Croniq.Hosting\Croniq.Hosting.csproj" />
     <ProjectReference
       Include="..\Croniq.Persistence.Abstractions\Croniq.Persistence.Abstractions.csproj" />
-    <ProjectReference Include="..\Croniq.Rpc.Client\Croniq.Rpc.Client.csproj" />
+    <ProjectReference Include="..\Croniq.Rpc.Client\Croniq.Rpc.Client.csproj" PrivateAssets="all" />
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="OpenTelemetry.Instrumentation.AspNetCore" Version="1.14.0" />

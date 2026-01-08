@@ -299,6 +299,7 @@ public sealed class RetentionCleanupJobTests
         db.Tenants.Add(new TenantEntity
         {
             TenantId = tenantId,
+            Reference = tenantId,
             Name = tenantId,
             IsActive = true,
             CreatedAtUtc = DateTime.UtcNow,

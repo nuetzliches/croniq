@@ -65,8 +65,8 @@
 
 ## Naechste Schritte (Stand 2026-01-08)
 
-- [ ] Tests: gRPC WebhookIngress Service (Hello + Tenant/Scope Guard + Ack/Nack/Extend + Lease-Expiry).
-- [ ] Tests: Relay-Worker E2E (DMZ StoreOnly -> gRPC Stream -> Job Trigger, inkl. Fehlerpfad mit Ack(false)).
+- [x] Tests: gRPC WebhookIngress Service (Hello + Tenant/Scope Guard + Ack/Nack/Extend + Lease-Expiry).
+- [x] Tests: Relay-Worker E2E (DMZ StoreOnly -> gRPC Stream -> Job Trigger, inkl. Fehlerpfad mit Ack(false)).
 - [ ] Smoke: `samples/Croniq.Sample.Dmz` + interner Host (Remote-Mode + Relay) starten und Basisfluss verifizieren.
 - [ ] Optional: Stream-Fallback (SSE/Long-Poll) fuer Umgebungen ohne gRPC.
 
