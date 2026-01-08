@@ -130,6 +130,7 @@ public sealed class PasswordAuthApiTestHost : IAsyncLifetime
 
         builder.Services.AddSingleton(ExecutionLogs);
         builder.Services.AddSingleton<IExecutionLogReader>(sp => sp.GetRequiredService<TestExecutionLogReader>());
+        builder.Services.AddSingleton<IExecutionLogStore>(sp => sp.GetRequiredService<TestExecutionLogReader>());
 
         builder.Services.AddSingleton(ExecutionHistory);
         builder.Services.AddSingleton<IExecutionHistoryReader>(sp => sp.GetRequiredService<TestExecutionHistoryReader>());

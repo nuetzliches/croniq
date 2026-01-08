@@ -2394,44 +2394,6 @@
           }
         }
       }
-    },
-    "/tenants/{tenantId}/environments/{environmentTag}/webhooks/{hookKey}": {
-      "post": {
-        "tags": [
-          "Croniq.Sample.ApiHost"
-        ],
-        "parameters": [
-          {
-            "name": "tenantId",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "environmentTag",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "hookKey",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "OK"
-          }
-        }
-      }
     }
   },
   "components": {

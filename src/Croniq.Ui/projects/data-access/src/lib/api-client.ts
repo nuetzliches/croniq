@@ -90,11 +90,20 @@ const TENANT_ENDPOINTS = {
     workRenew: requireEndpoint(TenantsApi, 'post', '/tenants/:tenantId/work/renew'),
 };
 
-const INVOKE_WEBHOOK_ENDPOINT = requireEndpoint(
-    TenantsApi,
-    'post',
-    '/tenants/:tenantId/environments/:environmentTag/webhooks/:hookKey',
-);
+const INVOKE_WEBHOOK_ENDPOINT_PATH =
+    '/tenants/:tenantId/environments/:environmentTag/webhooks/:hookKey';
+const INVOKE_WEBHOOK_ENDPOINT: EndpointDefinition =
+    TenantsApi.find((entry) => entry.method === 'post' && entry.path === INVOKE_WEBHOOK_ENDPOINT_PATH) ?? {
+        method: 'post',
+        path: INVOKE_WEBHOOK_ENDPOINT_PATH,
+        requestFormat: 'json',
+        parameters: [
+            { name: 'tenantId', type: 'Path', schema: z.string() },
+            { name: 'environmentTag', type: 'Path', schema: z.string() },
+            { name: 'hookKey', type: 'Path', schema: z.string() },
+        ],
+        response: z.void(),
+    };
 const EXECUTION_LOG_ENDPOINT = requireEndpoint(
     TenantsApi,
     'get',

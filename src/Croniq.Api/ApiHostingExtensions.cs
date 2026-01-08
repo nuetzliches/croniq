@@ -47,6 +47,7 @@ public static partial class ApiHostingExtensions
         services.Configure<WebhookIngressStreamOptions>(configuration.GetSection("Croniq:Webhooks:Ingress"));
         services.AddCroniqPlatformServices(configuration);
         services.AddSingleton<TenantRateLimitDecider>();
+        services.TryAddSingleton<WebhookIngressConsumerTracker>();
         services.AddGrpc(options => options.Interceptors.Add<TenantRateLimitInterceptor>());
         return services;
     }
@@ -103,6 +104,12 @@ public static partial class ApiHostingExtensions
         {
             var path = context.Request.Path;
             var pathWithBase = context.Request.PathBase.Add(path);
+            // Webhook ingress is authenticated by signature, not Croniq API keys.
+            if (IsWebhookIngressPath(path) || IsWebhookIngressPath(pathWithBase))
+            {
+                await next().ConfigureAwait(false);
+                return;
+            }
             if (anonymousPrefixes.Any(prefix =>
                     path.StartsWithSegments(prefix, StringComparison.OrdinalIgnoreCase)
                     || pathWithBase.StartsWithSegments(prefix, StringComparison.OrdinalIgnoreCase)))
@@ -177,6 +184,20 @@ public static partial class ApiHostingExtensions
         MapRunnerEndpoints(app);
 
         return app;
+    }
+
+    private static bool IsWebhookIngressPath(PathString path)
+    {
+        if (!path.HasValue)
+        {
+            return false;
+        }
+
+        var segments = path.Value!.Split('/', StringSplitOptions.RemoveEmptyEntries);
+        return segments.Length >= 6
+            && string.Equals(segments[0], "tenants", StringComparison.OrdinalIgnoreCase)
+            && string.Equals(segments[2], "environments", StringComparison.OrdinalIgnoreCase)
+            && string.Equals(segments[4], "webhooks", StringComparison.OrdinalIgnoreCase);
     }
 
     private static IReadOnlyCollection<IpNetwork> ParseAllowedNetworks(IReadOnlyCollection<string> rawCidrs)
@@ -422,6 +443,7 @@ public static partial class ApiHostingExtensions
     public static WebApplication MapCroniqWebhookIngressGrpc(this WebApplication app)
     {
         app.MapGrpcService<WebhookIngressGrpcService>();
+        MapWebhookIngressHttpEndpoints(app);
         return app;
     }
 

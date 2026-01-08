@@ -252,17 +252,6 @@ export const TenantsApi: EndpointDefinition[] = [
         ],
     },
     {
-        method: 'post',
-        path: '/tenants/:tenantId/environments/:environmentTag/webhooks/:hookKey',
-        requestFormat: 'json',
-        parameters: [
-            { name: 'tenantId', type: 'Path', schema: z.string() },
-            { name: 'environmentTag', type: 'Path', schema: z.string() },
-            { name: 'hookKey', type: 'Path', schema: z.string() },
-        ],
-        response: z.void(),
-    },
-    {
         method: 'get',
         path: '/tenants/:tenantId/executions',
         description: `Returns execution summaries for the tenant/environment scope with optional filters.`,

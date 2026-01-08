@@ -4,6 +4,7 @@ using System.Net.Http;
 using System.Net.Http.Json;
 using System.Security.Cryptography;
 using System.Text;
+using Croniq.Api;
 using Croniq.Core.Execution;
 using Croniq.Core.Jobs;
 using Croniq.Core.Policies;
@@ -55,6 +56,22 @@ public class WebhookIngressTests
         pipeline.Executed.ShouldBeFalse();
     }
 
+    [Fact]
+    public async Task CoHostedIngress_AllowsAnonymousRequests()
+    {
+        var (client, pipeline) = CreateCoHostedClient();
+        var payload = "{\"hello\":\"world\"}";
+        var signature = ComputeSignature(Secret, payload);
+
+        var response = await client.PostAsync($"/tenants/{TenantId}/environments/{EnvironmentTag}/webhooks/{HookKey}", new StringContent(payload, Encoding.UTF8, "application/json")
+        {
+            Headers = { { "X-Croniq-Signature", signature } }
+        });
+
+        response.StatusCode.ShouldBe(HttpStatusCode.Accepted);
+        pipeline.Executed.ShouldBeTrue();
+    }
+
     private static (HttpClient client, StubPipeline pipeline) CreateClient()
     {
         var builder = WebApplication.CreateBuilder();
@@ -85,6 +102,48 @@ public class WebhookIngressTests
         var app = builder.Build();
         app.UseRateLimiter();
         app.UseRouting();
+        app.UseCroniqWebhooks();
+
+        app.StartAsync().GetAwaiter().GetResult();
+        return (app.GetTestClient(), pipeline);
+    }
+
+    private static (HttpClient client, StubPipeline pipeline) CreateCoHostedClient()
+    {
+        var builder = WebApplication.CreateBuilder();
+        builder.WebHost.UseTestServer();
+
+        var apiKey = "api-key";
+        var config = new Dictionary<string, string?>
+        {
+            ["Croniq:Api:RequestsPerMinute"] = "0",
+            ["Croniq:Auth:Mode"] = "InMemory",
+            ["Croniq:Auth:InMemory:ApiKey"] = apiKey,
+            ["Croniq:Auth:InMemory:TenantId"] = TenantId,
+            ["Croniq:Auth:InMemory:EnvironmentTag"] = EnvironmentTag,
+            ["Croniq:Webhooks:Mode"] = "InMemory",
+            ["Croniq:Webhooks:Security:AllowUnsignedHooks"] = "false",
+            ["Croniq:Webhooks:Endpoints:0:HookKey"] = HookKey,
+            ["Croniq:Webhooks:Endpoints:0:JobKey"] = JobKeyValue,
+            ["Croniq:Webhooks:Endpoints:0:RequireSignature"] = "true",
+            ["Croniq:Webhooks:Endpoints:0:Secret"] = Secret
+        };
+        builder.Configuration.AddInMemoryCollection(config);
+
+        var registry = new StubRegistry();
+        var pipeline = new StubPipeline();
+        var policies = new StubPolicies();
+
+        builder.Services.AddSingleton<IJobRegistry>(registry);
+        builder.Services.AddSingleton<IJobExecutionPipeline>(pipeline);
+        builder.Services.AddSingleton<IPolicyResolver>(policies);
+        builder.Services.AddCroniqApiServices(builder.Configuration);
+        builder.Services.AddCroniqApiRateLimiter();
+        builder.Services.AddCroniqWebhookServices(builder.Configuration);
+        builder.Services.AddCroniqWebhookRateLimiter();
+
+        var app = builder.Build();
+        app.UseCroniqApi();
         app.UseCroniqWebhooks();
 
         app.StartAsync().GetAwaiter().GetResult();

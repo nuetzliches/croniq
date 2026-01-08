@@ -5,6 +5,7 @@ using Croniq.Core;
 using Croniq.Core.Execution;
 using Croniq.Sample.Jobs;
 using Croniq.Webhooks;
+using Croniq.Webhooks.Options;
 using Croniq.Data.SqlServer;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
@@ -30,7 +31,7 @@ var otelBuilder = builder.Services.AddCroniqApiObservability(
 
 var corsPolicyName = "CroniqSampleApiCors";
 var allowedOrigins = builder.Configuration
-    .GetSection("Croniq:Sample:Api:Cors:AllowedOrigins")
+    .GetSection("CroniqSample:Api:Cors:AllowedOrigins")
     .Get<string[]>() ?? Array.Empty<string>();
 
 builder.Services.AddCors(options =>
@@ -45,7 +46,7 @@ builder.Services.AddCors(options =>
                 return;
             }
 
-            throw new InvalidOperationException("Croniq:Sample:Api:Cors:AllowedOrigins must be configured outside Development.");
+            throw new InvalidOperationException("CroniqSample:Api:Cors:AllowedOrigins must be configured outside Development.");
         }
 
         policy
@@ -96,7 +97,7 @@ if (app.Environment.IsDevelopment())
             await db.Database.MigrateAsync();
         }
 
-        var seedSection = config.GetSection("Croniq:Sample:Auth:Password");
+        var seedSection = config.GetSection("CroniqSample:Auth:Password");
 
         static string? Env(string name)
         {
@@ -202,6 +203,10 @@ app.UseCors(corsPolicyName);
 app.UseCroniqApi();
 app.MapCroniqSchedulerGrpc();
 app.MapCroniqWorkerGrpc();
-app.UseCroniqWebhooks(mapHealthEndpoints: false);
+var webhookOptions = app.Services.GetRequiredService<IOptions<CroniqWebhookOptions>>().Value;
+if (webhookOptions.Mode != WebhookPersistenceMode.Remote)
+{
+    app.UseCroniqWebhooks(mapHealthEndpoints: false);
+}
 
 app.Run();

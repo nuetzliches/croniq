@@ -77,12 +77,12 @@ Goal: accept public webhooks in a DMZ without allowing DMZ hosts to open outboun
 Typical separation:
 
 - DMZ: `Croniq.Api` in `WebhookAdminOnly` mode + `Croniq.Webhooks` with `Ingress.DispatchMode=StoreOnly`, backed by a dedicated SqlServer instance.
-- Internal: `Croniq.Api` + worker hosts + UI. Internal API uses `Croniq:Webhooks:Mode=Remote` to manage webhook definitions in the DMZ and runs the relay worker to consume ingress events over gRPC.
+- Internal: `Croniq.Api` + worker hosts + UI. Internal API uses `Croniq:Webhooks:Mode=Remote` to manage webhook definitions in the DMZ and runs the relay worker to consume ingress events over gRPC (or SSE/polling via `StreamFallback` when gRPC is blocked).
 
 Network paths:
 
 - Inbound: public callers → DMZ webhook ingress.
-- Outbound: internal network → DMZ admin API + ingress gRPC stream.
+- Outbound: internal network → DMZ admin API + ingress gRPC/SSE/polling stream.
 - DMZ hosts do **not** connect into the internal network.
 
 Security expectations:

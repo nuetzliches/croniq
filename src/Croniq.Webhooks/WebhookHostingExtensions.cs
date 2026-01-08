@@ -12,6 +12,7 @@ using Croniq.Core.Policies;
 using Croniq.Core.Security;
 using Croniq.Data.SqlServer;
 using Croniq.Hosting;
+using Croniq.Options;
 using Croniq.Persistence.Abstractions;
 using Croniq.Persistence.SqlServer;
 using Croniq.Webhooks.InMemory;
@@ -278,6 +279,8 @@ public static class WebhookHostingExtensions
             IJobRegistry registry,
             IJobExecutionPipeline pipeline,
             IPolicyResolver policyResolver,
+            IExecutionLogStore executionLogStore,
+            IOptions<CroniqOptions> coreOptions,
             WebhookMetadataFactory metadataFactory,
             WebhookEndpointResolver endpointResolver,
             WebhookDeadLetterRecorder deadLetterRecorder,
@@ -409,21 +412,60 @@ public static class WebhookHostingExtensions
             var executionOptions = policyResolver.ResolveExecution(jobKey, scope);
             var executionId = Guid.NewGuid().ToString("N");
             var execRequest = new JobExecutionRequest(executionId, jobKey, scope, descriptor, executionOptions, metadata, ActivitySource);
+            var startedAtUtc = DateTimeOffset.UtcNow;
 
             using var activity = ActivitySource.StartActivity("Croniq.Webhooks.Trigger", ActivityKind.Server);
             activity?.SetTag("croniq.webhook.key", endpoint.HookKey);
             activity?.SetTag("croniq.job.key", jobKey.Value);
             activity?.SetTag("croniq.tenant_id", scope.TenantId);
             activity?.SetTag("croniq.environment", scope.EnvironmentTag);
+            await TryStoreExecutionStartedAsync(
+                executionLogStore,
+                logger,
+                new ExecutionRecord(
+                    executionId,
+                    ExecutionKind.Job,
+                    WorkflowId: null,
+                    jobKey.Value,
+                    scope.TenantId,
+                    scope.EnvironmentTag,
+                    TriggerId: null,
+                    FireAtUtc: startedAtUtc,
+                    StartedAtUtc: startedAtUtc,
+                    coreOptions.Value.InstanceId,
+                    activity?.TraceId.ToString(),
+                    activity?.SpanId.ToString(),
+                    TryGetCorrelationId(activity, metadata)),
+                cancellationToken).ConfigureAwait(false);
 
+            var stopwatch = Stopwatch.StartNew();
             try
             {
                 await pipeline.ExecuteAsync(execRequest, cancellationToken).ConfigureAwait(false);
+                stopwatch.Stop();
                 activity?.SetStatus(ActivityStatusCode.Ok);
+                await TryStoreExecutionCompletedAsync(
+                    executionLogStore,
+                    logger,
+                    executionId,
+                    ExecutionStatus.Succeeded,
+                    stopwatch.Elapsed.TotalMilliseconds,
+                    error: null,
+                    cancellationToken).ConfigureAwait(false);
                 return Results.Accepted(value: new { status = "triggered", hook = endpoint.HookKey, job = endpoint.JobKey });
             }
             catch (Exception ex)
             {
+                stopwatch.Stop();
+                var canceled = IsCancellation(ex, cancellationToken);
+                await TryStoreExecutionCompletedAsync(
+                    executionLogStore,
+                    logger,
+                    executionId,
+                    canceled ? ExecutionStatus.Canceled : ExecutionStatus.Failed,
+                    stopwatch.Elapsed.TotalMilliseconds,
+                    canceled ? null : ex,
+                    cancellationToken).ConfigureAwait(false);
                 activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
                 logger.LogError(ex, "error executing job {JobKey} for webhook {HookKey}", endpoint.JobKey, endpoint.HookKey);
                 await deadLetterRecorder.TryRecordAsync(jobKey, scope, endpoint, payload, headers, metadata, failureReason: "execution-error", statusCode: StatusCodes.Status500InternalServerError, errorDetails: ex.Message, cancellationToken: cancellationToken).ConfigureAwait(false);
@@ -470,6 +512,72 @@ public static class WebhookHostingExtensions
         }
 
         return CryptographicOperations.FixedTimeEquals(expectedBytes, providedBytes);
+    }
+
+    private static bool IsCancellation(Exception exception, CancellationToken cancellationToken)
+        => cancellationToken.IsCancellationRequested && exception is OperationCanceledException;
+
+    private static string? TryGetCorrelationId(Activity? activity, IReadOnlyDictionary<string, string>? metadata)
+    {
+        if (activity?.GetBaggageItem("croniq.correlation_id") is { Length: > 0 } baggageCorrelation)
+        {
+            return baggageCorrelation;
+        }
+
+        if (activity?.GetTagItem("croniq.correlation_id") is string tagCorrelation && !string.IsNullOrWhiteSpace(tagCorrelation))
+        {
+            return tagCorrelation;
+        }
+
+        if (metadata is not null && metadata.TryGetValue("correlation_id", out var value) && !string.IsNullOrWhiteSpace(value))
+        {
+            return value;
+        }
+
+        return null;
+    }
+
+    private static async Task TryStoreExecutionStartedAsync(
+        IExecutionLogStore executionLogStore,
+        ILogger logger,
+        ExecutionRecord record,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            await executionLogStore.OnExecutionStartedAsync(record, cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Failed to persist execution start for {ExecutionId}", record.ExecutionId);
+        }
+    }
+
+    private static async Task TryStoreExecutionCompletedAsync(
+        IExecutionLogStore executionLogStore,
+        ILogger logger,
+        string executionId,
+        ExecutionStatus status,
+        double? durationMs,
+        Exception? error,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var completion = new ExecutionCompletion(
+                executionId,
+                DateTimeOffset.UtcNow,
+                status,
+                durationMs,
+                error?.GetType().FullName ?? error?.GetType().Name,
+                error?.Message);
+
+            await executionLogStore.OnExecutionCompletedAsync(completion, cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Failed to persist execution completion for {ExecutionId}", executionId);
+        }
     }
 
     private sealed class WebhookMetadataFactory

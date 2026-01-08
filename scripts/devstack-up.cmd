@@ -37,6 +37,12 @@ set HEALTH_URL=%CRONIQ_API_BASEURL%
 if not "%HEALTH_URL:~-1%"=="/" set HEALTH_URL=%HEALTH_URL%/
 set HEALTH_URL=%HEALTH_URL%health
 
+if "%CRONIQ_DMZ_HTTP_PORT%"=="" set CRONIQ_DMZ_HTTP_PORT=5000
+if "%CRONIQ_DMZ_GRPC_PORT%"=="" set CRONIQ_DMZ_GRPC_PORT=5001
+if "%CRONIQ_DMZ_SQL_DATABASE%"=="" set CRONIQ_DMZ_SQL_DATABASE=CroniqDmz
+if "%CRONIQ_DMZ_API_KEY%"=="" set CRONIQ_DMZ_API_KEY=dmz-sample-key
+set DMZ_HEALTH_URL=http://localhost:%CRONIQ_DMZ_HTTP_PORT%/health
+
 REM Seed defaults for the migrator when CRONIQ_SEED_* is omitted.
 if "%CRONIQ_SEED_TENANT_ID%"=="" (
     if not "%CRONIQ_CORE_TENANT_ID%"=="" (
@@ -264,6 +270,9 @@ if errorlevel 1 (
 call :wait_for_migrator
 if errorlevel 1 exit /b 1
 
+call :maybe_run_dmz_migrator "%RUN_SAMPLE%" "%CRONIQ_DMZ_SQL_DATABASE%"
+if errorlevel 1 exit /b 1
+
 echo [devstack] Starting Croniq services (%PROFILE_ARGS%)...
 docker compose %COMPOSE_ARGS% %PROFILE_ARGS% up %BUILD_ARG% -d
 if errorlevel 1 (
@@ -273,6 +282,10 @@ if errorlevel 1 (
 
 if /I "%CRONIQ_DEVSTACK_TRACE%"=="1" echo [devstack] Step: maybe_wait_for_api
 call :maybe_wait_for_api "%PROFILE_ARGS%" "%HEALTH_URL%" "%RUN_SAMPLE%"
+if errorlevel 1 exit /b 1
+
+if /I "%CRONIQ_DEVSTACK_TRACE%"=="1" echo [devstack] Step: maybe_start_dmz
+call :maybe_start_dmz "%RUN_SAMPLE%" "%DMZ_HEALTH_URL%" "%PROFILE_ARGS%"
 if errorlevel 1 exit /b 1
 
 if /I "%CRONIQ_DEVSTACK_TRACE%"=="1" echo [devstack] Step: maybe_start_sample
@@ -294,6 +307,108 @@ if "!HAS_WORKER_PROFILE!"=="1" (
 )
 
 exit /b 0
+
+:maybe_run_dmz_migrator
+setlocal
+set SAMPLE=%~1
+set DMZ_DB=%~2
+if /I not "%SAMPLE%"=="apihost" (endlocal & exit /b 0)
+if "%DMZ_DB%"=="" (endlocal & exit /b 0)
+
+echo [devstack] Applying migrations for DMZ database %DMZ_DB%...
+if "%CRONIQ_SQL_HOST%"=="" set CRONIQ_SQL_HOST=mssql-22
+if "%CRONIQ_SQL_PASSWORD%"=="" set CRONIQ_SQL_PASSWORD=CroniqSqlP@ssw0rd!
+setlocal DisableDelayedExpansion
+set "DMZ_CONN=Server=%CRONIQ_SQL_HOST%,1433;Database=%DMZ_DB%;User Id=sa;Password=%CRONIQ_SQL_PASSWORD%;Encrypt=False;TrustServerCertificate=True;"
+docker compose %COMPOSE_ARGS% run --rm --no-deps -e "CRONIQ_SQL_CONNECTION=%DMZ_CONN%" croniq-db-migrator
+set "DMZ_ERROR=%ERRORLEVEL%"
+endlocal & set "DMZ_ERROR=%DMZ_ERROR%"
+if not "%DMZ_ERROR%"=="0" (
+    echo [devstack] DMZ migrator failed.
+    endlocal & exit /b 1
+)
+
+endlocal & exit /b 0
+
+:maybe_start_dmz
+setlocal
+set SAMPLE=%~1
+set HEALTH_URL=%~2
+set PROFILE_ARGS=%~3
+if /I not "%SAMPLE%"=="apihost" (endlocal & exit /b 0)
+
+if "%CRONIQ_DMZ_HTTP_PORT%"=="" set CRONIQ_DMZ_HTTP_PORT=5000
+if "%CRONIQ_DMZ_GRPC_PORT%"=="" set CRONIQ_DMZ_GRPC_PORT=5001
+
+set PID_DIR=artifacts\devstack
+if not exist "%PID_DIR%" mkdir "%PID_DIR%" >nul 2>&1
+set PID_FILE=%PID_DIR%\sample-dmz.pid
+
+REM Stop previous instance if pid file exists.
+if exist "%PID_FILE%" (
+    for /f "usebackq delims=" %%P in ("%PID_FILE%") do set OLD_PID=%%P
+    if not "%OLD_PID%"=="" (
+        taskkill /PID %OLD_PID% /T /F >nul 2>&1
+    )
+    del /q "%PID_FILE%" >nul 2>&1
+)
+
+echo [devstack] Starting sample Dmz via dotnet run on http://localhost:%CRONIQ_DMZ_HTTP_PORT% (gRPC https://localhost:%CRONIQ_DMZ_GRPC_PORT%) ...
+
+REM If observability profile is enabled, prefer localhost OTLP endpoint for host-run processes.
+set "OTLP_ARGS="
+call :detect_profiles "%PROFILE_ARGS%"
+if "!HAS_OBS_PROFILE!"=="1" (
+    if "%CRONIQ_OTLP_GRPC_PORT%"=="" set CRONIQ_OTLP_GRPC_PORT=4317
+    set "OTLP_ARGS=-OtlpEndpoint http://localhost:!CRONIQ_OTLP_GRPC_PORT!"
+    if not "%CRONIQ_OBS_OTLP_PROTOCOL%"=="" (
+        set "OTLP_ARGS=!OTLP_ARGS! -OtlpProtocol %CRONIQ_OBS_OTLP_PROTOCOL%"
+    )
+)
+
+set "DMZ_SCRIPT=scripts\devstack-dmz.ps1"
+if not exist "%DMZ_SCRIPT%" (
+    echo [devstack] Dmz script not found: %DMZ_SCRIPT%
+    endlocal & exit /b 1
+)
+
+REM Prefer Windows Terminal new-tab when running inside Windows Terminal.
+where wt >nul 2>&1
+if errorlevel 1 goto dmz_start_ps
+if "%WT_SESSION%"=="" goto dmz_start_ps
+
+wt -w 0 new-tab --title "Croniq Dmz" -d "%CD%" powershell -NoProfile -NoExit -ExecutionPolicy Bypass -File "%CD%\%DMZ_SCRIPT%" -HttpPort %CRONIQ_DMZ_HTTP_PORT% -GrpcPort %CRONIQ_DMZ_GRPC_PORT% -PidFile "%PID_FILE%" %OTLP_ARGS% >nul 2>&1
+goto wait_for_dmz_pid
+
+:dmz_start_ps
+REM Fallback: start a separate PowerShell window.
+start "Croniq Dmz" powershell -NoProfile -NoExit -ExecutionPolicy Bypass -File "%CD%\%DMZ_SCRIPT%" -HttpPort %CRONIQ_DMZ_HTTP_PORT% -GrpcPort %CRONIQ_DMZ_GRPC_PORT% -PidFile "%PID_FILE%" %OTLP_ARGS% >nul 2>&1
+
+:wait_for_dmz_pid
+REM Wait briefly for PID file to be created by scripts/devstack-dmz.ps1.
+set /a DMZ_WAIT=0
+:dmz_wait_loop
+set /a DMZ_WAIT+=1
+if %DMZ_WAIT% gtr 20 goto dmz_pid_warn
+if exist "%PID_FILE%" goto dmz_pid_ok
+timeout /t 1 >nul
+goto dmz_wait_loop
+
+:dmz_pid_warn
+echo [devstack] Warning: Dmz PID file was not created. It may still be running.
+goto dmz_pid_checked
+
+:dmz_pid_ok
+echo [devstack] Sample Dmz PID written to %PID_FILE%
+
+:dmz_pid_checked
+echo [devstack] Waiting for host Dmz at %HEALTH_URL% ...
+call :wait_for_health "%HEALTH_URL%"
+if errorlevel 1 (
+    echo [devstack] Host Dmz did not become healthy in time.
+    endlocal & exit /b 1
+)
+endlocal & exit /b 0
 
 :maybe_start_sample
 setlocal
@@ -618,6 +733,7 @@ echo   --no-window        Start host sample without a visible window (default).
 echo   --window           Start host sample with a normal window (debug).
 echo   --sample apihost   Starts samples\Croniq.Sample.ApiHost on the host via dotnet run
 echo                    after the DB migrator completed (and after API health check if api profile is enabled).
+echo                    Also starts samples\Croniq.Sample.Dmz for remote webhook ingress.
 echo   --no-sample        Do not start the default host ApiHost.
 echo   --help, -h, /?     Show this help.
 echo.
@@ -628,6 +744,11 @@ echo   CRONIQ_API_HTTP_PORT       Used for host ApiHost port and container API h
 echo   CRONIQ_API_BASEURL         Used for API health probe (default: http://localhost:%%CRONIQ_API_HTTP_PORT%%).
 echo   CRONIQ_UI_HTTP_PORT        UI port for ng serve (default: 5081).
 echo   CRONIQ_SAMPLE_APIHOST_HTTP_PORT  Informational only (default: 5090).
+echo   CRONIQ_DMZ_HTTP_PORT       DMZ sample HTTP port (default: 5000).
+echo   CRONIQ_DMZ_GRPC_PORT       DMZ sample gRPC HTTPS port (default: 5001).
+echo   CRONIQ_DMZ_BASEURL         DMZ base URL for remote webhooks (default: https://localhost:%%CRONIQ_DMZ_GRPC_PORT%%).
+echo   CRONIQ_DMZ_SQL_DATABASE    DMZ sample SQL database (default: CroniqDmz).
+echo   CRONIQ_DMZ_API_KEY         DMZ sample API key (default: dmz-sample-key).
 echo.
 echo Examples:
 echo   scripts\devstack-up.cmd

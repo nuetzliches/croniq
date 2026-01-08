@@ -58,7 +58,7 @@ Croniq already ships gRPC for workers, so the remote ingress stream should be gR
 - Internal relay worker opens an outbound gRPC stream to the DMZ (HTTP/2).
 - DMZ never opens connections to the internal network.
 - gRPC stays internal-only (not exposed on the public ingress).
-- Provide an SSE or long-poll fallback for environments that cannot route gRPC (future).
+- Provide an SSE or long-poll fallback for environments that cannot route gRPC.
 
 The stream should be at-least-once with explicit ack/lease semantics to avoid event loss.
 
@@ -138,6 +138,20 @@ message WebhookEventExtend {
   int64 lease_expires_at_utc = 3;
 }
 ```
+
+## HTTP Fallback Endpoints
+
+When gRPC is blocked, the relay can use SSE or polling against the DMZ API:
+
+- `GET /tenants/{tenantId}/webhooks/ingress/stream?environment=...&consumerId=...&maxInflight=...&maxBatchSize=...`
+  - Server-sent events with `data:` payloads matching the `WebhookIngressEvent` shape (unix ms timestamps).
+- `GET /tenants/{tenantId}/webhooks/ingress/poll?environment=...&maxBatchSize=...&waitMs=...`
+  - Returns `{ events: [...], serverTimeUtc: <unix ms> }`.
+- `POST /tenants/{tenantId}/webhooks/ingress/ack?environment=...`
+- `POST /tenants/{tenantId}/webhooks/ingress/nack?environment=...`
+- `POST /tenants/{tenantId}/webhooks/ingress/extend?environment=...`
+
+All ingress stream endpoints require the `webhooks:ingress` scope and the same API key used for the gRPC relay.
 
 Notes:
 - DMZ validates signatures and only streams verified ingress events.

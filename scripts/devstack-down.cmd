@@ -73,6 +73,8 @@ REM Stop optional host-run samples (best-effort).
 :after_compose
 if /I "%CRONIQ_DEVSTACK_TRACE%"=="1" echo [devstack] Step: stop_sample_apihost
 call :stop_sample_apihost
+if /I "%CRONIQ_DEVSTACK_TRACE%"=="1" echo [devstack] Step: stop_sample_dmz
+call :stop_sample_dmz
 if "%STOP_UI%"=="1" call :stop_ui
 if /I "%CRONIQ_DEVSTACK_TRACE%"=="1" echo [devstack] Step: cleanup_ui_pid_file
 call :cleanup_ui_pid_file
@@ -115,6 +117,33 @@ taskkill /PID %SAMPLE_PID% /F >nul 2>&1
 
 del /q "%PID_FILE%" >nul 2>&1
 :stop_sample_apihost_done
+endlocal & exit /b 0
+
+:stop_sample_dmz
+setlocal
+set "PID_FILE=artifacts\devstack\sample-dmz.pid"
+if not exist "%PID_FILE%" goto stop_sample_dmz_done
+
+set "SAMPLE_PID="
+set /p SAMPLE_PID=<"%PID_FILE%"
+
+if "%SAMPLE_PID%"=="" goto stop_sample_dmz_delete
+
+set "INVALID_PID="
+for /f "delims=0123456789" %%A in ("%SAMPLE_PID%") do set "INVALID_PID=1"
+
+if defined INVALID_PID (
+  echo [devstack] Warning: PID file contained an unexpected value. Skipping process termination.
+  goto stop_sample_dmz_delete
+)
+
+echo [devstack] Stopping sample Dmz (PID %SAMPLE_PID%)...
+taskkill /PID %SAMPLE_PID% /F >nul 2>&1
+
+:stop_sample_dmz_delete
+
+del /q "%PID_FILE%" >nul 2>&1
+:stop_sample_dmz_done
 endlocal & exit /b 0
 
 :stop_ui
