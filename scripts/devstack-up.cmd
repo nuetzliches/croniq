@@ -316,10 +316,18 @@ if /I not "%SAMPLE%"=="apihost" (endlocal & exit /b 0)
 if "%DMZ_DB%"=="" (endlocal & exit /b 0)
 
 echo [devstack] Applying migrations for DMZ database %DMZ_DB%...
-if "%CRONIQ_SQL_HOST%"=="" set CRONIQ_SQL_HOST=mssql-22
-if "%CRONIQ_SQL_PASSWORD%"=="" set CRONIQ_SQL_PASSWORD=CroniqSqlP@ssw0rd!
 setlocal DisableDelayedExpansion
-set "DMZ_CONN=Server=%CRONIQ_SQL_HOST%,1433;Database=%DMZ_DB%;User Id=sa;Password=%CRONIQ_SQL_PASSWORD%;Encrypt=False;TrustServerCertificate=True;"
+set "SQL_HOST=%CRONIQ_SQL_HOST%"
+set "SQL_PASSWORD=%CRONIQ_SQL_PASSWORD%"
+if exist ".env" (
+    for /f "usebackq eol=# tokens=1* delims==" %%A in (".env") do (
+        if /I "%%A"=="CRONIQ_SQL_HOST" if not defined SQL_HOST set "SQL_HOST=%%B"
+        if /I "%%A"=="CRONIQ_SQL_PASSWORD" if not defined SQL_PASSWORD set "SQL_PASSWORD=%%B"
+    )
+)
+if not defined SQL_HOST set "SQL_HOST=mssql-22"
+if not defined SQL_PASSWORD set "SQL_PASSWORD=CroniqSqlP@ssw0rd!"
+set "DMZ_CONN=Server=%SQL_HOST%,1433;Database=%DMZ_DB%;User Id=sa;Password=%SQL_PASSWORD%;Encrypt=False;TrustServerCertificate=True;"
 docker compose %COMPOSE_ARGS% run --rm --no-deps -e "CRONIQ_SQL_CONNECTION=%DMZ_CONN%" croniq-db-migrator
 set "DMZ_ERROR=%ERRORLEVEL%"
 endlocal & set "DMZ_ERROR=%DMZ_ERROR%"
