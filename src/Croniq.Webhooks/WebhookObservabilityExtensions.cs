@@ -33,7 +33,8 @@ public static class WebhookObservabilityExtensions
                 .AddAspNetCoreInstrumentation(options => options.RecordException = true)
                 .AddHttpClientInstrumentation()
                 .AddSource("Croniq.Core")
-                .AddSource("Croniq.Webhooks.Ingress");
+                .AddSource("Croniq.Webhooks.Ingress")
+                .AddSource("Croniq.Webhooks.Ingress.Relay");
 
             configureTracing?.Invoke(tracing);
         });

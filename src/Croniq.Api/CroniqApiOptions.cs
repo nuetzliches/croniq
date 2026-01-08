@@ -9,6 +9,11 @@ namespace Croniq.Api;
 public sealed class CroniqApiOptions
 {
     /// <summary>
+    /// Limits which API surfaces are exposed by the host.
+    /// </summary>
+    public CroniqApiSurface Surface { get; set; } = CroniqApiSurface.Full;
+
+    /// <summary>
     /// Requests per minute per API key (fixed window).
     /// </summary>
     public int RequestsPerMinute { get; set; } = 60;
@@ -24,6 +29,11 @@ public sealed class CroniqApiOptions
     public Dictionary<string, TenantRateLimitOptions> TenantRateLimits { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>
+    /// Optional CIDR allowlist for inbound requests.
+    /// </summary>
+    public List<string> AllowedIpCidrs { get; set; } = new();
+
+    /// <summary>
     /// How long to keep rate limiter entries without activity. Default: 10 minutes.
     /// </summary>
     public TimeSpan RateLimiterCacheRetention { get; set; } = TimeSpan.FromMinutes(10);
@@ -34,6 +44,12 @@ public sealed class CroniqApiOptions
     public TimeSpan RateLimiterCacheCleanupInterval { get; set; } = TimeSpan.FromMinutes(2);
 
     // Intentionally no "known environments" list: environment selection is token-bound and not discoverable via API.
+}
+
+public enum CroniqApiSurface
+{
+    Full,
+    WebhookAdminOnly
 }
 
 public sealed class TenantRateLimitOptions

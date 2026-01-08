@@ -451,5 +451,73 @@ public static partial class ApiHostingExtensions
         .Produces(StatusCodes.Status500InternalServerError)
         .Produces(StatusCodes.Status503ServiceUnavailable)
         .RequireCroniqTenantScope(CroniqScopes.WebhooksDeadLetter);
+
+        app.MapPost("/tenants/{tenantId}/webhooks/deadletters/{deadLetterId}:resolve", async (
+            string tenantId,
+            long deadLetterId,
+            string? environment,
+            [FromServices] ICallerContextAccessor callerContextAccessor,
+            [FromServices] IWebhookDeadLetterStore? deadLetterStore,
+            CancellationToken cancellationToken) =>
+        {
+            if (deadLetterStore is null)
+            {
+                return Results.Problem(statusCode: StatusCodes.Status503ServiceUnavailable, title: "webhook-deadletter-unavailable", detail: "Webhook dead-letter store not configured.");
+            }
+
+            var resolvedEnvironment = ResolveEnvironmentTag(environment, callerContextAccessor);
+            if (string.IsNullOrWhiteSpace(resolvedEnvironment))
+            {
+                return MissingEnvironment();
+            }
+
+            var scope = new PartitionScope(tenantId, resolvedEnvironment);
+            await deadLetterStore.ResolveAsync(deadLetterId, scope, cancellationToken).ConfigureAwait(false);
+            return Results.NoContent();
+        })
+        .WithDocs("WebhookDeadLetters_Resolve", "Resolve webhook dead letter", "Marks a webhook dead letter as resolved without replaying it.")
+        .Produces(StatusCodes.Status204NoContent)
+        .Produces(StatusCodes.Status503ServiceUnavailable)
+        .RequireCroniqTenantScope(CroniqScopes.WebhooksDeadLetter);
+
+        app.MapPost("/tenants/{tenantId}/webhooks/deadletters/{deadLetterId}:fail", async (
+            string tenantId,
+            long deadLetterId,
+            string? environment,
+            WebhookDeadLetterFailureRequest request,
+            [FromServices] ICallerContextAccessor callerContextAccessor,
+            [FromServices] IWebhookDeadLetterStore? deadLetterStore,
+            CancellationToken cancellationToken) =>
+        {
+            if (deadLetterStore is null)
+            {
+                return Results.Problem(statusCode: StatusCodes.Status503ServiceUnavailable, title: "webhook-deadletter-unavailable", detail: "Webhook dead-letter store not configured.");
+            }
+
+            if (request is null || string.IsNullOrWhiteSpace(request.FailureReason))
+            {
+                return Results.BadRequest(new { error = "invalid-request" });
+            }
+
+            var resolvedEnvironment = ResolveEnvironmentTag(environment, callerContextAccessor);
+            if (string.IsNullOrWhiteSpace(resolvedEnvironment))
+            {
+                return MissingEnvironment();
+            }
+
+            var scope = new PartitionScope(tenantId, resolvedEnvironment);
+            var failure = new WebhookDeadLetterFailure(
+                request.FailureReason,
+                request.StatusCode,
+                request.ErrorDetails,
+                request.NextAttemptAtUtc);
+            await deadLetterStore.RecordFailureAsync(deadLetterId, scope, failure, cancellationToken).ConfigureAwait(false);
+            return Results.NoContent();
+        })
+        .WithDocs("WebhookDeadLetters_RecordFailure", "Record webhook dead letter failure", "Stores a failure update for a webhook dead letter without replaying it.")
+        .Produces(StatusCodes.Status204NoContent)
+        .Produces(StatusCodes.Status400BadRequest)
+        .Produces(StatusCodes.Status503ServiceUnavailable)
+        .RequireCroniqTenantScope(CroniqScopes.WebhooksDeadLetter);
     }
 }

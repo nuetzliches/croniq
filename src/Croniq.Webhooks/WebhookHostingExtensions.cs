@@ -16,6 +16,8 @@ using Croniq.Persistence.Abstractions;
 using Croniq.Persistence.SqlServer;
 using Croniq.Webhooks.InMemory;
 using Croniq.Webhooks.Options;
+using Croniq.Webhooks.Relay;
+using Croniq.Webhooks.Remote;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Configuration;
@@ -42,12 +44,14 @@ public static class WebhookHostingExtensions
         if (configuration is null) throw new ArgumentNullException(nameof(configuration));
 
         var options = configuration.GetSection(sectionName).Get<CroniqWebhookOptions>() ?? new CroniqWebhookOptions();
+        services.Configure<CroniqWebhookOptions>(configuration.GetSection(sectionName));
 
         return options.Mode switch
         {
             WebhookPersistenceMode.SqlServer => ConfigureWebhookSqlServerPersistence(services, configuration, options),
             WebhookPersistenceMode.InMemory => ConfigureWebhookInMemoryPersistence(services),
-            _ => throw new InvalidOperationException($"Unsupported Croniq:Webhooks:Mode '{options.Mode}'. Supported values: InMemory, SqlServer."),
+            WebhookPersistenceMode.Remote => ConfigureWebhookRemotePersistence(services, options),
+            _ => throw new InvalidOperationException($"Unsupported Croniq:Webhooks:Mode '{options.Mode}'. Supported values: InMemory, SqlServer, Remote."),
         };
     }
 
@@ -80,7 +84,48 @@ public static class WebhookHostingExtensions
 
         services.TryAddSingleton<IWebhookPersistenceProvider, SqlServerWebhookPersistenceProvider>();
         services.TryAddSingleton<IWebhookDeadLetterStore, SqlServerWebhookDeadLetterStore>();
+        services.TryAddSingleton<IWebhookIngressEventStore, SqlServerWebhookIngressEventStore>();
         services.TryAddSingleton<IWebhookEndpointChangefeed, SqlServerWebhookEndpointChangefeed>();
+        return services;
+    }
+
+    private static IServiceCollection ConfigureWebhookRemotePersistence(IServiceCollection services, CroniqWebhookOptions options)
+    {
+        var remote = options.Remote ?? new WebhookRemoteOptions();
+        if (string.IsNullOrWhiteSpace(remote.BaseUrl))
+        {
+            throw new InvalidOperationException("Croniq:Webhooks:Remote:BaseUrl must be provided when Croniq:Webhooks:Mode = Remote.");
+        }
+
+        if (!Uri.TryCreate(remote.BaseUrl.Trim(), UriKind.Absolute, out var baseUri))
+        {
+            throw new InvalidOperationException("Croniq:Webhooks:Remote:BaseUrl must be a valid absolute URI when Croniq:Webhooks:Mode = Remote.");
+        }
+
+        if (!string.IsNullOrWhiteSpace(remote.ApiKey))
+        {
+            remote.ApiKey = remote.ApiKey.Trim();
+        }
+
+        if (string.IsNullOrWhiteSpace(remote.ApiKey))
+        {
+            throw new InvalidOperationException("Croniq:Webhooks:Remote:ApiKey must be provided when Croniq:Webhooks:Mode = Remote.");
+        }
+
+        var normalizedBase = baseUri.AbsoluteUri.EndsWith("/", StringComparison.Ordinal)
+            ? baseUri
+            : new Uri(baseUri.AbsoluteUri + "/", UriKind.Absolute);
+        var timeoutSeconds = Math.Max(1, remote.TimeoutSeconds);
+
+        services.AddHttpClient<RemoteWebhookClient>(client =>
+        {
+            client.BaseAddress = normalizedBase;
+            client.Timeout = TimeSpan.FromSeconds(timeoutSeconds);
+            client.DefaultRequestHeaders.Add("X-Croniq-Key", remote.ApiKey);
+        });
+
+        services.TryAddSingleton<IWebhookPersistenceProvider, RemoteWebhookPersistenceProvider>();
+        services.TryAddSingleton<IWebhookDeadLetterStore, RemoteWebhookDeadLetterStore>();
         return services;
     }
 
@@ -130,6 +175,10 @@ public static class WebhookHostingExtensions
         services.TryAddSingleton<WebhookDeadLetterRecorder>();
         services.AddHostedService<WebhookConfigurationWarningService>();
         services.AddHostedService<WebhookEndpointCacheInvalidationService>();
+        if (hostingOptions.Mode == WebhookPersistenceMode.Remote)
+        {
+            services.AddHostedService<WebhookIngressRelayService>();
+        }
         return services;
     }
 
@@ -181,6 +230,18 @@ public static class WebhookHostingExtensions
 
     public static WebApplication UseCroniqWebhooks(this WebApplication app, bool mapHealthEndpoints = true)
     {
+        var options = app.Services.GetRequiredService<IOptions<CroniqWebhookOptions>>().Value;
+        if (options.Mode == WebhookPersistenceMode.Remote)
+        {
+            throw new InvalidOperationException("Croniq.Webhooks ingress cannot run with Croniq:Webhooks:Mode = Remote. Use SqlServer or InMemory for ingress.");
+        }
+
+        if (options.Ingress.DispatchMode == WebhookIngressDispatchMode.StoreOnly
+            && app.Services.GetService<IWebhookIngressEventStore>() is null)
+        {
+            throw new InvalidOperationException("Croniq:Webhooks:Ingress:DispatchMode=StoreOnly requires IWebhookIngressEventStore. Configure SqlServer persistence or register a custom store.");
+        }
+
         if (mapHealthEndpoints)
         {
             app.MapGet("/health", () => Results.Ok(new { status = "ok" }));
@@ -249,13 +310,6 @@ public static class WebhookHostingExtensions
             var headers = deadLetterRecorder.CaptureHeaders(request.Headers);
             var payload = await ReadPayloadAsync(request).ConfigureAwait(false);
 
-            if (!registry.TryGet(jobKey, out var descriptor))
-            {
-                logger.LogWarning("job {JobKey} not registered for webhook {HookKey}", endpoint.JobKey, hookKey);
-                await deadLetterRecorder.TryRecordAsync(jobKey, scope, endpoint, payload, headers, metadata: null, failureReason: "job-not-registered", statusCode: StatusCodes.Status404NotFound, errorDetails: "job not registered", cancellationToken: cancellationToken).ConfigureAwait(false);
-                return Results.NotFound(new { error = "job-not-registered", endpoint.JobKey });
-            }
-
             var security = webhookOptions.CurrentValue.Security;
             var shouldValidateSignature = endpoint.RequireSignature || !security.AllowUnsignedHooks;
 
@@ -301,6 +355,57 @@ public static class WebhookHostingExtensions
             }
 
             var metadata = metadataFactory.Create(endpoint, payload);
+            var ingressOptions = webhookOptions.CurrentValue.Ingress;
+            if (ingressOptions.DispatchMode == WebhookIngressDispatchMode.StoreOnly)
+            {
+                var ingressStore = request.HttpContext.RequestServices.GetService<IWebhookIngressEventStore>();
+                if (ingressStore is null)
+                {
+                    logger.LogError("Webhook ingress store is not configured while DispatchMode=StoreOnly.");
+                    return Results.Problem(statusCode: StatusCodes.Status500InternalServerError, title: "ingress-store-missing", detail: "Webhook ingress store is not configured.");
+                }
+
+                using var storeActivity = ActivitySource.StartActivity("Croniq.Webhooks.Ingress.Store", ActivityKind.Server);
+                storeActivity?.SetTag("croniq.webhook.key", endpoint.HookKey);
+                storeActivity?.SetTag("croniq.job.key", jobKey.Value);
+                storeActivity?.SetTag("croniq.tenant_id", scope.TenantId);
+                storeActivity?.SetTag("croniq.environment", scope.EnvironmentTag);
+
+                var eventId = Guid.NewGuid().ToString("N");
+                try
+                {
+                    await ingressStore.EnqueueAsync(
+                        new WebhookIngressEventCreate(
+                            eventId,
+                            endpoint.HookKey,
+                            endpoint.JobKey,
+                            scope.TenantId,
+                            scope.EnvironmentTag,
+                            payload,
+                            headers,
+                            metadata,
+                            DateTimeOffset.UtcNow),
+                        cancellationToken).ConfigureAwait(false);
+
+                    storeActivity?.SetStatus(ActivityStatusCode.Ok);
+                    return Results.Accepted(value: new { status = "stored", eventId, hook = endpoint.HookKey, job = endpoint.JobKey });
+                }
+                catch (Exception ex)
+                {
+                    storeActivity?.SetStatus(ActivityStatusCode.Error, ex.Message);
+                    logger.LogError(ex, "error storing webhook {HookKey} ingress event", endpoint.HookKey);
+                    await deadLetterRecorder.TryRecordAsync(jobKey, scope, endpoint, payload, headers, metadata, failureReason: "ingress-store-failed", statusCode: StatusCodes.Status500InternalServerError, errorDetails: ex.Message, cancellationToken: cancellationToken).ConfigureAwait(false);
+                    return Results.Problem(statusCode: StatusCodes.Status500InternalServerError, title: "ingress-store-failed", detail: ex.Message);
+                }
+            }
+
+            if (!registry.TryGet(jobKey, out var descriptor))
+            {
+                logger.LogWarning("job {JobKey} not registered for webhook {HookKey}", endpoint.JobKey, hookKey);
+                await deadLetterRecorder.TryRecordAsync(jobKey, scope, endpoint, payload, headers, metadata: null, failureReason: "job-not-registered", statusCode: StatusCodes.Status404NotFound, errorDetails: "job not registered", cancellationToken: cancellationToken).ConfigureAwait(false);
+                return Results.NotFound(new { error = "job-not-registered", endpoint.JobKey });
+            }
+
             var executionOptions = policyResolver.ResolveExecution(jobKey, scope);
             var executionId = Guid.NewGuid().ToString("N");
             var execRequest = new JobExecutionRequest(executionId, jobKey, scope, descriptor, executionOptions, metadata, ActivitySource);

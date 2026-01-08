@@ -63,6 +63,13 @@
 - [ ] dotnet templates: `dotnet new croniq-worker` / `dotnet new croniq-platform` inkl. minimaler `appsettings.json`.
 - [ ] CLI/Dev-Tool (optional): Trigger-Liste, "next runs", config validate, export/import (z.B. `dotnet tool`).
 
+## Naechste Schritte (Stand 2026-01-08)
+
+- [ ] Tests: gRPC WebhookIngress Service (Hello + Tenant/Scope Guard + Ack/Nack/Extend + Lease-Expiry).
+- [ ] Tests: Relay-Worker E2E (DMZ StoreOnly -> gRPC Stream -> Job Trigger, inkl. Fehlerpfad mit Ack(false)).
+- [ ] Smoke: `samples/Croniq.Sample.Dmz` + interner Host (Remote-Mode + Relay) starten und Basisfluss verifizieren.
+- [ ] Optional: Stream-Fallback (SSE/Long-Poll) fuer Umgebungen ohne gRPC.
+
 ## Next Focus
 
 1. (Done 2025-12-09) Webhook-CRUD/API abgesichert: Authz-Scopes vereinheitlicht, Integrationstests für CRUD/Rotate/Dead-Letter-Endpunkte laufen über den neuen TestHost.
@@ -147,6 +154,16 @@
       - Tests: Core-HostedService Tests analog Trigger-Seeding (Off/Validate/CreateIfMissing/ForceUpdate + managedBy-mismatch).
       - Docs: technische Doku (außerhalb `docs/`) wenn nötig; public docs bleiben Englisch-only.
 - [x] Runner Identity + Availability (für verteilte Runner): Modell/Schema für Runner-Identität (z.B. RunnerId + RunnerSecret/ApiKey) und Online/Offline-Status (Heartbeat/Lease), damit UI/Operatoren sehen, welche Runner gerade verfügbar sind. (2025-12-26)
+- [ ] WorkerHost-Praesenz (SQL-Persistenz + UI-Sichtbarkeit): WorkerHost registriert sich ueber dedizierten `IWorkerStore`; EF-Entity, Migrationen, Heartbeat-Writer, List-Endpoint und UI-Listing fuer Online/Offline-Status umsetzen.
+  - [ ] Persistenz: `WorkerInstance`-Entity (TenantId, EnvironmentTag, InstanceId, LastSeenAtUtc, ExpiresAtUtc, MetadataJson) + SQL-Store + InMemory-Store fuer `IWorkerStore`.
+  - [ ] Wiring: Heartbeat-Background-Job im WorkerHost (oder API-seitige Registrierung) + List-Endpoint + UI-Empty-State-Text.
+  - [ ] Tests: TTL/Online-Offline-Uebergaenge + API-List-Tests.
+- [x] DMZ-Ingress-Only (Croniq.Api + Croniq.Webhooks in der DMZ, kein Outbound): Remote-Webhooks fuer interne API + restriktive DMZ-Adminflaeche planen und implementieren.
+  - [x] Remote-Webhook-Persistence-Provider: interne API nutzt `Croniq:Webhooks:Mode=Remote` (BaseUrl, ApiKey) fuer CRUD/Rotate/IP-Rules/DeadLetters gegen die DMZ-API.
+  - [x] DMZ-API hardenen: Croniq.Api in der DMZ auf Webhook-Admin-Endpoints begrenzen (Scopes, Allowlist, RateLimits, Health), restliche Verwaltungsflaechen abschaltbar machen.
+  - [x] Ingress-Dispatch entkoppeln: DMZ speichert Webhook-Events (DB/Queue); interner Relay-Worker zieht Events per Stream/Queue-Pull (Polling optional) und triggert Jobs intern.
+  - [x] Sample: neues `samples/Croniq.Sample.Dmz` (DMZ-Host + DMZ-DB + Admin-API) inkl. Konfig-Beispielen fuer Remote-Mode und Relay-Worker.
+  - [x] Doku: `docs/deep-dive/architecture.md` und Deployment-Guide um DMZ-Topologie, Netzpfade und Sicherheitsannahmen erweitern.
 - [x] Fremdsprachige Clients als Job-Runner (Go/Node/Python): Lösungsweg definieren und planen. (2025-12-26)
 
   - Echtes Worker-Protokoll (Claim/Heartbeat/Ack/Logs) + SDKs, damit fremdsprachige Prozesse Jobs direkt ausführen können.

@@ -134,6 +134,7 @@ public static class PlatformHostingExtensions
                         CroniqScopes.WebhooksWrite,
                         CroniqScopes.WebhooksRotate,
                         CroniqScopes.WebhooksDeadLetter,
+                        CroniqScopes.WebhooksIngress,
                         CroniqScopes.ApiKeysManage,
                         CroniqScopes.TenantsAdmin
                     },

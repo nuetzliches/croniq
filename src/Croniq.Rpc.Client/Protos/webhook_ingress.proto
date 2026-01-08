@@ -1,0 +1,70 @@
+syntax = "proto3";
+
+package croniq.rpc;
+
+option csharp_namespace = "Croniq.Rpc";
+
+service WebhookIngress {
+  rpc Connect (stream WebhookIngressClientMessage) returns (stream WebhookIngressServerMessage);
+}
+
+message WebhookIngressClientMessage {
+  oneof payload {
+    WebhookConsumerHello hello = 1;
+    WebhookEventAck ack = 2;
+    WebhookEventNack nack = 3;
+    WebhookEventExtend extend = 4;
+  }
+}
+
+message WebhookIngressServerMessage {
+  oneof payload {
+    WebhookServerHello hello = 1;
+    WebhookIngressEvent event = 2;
+  }
+}
+
+message WebhookConsumerHello {
+  string consumer_id = 1;
+  int32 max_inflight = 2;
+  string tenant_id = 3;
+  string environment_tag = 4;
+}
+
+message WebhookServerHello {
+  string server_id = 1;
+  string tenant_id = 2;
+  string environment_tag = 3;
+  int64 server_time_utc = 4;
+}
+
+message WebhookIngressEvent {
+  string event_id = 1;
+  string lease_id = 2;
+  int64 lease_expires_at_utc = 3;
+  string hook_key = 4;
+  string job_key = 5;
+  string payload = 6;
+  map<string, string> headers = 7;
+  int64 received_at_utc = 8;
+  map<string, string> metadata = 9;
+}
+
+message WebhookEventAck {
+  string event_id = 1;
+  string lease_id = 2;
+  bool succeeded = 3;
+  string error_message = 4;
+}
+
+message WebhookEventNack {
+  string event_id = 1;
+  string lease_id = 2;
+  string reason = 3;
+}
+
+message WebhookEventExtend {
+  string event_id = 1;
+  string lease_id = 2;
+  int64 lease_expires_at_utc = 3;
+}

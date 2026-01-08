@@ -33,7 +33,8 @@ public static class ApiObservabilityExtensions
                 .AddAspNetCoreInstrumentation(options => options.RecordException = true)
                 .AddHttpClientInstrumentation()
                 .AddSource("Croniq.Core")
-                .AddSource("Croniq.Api.Trigger");
+                .AddSource("Croniq.Api.Trigger")
+                .AddSource("Croniq.Api.Grpc.WebhookIngress");
 
             configureTracing?.Invoke(tracing);
         });

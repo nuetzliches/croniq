@@ -5,6 +5,7 @@ using Croniq.Persistence.SqlServer;
 using Croniq.Webhooks;
 using Croniq.Webhooks.InMemory;
 using Croniq.Webhooks.Options;
+using Croniq.Webhooks.Remote;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
@@ -54,6 +55,43 @@ public class WebhookHostingExtensionsTests
             .ShouldBeOfType<SqlServerWebhookPersistenceProvider>();
         provider.GetRequiredService<IWebhookDeadLetterStore>()
             .ShouldBeOfType<SqlServerWebhookDeadLetterStore>();
+    }
+
+    [Fact]
+    public void AddCroniqWebhookPersistence_UsesRemote_WhenConfigured()
+    {
+        var services = new ServiceCollection();
+        var config = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["Croniq:Webhooks:Mode"] = "Remote",
+                ["Croniq:Webhooks:Remote:BaseUrl"] = "https://dmz.croniq.test/api",
+                ["Croniq:Webhooks:Remote:ApiKey"] = "dmz-key"
+            })
+            .Build();
+
+        services.AddCroniqWebhookPersistence(config);
+        var provider = services.BuildServiceProvider();
+
+        provider.GetRequiredService<IWebhookPersistenceProvider>()
+            .ShouldBeOfType<RemoteWebhookPersistenceProvider>();
+        provider.GetRequiredService<IWebhookDeadLetterStore>()
+            .ShouldBeOfType<RemoteWebhookDeadLetterStore>();
+    }
+
+    [Fact]
+    public void AddCroniqWebhookPersistence_Throws_WhenRemoteMissingBaseUrl()
+    {
+        var services = new ServiceCollection();
+        var config = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["Croniq:Webhooks:Mode"] = "Remote",
+                ["Croniq:Webhooks:Remote:ApiKey"] = "dmz-key"
+            })
+            .Build();
+
+        Should.Throw<InvalidOperationException>(() => services.AddCroniqWebhookPersistence(config));
     }
 
     [Fact]

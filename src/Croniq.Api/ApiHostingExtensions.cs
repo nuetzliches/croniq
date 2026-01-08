@@ -44,6 +44,7 @@ public static partial class ApiHostingExtensions
     public static IServiceCollection AddCroniqApiServices(this IServiceCollection services, IConfiguration configuration)
     {
         services.Configure<CroniqApiOptions>(configuration.GetSection("Croniq:Api"));
+        services.Configure<WebhookIngressStreamOptions>(configuration.GetSection("Croniq:Webhooks:Ingress"));
         services.AddCroniqPlatformServices(configuration);
         services.AddSingleton<TenantRateLimitDecider>();
         services.AddGrpc(options => options.Interceptors.Add<TenantRateLimitInterceptor>());
@@ -53,6 +54,23 @@ public static partial class ApiHostingExtensions
     public static WebApplication UseCroniqApi(this WebApplication app)
     {
         var apiOpts = app.Services.GetRequiredService<IOptions<CroniqApiOptions>>().Value;
+        var allowedNetworks = ParseAllowedNetworks(apiOpts.AllowedIpCidrs);
+
+        if (allowedNetworks.Count > 0)
+        {
+            app.Use(async (context, next) =>
+            {
+                var remoteIp = context.Connection.RemoteIpAddress;
+                if (remoteIp is null || !allowedNetworks.Any(network => network.Contains(remoteIp)))
+                {
+                    context.Response.StatusCode = StatusCodes.Status403Forbidden;
+                    await context.Response.WriteAsync("ip not allowed");
+                    return;
+                }
+
+                await next().ConfigureAwait(false);
+            });
+        }
 
         if (apiOpts.RequestsPerMinute > 0)
         {
@@ -135,6 +153,13 @@ public static partial class ApiHostingExtensions
         });
 
         MapHealthEndpoints(app);
+
+        if (apiOpts.Surface == CroniqApiSurface.WebhookAdminOnly)
+        {
+            MapWebhookEndpoints(app);
+            return app;
+        }
+
         MapCallerEndpoints(app);
         MapTenantAdminEndpoints(app);
         MapJobEndpoints(app);
@@ -152,6 +177,27 @@ public static partial class ApiHostingExtensions
         MapRunnerEndpoints(app);
 
         return app;
+    }
+
+    private static IReadOnlyCollection<IpNetwork> ParseAllowedNetworks(IReadOnlyCollection<string> rawCidrs)
+    {
+        if (rawCidrs is null || rawCidrs.Count == 0)
+        {
+            return Array.Empty<IpNetwork>();
+        }
+
+        var networks = new List<IpNetwork>();
+        foreach (var cidr in rawCidrs)
+        {
+            if (!IpNetwork.TryParse(cidr, out var network, out var error) || network is null)
+            {
+                throw new InvalidOperationException($"Croniq:Api:AllowedIpCidrs contains invalid CIDR '{cidr}': {error ?? "invalid-cidr"}");
+            }
+
+            networks.Add(network);
+        }
+
+        return networks;
     }
 
     private static readonly Lazy<Func<RouteHandlerBuilder, string, string?, RouteHandlerBuilder>?> OpenApiSummaryApplier = new(CreateOpenApiSummaryApplier);
@@ -370,6 +416,12 @@ public static partial class ApiHostingExtensions
     public static WebApplication MapCroniqWorkerGrpc(this WebApplication app)
     {
         app.MapGrpcService<WorkerGrpcService>();
+        return app;
+    }
+
+    public static WebApplication MapCroniqWebhookIngressGrpc(this WebApplication app)
+    {
+        app.MapGrpcService<WebhookIngressGrpcService>();
         return app;
     }
 

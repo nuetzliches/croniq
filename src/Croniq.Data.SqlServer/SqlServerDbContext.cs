@@ -20,6 +20,7 @@ public sealed class SqlServerDbContext(DbContextOptions<SqlServerDbContext> opti
     public DbSet<ApiKeyEntity> ApiKeys => Set<ApiKeyEntity>();
     public DbSet<WebhookEndpointEntity> WebhookEndpoints => Set<WebhookEndpointEntity>();
     public DbSet<WebhookEndpointEventEntity> WebhookEndpointEvents => Set<WebhookEndpointEventEntity>();
+    public DbSet<WebhookIngressEventEntity> WebhookIngressEvents => Set<WebhookIngressEventEntity>();
     public DbSet<WebhookDeadLetterEntity> WebhookDeadLetters => Set<WebhookDeadLetterEntity>();
     public DbSet<WebhookSecretHistoryEntity> WebhookSecretHistory => Set<WebhookSecretHistoryEntity>();
     public DbSet<WebhookEndpointIpRuleEntity> WebhookEndpointIpRules => Set<WebhookEndpointIpRuleEntity>();
@@ -42,6 +43,7 @@ public sealed class SqlServerDbContext(DbContextOptions<SqlServerDbContext> opti
         ConfigureWebhookEndpoints(modelBuilder.Entity<WebhookEndpointEntity>());
         ConfigureWebhookDeadLetters(modelBuilder.Entity<WebhookDeadLetterEntity>());
         ConfigureWebhookEndpointEvents(modelBuilder.Entity<WebhookEndpointEventEntity>());
+        ConfigureWebhookIngressEvents(modelBuilder.Entity<WebhookIngressEventEntity>());
         ConfigureWebhookSecretHistory(modelBuilder.Entity<WebhookSecretHistoryEntity>());
         ConfigureWebhookEndpointIpRules(modelBuilder.Entity<WebhookEndpointIpRuleEntity>());
         ConfigurePasswordUsers(modelBuilder.Entity<PasswordUserEntity>());
@@ -231,6 +233,28 @@ public sealed class SqlServerDbContext(DbContextOptions<SqlServerDbContext> opti
             .HasPrincipalKey(x => new { x.TenantId, x.EnvironmentTag, x.HookKey })
             .OnDelete(DeleteBehavior.Restrict);
         builder.Property(x => x.OccurredAtUtc).HasDefaultValueSql("sysutcdatetime()");
+    }
+
+    private static void ConfigureWebhookIngressEvents(EntityTypeBuilder<WebhookIngressEventEntity> builder)
+    {
+        builder.ToTable("WebhookIngressEvents", "croniq");
+        builder.HasIndex(x => x.EventId).IsUnique();
+        builder.HasIndex(x => new { x.TenantId, x.EnvironmentTag, x.Status, x.LeaseExpiresAtUtc });
+        builder.HasIndex(x => new { x.TenantId, x.EnvironmentTag, x.ReceivedAtUtc });
+        builder.HasOne<TenantEntity>()
+            .WithMany()
+            .HasForeignKey(x => x.TenantId)
+            .OnDelete(DeleteBehavior.Restrict);
+        builder.Property(x => x.EventId).HasMaxLength(64);
+        builder.Property(x => x.HookKey).HasMaxLength(128);
+        builder.Property(x => x.JobKey).HasMaxLength(256);
+        builder.Property(x => x.EnvironmentTag).HasMaxLength(64);
+        builder.Property(x => x.TenantId).HasMaxLength(64);
+        builder.Property(x => x.Status).HasMaxLength(32);
+        builder.Property(x => x.LeaseId).HasMaxLength(64);
+        builder.Property(x => x.LastError).HasMaxLength(1024);
+        builder.Property(x => x.CreatedAtUtc).HasDefaultValueSql("sysutcdatetime()");
+        builder.Property(x => x.UpdatedAtUtc).HasDefaultValueSql("sysutcdatetime()");
     }
 
     private static void ConfigureWebhookSecretHistory(EntityTypeBuilder<WebhookSecretHistoryEntity> builder)

@@ -71,3 +71,9 @@ public sealed record WebhookIpRuleResponse(
     string? CreatedBy,
     DateTimeOffset CreatedAtUtc,
     DateTimeOffset UpdatedAtUtc);
+
+public sealed record WebhookDeadLetterFailureRequest(
+    [property: Required] string FailureReason,
+    int? StatusCode = null,
+    string? ErrorDetails = null,
+    DateTimeOffset? NextAttemptAtUtc = null);

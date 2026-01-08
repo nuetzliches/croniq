@@ -126,6 +126,7 @@ if (app.Environment.IsDevelopment())
                     CroniqScopes.WebhooksWrite,
                     CroniqScopes.WebhooksRotate,
                     CroniqScopes.WebhooksDeadLetter,
+                    CroniqScopes.WebhooksIngress,
                     CroniqScopes.ApiKeysManage,
                     CroniqScopes.TenantsAdmin,
                 };
