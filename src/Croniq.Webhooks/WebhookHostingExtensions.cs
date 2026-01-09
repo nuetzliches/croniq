@@ -118,6 +118,8 @@ public static class WebhookHostingExtensions
             : new Uri(baseUri.AbsoluteUri + "/", UriKind.Absolute);
         var timeoutSeconds = Math.Max(1, remote.TimeoutSeconds);
 
+        RemoveWebhookPersistenceRegistrations(services);
+
         services.AddHttpClient<RemoteWebhookClient>(client =>
         {
             client.BaseAddress = normalizedBase;
@@ -125,9 +127,18 @@ public static class WebhookHostingExtensions
             client.DefaultRequestHeaders.Add("X-Croniq-Key", remote.ApiKey);
         });
 
-        services.TryAddSingleton<IWebhookPersistenceProvider, RemoteWebhookPersistenceProvider>();
-        services.TryAddSingleton<IWebhookDeadLetterStore, RemoteWebhookDeadLetterStore>();
+        services.AddSingleton<IWebhookPersistenceProvider, RemoteWebhookPersistenceProvider>();
+        services.AddSingleton<IWebhookDeadLetterStore, RemoteWebhookDeadLetterStore>();
+        services.AddSingleton<IWebhookCapabilitiesProvider, RemoteWebhookCapabilitiesProvider>();
         return services;
+    }
+
+    private static void RemoveWebhookPersistenceRegistrations(IServiceCollection services)
+    {
+        services.RemoveAll<IWebhookPersistenceProvider>();
+        services.RemoveAll<IWebhookDeadLetterStore>();
+        services.RemoveAll<IWebhookIngressEventStore>();
+        services.RemoveAll<IWebhookEndpointChangefeed>();
     }
 
     private static string? ResolveConnectionString(IConfiguration configuration)
@@ -143,12 +154,13 @@ public static class WebhookHostingExtensions
         var hostingOptions = optionsSection.Get<CroniqWebhookOptions>() ?? new CroniqWebhookOptions();
         var shouldConfigurePersistence = hostingOptions.ConfigurePersistence;
 
+        services.AddCroniqPlatformServices(configuration);
+
         if (shouldConfigurePersistence)
         {
             services.AddCroniqWebhookPersistence(configuration);
         }
 
-        services.AddCroniqPlatformServices(configuration);
         services.Configure<CroniqWebhookOptions>(optionsSection);
         services.PostConfigure<CroniqWebhookOptions>(options =>
         {

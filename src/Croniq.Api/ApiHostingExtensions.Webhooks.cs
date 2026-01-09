@@ -53,10 +53,48 @@ public static partial class ApiHostingExtensions
         .Produces(StatusCodes.Status503ServiceUnavailable)
         .RequireCroniqTenantScope(CroniqScopes.WebhooksRead);
 
+        app.MapGet("/tenants/{tenantId}/webhooks/capabilities", async (
+            string tenantId,
+            string? environment,
+            [FromServices] ICallerContextAccessor callerContextAccessor,
+            [FromServices] IWebhookCapabilitiesProvider? capabilitiesProvider,
+            [FromServices] IConfiguration configuration,
+            CancellationToken cancellationToken) =>
+        {
+            var resolvedEnvironment = ResolveEnvironmentTag(environment, callerContextAccessor);
+            if (string.IsNullOrWhiteSpace(resolvedEnvironment))
+            {
+                return MissingEnvironment();
+            }
+
+            WebhookCapabilities capabilities;
+            if (capabilitiesProvider is not null)
+            {
+                capabilities = await capabilitiesProvider
+                    .GetCapabilitiesAsync(new PartitionScope(tenantId, resolvedEnvironment), cancellationToken)
+                    .ConfigureAwait(false);
+            }
+            else
+            {
+                var allowUnsignedHooks = configuration.GetValue<bool?>("Croniq:Webhooks:Security:AllowUnsignedHooks") ?? false;
+                var defaultRequestsPerMinute = configuration.GetValue<int?>("Croniq:Webhooks:RequestsPerMinute") ?? 60;
+                capabilities = new WebhookCapabilities(allowUnsignedHooks, defaultRequestsPerMinute);
+            }
+
+            return Results.Ok(new WebhookCapabilitiesResponse(
+                capabilities.AllowUnsignedHooks,
+                capabilities.DefaultRequestsPerMinute));
+        })
+        .WithDocs(
+            "Webhooks_Capabilities",
+            "Get webhook capabilities",
+            "Returns the webhook defaults/capabilities for the tenant/environment scope.")
+        .Produces<WebhookCapabilitiesResponse>(StatusCodes.Status200OK)
+        .RequireCroniqTenantScope(CroniqScopes.WebhooksRead);
+
         app.MapPost("/tenants/{tenantId}/webhooks", async (
             string tenantId,
             string? environment,
-            bool allowUnsigned,
             UpsertWebhookEndpointRequest request,
             [FromServices] ICallerContextAccessor callerContextAccessor,
             [FromServices] IWebhookPersistenceProvider? webhookStore,
@@ -80,21 +118,47 @@ public static partial class ApiHostingExtensions
                 return Results.BadRequest(new { error = "invalid-job-key", message = "JobKey must follow the Croniq format." });
             }
 
-            var defaultLimit = configuration.GetValue<int?>("Croniq:Webhooks:RequestsPerMinute") ?? 60;
-            var rpm = request.RequestsPerMinute ?? defaultLimit;
-            if (rpm <= 0)
+            var isRemote = string.Equals(
+                configuration.GetValue<string?>("Croniq:Webhooks:Mode"),
+                "Remote",
+                StringComparison.OrdinalIgnoreCase);
+
+            int rpm;
+            if (isRemote)
             {
-                return Results.BadRequest(new { error = "invalid-rate-limit", message = "RequestsPerMinute must be greater than zero." });
+                if (request.RequestsPerMinute.HasValue && request.RequestsPerMinute.Value <= 0)
+                {
+                    return Results.BadRequest(new { error = "invalid-rate-limit", message = "RequestsPerMinute must be greater than zero." });
+                }
+
+                rpm = request.RequestsPerMinute ?? 0;
+            }
+            else
+            {
+                var defaultLimit = configuration.GetValue<int?>("Croniq:Webhooks:RequestsPerMinute") ?? 60;
+                rpm = request.RequestsPerMinute ?? defaultLimit;
+                if (rpm <= 0)
+                {
+                    return Results.BadRequest(new { error = "invalid-rate-limit", message = "RequestsPerMinute must be greater than zero." });
+                }
             }
 
             var metadata = request.Metadata is null
                 ? null
                 : new Dictionary<string, string>(request.Metadata, StringComparer.OrdinalIgnoreCase);
 
-            var unsignedAllowedGlobally = configuration.GetValue<bool?>("Croniq:Webhooks:Security:AllowUnsignedHooks") ?? false;
-            if (!request.RequireSignature && (!unsignedAllowedGlobally || !allowUnsigned))
+            if (!request.RequireSignature && !request.AllowUnsigned)
             {
-                return Results.BadRequest(new { error = "unsigned-hooks-disallowed", message = "Signature validation can only be disabled when Croniq:Webhooks:Security:AllowUnsignedHooks=true and the allowUnsigned query flag is set." });
+                return Results.BadRequest(new { error = "unsigned-hooks-flag-required", message = "Payload field 'allowUnsigned=true' is required when RequireSignature=false." });
+            }
+
+            if (!request.RequireSignature && !isRemote)
+            {
+                var unsignedAllowedGlobally = configuration.GetValue<bool?>("Croniq:Webhooks:Security:AllowUnsignedHooks") ?? false;
+                if (!unsignedAllowedGlobally)
+                {
+                    return Results.BadRequest(new { error = "unsigned-hooks-disallowed", message = "Signature validation can only be disabled when Croniq:Webhooks:Security:AllowUnsignedHooks=true." });
+                }
             }
 
             var upsert = new WebhookEndpointUpsert(

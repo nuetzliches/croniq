@@ -83,7 +83,7 @@ The script prints the activation/grace window plus the plaintext secret, making 
 ## Signature Opt-Out Controls
 
 - Config flag `Croniq:Webhooks:Security:AllowUnsignedHooks` (bool, default `false`). `CroniqWebhookOptions.Security.AllowUnsignedHooks` exposes the same toggle for code-first hosts.
-- Admin API rejects `RequireSignature = false` unless the flag is `true` **and** callers pass `?allowUnsigned=true` on the request (safety net against accidental opt-out).
+- Admin API rejects `RequireSignature = false` unless the flag is `true` **and** callers pass `allowUnsigned=true` in the request payload (safety net against accidental opt-out).
 - For config-defined endpoints, `AddCroniqWebhookServices` throws during startup when an unsigned hook is encountered without the flag.
 - Ingress bypasses validation only when both the descriptor opts out and the flag is enabled. The first unsigned request emits a warning (`webhook {HookKey} accepts unsigned payloads because AllowUnsignedHooks=true`) so operators have an audit trail.
 

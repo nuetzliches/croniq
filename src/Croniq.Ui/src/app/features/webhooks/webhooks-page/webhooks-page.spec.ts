@@ -11,6 +11,7 @@ class WebhooksStoreStub {
   readonly deadLetters = signal([]);
   readonly ipRules = signal([]);
   readonly rotatedSecret = signal<string | null>(null);
+  readonly capabilities = signal(null);
   readonly lastError = signal<string | null>(null);
   readonly activeCount = signal(0);
 

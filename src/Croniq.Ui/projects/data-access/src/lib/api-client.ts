@@ -1,9 +1,9 @@
 import { HttpClient } from '@angular/common/http';
 import { EnvironmentProviders, InjectionToken, Provider, inject, makeEnvironmentProviders } from '@angular/core';
-import { AuthApi, CreateWebhookIpRuleRequest, HealthApi, IssueApiKeyRequest, IssueTokenRequest, JobsApi, MeApi, PasswordChangePasswordRequest, PasswordLoginRequest, PasswordLogoutRequest, PasswordRefreshRequest, RotateWebhookSecretRequest, RunnerHeartbeatRequest, ScheduleResponse, ScheduleUpsertResult, TenantsApi, TriggerJobRequest, UpsertApiClientRequest, UpsertJobRequest, UpsertScheduleRequest, UpsertTenantRequest, UpsertWebhookEndpointRequest, WorkAckRequest, WorkEventsRequest, WorkPollRequest, WorkRenewRequest, type EndpointDefinition } from '@croniq/api-schema';
+import { AuthApi, CreateWebhookIpRuleRequest, HealthApi, IssueApiKeyRequest, IssueTokenRequest, JobsApi, MeApi, PasswordChangePasswordRequest, PasswordLoginRequest, PasswordLogoutRequest, PasswordRefreshRequest, RotateWebhookSecretRequest, RunnerHeartbeatRequest, ScheduleResponse, ScheduleUpsertResult, TenantsApi, TriggerJobRequest, UpsertApiClientRequest, UpsertJobRequest, UpsertScheduleRequest, UpsertTenantRequest, UpsertWebhookEndpointRequest, WebhookCapabilitiesResponse, WorkAckRequest, WorkEventsRequest, WorkPollRequest, WorkRenewRequest, type EndpointDefinition } from '@croniq/api-schema';
 import type { Observable } from 'rxjs';
 import { z } from 'zod';
-import type { CroniqCredentialSupplier, CroniqRequestOptions, ExecutionLogParams, ExecutionParams, TenantApiClientParams, TenantApiClientTokenParams, TenantApiKeyParams, TenantDeadLetterParams, TenantEnvironmentOptionalParams, TenantEnvironmentParams, TenantScheduleParams, TenantScopedParams, TenantUpsertApiClientParams, TenantWebhookParams, TenantWebhookRuleParams, TenantWebhookUpsertParams, WebhookInvocationParams, WorkEventsParams } from './api-client.types';
+import type { CroniqCredentialSupplier, CroniqRequestOptions, ExecutionLogParams, ExecutionParams, TenantApiClientParams, TenantApiClientTokenParams, TenantApiKeyParams, TenantDeadLetterParams, TenantEnvironmentOptionalParams, TenantEnvironmentParams, TenantScheduleParams, TenantScopedParams, TenantUpsertApiClientParams, TenantWebhookCapabilitiesParams, TenantWebhookParams, TenantWebhookRuleParams, TenantWebhookUpsertParams, WebhookInvocationParams, WorkEventsParams } from './api-client.types';
 import type { EndpointCallConfig } from './endpoint-executor';
 import { EndpointExecutor, requireEndpoint } from './endpoint-executor';
 
@@ -90,6 +90,12 @@ const TENANT_ENDPOINTS = {
     workRenew: requireEndpoint(TenantsApi, 'post', '/tenants/:tenantId/work/renew'),
 };
 
+const WEBHOOK_CAPABILITIES_ENDPOINT = requireEndpoint(
+    TenantsApi,
+    'get',
+    '/tenants/:tenantId/webhooks/capabilities',
+);
+
 const INVOKE_WEBHOOK_ENDPOINT_PATH =
     '/tenants/:tenantId/environments/:environmentTag/webhooks/:hookKey';
 const INVOKE_WEBHOOK_ENDPOINT: EndpointDefinition =
@@ -166,6 +172,10 @@ export interface CroniqApiClient {
         params: TenantEnvironmentParams,
         options?: CroniqRequestOptions,
     ): Observable<unknown>;
+    getTenantWebhookCapabilities(
+        params: TenantWebhookCapabilitiesParams,
+        options?: CroniqRequestOptions,
+    ): Observable<WebhookCapabilitiesResponse>;
     upsertTenantWebhook(
         params: TenantWebhookUpsertParams,
         payload: UpsertWebhookEndpointRequest,
@@ -680,6 +690,20 @@ class HttpCroniqApiClient implements CroniqApiClient {
         );
     }
 
+    getTenantWebhookCapabilities(
+        params: TenantWebhookCapabilitiesParams,
+        options?: CroniqRequestOptions,
+    ): Observable<WebhookCapabilitiesResponse> {
+        return this.execute$<WebhookCapabilitiesResponse>(
+            WEBHOOK_CAPABILITIES_ENDPOINT,
+            {
+                path: { tenantId: params.tenantId },
+                query: { environment: params.environment },
+            },
+            options,
+        );
+    }
+
     upsertTenantWebhook(
         params: TenantWebhookUpsertParams,
         payload: UpsertWebhookEndpointRequest,
@@ -691,7 +715,6 @@ class HttpCroniqApiClient implements CroniqApiClient {
                 path: { tenantId: params.tenantId },
                 query: {
                     environment: params.environment,
-                    allowUnsigned: params.allowUnsigned,
                 },
                 body: payload,
             },
@@ -1010,5 +1033,5 @@ export function provideCroniqApiClient(config: { baseUrl?: string } = {}): Envir
     return makeEnvironmentProviders(providers);
 }
 
-export type { CallerContext, CroniqCredentialSupplier, CroniqRequestOptions, ExecutionLogParams, TenantApiClientParams, TenantApiKeyParams, TenantDeadLetterParams, TenantEnvironmentParams, TenantScopedParams, TenantWebhookParams, TenantWebhookRuleParams, TenantWebhookUpsertParams, WebhookInvocationParams } from './api-client.types';
+export type { CallerContext, CroniqCredentialSupplier, CroniqRequestOptions, ExecutionLogParams, TenantApiClientParams, TenantApiKeyParams, TenantDeadLetterParams, TenantEnvironmentParams, TenantScopedParams, TenantWebhookCapabilitiesParams, TenantWebhookParams, TenantWebhookRuleParams, TenantWebhookUpsertParams, WebhookInvocationParams } from './api-client.types';
 

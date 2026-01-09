@@ -52,13 +52,14 @@ public sealed class WebhookEndpointIntegrationTests : IClassFixture<WebhookApiTe
             JobKey: jobKey,
             Enabled: true,
             RequireSignature: false,
+            AllowUnsigned: true,
             RequestsPerMinute: 30,
             Secret: "whsec_custom",
             Metadata: new Dictionary<string, string> { { "team", "billing" } },
             SignatureVersion: 2);
 
         var response = await _host.Client.PostAsJsonAsync(
-            $"/tenants/{WebhookApiTestHost.TenantId}/webhooks?environment={WebhookApiTestHost.Environment}&allowUnsigned=true",
+            $"/tenants/{WebhookApiTestHost.TenantId}/webhooks?environment={WebhookApiTestHost.Environment}",
             request);
 
         response.StatusCode.ShouldBe(HttpStatusCode.OK);

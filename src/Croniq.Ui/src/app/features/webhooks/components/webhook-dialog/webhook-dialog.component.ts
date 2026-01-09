@@ -2,7 +2,13 @@ import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@a
 import { disabled, Field, form, required, submit } from '@angular/forms/signals';
 import { DialogRef, DIALOG_DATA } from '@angular/cdk/dialog';
 import { UpsertWebhookEndpointRequest } from '@croniq/api-schema';
-import { RuntimeConfigService } from '@core/runtime-config.service';
+type WebhookDialogData = {
+    endpoint: UpsertWebhookEndpointRequest | null;
+    capabilities: {
+        allowUnsignedHooks: boolean;
+        defaultRequestsPerMinute: number;
+    } | null;
+};
 
 interface WebhookFormModel {
     hookKey: string;
@@ -35,14 +41,13 @@ function mapToFormModel(data: UpsertWebhookEndpointRequest | null, forceSignatur
 })
 export class WebhookDialogComponent {
     private readonly dialogRef = inject(DialogRef);
-    readonly data = inject<UpsertWebhookEndpointRequest | null>(DIALOG_DATA);
-    private readonly runtimeConfig = inject(RuntimeConfigService);
+    readonly data = inject<WebhookDialogData>(DIALOG_DATA);
 
-    readonly isEdit = !!this.data;
+    readonly isEdit = !!this.data.endpoint;
     readonly submitAttempted = signal(false);
-    readonly signatureToggleDisabled = !this.runtimeConfig.webhooksAllowUnsignedHooks;
+    readonly signatureToggleDisabled = !(this.data.capabilities?.allowUnsignedHooks ?? false);
 
-    readonly webhookModel = signal(mapToFormModel(this.data, this.signatureToggleDisabled));
+    readonly webhookModel = signal(mapToFormModel(this.data.endpoint, this.signatureToggleDisabled));
 
     readonly webhookForm = form(this.webhookModel, (f) => {
         required(f.hookKey, { message: 'Hook Key is required.' });
@@ -73,12 +78,14 @@ export class WebhookDialogComponent {
             // Coerce requestsPerMinute to number or null, as HTML input might return a string
             const rawRpm = model.requestsPerMinute as unknown;
             const requestsPerMinute = rawRpm === null || rawRpm === '' ? null : Number(rawRpm);
+            const requireSignature = this.signatureToggleDisabled ? true : model.requireSignature;
 
             const payload: UpsertWebhookEndpointRequest = {
                 hookKey: model.hookKey,
                 jobKey: model.jobKey,
                 enabled: model.enabled,
-                requireSignature: this.signatureToggleDisabled ? true : model.requireSignature,
+                requireSignature,
+                allowUnsigned: !requireSignature,
                 requestsPerMinute,
                 metadata: model.description ? { description: model.description } : undefined,
                 secret: model.secret || undefined,

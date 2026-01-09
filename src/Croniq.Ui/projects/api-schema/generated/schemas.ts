@@ -192,9 +192,19 @@ export const UpsertWebhookEndpointRequest = z.object({
     secret: z.string().nullish(),
     metadata: z.record(z.string(), z.string()).nullish(),
     signatureVersion: z.number().int().optional(),
+    allowUnsigned: z.boolean().optional(),
 });
 export type UpsertWebhookEndpointRequest = z.infer<
     typeof UpsertWebhookEndpointRequest
+>;
+export const WebhookCapabilitiesResponse = z
+    .object({
+        allowUnsignedHooks: z.boolean(),
+        defaultRequestsPerMinute: z.number().int(),
+    })
+    .partial();
+export type WebhookCapabilitiesResponse = z.infer<
+    typeof WebhookCapabilitiesResponse
 >;
 export const RotateWebhookSecretRequest = z
     .object({
@@ -472,6 +482,7 @@ export const schemas = {
     WebhookIpRuleResponse,
     WebhookEndpointResponse,
     UpsertWebhookEndpointRequest,
+    WebhookCapabilitiesResponse,
     RotateWebhookSecretRequest,
     RotateWebhookSecretResponse,
     CreateWebhookIpRuleRequest,

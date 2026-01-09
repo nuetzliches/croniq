@@ -18,11 +18,12 @@ Runtime config is loaded from `public/assets/croniq-config.json` (optional). Sup
 
 - `apiBaseUrl`: absolute URL (`http/https`) or absolute path (`/...`)
 - `swaggerUiUrl`: optional override (absolute URL or absolute path)
-- `webhooksAllowUnsignedHooks`: derived from `Croniq:Webhooks:Security:AllowUnsignedHooks` when the sample ApiHost settings are present; defaults to `false`
 
 Generate the file via `npm run generate:runtime-config` (runs automatically for `npm start`, `npm run build`, and `npm run watch`).
 Environment variables: `CRONIQ_UI_API_BASEURL`, `CRONIQ_UI_SWAGGER_UI_URL`.
 If `CRONIQ_UI_API_BASEURL` is not set, `CRONIQ_UI_API_PORT` plus optional `CRONIQ_UI_API_HOST` / `CRONIQ_UI_API_SCHEME` are used.
+
+Webhook capability flags (e.g., unsigned webhook support) are loaded from the API capabilities endpoint instead of the runtime config file.
 
 See `src/app/core/api-config.ts` and `src/app/core/runtime-config.service.ts`.
 

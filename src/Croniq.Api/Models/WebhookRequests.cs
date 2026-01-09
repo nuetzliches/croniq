@@ -11,7 +11,8 @@ public sealed record UpsertWebhookEndpointRequest(
     int? RequestsPerMinute = null,
     string? Secret = null,
     IDictionary<string, string>? Metadata = null,
-    int SignatureVersion = 1);
+    int SignatureVersion = 1,
+    bool AllowUnsigned = false);
 
 public sealed record WebhookEndpointResponse(
     string HookKey,
@@ -24,6 +25,10 @@ public sealed record WebhookEndpointResponse(
     DateTimeOffset CreatedAtUtc,
     DateTimeOffset UpdatedAtUtc,
     string? Secret = null);
+
+public sealed record WebhookCapabilitiesResponse(
+    bool AllowUnsignedHooks,
+    int DefaultRequestsPerMinute);
 
 public sealed record WebhookDeadLetterResponse(
     long Id,

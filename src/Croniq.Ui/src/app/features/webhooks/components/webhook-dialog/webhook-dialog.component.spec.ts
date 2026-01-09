@@ -2,7 +2,14 @@ import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { WebhookDialogComponent } from './webhook-dialog.component';
 import { DialogRef, DIALOG_DATA } from '@angular/cdk/dialog';
 import { vi, describe, it, expect, beforeEach } from 'vitest';
-import { RuntimeConfigService } from '@core/runtime-config.service';
+
+const dialogData = {
+    endpoint: null,
+    capabilities: {
+        allowUnsignedHooks: true,
+        defaultRequestsPerMinute: 60,
+    },
+};
 
 describe('WebhookDialogComponent', () => {
     let component: WebhookDialogComponent;
@@ -16,8 +23,7 @@ describe('WebhookDialogComponent', () => {
             imports: [WebhookDialogComponent],
             providers: [
                 { provide: DialogRef, useValue: dialogRefMock },
-                { provide: DIALOG_DATA, useValue: null },
-                { provide: RuntimeConfigService, useValue: { webhooksAllowUnsignedHooks: true } },
+                { provide: DIALOG_DATA, useValue: dialogData },
             ],
         }).compileComponents();
 

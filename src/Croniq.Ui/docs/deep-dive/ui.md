@@ -49,10 +49,11 @@ Supported keys:
 
 - `apiBaseUrl` (absolute URL or absolute path)
 - `swaggerUiUrl` (optional override)
-- `webhooksAllowUnsignedHooks` (derived from `Croniq:Webhooks:Security:AllowUnsignedHooks` when the sample ApiHost settings are present; defaults to `false`)
 
 Generate `public/assets/croniq-config.json` via `npm run generate:runtime-config` (runs automatically for `npm start`, `npm run build`, and `npm run watch`).
 If `CRONIQ_UI_API_BASEURL` is not set, `CRONIQ_UI_API_PORT` plus optional `CRONIQ_UI_API_HOST` / `CRONIQ_UI_API_SCHEME` are used.
+
+Webhook capability flags (for example, unsigned webhook support) are resolved from the API capabilities endpoint and are not read from runtime config.
 
 ## API Schema & Generation
 

@@ -160,6 +160,7 @@
   - [ ] Tests: TTL/Online-Offline-Uebergaenge + API-List-Tests.
 - [x] DMZ-Ingress-Only (Croniq.Api + Croniq.Webhooks in der DMZ, kein Outbound): Remote-Webhooks fuer interne API + restriktive DMZ-Adminflaeche planen und implementieren.
   - [x] Remote-Webhook-Persistence-Provider: interne API nutzt `Croniq:Webhooks:Mode=Remote` (BaseUrl, ApiKey) fuer CRUD/Rotate/IP-Rules/DeadLetters gegen die DMZ-API.
+  - [x] Remote persistence wiring: when `Croniq:Webhooks:Mode=Remote`, webhook CRUD must proxy to the DMZ admin API and override any locally registered SqlServer webhook stores so CroniqDev is not mutated.
   - [x] DMZ-API hardenen: Croniq.Api in der DMZ auf Webhook-Admin-Endpoints begrenzen (Scopes, Allowlist, RateLimits, Health), restliche Verwaltungsflaechen abschaltbar machen.
   - [x] Ingress-Dispatch entkoppeln: DMZ speichert Webhook-Events (DB/Queue); interner Relay-Worker zieht Events per Stream/Queue-Pull (Polling optional) und triggert Jobs intern.
   - [x] Sample: neues `samples/Croniq.Sample.Dmz` (DMZ-Host + DMZ-DB + Admin-API) inkl. Konfig-Beispielen fuer Remote-Mode und Relay-Worker.

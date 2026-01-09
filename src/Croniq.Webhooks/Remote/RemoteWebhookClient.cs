@@ -35,19 +35,32 @@ public sealed class RemoteWebhookClient
         return payload.Select(entry => MapEndpoint(entry, scope)).ToArray();
     }
 
+    public async Task<WebhookCapabilities> GetCapabilitiesAsync(PartitionScope scope, CancellationToken cancellationToken)
+    {
+        var url = BuildUrl($"tenants/{Escape(scope.TenantId)}/webhooks/capabilities", scope);
+        var payload = await _httpClient
+            .GetFromJsonAsync<WebhookCapabilitiesResponseDto>(url, _jsonOptions, cancellationToken)
+            .ConfigureAwait(false);
+
+        if (payload is null)
+        {
+            throw new InvalidOperationException("Remote webhook capabilities did not return a response.");
+        }
+
+        return new WebhookCapabilities(payload.AllowUnsignedHooks, payload.DefaultRequestsPerMinute);
+    }
+
     public async Task UpsertEndpointAsync(WebhookEndpointUpsert request, CancellationToken cancellationToken)
     {
         var scope = new PartitionScope(request.TenantId, request.EnvironmentTag);
-        var url = BuildUrl(
-            $"tenants/{Escape(request.TenantId)}/webhooks",
-            scope,
-            request.RequireSignature ? null : new Dictionary<string, string> { ["allowUnsigned"] = "true" });
+        var url = BuildUrl($"tenants/{Escape(request.TenantId)}/webhooks", scope);
 
         var payload = new UpsertWebhookEndpointRequestDto(
             request.HookKey,
             request.JobKey,
             request.Enabled,
             request.RequireSignature,
+            !request.RequireSignature,
             request.RequestsPerMinute > 0 ? request.RequestsPerMinute : null,
             request.Secret,
             request.Metadata?.ToDictionary(kvp => kvp.Key, kvp => kvp.Value, StringComparer.OrdinalIgnoreCase),
@@ -282,6 +295,7 @@ public sealed class RemoteWebhookClient
         string JobKey,
         bool Enabled,
         bool RequireSignature,
+        bool AllowUnsigned,
         int? RequestsPerMinute,
         string? Secret,
         IDictionary<string, string>? Metadata,
@@ -346,4 +360,8 @@ public sealed class RemoteWebhookClient
         int? StatusCode,
         string? ErrorDetails,
         DateTimeOffset? NextAttemptAtUtc);
+
+    private sealed record WebhookCapabilitiesResponseDto(
+        bool AllowUnsignedHooks,
+        int DefaultRequestsPerMinute);
 }

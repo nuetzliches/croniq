@@ -127,6 +127,11 @@ internal sealed class WorkerGrpcService : Worker.WorkerBase
 
             activity?.SetStatus(ActivityStatusCode.Ok);
         }
+        catch (Exception ex) when (GrpcDisconnects.IsExpected(ex, context.CancellationToken))
+        {
+            _logger.LogDebug("Worker.Connect stream closed.");
+            activity?.SetStatus(ActivityStatusCode.Ok);
+        }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Worker.Connect stream ended unexpectedly.");

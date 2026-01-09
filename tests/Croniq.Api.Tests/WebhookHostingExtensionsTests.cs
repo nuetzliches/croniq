@@ -80,6 +80,61 @@ public class WebhookHostingExtensionsTests
     }
 
     [Fact]
+    public void AddCroniqWebhookPersistence_RemoteOverridesExistingSqlServerWebhookStores()
+    {
+        var services = new ServiceCollection();
+        services.AddCroniqSqlServerPersistence(options =>
+        {
+            options.ConnectionString = "Server=localhost;Database=Croniq;Trusted_Connection=True;Encrypt=False";
+        });
+        var config = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["Croniq:Webhooks:Mode"] = "Remote",
+                ["Croniq:Webhooks:Remote:BaseUrl"] = "https://dmz.croniq.test/api",
+                ["Croniq:Webhooks:Remote:ApiKey"] = "dmz-key"
+            })
+            .Build();
+
+        services.AddCroniqWebhookPersistence(config);
+        var provider = services.BuildServiceProvider();
+
+        provider.GetRequiredService<IWebhookPersistenceProvider>()
+            .ShouldBeOfType<RemoteWebhookPersistenceProvider>();
+        provider.GetRequiredService<IWebhookDeadLetterStore>()
+            .ShouldBeOfType<RemoteWebhookDeadLetterStore>();
+        provider.GetService<IWebhookEndpointChangefeed>().ShouldBeNull();
+        provider.GetService<IWebhookIngressEventStore>().ShouldBeNull();
+    }
+
+    [Fact]
+    public void AddCroniqWebhookServices_RemoteOverridesSqlServerWebhookStores()
+    {
+        var services = new ServiceCollection();
+        var config = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["Croniq:Auth:Mode"] = "InMemory",
+                ["Croniq:Persistence:Mode"] = "SqlServer",
+                ["Croniq:SqlServer:ConnectionString"] = "Server=localhost;Database=Croniq;Trusted_Connection=True;Encrypt=False",
+                ["Croniq:Webhooks:Mode"] = "Remote",
+                ["Croniq:Webhooks:Remote:BaseUrl"] = "https://dmz.croniq.test/api",
+                ["Croniq:Webhooks:Remote:ApiKey"] = "dmz-key"
+            })
+            .Build();
+
+        services.AddCroniqWebhookServices(config);
+        var provider = services.BuildServiceProvider();
+
+        provider.GetRequiredService<IWebhookPersistenceProvider>()
+            .ShouldBeOfType<RemoteWebhookPersistenceProvider>();
+        provider.GetRequiredService<IWebhookDeadLetterStore>()
+            .ShouldBeOfType<RemoteWebhookDeadLetterStore>();
+        provider.GetService<IWebhookEndpointChangefeed>().ShouldBeNull();
+        provider.GetService<IWebhookIngressEventStore>().ShouldBeNull();
+    }
+
+    [Fact]
     public void AddCroniqWebhookPersistence_Throws_WhenRemoteMissingBaseUrl()
     {
         var services = new ServiceCollection();

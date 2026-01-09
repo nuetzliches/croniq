@@ -16,6 +16,7 @@ import {
     WebhookIpRuleResponse,
     WebhookEndpointResponse,
     UpsertWebhookEndpointRequest,
+    WebhookCapabilitiesResponse,
     RotateWebhookSecretRequest,
     RotateWebhookSecretResponse,
     CreateWebhookIpRuleRequest,
@@ -588,7 +589,6 @@ export const TenantsApi: EndpointDefinition[] = [
                 type: 'Query',
                 schema: z.string().optional(),
             },
-            { name: 'allowUnsigned', type: 'Query', schema: z.boolean() },
         ],
         response: WebhookEndpointResponse,
         errors: [
@@ -738,6 +738,21 @@ export const TenantsApi: EndpointDefinition[] = [
                 schema: z.void(),
             },
         ],
+    },
+    {
+        method: 'get',
+        path: '/tenants/:tenantId/webhooks/capabilities',
+        description: `Returns the webhook defaults/capabilities for the tenant/environment scope.`,
+        requestFormat: 'json',
+        parameters: [
+            { name: 'tenantId', type: 'Path', schema: z.string() },
+            {
+                name: 'environment',
+                type: 'Query',
+                schema: z.string().optional(),
+            },
+        ],
+        response: WebhookCapabilitiesResponse,
     },
     {
         method: 'get',

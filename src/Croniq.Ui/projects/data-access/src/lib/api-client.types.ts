@@ -26,8 +26,9 @@ export interface TenantWebhookParams extends TenantEnvironmentParams {
     hookKey: string;
 }
 
-export interface TenantWebhookUpsertParams extends TenantWebhookParams {
-    allowUnsigned: boolean;
+export type TenantWebhookUpsertParams = TenantEnvironmentParams;
+
+export interface TenantWebhookCapabilitiesParams extends TenantEnvironmentParams {
 }
 
 export interface TenantWebhookRuleParams extends TenantWebhookParams {

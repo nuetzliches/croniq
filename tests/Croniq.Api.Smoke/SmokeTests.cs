@@ -186,8 +186,8 @@ public sealed class SmokeTests
     private static string BuildJobKey(string scenario) =>
         $"{Config.TenantId}:{Config.EnvironmentTag}:samples:{scenario}-{Guid.NewGuid():N}";
 
-    private static string GetWebhookCollectionUrl(bool allowUnsigned = false) =>
-        $"tenants/{Config.TenantId}/webhooks?environment={Config.EnvironmentTag}&allowUnsigned={allowUnsigned.ToString().ToLowerInvariant()}";
+    private static string GetWebhookCollectionUrl() =>
+        $"tenants/{Config.TenantId}/webhooks?environment={Config.EnvironmentTag}";
 
     private static string GetSchedulesUrl() => $"tenants/{Config.TenantId}/schedules";
 
@@ -313,7 +313,8 @@ public sealed class SmokeTests
         int? RequestsPerMinute,
         string? Secret,
         Dictionary<string, string>? Metadata,
-        int SignatureVersion);
+        int SignatureVersion,
+        bool AllowUnsigned = false);
 
     private sealed record WebhookEndpointResponse(
         string HookKey,

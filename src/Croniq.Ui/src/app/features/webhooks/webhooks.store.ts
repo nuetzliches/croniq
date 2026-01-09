@@ -2,7 +2,7 @@ import { Injectable, computed, inject, signal } from '@angular/core';
 import { tenantRxResource } from '@core/resource/tenant-rx-resource';
 import { TenantContextService } from '@core/tenant-context/tenant-context.service';
 import { nowIso, nowMs, tryIsoFromUnknown } from '@core/time/clock';
-import { CreateWebhookIpRuleRequest, RotateWebhookSecretRequest, UpsertWebhookEndpointRequest } from '@croniq/api-schema';
+import { CreateWebhookIpRuleRequest, RotateWebhookSecretRequest, UpsertWebhookEndpointRequest, type WebhookCapabilitiesResponse } from '@croniq/api-schema';
 import { CRONIQ_API_CLIENT, CroniqApiClient, TenantDeadLetterParams, TenantEnvironmentParams, TenantWebhookParams, TenantWebhookRuleParams, TenantWebhookUpsertParams, WebhookInvocationParams } from 'data-access';
 import { EMPTY, catchError, map, of, tap } from 'rxjs';
 
@@ -14,6 +14,11 @@ export type WebhookEndpointView = {
     requestsPerMinute?: number;
     status: 'active' | 'paused' | 'degraded';
     lastDeliveryAt: string;
+};
+
+export type WebhookCapabilitiesView = {
+    allowUnsignedHooks: boolean;
+    defaultRequestsPerMinute: number;
 };
 
 export type WebhookActionEntry = {
@@ -50,6 +55,7 @@ export class WebhooksStore {
     private readonly ipRulesSignal = signal<ReadonlyArray<WebhookIpRuleView>>([]);
     private readonly deadLettersSignal = signal<ReadonlyArray<WebhookDeadLetterView>>([]);
     private readonly rotatedSecretSignal = signal<string | null>(null);
+    private readonly capabilitiesSignal = signal<WebhookCapabilitiesView | null>(null);
     private readonly lastErrorSignal = signal<string | null>(null);
     private readonly logNextRefreshSignal = signal(false);
 
@@ -92,6 +98,34 @@ export class WebhooksStore {
                         );
                     }
                     return of(this.endpointsSignal());
+                }),
+            );
+        },
+    });
+
+    private readonly capabilitiesResource = tenantRxResource<WebhookCapabilitiesView | null, { tenantId: string; environment: string }>({
+        command: 'webhooks.capabilities',
+        defaultValue: this.capabilitiesSignal(),
+        params: () => {
+            const { tenantId, environment } = this.tenantContext.snapshot();
+            return { tenantId, environment };
+        },
+        stream: ({ params, requestOptions }) => {
+            const tenantId = params.tenantId.trim();
+            const environment = params.environment.trim();
+            if (!tenantId) {
+                return of(this.capabilitiesSignal());
+            }
+
+            const request$ = this.api.getTenantWebhookCapabilities({ tenantId, environment }, requestOptions);
+
+            return request$.pipe(
+                map((response) => this.normalizeCapabilitiesResponse(response)),
+                tap((capabilities) => this.capabilitiesSignal.set(capabilities)),
+                catchError((error: unknown) => {
+                    console.error('Unable to fetch webhook capabilities', error);
+                    this.capabilitiesSignal.set(null);
+                    return of(this.capabilitiesSignal());
                 }),
             );
         },
@@ -158,16 +192,25 @@ export class WebhooksStore {
     readonly ipRules = this.ipRulesSignal.asReadonly();
     readonly deadLetters = this.deadLettersSignal.asReadonly();
     readonly rotatedSecret = this.rotatedSecretSignal.asReadonly();
+    readonly capabilities = this.capabilitiesSignal.asReadonly();
 
     readonly loading = computed(() =>
         this.endpointsResource.isLoading()
         || this.deadLetterCountResource.isLoading()
-        || this.ipRulesResource.isLoading(),
+        || this.ipRulesResource.isLoading()
+        || this.capabilitiesResource.isLoading(),
     );
 
     readonly deadLetterCount = computed(() => this.deadLettersSignal().length);
     readonly lastError = this.lastErrorSignal.asReadonly();
     readonly activeCount = computed(() => this.endpoints().filter((endpoint) => endpoint.status === 'active').length);
+
+    constructor() {
+        queueMicrotask(() => {
+            const { tenantId, environment } = this.tenantContext.snapshot();
+            this.refreshEndpoints({ tenantId, environment });
+        });
+    }
 
     selectHook(hookKey: string): void {
         const normalized = hookKey.trim();
@@ -189,6 +232,7 @@ export class WebhooksStore {
         this.endpointsResource.reload();
         this.deadLetterCountResource.reload();
         this.ipRulesResource.reload();
+        this.capabilitiesResource.reload();
     }
 
     upsertEndpoint(
@@ -457,6 +501,19 @@ export class WebhooksStore {
             });
         });
         return entries.length ? entries : this.endpointsSignal();
+    }
+
+    private normalizeCapabilitiesResponse(value: WebhookCapabilitiesResponse): WebhookCapabilitiesView {
+        const allowUnsignedHooks = Boolean(value.allowUnsignedHooks);
+        const defaultRequestsPerMinute = typeof value.defaultRequestsPerMinute === 'number'
+            && Number.isFinite(value.defaultRequestsPerMinute)
+            ? Math.max(1, Math.floor(value.defaultRequestsPerMinute))
+            : 60;
+
+        return {
+            allowUnsignedHooks,
+            defaultRequestsPerMinute,
+        };
     }
 
     private recordAction(summary: string, status: 'success' | 'error', detail?: string): void {

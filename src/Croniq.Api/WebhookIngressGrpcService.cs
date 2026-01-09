@@ -112,6 +112,11 @@ internal sealed class WebhookIngressGrpcService : WebhookIngress.WebhookIngressB
 
             activity?.SetStatus(ActivityStatusCode.Ok);
         }
+        catch (Exception ex) when (GrpcDisconnects.IsExpected(ex, context.CancellationToken))
+        {
+            _logger.LogDebug("Webhook ingress stream closed.");
+            activity?.SetStatus(ActivityStatusCode.Ok);
+        }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Webhook ingress stream ended unexpectedly.");

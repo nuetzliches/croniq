@@ -29,7 +29,6 @@ services.AddCroniqSqlServerDbContext(options =>
 {
     options.ConnectionString = connectionString;
     options.EnableDetailedErrors = true;
-    options.EnableSensitiveDataLogging = true;
     options.MigrationsAssembly = typeof(SqlServerDbContext).Assembly.GetName().Name;
 });
 

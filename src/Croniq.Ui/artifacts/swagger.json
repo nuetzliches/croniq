@@ -881,14 +881,6 @@
             "schema": {
               "type": "string"
             }
-          },
-          {
-            "name": "allowUnsigned",
-            "in": "query",
-            "required": true,
-            "schema": {
-              "type": "boolean"
-            }
           }
         ],
         "requestBody": {
@@ -920,6 +912,45 @@
           },
           "503": {
             "description": "Service Unavailable"
+          }
+        }
+      }
+    },
+    "/tenants/{tenantId}/webhooks/capabilities": {
+      "get": {
+        "tags": [
+          "Croniq.Sample.ApiHost"
+        ],
+        "summary": "Get webhook capabilities",
+        "description": "Returns the webhook defaults/capabilities for the tenant/environment scope.",
+        "operationId": "Webhooks_Capabilities",
+        "parameters": [
+          {
+            "name": "tenantId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "environment",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WebhookCapabilitiesResponse"
+                }
+              }
+            }
           }
         }
       }
@@ -3361,6 +3392,22 @@
             "nullable": true
           },
           "signatureVersion": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "allowUnsigned": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      },
+      "WebhookCapabilitiesResponse": {
+        "type": "object",
+        "properties": {
+          "allowUnsignedHooks": {
+            "type": "boolean"
+          },
+          "defaultRequestsPerMinute": {
             "type": "integer",
             "format": "int32"
           }

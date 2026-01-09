@@ -20,6 +20,7 @@ using Croniq.Persistence.Abstractions;
 using Croniq.Rpc;
 using Croniq.Webhooks.Options;
 using Grpc.Net.Client;
+using Grpc.Core;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -85,6 +86,10 @@ internal sealed class WebhookIngressRelayService : BackgroundService
                 await ConnectAndRunAsync(remote, currentMode, stoppingToken).ConfigureAwait(false);
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+            {
+                break;
+            }
+            catch (Exception ex) when (IsExpectedDisconnect(ex, stoppingToken))
             {
                 break;
             }
@@ -992,6 +997,34 @@ internal sealed class WebhookIngressRelayService : BackgroundService
 
         reason = "enabled";
         return true;
+    }
+
+    private static bool IsExpectedDisconnect(Exception exception, CancellationToken stoppingToken)
+    {
+        if (!stoppingToken.IsCancellationRequested)
+        {
+            return false;
+        }
+
+        if (exception is OperationCanceledException)
+        {
+            return true;
+        }
+
+        if (exception is RpcException rpcException)
+        {
+            return rpcException.StatusCode == StatusCode.Cancelled
+                || rpcException.StatusCode == StatusCode.Unavailable
+                || rpcException.StatusCode == StatusCode.DeadlineExceeded;
+        }
+
+        if (exception is AggregateException aggregateException
+            && aggregateException.InnerExceptions.Count == 1)
+        {
+            return IsExpectedDisconnect(aggregateException.InnerExceptions[0], stoppingToken);
+        }
+
+        return false;
     }
     private sealed record IngressEvent(
         string EventId,
