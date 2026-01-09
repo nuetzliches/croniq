@@ -99,6 +99,39 @@ public sealed class SqlServerJobPersistenceProviderTests : IAsyncLifetime
 
     [Fact]
     [Trait(TestCategories.Category, TestCategories.Contract)]
+    public async Task UpsertJobAsync_IsIdempotent_under_concurrency()
+    {
+        var scope = new PartitionScope("tenant-a", "dev");
+        var jobKey = JobKey.Create("samples", "logging-job");
+        var job = new JobDefinition(jobKey.Value, jobKey.NamespaceSegment, jobKey.JobName, jobKey.Variant, "seed", null);
+
+        var barrier = new Barrier(2);
+        var tasks = new[]
+        {
+            Task.Run(async () =>
+            {
+                barrier.SignalAndWait();
+                await _persistence!.UpsertJobAsync(job, scope, CancellationToken.None);
+            }),
+            Task.Run(async () =>
+            {
+                barrier.SignalAndWait();
+                await _persistence!.UpsertJobAsync(job, scope, CancellationToken.None);
+            })
+        };
+
+        await Task.WhenAll(tasks);
+
+        await using var context = await _dbFactory!.CreateDbContextAsync();
+        var count = await context.Jobs.CountAsync(j =>
+            j.TenantId == scope.TenantId
+            && j.EnvironmentTag == scope.EnvironmentTag
+            && j.JobKey == jobKey.Value);
+        count.ShouldBe(1);
+    }
+
+    [Fact]
+    [Trait(TestCategories.Category, TestCategories.Contract)]
     public async Task ListJobsAsync_Returns_matches_for_scope()
     {
         var jobKey = JobKey.Create("ops", "notify");

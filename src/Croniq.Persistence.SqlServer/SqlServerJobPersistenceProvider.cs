@@ -8,6 +8,7 @@ using Croniq.Core.Scheduling;
 using Croniq.Data.SqlServer;
 using Croniq.Data.SqlServer.Entities;
 using Croniq.Persistence.Abstractions;
+using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -44,12 +45,8 @@ public sealed class SqlServerJobPersistenceProvider : IJobPersistenceProvider
         }
 
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
-        var existing = await db.Jobs.FirstOrDefaultAsync(
-            j => j.JobKey == job.JobKey
-                 && j.TenantId == scope.TenantId
-                 && j.EnvironmentTag == scope.EnvironmentTag,
-            cancellationToken).ConfigureAwait(false);
         var now = DateTime.UtcNow;
+        var existing = await FindJobAsync(db, job.JobKey, scope, cancellationToken).ConfigureAwait(false);
 
         if (existing is null)
         {
@@ -66,14 +63,24 @@ public sealed class SqlServerJobPersistenceProvider : IJobPersistenceProvider
             db.Jobs.Add(existing);
         }
 
-        existing.NamespaceSegment = job.Namespace;
-        existing.Name = job.Name;
-        existing.Variant = job.Variant;
-        existing.Description = job.Description;
-        existing.MetadataJson = SerializeMetadata(job.Metadata);
-        existing.UpdatedAtUtc = now;
+        ApplyJobDefinition(existing, job, now);
 
-        await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+        }
+        catch (DbUpdateException ex) when (IsUniqueConstraintViolation(ex))
+        {
+            db.ChangeTracker.Clear();
+            var retry = await FindJobAsync(db, job.JobKey, scope, cancellationToken).ConfigureAwait(false);
+            if (retry is null)
+            {
+                throw;
+            }
+
+            ApplyJobDefinition(retry, job, now);
+            await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+        }
     }
 
     public async Task<IReadOnlyCollection<JobDefinition>> ListJobsAsync(PartitionScope scope, CancellationToken cancellationToken)
@@ -465,6 +472,47 @@ public sealed class SqlServerJobPersistenceProvider : IJobPersistenceProvider
     {
         if (metadata is null || metadata.Count == 0) return null;
         return JsonSerializer.Serialize(metadata, _jsonOptions);
+    }
+
+    private static async Task<JobEntity?> FindJobAsync(
+        SqlServerDbContext db,
+        string jobKey,
+        PartitionScope scope,
+        CancellationToken cancellationToken)
+    {
+        return await db.Jobs.FirstOrDefaultAsync(
+            j => j.JobKey == jobKey
+                 && j.TenantId == scope.TenantId
+                 && j.EnvironmentTag == scope.EnvironmentTag,
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    private void ApplyJobDefinition(JobEntity entity, JobDefinition job, DateTime now)
+    {
+        entity.NamespaceSegment = job.Namespace;
+        entity.Name = job.Name;
+        entity.Variant = job.Variant;
+        entity.Description = job.Description;
+        entity.MetadataJson = SerializeMetadata(job.Metadata);
+        entity.UpdatedAtUtc = now;
+    }
+
+    private static bool IsUniqueConstraintViolation(DbUpdateException exception)
+    {
+        if (exception.InnerException is not SqlException sqlException)
+        {
+            return false;
+        }
+
+        foreach (SqlError error in sqlException.Errors)
+        {
+            if (error.Number is 2601 or 2627)
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private IReadOnlyDictionary<string, string>? DeserializeMetadata(string? metadataJson)
