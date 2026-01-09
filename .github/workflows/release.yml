@@ -191,10 +191,10 @@ jobs:
             VERSION="manual-${GITHUB_RUN_ID}"
           fi
           echo "version=$VERSION" >> $GITHUB_OUTPUT
-          echo "api_image=${{ env.REGISTRY }}/${{ github.repository_owner }}/croniq-api:$VERSION" >> $GITHUB_OUTPUT
-          echo "api_latest=${{ env.REGISTRY }}/${{ github.repository_owner }}/croniq-api:latest" >> $GITHUB_OUTPUT
-          echo "worker_image=${{ env.REGISTRY }}/${{ github.repository_owner }}/croniq-worker:$VERSION" >> $GITHUB_OUTPUT
-          echo "worker_latest=${{ env.REGISTRY }}/${{ github.repository_owner }}/croniq-worker:latest" >> $GITHUB_OUTPUT
+          echo "api_image=${{ env.REGISTRY }}/${{ github.repository_owner }}/croniq-sample-api:$VERSION" >> $GITHUB_OUTPUT
+          echo "api_latest=${{ env.REGISTRY }}/${{ github.repository_owner }}/croniq-sample-api:latest" >> $GITHUB_OUTPUT
+          echo "worker_image=${{ env.REGISTRY }}/${{ github.repository_owner }}/croniq-sample-worker:$VERSION" >> $GITHUB_OUTPUT
+          echo "worker_latest=${{ env.REGISTRY }}/${{ github.repository_owner }}/croniq-sample-worker:latest" >> $GITHUB_OUTPUT
 
       - name: Prepare tooling directories
         run: |
@@ -217,13 +217,13 @@ jobs:
         run: echo "$COSIGN_KEY_B64" | base64 -d > cosign.key
         shell: bash
 
-      - name: Build Croniq API image
+      - name: Build Croniq Sample API image
         run: |
           docker build -f samples/Croniq.Sample.ApiHost/Dockerfile -t ${{ steps.version.outputs.api_image }} -t ${{ steps.version.outputs.api_latest }} .
           docker push ${{ steps.version.outputs.api_image }}
           docker push ${{ steps.version.outputs.api_latest }}
 
-      - name: Build Croniq Worker image
+      - name: Build Croniq Sample Worker image
         run: |
           docker build -f samples/Croniq.Sample.WorkerHost/Dockerfile -t ${{ steps.version.outputs.worker_image }} -t ${{ steps.version.outputs.worker_latest }} .
           docker push ${{ steps.version.outputs.worker_image }}

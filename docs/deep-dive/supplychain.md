@@ -13,13 +13,13 @@ This plan details how we will fulfill the checklist item "SBOM/Signierung und Vu
 
 - **Tooling**: Use `syft` for SBOM generation (SPDX JSON) across source + built artifacts. Versions are defined in `eng/versions/supplychain-tools.json` and installed locally/CI via `scripts/ci/install-supplychain-tool.ps1 -Tool syft`, which places the binary in `bin/` and appends it to `PATH`.
 - **NuGet packages**: After `dotnet pack`, run `syft packages ./artifacts/nuget -o spdx-json=sbom-nuget.json`.
-- **Container images**: After Docker builds finish, run `syft ghcr.io/<owner>/croniq-<api|worker>:<tag> -o spdx-json=sbom-api.json` (the release workflow already emits `api-<version>.spdx.json` and `worker-<version>.spdx.json`).
+- **Container images**: After Docker builds finish, run `syft ghcr.io/<owner>/croniq-sample-<api|worker>:<tag> -o spdx-json=sbom-api.json` (the release workflow already emits `api-<version>.spdx.json` and `worker-<version>.spdx.json`).
 - **Storage**: Attach SBOM files to GitHub Releases and upload as workflow artifacts. Keep a copy under `artifacts/sbom/` in build output.
 
 ## Vulnerability Scanning
 
 - **Dependencies**: `dotnet list package --vulnerable --include-transitive` in PR builds (warning) and release builds (fail on HIGH/CRITICAL unless waived).
-- **Containers**: `trivy image ghcr.io/nuetzliches/croniq-api:<tag>` in release workflow; block on HIGH/CRITICAL. Trivy is installed through `scripts/ci/install-supplychain-tool.ps1 -Tool trivy`, sharing the same version manifest as Syft.
+- **Containers**: `trivy image ghcr.io/nuetzliches/croniq-sample-api:<tag>` in release workflow; block on HIGH/CRITICAL. Trivy is installed through `scripts/ci/install-supplychain-tool.ps1 -Tool trivy`, sharing the same version manifest as Syft.
 - **Source/FS**: `trivy fs --scanners vuln,secret .` nightly; fail on CRITICAL secrets/vulns.
 - **Reports**: Upload SARIF to GitHub Security tab (`trivy ... -f sarif -o trivy.sarif`). Provide summary comment in PRs.
 - **Waivers**: Maintain `docs/deep-dive/supplychain-waivers.md` documenting accepted risks, expiry dates, and references.
@@ -49,7 +49,7 @@ This plan details how we will fulfill the checklist item "SBOM/Signierung und Vu
 ## Signing & Provenance
 
 - **NuGet**: Use `dotnet nuget sign` (or `nuget sign`) with an Azure Key Vault or local certificate; store certificate thumbprint in GitHub secret. Optional alternative: integrate with SignPath if available.
-- **Containers**: Sign images using `cosign sign --key env://COSIGN_KEY ghcr.io/nuetzliches/croniq-api:<tag>`. Commit the public key at `infra/signing/cosign.pub` once generated so consumers can verify.
+- **Containers**: Sign images using `cosign sign --key env://COSIGN_KEY ghcr.io/nuetzliches/croniq-sample-api:<tag>`. Commit the public key at `infra/signing/cosign.pub` once generated so consumers can verify.
 - **Public certs/keys**: Export the NuGet signing certificate as `infra/signing/nuget-signing.cer` and document its thumbprint (also referenced from `docs/SECURITY.md`).
 - **Attestations**: Use `cosign attest` with predicate type `https://slsa.dev/provenance/v1` to link SBOM hash + build metadata.
 - **Verification docs**: `docs/deep-dive/release-verification.md` contains consumer commands; `docs/SECURITY.md` summarizes guarantees.

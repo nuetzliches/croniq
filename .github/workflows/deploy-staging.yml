@@ -76,9 +76,9 @@ jobs:
           helm upgrade --install croniq charts/croniq \
             --namespace ${{ env.STAGING_NAMESPACE }} \
             --create-namespace \
-            --set image.api.repository=${{ env.REGISTRY }}/${{ github.repository_owner }}/croniq-api \
+            --set image.api.repository=${{ env.REGISTRY }}/${{ github.repository_owner }}/croniq-sample-api \
             --set image.api.tag=${{ steps.version.outputs.version }} \
-            --set image.worker.repository=${{ env.REGISTRY }}/${{ github.repository_owner }}/croniq-worker \
+            --set image.worker.repository=${{ env.REGISTRY }}/${{ github.repository_owner }}/croniq-sample-worker \
             --set image.worker.tag=${{ steps.version.outputs.version }} \
             -f charts/environments/staging-values.yaml
 

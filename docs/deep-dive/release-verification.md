@@ -20,11 +20,11 @@ Replace `<owner>` with the GitHub org/user and `<tag>` with the release tag (e.g
 ```bash
 cosign verify \
   --key infra/signing/cosign.pub \
-  ghcr.io/<owner>/croniq-api:<tag>
+  ghcr.io/<owner>/croniq-sample-api:<tag>
 
 cosign verify \
   --key infra/signing/cosign.pub \
-  ghcr.io/<owner>/croniq-worker:<tag>
+  ghcr.io/<owner>/croniq-sample-worker:<tag>
 ```
 
 Notes:
@@ -46,7 +46,7 @@ Use the same command for other Croniq packages. If you prefer fingerprints, add 
 
 ## Inspect SBOMs and scan evidence
 
-- SBOMs: Compare the attached SPDX files against the images or packages you consume (`syft packages ghcr.io/<owner>/croniq-api:<tag> -o spdx-json` should yield the same package set).
+- SBOMs: Compare the attached SPDX files against the images or packages you consume (`syft packages ghcr.io/<owner>/croniq-sample-api:<tag> -o spdx-json` should yield the same package set).
 - Vulnerability scans: Review `trivy-image-api.sarif` / `trivy-image-worker.sarif` and `trivy-fs.sarif` attached to the release. The release gate blocks CRITICAL/HIGH unless a waiver exists.
 - License scan: `artifacts/licenses/license-scan.json` is attached to the release; it must show only allow-listed SPDX IDs.
 
