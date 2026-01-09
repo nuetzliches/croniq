@@ -271,7 +271,7 @@ public sealed class GrpcWebhookIngressTests
             }
         });
 
-        await WaitForStatusAsync(store, assigned.EventId, InMemoryWebhookIngressEventStore.StatusPending);
+        await WaitForLeaseReleaseAsync(store, assigned.EventId, assigned.LeaseId);
 
         var reassigned = await WaitForEventAsync(call.ResponseStream, TimeSpan.FromSeconds(3));
         reassigned.EventId.ShouldBe(assigned.EventId);
@@ -508,5 +508,26 @@ public sealed class GrpcWebhookIngressTests
         }
 
         store.GetSnapshot(eventId)?.LeaseExpiresAtUtc.ShouldBe(expectedExpiry);
+    }
+
+    private static async Task WaitForLeaseReleaseAsync(
+        InMemoryWebhookIngressEventStore store,
+        string eventId,
+        string leaseId)
+    {
+        var deadline = DateTimeOffset.UtcNow.AddSeconds(2);
+        while (DateTimeOffset.UtcNow < deadline)
+        {
+            var snapshot = store.GetSnapshot(eventId);
+            if (snapshot is not null
+                && !string.Equals(snapshot.LeaseId, leaseId, StringComparison.OrdinalIgnoreCase))
+            {
+                return;
+            }
+
+            await Task.Delay(50);
+        }
+
+        store.GetSnapshot(eventId)?.LeaseId.ShouldNotBe(leaseId);
     }
 }
