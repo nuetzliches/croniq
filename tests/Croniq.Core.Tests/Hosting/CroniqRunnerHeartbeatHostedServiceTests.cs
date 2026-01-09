@@ -19,21 +19,21 @@ public sealed class CroniqRunnerHeartbeatHostedServiceTests
     public async Task ExecuteAsync_records_runner_heartbeat()
     {
         var store = new TrackingRunnerStore();
-        var options = Options.Create(new CroniqOptions
+        var options = Microsoft.Extensions.Options.Options.Create(new CroniqOptions
         {
             TenantId = "tenant-a",
             EnvironmentTag = "dev",
             InstanceId = "runner-1"
         });
-        var hostOptions = Options.Create(new WorkerHostOptions
+        var hostOptions = Microsoft.Extensions.Options.Options.Create(new WorkerHostOptions
         {
             HeartbeatInterval = TimeSpan.FromMilliseconds(10)
         });
-        var runnerOptions = Options.Create(new RunnerStoreOptions
+        var runnerOptions = Microsoft.Extensions.Options.Options.Create(new RunnerStoreOptions
         {
             OnlineTtl = TimeSpan.FromSeconds(2)
         });
-        var startupOptions = Options.Create(new CroniqStartupOptions { Mode = "Run" });
+        var startupOptions = Microsoft.Extensions.Options.Options.Create(new CroniqStartupOptions { Mode = "Run" });
 
         var service = new CroniqRunnerHeartbeatHostedService(
             store,
@@ -67,21 +67,21 @@ public sealed class CroniqRunnerHeartbeatHostedServiceTests
     public async Task ExecuteAsync_skips_heartbeats_in_validate_mode()
     {
         var store = new TrackingRunnerStore();
-        var options = Options.Create(new CroniqOptions
+        var options = Microsoft.Extensions.Options.Options.Create(new CroniqOptions
         {
             TenantId = "tenant-a",
             EnvironmentTag = "dev",
             InstanceId = "runner-1"
         });
-        var hostOptions = Options.Create(new WorkerHostOptions
+        var hostOptions = Microsoft.Extensions.Options.Options.Create(new WorkerHostOptions
         {
             HeartbeatInterval = TimeSpan.FromMilliseconds(10)
         });
-        var runnerOptions = Options.Create(new RunnerStoreOptions
+        var runnerOptions = Microsoft.Extensions.Options.Options.Create(new RunnerStoreOptions
         {
             OnlineTtl = TimeSpan.FromSeconds(2)
         });
-        var startupOptions = Options.Create(new CroniqStartupOptions { Mode = "Validate" });
+        var startupOptions = Microsoft.Extensions.Options.Options.Create(new CroniqStartupOptions { Mode = "Validate" });
 
         var service = new CroniqRunnerHeartbeatHostedService(
             store,
