@@ -86,6 +86,7 @@ static async Task ApplyMigrationsAsync(IServiceProvider provider, string connect
         try
         {
             await EnsureDatabaseExistsAsync(connectionString, logger, token).ConfigureAwait(false);
+            await EnsureSchemasAsync(connectionString, token).ConfigureAwait(false);
             var migrationsAssembly = context.GetService<IMigrationsAssembly>();
             if (migrationsAssembly.Migrations.Count == 0)
             {
@@ -177,6 +178,25 @@ static async Task EnsureDatabaseExistsAsync(string connectionString, ILogger log
     {
         logger.LogInformation("Croniq SQL Server database '{Database}' already exists.", databaseName);
     }
+}
+
+static async Task EnsureSchemasAsync(string connectionString, CancellationToken token)
+{
+    var builder = new SqlConnectionStringBuilder(connectionString);
+    if (string.IsNullOrWhiteSpace(builder.InitialCatalog)
+        || string.Equals(builder.InitialCatalog, "master", StringComparison.OrdinalIgnoreCase))
+    {
+        return;
+    }
+
+    await using var connection = new SqlConnection(connectionString);
+    await connection.OpenAsync(token).ConfigureAwait(false);
+
+    await ExecuteNonQueryAsync(
+        connection,
+        "IF SCHEMA_ID(N'croniq') IS NULL EXEC(N'CREATE SCHEMA [croniq]');"
+        + "IF SCHEMA_ID(N'auth') IS NULL EXEC(N'CREATE SCHEMA [auth]');",
+        token).ConfigureAwait(false);
 }
 
 static bool IsObjectAlreadyExistsError(SqlException exception)
