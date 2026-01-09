@@ -38,10 +38,17 @@ const parseRunnerMetadata = (metadataJson?: string | null): RunnerMetadata => {
         }
 
         const record = parsed as Record<string, unknown>;
-        const hostname = typeof record.hostname === 'string' ? record.hostname : undefined;
-        const tags = Array.isArray(record.tags) ? record.tags.filter((tag): tag is string => typeof tag === 'string') : undefined;
-        const capacity = typeof record.capacity === 'number' ? record.capacity : undefined;
-        const activeJobs = typeof record.activeJobs === 'number' ? record.activeJobs : undefined;
+        const hostnameValue = record['hostname'];
+        const tagsValue = record['tags'];
+        const capacityValue = record['capacity'];
+        const activeJobsValue = record['activeJobs'];
+
+        const hostname = typeof hostnameValue === 'string' ? hostnameValue : undefined;
+        const tags = Array.isArray(tagsValue)
+            ? tagsValue.filter((tag): tag is string => typeof tag === 'string')
+            : undefined;
+        const capacity = typeof capacityValue === 'number' ? capacityValue : undefined;
+        const activeJobs = typeof activeJobsValue === 'number' ? activeJobsValue : undefined;
 
         return {
             hostname,
@@ -65,7 +72,7 @@ const mapRunnerStatus = (runner: RunnerStatusModel): Runner => {
         id: runner.runnerId,
         hostname: metadata.hostname ?? runner.runnerId,
         status: runner.isOnline ? 'Online' : 'Offline',
-        lastHeartbeatAt: runner.lastSeenAtUtc,
+        lastHeartbeatAt: runner.lastSeenAtUtc ?? '',
         activeJobs,
         capacity,
         tags: metadata.tags ?? [],
