@@ -4,7 +4,7 @@ Angular 21 (standalone) admin UI for Croniq. The app is configured to run **zone
 
 ## Prerequisites
 
-- Node.js (use the repo/toolchain standard; `packageManager` is pinned in `package.json`)
+- Node.js >= 20 with npm >= 11 (enforced via `packageManager`/`engines` in `package.json`)
 - `npm install`
 
 ## Development

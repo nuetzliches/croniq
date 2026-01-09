@@ -36,6 +36,10 @@
   },
   "private": true,
   "packageManager": "npm@11.0.0",
+  "engines": {
+    "node": ">=20.0.0",
+    "npm": ">=11.0.0 <12"
+  },
   "dependencies": {
     "@angular/aria": "^21.0.3",
     "@angular/cdk": "^21.0.3",

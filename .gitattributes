@@ -1,2 +1,8 @@
 # Auto detect text files and perform LF normalization
 * text=auto
+
+# Normalize line endings for UI sources and generated artifacts.
+src/Croniq.Ui/**/*.ts text eol=lf
+src/Croniq.Ui/**/*.json text eol=lf
+src/Croniq.Ui/**/*.css text eol=lf
+src/Croniq.Ui/**/*.html text eol=lf
