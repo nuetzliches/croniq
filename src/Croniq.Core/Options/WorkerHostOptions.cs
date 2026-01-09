@@ -25,6 +25,11 @@ public sealed class WorkerHostOptions
     public TimeSpan ErrorDelay { get; set; } = TimeSpan.FromSeconds(5);
 
     /// <summary>
+    /// Interval for runner heartbeats. Set to zero to disable heartbeats.
+    /// </summary>
+    public TimeSpan HeartbeatInterval { get; set; } = TimeSpan.FromSeconds(15);
+
+    /// <summary>
     /// Lead time before lease expiry to renew it (set to zero to disable renewals).
     /// </summary>
     public TimeSpan LeaseRenewalLeadTime { get; set; } = TimeSpan.FromSeconds(10);

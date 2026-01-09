@@ -99,6 +99,7 @@ public static class ServiceCollectionExtensions
                 || options.IdleDelay.HasValue
                 || options.BusyDelay.HasValue
                 || options.ErrorDelay.HasValue
+                || options.HeartbeatInterval.HasValue
                 || options.LeaseRenewalLeadTime.HasValue)
             {
                 services.PostConfigure<WorkerHostOptions>(worker =>
@@ -121,6 +122,11 @@ public static class ServiceCollectionExtensions
                     if (options.ErrorDelay.HasValue)
                     {
                         worker.ErrorDelay = options.ErrorDelay.Value;
+                    }
+
+                    if (options.HeartbeatInterval.HasValue)
+                    {
+                        worker.HeartbeatInterval = options.HeartbeatInterval.Value;
                     }
 
                     if (options.LeaseRenewalLeadTime.HasValue)

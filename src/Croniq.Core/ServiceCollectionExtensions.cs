@@ -170,6 +170,7 @@ public static class ServiceCollectionExtensions
             services.Configure(configure);
         }
         services.AddHostedService<CroniqWorkerHostedService>();
+        services.AddHostedService<CroniqRunnerHeartbeatHostedService>();
         return services;
     }
 
@@ -361,6 +362,7 @@ public static class ServiceCollectionExtensions
             && options.IdleDelay >= TimeSpan.Zero
             && options.BusyDelay >= TimeSpan.Zero
             && options.ErrorDelay >= TimeSpan.Zero
+            && options.HeartbeatInterval >= TimeSpan.Zero
             && options.LeaseRenewalLeadTime >= TimeSpan.Zero;
     }
 

@@ -71,10 +71,10 @@
                 <div class="h-1.5 w-16 rounded-full bg-white/10">
                   <div
                     class="h-full rounded-full bg-accent"
-                    [style.width.%]="(runner.activeJobs / runner.capacity) * 100"
+                    [style.width.%]="runner.loadPercent"
                   ></div>
                 </div>
-                <span class="text-xs">{{ runner.activeJobs }}/{{ runner.capacity }}</span>
+                <span class="text-xs">{{ runner.loadLabel }}</span>
               </div>
             </td>
             <td class="px-6 py-4">
@@ -102,6 +102,10 @@
                 </button>
               </div>
             </td>
+          </tr>
+          } @empty {
+          <tr>
+            <td class="px-6 py-6 text-sm text-muted" colspan="7">No runners reported yet.</td>
           </tr>
           }
         </tbody>

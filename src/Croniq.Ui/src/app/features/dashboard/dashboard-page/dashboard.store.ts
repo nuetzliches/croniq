@@ -3,7 +3,7 @@ import { authFailureFromError } from '@core/auth/auth-failure';
 import { tenantRxResource } from '@core/resource/tenant-rx-resource';
 import { TenantContextService } from '@core/tenant-context/tenant-context.service';
 import { nowIso } from '@core/time/clock';
-import { ScheduleResponse } from '@croniq/api-schema';
+import { RunnerStatusModel, ScheduleResponse } from '@croniq/api-schema';
 import { CRONIQ_API_CLIENT, CroniqApiClient } from 'data-access';
 import { of, catchError, map, forkJoin } from 'rxjs';
 
@@ -42,7 +42,7 @@ export class DashboardStore {
     readonly error = signal<string | null>(null);
 
     private readonly dashboardResource = tenantRxResource<
-        { schedules: ScheduleResponse[]; deadLetters: any[]; runners: any[] },
+        { schedules: ScheduleResponse[]; deadLetters: any[]; runners: RunnerStatusModel[] },
         { tenantId: string; environment: string }
     >({
         command: 'dashboard.refresh',
@@ -70,8 +70,8 @@ export class DashboardStore {
             );
 
             const runners$ = this.api.listRunners({ tenantId, environment }, requestOptions).pipe(
-                map(res => res as any[]),
-                catchError(() => of([] as any[]))
+                map(res => res.runners ?? []),
+                catchError(() => of<RunnerStatusModel[]>([]))
             );
 
             return forkJoin({
@@ -79,7 +79,7 @@ export class DashboardStore {
                 deadLetters: deadLetters$,
                 runners: runners$
             }).pipe(
-                map((data: { schedules: ScheduleResponse[], deadLetters: any[], runners: any[] }) => {
+                map((data: { schedules: ScheduleResponse[], deadLetters: any[], runners: RunnerStatusModel[] }) => {
                     // Normalize and update signals
                     this.updateMetrics(data.runners);
                     this.updateUpcoming(data.schedules);
@@ -110,9 +110,8 @@ export class DashboardStore {
     readonly upcomingSchedules = this.upcomingSchedulesSignal.asReadonly();
     readonly misfireHeatmap = this.misfireHeatmapSignal.asReadonly();
 
-    private updateMetrics(runners: any[]) {
-        // Active Runners
-        const activeRunnersCount = Array.isArray(runners) ? runners.length : 0;
+    private updateMetrics(runners: RunnerStatusModel[]) {
+        const activeRunnersCount = runners.filter(runner => runner.isOnline).length;
 
         // Mocking other metrics for now as we don't have direct endpoints for RPM/ErrorRate yet
         const metrics: MetricCard[] = [

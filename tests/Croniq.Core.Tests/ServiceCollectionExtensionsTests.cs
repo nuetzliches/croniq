@@ -103,6 +103,7 @@ public class ServiceCollectionExtensionsTests
 
         var provider = services.BuildServiceProvider();
         provider.GetServices<IHostedService>().Any(s => s is CroniqWorkerHostedService).ShouldBeTrue();
+        provider.GetServices<IHostedService>().Any(s => s is CroniqRunnerHeartbeatHostedService).ShouldBeTrue();
         provider.GetRequiredService<Microsoft.Extensions.Options.IOptions<WorkerHostOptions>>().Value.BatchSize.ShouldBe(123);
     }
 

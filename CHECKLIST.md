@@ -154,10 +154,10 @@
       - Tests: Core-HostedService Tests analog Trigger-Seeding (Off/Validate/CreateIfMissing/ForceUpdate + managedBy-mismatch).
       - Docs: technische Doku (außerhalb `docs/`) wenn nötig; public docs bleiben Englisch-only.
 - [x] Runner Identity + Availability (für verteilte Runner): Modell/Schema für Runner-Identität (z.B. RunnerId + RunnerSecret/ApiKey) und Online/Offline-Status (Heartbeat/Lease), damit UI/Operatoren sehen, welche Runner gerade verfügbar sind. (2025-12-26)
-- [ ] WorkerHost-Praesenz (SQL-Persistenz + UI-Sichtbarkeit): WorkerHost registriert sich ueber dedizierten `IWorkerStore`; EF-Entity, Migrationen, Heartbeat-Writer, List-Endpoint und UI-Listing fuer Online/Offline-Status umsetzen.
-  - [ ] Persistenz: `WorkerInstance`-Entity (TenantId, EnvironmentTag, InstanceId, LastSeenAtUtc, ExpiresAtUtc, MetadataJson) + SQL-Store + InMemory-Store fuer `IWorkerStore`.
-  - [ ] Wiring: Heartbeat-Background-Job im WorkerHost (oder API-seitige Registrierung) + List-Endpoint + UI-Empty-State-Text.
-  - [ ] Tests: TTL/Online-Offline-Uebergaenge + API-List-Tests.
+- [x] WorkerHost-Praesenz (SQL-Persistenz + UI-Sichtbarkeit): WorkerHost registriert sich ueber dedizierten `IWorkerStore`; EF-Entity, Migrationen, Heartbeat-Writer, List-Endpoint und UI-Listing fuer Online/Offline-Status umsetzen.
+  - [x] Persistenz: `WorkerInstance`-Entity (TenantId, EnvironmentTag, InstanceId, LastSeenAtUtc, ExpiresAtUtc, MetadataJson) + SQL-Store + InMemory-Store fuer `IWorkerStore`.
+  - [x] Wiring: Heartbeat-Background-Job im WorkerHost (oder API-seitige Registrierung) + List-Endpoint + UI-Empty-State-Text.
+  - [x] Tests: TTL/Online-Offline-Uebergaenge + API-List-Tests.
 - [x] DMZ-Ingress-Only (Croniq.Api + Croniq.Webhooks in der DMZ, kein Outbound): Remote-Webhooks fuer interne API + restriktive DMZ-Adminflaeche planen und implementieren.
   - [x] Remote-Webhook-Persistence-Provider: interne API nutzt `Croniq:Webhooks:Mode=Remote` (BaseUrl, ApiKey) fuer CRUD/Rotate/IP-Rules/DeadLetters gegen die DMZ-API.
   - [x] Remote persistence wiring: when `Croniq:Webhooks:Mode=Remote`, webhook CRUD must proxy to the DMZ admin API and override any locally registered SqlServer webhook stores so CroniqDev is not mutated.

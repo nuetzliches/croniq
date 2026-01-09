@@ -19,6 +19,8 @@ public sealed class CroniqWorkerOptions
 
     public TimeSpan? ErrorDelay { get; set; }
 
+    public TimeSpan? HeartbeatInterval { get; set; }
+
     public TimeSpan? LeaseRenewalLeadTime { get; set; }
 
     public int? InMemoryLeaseDurationSeconds { get; set; }
