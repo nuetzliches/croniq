@@ -60,16 +60,25 @@ RUN --mount=type=cache,id=nuget-packages,target=/root/.nuget/packages,sharing=lo
 
 FROM mcr.microsoft.com/dotnet/aspnet:${DOTNET_VERSION} AS api
 WORKDIR /app
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends gpgv \
+    && rm -rf /var/lib/apt/lists/*
 COPY --from=publish-api /app/publish .
 ENV ASPNETCORE_URLS=http://+:8080
 ENTRYPOINT ["dotnet", "Croniq.Sample.ApiHost.dll"]
 
 FROM mcr.microsoft.com/dotnet/aspnet:${DOTNET_VERSION} AS worker
 WORKDIR /app
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends gpgv \
+    && rm -rf /var/lib/apt/lists/*
 COPY --from=publish-worker /app/publish .
 ENTRYPOINT ["dotnet", "Croniq.Sample.WorkerHost.dll"]
 
 FROM mcr.microsoft.com/dotnet/aspnet:${DOTNET_VERSION} AS migrator
 WORKDIR /app
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends gpgv \
+    && rm -rf /var/lib/apt/lists/*
 COPY --from=publish-migrator /app/publish .
 ENTRYPOINT ["dotnet", "Croniq.DbMigrator.dll"]
