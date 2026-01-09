@@ -17,11 +17,13 @@
 ## Proposed Topology
 
 DMZ:
+
 - `Croniq.Webhooks` for ingress (`POST /tenants/{tenantId}/environments/{environmentTag}/webhooks/{hookKey}`).
 - `Croniq.Api` in a restricted "webhook admin" mode (only webhook CRUD + health).
 - Dedicated SqlServer instance seeded by `Croniq.Data.SqlServer` migrations.
 
 Internal network:
+
 - `Croniq.Api` + WorkerHost (job execution).
 - Webhook relay worker (pulls DMZ events and triggers jobs).
 - UI connects only to the internal API.
@@ -33,7 +35,7 @@ Internal API uses a new `Croniq:Webhooks:Mode=Remote` to call the DMZ admin API.
 
 Example (internal API):
 
-```
+```yaml
 Croniq:
   Webhooks:
     Mode: Remote
@@ -66,7 +68,7 @@ The stream should be at-least-once with explicit ack/lease semantics to avoid ev
 
 Draft proto file: `src/Croniq.Rpc.Client/Protos/webhook_ingress.proto`.
 
-```
+```proto
 syntax = "proto3";
 
 package croniq.rpc;
@@ -154,6 +156,7 @@ When gRPC is blocked, the relay can use SSE or polling against the DMZ API:
 All ingress stream endpoints require the `webhooks:ingress` scope and the same API key used for the gRPC relay.
 
 Notes:
+
 - DMZ validates signatures and only streams verified ingress events.
 - `lease_id` + `lease_expires_at_utc` allow retry without duplicating events.
 - `metadata` mirrors webhook metadata and payload hints.
@@ -162,7 +165,7 @@ Notes:
 
 Internal API (remote persistence + relay):
 
-```
+```yaml
 Croniq:
   Webhooks:
     Mode: Remote
@@ -179,7 +182,7 @@ Croniq:
 
 DMZ (ingress-only, no outbound):
 
-```
+```yaml
 Croniq:
   Webhooks:
     Mode: SqlServer
@@ -197,6 +200,7 @@ Croniq:
 ## Event Store Schema (Draft)
 
 `WebhookIngressEvent` (DMZ SqlServer):
+
 - `Id` (bigint identity)
 - `EventId` (nvarchar(64), unique)
 - `TenantId`, `EnvironmentTag` (nvarchar(64))
@@ -209,6 +213,7 @@ Croniq:
 - `CreatedAtUtc`, `UpdatedAtUtc` (datetime2)
 
 Indexes:
+
 - Unique: `EventId`
 - Lookup: `(TenantId, EnvironmentTag, Status, LeaseExpiresAtUtc)`
 - Ordering: `(TenantId, EnvironmentTag, ReceivedAtUtc)`
@@ -225,7 +230,7 @@ Indexes:
 
 ## Relay Worker Loop (Sketch)
 
-```
+```text
 connect -> hello(max_inflight)
 while stream open:
   receive event
