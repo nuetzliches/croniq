@@ -1,6 +1,6 @@
 import { HttpClient } from '@angular/common/http';
 import { EnvironmentProviders, InjectionToken, Provider, inject, makeEnvironmentProviders } from '@angular/core';
-import { AuthApi, CreateWebhookIpRuleRequest, HealthApi, IssueApiKeyRequest, IssueTokenRequest, JobsApi, MeApi, PasswordChangePasswordRequest, PasswordLoginRequest, PasswordLogoutRequest, PasswordRefreshRequest, RotateWebhookSecretRequest, RunnerHeartbeatRequest, RunnerListResponse, ScheduleResponse, ScheduleUpsertResult, TenantsApi, TriggerJobRequest, UpsertApiClientRequest, UpsertJobRequest, UpsertScheduleRequest, UpsertTenantRequest, UpsertWebhookEndpointRequest, WebhookCapabilitiesResponse, WorkAckRequest, WorkEventsRequest, WorkPollRequest, WorkRenewRequest, type EndpointDefinition } from '@croniq/api-schema';
+import { AuthApi, CreateWebhookIpRuleRequest, HealthApi, IssueApiKeyRequest, IssueTokenRequest, JobsApi, MeApi, PasswordChangePasswordRequest, PasswordLoginRequest, PasswordLogoutRequest, PasswordRefreshRequest, RotateWebhookSecretRequest, RunnerHeartbeatRequest, RunnerListResponse, ScheduleResponse, ScheduleUpsertResult, TenantsApi, TriggerJobRequest, UpsertApiClientRequest, UpsertJobRequest, UpsertScheduleRequest, UpsertTenantRequest, UpsertWebhookEndpointRequest, WebhookCapabilitiesResponse, WorkerHeartbeatRequest, WorkerListResponse, WorkAckRequest, WorkEventsRequest, WorkPollRequest, WorkRenewRequest, type EndpointDefinition } from '@croniq/api-schema';
 import type { Observable } from 'rxjs';
 import { z } from 'zod';
 import type { CroniqCredentialSupplier, CroniqRequestOptions, ExecutionLogParams, ExecutionParams, TenantApiClientParams, TenantApiClientTokenParams, TenantApiKeyParams, TenantDeadLetterParams, TenantEnvironmentOptionalParams, TenantEnvironmentParams, TenantScheduleParams, TenantScopedParams, TenantUpsertApiClientParams, TenantWebhookCapabilitiesParams, TenantWebhookParams, TenantWebhookRuleParams, TenantWebhookUpsertParams, WebhookInvocationParams, WorkEventsParams } from './api-client.types';
@@ -36,6 +36,41 @@ const TENANTS_ENDPOINTS = {
     get: requireEndpoint(TenantsApi, 'get', '/tenants/:tenantId'),
     deactivate: requireEndpoint(TenantsApi, 'delete', '/tenants/:tenantId'),
 };
+
+const LIST_WORKERS_ENDPOINT_PATH = '/tenants/:tenantId/workers';
+const LIST_WORKERS_ENDPOINT: EndpointDefinition =
+    TenantsApi.find((entry) => entry.method === 'get' && entry.path === LIST_WORKERS_ENDPOINT_PATH) ?? {
+        method: 'get',
+        path: LIST_WORKERS_ENDPOINT_PATH,
+        requestFormat: 'json',
+        parameters: [
+            { name: 'tenantId', type: 'Path', schema: z.string() },
+            {
+                name: 'environment',
+                type: 'Query',
+                schema: z.string().optional(),
+            },
+        ],
+        response: WorkerListResponse,
+    };
+
+const WORKER_HEARTBEAT_ENDPOINT_PATH = '/tenants/:tenantId/workers/heartbeat';
+const WORKER_HEARTBEAT_ENDPOINT: EndpointDefinition =
+    TenantsApi.find((entry) => entry.method === 'post' && entry.path === WORKER_HEARTBEAT_ENDPOINT_PATH) ?? {
+        method: 'post',
+        path: WORKER_HEARTBEAT_ENDPOINT_PATH,
+        requestFormat: 'json',
+        parameters: [
+            { name: 'body', type: 'Body', schema: WorkerHeartbeatRequest },
+            { name: 'tenantId', type: 'Path', schema: z.string() },
+            {
+                name: 'environment',
+                type: 'Query',
+                schema: z.string().optional(),
+            },
+        ],
+        response: z.void(),
+    };
 
 const TENANT_ENDPOINTS = {
     apiClient: requireEndpoint(TenantsApi, 'get', '/tenants/:tenantId/api-clients/:clientId'),
@@ -83,6 +118,8 @@ const TENANT_ENDPOINTS = {
     ),
     listRunners: requireEndpoint(TenantsApi, 'get', '/tenants/:tenantId/runners'),
     runnerHeartbeat: requireEndpoint(TenantsApi, 'post', '/tenants/:tenantId/runners/heartbeat'),
+    listWorkers: LIST_WORKERS_ENDPOINT,
+    workerHeartbeat: WORKER_HEARTBEAT_ENDPOINT,
     issueToken: requireEndpoint(TenantsApi, 'post', '/tenants/:tenantId/tokens'),
     workEvents: requireEndpoint(TenantsApi, 'post', '/tenants/:tenantId/work/:executionId:events'),
     workAck: requireEndpoint(TenantsApi, 'post', '/tenants/:tenantId/work/ack'),
@@ -220,6 +257,12 @@ export interface CroniqApiClient {
     runnerHeartbeat(
         params: TenantEnvironmentOptionalParams,
         payload: RunnerHeartbeatRequest,
+        options?: CroniqRequestOptions,
+    ): Observable<void>;
+    listWorkers(params: TenantEnvironmentOptionalParams, options?: CroniqRequestOptions): Observable<WorkerListResponse>;
+    workerHeartbeat(
+        params: TenantEnvironmentOptionalParams,
+        payload: WorkerHeartbeatRequest,
         options?: CroniqRequestOptions,
     ): Observable<void>;
     issueToken(
@@ -858,6 +901,33 @@ class HttpCroniqApiClient implements CroniqApiClient {
     ): Observable<void> {
         return this.execute$(
             TENANT_ENDPOINTS.runnerHeartbeat,
+            {
+                path: { tenantId: params.tenantId },
+                query: { environment: params.environment ?? undefined },
+                body: payload,
+            },
+            options,
+        );
+    }
+
+    listWorkers(params: TenantEnvironmentOptionalParams, options?: CroniqRequestOptions): Observable<WorkerListResponse> {
+        return this.execute$(
+            TENANT_ENDPOINTS.listWorkers,
+            {
+                path: { tenantId: params.tenantId },
+                query: { environment: params.environment ?? undefined },
+            },
+            options,
+        );
+    }
+
+    workerHeartbeat(
+        params: TenantEnvironmentOptionalParams,
+        payload: WorkerHeartbeatRequest,
+        options?: CroniqRequestOptions,
+    ): Observable<void> {
+        return this.execute$(
+            TENANT_ENDPOINTS.workerHeartbeat,
             {
                 path: { tenantId: params.tenantId },
                 query: { environment: params.environment ?? undefined },

@@ -109,13 +109,19 @@ docs/
 - If renewals are disabled or a lease is lost, another worker may pick up the same trigger while the original handler is still running, so long-running jobs must remain idempotent.
 - Keep execution timeouts aligned: `Croniq:Policies:Execution:Timeout:Timeout` defaults to 5 minutes and should remain higher than the lease duration. For long-running jobs, increase/disable the timeout and ensure `LeaseRenewalLeadTime` is comfortably smaller than the lease (e.g., 10s lead on a 60s lease).
 
+## Worker Host Presence
+
+- A worker host is the .NET scheduler/executor process (Croniq.WorkerHost). It uses `Croniq:Core:InstanceId` as the stable identity.
+- Presence is tracked via heartbeats (`POST /tenants/{tenantId}/workers/heartbeat`) and listed via `GET /tenants/{tenantId}/workers`. The TTL is controlled by `WorkerStoreOptions.OnlineTtl`.
+- Worker presence endpoints require `workers:heartbeat` (post) and `workers:read` (list) scopes.
+- Worker hosts emit heartbeats on `Croniq:WorkerHost:HeartbeatInterval` (set to `00:00:00` to disable). The heartbeat interval should remain comfortably below the online TTL.
+
 ## Runner Identity & Availability
 
-- A runner represents a **worker process instance**, not a single job. One runner can execute many jobs over time.
+- A runner represents a **worker process instance** that claims work via the `/work/*` endpoints. One runner can execute many jobs over time.
 - `runnerId` is a stable identifier (for example `hostname + process`) and is used as the lease owner. Renew/ack requests must use the same `runnerId` that claimed the lease.
 - Authentication stays on the regular Croniq auth paths (API keys or bearer tokens) with least-privilege work scopes (`work:poll`, `work:renew`, `work:ack`, `work:events`). `runnerId` itself is **not** a secret, but it must match the authenticated caller identity.
-- Availability is tracked via heartbeats (`POST /tenants/{tenantId}/runners/heartbeat`) and listed via `GET /tenants/{tenantId}/runners`. The TTL is controlled by `RunnerStoreOptions.OnlineTtl`. Availability is informational and does not affect lease correctness.
-- Worker hosts emit heartbeats through the runner store on `Croniq:WorkerHost:HeartbeatInterval` (set to `00:00:00` to disable). The heartbeat interval should remain comfortably below the online TTL.
+- Runner availability is tracked via heartbeats (`POST /tenants/{tenantId}/runners/heartbeat`) and listed via `GET /tenants/{tenantId}/runners`. The TTL is controlled by `RunnerStoreOptions.OnlineTtl`. Availability is informational and does not affect lease correctness.
 
 ## Polyglot Worker Protocol
 

@@ -40,6 +40,9 @@ import {
     RunnerHeartbeatRequest,
     RunnerStatusModel,
     RunnerListResponse,
+    WorkerHeartbeatRequest,
+    WorkerStatusModel,
+    WorkerListResponse,
     CallerType,
     CallerInfoResponse,
     HealthStatusResponse,
@@ -938,6 +941,38 @@ export const TenantsApi: EndpointDefinition[] = [
                 schema: WorkRenewResponse,
             },
         ],
+    },
+    {
+        method: 'get',
+        path: '/tenants/:tenantId/workers',
+        description: `Lists active worker hosts for the tenant/environment.`,
+        requestFormat: 'json',
+        parameters: [
+            { name: 'tenantId', type: 'Path', schema: z.string() },
+            {
+                name: 'environment',
+                type: 'Query',
+                schema: z.string().optional(),
+            },
+        ],
+        response: WorkerListResponse,
+    },
+    {
+        method: 'post',
+        path: '/tenants/:tenantId/workers/heartbeat',
+        description: `Records a worker host heartbeat to track availability.`,
+        requestFormat: 'json',
+        parameters: [
+            { name: 'body', type: 'Body', schema: WorkerHeartbeatRequest },
+            { name: 'tenantId', type: 'Path', schema: z.string() },
+            {
+                name: 'environment',
+                type: 'Query',
+                schema: z.string().optional(),
+            },
+        ],
+        response: z.void(),
+        errors: [{ status: 400, description: `Bad Request`, schema: z.void() }],
     },
 ] as const;
 

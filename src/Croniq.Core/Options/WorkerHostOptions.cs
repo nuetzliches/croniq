@@ -25,7 +25,7 @@ public sealed class WorkerHostOptions
     public TimeSpan ErrorDelay { get; set; } = TimeSpan.FromSeconds(5);
 
     /// <summary>
-    /// Interval for runner heartbeats. Set to zero to disable heartbeats.
+    /// Interval for worker heartbeats. Set to zero to disable heartbeats.
     /// </summary>
     public TimeSpan HeartbeatInterval { get; set; } = TimeSpan.FromSeconds(15);
 

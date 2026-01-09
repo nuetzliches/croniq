@@ -37,6 +37,7 @@ public static class ServiceCollectionExtensions
             .Validate(ValidateRetentionOptions, "Croniq:Retention must define a valid schedule and retention settings.")
             .ValidateOnStart();
         services.AddOptions<WorkerHostOptions>();
+        services.AddOptions<WorkerStoreOptions>();
         services.AddOptions<RunnerStoreOptions>();
         if (configure is not null)
         {
@@ -58,6 +59,7 @@ public static class ServiceCollectionExtensions
         services.TryAddSingleton<IExecutionLogExporter, LoggerExecutionLogExporter>();
         services.TryAddSingleton<IExecutionLogReader, NoOpExecutionLogReader>();
         services.TryAddSingleton<IExecutionHistoryReader, NoOpExecutionHistoryReader>();
+        services.TryAddSingleton<IWorkerStore, NoOpWorkerStore>();
         services.TryAddSingleton<IRunnerStore, NoOpRunnerStore>();
         services.TryAddSingleton<IWorkItemStore, NoOpWorkItemStore>();
         services.TryAddSingleton<TriggerWorker>();
@@ -170,7 +172,7 @@ public static class ServiceCollectionExtensions
             services.Configure(configure);
         }
         services.AddHostedService<CroniqWorkerHostedService>();
-        services.AddHostedService<CroniqRunnerHeartbeatHostedService>();
+        services.AddHostedService<CroniqWorkerHeartbeatHostedService>();
         return services;
     }
 

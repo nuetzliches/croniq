@@ -35,6 +35,7 @@ public static class ServiceCollectionExtensions
 
         services.AddCroniqSqlServerDbContext(configureSql);
         services.AddOptions<SqlServerPersistenceOptions>();
+        services.AddOptions<WorkerStoreOptions>();
         services.AddOptions<RunnerStoreOptions>();
         if (configurePersistence is not null)
         {
@@ -48,6 +49,7 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<IWebhookDeadLetterStore, SqlServerWebhookDeadLetterStore>();
         services.AddSingleton<IWebhookIngressEventStore, SqlServerWebhookIngressEventStore>();
         services.AddSingleton<IWebhookEndpointChangefeed, SqlServerWebhookEndpointChangefeed>();
+        services.AddSingleton<IWorkerStore, SqlServerWorkerStore>();
         services.AddSingleton<IRunnerStore, SqlServerRunnerStore>();
         services.AddSingleton<IWorkItemStore, SqlServerWorkItemStore>();
 

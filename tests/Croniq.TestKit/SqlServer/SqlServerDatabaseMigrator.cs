@@ -146,6 +146,7 @@ public static class SqlServerDatabaseMigrator
         IF OBJECT_ID(N'[croniq].[Jobs]', 'U') IS NOT NULL DELETE FROM [croniq].[Jobs];
         IF OBJECT_ID(N'[croniq].[RunnerCapabilities]', 'U') IS NOT NULL DELETE FROM [croniq].[RunnerCapabilities];
         IF OBJECT_ID(N'[croniq].[Runners]', 'U') IS NOT NULL DELETE FROM [croniq].[Runners];
+        IF OBJECT_ID(N'[croniq].[WorkerInstances]', 'U') IS NOT NULL DELETE FROM [croniq].[WorkerInstances];
         IF OBJECT_ID(N'[croniq].[ApiKeys]', 'U') IS NOT NULL DELETE FROM [croniq].[ApiKeys];
         IF OBJECT_ID(N'[croniq].[ApiClients]', 'U') IS NOT NULL DELETE FROM [croniq].[ApiClients];
         IF OBJECT_ID(N'[croniq].[Tenants]', 'U') IS NOT NULL DELETE FROM [croniq].[Tenants];

@@ -127,6 +127,8 @@ public static class PlatformHostingExtensions
                         CroniqScopes.WorkRenew,
                         CroniqScopes.WorkAck,
                         CroniqScopes.WorkEvents,
+                        CroniqScopes.WorkersHeartbeat,
+                        CroniqScopes.WorkersRead,
                         CroniqScopes.RunnersHeartbeat,
                         CroniqScopes.RunnersRead,
                         CroniqScopes.ExecutionsRead,

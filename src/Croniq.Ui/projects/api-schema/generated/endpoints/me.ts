@@ -51,6 +51,9 @@ import {
     WorkPollResponse,
     WorkRenewRequest,
     WorkRenewResponse,
+    WorkerHeartbeatRequest,
+    WorkerStatusModel,
+    WorkerListResponse,
 } from '../schemas';
 
 export const MeApi: EndpointDefinition[] = [

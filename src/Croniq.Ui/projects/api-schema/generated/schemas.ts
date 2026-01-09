@@ -462,6 +462,25 @@ export const RunnerListResponse = z
     .object({ runners: z.array(RunnerStatusModel).nullable() })
     .partial();
 export type RunnerListResponse = z.infer<typeof RunnerListResponse>;
+export const WorkerHeartbeatRequest = z.object({
+    environmentTag: z.string().nullish(),
+    instanceId: z.string().min(1),
+    seenAtUtc: z.iso.datetime({ offset: true }).nullish(),
+    metadataJson: z.string().nullish(),
+});
+export type WorkerHeartbeatRequest = z.infer<typeof WorkerHeartbeatRequest>;
+export const WorkerStatusModel = z.object({
+    instanceId: z.string().min(1),
+    lastSeenAtUtc: z.iso.datetime({ offset: true }).optional(),
+    expiresAtUtc: z.iso.datetime({ offset: true }).optional(),
+    isOnline: z.boolean().optional(),
+    metadataJson: z.string().nullish(),
+});
+export type WorkerStatusModel = z.infer<typeof WorkerStatusModel>;
+export const WorkerListResponse = z
+    .object({ workers: z.array(WorkerStatusModel).nullable() })
+    .partial();
+export type WorkerListResponse = z.infer<typeof WorkerListResponse>;
 export const schemas = {
     HealthStatusResponse,
     PersistenceHealthResponse,
@@ -513,6 +532,9 @@ export const schemas = {
     RunnerHeartbeatRequest,
     RunnerStatusModel,
     RunnerListResponse,
+    WorkerHeartbeatRequest,
+    WorkerStatusModel,
+    WorkerListResponse,
 };
 export type HttpMethod =
     | 'get'

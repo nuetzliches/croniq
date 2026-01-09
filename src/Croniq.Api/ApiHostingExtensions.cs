@@ -182,6 +182,7 @@ public static partial class ApiHostingExtensions
         MapJobTriggerEndpoints(app);
         MapWorkEndpoints(app);
         MapRunnerEndpoints(app);
+        MapWorkerEndpoints(app);
 
         return app;
     }
@@ -286,6 +287,33 @@ public static partial class ApiHostingExtensions
                 statusCode: StatusCodes.Status403Forbidden,
                 title: "runner-mismatch",
                 detail: "RunnerId must match the authenticated caller identity.");
+        }
+
+        return null;
+    }
+
+    private static IResult? EnsureWorkerIdentity(ICallerContextAccessor callerContextAccessor, string instanceId)
+    {
+        if (callerContextAccessor is null)
+        {
+            throw new ArgumentNullException(nameof(callerContextAccessor));
+        }
+
+        var caller = callerContextAccessor.Current;
+        if (caller is null)
+        {
+            return Results.Problem(
+                statusCode: StatusCodes.Status401Unauthorized,
+                title: "unauthorized",
+                detail: "Caller context is not available for this request.");
+        }
+
+        if (!string.Equals(caller.CallerId, instanceId, StringComparison.OrdinalIgnoreCase))
+        {
+            return Results.Problem(
+                statusCode: StatusCodes.Status403Forbidden,
+                title: "worker-mismatch",
+                detail: "InstanceId must match the authenticated caller identity.");
         }
 
         return null;

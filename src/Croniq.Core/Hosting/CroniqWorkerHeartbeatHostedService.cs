@@ -12,38 +12,38 @@ using Microsoft.Extensions.Options;
 namespace Croniq.Core.Hosting;
 
 /// <summary>
-/// Background service that emits runner heartbeats for worker availability.
+/// Background service that emits worker host heartbeats for availability.
 /// </summary>
-public sealed class CroniqRunnerHeartbeatHostedService : BackgroundService
+public sealed class CroniqWorkerHeartbeatHostedService : BackgroundService
 {
     private static readonly JsonSerializerOptions MetadataSerializerOptions = new(JsonSerializerDefaults.Web);
     private static readonly TimeSpan MinHeartbeatSkew = TimeSpan.FromSeconds(1);
 
-    private readonly IRunnerStore _runnerStore;
+    private readonly IWorkerStore _workerStore;
     private readonly CroniqOptions _coreOptions;
     private readonly WorkerHostOptions _hostOptions;
-    private readonly RunnerStoreOptions _runnerOptions;
+    private readonly WorkerStoreOptions _workerOptions;
     private readonly CroniqStartupOptions _startupOptions;
-    private readonly ILogger<CroniqRunnerHeartbeatHostedService> _logger;
+    private readonly ILogger<CroniqWorkerHeartbeatHostedService> _logger;
     private readonly TimeSpan _heartbeatInterval;
     private readonly string? _metadataJson;
 
-    public CroniqRunnerHeartbeatHostedService(
-        IRunnerStore runnerStore,
+    public CroniqWorkerHeartbeatHostedService(
+        IWorkerStore workerStore,
         IOptions<CroniqOptions> options,
         IOptions<WorkerHostOptions> hostOptions,
-        IOptions<RunnerStoreOptions> runnerOptions,
+        IOptions<WorkerStoreOptions> workerOptions,
         IOptions<CroniqStartupOptions> startupOptions,
-        ILogger<CroniqRunnerHeartbeatHostedService> logger)
+        ILogger<CroniqWorkerHeartbeatHostedService> logger)
     {
-        _runnerStore = runnerStore ?? throw new ArgumentNullException(nameof(runnerStore));
+        _workerStore = workerStore ?? throw new ArgumentNullException(nameof(workerStore));
         _coreOptions = options?.Value ?? throw new ArgumentNullException(nameof(options));
         _hostOptions = hostOptions?.Value ?? throw new ArgumentNullException(nameof(hostOptions));
-        _runnerOptions = runnerOptions?.Value ?? new RunnerStoreOptions();
-        _runnerOptions.Normalize();
+        _workerOptions = workerOptions?.Value ?? new WorkerStoreOptions();
+        _workerOptions.Normalize();
         _startupOptions = startupOptions?.Value ?? new CroniqStartupOptions();
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
-        _heartbeatInterval = ResolveInterval(_hostOptions.HeartbeatInterval, _runnerOptions.OnlineTtl);
+        _heartbeatInterval = ResolveInterval(_hostOptions.HeartbeatInterval, _workerOptions.OnlineTtl);
         _metadataJson = BuildMetadataJson();
     }
 
@@ -52,23 +52,23 @@ public sealed class CroniqRunnerHeartbeatHostedService : BackgroundService
         var startupMode = CroniqStartupModeParser.Parse(_startupOptions.Mode);
         if (startupMode == CroniqStartupMode.Validate)
         {
-            _logger.LogInformation("Croniq startup mode is Validate; runner heartbeats are disabled.");
+            _logger.LogInformation("Croniq startup mode is Validate; worker heartbeats are disabled.");
             return;
         }
 
         if (_hostOptions.HeartbeatInterval <= TimeSpan.Zero)
         {
-            _logger.LogInformation("Croniq runner heartbeats are disabled (HeartbeatInterval <= 0).");
+            _logger.LogInformation("Croniq worker heartbeats are disabled (HeartbeatInterval <= 0).");
             return;
         }
 
         var scope = new PartitionScope(_coreOptions.TenantId.Trim(), _coreOptions.EnvironmentTag);
-        var runnerId = _coreOptions.InstanceId.Trim();
+        var instanceId = _coreOptions.InstanceId.Trim();
         using var logScope = _logger.BeginScope(new Dictionary<string, object?>
         {
             ["tenantId"] = scope.TenantId,
             ["environmentTag"] = scope.EnvironmentTag,
-            ["runnerId"] = runnerId
+            ["instanceId"] = instanceId
         });
 
         if (_heartbeatInterval != _hostOptions.HeartbeatInterval)
@@ -76,7 +76,7 @@ public sealed class CroniqRunnerHeartbeatHostedService : BackgroundService
             _logger.LogWarning(
                 "Heartbeat interval {Configured} exceeds online TTL {OnlineTtl}; clamped to {Effective}.",
                 _hostOptions.HeartbeatInterval,
-                _runnerOptions.OnlineTtl,
+                _workerOptions.OnlineTtl,
                 _heartbeatInterval);
         }
 
@@ -84,8 +84,8 @@ public sealed class CroniqRunnerHeartbeatHostedService : BackgroundService
         {
             try
             {
-                var heartbeat = new RunnerHeartbeat(scope, runnerId, DateTimeOffset.UtcNow, _metadataJson);
-                await _runnerStore.UpsertHeartbeatAsync(heartbeat, stoppingToken).ConfigureAwait(false);
+                var heartbeat = new WorkerHeartbeat(scope, instanceId, DateTimeOffset.UtcNow, _metadataJson);
+                await _workerStore.UpsertHeartbeatAsync(heartbeat, stoppingToken).ConfigureAwait(false);
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
             {
@@ -93,7 +93,7 @@ public sealed class CroniqRunnerHeartbeatHostedService : BackgroundService
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "Failed to persist runner heartbeat.");
+                _logger.LogWarning(ex, "Failed to persist worker heartbeat.");
             }
 
             try
@@ -131,9 +131,9 @@ public sealed class CroniqRunnerHeartbeatHostedService : BackgroundService
             return null;
         }
 
-        var metadata = new RunnerMetadata("worker", hostname);
+        var metadata = new WorkerMetadata("worker", hostname);
         return JsonSerializer.Serialize(metadata, MetadataSerializerOptions);
     }
 
-    private sealed record RunnerMetadata(string Kind, string Hostname);
+    private sealed record WorkerMetadata(string Kind, string Hostname);
 }

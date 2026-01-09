@@ -13,35 +13,35 @@ using Xunit;
 
 namespace Croniq.Core.Tests.Hosting;
 
-public sealed class CroniqRunnerHeartbeatHostedServiceTests
+public sealed class CroniqWorkerHeartbeatHostedServiceTests
 {
     [Fact]
-    public async Task ExecuteAsync_records_runner_heartbeat()
+    public async Task ExecuteAsync_records_worker_heartbeat()
     {
-        var store = new TrackingRunnerStore();
+        var store = new TrackingWorkerStore();
         var options = Microsoft.Extensions.Options.Options.Create(new CroniqOptions
         {
             TenantId = "tenant-a",
             EnvironmentTag = "dev",
-            InstanceId = "runner-1"
+            InstanceId = "worker-1"
         });
         var hostOptions = Microsoft.Extensions.Options.Options.Create(new WorkerHostOptions
         {
             HeartbeatInterval = TimeSpan.FromMilliseconds(10)
         });
-        var runnerOptions = Microsoft.Extensions.Options.Options.Create(new RunnerStoreOptions
+        var workerOptions = Microsoft.Extensions.Options.Options.Create(new WorkerStoreOptions
         {
             OnlineTtl = TimeSpan.FromSeconds(2)
         });
         var startupOptions = Microsoft.Extensions.Options.Options.Create(new CroniqStartupOptions { Mode = "Run" });
 
-        var service = new CroniqRunnerHeartbeatHostedService(
+        var service = new CroniqWorkerHeartbeatHostedService(
             store,
             options,
             hostOptions,
-            runnerOptions,
+            workerOptions,
             startupOptions,
-            NullLogger<CroniqRunnerHeartbeatHostedService>.Instance);
+            NullLogger<CroniqWorkerHeartbeatHostedService>.Instance);
 
         await service.StartAsync(CancellationToken.None);
 
@@ -51,11 +51,11 @@ public sealed class CroniqRunnerHeartbeatHostedServiceTests
 
         heartbeat.Scope.TenantId.ShouldBe("tenant-a");
         heartbeat.Scope.EnvironmentTag.ShouldBe("dev");
-        heartbeat.RunnerId.ShouldBe("runner-1");
+        heartbeat.InstanceId.ShouldBe("worker-1");
         heartbeat.SeenAtUtc.ShouldBeGreaterThan(DateTimeOffset.UtcNow.AddMinutes(-1));
         heartbeat.MetadataJson.ShouldNotBeNull();
 
-        var metadata = JsonSerializer.Deserialize<RunnerMetadataPayload>(
+        var metadata = JsonSerializer.Deserialize<WorkerMetadataPayload>(
             heartbeat.MetadataJson!,
             new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
         metadata.ShouldNotBeNull();
@@ -66,30 +66,30 @@ public sealed class CroniqRunnerHeartbeatHostedServiceTests
     [Fact]
     public async Task ExecuteAsync_skips_heartbeats_in_validate_mode()
     {
-        var store = new TrackingRunnerStore();
+        var store = new TrackingWorkerStore();
         var options = Microsoft.Extensions.Options.Options.Create(new CroniqOptions
         {
             TenantId = "tenant-a",
             EnvironmentTag = "dev",
-            InstanceId = "runner-1"
+            InstanceId = "worker-1"
         });
         var hostOptions = Microsoft.Extensions.Options.Options.Create(new WorkerHostOptions
         {
             HeartbeatInterval = TimeSpan.FromMilliseconds(10)
         });
-        var runnerOptions = Microsoft.Extensions.Options.Options.Create(new RunnerStoreOptions
+        var workerOptions = Microsoft.Extensions.Options.Options.Create(new WorkerStoreOptions
         {
             OnlineTtl = TimeSpan.FromSeconds(2)
         });
         var startupOptions = Microsoft.Extensions.Options.Options.Create(new CroniqStartupOptions { Mode = "Validate" });
 
-        var service = new CroniqRunnerHeartbeatHostedService(
+        var service = new CroniqWorkerHeartbeatHostedService(
             store,
             options,
             hostOptions,
-            runnerOptions,
+            workerOptions,
             startupOptions,
-            NullLogger<CroniqRunnerHeartbeatHostedService>.Instance);
+            NullLogger<CroniqWorkerHeartbeatHostedService>.Instance);
 
         await service.StartAsync(CancellationToken.None);
 
@@ -100,25 +100,25 @@ public sealed class CroniqRunnerHeartbeatHostedServiceTests
         await service.StopAsync(CancellationToken.None);
     }
 
-    private sealed class TrackingRunnerStore : IRunnerStore
+    private sealed class TrackingWorkerStore : IWorkerStore
     {
-        private readonly TaskCompletionSource<RunnerHeartbeat> _tcs =
+        private readonly TaskCompletionSource<WorkerHeartbeat> _tcs =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
 
-        public List<RunnerHeartbeat> Heartbeats { get; } = new();
+        public List<WorkerHeartbeat> Heartbeats { get; } = new();
 
-        public Task UpsertHeartbeatAsync(RunnerHeartbeat heartbeat, CancellationToken cancellationToken)
+        public Task UpsertHeartbeatAsync(WorkerHeartbeat heartbeat, CancellationToken cancellationToken)
         {
             Heartbeats.Add(heartbeat);
             _tcs.TrySetResult(heartbeat);
             return Task.CompletedTask;
         }
 
-        public Task<IReadOnlyCollection<RunnerStatus>> ListAsync(RunnerQuery query, CancellationToken cancellationToken)
-            => Task.FromResult<IReadOnlyCollection<RunnerStatus>>(Array.Empty<RunnerStatus>());
+        public Task<IReadOnlyCollection<WorkerStatus>> ListAsync(WorkerQuery query, CancellationToken cancellationToken)
+            => Task.FromResult<IReadOnlyCollection<WorkerStatus>>(Array.Empty<WorkerStatus>());
 
-        public Task<RunnerHeartbeat> WaitForHeartbeatAsync(TimeSpan timeout) => _tcs.Task.WaitAsync(timeout);
+        public Task<WorkerHeartbeat> WaitForHeartbeatAsync(TimeSpan timeout) => _tcs.Task.WaitAsync(timeout);
     }
 
-    private sealed record RunnerMetadataPayload(string Kind, string Hostname);
+    private sealed record WorkerMetadataPayload(string Kind, string Hostname);
 }

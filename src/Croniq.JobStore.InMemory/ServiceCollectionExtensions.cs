@@ -24,6 +24,8 @@ public static class ServiceCollectionExtensions
         services.TryAddSingleton<IJobStore>(sp => (IJobStore)sp.GetRequiredService<IJobPersistenceProvider>());
         services.TryAddSingleton<IJobDeadLetterStore>(sp => (IJobDeadLetterStore)sp.GetRequiredService<IJobPersistenceProvider>());
 
+        services.AddOptions<WorkerStoreOptions>();
+        services.AddSingleton<IWorkerStore, InMemoryWorkerStore>();
         services.AddOptions<RunnerStoreOptions>();
         services.AddSingleton<IRunnerStore, InMemoryRunnerStore>();
 

@@ -12,6 +12,7 @@ public sealed class SqlServerDbContext(DbContextOptions<SqlServerDbContext> opti
     public DbSet<JobEntity> Jobs => Set<JobEntity>();
     public DbSet<TriggerEntity> Triggers => Set<TriggerEntity>();
     public DbSet<DeadLetterEntity> DeadLetters => Set<DeadLetterEntity>();
+    public DbSet<WorkerInstanceEntity> WorkerInstances => Set<WorkerInstanceEntity>();
     public DbSet<RunnerEntity> Runners => Set<RunnerEntity>();
     public DbSet<RunnerCapabilityEntity> RunnerCapabilities => Set<RunnerCapabilityEntity>();
     public DbSet<WorkItemEntity> WorkItems => Set<WorkItemEntity>();
@@ -34,6 +35,7 @@ public sealed class SqlServerDbContext(DbContextOptions<SqlServerDbContext> opti
         ConfigureJobs(modelBuilder.Entity<JobEntity>());
         ConfigureTriggers(modelBuilder.Entity<TriggerEntity>());
         ConfigureDeadLetters(modelBuilder.Entity<DeadLetterEntity>());
+        ConfigureWorkerInstances(modelBuilder.Entity<WorkerInstanceEntity>());
         ConfigureRunners(modelBuilder.Entity<RunnerEntity>());
         ConfigureRunnerCapabilities(modelBuilder.Entity<RunnerCapabilityEntity>());
         ConfigureWorkItems(modelBuilder.Entity<WorkItemEntity>());
@@ -96,6 +98,22 @@ public sealed class SqlServerDbContext(DbContextOptions<SqlServerDbContext> opti
             .WithMany(t => t.DeadLetters)
             .HasForeignKey(x => x.TriggerId)
             .OnDelete(DeleteBehavior.Cascade);
+    }
+
+    private static void ConfigureWorkerInstances(EntityTypeBuilder<WorkerInstanceEntity> builder)
+    {
+        builder.ToTable("WorkerInstances", "croniq");
+        builder.HasIndex(x => new { x.TenantId, x.EnvironmentTag, x.InstanceId }).IsUnique();
+        builder.HasIndex(x => x.ExpiresAtUtc);
+        builder.HasOne<TenantEntity>()
+            .WithMany()
+            .HasForeignKey(x => x.TenantId)
+            .OnDelete(DeleteBehavior.Restrict);
+        builder.Property(x => x.InstanceId).HasMaxLength(256);
+        builder.Property(x => x.EnvironmentTag).HasMaxLength(64);
+        builder.Property(x => x.TenantId).HasMaxLength(64);
+        builder.Property(x => x.CreatedAtUtc).HasDefaultValueSql("sysutcdatetime()");
+        builder.Property(x => x.UpdatedAtUtc).HasDefaultValueSql("sysutcdatetime()");
     }
 
     private static void ConfigureRunners(EntityTypeBuilder<RunnerEntity> builder)

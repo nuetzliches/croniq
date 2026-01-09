@@ -13,6 +13,8 @@ public static class CroniqScopes
     public const string WorkAck = "work:ack";
     public const string WorkEvents = "work:events";
     public const string WorkExecute = "work:execute";
+    public const string WorkersHeartbeat = "workers:heartbeat";
+    public const string WorkersRead = "workers:read";
     public const string RunnersHeartbeat = "runners:heartbeat";
     public const string RunnersRead = "runners:read";
     public const string ExecutionsRead = "executions:read";

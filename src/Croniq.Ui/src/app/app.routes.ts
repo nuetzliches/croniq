@@ -90,6 +90,11 @@ export const appRoutes: Routes = [
                     import('./features/runners/runners-page/runners-page').then((m) => m.RunnersPage),
             },
             {
+                path: 'workers',
+                loadComponent: () =>
+                    import('./features/workers/workers-page/workers-page').then((m) => m.WorkersPage),
+            },
+            {
                 path: 'api-access',
                 loadComponent: () =>
                     import('./features/api-access/api-access-page/api-access-page').then(

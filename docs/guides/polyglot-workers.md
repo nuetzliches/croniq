@@ -2,6 +2,7 @@
 
 Croniq’s in-process .NET worker uses a **lease-based** model to claim and execute due triggers.
 The HTTP work endpoints expose the same lease lifecycle so non-.NET (“polyglot”) workers can participate.
+Worker host presence is tracked separately via `/workers`; this guide focuses on runner identities used by the `/work/*` surface.
 
 ## Authentication & Scoping
 
@@ -142,10 +143,11 @@ For SQL-backed auth, you can use the helper script to create an API client and k
 ```
 
 Use the emitted `CRONIQ_API_KEY` and set `CRONIQ_RUNNER_ID` to the same client id.
+The helper includes `workers:*` scopes by default so the same key can read/post worker host presence; use `-Scopes` to trim if you only need runner access.
 
 ## Runner Presence (Optional)
 
-If you need runner availability for dashboards or ops tooling, use the runner heartbeat endpoints:
+If you need runner availability for dashboards or ops tooling, use the runner heartbeat endpoints (worker hosts use `/workers` instead):
 
 - `POST /tenants/{tenantId}/runners/heartbeat?environment=dev`
 - `GET /tenants/{tenantId}/runners?environment=dev`

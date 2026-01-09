@@ -26,6 +26,8 @@ if ([string]::IsNullOrWhiteSpace($Scopes)) {
         "work:renew",
         "work:ack",
         "work:events",
+        "workers:heartbeat",
+        "workers:read",
         "runners:heartbeat",
         "runners:read"
     )

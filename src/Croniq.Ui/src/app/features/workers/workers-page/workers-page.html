@@ -1,0 +1,115 @@
+<div class="flex h-full flex-col space-y-6">
+  <!-- Header -->
+  <header class="flex items-center justify-between">
+    <h1 class="text-lg font-semibold text-primary">Workers</h1>
+    <button
+      (click)="refresh()"
+      class="rounded-lg bg-white/5 px-4 py-2 text-sm font-semibold text-primary hover:bg-white/10"
+      [disabled]="loading()"
+    >
+      {{ loading() ? 'Refreshing...' : 'Refresh' }}
+    </button>
+  </header>
+
+  <!-- Metrics Grid -->
+  <div class="grid grid-cols-1 gap-4 sm:grid-cols-3">
+    <div class="rounded-xl border border-white/10 bg-surface-alt p-4">
+      <p class="text-xs font-medium uppercase text-muted">Active Workers</p>
+      <p class="mt-2 text-2xl font-semibold text-primary">{{ activeWorkersCount() }}</p>
+    </div>
+    <div class="rounded-xl border border-white/10 bg-surface-alt p-4">
+      <p class="text-xs font-medium uppercase text-muted">Total Capacity</p>
+      <p class="mt-2 text-2xl font-semibold text-primary">{{ totalCapacity() }}</p>
+    </div>
+    <div class="rounded-xl border border-white/10 bg-surface-alt p-4">
+      <p class="text-xs font-medium uppercase text-muted">Busy Threads</p>
+      <p class="mt-2 text-2xl font-semibold text-primary">{{ busyThreads() }}</p>
+    </div>
+  </div>
+
+  <!-- Content -->
+  <div class="flex-1 overflow-hidden rounded-xl border border-white/10 bg-surface-alt shadow-card">
+    <div class="overflow-x-auto">
+      <table class="w-full text-left text-sm">
+        <thead class="bg-white/5 text-xs uppercase text-muted">
+          <tr>
+            <th class="px-6 py-3 font-medium">Worker ID</th>
+            <th class="px-6 py-3 font-medium">Hostname</th>
+            <th class="px-6 py-3 font-medium">Status</th>
+            <th class="px-6 py-3 font-medium">Last Heartbeat</th>
+            <th class="px-6 py-3 font-medium">Load</th>
+            <th class="px-6 py-3 font-medium">Tags</th>
+            <th class="px-6 py-3 font-medium text-right">Actions</th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-white/10">
+          @for (worker of workers(); track worker.id) {
+          <tr class="hover:bg-white/5">
+            <td class="px-6 py-4 font-mono text-xs text-muted">{{ worker.id }}</td>
+            <td class="px-6 py-4 font-medium text-primary">{{ worker.hostname }}</td>
+            <td class="px-6 py-4">
+              @switch (worker.status) { @case ('Online') {
+              <span
+                class="inline-flex items-center rounded-full bg-success/10 px-2 py-0.5 text-xs font-medium text-success"
+                >Online</span
+              >
+              } @case ('Offline') {
+              <span
+                class="inline-flex items-center rounded-full bg-error/10 px-2 py-0.5 text-xs font-medium text-error"
+                >Offline</span
+              >
+              } @case ('Draining') {
+              <span
+                class="inline-flex items-center rounded-full bg-warning/10 px-2 py-0.5 text-xs font-medium text-warning"
+                >Draining</span
+              >
+              } }
+            </td>
+            <td class="px-6 py-4 text-muted">{{ worker.lastHeartbeatAt | date : 'medium' }}</td>
+            <td class="px-6 py-4 text-muted">
+              <div class="flex items-center gap-2">
+                <div class="h-1.5 w-16 rounded-full bg-white/10">
+                  <div
+                    class="h-full rounded-full bg-accent"
+                    [style.width.%]="worker.loadPercent"
+                  ></div>
+                </div>
+                <span class="text-xs">{{ worker.loadLabel }}</span>
+              </div>
+            </td>
+            <td class="px-6 py-4">
+              <div class="flex flex-wrap gap-1">
+                @for (tag of worker.tags; track tag) {
+                <span class="rounded bg-white/5 px-1.5 py-0.5 text-xs text-muted">{{ tag }}</span>
+                }
+              </div>
+            </td>
+            <td class="px-6 py-4 text-right">
+              <div class="flex justify-end gap-2">
+                @if (worker.status !== 'Draining') {
+                <button
+                  (click)="drainWorker(worker.id)"
+                  class="text-xs font-medium text-warning hover:text-warning-hover"
+                >
+                  Drain
+                </button>
+                }
+                <button
+                  (click)="deregisterWorker(worker.id)"
+                  class="text-xs font-medium text-error hover:text-error-hover"
+                >
+                  Deregister
+                </button>
+              </div>
+            </td>
+          </tr>
+          } @empty {
+          <tr>
+            <td class="px-6 py-6 text-sm text-muted" colspan="7">No workers reported yet.</td>
+          </tr>
+          }
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>

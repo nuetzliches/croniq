@@ -20,6 +20,7 @@
 ## Current State
 
 - Croniq has tenant/env scoping (`TenantId`, `EnvironmentTag`) and a worker host that executes jobs.
+- Worker host presence is tracked separately via `POST /tenants/{tenantId}/workers/heartbeat` and `GET /tenants/{tenantId}/workers`.
 - gRPC exists for scheduler-facing operations (e.g. `Scheduler` service).
 - Long-running execution already uses a lease/extend model internally.
 - The HTTP work endpoints (`/work/poll`, `/work/renew`, `/work/ack`, `/work/{executionId}:events`) expose the lease lifecycle for polyglot workers.
@@ -53,7 +54,7 @@ A **Work Item** is an assignment representing a single execution attempt.
   - **Acks/events** while executing (optional; work-scoped).
   - For streaming: the **open stream** plus transport keepalive.
 
-This keeps the protocol focused on correctness (ownership) rather than presence.
+Croniq still supports optional runner presence via `POST /tenants/{tenantId}/runners/heartbeat` and `GET /tenants/{tenantId}/runners`, but correctness does not depend on those heartbeats.
 
 ## Semantics
 
@@ -204,6 +205,7 @@ The API must enforce that:
   - streaming transport provides presence information naturally.
   - HTTP long-poll provides "recently active" signals but is not strict presence.
 - Correctness does not depend on presence; leases + idempotent acks are the source of truth.
+  - Croniq also tracks worker host presence separately via `/workers` for dashboard/ops use.
 
 ## Persistence & Schema
 
@@ -235,7 +237,7 @@ Planned tables (SqlServer):
   - `EventType`, `PayloadJson`
   - `OccurredAtUtc`
 
-The existing `croniq.Runners` table remains the availability view (TTL-based) and does not gate leasing.
+The existing `croniq.Runners` table remains the runner availability view (TTL-based) and does not gate leasing. Worker host presence is stored in `croniq.WorkerInstances` and is also informational.
 
 ## Integration Plan
 

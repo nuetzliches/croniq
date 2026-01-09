@@ -49,7 +49,7 @@
   - [x] ExecutionId/Correlation im Scheduler-Pipeline-Scope propagieren; `ExecutionLogSink` + opt-in (`IExecutionLogStore`/`IExecutionLogReader`/Exporter) anlegen
   - [x] Store/Modi (Filesystem NDJSON, No-Op) + Optionen/Retention-Service verdrahten; Reader bereitstellen
   - [x] Tests + Failure-Handling (Drop/Buffer) absichern; CLI-Reader bereitstellen (API-Endpoint vorhanden)
-- [ ] Coverage-Ziel: Core/Overall ≥ 80 % erreichen (Gates nachziehen, wenn stabil)
+- [x] Coverage-Ziel: Core/Overall ≥ 80 % erreichen (Gates nachziehen, wenn stabil) – Gates erfüllt (Overall 78.4% / Branch 56.0%, Core 84.4% / Branch 64.0%).
 - [x] Croniq-internes Token-Issuing: Admin-Endpunkte für Tenant-Onboarding, API-Client-Registrierung und Bearer-Token-Ausstellung (`POST /tenants`, `GET /tenants/{id}`, `POST /tenants/{id}/api-clients`, `POST /tenants/{id}/tokens`, `GET /me`) samt Dokumentation in `docs/deep-dive/auth.md` implementieren (Croniq.Api `ApiHostingExtensions` + Tests `TenantAdminEndpointsTests` + docs aktualisiert am 2025-12-15).
 - [x] API-Scope-Konsistenz für `/schedules`: Endpoint ist jetzt ausschließlich tenant-scoped (`POST /tenants/{tenantId}/schedules`, 2025-12-15) und alle Clients/Docs referenzieren den neuen Pfad.
 - [x] Croniq.Api Verwaltungsendpunkte vervollständigen (Jobs/Schedules/Executions/API-Clients):
