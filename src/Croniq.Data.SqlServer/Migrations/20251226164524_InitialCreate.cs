@@ -1,5 +1,4 @@
 ﻿using System;
-using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Migrations;
 
 #nullable disable
@@ -7,8 +6,6 @@ using Microsoft.EntityFrameworkCore.Migrations;
 namespace Croniq.Data.SqlServer.Migrations
 {
     /// <inheritdoc />
-    [DbContext(typeof(SqlServerDbContext))]
-    [Migration("20251226164524_InitialCreate")]
     public partial class InitialCreate : Migration
     {
         /// <inheritdoc />

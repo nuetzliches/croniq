@@ -1,0 +1,98 @@
+# syntax=docker/dockerfile:1.7
+
+ARG DOTNET_VERSION=10.0
+
+FROM mcr.microsoft.com/dotnet/sdk:${DOTNET_VERSION} AS build-base
+WORKDIR /src
+
+COPY croniq.slnx .
+COPY Directory.Build.props .
+
+# Keep this list in sync with the project graph used by ApiHost/WorkerHost/WebhooksHost/DbMigrator.
+# If a build fails with MSB3202 (project not found), add the missing *.csproj COPY here.
+
+COPY src/Croniq.ApiHost/Croniq.ApiHost.csproj src/Croniq.ApiHost/
+COPY src/Croniq.WorkerHost/Croniq.WorkerHost.csproj src/Croniq.WorkerHost/
+COPY src/Croniq.WebhooksHost/Croniq.WebhooksHost.csproj src/Croniq.WebhooksHost/
+
+COPY src/Croniq.Api/Croniq.Api.csproj src/Croniq.Api/
+COPY src/Croniq.Webhooks/Croniq.Webhooks.csproj src/Croniq.Webhooks/
+COPY src/Croniq.Hosting/Croniq.Hosting.csproj src/Croniq.Hosting/
+COPY src/Croniq.Core/Croniq.Core.csproj src/Croniq.Core/
+COPY src/Croniq.Sdk/Croniq.Sdk.csproj src/Croniq.Sdk/
+COPY src/Croniq.Auth.Abstractions/Croniq.Auth.Abstractions.csproj src/Croniq.Auth.Abstractions/
+COPY src/Croniq.Auth.Core/Croniq.Auth.Core.csproj src/Croniq.Auth.Core/
+COPY src/Croniq.Auth.SqlServer/Croniq.Auth.SqlServer.csproj src/Croniq.Auth.SqlServer/
+COPY src/Croniq.Data.SqlServer/Croniq.Data.SqlServer.csproj src/Croniq.Data.SqlServer/
+COPY src/Croniq.JobStore.InMemory/Croniq.JobStore.InMemory.csproj src/Croniq.JobStore.InMemory/
+COPY src/Croniq.Persistence.Abstractions/Croniq.Persistence.Abstractions.csproj src/Croniq.Persistence.Abstractions/
+COPY src/Croniq.Persistence.SqlServer/Croniq.Persistence.SqlServer.csproj src/Croniq.Persistence.SqlServer/
+COPY src/Croniq.Providers.Abstractions/Croniq.Providers.Abstractions.csproj src/Croniq.Providers.Abstractions/
+COPY src/Croniq.Providers.Default/Croniq.Providers.Default.csproj src/Croniq.Providers.Default/
+COPY src/Croniq.Rpc.Client/Croniq.Rpc.Client.csproj src/Croniq.Rpc.Client/
+
+COPY tools/Croniq.DbMigrator/Croniq.DbMigrator.csproj tools/Croniq.DbMigrator/
+
+RUN --mount=type=cache,id=nuget-packages,target=/root/.nuget/packages,sharing=locked \
+    --mount=type=cache,id=nuget-http-cache,target=/root/.local/share/NuGet/v3-cache,sharing=locked \
+    set -eux; \
+    dotnet restore src/Croniq.ApiHost/Croniq.ApiHost.csproj; \
+    dotnet restore src/Croniq.WorkerHost/Croniq.WorkerHost.csproj; \
+    dotnet restore src/Croniq.WebhooksHost/Croniq.WebhooksHost.csproj; \
+    dotnet restore tools/Croniq.DbMigrator/Croniq.DbMigrator.csproj
+
+COPY . .
+
+FROM build-base AS publish-api
+RUN --mount=type=cache,id=nuget-packages,target=/root/.nuget/packages,sharing=locked \
+    --mount=type=cache,id=nuget-http-cache,target=/root/.local/share/NuGet/v3-cache,sharing=locked \
+    dotnet publish src/Croniq.ApiHost/Croniq.ApiHost.csproj -c Release -o /app/publish /p:UseAppHost=false --no-restore
+
+FROM build-base AS publish-worker
+RUN --mount=type=cache,id=nuget-packages,target=/root/.nuget/packages,sharing=locked \
+    --mount=type=cache,id=nuget-http-cache,target=/root/.local/share/NuGet/v3-cache,sharing=locked \
+    dotnet publish src/Croniq.WorkerHost/Croniq.WorkerHost.csproj -c Release -o /app/publish /p:UseAppHost=false --no-restore
+
+FROM build-base AS publish-webhooks
+RUN --mount=type=cache,id=nuget-packages,target=/root/.nuget/packages,sharing=locked \
+    --mount=type=cache,id=nuget-http-cache,target=/root/.local/share/NuGet/v3-cache,sharing=locked \
+    dotnet publish src/Croniq.WebhooksHost/Croniq.WebhooksHost.csproj -c Release -o /app/publish /p:UseAppHost=false --no-restore
+
+FROM build-base AS publish-migrator
+RUN --mount=type=cache,id=nuget-packages,target=/root/.nuget/packages,sharing=locked \
+    --mount=type=cache,id=nuget-http-cache,target=/root/.local/share/NuGet/v3-cache,sharing=locked \
+    dotnet publish tools/Croniq.DbMigrator/Croniq.DbMigrator.csproj -c Release -o /app/publish /p:UseAppHost=false --no-restore
+
+FROM mcr.microsoft.com/dotnet/aspnet:${DOTNET_VERSION} AS api
+WORKDIR /app
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends gpgv \
+    && rm -rf /var/lib/apt/lists/*
+COPY --from=publish-api /app/publish .
+ENV ASPNETCORE_URLS=http://+:8080
+ENTRYPOINT ["dotnet", "Croniq.ApiHost.dll"]
+
+FROM mcr.microsoft.com/dotnet/aspnet:${DOTNET_VERSION} AS worker
+WORKDIR /app
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends gpgv \
+    && rm -rf /var/lib/apt/lists/*
+COPY --from=publish-worker /app/publish .
+ENTRYPOINT ["dotnet", "Croniq.WorkerHost.dll"]
+
+FROM mcr.microsoft.com/dotnet/aspnet:${DOTNET_VERSION} AS webhooks
+WORKDIR /app
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends gpgv \
+    && rm -rf /var/lib/apt/lists/*
+COPY --from=publish-webhooks /app/publish .
+ENV ASPNETCORE_URLS=http://+:8080
+ENTRYPOINT ["dotnet", "Croniq.WebhooksHost.dll"]
+
+FROM mcr.microsoft.com/dotnet/aspnet:${DOTNET_VERSION} AS migrator
+WORKDIR /app
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends gpgv \
+    && rm -rf /var/lib/apt/lists/*
+COPY --from=publish-migrator /app/publish .
+ENTRYPOINT ["dotnet", "Croniq.DbMigrator.dll"]

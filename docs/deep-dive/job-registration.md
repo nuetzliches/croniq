@@ -8,6 +8,7 @@ Croniq supports two registration styles:
 
 1. **Inline handlers** - call `builder.Services.AddCroniqJob("namespace", "name", handler)` and provide a delegate. This uses an internal delegating `IJob` that dispatches to the handler.
 2. **Attributed classes** - implement `IJob`, decorate with `[CroniqJob("namespace", "name", variant: "optional")]`, and register via `AddCroniqJob<TJob>()`.
+3. **Config-driven assembly loading** - call `AddCroniqJobsFromConfiguration(builder.Configuration)` and set `Croniq:Jobs:Assemblies` to scan job assemblies at startup.
 
 Both paths produce a `JobDescriptor` with a deterministic job key.
 

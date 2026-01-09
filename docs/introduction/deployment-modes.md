@@ -70,22 +70,22 @@ Why opt-in (instead of implicit):
 - It makes ownership explicit: multiple hosts can register the same JobKey, so seeding needs clear rules for how metadata/owner is set and how conflicts are resolved.
 - It keeps failure modes obvious: if seeding fails (DB down/misconfigured), you get a clear startup error only when you opted into that dependency.
 
-## 3) DMZ ingress-only (webhooks in the DMZ)
+## 3) Remote ingress (webhooks via a DMZ or edge tier)
 
-Goal: accept public webhooks in a DMZ without allowing DMZ hosts to open outbound connections into the internal network.
+Goal: accept public webhooks via a remote ingress tier (for example, a DMZ) without allowing ingress hosts to open outbound connections into the internal network.
 
-Typical separation:
+Typical separation (DMZ example):
 
-- DMZ: `Croniq.Api` in `WebhookAdminOnly` mode + `Croniq.Webhooks` with `Ingress.DispatchMode=StoreOnly`, backed by a dedicated SqlServer instance.
+- Ingress/DMZ: `Croniq.Api` in `WebhookAdminOnly` mode + `Croniq.Webhooks` with `Ingress.DispatchMode=StoreOnly`, backed by a dedicated SqlServer instance.
 - Internal: `Croniq.Api` + worker hosts + UI. Internal API uses `Croniq:Webhooks:Mode=Remote` to manage webhook definitions in the DMZ and runs the relay worker to consume ingress events over gRPC (or SSE/polling via `StreamFallback` when gRPC is blocked).
 
 Network paths:
 
-- Inbound: public callers → DMZ webhook ingress.
-- Outbound: internal network → DMZ admin API + ingress gRPC/SSE/polling stream.
-- DMZ hosts do **not** connect into the internal network.
+- Inbound: public callers → ingress webhook ingress.
+- Outbound: internal network → ingress admin API + ingress gRPC/SSE/polling stream.
+- Ingress hosts do **not** connect into the internal network.
 
 Security expectations:
 
 - Use API keys with least-privilege scopes (`webhooks:read|write|rotate|deadletter` for admin, `webhooks:ingress` for the relay).
-- Apply `Croniq:Api:AllowedIpCidrs` on the DMZ host to restrict admin access to internal egress ranges.
+- Apply `Croniq:Api:AllowedIpCidrs` on the ingress host to restrict admin access to internal egress ranges.

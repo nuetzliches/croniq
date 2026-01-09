@@ -62,7 +62,7 @@
 
 - [ ] dotnet templates: `dotnet new croniq-worker` / `dotnet new croniq-platform` inkl. minimaler `appsettings.json`.
 - [ ] CLI/Dev-Tool (optional): Trigger-Liste, "next runs", config validate, export/import (z.B. `dotnet tool`).
-- [ ] Production container images: dedizierte Hosts/Dockerfiles ohne Sample-Defaults (z.B. `croniq-api`, `croniq-worker`, `croniq-webhooks`, `croniq-db-migrator`), klares Config-Contract (keine Development-JSONs), Release-Workflow + Doku anpassen.
+- [x] Production container images: dedizierte Hosts/Dockerfiles ohne Sample-Defaults (z.B. `croniq-api`, `croniq-worker`, `croniq-webhooks`, `croniq-db-migrator`), klares Config-Contract (keine Development-JSONs), Release-Workflow + Doku anpassen.
 
 ## Naechste Schritte (Stand 2026-01-08)
 

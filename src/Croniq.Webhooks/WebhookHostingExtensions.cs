@@ -150,11 +150,22 @@ public static class WebhookHostingExtensions
 
     public static IServiceCollection AddCroniqWebhookServices(this IServiceCollection services, IConfiguration configuration)
     {
+        return AddCroniqWebhookServices(services, configuration, includePlatformServices: true);
+    }
+
+    public static IServiceCollection AddCroniqWebhookServices(
+        this IServiceCollection services,
+        IConfiguration configuration,
+        bool includePlatformServices)
+    {
         var optionsSection = configuration.GetSection("Croniq:Webhooks");
         var hostingOptions = optionsSection.Get<CroniqWebhookOptions>() ?? new CroniqWebhookOptions();
         var shouldConfigurePersistence = hostingOptions.ConfigurePersistence;
 
-        services.AddCroniqPlatformServices(configuration);
+        if (includePlatformServices)
+        {
+            services.AddCroniqPlatformServices(configuration);
+        }
 
         if (shouldConfigurePersistence)
         {

@@ -1,15 +1,11 @@
 ﻿using System;
 using Microsoft.EntityFrameworkCore.Migrations;
-using Croniq.Data.SqlServer;
-using Microsoft.EntityFrameworkCore.Infrastructure;
 
 #nullable disable
 
 namespace Croniq.Data.SqlServer.Migrations
 {
     /// <inheritdoc />
-    [DbContext(typeof(SqlServerDbContext))]
-    [Migration("20260107234527_AddWebhookIngressEvents")]
     public partial class AddWebhookIngressEvents : Migration
     {
         /// <inheritdoc />

@@ -13,6 +13,7 @@
   </Folder>
   <Folder Name="/src/">
     <Project Path="src/Croniq.Api/Croniq.Api.csproj" />
+    <Project Path="src/Croniq.ApiHost/Croniq.ApiHost.csproj" />
     <Project Path="src/Croniq.Auth.Abstractions/Croniq.Auth.Abstractions.csproj" />
     <Project Path="src/Croniq.Auth.Core/Croniq.Auth.Core.csproj" />
     <Project Path="src/Croniq.Auth.SqlServer/Croniq.Auth.SqlServer.csproj" />
@@ -28,11 +29,14 @@
     <Project Path="src/Croniq.Sdk/Croniq.Sdk.csproj" />
     <Project Path="src/Croniq.Usings/Croniq.Usings.csproj" />
     <Project Path="src/Croniq.Webhooks/Croniq.Webhooks.csproj" />
+    <Project Path="src/Croniq.WebhooksHost/Croniq.WebhooksHost.csproj" />
+    <Project Path="src/Croniq.WorkerHost/Croniq.WorkerHost.csproj" />
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/Croniq.Api.Smoke/Croniq.Api.Smoke.csproj" />
     <Project Path="tests/Croniq.Api.Tests/Croniq.Api.Tests.csproj" />
     <Project Path="tests/Croniq.Core.Tests/Croniq.Core.Tests.csproj" />
+    <Project Path="tests/Croniq.Hosting.Tests/Croniq.Hosting.Tests.csproj" />
     <Project Path="tests/Croniq.JobStore.InMemory.Tests/Croniq.JobStore.InMemory.Tests.csproj" />
     <Project Path="tests/Croniq.Observability.Tests/Croniq.Observability.Tests.csproj" />
     <Project Path="tests/Croniq.Persistence.SqlServer.Tests/Croniq.Persistence.SqlServer.Tests.csproj" />

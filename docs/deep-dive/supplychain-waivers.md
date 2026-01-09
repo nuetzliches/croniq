@@ -15,7 +15,7 @@ Add entries to the table below instead of editing historical rows. Keep newest w
 
 | ID | Package/Image | Version/Digest | CVE/Advisory | Severity | Expires (UTC) | Owner | Mitigation / Justification | Tracking Issue |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| WAIVER-YYYYMMDD-01 | e.g. `Croniq.Api image` | `ghcr.io/<owner>/croniq-sample-api@sha256:...` | CVE-2025-12345 | HIGH | 2026-01-15 | @owner | Pending upstream patch; blocked behind mTLS + WAF rule | tracking issue: <org>/croniq#123 |
+| WAIVER-YYYYMMDD-01 | e.g. `Croniq.Api image` | `ghcr.io/<owner>/croniq-api@sha256:...` | CVE-2025-12345 | HIGH | 2026-01-15 | @owner | Pending upstream patch; blocked behind mTLS + WAF rule | tracking issue: <org>/croniq#123 |
 
 ## How to apply a waiver
 

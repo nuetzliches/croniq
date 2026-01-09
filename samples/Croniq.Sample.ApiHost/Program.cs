@@ -22,7 +22,7 @@ builder.Configuration
 builder.Services.AddCroniqApiServices(builder.Configuration);
 builder.Services.AddCroniqApiRateLimiter();
 
-builder.Services.AddCroniqWebhookServices(builder.Configuration);
+builder.Services.AddCroniqWebhookServices(builder.Configuration, includePlatformServices: false);
 builder.Services.AddCroniqWebhookRateLimiter();
 
 var otelBuilder = builder.Services.AddCroniqApiObservability(

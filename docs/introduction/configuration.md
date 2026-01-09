@@ -43,7 +43,46 @@ builder.Services.PostConfigure<CroniqAuthOptions>(options =>
 });
 ```
 
-## 3. Trigger Seeding (Worker Hosts)
+## 3. Job Assembly Loading (Optional)
+
+Production container images and shared hosts can register jobs from assemblies specified in configuration.
+
+Supported keys:
+
+- `Croniq:Jobs:Assemblies` (array of assembly names or file paths)
+- `Croniq:Jobs:IncludeEntryAssembly` (bool)
+
+JSON example:
+
+```json
+{
+  "Croniq": {
+    "Jobs": {
+      "Assemblies": ["./jobs/Acme.Jobs.dll"]
+    }
+  }
+}
+```
+
+Environment variable example:
+
+```powershell
+$Env:Croniq__Jobs__Assemblies__0 = "C:\\croniq\\jobs\\Acme.Jobs.dll"
+```
+
+You can also provide a semicolon-delimited list:
+
+```powershell
+$Env:Croniq__Jobs__Assemblies = "/app/jobs/Acme.Jobs.dll;/app/jobs/Acme.Billing.Jobs.dll"
+```
+
+Host helper:
+
+```csharp
+builder.Services.AddCroniqJobsFromConfiguration(builder.Configuration);
+```
+
+## 4. Trigger Seeding (Worker Hosts)
 
 Worker hosts can seed triggers on startup so schedules exist without manual API calls. This runs when you use `AddCroniq(...)` (package `Croniq`) or `AddCroniqWorkerServices(...)` (package `Croniq.Hosting`).
 
@@ -133,7 +172,7 @@ Example:
 
 Use a stable `ManagedBy` value (not instance-id based) to avoid flapping in rolling deployments.
 
-## 4. Key Environment Variables
+## 5. Key Environment Variables
 
 See [`auth.md`](../guides/auth.md) for the end-to-end authentication story and when to prefer API keys vs bearer tokens.
 
@@ -152,7 +191,7 @@ See [`auth.md`](../guides/auth.md) for the end-to-end authentication story and w
 
 > **Tip:** Keep secrets (API keys, connection strings) outside source control. Prefer user-secrets for local development and a managed vault for production environments.
 
-## 5. Authentication Modes
+## 6. Authentication Modes
 
 Croniq keeps authentication pluggable so you can start with a single API key and grow into bearer tokens without touching application code. Pick the mode that matches your caller profile, then set the corresponding configuration keys.
 
@@ -187,7 +226,7 @@ See [docs/deep-dive/password-auth.md](../deep-dive/password-auth.md) for the ful
 - Map scopes to REST permissions (e.g., `schedules:write`, `jobs:trigger`, `api-keys:manage`). When callers lack a scope, Croniq returns `403 insufficient-scope`.
 - For a deeper walkthrough (including sample IdP setups), jump to [`guides/auth.md`](../guides/auth.md) or the security deep dive.
 
-## 6. Sample Local Setup
+## 7. Sample Local Setup
 
 ```cmd
 set Croniq__Auth__Mode=InMemory
@@ -205,7 +244,7 @@ $Env:Croniq__Persistence__Mode = "SqlServer"
 $Env:Croniq__SqlServer__ConnectionString = "Server=localhost;Database=Croniq;User Id=sa;Password=Secret123!"
 ```
 
-## 7. Programmatic Overrides
+## 8. Programmatic Overrides
 
 When you need per-tenant or per-cluster customization, hook into the options pipeline instead of inventing new configuration entry points:
 
@@ -229,7 +268,7 @@ builder.Services.PostConfigure<CroniqPersistenceOptions>(options =>
 
 Only override the values you truly need—everything else continues to flow from configuration files or environment variables.
 
-## 8. Troubleshooting
+## 9. Troubleshooting
 
 - **Missing connection string:** When either `Auth.Mode` or `Persistence.Mode` is `SqlServer`, the extension throws if it cannot find a connection string on the domain-specific section or the shared `Croniq__SqlServer__ConnectionString` key.
 - **Missing API key:** When `Auth.Mode = InMemory`, you must provide `Croniq__Auth__InMemory__ApiKey`. Otherwise startup throws `InvalidOperationException`.
@@ -238,7 +277,7 @@ Only override the values you truly need—everything else continues to flow from
 
 Need a bigger checklist? Jump to [`troubleshooting.md`](../ops/troubleshooting.md) for Docker/dev-stack, observability, and CLI-specific fixes.
 
-## 9. Next Steps
+## 10. Next Steps
 
 - Return to the [Quickstart](./quickstart.md) to continue the walkthrough.
 - Consult `docs/deep-dive/job-registration.md` (upcoming) for the in-depth view on how the runtime persists job metadata during startup.
