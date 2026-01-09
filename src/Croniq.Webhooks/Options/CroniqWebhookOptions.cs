@@ -114,4 +114,6 @@ public sealed class WebhookRemoteOptions
     public int ReconnectDelaySeconds { get; set; } = 5;
 
     public bool EnableRelay { get; set; } = true;
+
+    public bool AllowInvalidServerCertificate { get; set; }
 }

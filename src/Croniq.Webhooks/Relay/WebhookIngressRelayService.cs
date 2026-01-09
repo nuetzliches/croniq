@@ -70,6 +70,11 @@ internal sealed class WebhookIngressRelayService : BackgroundService
         var reconnectDelay = TimeSpan.FromSeconds(Math.Max(1, remote.ReconnectDelaySeconds));
         var fallbackMode = remote.StreamFallback;
 
+        if (remote.AllowInvalidServerCertificate)
+        {
+            _logger.LogWarning("Webhook ingress relay is configured to skip TLS certificate validation; use only in trusted environments.");
+        }
+
         if (remote.StreamMode == WebhookIngressStreamMode.Grpc || fallbackMode == WebhookIngressStreamMode.Grpc)
         {
             AppContext.SetSwitch("System.Net.Http.SocketsHttpHandler.Http2UnencryptedSupport", true);
@@ -142,7 +147,7 @@ internal sealed class WebhookIngressRelayService : BackgroundService
             return;
         }
 
-        using var httpClient = BuildGrpcHttpClient(endpoint, apiKey, remote.TimeoutSeconds);
+        using var httpClient = BuildGrpcHttpClient(endpoint, apiKey, remote.TimeoutSeconds, remote.AllowInvalidServerCertificate);
         using var channel = GrpcChannel.ForAddress(endpoint, new GrpcChannelOptions { HttpClient = httpClient });
         var client = new WebhookIngress.WebhookIngressClient(channel);
 
@@ -256,8 +261,8 @@ internal sealed class WebhookIngressRelayService : BackgroundService
         var maxInflight = NormalizeMaxInflight(remote.MaxInflight);
         var consumerId = ResolveConsumerId();
 
-        using var streamClient = BuildHttpClient(endpoint, apiKey, Timeout.InfiniteTimeSpan);
-        using var controlClient = BuildHttpClient(endpoint, apiKey, TimeSpan.FromSeconds(Math.Max(1, remote.TimeoutSeconds)));
+        using var streamClient = BuildHttpClient(endpoint, apiKey, Timeout.InfiniteTimeSpan, remote.AllowInvalidServerCertificate);
+        using var controlClient = BuildHttpClient(endpoint, apiKey, TimeSpan.FromSeconds(Math.Max(1, remote.TimeoutSeconds)), remote.AllowInvalidServerCertificate);
 
         var streamUrl = BuildIngressUrl("stream", scope, new Dictionary<string, string>
         {
@@ -324,7 +329,7 @@ internal sealed class WebhookIngressRelayService : BackgroundService
         var consumerId = ResolveConsumerId();
         var pollWaitMs = Math.Clamp((remote.TimeoutSeconds * 1000) - 1000, 0, PollWaitMaxMs);
 
-        using var httpClient = BuildHttpClient(endpoint, apiKey, TimeSpan.FromSeconds(Math.Max(1, remote.TimeoutSeconds)));
+        using var httpClient = BuildHttpClient(endpoint, apiKey, TimeSpan.FromSeconds(Math.Max(1, remote.TimeoutSeconds)), remote.AllowInvalidServerCertificate);
 
         _logger.LogInformation(
             "Webhook ingress relay polling {Endpoint} for {Tenant}/{Environment} (max inflight {MaxInflight}, mode {Mode}).",
@@ -856,9 +861,10 @@ internal sealed class WebhookIngressRelayService : BackgroundService
             _logger.LogWarning(ex, "Failed to persist execution completion for {ExecutionId}", executionId);
         }
     }
-    private static HttpClient BuildGrpcHttpClient(Uri endpoint, string apiKey, int timeoutSeconds)
+    private static HttpClient BuildGrpcHttpClient(Uri endpoint, string apiKey, int timeoutSeconds, bool allowInvalidServerCertificate)
     {
-        var client = new HttpClient
+        var handler = BuildHttpClientHandler(allowInvalidServerCertificate);
+        var client = new HttpClient(handler)
         {
             BaseAddress = endpoint,
             Timeout = TimeSpan.FromSeconds(Math.Max(1, timeoutSeconds))
@@ -870,9 +876,10 @@ internal sealed class WebhookIngressRelayService : BackgroundService
         return client;
     }
 
-    private static HttpClient BuildHttpClient(Uri endpoint, string apiKey, TimeSpan timeout)
+    private static HttpClient BuildHttpClient(Uri endpoint, string apiKey, TimeSpan timeout, bool allowInvalidServerCertificate)
     {
-        var client = new HttpClient
+        var handler = BuildHttpClientHandler(allowInvalidServerCertificate);
+        var client = new HttpClient(handler)
         {
             BaseAddress = endpoint,
             Timeout = timeout
@@ -882,6 +889,17 @@ internal sealed class WebhookIngressRelayService : BackgroundService
         client.DefaultVersionPolicy = HttpVersionPolicy.RequestVersionOrLower;
         client.DefaultRequestHeaders.Add("X-Croniq-Key", apiKey);
         return client;
+    }
+
+    private static HttpClientHandler BuildHttpClientHandler(bool allowInvalidServerCertificate)
+    {
+        var handler = new HttpClientHandler();
+        if (allowInvalidServerCertificate)
+        {
+            handler.ServerCertificateCustomValidationCallback = HttpClientHandler.DangerousAcceptAnyServerCertificateValidator;
+        }
+
+        return handler;
     }
 
     private static int NormalizeMaxInflight(int maxInflight)
