@@ -139,10 +139,15 @@ public class WebhookEndpointResolverTests
 
         var service = CreateCacheInvalidationService(resolver, options, changefeed);
 
-        using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(200));
-        await service.StartAsync(cts.Token);
-        await Task.Delay(50, cts.Token);
-        await service.StopAsync(CancellationToken.None);
+        await service.StartAsync(CancellationToken.None);
+        try
+        {
+            await WaitForCacheEvictionAsync(cache, cacheKey, TimeSpan.FromSeconds(2));
+        }
+        finally
+        {
+            await service.StopAsync(CancellationToken.None);
+        }
 
         cache.TryGetValue(cacheKey, out _).ShouldBeFalse();
     }
@@ -183,6 +188,22 @@ public class WebhookEndpointResolverTests
         var buildKey = typeof(WebhookHostingExtensions)
             .GetMethod("BuildEndpointCacheKey", BindingFlags.Static | BindingFlags.NonPublic)!;
         return (string)buildKey.Invoke(null, new object[] { scope, hookKey })!;
+    }
+
+    private static async Task WaitForCacheEvictionAsync(IMemoryCache cache, string cacheKey, TimeSpan timeout)
+    {
+        var deadline = DateTimeOffset.UtcNow.Add(timeout);
+        while (DateTimeOffset.UtcNow < deadline)
+        {
+            if (!cache.TryGetValue(cacheKey, out _))
+            {
+                return;
+            }
+
+            await Task.Delay(10).ConfigureAwait(false);
+        }
+
+        throw new TimeoutException($"Cache entry '{cacheKey}' was not invalidated within {timeout.TotalSeconds:F1}s.");
     }
 
     private static BackgroundService CreateCacheInvalidationService(
