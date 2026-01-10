@@ -35,7 +35,6 @@
   - [x] CI-License-Scan (Syft + Allowlist + nightly/release gating) hinzugefügen und in docs/deep-dive/supplychain.md beschreiben (2025-12-12)
 - [ ] (blocked bis Repo public) Docs Streams aufsetzen (docs root, docs/deep-dive) inkl. Quickstart & Mermaid policy – Plan siehe `docs/deep-dive/docstreams.md`
 - [ ] (deferred – wartet auf expliziten Stakeholder-Request) Kubernetes Chart (charts/croniq) als Backlog-Platzhalter vorbereiten – Plan siehe `docs/deep-dive/kubernetes.md`
-- [ ] (deferred) Workflow-Ausführungen an Execution-Logging anbinden (ExecutionKind/WorkflowId nutzen; eigenes Interface/Adapter bei Workflow-Feature einziehen)
 - [x] CI/CD Validation Backlog abschließen (`docs/deep-dive/ci.md`): `ci-pr.yml`, reusable Scripts, Coverage-Kommentar, automatisches Staging-Deploy sowie Toolchain-Pinning + Secrets-Runbook sind stand 2025-12-10 umgesetzt.
 - [x] Policy-Dokumentation & Observability vervollständigen (`docs/deep-dive/policies.md`): Konfigurationsbeispiele dokumentieren sowie Dashboards/Alerts gemäß Observability-Plan verdrahten.
 - [x] Security/Bearer-Basis liefern (`docs/deep-dive/security.md`): Bearer-Token-Validierung + Dual-Auth-Middleware, CallerContext + RateLimiter-Partitionierung, gRPC-Interceptor, Admin-APIs, Doku und Regressionstests implementieren.
@@ -133,7 +132,6 @@
 - Hinweis (2025-12-26): Es gibt aktuell keine externen Konsumenten. Änderungen/Umbenennungen können ohne Legacy-Bridges/Abwärtskompatibilität durchgeführt werden (Breaking Changes sind ok).
 
 - [x] Können wir die Konfiguration des `otelBuilder` in `samples\Croniq.Sample.WorkerHost\Program.cs` so vereinfachen wie in `samples\Croniq.Sample.ApiHost\Program.cs`?
-- [x] `src\Croniq.Core\Execution\IJobExecutionPipeline.cs` Naming-Check abgeschlossen: Für das aktuelle Scope bleibt das Interface job-spezifisch; Workflows würden ein eigenes Interface (`IWorkflowExecutionPipeline`) oder einen generischen `IExecutionPipeline` erhalten, sobald das Feature gestartet wird. Kein sofortiger Umbau nötig.
 - [x] Route `/me` in `/profile` umbenennen? (Entscheidung: nein. `/me` bleibt bestehen, da bereits von Clients/Docs genutzt; Umbenennung wäre unnötiger Breaking-Change.)
 - [x] (akut) `WithDocs` wird in Swagger nicht angezeigt: sicherstellen, dass OpenAPI Summary/Description im UI sichtbar sind (z.B. via `WithOpenApi(...)`-Integration bzw. korrigierte Fallback-Strategie).
 - [x] Username/Passwort Login für BearerTokens: Konzept + Implementierung (Tenant-Isolation, Scopes, RateLimits, Lockout, Refresh-Token-Rotation)

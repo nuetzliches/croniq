@@ -1,6 +1,6 @@
 # Croniq Workflow Concept
 
-_Last updated: 2025-12-15_
+_Last updated: 2026-01-10_
 
 ## Objectives
 
@@ -77,6 +77,20 @@ _Last updated: 2025-12-15_
 - **Parallel Branches**: support multiple active states by relaxing single-state constraint per instance.
 - **UI/Visualization**: once UI work resumes, render workflow graphs and live statuses.
 - **SDK Helpers**: typed clients that issue transition commands with optimistic concurrency tokens.
+
+## Decisions & Notes
+
+- [x] Keep `IJobExecutionPipeline` job-specific for now; introduce `IWorkflowExecutionPipeline` or a generic `IExecutionPipeline` once the workflow feature starts.
+
+## Execution Logging Integration (Deferred)
+
+- [ ] Wire workflow executions into `IExecutionLogStore` with `ExecutionKind.Workflow` and `WorkflowId`; add a workflow-specific adapter/interface when the workflow feature ships.
+- [ ] Ensure workflow execution scopes include `croniq.execution_id` (and `croniq.workflow_id` if added) so `ExecutionLogSinkProvider` persists entries.
+- [ ] Decide how a workflow execution maps to job executions (single `ExecutionId` across the workflow vs per-step execution ids).
+- [ ] Clarify how to populate `ExecutionRecord.JobKey` for workflow executions (use workflow key, current job key, or add a dedicated field).
+- [ ] Extend execution list/detail APIs and UI contracts to expose and filter by `WorkflowId` when workflows are introduced.
+
+Current status: the file-based execution log store already uses `ExecutionKind.Workflow` and `WorkflowId` in its path layout, but no workflow runtime is wiring it yet.
 
 ## Open Questions
 
