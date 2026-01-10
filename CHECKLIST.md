@@ -33,7 +33,6 @@
   - [x] Croniq.Sdk.Tests auf Shouldly portiert und FluentAssertions-Paket entfernt
   - [x] Restliche Testprojekte iterativ migrieren (Croniq.Api.Smoke, Providers.Default, JobStore.InMemory, Observability, Persistence.SqlServer, Api.Tests, Core – abgeschlossen 2025-12-12)
   - [x] CI-License-Scan (Syft + Allowlist + nightly/release gating) hinzugefügen und in docs/deep-dive/supplychain.md beschreiben (2025-12-12)
-- [ ] (blocked bis Repo public) Docs Streams aufsetzen (docs root, docs/deep-dive) inkl. Quickstart & Mermaid policy – Plan siehe `docs/deep-dive/docstreams.md`
 - [ ] (deferred – wartet auf expliziten Stakeholder-Request) Kubernetes Chart (charts/croniq) als Backlog-Platzhalter vorbereiten – Plan siehe `docs/deep-dive/kubernetes.md`
 - [x] CI/CD Validation Backlog abschließen (`docs/deep-dive/ci.md`): `ci-pr.yml`, reusable Scripts, Coverage-Kommentar, automatisches Staging-Deploy sowie Toolchain-Pinning + Secrets-Runbook sind stand 2025-12-10 umgesetzt.
 - [x] Policy-Dokumentation & Observability vervollständigen (`docs/deep-dive/policies.md`): Konfigurationsbeispiele dokumentieren sowie Dashboards/Alerts gemäß Observability-Plan verdrahten.
@@ -42,7 +41,6 @@
 - [x] gRPC-Clients/Samples: Neben `Croniq.Rpc.Client` (.NET) schlanke gRPC-Client-Samples/SDK-Snippets für Python, Go, Node (nur Proto + Auth/Metadata Helpers) bereitstellen; kein WorkerHost nötig; Java nur bei Bedarf.
 - [x] gRPC Observability & CI: gRPC-Routen mit OTel/Activity-Tags (Tenant/Environment/Job/Trigger) versehen; Sample-Syntax/Build-Checks via `eng/validate-grpc-samples.ps1` in CI (`ci-pr.yml`) verdrahtet.
 - [ ] (deferred – vNext) gRPC Client Packages (non-.NET): Pro Sprache ein leichtes Paket inkl. generierter Stubs + kleinem Helper bereitstellen und dokumentieren (Python/PyPI, Go/Go module, Node/NPM); Samples referenzieren diese Pakete statt lokaler Stubs.
-- [ ] (deferred – vNext) gRPC Docs ausbauen: Sprachspezifische Abschnitte (Python/Go/Node, optional Java) mit Paketnamen, Installation, Auth/Metadata-Helpers und Minimalbeispielen ergänzen.
 - [x] Webhook-Trigger (Croniq.Webhooks Projekt) planen, host implementieren und in `docs/deep-dive/architecture.md` verankern (inkl. CRUD-API + persistente Hooks)
 - [x] Job-Log-Persistenz (Plan siehe `docs/deep-dive/designs/job-log-persistence.md`)
   - [x] ExecutionId/Correlation im Scheduler-Pipeline-Scope propagieren; `ExecutionLogSink` + opt-in (`IExecutionLogStore`/`IExecutionLogReader`/Exporter) anlegen
@@ -102,6 +100,12 @@
 - [x] `CONTRIBUTING.md` aktualisieren (veraltete Inhalte z.B. `Consumer docs` -> `Croniq docs`) – Stand 2025-12-10 mit Docstreams-Hinweisen synchronisiert
 - [x] Signaturen für Webhooks per Opt-Out deaktivierbar machen (env, config, fluent)?
 - [x] Suche nach `- [ ]` und prüfe, was wir noch zu erledigen haben bzw. ob es veraltete Tasks sind (2025-12-10). Ergebnis siehe Abschnitt "Outstanding Backlog".
+
+Docs checklist moved to `CHECKLIST-DOCS.md`.
+
+- [ ] `infra/docker/docker-compose.production.yml` Defaults hardenen: Auth-Mode nicht InMemory+smoke-key, Admin-Seeding nicht admin/admin, SQL-Conn nicht Encrypt=False/TrustServerCertificate=True, ExposeSchemas default false.
+- [ ] `infra/docker/docker-compose.production.yml` MSSQL_PID Default "Developer" fuer Production vermeiden (expliziten Wert erzwingen oder klar dokumentieren).
+- [ ] `src/Croniq.Core/Scheduling/CronExpression.cs` TODO zur schlechten Performance adressieren oder dokumentieren.
 
 ## Zwischenstand 2025-12-09
 
