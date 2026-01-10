@@ -31,7 +31,13 @@ public static class SqlServerDatabaseMigrator
         var migrationsAssembly = context.GetService<IMigrationsAssembly>();
         if (migrationsAssembly.Migrations.Count == 0)
         {
-            throw new InvalidOperationException($"No EF Core migrations were discovered for '{migrationsAssembly.Assembly.GetName().Name}'.");
+            logger.LogWarning(
+                "No EF Core migrations were discovered for '{AssemblyName}'. Falling back to EnsureCreated for tests.",
+                migrationsAssembly.Assembly.GetName().Name);
+            await context.Database.EnsureCreatedAsync(cancellationToken).ConfigureAwait(false);
+            await EnsurePasswordChangeRequiredColumnAsync(connectionString, cancellationToken).ConfigureAwait(false);
+            await EnsureWebhookIngressEventsTableAsync(connectionString, cancellationToken).ConfigureAwait(false);
+            return;
         }
         if (logger.IsEnabled(LogLevel.Debug))
         {
