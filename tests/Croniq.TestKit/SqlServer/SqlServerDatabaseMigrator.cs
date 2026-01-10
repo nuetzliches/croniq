@@ -1,5 +1,9 @@
 using System;
+using System.Collections.Generic;
+using System.IO;
 using System.Linq;
+using System.Reflection;
+using System.Runtime.Loader;
 using System.Threading;
 using System.Threading.Tasks;
 using Croniq.Data.SqlServer;
@@ -31,6 +35,7 @@ public static class SqlServerDatabaseMigrator
         var migrationsAssembly = context.GetService<IMigrationsAssembly>();
         if (migrationsAssembly.Migrations.Count == 0)
         {
+            LogMigrationDiagnostics(logger, context, migrationsAssembly, connectionString);
             logger.LogWarning(
                 "No EF Core migrations were discovered for '{AssemblyName}'. Falling back to EnsureCreated for tests.",
                 migrationsAssembly.Assembly.GetName().Name);
@@ -223,5 +228,128 @@ public static class SqlServerDatabaseMigrator
         });
 
         return services.BuildServiceProvider();
+    }
+
+    private static void LogMigrationDiagnostics(
+        ILogger logger,
+        SqlServerDbContext context,
+        IMigrationsAssembly migrationsAssembly,
+        string connectionString)
+    {
+        var contextAssembly = context.GetType().Assembly;
+        var migrationsAsm = migrationsAssembly.Assembly;
+        var contextLocation = SafeAssemblyLocation(contextAssembly);
+        var migrationsLocation = SafeAssemblyLocation(migrationsAsm);
+
+        logger.LogWarning(
+            "Migration diagnostics: ContextAssembly={ContextAssembly} Location={ContextLocation} LoadContext={ContextLoadContext}",
+            contextAssembly.FullName,
+            contextLocation,
+            DescribeLoadContext(contextAssembly));
+        logger.LogWarning(
+            "Migration diagnostics: MigrationsAssembly={MigrationsAssembly} Location={MigrationsLocation} LoadContext={MigrationsLoadContext} LocationExists={LocationExists}",
+            migrationsAsm.FullName,
+            migrationsLocation,
+            DescribeLoadContext(migrationsAsm),
+            File.Exists(migrationsLocation));
+        logger.LogWarning(
+            "Migration diagnostics: ProviderName={ProviderName} BaseDirectory={BaseDirectory} CurrentDirectory={CurrentDirectory}",
+            context.Database.ProviderName ?? "<unknown>",
+            AppContext.BaseDirectory,
+            Environment.CurrentDirectory);
+        logger.LogWarning(
+            "Migration diagnostics: OptionsMigrationsAssembly={OptionsMigrationsAssembly}",
+            ResolveMigrationsAssemblyOption(context) ?? "<not-configured>");
+        logger.LogWarning(
+            "Migration diagnostics: Connection={ConnectionSummary}",
+            DescribeConnection(connectionString));
+
+        var migrationTypes = GetMigrationTypeNames(migrationsAsm, context.GetType(), logger);
+        logger.LogWarning(
+            "Migration diagnostics: MigrationTypeCount={MigrationTypeCount} Types={MigrationTypes}",
+            migrationTypes.Count,
+            migrationTypes.Count == 0 ? "<none>" : string.Join(", ", migrationTypes));
+
+        var loadedCroniqAssemblies = AppDomain.CurrentDomain.GetAssemblies()
+            .Where(assembly => assembly.GetName().Name?.StartsWith("Croniq", StringComparison.OrdinalIgnoreCase) == true)
+            .Select(assembly => $"{assembly.GetName().Name} ({SafeAssemblyLocation(assembly)})")
+            .OrderBy(name => name, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        logger.LogWarning(
+            "Migration diagnostics: LoadedCroniqAssemblies={Assemblies}",
+            loadedCroniqAssemblies.Length == 0 ? "<none>" : string.Join(", ", loadedCroniqAssemblies));
+    }
+
+    private static string SafeAssemblyLocation(Assembly assembly)
+    {
+        try
+        {
+            return string.IsNullOrWhiteSpace(assembly.Location) ? "<none>" : assembly.Location;
+        }
+        catch (NotSupportedException)
+        {
+            return "<dynamic>";
+        }
+    }
+
+    private static string DescribeLoadContext(Assembly assembly)
+    {
+        return AssemblyLoadContext.GetLoadContext(assembly)?.Name ?? "<default>";
+    }
+
+    private static string? ResolveMigrationsAssemblyOption(DbContext context)
+    {
+        var options = context.GetService<IDbContextOptions>();
+        var extension = options.Extensions.FirstOrDefault(ext =>
+            ext.GetType().Name.Contains("RelationalOptionsExtension", StringComparison.OrdinalIgnoreCase));
+        if (extension is null)
+        {
+            return null;
+        }
+
+        var property = extension.GetType().GetProperty("MigrationsAssembly", BindingFlags.Instance | BindingFlags.Public);
+        return property?.GetValue(extension) as string;
+    }
+
+    private static IReadOnlyList<string> GetMigrationTypeNames(Assembly assembly, Type contextType, ILogger logger)
+    {
+        try
+        {
+            return assembly
+                .GetTypes()
+                .Where(type => typeof(Migration).IsAssignableFrom(type) && !type.IsAbstract)
+                .Select(type =>
+                {
+                    var hasContext = type
+                        .GetCustomAttributes<DbContextAttribute>()
+                        .Any(attribute => attribute.ContextType == contextType);
+                    return $"{type.FullName}{(hasContext ? " [context]" : " [no-context]")}";
+                })
+                .OrderBy(name => name, StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+        }
+        catch (ReflectionTypeLoadException ex)
+        {
+            logger.LogWarning(ex, "Migration diagnostics: Failed to load migration types from {AssemblyName}.", assembly.FullName);
+            foreach (var loaderException in ex.LoaderExceptions ?? Array.Empty<Exception>())
+            {
+                logger.LogWarning(loaderException, "Migration diagnostics: Loader exception.");
+            }
+
+            return Array.Empty<string>();
+        }
+    }
+
+    private static string DescribeConnection(string connectionString)
+    {
+        try
+        {
+            var builder = new SqlConnectionStringBuilder(connectionString);
+            return $"DataSource={builder.DataSource};InitialCatalog={builder.InitialCatalog}";
+        }
+        catch (ArgumentException)
+        {
+            return "<unavailable>";
+        }
     }
 }
