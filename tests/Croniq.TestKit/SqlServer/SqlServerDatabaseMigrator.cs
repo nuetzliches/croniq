@@ -212,10 +212,8 @@ public static class SqlServerDatabaseMigrator
         // and fail with "There is already an object named ...".
         services.AddDbContext<SqlServerDbContext>(options =>
         {
-            options.UseSqlServer(builder.ConnectionString, sql =>
-            {
-                sql.MigrationsAssembly(typeof(SqlServerDbContext).Assembly.GetName().Name);
-            });
+            // Let EF Core use the DbContext's assembly for migrations to avoid test ALC mismatches.
+            options.UseSqlServer(builder.ConnectionString);
         });
 
         return services.BuildServiceProvider();
