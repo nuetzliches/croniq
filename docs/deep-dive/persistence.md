@@ -116,6 +116,8 @@ tools/Croniq.DbMigrator/
    dotnet ef migrations add <Name> --project src/Croniq.Data.SqlServer --startup-project tools/Croniq.DbMigrator --output-dir Migrations
    ```
 
+   Make sure the generated migration files are checked in, including the `*.Designer.cs` files and `SqlServerDbContextModelSnapshot.cs`. EF Core uses the designer attributes to discover migrations, and missing designer files will surface as "No EF Core migrations were discovered" in CI.
+
 3. **Apply locally** via the migrator:
 
    ```cmd
