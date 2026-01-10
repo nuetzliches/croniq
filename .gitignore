@@ -49,6 +49,7 @@ TestResult.xml
 *.g.*
 *.g.cs
 *.Designer.cs
+!src/**/Migrations/*.Designer.cs
 *.generated.cs
 *.AssemblyAttributes.cs
 *_i.c
