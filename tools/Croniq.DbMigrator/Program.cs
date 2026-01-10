@@ -1,3 +1,4 @@
+using Croniq.Core;
 using Croniq.Data.SqlServer;
 using Croniq.Auth.Abstractions;
 using Croniq.Auth.SqlServer;
@@ -7,6 +8,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.AspNetCore.Identity;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using System.Globalization;
@@ -23,8 +25,29 @@ if (string.IsNullOrWhiteSpace(connectionString))
 using var cancellation = new CancellationTokenSource(TimeSpan.FromMinutes(10));
 var token = cancellation.Token;
 
+var configuration = new ConfigurationBuilder()
+    .AddEnvironmentVariables()
+    .Build();
+
 var services = new ServiceCollection();
-services.AddLogging(builder => builder.AddSimpleConsole());
+var loggingBuilder = services.AddLogging();
+services.AddCroniqObservability(configuration, loggingBuilder, "Croniq.DbMigrator", options =>
+{
+    if (string.IsNullOrWhiteSpace(configuration["Croniq:Observability:ConsoleLogFormat"]))
+    {
+        options.ConsoleLogFormat = "text";
+    }
+
+    if (string.IsNullOrWhiteSpace(configuration["Croniq:Observability:EnableTracing"]))
+    {
+        options.EnableTracing = false;
+    }
+
+    if (string.IsNullOrWhiteSpace(configuration["Croniq:Observability:EnableMetrics"]))
+    {
+        options.EnableMetrics = false;
+    }
+});
 services.AddCroniqSqlServerDbContext(options =>
 {
     options.ConnectionString = connectionString;
