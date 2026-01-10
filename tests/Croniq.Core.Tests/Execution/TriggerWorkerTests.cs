@@ -183,7 +183,12 @@ public class TriggerWorkerTests
             LeaseExpiresAtUtc = DateTimeOffset.UtcNow.AddMilliseconds(80)
         };
         var store = new FakeJobStore(new[] { lease });
-        store.RenewHandler = request => request.Lease with { LeaseExpiresAtUtc = request.NowUtc.AddSeconds(5) };
+        var renewalSignal = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        store.RenewHandler = request =>
+        {
+            renewalSignal.TrySetResult(true);
+            return request.Lease with { LeaseExpiresAtUtc = request.NowUtc.AddSeconds(5) };
+        };
 
         var registry = Substitute.For<IJobRegistry>();
         registry.TryGet(SampleJobKey, out Arg.Any<JobDescriptor>()).Returns(ci =>
@@ -192,7 +197,7 @@ public class TriggerWorkerTests
             return true;
         });
 
-        var pipeline = new DelayedPipeline(TimeSpan.FromMilliseconds(500));
+        var pipeline = new RenewalGatePipeline(renewalSignal.Task, TimeSpan.FromSeconds(2));
         var worker = CreateWorker(
             store,
             registry,
@@ -203,6 +208,7 @@ public class TriggerWorkerTests
 
         processed.ShouldBe(1);
         pipeline.Executions.ShouldBe(1);
+        renewalSignal.Task.IsCompletedSuccessfully.ShouldBeTrue();
         store.RenewRequests.Count.ShouldBeGreaterThan(0);
         store.Releases.ShouldHaveSingleItem();
         store.Releases[0].Succeeded.ShouldBeTrue();
@@ -216,7 +222,12 @@ public class TriggerWorkerTests
             LeaseExpiresAtUtc = DateTimeOffset.UtcNow.AddMilliseconds(80)
         };
         var store = new FakeJobStore(new[] { lease });
-        store.RenewHandler = request => request.Lease with { LeaseExpiresAtUtc = request.NowUtc.AddSeconds(5) };
+        var renewalSignal = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        store.RenewHandler = request =>
+        {
+            renewalSignal.TrySetResult(true);
+            return request.Lease with { LeaseExpiresAtUtc = request.NowUtc.AddSeconds(5) };
+        };
         var workItemStore = Substitute.For<IWorkItemStore>();
         workItemStore.UpsertAssignmentAsync(Arg.Any<WorkAssignment>(), Arg.Any<CancellationToken>())
             .Returns(Task.CompletedTask);
@@ -232,7 +243,7 @@ public class TriggerWorkerTests
             return true;
         });
 
-        var pipeline = new DelayedPipeline(TimeSpan.FromMilliseconds(500));
+        var pipeline = new RenewalGatePipeline(renewalSignal.Task, TimeSpan.FromSeconds(2));
         var worker = CreateWorker(
             store,
             registry,
@@ -243,6 +254,7 @@ public class TriggerWorkerTests
         var processed = await worker.ProcessBatchAsync(DateTimeOffset.UtcNow, batchSize: 1, CancellationToken.None);
 
         processed.ShouldBe(1);
+        renewalSignal.Task.IsCompletedSuccessfully.ShouldBeTrue();
         await workItemStore.Received().TryRenewAsync(
             Arg.Is<WorkLeaseRenewal>(r => r.LeaseId == lease.LeaseId && r.RunnerId == "test"),
             Arg.Any<CancellationToken>());
@@ -256,7 +268,12 @@ public class TriggerWorkerTests
             LeaseExpiresAtUtc = DateTimeOffset.UtcNow.AddMilliseconds(150)
         };
         var store = new FakeJobStore(new[] { lease });
-        store.RenewHandler = _ => null;
+        var renewalSignal = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        store.RenewHandler = _ =>
+        {
+            renewalSignal.TrySetResult(true);
+            return null;
+        };
         var jobLogStore = Substitute.For<IExecutionLogStore>();
 
         var registry = Substitute.For<IJobRegistry>();
@@ -266,7 +283,7 @@ public class TriggerWorkerTests
             return true;
         });
 
-        var pipeline = new DelayedPipeline(TimeSpan.FromMilliseconds(500));
+        var pipeline = new RenewalGatePipeline(renewalSignal.Task, TimeSpan.FromSeconds(2));
         var worker = CreateWorker(
             store,
             registry,
@@ -277,6 +294,7 @@ public class TriggerWorkerTests
         var processed = await worker.ProcessBatchAsync(DateTimeOffset.UtcNow, batchSize: 1, CancellationToken.None);
 
         processed.ShouldBe(0);
+        renewalSignal.Task.IsCompletedSuccessfully.ShouldBeTrue();
         store.RenewRequests.Count.ShouldBeGreaterThan(0);
         store.Releases.ShouldBeEmpty();
         store.DeadLetters.ShouldBeEmpty();
@@ -509,6 +527,35 @@ public class TriggerWorkerTests
         {
             Executions++;
             return Task.Delay(_delay, cancellationToken);
+        }
+    }
+
+    private sealed class RenewalGatePipeline : IJobExecutionPipeline
+    {
+        private readonly Task _gate;
+        private readonly TimeSpan _timeout;
+
+        public RenewalGatePipeline(Task gate, TimeSpan timeout)
+        {
+            _gate = gate;
+            _timeout = timeout;
+        }
+
+        public int Executions { get; private set; }
+
+        public async Task ExecuteAsync(JobExecutionRequest request, CancellationToken cancellationToken)
+        {
+            Executions++;
+            using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            timeoutCts.CancelAfter(_timeout);
+            try
+            {
+                await _gate.WaitAsync(timeoutCts.Token).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                // Expected when the renewal gate times out or the job is canceled.
+            }
         }
     }
 
