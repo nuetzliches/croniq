@@ -42,6 +42,8 @@ public static class CroniqObservabilityExtensions
         var protocol = ParseProtocol(options.OtlpProtocol);
         var otlpEndpoint = options.OtlpEndpoint;
 
+        ApplyMinimumLevelOverrides(loggingBuilder, options);
+
         if (options.EnableHttp2UnencryptedSupport && protocol == OtlpExportProtocol.Grpc && IsHttpEndpoint(otlpEndpoint))
         {
             AppContext.SetSwitch("System.Net.Http.SocketsHttpHandler.Http2UnencryptedSupport", true);
@@ -130,6 +132,28 @@ public static class CroniqObservabilityExtensions
         Ensure(overrides, "Microsoft.Hosting.Lifetime", Serilog.Events.LogEventLevel.Warning);
         Ensure(overrides, "Microsoft.AspNetCore.Hosting.Diagnostics", Serilog.Events.LogEventLevel.Warning);
         Ensure(overrides, "Microsoft.AspNetCore.Mvc.Infrastructure.DefaultActionDescriptorCollectionProvider", Serilog.Events.LogEventLevel.Warning);
+    }
+
+    private static void ApplyMinimumLevelOverrides(ILoggingBuilder loggingBuilder, CroniqObservabilityOptions options)
+    {
+        foreach (var overridePair in options.MinimumLevelOverrides)
+        {
+            loggingBuilder.AddFilter(overridePair.Key, MapLogLevel(overridePair.Value));
+        }
+    }
+
+    private static LogLevel MapLogLevel(Serilog.Events.LogEventLevel level)
+    {
+        return level switch
+        {
+            Serilog.Events.LogEventLevel.Verbose => LogLevel.Trace,
+            Serilog.Events.LogEventLevel.Debug => LogLevel.Debug,
+            Serilog.Events.LogEventLevel.Information => LogLevel.Information,
+            Serilog.Events.LogEventLevel.Warning => LogLevel.Warning,
+            Serilog.Events.LogEventLevel.Error => LogLevel.Error,
+            Serilog.Events.LogEventLevel.Fatal => LogLevel.Critical,
+            _ => LogLevel.Information
+        };
     }
 
     private static IReadOnlyList<KeyValuePair<string, object>> BuildResourceAttributes(CroniqObservabilityOptions options)
