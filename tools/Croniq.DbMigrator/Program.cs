@@ -10,6 +10,7 @@ using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using System.Globalization;
 using System.Linq;
@@ -25,13 +26,12 @@ if (string.IsNullOrWhiteSpace(connectionString))
 using var cancellation = new CancellationTokenSource(TimeSpan.FromMinutes(10));
 var token = cancellation.Token;
 
-var configuration = new ConfigurationBuilder()
-    .AddEnvironmentVariables()
-    .Build();
+var builder = Host.CreateApplicationBuilder();
+builder.Configuration.AddEnvironmentVariables();
 
-var services = new ServiceCollection();
-var loggingBuilder = services.AddLogging();
-services.AddCroniqObservability(configuration, loggingBuilder, "Croniq.DbMigrator", options =>
+var configuration = builder.Configuration;
+var services = builder.Services;
+services.AddCroniqObservability(configuration, builder.Logging, "Croniq.DbMigrator", options =>
 {
     if (string.IsNullOrWhiteSpace(configuration["Croniq:Observability:ConsoleLogFormat"]))
     {
