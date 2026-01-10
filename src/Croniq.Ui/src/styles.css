@@ -63,3 +63,9 @@ body {
 button {
   font: inherit;
 }
+
+:root[data-density='compact'] table th,
+:root[data-density='compact'] table td {
+  padding-top: 0.5rem;
+  padding-bottom: 0.5rem;
+}

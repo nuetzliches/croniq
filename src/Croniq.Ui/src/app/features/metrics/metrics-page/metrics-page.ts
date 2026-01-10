@@ -4,7 +4,6 @@ import { RuntimeConfigService } from '@core/runtime-config.service';
 
 @Component({
     selector: 'cq-metrics-page',
-    standalone: true,
     template: `
     <div class="h-full flex flex-col space-y-4">
       <header class="flex items-center justify-between">

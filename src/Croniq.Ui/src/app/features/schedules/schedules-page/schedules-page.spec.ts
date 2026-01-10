@@ -42,8 +42,13 @@ describe('SchedulesPage', () => {
   beforeEach(async () => {
     await TestBed.configureTestingModule({
       imports: [SchedulesPage],
-      providers: [provideZonelessChangeDetection(), { provide: SchedulesStore, useClass: SchedulesStoreStub }],
+      providers: [provideZonelessChangeDetection()],
     })
+      .overrideComponent(SchedulesPage, {
+        set: {
+          providers: [{ provide: SchedulesStore, useClass: SchedulesStoreStub }],
+        },
+      })
       .compileComponents();
 
     fixture = TestBed.createComponent(SchedulesPage);

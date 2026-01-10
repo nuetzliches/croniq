@@ -55,6 +55,11 @@ If `CRONIQ_UI_API_BASEURL` is not set, `CRONIQ_UI_API_PORT` plus optional `CRONI
 
 Webhook capability flags (for example, unsigned webhook support) are resolved from the API capabilities endpoint and are not read from runtime config.
 
+## Preferences
+
+- UI preferences (theme, table density) are stored per tenant in IndexedDB via `UiPreferencesService`.
+- Storage supports an optional encryption hook (`UI_PREFERENCES_CIPHER`) to wrap the serialized payload.
+
 ## API Schema & Generation
 
 The UI uses runtime-safe Zod models generated from the upstream OpenAPI contract.

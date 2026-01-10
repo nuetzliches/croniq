@@ -54,7 +54,7 @@ public/
 
 - Place the Angular workspace in `src/Croniq.Ui` so it lives next to other product code and inherits the same build/versioning pipelines.
 - Use secondary entry points (libraries) to separate regulated surfaces (telemetry, auth) from visual components; this aides tree-shaking when we publish micro-frontends later.
-- Tailwind uses CSS variables for semantic colors (see `src/styles.css` + `tailwind.config.js`). If we add theme switching later, scope variables via `data-theme`.
+- Tailwind uses CSS variables for semantic colors (see `src/styles.css` + `tailwind.config.js`); theme switching is applied via `data-theme` on `:root`.
 
 ## Application Architecture
 
@@ -80,7 +80,7 @@ public/
 
 4. **State & Caching**
    - Use Signals for local ephemeral state (panel toggles, wizard steps) to avoid unnecessary RxJS complexity.
-   - Persistence of preferences (theme, density) is a future decision; document and implement it only once requirements are clear.
+   - UI preferences (theme, density) are persisted per tenant in IndexedDB; see `docs/deep-dive/ui.md` for details.
 
 ## Styling & Design Language
 

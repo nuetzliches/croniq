@@ -148,7 +148,7 @@ export class WebhooksStore {
             const request$ = this.api.listTenantWebhookDeadLetters({ tenantId, environment }, requestOptions);
 
             return request$.pipe(
-                map((response) => this.normalizeDeadLettersResponse(response, environment)),
+                map((response) => this.normalizeDeadLettersResponse(response)),
                 tap((entries) => this.deadLettersSignal.set(entries)),
                 map((entries) => entries.length),
                 catchError((error: unknown) => {
@@ -431,7 +431,7 @@ export class WebhooksStore {
             .subscribe();
     }
 
-    private normalizeDeadLettersResponse(value: unknown, fallbackEnvironment: string): ReadonlyArray<WebhookDeadLetterView> {
+    private normalizeDeadLettersResponse(value: unknown): ReadonlyArray<WebhookDeadLetterView> {
         if (!Array.isArray(value)) {
             return this.deadLettersSignal();
         }

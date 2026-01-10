@@ -1,5 +1,6 @@
-import { ChangeDetectionStrategy, Component } from '@angular/core';
+import { ChangeDetectionStrategy, Component, inject } from '@angular/core';
 import { RouterOutlet } from '@angular/router';
+import { UiPreferencesService } from '@core/preferences/ui-preferences.service';
 
 @Component({
   selector: 'cq-root',
@@ -8,4 +9,5 @@ import { RouterOutlet } from '@angular/router';
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class App {
+  private readonly _preferences = inject(UiPreferencesService);
 }

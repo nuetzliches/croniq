@@ -34,8 +34,13 @@ describe('WebhooksPage', () => {
   beforeEach(async () => {
     await TestBed.configureTestingModule({
       imports: [WebhooksPage],
-      providers: [provideZonelessChangeDetection(), { provide: WebhooksStore, useClass: WebhooksStoreStub }],
+      providers: [provideZonelessChangeDetection()],
     })
+      .overrideComponent(WebhooksPage, {
+        set: {
+          providers: [{ provide: WebhooksStore, useClass: WebhooksStoreStub }],
+        },
+      })
       .compileComponents();
 
     fixture = TestBed.createComponent(WebhooksPage);

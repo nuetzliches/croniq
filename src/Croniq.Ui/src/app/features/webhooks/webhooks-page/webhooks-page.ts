@@ -1,8 +1,8 @@
 import { ChangeDetectionStrategy, Component, inject } from '@angular/core';
 import { Dialog } from '@angular/cdk/dialog';
-import { WebhooksStore, WebhookEndpointView, WebhookCapabilitiesView } from '@features/webhooks/webhooks.store';
 import { TenantContextService } from '@core/tenant-context/tenant-context.service';
-import { WebhookDialogComponent } from '../components/webhook-dialog/webhook-dialog.component';
+import { WebhookDialogComponent } from '@features/webhooks/components/webhook-dialog/webhook-dialog.component';
+import { WebhookCapabilitiesView, WebhookEndpointView, WebhooksStore } from '@features/webhooks/webhooks.store';
 import { UpsertWebhookEndpointRequest } from '@croniq/api-schema';
 
 type WebhookDialogData = {
@@ -41,18 +41,18 @@ export class WebhooksPage {
     }
   }
 
-    openWebhookDialog(endpoint?: WebhookEndpointView): void {
-        const data: UpsertWebhookEndpointRequest | null = endpoint
-            ? {
-                hookKey: endpoint.hookKey,
-                jobKey: endpoint.jobKey,
-                enabled: endpoint.status === 'active', // Map status to enabled
-                requireSignature: endpoint.requireSignature,
-                allowUnsigned: !endpoint.requireSignature,
-                requestsPerMinute: endpoint.requestsPerMinute ?? null,
-                metadata: {}, // View doesn't have metadata, might need to fetch or ignore
-            }
-            : null;
+  openWebhookDialog(endpoint?: WebhookEndpointView): void {
+    const data: UpsertWebhookEndpointRequest | null = endpoint
+      ? {
+          hookKey: endpoint.hookKey,
+          jobKey: endpoint.jobKey,
+          enabled: endpoint.status === 'active',
+          requireSignature: endpoint.requireSignature,
+          allowUnsigned: !endpoint.requireSignature,
+          requestsPerMinute: endpoint.requestsPerMinute ?? null,
+          metadata: {},
+        }
+      : null;
 
     const ref = this.dialog.open<UpsertWebhookEndpointRequest>(WebhookDialogComponent, {
       data: this.createDialogData(data),
@@ -60,20 +60,20 @@ export class WebhooksPage {
       panelClass: 'bg-transparent',
     });
 
-        ref.closed.subscribe((result) => {
-            if (result) {
-                const tenantId = this.tenantContext.tenantId();
-                const environment = this.tenantContext.environment();
-                if (tenantId) {
-                    this.store.upsertEndpoint(
-                        {
-                            tenantId,
-                            environment,
-                        },
-                        result
-                    );
-                }
-            }
-        });
-    }
+    ref.closed.subscribe((result) => {
+      if (result) {
+        const tenantId = this.tenantContext.tenantId();
+        const environment = this.tenantContext.environment();
+        if (tenantId) {
+          this.store.upsertEndpoint(
+            {
+              tenantId,
+              environment,
+            },
+            result,
+          );
+        }
+      }
+    });
+  }
 }

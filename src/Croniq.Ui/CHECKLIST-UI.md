@@ -99,7 +99,7 @@ Derived from [docs/deep-dive/designs/angular-ui-concept.md](docs/deep-dive/desig
   - [x] schedules upsert (POST Upsert) + schedule dead-letters list/replay
   - [x] token issuance endpoints
 - [ ] Configure Angular Query caches, refetch policies, and tenant/env scoping helpers.
-- [ ] Persist non-sensitive preferences (theme, table density) per tenant using IndexedDB with optional encryption.
+- [x] Persist non-sensitive preferences (theme, table density) per tenant using IndexedDB with optional encryption. _(Implemented via `UiPreferencesService` + IndexedDB storage.)_
 
 ## Styling & Design Language
 

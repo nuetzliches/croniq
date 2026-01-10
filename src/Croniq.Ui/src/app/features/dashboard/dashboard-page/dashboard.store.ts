@@ -3,7 +3,7 @@ import { authFailureFromError } from '@core/auth/auth-failure';
 import { tenantRxResource } from '@core/resource/tenant-rx-resource';
 import { TenantContextService } from '@core/tenant-context/tenant-context.service';
 import { nowIso } from '@core/time/clock';
-import { RunnerStatusModel, ScheduleResponse } from '@croniq/api-schema';
+import { RunnerStatusModel, ScheduleDeadLetterResponse, ScheduleResponse } from '@croniq/api-schema';
 import { CRONIQ_API_CLIENT, CroniqApiClient } from 'data-access';
 import { of, catchError, map, forkJoin } from 'rxjs';
 
@@ -42,7 +42,7 @@ export class DashboardStore {
     readonly error = signal<string | null>(null);
 
     private readonly dashboardResource = tenantRxResource<
-        { schedules: ScheduleResponse[]; deadLetters: any[]; runners: RunnerStatusModel[] },
+        { schedules: ScheduleResponse[]; deadLetters: ScheduleDeadLetterResponse[]; runners: RunnerStatusModel[] },
         { tenantId: string; environment: string }
     >({
         command: 'dashboard.refresh',
@@ -65,8 +65,7 @@ export class DashboardStore {
             );
 
             const deadLetters$ = this.api.listTenantScheduleDeadLetters({ tenantId, environment }, requestOptions).pipe(
-                map(res => res as any[]),
-                catchError(() => of([] as any[]))
+                catchError(() => of<ScheduleDeadLetterResponse[]>([])),
             );
 
             const runners$ = this.api.listRunners({ tenantId, environment }, requestOptions).pipe(
@@ -79,7 +78,7 @@ export class DashboardStore {
                 deadLetters: deadLetters$,
                 runners: runners$
             }).pipe(
-                map((data: { schedules: ScheduleResponse[], deadLetters: any[], runners: RunnerStatusModel[] }) => {
+                map((data: { schedules: ScheduleResponse[]; deadLetters: ScheduleDeadLetterResponse[]; runners: RunnerStatusModel[] }) => {
                     // Normalize and update signals
                     this.updateMetrics(data.runners);
                     this.updateUpcoming(data.schedules);
@@ -164,7 +163,7 @@ export class DashboardStore {
         this.upcomingSchedulesSignal.set(upcoming);
     }
 
-    private updateFailures(deadLetters: any[]) {
+    private updateFailures(deadLetters: ScheduleDeadLetterResponse[]) {
         if (!Array.isArray(deadLetters)) {
             this.recentFailuresSignal.set([]);
             return;
@@ -174,8 +173,8 @@ export class DashboardStore {
             .map((dl, index) => ({
                 id: dl.id ?? index,
                 jobKey: dl.jobKey || dl.triggerId || 'Unknown',
-                reason: dl.detail || dl.message || 'Unknown Error',
-                time: dl.occurredAtUtc || dl.timestampUtc || nowIso()
+                reason: dl.reason || 'Unknown Error',
+                time: dl.createdAtUtc || dl.fireAtUtc || nowIso(),
             }))
             .sort((a, b) => new Date(b.time).getTime() - new Date(a.time).getTime())
             .slice(0, 5);

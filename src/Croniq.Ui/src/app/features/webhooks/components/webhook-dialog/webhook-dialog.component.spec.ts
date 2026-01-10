@@ -14,10 +14,11 @@ const dialogData = {
 describe('WebhookDialogComponent', () => {
     let component: WebhookDialogComponent;
     let fixture: ComponentFixture<WebhookDialogComponent>;
-    let dialogRefMock: { close: any };
+    type DialogRefMock = Pick<DialogRef<unknown>, 'close'>;
+    let dialogRefMock: DialogRefMock;
 
     beforeEach(async () => {
-        dialogRefMock = { close: vi.fn() };
+        dialogRefMock = { close: vi.fn() as DialogRefMock['close'] };
 
         await TestBed.configureTestingModule({
             imports: [WebhookDialogComponent],
@@ -66,7 +67,7 @@ describe('WebhookDialogComponent', () => {
             hookKey: 'test-hook',
             jobKey: 'test-job',
             secret: 'my-secret',
-            requestsPerMinute: '60' as any
+            requestsPerMinute: '60' as unknown as number
         }));
         fixture.detectChanges();
 
@@ -83,7 +84,7 @@ describe('WebhookDialogComponent', () => {
             hookKey: 'test-hook',
             jobKey: 'test-job',
             secret: 'my-secret',
-            requestsPerMinute: '' as any
+            requestsPerMinute: '' as unknown as number
         }));
         fixture.detectChanges();
 

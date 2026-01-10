@@ -559,7 +559,7 @@ function normalizeJobRegistry(
     return entries;
 }
 
-function mapExecutionStatus(status: any): string {
+function mapExecutionStatus(status: unknown): string {
     if (status === 1 || status === '1' || status === 'Success') return 'Success';
     if (status === 2 || status === '2' || status === 'Failure') return 'Failure';
     if (status === 0 || status === '0' || status === 'Pending') return 'Pending';
