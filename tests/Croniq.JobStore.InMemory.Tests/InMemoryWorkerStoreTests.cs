@@ -3,7 +3,6 @@ using System.Threading;
 using System.Threading.Tasks;
 using Croniq.JobStore.InMemory;
 using Croniq.Persistence.Abstractions;
-using Microsoft.Extensions.Options;
 using Shouldly;
 using Xunit;
 
@@ -14,7 +13,7 @@ public sealed class InMemoryWorkerStoreTests
     [Fact]
     public async Task UpsertHeartbeatAsync_stores_worker_and_lists_online_status()
     {
-        var store = new InMemoryWorkerStore(Options.Create(new WorkerStoreOptions
+        var store = new InMemoryWorkerStore(Microsoft.Extensions.Options.Options.Create(new WorkerStoreOptions
         {
             OnlineTtl = TimeSpan.FromMinutes(5)
         }));
@@ -37,7 +36,7 @@ public sealed class InMemoryWorkerStoreTests
     [Fact]
     public async Task ListAsync_prunes_expired_workers()
     {
-        var store = new InMemoryWorkerStore(Options.Create(new WorkerStoreOptions
+        var store = new InMemoryWorkerStore(Microsoft.Extensions.Options.Options.Create(new WorkerStoreOptions
         {
             OnlineTtl = TimeSpan.FromMinutes(1)
         }));
