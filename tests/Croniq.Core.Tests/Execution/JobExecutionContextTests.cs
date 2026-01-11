@@ -12,15 +12,15 @@ public class JobExecutionContextTests
     [Fact]
     public void Uses_defaults_when_metadata_or_logger_missing()
     {
-        var ctx = new JobExecutionContext("exec-1", "tenant:env:ns:job", null, null!, null!);
+        var ctx = new JobExecutionContext("exec-1", "ns:job", null, null!, null!);
         ctx.ExecutionId.ShouldBe("exec-1");
-        ctx.JobKey.ShouldBe("tenant:env:ns:job");
+        ctx.JobKey.ShouldBe("ns:job");
         ctx.Metadata.ShouldBeEmpty();
         ctx.Logger.ShouldBe(NullLogger.Instance);
         ctx.ActivitySource.ShouldNotBeNull();
 
         var metadata = new Dictionary<string, string> { { "foo", "bar" } };
-        var ctxWithValues = new JobExecutionContext("exec-2", "a:b:c:d", metadata, NullLogger.Instance, new ActivitySource("test"));
+        var ctxWithValues = new JobExecutionContext("exec-2", "a:b:c", metadata, NullLogger.Instance, new ActivitySource("test"));
         ctxWithValues.Metadata.ShouldContainKey("foo");
         ctxWithValues.ExecutionId.ShouldBe("exec-2");
     }

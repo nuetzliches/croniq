@@ -118,12 +118,11 @@ curl -X POST https://localhost:5001/jobs/trigger \
 
 ### Incoming Webhook Trigger
 
-The `Croniq.Webhooks` host exposes tenant-scoped endpoints such as `POST /webhooks/{hookKey}`. Each hook references a job key and forwards request metadata into the job execution.
+The `Croniq.Webhooks` host exposes tenant-scoped endpoints such as `POST /tenants/{tenantId}/environments/{environmentTag}/webhooks/{hookKey}`. Each hook references a job key and forwards request metadata into the job execution.
 
 ```http
-POST /webhooks/invoice-paid HTTP/1.1
+POST /tenants/default/environments/dev/webhooks/invoice-paid HTTP/1.1
 Host: hooks.croniq.local
-X-Croniq-Key: crq_dev_local_sample
 X-Croniq-Signature: sha256=...
 Content-Type: application/json
 
@@ -146,7 +145,7 @@ Sample configuration (`appsettings.Development.json`) wired up in `Croniq.Sample
       "Endpoints": [
         {
           "HookKey": "invoice-paid",
-          "JobKey": "dev:local:samples:smoke",
+          "JobKey": "samples:smoke",
           "Secret": "dev-webhook-secret",
           "RequireSignature": true,
           "Metadata": {
@@ -160,12 +159,12 @@ Sample configuration (`appsettings.Development.json`) wired up in `Croniq.Sample
 }
 ```
 
-This exposes `POST /webhooks/invoice-paid` locally; the sample job logs every invocation, and metadata keys such as `payload:invoiceId` become available via `IJobExecutionContext.Metadata`.
+This exposes `POST /tenants/default/environments/dev/webhooks/invoice-paid` locally; the sample job logs every invocation, and metadata keys such as `payload:invoiceId` become available via `IJobExecutionContext.Metadata`.
 
 Example request against the sample host:
 
 ```bash
-curl -X POST http://localhost:5199/webhooks/invoice-paid \
+curl -X POST http://localhost:5199/tenants/default/environments/dev/webhooks/invoice-paid \
   -H "Content-Type: application/json" \
   -H "X-Croniq-Signature: $(python - <<'PY'
 import hmac, hashlib, json
@@ -187,7 +186,7 @@ PY
    ```json
    {
      "hookKey": "invoice-paid",
-     "jobKey": "dev:local:samples:smoke",
+     "jobKey": "samples:smoke",
      "secret": "dev-webhook-secret",
      "requestsPerMinute": 30,
      "metadata": { "source": "sample" }
@@ -260,7 +259,7 @@ Treat secrets as credentials: read them from your secret manager at runtime, nev
 
 #### Replay protection
 
-- Send `X-Croniq-Timestamp` with the Unix epoch seconds when the payload was created. Croniq rejects timestamps outside the default ±5-minute window once strict mode is enabled; callers should also refuse to retry a payload once that window has elapsed.
+- Send `X-Croniq-Timestamp` with the Unix epoch seconds when the payload was created. Croniq rejects timestamps outside the default 5-minute window once strict mode is enabled; callers should also refuse to retry a payload once that window has elapsed.
 - Add `X-Croniq-Delivery-Id` (a UUID) and store it in your system of record. Croniq logs duplicate IDs, giving you a breadcrumb trail during audits.
 - When re-sending after failures, prefer a fresh payload with a new timestamp/id instead of replaying stale data.
 

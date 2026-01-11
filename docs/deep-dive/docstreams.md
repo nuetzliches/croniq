@@ -1,6 +1,6 @@
 # Croniq Documentation Streams Plan
 
-This living note tracks how we keep the consumer-facing docs in sync with the deep-dive reference set. The streams are defined, but public publishing and cross-stream enforcement are blocked until the repo is public. We already run docs lint/link checks nightly and provide a manual preview workflow.
+This living note tracks how we keep the consumer-facing docs in sync with the deep-dive reference set. The streams and review expectations are active; only public publishing is deferred until the repo is public. We already run docs lint/link checks nightly and provide a manual preview workflow.
 
 ## Objectives
 

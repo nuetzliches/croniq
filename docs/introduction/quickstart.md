@@ -72,7 +72,7 @@ public sealed class HelloWorldJob : IJob
 
 - `AddCroniq(...)` wires the worker runtime with safe defaults; drop the `configuration` argument if you want pure defaults.
 - `AddCroniqApiServices(...)` exposes the management API. If you do not want to co-host, move API registration into a separate web host.
-- Job keys are composed as `TenantId:EnvironmentTag:Namespace:Name` (defaults come from `Croniq:Core:*`).
+- Job keys are composed as `namespace:name[:variant]`. Tenant/environment scope comes from `Croniq:Core:*` and auth config, not the job key.
 
 Prefer an inline handler and a seeded schedule instead of a job class + API call? Use the fluent registration:
 
@@ -165,7 +165,7 @@ $BodyBytes = [System.Text.Encoding]::UTF8.GetBytes($Payload)
 $Hmac = [System.Security.Cryptography.HMACSHA256]::new($KeyBytes)
 $Signature = 'sha256=' + ([BitConverter]::ToString($Hmac.ComputeHash($BodyBytes)).Replace('-', '').ToLower())
 
-Invoke-WebRequest -Uri "https://localhost:5001/webhooks/hello-world" `
+Invoke-WebRequest -Uri "https://localhost:5001/tenants/default/environments/dev/webhooks/hello-world" `
   -Method Post `
   -ContentType "application/json" `
   -Headers @{ "X-Croniq-Signature" = $Signature } `
@@ -193,7 +193,7 @@ Pass `-ActivateInSeconds <seconds>` (up to seven days) when you need to stage th
 
 ## 4.1 Publish API & gRPC Schemas
 
-Croniq hosts both Minimal API endpoints (`/tenants/{tenantId}/schedules`, `/jobs/trigger`, `/tenants/*/webhooks`) and the Scheduler gRPC surface defined in [src/Croniq.Rpc.Client/Protos/scheduler.proto](../../src/Croniq.Rpc.Client/Protos/scheduler.proto). Expose their schemas so downstream teams can generate clients without reverse engineering requests.
+Croniq hosts both Minimal API endpoints (`/tenants/{tenantId}/schedules`, `/jobs/trigger`, `/tenants/{tenantId}/webhooks` for management, `/tenants/{tenantId}/environments/{environmentTag}/webhooks/{hookKey}` for ingress) and the Scheduler gRPC surface defined in [src/Croniq.Rpc.Client/Protos/scheduler.proto](../../src/Croniq.Rpc.Client/Protos/scheduler.proto). Expose their schemas so downstream teams can generate clients without reverse engineering requests.
 
 Add the recommended tooling to your host:
 

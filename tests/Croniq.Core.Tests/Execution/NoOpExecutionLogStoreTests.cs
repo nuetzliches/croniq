@@ -19,7 +19,7 @@ public class NoOpExecutionLogStoreTests
             "exec-1",
             ExecutionKind.Job,
             null,
-            "t:env:ns:job",
+            "ns:job",
             "t",
             "env",
             "tr-1",

@@ -56,12 +56,11 @@ type SchedulerClient = grpc.Client & {
 const schedulerPackage = grpc.loadPackageDefinition(packageDefinition) as any;
 
 const endpoint = process.env.CRONIQ_ENDPOINT || "localhost:5080";
-const apiKey = process.env.CRONIQ_API_KEY || "dev-key";
-const tenantId = process.env.CRONIQ_TENANT_ID || "1";
+const apiKey = process.env.CRONIQ_API_KEY || "smoke-key";
+const tenantId = process.env.CRONIQ_TENANT_ID || "default";
 const environmentTag = process.env.CRONIQ_ENVIRONMENT || "dev";
 const jobKey =
-  process.env.CRONIQ_JOB_KEY ||
-  `${tenantId}:${environmentTag}:ops:node-demo`;
+  process.env.CRONIQ_JOB_KEY || "ops:node-demo";
 
 const client = new schedulerPackage.croniq.rpc.Scheduler(
   endpoint,

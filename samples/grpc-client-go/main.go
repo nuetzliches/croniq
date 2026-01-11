@@ -16,10 +16,10 @@ import (
 
 func main() {
 	endpoint := getenv("CRONIQ_ENDPOINT", "localhost:5080")
-	apiKey := getenv("CRONIQ_API_KEY", "dev-key")
-	tenantId := getenv("CRONIQ_TENANT_ID", "1")
+	apiKey := getenv("CRONIQ_API_KEY", "smoke-key")
+	tenantId := getenv("CRONIQ_TENANT_ID", "default")
 	environment := getenv("CRONIQ_ENVIRONMENT", "dev")
-	jobKey := getenv("CRONIQ_JOB_KEY", fmt.Sprintf("%s:%s:ops:go-demo", tenantId, environment))
+	jobKey := getenv("CRONIQ_JOB_KEY", "ops:go-demo")
 
 	conn, err := grpc.Dial(endpoint, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
@@ -29,6 +29,8 @@ func main() {
 
 	client := pb.NewSchedulerClient(conn)
 	ctx := metadata.AppendToOutgoingContext(context.Background(), "x-croniq-key", apiKey)
+
+	fmt.Printf("Croniq gRPC demo -> %s (tenant %s/%s)\n", endpoint, tenantId, environment)
 
 	upsert, err := client.UpsertSchedule(ctx, &pb.UpsertScheduleRequest{
 		JobKey:         jobKey,

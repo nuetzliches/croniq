@@ -21,8 +21,8 @@ Documentation backlog extracted from `CHECKLIST.md`. Track doc-only and doc-alig
 - [x] `docs/deep-dive/observability.md`: fix metric name to `cronijob_executions_total`.
 - [x] `docs/deep-dive/observability.md`: remove the Serilog registration claim (Default provider uses `ILoggerFactory`).
 - [x] `docs/deep-dive/devstack.md`: fix Prometheus/Tempo port defaults to 9090/3200.
-- [x] `docs/deep-dive/devstack.md`: fix default JobKey in step 5 (`default:dev:samples:smoke`).
-- [x] `docs/deep-dive/observability.md`: fix default JobKey in verification steps (`default:dev:samples:smoke`).
+- [x] `docs/deep-dive/devstack.md`: fix default JobKey in step 5 (`samples:smoke`).
+- [x] `docs/deep-dive/observability.md`: fix default JobKey in verification steps (`samples:smoke`).
 - [x] `docs/deep-dive/devstack.md` + `docs/deep-dive/persistence.md`: clarify SQL connection sourcing (compose builds `CRONIQ_SQL_CONNECTION` from `CRONIQ_SQL_*`).
 - [x] `docs/deep-dive/persistence.md`: clarify scheduler vs auth schema (`croniq` vs `auth`).
 - [x] `docs/deep-dive/job-registration.md`: update backlog section (both `AddCroniqJobsFromAssembly` and validate-only startup mode exist).
@@ -61,28 +61,28 @@ Documentation backlog extracted from `CHECKLIST.md`. Track doc-only and doc-alig
 - [x] `docs/SECURITY.md` + `docs/deep-dive/release-verification.md` + `docs/deep-dive/supplychain-waivers.md`: remove stray `***` at EOF.
 
 ## Needs discussion / code change (decide: doc-only vs behavior change)
-- [ ] Docstreams process (blocked until repo is public): create docs root + deep-dive streams, quickstart alignment, Mermaid policy.
+- [ ] (blocked until repo is public) Add docs publishing workflow (GitHub Pages) once the repo is public to avoid private-repo costs.
 - [ ] (deferred - vNext) gRPC docs expansion for Python/Go/Node (optional Java) with packages, install, auth helpers, minimal examples.
 - [ ] `docs/deep-dive/architecture.md`: clock drift monitoring via ITimeProvider is documented but not implemented.
 - [ ] `docs/deep-dive/designs/dmz-ingress-remote-webhooks.md`: options mention `LeaseSeconds/MaxBatchSize/PollingIntervalMilliseconds`, but `WebhookIngressOptions` exposes only `DispatchMode`.
 - [ ] `docs/deep-dive/password-auth.md`: admin endpoints `/tenants/{tenantId}/users` and `/tenants/{tenantId}/users/{userId}/reset-password` are not implemented.
 - [ ] `docs/deep-dive/persistence.md`: `Croniq:Persistence:SqlServer:CommandTimeoutSeconds` is documented but not implemented.
 - [ ] Webhook remote: restrict `AllowInvalidServerCertificate` to dev-only; align samples/docs accordingly.
-- [ ] Tenant defaults: align `CRONIQ_TENANT_ID` "1" (smoke tests + gRPC samples) vs "default" in core/devstack.
-- [ ] Smoke API key env: align `CRONIQ_API_KEY` vs `CRONIQ_SMOKE_API_KEY` across tests/devstack.
-- [ ] Environment tag env: align `CRONIQ_ENVIRONMENT_TAG` vs `CRONIQ_ENVIRONMENT` across samples/docs.
+- [x] Tenant defaults: align `CRONIQ_TENANT_ID` to `default` for single-tenant samples/tests.
+- [x] Smoke API key env: standardize on `CRONIQ_API_KEY` across tests/devstack.
+- [x] Environment tag env: standardize on `CRONIQ_ENVIRONMENT` across samples/docs.
 - [ ] `Croniq.DbMigrator` CLI docs: decide whether to implement `--apply/--verify/--connection` or update docs to match current behavior.
-- [ ] Samples/READMEs: `CRONIQ_API_KEY=dev-key` vs devstack `.env.example` `CRONIQ_SMOKE_API_KEY=smoke-key` (pick one default or document the difference).
-- [ ] JobKey format: parser accepts `namespace:name[:variant]`, but docs/samples use `tenant:env:namespace:name`.
+- [x] Samples/READMEs: default `CRONIQ_API_KEY` now matches devstack (`smoke-key`).
+- [x] JobKey format: docs/samples now use `namespace:name[:variant]` (tenant/environment come from scope).
 - [ ] `docs/guides/triggers.md` + `docs/deep-dive/security.md`: replay/idempotency headers documented but not implemented.
 - [ ] `docs/deep-dive/security.md`: per-hook metadata enrichment toggle documented but not implemented.
 - [ ] `docs/deep-dive/security.md`: `cluster:read` scope documented but not implemented.
 - [ ] `docs/deep-dive/security.md`: webhook secrets are stored as plaintext but docs claim "hashed only".
 - [ ] `docs/deep-dive/security.md`: correlation/actor documented for all webhook management requests, but only IP rule CRUD sets them.
 - [ ] `docs/deep-dive/security.md`: payload size/content-type guardrails are documented but not implemented.
-- [ ] `docs/guides/triggers.md`: ingress example uses `X-Croniq-Key`, but ingress ignores API keys.
-- [ ] `docs/guides/triggers.md` + `docs/introduction/quickstart.md` + `docs/deep-dive/architecture.md`: ingress route mismatch (`/webhooks/{hookKey}` vs `/tenants/{tenantId}/environments/{environmentTag}/webhooks/{hookKey}`).
-- [ ] `docs/deep-dive/architecture.md`: processing stages mention optional caller auth for ingress, but `Croniq.Webhooks` does not validate auth.
+- [x] `docs/guides/triggers.md`: ingress example no longer uses `X-Croniq-Key` (signature-only).
+- [x] `docs/guides/triggers.md` + `docs/introduction/quickstart.md` + `docs/deep-dive/architecture.md`: ingress route unified to `/tenants/{tenantId}/environments/{environmentTag}/webhooks/{hookKey}`.
+- [x] `docs/deep-dive/architecture.md`: ingress processing stages no longer mention optional caller auth.
 - [ ] `docs/deep-dive/ci.md`: health probe is documented as `/webhooks/health`, but host exposes `/health`.
 - [ ] `docs/deep-dive/security.md`: "TenantId/CallerId only after hashing" does not match current log/metric tagging.
 - [ ] `docs/guides/auth.md`: `/health` with `X-Croniq-Debug: auth` is documented but not implemented.
@@ -93,8 +93,8 @@ Documentation backlog extracted from `CHECKLIST.md`. Track doc-only and doc-alig
 - [ ] `docs/deep-dive/architecture.md`: Serilog + OTel sink is documented, but default provider is `ILoggerFactory`.
 
 ## Pending doc scans
-- [ ] Scan `docs/README.md` + `docs/_templates/README.md` for current template/link guidance.
-- [ ] Scan `docs/ops/index.md` and `docs/ops/retention.md` for configuration/port consistency.
-- [ ] Scan `docs/guides/handlers.md`, `docs/guides/policies.md`, and `docs/guides/grpc.md` for API drift.
-- [ ] Scan `docs/deep-dive/ui.md`, `docs/deep-dive/kubernetes.md`, and `docs/deep-dive/sdk-worker-integration.md` for current-state accuracy.
-- [ ] Scan `samples/worker-sdk-*` and `samples/grpc-client-{go,node,python}` READMEs for env var and JobKey consistency.
+- [x] Scan `docs/README.md` + `docs/_templates/README.md` for current template/link guidance (no updates needed).
+- [x] Scan `docs/ops/index.md` and `docs/ops/retention.md` for configuration/port consistency (no updates needed).
+- [x] Scan `docs/guides/handlers.md`, `docs/guides/policies.md`, and `docs/guides/grpc.md` for API drift (updated `docs/guides/grpc.md`).
+- [x] Scan `docs/deep-dive/ui.md`, `docs/deep-dive/kubernetes.md`, and `docs/deep-dive/sdk-worker-integration.md` for current-state accuracy (updated `docs/deep-dive/kubernetes.md` wording).
+- [x] Scan `samples/worker-sdk-*` and `samples/grpc-client-{go,node,python}` READMEs for env var and JobKey consistency (updated `samples/grpc-client-go/README.md`).

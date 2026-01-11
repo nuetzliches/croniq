@@ -1,11 +1,11 @@
-Go gRPC Client Sample
+# Go gRPC Client Sample
 
-Voraussetzungen:
+Prerequisites:
 
 - Go 1.21+
-- `protoc` + Go plugins (`google.golang.org/protobuf/cmd/protoc-gen-go`, `google.golang.org/grpc/cmd/protoc-gen-go-grpc`)
+- `protoc` plus Go plugins (`google.golang.org/protobuf/cmd/protoc-gen-go`, `google.golang.org/grpc/cmd/protoc-gen-go-grpc`)
 
-Stubs generieren (aus Repo-Root):
+Generate stubs (from repo root):
 
 ```bash
 protoc -I src/Croniq.Rpc.Client/Protos \
@@ -14,10 +14,12 @@ protoc -I src/Croniq.Rpc.Client/Protos \
   src/Croniq.Rpc.Client/Protos/scheduler.proto
 ```
 
-Ausführen:
+Run:
 
 ```bash
 cd samples/grpc-client-go
 go mod tidy
-CRONIQ_ENDPOINT=localhost:5080 CRONIQ_API_KEY=dev-key go run .
+CRONIQ_ENDPOINT=localhost:5080 \
+CRONIQ_API_KEY=smoke-key \
+go run .
 ```

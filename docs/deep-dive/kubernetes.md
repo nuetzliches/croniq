@@ -1,6 +1,6 @@
 # Croniq Kubernetes Plan
 
-This document expands the backlog captured in `architecture.md` and describes the work required to satisfy the checklist item "Kubernetes Chart (charts/croniq) als Backlog-Platzhalter vorbereiten".
+This document expands the backlog captured in `architecture.md` and describes the work required to satisfy the checklist item "Prepare the Kubernetes chart placeholder (charts/croniq)".
 
 > **Status (2025-12-15)**: Implementation work is deferred until a stakeholder explicitly requests Kubernetes delivery. The backlog below remains as a parking lot and should not start without a fresh kickoff signal.
 

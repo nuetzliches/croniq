@@ -14,8 +14,8 @@ internal sealed record SmokeTestConfiguration(string BaseUrl, string ApiKey, str
     {
         var baseUrl = Environment.GetEnvironmentVariable("CRONIQ_API_BASEURL") ?? "http://localhost:5080";
         var apiKey = Environment.GetEnvironmentVariable("CRONIQ_API_KEY") ?? "smoke-key";
-        var tenantId = Environment.GetEnvironmentVariable("CRONIQ_TENANT_ID") ?? "1";
-        var environmentTag = Environment.GetEnvironmentVariable("CRONIQ_ENVIRONMENT_TAG") ?? "dev";
+        var tenantId = Environment.GetEnvironmentVariable("CRONIQ_TENANT_ID") ?? "default";
+        var environmentTag = Environment.GetEnvironmentVariable("CRONIQ_ENVIRONMENT") ?? "dev";
         var webhookBaseUrl = Environment.GetEnvironmentVariable("CRONIQ_WEBHOOK_BASEURL") ?? baseUrl;
 
         if (!baseUrl.EndsWith('/'))

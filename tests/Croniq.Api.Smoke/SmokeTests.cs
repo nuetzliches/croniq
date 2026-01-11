@@ -16,7 +16,7 @@ public sealed class SmokeTests
 {
     private static readonly SmokeTestConfiguration Config = SmokeTestConfiguration.Load();
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
-    private static readonly string SampleLoggingJobKey = $"{Config.TenantId}:{Config.EnvironmentTag}:samples:smoke";
+    private static readonly string SampleLoggingJobKey = BuildJobKey("smoke");
     private static bool SmokeTestsDisabled => !SmokeTestConfiguration.IsEnabled;
     private static readonly bool IsCiAgent = string.Equals(Environment.GetEnvironmentVariable("TF_BUILD"), "true", StringComparison.OrdinalIgnoreCase)
         || string.Equals(Environment.GetEnvironmentVariable("CI"), "true", StringComparison.OrdinalIgnoreCase);
@@ -184,7 +184,7 @@ public sealed class SmokeTests
     }
 
     private static string BuildJobKey(string scenario) =>
-        $"{Config.TenantId}:{Config.EnvironmentTag}:samples:{scenario}-{Guid.NewGuid():N}";
+        $"samples:{scenario}:{Guid.NewGuid():N}";
 
     private static string GetWebhookCollectionUrl() =>
         $"tenants/{Config.TenantId}/webhooks?environment={Config.EnvironmentTag}";

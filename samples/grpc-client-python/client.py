@@ -6,10 +6,12 @@ import scheduler_pb2_grpc as svc
 
 def main():
     endpoint = os.environ.get("CRONIQ_ENDPOINT", "localhost:5080")
-    api_key = os.environ.get("CRONIQ_API_KEY", "dev-key")
-    tenant_id = os.environ.get("CRONIQ_TENANT_ID", "1")
+    api_key = os.environ.get("CRONIQ_API_KEY", "smoke-key")
+    tenant_id = os.environ.get("CRONIQ_TENANT_ID", "default")
     environment_tag = os.environ.get("CRONIQ_ENVIRONMENT", "dev")
-    job_key = os.environ.get("CRONIQ_JOB_KEY", f"{tenant_id}:{environment_tag}:samples:python-demo")
+    job_key = os.environ.get("CRONIQ_JOB_KEY", "samples:python-demo")
+
+    print(f"Croniq gRPC demo -> {endpoint} (tenant {tenant_id}/{environment_tag})")
 
     with grpc.insecure_channel(endpoint) as channel:
         client = svc.SchedulerStub(channel)

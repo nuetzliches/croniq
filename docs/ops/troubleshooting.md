@@ -43,7 +43,7 @@ Use this checklist to diagnose the most common issues developers hit while worki
 | Symptom                                             | Likely Cause          | Fix                                                                                                         |
 | --------------------------------------------------- | --------------------- | ----------------------------------------------------------------------------------------------------------- |
 | `scripts\devstack-up.cmd` fails with ".env missing" | `.env` not created    | Copy `.env.example` to `.env` and edit the secrets. The script checks for the file before launching Docker. |
-| `scripts\devstack-trigger-job.cmd` returns `401`    | Missing smoke API key | Populate `CRONIQ_SMOKE_API_KEY` in `.env`. The script forwards it as `X-Croniq-Key`.                        |
+| `scripts\devstack-trigger-job.cmd` returns `401`    | Missing API key | Populate `CRONIQ_API_KEY` in `.env`. The script forwards it as `X-Croniq-Key`.                              |
 
 ## Still Stuck?
 

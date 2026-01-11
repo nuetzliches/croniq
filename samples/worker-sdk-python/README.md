@@ -18,7 +18,7 @@ Run the example:
 CRONIQ_API_BASEURL=http://localhost:5080 \
 CRONIQ_TENANT_ID=default \
 CRONIQ_ENVIRONMENT=dev \
-CRONIQ_API_KEY=dev-key \
+CRONIQ_API_KEY=smoke-key \
 CRONIQ_RUNNER_ID=default \
 python example.py
 ```

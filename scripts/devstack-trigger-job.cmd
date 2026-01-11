@@ -17,17 +17,11 @@ set API_BASE=%CRONIQ_API_BASEURL%
 if "%API_BASE%"=="" set API_BASE=http://localhost:%API_PORT%
 if not "%API_BASE:~-1%"=="/" set API_BASE=%API_BASE%/
 
-set API_KEY=%CRONIQ_SMOKE_API_KEY%
+set API_KEY=%CRONIQ_API_KEY%
 if "%API_KEY%"=="" set API_KEY=smoke-key
 
-set TENANT_ID=%CRONIQ_CORE_TENANT_ID%
-if "%TENANT_ID%"=="" set TENANT_ID=default
-
-set ENVIRONMENT_TAG=%CRONIQ_CORE_ENVIRONMENT%
-if "%ENVIRONMENT_TAG%"=="" set ENVIRONMENT_TAG=dev
-
 set JOB_KEY=%~1
-if "%JOB_KEY%"=="" set JOB_KEY=%TENANT_ID%:%ENVIRONMENT_TAG%:samples:smoke
+if "%JOB_KEY%"=="" set JOB_KEY=samples:smoke
 
 set METADATA_TAG=%~2
 if "%METADATA_TAG%"=="" set METADATA_TAG=devstack-script

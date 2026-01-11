@@ -58,7 +58,7 @@ This document extends the quality vision captured in `architecture.md` and descr
 - **Execution**: `scripts\test-e2e.cmd` orchestrates build, compose up, readiness polling, `dotnet test tests/Croniq.Api.Smoke/...`, and teardown. Override `CRONIQ_API_BASEURL`/`CRONIQ_API_KEY` to target remote environments.
 - **Cadence**: Nightly + release candidate builds; run manually before large API refactors. Failures block releases.
 - **Scenarios**: `Webhook_ip_rule_crud_roundtrip` validates the management APIs, and `Webhook_ingress_respects_ip_rules` now hits the live ingress twice—first expecting `403 ip-blocked`, then `202 accepted` after adding a catch-all rule—alongside the existing health/schedule checks.
-- **Configuration**: `CRONIQ_TENANT_ID`, `CRONIQ_ENVIRONMENT_TAG`, and `CRONIQ_WEBHOOK_BASEURL` let the suite point at non-default partitions and webhook hosts while sharing the same API base URL and key overrides.
+- **Configuration**: `CRONIQ_TENANT_ID`, `CRONIQ_ENVIRONMENT`, and `CRONIQ_WEBHOOK_BASEURL` let the suite point at non-default partitions and webhook hosts while sharing the same API base URL and key overrides.
 
 ### Compliance & Supply-Chain Checks
 

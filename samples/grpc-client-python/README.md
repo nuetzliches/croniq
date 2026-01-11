@@ -16,7 +16,7 @@ This creates `scheduler_pb2.py` and `scheduler_pb2_grpc.py` in the current direc
 Run:
 
 ```bash
-CRONIQ_API_KEY=dev-key \
+CRONIQ_API_KEY=smoke-key \
 CRONIQ_ENDPOINT=localhost:5080 \
 PYTHONPATH=. \
 python client.py

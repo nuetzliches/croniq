@@ -51,13 +51,13 @@ if ($env:CRONIQ_DOTNET_ENVIRONMENT) { $env:DOTNET_ENVIRONMENT = $env:CRONIQ_DOTN
 $env:Croniq__Auth__Mode = Get-EnvOrDotenv 'CRONIQ_DMZ_AUTH_MODE' 'InMemory'
 $env:Croniq__Auth__InMemory__ApiKey = Get-EnvOrDotenv 'CRONIQ_DMZ_API_KEY' 'dmz-sample-key'
 $env:Croniq__Auth__InMemory__TenantId = Get-EnvOrDotenv 'CRONIQ_CORE_TENANT_ID' 'default'
-$env:Croniq__Auth__InMemory__EnvironmentTag = Get-EnvOrDotenv 'CRONIQ_CORE_ENVIRONMENT' 'dev'
+$env:Croniq__Auth__InMemory__EnvironmentTag = Get-EnvOrDotenv 'CRONIQ_ENVIRONMENT' 'dev'
 
 $env:Croniq__Persistence__Mode = 'SqlServer'
 
 $env:Croniq__Core__TenantId = Get-EnvOrDotenv 'CRONIQ_CORE_TENANT_ID' 'default'
 $env:Croniq__Core__TenantMode = Get-EnvOrDotenv 'CRONIQ_CORE_TENANT_MODE' ''
-$env:Croniq__Core__EnvironmentTag = Get-EnvOrDotenv 'CRONIQ_CORE_ENVIRONMENT' 'dev'
+$env:Croniq__Core__EnvironmentTag = Get-EnvOrDotenv 'CRONIQ_ENVIRONMENT' 'dev'
 $env:Croniq__Core__InstanceId = Get-EnvOrDotenv 'CRONIQ_DMZ_INSTANCE_ID' 'dmz-dev'
 
 # Construct SQL Connection String

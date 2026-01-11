@@ -1,11 +1,11 @@
 # Croniq gRPC Guide
 
-## Proto & Client
+## Proto and client
 
 - Proto: `src/Croniq.Rpc.Client/Protos/scheduler.proto`
-- .NET Client: `Croniq.Rpc.Client` bietet `AddCroniqSchedulerClient` (HTTP/2, optional `X-Croniq-Key`) und Safe-Wrapper (`*SafeAsync`) mit `CroniqRpcException`.
+- .NET client: `Croniq.Rpc.Client` provides `AddCroniqSchedulerClient` (HTTP/2, optional `X-Croniq-Key`) and safe wrappers (`*SafeAsync`) that throw `CroniqRpcException`.
 
-### Minimal .NET Usage
+### Minimal .NET usage
 
 ```csharp
 var services = new ServiceCollection();
@@ -32,30 +32,30 @@ catch (CroniqRpcException ex)
 }
 ```
 
-## Auth & Headers
+## Auth and headers
 
-- API-Key: send `X-Croniq-Key` header (AddCroniqSchedulerClient setzt ihn, wenn `ApiKey` hinterlegt ist).
-- Bearer: send `Authorization: Bearer <token>`. Tenant/Environment werden aus Claims gezogen; Cross-Tenant wird mit `PermissionDenied` geblockt.
+- API key: send the `X-Croniq-Key` header (`AddCroniqSchedulerClient` sets it when `ApiKey` is configured).
+- Bearer: send `Authorization: Bearer <token>`. Tenant/environment are resolved from claims; cross-tenant access is rejected with `PermissionDenied`.
 
-## Proto Semantik
+## Proto semantics
 
-- `UpsertScheduleRequest`: `job_key` (`namespace:name[:variant]`), `cron_expression`, optional `trigger_id`, `description`, `metadata`, optional `enabled`.
-- `DeleteScheduleRequest`: `trigger_id`, `tenant_id`, `environment_tag` erforderlich.
+- `UpsertScheduleRequest`: `job_key` (`namespace:name[:variant]`), `cron_expression`, optional `trigger_id`, `description`, `metadata`, optional `enabled`, optional `start_at_utc`, `end_at_utc`, `time_zone_id`.
+- `DeleteScheduleRequest`: `trigger_id`, `tenant_id`, `environment_tag` are required.
 - `TriggerJobRequest`: `job_key`, optional `metadata`.
 
-## Non-.NET Clients
+## Non-.NET clients
 
-- Verwende die Proto mit `protoc`/`buf` für Python/Go; sende `X-Croniq-Key` oder Bearer-Metadaten.
-- Node/TS kann via `@grpc/grpc-js` + `@grpc/proto-loader` ohne Vorab-Generation arbeiten (siehe `samples/grpc-client-node`).
+- Use the proto with `protoc` or `buf` for Python/Go; send `X-Croniq-Key` or bearer metadata.
+- Node/TS can use `@grpc/grpc-js` plus `@grpc/proto-loader` without pre-generation (see `samples/grpc-client-node`).
 - Samples: `samples/grpc-client-python`, `samples/grpc-client-go`, `samples/grpc-client-node`.
-- Empfohlenes Set: Python (Scripting), Go (CLI/Automation), Node/TS (Serverless/Edge). Java nur bei Bedarf der Konsumenten; gleiche Proto kann via `protoc --java_out` generiert werden.
-- Geplante Pakete: Leichte Client-Bundles pro Sprache (Python/PyPI, Go/Go module, Node/NPM) mit generierten Stubs + Minimal-Helper für Endpoint/Auth/Metadata, damit Samples nur noch das Paket konsumieren müssen.
+- Recommended set: Python (scripting), Go (CLI/automation), Node/TS (serverless/edge). Add Java only when a consumer needs it; the same proto can be generated with `protoc --java_out`.
+- Planned packages: light client bundles per language (PyPI, Go module, NPM) with generated stubs and minimal endpoint/auth/metadata helpers so samples can consume the package directly.
 
-## Logging & Telemetry
+## Logging and telemetry
 
-- gRPC-Routen nutzen dieselben Guards wie HTTP und instrumentieren Aktivitäten mit Tenant/Environment/Job-Tags (`Croniq.Api.Grpc` ActivitySource). Trigger/Upsert/Delete setzen Status/Error, sodass OTel/Tracing-Dashboards konsistent bleiben.
-- Rate-Limiter greift per gRPC-Interceptor (`TenantRateLimitInterceptor`) mit den gleichen Partition-IDs wie die REST-Route.
+- gRPC routes use the same guards as HTTP and emit activities with tenant/environment/job tags via the `Croniq.Api.Grpc` ActivitySource. Trigger/Upsert/Delete set status and error, keeping OTel tracing consistent.
+- Rate limiting is enforced by the gRPC interceptor (`TenantRateLimitInterceptor`) with the same partition IDs as the REST routes.
 
-## Validierung / CI-Hooks
+## Validation and CI hooks
 
-- Schneller Syntax-/Build-Check: `eng/validate-grpc-samples.ps1` prüft Node (Syntax) und, falls generierte Stubs vorliegen, optional Python/Go Builds. Die eigentlichen Calls benötigen einen laufenden Croniq.Api Host (siehe Samples).
+- Quick syntax/build check: `eng/validate-grpc-samples.ps1` checks Node (syntax) and, when generated stubs exist, optionally builds Python/Go. Actual calls require a running `Croniq.Api` host (see the samples).
