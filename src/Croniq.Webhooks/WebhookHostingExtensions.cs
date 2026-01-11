@@ -174,42 +174,7 @@ public static class WebhookHostingExtensions
         }
 
         services.Configure<CroniqWebhookOptions>(optionsSection);
-        services.PostConfigure<CroniqWebhookOptions>(options =>
-        {
-            if (options is null || options.Security.AllowUnsignedHooks)
-            {
-                return;
-            }
-
-            var unsignedHooks = options.Endpoints
-                .Where(endpoint => endpoint.Enabled && !endpoint.RequireSignature)
-                .Select(endpoint => endpoint.HookKey)
-                .Where(hookKey => !string.IsNullOrWhiteSpace(hookKey))
-                .ToArray();
-
-            if (unsignedHooks.Length > 0)
-            {
-                var joined = string.Join(", ", unsignedHooks);
-                throw new InvalidOperationException($"Unsigned webhooks ({joined}) are configured but Croniq:Webhooks:Security:AllowUnsignedHooks is disabled.");
-            }
-        });
-        services.PostConfigure<CroniqWebhookOptions, IHostEnvironment>((options, environment) =>
-        {
-            if (options is null || options.Mode != WebhookPersistenceMode.Remote)
-            {
-                return;
-            }
-
-            if (!(options.Remote?.AllowInvalidServerCertificate ?? false))
-            {
-                return;
-            }
-
-            if (!environment.IsDevelopment())
-            {
-                throw new InvalidOperationException("Croniq:Webhooks:Remote:AllowInvalidServerCertificate is only supported in Development.");
-            }
-        });
+        services.TryAddEnumerable(ServiceDescriptor.Singleton<IPostConfigureOptions<CroniqWebhookOptions>, CroniqWebhookOptionsPostConfigurator>());
         services.AddMemoryCache();
         services.TryAddSingleton<WebhookMetadataFactory>();
         services.TryAddSingleton<WebhookEndpointResolver>();
@@ -1032,6 +997,46 @@ public static class WebhookHostingExtensions
             }
 
             _cache.Remove(BuildEndpointCacheKey(scope, hookKey));
+        }
+    }
+
+    private sealed class CroniqWebhookOptionsPostConfigurator : IPostConfigureOptions<CroniqWebhookOptions>
+    {
+        private readonly IHostEnvironment _environment;
+
+        public CroniqWebhookOptionsPostConfigurator(IHostEnvironment environment)
+        {
+            _environment = environment ?? throw new ArgumentNullException(nameof(environment));
+        }
+
+        public void PostConfigure(string? name, CroniqWebhookOptions options)
+        {
+            if (options is null)
+            {
+                return;
+            }
+
+            if (!options.Security.AllowUnsignedHooks)
+            {
+                var unsignedHooks = options.Endpoints
+                    .Where(endpoint => endpoint.Enabled && !endpoint.RequireSignature)
+                    .Select(endpoint => endpoint.HookKey)
+                    .Where(hookKey => !string.IsNullOrWhiteSpace(hookKey))
+                    .ToArray();
+
+                if (unsignedHooks.Length > 0)
+                {
+                    var joined = string.Join(", ", unsignedHooks);
+                    throw new InvalidOperationException($"Unsigned webhooks ({joined}) are configured but Croniq:Webhooks:Security:AllowUnsignedHooks is disabled.");
+                }
+            }
+
+            if (options.Mode == WebhookPersistenceMode.Remote
+                && (options.Remote?.AllowInvalidServerCertificate ?? false)
+                && !_environment.IsDevelopment())
+            {
+                throw new InvalidOperationException("Croniq:Webhooks:Remote:AllowInvalidServerCertificate is only supported in Development.");
+            }
         }
     }
 
