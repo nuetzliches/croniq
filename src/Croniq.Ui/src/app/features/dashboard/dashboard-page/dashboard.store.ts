@@ -3,7 +3,7 @@ import { authFailureFromError } from '@core/auth/auth-failure';
 import { tenantRxResource } from '@core/resource/tenant-rx-resource';
 import { TenantContextService } from '@core/tenant-context/tenant-context.service';
 import { nowIso } from '@core/time/clock';
-import { RunnerStatusModel, ScheduleDeadLetterResponse, ScheduleResponse } from '@croniq/api-schema';
+import { ScheduleDeadLetterResponse, ScheduleResponse } from '@croniq/api-schema';
 import { CRONIQ_API_CLIENT, CroniqApiClient } from 'data-access';
 import { of, catchError, map, forkJoin } from 'rxjs';
 
@@ -29,6 +29,95 @@ export type UpcomingSchedule = {
     cron: string;
 };
 
+type PresenceSummary = {
+    total: number;
+    online: number;
+    offline: number;
+};
+
+type WebhookSummary = {
+    total: number;
+    enabled: number;
+    disabled: number;
+};
+
+const EMPTY_PRESENCE_SUMMARY: PresenceSummary = { total: 0, online: 0, offline: 0 };
+const EMPTY_WEBHOOK_SUMMARY: WebhookSummary = { total: 0, enabled: 0, disabled: 0 };
+
+const summarizePresence = (entries: ReadonlyArray<{ isOnline?: boolean }>): PresenceSummary => {
+    const total = entries.length;
+    if (!total) {
+        return EMPTY_PRESENCE_SUMMARY;
+    }
+
+    const online = entries.reduce((count, entry) => count + (entry.isOnline ? 1 : 0), 0);
+    return {
+        total,
+        online,
+        offline: Math.max(0, total - online),
+    };
+};
+
+const summarizeWebhooks = (payload: unknown): WebhookSummary => {
+    if (!Array.isArray(payload)) {
+        return EMPTY_WEBHOOK_SUMMARY;
+    }
+
+    let total = 0;
+    let enabled = 0;
+
+    payload.forEach((item) => {
+        if (!item || typeof item !== 'object') {
+            return;
+        }
+        total += 1;
+        const record = item as Record<string, unknown>;
+        const enabledValue = record['enabled'];
+        const isEnabled = typeof enabledValue === 'boolean' ? enabledValue : true;
+        if (isEnabled) {
+            enabled += 1;
+        }
+    });
+
+    return {
+        total,
+        enabled,
+        disabled: Math.max(0, total - enabled),
+    };
+};
+
+const formatPresenceSubtext = (summary: PresenceSummary, emptyLabel: string): string =>
+    summary.total > 0 ? `${summary.online}/${summary.total} online` : emptyLabel;
+
+const formatWebhookSubtext = (summary: WebhookSummary): string =>
+    summary.total > 0 ? `${summary.enabled}/${summary.total} enabled` : 'No webhooks configured';
+
+const statusFromPresence = (summary: PresenceSummary): MetricCard['status'] => {
+    if (summary.total === 0) {
+        return 'warning';
+    }
+    if (summary.online === 0) {
+        return 'critical';
+    }
+    if (summary.online === summary.total) {
+        return 'healthy';
+    }
+    return 'warning';
+};
+
+const statusFromWebhooks = (summary: WebhookSummary): MetricCard['status'] => {
+    if (summary.total === 0) {
+        return 'warning';
+    }
+    if (summary.enabled === 0) {
+        return 'critical';
+    }
+    if (summary.enabled === summary.total) {
+        return 'healthy';
+    }
+    return 'warning';
+};
+
 @Injectable()
 export class DashboardStore {
     private readonly api = inject<CroniqApiClient>(CRONIQ_API_CLIENT);
@@ -42,11 +131,23 @@ export class DashboardStore {
     readonly error = signal<string | null>(null);
 
     private readonly dashboardResource = tenantRxResource<
-        { schedules: ScheduleResponse[]; deadLetters: ScheduleDeadLetterResponse[]; runners: RunnerStatusModel[] },
+        {
+            schedules: ScheduleResponse[];
+            deadLetters: ScheduleDeadLetterResponse[];
+            runnerSummary: PresenceSummary;
+            workerSummary: PresenceSummary;
+            webhookSummary: WebhookSummary;
+        },
         { tenantId: string; environment: string }
     >({
         command: 'dashboard.refresh',
-        defaultValue: { schedules: [], deadLetters: [], runners: [] },
+        defaultValue: {
+            schedules: [],
+            deadLetters: [],
+            runnerSummary: EMPTY_PRESENCE_SUMMARY,
+            workerSummary: EMPTY_PRESENCE_SUMMARY,
+            webhookSummary: EMPTY_WEBHOOK_SUMMARY,
+        },
         params: () => {
             const { tenantId, environment } = this.tenantContext.snapshot();
             return { tenantId, environment };
@@ -56,7 +157,13 @@ export class DashboardStore {
             const { tenantId, environment } = params;
 
             if (!tenantId.trim()) {
-                return of({ schedules: [], deadLetters: [], runners: [] });
+                return of({
+                    schedules: [],
+                    deadLetters: [],
+                    runnerSummary: EMPTY_PRESENCE_SUMMARY,
+                    workerSummary: EMPTY_PRESENCE_SUMMARY,
+                    webhookSummary: EMPTY_WEBHOOK_SUMMARY,
+                });
             }
 
             // Parallel fetch for dashboard data
@@ -69,18 +176,36 @@ export class DashboardStore {
             );
 
             const runners$ = this.api.listRunners({ tenantId, environment }, requestOptions).pipe(
-                map(res => res.runners ?? []),
-                catchError(() => of<RunnerStatusModel[]>([]))
+                map((res) => summarizePresence(res.runners ?? [])),
+                catchError(() => of(EMPTY_PRESENCE_SUMMARY))
+            );
+
+            const workers$ = this.api.listWorkers({ tenantId, environment }, requestOptions).pipe(
+                map((res) => summarizePresence(res.workers ?? [])),
+                catchError(() => of(EMPTY_PRESENCE_SUMMARY))
+            );
+
+            const webhooks$ = this.api.listTenantWebhooks({ tenantId, environment }, requestOptions).pipe(
+                map((response) => summarizeWebhooks(response)),
+                catchError(() => of(EMPTY_WEBHOOK_SUMMARY))
             );
 
             return forkJoin({
                 schedules: schedules$,
                 deadLetters: deadLetters$,
-                runners: runners$
+                runnerSummary: runners$,
+                workerSummary: workers$,
+                webhookSummary: webhooks$
             }).pipe(
-                map((data: { schedules: ScheduleResponse[]; deadLetters: ScheduleDeadLetterResponse[]; runners: RunnerStatusModel[] }) => {
+                map((data: {
+                    schedules: ScheduleResponse[];
+                    deadLetters: ScheduleDeadLetterResponse[];
+                    runnerSummary: PresenceSummary;
+                    workerSummary: PresenceSummary;
+                    webhookSummary: WebhookSummary;
+                }) => {
                     // Normalize and update signals
-                    this.updateMetrics(data.runners);
+                    this.updateMetrics(data.runnerSummary, data.workerSummary, data.webhookSummary);
                     this.updateUpcoming(data.schedules);
                     this.updateFailures(data.deadLetters);
                     return data;
@@ -97,7 +222,13 @@ export class DashboardStore {
                     }
                     // Fallback data for demo purposes if API fails completely
                     this.setFallbackData();
-                    return of({ schedules: [], deadLetters: [], runners: [] });
+                    return of({
+                        schedules: [],
+                        deadLetters: [],
+                        runnerSummary: EMPTY_PRESENCE_SUMMARY,
+                        workerSummary: EMPTY_PRESENCE_SUMMARY,
+                        webhookSummary: EMPTY_WEBHOOK_SUMMARY,
+                    });
                 })
             );
         },
@@ -109,16 +240,30 @@ export class DashboardStore {
     readonly upcomingSchedules = this.upcomingSchedulesSignal.asReadonly();
     readonly misfireHeatmap = this.misfireHeatmapSignal.asReadonly();
 
-    private updateMetrics(runners: RunnerStatusModel[]) {
-        const activeRunnersCount = runners.filter(runner => runner.isOnline).length;
-
+    private updateMetrics(
+        runnerSummary: PresenceSummary,
+        workerSummary: PresenceSummary,
+        webhookSummary: WebhookSummary,
+    ) {
         // Mocking other metrics for now as we don't have direct endpoints for RPM/ErrorRate yet
         const metrics: MetricCard[] = [
             {
-                label: 'Active Runners',
-                value: activeRunnersCount.toString(),
-                status: activeRunnersCount > 0 ? 'healthy' : 'warning',
-                subtext: activeRunnersCount > 0 ? 'All systems operational' : 'No runners available'
+                label: 'Workers Online',
+                value: workerSummary.online.toString(),
+                status: statusFromPresence(workerSummary),
+                subtext: formatPresenceSubtext(workerSummary, 'No workers reporting'),
+            },
+            {
+                label: 'Runners Online',
+                value: runnerSummary.online.toString(),
+                status: statusFromPresence(runnerSummary),
+                subtext: formatPresenceSubtext(runnerSummary, 'No runners reporting'),
+            },
+            {
+                label: 'Webhooks Enabled',
+                value: webhookSummary.enabled.toString(),
+                status: statusFromWebhooks(webhookSummary),
+                subtext: formatWebhookSubtext(webhookSummary),
             },
             {
                 label: 'Throughput (RPM)',
@@ -184,7 +329,9 @@ export class DashboardStore {
 
     private setFallbackData() {
         this.metricsSignal.set([
-            { label: 'Active Runners', value: '8', status: 'healthy', subtext: 'All systems operational' },
+            { label: 'Workers Online', value: '6', status: 'healthy', subtext: '6/7 online' },
+            { label: 'Runners Online', value: '8', status: 'healthy', subtext: '8/8 online' },
+            { label: 'Webhooks Enabled', value: '5', status: 'warning', subtext: '5/6 enabled' },
             {
                 label: 'Throughput (RPM)',
                 value: '1,240',

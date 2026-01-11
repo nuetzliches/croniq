@@ -24,8 +24,8 @@ export const NAV_SECTIONS: ReadonlyArray<NavSection> = [
     {
         label: 'INFRA',
         items: [
-            { path: 'runners', label: 'Runners', description: 'Executors' },
             { path: 'workers', label: 'Workers', description: 'Worker hosts' },
+            { path: 'runners', label: 'Runners', description: 'Executors' },
             { path: 'webhooks', label: 'Webhooks', description: 'Ingress' },
             { path: 'metrics', label: 'Metrics', description: 'Monitoring' },
             { path: 'api-access', label: 'API Access', description: 'Clients & Keys' },

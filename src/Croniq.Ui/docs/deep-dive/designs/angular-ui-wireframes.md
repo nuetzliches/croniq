@@ -64,6 +64,10 @@ High-level overview of the system health and activity.
 └───────────────────────────────────────────────┴────────────────────────────────┘
 ```
 
+Notes:
+
+- Summary metrics include Workers, Runners, and Webhooks presence (workers appear before runners).
+
 ## 2. Jobs
 
 Registry of all defined jobs.

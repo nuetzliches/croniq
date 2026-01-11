@@ -98,6 +98,11 @@ The UI standardizes timestamp handling via `src/app/core/time/clock.ts`.
 - When reading date-ish values from `unknown` payloads (manual parsing, permissive API responses), normalize via `tryIsoFromUnknown(value)`.
 - Avoid direct `new Date(...)`, `Date.now()`, `Date.parse(...)`, or `toISOString()` outside `clock.ts`.
 
+## Live Dashboard Data
+
+- Dashboard polling is the default, with no cache unless a resource opts in explicitly.
+- Streaming concepts (SSE-first) live in `docs/deep-dive/designs/dashboard-live-data.md`.
+
 ## MCP (dev-only)
 
 The Angular MCP server is a development helper for workspace-aware automation.
