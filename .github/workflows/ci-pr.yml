@@ -256,3 +256,37 @@ jobs:
         with:
           name: pr-coverage-summary
           path: coverage/report
+
+  ui-openapi-sync:
+    name: UI OpenAPI Snapshot & Schemas
+    needs: validate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install UI dependencies
+        working-directory: src/Croniq.Ui
+        run: npm ci
+
+      - name: Generate OpenAPI schemas (offline/snapshot first)
+        working-directory: src/Croniq.Ui
+        env:
+          # Allow CI to use snapshot without depending on live backend
+          CRONIQ_OPENAPI_URL: ''
+        run: npm run generate:api
+
+      - name: Fail on generated diffs (api-schema + snapshot)
+        run: |
+          git diff --stat --exit-code -- projects/api-schema/generated artifacts/swagger.json || (
+            git diff --color=always -- projects/api-schema/generated artifacts/swagger.json
+            exit 1
+          )

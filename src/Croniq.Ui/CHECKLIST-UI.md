@@ -88,7 +88,7 @@ Derived from [docs/deep-dive/designs/angular-ui-concept.md](docs/deep-dive/desig
 - [x] Generate REST clients directly from the upstream OpenAPI contract (or gRPC-Web bridge) and wrap them in the shared `ApiClient` service that injects telemetry headers. _(Implemented via `openapi-zod-client` generation to `projects/api-schema/generated`; scripts live in `package.json`.)_
 - [x] Document & standardize OpenAPI source selection (snapshot vs. live server), including the recommended local dev commands and the fallback order. _(See `artifacts/README.md`; use `npm run generate:api` (snapshot/offline) or `npm run generate:api:server` (live).)_
 - [x] Add a one-shot Swagger snapshot command (`npm run snapshot:swagger`) and a combined refresh command (`npm run generate:api:server:snapshot`) so the repo snapshot can be updated deterministically.
-- [ ] Decide CI policy for OpenAPI sync: keep committing `artifacts/swagger.json` snapshots vs. generating from a live/staging swagger endpoint (and how to avoid flaky builds when the endpoint is unavailable).
+- [x] Decide CI policy for OpenAPI sync: keep committing `artifacts/swagger.json` snapshots and enforce `npm run generate:api` via CI job `ui-openapi-sync` in `.github/workflows/ci-pr.yml` (fails on diffs in `projects/api-schema/generated` or `artifacts/swagger.json`).
 - [ ] Wire newly generated endpoints into the relevant feature stores (no new UX):
   - [ ] tenants list/create/deactivate (deferred: tenant feature excluded in single-tenant UI)
   - [x] tenant api-clients list/upsert/delete
@@ -156,7 +156,7 @@ This checklist intentionally avoids duplicating how-tos.
 - Keep OpenAPI responses in sync with the backend (ideally add response schemas for `/auth/*` upstream so generation no longer yields `z.void()` responses).
 - Keep `tenantId` / `environmentTag` unset in the login payload (server-configured defaults).
 - For tenant-scoped API routes (`/tenants/:tenantId/*`), pass the **tenant reference** (see root docs: `docs/deep-dive/password-auth.md` and `AGENTS.md`).
-- Decide CI policy for OpenAPI sync (snapshot commit vs. live/staging generation) and implement it.
+- CI now enforces snapshot-based OpenAPI sync: `ui-openapi-sync` in `.github/workflows/ci-pr.yml` runs `npm run generate:api` and fails on diffs in `projects/api-schema/generated` or `artifacts/swagger.json`.
 - Establish Angular Query + Signals boilerplate shared across feature modules.
 
 # Technical Debt & Optimizations
