@@ -93,7 +93,7 @@ This document extends the quality vision captured in `architecture.md` and descr
 
 ### Data & Environment Management
 
-- `tools/Croniq.DbMigrator` keeps schemas consistent across suites; invoke via `dotnet run --project tools/Croniq.DbMigrator/Croniq.DbMigrator.csproj -- --connection <conn>` when reproducing issues.
+- `tools/Croniq.DbMigrator` keeps schemas consistent across suites; invoke via `CRONIQ_SQL_CONNECTION=<conn> dotnet run --project tools/Croniq.DbMigrator/Croniq.DbMigrator.csproj` when reproducing issues.
 - Default secrets and API keys come from sample hosts; never commit real credentials. Use `ISecretProvider` abstractions when tests require secret resolution.
 - Docker Desktop (or another engine) must be running for contract/E2E suites; unit tests stay Docker-free.
 

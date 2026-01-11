@@ -85,8 +85,8 @@ The rest of this document describes Option A as the baseline, and outlines Optio
   - Body: `{ currentPassword, newPassword }`
   - After a successful password change, all refresh tokens for the user are revoked. Clients must re-login to obtain a new refresh token.
 
-- Optional admin endpoints (restricted):
-  - `POST /tenants/{tenantId}/users` create user / invite.
+- Deferred admin endpoints (backlog, not implemented yet):
+  - `POST /tenants/{tenantId}/users` (create user / invite).
   - `POST /tenants/{tenantId}/users/{userId}/reset-password`.
 
 ### Token Model

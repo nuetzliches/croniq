@@ -51,6 +51,8 @@ public static class WorkerHostingExtensions
                 persistenceOpts.SqlServer.ConnectionString,
                 sharedSqlServer.ConnectionString,
                 configuration);
+            var commandTimeoutSeconds = persistenceOpts.SqlServer.CommandTimeoutSeconds
+                ?? sharedSqlServer.CommandTimeoutSeconds;
 
             if (string.IsNullOrWhiteSpace(conn))
             {
@@ -63,6 +65,7 @@ public static class WorkerHostingExtensions
                 sqlOptions.MigrationsAssembly = persistenceOpts.SqlServer.MigrationsAssembly ?? sharedSqlServer.MigrationsAssembly;
                 sqlOptions.EnableDetailedErrors = persistenceOpts.SqlServer.EnableDetailedErrors ?? sharedSqlServer.EnableDetailedErrors;
                 sqlOptions.EnableSensitiveDataLogging = persistenceOpts.SqlServer.EnableSensitiveDataLogging ?? sharedSqlServer.EnableSensitiveDataLogging;
+                sqlOptions.CommandTimeoutSeconds = commandTimeoutSeconds;
             }, persistenceOptions =>
             {
                 if (persistenceOpts.SqlServer.LeaseDurationSeconds.HasValue)

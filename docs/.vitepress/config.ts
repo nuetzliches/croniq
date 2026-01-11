@@ -47,6 +47,9 @@ export default withMermaid(defineConfig({
                         { text: 'Authentication', link: '/guides/auth' },
                         { text: 'Policies', link: '/guides/policies' },
                         { text: 'Triggers', link: '/guides/triggers' },
+                        { text: 'Webhooks', link: '/guides/webhooks' },
+                        { text: 'Workers & Runners (HTTP)', link: '/guides/workers-runners' },
+                        { text: 'gRPC', link: '/guides/grpc' },
                         { text: 'Handlers', link: '/guides/handlers' }
                     ]
                 },

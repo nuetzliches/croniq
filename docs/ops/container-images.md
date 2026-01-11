@@ -102,14 +102,9 @@ If you run in DMZ ingress-only mode (`Ingress.DispatchMode=StoreOnly`), the host
 
 ### croniq-db-migrator
 
-Provide the connection string via `CRONIQ_SQL_CONNECTION` and pass CLI arguments:
-
-- `--apply` to apply migrations
-- `--verify` to validate schema drift without applying
-
-Example:
+Provide the connection string via `CRONIQ_SQL_CONNECTION` and run the migrator (idempotent; safe to rerun):
 
 ```bash
 CRONIQ_SQL_CONNECTION="Server=sql;Database=Croniq;User Id=sa;Password=..." \
-  dotnet Croniq.DbMigrator.dll --apply
+  dotnet Croniq.DbMigrator.dll
 ```

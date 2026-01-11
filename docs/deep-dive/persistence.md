@@ -101,9 +101,10 @@ tools/Croniq.DbMigrator/
 | Setting                                              | Purpose                                                | Notes                                                                           |
 | ---------------------------------------------------- | ------------------------------------------------------ | ------------------------------------------------------------------------------- |
 | `Croniq:SqlServer:ConnectionString`                  | Default connection string shared by auth + persistence | Example: `Server=localhost,1433;Database=Croniq;User Id=sa;Password=Secret123!` |
+| `Croniq:SqlServer:CommandTimeoutSeconds`             | EF Core command timeout (seconds)                      | Shared default for auth + persistence; omit to use provider defaults            |
 | `Croniq:Persistence:Mode`                            | `InMemory` or `SqlServer`                              | Controls which provider `AddCroniqApiServices` wires up                         |
 | `Croniq:Persistence:SqlServer:ConnectionString`      | Optional override for persistence only                 | Falls back to `Croniq:SqlServer:ConnectionString`                               |
-| `Croniq:Persistence:SqlServer:CommandTimeoutSeconds` | EF command timeout                                     | Defaults to 30s                                                                 |
+| `Croniq:Persistence:SqlServer:CommandTimeoutSeconds` | Optional override for persistence only                 | Falls back to `Croniq:SqlServer:CommandTimeoutSeconds`                          |
 | `Croniq:Auth:Mode`                                   | `InMemory` or `SqlServer`                              | Auth shares the DbContext when `SqlServer`                                      |
 | `Croniq:Auth:SqlServer:ConnectionString`             | Optional override for auth only                        | Use when auth DB is separate                                                    |
 
@@ -118,13 +119,14 @@ tools/Croniq.DbMigrator/
 
    Make sure the generated migration files are checked in, including the `*.Designer.cs` files and `SqlServerDbContextModelSnapshot.cs`. EF Core uses the designer attributes to discover migrations, and missing designer files will surface as "No EF Core migrations were discovered" in CI.
 
-3. **Apply locally** via the migrator:
+3. **Apply locally** via the migrator (uses `CRONIQ_SQL_CONNECTION`):
 
    ```cmd
-   dotnet run --project tools/Croniq.DbMigrator -- --connection "<connection-string>" --apply
+   set CRONIQ_SQL_CONNECTION=Server=<sql-host>;Database=Croniq;User Id=cronq_admin;Password=<secret>;
+   dotnet run --project tools/Croniq.DbMigrator
    ```
 
-4. **Verify CI**: `Croniq.DbMigrator --verify` runs in nightly workflows to detect drift.
+4. **Verify CI**: CI runs `Croniq.DbMigrator` against a test database to detect migration drift.
 5. **Docs**: Update this file (and any consumer references) whenever connection options or defaults change.
 
 ### Applying `WebhookEndpointIpRules` (2025-12)
@@ -140,7 +142,7 @@ set CRONIQ_SQL_CONNECTION=Server=<sql-host>;Database=Croniq;User Id=cronq_admin;
 1. **Run the migrator once per environment** (dev/test/prod). The tool is idempotent, so reruns are safe:
 
 ```cmd
-dotnet run --project tools/Croniq.DbMigrator -- --apply
+dotnet run --project tools/Croniq.DbMigrator
 ```
 
 > Containerized clusters can execute the same step with `docker compose run --rm croniq-db-migrator` as long as `CRONIQ_SQL_CONNECTION` is injected.
@@ -159,7 +161,7 @@ ORDER BY CreatedAtUtc DESC;
 
 - The Docker dev stack (`infra/docker/docker-compose.yml`) launches SQL Server 2022 with the Croniq schema. Compose derives `CRONIQ_SQL_CONNECTION` from `CRONIQ_SQL_HOST`, `CRONIQ_SQL_DATABASE`, and `CRONIQ_SQL_PASSWORD` (using `sa` on port 1433) based on `.env`.
 - `scripts\devstack-up.cmd` waits for SQL health before running the migrator container (`croniq-db-migrator`).
-- Developers can also run `dotnet run --project tools/Croniq.DbMigrator -- --connection %CRONIQ_SQL_CONNECTION% --apply` manually.
+- Developers can also run `dotnet run --project tools/Croniq.DbMigrator` manually (reads `CRONIQ_SQL_CONNECTION`).
 - Test projects rely on Testcontainers to spin up SQL Server and call the migrator automatically.
 
 ## Clustering & Leases (Future)

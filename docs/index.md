@@ -8,7 +8,7 @@ Croniq orchestrates distributed workloads for microservice platforms: register j
 
 - [Introduction](./introduction/index.md) – What Croniq is, how to get started, and essential configuration.
 - [Deployment modes](./introduction/deployment-modes.md) – Minimal samples vs a separated, self-hosted platform setup.
-- [Guides](./guides/index.md) – Deepen your skills with authentication, policies, triggers, and handler patterns.
+- [Guides](./guides/index.md) - Deepen your skills with authentication, policies, triggers, webhooks, workers/runners, gRPC, and handler patterns.
 - [Operations](./ops/index.md) – Troubleshoot deployments and keep Croniq healthy.
 - [Deep Dive](./deep-dive/index.md) – Architecture plans, CI/CD workflows, dev stack, and observability internals.
 

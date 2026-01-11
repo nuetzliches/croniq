@@ -17,6 +17,8 @@ public sealed class SqlServerPersistenceNode
 
     public bool? EnableSensitiveDataLogging { get; set; }
 
+    public int? CommandTimeoutSeconds { get; set; }
+
     public int? LeaseDurationSeconds { get; set; }
 
     public int? DeadLetterRetentionDays { get; set; }

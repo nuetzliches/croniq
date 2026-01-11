@@ -36,6 +36,10 @@ public static class DependencyInjectionExtensions
                 {
                     sqlOptions.MigrationsAssembly(options.MigrationsAssembly);
                 }
+                if (options.CommandTimeoutSeconds is > 0)
+                {
+                    sqlOptions.CommandTimeout(options.CommandTimeoutSeconds);
+                }
             });
 
             builder.EnableDetailedErrors(options.EnableDetailedErrors);

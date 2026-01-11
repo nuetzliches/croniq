@@ -17,7 +17,7 @@ Documentation backlog extracted from `CHECKLIST.md`. Track doc-only and doc-alig
 - [x] `docs/deep-dive/architecture.md`: fix quota description (JobKey/Scope with `MaxTriggersPerMinute` + `MaxParallelExecutionsPerJob`; API rate limits are separate).
 - [x] `docs/deep-dive/designs/webhook-secret-rotation.md`: remove "future helper script" note and align retention/cleanup notes to current options/defaults.
 - [x] `docs/deep-dive/release.md`: align steps with actual release workflows (no `Directory.Build.props` bump, no Snyk/Docs artifact if not used).
-- [x] `docs/deep-dive/password-auth.md`: fix config key names and update `docs/guides/triggers.md` from .NET 8 to net10.0.
+- [x] `docs/deep-dive/password-auth.md`: fix config key names and update `docs/guides/webhooks.md` from .NET 8 to net10.0.
 - [x] `docs/deep-dive/observability.md`: fix metric name to `cronijob_executions_total`.
 - [x] `docs/deep-dive/observability.md`: remove the Serilog registration claim (Default provider uses `ILoggerFactory`).
 - [x] `docs/deep-dive/devstack.md`: fix Prometheus/Tempo port defaults to 9090/3200.
@@ -40,9 +40,9 @@ Documentation backlog extracted from `CHECKLIST.md`. Track doc-only and doc-alig
 ### Guides and introduction
 - [x] `docs/guides/triggers.md`, `docs/ops/retention.md`, `docs/deep-dive/architecture.md`: align cron field count (6 fields + optional year).
 - [x] `docs/guides/triggers.md`: update TriggerId default (Base64-url Cron + optional TimeZoneId, hash fallback >512 chars).
-- [x] `docs/guides/triggers.md` + `docs/deep-dive/security.md`: IP rule block is `403 ip-blocked` (not `429 ip-rule-denied`).
-- [x] `docs/guides/polyglot-workers.md`: runner mismatch returns `403 runner-mismatch` (not `409 lease-conflict`).
-- [x] `docs/guides/polyglot-workers.md`: default scopes from `issue-worker-api-key.ps1` are `work:*`, `workers:heartbeat/read`, `runners:heartbeat/read`.
+- [x] `docs/guides/webhooks.md` + `docs/deep-dive/security.md`: IP rule block is `403 ip-blocked` (not `429 ip-rule-denied`).
+- [x] `docs/guides/workers-runners.md`: runner mismatch returns `403 runner-mismatch` (not `409 lease-conflict`).
+- [x] `docs/guides/workers-runners.md`: default scopes from `issue-worker-api-key.ps1` are `work:*`, `workers:heartbeat/read`, `runners:heartbeat/read`.
 - [x] `docs/guides/auth.md`: remove "after backlog item completes" wording for `/tenants/{tenantId}/api-keys`.
 - [x] `docs/introduction/index.md`: replace "SDK reference (coming soon)" placeholder with existing doc links.
 - [x] `docs/introduction/configuration.md`: remove "job-registration.md (upcoming)" wording and link directly.
@@ -64,24 +64,24 @@ Documentation backlog extracted from `CHECKLIST.md`. Track doc-only and doc-alig
 - [ ] (blocked until repo is public) Add docs publishing workflow (GitHub Pages) once the repo is public to avoid private-repo costs.
 - [ ] (deferred - vNext) gRPC docs expansion for Python/Go/Node (optional Java) with packages, install, auth helpers, minimal examples.
 - [ ] `docs/deep-dive/architecture.md`: clock drift monitoring via ITimeProvider is documented but not implemented.
-- [ ] `docs/deep-dive/designs/dmz-ingress-remote-webhooks.md`: options mention `LeaseSeconds/MaxBatchSize/PollingIntervalMilliseconds`, but `WebhookIngressOptions` exposes only `DispatchMode`.
-- [ ] `docs/deep-dive/password-auth.md`: admin endpoints `/tenants/{tenantId}/users` and `/tenants/{tenantId}/users/{userId}/reset-password` are not implemented.
-- [ ] `docs/deep-dive/persistence.md`: `Croniq:Persistence:SqlServer:CommandTimeoutSeconds` is documented but not implemented.
-- [ ] Webhook remote: restrict `AllowInvalidServerCertificate` to dev-only; align samples/docs accordingly.
+- [x] `docs/deep-dive/designs/dmz-ingress-remote-webhooks.md`: options mention `LeaseSeconds/MaxBatchSize/PollingIntervalMilliseconds`, but `WebhookIngressOptions` exposes only `DispatchMode`.
+- [x] `docs/deep-dive/password-auth.md`: admin endpoints `/tenants/{tenantId}/users` and `/tenants/{tenantId}/users/{userId}/reset-password` are not implemented.
+- [x] `docs/deep-dive/persistence.md`: `Croniq:Persistence:SqlServer:CommandTimeoutSeconds` is documented but not implemented.
+- [x] Webhook remote: restrict `AllowInvalidServerCertificate` to dev-only; align samples/docs accordingly.
 - [x] Tenant defaults: align `CRONIQ_TENANT_ID` to `default` for single-tenant samples/tests.
 - [x] Smoke API key env: standardize on `CRONIQ_API_KEY` across tests/devstack.
 - [x] Environment tag env: standardize on `CRONIQ_ENVIRONMENT` across samples/docs.
-- [ ] `Croniq.DbMigrator` CLI docs: decide whether to implement `--apply/--verify/--connection` or update docs to match current behavior.
+- [x] `Croniq.DbMigrator` CLI docs: decide whether to implement `--apply/--verify/--connection` or update docs to match current behavior.
 - [x] Samples/READMEs: default `CRONIQ_API_KEY` now matches devstack (`smoke-key`).
 - [x] JobKey format: docs/samples now use `namespace:name[:variant]` (tenant/environment come from scope).
-- [ ] `docs/guides/triggers.md` + `docs/deep-dive/security.md`: replay/idempotency headers documented but not implemented.
+- [x] `docs/guides/webhooks.md` + `docs/deep-dive/security.md`: replay/idempotency headers documented but not implemented.
 - [ ] `docs/deep-dive/security.md`: per-hook metadata enrichment toggle documented but not implemented.
 - [ ] `docs/deep-dive/security.md`: `cluster:read` scope documented but not implemented.
 - [ ] `docs/deep-dive/security.md`: webhook secrets are stored as plaintext but docs claim "hashed only".
 - [ ] `docs/deep-dive/security.md`: correlation/actor documented for all webhook management requests, but only IP rule CRUD sets them.
 - [ ] `docs/deep-dive/security.md`: payload size/content-type guardrails are documented but not implemented.
-- [x] `docs/guides/triggers.md`: ingress example no longer uses `X-Croniq-Key` (signature-only).
-- [x] `docs/guides/triggers.md` + `docs/introduction/quickstart.md` + `docs/deep-dive/architecture.md`: ingress route unified to `/tenants/{tenantId}/environments/{environmentTag}/webhooks/{hookKey}`.
+- [x] `docs/guides/webhooks.md`: ingress example no longer uses `X-Croniq-Key` (signature-only).
+- [x] `docs/guides/webhooks.md` + `docs/introduction/quickstart.md` + `docs/deep-dive/architecture.md`: ingress route unified to `/tenants/{tenantId}/environments/{environmentTag}/webhooks/{hookKey}`.
 - [x] `docs/deep-dive/architecture.md`: ingress processing stages no longer mention optional caller auth.
 - [ ] `docs/deep-dive/ci.md`: health probe is documented as `/webhooks/health`, but host exposes `/health`.
 - [ ] `docs/deep-dive/security.md`: "TenantId/CallerId only after hashing" does not match current log/metric tagging.

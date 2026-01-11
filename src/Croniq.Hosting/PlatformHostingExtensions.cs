@@ -50,6 +50,8 @@ public static class PlatformHostingExtensions
                 persistenceOpts.SqlServer.ConnectionString,
                 sharedSqlServer.ConnectionString,
                 configuration);
+            var commandTimeoutSeconds = persistenceOpts.SqlServer.CommandTimeoutSeconds
+                ?? sharedSqlServer.CommandTimeoutSeconds;
 
             if (string.IsNullOrWhiteSpace(conn))
             {
@@ -62,6 +64,7 @@ public static class PlatformHostingExtensions
                 sqlOptions.MigrationsAssembly = persistenceOpts.SqlServer.MigrationsAssembly ?? sharedSqlServer.MigrationsAssembly;
                 sqlOptions.EnableDetailedErrors = persistenceOpts.SqlServer.EnableDetailedErrors ?? sharedSqlServer.EnableDetailedErrors;
                 sqlOptions.EnableSensitiveDataLogging = persistenceOpts.SqlServer.EnableSensitiveDataLogging ?? sharedSqlServer.EnableSensitiveDataLogging;
+                sqlOptions.CommandTimeoutSeconds = commandTimeoutSeconds;
             }, persistenceOptions =>
             {
                 if (persistenceOpts.SqlServer.LeaseDurationSeconds.HasValue)
@@ -99,6 +102,7 @@ public static class PlatformHostingExtensions
                 sqlOptions.MigrationsAssembly = authOpts.SqlServer.MigrationsAssembly ?? sharedSqlServer.MigrationsAssembly;
                 sqlOptions.EnableDetailedErrors = authOpts.SqlServer.EnableDetailedErrors ?? sharedSqlServer.EnableDetailedErrors;
                 sqlOptions.EnableSensitiveDataLogging = authOpts.SqlServer.EnableSensitiveDataLogging ?? sharedSqlServer.EnableSensitiveDataLogging;
+                sqlOptions.CommandTimeoutSeconds = sharedSqlServer.CommandTimeoutSeconds;
             });
         }
         else

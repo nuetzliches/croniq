@@ -5,7 +5,7 @@ This document explains how Croniq implements the Polly-based policy engine outli
 ## Goals
 
 - Provide deterministic policy resolution per job key (global -> tenant -> environment -> namespace -> job) leveraging the existing `IPolicyResolver` in `Croniq.Core`.
-- Use Polly resilience pipelines to compose retry, timeout, circuit breaker, and fallback behaviors for every job execution.
+- Use Polly resilience pipelines to compose retry, timeout, and circuit breaker behaviors for every job execution.
 - Ensure dead-letter routing and telemetry signals fire consistently regardless of policy override layer.
 - Allow sample hosts to switch between default in-memory guards and future distributed implementations without code changes.
 
@@ -33,7 +33,7 @@ This document explains how Croniq implements the Polly-based policy engine outli
 ### Dead Letter Strategy
 
 - Extend `IJobPersistenceProvider` with `MoveToDeadLetterAsync` (if not already). When retries exhausted or policy decides to DLQ, persist the payload, exception metadata, policy snapshot, and schedule automatic cleanup based on retention options.
-- Provide In-Memory fallback for local dev.
+- Provide in-memory providers for local dev.
 
 ### Telemetry Integration
 
@@ -193,7 +193,7 @@ builder.WithMetrics(metrics => metrics.AddMeter("Croniq.Core.Policy", "Croniq.Co
 - [x] Define `ExecutionPolicyOptions` + override binding in `Croniq.Core` (`Options/Policies`).
 - [x] Implement `PolicyOverrideOptions.Execution` hierarchy (mirroring Misfire/Quota) and extend `IPolicyResolver` to supply execution policies per job.
 - [x] Add `ExecutionPolicyPipelineProvider` (Polly v8) with retry/timeout/circuit support, caching pipelines per job, and wire `DefaultJobExecutionPipeline` to use it.
-- [x] Extend resilience pipeline with a Dead-Letter fallback once persistence contracts and SQL scripts are ready (TriggerWorker now routes exhausted leases via `DeadLetterRequest`).
+- [x] Add dead-letter handling when retries are exhausted once persistence contracts and SQL scripts are ready (TriggerWorker now routes exhausted leases via `DeadLetterRequest`).
 - [x] Emit policy outcome counters/metrics via the `ExecutionPolicyPipelineProvider` + `TriggerWorker` instrumentation (replaces earlier plan to wire it inside `DefaultJobExecutionPipeline`).
 - [x] Extend persistence contracts for dead-letter writes/reads and update SqlServer EF migrations accordingly.
 - [x] Provide integration tests in `Croniq.Core.Tests` + contract tests for persistence to validate dead-letter storage.

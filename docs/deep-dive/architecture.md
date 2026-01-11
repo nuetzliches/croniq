@@ -9,7 +9,7 @@ This document captures the current architecture of Croniq and replaces the earli
 - Default SLOs:
   - Trigger lookup + schedule evaluation: < 100 ms p50 / < 250 ms p95 for up to 10k active triggers per node.
   - End-to-end job start (trigger to `ExecuteAsync`): < 500 ms p95 (in-memory), < 750 ms p95 (SqlServer persistence).
-  - Availability: 99.9% monthly for Scheduler/API; API error rate < 0.1% per day; clock drift between nodes < 50 ms.
+  - Availability: 99.9% monthly for Scheduler/API; API error rate < 0.1% per day.
 
 ## Layered Architecture
 
@@ -97,9 +97,9 @@ docs/
 
 - Trigger types: cron expressions (6 fields + optional year) plus `@once` for one-off schedules; webhook ingress and manual triggers dispatch immediate executions.
 - Every job key follows `namespace:name[:variant]`, ensuring a stable identifier while tenant/environment are derived from the hosting scope.
-- `IJobExecutionContext` exposes metadata, logger, telemetry hooks, and helpers (`InitProgress`, `ReportProgress`, `CustomState`). Jobs log and rethrow exceptions so policies can respond.
+- `IJobExecutionContext` exposes metadata, logger, and telemetry hooks. Jobs log and rethrow exceptions so policies can respond.
 - Misfires are retried while `MaxMisfireDelay` (default 5 minutes) is respected. Beyond that the execution is marked as dead letter.
-- Delivery semantics: at-least-once by default. Callers may supply `IdempotencyKey` metadata to deduplicate downstream effects.
+- Delivery semantics: at-least-once by default. Callers can attach idempotency metadata for their own handlers if needed.
 
 ### Lease Renewal & Long-Running Jobs
 
@@ -134,8 +134,8 @@ docs/
 
 - In-memory JobStore (`Croniq.JobStore.InMemory`) stays the default for dev/test while all operations flow through `IJobPersistenceProvider` contracts.
 - SqlServer provider adds durability, leases, recovery, and future clustering. Locking uses SQL row versions and optional lease tables.
-- Providers also exist for auth, logging (Serilog), telemetry (OpenTelemetry), secrets, and future extensions (queues, notifications).
-- All persistence access goes through EF Core. Schema changes use migrations (`dotnet ef migrations add ...` in `Croniq.Data.SqlServer`). CI verifies drift via `Croniq.DbMigrator --verify`.
+- Providers also exist for auth, logging (ILogger plus optional Serilog), telemetry (OpenTelemetry), secrets, and future extensions (queues, notifications).
+- All persistence access goes through EF Core. Schema changes use migrations (`dotnet ef migrations add ...` in `Croniq.Data.SqlServer`). CI runs `Croniq.DbMigrator` to apply migrations and detect drift.
 
 ## API & RPC Surface
 
@@ -170,8 +170,8 @@ docs/
 - **Endpoints & Protocols**: Ingress routes such as `POST /tenants/{tenantId}/environments/{environmentTag}/webhooks/{hookKey}` accept JSON payloads today, with a standardized event envelope planned. Each hook maps to a registered `JobKey`. Payload metadata is projected into `IJobExecutionContext` with `webhook:*` and `payload:*` prefixes so downstream jobs can branch without re-parsing JSON.
 - **Configuration Source**: Hooks are defined under `Croniq:Webhooks` (in-memory for dev) or persisted via `Croniq.Persistence.SqlServer` once the admin API lands. The shape includes `HookKey`, `JobKey`, `Secret`, per-hook `RequestsPerMinute`, and arbitrary metadata. The host falls back to global defaults when per-hook values are omitted.
 - **Processing Stages**: Request enters `Croniq.Webhooks` -> hook lookup for tenant/environment scope -> HMAC signature validation (`X-Croniq-Signature`) -> named ASP.NET Core rate limiter partitioned per hook -> payload normalization/metadata enrichment -> dispatch. In standard mode the dispatcher executes via `IJobExecutionPipeline`; in DMZ StoreOnly mode it persists a `WebhookIngressEvent` for the internal relay worker. Failures bubble into policy-based retries, logging, and a `WebhookIngressEvent`/dead-letter record for diagnostics.
-- **Security & Observability**: TLS is mandatory; secrets never leave the server; validation runs in constant time to avoid timing attacks. OpenTelemetry spans (`Croniq.Webhooks.Ingress`) capture hook/job tags, and the host exports the same metrics/logging decorators as `Croniq.Api`, making it easy to monitor ingress pressure separately from management traffic.
-- **Docs Impact**: `docs/guides/triggers.md` demonstrates configuration + curl usage, the quickstart teaches how to co-host webhooks, and this section outlines deployment trade-offs so operators understand when to promote the ingress to a dedicated service.
+- **Security & Observability**: TLS is mandatory; secrets are returned only on create/rotate and stored in SqlServer, so treat the database as sensitive; validation runs in constant time to avoid timing attacks. OpenTelemetry spans (`Croniq.Webhooks.Ingress`) capture hook/job tags, and the host exports the same metrics/logging decorators as `Croniq.Api`, making it easy to monitor ingress pressure separately from management traffic.
+- **Docs Impact**: `docs/guides/webhooks.md` demonstrates configuration + curl usage, the quickstart teaches how to co-host webhooks, and this section outlines deployment trade-offs so operators understand when to promote the ingress to a dedicated service.
 
 ### Webhook Persistence & Admin Lifecycle (Preview)
 
@@ -198,13 +198,13 @@ docs/
 
 ## Policies & Error Handling
 
-- Policy engine builds on Polly (retry, timeout, circuit, fallback). Policies attach via configuration; a fluent per-job builder is on the backlog.
+- Policy engine builds on Polly (retry, timeout, circuit). Policies attach via configuration; a fluent per-job builder is on the backlog.
 - Dead-letter routing persists payload and reason, default retention 30 days (configurable). Recoveries feed into admin tooling via SqlServer tables.
-- Idempotency tokens derive from metadata when needed; concurrency controls limit overlapping runs per job.
+- Concurrency controls limit overlapping runs per job; idempotency remains a caller concern today.
 
 ## Observability & Deployment
 
-- Logging: Serilog with OpenTelemetry sink; structured fields include tenant/environment/job context.
+- Logging: uses `ILoggerFactory` by default; `AddCroniqObservability` can enable Serilog with optional OpenTelemetry log export. Structured fields include tenant/environment/job context.
 - Metrics/Traces: OpenTelemetry SDK emitting OTLP by default. Dev stack ships with collector + Grafana + Tempo + Prometheus + Loki (optional).
 - Docker strategy: multi-stage .NET 10 images, Compose stack for API, worker, SQL Server, observability, optional RPC sample.
 - GitHub Actions build/test/publish NuGet packages and OCI images, uploading docs previews as artifacts.
@@ -212,7 +212,6 @@ docs/
 ## Reliability, Recovery & Tenant Isolation
 
 - Recovery flow: on startup, load persisted triggers, clean stale locks, resume pending executions before declaring the instance healthy.
-- Clock drift monitoring via `ITimeProvider`; warnings from 50 ms drift upward.
 - Retention defaults: execution log retention is 7 days (hourly sweep) when `ExecutionLogRetentionService` is hosted. SQL retention jobs are disabled by default (`Croniq:Retention:Enabled=false`); if enabled, refresh tokens default to 14 days after expiry, webhook endpoint events 30 days, and webhook secret history 7 days after expiry. Job/webhook dead letter pruning is disabled unless configured.
 - Tenant isolation is enforced everywhere: persistence schemas, caller context, telemetry dimensions, rate limiting, and API scopes.
 - Quotas are enforced per JobKey/scope using `MaxTriggersPerMinute` (default 60) and `MaxParallelExecutionsPerJob` (default 5) from `Croniq:Policies:*`. API rate limits are separate (`Croniq:Api:RequestsPerMinute` + `Croniq:Api:TenantRateLimits`).

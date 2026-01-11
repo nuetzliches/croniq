@@ -5,7 +5,7 @@ The rendered homepage for these docs lives at [`docs/index.md`](./index.md). Use
 Quick links:
 
 - [`/introduction/`](./introduction/) – onboarding and configuration guides.
-- [`/guides/`](./guides/) – auth, policies, triggers, handler patterns.
+- [`/guides/`](./guides/) - auth, policies, triggers, webhooks, workers/runners, gRPC, handler patterns.
 - [`/ops/`](./ops/) – troubleshooting and operations.
 - [`/deep-dive/`](./deep-dive/) – architecture, supply chain, observability, dev stack.
 

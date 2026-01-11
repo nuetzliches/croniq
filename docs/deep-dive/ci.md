@@ -83,7 +83,7 @@ This document describes the continuous integration and delivery strategy require
 - Steps:
   1. Resolve image tag (defaults to current ref, workflow input, or `staging-<run>`).
   2. Configure kubectl/Helm with the staging kubeconfig and install/upgrade the chart with staged API/worker tags.
-  3. Run layered health probes via `scripts/ci/wait-for-http.ps1` against `/health`, `/health/persistence`, and `/webhooks/health`; on failure, capture `kubectl get/describe/logs` before exiting.
+3. Run layered health probes via `scripts/ci/wait-for-http.ps1` against `/health` and `/health/persistence`; on failure, capture `kubectl get/describe/logs` before exiting.
   4. Execute `dotnet test tests/Croniq.Api.Smoke/... -- TestRunParameters.Parameter(BaseUrl, https://staging.croniq.local)` to validate ingress + APIs.
   5. Collect diagnostics (pods, describe output, API/worker logs) as artifacts for traceability.
 

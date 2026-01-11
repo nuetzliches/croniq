@@ -122,7 +122,7 @@ This document specifies the authentication, authorization, and rate limiting des
 ### Broader Ingress Tests & Visibility
 
 - **E2E coverage**: `tests/Croniq.Api.Smoke` now runs both the management scenario (`Webhook_ip_rule_crud_roundtrip`) and the ingress exercise (`Webhook_ingress_respects_ip_rules`), which hits `Croniq.Webhooks` to assert `403 ip-blocked` followed by `202 accepted` after adding a catch-all rule.
-- **Telemetry dashboards**: Extend the observability pack to chart `ip-rule-denied`, `signature-invalid`, and rate-limit signals together. Distinguishing between denied IPs and failed signatures shortens incident triage.
+- **Telemetry dashboards**: Extend the observability pack to chart `ip-blocked`, `signature-invalid`, and rate-limit signals together. Distinguishing between denied IPs and failed signatures shortens incident triage.
 
 ### Operator UI & SDK Roadmap
 
@@ -191,14 +191,13 @@ Minimal configuration example:
 - **API key compromise**: (1) call `DELETE /tenants/{tenantId}/api-keys/{keyId}` to revoke the offender, (2) rotate dependent deploy agents via `POST .../rotate`, (3) search `Croniq.Api.Auth` logs for the compromised CallerId to confirm no lingering traffic, and (4) invalidate cached rate-limiter entries by restarting only the edge pod if requests keep flowing (the limiter refreshes partitions automatically once traffic stops).
 - **Webhook secret/IP rule drift**: When secrets or CIDRs must change quickly, batch rotations through the existing CRUD APIs—each call emits a `WebhookEndpointEvents` record and pushes cache invalidations to every ingress replica. No manual recycle is required; confirm the rollout by tailing `Croniq.Webhooks` logs for `cache invalidation completed` and running the smoke tests.
 - **Database least privilege**: Deploy `Croniq.DbMigrator` with a migration role, then run the API/Worker/Webhook hosts under read/write roles scoped to their schemas (`croniq`, `auth`). Deny `ALTER` to runtime identities and audit failed DDL attempts via SQL Server Extended Events.
-- **Telemetry to SIEM**: Forward `Croniq.Api` and `Croniq.Webhooks` structured logs plus `Croniq.Observability` metrics to your SIEM. Prioritize alerts for `auth.failed`, `rate.limit.rejected`, `ip-rule-denied`, and unusual spikes in `WebhookDeadLetters`.
+- **Telemetry to SIEM**: Forward `Croniq.Api` and `Croniq.Webhooks` structured logs plus `Croniq.Observability` metrics to your SIEM. Prioritize alerts for `auth.failed`, `rate.limit.rejected`, `ip-blocked`, and unusual spikes in `WebhookDeadLetters`.
 - **Disaster recovery validation**: Quarterly, restore the SQL backups into a staging cluster, run `Croniq.DbMigrator` to verify schema parity, then execute `scripts/test-e2e.cmd` against the restored environment to ensure creds, secrets, and webhook caches hydrate as expected.
 
 ## Webhook Consumer Guidance
 
-- Detailed guidance now lives in `docs/guides/triggers.md` under **Webhook Security Guidance**. It covers signature generation samples (C#, Node.js, Go), timestamp/delivery headers, and when to send `Idempotency-Key` vs. `User-Agent` metadata.
-- Replay protection defaults to a ±5-minute acceptance window. Encourage producers to generate fresh payloads with new `X-Croniq-Delivery-Id` values for every retry.
-- Error-handling expectations (`ip-rule-denied`, `signature-invalid`, `rate-limit`) plus rotation best practices reference the `WebhookEndpointEvents` audit stream so operators can confirm which secret is active.
+- Detailed guidance now lives in `docs/guides/webhooks.md` under **Webhook Security Guidance**. It covers signature generation samples (C#, Node.js, Go), recommended headers, and ingress error handling.
+- Error-handling expectations (`ip-blocked`, `signature-invalid`, `rate-limit`) plus rotation best practices reference the `WebhookEndpointEvents` audit stream so operators can confirm which secret is active.
 
 ## Backlog to Reach "Security-Basis"
 
@@ -217,9 +216,9 @@ Minimal configuration example:
   - [x] Add idempotent helpers to `Croniq.Sdk` + CLI (`cronq webhooks ip-rules sync`) so automation converges desired rule sets (`WebhookIpRuleClient.SyncAsync`).
   - [x] Record `ChangedBy` + correlation IDs from both surfaces (stored in `WebhookEndpointEvents` + SDK correlation header support).
   - [ ] Add end-to-end UI automation (Playwright/integration harness) once the Operator UI ships to exercise the SDK-powered workflow.
-- [x] Add webhook-specific security docs for consumers (`docs/guides/triggers.md`) covering signature generation, replay protection, and recommended HTTP headers.
+- [x] Add webhook-specific security docs for consumers (`docs/guides/webhooks.md`) covering signature generation and recommended HTTP headers.
   - [x] Publish step-by-step signature verification samples (Go/Node/.NET) that match `X-Croniq-Signature` semantics.
-  - [x] Document replay windows, required headers (`X-Croniq-Timestamp`, `X-Croniq-Delivery-Id`), and backoff expectations for 429s.
+  - [x] Document required signature headers (`X-Croniq-Signature`) and backoff expectations for 429s.
   - [x] Include rotation guidance referencing `WebhookEndpointEvents`, plus troubleshooting flow for `signature-invalid` metrics.
 
 Delivering the checklist item means these backlog bullets are implemented and documented, ensuring both API key and bearer-token callers share the same enforcement and observability experience.

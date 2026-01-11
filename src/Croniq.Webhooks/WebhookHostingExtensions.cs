@@ -81,6 +81,7 @@ public static class WebhookHostingExtensions
             sqlOptions.MigrationsAssembly = options.SqlServer.MigrationsAssembly ?? sharedSql.MigrationsAssembly;
             sqlOptions.EnableDetailedErrors = options.SqlServer.EnableDetailedErrors ?? sharedSql.EnableDetailedErrors;
             sqlOptions.EnableSensitiveDataLogging = options.SqlServer.EnableSensitiveDataLogging ?? sharedSql.EnableSensitiveDataLogging;
+            sqlOptions.CommandTimeoutSeconds = options.SqlServer.CommandTimeoutSeconds ?? sharedSql.CommandTimeoutSeconds;
         });
 
         services.TryAddSingleton<IWebhookPersistenceProvider, SqlServerWebhookPersistenceProvider>();
@@ -190,6 +191,23 @@ public static class WebhookHostingExtensions
             {
                 var joined = string.Join(", ", unsignedHooks);
                 throw new InvalidOperationException($"Unsigned webhooks ({joined}) are configured but Croniq:Webhooks:Security:AllowUnsignedHooks is disabled.");
+            }
+        });
+        services.PostConfigure<CroniqWebhookOptions, IHostEnvironment>((options, environment) =>
+        {
+            if (options is null || options.Mode != WebhookPersistenceMode.Remote)
+            {
+                return;
+            }
+
+            if (!(options.Remote?.AllowInvalidServerCertificate ?? false))
+            {
+                return;
+            }
+
+            if (!environment.IsDevelopment())
+            {
+                throw new InvalidOperationException("Croniq:Webhooks:Remote:AllowInvalidServerCertificate is only supported in Development.");
             }
         });
         services.AddMemoryCache();

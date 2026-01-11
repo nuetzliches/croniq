@@ -188,9 +188,6 @@ Croniq:
     Mode: SqlServer
     Ingress:
       DispatchMode: StoreOnly
-      LeaseSeconds: 30
-      MaxBatchSize: 100
-      PollingIntervalMilliseconds: 250
     Security:
       AllowUnsignedHooks: false
   Api:

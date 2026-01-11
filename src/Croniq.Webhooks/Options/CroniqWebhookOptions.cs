@@ -95,6 +95,8 @@ public sealed class WebhookSqlServerOptions
     public bool? EnableDetailedErrors { get; set; }
 
     public bool? EnableSensitiveDataLogging { get; set; }
+
+    public int? CommandTimeoutSeconds { get; set; }
 }
 
 public sealed class WebhookRemoteOptions

@@ -17,7 +17,7 @@ This living note tracks how we keep the consumer-facing docs in sync with the de
 | -------------- | -------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
 | Landing + Hero | `index.md`, `README.md`                                                                | Hero page explains Croniq's value; repo README links to each section and preview commands.                            |
 | Introduction   | `introduction/index.md`, `introduction/quickstart.md`, `introduction/configuration.md` | Quickstart drives a Hello Croniq scenario, references configuration, dev stack, and troubleshooting pages.            |
-| Guides         | `guides/auth.md`, `guides/policies.md`, `guides/triggers.md`, `guides/handlers.md`     | Covers auth modes, policy options, trigger payloads, and handler patterns with "Learn more" callouts into deep dives. |
+| Guides         | `guides/auth.md`, `guides/policies.md`, `guides/triggers.md`, `guides/webhooks.md`, `guides/workers-runners.md`, `guides/grpc.md`, `guides/handlers.md` | Covers auth modes, policy options, trigger payloads, webhooks, worker integration, and handler patterns with "Learn more" callouts into deep dives. |
 | Operations     | `ops/troubleshooting.md`                                                               | Fast-path troubleshooting with links to dev stack, observability, and CI docs for deeper debugging.                   |
 
 ### Deep-Dive Stream (`docs/deep-dive/`)
@@ -43,7 +43,7 @@ Every PR touching `docs/**` must tag at least one representative from each strea
 ## End-to-End Workflow
 
 1. **Open/triage** a `docs-sync` issue describing the source of truth (consumer vs deep dive) and the affected files.
-2. **Edit in pairs**: mirror the change in both locations (e.g., update `guides/triggers.md` _and_ `deep-dive/architecture.md`). Reuse shared snippets from `docs/_templates/` when possible.
+2. **Edit in pairs**: mirror the change in both locations (e.g., update `guides/webhooks.md` _and_ `deep-dive/architecture.md`). Reuse shared snippets from `docs/_templates/` when possible.
 3. **Run local quality gates**: `npm run docs:lint`, `lychee --config docs/.lychee.toml docs`, optional `npm run docs:build` to confirm Mermaid diagrams render.
 4. **Request cross-stream review** so both the Docs crew and Core maintainers sign off.
 5. **Ship + log**: mention the `docs-sync` issue in the PR description so the weekly triage board stays accurate.

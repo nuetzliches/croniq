@@ -80,7 +80,7 @@ See [docs/deep-dive/password-auth.md](../deep-dive/password-auth.md) for details
 ## FAQs
 
 **How do I know which mode is active?**
-Check the startup logs-Croniq logs the effective `Auth.Mode` and the connection string source. You can also hit `/health` with `X-Croniq-Debug: auth` once that probe lands (tracked in the security backlog).
+Check the startup logs-Croniq logs the effective `Auth.Mode` and the connection string source.
 
 **Can I use mTLS or a gateway instead?**
 Yes. Terminate TLS or authenticate upstream (e.g., Azure APIM, Ambassador) and forward either `Authorization` or `X-Croniq-Key` headers. Additional first-class providers will plug into `ICallerContextFactory` later.
