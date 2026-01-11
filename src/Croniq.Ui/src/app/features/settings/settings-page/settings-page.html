@@ -1,20 +1,20 @@
-<div class="flex h-full flex-col space-y-8">
+<div class="cq-stack cq-stack-xl h-full">
   <header>
     <h1 class="text-lg font-semibold text-primary">Settings</h1>
     <p class="text-sm text-muted">Personalize the Croniq UI for this tenant.</p>
   </header>
 
-  <section class="space-y-4">
+  <section class="cq-stack">
     <h2 class="text-sm font-medium uppercase text-muted">Appearance</h2>
     <div class="rounded-xl border border-white/10 bg-surface-alt p-6">
       <form
-        class="space-y-6"
+        class="cq-stack cq-stack-loose"
         novalidate
         [attr.aria-busy]="saveState() === 'saving'"
         (submit)="$event.preventDefault()"
       >
         <div class="grid gap-6 lg:grid-cols-2">
-          <label class="space-y-2">
+          <label class="cq-stack cq-stack-tight">
             <span class="text-sm font-medium text-primary">Theme</span>
             <select
               id="settings-theme"
@@ -28,7 +28,7 @@
             <p class="text-xs text-muted">Applied instantly across the UI.</p>
           </label>
 
-          <label class="space-y-2">
+          <label class="cq-stack cq-stack-tight">
             <span class="text-sm font-medium text-primary">Table density</span>
             <select
               id="settings-density"
@@ -70,7 +70,7 @@
           </div>
         </div>
 
-        <div class="flex flex-wrap items-center justify-between gap-3">
+        <div class="cq-cluster cq-cluster-loose justify-between">
           <div
             class="text-xs"
             role="status"
@@ -94,7 +94,7 @@
     </div>
   </section>
 
-  <section class="space-y-4">
+  <section class="cq-stack">
     <h2 class="text-sm font-medium uppercase text-muted">Scope</h2>
     <div class="rounded-xl border border-white/10 bg-surface-alt p-6">
       <div class="grid gap-6 sm:grid-cols-3">

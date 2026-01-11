@@ -56,11 +56,51 @@ Define CSS variables on `:root[data-theme="ops-light"]` and `:root[data-theme="o
 | `--cq-graph-1`        | `#93C5FD`   |
 | `--cq-graph-2`        | `#F9A8D4`   |
 
+### Semantic Ramps
+
+Ramps provide stepped variants for surfaces, accent, and danger. Use `--cq-surface-1..5`, `--cq-accent-1..5`, and `--cq-danger-1..5`.
+Prefer ramp tokens for borders, table headers, hover fills, and nested surfaces instead of hard-coded `white/10` or raw hex values.
+
+Light theme ramps:
+
+```
+surface: #FFFFFF, #F8FAFC, #EEF2F7, #E2E8F0, #CBD2DF
+accent:  #F3E8FF, #D8B4FE, #7C3AED, #6D28D9, #4C1D95
+danger:  #FEE2E2, #FCA5A5, #F05252, #DC2626, #991B1B
+```
+
+Dark theme ramps:
+
+```
+surface: #0B1223, #0F172A, #162033, #1E2A3F, #27344D
+accent:  #EDE9FE, #C4B5FD, #A78BFA, #8B5CF6, #6D28D9
+danger:  #FECDD3, #FB7181, #F43F5E, #E11D48, #9F1239
+```
+
 ## Spacing & Layout
 
 - Base grid: 8px units (`spacing: {0:0px, 1:4px, 2:8px, 3:12px, 4:16px, ...}`) to support dense operator layouts.
 - Container widths: 1440px max with 24px gutters.
 - Card padding: `px-5 py-4` in Tailwind terms, adjusted down to `px-4 py-3` for drawer content.
+- Layout primitives: use `cq-stack` / `cq-cluster` utilities plus `-tight`, `-loose`, `-xl` modifiers to keep spacing on the 8px grid. Prefer them over ad-hoc `space-y-*` / `gap-*` for generic vertical or inline flow, and keep them independent of any future shared DataGrid component.
+
+Examples:
+
+```html
+<div class="cq-stack cq-stack-loose">
+  <header class="cq-stack cq-stack-tight">
+    <h1>Heading</h1>
+    <p>Supporting copy</p>
+  </header>
+  <section class="cq-stack">
+    <!-- content -->
+  </section>
+  <div class="cq-cluster cq-cluster-loose justify-between">
+    <span>Left</span>
+    <button type="button">Action</button>
+  </div>
+</div>
+```
 
 ## Elevation & Borders
 
@@ -77,6 +117,7 @@ Define CSS variables on `:root[data-theme="ops-light"]` and `:root[data-theme="o
 - `motion-medium`: 220ms same curve for panel slides and drawers.
 - `motion-emphasis`: 320ms cubic-bezier(0.25, 0.8, 0.25, 1) for command palette + overlays.
 - Apply reduced-motion media queries to disable sparkline animations if requested.
+- Tailwind utilities: `duration-fast|medium|emphasis`, `ease-standard|ease-emphasis`, `animate-panel-sweep`, `animate-counter-flip`, `animate-reveal`, and `animate-delay-*` for staggered reveals.
 
 ## Tailwind Config Snippet
 
