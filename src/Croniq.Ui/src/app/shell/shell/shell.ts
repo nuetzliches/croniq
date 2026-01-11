@@ -2,6 +2,7 @@ import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@a
 import { Router, RouterLink, RouterLinkActive, RouterOutlet } from '@angular/router';
 import { PasswordAuthService } from '@core/auth/password-auth.service';
 import { NAV_SECTIONS, NavSection } from '@core/navigation/nav-items';
+import { RuntimeConfigService } from '@core/runtime-config.service';
 import { TenantContextService } from '@core/tenant-context/tenant-context.service';
 import { AppBrand } from '@shared/app-brand/app-brand';
 import { CommandPalette } from '@shared/command-palette/command-palette';
@@ -29,11 +30,13 @@ type StatusCard = {
 export class Shell {
   private readonly commandPalette = inject(CommandPaletteController);
   private readonly tenantContext = inject(TenantContextService);
+  private readonly runtimeConfig = inject(RuntimeConfigService);
   private readonly passwordAuth = inject(PasswordAuthService);
   private readonly router = inject(Router);
 
   readonly tenantDisplay = this.tenantContext.tenantLabel;
   readonly environmentDisplay = this.tenantContext.environment;
+  readonly showTenantBadge = computed(() => this.runtimeConfig.defaultTenantId.trim().length === 0);
   readonly hasEnvironment = computed(() => (this.tenantContext.environment() ?? '').trim().length > 0);
   readonly navSections = signal<ReadonlyArray<NavSection>>(NAV_SECTIONS);
 

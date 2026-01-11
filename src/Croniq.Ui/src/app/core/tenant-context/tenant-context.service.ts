@@ -60,7 +60,7 @@ export class TenantContextService {
     readonly snapshot = this.state.asReadonly();
     readonly tenantLabel = computed(() => {
         const ctx = this.state();
-        return ctx.environment?.trim() || '—';
+        return ctx.tenantName?.trim() || ctx.tenantId?.trim() || '-';
     });
     readonly tenantId = computed(() => this.state().tenantId);
     readonly environment = computed(() => this.state().environment);
