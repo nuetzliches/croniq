@@ -5,6 +5,8 @@ import { dirname, join, resolve } from 'node:path';
 type RuntimeConfig = {
     apiBaseUrl?: string;
     swaggerUiUrl?: string;
+    grafanaUrl?: string;
+    defaultTenantId?: string;
 };
 
 const CONFIG_RELATIVE_PATH = join('public', 'assets', 'croniq-config.json');
@@ -21,6 +23,12 @@ async function main(): Promise<void> {
     if (existing.config.swaggerUiUrl) {
         next.swaggerUiUrl = existing.config.swaggerUiUrl;
     }
+    if (existing.config.grafanaUrl) {
+        next.grafanaUrl = existing.config.grafanaUrl;
+    }
+    if (existing.config.defaultTenantId) {
+        next.defaultTenantId = existing.config.defaultTenantId;
+    }
 
     const apiBaseUrl = resolveApiBaseUrl(env);
     if (apiBaseUrl) {
@@ -30,6 +38,11 @@ async function main(): Promise<void> {
     const swaggerUiUrl = resolveSwaggerUiUrl(env);
     if (swaggerUiUrl) {
         next.swaggerUiUrl = swaggerUiUrl;
+    }
+
+    const defaultTenantId = resolveDefaultTenantId(env);
+    if (defaultTenantId) {
+        next.defaultTenantId = defaultTenantId;
     }
 
     const serialized = JSON.stringify(next, null, 2) + '\n';
@@ -157,6 +170,10 @@ function resolveApiBaseUrl(env: Record<string, string>): string | undefined {
 
 function resolveSwaggerUiUrl(env: Record<string, string>): string | undefined {
     return pick(env, ['CRONIQ_UI_SWAGGER_UI_URL', 'CRONIQ_UI_SWAGGER_URL']);
+}
+
+function resolveDefaultTenantId(env: Record<string, string>): string | undefined {
+    return pick(env, ['CRONIQ_UI_DEFAULT_TENANT_ID']);
 }
 
 

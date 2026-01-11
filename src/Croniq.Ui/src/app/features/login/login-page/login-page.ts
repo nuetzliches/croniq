@@ -3,6 +3,7 @@ import { Field, form, required, submit } from '@angular/forms/signals';
 import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 import { AuthSessionService } from '@core/auth/auth-session.service';
 import { PasswordAuthService } from '@core/auth/password-auth.service';
+import { RuntimeConfigService } from '@core/runtime-config.service';
 import { TenantContextService } from '@core/tenant-context/tenant-context.service';
 import { AppBrand } from '@shared/app-brand/app-brand';
 import { finalize } from 'rxjs';
@@ -16,6 +17,7 @@ import { finalize } from 'rxjs';
 export class LoginPage {
     private readonly authSession = inject(AuthSessionService);
     private readonly passwordAuth = inject(PasswordAuthService);
+    private readonly runtimeConfig = inject(RuntimeConfigService);
     private readonly tenantContext = inject(TenantContextService);
     private readonly route = inject(ActivatedRoute);
     private readonly router = inject(Router);
@@ -39,14 +41,30 @@ export class LoginPage {
     readonly busy = signal(false);
     readonly submitAttempted = signal(false);
 
+    readonly defaultTenantId = signal(this.runtimeConfig.defaultTenantId);
+    readonly showTenantIdInput = computed(() => this.defaultTenantId().trim().length === 0);
+    readonly usernameAutofocus = computed(() => !this.showTenantIdInput());
+
     readonly loginModel = signal({
+        tenantId: this.defaultTenantId().trim() || this.tenantContext.tenantId().trim(),
         username: '',
         password: '',
     });
 
+    readonly tenantIdEmpty = computed(() => this.loginModel().tenantId.trim().length === 0);
     readonly usernameEmpty = computed(() => this.loginModel().username.trim().length === 0);
     readonly passwordEmpty = computed(() => this.loginModel().password.length === 0);
-    readonly showValidation = computed(() => this.submitAttempted() && (this.usernameEmpty() || this.passwordEmpty()));
+    readonly showValidation = computed(
+        () => this.submitAttempted() && (this.tenantIdEmpty() || this.usernameEmpty() || this.passwordEmpty()),
+    );
+
+    readonly tenantIdDescribedBy = computed(() => {
+        const ids = ['login-tenant-id-hint'];
+        if (this.showValidation() && this.tenantIdEmpty()) {
+            ids.push('login-tenant-id-error');
+        }
+        return ids.join(' ');
+    });
 
     readonly usernameDescribedBy = computed(() => {
         const ids = ['login-username-hint'];
@@ -65,6 +83,7 @@ export class LoginPage {
     });
 
     readonly loginForm = form(this.loginModel, (fieldPath) => {
+        required(fieldPath.tenantId, { message: 'Tenant ID is required.' });
         required(fieldPath.username, { message: 'Username is required.' });
         required(fieldPath.password, { message: 'Password is required.' });
     });
@@ -79,9 +98,9 @@ export class LoginPage {
         this.submitAttempted.set(true);
 
         await submit(this.loginForm, async () => {
+            const tenantId = this.loginModel().tenantId.trim();
             const username = this.loginModel().username.trim();
             const password = this.loginModel().password;
-            const tenantId = this.tenantContext.snapshot().tenantId.trim();
 
             this.busy.set(true);
             this.lastAction.set(null);
@@ -92,10 +111,11 @@ export class LoginPage {
                 .pipe(finalize(() => this.busy.set(false)))
                 .subscribe({
                     next: (result) => {
-                        const currentTenantId = this.tenantContext.snapshot().tenantId.trim();
                         const resolvedTenantId = result.tenantId?.trim();
-                        if (!currentTenantId && resolvedTenantId) {
+                        if (resolvedTenantId) {
                             this.tenantContext.setTenantIdentity(resolvedTenantId);
+                        } else if (tenantId) {
+                            this.tenantContext.setTenantIdentity(tenantId);
                         }
                         this.loginModel.update((model) => ({ ...model, password: '' }));
                         this.lastAction.set('Signed in successfully.');

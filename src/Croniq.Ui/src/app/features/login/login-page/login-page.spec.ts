@@ -4,6 +4,7 @@ import { ActivatedRoute, Router, UrlTree, convertToParamMap, provideRouter } fro
 import { AuthSessionService } from '@core/auth/auth-session.service';
 import { PasswordAuthService } from '@core/auth/password-auth.service';
 import { redirectIfSessionTokenGuard } from '@core/auth/redirect-if-session-token.guard';
+import { RuntimeConfigService } from '@core/runtime-config.service';
 import { of } from 'rxjs';
 import { LoginPage } from './login-page';
 
@@ -11,6 +12,7 @@ class AuthSessionStub {
     readonly sessionToken = signal<{ value: string } | null>(null);
     readonly sessionTokenExpired = signal(false);
     readonly refreshToken = signal<string | null>(null);
+    readonly tenantId = signal<string | null>(null);
     readonly passwordChangeRequired = signal(false);
 
     getSessionToken(): string | null {
@@ -28,12 +30,17 @@ class PasswordAuthStub {
     login = vi.fn();
 }
 
+class RuntimeConfigStub {
+    defaultTenantId = '';
+}
+
 describe('LoginPage', () => {
     let component: LoginPage;
     let fixture: ComponentFixture<LoginPage>;
     let router: Router;
     let authSession: AuthSessionStub;
     let passwordAuth: PasswordAuthStub;
+    let runtimeConfig: RuntimeConfigStub;
 
     beforeEach(async () => {
         await TestBed.configureTestingModule({
@@ -51,12 +58,14 @@ describe('LoginPage', () => {
                 },
                 { provide: AuthSessionService, useClass: AuthSessionStub },
                 { provide: PasswordAuthService, useClass: PasswordAuthStub },
+                { provide: RuntimeConfigService, useClass: RuntimeConfigStub },
             ],
         }).compileComponents();
 
         router = TestBed.inject(Router);
         authSession = TestBed.inject(AuthSessionService) as unknown as AuthSessionStub;
         passwordAuth = TestBed.inject(PasswordAuthService) as unknown as PasswordAuthStub;
+        runtimeConfig = TestBed.inject(RuntimeConfigService) as unknown as RuntimeConfigStub;
 
         fixture = TestBed.createComponent(LoginPage);
         component = fixture.componentInstance;
@@ -93,7 +102,7 @@ describe('LoginPage', () => {
             raw: {},
         }));
 
-        component.loginModel.set({ username: 'admin', password: 'admin' });
+        component.loginModel.set({ tenantId: 'tenant-a', username: 'admin', password: 'admin' });
         await component.onSubmit(new SubmitEvent('submit'));
 
         expect(navigateSpy).toHaveBeenCalledWith('/jobs');
@@ -111,9 +120,19 @@ describe('LoginPage', () => {
             raw: {},
         }));
 
-        component.loginModel.set({ username: 'admin', password: 'admin' });
+        component.loginModel.set({ tenantId: 'tenant-a', username: 'admin', password: 'admin' });
         await component.onSubmit(new SubmitEvent('submit'));
 
         expect(navigateSpy).toHaveBeenCalledWith('/auth/change-password');
+    });
+
+    it('prefills tenantId from runtime config', async () => {
+        runtimeConfig.defaultTenantId = 'tenant-config';
+
+        const localFixture = TestBed.createComponent(LoginPage);
+        const localComponent = localFixture.componentInstance;
+        await localFixture.whenStable();
+
+        expect(localComponent.loginModel().tenantId).toBe('tenant-config');
     });
 });

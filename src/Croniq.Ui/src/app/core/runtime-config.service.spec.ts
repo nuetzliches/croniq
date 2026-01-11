@@ -48,4 +48,17 @@ describe('RuntimeConfigService', () => {
 
     expect(service.swaggerUiUrl).toBe('http://localhost:5080/swagger/index.html');
   });
+
+  it('exposes defaultTenantId from runtime config', async () => {
+    const loadPromise = firstValueFrom(service.load());
+
+    const req = http.expectOne('assets/croniq-config.json');
+    req.flush({
+      defaultTenantId: ' tenant-a ',
+    });
+
+    await loadPromise;
+
+    expect(service.defaultTenantId).toBe('tenant-a');
+  });
 });

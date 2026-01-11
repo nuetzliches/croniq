@@ -47,7 +47,7 @@
     {
       "label": "Angular MCP Server",
       "type": "shell",
-      "command": "npm",
+      "command": "npm.cmd",
       "args": ["run", "mcp"],
       "isBackground": true,
       "problemMatcher": [],

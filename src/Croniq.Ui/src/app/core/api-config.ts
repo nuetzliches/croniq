@@ -7,12 +7,14 @@ const urlLikeSchema = z
     .refine((value) => value.startsWith('/') || value.startsWith('http://') || value.startsWith('https://'), {
         message: 'Expected an absolute URL (http/https) or an absolute path starting with /',
     });
+const nonEmptyStringSchema = z.string().trim().min(1);
 
 export const croniqUiRuntimeConfigSchema = z
     .object({
         apiBaseUrl: urlLikeSchema.optional(),
         swaggerUiUrl: urlLikeSchema.optional(),
         grafanaUrl: urlLikeSchema.optional(),
+        defaultTenantId: nonEmptyStringSchema.optional(),
     })
     .strict();
 

@@ -47,4 +47,8 @@ export class RuntimeConfigService {
     get swaggerUiUrl(): string {
         return resolveSwaggerUiUrl(this.apiBaseUrl, this.config.swaggerUiUrl);
     }
+
+    get defaultTenantId(): string {
+        return this.config.defaultTenantId?.trim() ?? '';
+    }
 }

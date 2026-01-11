@@ -49,9 +49,12 @@ Supported keys:
 
 - `apiBaseUrl` (absolute URL or absolute path)
 - `swaggerUiUrl` (optional override)
+- `grafanaUrl` (optional absolute URL for the Grafana embed)
+- `defaultTenantId` (optional; pre-fills tenant ID on the login screen and hides the tenant input)
 
 Generate `public/assets/croniq-config.json` via `npm run generate:runtime-config` (runs automatically for `npm start`, `npm run build`, and `npm run watch`).
 If `CRONIQ_UI_API_BASEURL` is not set, `CRONIQ_UI_API_PORT` plus optional `CRONIQ_UI_API_HOST` / `CRONIQ_UI_API_SCHEME` are used.
+Set `CRONIQ_UI_DEFAULT_TENANT_ID` to emit `defaultTenantId` for single-tenant deployments.
 
 Webhook capability flags (for example, unsigned webhook support) are resolved from the API capabilities endpoint and are not read from runtime config.
 

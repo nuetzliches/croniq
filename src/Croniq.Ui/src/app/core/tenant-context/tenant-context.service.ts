@@ -8,7 +8,7 @@ const TENANT_STORAGE_KEY = 'croniq.ui.tenant-context';
 
 function createFallbackContext(): TenantContextState {
     return {
-        tenantId: 'default',
+        tenantId: '',
         tenantName: '',
         environment: '',
         region: '',
@@ -29,6 +29,14 @@ export class TenantContextService {
         // Intentionally empty: tenant presets were removed.
         // Tenant context is now operator-controlled and/or API-backed.
         effect(() => {
+            const authTenantId = this.authSession.tenantId()?.trim() ?? '';
+            if (authTenantId) {
+                const current = this.state();
+                if (current.tenantId !== authTenantId) {
+                    this.setTenantIdentity(authTenantId, current.tenantName);
+                }
+            }
+
             const token = this.authSession.sessionToken()?.value ?? '';
             const envFromToken = tryExtractEnvironmentFromJwt(token);
             if (!envFromToken) {
