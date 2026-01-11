@@ -187,7 +187,7 @@ See [`auth.md`](../guides/auth.md) for the end-to-end authentication story and w
 | `Croniq__Core__TenantId`                           | Optional                                                          | Tenant id used for partitioning/scoping. Default is `default`.                             | `dev-sandbox`                                      |
 | `Croniq__Core__TenantMode`                         | Optional                                                          | Informational only (does not change tenant resolution). Default is `Single`.               | `Multi`                                            |
 | `Croniq__Core__EnvironmentTag`                     | Optional                                                          | Distinguishes environments/instances (helps multi-dev setups).                             | `dev-alice`                                        |
-| `Croniq__Api__RequestsPerMinute`                   | Optional                                                          | Per-key fixed-window rate limit enforced by `AddCroniqApiRateLimiter`.                     | `120`                                              |
+| `Croniq__Api__RequestsPerMinute`                   | Optional                                                          | Per-key fixed-window rate limit enforced by `AddCroniqApiRateLimiter`. Default `60`.       | `60`                                               |
 
 > **Tip:** Keep secrets (API keys, connection strings) outside source control. Prefer user-secrets for local development and a managed vault for production environments.
 
@@ -266,7 +266,7 @@ builder.Services.PostConfigure<CroniqPersistenceOptions>(options =>
 });
 ```
 
-Only override the values you truly need—everything else continues to flow from configuration files or environment variables.
+Only override the values you truly need-everything else continues to flow from configuration files or environment variables.
 
 ## 9. Troubleshooting
 
@@ -280,6 +280,6 @@ Need a bigger checklist? Jump to [`troubleshooting.md`](../ops/troubleshooting.m
 ## 10. Next Steps
 
 - Return to the [Quickstart](./quickstart.md) to continue the walkthrough.
-- Consult `docs/deep-dive/job-registration.md` (upcoming) for the in-depth view on how the runtime persists job metadata during startup.
+- Consult `docs/deep-dive/job-registration.md` for the in-depth view on how the runtime persists job metadata during startup.
 - Switch to [`auth.md`](../guides/auth.md) when you need detailed guidance on caller flows and secret rotation.
 - Keep [`troubleshooting.md`](../ops/troubleshooting.md) handy when startup or dev stack issues block you.

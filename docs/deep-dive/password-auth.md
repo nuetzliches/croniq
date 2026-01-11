@@ -1,4 +1,4 @@
-# Password Authentication (Username/Password) – Concept
+# Password Authentication (Username/Password) - Concept
 
 This document defines a first-party username/password login concept for Croniq.
 
@@ -41,11 +41,11 @@ A plain "hash password in the UI and send the hash" approach is **not** equivale
 - It does not protect against credential stuffing; it can worsen it by creating a stable credential.
 - It prevents server-side upgrades (hash parameters, peppering strategy) because the server no longer sees the password.
 
-**Therefore**: Croniq should not implement “hash-in-UI and send hash” as the primary mechanism.
+**Therefore**: Croniq should not implement "hash-in-UI and send hash" as the primary mechanism.
 
 If you truly need "never send the password" semantics, use a PAKE protocol.
 
-### 3) If “no raw password over the wire” is required: use PAKE (OPAQUE/SRP)
+### 3) If "no raw password over the wire" is required: use PAKE (OPAQUE/SRP)
 
 - **Recommended**: OPAQUE (modern PAKE) or SRP as a fallback.
 - This requires a vetted, well-maintained library with acceptable licensing.
@@ -91,14 +91,14 @@ The rest of this document describes Option A as the baseline, and outlines Optio
 
 ### Token Model
 
-- **Access token**: JWT, short-lived (e.g. 5–15 minutes).
+- **Access token**: JWT, short-lived (e.g. 5-15 minutes).
 
   - Claims: `sub` (user id), `tenant`, `env` (optional), `scope`, `amr=pwd`, `sid` (session id), `jti`.
   - Signed with the existing token signing infrastructure (`Croniq:Auth:Tokens:*`) or a dedicated key.
 
 - **Refresh token**: opaque random value.
   - Stored server-side (SQL) as a hash (`SHA-256` or stronger) + metadata.
-  - Rotation on every refresh; reuse detection → revoke the entire session.
+  - Rotation on every refresh; reuse detection -> revoke the entire session.
 
 ### Password Storage (Server)
 
@@ -132,7 +132,7 @@ The rest of this document describes Option A as the baseline, and outlines Optio
 
 Croniq can transport refresh tokens in two common ways.
 
-**Stand jetzt**: refresh tokens are returned in the JSON response body and must be provided in the request body for `/auth/refresh` and `/auth/logout`.
+**Current behavior**: refresh tokens are returned in the JSON response body and must be provided in the request body for `/auth/refresh` and `/auth/logout`.
 
 ### Variant A: refresh token in JSON body (current)
 
@@ -164,16 +164,16 @@ Croniq can transport refresh tokens in two common ways.
 
 ### High-level Flow
 
-1. `POST /auth/pake/start` → server returns a challenge.
+1. `POST /auth/pake/start` -> server returns a challenge.
 2. Client computes response using username/password and the challenge.
-3. `POST /auth/pake/finish` → server verifies without learning the password.
+3. `POST /auth/pake/finish` -> server verifies without learning the password.
 4. Issue the same access/refresh tokens as Option A.
 
 ### Notes
 
 - This is significantly more complex to implement and test.
 - Requires careful cryptographic review, library selection, and protocol parameter hardening.
-- The main benefit is “password not transmitted”, but it does **not** replace HTTPS.
+- The main benefit is "password not transmitted", but it does **not** replace HTTPS.
 
 ## Data Model (SQL)
 
@@ -200,9 +200,9 @@ Password auth is tenant-scoped. Callers must always provide `tenantId` for `/aut
 - Refresh tokens are not bound to an environment.
 - Clients may request a different `environmentTag` on refresh to switch environments without re-entering the password.
 
-## Tenant & environment: "Stand jetzt" and open decisions
+## Tenant and environment: current state and open decisions
 
-### Stand jetzt (V1)
+### Current state (V1)
 
 - `tenantId` is required for password endpoints.
 - `environmentTag` is treated as a partition/preset and is carried in the access token.
@@ -222,12 +222,13 @@ Password auth is tenant-scoped. Callers must always provide `tenantId` for `/aut
 
 ## Configuration
 
-Proposed configuration keys:
+Current configuration keys (bound from `Croniq:Auth:Password`):
 
 - `Croniq:Auth:Password:Enabled` (default `false`)
-- `Croniq:Auth:Password:Lockout:*` (thresholds/durations)
-- `Croniq:Auth:Password:TokenLifetimeMinutes`
-- `Croniq:Auth:Password:RefreshLifetimeDays`
+- `Croniq:Auth:Password:AccessTokenLifetimeMinutes`
+- `Croniq:Auth:Password:RefreshTokenLifetimeDays`
+- `Croniq:Auth:Password:MaxFailedAccessAttempts`
+- `Croniq:Auth:Password:LockoutMinutes`
 
 ## Rollout Plan
 

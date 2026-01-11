@@ -1,6 +1,6 @@
 # Croniq Documentation Streams Plan
 
-This living note tracks how we keep the consumer-facing docs in sync with the deep-dive reference set. Both streams now exist and stay healthy through linting, ownership rules, and nightly validation. The only remaining backlog item is enabling an automated GitHub Pages deployment.
+This living note tracks how we keep the consumer-facing docs in sync with the deep-dive reference set. The streams are defined, but public publishing and cross-stream enforcement are blocked until the repo is public. We already run docs lint/link checks nightly and provide a manual preview workflow.
 
 ## Objectives
 
@@ -51,9 +51,8 @@ Every PR touching `docs/**` must tag at least one representative from each strea
 ## Templates, Mermaid & Callouts
 
 - All diagrams must be written as inline Mermaid blocks so GitHub + VitePress have identical output.
-- Use `_templates/callout-learn-more.md` (consumer → deep dive) and `_templates/callout-back-to-quickstart.md` (deep dive → consumer) for consistent tone.
+- Use `_templates/learn-more-callout.md` (consumer -> deep dive) and `_templates/ops-warning.md` for consistent tone; additional templates will be added once the repo is public.
 - Keep frontmatter minimal; every page should declare `title` and `description` to power search.
-- Reference `docs/_templates/glossary.md` when introducing new terminology to avoid drift between streams.
 
 ## Cross-Linking Guardrails
 
@@ -78,9 +77,9 @@ Every PR touching `docs/**` must tag at least one representative from each strea
 ## Publishing & Automation
 
 - `.github/workflows/docs-preview.yml` manually builds the VitePress site and uploads the artifact for reviewers.
-- Nightly CI already runs docs linting, link checks, SBOM scans, and smoke tests.
-- Next improvement: trigger a publish workflow (GitHub Pages or internal static host) on pushes/tags so the docs stay live without manual intervention.
+- Nightly CI runs docs linting and link checks (`.github/workflows/nightly.yml`).
+- Publishing is blocked until the repo is public; once unblocked, add a publish workflow (GitHub Pages or internal static host) on pushes/tags.
 
 ## Open Item
 
-- [ ] Extend the `docs-preview` GitHub Action (or add a dedicated workflow) to publish `.vitepress/dist` automatically after successful builds.
+- [ ] (blocked until repo is public) Add a publish workflow to push `.vitepress/dist` after successful builds.

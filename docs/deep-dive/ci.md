@@ -14,12 +14,12 @@ This document describes the continuous integration and delivery strategy require
 | Workflow             | Trigger                                | Purpose                                                                                                                                                        |
 | -------------------- | -------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `ci-pr.yml`          | Pull request to `main`                 | Lint, build, unit + contract tests with coverage, basic security checks.                                                                                       |
-| `ci-nightly.yml`     | Scheduled (UTC 02:00) + manual run     | Full stack validation: PR steps + Compose E2E tests (dev stack), Docker image build, integration smoke, dependency scanning.                                   |
+| `nightly.yml`        | Scheduled (UTC 02:00) + manual run     | Full stack validation: PR steps + Compose E2E tests (dev stack), Docker image build, integration smoke, dependency scanning.                                   |
 | `release.yml`        | Tag `v*` pushes or manual dispatch     | Build & test release artifacts, publish NuGet packages and container images, gate on SBOM/vulnerability checks, sign assets, attach reports to GitHub Release. |
 | `deploy-staging.yml` | Manual (`workflow_dispatch`) + staging | Helm deploy Croniq to the staging cluster, run HTTPS health probes, execute smoke tests against the staging ingress, and collect Kubernetes diagnostics.       |
 | `dacpac.yml`         | Manual (`workflow_dispatch`) + guard   | Provision Azure SQL Edge locally and publish a DACPAC for schema validation; jobs stay skipped until `run_workflow` is set to true.                            |
 
-`ci-nightly.yml`, `ci-pr.yml`, and `release.yml` already live in `.github/workflows/` and can be triggered manually (the former `tests.yml` workflow has been retired).
+`nightly.yml`, `ci-pr.yml`, and `release.yml` already live in `.github/workflows/` and can be triggered manually (the former `tests.yml` workflow has been retired).
 
 ## ci-pr.yml (Validation)
 
@@ -41,7 +41,7 @@ This document describes the continuous integration and delivery strategy require
    - `scripts/ci/enforce_coverage_thresholds.py` enforces the line + branch thresholds above.
    - The workflow posts an auto-updating PR comment summarizing overall + Croniq.Core coverage plus per-assembly breakdown.
 
-## ci-nightly.yml (Full Suite)
+## nightly.yml (Full Suite)
 
 - Inherits steps from `ci-pr` via reusable workflow `workflow_call` or composite action.
 - Additional jobs:
@@ -132,7 +132,7 @@ Release builds automatically call this workflow; you can still dispatch it manua
 | Workflow             | Environment                    | Required Secrets                                                                                                                   | Notes                                                                             |
 | -------------------- | ------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------- |
 | `ci-pr.yml`          | _none_                         | (optional) `CODECOV_TOKEN` once coverage uploads are enabled                                                                       | Uses repo-level permissions only.                                                 |
-| `ci-nightly.yml`     | `nightly` (optional)           | `GITHUB_TOKEN` (default)                                                                                                           | Additional secrets only needed for experimental scans.                            |
+| `nightly.yml`        | `nightly` (optional)           | `GITHUB_TOKEN` (default)                                                                                                           | Additional secrets only needed for experimental scans.                            |
 | `release.yml`        | `release`                      | `NUGET_API_KEY`, `NUGET_SIGNING_CERT_BASE64`, `NUGET_SIGNING_CERT_PASSWORD`, `COSIGN_KEY`, `COSIGN_PASSWORD`, `STAGING_KUBECONFIG` | `STAGING_KUBECONFIG` is forwarded to `deploy-staging.yml` via `workflow_call`.    |
 | `deploy-staging.yml` | `staging` (requires reviewers) | `STAGING_KUBECONFIG`                                                                                                               | kubeconfig is base64-encoded; workflow decodes to `kubeconfig`.                   |
 | `dacpac.yml`         | _none_                         | (optional) `SQL_EDGE_SA_PASSWORD`                                                                                                  | Manual workflow remains disabled until the `run_workflow` input is set to `true`. |
@@ -155,4 +155,4 @@ Reference `eng/pipelines/secrets.template.md` when provisioning secrets so the i
 - [x] Integrate SBOM + signing steps into the release workflow (cosign execution becomes active once secrets are provided).
 - [x] Stand up `deploy-staging.yml` Helm workflow (see "deploy-staging.yml" section) to deploy the staging cluster via Helm.
 
-Once these backlog items land, the "Build/Test CI Pipelines" checklist entry can move to done.
+All backlog items are complete; the "Build/Test CI Pipelines" checklist entry can move to done.

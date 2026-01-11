@@ -109,7 +109,7 @@ curl -X POST https://localhost:5001/tenants/dev-sandbox/schedules?environment=de
          }"
 ```
 
-Refer to `/deep-dive/persistence.md` (to be added) for the exact schedule payload and validation rules.
+Refer to `/deep-dive/persistence.md` for the exact schedule payload and validation rules.
 
 ## 4. Trigger Jobs via Webhooks (Optional)
 
@@ -189,7 +189,7 @@ scripts/webhook-rotate-secret.ps1 `
   -Notes "rotated during quickstart"
 ```
 
-Pass `-ActivateInSeconds <seconds>` (up to seven days) when you need to stage the new secret before callers switch over. The script prints the activation window plus the plaintext secret—capture it immediately because Croniq never stores or returns it again.
+Pass `-ActivateInSeconds <seconds>` (up to seven days) when you need to stage the new secret before callers switch over. The script prints the activation window plus the plaintext secret-capture it immediately because Croniq never stores or returns it again.
 
 ## 4.1 Publish API & gRPC Schemas
 
@@ -235,7 +235,7 @@ app.UseCroniqApi();
 
 ```cmd
 # Terminal 1
-cd HelloCroniq.Api
+cd HelloCroniq
  dotnet run
 ```
 
@@ -283,9 +283,9 @@ This launches Prometheus (`http://localhost:9090`), Tempo, and Grafana (`http://
 
 2. Trigger your job again. Within a few seconds you can:
 
-   - Open Grafana ▸ Dashboards ▸ _Croniq Scheduler Health_ or _Croniq API Gateway_ to view the panels provisioned from `infra/docker/observability/grafana/dashboards/` (they refresh every 30s).
-   - Inspect traces under Grafana ▸ Explore ▸ Tempo, filtering by `service.name="Croniq.Api"`.
-   - Check Prometheus ▸ Alerts to see the built-in alerts from `infra/monitoring/rules/scheduler-alerts.yaml`. Alerts fire when dead letters, misfires, queue depth, or latency breach their thresholds (`CroniqDeadLettersHigh`, `CroniqMisfireBurst`, `CroniqQueueDepthHigh`, `CroniqLatencyP95High`, `CroniqJobFailures`).
+   - Open Grafana > Dashboards > _Croniq Scheduler Health_ or _Croniq API Gateway_ to view the panels provisioned from `infra/docker/observability/grafana/dashboards/` (they refresh every 30s).
+   - Inspect traces under Grafana > Explore > Tempo, filtering by `service.name="Croniq.Api"`.
+   - Check Prometheus > Alerts to see the built-in alerts from `infra/monitoring/rules/scheduler-alerts.yaml`. Alerts fire when dead letters, misfires, queue depth, or latency breach their thresholds (`CroniqDeadLettersHigh`, `CroniqMisfireBurst`, `CroniqQueueDepthHigh`, `CroniqLatencyP95High`, `CroniqJobFailures`).
 
 3. Deploying to your own observability stack? Copy the dashboard JSON + rule file into your Grafana/Prometheus setup and keep the datasource UIDs (`prometheus`, `tempo`) consistent. See [`docs/deep-dive/observability.md`](../deep-dive/observability.md#dashboards--alerts) for detailed instructions.
 

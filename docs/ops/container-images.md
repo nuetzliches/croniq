@@ -34,7 +34,7 @@ docker compose -f infra/docker/docker-compose.production.yml up --build
 ```
 
 Defaults use in-memory auth for quick smoke tests. Use `X-Croniq-Key: ${CRONIQ_SMOKE_API_KEY}` when calling the API.
-To exercise SQL auth instead, set `CRONIQ_AUTH_MODE=SqlServer` and `CRONIQ_AUTH_PASSWORD_ENABLED=true` (keep `CRONIQ_SEED_ADMIN=true` so the migrator seeds the admin user).
+To exercise SQL auth instead, set `Croniq__Auth__Mode=SqlServer` and `Croniq__Auth__Password__Enabled=true` (keep `CRONIQ_SEED_ADMIN=true` so the migrator seeds the admin user).
 
 ## Common configuration
 

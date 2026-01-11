@@ -14,7 +14,7 @@ This document describes the local Docker Compose environment required to satisfy
 | Service          | Purpose                                              | Notes                                                             |
 | ---------------- | ---------------------------------------------------- | ----------------------------------------------------------------- |
 | `api`            | Hosts `Croniq.Sample.ApiHost` (Minimal API + gRPC).  | Mounted source, hot reload via `dotnet watch` or pre-built image. |
-| `worker`         | Runs scheduler worker host (future `Croniq.Worker`). | Shares code with API; processes triggers/jobs.                    |
+| `worker`         | Runs scheduler worker host (`Croniq.WorkerHost`).    | Shares code with API; processes triggers/jobs.                    |
 | `rpc-sample`     | Optional sample RPC client (demonstrates SDK usage). | Can be toggled via profile.                                       |
 | `mssql-22`       | SQL Server 2022 with Croniq schema + EF migrations.  | Uses persisted volume `croniq-mssql-data`.                        |
 | `otel-collector` | OpenTelemetry collector for logs/metrics/traces.     | Exports to Tempo/Prometheus/Grafana.                              |
@@ -23,7 +23,7 @@ This document describes the local Docker Compose environment required to satisfy
 | `tempo`          | Stores traces from collector.                        | Local filesystem volume.                                          |
 | `loki`           | Log aggregation for OTLP logs routed via collector.  | Enabled with the `obs` profile; Grafana ships a Loki datasource.  |
 
-All services share a `croniq-net` bridge network. Ports are exposed via `.env` defaults (e.g., API 5080, UI 5081, Grafana 5610, Prometheus 9000, Tempo 3100).
+All services share a `croniq-net` bridge network. Ports are exposed via `.env` defaults (e.g., API 5080, UI 5081, Grafana 5610, Prometheus 9090, Tempo 3200).
 
 > **Logs in Grafana**: With Loki now part of the `obs` profile, the OpenTelemetry Collector's log pipeline exports directly to `loki:3100`. Grafana auto-loads a Loki datasource so the `Croniq Logs` dashboard (or ad hoc Explore views) can show `Croniq.Sample.ApiHost` / worker logs alongside traces and metrics. If Loki is disabled, Serilog still writes to the console, but Grafana will no longer list the datasource.
 
@@ -51,7 +51,7 @@ All services share a `croniq-net` bridge network. Ports are exposed via `.env` d
 
 - `.env.example` (root) now lists the required ports, database credentials, and Croniq defaults. Copy it to `.env`, adjust secrets, and Compose will pick the variables up automatically. `.env` stays ignored via `.gitignore`.
 - `Croniq.Sample.ApiHost` reads configuration from `appsettings.Development.json` + environment variables injected via Compose (`Croniq__SqlServer__ConnectionString`, `Croniq__Auth__Mode`, etc.). Keep sensitive overrides in `.env.local` or user secrets when running locally.
-- The `croniq-db-migrator` service (defined in the base compose file) waits for `mssql-22` to report healthy status and then applies EF Core migrations using `CRONIQ_SQL_CONNECTION`. When troubleshooting, you can still run `docker compose run --rm croniq-db-migrator` or `dotnet run --project tools/Croniq.DbMigrator -- --connection <conn>` manually.
+- The `croniq-db-migrator` service (defined in the base compose file) waits for `mssql-22` to report healthy status and then applies EF Core migrations using `CRONIQ_SQL_CONNECTION`. Compose derives that connection string from `CRONIQ_SQL_HOST`, `CRONIQ_SQL_DATABASE`, and `CRONIQ_SQL_PASSWORD` (with `sa` on port 1433). When troubleshooting, you can still run `docker compose run --rm croniq-db-migrator` or `dotnet run --project tools/Croniq.DbMigrator -- --connection <conn>` manually.
 
 ## Developer Workflow
 
@@ -59,7 +59,7 @@ All services share a `croniq-net` bridge network. Ports are exposed via `.env` d
 2. `copy .env.example .env` (first run) and adjust secrets/ports as needed.
 3. `scripts\devstack-up.cmd [--profile obs]` ensures `.env` exists, loads all compose files, and polls `/health`. As soon as `mssql-22` is ready, `croniq-db-migrator` runs automatically so the schema is ready before the API/worker start. The API/worker profiles are implied; pass extra profiles (e.g., `obs`) explicitly.
 4. `scripts\devstack-restart.cmd [--profile ...]` first calls `devstack-down --remove-orphans` with the same profiles, then replays `devstack-up`—useful when Docker networks/containers get stuck.
-5. Send smoke traffic with `scripts\devstack-trigger-job.cmd [jobKey [initiatorTag]]`, which defaults to `1:dev:samples:smoke` and tags the metadata `initiator` (default `devstack-script`) while posting to `/jobs/trigger` using `CRONIQ_SMOKE_API_KEY`.
+5. Send smoke traffic with `scripts\devstack-trigger-job.cmd [jobKey [initiatorTag]]`, which defaults to `default:dev:samples:smoke` and tags the metadata `initiator` (default `devstack-script`) while posting to `/jobs/trigger` using `CRONIQ_SMOKE_API_KEY`.
 6. Rotate webhook secrets without crafting raw HTTP calls by running `scripts\webhook-rotate-secret.ps1 -TenantId <id> -Environment <tag> -HookKey <key> [-ActivateInSeconds 900] [-GracePeriodSeconds 86400]`. The helper prints the activation window plus the new secret so you can stash it in your vault immediately.
 7. The default OTLP target `http://otel-collector:4317` (gRPC) can be overridden via `CRONIQ_OBS_OTLP_ENDPOINT`; set `CRONIQ_OBS_OTLP_PROTOCOL=http` if you need to switch the sample hosts over to OTLP/HTTP. Both API and worker containers read these values via `Croniq:Observability:*` so telemetry can be pointed at alternative collectors. Logs, traces, and metrics all flow through the same OTLP endpoint; the collector now forwards logs to Loki, traces to Tempo, and metrics to Prometheus.
 8. API available at `http://localhost:5080`, UI (dev server) at `http://localhost:5081`, Grafana at `http://localhost:5610` (login `admin/admin`) once the `obs` profile is enabled.
@@ -68,7 +68,7 @@ All services share a `croniq-net` bridge network. Ports are exposed via `.env` d
 
 ## CI Integration
 
-- Nightly workflow (`ci-nightly.yml`) uses the same compose files with `--profile api --profile worker --profile obs`. Tests (`Croniq.Api.Smoke`) run after health checks pass.
+- Nightly workflow (`nightly.yml`) uses the same compose files with `--profile api --profile worker --profile obs`. Tests (`Croniq.Api.Smoke`) run after health checks pass.
 - Logs (`docker compose logs --timestamps`) and metrics snapshots are uploaded as artifacts for debugging.
 - Compose env also seeds sample tenants/jobs to support E2E tests.
 
@@ -78,7 +78,7 @@ All services share a `croniq-net` bridge network. Ports are exposed via `.env` d
 - [x] Create `docker-compose.dev.yml` defining API, worker, RPC sample, and referencing shared build context or published images.
 - [x] Add observability overlay compose file + Grafana dashboards + Tempo/Prometheus volumes, aligning with `observability.md`.
 - [x] Provide helper scripts (`scripts/devstack-up.cmd`, `scripts/devstack-down.cmd`) wrapping the compose commands and health checks.
-- [x] Update CI workflow (`ci-nightly.yml`) to call the same compose stack for smoke tests.
+- [x] Update CI workflow (`nightly.yml`) to call the same compose stack for smoke tests.
 - [x] Ensure SQL initialization script runs automatically on first boot (entrypoint or helper container) so developers don't run manual apply steps.
 
 Completing these tasks enables a reproducible dev/test environment and closes the checklist item.

@@ -32,7 +32,7 @@
   3. Update the current active row's `ExpiresAtUtc` to `ActivatedAtUtc + gracePeriod` and trim any other pending rows so only the primary + grace window remain active at a time.
   4. Return plaintext secret to caller exactly once.
 - Signature validation queries `WebhookSecretHistory` for active rows and accepts any whose window contains `UtcNow`.
-- Maintenance job (future) can purge expired history based on retention.
+- Retention cleanup uses `Croniq:Retention` settings (`WebhookSecretHistoryEnabled`, `WebhookSecretHistoryExpiryOffsetDays`) when the retention job is enabled; default expiry offset is 7 days after `ExpiresAtUtc`.
 
 ## API Surface
 
@@ -55,7 +55,7 @@ curl -s -X POST "https://api.croniq.dev/tenants/{tenantId}/webhooks/{hookKey}/ro
 
 The API returns the plaintext secret exactly once. Persist it in your secret manager immediately; Croniq only stores the hash + metadata. `RotatedBy` derives from the authenticated caller (`ICallerContextAccessor`) so CI/service principals show up as `apiKey:{clientId}`.
 
-You can wrap the call inside a script (PowerShell, Bash, etc.) to mask the new secret before printing it or to push it downstream (Azure Key Vault, AWS Secrets Manager). A future helper script will live under `scripts/webhook-rotate-secret.ps1`, but until then the raw HTTP call above is the reference flow.
+You can wrap the call inside a script (PowerShell, Bash, etc.) to mask the new secret before printing it or to push it downstream (Azure Key Vault, AWS Secrets Manager). The `scripts/webhook-rotate-secret.ps1` helper automates the request and is a good reference for CI/local flows.
 
 ### Helper script
 
@@ -91,4 +91,4 @@ The script prints the activation/grace window plus the plaintext secret, making 
 
 - Key management: secrets remain plaintext for now; once the secrets provider supports encryption, `WebhookSecretHistory.Secret` becomes encrypted blob and responses fetch decrypted value on-demand.
 - Audit fields (`RotatedBy`) sourced from authenticated principal in Admin API; CLI can pass custom value (e.g., `"cli:devops"`).
-- Retention policy: default 90 days for expired rows; configurable via `Croniq:Webhooks:SecretHistoryRetentionDays` (future work).
+- Retention policy uses the Croniq retention job (`Croniq:Retention:WebhookSecretHistoryEnabled`, `Croniq:Retention:WebhookSecretHistoryExpiryOffsetDays`); defaults keep history for 7 days after expiry once retention is enabled.

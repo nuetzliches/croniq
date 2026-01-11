@@ -58,4 +58,4 @@ Use the same command for other Croniq packages. If you prefer fingerprints, add 
 - Vulnerability scans: Review `api.sarif`, `worker.sarif`, `webhooks.sarif`, `db-migrator.sarif`, and `trivy-fs.sarif` attached to the release. The release gate blocks CRITICAL/HIGH unless a waiver exists.
 - License scan: `artifacts/licenses/license-scan.json` is attached to the release; it must show only allow-listed SPDX IDs.
 
-If any verification step fails, halt deployment and open an incident/issue referencing the failing artifact and command.***
+If any verification step fails, halt deployment and open an incident/issue referencing the failing artifact and command.

@@ -1,27 +1,28 @@
-Python gRPC Client Sample
+# Python gRPC Client Sample
 
-Voraussetzungen:
+Prerequisites:
 
 - Python 3.11+
-- Pakete: `grpcio`, `grpcio-tools`
+- Packages: `grpcio`, `grpcio-tools`
 
-Stubs generieren (aus Repo-Root):
+Generate stubs (from repo root):
 
 ```bash
 python -m grpc_tools.protoc -I src/Croniq.Rpc.Client/Protos --python_out=. --grpc_python_out=. src/Croniq.Rpc.Client/Protos/scheduler.proto
 ```
 
-Dabei entstehen `scheduler_pb2.py` und `scheduler_pb2_grpc.py` im aktuellen Verzeichnis.
+This creates `scheduler_pb2.py` and `scheduler_pb2_grpc.py` in the current directory.
 
-Ausführen:
+Run:
 
 ```bash
-X_Croniq_Key=dev-key \
+CRONIQ_API_KEY=dev-key \
+CRONIQ_ENDPOINT=localhost:5080 \
 PYTHONPATH=. \
 python client.py
 ```
 
-Hinweise:
+Notes:
 
-- Endpoint erwartet Form `localhost:5080` (kein http:// Prefix).
-- Metadata `X-Croniq-Key` wird im Client gesetzt; Bearer geht analog (`Authorization: Bearer <token>`).
+- Endpoint expects `host:port` (no `http://` prefix).
+- The client sets `X-Croniq-Key` metadata; bearer tokens work via `Authorization: Bearer <token>`.

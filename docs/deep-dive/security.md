@@ -73,7 +73,7 @@ This document specifies the authentication, authorization, and rate limiting des
 ## Authorization & Tenant Enforcement
 
 - `ICallerContext` lives in scoped DI via `ICallerContextAccessor`. Downstream components (Persistence, JobStore) fetch it to derive `PartitionScope` (TenantId + EnvironmentTag).
-- `TenantGuard` enforces caller tenant/environment across REST routes (webhooks CRUD, schedules, manual triggers) and rejects cross-tenant attempts with 403 before persistence/pipeline execution. The execution-log endpoint now inspects the first log entry to validate tenant/environment metadata before streaming; the gRPC surface will reuse the same guard once the Scheduler RPC host is exposed.
+- `TenantGuard` enforces caller tenant/environment across REST routes (webhooks CRUD, schedules, manual triggers) and rejects cross-tenant attempts with 403 before persistence/pipeline execution. The execution-log endpoint now inspects the first log entry to validate tenant/environment metadata before streaming; Scheduler/Worker/Webhook ingress gRPC hosts already apply the same guard.
 - Scope naming convention mirrors REST permissions: `schedules:write`, `jobs:trigger`, `tenants:admin`, `api-keys:manage`, `cluster:read`.
 - Bearer tokens must carry the configured tenant claim and any required scopes; missing claims/scopes yield 401/403. API keys remain single-tenant because validation bakes the tenant into the emitted caller context.
 - gRPC Scheduler: the Scheduler service runs in `Croniq.Api` (mapped via `MapCroniqSchedulerGrpc`). Calls use the same middleware/guards as HTTP; clients must send `x-croniq-key` (or Bearer) metadata and align `tenant_id`/`environment_tag` (required on `DeleteSchedule`). The proto lives under `src/Croniq.Rpc.Client/Protos/scheduler.proto`; `Croniq.Sample.GrpcClient` shows usage with `Croniq.Rpc.Client` and the DI helper `AddCroniqSchedulerClient`. Safe wrappers emit `CroniqRpcException` to avoid direct coupling zu `Grpc.Core`.
@@ -92,7 +92,7 @@ This document specifies the authentication, authorization, and rate limiting des
 ### Per-Hook IP Allow Lists
 
 - **Schema & rollout**: The `WebhookEndpointIpRules` table stores CIDR blocks per hook/tenant/environment. Apply the EF Core migration via `Croniq.DbMigrator` before enabling the feature (runbook in `docs/deep-dive/persistence.md`). The schema addition is backward compatible, so existing hooks stay open until rules are created.
-- **Ingress enforcement**: `Croniq.Webhooks` compiles the stored CIDRs into `IpNetwork` instances during endpoint hydration. Requests are rejected with `403 ip-rule-denied` when the remote address falls outside every configured network. Empty rule sets keep endpoints open, letting operators stage the rollout hook-by-hook.
+- **Ingress enforcement**: `Croniq.Webhooks` compiles the stored CIDRs into `IpNetwork` instances during endpoint hydration. Requests are rejected with `403 ip-blocked` when the remote address falls outside every configured network. Empty rule sets keep endpoints open, letting operators stage the rollout hook-by-hook.
 - **Admin APIs**: Tenant-scoped management APIs expose CRUD operations guarded by `webhooks:read`/`webhooks:write`:
 
   - `GET /tenants/{tenantId}/webhooks/{hookKey}/ip-rules?environment=prod`
@@ -115,7 +115,7 @@ This document specifies the authentication, authorization, and rate limiting des
 
 1. Decide the default posture (open vs closed). For closed-by-default, seed a catch-all rule (`0.0.0.0/0`) before tightening to explicit CIDRs.
 2. Script creation/deletion via the API or the `Croniq.Sdk.Operator.Webhooks.WebhookIpRuleClient` helper to keep Croniq in sync with your source-of-truth IP inventory.
-3. Monitor `Croniq.Webhooks.Ingress` metrics/logs for the `ip-rule-denied` counter; alert when the rate exceeds baseline to catch accidental lockouts.
+3. Monitor `Croniq.Webhooks.Ingress` metrics/logs for the `ip-blocked` counter; alert when the rate exceeds baseline to catch accidental lockouts.
 4. Every CRUD/rotation call writes to `WebhookEndpointEvents`; the API publishes cache-invalidating notifications so the ingress host refreshes CIDRs within seconds (no manual restarts required).
 5. Include `X-Croniq-CorrelationId` on every management request (UI + SDK do this automatically) so `WebhookEndpointEvents` can stitch a full audit trail; the table now captures both `Actor` (e.g., `ui:operator-1`) and the supplied correlation ID.
 

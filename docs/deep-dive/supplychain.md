@@ -77,7 +77,7 @@ This plan details how we will fulfill the checklist item "SBOM/Signierung und Vu
    - `dotnet list package --vulnerable` (non-blocking warning).
    - `trivy fs --severity HIGH,CRITICAL --exit-code 0 .` (informational).
    - Publish summary comment if issues found.
-2. **Nightly (`ci-nightly.yml`)**
+2. **Nightly (`nightly.yml`)**
    - Full `trivy fs` with `--exit-code 1` for CRITICAL/HIGH.
    - Generate SBOM for current main branch; upload artifact.
 3. **Release (`release.yml`)**
@@ -98,7 +98,7 @@ This plan details how we will fulfill the checklist item "SBOM/Signierung und Vu
 
 - [x] Add `syft` and `trivy` to toolchain (`scripts/ci/install-supplychain-tool.ps1` + `eng/versions/supplychain-tools.json`) and document local usage. (2025-12-12)
 - [x] Implement PR/nightly/release workflow steps for scans + SBOMs per the pipeline plan (see `.github/workflows/nightly.yml` + `.github/workflows/release.yml`).
-- [ ] Provision signing keys (NuGet cert, cosign) and store public verification artifacts in the repo.
+- [x] Provision signing keys (NuGet cert, cosign) and store public verification artifacts in the repo (`infra/signing/`); signing steps stay gated until production secrets are enabled.
 - [x] Add documentation (`docs/deep-dive/release-verification.md` + `SECURITY.md`) showing verification commands for consumers.
 - [x] Create waiver process (template + file) for temporary vulnerability exceptions.
 - [x] Ensure release workflow attaches SBOMs, scans, and signatures to GitHub Releases automatically.

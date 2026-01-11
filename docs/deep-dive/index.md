@@ -39,10 +39,10 @@ This section targets maintainers, platform engineers, and contributors working o
 - `Croniq.Api` provides Minimal API endpoints:
   - `GET /health`
   - `POST /tenants/{tenantId}/schedules` (job + trigger upsert via `IJobPersistenceProvider`)
-  - `GET/DELETE /tenants/{tenantId}/schedules/{id}` (roadmap)
+  - `GET/DELETE /tenants/{tenantId}/schedules/{id}`
   - `POST /jobs/trigger` (direct invocation via `IJobExecutionPipeline`)
   - Fixed-window rate limiting and simple API-key guard (`X-Croniq-Key`, see `CroniqApiOptions`).
-- `Croniq.Rpc.Client` contains the draft gRPC proto (`Protos/scheduler.proto`) for Scheduler operations (health, trigger, upsert/delete schedule); codegen to be added later.
+- `Croniq.Rpc.Client` packages generated gRPC clients (`Protos/scheduler.proto`, `worker.proto`, `webhook_ingress.proto`) plus helpers for Scheduler/Worker/Webhook ingress operations.
 
 ## Authoring Guidelines
 

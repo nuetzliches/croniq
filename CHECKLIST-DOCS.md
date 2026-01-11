@@ -5,60 +5,60 @@ Documentation backlog extracted from `CHECKLIST.md`. Track doc-only and doc-alig
 ## Ready to implement (doc-only updates)
 
 ### Deep-dive docs
-- [ ] `docs/deep-dive/testing.md`: switch to Shouldly, remove global.json 8.x reference, fix Observability cadence, update release workflow TODO.
-- [ ] `docs/deep-dive/ci.md`: rename `ci-nightly.yml` references to `nightly.yml`.
-- [ ] `docs/deep-dive/devstack.md` + `docs/deep-dive/supplychain.md`: rename `ci-nightly.yml` references to `nightly.yml`.
-- [ ] `docs/deep-dive/devstack.md`: replace "future Croniq.Worker" with `Croniq.WorkerHost`.
-- [ ] `docs/deep-dive/auth.md`: update testing section to point at real test projects.
-- [ ] `docs/deep-dive/auth.md`: fix API key format to `ak_<guid>.<secret>`.
-- [ ] `docs/deep-dive/auth.md`: fix tenant rate limits key to `Croniq:Api:TenantRateLimits`.
-- [ ] `docs/deep-dive/architecture.md`: align retention defaults with `CroniqRetentionOptions` and `ExecutionLogRetentionOptions`.
-- [ ] `docs/deep-dive/architecture.md`: update trigger types to current cron/@once + webhooks/manual.
-- [ ] `docs/deep-dive/architecture.md`: fix quota description (JobKey/Scope with `MaxTriggersPerMinute` + `MaxParallelExecutionsPerJob`; API rate limits are separate).
-- [ ] `docs/deep-dive/designs/webhook-secret-rotation.md`: remove "future helper script" note and align retention/cleanup notes to current options/defaults.
-- [ ] `docs/deep-dive/release.md`: align steps with actual release workflows (no `Directory.Build.props` bump, no Snyk/Docs artifact if not used).
-- [ ] `docs/deep-dive/password-auth.md`: fix config key names and update `docs/guides/triggers.md` from .NET 8 to net10.0.
-- [ ] `docs/deep-dive/observability.md`: fix metric name to `cronijob_executions_total`.
-- [ ] `docs/deep-dive/observability.md`: remove the Serilog registration claim (Default provider uses `ILoggerFactory`).
-- [ ] `docs/deep-dive/devstack.md`: fix Prometheus/Tempo port defaults to 9090/3200.
-- [ ] `docs/deep-dive/devstack.md`: fix default JobKey in step 5 (`default:dev:samples:smoke`).
-- [ ] `docs/deep-dive/observability.md`: fix default JobKey in verification steps (`default:dev:samples:smoke`).
-- [ ] `docs/deep-dive/devstack.md` + `docs/deep-dive/persistence.md`: clarify SQL connection sourcing (compose builds `CRONIQ_SQL_CONNECTION` from `CRONIQ_SQL_*`).
-- [ ] `docs/deep-dive/persistence.md`: clarify scheduler vs auth schema (`croniq` vs `auth`).
-- [ ] `docs/deep-dive/job-registration.md`: update backlog section (both `AddCroniqJobsFromAssembly` and validate-only startup mode exist).
-- [ ] `docs/deep-dive/persistence.md`: update retention backlog note (cleanup is implemented).
-- [ ] `docs/deep-dive/policies.md`: translate non-English sentences and normalize metric names to `cronipolicy_*`.
-- [ ] `docs/deep-dive/designs/job-log-persistence.md`: update "Current State" to reflect the implemented execution log store.
-- [ ] `docs/deep-dive/designs/polyglot-worker-protocol.md`: resolve WorkItems/WorkClaims contradiction.
-- [ ] `docs/deep-dive/ci.md`: update backlog note to reflect completion.
-- [ ] `docs/deep-dive/observability.md`: update backlog note to reflect completion.
-- [ ] `docs/deep-dive/supplychain.md`: update "Provision signing keys" backlog item to current state.
-- [ ] `docs/deep-dive/security.md`: update TenantGuard note (Scheduler RPC host already uses it).
-- [ ] `docs/deep-dive/index.md`: remove "roadmap" label for schedules endpoint and update gRPC client note.
-- [ ] `docs/deep-dive/docstreams.md`: align status with the checklist (blocked until repo public) and fix missing template references.
+- [x] `docs/deep-dive/testing.md`: switch to Shouldly, remove global.json 8.x reference, fix Observability cadence, update release workflow TODO.
+- [x] `docs/deep-dive/ci.md`: rename `ci-nightly.yml` references to `nightly.yml`.
+- [x] `docs/deep-dive/devstack.md` + `docs/deep-dive/supplychain.md`: rename `ci-nightly.yml` references to `nightly.yml`.
+- [x] `docs/deep-dive/devstack.md`: replace "future Croniq.Worker" with `Croniq.WorkerHost`.
+- [x] `docs/deep-dive/auth.md`: update testing section to point at real test projects.
+- [x] `docs/deep-dive/auth.md`: fix API key format to `ak_<guid>.<secret>`.
+- [x] `docs/deep-dive/auth.md`: fix tenant rate limits key to `Croniq:Api:TenantRateLimits`.
+- [x] `docs/deep-dive/architecture.md`: align retention defaults with `CroniqRetentionOptions` and `ExecutionLogRetentionOptions`.
+- [x] `docs/deep-dive/architecture.md`: update trigger types to current cron/@once + webhooks/manual.
+- [x] `docs/deep-dive/architecture.md`: fix quota description (JobKey/Scope with `MaxTriggersPerMinute` + `MaxParallelExecutionsPerJob`; API rate limits are separate).
+- [x] `docs/deep-dive/designs/webhook-secret-rotation.md`: remove "future helper script" note and align retention/cleanup notes to current options/defaults.
+- [x] `docs/deep-dive/release.md`: align steps with actual release workflows (no `Directory.Build.props` bump, no Snyk/Docs artifact if not used).
+- [x] `docs/deep-dive/password-auth.md`: fix config key names and update `docs/guides/triggers.md` from .NET 8 to net10.0.
+- [x] `docs/deep-dive/observability.md`: fix metric name to `cronijob_executions_total`.
+- [x] `docs/deep-dive/observability.md`: remove the Serilog registration claim (Default provider uses `ILoggerFactory`).
+- [x] `docs/deep-dive/devstack.md`: fix Prometheus/Tempo port defaults to 9090/3200.
+- [x] `docs/deep-dive/devstack.md`: fix default JobKey in step 5 (`default:dev:samples:smoke`).
+- [x] `docs/deep-dive/observability.md`: fix default JobKey in verification steps (`default:dev:samples:smoke`).
+- [x] `docs/deep-dive/devstack.md` + `docs/deep-dive/persistence.md`: clarify SQL connection sourcing (compose builds `CRONIQ_SQL_CONNECTION` from `CRONIQ_SQL_*`).
+- [x] `docs/deep-dive/persistence.md`: clarify scheduler vs auth schema (`croniq` vs `auth`).
+- [x] `docs/deep-dive/job-registration.md`: update backlog section (both `AddCroniqJobsFromAssembly` and validate-only startup mode exist).
+- [x] `docs/deep-dive/persistence.md`: update retention backlog note (cleanup is implemented).
+- [x] `docs/deep-dive/policies.md`: translate non-English sentences and normalize metric names to `cronipolicy_*`.
+- [x] `docs/deep-dive/designs/job-log-persistence.md`: update "Current State" to reflect the implemented execution log store.
+- [x] `docs/deep-dive/designs/polyglot-worker-protocol.md`: resolve WorkItems/WorkClaims contradiction.
+- [x] `docs/deep-dive/ci.md`: update backlog note to reflect completion.
+- [x] `docs/deep-dive/observability.md`: update backlog note to reflect completion.
+- [x] `docs/deep-dive/supplychain.md`: update "Provision signing keys" backlog item to current state.
+- [x] `docs/deep-dive/security.md`: update TenantGuard note (Scheduler RPC host already uses it).
+- [x] `docs/deep-dive/index.md`: remove "roadmap" label for schedules endpoint and update gRPC client note.
+- [x] `docs/deep-dive/docstreams.md`: align status with the checklist (blocked until repo public) and fix missing template references.
 
 ### Guides and introduction
-- [ ] `docs/guides/triggers.md`, `docs/ops/retention.md`, `docs/deep-dive/architecture.md`: align cron field count (6 fields + optional year).
-- [ ] `docs/guides/triggers.md`: update TriggerId default (Base64-url Cron + optional TimeZoneId, hash fallback >512 chars).
-- [ ] `docs/guides/triggers.md` + `docs/deep-dive/security.md`: IP rule block is `403 ip-blocked` (not `429 ip-rule-denied`).
-- [ ] `docs/guides/polyglot-workers.md`: runner mismatch returns `403 runner-mismatch` (not `409 lease-conflict`).
-- [ ] `docs/guides/polyglot-workers.md`: default scopes from `issue-worker-api-key.ps1` are `work:*`, `workers:heartbeat/read`, `runners:heartbeat/read`.
-- [ ] `docs/guides/auth.md`: remove "after backlog item completes" wording for `/tenants/{tenantId}/api-keys`.
-- [ ] `docs/introduction/index.md`: replace "SDK reference (coming soon)" placeholder with existing doc links.
-- [ ] `docs/introduction/configuration.md`: remove "job-registration.md (upcoming)" wording and link directly.
-- [ ] `docs/introduction/configuration.md`: align default `Croniq__Api__RequestsPerMinute` with `CroniqApiOptions` (60).
-- [ ] `docs/introduction/quickstart.md`: remove stale "(to be added)" note and fix `cd HelloCroniq.Api` path.
+- [x] `docs/guides/triggers.md`, `docs/ops/retention.md`, `docs/deep-dive/architecture.md`: align cron field count (6 fields + optional year).
+- [x] `docs/guides/triggers.md`: update TriggerId default (Base64-url Cron + optional TimeZoneId, hash fallback >512 chars).
+- [x] `docs/guides/triggers.md` + `docs/deep-dive/security.md`: IP rule block is `403 ip-blocked` (not `429 ip-rule-denied`).
+- [x] `docs/guides/polyglot-workers.md`: runner mismatch returns `403 runner-mismatch` (not `409 lease-conflict`).
+- [x] `docs/guides/polyglot-workers.md`: default scopes from `issue-worker-api-key.ps1` are `work:*`, `workers:heartbeat/read`, `runners:heartbeat/read`.
+- [x] `docs/guides/auth.md`: remove "after backlog item completes" wording for `/tenants/{tenantId}/api-keys`.
+- [x] `docs/introduction/index.md`: replace "SDK reference (coming soon)" placeholder with existing doc links.
+- [x] `docs/introduction/configuration.md`: remove "job-registration.md (upcoming)" wording and link directly.
+- [x] `docs/introduction/configuration.md`: align default `Croniq__Api__RequestsPerMinute` with `CroniqApiOptions` (60).
+- [x] `docs/introduction/quickstart.md`: remove stale "(to be added)" note and fix `cd HelloCroniq.Api` path.
 
 ### Ops and troubleshooting
-- [ ] `docs/ops/troubleshooting.md`: update "login failed" guidance to use `CRONIQ_SQL_HOST/CRONIQ_SQL_PASSWORD/CRONIQ_SQL_DATABASE` or compose-generated connection.
-- [ ] `docs/ops/container-images.md`: fix password auth env var example to `Croniq__Auth__Password__Enabled`.
+- [x] `docs/ops/troubleshooting.md`: update "login failed" guidance to use `CRONIQ_SQL_HOST/CRONIQ_SQL_PASSWORD/CRONIQ_SQL_DATABASE` or compose-generated connection.
+- [x] `docs/ops/container-images.md`: fix password auth env var example to `Croniq__Auth__Password__Enabled`.
 
 ### Samples and README
-- [ ] `samples/grpc-client-python/README.md`: API key env var should be `CRONIQ_API_KEY` (and `CRONIQ_ENDPOINT`).
-- [ ] `tests/README.md`: verify the port note for `9464` (not mapped on host).
+- [x] `samples/grpc-client-python/README.md`: API key env var should be `CRONIQ_API_KEY` (and `CRONIQ_ENDPOINT`).
+- [x] `tests/README.md`: verify the port note for `9464` (not mapped on host).
 
 ### Docs hygiene
-- [ ] `docs/SECURITY.md` + `docs/deep-dive/release-verification.md` + `docs/deep-dive/supplychain-waivers.md`: remove stray `***` at EOF.
+- [x] `docs/SECURITY.md` + `docs/deep-dive/release-verification.md` + `docs/deep-dive/supplychain-waivers.md`: remove stray `***` at EOF.
 
 ## Needs discussion / code change (decide: doc-only vs behavior change)
 - [ ] Docstreams process (blocked until repo is public): create docs root + deep-dive streams, quickstart alignment, Mermaid policy.

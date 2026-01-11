@@ -26,13 +26,12 @@ This document extends `ci.md` with the steps every Croniq release must follow: v
    - `dotnet pack` produces NuGet packages (Croniq.\*).
    - Docker images built with multi-stage Dockerfiles (`infra/docker`).
 4. **Security evidence**:
-   - Generate SBOM via Syft: `syft packages dir:. -o spdx-json > sbom.json`.
-   - Scan images/packages with Trivy/Snyk; fail on high-severity issues.
-   - Sign NuGet packages and container images using Cosign/SignPath (`cosign sign ghcr.io/...:0.6.0`).
+   - Generate SBOM via Syft: `syft dir:artifacts/nuget -o spdx-json` plus image SBOMs from the built tags.
+   - Scan images/packages with Trivy; fail on high-severity issues.
+   - Sign container images with Cosign when keys are available. NuGet signing is gated and currently disabled until a public CA certificate is available.
 5. **Publishing**:
    - Push NuGet packages with `dotnet nuget push`.
    - Push container images to GHCR.
-   - Upload docs build artifact (`npm run docs:build` in `docs/`).
 6. **Verification**:
    - `cosign verify --certificate-identity <issuer> ghcr.io/...:0.6.0`.
    - `dotnet nuget verify Croniq.Core.0.6.0.nupkg --certificate-fingerprint <fingerprint>`.
@@ -55,7 +54,7 @@ This document extends `ci.md` with the steps every Croniq release must follow: v
 
 ## Release Checklist
 
-1. Update CHANGELOG and ensure version bump in `Directory.Build.props` (or dedicated version file).
+1. Update CHANGELOG/release notes if maintained; versioning comes from the git tag via MinVer.
 2. Verify `Croniq.DbMigrator --verify` passes locally.
 3. Run `npm --prefix docs run docs:build` to ensure docs compile; update navigation if new pages were added.
 4. Tag and push; wait for CI to produce packages/images.

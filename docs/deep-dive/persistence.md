@@ -4,14 +4,14 @@ This document describes the current SqlServer persistence layer for Croniq: sche
 
 ## Scope & Goals
 
-- A single SqlServer schema (`croniq`) backs both scheduler persistence and auth data.
+- A single SqlServer database uses the `croniq` schema for scheduler persistence and the `auth` schema for auth data by default.
 - Every entity includes `TenantId`, `EnvironmentTag`, and concurrency metadata to guarantee tenant isolation.
 - EF Core is the only abstraction; migrations are versioned in `src/Croniq.Data.SqlServer/Migrations` and applied via `tools/Croniq.DbMigrator`.
 - Croniq hosts can switch between in-memory and SqlServer persistence via configuration (`Croniq:Persistence:Mode`).
 
 ## Schema Overview
 
-Below is a simplified entity diagram covering the scheduler and auth tables (shared DbContext).
+Below is a simplified entity diagram covering the scheduler (`croniq`) and auth (`auth`) tables (shared DbContext).
 
 ```mermaid
 classDiagram
@@ -67,7 +67,7 @@ classDiagram
     ApiClientEntity <|-- ApiKeyEntity : keys
 ```
 
-Additional tables (leases, worker instances, audit log) follow the same tenant/environment pattern; see `SqlServerDbContext` for exact property lists.
+Additional tables (leases, worker instances, audit log) follow the same tenant/environment pattern; scheduler tables live under `croniq` while auth tables live under `auth`. See `SqlServerDbContext` for exact property lists.
 
 ## Code Layout
 
@@ -157,7 +157,7 @@ ORDER BY CreatedAtUtc DESC;
 
 ## Local Development & Dev Stack
 
-- The Docker dev stack (`infra/docker/docker-compose.yml`) launches SQL Server 2022 with the Croniq schema. Connection values originate in `.env` via `CRONIQ_SQL_CONNECTION`.
+- The Docker dev stack (`infra/docker/docker-compose.yml`) launches SQL Server 2022 with the Croniq schema. Compose derives `CRONIQ_SQL_CONNECTION` from `CRONIQ_SQL_HOST`, `CRONIQ_SQL_DATABASE`, and `CRONIQ_SQL_PASSWORD` (using `sa` on port 1433) based on `.env`.
 - `scripts\devstack-up.cmd` waits for SQL health before running the migrator container (`croniq-db-migrator`).
 - Developers can also run `dotnet run --project tools/Croniq.DbMigrator -- --connection %CRONIQ_SQL_CONNECTION% --apply` manually.
 - Test projects rely on Testcontainers to spin up SQL Server and call the migrator automatically.
@@ -177,11 +177,11 @@ This document will expand with schema details once clustering ships.
 - Use the shared DbContext for both persistence and auth to avoid duplication. If production separates the databases, configure the domain-specific connection strings.
 - Always enable Transparent Data Encryption and TLS on production SQL instances; Croniq simply uses the ADO.NET connection string.
 - Monitor `SqlServerJobPersistenceProvider` health checks; they expose readiness/liveness for the API and worker hosts.
-- Set retention policies via configuration (dead letters default 30 days, execution history 90 days). Retention jobs live in the persistence provider backlog.
+- Set retention policies via configuration. Retention jobs are implemented and configured via `Croniq:Retention` and `ExecutionLogRetentionOptions`.
 
 ## Backlog & Ownership
 
 - Finish the lease/worker instance tables for clustering (tracked in `architecture.md`).
-- Document retention job configuration once implemented.
+- Keep retention configuration aligned with `CroniqRetentionOptions` and `ExecutionLogRetentionOptions` whenever defaults change.
 - Mirror any schema changes in both this doc and the consumer configuration guide so operators know which settings exist.
 - Owners: `@CroniqMaintainers` (persistence), `@CroniqDocs` (documentation).

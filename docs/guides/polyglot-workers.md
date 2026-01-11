@@ -1,7 +1,7 @@
 # Polyglot Workers (HTTP)
 
-Croniq’s in-process .NET worker uses a **lease-based** model to claim and execute due triggers.
-The HTTP work endpoints expose the same lease lifecycle so non-.NET (“polyglot”) workers can participate.
+Croniq's in-process .NET worker uses a **lease-based** model to claim and execute due triggers.
+The HTTP work endpoints expose the same lease lifecycle so non-.NET ("polyglot") workers can participate.
 Worker host presence is tracked separately via `/workers`; this guide focuses on runner identities used by the `/work/*` surface.
 
 ## Authentication & Scoping
@@ -19,7 +19,7 @@ Authentication supports both:
 
 ## Runner Identity
 
-`runnerId` is treated as the lease owner and must match the authenticated caller identity (API client id for API keys or subject for bearer tokens). A runner represents a worker process instance and can execute many jobs over time. Use a stable value (for example `hostname + process`) and reuse the same `runnerId` for polling, renewing, and acknowledging work. If the `runnerId` does not match the active lease owner, the server rejects the request with `409 lease-conflict`.
+`runnerId` is treated as the lease owner and must match the authenticated caller identity (API client id for API keys or subject for bearer tokens). A runner represents a worker process instance and can execute many jobs over time. Use a stable value (for example `hostname + process`) and reuse the same `runnerId` for polling, renewing, and acknowledging work. If the `runnerId` does not match the authenticated caller identity, the server rejects the request with `403 runner-mismatch`.
 
 ## Endpoints
 
@@ -123,7 +123,7 @@ Failover/offline strategy:
 
 - If polling fails due to transient network errors, back off with jitter and retry; do not spin.
 - Keep renewing active leases while work is running; if renew fails with a conflict or missing lease, cancel the job and stop acking (the server may have reassigned).
-- Treat ack and event publishing as idempotent. Retry on transient failures; stop on `409 lease-conflict` or `404` (lease no longer valid).
+- Treat ack and event publishing as idempotent. Retry on transient failures; stop on `403 runner-mismatch`, `409 lease-conflict`, or `404` (lease no longer valid).
 - If auth fails (`401/403` or runner mismatch), treat it as a fatal configuration error.
 
 Local persistence fallback (outgoing queue):
@@ -143,7 +143,7 @@ For SQL-backed auth, you can use the helper script to create an API client and k
 ```
 
 Use the emitted `CRONIQ_API_KEY` and set `CRONIQ_RUNNER_ID` to the same client id.
-The helper includes `workers:*` scopes by default so the same key can read/post worker host presence; use `-Scopes` to trim if you only need runner access.
+The helper defaults to the work scopes plus `workers:heartbeat`, `workers:read`, `runners:heartbeat`, and `runners:read`; use `-Scopes` to trim if you only need runner access.
 
 ## Runner Presence (Optional)
 

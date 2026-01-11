@@ -4,11 +4,12 @@ This deep dive explains how Croniq discovers jobs, composes job keys, and persis
 
 ## Discovery Options
 
-Croniq supports two registration styles:
+Croniq supports multiple registration styles:
 
 1. **Inline handlers** - call `builder.Services.AddCroniqJob("namespace", "name", handler)` and provide a delegate. This uses an internal delegating `IJob` that dispatches to the handler.
 2. **Attributed classes** - implement `IJob`, decorate with `[CroniqJob("namespace", "name", variant: "optional")]`, and register via `AddCroniqJob<TJob>()`.
-3. **Config-driven assembly loading** - call `AddCroniqJobsFromConfiguration(builder.Configuration)` and set `Croniq:Jobs:Assemblies` to scan job assemblies at startup.
+3. **Assembly scanning** - call `AddCroniqJobsFromAssembly(assembly)` to register all `[CroniqJob]` types from the target assembly.
+4. **Config-driven assembly loading** - call `AddCroniqJobsFromConfiguration(builder.Configuration)` and set `Croniq:Jobs:Assemblies` to scan job assemblies at startup.
 
 Both paths produce a `JobDescriptor` with a deterministic job key.
 
@@ -53,6 +54,8 @@ The seeding mode is controlled by `Croniq:Seeding:Mode`:
 - `Off` disables seeding.
 - `CreateIfMissing` creates only new triggers (default).
 - `ForceUpdate` updates existing triggers only when `managedBy` matches.
+
+`Croniq:Startup:Mode=Validate` runs the validation pipeline without starting worker loops, which is useful for CI and preflight checks.
 
 Invalid cron expressions, missing job registrations, or scope mismatches fail fast at startup.
 
@@ -102,6 +105,4 @@ Policies are configured via `Croniq:Policies:*`. Use `Croniq:Policies:Overrides`
 
 ## Backlog
 
-- Assembly scanning helpers (`AddCroniqJobsFromAssembly`).
 - Fluent per-job policy builder.
-- Optional validate-only startup mode and health checks.

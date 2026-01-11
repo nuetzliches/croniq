@@ -13,9 +13,9 @@ This document extends the quality vision captured in `architecture.md` and descr
 
 | Suite                                                | Primary scope                                                                                                     | Trigger/Cadence             | Tooling / Infra                                         | Blocking rule                     |
 | ---------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- | --------------------------- | ------------------------------------------------------- | --------------------------------- |
-| `Unit` (`tests/Croniq.*.Tests`)                      | Pure logic, options, schedulers, API surface guards                                                               | Every PR + local pre-push   | `xUnit`, `FluentAssertions`, `dotnet test`              | Fail blocks merge                 |
+| `Unit` (`tests/Croniq.*.Tests`)                      | Pure logic, options, schedulers, API surface guards                                                               | Every PR + local pre-push   | `xUnit`, `Shouldly`, `dotnet test`                      | Fail blocks merge                 |
 | `Contract` (`*.ContractTests`)                       | Provider contracts (SqlServer persistence/auth, secrets) via Testcontainers                                       | Every PR (parallel)         | `Testcontainers`, seeded SQL, `Croniq.TestKit`          | Fail blocks merge                 |
-| `Observability` (`tests/Croniq.Observability.Tests`) | Verifies OTLP exporter wiring using an in-memory collector + host builder                                         | Nightly + ad-hoc PR runs    | `dotnet test`, ASP.NET host, lightweight OTLP server    | Fail blocks nightly badge         |
+| `Observability` (`tests/Croniq.Observability.Tests`) | Verifies OTLP exporter wiring using an in-memory collector + host builder                                         | Every PR + nightly + release | `dotnet test`, ASP.NET host, lightweight OTLP server    | Fail blocks merge/release         |
 | `Smoke`/`E2E` (`tests/Croniq.Api.Smoke`)             | `Croniq.Sample.ApiHost` + `Croniq.Sample.WorkerHost` via Compose (InMemory auth, SqlServer persistence, migrator) | Nightly + release candidate | `scripts/test-e2e.cmd` (Docker Compose + `dotnet test`) | Fail blocks release/nightly badge |
 | `Compliance`                                         | SBOM, Trivy scan, dependency audit                                                                                | Nightly + release           | `Syft`, `Trivy`, GitHub Actions reusable workflows      | Fail blocks release               |
 | `Perf/Burn-in` (planned)                             | Long-running stress on scheduler leases + quotas                                                                  | On-demand / before GA       | Testcontainers + perf harness (to be defined)           | Informational                     |
@@ -25,7 +25,7 @@ This document extends the quality vision captured in `architecture.md` and descr
 ### Unit Tests
 
 - **Scope**: Business rules in `src/*` projects (parsers, schedulers, policy resolvers, hosting extensions) with no I/O or network dependencies.
-- **Frameworks**: `xUnit` + `FluentAssertions`, with `NSubstitute` for lightweight mocks when an interface cannot be satisfied with in-memory doubles.
+- **Frameworks**: `xUnit` + `Shouldly`, with `NSubstitute` for lightweight mocks when an interface cannot be satisfied with in-memory doubles.
 - **Layout**: Mirror namespaces (e.g., `Croniq.Core.Tests/Scheduling/TriggerWorkerTests.cs`) with explicit Arrange–Act–Assert regions. Prefer `[Theory]` and `MemberData` for parser/policy matrices.
 - **Execution**: `dotnet test tests/Croniq.Core.Tests/Croniq.Core.Tests.csproj --configuration Release` (or target another suite directly).
 - **Gates**: Coverage per suite is aggregated by Coverlet; PRs fail when `Croniq.Core` line coverage <73%, overall line coverage <75%, or branch coverage <55% (overall + Core).
@@ -48,13 +48,13 @@ This document extends the quality vision captured in `architecture.md` and descr
 - **Scope**: Ensures `AddCroniqObservability` wires OpenTelemetry for traces, metrics, and logs.
 - **Framework**: `xUnit` plus a lightweight OTLP HTTP collector hosted via ASP.NET on a random port; tests emit one signal of each type and assert collector reception.
 - **Execution**: `dotnet test tests/Croniq.Observability.Tests/Croniq.Observability.Tests.csproj`.
-- **Cadence**: Optional on PRs touching observability, mandatory on nightly pipeline before the Compose stack boots.
-- **Gate**: Failure blocks nightly badge and release readiness because exporters would silently fail in production.
+- **Cadence**: Every PR, nightly, and release pipelines.
+- **Gate**: Failure blocks merge and release readiness because exporters would silently fail in production.
 
 ### End-to-End & Smoke Tests
 
 - **Scope**: Validates that the sample API host, worker host, SqlServer persistence, and migrator collaborate successfully.
-- **Frameworks**: `xUnit` harness under `tests/Croniq.Api.Smoke`, `FluentAssertions`, Docker Compose stack defined in `infra/docker/docker-compose.tests.yml`.
+- **Frameworks**: `xUnit` harness under `tests/Croniq.Api.Smoke`, `Shouldly`, Docker Compose stack defined in `infra/docker/docker-compose.tests.yml`.
 - **Execution**: `scripts\test-e2e.cmd` orchestrates build, compose up, readiness polling, `dotnet test tests/Croniq.Api.Smoke/...`, and teardown. Override `CRONIQ_API_BASEURL`/`CRONIQ_API_KEY` to target remote environments.
 - **Cadence**: Nightly + release candidate builds; run manually before large API refactors. Failures block releases.
 - **Scenarios**: `Webhook_ip_rule_crud_roundtrip` validates the management APIs, and `Webhook_ingress_respects_ip_rules` now hits the live ingress twice—first expecting `403 ip-blocked`, then `202 accepted` after adding a catch-all rule—alongside the existing health/schedule checks.
@@ -105,7 +105,7 @@ This document extends the quality vision captured in `architecture.md` and descr
 
 ## Local Developer Workflow
 
-1. Install the .NET SDK defined in `global.json` (currently 8.x) plus Docker Desktop.
+1. Install the .NET SDK 10.x (net10.0) plus Docker Desktop.
 2. Restore tools: `dotnet tool restore`.
 3. Run targeted suites:
    - Unit: `dotnet test tests/Croniq.Core.Tests/Croniq.Core.Tests.csproj`.
@@ -150,7 +150,7 @@ This document extends the quality vision captured in `architecture.md` and descr
 ## Ownership & Backlog
 
 - **Owners**: Core (unit coverage, schedulers), Persistence (contract tests, SQL fixtures), Platform (observability + CI), Release Engineering (compliance + signing), Solutions (E2E harness).
-- **Delivered**: `Croniq.TestKit`, FluentAssertions/NSubstitute rollout, `[Category]` traits, Compose-based `Croniq.Api.Smoke`, this document + `tests/README.md`, GitHub Actions workflows for PR and nightly builds.
+- **Delivered**: `Croniq.TestKit`, Shouldly/NSubstitute rollout, `[Category]` traits, Compose-based `Croniq.Api.Smoke`, this document + `tests/README.md`, GitHub Actions workflows for PR and nightly builds.
 - **Open Backlog**:
   1. Hook container log export into CI artifacts automatically (partially implemented via `TestcontainerLogCollector`).
   2. Add response snapshot helpers to `Croniq.TestKit` for API regression detection.
@@ -168,6 +168,6 @@ This document extends the quality vision captured in `architecture.md` and descr
 | DONE   | Croniq.TestKit shared fixtures committed                     | `tests/Croniq.TestKit/` now ships SQL Server fixtures, log collectors, and canonical trait constants.                                                   |
 | DONE   | Contract suites for SqlServer providers run in CI            | `tests/Croniq.Persistence.SqlServer.Tests` exercises the EF provider and is wired into `.github/workflows/ci-pr.yml`.                                   |
 | DONE   | Nightly workflow with Compose E2E + SBOM/Trivy               | `.github/workflows/nightly.yml` now runs the dev stack and a compliance job (Syft SBOM + Trivy scan) with blocking gates.                               |
-| TODO   | Release workflow for packaging, signing, compliance          | `.github/workflows/release.yml` is absent; add the tag-triggered workflow with NuGet/container publishing and scans.                                    |
+| DONE   | Release workflow for packaging, signing, compliance          | `.github/workflows/release.yml` runs full tests, packs/publishes artifacts, builds images, and runs SBOM/Trivy scans.                                  |
 
 Once these backlog items close, the “Teststrategie-Dokument” entry in `CHECKLIST.md` can move to **done**.

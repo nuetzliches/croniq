@@ -95,7 +95,7 @@ docs/
 
 ## Scheduler & Execution Semantics
 
-- Trigger types: Cron-compatible expressions (7 fields), fixed/sliding intervals, calendar windows, ad-hoc/event driven.
+- Trigger types: cron expressions (6 fields + optional year) plus `@once` for one-off schedules; webhook ingress and manual triggers dispatch immediate executions.
 - Every job key follows `TenantId:EnvironmentTag:Namespace:JobName[:Variant]`, ensuring partitioning across tenants/environments.
 - `IJobExecutionContext` exposes metadata, logger, telemetry hooks, and helpers (`InitProgress`, `ReportProgress`, `CustomState`). Jobs log and rethrow exceptions so policies can respond.
 - Misfires are retried while `MaxMisfireDelay` (default 5 minutes) is respected. Beyond that the execution is marked as dead letter.
@@ -144,22 +144,22 @@ docs/
 - Hosting packages expose opinionated extensions so consumers can bootstrap Croniq quickly. Auth, persistence mode, and rate limits are all configuration-driven.
 - Rate limiting uses ASP.NET Core RateLimiter with per-tenant partitions; gRPC interceptors reuse the same policy.
 
-### Tenant-basierte Routen als neues Default
+### Tenant-scoped routes as the default
 
-- Wir verschieben sämtliche Verwaltungs-Endpunkte (Schedules, Executions, Admin-CRUD) unter den Basis-Pfad `/tenants/{tenantId}/{resource}`. Da es aktuell keine externen Konsumenten gibt, akzeptieren wir die Breaking Changes jetzt und vermeiden spätere Doppelpfade.
-- `POST /schedules` sowie `GET /executions/{executionId}/logs` wurden auf `/tenants/{tenantId}/schedules` bzw. `/tenants/{tenantId}/executions/{executionId}/logs` verschoben. Legacy-Pfade sind entfernt, da keine externen Konsumenten existierten.
-- Zielbild für die REST-Oberfläche (ausgenommen öffentlich nutzbare Trigger/Webhooks):
+- All management endpoints (schedules, executions, admin CRUD) live under `/tenants/{tenantId}/{resource}`. With no external consumers yet, we accept the breaking changes now to avoid duplicate paths later.
+- `POST /schedules` and `GET /executions/{executionId}/logs` moved to `/tenants/{tenantId}/schedules` and `/tenants/{tenantId}/executions/{executionId}/logs`. Legacy paths are removed.
+- Target REST surface (excluding public trigger/webhook ingress):
   - `/tenants/{tenantId}/schedules`
   - `/tenants/{tenantId}/executions`
   - `/tenants/{tenantId}/api-clients`, `/api-keys`, `/tokens`
-  - `/jobs/trigger` (bleibt global nutzbar)
-  - `/webhooks/*` (separater Surface)
-  - Execution-Übersicht steht jetzt zur Verfügung: `GET /tenants/{tenantId}/executions` liefert filterbare Listen, `GET /tenants/{tenantId}/executions/{executionId}` das Detail; beide Endpunkte hängen am neuen `executions:read`-Scope und bauen auf `IExecutionHistoryReader` auf [src/Croniq.Api/ApiHostingExtensions.cs#L200-L330](../../src/Croniq.Api/ApiHostingExtensions.cs#L200-L330).
-  - API-Client-Verwaltung + Token-Issuing liegen unter `/tenants/{tenantId}/api-clients*` bzw. `/tenants/{tenantId}/tokens` [src/Croniq.Api/ApiHostingExtensions.cs#L1040-L1294](../../src/Croniq.Api/ApiHostingExtensions.cs#L1040-L1294).
-- Umsetzungsschritte:
-  1. API-Code auf neue Pfade umstellen, alte Pfade in derselben Version entfernen (Breaking Change akzeptabel vor `v1.0.0`).
-  2. UI/SDKs + Scripting-Samples auf den konsistenten Basis-Pfad aktualisieren.
-  3. Dokumentation, OpenAPI-Beschreibungen und Tests auf die neuen Pfade drehen.
+  - `/jobs/trigger` (remains global)
+  - `/webhooks/*` (separate surface)
+  - Execution overview: `GET /tenants/{tenantId}/executions` returns filterable lists, `GET /tenants/{tenantId}/executions/{executionId}` returns details. Both require the `executions:read` scope and use `IExecutionHistoryReader` [src/Croniq.Api/ApiHostingExtensions.cs#L200-L330](../../src/Croniq.Api/ApiHostingExtensions.cs#L200-L330).
+  - API client management and token issuance live under `/tenants/{tenantId}/api-clients*` and `/tenants/{tenantId}/tokens` [src/Croniq.Api/ApiHostingExtensions.cs#L1040-L1294](../../src/Croniq.Api/ApiHostingExtensions.cs#L1040-L1294).
+- Implementation steps:
+  1. Move API code to the new routes and remove legacy routes in the same release (breaking change is acceptable before `v1.0.0`).
+  2. Update UI/SDKs and scripting samples to use the consistent base path.
+  3. Update documentation, OpenAPI descriptions, and tests to the new routes.
 
 ## Webhook Trigger Surface
 
@@ -213,9 +213,9 @@ docs/
 
 - Recovery flow: on startup, load persisted triggers, clean stale locks, resume pending executions before declaring the instance healthy.
 - Clock drift monitoring via `ITimeProvider`; warnings from 50 ms drift upward.
-- Retention defaults: dead letters 30 days, execution history 90 days, audit logs 365 days (all configurable).
+- Retention defaults: execution log retention is 7 days (hourly sweep) when `ExecutionLogRetentionService` is hosted. SQL retention jobs are disabled by default (`Croniq:Retention:Enabled=false`); if enabled, refresh tokens default to 14 days after expiry, webhook endpoint events 30 days, and webhook secret history 7 days after expiry. Job/webhook dead letter pruning is disabled unless configured.
 - Tenant isolation is enforced everywhere: persistence schemas, caller context, telemetry dimensions, rate limiting, and API scopes.
-- Quotas per tenant cover max trigger/minute, concurrent executions, and payload size; defaults live under `Croniq:Api:RequestsPerMinute` with overrides per tenant.
+- Quotas are enforced per JobKey/scope using `MaxTriggersPerMinute` (default 60) and `MaxParallelExecutionsPerJob` (default 5) from `Croniq:Policies:*`. API rate limits are separate (`Croniq:Api:RequestsPerMinute` + `Croniq:Api:TenantRateLimits`).
 
 ## Release, Testing & Compliance
 

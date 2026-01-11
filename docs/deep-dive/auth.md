@@ -118,7 +118,7 @@ Alle Summaries/Beschreibungen aus der Tabelle landen wortgleich in den neuen Ope
 
 ## Secret Handling
 
-- API keys follow the format `crq_<segment>_<keyId>_<secret>`; only `keyId` + hashed secret are stored.
+- API keys follow the format `ak_<guid>.<secret>`; only the key id + hashed secret are stored.
 - Hashing: HMAC SHA-256 with per-key salt. Secrets never leave memory after issuance.
 - Rotation stores audit events (table `auth.AuditLog`, backlog item) for compliance.
 - `ISecretProvider` allows binding API keys or connection strings to external secret stores in production deployments.
@@ -126,7 +126,7 @@ Alle Summaries/Beschreibungen aus der Tabelle landen wortgleich in den neuen Ope
 ## Rate Limiting & Quotas
 
 - ASP.NET RateLimiter partitions requests by `TenantId:CallerId` based on the resolved caller context.
-- Default policy: 60 requests/minute per caller, configured via `Croniq:Api:RequestsPerMinute` with per-tenant overrides (planned config `Croniq:Api:TenantLimits:<tenantId>`).
+- Default policy: 60 requests/minute per caller, configured via `Croniq:Api:RequestsPerMinute` with per-tenant overrides configured under `Croniq:Api:TenantRateLimits`.
 - Scheduler-level quotas (concurrency, trigger throughput) remain in the policy engine but rely on the same tenant/caller metadata.
 
 ## Configuration Reference
@@ -144,9 +144,8 @@ Alle Summaries/Beschreibungen aus der Tabelle landen wortgleich in den neuen Ope
 
 ## Testing & Tooling
 
-- `Croniq.Auth.Core.Tests` verify in-memory stores, middleware flows, and rate limiter partitioning.
-- `Croniq.Auth.SqlServer.Tests` use Testcontainers SQL Server to ensure hashing/rotation/audit logic is deterministic.
-- Smoke tests in `Croniq.Api.Tests` cover header parsing, mixed-mode auth, and 401/403 paths.
+- `Croniq.Api.Tests` cover header parsing, mixed-mode auth, `/me`, and 401/403 paths.
+- `Croniq.Persistence.SqlServer.Tests` cover API key storage, password user flows, and refresh token behavior.
 
 ## Backlog
 

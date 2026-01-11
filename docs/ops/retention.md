@@ -11,7 +11,7 @@ This is only wired when the worker host uses `Persistence.Mode = SqlServer`.
 | Key                             | Description                                                                             |
 | ------------------------------- | --------------------------------------------------------------------------------------- |
 | `Croniq:Retention:Enabled`      | Enables the maintenance trigger. Default `false`.                                       |
-| `Croniq:Retention:ScheduleCron` | 7-field cron expression used by the trigger. Default `0 0 3 ? * * *` (daily 03:00 UTC). |
+| `Croniq:Retention:ScheduleCron` | 6-field cron expression with optional year used by the trigger. Default `0 0 3 ? * * *` (daily 03:00 UTC). |
 | `Croniq:Retention:TimeZoneId`   | Optional time zone id for the trigger schedule. Default UTC.                            |
 | `Croniq:Retention:TriggerId`    | Optional stable trigger id override. Default `croniq.retention.cleanup`.                |
 

@@ -22,4 +22,4 @@ Add entries to the table below instead of editing historical rows. Keep newest w
 1. Create an entry in the table with expiry and mitigation.
 2. Reference the waiver ID in the CI/release job that is being suppressed (e.g., `TRIVY_IGNORE_UNFIXED` list or custom ignore file) and link back to this document.
 3. Open/associate a tracking issue for remediation before expiry.
-4. Remove the waiver once the dependency/image is patched; do not extend expiry without security review.***
+4. Remove the waiver once the dependency/image is patched; do not extend expiry without security review.

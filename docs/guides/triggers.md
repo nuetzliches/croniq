@@ -4,7 +4,7 @@ Triggers decide when a job key should run. Croniq currently supports cron-based 
 
 ## Cron Expressions
 
-Croniq uses 7-field cron expressions (seconds precision). Examples:
+Croniq uses 6-field cron expressions (seconds precision) with an optional year field. Examples:
 
 ```csharp
 var everyFiveMinutes = "0 */5 * * * *";
@@ -42,9 +42,9 @@ Worker hosts can seed schedules on startup:
 
 | Field          | Required | Notes                                                                                                                                          |
 | -------------- | -------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
-| TriggerId      | No       | Defaults to `{JobKey}:{CronExpression}` when omitted.                                                                                          |
+| TriggerId      | No       | Defaults to `{JobKey}:{base64url(cronExpression)}` (and `:{base64url(timeZoneId)}` when provided). If the result exceeds 512 chars, Croniq uses `JobKey:hash-<sha256>`. |
 | JobKey         | Yes      | Must follow the Croniq job key format (`namespace:name[:variant]`). Tenant/environment are taken from the hosting scope, not from the job key. |
-| CronExpression | Yes      | 7-field cron expression, or `@once` for a one-off trigger.                                                                                     |
+| CronExpression | Yes      | 6-field cron expression (optional year), or `@once` for a one-off trigger.                                                                     |
 | StartAtUtc     | No       | Optional UTC start bound (ISO-8601).                                                                                                           |
 | EndAtUtc       | No       | Optional UTC end bound (ISO-8601).                                                                                                             |
 | Enabled        | No       | Defaults to `true`.                                                                                                                            |
@@ -229,7 +229,7 @@ Consumers that call Croniq's webhook ingress should implement the following safe
 `X-Croniq-Signature` is `sha256=<hex>` where `<hex>` is the lowercase HMAC-SHA256 digest of the UTF-8 request body using the shared webhook secret. Example implementations:
 
 ```csharp
-// .NET 8 / C#
+// .NET 10 / C#
 using var hmac = new HMACSHA256(Encoding.UTF8.GetBytes(secret));
 var payload = JsonSerializer.Serialize(body);
 var signature = "sha256=" + Convert.ToHexString(hmac.ComputeHash(Encoding.UTF8.GetBytes(payload))).ToLowerInvariant();
@@ -273,7 +273,7 @@ Treat secrets as credentials: read them from your secret manager at runtime, nev
 
 #### Backoff and error handling
 
-- `429 ip-rule-denied`: your source IP is not listed. Cross-check the allow list and update it via the API or `WebhookIpRuleClient` before retrying.
+- `403 ip-blocked`: your source IP is not listed. Cross-check the allow list and update it via the API or `WebhookIpRuleClient` before retrying.
 - `401 signature-invalid`: regenerate the signature using the newest secret, confirm there is no whitespace/double encoding, and check whether a rotation just occurred (see `WebhookEndpointEvents`).
 - `429 rate-limit`: respect the `Retry-After` header. Croniq's fixed window allows short bursts but will throttle noisy callers.
 

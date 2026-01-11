@@ -50,7 +50,7 @@ All suites are regular `dotnet test` projects, so you can target any subset via 
 
 ## Troubleshooting Cheatsheet
 
-- **Docker failures**: Ensure Docker Desktop is running, then re-run `docker compose ls` to verify connectivity. Ports `5080`, `9464`, and `4317` must be free before launching the stack.
+- **Docker failures**: Ensure Docker Desktop is running, then re-run `docker compose ls` to verify connectivity. Ports `5080` and `4317` must be free before launching the stack (plus any ports you override in `.env`).
 - **OTLP collector unreachable**: The observability smoke test listens on `http://127.0.0.1:<ephemeral port>/`. Disable VPN software that blocks loopback HTTP calls if the test hangs waiting for telemetry.
 - **SQL container reuse**: If contract tests complain about schema drift, run `docker compose -f infra/docker/docker-compose.tests.yml down -v` to wipe old volumes, then rerun the suite.
 - **Verbose logs**: Pass `--logger:"console;verbosity=detailed"` to `dotnet test` for more context, or run `docker compose -f infra/docker/docker-compose.tests.yml logs -f` in another terminal while the smoke tests execute.

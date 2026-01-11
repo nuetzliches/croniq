@@ -209,11 +209,9 @@ The API must enforce that:
 
 ## Persistence & Schema
 
-WorkItems/WorkClaims/RunnerCapabilities are now part of the SqlServer schema and are updated by the HTTP/gRPC work endpoints when assignments are claimed, renewed, and acknowledged. WorkEvents are still optional; events are currently streamed into the execution log store.
+WorkItems/WorkClaims/RunnerCapabilities are part of the SqlServer schema and are updated by the HTTP/gRPC work endpoints when assignments are claimed, renewed, and acknowledged. WorkEvents are still optional; events are currently streamed into the execution log store.
 
-The current HTTP endpoints reuse trigger leases. For polyglot execution telemetry, we will introduce explicit work items and claims.
-
-Planned tables (SqlServer):
+Current tables (SqlServer):
 
 - `croniq.WorkItems`
   - `WorkItemId` (PK)

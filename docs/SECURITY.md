@@ -29,4 +29,4 @@ This document summarizes how Croniq secures releases and how consumers can verif
 ## Waivers and exceptions
 
 - Temporary vulnerability waivers are tracked in `docs/deep-dive/supplychain-waivers.md` with expiry dates and mitigations.
-- CI/release gates fail when waivers expire or when new HIGH/CRITICAL issues are discovered without an approved waiver.***
+- CI/release gates fail when waivers expire or when new HIGH/CRITICAL issues are discovered without an approved waiver.

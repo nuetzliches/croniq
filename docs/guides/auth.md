@@ -10,7 +10,7 @@ This consumer-focused guide explains how to secure Croniq hosts with API keys an
 | Human operators via UI                    | Password login      | Self-hosted option; Croniq issues access + refresh tokens.                                                              |
 | Hybrid workloads                          | Mixed (enable both) | Croniq inspects `Authorization: Bearer ...` first, then `X-Croniq-Key`. Only one caller context is created per request. |
 
-You can switch between modes (or enable both) by changing configuration—no code changes are required.
+You can switch between modes (or enable both) by changing configuration-no code changes are required.
 
 ## API Keys
 
@@ -26,7 +26,7 @@ You can switch between modes (or enable both) by changing configuration—no cod
    - `Croniq:Auth:Mode = InMemory`: single key, best for samples/tests only.
    - `Croniq:Auth:Mode = SqlServer`: production-ready, uses `Croniq.Auth.SqlServer` to hash and store keys.
 2. **Issue a key**
-   - SQL-backed hosts will expose admin endpoints under `/tenants/{id}/api-keys` (after the backlog item completes). Until then, call `IApiKeyStore.IssueAsync` via a bootstrap script or console app.
+   - SQL-backed hosts expose admin endpoints under `/tenants/{id}/api-keys`. Call `IApiKeyStore.IssueAsync` only when you need a bootstrap script or console app.
    - In-memory mode reads the secret from `Croniq__Auth__InMemory__ApiKey` (or `appsettings.*`).
 3. **Distribute the plaintext** once. Operators copy it into CI/CD variables or `.env.local`. Croniq never stores the plaintext value.
 4. **Call the API** with the header `X-Croniq-Key: <your-secret>`.
@@ -65,7 +65,7 @@ Croniq can expose a username/password login for self-hosted deployments.
 
 - Endpoints: `/auth/login`, `/auth/refresh`, `/auth/logout`, `/auth/change-password`
 - Callers must provide `tenantId`.
-- Stand jetzt: the API returns `refreshToken` in the JSON response body and expects it in the request body for refresh/logout.
+- Current behavior: the API returns `refreshToken` in the JSON response body and expects it in the request body for refresh/logout.
 - Password changes revoke existing refresh tokens; clients must re-login.
 
 See [docs/deep-dive/password-auth.md](../deep-dive/password-auth.md) for details.
@@ -80,7 +80,7 @@ See [docs/deep-dive/password-auth.md](../deep-dive/password-auth.md) for details
 ## FAQs
 
 **How do I know which mode is active?**
-Check the startup logs—Croniq logs the effective `Auth.Mode` and the connection string source. You can also hit `/health` with `X-Croniq-Debug: auth` once that probe lands (tracked in the security backlog).
+Check the startup logs-Croniq logs the effective `Auth.Mode` and the connection string source. You can also hit `/health` with `X-Croniq-Debug: auth` once that probe lands (tracked in the security backlog).
 
 **Can I use mTLS or a gateway instead?**
 Yes. Terminate TLS or authenticate upstream (e.g., Azure APIM, Ambassador) and forward either `Authorization` or `X-Croniq-Key` headers. Additional first-class providers will plug into `ICallerContextFactory` later.
@@ -90,6 +90,6 @@ Use `ISecretProvider` (Key Vault, AWS Secrets Manager, etc.). The default sample
 
 ## Related Docs
 
-- `/introduction/configuration.md` – environment variable matrix and troubleshooting tips.
-- `/ops/troubleshooting.md` – common auth failures and rate limit issues.
-- `/deep-dive/security.md` – in-depth design, rate limiting, and backlog status.
+- `/introduction/configuration.md` - environment variable matrix and troubleshooting tips.
+- `/ops/troubleshooting.md` - common auth failures and rate limit issues.
+- `/deep-dive/security.md` - in-depth design, rate limiting, and backlog status.

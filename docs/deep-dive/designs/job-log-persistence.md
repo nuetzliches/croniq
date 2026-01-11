@@ -8,10 +8,10 @@
 
 ## Current State
 
-- Jobs already receive an `ILogger` via `IJobExecutionContext`. The execution pipeline enriches scopes with `croniq.job.*`, `croniq.tenant_id`, `croniq.environment`, and optional trigger metadata, but nothing is persisted.
-- EF Core persists jobs, triggers, and dead letters via `Croniq.Data.SqlServer`; there is no execution/log table yet. Correlation IDs exist only on webhook events (`WebhookEndpointEventEntity`); scheduler entities do not capture correlation today.
-- Serilog/OpenTelemetry emit logs to external sinks, but there is no first-party query API for per-job execution logs.
-- UX: Job authors should log via `context.Logger` so scopes (`JobKey`, `ExecutionId`, `CorrelationId`, tenant/env) stay intact. Samples should demonstrate structured logging with the provided logger rather than constructing new loggers.
+- Jobs receive an `ILogger` via `IJobExecutionContext`. The execution pipeline enriches scopes with `croniq.job.*`, `croniq.tenant_id`, `croniq.environment`, and trigger metadata so all execution logs carry the right tags.
+- Execution log persistence is implemented for the filesystem: `AddCroniqExecutionLogSink` captures scoped logs, `AddCroniqFileExecutionLogStore` writes NDJSON per execution, and `FileExecutionLogReader`/`FileExecutionHistoryReader` expose read access. The default store remains `NoOp` unless a host opts in.
+- SQL-backed execution/log tables do not exist yet. Correlation IDs are persisted on webhook events, while scheduler tables still do not store correlation metadata.
+- Serilog/OpenTelemetry remain the primary external sinks; Croniq does not yet ship a SQL query API for execution logs.
 
 ## Proposed Design
 
@@ -75,7 +75,7 @@
 - Persist `TraceId`/`SpanId` from `Activity.Current` to align with existing OTel traces.
 - Note: today only `WebhookEndpointEventEntity` stores `CorrelationId`; the new execution/log tables should add correlation to the scheduler surface.
 
-## Weiter gedacht
+## Looking ahead
 
 - Export helpers: download NDJSON for a single execution (support bundles) or push to external sinks (S3/Azure Blob) for long-term storage.
 - UI/CLI: per-execution log viewer with filters (level, text search, timeframe) and a jump-to-error shortcut; overlay execution metadata (duration, policy outcome).
@@ -83,7 +83,7 @@
 - PII hygiene: allow a redaction filter that strips configured property keys before persistence; document safe defaults.
 - Multi-store support: file-based log store for air-gapped/offline scenarios, plus an interface for streaming logs to vendor APIs if SQL storage is disabled.
 - Backfill: one-time migration to copy recent Serilog sinks (if using file/Loki) into the new tables for continuity.
-- Operators: API exposes `GET /tenants/{tenantId}/executions/{executionId}/logs` (NDJSON). Sample script `scripts/get-execution-logs.ps1` calls the endpoint (`-TenantId`, `-ExecutionId`, `-Endpoint`, `-ApiKey`); file store retention via `Croniq:Logging:Execution:Retention`.
+- Operators: API exposes `GET /tenants/{tenantId}/executions/{executionId}/logs` (NDJSON). Sample script `scripts/get-execution-logs.ps1` calls the endpoint (`-TenantId`, `-ExecutionId`, `-Endpoint`, `-ApiKey`); file store retention is managed via `ExecutionLogRetentionOptions` when the retention service is hosted.
 
 ## Suggested Implementation Stages
 
