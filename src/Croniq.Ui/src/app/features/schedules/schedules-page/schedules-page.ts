@@ -1,12 +1,21 @@
 import { DatePipe } from '@angular/common';
-import { ChangeDetectionStrategy, Component, effect, inject, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, Directive, effect, inject, signal } from '@angular/core';
 import { ScheduleSummary, UpsertScheduleRequest } from '@croniq/api-schema';
 import { ScheduleDialogComponent } from '@features/schedules/components/schedule-dialog/schedule-dialog.component';
+import { ColumnCellContext, CqCellDefDirective, CqColumnComponent, DataGrid } from 'ui-kit';
 import { SchedulesStore } from './schedules.store';
+
+@Directive({
+  selector: '[cqScheduleCell]',
+  providers: [{ provide: CqCellDefDirective, useExisting: CqScheduleCellDirective }],
+})
+export class CqScheduleCellDirective extends CqCellDefDirective<ScheduleSummary> {
+  // Inherits ngTemplateContextGuard from base class
+}
 
 @Component({
   selector: 'cq-schedules-page',
-  imports: [DatePipe, ScheduleDialogComponent],
+  imports: [DatePipe, ScheduleDialogComponent, DataGrid, CqColumnComponent, CqScheduleCellDirective],
   templateUrl: './schedules-page.html',
   changeDetection: ChangeDetectionStrategy.OnPush,
   providers: [SchedulesStore],
@@ -60,6 +69,11 @@ export class SchedulesPage {
   setViewMode(mode: 'list' | 'calendar' | 'dead-letters' | 'logs') {
     this.viewMode.set(mode);
   }
+
+  scheduleRowKey = (row: ScheduleSummary, index: number) => row.id ?? `schedule-${index}`;
+
+  scheduleRowClasses = (row: ScheduleSummary) =>
+    row.state === 'active' ? undefined : ['opacity-80'];
 
   createSchedule() {
     this.editingSchedule.set(null);

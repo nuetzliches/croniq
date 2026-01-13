@@ -1,5 +1,9 @@
 # UiKit
 
+Croniq UI Kit hosts shared, signal-first primitives for the Croniq UI. Current components:
+
+- `DataGrid` (`cq-data-grid`): virtual-scroll capable grid with typed column templates (header/cell) and keyboard navigation. See `projects/ui-kit/src/lib/data-grid/data-grid.ts` for API and usage snippet in `CHECKLIST-DATAGRID.md`.
+
 This project was generated using [Angular CLI](https://github.com/angular/angular-cli) version 21.1.0-next.0.
 
 ## Code scaffolding
@@ -31,6 +35,7 @@ This command will compile your project, and the build artifacts will be placed i
 Once the project is built, you can publish your library by following these steps:
 
 1. Navigate to the `dist` directory:
+
    ```bash
    cd dist/ui-kit
    ```

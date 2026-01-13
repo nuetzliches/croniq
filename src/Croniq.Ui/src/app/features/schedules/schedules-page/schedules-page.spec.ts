@@ -26,6 +26,10 @@ class SchedulesStoreStub {
   readonly scheduleDeadLettersError = signal<string | null>(null);
   readonly scheduleDeadLetterCount = signal(0);
 
+  readonly executions = signal<ReadonlyArray<{ id: string }>>([]);
+  readonly executionsLoading = signal(false);
+  readonly executionsError = signal<string | null>(null);
+
   refresh = vi.fn();
 
   refreshScheduleDetail = vi.fn();

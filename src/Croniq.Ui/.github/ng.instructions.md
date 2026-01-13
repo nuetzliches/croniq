@@ -12,7 +12,7 @@ These instructions complement `.github/copilot.instructions.md` and capture repo
 - Follow Angular's official coding style guide for naming and structure: https://angular.dev/style-guide
 - **Components & Directives**:
   - **Standalone**: All components are standalone by default in Angular v19+. **DO NOT** set `standalone: true` in the `@Component` decorator.
-  - **Imports**: **DO NOT** import `CommonModule`. Import specific dependencies (e.g., `DatePipe`, `JsonPipe`) directly.
+  - **Imports**: **DO NOT** import `CommonModule`. Import specific dependencies (e.g., `DatePipe`, `JsonPipe`) directly. Avoid NgModule imports in general (e.g., prefer standalone CDK directives like `CdkVirtualScrollViewport`/`CdkVirtualForOf` over `ScrollingModule`).
   - **Change Detection**: Always use `ChangeDetectionStrategy.OnPush`.
   - **Inputs/Outputs**: Use the `input()` and `output()` functions instead of `@Input()` and `@Output()` decorators.
   - **Dependency Injection**: Use the `inject()` function for all dependencies. Avoid constructor injection.
