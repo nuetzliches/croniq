@@ -67,7 +67,7 @@ classDiagram
     ApiClientEntity <|-- ApiKeyEntity : keys
 ```
 
-Additional tables (leases, worker instances, audit log) follow the same tenant/environment pattern; scheduler tables live under `croniq` while auth tables live under `auth`. See `SqlServerDbContext` for exact property lists.
+Additional tables (leases, worker instances) follow the same tenant/environment pattern; audit logging is planned but not yet implemented. Scheduler tables live under `croniq` while auth tables live under `auth`. See `SqlServerDbContext` for exact property lists.
 
 ## Code Layout
 

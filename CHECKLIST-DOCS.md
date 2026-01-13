@@ -77,20 +77,20 @@ Documentation backlog extracted from `CHECKLIST.md`. Track doc-only and doc-alig
 - [x] `docs/guides/webhooks.md` + `docs/deep-dive/security.md`: replay/idempotency headers documented but not implemented.
 - [ ] `docs/deep-dive/security.md`: per-hook metadata enrichment toggle documented but not implemented.
 - [ ] `docs/deep-dive/security.md`: `cluster:read` scope documented but not implemented.
-- [ ] `docs/deep-dive/security.md`: webhook secrets are stored as plaintext but docs claim "hashed only".
-- [ ] `docs/deep-dive/security.md`: correlation/actor documented for all webhook management requests, but only IP rule CRUD sets them.
-- [ ] `docs/deep-dive/security.md`: payload size/content-type guardrails are documented but not implemented.
+- [x] `docs/deep-dive/security.md`: webhook secrets are stored as plaintext but docs claim "hashed only".
+- [x] `docs/deep-dive/security.md`: correlation/actor documented for all webhook management requests, but only IP rule CRUD sets them.
+- [x] `docs/deep-dive/security.md`: payload size/content-type guardrails are documented but not implemented.
 - [x] `docs/guides/webhooks.md`: ingress example no longer uses `X-Croniq-Key` (signature-only).
 - [x] `docs/guides/webhooks.md` + `docs/introduction/quickstart.md` + `docs/deep-dive/architecture.md`: ingress route unified to `/tenants/{tenantId}/environments/{environmentTag}/webhooks/{hookKey}`.
 - [x] `docs/deep-dive/architecture.md`: ingress processing stages no longer mention optional caller auth.
-- [ ] `docs/deep-dive/ci.md`: health probe is documented as `/webhooks/health`, but host exposes `/health`.
+- [x] `docs/deep-dive/ci.md`: health probes align to `/health` (liveness) and `/health/persistence` (readiness).
 - [ ] `docs/deep-dive/security.md`: "TenantId/CallerId only after hashing" does not match current log/metric tagging.
 - [ ] `docs/guides/auth.md`: `/health` with `X-Croniq-Debug: auth` is documented but not implemented.
-- [ ] `docs/guides/auth.md` + `docs/deep-dive/auth.md` + `docs/deep-dive/persistence.md` + `docs/deep-dive/architecture.md`: audit log table/retention claims are not backed by code.
-- [ ] `docs/index.md` + `docs/introduction/index.md`: auditing claims are documented but audit logging is not implemented.
+- [x] `docs/guides/auth.md` + `docs/deep-dive/auth.md` + `docs/deep-dive/persistence.md` + `docs/deep-dive/architecture.md`: audit log table/retention claims are not backed by code.
+- [x] `docs/index.md` + `docs/introduction/index.md`: auditing claims are documented but audit logging is not implemented.
 - [ ] `docs/deep-dive/architecture.md`: `IJobExecutionContext` progress APIs are documented but not implemented.
 - [ ] `docs/deep-dive/architecture.md` (and possibly `docs/deep-dive/policies.md`): fallback policy is documented but not implemented in `ExecutionPolicyPipelineProvider`.
-- [ ] `docs/deep-dive/architecture.md`: Serilog + OTel sink is documented, but default provider is `ILoggerFactory`.
+- [x] `docs/deep-dive/architecture.md`: Serilog + OTel sink is documented, but default provider is `ILoggerFactory`.
 
 ## Pending doc scans
 - [x] Scan `docs/README.md` + `docs/_templates/README.md` for current template/link guidance (no updates needed).

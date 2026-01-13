@@ -9,24 +9,30 @@ using Croniq.Core.Jobs;
 using Croniq.Data.SqlServer;
 using Croniq.Data.SqlServer.Entities;
 using Croniq.Persistence.Abstractions;
+using Microsoft.AspNetCore.DataProtection;
 using Microsoft.EntityFrameworkCore;
 
 namespace Croniq.Persistence.SqlServer;
 
 public sealed class SqlServerWebhookPersistenceProvider : IWebhookPersistenceProvider
 {
+    private const string SecretProtectionPurpose = "Croniq.Webhooks.Secret.v1";
     private const int SecretByteLength = 32;
     private static readonly TimeSpan DefaultGracePeriod = TimeSpan.FromHours(24);
     private static readonly TimeSpan MaxActivationDelay = TimeSpan.FromDays(7);
     private readonly IDbContextFactory<SqlServerDbContext> _dbFactory;
     private readonly IReadOnlyList<IWebhookEndpointChangeNotifier> _changeNotifiers;
     private readonly JsonSerializerOptions _jsonOptions = new(JsonSerializerDefaults.Web);
+    private readonly IDataProtector _secretProtector;
 
     public SqlServerWebhookPersistenceProvider(
         IDbContextFactory<SqlServerDbContext> dbFactory,
+        IDataProtectionProvider dataProtectionProvider,
         IEnumerable<IWebhookEndpointChangeNotifier>? changeNotifiers = null)
     {
         _dbFactory = dbFactory ?? throw new ArgumentNullException(nameof(dbFactory));
+        _secretProtector = (dataProtectionProvider ?? throw new ArgumentNullException(nameof(dataProtectionProvider)))
+            .CreateProtector(SecretProtectionPurpose);
         _changeNotifiers = changeNotifiers?.ToArray() ?? Array.Empty<IWebhookEndpointChangeNotifier>();
     }
 
@@ -162,18 +168,21 @@ public sealed class SqlServerWebhookPersistenceProvider : IWebhookPersistencePro
             entity.MetadataJson = SerializeMetadata(request.Metadata);
             entity.UpdatedAtUtc = now;
 
+            string currentSecret;
             if (!string.IsNullOrWhiteSpace(request.Secret))
             {
-                await ApplySecretAsync(db, entity, request.Secret, now, TimeSpan.Zero, "system:update", null, cancellationToken).ConfigureAwait(false);
+                currentSecret = request.Secret;
             }
             else if (!string.IsNullOrWhiteSpace(entity.Secret))
             {
-                await ApplySecretAsync(db, entity, entity.Secret, now, TimeSpan.Zero, "system:update", null, cancellationToken).ConfigureAwait(false);
+                currentSecret = UnprotectSecret(entity.Secret);
             }
             else
             {
                 throw new InvalidOperationException($"Webhook {request.HookKey} does not have an existing secret to snapshot.");
             }
+
+            await ApplySecretAsync(db, entity, currentSecret, now, TimeSpan.Zero, "system:update", null, cancellationToken).ConfigureAwait(false);
 
             db.WebhookEndpointEvents.Add(CreateEvent(entity.HookKey, entity.TenantId, entity.EnvironmentTag, WebhookEndpointEventTypes.Updated, now));
         }
@@ -320,7 +329,7 @@ public sealed class SqlServerWebhookPersistenceProvider : IWebhookPersistencePro
             .ConfigureAwait(false);
 
         return rows.Select(x => new WebhookSecretMaterial(
-            x.Secret,
+            UnprotectSecret(x.Secret),
             x.SecretHash,
             DateTime.SpecifyKind(x.ActivatedAtUtc, DateTimeKind.Utc),
             x.ExpiresAtUtc.HasValue ? DateTime.SpecifyKind(x.ExpiresAtUtc.Value, DateTimeKind.Utc) : null)).ToList();
@@ -460,7 +469,8 @@ public sealed class SqlServerWebhookPersistenceProvider : IWebhookPersistencePro
         }
 
         var secretHash = ComputeSecretHash(secret);
-        entity.Secret = secret;
+        var protectedSecret = ProtectSecret(secret);
+        entity.Secret = protectedSecret;
         entity.SecretHash = secretHash;
 
         var activeRows = await db.WebhookSecretHistory
@@ -504,7 +514,7 @@ public sealed class SqlServerWebhookPersistenceProvider : IWebhookPersistencePro
             HookKey = entity.HookKey,
             TenantId = entity.TenantId,
             EnvironmentTag = entity.EnvironmentTag,
-            Secret = secret,
+            Secret = protectedSecret,
             SecretHash = secretHash,
             ActivatedAtUtc = DateTime.SpecifyKind(activatedAtUtc, DateTimeKind.Utc),
             ExpiresAtUtc = null,
@@ -560,7 +570,7 @@ public sealed class SqlServerWebhookPersistenceProvider : IWebhookPersistencePro
         return new WebhookEndpointDefinition(
             entity.HookKey,
             entity.JobKey,
-            entity.Secret,
+            UnprotectSecret(entity.Secret),
             entity.Enabled,
             entity.RequireSignature,
             entity.RequestsPerMinute,
@@ -612,5 +622,29 @@ public sealed class SqlServerWebhookPersistenceProvider : IWebhookPersistencePro
         var bytes = System.Text.Encoding.UTF8.GetBytes(secret);
         var hash = SHA256.HashData(bytes);
         return Convert.ToHexString(hash).ToLowerInvariant();
+    }
+
+    private string ProtectSecret(string secret)
+    {
+        return _secretProtector.Protect(secret);
+    }
+
+    private string UnprotectSecret(string protectedSecret)
+    {
+        if (string.IsNullOrWhiteSpace(protectedSecret))
+        {
+            throw new InvalidOperationException("Webhook secret material is missing.");
+        }
+
+        try
+        {
+            return _secretProtector.Unprotect(protectedSecret);
+        }
+        catch (CryptographicException ex)
+        {
+            throw new InvalidOperationException(
+                "Webhook secret material could not be decrypted. Ensure DataProtection keys are shared and the key ring matches across hosts.",
+                ex);
+        }
     }
 }

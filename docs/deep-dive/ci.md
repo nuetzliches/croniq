@@ -125,7 +125,8 @@ Release builds automatically call this workflow; you can still dispatch it manua
    - `pwsh ./scripts/ci/compose-devstack.ps1 -Action Up` starts the API/worker/observability profiles.
    - `pwsh ./scripts/ci/compose-devstack.ps1 -Action Down -CaptureLogs` stops the stack and collects logs to `artifacts/ci-compose/`.
 4. **HTTP health probes**
-   - `pwsh ./scripts/ci/wait-for-http.ps1 -Uri http://localhost:5080/health` blocks until the endpoint returns 200 (mirrors the nightly/release workflows).
+   - `pwsh ./scripts/ci/wait-for-http.ps1 -Uri http://localhost:5080/health` blocks until the liveness probe returns 200 (mirrors the nightly/release workflows).
+   - `pwsh ./scripts/ci/wait-for-http.ps1 -Uri http://localhost:5080/health/persistence` validates persistence readiness and returns 503 when the configured store is unavailable.
 
 ## Secrets & Environment
 

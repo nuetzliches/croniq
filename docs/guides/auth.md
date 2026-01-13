@@ -42,7 +42,7 @@ API keys are issued for an **API client** (`ClientId`). The client id is the log
 | `Croniq__Auth__Mode`                                      | Always                | `InMemory` or `SqlServer`.                                                      |
 | `Croniq__Auth__SqlServer__ConnectionString`               | When `SqlServer` mode | Overrides the default Croniq SQL connection if needed.                          |
 | `Croniq__Auth__InMemory__ApiKey`                          | When `InMemory` mode  | Single dev key used by all callers.                                             |
-| `Croniq__Core__TenantId` / `Croniq__Core__EnvironmentTag` | Optional              | Embedded in every issued key so rate limiting and auditing remain tenant-aware. |
+| `Croniq__Core__TenantId` / `Croniq__Core__EnvironmentTag` | Optional              | Embedded in every issued key so rate limiting and future audit trails remain tenant-aware. |
 
 Example local `.cmd` snippet:
 
@@ -55,7 +55,7 @@ set Croniq__Core__EnvironmentTag=dev-jane
 
 ### Rotation & Revocation
 
-- SQL mode: call `IApiKeyStore.RotateAsync` / `RevokeAsync` (directly or via the future admin API). Croniq writes the action to `auth.AuditLog` so you can track who changed a key.
+- SQL mode: call `IApiKeyStore.RotateAsync` / `RevokeAsync` (directly or via the future admin API). Structured audit logging is planned; today, rely on API logs and telemetry for change tracking.
 - In-memory mode: update the environment variable and restart the host. Any cached callers must pick up the new value.
 - Always remove revoked keys from CI/CD secrets. Croniq rate limiting partitions by Tenant + Caller ID, so stale keys fall back to anonymous throttles and fail fast.
 

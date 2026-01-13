@@ -23,7 +23,7 @@ public sealed class WebhookSecretHistoryEntity
     public string EnvironmentTag { get; set; } = string.Empty;
 
     [Required]
-    [MaxLength(256)]
+    [MaxLength(2048)]
     public string Secret { get; set; } = string.Empty;
 
     [Required]

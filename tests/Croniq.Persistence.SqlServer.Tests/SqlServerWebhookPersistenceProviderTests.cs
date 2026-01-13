@@ -12,6 +12,7 @@ using Croniq.Persistence.SqlServer.Tests.Collections;
 using Croniq.TestKit.SqlServer;
 using Croniq.TestKit.Testing;
 using Shouldly;
+using Microsoft.AspNetCore.DataProtection;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Xunit;
@@ -22,10 +23,12 @@ namespace Croniq.Persistence.SqlServer.Tests;
 [Trait(TestTraits.Component, TestTraits.Components.SqlPersistenceWebhooks)]
 public sealed class SqlServerWebhookPersistenceProviderTests : IAsyncLifetime
 {
+    private const string SecretProtectionPurpose = "Croniq.Webhooks.Secret.v1";
     private readonly SqlServerContainerFixture _sql;
     private ServiceProvider? _provider;
     private IWebhookPersistenceProvider? _persistence;
     private IDbContextFactory<SqlServerDbContext>? _dbFactory;
+    private IDataProtector? _secretProtector;
 
     public SqlServerWebhookPersistenceProviderTests(SqlServerContainerFixture sql)
     {
@@ -49,6 +52,8 @@ public sealed class SqlServerWebhookPersistenceProviderTests : IAsyncLifetime
         _provider = SqlServerTestServiceProviderFactory.Create(_sql.ConnectionString);
         _persistence = _provider.GetRequiredService<IWebhookPersistenceProvider>();
         _dbFactory = _provider.GetRequiredService<IDbContextFactory<SqlServerDbContext>>();
+        _secretProtector = _provider.GetRequiredService<IDataProtectionProvider>()
+            .CreateProtector(SecretProtectionPurpose);
     }
 
     public async Task DisposeAsync()
@@ -90,10 +95,13 @@ public sealed class SqlServerWebhookPersistenceProviderTests : IAsyncLifetime
         {
             var entity = await context.WebhookEndpoints.SingleAsync(x => x.HookKey == hookKey);
             entity.JobKey.ShouldBe(jobKey.Value);
+            entity.Secret.ShouldNotBe("secret-one");
             entity.SecretHash.ShouldBe(ComputeSecretHash("secret-one"));
             entity.MetadataJson.ShouldNotBeNull();
             entity.MetadataJson!.ShouldContain("billing");
         }
+        (await _persistence!.FindByHookKeyAsync(hookKey, scope, CancellationToken.None))!
+            .Secret.ShouldBe("secret-one");
 
         var updateMetadata = new Dictionary<string, string> { ["source"] = "ops" };
         await _persistence.UpsertAsync(
@@ -115,9 +123,11 @@ public sealed class SqlServerWebhookPersistenceProviderTests : IAsyncLifetime
             var updated = await updatedContext.WebhookEndpoints.SingleAsync(x => x.HookKey == hookKey);
             updated.Enabled.ShouldBeFalse();
             updated.RequireSignature.ShouldBeFalse();
-            updated.Secret.ShouldBe("secret-one");
+            updated.Secret.ShouldNotBe("secret-one");
             updated.SecretHash.ShouldBe(ComputeSecretHash("secret-one"));
         }
+        (await _persistence!.FindByHookKeyAsync(hookKey, scope, CancellationToken.None))!
+            .Secret.ShouldBe("secret-one");
 
         await _persistence.UpsertAsync(
             new WebhookEndpointUpsert(
@@ -135,9 +145,11 @@ public sealed class SqlServerWebhookPersistenceProviderTests : IAsyncLifetime
 
         await using var verification = await _dbFactory.CreateDbContextAsync();
         var finalEntity = await verification.WebhookEndpoints.SingleAsync(x => x.HookKey == hookKey);
-        finalEntity.Secret.ShouldBe("secret-two");
+        finalEntity.Secret.ShouldNotBe("secret-two");
         finalEntity.SecretHash.ShouldBe(ComputeSecretHash("secret-two"));
         finalEntity.SignatureVersion.ShouldBe(4);
+        (await _persistence!.FindByHookKeyAsync(hookKey, scope, CancellationToken.None))!
+            .Secret.ShouldBe("secret-two");
 
         var history = await verification.WebhookSecretHistory
             .Where(x => x.HookKey == hookKey)
@@ -227,8 +239,11 @@ public sealed class SqlServerWebhookPersistenceProviderTests : IAsyncLifetime
             .ToListAsync();
 
         history.Count.ShouldBe(2);
-        history.Last().Secret.ShouldBe(result.Secret);
+        history.Last().Secret.ShouldNotBe(result.Secret);
         history.First().ExpiresAtUtc.ShouldNotBeNull();
+
+        var activeSecrets = await _persistence!.GetActiveSecretsAsync(hookKey, scope, CancellationToken.None);
+        activeSecrets.Select(x => x.Secret).ShouldContain(result.Secret);
     }
 
     [Fact]
@@ -325,7 +340,7 @@ public sealed class SqlServerWebhookPersistenceProviderTests : IAsyncLifetime
                 HookKey = hookKey,
                 TenantId = scope.TenantId,
                 EnvironmentTag = scope.EnvironmentTag,
-                Secret = "future-secret",
+                Secret = ProtectSecret("future-secret"),
                 SecretHash = ComputeSecretHash("future-secret"),
                 ActivatedAtUtc = DateTime.UtcNow.AddMinutes(10),
                 ExpiresAtUtc = null,
@@ -478,6 +493,16 @@ public sealed class SqlServerWebhookPersistenceProviderTests : IAsyncLifetime
         var bytes = System.Text.Encoding.UTF8.GetBytes(secret);
         var hash = SHA256.HashData(bytes);
         return Convert.ToHexString(hash).ToLowerInvariant();
+    }
+
+    private string ProtectSecret(string secret)
+    {
+        if (_secretProtector is null)
+        {
+            throw new InvalidOperationException("Secret protector is not initialized.");
+        }
+
+        return _secretProtector.Protect(secret);
     }
 }
 

@@ -1,5 +1,7 @@
+using System.IO;
 using Croniq.Data.SqlServer;
 using Croniq.Persistence.Abstractions;
+using Microsoft.AspNetCore.DataProtection;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -10,6 +12,9 @@ namespace Croniq.Persistence.SqlServer;
 /// </summary>
 public static class ServiceCollectionExtensions
 {
+    private const string DataProtectionSectionName = "Croniq:Security:DataProtection";
+    private const string DefaultDataProtectionAppName = "Croniq";
+
     public static IServiceCollection AddCroniqSqlServerPersistence(
         this IServiceCollection services,
         IConfiguration configuration,
@@ -22,7 +27,11 @@ public static class ServiceCollectionExtensions
         services.Configure<SqlServerOptions>(section);
         services.Configure<SqlServerPersistenceOptions>(section);
 
-        return services.AddCroniqSqlServerPersistence(options => section.Bind(options));
+        return AddCroniqSqlServerPersistenceInternal(
+            services,
+            options => section.Bind(options),
+            configurePersistence: null,
+            configuration);
     }
 
     public static IServiceCollection AddCroniqSqlServerPersistence(
@@ -33,6 +42,16 @@ public static class ServiceCollectionExtensions
         if (services is null) throw new ArgumentNullException(nameof(services));
         if (configureSql is null) throw new ArgumentNullException(nameof(configureSql));
 
+        return AddCroniqSqlServerPersistenceInternal(services, configureSql, configurePersistence, configuration: null);
+    }
+
+    private static IServiceCollection AddCroniqSqlServerPersistenceInternal(
+        IServiceCollection services,
+        Action<SqlServerOptions> configureSql,
+        Action<SqlServerPersistenceOptions>? configurePersistence,
+        IConfiguration? configuration)
+    {
+        ConfigureDataProtection(services, configuration);
         services.AddCroniqSqlServerDbContext(configureSql);
         services.AddOptions<SqlServerPersistenceOptions>();
         services.AddOptions<WorkerStoreOptions>();
@@ -54,5 +73,30 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<IWorkItemStore, SqlServerWorkItemStore>();
 
         return services;
+    }
+
+    private static void ConfigureDataProtection(IServiceCollection services, IConfiguration? configuration)
+    {
+        var builder = services.AddDataProtection();
+        var section = configuration?.GetSection(DataProtectionSectionName);
+        var keyRingPath = section?.GetValue<string>("KeyRingPath");
+        var applicationName = section?.GetValue<string>("ApplicationName");
+
+        if (!string.IsNullOrWhiteSpace(keyRingPath))
+        {
+            builder.PersistKeysToFileSystem(new DirectoryInfo(keyRingPath));
+        }
+
+        var resolvedName = string.IsNullOrWhiteSpace(applicationName)
+            ? DefaultDataProtectionAppName
+            : applicationName;
+
+        services.PostConfigure<DataProtectionOptions>(options =>
+        {
+            if (string.IsNullOrWhiteSpace(options.ApplicationDiscriminator))
+            {
+                options.ApplicationDiscriminator = resolvedName;
+            }
+        });
     }
 }
