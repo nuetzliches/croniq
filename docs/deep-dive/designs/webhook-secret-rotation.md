@@ -11,7 +11,7 @@
 - New table `croniq.WebhookSecretHistory` with columns:
   - `Id` (identity)
   - `HookKey`, `TenantId`, `EnvironmentTag`
-  - `Secret` (encrypted at rest once KMS support lands; plaintext stored temporarily for compatibility)
+  - `Secret` (encrypted at rest via ASP.NET Core Data Protection)
   - `SecretHash` (HMAC SHA-256 of secret)
   - `ActivatedAtUtc` (defaults to now)
   - `ExpiresAtUtc` (nullable; null means active)
@@ -53,7 +53,7 @@ curl -s -X POST "https://api.croniq.dev/tenants/{tenantId}/webhooks/{hookKey}/ro
       }'
 ```
 
-The API returns the plaintext secret exactly once. Persist it in your secret manager immediately; Croniq only stores the hash + metadata. `RotatedBy` derives from the authenticated caller (`ICallerContextAccessor`) so CI/service principals show up as `apiKey:{clientId}`.
+The API returns the plaintext secret exactly once. Persist it in your secret manager immediately; Croniq stores the encrypted secret plus hash metadata. `RotatedBy` derives from the authenticated caller (`ICallerContextAccessor`) so CI/service principals show up as `apiKey:{clientId}`.
 
 You can wrap the call inside a script (PowerShell, Bash, etc.) to mask the new secret before printing it or to push it downstream (Azure Key Vault, AWS Secrets Manager). The `scripts/webhook-rotate-secret.ps1` helper automates the request and is a good reference for CI/local flows.
 
@@ -89,6 +89,6 @@ The script prints the activation/grace window plus the plaintext secret, making 
 
 ## Open Questions
 
-- Key management: secrets remain plaintext for now; once the secrets provider supports encryption, `WebhookSecretHistory.Secret` becomes encrypted blob and responses fetch decrypted value on-demand.
+- Key management: secrets are encrypted at rest via Data Protection; decide whether to centralize the key ring (shared volume, key store) or integrate an external KMS as a follow-up.
 - Audit fields (`RotatedBy`) sourced from authenticated principal in Admin API; CLI can pass custom value (e.g., `"cli:devops"`).
 - Retention policy uses the Croniq retention job (`Croniq:Retention:WebhookSecretHistoryEnabled`, `Croniq:Retention:WebhookSecretHistoryExpiryOffsetDays`); defaults keep history for 7 days after expiry once retention is enabled.

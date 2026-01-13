@@ -4,16 +4,17 @@ using Croniq.Data.SqlServer;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 
 #nullable disable
 
 namespace Croniq.Data.SqlServer.Migrations
 {
-    [DbContext(typeof(SqlServerDbContext))]
-    partial class SqlServerDbContextModelSnapshot : ModelSnapshot
+    partial class InitialCreate
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -238,10 +239,10 @@ namespace Croniq.Data.SqlServer.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("TenantId", "EnvironmentTag");
-
-                    b.HasIndex("TenantId", "EnvironmentTag", "JobKey")
+                    b.HasIndex("JobKey")
                         .IsUnique();
+
+                    b.HasIndex("TenantId", "EnvironmentTag");
 
                     b.ToTable("Jobs", "croniq");
                 });
@@ -347,110 +348,14 @@ namespace Croniq.Data.SqlServer.Migrations
 
                     b.HasIndex("ExpiresAtUtc");
 
+                    b.HasIndex("UserId");
+
                     b.HasIndex("TenantId", "TokenHash")
                         .IsUnique();
 
                     b.HasIndex("TenantId", "UserId");
 
                     b.ToTable("RefreshTokens", "auth");
-                });
-
-            modelBuilder.Entity("Croniq.Data.SqlServer.Entities.RunnerCapabilityEntity", b =>
-                {
-                    b.Property<long>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("bigint");
-
-                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("Id"));
-
-                    b.Property<string>("CapabilitiesJson")
-                        .HasColumnType("nvarchar(max)");
-
-                    b.Property<DateTime>("CreatedAtUtc")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("datetime2")
-                        .HasDefaultValueSql("sysutcdatetime()");
-
-                    b.Property<string>("EnvironmentTag")
-                        .IsRequired()
-                        .HasMaxLength(64)
-                        .HasColumnType("nvarchar(64)");
-
-                    b.Property<string>("RunnerId")
-                        .IsRequired()
-                        .HasMaxLength(256)
-                        .HasColumnType("nvarchar(256)");
-
-                    b.Property<string>("TenantId")
-                        .IsRequired()
-                        .HasMaxLength(64)
-                        .HasColumnType("nvarchar(64)");
-
-                    b.Property<DateTime>("UpdatedAtUtc")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("datetime2")
-                        .HasDefaultValueSql("sysutcdatetime()");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("UpdatedAtUtc");
-
-                    b.HasIndex("TenantId", "EnvironmentTag", "RunnerId")
-                        .IsUnique();
-
-                    b.ToTable("RunnerCapabilities", "croniq");
-                });
-
-            modelBuilder.Entity("Croniq.Data.SqlServer.Entities.RunnerEntity", b =>
-                {
-                    b.Property<long>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("bigint");
-
-                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("Id"));
-
-                    b.Property<DateTime>("CreatedAtUtc")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("datetime2")
-                        .HasDefaultValueSql("sysutcdatetime()");
-
-                    b.Property<string>("EnvironmentTag")
-                        .IsRequired()
-                        .HasMaxLength(64)
-                        .HasColumnType("nvarchar(64)");
-
-                    b.Property<DateTime>("ExpiresAtUtc")
-                        .HasColumnType("datetime2");
-
-                    b.Property<DateTime>("LastSeenAtUtc")
-                        .HasColumnType("datetime2");
-
-                    b.Property<string>("MetadataJson")
-                        .HasColumnType("nvarchar(max)");
-
-                    b.Property<string>("RunnerId")
-                        .IsRequired()
-                        .HasMaxLength(256)
-                        .HasColumnType("nvarchar(256)");
-
-                    b.Property<string>("TenantId")
-                        .IsRequired()
-                        .HasMaxLength(64)
-                        .HasColumnType("nvarchar(64)");
-
-                    b.Property<DateTime>("UpdatedAtUtc")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("datetime2")
-                        .HasDefaultValueSql("sysutcdatetime()");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("ExpiresAtUtc");
-
-                    b.HasIndex("TenantId", "EnvironmentTag", "RunnerId")
-                        .IsUnique();
-
-                    b.ToTable("Runners", "croniq");
                 });
 
             modelBuilder.Entity("Croniq.Data.SqlServer.Entities.TenantEntity", b =>
@@ -661,6 +566,8 @@ namespace Croniq.Data.SqlServer.Migrations
 
                     b.HasIndex("TenantId", "EnvironmentTag", "CreatedAtUtc");
 
+                    b.HasIndex("TenantId", "EnvironmentTag", "HookKey");
+
                     b.ToTable("WebhookDeadLetters", "croniq");
                 });
 
@@ -709,8 +616,8 @@ namespace Croniq.Data.SqlServer.Migrations
 
                     b.Property<string>("Secret")
                         .IsRequired()
-                        .HasMaxLength(2048)
-                        .HasColumnType("nvarchar(2048)");
+                        .HasMaxLength(256)
+                        .HasColumnType("nvarchar(256)");
 
                     b.Property<string>("SecretHash")
                         .IsRequired()
@@ -852,93 +759,6 @@ namespace Croniq.Data.SqlServer.Migrations
                     b.ToTable("WebhookEndpointIpRules", "croniq");
                 });
 
-            modelBuilder.Entity("Croniq.Data.SqlServer.Entities.WebhookIngressEventEntity", b =>
-                {
-                    b.Property<long>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("bigint");
-
-                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("Id"));
-
-                    b.Property<int>("AttemptCount")
-                        .HasColumnType("int");
-
-                    b.Property<DateTime>("CreatedAtUtc")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("datetime2")
-                        .HasDefaultValueSql("sysutcdatetime()");
-
-                    b.Property<string>("EnvironmentTag")
-                        .IsRequired()
-                        .HasMaxLength(64)
-                        .HasColumnType("nvarchar(64)");
-
-                    b.Property<string>("EventId")
-                        .IsRequired()
-                        .HasMaxLength(64)
-                        .HasColumnType("nvarchar(64)");
-
-                    b.Property<string>("HeadersJson")
-                        .HasColumnType("nvarchar(max)");
-
-                    b.Property<string>("HookKey")
-                        .IsRequired()
-                        .HasMaxLength(128)
-                        .HasColumnType("nvarchar(128)");
-
-                    b.Property<string>("JobKey")
-                        .IsRequired()
-                        .HasMaxLength(256)
-                        .HasColumnType("nvarchar(256)");
-
-                    b.Property<string>("LastError")
-                        .HasMaxLength(1024)
-                        .HasColumnType("nvarchar(1024)");
-
-                    b.Property<DateTime?>("LeaseExpiresAtUtc")
-                        .HasColumnType("datetime2");
-
-                    b.Property<string>("LeaseId")
-                        .HasMaxLength(64)
-                        .HasColumnType("nvarchar(64)");
-
-                    b.Property<string>("MetadataJson")
-                        .HasColumnType("nvarchar(max)");
-
-                    b.Property<string>("Payload")
-                        .IsRequired()
-                        .HasColumnType("nvarchar(max)");
-
-                    b.Property<DateTime>("ReceivedAtUtc")
-                        .HasColumnType("datetime2");
-
-                    b.Property<string>("Status")
-                        .IsRequired()
-                        .HasMaxLength(32)
-                        .HasColumnType("nvarchar(32)");
-
-                    b.Property<string>("TenantId")
-                        .IsRequired()
-                        .HasMaxLength(64)
-                        .HasColumnType("nvarchar(64)");
-
-                    b.Property<DateTime>("UpdatedAtUtc")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("datetime2")
-                        .HasDefaultValueSql("sysutcdatetime()");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("EventId")
-                        .IsUnique();
-
-                    b.HasIndex("TenantId", "EnvironmentTag", "ReceivedAtUtc");
-
-                    b.HasIndex("TenantId", "EnvironmentTag", "Status", "LeaseExpiresAtUtc");
-
-                    b.ToTable("WebhookIngressEvents", "croniq");
-                });
-
             modelBuilder.Entity("Croniq.Data.SqlServer.Entities.WebhookSecretHistoryEntity", b =>
                 {
                     b.Property<long>("Id")
@@ -975,8 +795,8 @@ namespace Croniq.Data.SqlServer.Migrations
 
                     b.Property<string>("Secret")
                         .IsRequired()
-                        .HasMaxLength(2048)
-                        .HasColumnType("nvarchar(2048)");
+                        .HasMaxLength(256)
+                        .HasColumnType("nvarchar(256)");
 
                     b.Property<string>("SecretHash")
                         .IsRequired()
@@ -997,164 +817,6 @@ namespace Croniq.Data.SqlServer.Migrations
                     b.HasIndex("HookKey", "TenantId", "EnvironmentTag", "ActivatedAtUtc");
 
                     b.ToTable("WebhookSecretHistory", "croniq");
-                });
-
-            modelBuilder.Entity("Croniq.Data.SqlServer.Entities.WorkClaimEntity", b =>
-                {
-                    b.Property<long>("WorkItemId")
-                        .HasColumnType("bigint");
-
-                    b.Property<DateTime>("CreatedAtUtc")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("datetime2")
-                        .HasDefaultValueSql("sysutcdatetime()");
-
-                    b.Property<DateTime?>("LastHeartbeatAtUtc")
-                        .HasColumnType("datetime2");
-
-                    b.Property<DateTime>("LeaseExpiresAtUtc")
-                        .HasColumnType("datetime2");
-
-                    b.Property<string>("LeaseId")
-                        .IsRequired()
-                        .HasMaxLength(64)
-                        .HasColumnType("nvarchar(64)");
-
-                    b.Property<string>("RunnerId")
-                        .IsRequired()
-                        .HasMaxLength(256)
-                        .HasColumnType("nvarchar(256)");
-
-                    b.Property<DateTime>("UpdatedAtUtc")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("datetime2")
-                        .HasDefaultValueSql("sysutcdatetime()");
-
-                    b.HasKey("WorkItemId");
-
-                    b.HasIndex("LeaseExpiresAtUtc");
-
-                    b.HasIndex("LeaseId")
-                        .IsUnique();
-
-                    b.ToTable("WorkClaims", "croniq");
-                });
-
-            modelBuilder.Entity("Croniq.Data.SqlServer.Entities.WorkItemEntity", b =>
-                {
-                    b.Property<long>("WorkItemId")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("bigint");
-
-                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("WorkItemId"));
-
-                    b.Property<int>("Attempt")
-                        .HasColumnType("int");
-
-                    b.Property<DateTime>("CreatedAtUtc")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("datetime2")
-                        .HasDefaultValueSql("sysutcdatetime()");
-
-                    b.Property<string>("EnvironmentTag")
-                        .IsRequired()
-                        .HasMaxLength(64)
-                        .HasColumnType("nvarchar(64)");
-
-                    b.Property<string>("ExecutionId")
-                        .IsRequired()
-                        .HasMaxLength(64)
-                        .HasColumnType("nvarchar(64)");
-
-                    b.Property<string>("JobKey")
-                        .IsRequired()
-                        .HasMaxLength(256)
-                        .HasColumnType("nvarchar(256)");
-
-                    b.Property<string>("PayloadJson")
-                        .HasColumnType("nvarchar(max)");
-
-                    b.Property<string>("Status")
-                        .IsRequired()
-                        .HasMaxLength(32)
-                        .HasColumnType("nvarchar(32)");
-
-                    b.Property<string>("TenantId")
-                        .IsRequired()
-                        .HasMaxLength(64)
-                        .HasColumnType("nvarchar(64)");
-
-                    b.Property<string>("TriggerId")
-                        .HasMaxLength(512)
-                        .HasColumnType("nvarchar(512)");
-
-                    b.Property<DateTime>("UpdatedAtUtc")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("datetime2")
-                        .HasDefaultValueSql("sysutcdatetime()");
-
-                    b.HasKey("WorkItemId");
-
-                    b.HasIndex("ExecutionId")
-                        .IsUnique();
-
-                    b.HasIndex("TenantId", "EnvironmentTag", "JobKey");
-
-                    b.HasIndex("TenantId", "EnvironmentTag", "Status", "CreatedAtUtc");
-
-                    b.ToTable("WorkItems", "croniq");
-                });
-
-            modelBuilder.Entity("Croniq.Data.SqlServer.Entities.WorkerInstanceEntity", b =>
-                {
-                    b.Property<long>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("bigint");
-
-                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("Id"));
-
-                    b.Property<DateTime>("CreatedAtUtc")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("datetime2")
-                        .HasDefaultValueSql("sysutcdatetime()");
-
-                    b.Property<string>("EnvironmentTag")
-                        .IsRequired()
-                        .HasMaxLength(64)
-                        .HasColumnType("nvarchar(64)");
-
-                    b.Property<DateTime>("ExpiresAtUtc")
-                        .HasColumnType("datetime2");
-
-                    b.Property<string>("InstanceId")
-                        .IsRequired()
-                        .HasMaxLength(256)
-                        .HasColumnType("nvarchar(256)");
-
-                    b.Property<DateTime>("LastSeenAtUtc")
-                        .HasColumnType("datetime2");
-
-                    b.Property<string>("MetadataJson")
-                        .HasColumnType("nvarchar(max)");
-
-                    b.Property<string>("TenantId")
-                        .IsRequired()
-                        .HasMaxLength(64)
-                        .HasColumnType("nvarchar(64)");
-
-                    b.Property<DateTime>("UpdatedAtUtc")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("datetime2")
-                        .HasDefaultValueSql("sysutcdatetime()");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("ExpiresAtUtc");
-
-                    b.HasIndex("TenantId", "EnvironmentTag", "InstanceId")
-                        .IsUnique();
-
-                    b.ToTable("WorkerInstances", "croniq");
                 });
 
             modelBuilder.Entity("Croniq.Data.SqlServer.Entities.ApiClientEntity", b =>
@@ -1213,22 +875,10 @@ namespace Croniq.Data.SqlServer.Migrations
                         .HasForeignKey("TenantId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
-                });
 
-            modelBuilder.Entity("Croniq.Data.SqlServer.Entities.RunnerCapabilityEntity", b =>
-                {
-                    b.HasOne("Croniq.Data.SqlServer.Entities.TenantEntity", null)
+                    b.HasOne("Croniq.Data.SqlServer.Entities.PasswordUserEntity", null)
                         .WithMany()
-                        .HasForeignKey("TenantId")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
-                });
-
-            modelBuilder.Entity("Croniq.Data.SqlServer.Entities.RunnerEntity", b =>
-                {
-                    b.HasOne("Croniq.Data.SqlServer.Entities.TenantEntity", null)
-                        .WithMany()
-                        .HasForeignKey("TenantId")
+                        .HasForeignKey("UserId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
                 });
@@ -1249,6 +899,13 @@ namespace Croniq.Data.SqlServer.Migrations
                     b.HasOne("Croniq.Data.SqlServer.Entities.TenantEntity", null)
                         .WithMany()
                         .HasForeignKey("TenantId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("Croniq.Data.SqlServer.Entities.WebhookEndpointEntity", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId", "EnvironmentTag", "HookKey")
+                        .HasPrincipalKey("TenantId", "EnvironmentTag", "HookKey")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
                 });
@@ -1294,15 +951,6 @@ namespace Croniq.Data.SqlServer.Migrations
                         .IsRequired();
                 });
 
-            modelBuilder.Entity("Croniq.Data.SqlServer.Entities.WebhookIngressEventEntity", b =>
-                {
-                    b.HasOne("Croniq.Data.SqlServer.Entities.TenantEntity", null)
-                        .WithMany()
-                        .HasForeignKey("TenantId")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
-                });
-
             modelBuilder.Entity("Croniq.Data.SqlServer.Entities.WebhookSecretHistoryEntity", b =>
                 {
                     b.HasOne("Croniq.Data.SqlServer.Entities.TenantEntity", null)
@@ -1315,35 +963,6 @@ namespace Croniq.Data.SqlServer.Migrations
                         .WithMany()
                         .HasForeignKey("TenantId", "EnvironmentTag", "HookKey")
                         .HasPrincipalKey("TenantId", "EnvironmentTag", "HookKey")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
-                });
-
-            modelBuilder.Entity("Croniq.Data.SqlServer.Entities.WorkClaimEntity", b =>
-                {
-                    b.HasOne("Croniq.Data.SqlServer.Entities.WorkItemEntity", "WorkItem")
-                        .WithOne("Claim")
-                        .HasForeignKey("Croniq.Data.SqlServer.Entities.WorkClaimEntity", "WorkItemId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.Navigation("WorkItem");
-                });
-
-            modelBuilder.Entity("Croniq.Data.SqlServer.Entities.WorkItemEntity", b =>
-                {
-                    b.HasOne("Croniq.Data.SqlServer.Entities.TenantEntity", null)
-                        .WithMany()
-                        .HasForeignKey("TenantId")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
-                });
-
-            modelBuilder.Entity("Croniq.Data.SqlServer.Entities.WorkerInstanceEntity", b =>
-                {
-                    b.HasOne("Croniq.Data.SqlServer.Entities.TenantEntity", null)
-                        .WithMany()
-                        .HasForeignKey("TenantId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
                 });
@@ -1361,11 +980,6 @@ namespace Croniq.Data.SqlServer.Migrations
             modelBuilder.Entity("Croniq.Data.SqlServer.Entities.TriggerEntity", b =>
                 {
                     b.Navigation("DeadLetters");
-                });
-
-            modelBuilder.Entity("Croniq.Data.SqlServer.Entities.WorkItemEntity", b =>
-                {
-                    b.Navigation("Claim");
                 });
 #pragma warning restore 612, 618
         }

@@ -702,7 +702,13 @@ if not "!MIGRATOR_CID!"=="" (
 
     if /I "!MIGRATOR_STATUS!"=="exited" (
         if "!MIGRATOR_EXIT!"=="0" (endlocal & exit /b 0)
-        echo [devstack] DB migrator failed.
+        echo [devstack] DB migrator failed. Exit code: !MIGRATOR_EXIT!
+        echo [devstack] ---- croniq-db-migrator logs, tail ----
+        docker compose %COMPOSE_ARGS% logs --no-color --tail 120 croniq-db-migrator
+        echo [devstack] ---- end migrator logs ----
+        echo [devstack] If this is a rerun on an existing SQL volume, for example after switching branches or migrations,
+        echo [devstack] reset the dev DB volume and retry:
+        echo [devstack]   scripts\devstack-down.cmd --remove-orphans -v
         endlocal & exit /b 1
     )
 )

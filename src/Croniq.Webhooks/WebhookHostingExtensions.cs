@@ -163,6 +163,33 @@ public static class WebhookHostingExtensions
         var hostingOptions = optionsSection.Get<CroniqWebhookOptions>() ?? new CroniqWebhookOptions();
         var shouldConfigurePersistence = hostingOptions.ConfigurePersistence;
 
+        if (!hostingOptions.Security.AllowUnsignedHooks)
+        {
+            var unsignedHooks = hostingOptions.Endpoints
+                .Where(endpoint => endpoint.Enabled && !endpoint.RequireSignature)
+                .Select(endpoint => endpoint.HookKey)
+                .Where(hookKey => !string.IsNullOrWhiteSpace(hookKey))
+                .ToArray();
+
+            if (unsignedHooks.Length > 0)
+            {
+                var joined = string.Join(", ", unsignedHooks);
+                throw new InvalidOperationException($"Unsigned webhooks ({joined}) are configured but Croniq:Webhooks:Security:AllowUnsignedHooks is disabled.");
+            }
+        }
+
+        if (hostingOptions.Mode == WebhookPersistenceMode.Remote && (hostingOptions.Remote?.AllowInvalidServerCertificate ?? false))
+        {
+            var environmentName = Environment.GetEnvironmentVariable("DOTNET_ENVIRONMENT")
+                ?? Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT")
+                ?? Environments.Production;
+
+            if (!string.Equals(environmentName, Environments.Development, StringComparison.OrdinalIgnoreCase))
+            {
+                throw new InvalidOperationException("Croniq:Webhooks:Remote:AllowInvalidServerCertificate is only supported in Development.");
+            }
+        }
+
         if (includePlatformServices)
         {
             services.AddCroniqPlatformServices(configuration);

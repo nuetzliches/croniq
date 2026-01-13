@@ -120,7 +120,7 @@ Alle Summaries/Beschreibungen aus der Tabelle landen wortgleich in den neuen Ope
 
 - API keys follow the format `ak_<guid>.<secret>`; only the key id + hashed secret are stored.
 - Hashing: HMAC SHA-256 with per-key salt. Secrets never leave memory after issuance.
-- Rotation stores audit events (table `auth.AuditLog`, backlog item) for compliance.
+- Rotation does not yet store audit events; an `auth.AuditLog` table and structured audit logging remain backlog items.
 - `ISecretProvider` allows binding API keys or connection strings to external secret stores in production deployments.
 
 ## Rate Limiting & Quotas

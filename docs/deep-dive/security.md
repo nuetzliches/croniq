@@ -82,7 +82,7 @@ This document specifies the authentication, authorization, and rate limiting des
 ## Inbound Webhook Security
 
 - **Dedicated Host**: `Croniq.Webhooks` runs as a standalone ingress surface (or co-hosted inside `Croniq.Api` for dev). It reuses the same DI setup (`Croniq.Hosting`) so persistence/auth/telemetry policies are shared. Operators can place it behind their own gateway/WAF while keeping management APIs separate.
-- **Secrets & Signatures**: Every webhook endpoint requires a secret. The host validates `X-Croniq-Signature` using HMAC-SHA256 on the raw request body, then compares hashes in constant time. Secrets live in `croniq.WebhookEndpoints` (SqlServer) with hashes stored alongside metadata; plaintext is only returned when the admin explicitly rotates it via the CRUD API.
+- **Secrets & Signatures**: Every webhook endpoint requires a secret. The host validates `X-Croniq-Signature` using HMAC-SHA256 on the raw request body, then compares hashes in constant time. Persisted webhook secrets are encrypted at rest via ASP.NET Core Data Protection and stored alongside a SHA-256 hash; plaintext is only returned when the admin explicitly creates or rotates the secret via the CRUD API.
 - **Rate Limiting**: ASP.NET rate limiter partitions per hook key (falling back to the global default). Limits are configurable through persistence or `Croniq:Webhooks:RequestsPerMinute`. Burst protection keeps individual tenants from exhausting dispatcher capacity.
 - **Tenant Scoping**: Persisted hooks include `TenantId` and `EnvironmentTag`. The webhook resolver enforces that the mapped `JobKey` belongs to the same partition before invoking the execution pipeline, preventing cross-tenant spoofing even when secrets leak.
 - **Metadata Sanitization**: Incoming JSON payloads are stored as metadata with `payload:*` prefixes. The factory performs best-effort extraction (strings/numbers/bools) and never stores raw headers. Operators can disable metadata enrichment per hook at configuration time if data minimization is required.
@@ -117,7 +117,7 @@ This document specifies the authentication, authorization, and rate limiting des
 2. Script creation/deletion via the API or the `Croniq.Sdk.Operator.Webhooks.WebhookIpRuleClient` helper to keep Croniq in sync with your source-of-truth IP inventory.
 3. Monitor `Croniq.Webhooks.Ingress` metrics/logs for the `ip-blocked` counter; alert when the rate exceeds baseline to catch accidental lockouts.
 4. Every CRUD/rotation call writes to `WebhookEndpointEvents`; the API publishes cache-invalidating notifications so the ingress host refreshes CIDRs within seconds (no manual restarts required).
-5. Include `X-Croniq-CorrelationId` on every management request (UI + SDK do this automatically) so `WebhookEndpointEvents` can stitch a full audit trail; the table now captures both `Actor` (e.g., `ui:operator-1`) and the supplied correlation ID.
+5. Include `X-Croniq-CorrelationId` on IP rule management requests so `WebhookEndpointEvents` can stitch a trail today; extending `Actor`/`CorrelationId` capture to the rest of the webhook CRUD surface is still backlog.
 
 ### Broader Ingress Tests & Visibility
 
@@ -183,6 +183,7 @@ Minimal configuration example:
 ## Secrets & Transport
 
 - `ISecretProvider` remains the abstraction for loading API keys/connection strings in hosts; production deployments plug into Vault/KeyVault/Secrets Manager. Local dev may use `.env` or user-secrets.
+- Webhook secret encryption relies on ASP.NET Core Data Protection; API and webhook hosts must share the same key ring (`Croniq:Security:DataProtection:ApplicationName` plus `KeyRingPath` or another shared key store) to decrypt persisted secrets.
 - All traffic assumes HTTPS. Self-hosted scenarios must trust dev certificates; production requires TLS termination before the API.
 - Log and metric hooks redact secrets. Structured logs include TenantId/CallerId only after hashing to prevent leakage.
 
@@ -209,8 +210,10 @@ Minimal configuration example:
 - [x] Create admin endpoints + docs for API key issuance/rotation (ties into `Croniq.Auth.Abstractions` stores).
 - [x] Extend configuration docs with an "Authentication" section and examples.
 - [x] Add automated security regression tests (invalid key, expired key, revoked key, missing scope) under `Croniq.Api.Tests` or the future smoke suite.
-- [x] Harden webhook ingress: per-hook IP allow lists and guardrails for payload size/content-type.
-- [x] Build webhook allow-list smoke tests (allow + deny paths) and payload size guardrail coverage under `tests/Croniq.Api.Smoke` (`Webhook_ip_rule_crud_roundtrip`, `Webhook_ingress_respects_ip_rules`).
+- [x] Harden webhook ingress: per-hook IP allow lists.
+- [ ] Add payload size/content-type guardrails for webhook ingress.
+- [x] Build webhook allow-list smoke tests (allow + deny paths) under `tests/Croniq.Api.Smoke` (`Webhook_ip_rule_crud_roundtrip`, `Webhook_ingress_respects_ip_rules`).
+- [ ] Add payload size/content-type guardrail coverage under `tests/Croniq.Api.Smoke` once the guardrails ship.
 - [ ] Expose allow-list CRUD in the Operator UI / `Croniq.Sdk` to replace ad-hoc HTTP calls.
   - [ ] (deferred until ui is ready) Ship a webhook details panel that lists CIDRs, supports inline add/remove, and blocks edits without `webhooks:write` scope.
   - [x] Add idempotent helpers to `Croniq.Sdk` + CLI (`cronq webhooks ip-rules sync`) so automation converges desired rule sets (`WebhookIpRuleClient.SyncAsync`).

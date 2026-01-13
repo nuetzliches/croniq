@@ -11,7 +11,7 @@ Croniq is a tenant-aware scheduling platform built on .NET 10. It combines a flu
 - **Unified orchestration:** Register jobs once, attach cron/interval/event triggers, and let Croniq fan them out across workers.
 - **Central guardrails:** Apply retry, timeout, concurrency, and quota policies globally while keeping tenant isolation.
 - **Operational clarity:** Stream logs/metrics/traces via the built-in OpenTelemetry stack and inspect dead letters centrally.
-- **Secure access:** Mix API keys and bearer tokens with per-tenant scopes, rate limits, and auditing.
+- **Secure access:** Mix API keys and bearer tokens with per-tenant scopes, rate limits, and planned audit logging.
 - **Easy onboarding:** Spin up the Docker dev stack, run the quickstart, and grow into the deeper architecture guides at your own pace.
 
 Whenever you need implementation details (dev stack bootstrap, CI/CD, troubleshooting), jump into `/deep-dive/`.

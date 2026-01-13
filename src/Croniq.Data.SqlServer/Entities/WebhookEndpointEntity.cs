@@ -26,7 +26,7 @@ public sealed class WebhookEndpointEntity
     public string JobKey { get; set; } = string.Empty;
 
     [Required]
-    [MaxLength(256)]
+    [MaxLength(2048)]
     public string Secret { get; set; } = string.Empty;
 
     [Required]
