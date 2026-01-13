@@ -58,6 +58,14 @@ Set `CRONIQ_UI_DEFAULT_TENANT_ID` to emit `defaultTenantId` for single-tenant de
 
 Webhook capability flags (for example, unsigned webhook support) are resolved from the API capabilities endpoint and are not read from runtime config.
 
+## Tenancy (Single Tenant)
+
+Croniq.Ui currently targets single-tenant deployments. The UI does not expose tenant management routes or command palette entries. API Access remains available for managing tenant API keys/clients within the active tenant. Multi-tenant UI is deferred to vNext.
+
+## Design Tokens & Motion
+
+Design tokens (ramps, typography, motion durations) and layout primitives are implemented in `src/styles.css` and `tailwind.config.js`. The current token catalog and guidance live in `docs/deep-dive/designs/angular-ui-theme.md`.
+
 ## Preferences
 
 - UI preferences (theme, table density) are stored per tenant in IndexedDB via `UiPreferencesService`.
@@ -100,7 +108,7 @@ The UI standardizes timestamp handling via `src/app/core/time/clock.ts`.
 
 ## Live Dashboard Data
 
-- Dashboard polling is the default, with no cache unless a resource opts in explicitly.
+- Dashboard polling is the default; caching is disabled across UI resources (tenantRxResource cache hook is unused) and will be revisited after perf work.
 - Streaming concepts (SSE-first) live in `docs/deep-dive/designs/dashboard-live-data.md`.
 
 ## MCP (dev-only)

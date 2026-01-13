@@ -2,7 +2,7 @@ import { Injectable, computed, inject, signal } from '@angular/core';
 import { authFailureFromError } from '@core/auth/auth-failure';
 import { tenantRxResource } from '@core/resource/tenant-rx-resource';
 import { TenantContextService } from '@core/tenant-context/tenant-context.service';
-import { nowIso } from '@core/time/clock';
+import { epochMsFromIso, nowIso, nowMs, tryIsoFromUnknown, utcHourFromEpochMs } from '@core/time/clock';
 import { ScheduleDeadLetterResponse, ScheduleResponse } from '@croniq/api-schema';
 import { CRONIQ_API_CLIENT, CroniqApiClient } from 'data-access';
 import { of, catchError, map, forkJoin } from 'rxjs';
@@ -43,6 +43,7 @@ type WebhookSummary = {
 
 const EMPTY_PRESENCE_SUMMARY: PresenceSummary = { total: 0, online: 0, offline: 0 };
 const EMPTY_WEBHOOK_SUMMARY: WebhookSummary = { total: 0, enabled: 0, disabled: 0 };
+const DAY_MS = 24 * 60 * 60 * 1000;
 
 const summarizePresence = (entries: ReadonlyArray<{ isOnline?: boolean }>): PresenceSummary => {
     const total = entries.length;
@@ -86,11 +87,81 @@ const summarizeWebhooks = (payload: unknown): WebhookSummary => {
     };
 };
 
+type ScheduleSummary = {
+    total: number;
+    active: number;
+    paused: number;
+};
+
+type DeadLetterSummary = {
+    total: number;
+    recent: number;
+    heatmap: ReadonlyArray<number>;
+};
+
+const summarizeSchedules = (entries: ReadonlyArray<ScheduleResponse>): ScheduleSummary => {
+    const total = entries.length;
+    const active = entries.reduce((count, entry) => count + (entry.enabled ? 1 : 0), 0);
+    return {
+        total,
+        active,
+        paused: Math.max(0, total - active),
+    };
+};
+
+const resolveDeadLetterTimestamp = (entry: ScheduleDeadLetterResponse): number | null => {
+    const raw = entry.fireAtUtc ?? entry.createdAtUtc ?? null;
+    if (typeof raw !== 'string') {
+        return null;
+    }
+    const trimmed = raw.trim();
+    if (!trimmed) {
+        return null;
+    }
+    return epochMsFromIso(trimmed);
+};
+
+const summarizeDeadLetters = (
+    entries: ReadonlyArray<ScheduleDeadLetterResponse>,
+    nowEpochMs: number,
+): DeadLetterSummary => {
+    const total = entries.length;
+    const cutoff = nowEpochMs - DAY_MS;
+    const buckets = new Array<number>(24).fill(0);
+    let recent = 0;
+    let bucketed = false;
+
+    entries.forEach((entry) => {
+        const timestamp = resolveDeadLetterTimestamp(entry);
+        if (timestamp === null || timestamp < cutoff) {
+            return;
+        }
+        const hour = utcHourFromEpochMs(timestamp);
+        buckets[hour] += 1;
+        recent += 1;
+        bucketed = true;
+    });
+
+    return {
+        total,
+        recent,
+        heatmap: bucketed ? buckets : [],
+    };
+};
+
 const formatPresenceSubtext = (summary: PresenceSummary, emptyLabel: string): string =>
     summary.total > 0 ? `${summary.online}/${summary.total} online` : emptyLabel;
 
 const formatWebhookSubtext = (summary: WebhookSummary): string =>
     summary.total > 0 ? `${summary.enabled}/${summary.total} enabled` : 'No webhooks configured';
+
+const formatScheduleSubtext = (summary: ScheduleSummary): string =>
+    summary.total > 0
+        ? `${summary.active} active / ${summary.paused} paused`
+        : 'No schedules configured';
+
+const formatDeadLetterSubtext = (summary: DeadLetterSummary): string =>
+    summary.total > 0 ? `${summary.total} total` : 'No dead letters recorded';
 
 const statusFromPresence = (summary: PresenceSummary): MetricCard['status'] => {
     if (summary.total === 0) {
@@ -116,6 +187,16 @@ const statusFromWebhooks = (summary: WebhookSummary): MetricCard['status'] => {
         return 'healthy';
     }
     return 'warning';
+};
+
+const statusFromDeadLetters = (count: number): MetricCard['status'] => {
+    if (count === 0) {
+        return 'healthy';
+    }
+    if (count <= 3) {
+        return 'warning';
+    }
+    return 'critical';
 };
 
 @Injectable()
@@ -204,24 +285,33 @@ export class DashboardStore {
                     workerSummary: PresenceSummary;
                     webhookSummary: WebhookSummary;
                 }) => {
+                    const nowEpochMs = nowMs();
+                    const scheduleSummary = summarizeSchedules(data.schedules);
+                    const deadLetterSummary = summarizeDeadLetters(data.deadLetters, nowEpochMs);
+
                     // Normalize and update signals
-                    this.updateMetrics(data.runnerSummary, data.workerSummary, data.webhookSummary);
+                    this.updateMetrics(
+                        scheduleSummary,
+                        deadLetterSummary,
+                        data.runnerSummary,
+                        data.workerSummary,
+                        data.webhookSummary,
+                    );
                     this.updateUpcoming(data.schedules);
                     this.updateFailures(data.deadLetters);
+                    this.misfireHeatmapSignal.set(deadLetterSummary.heatmap);
                     return data;
                 }),
                 catchError((error) => {
                     console.error('Failed to load dashboard data', error);
                     const authFailure = authFailureFromError(error, {
-                        forbidden: 'Forbidden (403) — missing dashboard permissions.',
+                        forbidden: 'Forbidden (403) - missing dashboard permissions.',
                     });
                     if (authFailure) {
                         this.error.set(authFailure.message);
                     } else {
                         this.error.set('Unable to load dashboard data.');
                     }
-                    // Fallback data for demo purposes if API fails completely
-                    this.setFallbackData();
                     return of({
                         schedules: [],
                         deadLetters: [],
@@ -241,11 +331,15 @@ export class DashboardStore {
     readonly misfireHeatmap = this.misfireHeatmapSignal.asReadonly();
 
     private updateMetrics(
+        scheduleSummary: ScheduleSummary,
+        deadLetterSummary: DeadLetterSummary,
         runnerSummary: PresenceSummary,
         workerSummary: PresenceSummary,
         webhookSummary: WebhookSummary,
     ) {
-        // Mocking other metrics for now as we don't have direct endpoints for RPM/ErrorRate yet
+        const activeSchedules = scheduleSummary.active;
+        const hasSchedules = scheduleSummary.total > 0;
+
         const metrics: MetricCard[] = [
             {
                 label: 'Workers Online',
@@ -266,24 +360,22 @@ export class DashboardStore {
                 subtext: formatWebhookSubtext(webhookSummary),
             },
             {
-                label: 'Throughput (RPM)',
-                value: '1,240',
-                trend: '↑ 12%',
-                subtext: 'vs last hour',
-                sparkline: [20, 25, 30, 28, 35, 40, 42, 38, 45, 50]
+                label: 'Schedules',
+                value: scheduleSummary.total.toString(),
+                status: hasSchedules ? 'healthy' : 'warning',
+                subtext: formatScheduleSubtext(scheduleSummary),
             },
             {
-                label: 'Queue Depth',
-                value: '12',
-                status: 'healthy',
-                subtext: 'Jobs pending',
-                sparkline: [5, 12, 8, 15, 20, 10, 5, 2, 4, 12]
+                label: 'Active Schedules',
+                value: activeSchedules.toString(),
+                status: activeSchedules > 0 ? 'healthy' : 'warning',
+                subtext: hasSchedules ? `${scheduleSummary.paused} paused` : 'No schedules configured',
             },
             {
-                label: 'Error Rate (1h)',
-                value: '0.05%',
-                status: 'healthy',
-                subtext: 'Below threshold'
+                label: 'Dead Letters (24h)',
+                value: deadLetterSummary.recent.toString(),
+                status: statusFromDeadLetters(deadLetterSummary.recent),
+                subtext: formatDeadLetterSubtext(deadLetterSummary),
             },
         ];
         this.metricsSignal.set(metrics);
@@ -296,14 +388,24 @@ export class DashboardStore {
         }
 
         const upcoming = schedules
-            .filter(s => s.enabled && s.startAtUtc)
-            .map(s => ({
-                jobKey: s.jobKey || s.triggerId || 'Unknown',
-                fireTime: s.startAtUtc!,
-                cron: s.cronExpression || ''
-            }))
-            .sort((a, b) => new Date(a.fireTime).getTime() - new Date(b.fireTime).getTime())
-            .slice(0, 5); // Top 5
+            .filter((schedule) => schedule.enabled && typeof schedule.startAtUtc === 'string')
+            .map((schedule) => {
+                const fireTime = schedule.startAtUtc?.trim() ?? '';
+                const fireEpoch = fireTime ? epochMsFromIso(fireTime) : null;
+                if (fireEpoch === null) {
+                    return null;
+                }
+                return {
+                    jobKey: schedule.jobKey || schedule.triggerId || 'Unknown',
+                    fireTime,
+                    cron: schedule.cronExpression || '',
+                    fireEpoch,
+                };
+            })
+            .filter((entry): entry is { jobKey: string; fireTime: string; cron: string; fireEpoch: number } => !!entry)
+            .sort((a, b) => a.fireEpoch - b.fireEpoch)
+            .slice(0, 5)
+            .map(({ fireEpoch, ...entry }) => entry);
 
         this.upcomingSchedulesSignal.set(upcoming);
     }
@@ -315,54 +417,20 @@ export class DashboardStore {
         }
 
         const failures = deadLetters
-            .map((dl, index) => ({
-                id: dl.id ?? index,
-                jobKey: dl.jobKey || dl.triggerId || 'Unknown',
-                reason: dl.reason || 'Unknown Error',
-                time: dl.createdAtUtc || dl.fireAtUtc || nowIso(),
-            }))
-            .sort((a, b) => new Date(b.time).getTime() - new Date(a.time).getTime())
+            .map((deadLetter, index) => {
+                const rawTime = deadLetter.createdAtUtc ?? deadLetter.fireAtUtc ?? null;
+                const time = tryIsoFromUnknown(rawTime) ?? nowIso();
+                return {
+                    id: deadLetter.id ?? index,
+                    jobKey: deadLetter.jobKey || deadLetter.triggerId || 'Unknown',
+                    reason: deadLetter.reason || 'Unknown Error',
+                    time,
+                };
+            })
+            .sort((a, b) => (epochMsFromIso(b.time) ?? 0) - (epochMsFromIso(a.time) ?? 0))
             .slice(0, 5);
 
         this.recentFailuresSignal.set(failures);
     }
 
-    private setFallbackData() {
-        this.metricsSignal.set([
-            { label: 'Workers Online', value: '6', status: 'healthy', subtext: '6/7 online' },
-            { label: 'Runners Online', value: '8', status: 'healthy', subtext: '8/8 online' },
-            { label: 'Webhooks Enabled', value: '5', status: 'warning', subtext: '5/6 enabled' },
-            {
-                label: 'Throughput (RPM)',
-                value: '1,240',
-                trend: '↑ 12%',
-                subtext: 'vs last hour',
-                sparkline: [20, 25, 30, 28, 35, 40, 42, 38, 45, 50]
-            },
-            {
-                label: 'Queue Depth',
-                value: '24',
-                status: 'warning',
-                subtext: 'Jobs pending',
-                sparkline: [10, 15, 24, 20, 15, 12, 18, 24, 22, 24]
-            },
-            { label: 'Error Rate (1h)', value: '0.05%', status: 'healthy', subtext: 'Below threshold' },
-        ]);
-
-        this.recentFailuresSignal.set([
-            { id: 1, jobKey: 'payment-sync', reason: 'Timeout', time: '2m ago' },
-            { id: 2, jobKey: 'email-send', reason: '500 Error', time: '15m ago' },
-            { id: 3, jobKey: 'data-export', reason: 'Connection Refused', time: '1h ago' },
-        ]);
-
-        this.upcomingSchedulesSignal.set([
-            { jobKey: 'daily-report', fireTime: 'in 5m', cron: '0 0 * * *' },
-            { jobKey: 'cleanup-logs', fireTime: 'in 1h', cron: '0 1 * * *' },
-            { jobKey: 'billing-cycle', fireTime: 'Tomorrow 00:00', cron: '0 0 1 * *' },
-        ]);
-
-        // Mock 24h heatmap (mostly zeros, some spikes)
-        const heatmap = new Array(24).fill(0).map((_, i) => (i === 14 || i === 15) ? Math.floor(Math.random() * 5) + 1 : 0);
-        this.misfireHeatmapSignal.set(heatmap);
-    }
 }

@@ -81,7 +81,7 @@ Derived from [docs/deep-dive/designs/angular-ui-concept.md](docs/deep-dive/desig
   - [x] Jobs - registry browser, manual trigger action, last-N execution view.
   - [x] Webhooks - ingress status, secret rotation UI, IP allow-list grid.
   - [x] Runners - availability read-model (available runners list + heartbeat status).
-  - [ ] Tenants & API keys - intentionally excluded (single-tenant UI); no menu/command entries. Tenant reference is still required for tenant-scoped API routes.
+  - [x] Tenants are intentionally excluded (single-tenant UI); no routes/nav/command entries. API Access remains for managing tenant API keys/clients.
 
 ## Data Access & State
 
@@ -98,16 +98,16 @@ Derived from [docs/deep-dive/designs/angular-ui-concept.md](docs/deep-dive/desig
   - [x] schedule get/delete
   - [x] schedules upsert (POST Upsert) + schedule dead-letters list/replay
   - [x] token issuance endpoints
-- [ ] Configure Angular Query caches, refetch policies, and tenant/env scoping helpers.
+- [x] No-cache policy is the current baseline (tenantRxResource cache hook exists but is unused; revisit after perf work).
 - [x] Persist non-sensitive preferences (theme, table density) per tenant using IndexedDB with optional encryption. _(Implemented via `UiPreferencesService` + IndexedDB storage.)_
 
 ## Styling & Design Language
 
 - [x] Finalize typography pairing (`Space Grotesk`, `IBM Plex Mono`) and encode in Tailwind theme.
-- [ ] Define semantic color ramps (surface, accent, danger) for both light/dark ops themes.
-- [ ] Specify motion patterns (panel sweep, counter flip) and implement reusable animation utilities.
-- [ ] Create layout primitives (`stack`, `cluster`, density controls) to keep spacing on the 8px grid.
-- [ ] Document the Tailwind enrichment plan (utility namespaces, component recipes, palette integration) and ensure headless components expose the hooks needed for utility-first theming.
+- [x] Define semantic color ramps (surface, accent, danger) for both light/dark ops themes. _(Implemented in `src/styles.css` + `tailwind.config.js`.)_
+- [x] Specify motion patterns (panel sweep, counter flip) and implement reusable animation utilities. _(Implemented in `tailwind.config.js` + CSS variables.)_
+- [x] Create layout primitives (`stack`, `cluster`, density controls) to keep spacing on the 8px grid. _(Implemented in `src/styles.css`.)_
+- [x] Document the Tailwind enrichment plan (utility namespaces, component recipes, palette integration) and ensure headless components expose the hooks needed for utility-first theming. _(Documented in `docs/deep-dive/designs/angular-ui-theme.md`.)_
 
 ## Security & Auth
 

@@ -102,6 +102,8 @@ export class EndpointExecutor {
     ): Record<string, string> {
         const headers: Record<string, string> = {
             'X-Croniq-Client': this.clientId,
+            'Cache-Control': 'no-store, no-cache, max-age=0',
+            Pragma: 'no-cache',
         };
 
         if (context?.source) {

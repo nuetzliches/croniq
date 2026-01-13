@@ -96,12 +96,18 @@
             </tr>
           </thead>
           <tbody class="divide-y divide-surface-5">
+            @if (recentFailures().length === 0) {
+            <tr>
+              <td colspan="3" class="px-6 py-6 text-center text-muted">No dead letters recorded.</td>
+            </tr>
+            } @else {
             @for (failure of recentFailures(); track failure.id) {
             <tr class="hover:bg-surface-3">
               <td class="px-6 py-3 font-medium text-primary">{{ failure.jobKey }}</td>
               <td class="px-6 py-3 text-danger">{{ failure.reason }}</td>
               <td class="px-6 py-3 text-muted">{{ failure.time | date : 'short' }}</td>
             </tr>
+            }
             }
           </tbody>
         </table>
@@ -131,6 +137,11 @@
             </tr>
           </thead>
           <tbody class="divide-y divide-surface-5">
+            @if (upcomingSchedules().length === 0) {
+            <tr>
+              <td colspan="2" class="px-6 py-6 text-center text-muted">No upcoming schedules.</td>
+            </tr>
+            } @else {
             @for (schedule of upcomingSchedules(); track schedule.jobKey) {
             <tr class="hover:bg-surface-3">
               <td class="px-6 py-3 font-medium text-primary">
@@ -139,6 +150,7 @@
               </td>
               <td class="px-6 py-3 text-muted">{{ schedule.fireTime | date : 'short' }}</td>
             </tr>
+            }
             }
           </tbody>
         </table>
