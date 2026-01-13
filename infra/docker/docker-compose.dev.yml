@@ -5,6 +5,8 @@ services:
       context: ../..
       dockerfile: infra/docker/Dockerfile.services
       target: api
+      args:
+        DOTNET_VERSION: ${DOTNET_VERSION:-10.0}
     environment:
       ASPNETCORE_URLS: http://0.0.0.0:${CRONIQ_API_INTERNAL_PORT:-5080}
       DOTNET_ENVIRONMENT: ${CRONIQ_DOTNET_ENVIRONMENT:-Development}
@@ -50,6 +52,8 @@ services:
       context: ../..
       dockerfile: infra/docker/Dockerfile.services
       target: worker
+      args:
+        DOTNET_VERSION: ${DOTNET_VERSION:-10.0}
     environment:
       DOTNET_ENVIRONMENT: ${CRONIQ_DOTNET_ENVIRONMENT:-Development}
       Croniq__Core__TenantMode: ${CRONIQ_CORE_TENANT_MODE:-Single}

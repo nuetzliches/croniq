@@ -29,6 +29,8 @@ services:
       context: ../..
       dockerfile: infra/docker/Dockerfile.services
       target: migrator
+      args:
+        DOTNET_VERSION: ${DOTNET_VERSION:-10.0}
     environment:
       CRONIQ_SQL_CONNECTION: Server=${CRONIQ_SQL_HOST:-mssql-22},1433;Database=${CRONIQ_SQL_DATABASE:-CroniqDev};User Id=sa;Password=${CRONIQ_SQL_PASSWORD:-CroniqSqlP@ssw0rd!};Encrypt=False;TrustServerCertificate=True;
     depends_on:
