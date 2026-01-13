@@ -74,7 +74,7 @@ This document specifies the authentication, authorization, and rate limiting des
 
 - `ICallerContext` lives in scoped DI via `ICallerContextAccessor`. Downstream components (Persistence, JobStore) fetch it to derive `PartitionScope` (TenantId + EnvironmentTag).
 - `TenantGuard` enforces caller tenant/environment across REST routes (webhooks CRUD, schedules, manual triggers) and rejects cross-tenant attempts with 403 before persistence/pipeline execution. The execution-log endpoint now inspects the first log entry to validate tenant/environment metadata before streaming; Scheduler/Worker/Webhook ingress gRPC hosts already apply the same guard.
-- Scope naming convention mirrors REST permissions: `schedules:write`, `jobs:trigger`, `tenants:admin`, `api-keys:manage`, `cluster:read`.
+- Scope naming convention mirrors REST permissions: `schedules:write`, `jobs:trigger`, `tenants:admin`, `api-keys:manage`.
 - Bearer tokens must carry the configured tenant claim and any required scopes; missing claims/scopes yield 401/403. API keys remain single-tenant because validation bakes the tenant into the emitted caller context.
 - gRPC Scheduler: the Scheduler service runs in `Croniq.Api` (mapped via `MapCroniqSchedulerGrpc`). Calls use the same middleware/guards as HTTP; clients must send `x-croniq-key` (or Bearer) metadata and align `tenant_id`/`environment_tag` (required on `DeleteSchedule`). The proto lives under `src/Croniq.Rpc.Client/Protos/scheduler.proto`; `Croniq.Sample.GrpcClient` shows usage with `Croniq.Rpc.Client` and the DI helper `AddCroniqSchedulerClient`. Safe wrappers emit `CroniqRpcException` to avoid direct coupling zu `Grpc.Core`.
 - Admin APIs verify both caller scope and tenant match (e.g., only Tenant Admins can mutate their key space). Cross-tenant actions require service-level credentials flagged with `CallerType = ApiKey` and `Scopes` containing `system:*`.
@@ -85,7 +85,7 @@ This document specifies the authentication, authorization, and rate limiting des
 - **Secrets & Signatures**: Every webhook endpoint requires a secret. The host validates `X-Croniq-Signature` using HMAC-SHA256 on the raw request body, then compares hashes in constant time. Persisted webhook secrets are encrypted at rest via ASP.NET Core Data Protection and stored alongside a SHA-256 hash; plaintext is only returned when the admin explicitly creates or rotates the secret via the CRUD API.
 - **Rate Limiting**: ASP.NET rate limiter partitions per hook key (falling back to the global default). Limits are configurable through persistence or `Croniq:Webhooks:RequestsPerMinute`. Burst protection keeps individual tenants from exhausting dispatcher capacity.
 - **Tenant Scoping**: Persisted hooks include `TenantId` and `EnvironmentTag`. The webhook resolver enforces that the mapped `JobKey` belongs to the same partition before invoking the execution pipeline, preventing cross-tenant spoofing even when secrets leak.
-- **Metadata Sanitization**: Incoming JSON payloads are stored as metadata with `payload:*` prefixes. The factory performs best-effort extraction (strings/numbers/bools) and never stores raw headers. Operators can disable metadata enrichment per hook at configuration time if data minimization is required.
+- **Metadata Sanitization**: Incoming JSON payloads are stored as metadata with `payload:*` prefixes. The factory performs best-effort extraction (strings/numbers/bools) and never stores raw headers. Metadata enrichment is always enabled; keep payloads minimal if data minimization is required.
 - **Secret Rotation Flow**: `POST /tenants/{tenantId}/webhooks` accepts updated secrets and returns them once. Automation can perform staged rotations by creating a temporary hook with the same job key or by coordinating clients to pick up the new secret immediately. Every rotation writes to `croniq.WebhookSecretHistory`, so the previous secret stays valid until the configured grace window expires; the ingress host resolves all active secrets via `GetActiveSecretsAsync` and validates payloads against each value.
 - **Recommended Hardening**: Front webhook hosts with IP allow lists or API Gateway auth, configure OWASP rules for JSON bodies, and send telemetry (`Croniq.Webhooks.Ingress`) to your SIEM for anomaly detection (e.g., spikes in 401/429).
 
@@ -185,7 +185,7 @@ Minimal configuration example:
 - `ISecretProvider` remains the abstraction for loading API keys/connection strings in hosts; production deployments plug into Vault/KeyVault/Secrets Manager. Local dev may use `.env` or user-secrets.
 - Webhook secret encryption relies on ASP.NET Core Data Protection; API and webhook hosts must share the same key ring (`Croniq:Security:DataProtection:ApplicationName` plus `KeyRingPath` or another shared key store) to decrypt persisted secrets.
 - All traffic assumes HTTPS. Self-hosted scenarios must trust dev certificates; production requires TLS termination before the API.
-- Log and metric hooks redact secrets. Structured logs include TenantId/CallerId only after hashing to prevent leakage.
+- Log and metric hooks redact secrets. TenantId/CallerId are hashed when `Croniq:Observability:HashIdentifiers=true` with `Croniq:Observability:IdentifierHashKey`; otherwise they remain clear text.
 
 ## Operational Runbooks & Incident Response
 

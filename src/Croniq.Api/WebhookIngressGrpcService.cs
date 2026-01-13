@@ -2,6 +2,7 @@ using System;
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using Croniq.Auth.Abstractions;
+using Croniq.Core.Observability;
 using Croniq.Persistence.Abstractions;
 using Croniq.Rpc;
 using Grpc.Core;
@@ -73,7 +74,7 @@ internal sealed class WebhookIngressGrpcService : WebhookIngress.WebhookIngressB
         var maxInflight = NormalizeMaxInflight(hello.MaxInflight);
         var scope = new PartitionScope(tenantId, environmentTag);
 
-        activity?.SetTag("croniq.tenant_id", tenantId);
+        activity?.SetTag("croniq.tenant_id", IdentifierHashing.HashTenantId(tenantId));
         activity?.SetTag("croniq.environment", environmentTag);
         activity?.SetTag("croniq.webhook.consumer_id", hello.ConsumerId);
 

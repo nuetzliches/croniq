@@ -2,6 +2,7 @@ using System;
 using System.Diagnostics;
 using System.Threading;
 using System.Threading.Tasks;
+using Croniq.Core.Observability;
 using Croniq.Data.SqlServer;
 using Croniq.Options;
 using Croniq.Sdk;
@@ -57,7 +58,7 @@ public sealed class RetentionCleanupJob : IJob
 
         context.Logger.LogInformation(
             "Retention cleanup completed for tenant {TenantId}. Deleted refreshTokens={RefreshTokensDeleted}, jobDeadLetters={JobDeadLettersDeleted}, webhookDeadLetters={WebhookDeadLettersDeleted}, webhookEndpointEvents={WebhookEndpointEventsDeleted}, webhookSecretHistory={WebhookSecretHistoryDeleted}.",
-            tenantId,
+            IdentifierHashing.HashTenantId(tenantId) ?? string.Empty,
             refreshTokensDeleted,
             jobDeadLettersDeleted,
             webhookDeadLettersDeleted,
@@ -86,7 +87,7 @@ public sealed class RetentionCleanupJob : IJob
         logger.LogInformation(
             "Retention cleanup deleted {Deleted} refresh tokens for tenant {TenantId} (expiryOffsetDays={OffsetDays}, cutoff={CutoffUtc:O}).",
             deleted,
-            tenantId,
+            IdentifierHashing.HashTenantId(tenantId) ?? string.Empty,
             _retentionOptions.RefreshTokensRetentionDays,
             cutoffUtc);
 
@@ -121,7 +122,7 @@ WHERE j.[TenantId] = {tenantId} AND j.[EnvironmentTag] = {environmentTag} AND dl
         logger.LogInformation(
             "Retention cleanup deleted {Deleted} job dead letters for tenant {TenantId} (expiryOffsetDays={OffsetDays}, cutoff={CutoffUtc:O}).",
             deleted,
-            tenantId,
+            IdentifierHashing.HashTenantId(tenantId) ?? string.Empty,
             _retentionOptions.JobDeadLettersExpiryOffsetDays,
             cutoffUtc);
 
@@ -153,7 +154,7 @@ WHERE j.[TenantId] = {tenantId} AND j.[EnvironmentTag] = {environmentTag} AND dl
         logger.LogInformation(
             "Retention cleanup deleted {Deleted} webhook dead letters for tenant {TenantId} (expiryOffsetDays={OffsetDays}, cutoff={CutoffUtc:O}).",
             deleted,
-            tenantId,
+            IdentifierHashing.HashTenantId(tenantId) ?? string.Empty,
             _retentionOptions.WebhookDeadLettersExpiryOffsetDays,
             cutoffUtc);
 
@@ -184,7 +185,7 @@ WHERE j.[TenantId] = {tenantId} AND j.[EnvironmentTag] = {environmentTag} AND dl
         logger.LogInformation(
             "Retention cleanup deleted {Deleted} webhook endpoint events for tenant {TenantId} (retentionDays={RetentionDays}, cutoff={CutoffUtc:O}).",
             deleted,
-            tenantId,
+            IdentifierHashing.HashTenantId(tenantId) ?? string.Empty,
             _retentionOptions.WebhookEndpointEventsRetentionDays,
             cutoffUtc);
 
@@ -216,7 +217,7 @@ WHERE j.[TenantId] = {tenantId} AND j.[EnvironmentTag] = {environmentTag} AND dl
         logger.LogInformation(
             "Retention cleanup deleted {Deleted} webhook secret history entries for tenant {TenantId} (expiryOffsetDays={OffsetDays}, cutoff={CutoffUtc:O}).",
             deleted,
-            tenantId,
+            IdentifierHashing.HashTenantId(tenantId) ?? string.Empty,
             _retentionOptions.WebhookSecretHistoryExpiryOffsetDays,
             cutoffUtc);
 
@@ -226,7 +227,7 @@ WHERE j.[TenantId] = {tenantId} AND j.[EnvironmentTag] = {environmentTag} AND dl
     private static Activity? StartActivity(IJobExecutionContext context, string tenantId, DateTime nowUtc)
     {
         var activity = context.ActivitySource.StartActivity("croniq.retention.cleanup");
-        activity?.SetTag("croniq.tenant_id", tenantId);
+        activity?.SetTag("croniq.tenant_id", IdentifierHashing.HashTenantId(tenantId));
         activity?.SetTag("croniq.retention.now_utc", nowUtc.ToString("O"));
         activity?.SetTag("croniq.job_key", context.JobKey);
         activity?.SetTag("croniq.execution_id", context.ExecutionId);

@@ -63,7 +63,7 @@ Documentation backlog extracted from `CHECKLIST.md`. Track doc-only and doc-alig
 ## Needs discussion / code change (decide: doc-only vs behavior change)
 - [ ] (blocked until repo is public) Add docs publishing workflow (GitHub Pages) once the repo is public to avoid private-repo costs.
 - [ ] (deferred - vNext) gRPC docs expansion for Python/Go/Node (optional Java) with packages, install, auth helpers, minimal examples.
-- [ ] `docs/deep-dive/architecture.md`: clock drift monitoring via ITimeProvider is documented but not implemented.
+- [x] `docs/deep-dive/architecture.md`: clock drift monitoring via ITimeProvider is documented but not implemented.
 - [x] `docs/deep-dive/designs/dmz-ingress-remote-webhooks.md`: options mention `LeaseSeconds/MaxBatchSize/PollingIntervalMilliseconds`, but `WebhookIngressOptions` exposes only `DispatchMode`.
 - [x] `docs/deep-dive/password-auth.md`: admin endpoints `/tenants/{tenantId}/users` and `/tenants/{tenantId}/users/{userId}/reset-password` are not implemented.
 - [x] `docs/deep-dive/persistence.md`: `Croniq:Persistence:SqlServer:CommandTimeoutSeconds` is documented but not implemented.
@@ -75,8 +75,8 @@ Documentation backlog extracted from `CHECKLIST.md`. Track doc-only and doc-alig
 - [x] Samples/READMEs: default `CRONIQ_API_KEY` now matches devstack (`smoke-key`).
 - [x] JobKey format: docs/samples now use `namespace:name[:variant]` (tenant/environment come from scope).
 - [x] `docs/guides/webhooks.md` + `docs/deep-dive/security.md`: replay/idempotency headers documented but not implemented.
-- [ ] `docs/deep-dive/security.md`: per-hook metadata enrichment toggle documented but not implemented.
-- [ ] `docs/deep-dive/security.md`: `cluster:read` scope documented but not implemented.
+- [x] `docs/deep-dive/security.md`: per-hook metadata enrichment toggle documented but not implemented.
+- [x] `docs/deep-dive/security.md`: `cluster:read` scope documented but not implemented.
 - [x] `docs/deep-dive/security.md`: webhook secrets are stored as plaintext but docs claim "hashed only".
 - [x] `docs/deep-dive/security.md`: correlation/actor documented for all webhook management requests, but only IP rule CRUD sets them.
 - [x] `docs/deep-dive/security.md`: payload size/content-type guardrails are documented but not implemented.
@@ -84,13 +84,20 @@ Documentation backlog extracted from `CHECKLIST.md`. Track doc-only and doc-alig
 - [x] `docs/guides/webhooks.md` + `docs/introduction/quickstart.md` + `docs/deep-dive/architecture.md`: ingress route unified to `/tenants/{tenantId}/environments/{environmentTag}/webhooks/{hookKey}`.
 - [x] `docs/deep-dive/architecture.md`: ingress processing stages no longer mention optional caller auth.
 - [x] `docs/deep-dive/ci.md`: health probes align to `/health` (liveness) and `/health/persistence` (readiness).
-- [ ] `docs/deep-dive/security.md`: "TenantId/CallerId only after hashing" does not match current log/metric tagging.
-- [ ] `docs/guides/auth.md`: `/health` with `X-Croniq-Debug: auth` is documented but not implemented.
+- [x] Implement optional hashing for TenantId/CallerId in logs/metrics/traces; docs updated for the new config.
+- [x] `docs/guides/auth.md`: `/health` with `X-Croniq-Debug: auth` is documented but not implemented.
 - [x] `docs/guides/auth.md` + `docs/deep-dive/auth.md` + `docs/deep-dive/persistence.md` + `docs/deep-dive/architecture.md`: audit log table/retention claims are not backed by code.
 - [x] `docs/index.md` + `docs/introduction/index.md`: auditing claims are documented but audit logging is not implemented.
-- [ ] `docs/deep-dive/architecture.md`: `IJobExecutionContext` progress APIs are documented but not implemented.
-- [ ] `docs/deep-dive/architecture.md` (and possibly `docs/deep-dive/policies.md`): fallback policy is documented but not implemented in `ExecutionPolicyPipelineProvider`.
+- [x] `docs/deep-dive/architecture.md`: `IJobExecutionContext` progress APIs are documented but not implemented.
+- [x] `docs/deep-dive/architecture.md` (and possibly `docs/deep-dive/policies.md`): fallback policy is documented but not implemented in `ExecutionPolicyPipelineProvider`.
 - [x] `docs/deep-dive/architecture.md`: Serilog + OTel sink is documented, but default provider is `ILoggerFactory`.
+
+### Hashing concept (implemented)
+- Scope: hash TenantId/CallerId only at observability boundaries (logs, metrics, traces); keep raw values for auth and routing.
+- Algorithm: HMAC-SHA256 with an environment-specific secret; emit a stable, lowercase hex digest to preserve joins.
+- Toggle: `Croniq:Observability:HashIdentifiers` (default false) plus required `Croniq:Observability:IdentifierHashKey`.
+- Centralize: `IdentifierHashing` helper keeps `ApiMetrics`, `PolicyMetrics`, `SchedulerMetrics`, and log scopes consistent.
+- Docs: `docs/deep-dive/security.md`, `docs/deep-dive/observability.md`, and `docs/introduction/configuration.md` updated with config guidance.
 
 ## Pending doc scans
 - [x] Scan `docs/README.md` + `docs/_templates/README.md` for current template/link guidance (no updates needed).

@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Reflection;
+using Croniq.Core.Observability;
 using Croniq.Options;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -115,6 +116,7 @@ public static class CroniqObservabilityExtensions
 
         options.ServiceInstanceId ??= options.ServiceName;
         ApplyDefaultMinimumLevelOverrides(options.MinimumLevelOverrides);
+        IdentifierHashing.Configure(options);
         return options;
     }
 
@@ -158,10 +160,11 @@ public static class CroniqObservabilityExtensions
 
     private static IReadOnlyList<KeyValuePair<string, object>> BuildResourceAttributes(CroniqObservabilityOptions options)
     {
+        var hashedTenantId = IdentifierHashing.HashTenantId(options.TenantId);
         var attributes = new List<KeyValuePair<string, object>>
         {
             new("deployment.environment", options.Environment),
-            new("croniq.tenant_id", options.TenantId)
+            new("croniq.tenant_id", hashedTenantId ?? string.Empty)
         };
 
         if (!string.IsNullOrWhiteSpace(options.ServiceInstanceId))
@@ -232,7 +235,8 @@ public static class CroniqObservabilityExtensions
         }
 
         loggerConfiguration.Enrich.WithProperty("deployment.environment", options.Environment);
-        loggerConfiguration.Enrich.WithProperty("croniq.tenant_id", options.TenantId);
+        var hashedTenantId = IdentifierHashing.HashTenantId(options.TenantId);
+        loggerConfiguration.Enrich.WithProperty("croniq.tenant_id", hashedTenantId ?? string.Empty);
 
         foreach (var attribute in resourceAttributes)
         {

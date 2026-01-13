@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Linq;
 using Croniq.Auth.Abstractions;
+using Croniq.Core.Observability;
 using Croniq.Options;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.Extensions.Logging;
@@ -99,7 +100,7 @@ public sealed class PasswordAuthService
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "Failed to upgrade password hash for {TenantId}/{UserId}", user.TenantId, user.UserId);
+                _logger.LogWarning(ex, "Failed to upgrade password hash for {TenantId}/{UserId}", IdentifierHashing.HashTenantId(user.TenantId) ?? string.Empty, user.UserId);
             }
         }
 

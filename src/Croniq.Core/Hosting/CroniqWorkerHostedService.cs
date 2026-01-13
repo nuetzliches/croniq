@@ -1,4 +1,5 @@
 using Croniq.Core.Execution;
+using Croniq.Core.Observability;
 using Croniq.Options;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -40,7 +41,12 @@ public sealed class CroniqWorkerHostedService : BackgroundService
             return;
         }
 
-        _logger.LogInformation("Croniq worker starting for tenant {Tenant} / env {Environment} (instance {Instance})", _options.TenantId.Trim(), _options.EnvironmentTag, _options.InstanceId);
+        var hashedTenantId = IdentifierHashing.HashTenantId(_options.TenantId.Trim());
+        _logger.LogInformation(
+            "Croniq worker starting for tenant {Tenant} / env {Environment} (instance {Instance})",
+            hashedTenantId ?? string.Empty,
+            _options.EnvironmentTag,
+            _options.InstanceId);
 
         while (!stoppingToken.IsCancellationRequested)
         {

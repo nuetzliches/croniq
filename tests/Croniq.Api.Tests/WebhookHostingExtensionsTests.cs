@@ -8,6 +8,8 @@ using Croniq.Webhooks.Options;
 using Croniq.Webhooks.Remote;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.FileProviders;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Options;
 using Shouldly;
 using Xunit;
@@ -111,6 +113,7 @@ public class WebhookHostingExtensionsTests
     public void AddCroniqWebhookServices_RemoteOverridesSqlServerWebhookStores()
     {
         var services = new ServiceCollection();
+        AddHostEnvironment(services);
         var config = new ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string?>
             {
@@ -153,6 +156,7 @@ public class WebhookHostingExtensionsTests
     public void AddCroniqWebhookServices_Throws_WhenUnsignedHooksDisallowed()
     {
         var services = new ServiceCollection();
+        AddHostEnvironment(services);
         var config = new ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string?>
             {
@@ -175,6 +179,7 @@ public class WebhookHostingExtensionsTests
     public void AddCroniqWebhookServices_AllowsUnsignedHooks_WhenEnabled()
     {
         var services = new ServiceCollection();
+        AddHostEnvironment(services);
         var config = new ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string?>
             {
@@ -193,5 +198,26 @@ public class WebhookHostingExtensionsTests
         options.Security.AllowUnsignedHooks.ShouldBeTrue();
         options.Endpoints.ShouldNotBeEmpty();
         options.Endpoints[0].RequireSignature.ShouldBeFalse();
+    }
+
+    private static void AddHostEnvironment(IServiceCollection services, string environmentName = "Development")
+    {
+        services.AddSingleton<IHostEnvironment>(new TestHostEnvironment(environmentName));
+    }
+
+    private sealed class TestHostEnvironment : IHostEnvironment
+    {
+        public TestHostEnvironment(string environmentName)
+        {
+            EnvironmentName = environmentName;
+            ApplicationName = "Croniq.Api.Tests";
+            ContentRootPath = AppContext.BaseDirectory;
+            ContentRootFileProvider = new NullFileProvider();
+        }
+
+        public string EnvironmentName { get; set; }
+        public string ApplicationName { get; set; }
+        public string ContentRootPath { get; set; }
+        public IFileProvider ContentRootFileProvider { get; set; }
     }
 }

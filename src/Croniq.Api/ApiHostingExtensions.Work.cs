@@ -5,6 +5,7 @@ using System.Linq;
 using System.Threading.Tasks;
 using Croniq.Api.Models;
 using Croniq.Auth.Abstractions;
+using Croniq.Core.Observability;
 using Croniq.Core.Execution;
 using Croniq.Persistence.Abstractions;
 using Microsoft.AspNetCore.Builder;
@@ -588,7 +589,7 @@ public static partial class ApiHostingExtensions
             ["croniq.execution_id"] = lease.ExecutionId,
             ["croniq.job.key"] = lease.JobKey,
             ["croniq.trigger.id"] = lease.TriggerId,
-            ["croniq.tenant_id"] = tenantId,
+            ["croniq.tenant_id"] = IdentifierHashing.HashTenantId(tenantId) ?? string.Empty,
             ["croniq.environment"] = environmentTag,
             ["croniq.runner_id"] = runnerId
         };

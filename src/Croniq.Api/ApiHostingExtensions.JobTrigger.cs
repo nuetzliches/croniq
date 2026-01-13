@@ -4,6 +4,7 @@ using Croniq.Api.Models;
 using Croniq.Api.Telemetry;
 using Croniq.Auth.Abstractions;
 using Croniq.Auth.Core;
+using Croniq.Core.Observability;
 using Croniq.Core.Jobs;
 using Croniq.Options;
 using Croniq.Persistence.Abstractions;
@@ -58,7 +59,7 @@ public static partial class ApiHostingExtensions
 
             using var triggerActivity = TriggerActivitySource.StartActivity("Croniq.Api.TriggerJob", ActivityKind.Server);
             triggerActivity?.SetTag("croniq.job.key", jobKey.Value);
-            triggerActivity?.SetTag("croniq.tenant_id", scope.TenantId);
+            triggerActivity?.SetTag("croniq.tenant_id", IdentifierHashing.HashTenantId(scope.TenantId));
             triggerActivity?.SetTag("croniq.environment", scope.EnvironmentTag);
             triggerActivity?.SetTag("croniq.job.namespace", jobKey.NamespaceSegment);
             triggerActivity?.SetTag("croniq.job.name", jobKey.JobName);

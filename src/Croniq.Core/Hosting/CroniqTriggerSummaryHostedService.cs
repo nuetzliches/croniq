@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using Croniq.Core.Observability;
 using Croniq.Options;
 using Croniq.Core.Scheduling;
 using Croniq.Persistence.Abstractions;
@@ -41,9 +42,10 @@ public sealed class CroniqTriggerSummaryHostedService : IHostedService
         }
 
         var scope = new PartitionScope(_options.TenantId.Trim(), _options.EnvironmentTag);
+        var hashedTenantId = IdentifierHashing.HashTenantId(scope.TenantId);
         using var logScope = _logger.BeginScope(new Dictionary<string, object?>
         {
-            ["tenantId"] = scope.TenantId,
+            ["tenantId"] = hashedTenantId ?? string.Empty,
             ["environmentTag"] = scope.EnvironmentTag
         });
 

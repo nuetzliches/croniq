@@ -73,6 +73,16 @@ public sealed class CroniqObservabilityOptions
     public bool EnableOtlpLogExport { get; set; } = true;
 
     /// <summary>
+    /// Hashes tenant and caller identifiers before emitting logs, metrics, or traces.
+    /// </summary>
+    public bool HashIdentifiers { get; set; }
+
+    /// <summary>
+    /// Secret key used for HMAC hashing when <see cref="HashIdentifiers"/> is enabled.
+    /// </summary>
+    public string? IdentifierHashKey { get; set; }
+
+    /// <summary>
     /// Optional per-category minimum log level overrides (e.g., suppress verbose EF Core logs).
     /// </summary>
     public Dictionary<string, LogEventLevel> MinimumLevelOverrides { get; set; } = new(StringComparer.OrdinalIgnoreCase);

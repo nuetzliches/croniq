@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Globalization;
+using System.IO;
 using System.Linq;
 using System.Net;
 using System.Security.Cryptography;
@@ -8,6 +9,7 @@ using System.Text;
 using System.Text.Json;
 using Croniq.Core.Execution;
 using Croniq.Core.Jobs;
+using Croniq.Core.Observability;
 using Croniq.Core.Policies;
 using Croniq.Core.Security;
 using Croniq.Data.SqlServer;
@@ -19,6 +21,7 @@ using Croniq.Webhooks.InMemory;
 using Croniq.Webhooks.Options;
 using Croniq.Webhooks.Relay;
 using Croniq.Webhooks.Remote;
+using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Configuration;
@@ -36,6 +39,8 @@ public static class WebhookHostingExtensions
     private static readonly ActivitySource ActivitySource = new("Croniq.Webhooks.Ingress");
     private static readonly ConcurrentDictionary<string, byte> UnsignedWarningCache = new(StringComparer.OrdinalIgnoreCase);
     private const string WebhookOptionsSectionName = "Croniq:Webhooks";
+    private const string DataProtectionSectionName = "Croniq:Security:DataProtection";
+    private const string DefaultDataProtectionAppName = "Croniq";
     private static string BuildEndpointCacheKey(PartitionScope scope, string hookKey)
         => $"webhook:endpoint:{scope.TenantId.ToLowerInvariant()}:{scope.EnvironmentTag.ToLowerInvariant()}:{hookKey.ToLowerInvariant()}";
 
@@ -75,6 +80,7 @@ public static class WebhookHostingExtensions
             throw new InvalidOperationException("Croniq:Webhooks:SqlServer:ConnectionString or Croniq:SqlServer:ConnectionString must be provided when Croniq:Webhooks:Mode = SqlServer.");
         }
 
+        ConfigureDataProtection(services, configuration);
         services.AddCroniqSqlServerDbContext(sqlOptions =>
         {
             sqlOptions.ConnectionString = connectionString;
@@ -89,6 +95,31 @@ public static class WebhookHostingExtensions
         services.TryAddSingleton<IWebhookIngressEventStore, SqlServerWebhookIngressEventStore>();
         services.TryAddSingleton<IWebhookEndpointChangefeed, SqlServerWebhookEndpointChangefeed>();
         return services;
+    }
+
+    private static void ConfigureDataProtection(IServiceCollection services, IConfiguration configuration)
+    {
+        var builder = services.AddDataProtection();
+        var section = configuration.GetSection(DataProtectionSectionName);
+        var keyRingPath = section.GetValue<string>("KeyRingPath");
+        var applicationName = section.GetValue<string>("ApplicationName");
+
+        if (!string.IsNullOrWhiteSpace(keyRingPath))
+        {
+            builder.PersistKeysToFileSystem(new DirectoryInfo(keyRingPath));
+        }
+
+        var resolvedName = string.IsNullOrWhiteSpace(applicationName)
+            ? DefaultDataProtectionAppName
+            : applicationName;
+
+        services.PostConfigure<DataProtectionOptions>(options =>
+        {
+            if (string.IsNullOrWhiteSpace(options.ApplicationDiscriminator))
+            {
+                options.ApplicationDiscriminator = resolvedName;
+            }
+        });
     }
 
     private static IServiceCollection ConfigureWebhookRemotePersistence(IServiceCollection services, CroniqWebhookOptions options)
@@ -162,33 +193,6 @@ public static class WebhookHostingExtensions
         var optionsSection = configuration.GetSection("Croniq:Webhooks");
         var hostingOptions = optionsSection.Get<CroniqWebhookOptions>() ?? new CroniqWebhookOptions();
         var shouldConfigurePersistence = hostingOptions.ConfigurePersistence;
-
-        if (!hostingOptions.Security.AllowUnsignedHooks)
-        {
-            var unsignedHooks = hostingOptions.Endpoints
-                .Where(endpoint => endpoint.Enabled && !endpoint.RequireSignature)
-                .Select(endpoint => endpoint.HookKey)
-                .Where(hookKey => !string.IsNullOrWhiteSpace(hookKey))
-                .ToArray();
-
-            if (unsignedHooks.Length > 0)
-            {
-                var joined = string.Join(", ", unsignedHooks);
-                throw new InvalidOperationException($"Unsigned webhooks ({joined}) are configured but Croniq:Webhooks:Security:AllowUnsignedHooks is disabled.");
-            }
-        }
-
-        if (hostingOptions.Mode == WebhookPersistenceMode.Remote && (hostingOptions.Remote?.AllowInvalidServerCertificate ?? false))
-        {
-            var environmentName = Environment.GetEnvironmentVariable("DOTNET_ENVIRONMENT")
-                ?? Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT")
-                ?? Environments.Production;
-
-            if (!string.Equals(environmentName, Environments.Development, StringComparison.OrdinalIgnoreCase))
-            {
-                throw new InvalidOperationException("Croniq:Webhooks:Remote:AllowInvalidServerCertificate is only supported in Development.");
-            }
-        }
 
         if (includePlatformServices)
         {
@@ -404,7 +408,7 @@ public static class WebhookHostingExtensions
                 using var storeActivity = ActivitySource.StartActivity("Croniq.Webhooks.Ingress.Store", ActivityKind.Server);
                 storeActivity?.SetTag("croniq.webhook.key", endpoint.HookKey);
                 storeActivity?.SetTag("croniq.job.key", jobKey.Value);
-                storeActivity?.SetTag("croniq.tenant_id", scope.TenantId);
+                storeActivity?.SetTag("croniq.tenant_id", IdentifierHashing.HashTenantId(scope.TenantId));
                 storeActivity?.SetTag("croniq.environment", scope.EnvironmentTag);
 
                 var eventId = Guid.NewGuid().ToString("N");
@@ -450,7 +454,7 @@ public static class WebhookHostingExtensions
             using var activity = ActivitySource.StartActivity("Croniq.Webhooks.Trigger", ActivityKind.Server);
             activity?.SetTag("croniq.webhook.key", endpoint.HookKey);
             activity?.SetTag("croniq.job.key", jobKey.Value);
-            activity?.SetTag("croniq.tenant_id", scope.TenantId);
+            activity?.SetTag("croniq.tenant_id", IdentifierHashing.HashTenantId(scope.TenantId));
             activity?.SetTag("croniq.environment", scope.EnvironmentTag);
             await TryStoreExecutionStartedAsync(
                 executionLogStore,

@@ -5,6 +5,7 @@ using System.Threading.Tasks;
 using Croniq.Api.Models;
 using Croniq.Auth.Abstractions;
 using Croniq.Auth.Core;
+using Croniq.Core.Observability;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging;
 
@@ -162,7 +163,7 @@ public static partial class ApiHostingExtensions
         }
         catch (Exception ex)
         {
-            logger.LogError(ex, "failed to issue token for tenant {TenantId} client {ClientId}", tenantId, clientId);
+            logger.LogError(ex, "failed to issue token for tenant {TenantId} client {ClientId}", IdentifierHashing.HashTenantId(tenantId) ?? string.Empty, clientId);
             return Results.Problem(statusCode: StatusCodes.Status500InternalServerError, title: "token-issue-failed", detail: ex.Message);
         }
     }

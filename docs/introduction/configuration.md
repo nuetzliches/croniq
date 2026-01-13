@@ -188,6 +188,8 @@ See [`auth.md`](../guides/auth.md) for the end-to-end authentication story and w
 | `Croniq__Core__TenantMode`                         | Optional                                                          | Informational only (does not change tenant resolution). Default is `Single`.               | `Multi`                                            |
 | `Croniq__Core__EnvironmentTag`                     | Optional                                                          | Distinguishes environments/instances (helps multi-dev setups).                             | `dev-alice`                                        |
 | `Croniq__Api__RequestsPerMinute`                   | Optional                                                          | Per-key fixed-window rate limit enforced by `AddCroniqApiRateLimiter`. Default `60`.       | `60`                                               |
+| `Croniq__Observability__HashIdentifiers`           | Optional                                                          | Hashes tenant/caller identifiers in logs/metrics/traces (HMAC-SHA256). Default `false`.    | `true`                                             |
+| `Croniq__Observability__IdentifierHashKey`         | When `HashIdentifiers = true`                                     | Secret key used for HMAC hashing of tenant/caller identifiers.                             | `<secret>`                                         |
 
 > **Tip:** Keep secrets (API keys, connection strings) outside source control. Prefer user-secrets for local development and a managed vault for production environments.
 
@@ -272,6 +274,7 @@ Only override the values you truly need-everything else continues to flow from c
 
 - **Missing connection string:** When either `Auth.Mode` or `Persistence.Mode` is `SqlServer`, the extension throws if it cannot find a connection string on the domain-specific section or the shared `Croniq__SqlServer__ConnectionString` key.
 - **Missing API key:** When `Auth.Mode = InMemory`, you must provide `Croniq__Auth__InMemory__ApiKey`. Otherwise startup throws `InvalidOperationException`.
+- **Missing identifier hash key:** When `Croniq__Observability__HashIdentifiers=true`, you must provide `Croniq__Observability__IdentifierHashKey`.
 - **Unexpected tenant scope:** Verify `Croniq__Core__TenantId`/`EnvironmentTag` when multiple developers work on the same database to avoid job collisions.
 - **Rate limiter rejecting calls:** Increase `Croniq__Api__RequestsPerMinute` or tailor the limiter via `AddCroniqApiRateLimiter` options.
 

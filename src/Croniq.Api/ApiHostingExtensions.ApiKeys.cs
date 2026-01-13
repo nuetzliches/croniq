@@ -2,6 +2,7 @@ using System;
 using Croniq.Api.Models;
 using Croniq.Auth.Abstractions;
 using Croniq.Auth.Core;
+using Croniq.Core.Observability;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging;
 
@@ -42,7 +43,7 @@ public static partial class ApiHostingExtensions
             }
             catch (Exception ex)
             {
-                logger.LogError(ex, "failed to issue api key for tenant {TenantId} client {ClientId}", tenantId, request.ClientId);
+                logger.LogError(ex, "failed to issue api key for tenant {TenantId} client {ClientId}", IdentifierHashing.HashTenantId(tenantId) ?? string.Empty, request.ClientId);
                 return Results.Problem(statusCode: StatusCodes.Status500InternalServerError, title: "api-key-issue-failed", detail: ex.Message);
             }
         })
@@ -73,7 +74,7 @@ public static partial class ApiHostingExtensions
             }
             catch (Exception ex)
             {
-                logger.LogError(ex, "failed to rotate api key {KeyId} for tenant {TenantId}", keyId, tenantId);
+                logger.LogError(ex, "failed to rotate api key {KeyId} for tenant {TenantId}", keyId, IdentifierHashing.HashTenantId(tenantId) ?? string.Empty);
                 return Results.Problem(statusCode: StatusCodes.Status500InternalServerError, title: "api-key-rotation-failed", detail: ex.Message);
             }
         })

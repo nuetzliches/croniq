@@ -12,7 +12,7 @@ This document captures the logging, metrics, and tracing strategy for Croniq ser
 ## Logging
 
 - **Library default**: `Croniq.Providers.Default` relies on `ILoggerFactory` and standard `ILogger` scopes. When `AddCroniqObservability` enables logging, it configures Serilog with JSON console output and optional OTLP log export.
-- **Enrichment**: add `TenantId`, `EnvironmentTag`, `JobKey`, and `CallerId` to the log scope when available. Sensitive fields (payloads, API keys) are redacted or hashed.
+- **Enrichment**: add `TenantId`, `EnvironmentTag`, `JobKey`, and `CallerId` to the log scope when available. Sensitive fields (payloads, API keys) are redacted or hashed. Set `Croniq:Observability:HashIdentifiers=true` plus `Croniq:Observability:IdentifierHashKey` to hash tenant/caller identifiers before emission.
 - **Correlation**: include `TraceId`/`SpanId` in every entry. When Serilog is enabled, the `ActivityEnricher` adds these fields; otherwise use the logging scopes from `ILogger`.
 - **Hosts**: `AddCroniqObservability` wires OpenTelemetry tracing/metrics and, when logging is enabled, configures Serilog for `Croniq.Api`, the worker, and the sample hosts. `Croniq.Api` and `Croniq.Webhooks` ship convenience wrappers (`AddCroniqApiObservability`, `AddCroniqWebhookObservability`) that call the shared helper with their default tracing/meter wiring.
 - **Hosts**: call `services.AddCroniqObservability(configuration, loggingBuilder, "<service>")` (or the service-specific wrappers) to provision OpenTelemetry exporters plus optional Serilog logging; `Croniq.Api` and both sample hosts already use these helpers.
@@ -42,6 +42,25 @@ This document captures the logging, metrics, and tracing strategy for Croniq ser
   - Use structured templates; avoid embedding payloads or secrets. Prefer opaque IDs or hashes for payload-derived values.
   - When adding new loggers, align `SourceContext` with the namespace and ensure the scope carries the standard fields above so Grafana/Loki filters continue to work.
 - **Quick noise check (devstack)**: start the devstack with obs profile, hit a sample endpoint, and tail logs. With the overrides above, you should not see `Hosting.Diagnostics`, EF SQL, or MVC action-descriptor info at `Information`; Croniq lifecycle messages should remain visible.
+
+### Identifier hashing
+
+Croniq can hash tenant/caller identifiers at the observability boundary to avoid emitting raw IDs in logs, metrics, and traces. `AddCroniqObservability` (and the service-specific wrappers) read the options and enable hashing when `Croniq:Observability:HashIdentifiers=true`. Croniq uses HMAC-SHA256 with `Croniq:Observability:IdentifierHashKey` and emits lowercase hex digests. The hash replaces the raw identifier (no dual tags).
+
+Example configuration:
+
+```json
+{
+  "Croniq": {
+    "Observability": {
+      "HashIdentifiers": true,
+      "IdentifierHashKey": "<secret>"
+    }
+  }
+}
+```
+
+Keep `IdentifierHashKey` in your secret provider and share the same key across hosts so tenant/caller joins remain stable.
 
 ## Metrics
 

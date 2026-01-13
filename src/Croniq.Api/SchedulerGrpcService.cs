@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Globalization;
 using Croniq.Auth.Abstractions;
+using Croniq.Core.Observability;
 using Croniq.Core.Execution;
 using Croniq.Core.Jobs;
 using Croniq.Core.Policies;
@@ -263,7 +264,7 @@ internal sealed class SchedulerGrpcService : Scheduler.SchedulerBase
             var scope = new PartitionScope(request.TenantId, request.EnvironmentTag);
             await _store.DeleteTriggerAsync(request.TriggerId, scope, context.CancellationToken).ConfigureAwait(false);
             activity?.SetTag("croniq.trigger.id", request.TriggerId);
-            activity?.SetTag("croniq.tenant_id", request.TenantId);
+            activity?.SetTag("croniq.tenant_id", IdentifierHashing.HashTenantId(request.TenantId));
             activity?.SetTag("croniq.environment", request.EnvironmentTag);
             activity?.SetStatus(ActivityStatusCode.Ok);
             return new DeleteScheduleResponse { Status = "deleted" };
@@ -331,7 +332,7 @@ internal sealed class SchedulerGrpcService : Scheduler.SchedulerBase
         activity.SetTag("croniq.job.key", jobKey.Value);
         if (scope.HasValue)
         {
-            activity.SetTag("croniq.tenant_id", scope.Value.TenantId);
+            activity.SetTag("croniq.tenant_id", IdentifierHashing.HashTenantId(scope.Value.TenantId));
             activity.SetTag("croniq.environment", scope.Value.EnvironmentTag);
         }
         activity.SetTag("croniq.job.namespace", jobKey.NamespaceSegment);

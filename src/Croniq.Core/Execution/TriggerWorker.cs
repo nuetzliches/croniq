@@ -5,6 +5,7 @@ using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Croniq.Core.Jobs;
+using Croniq.Core.Observability;
 using Croniq.Options;
 using Croniq.Core.Policies;
 using Croniq.Persistence.Abstractions;
@@ -77,7 +78,7 @@ public sealed class TriggerWorker
             batchSize);
 
         using var acquireActivity = _activitySource.StartActivity("Croniq.Trigger.Acquire", ActivityKind.Internal);
-        acquireActivity?.SetTag("croniq.tenant_id", _options.TenantId.Trim());
+        acquireActivity?.SetTag("croniq.tenant_id", IdentifierHashing.HashTenantId(_options.TenantId.Trim()));
         acquireActivity?.SetTag("croniq.environment", _options.EnvironmentTag);
         acquireActivity?.SetTag("croniq.batch.size", batchSize);
 

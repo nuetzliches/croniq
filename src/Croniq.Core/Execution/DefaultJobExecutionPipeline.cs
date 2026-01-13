@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.Threading;
 using System.Threading.Tasks;
 using Croniq.Core.Jobs;
+using Croniq.Core.Observability;
 using Croniq.Core.Policies;
 using Croniq.Persistence.Abstractions;
 using Croniq.Sdk;
@@ -60,7 +61,7 @@ public sealed class DefaultJobExecutionPipeline : IJobExecutionPipeline
         {
             activity?.SetTag("croniq.job.variant", request.JobKey.Variant);
         }
-        activity?.SetTag("croniq.tenant_id", request.Scope.TenantId);
+        activity?.SetTag("croniq.tenant_id", IdentifierHashing.HashTenantId(request.Scope.TenantId));
         activity?.SetTag("croniq.environment", request.Scope.EnvironmentTag);
         var stopwatch = Stopwatch.StartNew();
         metadata.TryGetValue(TriggerIdMetadataKey, out var triggerId);
@@ -94,13 +95,14 @@ public sealed class DefaultJobExecutionPipeline : IJobExecutionPipeline
 
     private static IReadOnlyCollection<KeyValuePair<string, object?>> BuildLogScope(JobKey jobKey, PartitionScope scope, string executionId, IReadOnlyDictionary<string, string> metadata)
     {
+        var hashedTenantId = IdentifierHashing.HashTenantId(scope.TenantId);
         var items = new List<KeyValuePair<string, object?>>
         {
             new("croniq.execution_id", executionId),
             new("croniq.job.key", jobKey.Value),
             new("croniq.job.namespace", jobKey.NamespaceSegment),
             new("croniq.job.name", jobKey.JobName),
-            new("croniq.tenant_id", scope.TenantId),
+            new("croniq.tenant_id", hashedTenantId ?? string.Empty),
             new("croniq.environment", scope.EnvironmentTag)
         };
 

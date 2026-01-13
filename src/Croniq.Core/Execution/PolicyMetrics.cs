@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Diagnostics.Metrics;
 using Croniq.Core.Jobs;
+using Croniq.Core.Observability;
 using Croniq.Persistence.Abstractions;
 
 namespace Croniq.Core.Execution;
@@ -40,7 +41,7 @@ internal static class PolicyMetrics
 
         if (scope.HasValue)
         {
-            tags.Add("tenant", scope.Value.TenantId);
+            tags.Add("tenant", IdentifierHashing.HashTenantId(scope.Value.TenantId) ?? string.Empty);
             tags.Add("env", scope.Value.EnvironmentTag);
         }
 

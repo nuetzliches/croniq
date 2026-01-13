@@ -3,6 +3,7 @@ using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics;
 using Croniq.Auth.Abstractions;
+using Croniq.Core.Observability;
 using Croniq.Core.Execution;
 using Croniq.Persistence.Abstractions;
 using Croniq.Rpc;
@@ -80,7 +81,7 @@ internal sealed class WorkerGrpcService : Worker.WorkerBase
         var runnerId = hello.RunnerId.Trim();
         EnsureRunnerIdentityOrThrow(caller, runnerId);
 
-        activity?.SetTag("croniq.tenant_id", caller.TenantId);
+        activity?.SetTag("croniq.tenant_id", IdentifierHashing.HashTenantId(caller.TenantId));
         activity?.SetTag("croniq.environment", environmentTag);
         activity?.SetTag("croniq.runner_id", runnerId);
 
@@ -515,7 +516,7 @@ internal sealed class WorkerGrpcService : Worker.WorkerBase
             ["croniq.execution_id"] = lease.ExecutionId,
             ["croniq.job.key"] = lease.JobKey,
             ["croniq.trigger.id"] = lease.TriggerId,
-            ["croniq.tenant_id"] = scope.TenantId,
+            ["croniq.tenant_id"] = IdentifierHashing.HashTenantId(scope.TenantId) ?? string.Empty,
             ["croniq.environment"] = scope.EnvironmentTag,
             ["croniq.runner_id"] = runnerId
         };

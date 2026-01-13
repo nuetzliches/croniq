@@ -14,6 +14,7 @@ using System.Threading.Channels;
 using System.Threading.Tasks;
 using Croniq.Core.Execution;
 using Croniq.Core.Jobs;
+using Croniq.Core.Observability;
 using Croniq.Core.Policies;
 using Croniq.Options;
 using Croniq.Persistence.Abstractions;
@@ -156,9 +157,10 @@ internal sealed class WebhookIngressRelayService : BackgroundService
         var maxInflight = NormalizeMaxInflight(remote.MaxInflight);
         var consumerId = ResolveConsumerId();
 
+        var hashedTenantId = IdentifierHashing.HashTenantId(scope.TenantId) ?? string.Empty;
         _logger.LogInformation(
             "Webhook ingress relay connected to {Endpoint} for {Tenant}/{Environment} (max inflight {MaxInflight}, mode {Mode}).",
-            endpoint, scope.TenantId, scope.EnvironmentTag, maxInflight, WebhookIngressStreamMode.Grpc);
+            endpoint, hashedTenantId, scope.EnvironmentTag, maxInflight, WebhookIngressStreamMode.Grpc);
 
         await call.RequestStream.WriteAsync(new WebhookIngressClientMessage
         {
@@ -279,9 +281,10 @@ internal sealed class WebhookIngressRelayService : BackgroundService
             .ConfigureAwait(false);
         response.EnsureSuccessStatusCode();
 
+        var hashedTenantId = IdentifierHashing.HashTenantId(scope.TenantId) ?? string.Empty;
         _logger.LogInformation(
             "Webhook ingress relay connected to {Endpoint} for {Tenant}/{Environment} (max inflight {MaxInflight}, mode {Mode}).",
-            endpoint, scope.TenantId, scope.EnvironmentTag, maxInflight, WebhookIngressStreamMode.Sse);
+            endpoint, hashedTenantId, scope.EnvironmentTag, maxInflight, WebhookIngressStreamMode.Sse);
 
         var tasks = new List<Task>();
         using var semaphore = new SemaphoreSlim(maxInflight, maxInflight);
@@ -331,9 +334,10 @@ internal sealed class WebhookIngressRelayService : BackgroundService
 
         using var httpClient = BuildHttpClient(endpoint, apiKey, TimeSpan.FromSeconds(Math.Max(1, remote.TimeoutSeconds)), remote.AllowInvalidServerCertificate);
 
+        var hashedTenantId = IdentifierHashing.HashTenantId(scope.TenantId) ?? string.Empty;
         _logger.LogInformation(
             "Webhook ingress relay polling {Endpoint} for {Tenant}/{Environment} (max inflight {MaxInflight}, mode {Mode}).",
-            endpoint, scope.TenantId, scope.EnvironmentTag, maxInflight, WebhookIngressStreamMode.Polling);
+            endpoint, hashedTenantId, scope.EnvironmentTag, maxInflight, WebhookIngressStreamMode.Polling);
 
         var tasks = new List<Task>();
         using var semaphore = new SemaphoreSlim(maxInflight, maxInflight);
@@ -605,7 +609,7 @@ internal sealed class WebhookIngressRelayService : BackgroundService
         activity?.SetTag("croniq.webhook.event_id", entry.EventId);
         activity?.SetTag("croniq.webhook.hook_key", entry.HookKey);
         activity?.SetTag("croniq.job.key", entry.JobKey);
-        activity?.SetTag("croniq.tenant_id", scope.TenantId);
+        activity?.SetTag("croniq.tenant_id", IdentifierHashing.HashTenantId(scope.TenantId));
         activity?.SetTag("croniq.environment", scope.EnvironmentTag);
 
         using var leaseCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);

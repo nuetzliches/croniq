@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Diagnostics.Metrics;
 using Croniq.Core.Jobs;
+using Croniq.Core.Observability;
 using Croniq.Persistence.Abstractions;
 
 namespace Croniq.Core.Execution;
@@ -73,7 +74,7 @@ internal static class SchedulerMetrics
 
         return new TagList
         {
-            { "tenant", scope.Value.TenantId },
+            { "tenant", IdentifierHashing.HashTenantId(scope.Value.TenantId) ?? string.Empty },
             { "env", scope.Value.EnvironmentTag }
         };
     }

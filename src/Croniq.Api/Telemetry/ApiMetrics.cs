@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Diagnostics.Metrics;
 using Croniq.Core.Jobs;
+using Croniq.Core.Observability;
 using Croniq.Persistence.Abstractions;
 
 namespace Croniq.Api.Telemetry;
@@ -19,7 +20,7 @@ internal static class ApiMetrics
     {
         var tags = new TagList
         {
-            { "tenant", tenantId },
+            { "tenant", IdentifierHashing.HashTenantId(tenantId) ?? string.Empty },
             { "env", environmentTag },
             { "job", jobKey }
         };
@@ -36,7 +37,7 @@ internal static class ApiMetrics
     {
         var tags = new TagList
         {
-            { "tenant", scope.TenantId },
+            { "tenant", IdentifierHashing.HashTenantId(scope.TenantId) ?? string.Empty },
             { "env", scope.EnvironmentTag },
             { "job", jobKey.Value },
             { "namespace", jobKey.NamespaceSegment },

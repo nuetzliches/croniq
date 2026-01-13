@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using Croniq.Core.Observability;
 using Croniq.Options;
 using Croniq.Persistence.Abstractions;
 using Microsoft.Extensions.Hosting;
@@ -64,9 +65,10 @@ public sealed class CroniqWorkerHeartbeatHostedService : BackgroundService
 
         var scope = new PartitionScope(_coreOptions.TenantId.Trim(), _coreOptions.EnvironmentTag);
         var instanceId = _coreOptions.InstanceId.Trim();
+        var hashedTenantId = IdentifierHashing.HashTenantId(scope.TenantId);
         using var logScope = _logger.BeginScope(new Dictionary<string, object?>
         {
-            ["tenantId"] = scope.TenantId,
+            ["tenantId"] = hashedTenantId ?? string.Empty,
             ["environmentTag"] = scope.EnvironmentTag,
             ["instanceId"] = instanceId
         });
