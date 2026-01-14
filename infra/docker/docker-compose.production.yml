@@ -63,6 +63,10 @@ services:
       Croniq__Persistence__Mode: SqlServer
       Croniq__Webhooks__Mode: SqlServer
       Croniq__Api__ExposeSchemas: ${CRONIQ_API_EXPOSE_SCHEMAS:-true}
+      Croniq__Api__ForwardedHeaders__Enabled: ${CRONIQ_API_FORWARDED_HEADERS_ENABLED:-false}
+      Croniq__Api__ForwardedHeaders__ForwardLimit: ${CRONIQ_API_FORWARDED_HEADERS_FORWARD_LIMIT:-1}
+      Croniq__Api__ForwardedHeaders__KnownNetworks__0: ${CRONIQ_API_FORWARDED_HEADERS_KNOWN_NETWORKS_0:-}
+      Croniq__Api__ForwardedHeaders__KnownProxies__0: ${CRONIQ_API_FORWARDED_HEADERS_KNOWN_PROXIES_0:-}
       Croniq__Core__TenantId: ${CRONIQ_CORE_TENANT_ID:-default}
       Croniq__Core__EnvironmentTag: ${CRONIQ_ENVIRONMENT:-dev}
       Croniq__Core__InstanceId: ${CRONIQ_API_INSTANCE_ID:-api-test}

@@ -31,7 +31,7 @@ The initial implementation target is a **self-hosted deployment inside a private
 ### 1) Transport Security is non-negotiable
 
 - All auth endpoints require HTTPS.
-- If Croniq is deployed behind a reverse proxy, enforce `ForwardedHeaders` + HTTPS redirection and document the required proxy config.
+- If Croniq is deployed behind a reverse proxy, enable `Croniq:Api:ForwardedHeaders`, configure `KnownNetworks`/`KnownProxies`, and enforce HTTPS redirection (see [`configuration.md`](../introduction/configuration.md)).
 
 ### 2) Client-side hashing: not a security substitute
 
