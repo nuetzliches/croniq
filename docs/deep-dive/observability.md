@@ -94,7 +94,7 @@ Keep `IdentifierHashKey` in your secret provider and share the same key across h
 3. Generate telemetry:
 
    - Hit the API health endpoint: `curl http://localhost:5080/health` repeatedly to produce request traces/metrics.
-- Trigger sample jobs via `scripts\devstack-trigger-job.cmd` (defaults to `samples:smoke`) so the worker emits spans and logs.
+   - Trigger sample jobs via `scripts\devstack-trigger-job.cmd` (defaults to `samples:smoke`) so the worker emits spans and logs.
 
 4. Check Grafana at `http://localhost:5610` (defaults `admin/admin`). The provisioned data sources (`Prometheus`, `Tempo`) should show as healthy; open the Scheduler dashboard to verify `cronijob_executions_total` increments.
 5. Switch to the "Croniq Log Pulse" dashboard (from `infra/docker/observability/grafana/dashboards/logs-overview.json`), select tenant `croniq-devstack`, and confirm INFO lines arrive for the triggered jobs while the "Failed Job Errors" panel stays quiet unless you provoke failures.

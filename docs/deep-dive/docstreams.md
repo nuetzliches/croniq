@@ -13,12 +13,12 @@ This living note tracks how we keep the consumer-facing docs in sync with the de
 
 ### Consumer Stream (`docs/`)
 
-| Area           | Files                                                                                  | Notes                                                                                                                 |
-| -------------- | -------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
-| Landing + Hero | `index.md`, `README.md`                                                                | Hero page explains Croniq's value; repo README links to each section and preview commands.                            |
-| Introduction   | `introduction/index.md`, `introduction/quickstart.md`, `introduction/configuration.md` | Quickstart drives a Hello Croniq scenario, references configuration, dev stack, and troubleshooting pages.            |
+| Area           | Files                                                                                                                                                   | Notes                                                                                                                                               |
+| -------------- | --------------------------------------------------------------------------------------                                                                  | ---------------------------------------------------------------------------------------------------------------------                               |
+| Landing + Hero | `index.md`, `README.md`                                                                                                                                 | Hero page explains Croniq's value; repo README links to each section and preview commands.                                                          |
+| Introduction   | `introduction/index.md`, `introduction/quickstart.md`, `introduction/configuration.md`                                                                  | Quickstart drives a Hello Croniq scenario, references configuration, dev stack, and troubleshooting pages.                                          |
 | Guides         | `guides/auth.md`, `guides/policies.md`, `guides/triggers.md`, `guides/webhooks.md`, `guides/workers-runners.md`, `guides/grpc.md`, `guides/handlers.md` | Covers auth modes, policy options, trigger payloads, webhooks, worker integration, and handler patterns with "Learn more" callouts into deep dives. |
-| Operations     | `ops/troubleshooting.md`                                                               | Fast-path troubleshooting with links to dev stack, observability, and CI docs for deeper debugging.                   |
+| Operations     | `ops/troubleshooting.md`                                                                                                                                | Fast-path troubleshooting with links to dev stack, observability, and CI docs for deeper debugging.                                                 |
 
 ### Deep-Dive Stream (`docs/deep-dive/`)
 

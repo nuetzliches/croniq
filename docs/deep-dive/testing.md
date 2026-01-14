@@ -11,14 +11,14 @@ This document extends the quality vision captured in `architecture.md` and descr
 
 ## Test Matrix (living reference)
 
-| Suite                                                | Primary scope                                                                                                     | Trigger/Cadence             | Tooling / Infra                                         | Blocking rule                     |
-| ---------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- | --------------------------- | ------------------------------------------------------- | --------------------------------- |
-| `Unit` (`tests/Croniq.*.Tests`)                      | Pure logic, options, schedulers, API surface guards                                                               | Every PR + local pre-push   | `xUnit`, `Shouldly`, `dotnet test`                      | Fail blocks merge                 |
-| `Contract` (`*.ContractTests`)                       | Provider contracts (SqlServer persistence/auth, secrets) via Testcontainers                                       | Every PR (parallel)         | `Testcontainers`, seeded SQL, `Croniq.TestKit`          | Fail blocks merge                 |
+| Suite                                                | Primary scope                                                                                                     | Trigger/Cadence              | Tooling / Infra                                         | Blocking rule                     |
+| ---------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- | ---------------------------  | ------------------------------------------------------- | --------------------------------- |
+| `Unit` (`tests/Croniq.*.Tests`)                      | Pure logic, options, schedulers, API surface guards                                                               | Every PR + local pre-push    | `xUnit`, `Shouldly`, `dotnet test`                      | Fail blocks merge                 |
+| `Contract` (`*.ContractTests`)                       | Provider contracts (SqlServer persistence/auth, secrets) via Testcontainers                                       | Every PR (parallel)          | `Testcontainers`, seeded SQL, `Croniq.TestKit`          | Fail blocks merge                 |
 | `Observability` (`tests/Croniq.Observability.Tests`) | Verifies OTLP exporter wiring using an in-memory collector + host builder                                         | Every PR + nightly + release | `dotnet test`, ASP.NET host, lightweight OTLP server    | Fail blocks merge/release         |
-| `Smoke`/`E2E` (`tests/Croniq.Api.Smoke`)             | `Croniq.Sample.ApiHost` + `Croniq.Sample.WorkerHost` via Compose (InMemory auth, SqlServer persistence, migrator) | Nightly + release candidate | `scripts/test-e2e.cmd` (Docker Compose + `dotnet test`) | Fail blocks release/nightly badge |
-| `Compliance`                                         | SBOM, Trivy scan, dependency audit                                                                                | Nightly + release           | `Syft`, `Trivy`, GitHub Actions reusable workflows      | Fail blocks release               |
-| `Perf/Burn-in` (planned)                             | Long-running stress on scheduler leases + quotas                                                                  | On-demand / before GA       | Testcontainers + perf harness (to be defined)           | Informational                     |
+| `Smoke`/`E2E` (`tests/Croniq.Api.Smoke`)             | `Croniq.Sample.ApiHost` + `Croniq.Sample.WorkerHost` via Compose (InMemory auth, SqlServer persistence, migrator) | Nightly + release candidate  | `scripts/test-e2e.cmd` (Docker Compose + `dotnet test`) | Fail blocks release/nightly badge |
+| `Compliance`                                         | SBOM, Trivy scan, dependency audit                                                                                | Nightly + release            | `Syft`, `Trivy`, GitHub Actions reusable workflows      | Fail blocks release               |
+| `Perf/Burn-in` (planned)                             | Long-running stress on scheduler leases + quotas                                                                  | On-demand / before GA        | Testcontainers + perf harness (to be defined)           | Informational                     |
 
 ## Suite Details
 
@@ -168,6 +168,6 @@ This document extends the quality vision captured in `architecture.md` and descr
 | DONE   | Croniq.TestKit shared fixtures committed                     | `tests/Croniq.TestKit/` now ships SQL Server fixtures, log collectors, and canonical trait constants.                                                   |
 | DONE   | Contract suites for SqlServer providers run in CI            | `tests/Croniq.Persistence.SqlServer.Tests` exercises the EF provider and is wired into `.github/workflows/ci-pr.yml`.                                   |
 | DONE   | Nightly workflow with Compose E2E + SBOM/Trivy               | `.github/workflows/nightly.yml` now runs the dev stack and a compliance job (Syft SBOM + Trivy scan) with blocking gates.                               |
-| DONE   | Release workflow for packaging, signing, compliance          | `.github/workflows/release.yml` runs full tests, packs/publishes artifacts, builds images, and runs SBOM/Trivy scans.                                  |
+| DONE   | Release workflow for packaging, signing, compliance          | `.github/workflows/release.yml` runs full tests, packs/publishes artifacts, builds images, and runs SBOM/Trivy scans.                                   |
 
 Once these backlog items close, the “Teststrategie-Dokument” entry in `CHECKLIST.md` can move to **done**.

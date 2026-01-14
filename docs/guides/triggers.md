@@ -40,16 +40,16 @@ Worker hosts can seed schedules on startup:
 
 `Croniq:Triggers` accepts either a JSON array or an object keyed by trigger id. When you use the map form, the key becomes `TriggerId` if the field is omitted.
 
-| Field          | Required | Notes                                                                                                                                          |
-| -------------- | -------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| Field          | Required | Notes                                                                                                                                                                   |
+| -------------- | -------- | ----------------------------------------------------------------------------------------------------------------------------------------------                          |
 | TriggerId      | No       | Defaults to `{JobKey}:{base64url(cronExpression)}` (and `:{base64url(timeZoneId)}` when provided). If the result exceeds 512 chars, Croniq uses `JobKey:hash-<sha256>`. |
-| JobKey         | Yes      | Must follow the Croniq job key format (`namespace:name[:variant]`). Tenant/environment are taken from the hosting scope, not from the job key. |
-| CronExpression | Yes      | 6-field cron expression (optional year), or `@once` for a one-off trigger.                                                                     |
-| StartAtUtc     | No       | Optional UTC start bound (ISO-8601).                                                                                                           |
-| EndAtUtc       | No       | Optional UTC end bound (ISO-8601).                                                                                                             |
-| Enabled        | No       | Defaults to `true`.                                                                                                                            |
-| ManagedBy      | No       | Required when `Croniq:Seeding:Mode=ForceUpdate`; also stored as `metadata.managedBy`.                                                          |
-| Metadata       | No       | String dictionary stored with the trigger definition and exposed via `IJobExecutionContext.Metadata`.                                          |
+| JobKey         | Yes      | Must follow the Croniq job key format (`namespace:name[:variant]`). Tenant/environment are taken from the hosting scope, not from the job key.                          |
+| CronExpression | Yes      | 6-field cron expression (optional year), or `@once` for a one-off trigger.                                                                                              |
+| StartAtUtc     | No       | Optional UTC start bound (ISO-8601).                                                                                                                                    |
+| EndAtUtc       | No       | Optional UTC end bound (ISO-8601).                                                                                                                                      |
+| Enabled        | No       | Defaults to `true`.                                                                                                                                                     |
+| ManagedBy      | No       | Required when `Croniq:Seeding:Mode=ForceUpdate`; also stored as `metadata.managedBy`.                                                                                   |
+| Metadata       | No       | String dictionary stored with the trigger definition and exposed via `IJobExecutionContext.Metadata`.                                                                   |
 
 ### Metadata conventions
 

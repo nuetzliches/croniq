@@ -37,11 +37,11 @@ API keys are issued for an **API client** (`ClientId`). The client id is the log
 
 ### Configuration Checklist
 
-| Setting                                                   | Required?             | Description                                                                     |
-| --------------------------------------------------------- | --------------------- | ------------------------------------------------------------------------------- |
-| `Croniq__Auth__Mode`                                      | Always                | `InMemory` or `SqlServer`.                                                      |
-| `Croniq__Auth__SqlServer__ConnectionString`               | When `SqlServer` mode | Overrides the default Croniq SQL connection if needed.                          |
-| `Croniq__Auth__InMemory__ApiKey`                          | When `InMemory` mode  | Single dev key used by all callers.                                             |
+| Setting                                                   | Required?             | Description                                                                                |
+| --------------------------------------------------------- | --------------------- | -------------------------------------------------------------------------------            |
+| `Croniq__Auth__Mode`                                      | Always                | `InMemory` or `SqlServer`.                                                                 |
+| `Croniq__Auth__SqlServer__ConnectionString`               | When `SqlServer` mode | Overrides the default Croniq SQL connection if needed.                                     |
+| `Croniq__Auth__InMemory__ApiKey`                          | When `InMemory` mode  | Single dev key used by all callers.                                                        |
 | `Croniq__Core__TenantId` / `Croniq__Core__EnvironmentTag` | Optional              | Embedded in every issued key so rate limiting and future audit trails remain tenant-aware. |
 
 Example local `.cmd` snippet:
