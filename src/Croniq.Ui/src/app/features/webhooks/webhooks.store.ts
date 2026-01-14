@@ -14,6 +14,7 @@ export type WebhookEndpointView = {
     requestsPerMinute?: number;
     status: 'active' | 'paused' | 'degraded';
     lastDeliveryAt: string;
+    ipRuleCount: number | null;
 };
 
 export type WebhookCapabilitiesView = {
@@ -486,6 +487,8 @@ export class WebhooksStore {
                 return;
             }
             const record = item as Record<string, unknown>;
+            const ipRules = record['ipRules'];
+            const ipRuleCount = Array.isArray(ipRules) ? ipRules.length : null;
             entries.push({
                 hookKey: typeof record['hookKey'] === 'string' ? record['hookKey'] : `hook-${index}`,
                 jobKey: typeof record['jobKey'] === 'string' ? record['jobKey'] : 'unknown-job',
@@ -498,6 +501,7 @@ export class WebhooksStore {
                         : 'active',
                 lastDeliveryAt:
                     tryIsoFromUnknown(record['lastDeliveryAt']) ?? nowIso(),
+                ipRuleCount,
             });
         });
         return entries.length ? entries : this.endpointsSignal();

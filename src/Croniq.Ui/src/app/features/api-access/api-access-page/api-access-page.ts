@@ -22,6 +22,7 @@ export class ApiAccessPage {
   // Data
   readonly clients = this.store.clients;
   readonly isLoading = this.store.isLoading;
+  readonly error = this.store.error;
 
   // Actions
   generateKey() {

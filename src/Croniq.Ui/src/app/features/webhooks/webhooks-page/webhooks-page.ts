@@ -76,4 +76,15 @@ export class WebhooksPage {
       }
     });
   }
+
+  ipWhitelistLabel(endpoint: WebhookEndpointView): string {
+    const count = endpoint.ipRuleCount;
+    if (count === null || count === undefined) {
+      return 'IP Whitelist: Unavailable';
+    }
+    if (count === 0) {
+      return 'IP Whitelist: None';
+    }
+    return `IP Whitelist: ${count} rule${count === 1 ? '' : 's'}`;
+  }
 }

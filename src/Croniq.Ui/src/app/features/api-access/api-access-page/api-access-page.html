@@ -12,6 +12,11 @@
 
   <!-- Content -->
   <div class="flex-1 overflow-hidden rounded-xl border border-white/10 bg-surface-alt shadow-card">
+    @if (error()) {
+      <div class="border-b border-white/10 bg-danger/10 px-4 py-3 text-sm text-danger">
+        {{ error() }}
+      </div>
+    }
     <div class="overflow-x-auto">
       <table class="w-full text-left text-sm">
         <thead class="bg-white/5 text-xs uppercase text-muted">
@@ -26,56 +31,56 @@
         </thead>
         <tbody class="divide-y divide-white/10">
           @if (isLoading()) {
-          <tr>
-            <td colspan="6" class="px-6 py-8 text-center text-muted">Loading API clients...</td>
-          </tr>
+            <tr>
+              <td colspan="6" class="px-6 py-8 text-center text-muted">Loading API clients...</td>
+            </tr>
           } @else if (clients().length === 0) {
-          <tr>
-            <td colspan="6" class="px-6 py-8 text-center text-muted">No API clients found.</td>
-          </tr>
-          } @else { @for (client of clients(); track client.clientId) {
-          <tr class="hover:bg-white/5">
-            <td class="px-6 py-4 font-medium text-primary">
-              {{ client.name }}
-              @if (!client.isActive) {
-              <span class="ml-2 rounded bg-danger/10 px-1.5 py-0.5 text-xs text-danger"
-                >Inactive</span
-              >
-              }
-            </td>
-            <td class="px-6 py-4 font-mono text-xs text-muted">{{ client.clientId }}</td>
-            <td class="px-6 py-4 text-muted">{{ client.environmentTag || '-' }}</td>
-            <td class="px-6 py-4 text-muted">
-              @if (client.expiresAtUtc) {
-              {{ client.expiresAtUtc | date : 'mediumDate' }}
-              } @else {
-              <span class="italic text-muted/50">Never</span>
-              }
-            </td>
-            <td class="px-6 py-4">
-              <div class="flex flex-wrap gap-1">
-                @for (scope of client.scopes || []; track scope) {
-                <span class="rounded bg-white/5 px-1.5 py-0.5 text-xs text-muted">{{ scope }}</span>
-                }
-              </div>
-            </td>
-            <td class="px-6 py-4 text-right">
-              <button
-                (click)="issueKey(client)"
-                class="mr-4 text-xs font-medium text-indigo-400 hover:text-indigo-300 transition-colors"
-                title="Issue new key"
-              >
-                Issue Key
-              </button>
-              <button
-                (click)="revokeKey(client.clientId!)"
-                class="text-xs font-medium text-danger hover:text-danger-hover transition-colors"
-              >
-                Revoke
-              </button>
-            </td>
-          </tr>
-          } }
+            <tr>
+              <td colspan="6" class="px-6 py-8 text-center text-muted">No API clients found.</td>
+            </tr>
+          } @else {
+            @for (client of clients(); track client.clientId) {
+              <tr class="hover:bg-white/5">
+                <td class="px-6 py-4 font-medium text-primary">
+                  {{ client.name }}
+                  @if (!client.isActive) {
+                    <span class="ml-2 rounded bg-danger/10 px-1.5 py-0.5 text-xs text-danger">Inactive</span>
+                  }
+                </td>
+                <td class="px-6 py-4 font-mono text-xs text-muted">{{ client.clientId }}</td>
+                <td class="px-6 py-4 text-muted">{{ client.environmentTag || '-' }}</td>
+                <td class="px-6 py-4 text-muted">
+                  @if (client.expiresAtUtc) {
+                    {{ client.expiresAtUtc | date : 'mediumDate' }}
+                  } @else {
+                    <span class="italic text-muted/50">Never</span>
+                  }
+                </td>
+                <td class="px-6 py-4">
+                  <div class="flex flex-wrap gap-1">
+                    @for (scope of client.scopes || []; track scope) {
+                      <span class="rounded bg-white/5 px-1.5 py-0.5 text-xs text-muted">{{ scope }}</span>
+                    }
+                  </div>
+                </td>
+                <td class="px-6 py-4 text-right">
+                  <button
+                    (click)="issueKey(client)"
+                    class="mr-4 text-xs font-medium text-indigo-400 hover:text-indigo-300 transition-colors"
+                    title="Issue new key"
+                  >
+                    Issue Key
+                  </button>
+                  <button
+                    (click)="revokeKey(client.clientId!)"
+                    class="text-xs font-medium text-danger hover:text-danger-hover transition-colors"
+                  >
+                    Revoke
+                  </button>
+                </td>
+              </tr>
+            }
+          }
         </tbody>
       </table>
     </div>

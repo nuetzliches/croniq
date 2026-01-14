@@ -1,34 +1,57 @@
-import { Injectable, computed, inject } from '@angular/core';
+import { Injectable, computed, inject, signal } from '@angular/core';
+import { authFailureFromError } from '@core/auth/auth-failure';
 import { tenantRxResource } from '@core/resource/tenant-rx-resource';
 import { TenantContextService } from '@core/tenant-context/tenant-context.service';
 import { ApiClientResponse, IssueApiKeyRequest, IssueApiKeyResponse, UpsertApiClientRequest } from '@croniq/api-schema';
 import { CRONIQ_API_CLIENT, CroniqApiClient } from 'data-access';
-import { Observable, map, of, tap } from 'rxjs';
+import { Observable, catchError, map, of, tap } from 'rxjs';
 
 @Injectable()
 export class ApiAccessStore {
     private readonly api = inject<CroniqApiClient>(CRONIQ_API_CLIENT);
     private readonly tenantContext = inject(TenantContextService);
 
-    readonly clientsResource = tenantRxResource<ApiClientResponse[], { tenantId: string }>({
-        command: 'listApiClients',
+    private readonly clientsSignal = signal<ReadonlyArray<ApiClientResponse>>([]);
+    private readonly clientsErrorSignal = signal<string | null>(null);
+
+    private readonly clientsResource = tenantRxResource<ReadonlyArray<ApiClientResponse>, { tenantId: string }>({
+        command: 'api-access.list',
         defaultValue: [],
         params: () => {
-            const tenant = this.tenantContext.tenantId();
-            if (!tenant) return { tenantId: '' }; // Should ideally handle no-tenant case by not fetching
-            return { tenantId: tenant };
+            return { tenantId: this.tenantContext.tenantId() ?? '' };
         },
-        stream: (args) => {
-            if (!args.params.tenantId) return of([]);
-            return this.api.listTenantApiClients(args.params).pipe(
-                map(res => res as ApiClientResponse[])
+        stream: ({ params, requestOptions }) => {
+            this.clientsErrorSignal.set(null);
+
+            const tenantId = params.tenantId.trim();
+            if (!tenantId) {
+                this.clientsErrorSignal.set('Required context is missing - unable to load API clients.');
+                this.clientsSignal.set([]);
+                return of([]);
+            }
+
+            return this.api.listTenantApiClients({ tenantId }, requestOptions).pipe(
+                map((response) => Array.isArray(response) ? response as ApiClientResponse[] : []),
+                tap((clients) => this.clientsSignal.set(clients)),
+                catchError((error: unknown) => {
+                    console.error('Failed to load API clients', error);
+                    const authFailure = authFailureFromError(error, {
+                        forbidden: 'Forbidden (403) - your token is missing API access permissions.',
+                    });
+                    if (authFailure) {
+                        this.clientsErrorSignal.set(authFailure.message);
+                        return of(this.clientsSignal());
+                    }
+                    this.clientsErrorSignal.set('Unable to load API clients from API.');
+                    return of(this.clientsSignal());
+                }),
             );
         },
     });
 
-    readonly clients = computed(() => this.clientsResource.value() ?? []);
-    readonly isLoading = this.clientsResource.isLoading;
-    readonly error = this.clientsResource.error;
+    readonly clients = this.clientsSignal.asReadonly();
+    readonly isLoading = computed(() => this.clientsResource.isLoading());
+    readonly error = this.clientsErrorSignal.asReadonly();
 
     upsertClient(request: UpsertApiClientRequest): Observable<UpsertApiClientRequest | null> {
         const tenant = this.tenantContext.tenantId();

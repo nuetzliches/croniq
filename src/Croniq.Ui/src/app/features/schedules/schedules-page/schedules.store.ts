@@ -3,7 +3,7 @@ import { Injectable, computed, inject, signal } from '@angular/core';
 import { authFailureFromError } from '@core/auth/auth-failure';
 import { tenantRxResource } from '@core/resource/tenant-rx-resource';
 import { TenantContextService } from '@core/tenant-context/tenant-context.service';
-import { isoFromEpochMs, nowIso, nowMs } from '@core/time/clock';
+import { nowIso } from '@core/time/clock';
 import { ScheduleResponse, ScheduleSummary, UpsertScheduleRequest } from '@croniq/api-schema';
 import { CRONIQ_API_CLIENT, CroniqApiClient } from 'data-access';
 import { EMPTY, catchError, finalize, map, of, tap } from 'rxjs';
@@ -74,7 +74,7 @@ export class SchedulesStore {
                     console.error('Failed to load schedules', error);
                     const authFailure = authFailureFromError(error, {
                         forbidden:
-                            'Forbidden (403) — your token is missing schedules permissions.',
+                            'Forbidden (403) - your token is missing schedules permissions.',
                     });
                     if (authFailure) {
                         this.error.set(authFailure.message);
@@ -82,10 +82,7 @@ export class SchedulesStore {
                         return of([]);
                     }
 
-                    this.error.set('Unable to load schedules from API — showing fallback data.');
-                    const fallback = createFallbackSchedules();
-                    this.schedulesSignal.set(fallback);
-                    this.lastUpdatedSignal.set(nowIso());
+                    this.error.set('Unable to load schedules from API.');
                     return of([]);
                 }),
             );
@@ -248,10 +245,6 @@ export class SchedulesStore {
     readonly executions = this.executionsSignal.asReadonly();
     readonly executionsLoading = computed(() => this.executionsResource.isLoading());
     readonly executionsError = this.executionsErrorSignal.asReadonly();
-
-    constructor() {
-        this.schedulesSignal.set(createFallbackSchedules());
-    }
 
     refresh(): void {
         this.schedulesResource.reload();
@@ -480,63 +473,6 @@ function normalizeScheduleDeadLettersResponse(value: unknown): ReadonlyArray<Sch
     return entries;
 }
 
-function createFallbackSchedules(): ReadonlyArray<ScheduleSummary> {
-    const now = nowMs();
-    return [
-        {
-            id: '8f2059c8-6fb9-4a8f-8d3f-a5b1a7bd81c2',
-            name: 'Nightly billing sweep',
-            tenant: 'cron-lab',
-            cron: '0 2 * * *',
-            timezone: 'UTC',
-            owner: 'billing@croniq.dev',
-            state: 'active',
-            nextFire: isoFromEpochMs(now + 1000 * 60 * 90),
-            lastDurationMs: 1850,
-            alerts: 0,
-            tags: ['critical'],
-        },
-        {
-            id: '8d553f98-16fe-4d27-9cf4-e1b4a4250df9',
-            name: 'Webhook retry coordinator',
-            tenant: 'cron-lab',
-            cron: '*/5 * * * *',
-            timezone: 'UTC',
-            owner: 'hooks@croniq.dev',
-            state: 'degraded',
-            nextFire: isoFromEpochMs(now + 1000 * 60 * 5),
-            lastDurationMs: 5320,
-            alerts: 3,
-            tags: ['webhooks'],
-        },
-        {
-            id: 'ff0e71b5-5c3c-436b-9116-5e7bbf5e3a6e',
-            name: 'Usage snapshot',
-            tenant: 'northwind',
-            cron: '15 * * * *',
-            timezone: 'America/Chicago',
-            owner: 'ops@croniq.dev',
-            state: 'active',
-            nextFire: isoFromEpochMs(now + 1000 * 60 * 15),
-            lastDurationMs: 2440,
-            alerts: 1,
-            tags: ['usage'],
-        },
-        {
-            id: 'be821a56-6630-4b43-9c8a-cc1c8fa4b924',
-            name: 'Legacy policy exporter',
-            tenant: 'legacy-east',
-            cron: '0 */6 * * *',
-            timezone: 'UTC',
-            owner: 'migrations@croniq.dev',
-            state: 'paused',
-            nextFire: isoFromEpochMs(now + 1000 * 60 * 60 * 6),
-            lastDurationMs: 8840,
-            alerts: 0,
-            tags: ['migration'],
-        },
-    ];
-}
 
 function normalizeScheduleDetail(value: unknown, fallbackId: string): ScheduleDetail | null {
     if (typeof value !== 'object' || value === null) {
