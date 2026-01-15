@@ -22,7 +22,7 @@
 
 ## Persistence Flow
 
-- `SqlServerWebhookPersistenceProvider` gains methods:
+- `SqlServerWebhookPersistenceProvider` and `PostgresWebhookPersistenceProvider` gain methods:
   - `RotateSecretAsync(WebhookSecretRotate request)` (new abstraction on `IWebhookPersistenceProvider`).
   - Internal helpers to append history row + update `WebhookEndpointEntity.Secret`/`SecretHash`.
 - `WebhookEndpointEntity` continues to hold current secret for backward compatibility but setter only triggered via rotation path.
@@ -62,7 +62,7 @@ You can wrap the call inside a script (PowerShell, Bash, etc.) to mask the new s
 `scripts/webhook-rotate-secret.ps1` automates the HTTP call for local operators and CI pipelines. Parameters:
 
 - `-TenantId`, `-Environment`, `-HookKey`: scope and webhook identifier.
-- Optional `-ActivateInSeconds` (0–604800) to stage a future activation window.
+- Optional `-ActivateInSeconds` (0-604800) to stage a future activation window.
 - Optional `-GracePeriodSeconds` (defaults to server-side 24h) to keep the previous secret alive while callers switch.
 - Optional `-Notes` to capture runbooks or ticket IDs in the audit trail.
 

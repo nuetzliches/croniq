@@ -7,8 +7,10 @@
     <IsPackable>false</IsPackable>
   </PropertyGroup>
   <ItemGroup>
+    <ProjectReference Include="..\..\src\Croniq.Data.Postgres\Croniq.Data.Postgres.csproj" />
     <ProjectReference Include="..\..\src\Croniq.Data.SqlServer\Croniq.Data.SqlServer.csproj" />
     <ProjectReference Include="..\..\src\Croniq.Auth.Abstractions\Croniq.Auth.Abstractions.csproj" />
+    <ProjectReference Include="..\..\src\Croniq.Auth.Postgres\Croniq.Auth.Postgres.csproj" />
     <ProjectReference Include="..\..\src\Croniq.Auth.SqlServer\Croniq.Auth.SqlServer.csproj" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="10.0.1">
       <PrivateAssets>all</PrivateAssets>

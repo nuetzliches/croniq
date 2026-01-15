@@ -131,7 +131,7 @@ app.UseCroniqApi();
 app.UseCroniqWebhooks(mapHealthEndpoints: false); // skip duplicate /health when co-hosted
 ```
 
-`AddCroniqWebhookServices` automatically wires the persistence provider based on `Croniq:Webhooks:Mode` (InMemory for samples, SqlServer when you reuse `Croniq:SqlServer`). Set `Croniq:Webhooks:ConfigurePersistence=false` when you need to register a custom `IWebhookPersistenceProvider` before calling `AddCroniqWebhookServices`.
+`AddCroniqWebhookServices` automatically wires the persistence provider based on `Croniq:Webhooks:Mode` (InMemory for samples, SqlServer/Postgres when you reuse `Croniq:SqlServer` or `Croniq:Postgres`). Set `Croniq:Webhooks:ConfigurePersistence=false` when you need to register a custom `IWebhookPersistenceProvider` before calling `AddCroniqWebhookServices`.
 
 Add a matching configuration block (e.g., in `appsettings.Development.json`). Point the `JobKey` at the handler you registered above so the webhook reuses the same job key used by manual triggers:
 

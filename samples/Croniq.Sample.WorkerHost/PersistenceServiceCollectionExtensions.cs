@@ -1,4 +1,5 @@
 using Croniq.JobStore.InMemory;
+using Croniq.Persistence.Postgres;
 using Croniq.Persistence.SqlServer;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -23,6 +24,22 @@ internal static class PersistenceServiceCollectionExtensions
             services.AddCroniqSqlServerPersistence(options =>
             {
                 sqlSection.Bind(options);
+                options.ConnectionString = connection;
+            }, persistenceSection.Exists() ? persistence => persistenceSection.Bind(persistence) : null);
+        }
+        else if (string.Equals(mode, "Postgres", StringComparison.OrdinalIgnoreCase))
+        {
+            var pgSection = configuration.GetSection("Croniq:Postgres");
+            var connection = pgSection["ConnectionString"];
+            if (string.IsNullOrWhiteSpace(connection))
+            {
+                throw new InvalidOperationException("Croniq:Postgres:ConnectionString is required when Persistence.Mode = Postgres.");
+            }
+
+            var persistenceSection = configuration.GetSection("Croniq:Persistence:Postgres");
+            services.AddCroniqPostgresPersistence(options =>
+            {
+                pgSection.Bind(options);
                 options.ConnectionString = connection;
             }, persistenceSection.Exists() ? persistence => persistenceSection.Bind(persistence) : null);
         }

@@ -116,6 +116,7 @@ public sealed class PasswordAuthApiTestHost : IAsyncLifetime
         builder.Services.AddSingleton<IRefreshTokenStore>(sp => sp.GetRequiredService<InMemoryRefreshTokenStore>());
 
         builder.Services.AddSingleton<PasswordAuthService>();
+        builder.Services.AddSingleton<IPasswordAuthService>(sp => sp.GetRequiredService<PasswordAuthService>());
 
         builder.Services.AddSingleton(Webhooks);
         builder.Services.AddSingleton<IWebhookPersistenceProvider>(sp => sp.GetRequiredService<InMemoryWebhookPersistenceProvider>());

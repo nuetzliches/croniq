@@ -106,6 +106,8 @@ jobs:
             project: tests/Croniq.Observability.Tests/Croniq.Observability.Tests.csproj
           - displayName: Croniq.Persistence.SqlServer.Tests
             project: tests/Croniq.Persistence.SqlServer.Tests/Croniq.Persistence.SqlServer.Tests.csproj
+          - displayName: Croniq.Persistence.Postgres.Tests
+            project: tests/Croniq.Persistence.Postgres.Tests/Croniq.Persistence.Postgres.Tests.csproj
           - displayName: Croniq.Sdk.Tests
             project: tests/Croniq.Sdk.Tests/Croniq.Sdk.Tests.csproj
     steps:

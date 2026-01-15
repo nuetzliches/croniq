@@ -82,19 +82,17 @@ Keep `IdentifierHashKey` in your secret provider and share the same key across h
 ## Collector & Local Stack
 
 - Compose overlay `infra/docker/docker-compose.observability.yml` (loaded automatically by the devstack helper scripts) spins up:
-  - `otel-collector` with pipelines for traces/logs/metrics → Prometheus, Tempo, Loki (optional).
+  - `otel-collector` with pipelines for traces/logs/metrics -> Prometheus, Tempo, Loki (optional).
   - `grafana` with preloaded dashboards (`infra/docker/observability/grafana/dashboards/*.json`).
   - `tempo` (traces) and `prometheus` (metrics). Loki is optional for logs if not using OpenTelemetry logs.
 - Developer workflow: `scripts\devstack-up.cmd --profile obs` (or manual `docker compose` with all three files) and set `OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317` (default gRPC) for local SDK processes that emit telemetry outside of Docker; swap to `http://localhost:4318` + `OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf` only when an HTTP collector is required.
 
 ## Verification Checklist (Local)
 
-1. `scripts\devstack-up.cmd --profile obs` ensures the base services (API, worker, SQL) plus `otel-collector`, `prometheus`, `tempo`, and `grafana` are up. Expose the OTLP gRPC endpoint via `CRONIQ_OTLP_GRPC_PORT` when you need to point external processes at the collector.
+1. `scripts\devstack-up.cmd --profile obs` ensures the base services (API, worker, SQL Server or Postgres) plus `otel-collector`, `prometheus`, `tempo`, and `grafana` are up. Expose the OTLP gRPC endpoint via `CRONIQ_OTLP_GRPC_PORT` when you need to point external processes at the collector.
 2. Tail `docker compose -f infra/docker/docker-compose.yml -f infra/docker/docker-compose.dev.yml -f infra/docker/docker-compose.observability.yml logs otel-collector -f` and confirm the pipelines report `Exporter started` with no errors.
-3. Generate telemetry:
+3. Generate telemetry: hit the API health endpoint (`curl http://localhost:5080/health`) repeatedly to produce request traces/metrics, then trigger sample jobs via `scripts\devstack-trigger-job.cmd` (defaults to `samples:smoke`) so the worker emits spans and logs.
 
-   - Hit the API health endpoint: `curl http://localhost:5080/health` repeatedly to produce request traces/metrics.
-   - Trigger sample jobs via `scripts\devstack-trigger-job.cmd` (defaults to `samples:smoke`) so the worker emits spans and logs.
 
 4. Check Grafana at `http://localhost:5610` (defaults `admin/admin`). The provisioned data sources (`Prometheus`, `Tempo`) should show as healthy; open the Scheduler dashboard to verify `cronijob_executions_total` increments.
 5. Switch to the "Croniq Log Pulse" dashboard (from `infra/docker/observability/grafana/dashboards/logs-overview.json`), select tenant `croniq-devstack`, and confirm INFO lines arrive for the triggered jobs while the "Failed Job Errors" panel stays quiet unless you provoke failures.

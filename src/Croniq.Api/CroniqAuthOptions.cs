@@ -4,9 +4,11 @@ namespace Croniq.Api;
 
 public sealed class CroniqAuthOptions
 {
-    public string Mode { get; set; } = "SqlServer"; // SqlServer | InMemory
+    public string Mode { get; set; } = "SqlServer"; // SqlServer | Postgres | InMemory
 
     public SqlServerAuthOptions SqlServer { get; set; } = new();
+
+    public PostgresAuthOptions Postgres { get; set; } = new();
 
     public InMemoryAuthOptions InMemory { get; set; } = new();
 
@@ -14,6 +16,14 @@ public sealed class CroniqAuthOptions
 }
 
 public sealed class SqlServerAuthOptions
+{
+    public string? ConnectionString { get; set; }
+    public string? MigrationsAssembly { get; set; }
+    public bool? EnableDetailedErrors { get; set; }
+    public bool? EnableSensitiveDataLogging { get; set; }
+}
+
+public sealed class PostgresAuthOptions
 {
     public string? ConnectionString { get; set; }
     public string? MigrationsAssembly { get; set; }

@@ -11,9 +11,9 @@ Croniq can be operated at different maturity levels. These are not different pro
 Goal: get started fast with little configuration and few running components.
 
 - Typical: run the `Croniq.Sample` project as a single process.
-- Default persistence: in-memory job store (no database required).
-- Features: keep the baseline small; additional surfaces are opt-in (API/UI, gRPC, webhooks, observability, durable SqlServer persistence).
-- Trade-off: without durable persistence, jobs and schedules are not a stable, shared “source of truth” across restarts and scaling.
+- It avoids requiring DB permissions/schema in scenarios that are intentionally "no database".
+- Features: keep the baseline small; additional surfaces are opt-in (API/UI, gRPC, webhooks, observability, durable SqlServer/Postgres persistence).
+- Trade-off: without durable persistence, jobs and schedules are not a stable, shared "source of truth" across restarts and scaling.
 
 When it fits:
 
@@ -34,12 +34,12 @@ In this repo, the platform-style samples are split across dedicated projects (fo
 
 Baseline requirements:
 
-- durable persistence (SqlServer)
+- durable persistence (SqlServer/Postgres)
 - more configuration, in exchange for predictable operations and full management capabilities
 
 Why it matters:
 
-- Once operators expect “full management in the UI”, Croniq needs a server-side source of truth (persistence), not only an in-process registry.
+- Once operators expect "full management in the UI", Croniq needs a server-side source of truth (persistence), not only an in-process registry.
 
 ---
 
@@ -47,8 +47,8 @@ Why it matters:
 
 Conceptually, Croniq distinguishes between:
 
-- Job catalog (job definitions): “Which jobs exist in this tenant/environment?” including metadata (JobKey, display name, description, owner, capabilities).
-- Schedules/triggers: “When should a job run?” (cron/interval/webhook/event) and with which policies.
+- Job catalog (job definitions): "Which jobs exist in this tenant/environment?" including metadata (JobKey, display name, description, owner, capabilities).
+- Schedules/triggers: "When should a job run?" (cron/interval/webhook/event) and with which policies.
 
 For UI/management the crucial point is:
 
@@ -59,14 +59,14 @@ For UI/management the crucial point is:
 
 ## Recommended baseline
 
-- Platform mode: enable opt-in “Job Catalog Seeding” on host startup to upsert job definitions per tenant/environment.
+- Platform mode: enable opt-in "Job Catalog Seeding" on host startup to upsert job definitions per tenant/environment.
   - No schedule creation, no deletions.
 - Minimal mode: keep it off by default, enable it when you want UI/management completeness.
 
 Why opt-in (instead of implicit):
 
 - It avoids unexpected writes to persistence on startup (principle of least surprise).
-- It avoids requiring DB permissions/schema in scenarios that are intentionally “no database”.
+- It avoids requiring DB permissions/schema in scenarios that are intentionally "no database".
 - It makes ownership explicit: multiple hosts can register the same JobKey, so seeding needs clear rules for how metadata/owner is set and how conflicts are resolved.
 - It keeps failure modes obvious: if seeding fails (DB down/misconfigured), you get a clear startup error only when you opted into that dependency.
 
@@ -76,13 +76,13 @@ Goal: accept public webhooks via a remote ingress tier (for example, a DMZ) with
 
 Typical separation (DMZ example):
 
-- Ingress/DMZ: `Croniq.Api` in `WebhookAdminOnly` mode + `Croniq.Webhooks` with `Ingress.DispatchMode=StoreOnly`, backed by a dedicated SqlServer instance.
+- Ingress/DMZ: `Croniq.Api` in `WebhookAdminOnly` mode + `Croniq.Webhooks` with `Ingress.DispatchMode=StoreOnly`, backed by a dedicated SqlServer/Postgres instance.
 - Internal: `Croniq.Api` + worker hosts + UI. Internal API uses `Croniq:Webhooks:Mode=Remote` to manage webhook definitions in the DMZ and runs the relay worker to consume ingress events over gRPC (or SSE/polling via `StreamFallback` when gRPC is blocked).
 
 Network paths:
 
-- Inbound: public callers → ingress webhook ingress.
-- Outbound: internal network → ingress admin API + ingress gRPC/SSE/polling stream.
+- Inbound: public callers -> ingress webhook ingress.
+- Outbound: internal network -> ingress admin API + ingress gRPC/SSE/polling stream.
 - Ingress hosts do **not** connect into the internal network.
 
 Security expectations:

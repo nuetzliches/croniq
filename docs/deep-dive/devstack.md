@@ -4,7 +4,7 @@ This document describes the local Docker Compose environment required to satisfy
 
 ## Objectives
 
-- Offer a one-command environment (`docker compose up`) that mirrors the production topology (API + worker + SQL + observability) for developers and CI smoke tests.
+- Offer a one-command environment (`docker compose up`) that mirrors the production topology (API + worker + SQL Server (default) + observability) for developers and CI smoke tests.
 - Keep configuration discoverable via `.env` and `appsettings.Development.json`, with secrets injected through `.env.local` or user secrets.
 - Reuse the same Compose definitions in nightly CI workflows and local troubleshooting to minimize drift.
 - Provide helpers for running EF Core migrations (via `Croniq.DbMigrator`) and exposing dashboards/logs for debugging.
@@ -51,6 +51,7 @@ All services share a `croniq-net` bridge network. Ports are exposed via `.env` d
 
 - `.env.example` (root) now lists the required ports, database credentials, and Croniq defaults. Copy it to `.env`, adjust secrets, and Compose will pick the variables up automatically. `.env` stays ignored via `.gitignore`.
 - `Croniq.Sample.ApiHost` reads configuration from `appsettings.Development.json` + environment variables injected via Compose (`Croniq__SqlServer__ConnectionString`, `Croniq__Auth__Mode`, etc.). Keep sensitive overrides in `.env.local` or user secrets when running locally.
+- Postgres is supported for local/dev environments by pointing `CRONIQ_DB_PROVIDER=Postgres` and `CRONIQ_POSTGRES_CONNECTION` at an external instance; the default Compose stack still uses SQL Server.
 - The `croniq-db-migrator` service (defined in the base compose file) waits for `mssql-22` to report healthy status and then applies EF Core migrations using `CRONIQ_SQL_CONNECTION`. Compose derives that connection string from `CRONIQ_SQL_HOST`, `CRONIQ_SQL_DATABASE`, and `CRONIQ_SQL_PASSWORD` (with `sa` on port 1433). When troubleshooting, you can still run `docker compose run --rm croniq-db-migrator` or `dotnet run --project tools/Croniq.DbMigrator` manually after setting `CRONIQ_SQL_CONNECTION`.
 
 ## Developer Workflow
@@ -58,7 +59,7 @@ All services share a `croniq-net` bridge network. Ports are exposed via `.env` d
 1. `cd <repo-root>`
 2. `copy .env.example .env` (first run) and adjust secrets/ports as needed.
 3. `scripts\devstack-up.cmd [--profile obs]` ensures `.env` exists, loads all compose files, and polls `/health`. As soon as `mssql-22` is ready, `croniq-db-migrator` runs automatically so the schema is ready before the API/worker start. The API/worker profiles are implied; pass extra profiles (e.g., `obs`) explicitly.
-4. `scripts\devstack-restart.cmd [--profile ...]` first calls `devstack-down --remove-orphans` with the same profiles, then replays `devstack-up`—useful when Docker networks/containers get stuck.
+4. `scripts\devstack-restart.cmd [--profile ...]` first calls `devstack-down --remove-orphans` with the same profiles, then replays `devstack-up` - useful when Docker networks/containers get stuck.
 5. Send smoke traffic with `scripts\devstack-trigger-job.cmd [jobKey [initiatorTag]]`, which defaults to `samples:smoke` and tags the metadata `initiator` (default `devstack-script`) while posting to `/jobs/trigger` using `CRONIQ_API_KEY`.
 6. Rotate webhook secrets without crafting raw HTTP calls by running `scripts\webhook-rotate-secret.ps1 -TenantId <id> -Environment <tag> -HookKey <key> [-ActivateInSeconds 900] [-GracePeriodSeconds 86400]`. The helper prints the activation window plus the new secret so you can stash it in your vault immediately.
 7. The default OTLP target `http://otel-collector:4317` (gRPC) can be overridden via `CRONIQ_OBS_OTLP_ENDPOINT`; set `CRONIQ_OBS_OTLP_PROTOCOL=http` if you need to switch the sample hosts over to OTLP/HTTP. Both API and worker containers read these values via `Croniq:Observability:*` so telemetry can be pointed at alternative collectors. Logs, traces, and metrics all flow through the same OTLP endpoint; the collector now forwards logs to Loki, traces to Tempo, and metrics to Prometheus.

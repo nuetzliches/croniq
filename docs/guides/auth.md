@@ -25,6 +25,7 @@ You can switch between modes (or enable both) by changing configuration-no code 
 1. **Pick a backing store**
    - `Croniq:Auth:Mode = InMemory`: single key, best for samples/tests only.
    - `Croniq:Auth:Mode = SqlServer`: production-ready, uses `Croniq.Auth.SqlServer` to hash and store keys.
+- `Croniq:Auth:Mode = Postgres`: production-ready, uses `Croniq.Auth.Postgres` to hash and store keys.
 2. **Issue a key**
    - SQL-backed hosts expose admin endpoints under `/tenants/{id}/api-keys`. Call `IApiKeyStore.IssueAsync` only when you need a bootstrap script or console app.
    - In-memory mode reads the secret from `Croniq__Auth__InMemory__ApiKey` (or `appsettings.*`).
@@ -38,9 +39,10 @@ API keys are issued for an **API client** (`ClientId`). The client id is the log
 ### Configuration Checklist
 
 | Setting                                                   | Required?             | Description                                                                                |
-| --------------------------------------------------------- | --------------------- | -------------------------------------------------------------------------------            |
-| `Croniq__Auth__Mode`                                      | Always                | `InMemory` or `SqlServer`.                                                                 |
+| --------------------------------------------------------- | --------------------- | ------------------------------------------------------------------------------------------ |
+| `Croniq__Auth__Mode`                                      | Always                | `InMemory`, `SqlServer`, or `Postgres`.                                                    |
 | `Croniq__Auth__SqlServer__ConnectionString`               | When `SqlServer` mode | Overrides the default Croniq SQL connection if needed.                                     |
+| `Croniq__Auth__Postgres__ConnectionString`                | When `Postgres` mode  | Overrides the default Croniq Postgres connection if needed.                                |
 | `Croniq__Auth__InMemory__ApiKey`                          | When `InMemory` mode  | Single dev key used by all callers.                                                        |
 | `Croniq__Core__TenantId` / `Croniq__Core__EnvironmentTag` | Optional              | Embedded in every issued key so rate limiting and future audit trails remain tenant-aware. |
 
@@ -55,7 +57,7 @@ set Croniq__Core__EnvironmentTag=dev-jane
 
 ### Rotation & Revocation
 
-- SQL mode: call `IApiKeyStore.RotateAsync` / `RevokeAsync` (directly or via the future admin API). Structured audit logging is planned; today, rely on API logs and telemetry for change tracking.
+- SqlServer/Postgres mode: call `IApiKeyStore.RotateAsync` / `RevokeAsync` (directly or via the future admin API). Structured audit logging is planned; today, rely on API logs and telemetry for change tracking.
 - In-memory mode: update the environment variable and restart the host. Any cached callers must pick up the new value.
 - Always remove revoked keys from CI/CD secrets. Croniq rate limiting partitions by Tenant + Caller ID, so stale keys fall back to anonymous throttles and fail fast.
 

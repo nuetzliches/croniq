@@ -39,6 +39,7 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<IPasswordUserStore, SqlServerPasswordUserStore>();
         services.AddSingleton<IRefreshTokenStore, SqlServerRefreshTokenStore>();
         services.AddSingleton<PasswordAuthService>();
+        services.AddSingleton<IPasswordAuthService>(sp => sp.GetRequiredService<PasswordAuthService>());
 
         services.AddOptions<CroniqTokenOptions>();
         services.AddSingleton<ICroniqTokenIssuer, CroniqTokenIssuer>();

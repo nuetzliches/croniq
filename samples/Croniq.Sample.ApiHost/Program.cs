@@ -1,11 +1,11 @@
 using Croniq.Api;
 using Croniq.Auth.Abstractions;
-using Croniq.Auth.SqlServer;
 using Croniq.Core;
 using Croniq.Core.Execution;
 using Croniq.Sample.Jobs;
 using Croniq.Webhooks;
 using Croniq.Webhooks.Options;
+using Croniq.Data.Postgres;
 using Croniq.Data.SqlServer;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
@@ -85,16 +85,26 @@ if (app.Environment.IsDevelopment())
     {
         var config = services.GetRequiredService<IConfiguration>();
         var authMode = (config["Croniq:Auth:Mode"] ?? string.Empty).Trim();
-        if (!string.Equals(authMode, "SqlServer", StringComparison.OrdinalIgnoreCase))
+        if (string.Equals(authMode, "SqlServer", StringComparison.OrdinalIgnoreCase))
+        {
+            var dbFactory = services.GetRequiredService<IDbContextFactory<SqlServerDbContext>>();
+            await using (var db = await dbFactory.CreateDbContextAsync())
+            {
+                await db.Database.MigrateAsync();
+            }
+        }
+        else if (string.Equals(authMode, "Postgres", StringComparison.OrdinalIgnoreCase))
+        {
+            var dbFactory = services.GetRequiredService<IDbContextFactory<PostgresDbContext>>();
+            await using (var db = await dbFactory.CreateDbContextAsync())
+            {
+                await db.Database.MigrateAsync();
+            }
+        }
+        else
         {
             app.Logger.LogInformation("Password auth seeding is enabled, but Croniq:Auth:Mode is '{AuthMode}'. Skipping password auth seeding.", authMode);
             goto after_password_seed;
-        }
-
-        var dbFactory = services.GetRequiredService<IDbContextFactory<SqlServerDbContext>>();
-        await using (var db = await dbFactory.CreateDbContextAsync())
-        {
-            await db.Database.MigrateAsync();
         }
 
         var seedSection = config.GetSection("CroniqSample:Auth:Password");
@@ -184,7 +194,7 @@ if (app.Environment.IsDevelopment())
         var users = services.GetService<IPasswordUserStore>();
         if (users is null)
         {
-            app.Logger.LogWarning("Password auth seeding requested, but IPasswordUserStore is not registered. Ensure Croniq auth mode is SqlServer and Croniq.Auth.SqlServer services are wired.");
+            app.Logger.LogWarning("Password auth seeding requested, but IPasswordUserStore is not registered. Ensure Croniq auth mode is SqlServer or Postgres and the auth provider services are wired.");
             goto after_password_seed;
         }
         await users.UpsertAsync(new PasswordUserUpsertRequest(

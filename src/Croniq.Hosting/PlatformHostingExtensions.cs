@@ -1,14 +1,17 @@
 using System;
 using Croniq.Auth.Abstractions;
 using Croniq.Auth.Core;
+using Croniq.Auth.Postgres;
 using Croniq.Auth.SqlServer;
 using Croniq.Core;
 using Croniq.Core.Hosting;
 using Croniq.Options;
 using Croniq.Core.Policies;
+using Croniq.Data.Postgres;
 using Croniq.Data.SqlServer;
 using Croniq.JobStore.InMemory;
 using Croniq.Persistence.Abstractions;
+using Croniq.Persistence.Postgres;
 using Croniq.Persistence.SqlServer;
 using Croniq.Providers.Default;
 using Microsoft.Extensions.Configuration;
@@ -30,6 +33,7 @@ public static class PlatformHostingExtensions
         services.Configure<PasswordAuthOptions>(configuration.GetSection("Croniq:Auth:Password"));
         services.Configure<CroniqPersistenceOptions>(configuration.GetSection("Croniq:Persistence"));
         services.Configure<SqlServerOptions>(configuration.GetSection("Croniq:SqlServer"));
+        services.Configure<PostgresOptions>(configuration.GetSection("Croniq:Postgres"));
         services.Configure<MisfirePolicyOptions>(configuration.GetSection("Croniq:Policies:Misfire"));
         services.Configure<ExecutionPolicyOptions>(configuration.GetSection("Croniq:Policies:Execution"));
         services.Configure<PolicyOverrideOptions>(configuration.GetSection("Croniq:Policies:Overrides"));
@@ -40,6 +44,7 @@ public static class PlatformHostingExtensions
         var authOpts = configuration.GetSection("Croniq:Auth").Get<CroniqAuthOptions>() ?? new CroniqAuthOptions();
         var persistenceOpts = configuration.GetSection("Croniq:Persistence").Get<CroniqPersistenceOptions>() ?? new CroniqPersistenceOptions();
         var sharedSqlServer = configuration.GetSection("Croniq:SqlServer").Get<SqlServerOptions>() ?? new SqlServerOptions();
+        var sharedPostgres = configuration.GetSection("Croniq:Postgres").Get<PostgresOptions>() ?? new PostgresOptions();
 
         services.AddCroniqInMemoryJobStore();
         services.AddHostedService<CroniqJobRegistrySyncHostedService>();
@@ -83,6 +88,46 @@ public static class PlatformHostingExtensions
                 }
             });
         }
+        else if (string.Equals(persistenceOpts.Mode, "Postgres", StringComparison.OrdinalIgnoreCase))
+        {
+            var conn = ResolvePostgresConnectionString(
+                persistenceOpts.Postgres.ConnectionString,
+                sharedPostgres.ConnectionString,
+                configuration);
+            var commandTimeoutSeconds = persistenceOpts.Postgres.CommandTimeoutSeconds
+                ?? sharedPostgres.CommandTimeoutSeconds;
+
+            if (string.IsNullOrWhiteSpace(conn))
+            {
+                throw new InvalidOperationException("Croniq:Persistence:Postgres:ConnectionString or Croniq:Postgres:ConnectionString is required when Persistence.Mode = Postgres.");
+            }
+
+            services.AddCroniqPostgresPersistence(pgOptions =>
+            {
+                pgOptions.ConnectionString = conn;
+                pgOptions.MigrationsAssembly = persistenceOpts.Postgres.MigrationsAssembly ?? sharedPostgres.MigrationsAssembly;
+                pgOptions.EnableDetailedErrors = persistenceOpts.Postgres.EnableDetailedErrors ?? sharedPostgres.EnableDetailedErrors;
+                pgOptions.EnableSensitiveDataLogging = persistenceOpts.Postgres.EnableSensitiveDataLogging ?? sharedPostgres.EnableSensitiveDataLogging;
+                pgOptions.CommandTimeoutSeconds = commandTimeoutSeconds;
+                pgOptions.SearchPath = sharedPostgres.SearchPath;
+            }, persistenceOptions =>
+            {
+                if (persistenceOpts.Postgres.LeaseDurationSeconds.HasValue)
+                {
+                    persistenceOptions.LeaseDurationSeconds = persistenceOpts.Postgres.LeaseDurationSeconds.Value;
+                }
+
+                if (persistenceOpts.Postgres.DeadLetterRetentionDays.HasValue)
+                {
+                    persistenceOptions.DeadLetterRetentionDays = persistenceOpts.Postgres.DeadLetterRetentionDays.Value;
+                }
+
+                if (persistenceOpts.Postgres.DeadLetterReasonMaxLength.HasValue)
+                {
+                    persistenceOptions.DeadLetterReasonMaxLength = persistenceOpts.Postgres.DeadLetterReasonMaxLength.Value;
+                }
+            });
+        }
 
         if (string.Equals(authOpts.Mode, "SqlServer", StringComparison.OrdinalIgnoreCase))
         {
@@ -103,6 +148,28 @@ public static class PlatformHostingExtensions
                 sqlOptions.EnableDetailedErrors = authOpts.SqlServer.EnableDetailedErrors ?? sharedSqlServer.EnableDetailedErrors;
                 sqlOptions.EnableSensitiveDataLogging = authOpts.SqlServer.EnableSensitiveDataLogging ?? sharedSqlServer.EnableSensitiveDataLogging;
                 sqlOptions.CommandTimeoutSeconds = sharedSqlServer.CommandTimeoutSeconds;
+            });
+        }
+        else if (string.Equals(authOpts.Mode, "Postgres", StringComparison.OrdinalIgnoreCase))
+        {
+            var conn = ResolvePostgresConnectionString(
+                authOpts.Postgres.ConnectionString,
+                sharedPostgres.ConnectionString,
+                configuration);
+
+            if (string.IsNullOrWhiteSpace(conn))
+            {
+                throw new InvalidOperationException("Croniq:Auth:Postgres:ConnectionString or Croniq:Postgres:ConnectionString is required when Auth.Mode = Postgres.");
+            }
+
+            services.AddCroniqAuthPostgres(pgOptions =>
+            {
+                pgOptions.ConnectionString = conn;
+                pgOptions.MigrationsAssembly = authOpts.Postgres.MigrationsAssembly ?? sharedPostgres.MigrationsAssembly;
+                pgOptions.EnableDetailedErrors = authOpts.Postgres.EnableDetailedErrors ?? sharedPostgres.EnableDetailedErrors;
+                pgOptions.EnableSensitiveDataLogging = authOpts.Postgres.EnableSensitiveDataLogging ?? sharedPostgres.EnableSensitiveDataLogging;
+                pgOptions.CommandTimeoutSeconds = sharedPostgres.CommandTimeoutSeconds;
+                pgOptions.SearchPath = sharedPostgres.SearchPath;
             });
         }
         else
@@ -166,6 +233,15 @@ public static class PlatformHostingExtensions
         return domainSpecific
             ?? shared
             ?? configuration.GetConnectionString("CroniqSqlServer")
+            ?? configuration.GetConnectionString("Croniq")
+            ?? configuration.GetConnectionString("DefaultConnection");
+    }
+
+    private static string? ResolvePostgresConnectionString(string? domainSpecific, string? shared, IConfiguration configuration)
+    {
+        return domainSpecific
+            ?? shared
+            ?? configuration.GetConnectionString("CroniqPostgres")
             ?? configuration.GetConnectionString("Croniq")
             ?? configuration.GetConnectionString("DefaultConnection");
     }

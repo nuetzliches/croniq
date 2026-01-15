@@ -4,7 +4,7 @@
 
 ## What Is Croniq?
 
-Croniq is a tenant-aware scheduling platform built on .NET 10. It combines a fluent job SDK, a configurable policy engine, and REST/gRPC gateways with SqlServer-backed durability. By keeping scheduling, throttling, and observability in one place, Croniq helps you coordinate maintenance tasks, compliance workflows, and recurring automations across dozens of services.
+Croniq is a tenant-aware scheduling platform built on .NET 10. It combines a fluent job SDK, a configurable policy engine, and REST/gRPC gateways with SqlServer/Postgres-backed durability. By keeping scheduling, throttling, and observability in one place, Croniq helps you coordinate maintenance tasks, compliance workflows, and recurring automations across dozens of services.
 
 ### Why teams adopt Croniq
 

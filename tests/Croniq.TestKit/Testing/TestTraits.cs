@@ -19,5 +19,13 @@ public static class TestTraits
         public const string SqlPersistenceWorkers = "Persistence.SqlServer.Workers";
         public const string SqlPersistenceRunners = "Persistence.SqlServer.Runners";
         public const string SqlPersistenceWorkItems = "Persistence.SqlServer.WorkItems";
+
+        public const string PostgresPersistenceJobs = "Persistence.Postgres.Jobs";
+        public const string PostgresPersistenceWebhooks = "Persistence.Postgres.Webhooks";
+        public const string PostgresPersistenceDeadLetters = "Persistence.Postgres.WebhookDeadLetters";
+        public const string PostgresPersistenceChangefeed = "Persistence.Postgres.WebhookChangefeed";
+        public const string PostgresPersistenceWorkers = "Persistence.Postgres.Workers";
+        public const string PostgresPersistenceRunners = "Persistence.Postgres.Runners";
+        public const string PostgresPersistenceWorkItems = "Persistence.Postgres.WorkItems";
     }
 }

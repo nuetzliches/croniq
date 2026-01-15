@@ -16,6 +16,8 @@ public sealed class CroniqWebhookOptions
 
     public WebhookSqlServerOptions SqlServer { get; set; } = new();
 
+    public WebhookPostgresOptions Postgres { get; set; } = new();
+
     public WebhookRemoteOptions Remote { get; set; } = new();
 
     public WebhookIngressOptions Ingress { get; set; } = new();
@@ -70,6 +72,7 @@ public enum WebhookPersistenceMode
 {
     InMemory,
     SqlServer,
+    Postgres,
     Remote
 }
 
@@ -87,6 +90,19 @@ public enum WebhookIngressStreamMode
 }
 
 public sealed class WebhookSqlServerOptions
+{
+    public string? ConnectionString { get; set; }
+
+    public string? MigrationsAssembly { get; set; }
+
+    public bool? EnableDetailedErrors { get; set; }
+
+    public bool? EnableSensitiveDataLogging { get; set; }
+
+    public int? CommandTimeoutSeconds { get; set; }
+}
+
+public sealed class WebhookPostgresOptions
 {
     public string? ConnectionString { get; set; }
 

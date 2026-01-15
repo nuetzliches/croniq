@@ -79,7 +79,7 @@ PY
    }
    ```
 
-   Dev stacks can still fall back to `Croniq:Webhooks` config, but production tenants should rely on the API so secrets are persisted in SqlServer.
+   Dev stacks can still fall back to `Croniq:Webhooks` config, but production tenants should rely on the API so secrets are persisted in SqlServer or Postgres.
 
 2. **Fetch capabilities** with `GET /tenants/{tenantId}/webhooks/capabilities?environment=<tag>` to learn the default `requestsPerMinute` and whether unsigned hooks can be enabled before setting `allowUnsigned=true` in the payload.
 

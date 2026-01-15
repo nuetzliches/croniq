@@ -6,7 +6,7 @@ This sample hosts the DMZ-side ingress:
 - `Croniq.Webhooks` with `Ingress.DispatchMode=StoreOnly` so ingress persists events instead of executing jobs.
 - gRPC ingress stream plus HTTP fallback (SSE/poll) via `MapCroniqWebhookIngressGrpc` for the internal relay worker.
 
-The DMZ host stores webhooks + ingress events in its local SqlServer database and does not open outbound connections.
+The DMZ host stores webhooks + ingress events in its local SqlServer or Postgres database and does not open outbound connections.
 
 ## Local smoke run
 

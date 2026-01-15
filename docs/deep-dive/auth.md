@@ -9,6 +9,7 @@ This document dives deeper into the authentication/authorization subsystem than 
 | `Croniq.Auth.Abstractions` | Contracts for `IApiKeyStore`, `ITenantStore`, `ICallerContextFactory`, `ICallerContextAccessor`, scope models.   |
 | `Croniq.Auth.Core`         | In-memory store, middleware that inspects headers (`Authorization`, `X-Croniq-Key`), caching of caller contexts. |
 | `Croniq.Auth.SqlServer`    | EF Core implementation of `IApiKeyStore` built on `SqlServerDbContext`. Stores hashed secrets, rotation history. |
+| `Croniq.Auth.Postgres`     | EF Core implementation of `IApiKeyStore` built on `PostgresDbContext`. Stores hashed secrets, rotation history.  |
 | `Croniq.Api`               | Wires middleware, rate limiter policies, and admin routes (tenant/key management).                               |
 
 ## Authentication Modes
@@ -17,14 +18,15 @@ This document dives deeper into the authentication/authorization subsystem than 
 | ----------- | ------------------------------------------------------------------------------------------- | ------------------------------- |
 | `InMemory`  | Single API key per host (`Croniq:Auth:InMemory:ApiKey`). No persistence.                    | Local dev, unit tests, samples. |
 | `SqlServer` | Tenant-aware API clients/keys persisted in SqlServer. Rotation, revocation, scopes per key. | Production.                     |
+| `Postgres`  | Tenant-aware API clients/keys persisted in Postgres. Rotation, revocation, scopes per key.  | Production.                     |
 
 Croniq inspects headers per request: `Authorization: Bearer ...` first, then `X-Croniq-Key`. Only one `ICallerContext` is produced per request.
 
 ## Caller Context Resolution
 
-1. **Bearer token present** → `ICallerContextFactory.FromBearerTokenAsync` validates the token against the configured authority, maps tenant/environment/scopes from claims, builds `CallerContext` with `CallerType = User`.
-2. **API key present** → `ICallerContextFactory.FromApiKeyAsync` looks up the key via `IApiKeyStore`, verifies hash/scope, sets `CallerType = ApiKey`.
-3. **Neither** → 401 Unauthorized. Rate limiter partitions fallback to `anonymous` scope when context is missing (should be rare outside health endpoints).
+1. **Bearer token present** -> `ICallerContextFactory.FromBearerTokenAsync` validates the token against the configured authority, maps tenant/environment/scopes from claims, builds `CallerContext` with `CallerType = User`.
+2. **API key present** -> `ICallerContextFactory.FromApiKeyAsync` looks up the key via `IApiKeyStore`, verifies hash/scope, sets `CallerType = ApiKey`.
+3. **Neither** -> 401 Unauthorized. Rate limiter partitions fallback to `anonymous` scope when context is missing (should be rare outside health endpoints).
 
 ### Tenant & Environment Claims
 
@@ -37,19 +39,19 @@ Forward-looking notes about federated login are intentionally out of scope for t
 
 Admin routes (scope `tenants:admin`) expose:
 
-- `POST /tenants` – create/update tenant metadata (plan, lifecycle state, default env tag).
-- `GET /tenants` / `GET /tenants/{id}` – enumerate tenants and inspect quotas/config.
-- `DELETE /tenants/{id}` – deactivate a tenant without removing historical data.
-- `POST /tenants/{id}/api-clients` – register a client (name, env tag, default scopes) before issuing keys or tokens.
-- `GET /tenants/{id}/api-clients` / `GET /tenants/{id}/api-clients/{clientId}` – list and inspect registered clients.
-- `DELETE /tenants/{id}/api-clients/{clientId}` – remove a client and revoke all dependent credentials.
-- `POST /tenants/{id}/api-keys` – issue a new key (returns plaintext once).
-- `POST /tenants/{id}/api-keys/{keyId}/rotate` – rotate secret, returns new plaintext.
-- `DELETE /tenants/{id}/api-keys/{keyId}` – revoke key immediately.
-- `GET /tenants/{id}/api-keys` – list active keys with scopes + env tags.
-- `POST /tenants/{id}/tokens` – mint a short-lived bearer token that Croniq signiert (Client-Credentials-ähnliche Response mit `accessToken`/`expiresIn`).
-- `POST /tenants/{id}/api-clients/{clientId}/tokens` – scoped Variante, wenn mehrere Clients pro Tenant leben (optional `audience`/`scopes`).
-- `GET /me` – resolve current caller context (user or API key) for self-checks.
+- `POST /tenants` - create/update tenant metadata (plan, lifecycle state, default env tag).
+- `GET /tenants` / `GET /tenants/{id}` - enumerate tenants and inspect quotas/config.
+- `DELETE /tenants/{id}` - deactivate a tenant without removing historical data.
+- `POST /tenants/{id}/api-clients` - register a client (name, env tag, default scopes) before issuing keys or tokens.
+- `GET /tenants/{id}/api-clients` / `GET /tenants/{id}/api-clients/{clientId}` - list and inspect registered clients.
+- `DELETE /tenants/{id}/api-clients/{clientId}` - remove a client and revoke all dependent credentials.
+- `POST /tenants/{id}/api-keys` - issue a new key (returns plaintext once).
+- `POST /tenants/{id}/api-keys/{keyId}/rotate` - rotate secret, returns new plaintext.
+- `DELETE /tenants/{id}/api-keys/{keyId}` - revoke key immediately.
+- `GET /tenants/{id}/api-keys` - list active keys with scopes + env tags.
+- `POST /tenants/{id}/tokens` - mint a short-lived bearer token signed by Croniq (client-credentials-style response with `accessToken`/`expiresIn`).
+- `POST /tenants/{id}/api-clients/{clientId}/tokens` - scoped variant when multiple clients per tenant exist (optional `audience`/`scopes`).
+- `GET /me` - resolve current caller context (user or API key) for self-checks.
 
 Croniq.Api ships the tenant onboarding, API-client CRUD, token issuance, and `/me` endpoints described above (see [src/Croniq.Api/ApiHostingExtensions.cs](../../src/Croniq.Api/ApiHostingExtensions.cs)).
 
@@ -63,24 +65,24 @@ Croniq.Api ships the tenant onboarding, API-client CRUD, token issuance, and `/m
 - **Configuration**: `Croniq:Auth:Tokens:Enabled`, `Issuer`, `DefaultAudience`, `SigningKey`, and `DefaultLifetimeMinutes` all map to `CroniqTokenOptions`. Disable the issuer when an external IdP is mandatory.
 - **Admin coverage**: `/me` echoes the resolved caller context (API key vs. Croniq token) so tooling can confirm scopes without parsing JWTs.
 
-### Tenant-/Client-/Token-Endpoints (Design-Spezifikation)
+### Tenant/Client/Token Endpoints (Design Spec)
 
-| Method   | Path                                                | Summary                  | Notes                                                                                                                                   |
-| -------- | --------------------------------------------------- | ------------------------ | --------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------- |
-| `POST`   | `/tenants`                                          | "Create tenant"          | Body `{ reference, name }`; returns `TenantResponse { tenantId, reference, name, isActive, createdAtUtc }`.                             |
-| `GET`    | `/tenants`                                          | "List tenants"           | Optional query `state=active                                                                                                            | all`. Returns collection of `TenantResponse`. |
-| `GET`    | `/tenants/{tenantId}`                               | "Get tenant"             | 404 when unknown; response = `TenantResponse`.                                                                                          |
-| `DELETE` | `/tenants/{tenantId}`                               | "Deactivate tenant"      | Marks the tenant inactive (soft-delete) and returns `204` or `404` when unknown.                                                        |
-| `POST`   | `/tenants/{tenantId}/api-clients`                   | "Register API client"    | Body `{ clientId, name, environmentTag, defaultScopes[] }`; reuses/updates existing row when `clientId` exists.                         |
-| `GET`    | `/tenants/{tenantId}/api-clients`                   | "List API clients"       | Optional `environment` filter; returns `ApiClientResponse` list (matches existing `/api-clients/{clientId}` schema).                    |
-| `DELETE` | `/tenants/{tenantId}/api-clients/{clientId}`        | "Delete API client"      | Removes the client metadata and revokes any API keys for that client.                                                                   |
-| `POST`   | `/tenants/{tenantId}/tokens`                        | "Issue tenant token"     | Body `{ clientId, scopes[], audience, ttlMinutes }`; authenticates via API key or PAT. Returns `{ accessToken, tokenType, expiresIn }`. |
-| `POST`   | `/tenants/{tenantId}/api-clients/{clientId}/tokens` | "Issue client token"     | Same payload, automatically infers `clientId` and allowed scopes.                                                                       |
-| `GET`    | `/me`                                               | "Inspect caller context" | Echoes resolved tenant/environment/scopes for debugging.                                                                                |
+| Method   | Path                                                | Summary                | Notes                                                                                                                                   |
+| -------- | --------------------------------------------------- | ---------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| `POST`   | `/tenants`                                          | Create tenant          | Body `{ reference, name }`; returns `TenantResponse { tenantId, reference, name, isActive, createdAtUtc }`.                             |
+| `GET`    | `/tenants`                                          | List tenants           | Optional query `state=active` or `state=all`. Returns collection of `TenantResponse`.                                                  |
+| `GET`    | `/tenants/{tenantId}`                               | Get tenant             | 404 when unknown; response = `TenantResponse`.                                                                                          |
+| `DELETE` | `/tenants/{tenantId}`                               | Deactivate tenant      | Marks the tenant inactive (soft-delete) and returns `204` or `404` when unknown.                                                        |
+| `POST`   | `/tenants/{tenantId}/api-clients`                   | Register API client    | Body `{ clientId, name, environmentTag, defaultScopes[] }`; reuses/updates existing row when `clientId` exists.                         |
+| `GET`    | `/tenants/{tenantId}/api-clients`                   | List API clients       | Optional `environment` filter; returns `ApiClientResponse` list (matches existing `/api-clients/{clientId}` schema).                    |
+| `DELETE` | `/tenants/{tenantId}/api-clients/{clientId}`        | Delete API client      | Removes the client metadata and revokes any API keys for that client.                                                                   |
+| `POST`   | `/tenants/{tenantId}/tokens`                        | Issue tenant token     | Body `{ clientId, scopes[], audience, ttlMinutes }`; authenticates via API key or PAT. Returns `{ accessToken, tokenType, expiresIn }`. |
+| `POST`   | `/tenants/{tenantId}/api-clients/{clientId}/tokens` | Issue client token     | Same payload, automatically infers `clientId` and allowed scopes.                                                                       |
+| `GET`    | `/me`                                               | Inspect caller context | Echoes resolved tenant/environment/scopes for debugging.                                                                                |
 
 The entries highlighted above are live in the API host today and covered by integration tests ([src/Croniq.Api/ApiHostingExtensions.cs](../../src/Croniq.Api/ApiHostingExtensions.cs), [tests/Croniq.Api.Tests/TenantAdminEndpointsTests.cs](../../tests/Croniq.Api.Tests/TenantAdminEndpointsTests.cs)).
 
-#### Request/Response Skizzen
+#### Request/Response Examples
 
 ```jsonc
 // POST /tenants
@@ -114,7 +116,7 @@ The entries highlighted above are live in the API host today and covered by inte
 }
 ```
 
-Alle Summaries/Beschreibungen aus der Tabelle landen wortgleich in den neuen OpenAPI-Metadaten, damit Swagger/CLI-Generatoren konsistente Texte zeigen.
+These summaries should remain consistent with OpenAPI descriptions so Swagger/CLI generators stay aligned.
 
 ## Secret Handling
 
@@ -133,9 +135,10 @@ Alle Summaries/Beschreibungen aus der Tabelle landen wortgleich in den neuen Ope
 
 | Key                                         | Description                                                                      |
 | ------------------------------------------- | -------------------------------------------------------------------------------- |
-| `Croniq:Auth:Mode`                          | `InMemory` or `SqlServer`.                                                       |
+| `Croniq:Auth:Mode`                          | `InMemory`, `SqlServer`, or `Postgres`.                                          |
 | `Croniq:Auth:InMemory:ApiKey`               | Plaintext key for in-memory mode.                                                |
 | `Croniq:Auth:SqlServer:ConnectionString`    | Optional connection override. Falls back to `Croniq:SqlServer:ConnectionString`. |
+| `Croniq:Auth:Postgres:ConnectionString`     | Optional connection override. Falls back to `Croniq:Postgres:ConnectionString`.  |
 | `Croniq:Auth:Tokens:Enabled`                | Toggles the built-in Croniq token issuer.                                        |
 | `Croniq:Auth:Tokens:Issuer`                 | Value emitted as `iss` for Croniq-minted tokens.                                 |
 | `Croniq:Auth:Tokens:DefaultAudience`        | Default `aud` claim when callers omit `audience`.                                |
@@ -145,7 +148,7 @@ Alle Summaries/Beschreibungen aus der Tabelle landen wortgleich in den neuen Ope
 ## Testing & Tooling
 
 - `Croniq.Api.Tests` cover header parsing, mixed-mode auth, `/me`, and 401/403 paths.
-- `Croniq.Persistence.SqlServer.Tests` cover API key storage, password user flows, and refresh token behavior.
+- `Croniq.Persistence.SqlServer.Tests` and `Croniq.Persistence.Postgres.Tests` cover API key storage, password user flows, and refresh token behavior.
 
 ## Backlog
 

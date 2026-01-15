@@ -4,7 +4,7 @@ This guide explains how the Croniq API host (`Croniq.Api`) resolves configuratio
 
 ## 1. Configuration Sources & Priority
 
-`builder.Services.AddCroniqApiServices(builder.Configuration)` binds the following option objects from the provided `IConfiguration` instance: `CroniqApiOptions`, `CroniqOptions`, `CroniqAuthOptions`, `CroniqPersistenceOptions`, and `SqlServerOptions`. The usual ASP.NET Core precedence applies (later providers win):
+`builder.Services.AddCroniqApiServices(builder.Configuration)` binds the following option objects from the provided `IConfiguration` instance: `CroniqApiOptions`, `CroniqOptions`, `CroniqAuthOptions`, `CroniqPersistenceOptions`, `SqlServerOptions`, and `PostgresOptions`. The usual ASP.NET Core precedence applies (later providers win):
 
 1. `appsettings.json` and other JSON files.
 2. Environment-specific JSON (e.g., `appsettings.Development.json`).
@@ -176,24 +176,28 @@ Use a stable `ManagedBy` value (not instance-id based) to avoid flapping in roll
 
 See [`auth.md`](../guides/auth.md) for the end-to-end authentication story and when to prefer API keys vs bearer tokens.
 
-| Variable                                           | Required                                                          | Description                                                                                     | Example                                            |
-| -------------------------------------------------- | ----------------------------------------------------------------- | ------------------------------------------------------------------------------------------      | -------------------------------------------------- |
-| `Croniq__Auth__Mode`                               | Yes                                                               | Selects `InMemory` (single API key) or `SqlServer` (database-backed) authentication.            | `SqlServer`                                        |
-| `Croniq__Auth__InMemory__ApiKey`                   | When `Auth.Mode = InMemory`                                       | API key issued to callers when using the in-memory store.                                       | `crq_dev_local_sample`                             |
-| `Croniq__Auth__SqlServer__ConnectionString`        | When `Auth.Mode = SqlServer` and no shared connection is provided | Database connection used for issuing/validating API keys.                                       | `Server=.;Database=Croniq;Trusted_Connection=True` |
-| `Croniq__Persistence__Mode`                        | Yes                                                               | `InMemory` for demo workloads or `SqlServer` for durable persistence.                           | `SqlServer`                                        |
-| `Croniq__Persistence__SqlServer__ConnectionString` | When `Persistence.Mode = SqlServer`                               | Connection string for the scheduler persistence schema.                                         | `Server=.;Database=Croniq;Trusted_Connection=True` |
-| `Croniq__SqlServer__ConnectionString`              | Optional                                                          | Shared fallback connection string used when specific auth/persistence strings are omitted.      | `Server=.;Database=Croniq;...`                     |
-| `Croniq__Core__TenantId`                           | Optional                                                          | Tenant id used for partitioning/scoping. Default is `default`.                                  | `dev-sandbox`                                      |
-| `Croniq__Core__TenantMode`                         | Optional                                                          | Informational only (does not change tenant resolution). Default is `Single`.                    | `Multi`                                            |
-| `Croniq__Core__EnvironmentTag`                     | Optional                                                          | Distinguishes environments/instances (helps multi-dev setups).                                  | `dev-alice`                                        |
-| `Croniq__Api__RequestsPerMinute`                   | Optional                                                          | Per-key fixed-window rate limit enforced by `AddCroniqApiRateLimiter`. Default `60`.            | `60`                                               |
-| `Croniq__Api__ForwardedHeaders__Enabled`           | Optional                                                          | Enables `X-Forwarded-For`/`X-Forwarded-Proto` processing from trusted proxies. Default `false`. | `true`                                             |
-| `Croniq__Api__ForwardedHeaders__ForwardLimit`      | Optional                                                          | Max number of forwarded entries to accept. Default `1`.                                         | `2`                                                |
-| `Croniq__Api__ForwardedHeaders__KnownNetworks__0`  | When `ForwardedHeaders.Enabled = true`                            | CIDR for trusted proxy networks (add indexes for more).                                         | `10.0.0.0/8`                                       |
-| `Croniq__Api__ForwardedHeaders__KnownProxies__0`   | When `ForwardedHeaders.Enabled = true`                            | IP address for trusted proxies (add indexes for more).                                          | `192.168.1.10`                                     |
-| `Croniq__Observability__HashIdentifiers`           | Optional                                                          | Hashes tenant/caller identifiers in logs/metrics/traces (HMAC-SHA256). Default `false`.         | `true`                                             |
-| `Croniq__Observability__IdentifierHashKey`         | When `HashIdentifiers = true`                                     | Secret key used for HMAC hashing of tenant/caller identifiers.                                  | `<secret>`                                         |
+| Variable                                           | Required                                                          | Description                                                                                          | Example                                                                |
+| -------------------------------------------------- | ----------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------- |
+| `Croniq__Auth__Mode`                               | Yes                                                               | Selects `InMemory`, `SqlServer`, or `Postgres` (database-backed) authentication.                     | `SqlServer`                                                            |
+| `Croniq__Auth__InMemory__ApiKey`                   | When `Auth.Mode = InMemory`                                       | API key issued to callers when using the in-memory store.                                            | `crq_dev_local_sample`                                                 |
+| `Croniq__Auth__SqlServer__ConnectionString`        | When `Auth.Mode = SqlServer` and no shared connection is provided | Database connection used for issuing/validating API keys.                                            | `Server=.;Database=Croniq;Trusted_Connection=True`                     |
+| `Croniq__Auth__Postgres__ConnectionString`         | When `Auth.Mode = Postgres` and no shared connection is provided  | Database connection used for issuing/validating API keys.                                            | `Host=localhost;Database=Croniq;Username=postgres;Password=Secret123!` |
+| `Croniq__Persistence__Mode`                        | Yes                                                               | `InMemory` for demo workloads or `SqlServer`/`Postgres` for durable persistence.                     | `SqlServer`                                                            |
+| `Croniq__Persistence__SqlServer__ConnectionString` | When `Persistence.Mode = SqlServer`                               | Connection string for the scheduler persistence schema.                                              | `Server=.;Database=Croniq;Trusted_Connection=True`                     |
+| `Croniq__Persistence__Postgres__ConnectionString`  | When `Persistence.Mode = Postgres`                                | Connection string for the scheduler persistence schema.                                              | `Host=localhost;Database=Croniq;Username=postgres;Password=Secret123!` |
+| `Croniq__SqlServer__ConnectionString`              | Optional                                                          | Shared fallback connection string used when SqlServer-specific auth/persistence strings are omitted. | `Server=.;Database=Croniq;...`                                         |
+| `Croniq__Postgres__ConnectionString`               | Optional                                                          | Shared fallback connection string used when Postgres-specific auth/persistence strings are omitted.  | `Host=localhost;Database=Croniq;...`                                   |
+| `Croniq__Postgres__SearchPath`                     | Optional                                                          | Comma-delimited Postgres search path applied to the connection.                                      | `croniq,auth,public`                                                   |
+| `Croniq__Core__TenantId`                           | Optional                                                          | Tenant id used for partitioning/scoping. Default is `default`.                                       | `dev-sandbox`                                                          |
+| `Croniq__Core__TenantMode`                         | Optional                                                          | Informational only (does not change tenant resolution). Default is `Single`.                         | `Multi`                                                                |
+| `Croniq__Core__EnvironmentTag`                     | Optional                                                          | Distinguishes environments/instances (helps multi-dev setups).                                       | `dev-alice`                                                            |
+| `Croniq__Api__RequestsPerMinute`                   | Optional                                                          | Per-key fixed-window rate limit enforced by `AddCroniqApiRateLimiter`. Default `60`.                 | `60`                                                                   |
+| `Croniq__Api__ForwardedHeaders__Enabled`           | Optional                                                          | Enables `X-Forwarded-For`/`X-Forwarded-Proto` processing from trusted proxies. Default `false`.      | `true`                                                                 |
+| `Croniq__Api__ForwardedHeaders__ForwardLimit`      | Optional                                                          | Max number of forwarded entries to accept. Default `1`.                                              | `2`                                                                    |
+| `Croniq__Api__ForwardedHeaders__KnownNetworks__0`  | When `ForwardedHeaders.Enabled = true`                            | CIDR for trusted proxy networks (add indexes for more).                                              | `10.0.0.0/8`                                                           |
+| `Croniq__Api__ForwardedHeaders__KnownProxies__0`   | When `ForwardedHeaders.Enabled = true`                            | IP address for trusted proxies (add indexes for more).                                               | `192.168.1.10`                                                         |
+| `Croniq__Observability__HashIdentifiers`           | Optional                                                          | Hashes tenant/caller identifiers in logs/metrics/traces (HMAC-SHA256). Default `false`.              | `true`                                                                 |
+| `Croniq__Observability__IdentifierHashKey`         | When `HashIdentifiers = true`                                     | Secret key used for HMAC hashing of tenant/caller identifiers.                                       | `<secret>`                                                             |
 
 > **Tip:** Keep secrets (API keys, connection strings) outside source control. Prefer user-secrets for local development and a managed vault for production environments.
 
@@ -235,6 +239,7 @@ Croniq keeps authentication pluggable so you can start with a single API key and
 
 - `Croniq__Auth__Mode=InMemory` issues a single shared key defined by `Croniq__Auth__InMemory__ApiKey`. Best for local dev and tests.
 - `Croniq__Auth__Mode=SqlServer` stores hashed keys via `Croniq.Auth.SqlServer`. Provide either `Croniq__Auth__SqlServer__ConnectionString` or the shared `Croniq__SqlServer__ConnectionString`.
+- `Croniq__Auth__Mode=Postgres` stores hashed keys via `Croniq.Auth.Postgres`. Provide either `Croniq__Auth__Postgres__ConnectionString` or the shared `Croniq__Postgres__ConnectionString`.
 - Issue, rotate, and revoke keys through the admin HTTP endpoints (`/tenants/{tenantId}/api-keys/**`) or by calling `IApiKeyStore` from a bootstrap script. Croniq only shows the plaintext secret on creation/rotation, so capture it immediately.
 - Callers send `X-Croniq-Key: <plaintext-secret>`; the middleware turns it into an `ICallerContext` enriched with TenantId, EnvironmentTag, and scopes.
 
@@ -243,6 +248,9 @@ Quick sample (PowerShell):
 ```powershell
 $Env:Croniq__Auth__Mode = "SqlServer"
 $Env:Croniq__Auth__SqlServer__ConnectionString = "Server=.;Database=CroniqAuth;Trusted_Connection=True"
+
+$Env:Croniq__Auth__Mode = "Postgres"
+$Env:Croniq__Auth__Postgres__ConnectionString = "Host=localhost;Database=CroniqAuth;Username=postgres;Password=Secret123!"
 $Env:Croniq__Core__TenantId = "prod"
 $Env:Croniq__Core__EnvironmentTag = "prod-cluster"
 ```
@@ -272,12 +280,16 @@ set Croniq__Core__EnvironmentTag=dev-alice
 set Croniq__Api__RequestsPerMinute=60
 ```
 
-To point both persistence and auth at the same SQL Server via the shared settings:
+To point both persistence and auth at the same database via the shared settings:
 
 ```powershell
 $Env:Croniq__Auth__Mode = "SqlServer"
 $Env:Croniq__Persistence__Mode = "SqlServer"
 $Env:Croniq__SqlServer__ConnectionString = "Server=localhost;Database=Croniq;User Id=sa;Password=Secret123!"
+
+$Env:Croniq__Auth__Mode = "Postgres"
+$Env:Croniq__Persistence__Mode = "Postgres"
+$Env:Croniq__Postgres__ConnectionString = "Host=localhost;Database=Croniq;Username=postgres;Password=Secret123!"
 ```
 
 ## 8. Programmatic Overrides
@@ -299,6 +311,10 @@ builder.Services.PostConfigure<CroniqPersistenceOptions>(options =>
     {
         options.SqlServer.ConnectionString = secretProvider.GetConnectionString("CroniqPersistence");
     }
+    else if (options.Mode.Equals("Postgres", StringComparison.OrdinalIgnoreCase))
+    {
+        options.Postgres.ConnectionString = secretProvider.GetConnectionString("CroniqPersistence");
+    }
 });
 ```
 
@@ -306,7 +322,7 @@ Only override the values you truly need-everything else continues to flow from c
 
 ## 9. Troubleshooting
 
-- **Missing connection string:** When either `Auth.Mode` or `Persistence.Mode` is `SqlServer`, the extension throws if it cannot find a connection string on the domain-specific section or the shared `Croniq__SqlServer__ConnectionString` key.
+- **Missing connection string:** When either `Auth.Mode` or `Persistence.Mode` is `SqlServer` or `Postgres`, the extension throws if it cannot find a connection string on the domain-specific section or the shared `Croniq__SqlServer__ConnectionString`/`Croniq__Postgres__ConnectionString` key.
 - **Missing API key:** When `Auth.Mode = InMemory`, you must provide `Croniq__Auth__InMemory__ApiKey`. Otherwise startup throws `InvalidOperationException`.
 - **Missing identifier hash key:** When `Croniq__Observability__HashIdentifiers=true`, you must provide `Croniq__Observability__IdentifierHashKey`.
 - **Unexpected tenant scope:** Verify `Croniq__Core__TenantId`/`EnvironmentTag` when multiple developers work on the same database to avoid job collisions.

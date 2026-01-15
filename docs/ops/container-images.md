@@ -35,6 +35,7 @@ docker compose -f infra/docker/docker-compose.production.yml up --build
 
 Defaults use in-memory auth for quick smoke tests. Use `X-Croniq-Key: ${CRONIQ_API_KEY}` when calling the API.
 To exercise SQL auth instead, set `Croniq__Auth__Mode=SqlServer` and `Croniq__Auth__Password__Enabled=true` (keep `CRONIQ_SEED_ADMIN=true` so the migrator seeds the admin user).
+To use Postgres instead, run a Postgres instance and set `CRONIQ_DB_PROVIDER=Postgres` plus `CRONIQ_POSTGRES_CONNECTION` (or `Croniq__Postgres__ConnectionString`).
 
 ## Common configuration
 
@@ -43,9 +44,10 @@ Most hosts rely on the same Croniq core + persistence/auth settings:
 - `Croniq__Core__TenantId` (recommended)
 - `Croniq__Core__EnvironmentTag` (recommended)
 - `Croniq__Core__InstanceId` (recommended for multi-node deployments)
-- `Croniq__Auth__Mode` (`InMemory` or `SqlServer`)
-- `Croniq__Persistence__Mode` (`InMemory` or `SqlServer`)
-- `Croniq__SqlServer__ConnectionString` (shared fallback for auth + persistence)
+- `Croniq__Auth__Mode` (`InMemory`, `SqlServer`, or `Postgres`)
+- `Croniq__Persistence__Mode` (`InMemory`, `SqlServer`, or `Postgres`)
+- `Croniq__SqlServer__ConnectionString` (shared fallback for SqlServer auth + persistence)
+- `Croniq__Postgres__ConnectionString` (shared fallback for Postgres auth + persistence)
 
 ## Job assembly loading
 
@@ -67,15 +69,15 @@ You can also provide a delimited list:
 
 Required for production:
 
-- `Croniq__Auth__Mode=SqlServer`
-- `Croniq__Persistence__Mode=SqlServer`
-- `Croniq__SqlServer__ConnectionString=...`
+- `Croniq__Auth__Mode=SqlServer` (or `Postgres`)
+- `Croniq__Persistence__Mode=SqlServer` (or `Postgres`)
+- `Croniq__SqlServer__ConnectionString=...` (or `Croniq__Postgres__ConnectionString=...`)
 
 Optional:
 
 - `Croniq__Api__RequestsPerMinute` (rate limit)
 - `Croniq__Api__ExposeSchemas=true` (Swagger + gRPC reflection)
-- `Croniq__Webhooks__Mode=SqlServer|Remote` (webhook admin persistence)
+- `Croniq__Webhooks__Mode=SqlServer|Postgres|Remote` (webhook admin persistence)
 - `Croniq__Webhooks__Remote__BaseUrl` + `Croniq__Webhooks__Remote__ApiKey` when `Mode=Remote`
 
 The API host does not expose webhook ingress endpoints. Use `croniq-webhooks` for inbound webhooks.
@@ -84,8 +86,8 @@ The API host does not expose webhook ingress endpoints. Use `croniq-webhooks` fo
 
 Required for production:
 
-- `Croniq__Persistence__Mode=SqlServer`
-- `Croniq__SqlServer__ConnectionString=...`
+- `Croniq__Persistence__Mode=SqlServer` (or `Postgres`)
+- `Croniq__SqlServer__ConnectionString=...` (or `Croniq__Postgres__ConnectionString=...`)
 - `Croniq__Jobs__Assemblies__0=...` (or include entry assembly)
 
 The worker host must load job assemblies or it cannot execute scheduled triggers.
@@ -94,17 +96,24 @@ The worker host must load job assemblies or it cannot execute scheduled triggers
 
 Required for production:
 
-- `Croniq__Webhooks__Mode=SqlServer` (or `Remote` for DMZ/internal split)
-- `Croniq__SqlServer__ConnectionString=...` when `Mode=SqlServer`
+- `Croniq__Webhooks__Mode=SqlServer|Postgres` (or `Remote` for DMZ/internal split)
+- `Croniq__SqlServer__ConnectionString=...` when `Mode=SqlServer` (or `Croniq__Postgres__ConnectionString=...` when `Mode=Postgres`)
 - `Croniq__Jobs__Assemblies__0=...` when `Ingress.DispatchMode=TriggerJob`
 
 If you run in DMZ ingress-only mode (`Ingress.DispatchMode=StoreOnly`), the host stores ingress events and does not execute jobs.
 
 ### croniq-db-migrator
 
-Provide the connection string via `CRONIQ_SQL_CONNECTION` and run the migrator (idempotent; safe to rerun):
+Provide the connection string via `CRONIQ_DB_PROVIDER` plus `CRONIQ_SQL_CONNECTION` or `CRONIQ_POSTGRES_CONNECTION` and run the migrator (idempotent; safe to rerun):
 
 ```bash
+CRONIQ_DB_PROVIDER=SqlServer \
 CRONIQ_SQL_CONNECTION="Server=sql;Database=Croniq;User Id=sa;Password=..." \
+  dotnet Croniq.DbMigrator.dll
+```
+
+```bash
+CRONIQ_DB_PROVIDER=Postgres \
+CRONIQ_POSTGRES_CONNECTION="Host=postgres;Database=Croniq;Username=postgres;Password=..." \
   dotnet Croniq.DbMigrator.dll
 ```

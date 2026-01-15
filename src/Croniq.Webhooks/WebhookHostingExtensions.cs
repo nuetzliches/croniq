@@ -12,10 +12,12 @@ using Croniq.Core.Jobs;
 using Croniq.Core.Observability;
 using Croniq.Core.Policies;
 using Croniq.Core.Security;
+using Croniq.Data.Postgres;
 using Croniq.Data.SqlServer;
 using Croniq.Hosting;
 using Croniq.Options;
 using Croniq.Persistence.Abstractions;
+using Croniq.Persistence.Postgres;
 using Croniq.Persistence.SqlServer;
 using Croniq.Webhooks.InMemory;
 using Croniq.Webhooks.Options;
@@ -55,9 +57,10 @@ public static class WebhookHostingExtensions
         return options.Mode switch
         {
             WebhookPersistenceMode.SqlServer => ConfigureWebhookSqlServerPersistence(services, configuration, options),
+            WebhookPersistenceMode.Postgres => ConfigureWebhookPostgresPersistence(services, configuration, options),
             WebhookPersistenceMode.InMemory => ConfigureWebhookInMemoryPersistence(services),
             WebhookPersistenceMode.Remote => ConfigureWebhookRemotePersistence(services, options),
-            _ => throw new InvalidOperationException($"Unsupported Croniq:Webhooks:Mode '{options.Mode}'. Supported values: InMemory, SqlServer, Remote."),
+            _ => throw new InvalidOperationException($"Unsupported Croniq:Webhooks:Mode '{options.Mode}'. Supported values: InMemory, SqlServer, Postgres, Remote."),
         };
     }
 
@@ -73,7 +76,7 @@ public static class WebhookHostingExtensions
     private static IServiceCollection ConfigureWebhookSqlServerPersistence(IServiceCollection services, IConfiguration configuration, CroniqWebhookOptions options)
     {
         var sharedSql = configuration.GetSection("Croniq:SqlServer").Get<SqlServerOptions>() ?? new SqlServerOptions();
-        var connectionString = options.SqlServer.ConnectionString ?? sharedSql.ConnectionString ?? ResolveConnectionString(configuration);
+        var connectionString = options.SqlServer.ConnectionString ?? sharedSql.ConnectionString ?? ResolveSqlServerConnectionString(configuration);
 
         if (string.IsNullOrWhiteSpace(connectionString))
         {
@@ -94,6 +97,34 @@ public static class WebhookHostingExtensions
         services.TryAddSingleton<IWebhookDeadLetterStore, SqlServerWebhookDeadLetterStore>();
         services.TryAddSingleton<IWebhookIngressEventStore, SqlServerWebhookIngressEventStore>();
         services.TryAddSingleton<IWebhookEndpointChangefeed, SqlServerWebhookEndpointChangefeed>();
+        return services;
+    }
+
+    private static IServiceCollection ConfigureWebhookPostgresPersistence(IServiceCollection services, IConfiguration configuration, CroniqWebhookOptions options)
+    {
+        var sharedPostgres = configuration.GetSection("Croniq:Postgres").Get<PostgresOptions>() ?? new PostgresOptions();
+        var connectionString = options.Postgres.ConnectionString ?? sharedPostgres.ConnectionString ?? ResolvePostgresConnectionString(configuration);
+
+        if (string.IsNullOrWhiteSpace(connectionString))
+        {
+            throw new InvalidOperationException("Croniq:Webhooks:Postgres:ConnectionString or Croniq:Postgres:ConnectionString must be provided when Croniq:Webhooks:Mode = Postgres.");
+        }
+
+        ConfigureDataProtection(services, configuration);
+        services.AddCroniqPostgresDbContext(pgOptions =>
+        {
+            pgOptions.ConnectionString = connectionString;
+            pgOptions.MigrationsAssembly = options.Postgres.MigrationsAssembly ?? sharedPostgres.MigrationsAssembly;
+            pgOptions.EnableDetailedErrors = options.Postgres.EnableDetailedErrors ?? sharedPostgres.EnableDetailedErrors;
+            pgOptions.EnableSensitiveDataLogging = options.Postgres.EnableSensitiveDataLogging ?? sharedPostgres.EnableSensitiveDataLogging;
+            pgOptions.CommandTimeoutSeconds = options.Postgres.CommandTimeoutSeconds ?? sharedPostgres.CommandTimeoutSeconds;
+            pgOptions.SearchPath = sharedPostgres.SearchPath;
+        });
+
+        services.TryAddSingleton<IWebhookPersistenceProvider, PostgresWebhookPersistenceProvider>();
+        services.TryAddSingleton<IWebhookDeadLetterStore, PostgresWebhookDeadLetterStore>();
+        services.TryAddSingleton<IWebhookIngressEventStore, PostgresWebhookIngressEventStore>();
+        services.TryAddSingleton<IWebhookEndpointChangefeed, PostgresWebhookEndpointChangefeed>();
         return services;
     }
 
@@ -173,9 +204,16 @@ public static class WebhookHostingExtensions
         services.RemoveAll<IWebhookEndpointChangefeed>();
     }
 
-    private static string? ResolveConnectionString(IConfiguration configuration)
+    private static string? ResolveSqlServerConnectionString(IConfiguration configuration)
     {
         return configuration.GetConnectionString("CroniqSqlServer")
+            ?? configuration.GetConnectionString("Croniq")
+            ?? configuration.GetConnectionString("DefaultConnection");
+    }
+
+    private static string? ResolvePostgresConnectionString(IConfiguration configuration)
+    {
+        return configuration.GetConnectionString("CroniqPostgres")
             ?? configuration.GetConnectionString("Croniq")
             ?? configuration.GetConnectionString("DefaultConnection");
     }
@@ -858,10 +896,12 @@ public static class WebhookHostingExtensions
         public Task StartAsync(CancellationToken cancellationToken)
         {
             var options = _options.CurrentValue;
-            if (options.Mode == WebhookPersistenceMode.SqlServer && options.Endpoints.Count > 0)
+            if ((options.Mode == WebhookPersistenceMode.SqlServer || options.Mode == WebhookPersistenceMode.Postgres)
+                && options.Endpoints.Count > 0)
             {
                 _logger.LogWarning(
-                    "Croniq:Webhooks:Endpoints is configured while Mode=SqlServer; persisted webhooks take precedence and config-defined endpoints are used only when no persisted hook exists for the same key. Configured endpoints: {Count}",
+                    "Croniq:Webhooks:Endpoints is configured while Mode={Mode}; persisted webhooks take precedence and config-defined endpoints are used only when no persisted hook exists for the same key. Configured endpoints: {Count}",
+                    options.Mode,
                     options.Endpoints.Count);
             }
 

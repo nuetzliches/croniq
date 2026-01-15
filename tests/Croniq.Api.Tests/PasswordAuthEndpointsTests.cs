@@ -4,7 +4,6 @@ using System.Net.Http.Json;
 using Croniq.Api.Models;
 using Croniq.Api.Tests.Infrastructure;
 using Croniq.Auth.Abstractions;
-using Croniq.Auth.SqlServer;
 using Microsoft.Extensions.DependencyInjection;
 using Shouldly;
 using Xunit;
@@ -27,7 +26,7 @@ public sealed class PasswordAuthEndpointsTests : IClassFixture<PasswordAuthApiTe
         var username = "alice";
         var password = "correct horse battery staple";
 
-        var auth = _host.Services.GetRequiredService<PasswordAuthService>();
+        var auth = _host.Services.GetRequiredService<IPasswordAuthService>();
         var hash = auth.HashPassword("usr_test", username, password);
 
         var user = await _host.Users.UpsertAsync(new(
@@ -72,7 +71,7 @@ public sealed class PasswordAuthEndpointsTests : IClassFixture<PasswordAuthApiTe
         var username = "bob";
         var password = "p@ssw0rd";
 
-        var auth = _host.Services.GetRequiredService<PasswordAuthService>();
+        var auth = _host.Services.GetRequiredService<IPasswordAuthService>();
         var hash = auth.HashPassword(userId, username, password);
 
         await _host.Users.UpsertAsync(new(
@@ -126,7 +125,7 @@ public sealed class PasswordAuthEndpointsTests : IClassFixture<PasswordAuthApiTe
         var username = "carol";
         var password = "right";
 
-        var auth = _host.Services.GetRequiredService<PasswordAuthService>();
+        var auth = _host.Services.GetRequiredService<IPasswordAuthService>();
         var hash = auth.HashPassword(userId, username, password);
 
         await _host.Users.UpsertAsync(new(
@@ -164,7 +163,7 @@ public sealed class PasswordAuthEndpointsTests : IClassFixture<PasswordAuthApiTe
         var username = "dave";
         var password = "right";
 
-        var auth = _host.Services.GetRequiredService<PasswordAuthService>();
+        var auth = _host.Services.GetRequiredService<IPasswordAuthService>();
         var hash = auth.HashPassword(userId, username, password);
 
         await _host.Users.UpsertAsync(new(
@@ -212,7 +211,7 @@ public sealed class PasswordAuthEndpointsTests : IClassFixture<PasswordAuthApiTe
         var username = "frank";
         var password = "right";
 
-        var auth = _host.Services.GetRequiredService<PasswordAuthService>();
+        var auth = _host.Services.GetRequiredService<IPasswordAuthService>();
         var hash = auth.HashPassword(userId, username, password);
 
         await _host.Users.UpsertAsync(new(
@@ -264,7 +263,7 @@ public sealed class PasswordAuthEndpointsTests : IClassFixture<PasswordAuthApiTe
         var oldPassword = "old";
         var newPassword = "new";
 
-        var auth = _host.Services.GetRequiredService<PasswordAuthService>();
+        var auth = _host.Services.GetRequiredService<IPasswordAuthService>();
         var hash = auth.HashPassword(userId, username, oldPassword);
 
         await _host.Users.UpsertAsync(new(

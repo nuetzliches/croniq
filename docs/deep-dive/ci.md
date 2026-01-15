@@ -30,7 +30,7 @@ This document describes the continuous integration and delivery strategy require
    - `dotnet format --verify-no-changes`.
    - `dotnet build -warnaserror` to enforce analyzers.
 3. **Unit + contract tests**
-   - Matrix per test project (`Croniq.Core.Tests`, `Croniq.Api.Tests`, `Croniq.JobStore.InMemory.Tests`, `Croniq.Persistence.SqlServer.Tests`, `Croniq.Providers.Default.Tests`, `Croniq.Sdk.Tests`).
+  - Matrix per test project (`Croniq.Core.Tests`, `Croniq.Api.Tests`, `Croniq.JobStore.InMemory.Tests`, `Croniq.Persistence.SqlServer.Tests`, `Croniq.Persistence.Postgres.Tests`, `Croniq.Providers.Default.Tests`, `Croniq.Sdk.Tests`).
    - Use `dotnet test <proj> /p:CollectCoverage=true /p:CoverletOutputFormat=cobertura`.
    - Upload coverage report aggregate + test results (TRX) as artifacts.
    - Fail if coverage <73% Core line / <75% overall line / <55% branch (overall + Core).
@@ -80,19 +80,19 @@ This document describes the continuous integration and delivery strategy require
 
 - Trigger: manual `workflow_dispatch` guarded by the `staging` environment **and** `workflow_call` from `release.yml`.
 - Prereqs: `charts/croniq` + `charts/environments/staging-values.yaml`, secrets `STAGING_KUBECONFIG` (base64), optional `image-tag` input (release passes the git tag).
-- Steps:
+Steps:
 
-  1. Resolve image tag (defaults to current ref, workflow input, or `staging-<run>`).
-  2. Configure kubectl/Helm with the staging kubeconfig and install/upgrade the chart with staged API/worker tags.
-  3. Run layered health probes via `scripts/ci/wait-for-http.ps1` against `/health` and `/health/persistence`; on failure, capture `kubectl get/describe/logs` before exiting.
-  4. Execute `dotnet test tests/Croniq.Api.Smoke/... -- TestRunParameters.Parameter(BaseUrl, https://staging.croniq.local)` to validate ingress + APIs.
-  5. Collect diagnostics (pods, describe output, API/worker logs) as artifacts for traceability.
+1. Resolve image tag (defaults to current ref, workflow input, or `staging-<run>`).
+2. Configure kubectl/Helm with the staging kubeconfig and install/upgrade the chart with staged API/worker tags.
+3. Run layered health probes via `scripts/ci/wait-for-http.ps1` against `/health` and `/health/persistence`; on failure, capture `kubectl get/describe/logs` before exiting.
+4. Execute `dotnet test tests/Croniq.Api.Smoke/... -- TestRunParameters.Parameter(BaseUrl, https://staging.croniq.local)` to validate ingress + APIs.
+5. Collect diagnostics (pods, describe output, API/worker logs) as artifacts for traceability.
 
 Release builds automatically call this workflow; you can still dispatch it manually for ad-hoc staging refreshes.
 
 ### dacpac.yml (Manual SQL Deploy, Disabled by Default)
 
-- Triggered only via `workflow_dispatch` and gated by the `run_workflow` boolean input (defaults to `false`). Unless you explicitly toggle it to `true`, the job is a no-op—this keeps the workflow checked in but effectively disabled.
+- Triggered only via `workflow_dispatch` and gated by the `run_workflow` boolean input (defaults to `false`). Unless you explicitly toggle it to `true`, the job is a no-op - this keeps the workflow checked in but effectively disabled.
 - Installs `sqlpackage` via a .NET global tool, provisions Azure SQL Edge through `scripts/ci/setup-sql.ps1`, and immediately executes `scripts/ci/deploy-dacpac.ps1` with the provided DACPAC/database inputs.
 - Accepts inputs for container name, host port, database, DACPAC path, and Compose vs. single-container provisioning so you can mirror local layouts. Update the defaults if artifacts move.
 - Optionally set the `SQL_EDGE_SA_PASSWORD` repository secret to override the default `sa` password when running the workflow; the script falls back to `P@ssw0rd1234` otherwise.

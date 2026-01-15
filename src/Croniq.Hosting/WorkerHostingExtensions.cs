@@ -1,12 +1,15 @@
 using System;
 using System.Reflection;
-using Croniq.Auth.SqlServer;
+using PostgresRetentionCleanupJob = Croniq.Auth.Postgres.RetentionCleanupJob;
+using SqlServerRetentionCleanupJob = Croniq.Auth.SqlServer.RetentionCleanupJob;
 using Croniq.Core;
 using Croniq.Core.Hosting;
 using Croniq.Options;
 using Croniq.Core.Policies;
+using Croniq.Data.Postgres;
 using Croniq.Data.SqlServer;
 using Croniq.JobStore.InMemory;
+using Croniq.Persistence.Postgres;
 using Croniq.Persistence.SqlServer;
 using Croniq.Providers.Default;
 using Microsoft.Extensions.Configuration;
@@ -32,6 +35,7 @@ public static class WorkerHostingExtensions
         services.Configure<PolicyOverrideOptions>(configuration.GetSection("Croniq:Policies:Overrides"));
         services.Configure<CroniqPersistenceOptions>(configuration.GetSection("Croniq:Persistence"));
         services.Configure<SqlServerOptions>(configuration.GetSection("Croniq:SqlServer"));
+        services.Configure<PostgresOptions>(configuration.GetSection("Croniq:Postgres"));
         services.Configure<CroniqRetentionOptions>(configuration.GetSection("Croniq:Retention"));
 
         services.AddCroniqCore();
@@ -44,6 +48,7 @@ public static class WorkerHostingExtensions
 
         var persistenceOpts = configuration.GetSection("Croniq:Persistence").Get<CroniqPersistenceOptions>() ?? new CroniqPersistenceOptions();
         var sharedSqlServer = configuration.GetSection("Croniq:SqlServer").Get<SqlServerOptions>() ?? new SqlServerOptions();
+        var sharedPostgres = configuration.GetSection("Croniq:Postgres").Get<PostgresOptions>() ?? new PostgresOptions();
 
         if (string.Equals(persistenceOpts.Mode, "SqlServer", StringComparison.OrdinalIgnoreCase))
         {
@@ -87,9 +92,73 @@ public static class WorkerHostingExtensions
             var retention = configuration.GetSection("Croniq:Retention").Get<CroniqRetentionOptions>() ?? new CroniqRetentionOptions();
             if (retention.Enabled)
             {
-                services.AddCroniqJob<RetentionCleanupJob>();
+                services.AddCroniqJob<SqlServerRetentionCleanupJob>();
 
-                var attribute = typeof(RetentionCleanupJob).GetCustomAttribute<Croniq.Sdk.CroniqJobAttribute>();
+                var attribute = typeof(SqlServerRetentionCleanupJob).GetCustomAttribute<Croniq.Sdk.CroniqJobAttribute>();
+                if (attribute is null)
+                {
+                    throw new InvalidOperationException("RetentionCleanupJob is missing [CroniqJob] attribute.");
+                }
+
+                var triggerId = string.IsNullOrWhiteSpace(retention.TriggerId)
+                    ? "croniq.retention.cleanup"
+                    : retention.TriggerId.Trim();
+
+                services.AddSingleton(new CroniqTriggerSeedRegistration(attribute, retention.ScheduleCron)
+                {
+                    TriggerId = triggerId,
+                    ManagedBy = "croniq-retention",
+                    TimeZoneId = retention.TimeZoneId,
+                    Enabled = true
+                });
+            }
+        }
+        else if (string.Equals(persistenceOpts.Mode, "Postgres", StringComparison.OrdinalIgnoreCase))
+        {
+            var conn = ResolvePostgresConnectionString(
+                persistenceOpts.Postgres.ConnectionString,
+                sharedPostgres.ConnectionString,
+                configuration);
+            var commandTimeoutSeconds = persistenceOpts.Postgres.CommandTimeoutSeconds
+                ?? sharedPostgres.CommandTimeoutSeconds;
+
+            if (string.IsNullOrWhiteSpace(conn))
+            {
+                throw new InvalidOperationException("Croniq:Persistence:Postgres:ConnectionString or Croniq:Postgres:ConnectionString is required when Persistence.Mode = Postgres.");
+            }
+
+            services.AddCroniqPostgresPersistence(pgOptions =>
+            {
+                pgOptions.ConnectionString = conn;
+                pgOptions.MigrationsAssembly = persistenceOpts.Postgres.MigrationsAssembly ?? sharedPostgres.MigrationsAssembly;
+                pgOptions.EnableDetailedErrors = persistenceOpts.Postgres.EnableDetailedErrors ?? sharedPostgres.EnableDetailedErrors;
+                pgOptions.EnableSensitiveDataLogging = persistenceOpts.Postgres.EnableSensitiveDataLogging ?? sharedPostgres.EnableSensitiveDataLogging;
+                pgOptions.CommandTimeoutSeconds = commandTimeoutSeconds;
+                pgOptions.SearchPath = sharedPostgres.SearchPath;
+            }, persistenceOptions =>
+            {
+                if (persistenceOpts.Postgres.LeaseDurationSeconds.HasValue)
+                {
+                    persistenceOptions.LeaseDurationSeconds = persistenceOpts.Postgres.LeaseDurationSeconds.Value;
+                }
+
+                if (persistenceOpts.Postgres.DeadLetterRetentionDays.HasValue)
+                {
+                    persistenceOptions.DeadLetterRetentionDays = persistenceOpts.Postgres.DeadLetterRetentionDays.Value;
+                }
+
+                if (persistenceOpts.Postgres.DeadLetterReasonMaxLength.HasValue)
+                {
+                    persistenceOptions.DeadLetterReasonMaxLength = persistenceOpts.Postgres.DeadLetterReasonMaxLength.Value;
+                }
+            });
+
+            var retention = configuration.GetSection("Croniq:Retention").Get<CroniqRetentionOptions>() ?? new CroniqRetentionOptions();
+            if (retention.Enabled)
+            {
+                services.AddCroniqJob<PostgresRetentionCleanupJob>();
+
+                var attribute = typeof(PostgresRetentionCleanupJob).GetCustomAttribute<Croniq.Sdk.CroniqJobAttribute>();
                 if (attribute is null)
                 {
                     throw new InvalidOperationException("RetentionCleanupJob is missing [CroniqJob] attribute.");
@@ -117,6 +186,15 @@ public static class WorkerHostingExtensions
         return domainSpecific
             ?? shared
             ?? configuration.GetConnectionString("CroniqSqlServer")
+            ?? configuration.GetConnectionString("Croniq")
+            ?? configuration.GetConnectionString("DefaultConnection");
+    }
+
+    private static string? ResolvePostgresConnectionString(string? domainSpecific, string? shared, IConfiguration configuration)
+    {
+        return domainSpecific
+            ?? shared
+            ?? configuration.GetConnectionString("CroniqPostgres")
             ?? configuration.GetConnectionString("Croniq")
             ?? configuration.GetConnectionString("DefaultConnection");
     }

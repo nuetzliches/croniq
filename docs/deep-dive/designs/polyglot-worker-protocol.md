@@ -6,7 +6,7 @@
 - Offer two transports with identical semantics:
   - **gRPC** for efficient typed streaming.
   - **HTTP** for broad compatibility (proxies, simpler SDKs).
-- Avoid a “global heartbeat API” as a first-class requirement.
+- Avoid a "global heartbeat API" as a first-class requirement.
   - Prefer **work-scoped leases with deadlines** and/or **connection presence** (for streaming).
 - Preserve tenant isolation and environment scoping.
 - Provide at-least-once execution with idempotent claim/ack semantics.
@@ -48,7 +48,7 @@ A **Work Item** is an assignment representing a single execution attempt.
 
 ### Lease (No Global Heartbeats)
 
-- A Runner does **not** send a periodic “I am alive” heartbeat.
+- A Runner does **not** send a periodic "I am alive" heartbeat.
 - Liveness and ownership are derived from:
   - The **lease deadline** (server reassigns after expiration).
   - **Acks/events** while executing (optional; work-scoped).
@@ -209,9 +209,9 @@ The API must enforce that:
 
 ## Persistence & Schema
 
-WorkItems/WorkClaims/RunnerCapabilities are part of the SqlServer schema and are updated by the HTTP/gRPC work endpoints when assignments are claimed, renewed, and acknowledged. WorkEvents are still optional; events are currently streamed into the execution log store.
+WorkItems/WorkClaims/RunnerCapabilities are part of the SqlServer/Postgres schema and are updated by the HTTP/gRPC work endpoints when assignments are claimed, renewed, and acknowledged. WorkEvents are still optional; events are currently streamed into the execution log store.
 
-Current tables (SqlServer):
+Current tables (SqlServer/Postgres):
 
 - `croniq.WorkItems`
   - `WorkItemId` (PK)
@@ -230,7 +230,7 @@ Current tables (SqlServer):
   - `RunnerId`, `TenantId`, `EnvironmentTag`
   - `CapabilitiesJson` (tags or kv pairs)
   - `UpdatedAtUtc`
-- `croniq.WorkEvents` (optional; not yet materialized in SQL Server)
+- `croniq.WorkEvents` (optional; not yet materialized in SqlServer/Postgres)
   - `ExecutionId`, `Attempt`, `Sequence`
   - `EventType`, `PayloadJson`
   - `OccurredAtUtc`

@@ -195,7 +195,7 @@ builder.WithMetrics(metrics => metrics.AddMeter("Croniq.Core.Policy", "Croniq.Co
 - [x] Add `ExecutionPolicyPipelineProvider` (Polly v8) with retry/timeout/circuit support, caching pipelines per job, and wire `DefaultJobExecutionPipeline` to use it.
 - [x] Add dead-letter handling when retries are exhausted once persistence contracts and SQL scripts are ready (TriggerWorker now routes exhausted leases via `DeadLetterRequest`).
 - [x] Emit policy outcome counters/metrics via the `ExecutionPolicyPipelineProvider` + `TriggerWorker` instrumentation (replaces earlier plan to wire it inside `DefaultJobExecutionPipeline`).
-- [x] Extend persistence contracts for dead-letter writes/reads and update SqlServer EF migrations accordingly.
+- [x] Extend persistence contracts for dead-letter writes/reads and update SqlServer/Postgres EF migrations accordingly.
 - [x] Provide integration tests in `Croniq.Core.Tests` + contract tests for persistence to validate dead-letter storage.
 - [x] Document policy configuration knobs in `docs/policies.md` and add examples to samples.
 - [x] Wire dashboards/alerts from the observability plan to include policy counters (ensure exporters emit them).

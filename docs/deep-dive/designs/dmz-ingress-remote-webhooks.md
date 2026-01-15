@@ -11,7 +11,7 @@
 
 - DMZ hosts must not open connections into the internal network.
 - Internal UI must only connect to the internal Croniq.Api.
-- DMZ storage uses the existing SqlServer migrations from `Croniq.Data.SqlServer`.
+- DMZ storage uses the existing SqlServer/Postgres migrations from `Croniq.Data.SqlServer` or `Croniq.Data.Postgres`.
 - `Croniq.Persistence.Abstractions` contains contracts only and does not define schema.
 
 ## Proposed Topology
@@ -20,7 +20,7 @@ DMZ:
 
 - `Croniq.Webhooks` for ingress (`POST /tenants/{tenantId}/environments/{environmentTag}/webhooks/{hookKey}`).
 - `Croniq.Api` in a restricted "webhook admin" mode (only webhook CRUD + health).
-- Dedicated SqlServer instance seeded by `Croniq.Data.SqlServer` migrations.
+- Dedicated SqlServer/Postgres instance seeded by `Croniq.Data.SqlServer` or `Croniq.Data.Postgres` migrations.
 
 Internal network:
 
@@ -30,7 +30,7 @@ Internal network:
 
 ## Mode Semantics
 
-DMZ remains `Croniq:Webhooks:Mode=SqlServer` and stores webhook definitions locally.
+DMZ remains `Croniq:Webhooks:Mode=SqlServer` or `Croniq:Webhooks:Mode=Postgres` and stores webhook definitions locally.
 Internal API uses a new `Croniq:Webhooks:Mode=Remote` to call the DMZ admin API.
 
 Example (internal API):
@@ -185,7 +185,7 @@ DMZ (ingress-only, no outbound):
 ```yaml
 Croniq:
   Webhooks:
-    Mode: SqlServer
+    Mode: SqlServer  # or Postgres
     Ingress:
       DispatchMode: StoreOnly
     Security:
@@ -196,7 +196,7 @@ Croniq:
 
 ## Event Store Schema (Draft)
 
-`WebhookIngressEvent` (DMZ SqlServer):
+`WebhookIngressEvent` (DMZ SqlServer/Postgres):
 
 - `Id` (bigint identity)
 - `EventId` (nvarchar(64), unique)

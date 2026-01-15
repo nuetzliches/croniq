@@ -13,8 +13,8 @@ This document specifies the authentication, authorization, and rate limiting des
 
 ### API Keys (Machines / Automation)
 
-1. **Provisioning**: Keys are created via `IApiKeyStore.IssueAsync` (backed by the EF-Core provider in `Croniq.Auth.SqlServer`). In-memory mode seeds keys via `Croniq:Auth:InMemory:ApiKey` for samples/tests only.
-2. **Persistence**: SQL Server stores only hashed secrets (HMAC SHA-256 + per-key salt). The plaintext is returned once to the operator and never persisted.
+1. **Provisioning**: Keys are created via `IApiKeyStore.IssueAsync` (backed by the EF-Core providers in `Croniq.Auth.SqlServer` or `Croniq.Auth.Postgres`). In-memory mode seeds keys via `Croniq:Auth:InMemory:ApiKey` for samples/tests only.
+2. **Persistence**: SqlServer/Postgres stores only hashed secrets (HMAC SHA-256 + per-key salt). The plaintext is returned once to the operator and never persisted.
 3. **Request Flow**: Callers send the key in `X-Croniq-Key`. Middleware resolves the key via `ICallerContextFactory.FromApiKeyAsync`, creating an `ICallerContext` with TenantId, EnvironmentTag, CallerId (API client id), and Scopes.
 4. **Admin APIs**: Tenant-scoped routes now expose key lifecycle operations behind `api-keys:manage`:
 
@@ -51,7 +51,7 @@ This document specifies the authentication, authorization, and rate limiting des
 
    The `plaintextSecret` is never persisted; automation must capture it at issuance/rotation time.
 
-5. **Configuration**: `Croniq:Auth:Mode = InMemory|SqlServer`. When `SqlServer`, either reuse `Croniq:SqlServer:ConnectionString` or provide `Croniq:Auth:SqlServer:ConnectionString` explicitly.
+5. **Configuration**: `Croniq:Auth:Mode = InMemory|SqlServer|Postgres`. When `SqlServer`, either reuse `Croniq:SqlServer:ConnectionString` or provide `Croniq:Auth:SqlServer:ConnectionString` explicitly; when `Postgres`, use `Croniq:Postgres:ConnectionString` or `Croniq:Auth:Postgres:ConnectionString`.
 
 ### Bearer Tokens (Users)
 
@@ -76,7 +76,7 @@ This document specifies the authentication, authorization, and rate limiting des
 - `TenantGuard` enforces caller tenant/environment across REST routes (webhooks CRUD, schedules, manual triggers) and rejects cross-tenant attempts with 403 before persistence/pipeline execution. The execution-log endpoint now inspects the first log entry to validate tenant/environment metadata before streaming; Scheduler/Worker/Webhook ingress gRPC hosts already apply the same guard.
 - Scope naming convention mirrors REST permissions: `schedules:write`, `jobs:trigger`, `tenants:admin`, `api-keys:manage`.
 - Bearer tokens must carry the configured tenant claim and any required scopes; missing claims/scopes yield 401/403. API keys remain single-tenant because validation bakes the tenant into the emitted caller context.
-- gRPC Scheduler: the Scheduler service runs in `Croniq.Api` (mapped via `MapCroniqSchedulerGrpc`). Calls use the same middleware/guards as HTTP; clients must send `x-croniq-key` (or Bearer) metadata and align `tenant_id`/`environment_tag` (required on `DeleteSchedule`). The proto lives under `src/Croniq.Rpc.Client/Protos/scheduler.proto`; `Croniq.Sample.GrpcClient` shows usage with `Croniq.Rpc.Client` and the DI helper `AddCroniqSchedulerClient`. Safe wrappers emit `CroniqRpcException` to avoid direct coupling zu `Grpc.Core`.
+- gRPC Scheduler: the Scheduler service runs in `Croniq.Api` (mapped via `MapCroniqSchedulerGrpc`). Calls use the same middleware/guards as HTTP; clients must send `x-croniq-key` (or Bearer) metadata and align `tenant_id`/`environment_tag` (required on `DeleteSchedule`). The proto lives under `src/Croniq.Rpc.Client/Protos/scheduler.proto`; `Croniq.Sample.GrpcClient` shows usage with `Croniq.Rpc.Client` and the DI helper `AddCroniqSchedulerClient`. Safe wrappers emit `CroniqRpcException` to avoid direct coupling to `Grpc.Core`.
 - Admin APIs verify both caller scope and tenant match (e.g., only Tenant Admins can mutate their key space). Cross-tenant actions require service-level credentials flagged with `CallerType = ApiKey` and `Scopes` containing `system:*`.
 
 ## Inbound Webhook Security
@@ -190,10 +190,10 @@ Minimal configuration example:
 ## Operational Runbooks & Incident Response
 
 - **API key compromise**: (1) call `DELETE /tenants/{tenantId}/api-keys/{keyId}` to revoke the offender, (2) rotate dependent deploy agents via `POST .../rotate`, (3) search `Croniq.Api.Auth` logs for the compromised CallerId to confirm no lingering traffic, and (4) invalidate cached rate-limiter entries by restarting only the edge pod if requests keep flowing (the limiter refreshes partitions automatically once traffic stops).
-- **Webhook secret/IP rule drift**: When secrets or CIDRs must change quickly, batch rotations through the existing CRUD APIs—each call emits a `WebhookEndpointEvents` record and pushes cache invalidations to every ingress replica. No manual recycle is required; confirm the rollout by tailing `Croniq.Webhooks` logs for `cache invalidation completed` and running the smoke tests.
-- **Database least privilege**: Deploy `Croniq.DbMigrator` with a migration role, then run the API/Worker/Webhook hosts under read/write roles scoped to their schemas (`croniq`, `auth`). Deny `ALTER` to runtime identities and audit failed DDL attempts via SQL Server Extended Events.
+- **Webhook secret/IP rule drift**: When secrets or CIDRs must change quickly, batch rotations through the existing CRUD APIs - each call emits a `WebhookEndpointEvents` record and pushes cache invalidations to every ingress replica. No manual recycle is required; confirm the rollout by tailing `Croniq.Webhooks` logs for `cache invalidation completed` and running the smoke tests.
+ - **Database least privilege**: Deploy `Croniq.DbMigrator` with a migration role, then run the API/Worker/Webhook hosts under read/write roles scoped to their schemas (`croniq`, `auth`). Deny `ALTER` to runtime identities and audit failed DDL attempts via SQL Server Extended Events or Postgres audit logs.
 - **Telemetry to SIEM**: Forward `Croniq.Api` and `Croniq.Webhooks` structured logs plus `Croniq.Observability` metrics to your SIEM. Prioritize alerts for `auth.failed`, `rate.limit.rejected`, `ip-blocked`, and unusual spikes in `WebhookDeadLetters`.
-- **Disaster recovery validation**: Quarterly, restore the SQL backups into a staging cluster, run `Croniq.DbMigrator` to verify schema parity, then execute `scripts/test-e2e.cmd` against the restored environment to ensure creds, secrets, and webhook caches hydrate as expected.
+- **Disaster recovery validation**: Quarterly, restore the database backups into a staging cluster, run `Croniq.DbMigrator` to verify schema parity, then execute `scripts/test-e2e.cmd` against the restored environment to ensure creds, secrets, and webhook caches hydrate as expected.
 
 ## Webhook Consumer Guidance
 

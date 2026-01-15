@@ -198,3 +198,62 @@ public interface IRefreshTokenStore
     Task RevokeAsync(string tenantId, string tokenId, string? replacedByTokenId, CancellationToken cancellationToken = default);
     Task RevokeAllForUserAsync(string tenantId, string userId, CancellationToken cancellationToken = default);
 }
+
+public sealed class PasswordAuthOptions
+{
+    public bool Enabled { get; set; }
+
+    public int AccessTokenLifetimeMinutes { get; set; } = 15;
+
+    public int RefreshTokenLifetimeDays { get; set; } = 7;
+
+    public int MaxFailedAccessAttempts { get; set; } = 10;
+
+    public int LockoutMinutes { get; set; } = 15;
+}
+
+public sealed record PasswordLoginResult(
+    bool Success,
+    string? AccessToken,
+    string? RefreshToken,
+    int? ExpiresInSeconds,
+    DateTimeOffset? LockoutEndUtc,
+    bool PasswordChangeRequired = false);
+
+public sealed record PasswordRefreshResult(
+    bool Success,
+    string? AccessToken,
+    string? RefreshToken,
+    int? ExpiresInSeconds,
+    bool PasswordChangeRequired = false);
+
+public interface IPasswordAuthService
+{
+    Task<PasswordLoginResult?> LoginAsync(
+        string tenantId,
+        string username,
+        string password,
+        string? environmentTag,
+        IReadOnlyCollection<string>? requestedScopes,
+        string? audience,
+        CancellationToken cancellationToken = default);
+
+    Task<PasswordRefreshResult?> RefreshAsync(
+        string tenantId,
+        string refreshToken,
+        string? environmentTag,
+        IReadOnlyCollection<string>? requestedScopes,
+        string? audience,
+        CancellationToken cancellationToken = default);
+
+    Task<bool?> LogoutAsync(string tenantId, string refreshToken, CancellationToken cancellationToken = default);
+
+    Task<bool?> ChangePasswordAsync(
+        string tenantId,
+        string userId,
+        string currentPassword,
+        string newPassword,
+        CancellationToken cancellationToken = default);
+
+    string HashPassword(string userId, string username, string password);
+}

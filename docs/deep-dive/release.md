@@ -18,7 +18,7 @@ This document extends `ci.md` with the steps every Croniq release must follow: v
 
 ## Release Pipeline (GitHub Actions)
 
-1. **Tagging** – create a signed tag `vX.Y.Z` on the main branch.
+1. **Tagging** - create a signed tag `vX.Y.Z` on the main branch.
 2. **Build phase**:
    - `dotnet build` + `dotnet test` (unit + contract suites).
    - Compose smoke tests (see `ci.md`) triggered for release candidates.
@@ -35,7 +35,7 @@ This document extends `ci.md` with the steps every Croniq release must follow: v
 6. **Verification**:
    - `cosign verify --certificate-identity <issuer> ghcr.io/...:0.6.0`.
    - `dotnet nuget verify Croniq.Core.0.6.0.nupkg --certificate-fingerprint <fingerprint>`.
-   - Run `Croniq.DbMigrator` against the staging database (set `CRONIQ_SQL_CONNECTION` in the environment) to confirm migrations apply cleanly.
+   - Run `Croniq.DbMigrator` against the staging database (set `CRONIQ_DB_PROVIDER` plus `CRONIQ_SQL_CONNECTION` or `CRONIQ_POSTGRES_CONNECTION` in the environment) to confirm migrations apply cleanly.
 
 ## Compliance Artifacts
 
@@ -55,7 +55,7 @@ This document extends `ci.md` with the steps every Croniq release must follow: v
 ## Release Checklist
 
 1. Update CHANGELOG/release notes if maintained; versioning comes from the git tag via MinVer.
-2. Verify `Croniq.DbMigrator` runs locally with `CRONIQ_SQL_CONNECTION` set.
+2. Verify `Croniq.DbMigrator` runs locally with `CRONIQ_DB_PROVIDER` plus `CRONIQ_SQL_CONNECTION` or `CRONIQ_POSTGRES_CONNECTION` set.
 3. Run `npm --prefix docs run docs:build` to ensure docs compile; update navigation if new pages were added.
 4. Tag and push; wait for CI to produce packages/images.
 5. Download artifacts, run `cosign verify` + `nuget verify` locally if required by policy.

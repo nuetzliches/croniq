@@ -1,6 +1,5 @@
 using Croniq.Api.Models;
 using Croniq.Auth.Abstractions;
-using Croniq.Auth.SqlServer;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Options;
 
@@ -23,7 +22,7 @@ public static partial class ApiHostingExtensions
                 return Results.NotFound();
             }
 
-            var auth = services.GetService<PasswordAuthService>();
+            var auth = services.GetService<IPasswordAuthService>();
             if (auth is null)
             {
                 return Results.NotFound();
@@ -112,7 +111,7 @@ public static partial class ApiHostingExtensions
                 return Results.NotFound();
             }
 
-            var auth = services.GetService<PasswordAuthService>();
+            var auth = services.GetService<IPasswordAuthService>();
             if (auth is null)
             {
                 return Results.NotFound();
@@ -190,7 +189,7 @@ public static partial class ApiHostingExtensions
                 return Results.NotFound();
             }
 
-            var auth = services.GetService<PasswordAuthService>();
+            var auth = services.GetService<IPasswordAuthService>();
             if (auth is null)
             {
                 return Results.NotFound();
@@ -246,7 +245,7 @@ public static partial class ApiHostingExtensions
                 return Results.NotFound();
             }
 
-            var auth = services.GetService<PasswordAuthService>();
+            var auth = services.GetService<IPasswordAuthService>();
             if (auth is null)
             {
                 return Results.NotFound();

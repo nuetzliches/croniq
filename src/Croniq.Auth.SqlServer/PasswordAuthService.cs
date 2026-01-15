@@ -10,7 +10,7 @@ using Microsoft.Extensions.Options;
 
 namespace Croniq.Auth.SqlServer;
 
-public sealed class PasswordAuthService
+public sealed class PasswordAuthService : IPasswordAuthService
 {
     private readonly IPasswordUserStore _users;
     private readonly IRefreshTokenStore _refreshTokens;
@@ -380,18 +380,3 @@ public sealed class PasswordAuthService
 
     private sealed record PasswordAuthUser(string UserId, string Username);
 }
-
-public sealed record PasswordLoginResult(
-    bool Success,
-    string? AccessToken,
-    string? RefreshToken,
-    int? ExpiresInSeconds,
-    DateTimeOffset? LockoutEndUtc,
-    bool PasswordChangeRequired = false);
-
-public sealed record PasswordRefreshResult(
-    bool Success,
-    string? AccessToken,
-    string? RefreshToken,
-    int? ExpiresInSeconds,
-    bool PasswordChangeRequired = false);
