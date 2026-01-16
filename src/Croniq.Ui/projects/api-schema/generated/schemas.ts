@@ -157,6 +157,31 @@ export const ScheduleReplayResult = z
     })
     .partial();
 export type ScheduleReplayResult = z.infer<typeof ScheduleReplayResult>;
+export const ScheduleForecastBucket = z
+    .object({
+        startAtUtc: z.iso.datetime({ offset: true }),
+        endAtUtc: z.iso.datetime({ offset: true }),
+        count: z.number().int(),
+    })
+    .partial();
+export type ScheduleForecastBucket = z.infer<typeof ScheduleForecastBucket>;
+export const ScheduleForecastSummary = z
+    .object({ windowMinutes: z.number().int(), count: z.number().int() })
+    .partial();
+export type ScheduleForecastSummary = z.infer<typeof ScheduleForecastSummary>;
+export const ScheduleForecastResponse = z
+    .object({
+        generatedAtUtc: z.iso.datetime({ offset: true }),
+        windowStartUtc: z.iso.datetime({ offset: true }),
+        windowEndUtc: z.iso.datetime({ offset: true }),
+        bucketMinutes: z.number().int(),
+        buckets: z.array(ScheduleForecastBucket).nullable(),
+        summaries: z.array(ScheduleForecastSummary).nullable(),
+        totalSchedules: z.number().int(),
+        activeSchedules: z.number().int(),
+    })
+    .partial();
+export type ScheduleForecastResponse = z.infer<typeof ScheduleForecastResponse>;
 export const WebhookIpRuleResponse = z
     .object({
         id: z.number().int(),
@@ -498,6 +523,9 @@ export const schemas = {
     ScheduleResponse,
     ScheduleDeadLetterResponse,
     ScheduleReplayResult,
+    ScheduleForecastBucket,
+    ScheduleForecastSummary,
+    ScheduleForecastResponse,
     WebhookIpRuleResponse,
     WebhookEndpointResponse,
     UpsertWebhookEndpointRequest,

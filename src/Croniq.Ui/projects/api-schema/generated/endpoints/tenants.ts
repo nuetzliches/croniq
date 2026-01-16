@@ -13,6 +13,9 @@ import {
     ScheduleUpsertResult,
     ScheduleDeadLetterResponse,
     ScheduleReplayResult,
+    ScheduleForecastBucket,
+    ScheduleForecastSummary,
+    ScheduleForecastResponse,
     WebhookIpRuleResponse,
     WebhookEndpointResponse,
     UpsertWebhookEndpointRequest,
@@ -254,6 +257,37 @@ export const TenantsApi: EndpointDefinition[] = [
                 schema: z.void(),
             },
         ],
+    },
+    {
+        method: 'get',
+        path: '/tenants/:tenantId/dashboard/forecast',
+        description: `Returns an aggregated forecast for schedule executions within the requested window.`,
+        requestFormat: 'json',
+        parameters: [
+            { name: 'tenantId', type: 'Path', schema: z.string() },
+            {
+                name: 'environment',
+                type: 'Query',
+                schema: z.string().optional(),
+            },
+            {
+                name: 'windowMinutes',
+                type: 'Query',
+                schema: z.number().int().optional(),
+            },
+            {
+                name: 'bucketMinutes',
+                type: 'Query',
+                schema: z.number().int().optional(),
+            },
+            {
+                name: 'summaryMinutes',
+                type: 'Query',
+                schema: z.string().optional(),
+            },
+        ],
+        response: ScheduleForecastResponse,
+        errors: [{ status: 400, description: `Bad Request`, schema: z.void() }],
     },
     {
         method: 'get',

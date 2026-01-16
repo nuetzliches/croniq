@@ -16,7 +16,7 @@ export class DashboardPage {
   readonly loading = this.store.loading;
   readonly metrics = this.store.metrics;
   readonly recentFailures = this.store.recentFailures;
-  readonly upcomingSchedules = this.store.upcomingSchedules;
+  readonly scheduleForecast = this.store.scheduleForecast;
   readonly misfireHeatmap = this.store.misfireHeatmap;
 
   getSparklinePath(values: number[] | undefined): string {

@@ -12,7 +12,16 @@ describe('DashboardPage', () => {
     loading: signal(false),
     metrics: signal([]),
     recentFailures: signal([]),
-    upcomingSchedules: signal([]),
+    scheduleForecast: signal({
+      windowMinutes: 60,
+      bucketMinutes: 5,
+      rangeLabel: 'Unavailable',
+      buckets: [],
+      summaries: [],
+      totalCount: 0,
+      maxBucketCount: 0,
+      hasData: false,
+    }),
     misfireHeatmap: signal([]),
   };
 

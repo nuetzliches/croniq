@@ -53,14 +53,14 @@ High-level overview of the system health and activity.
 └──────────────────────────┴──────────────────────────┴──────────────────────────┘
 
 ┌───────────────────────────────────────────────┬────────────────────────────────┐
-│ Recent Failures (Dead Letters)                │ Upcoming Schedules             │
+│ Recent Failures (Dead Letters)                │ Schedule Forecast (Next 60m)   │
 │ ┌─────────────┬──────────────┬──────────────┐ │ ┌─────────────┬──────────────┐ │
-│ │ Job         │ Reason       │ Time         │ │ │ Job         │ Fire Time    │ │
+│ │ Job         │ Reason       │ Time         │ │ │ Next 5m: 12 │ Next 15m: 42 │ │
 │ ├─────────────┼──────────────┼──────────────┤ │ ├─────────────┼──────────────┤ │
-│ │ payment-sync│ Timeout      │ 2m ago       │ │ │ daily-report│ in 5m        │ │
-│ │ email-send  │ 500 Error    │ 15m ago      │ │ │ cleanup     │ in 1h        │ │
+│ │ payment-sync│ Timeout      │ 2m ago       │ │ │ ||||||||||||│ |||||||||||  │ │
+│ │ email-send  │ 500 Error    │ 15m ago      │ │ │ 00:00 00:15 │ 00:30 00:45  │ │
 │ └─────────────┴──────────────┴──────────────┘ │ └─────────────┴──────────────┘ │
-│ [View All Dead Letters →]                     │ [View Calendar →]              │
+│ [View All Dead Letters ->]                     │ [View Calendar ->]              │
 └───────────────────────────────────────────────┴────────────────────────────────┘
 ```
 

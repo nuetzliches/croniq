@@ -3,7 +3,7 @@ import { authFailureFromError } from '@core/auth/auth-failure';
 import { tenantRxResource } from '@core/resource/tenant-rx-resource';
 import { TenantContextService } from '@core/tenant-context/tenant-context.service';
 import { epochMsFromIso, nowIso, nowMs, tryIsoFromUnknown, utcHourFromEpochMs } from '@core/time/clock';
-import { ScheduleDeadLetterResponse, ScheduleResponse } from '@croniq/api-schema';
+import { ScheduleDeadLetterResponse, ScheduleForecastResponse, ScheduleResponse } from '@croniq/api-schema';
 import { CRONIQ_API_CLIENT, CroniqApiClient } from 'data-access';
 import { of, catchError, map, forkJoin } from 'rxjs';
 
@@ -23,10 +23,31 @@ export type DeadLetter = {
     time: string;
 };
 
-export type UpcomingSchedule = {
-    jobKey: string;
-    fireTime: string;
-    cron: string;
+export type ScheduleForecastBucketView = {
+    index: number;
+    startAtUtc: string;
+    endAtUtc: string;
+    count: number;
+    heightPercent: number;
+    label: string;
+    showLabel: boolean;
+};
+
+export type ScheduleForecastSummaryView = {
+    windowMinutes: number;
+    count: number;
+    label: string;
+};
+
+export type ScheduleForecastView = {
+    windowMinutes: number;
+    bucketMinutes: number;
+    rangeLabel: string;
+    buckets: ReadonlyArray<ScheduleForecastBucketView>;
+    summaries: ReadonlyArray<ScheduleForecastSummaryView>;
+    totalCount: number;
+    maxBucketCount: number;
+    hasData: boolean;
 };
 
 type PresenceSummary = {
@@ -43,7 +64,31 @@ type WebhookSummary = {
 
 const EMPTY_PRESENCE_SUMMARY: PresenceSummary = { total: 0, online: 0, offline: 0 };
 const EMPTY_WEBHOOK_SUMMARY: WebhookSummary = { total: 0, enabled: 0, disabled: 0 };
+const EMPTY_FORECAST: ScheduleForecastView = {
+    windowMinutes: 60,
+    bucketMinutes: 5,
+    rangeLabel: 'Unavailable',
+    buckets: [],
+    summaries: [],
+    totalCount: 0,
+    maxBucketCount: 0,
+    hasData: false,
+};
 const DAY_MS = 24 * 60 * 60 * 1000;
+const FORECAST_LABEL_MINUTES = 15;
+
+const resolveForecastIso = (value: string | null | undefined, fallback: string): string =>
+    tryIsoFromUnknown(value) ?? fallback;
+
+const resolveForecastWindowMinutes = (startUtc: string, endUtc: string): number => {
+    const startMs = epochMsFromIso(startUtc);
+    const endMs = epochMsFromIso(endUtc);
+    if (startMs === null || endMs === null) {
+        return EMPTY_FORECAST.windowMinutes;
+    }
+    const diffMinutes = Math.round((endMs - startMs) / 60000);
+    return diffMinutes > 0 ? diffMinutes : EMPTY_FORECAST.windowMinutes;
+};
 
 const summarizePresence = (entries: ReadonlyArray<{ isOnline?: boolean }>): PresenceSummary => {
     const total = entries.length;
@@ -107,6 +152,26 @@ const summarizeSchedules = (entries: ReadonlyArray<ScheduleResponse>): ScheduleS
         active,
         paused: Math.max(0, total - active),
     };
+};
+
+const formatTimeLabel = (iso: string): string => {
+    const date = new Date(iso);
+    const hours = String(date.getHours()).padStart(2, '0');
+    const minutes = String(date.getMinutes()).padStart(2, '0');
+    return `${hours}:${minutes}`;
+};
+
+const formatSummaryLabel = (minutes: number): string => {
+    if (minutes < 60) {
+        return `Next ${minutes}m`;
+    }
+
+    if (minutes % 60 === 0) {
+        const hours = minutes / 60;
+        return `Next ${hours}h`;
+    }
+
+    return `Next ${minutes}m`;
 };
 
 const resolveDeadLetterTimestamp = (entry: ScheduleDeadLetterResponse): number | null => {
@@ -206,7 +271,7 @@ export class DashboardStore {
 
     private readonly metricsSignal = signal<ReadonlyArray<MetricCard>>([]);
     private readonly recentFailuresSignal = signal<ReadonlyArray<DeadLetter>>([]);
-    private readonly upcomingSchedulesSignal = signal<ReadonlyArray<UpcomingSchedule>>([]);
+    private readonly scheduleForecastSignal = signal<ScheduleForecastView>(EMPTY_FORECAST);
     private readonly misfireHeatmapSignal = signal<ReadonlyArray<number>>([]); // 24h counters
 
     readonly error = signal<string | null>(null);
@@ -218,6 +283,7 @@ export class DashboardStore {
             runnerSummary: PresenceSummary;
             workerSummary: PresenceSummary;
             webhookSummary: WebhookSummary;
+            forecast: ScheduleForecastResponse | null;
         },
         { tenantId: string; environment: string }
     >({
@@ -228,6 +294,7 @@ export class DashboardStore {
             runnerSummary: EMPTY_PRESENCE_SUMMARY,
             workerSummary: EMPTY_PRESENCE_SUMMARY,
             webhookSummary: EMPTY_WEBHOOK_SUMMARY,
+            forecast: null,
         },
         params: () => {
             const { tenantId, environment } = this.tenantContext.snapshot();
@@ -244,6 +311,7 @@ export class DashboardStore {
                     runnerSummary: EMPTY_PRESENCE_SUMMARY,
                     workerSummary: EMPTY_PRESENCE_SUMMARY,
                     webhookSummary: EMPTY_WEBHOOK_SUMMARY,
+                    forecast: null,
                 });
             }
 
@@ -271,12 +339,26 @@ export class DashboardStore {
                 catchError(() => of(EMPTY_WEBHOOK_SUMMARY))
             );
 
+            const forecast$ = this.api
+                .getScheduleForecast(
+                    {
+                        tenantId,
+                        environment,
+                        windowMinutes: 60,
+                        bucketMinutes: 5,
+                        summaryMinutes: '5,15,60',
+                    },
+                    requestOptions,
+                )
+                .pipe(catchError(() => of(null)));
+
             return forkJoin({
                 schedules: schedules$,
                 deadLetters: deadLetters$,
                 runnerSummary: runners$,
                 workerSummary: workers$,
-                webhookSummary: webhooks$
+                webhookSummary: webhooks$,
+                forecast: forecast$,
             }).pipe(
                 map((data: {
                     schedules: ScheduleResponse[];
@@ -284,6 +366,7 @@ export class DashboardStore {
                     runnerSummary: PresenceSummary;
                     workerSummary: PresenceSummary;
                     webhookSummary: WebhookSummary;
+                    forecast: ScheduleForecastResponse | null;
                 }) => {
                     const nowEpochMs = nowMs();
                     const scheduleSummary = summarizeSchedules(data.schedules);
@@ -297,8 +380,8 @@ export class DashboardStore {
                         data.workerSummary,
                         data.webhookSummary,
                     );
-                    this.updateUpcoming(data.schedules);
                     this.updateFailures(data.deadLetters);
+                    this.updateForecast(data.forecast);
                     this.misfireHeatmapSignal.set(deadLetterSummary.heatmap);
                     return data;
                 }),
@@ -318,6 +401,7 @@ export class DashboardStore {
                         runnerSummary: EMPTY_PRESENCE_SUMMARY,
                         workerSummary: EMPTY_PRESENCE_SUMMARY,
                         webhookSummary: EMPTY_WEBHOOK_SUMMARY,
+                        forecast: null,
                     });
                 })
             );
@@ -327,7 +411,7 @@ export class DashboardStore {
     readonly loading = computed(() => this.dashboardResource.isLoading());
     readonly metrics = this.metricsSignal.asReadonly();
     readonly recentFailures = this.recentFailuresSignal.asReadonly();
-    readonly upcomingSchedules = this.upcomingSchedulesSignal.asReadonly();
+    readonly scheduleForecast = this.scheduleForecastSignal.asReadonly();
     readonly misfireHeatmap = this.misfireHeatmapSignal.asReadonly();
 
     private updateMetrics(
@@ -381,33 +465,59 @@ export class DashboardStore {
         this.metricsSignal.set(metrics);
     }
 
-    private updateUpcoming(schedules: ScheduleResponse[]) {
-        if (!Array.isArray(schedules)) {
-            this.upcomingSchedulesSignal.set([]);
+    private updateForecast(forecast: ScheduleForecastResponse | null) {
+        if (!forecast || !Array.isArray(forecast.buckets) || forecast.buckets.length === 0) {
+            this.scheduleForecastSignal.set(EMPTY_FORECAST);
             return;
         }
 
-        const upcoming = schedules
-            .filter((schedule) => schedule.enabled && typeof schedule.startAtUtc === 'string')
-            .map((schedule) => {
-                const fireTime = schedule.startAtUtc?.trim() ?? '';
-                const fireEpoch = fireTime ? epochMsFromIso(fireTime) : null;
-                if (fireEpoch === null) {
-                    return null;
-                }
-                return {
-                    jobKey: schedule.jobKey || schedule.triggerId || 'Unknown',
-                    fireTime,
-                    cron: schedule.cronExpression || '',
-                    fireEpoch,
-                };
-            })
-            .filter((entry): entry is { jobKey: string; fireTime: string; cron: string; fireEpoch: number } => !!entry)
-            .sort((a, b) => a.fireEpoch - b.fireEpoch)
-            .slice(0, 5)
-            .map(({ fireEpoch, ...entry }) => entry);
+        const nowUtc = nowIso();
+        const windowStartUtc = resolveForecastIso(forecast.windowStartUtc, nowUtc);
+        const windowEndUtc = resolveForecastIso(forecast.windowEndUtc, windowStartUtc);
+        const windowMinutes = resolveForecastWindowMinutes(windowStartUtc, windowEndUtc);
 
-        this.upcomingSchedulesSignal.set(upcoming);
+        const bucketMinutes = forecast.bucketMinutes ?? EMPTY_FORECAST.bucketMinutes;
+        const maxBucketCount = forecast.buckets.reduce((max, bucket) => Math.max(max, bucket.count ?? 0), 0);
+        const bucketLabelStride = Math.max(1, Math.floor(FORECAST_LABEL_MINUTES / bucketMinutes));
+        const buckets = forecast.buckets.map((bucket, index) => {
+            const count = bucket.count ?? 0;
+            const heightPercent = maxBucketCount > 0
+                ? Math.max(8, Math.round((count / maxBucketCount) * 100))
+                : 0;
+            const startAtUtc = resolveForecastIso(bucket.startAtUtc, windowStartUtc);
+            const endAtUtc = resolveForecastIso(bucket.endAtUtc, windowEndUtc);
+            return {
+                index,
+                startAtUtc,
+                endAtUtc,
+                count,
+                heightPercent,
+                label: formatTimeLabel(startAtUtc),
+                showLabel: index % bucketLabelStride === 0,
+            };
+        });
+
+        const summaries = Array.isArray(forecast.summaries)
+            ? forecast.summaries.map((summary) => ({
+                windowMinutes: summary.windowMinutes ?? 0,
+                count: summary.count ?? 0,
+                label: formatSummaryLabel(summary.windowMinutes ?? 0),
+            }))
+            : [];
+
+        const totalCount = buckets.reduce((sum, bucket) => sum + bucket.count, 0);
+        const rangeLabel = `${formatTimeLabel(windowStartUtc)} - ${formatTimeLabel(windowEndUtc)}`;
+
+        this.scheduleForecastSignal.set({
+            windowMinutes,
+            bucketMinutes,
+            rangeLabel,
+            buckets,
+            summaries,
+            totalCount,
+            maxBucketCount,
+            hasData: buckets.length > 0,
+        });
     }
 
     private updateFailures(deadLetters: ScheduleDeadLetterResponse[]) {

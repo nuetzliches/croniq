@@ -118,42 +118,52 @@
           [queryParams]="{ view: 'dead-letters' }"
           class="text-sm font-medium text-accent hover:text-accent-hover"
         >
-          View All Dead Letters →
+          View All Dead Letters ->
         </a>
       </footer>
     </article>
 
-    <!-- Upcoming Schedules -->
+    <!-- Schedule Forecast -->
     <article class="animate-panel-sweep animate-delay-150 flex flex-col rounded-xl border border-surface-5 bg-surface-4 shadow-card motion-reduce:animate-none">
       <header class="flex items-center justify-between border-b border-surface-5 px-6 py-4">
-        <h2 class="text-base font-semibold text-primary">Upcoming Schedules</h2>
+        <div>
+          <h2 class="text-base font-semibold text-primary">Schedule Forecast</h2>
+          <p class="mt-1 text-xs text-muted">
+            Next {{ scheduleForecast().windowMinutes }} minutes | {{ scheduleForecast().rangeLabel }} local time
+          </p>
+        </div>
+        <div class="flex flex-wrap items-center gap-2">
+          @for (summary of scheduleForecast().summaries; track summary.windowMinutes) {
+          <span class="inline-flex items-center gap-2 rounded-full border border-surface-5 bg-surface-3 px-3 py-1 text-xs text-muted">
+            <span class="font-semibold text-primary">{{ summary.count }}</span>
+            <span>{{ summary.label }}</span>
+          </span>
+          }
+        </div>
       </header>
-      <div class="flex-1 p-0">
-        <table class="w-full text-left text-sm">
-          <thead class="bg-surface-3 text-xs uppercase text-muted">
-            <tr>
-              <th class="px-6 py-3 font-medium">Job</th>
-              <th class="px-6 py-3 font-medium">Fire Time</th>
-            </tr>
-          </thead>
-          <tbody class="divide-y divide-surface-5">
-            @if (upcomingSchedules().length === 0) {
-            <tr>
-              <td colspan="2" class="px-6 py-6 text-center text-muted">No upcoming schedules.</td>
-            </tr>
-            } @else {
-            @for (schedule of upcomingSchedules(); track schedule.jobKey) {
-            <tr class="hover:bg-surface-3">
-              <td class="px-6 py-3 font-medium text-primary">
-                {{ schedule.jobKey }}
-                <span class="block text-xs text-muted font-mono">{{ schedule.cron }}</span>
-              </td>
-              <td class="px-6 py-3 text-muted">{{ schedule.fireTime | date : 'short' }}</td>
-            </tr>
+      <div class="flex-1 p-6">
+        @if (!scheduleForecast().hasData) {
+        <div class="flex h-full items-center justify-center rounded-lg border border-dashed border-surface-5 bg-surface-3 p-6 text-sm text-muted">
+          No forecast data yet.
+        </div>
+        } @else {
+        <div class="grid grid-cols-12 items-end gap-2">
+          @for (bucket of scheduleForecast().buckets; track bucket.index) {
+          <div class="flex flex-col items-center gap-2">
+            <div class="flex h-24 w-full items-end rounded-lg bg-surface-3 px-1">
+              <div class="w-full rounded-md bg-accent/70" [style.height.%]="bucket.heightPercent"></div>
+            </div>
+            @if (bucket.showLabel) {
+            <span class="text-[10px] text-muted">{{ bucket.label }}</span>
             }
-            }
-          </tbody>
-        </table>
+          </div>
+          }
+        </div>
+        <div class="mt-4 flex items-center justify-between text-xs text-muted">
+          <span>{{ scheduleForecast().totalCount }} scheduled fires</span>
+          <span>{{ scheduleForecast().bucketMinutes }}m buckets</span>
+        </div>
+        }
       </div>
       <footer class="border-t border-surface-5 px-6 py-3">
         <a
@@ -161,7 +171,7 @@
           [queryParams]="{ view: 'calendar' }"
           class="text-sm font-medium text-accent hover:text-accent-hover"
         >
-          View Calendar →
+          View Calendar ->
         </a>
       </footer>
     </article>

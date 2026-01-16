@@ -170,6 +170,7 @@ public static partial class ApiHostingExtensions
         MapExecutionEndpoints(app);
         MapScheduleEndpoints(app);
         MapScheduleDeadLetterEndpoints(app);
+        MapDashboardEndpoints(app);
         MapWebhookEndpoints(app);
         MapApiClientEndpoints(app);
         MapApiKeyEndpoints(app);
