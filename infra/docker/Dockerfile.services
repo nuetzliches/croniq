@@ -15,12 +15,15 @@ COPY src/Croniq.Api/Croniq.Api.csproj src/Croniq.Api/
 COPY src/Croniq/Croniq.csproj src/Croniq/
 COPY src/Croniq.Auth.Abstractions/Croniq.Auth.Abstractions.csproj src/Croniq.Auth.Abstractions/
 COPY src/Croniq.Auth.Core/Croniq.Auth.Core.csproj src/Croniq.Auth.Core/
+COPY src/Croniq.Auth.Postgres/Croniq.Auth.Postgres.csproj src/Croniq.Auth.Postgres/
 COPY src/Croniq.Auth.SqlServer/Croniq.Auth.SqlServer.csproj src/Croniq.Auth.SqlServer/
 COPY src/Croniq.Core/Croniq.Core.csproj src/Croniq.Core/
+COPY src/Croniq.Data.Postgres/Croniq.Data.Postgres.csproj src/Croniq.Data.Postgres/
 COPY src/Croniq.Data.SqlServer/Croniq.Data.SqlServer.csproj src/Croniq.Data.SqlServer/
 COPY src/Croniq.Hosting/Croniq.Hosting.csproj src/Croniq.Hosting/
 COPY src/Croniq.JobStore.InMemory/Croniq.JobStore.InMemory.csproj src/Croniq.JobStore.InMemory/
 COPY src/Croniq.Persistence.Abstractions/Croniq.Persistence.Abstractions.csproj src/Croniq.Persistence.Abstractions/
+COPY src/Croniq.Persistence.Postgres/Croniq.Persistence.Postgres.csproj src/Croniq.Persistence.Postgres/
 COPY src/Croniq.Persistence.SqlServer/Croniq.Persistence.SqlServer.csproj src/Croniq.Persistence.SqlServer/
 COPY src/Croniq.Providers.Abstractions/Croniq.Providers.Abstractions.csproj src/Croniq.Providers.Abstractions/
 COPY src/Croniq.Providers.Default/Croniq.Providers.Default.csproj src/Croniq.Providers.Default/
