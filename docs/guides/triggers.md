@@ -15,6 +15,10 @@ Croniq also supports the special expression `@once` (alias `once`) for a single 
 
 Schedules run in UTC by default. Persisted triggers store the cron expression plus optional start/end bounds.
 
+## Calendars (Planned)
+
+Croniq plans to support Quartz-like calendars as separate entities that include or exclude candidate fire times. This keeps trigger expressions simple while allowing holiday and business-hour filters. The current design draft lives in `docs/deep-dive/designs/schedule-calendars.md`.
+
 ## Seed Triggers via Configuration
 
 Worker hosts can seed schedules on startup:

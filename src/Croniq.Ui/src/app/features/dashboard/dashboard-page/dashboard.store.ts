@@ -10,6 +10,8 @@ import { of, catchError, map, forkJoin } from 'rxjs';
 export type MetricCard = {
     label: string;
     value: string;
+    link: string;
+    queryParams?: Record<string, string>;
     trend?: string;
     status?: 'healthy' | 'warning' | 'critical';
     subtext?: string;
@@ -30,6 +32,7 @@ export type ScheduleForecastBucketView = {
     count: number;
     heightPercent: number;
     label: string;
+    rangeLabel: string;
     showLabel: boolean;
 };
 
@@ -48,6 +51,15 @@ export type ScheduleForecastView = {
     totalCount: number;
     maxBucketCount: number;
     hasData: boolean;
+};
+
+export type ScheduleForecastSelectionView = {
+    index: number;
+    rangeLabel: string;
+    count: number;
+    shareOfTotal: number;
+    shareOfPeak: number;
+    bucketMinutes: number;
 };
 
 type PresenceSummary = {
@@ -74,6 +86,19 @@ const EMPTY_FORECAST: ScheduleForecastView = {
     maxBucketCount: 0,
     hasData: false,
 };
+const METRIC_PLACEHOLDERS: ReadonlyArray<MetricCard> = [
+    { label: 'Workers Online', value: '--', link: '/workers' },
+    { label: 'Runners Online', value: '--', link: '/runners' },
+    { label: 'Webhooks Enabled', value: '--', link: '/webhooks' },
+    { label: 'Schedules', value: '--', link: '/schedules' },
+    { label: 'Active Schedules', value: '--', link: '/schedules' },
+    {
+        label: 'Dead Letters (24h)',
+        value: '--',
+        link: '/schedules',
+        queryParams: { view: 'dead-letters' },
+    },
+];
 const DAY_MS = 24 * 60 * 60 * 1000;
 const FORECAST_LABEL_MINUTES = 15;
 
@@ -88,6 +113,21 @@ const resolveForecastWindowMinutes = (startUtc: string, endUtc: string): number 
     }
     const diffMinutes = Math.round((endMs - startMs) / 60000);
     return diffMinutes > 0 ? diffMinutes : EMPTY_FORECAST.windowMinutes;
+};
+
+const resolveSelectedBucketIndex = (
+    buckets: ReadonlyArray<ScheduleForecastBucketView>,
+    currentIndex: number | null,
+): number | null => {
+    if (buckets.length === 0) {
+        return null;
+    }
+
+    if (currentIndex !== null && buckets.some((bucket) => bucket.index === currentIndex)) {
+        return currentIndex;
+    }
+
+    return buckets[0].index;
 };
 
 const summarizePresence = (entries: ReadonlyArray<{ isOnline?: boolean }>): PresenceSummary => {
@@ -272,6 +312,7 @@ export class DashboardStore {
     private readonly metricsSignal = signal<ReadonlyArray<MetricCard>>([]);
     private readonly recentFailuresSignal = signal<ReadonlyArray<DeadLetter>>([]);
     private readonly scheduleForecastSignal = signal<ScheduleForecastView>(EMPTY_FORECAST);
+    private readonly selectedForecastIndexSignal = signal<number | null>(null);
     private readonly misfireHeatmapSignal = signal<ReadonlyArray<number>>([]); // 24h counters
 
     readonly error = signal<string | null>(null);
@@ -409,10 +450,57 @@ export class DashboardStore {
     });
 
     readonly loading = computed(() => this.dashboardResource.isLoading());
+    readonly metricsDisplay = computed(() => {
+        const metrics = this.metricsSignal();
+        if (metrics.length > 0) {
+            return metrics;
+        }
+        return this.loading() ? METRIC_PLACEHOLDERS : metrics;
+    });
     readonly metrics = this.metricsSignal.asReadonly();
     readonly recentFailures = this.recentFailuresSignal.asReadonly();
     readonly scheduleForecast = this.scheduleForecastSignal.asReadonly();
+    readonly selectedForecastIndex = this.selectedForecastIndexSignal.asReadonly();
+    readonly selectedForecast = computed<ScheduleForecastSelectionView | null>(() => {
+        const forecast = this.scheduleForecastSignal();
+        if (!forecast.hasData || forecast.buckets.length === 0) {
+            return null;
+        }
+
+        const selectedIndex = this.selectedForecastIndexSignal();
+        const selectedBucket = forecast.buckets.find((bucket) => bucket.index === selectedIndex) ?? forecast.buckets[0];
+
+        const totalCount = forecast.totalCount;
+        const shareOfTotal = totalCount > 0
+            ? Math.round((selectedBucket.count / totalCount) * 100)
+            : 0;
+        const shareOfPeak = forecast.maxBucketCount > 0
+            ? Math.round((selectedBucket.count / forecast.maxBucketCount) * 100)
+            : 0;
+
+        return {
+            index: selectedBucket.index,
+            rangeLabel: selectedBucket.rangeLabel,
+            count: selectedBucket.count,
+            shareOfTotal,
+            shareOfPeak,
+            bucketMinutes: forecast.bucketMinutes,
+        };
+    });
     readonly misfireHeatmap = this.misfireHeatmapSignal.asReadonly();
+
+    selectForecastBucket(index: number): void {
+        const forecast = this.scheduleForecastSignal();
+        if (!forecast.hasData || forecast.buckets.length === 0) {
+            return;
+        }
+
+        if (!forecast.buckets.some((bucket) => bucket.index === index)) {
+            return;
+        }
+
+        this.selectedForecastIndexSignal.set(index);
+    }
 
     private updateMetrics(
         scheduleSummary: ScheduleSummary,
@@ -428,36 +516,43 @@ export class DashboardStore {
             {
                 label: 'Workers Online',
                 value: workerSummary.online.toString(),
+                link: '/workers',
                 status: statusFromPresence(workerSummary),
                 subtext: formatPresenceSubtext(workerSummary, 'No workers reporting'),
             },
             {
                 label: 'Runners Online',
                 value: runnerSummary.online.toString(),
+                link: '/runners',
                 status: statusFromPresence(runnerSummary),
                 subtext: formatPresenceSubtext(runnerSummary, 'No runners reporting'),
             },
             {
                 label: 'Webhooks Enabled',
                 value: webhookSummary.enabled.toString(),
+                link: '/webhooks',
                 status: statusFromWebhooks(webhookSummary),
                 subtext: formatWebhookSubtext(webhookSummary),
             },
             {
                 label: 'Schedules',
                 value: scheduleSummary.total.toString(),
+                link: '/schedules',
                 status: hasSchedules ? 'healthy' : 'warning',
                 subtext: formatScheduleSubtext(scheduleSummary),
             },
             {
                 label: 'Active Schedules',
                 value: activeSchedules.toString(),
+                link: '/schedules',
                 status: activeSchedules > 0 ? 'healthy' : 'warning',
                 subtext: hasSchedules ? `${scheduleSummary.paused} paused` : 'No schedules configured',
             },
             {
                 label: 'Dead Letters (24h)',
                 value: deadLetterSummary.recent.toString(),
+                link: '/schedules',
+                queryParams: { view: 'dead-letters' },
                 status: statusFromDeadLetters(deadLetterSummary.recent),
                 subtext: formatDeadLetterSubtext(deadLetterSummary),
             },
@@ -468,6 +563,7 @@ export class DashboardStore {
     private updateForecast(forecast: ScheduleForecastResponse | null) {
         if (!forecast || !Array.isArray(forecast.buckets) || forecast.buckets.length === 0) {
             this.scheduleForecastSignal.set(EMPTY_FORECAST);
+            this.selectedForecastIndexSignal.set(null);
             return;
         }
 
@@ -493,6 +589,7 @@ export class DashboardStore {
                 count,
                 heightPercent,
                 label: formatTimeLabel(startAtUtc),
+                rangeLabel: `${formatTimeLabel(startAtUtc)} - ${formatTimeLabel(endAtUtc)}`,
                 showLabel: index % bucketLabelStride === 0,
             };
         });
@@ -507,6 +604,7 @@ export class DashboardStore {
 
         const totalCount = buckets.reduce((sum, bucket) => sum + bucket.count, 0);
         const rangeLabel = `${formatTimeLabel(windowStartUtc)} - ${formatTimeLabel(windowEndUtc)}`;
+        const selectedIndex = resolveSelectedBucketIndex(buckets, this.selectedForecastIndexSignal());
 
         this.scheduleForecastSignal.set({
             windowMinutes,
@@ -518,6 +616,7 @@ export class DashboardStore {
             maxBucketCount,
             hasData: buckets.length > 0,
         });
+        this.selectedForecastIndexSignal.set(selectedIndex);
     }
 
     private updateFailures(deadLetters: ScheduleDeadLetterResponse[]) {

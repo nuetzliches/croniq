@@ -16,7 +16,9 @@ public sealed class FileExecutionLogStore : IExecutionLogStore, IDisposable
 {
     private readonly FileExecutionLogStoreOptions _options;
     private readonly ConcurrentDictionary<string, string> _executionFiles = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, ExecutionStartSnapshot> _executionStarts = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<string, SemaphoreSlim> _locks = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, SemaphoreSlim> _indexLocks = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<string, DateTimeOffset> _completedAt = new(StringComparer.OrdinalIgnoreCase);
     private long _lastCleanupTicks;
     private readonly Timer? _cleanupTimer;
@@ -41,6 +43,19 @@ public sealed class FileExecutionLogStore : IExecutionLogStore, IDisposable
 
         var path = ResolvePath(record);
         _executionFiles[record.ExecutionId] = path;
+        _executionStarts[record.ExecutionId] = new ExecutionStartSnapshot(
+            record.ExecutionId,
+            record.Kind,
+            record.WorkflowId,
+            record.JobKey,
+            record.TenantId,
+            record.EnvironmentTag,
+            record.TriggerId,
+            record.FireAtUtc,
+            record.StartedAtUtc,
+            record.InstanceId,
+            record.TraceId,
+            record.CorrelationId);
         _locks.TryAdd(record.ExecutionId, new SemaphoreSlim(1, 1));
 
         return WriteLineAsync(path, new
@@ -93,7 +108,67 @@ public sealed class FileExecutionLogStore : IExecutionLogStore, IDisposable
             completion.ErrorMessage
         }, completion.ExecutionId, cancellationToken).ConfigureAwait(false);
 
+        await TryWriteExecutionIndexAsync(completion, cancellationToken).ConfigureAwait(false);
+
         TrackCompletion(completion.ExecutionId, completion.CompletedAtUtc);
+    }
+
+    private async Task TryWriteExecutionIndexAsync(ExecutionCompletion completion, CancellationToken cancellationToken)
+    {
+        if (!_executionStarts.TryGetValue(completion.ExecutionId, out var start))
+        {
+            return;
+        }
+
+        var indexPath = FileExecutionLogPathHelper.GetDailyIndexPath(_options, start.TenantId, start.EnvironmentTag, start.StartedAtUtc);
+        var indexRoot = Path.GetDirectoryName(indexPath);
+        if (!string.IsNullOrWhiteSpace(indexRoot))
+        {
+            Directory.CreateDirectory(indexRoot);
+        }
+
+        var scopeRoot = FileExecutionLogPathHelper.GetScopeRoot(_options, start.TenantId, start.EnvironmentTag);
+        var relativeLogPath = _executionFiles.TryGetValue(completion.ExecutionId, out var fullPath)
+            ? Path.GetRelativePath(scopeRoot, fullPath)
+            : null;
+
+        var semaphore = _indexLocks.GetOrAdd(indexPath, _ => new SemaphoreSlim(1, 1));
+        await semaphore.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            var line = JsonSerializer.Serialize(new
+            {
+                type = "summary",
+                logPath = relativeLogPath,
+                start.ExecutionId,
+                start.Kind,
+                start.WorkflowId,
+                start.JobKey,
+                start.TenantId,
+                start.EnvironmentTag,
+                start.TriggerId,
+                start.FireAtUtc,
+                start.StartedAtUtc,
+                completion.CompletedAtUtc,
+                completion.Status,
+                completion.DurationMs,
+                start.InstanceId,
+                start.TraceId,
+                start.CorrelationId,
+                completion.ErrorType,
+                completion.ErrorMessage
+            }, _jsonOptions) + Environment.NewLine;
+
+            await File.AppendAllTextAsync(indexPath, line, Encoding.UTF8, cancellationToken).ConfigureAwait(false);
+        }
+        catch
+        {
+            // Best-effort index write; listing can fall back to file scan.
+        }
+        finally
+        {
+            semaphore.Release();
+        }
     }
 
     private async Task WriteBatchAsync(string path, string executionId, System.Collections.Generic.IReadOnlyCollection<ExecutionLogEntry> entries, CancellationToken cancellationToken)
@@ -163,10 +238,10 @@ public sealed class FileExecutionLogStore : IExecutionLogStore, IDisposable
 
         return Path.Combine(
             basePath,
-            kindSegment,
             year,
             month,
             day,
+            kindSegment,
             shard,
             $"{record.ExecutionId}.ndjson");
     }
@@ -217,11 +292,26 @@ public sealed class FileExecutionLogStore : IExecutionLogStore, IDisposable
     {
         _completedAt.TryRemove(executionId, out _);
         _executionFiles.TryRemove(executionId, out _);
+        _executionStarts.TryRemove(executionId, out _);
         if (_locks.TryRemove(executionId, out var semaphore))
         {
             semaphore.Dispose();
         }
     }
+
+    private readonly record struct ExecutionStartSnapshot(
+        string ExecutionId,
+        ExecutionKind Kind,
+        string? WorkflowId,
+        string JobKey,
+        string TenantId,
+        string EnvironmentTag,
+        string? TriggerId,
+        DateTimeOffset FireAtUtc,
+        DateTimeOffset StartedAtUtc,
+        string? InstanceId,
+        string? TraceId,
+        string? CorrelationId);
 
     public void Dispose()
     {

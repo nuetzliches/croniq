@@ -14,10 +14,16 @@ export class DashboardPage {
   private readonly store = inject(DashboardStore);
 
   readonly loading = this.store.loading;
-  readonly metrics = this.store.metrics;
+  readonly metrics = this.store.metricsDisplay;
   readonly recentFailures = this.store.recentFailures;
   readonly scheduleForecast = this.store.scheduleForecast;
+  readonly selectedForecastIndex = this.store.selectedForecastIndex;
+  readonly selectedForecast = this.store.selectedForecast;
   readonly misfireHeatmap = this.store.misfireHeatmap;
+
+  selectForecastBucket(index: number): void {
+    this.store.selectForecastBucket(index);
+  }
 
   getSparklinePath(values: number[] | undefined): string {
     if (!values || values.length < 2) return '';

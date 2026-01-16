@@ -50,6 +50,10 @@ public sealed class FileExecutionHistoryReaderTests : IAsyncLifetime
         await WriteExecutionAsync(scope, "tenant-a:dev:ops:first", ExecutionStatus.Succeeded, startedOffsetSeconds: -90, durationMs: 1200);
         var recent = await WriteExecutionAsync(scope, "tenant-a:dev:ops:second", ExecutionStatus.Failed, startedOffsetSeconds: -30, durationMs: 3000);
 
+        var today = DateTimeOffset.UtcNow.UtcDateTime.ToString("yyyy-MM-dd");
+        var indexPath = Path.Combine(_basePath, scope.TenantId, scope.EnvironmentTag, "_index", $"executions-index-{today}.ndjson");
+        File.Exists(indexPath).ShouldBeTrue();
+
         var summaries = await _reader.ListExecutionsAsync(scope, new ExecutionHistoryQuery { Limit = 10 }, _cancellationToken);
 
         summaries.Count.ShouldBe(2);

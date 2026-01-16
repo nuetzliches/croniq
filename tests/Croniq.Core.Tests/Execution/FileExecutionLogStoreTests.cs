@@ -71,7 +71,7 @@ public class FileExecutionLogStoreTests : IDisposable
 
         await store.OnExecutionCompletedAsync(completion, CancellationToken.None);
 
-        var files = Directory.GetFiles(_tempDir, "*.ndjson", SearchOption.AllDirectories);
+        var files = Directory.GetFiles(_tempDir, $"{record.ExecutionId}.ndjson", SearchOption.AllDirectories);
         files.ShouldHaveSingleItem();
 
         var content = await File.ReadAllLinesAsync(files.Single());
@@ -105,7 +105,7 @@ public class FileExecutionLogStoreTests : IDisposable
 
         await store.OnExecutionStartedAsync(record, CancellationToken.None);
 
-        var files = Directory.GetFiles(_tempDir, "*.ndjson", SearchOption.AllDirectories);
+        var files = Directory.GetFiles(_tempDir, $"{record.ExecutionId}.ndjson", SearchOption.AllDirectories);
         files.ShouldHaveSingleItem();
         files.Single().ShouldContain("wf-001");
     }
@@ -166,7 +166,7 @@ public class FileExecutionLogStoreTests : IDisposable
 
         await store.OnExecutionCompletedAsync(completion, CancellationToken.None);
 
-        var file = Directory.GetFiles(_tempDir, "*.ndjson", SearchOption.AllDirectories).Single();
+        var file = Directory.GetFiles(_tempDir, $"{record.ExecutionId}.ndjson", SearchOption.AllDirectories).Single();
         var before = await File.ReadAllLinesAsync(file);
 
         await store.AppendAsync(record.ExecutionId, entries, CancellationToken.None);

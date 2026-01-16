@@ -11,6 +11,7 @@ describe('DashboardPage', () => {
   const mockDashboardStore = {
     loading: signal(false),
     metrics: signal([]),
+    metricsDisplay: signal([]),
     recentFailures: signal([]),
     scheduleForecast: signal({
       windowMinutes: 60,
@@ -22,7 +23,10 @@ describe('DashboardPage', () => {
       maxBucketCount: 0,
       hasData: false,
     }),
+    selectedForecastIndex: signal(null),
+    selectedForecast: signal(null),
     misfireHeatmap: signal([]),
+    selectForecastBucket: () => { },
   };
 
   beforeEach(async () => {

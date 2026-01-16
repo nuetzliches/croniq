@@ -1,10 +1,21 @@
 <div class="cq-stack cq-stack-loose">
   <!-- Metrics Row -->
-  <section class="grid gap-6 md:grid-cols-3">
+  <section class="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-6">
     @for (metric of metrics(); track metric.label) {
-    <article class="animate-reveal rounded-xl border border-surface-5 bg-surface-4 p-5 shadow-card motion-reduce:animate-none">
+    <article
+      class="relative overflow-hidden animate-reveal rounded-xl border border-surface-5 bg-surface-4 p-5 shadow-card motion-reduce:animate-none"
+      [attr.aria-busy]="loading()"
+    >
       <div class="flex items-start justify-between">
-        <h3 class="text-sm font-medium text-muted">{{ metric.label }}</h3>
+        <h3 class="text-sm font-medium text-muted">
+          <a
+            [routerLink]="metric.link"
+            [queryParams]="metric.queryParams"
+            class="transition-colors hover:text-primary"
+          >
+            {{ metric.label }}
+          </a>
+        </h3>
         @if (metric.status) {
         <span
           class="flex h-2 w-2 rounded-full"
@@ -41,15 +52,30 @@
       @if (metric.subtext) {
       <p class="mt-1 text-xs text-muted">{{ metric.subtext }}</p>
       }
+      @if (loading()) {
+      <div
+        class="absolute inset-0 flex items-center justify-center rounded-xl bg-surface-2/80 text-xs font-semibold text-muted backdrop-blur-sm"
+        aria-hidden="true"
+      >
+        <span class="animate-pulse">Loading...</span>
+      </div>
+      }
     </article>
     }
   </section>
 
   <!-- Misfire Heatmap (Stub) -->
-  @if (misfireHeatmap().length > 0) {
-  <section class="animate-panel-sweep rounded-xl border border-surface-5 bg-surface-4 p-6 shadow-card motion-reduce:animate-none">
+  @if (misfireHeatmap().length > 0 || loading()) {
+  <section
+    class="relative overflow-hidden animate-panel-sweep rounded-xl border border-surface-5 bg-surface-4 p-6 shadow-card motion-reduce:animate-none"
+    [attr.aria-busy]="loading()"
+  >
     <header class="mb-4 flex items-center justify-between">
-      <h3 class="text-sm font-medium text-muted">Misfire Intensity (Last 24h)</h3>
+      <h3 class="text-sm font-medium text-muted">
+        <a routerLink="/metrics" class="transition-colors hover:text-primary">
+          Misfire Intensity (Last 24h)
+        </a>
+      </h3>
       <span class="text-xs text-muted">UTC Time</span>
     </header>
     <div class="flex items-end gap-1 h-16 w-full">
@@ -76,15 +102,34 @@
       <span>18:00</span>
       <span>23:00</span>
     </div>
+    @if (loading()) {
+    <div
+      class="absolute inset-0 flex items-center justify-center rounded-xl bg-surface-2/80 text-xs font-semibold text-muted backdrop-blur-sm"
+      aria-hidden="true"
+    >
+      <span class="animate-pulse">Loading...</span>
+    </div>
+    }
   </section>
   }
 
   <!-- Bottom Row -->
   <section class="grid gap-6 lg:grid-cols-2">
     <!-- Recent Failures -->
-    <article class="animate-panel-sweep flex flex-col rounded-xl border border-surface-5 bg-surface-4 shadow-card motion-reduce:animate-none">
+    <article
+      class="relative overflow-hidden animate-panel-sweep flex flex-col rounded-xl border border-surface-5 bg-surface-4 shadow-card motion-reduce:animate-none"
+      [attr.aria-busy]="loading()"
+    >
       <header class="flex items-center justify-between border-b border-surface-5 px-6 py-4">
-        <h2 class="text-base font-semibold text-primary">Recent Failures (Dead Letters)</h2>
+        <h2 class="text-base font-semibold text-primary">
+          <a
+            routerLink="/schedules"
+            [queryParams]="{ view: 'dead-letters' }"
+            class="transition-colors hover:text-accent"
+          >
+            Recent Failures (Dead Letters)
+          </a>
+        </h2>
       </header>
       <div class="flex-1 p-0">
         <table class="w-full text-left text-sm">
@@ -112,22 +157,32 @@
           </tbody>
         </table>
       </div>
-      <footer class="border-t border-surface-5 px-6 py-3">
-        <a
-          routerLink="/schedules"
-          [queryParams]="{ view: 'dead-letters' }"
-          class="text-sm font-medium text-accent hover:text-accent-hover"
-        >
-          View All Dead Letters ->
-        </a>
-      </footer>
+      @if (loading()) {
+      <div
+        class="absolute inset-0 flex items-center justify-center rounded-xl bg-surface-2/80 text-xs font-semibold text-muted backdrop-blur-sm"
+        aria-hidden="true"
+      >
+        <span class="animate-pulse">Loading...</span>
+      </div>
+      }
     </article>
 
     <!-- Schedule Forecast -->
-    <article class="animate-panel-sweep animate-delay-150 flex flex-col rounded-xl border border-surface-5 bg-surface-4 shadow-card motion-reduce:animate-none">
+    <article
+      class="relative overflow-hidden animate-panel-sweep animate-delay-150 flex flex-col rounded-xl border border-surface-5 bg-surface-4 shadow-card motion-reduce:animate-none"
+      [attr.aria-busy]="loading()"
+    >
       <header class="flex items-center justify-between border-b border-surface-5 px-6 py-4">
         <div>
-          <h2 class="text-base font-semibold text-primary">Schedule Forecast</h2>
+          <h2 class="text-base font-semibold text-primary">
+            <a
+              routerLink="/schedules"
+              [queryParams]="{ view: 'calendar' }"
+              class="transition-colors hover:text-accent"
+            >
+              Schedule Forecast
+            </a>
+          </h2>
           <p class="mt-1 text-xs text-muted">
             Next {{ scheduleForecast().windowMinutes }} minutes | {{ scheduleForecast().rangeLabel }} local time
           </p>
@@ -150,30 +205,64 @@
         <div class="grid grid-cols-12 items-end gap-2">
           @for (bucket of scheduleForecast().buckets; track bucket.index) {
           <div class="flex flex-col items-center gap-2">
-            <div class="flex h-24 w-full items-end rounded-lg bg-surface-3 px-1">
+            <button
+              type="button"
+              class="flex h-24 w-full items-end rounded-lg bg-surface-3 px-1 transition-shadow focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
+              [class.ring-2]="selectedForecastIndex() === bucket.index"
+              [class.ring-accent]="selectedForecastIndex() === bucket.index"
+              [attr.aria-pressed]="selectedForecastIndex() === bucket.index"
+              [attr.aria-label]="'Select bucket ' + bucket.rangeLabel"
+              (click)="selectForecastBucket(bucket.index)"
+            >
               <div class="w-full rounded-md bg-accent/70" [style.height.%]="bucket.heightPercent"></div>
-            </div>
-            @if (bucket.showLabel) {
-            <span class="text-[10px] text-muted">{{ bucket.label }}</span>
-            }
+            </button>
+            <span
+              class="h-3 text-[10px] leading-3 text-muted"
+              [class.invisible]="!bucket.showLabel"
+              [attr.aria-hidden]="!bucket.showLabel"
+            >
+              {{ bucket.label }}
+            </span>
           </div>
           }
         </div>
+        @if (selectedForecast(); as forecast) {
+        <div class="mt-4 rounded-lg border border-surface-5 bg-surface-3 p-4">
+          <div class="flex flex-wrap items-center justify-between gap-4">
+            <div>
+              <p class="text-xs font-semibold text-muted">Selected Bucket</p>
+              <p class="text-sm font-semibold text-primary">{{ forecast.rangeLabel }}</p>
+              <p class="text-xs text-muted">{{ forecast.bucketMinutes }}m window</p>
+            </div>
+            <div class="flex flex-wrap gap-4 text-xs text-muted">
+              <div class="min-w-[90px]">
+                <p class="text-[11px] uppercase text-muted">Executions</p>
+                <p class="text-base font-semibold text-primary">{{ forecast.count }}</p>
+                <p class="text-[10px] text-muted">{{ forecast.shareOfTotal }}% of total</p>
+              </div>
+              <div class="min-w-[90px]">
+                <p class="text-[11px] uppercase text-muted">Peak Share</p>
+                <p class="text-base font-semibold text-primary">{{ forecast.shareOfPeak }}%</p>
+                <p class="text-[10px] text-muted">of max bucket</p>
+              </div>
+            </div>
+          </div>
+        </div>
+        }
         <div class="mt-4 flex items-center justify-between text-xs text-muted">
           <span>{{ scheduleForecast().totalCount }} scheduled fires</span>
           <span>{{ scheduleForecast().bucketMinutes }}m buckets</span>
         </div>
         }
       </div>
-      <footer class="border-t border-surface-5 px-6 py-3">
-        <a
-          routerLink="/schedules"
-          [queryParams]="{ view: 'calendar' }"
-          class="text-sm font-medium text-accent hover:text-accent-hover"
-        >
-          View Calendar ->
-        </a>
-      </footer>
+      @if (loading()) {
+      <div
+        class="absolute inset-0 flex items-center justify-center rounded-xl bg-surface-2/80 text-xs font-semibold text-muted backdrop-blur-sm"
+        aria-hidden="true"
+      >
+        <span class="animate-pulse">Loading...</span>
+      </div>
+      }
     </article>
   </section>
 </div>

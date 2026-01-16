@@ -6,6 +6,7 @@ namespace Croniq.Core.Execution;
 internal static class FileExecutionLogPathHelper
 {
     private static readonly char[] InvalidFileNameChars = Path.GetInvalidFileNameChars();
+    private const string IndexFolderName = "_index";
 
     public static string ResolveBasePath(FileExecutionLogStoreOptions options)
     {
@@ -23,6 +24,19 @@ internal static class FileExecutionLogPathHelper
             ResolveBasePath(options),
             Sanitize(tenantId),
             Sanitize(environmentTag));
+    }
+
+    public static string GetIndexRoot(FileExecutionLogStoreOptions options, string tenantId, string environmentTag)
+    {
+        return Path.Combine(GetScopeRoot(options, tenantId, environmentTag), IndexFolderName);
+    }
+
+    public static string GetDailyIndexPath(FileExecutionLogStoreOptions options, string tenantId, string environmentTag, DateTimeOffset startedAtUtc)
+    {
+        var indexRoot = GetIndexRoot(options, tenantId, environmentTag);
+        var day = startedAtUtc.UtcDateTime;
+        var name = $"executions-index-{day:yyyy-MM-dd}.ndjson";
+        return Path.Combine(indexRoot, name);
     }
 
     public static string ResolveShard(string executionId, int prefixLength)

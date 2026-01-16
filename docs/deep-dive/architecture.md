@@ -104,6 +104,12 @@ docs/
 - Misfires are retried while `MaxMisfireDelay` (default 5 minutes) is respected. Beyond that the execution is marked as dead letter.
 - Delivery semantics: at-least-once by default. Callers can attach idempotency metadata for their own handlers if needed.
 
+### Schedule Calendars (Planned)
+
+- Calendars are separate tenant-scoped entities that include or exclude candidate fire times for schedules.
+- Triggers keep their cron/once semantics; an optional `CalendarId` filters occurrences after the cron evaluation.
+- The concept mirrors Quartz.NET's calendar model and is documented in `docs/deep-dive/designs/schedule-calendars.md`.
+
 ### Lease Renewal & Long-Running Jobs
 
 - Each trigger execution is protected by a lease (`Croniq:Persistence:SqlServer:LeaseDurationSeconds`, `Croniq:Persistence:Postgres:LeaseDurationSeconds`, or `Croniq:JobStore:InMemory:LeaseDurationSeconds`, default 60s).
