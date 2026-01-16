@@ -181,14 +181,24 @@ public static class WebhookHostingExtensions
             : new Uri(baseUri.AbsoluteUri + "/", UriKind.Absolute);
         var timeoutSeconds = Math.Max(1, remote.TimeoutSeconds);
 
+        var allowInvalidCertificate = remote.AllowInvalidServerCertificate && normalizedBase.Scheme == Uri.UriSchemeHttps;
+
         RemoveWebhookPersistenceRegistrations(services);
 
-        services.AddHttpClient<RemoteWebhookClient>(client =>
+        var remoteClientBuilder = services.AddHttpClient<RemoteWebhookClient>(client =>
         {
             client.BaseAddress = normalizedBase;
             client.Timeout = TimeSpan.FromSeconds(timeoutSeconds);
             client.DefaultRequestHeaders.Add("X-Croniq-Key", remote.ApiKey);
         });
+
+        if (allowInvalidCertificate)
+        {
+            remoteClientBuilder.ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler
+            {
+                ServerCertificateCustomValidationCallback = HttpClientHandler.DangerousAcceptAnyServerCertificateValidator
+            });
+        }
 
         services.AddSingleton<IWebhookPersistenceProvider, RemoteWebhookPersistenceProvider>();
         services.AddSingleton<IWebhookDeadLetterStore, RemoteWebhookDeadLetterStore>();

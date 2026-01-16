@@ -200,6 +200,29 @@ public class WebhookHostingExtensionsTests
         options.Endpoints[0].RequireSignature.ShouldBeFalse();
     }
 
+    [Fact]
+    public void AddCroniqWebhookServices_Throws_WhenInvalidCertificateAllowedOutsideDevelopment()
+    {
+        var services = new ServiceCollection();
+        AddHostEnvironment(services, environmentName: "Production");
+        var config = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["Croniq:Auth:Mode"] = "InMemory",
+                ["Croniq:Webhooks:Mode"] = "Remote",
+                ["Croniq:Webhooks:Remote:BaseUrl"] = "https://dmz.croniq.test/api",
+                ["Croniq:Webhooks:Remote:ApiKey"] = "dmz-key",
+                ["Croniq:Webhooks:Remote:AllowInvalidServerCertificate"] = "true"
+            })
+            .Build();
+
+        services.AddCroniqWebhookServices(config);
+        var provider = services.BuildServiceProvider();
+
+        Should.Throw<InvalidOperationException>(() =>
+            provider.GetRequiredService<IOptions<CroniqWebhookOptions>>().Value);
+    }
+
     private static void AddHostEnvironment(IServiceCollection services, string environmentName = "Development")
     {
         services.AddSingleton<IHostEnvironment>(new TestHostEnvironment(environmentName));
