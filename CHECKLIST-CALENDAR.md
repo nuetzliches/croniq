@@ -89,18 +89,18 @@ _Last updated: 2026-01-16_
 - UI coverage: calendars list + editor implemented in Croniq.Ui; schedule editor calendar assignment added.
 - UI tests for calendar assignment/views are still pending.
 
-## Open Questions
+## Decisions (v1)
 
 1. Calendar time zone is required and fixed per calendar (no trigger inheritance).
 2. Only one calendar assignment per schedule in v1.
 3. Guard schedule filtering with max-iteration + max-lookahead defaults (10,000 iterations or 365 days).
 4. No per-schedule overrides in v1; use calendar rules or dedicated calendars instead.
 
-## Constraints & Follow-ups
+## vNext Roadmap (Candidates)
 
-- Fixed time zones require separate calendars per time zone; a future `InheritTriggerTimeZone` flag can relax this.
-- Single-calendar assignment blocks cross-calendar composition; a future ordered assignment list can provide explicit precedence.
-- Guarded evaluation can return no next occurrence for highly excluded schedules; future options can allow per-calendar limits.
-- No per-schedule overrides means ad-hoc exclusions require calendar edits; future overlay rules can address temporary exceptions.
+- Add optional `InheritTriggerTimeZone` to reuse the schedule time zone when desired.
+- Support ordered multi-calendar assignments with explicit precedence.
+- Make guard limits configurable per calendar (or allow a wider lookahead mode).
+- Introduce per-schedule override layers for temporary exclusions/inclusions.
 
 Document decisions here and mirror the finalized design into `docs/deep-dive/designs/schedule-calendars.md`.
