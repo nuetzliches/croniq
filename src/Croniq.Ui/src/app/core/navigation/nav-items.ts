@@ -18,6 +18,7 @@ export const NAV_SECTIONS: ReadonlyArray<NavSection> = [
             { path: 'dashboard', label: 'Dashboard', description: 'Overview' },
             { path: 'jobs', label: 'Jobs', description: 'Registry' },
             { path: 'schedules', label: 'Schedules', description: 'Triggers' },
+            { path: 'calendars', label: 'Calendars', description: 'Filters' },
             { path: 'executions', label: 'Executions', description: 'History' },
         ],
     },

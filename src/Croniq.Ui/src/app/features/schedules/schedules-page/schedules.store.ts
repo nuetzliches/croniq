@@ -4,7 +4,7 @@ import { authFailureFromError } from '@core/auth/auth-failure';
 import { tenantRxResource } from '@core/resource/tenant-rx-resource';
 import { TenantContextService } from '@core/tenant-context/tenant-context.service';
 import { nowIso } from '@core/time/clock';
-import { ScheduleResponse, ScheduleSummary, UpsertScheduleRequest } from '@croniq/api-schema';
+import { CalendarResponse, ScheduleResponse, ScheduleSummary, UpsertScheduleRequest } from '@croniq/api-schema';
 import { CRONIQ_API_CLIENT, CroniqApiClient } from 'data-access';
 import { EMPTY, catchError, finalize, map, of, tap } from 'rxjs';
 
@@ -12,6 +12,7 @@ export type ScheduleDetail = {
     triggerId: string;
     jobKey?: string;
     cronExpression?: string;
+    calendarId?: string;
     enabled?: boolean;
     startAtUtc?: string;
     endAtUtc?: string;
@@ -20,6 +21,11 @@ export type ScheduleDetail = {
     cron?: string;
     timezone?: string;
     state?: string;
+};
+
+export type CalendarOption = {
+    calendarId: string;
+    label: string;
 };
 
 export type ScheduleDeadLetterView = {
@@ -90,6 +96,50 @@ export class SchedulesStore {
     });
 
     readonly loading = computed(() => this.schedulesResource.isLoading());
+
+    private readonly calendarOptionsSignal = signal<ReadonlyArray<CalendarOption>>([]);
+    private readonly calendarOptionsErrorSignal = signal<string | null>(null);
+    private readonly calendarOptionsResource = tenantRxResource<CalendarResponse[], { tenantId: string; environment: string }>({
+        command: 'schedules.list-calendars',
+        defaultValue: [],
+        params: () => {
+            const { tenantId, environment } = this.tenantContext.snapshot();
+            return { tenantId, environment };
+        },
+        stream: ({ params, requestOptions }) => {
+            this.calendarOptionsErrorSignal.set(null);
+
+            const tenantId = params.tenantId.trim();
+            const environment = params.environment.trim();
+            if (!tenantId) {
+                this.calendarOptionsErrorSignal.set('Required context is missing - unable to load calendars.');
+                this.calendarOptionsSignal.set([]);
+                return of([]);
+            }
+
+            const request$ = this.api.listCalendars({ tenantId, environment }, requestOptions);
+
+            return request$.pipe(
+                map((response) => (Array.isArray(response) ? response : [])),
+                tap((response) => {
+                    this.calendarOptionsSignal.set(normalizeCalendarOptions(response));
+                }),
+                catchError((error: unknown) => {
+                    console.error('Failed to load calendar options', error);
+                    const authFailure = authFailureFromError(error, {
+                        forbidden: 'Forbidden (403) - your token is missing calendars permissions.',
+                    });
+                    if (authFailure) {
+                        this.calendarOptionsErrorSignal.set(authFailure.message);
+                    } else {
+                        this.calendarOptionsErrorSignal.set('Unable to load calendars from API.');
+                    }
+                    this.calendarOptionsSignal.set([]);
+                    return of([]);
+                }),
+            );
+        },
+    });
 
     private readonly scheduleDetailSignal = signal<ScheduleDetail | null>(null);
     private readonly scheduleDetailTriggerIdSignal = signal<string | null>(null);
@@ -246,8 +296,13 @@ export class SchedulesStore {
     readonly executionsLoading = computed(() => this.executionsResource.isLoading());
     readonly executionsError = this.executionsErrorSignal.asReadonly();
 
+    readonly calendarOptions = this.calendarOptionsSignal.asReadonly();
+    readonly calendarOptionsLoading = computed(() => this.calendarOptionsResource.isLoading());
+    readonly calendarOptionsError = this.calendarOptionsErrorSignal.asReadonly();
+
     refresh(): void {
         this.schedulesResource.reload();
+        this.calendarOptionsResource.reload();
         this.scheduleDeadLettersResource.reload();
         this.executionsResource.reload();
     }
@@ -505,11 +560,13 @@ function normalizeScheduleDetail(value: unknown, fallbackId: string): ScheduleDe
     const startAtUtc = typeof record['startAtUtc'] === 'string' ? record['startAtUtc'].trim() : undefined;
     const endAtUtc = typeof record['endAtUtc'] === 'string' ? record['endAtUtc'].trim() : undefined;
     const description = typeof record['description'] === 'string' ? record['description'].trim() : undefined;
+    const calendarId = typeof record['calendarId'] === 'string' ? record['calendarId'].trim() : undefined;
 
     return {
         triggerId,
         jobKey: jobKey || undefined,
         cronExpression: cronExpression || undefined,
+        calendarId: calendarId || undefined,
         enabled,
         startAtUtc: startAtUtc || undefined,
         endAtUtc: endAtUtc || undefined,
@@ -542,4 +599,34 @@ function normalizeExecutionsResponse(value: unknown): ReadonlyArray<ExecutionSum
         entries.push({ id, jobKey, status, startAtUtc, durationMs, trigger });
     }
     return entries;
+}
+
+function normalizeCalendarOptions(calendars: CalendarResponse[]): ReadonlyArray<CalendarOption> {
+    if (!Array.isArray(calendars)) {
+        return [];
+    }
+
+    const options: CalendarOption[] = [];
+    for (const calendar of calendars) {
+        if (!calendar || typeof calendar !== 'object') {
+            continue;
+        }
+        const record = calendar as CalendarResponse;
+        const calendarId =
+            typeof record.calendarId === 'string' && record.calendarId.trim()
+                ? record.calendarId.trim()
+                : '';
+        if (!calendarId) {
+            continue;
+        }
+        const name = typeof record.name === 'string' ? record.name.trim() : '';
+        const enabled = typeof record.enabled === 'boolean' ? record.enabled : true;
+        let label = name && name !== calendarId ? `${name} (${calendarId})` : calendarId;
+        if (!enabled) {
+            label = `${label} (paused)`;
+        }
+        options.push({ calendarId, label });
+    }
+
+    return options.sort((a, b) => a.label.localeCompare(b.label));
 }

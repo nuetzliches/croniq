@@ -1,0 +1,140 @@
+<div class="flex h-full flex-col space-y-6">
+  <!-- Header -->
+  <header class="flex flex-wrap items-center justify-between gap-4">
+    <div>
+      <h1 class="text-lg font-semibold text-primary">Calendars</h1>
+      <p class="text-xs text-muted">Filter schedule occurrences with include/exclude rules.</p>
+    </div>
+    <div class="flex items-center gap-2">
+      <button
+        type="button"
+        (click)="refresh()"
+        class="rounded-lg border border-white/10 bg-white/5 px-4 py-2 text-sm font-semibold text-primary transition hover:border-accent hover:text-accent"
+        [disabled]="loading()"
+      >
+        {{ loading() ? 'Refreshing...' : 'Refresh' }}
+      </button>
+      <button
+        type="button"
+        (click)="createCalendar()"
+        class="rounded-lg bg-accent px-4 py-2 text-sm font-semibold text-white transition hover:bg-accent-hover"
+      >
+        Create Calendar
+      </button>
+    </div>
+  </header>
+
+  <!-- Content -->
+  <div class="flex-1 overflow-hidden rounded-xl border border-white/10 bg-surface-alt shadow-card">
+    @if (error()) {
+      <div class="border-b border-white/10 bg-danger/10 px-4 py-3 text-sm text-danger">
+        {{ error() }}
+      </div>
+    }
+    <cq-data-grid
+      class="h-[560px]"
+      [rows]="calendars()"
+      [rowKey]="calendarRowKey"
+      [bufferPx]="256"
+      [estimatedRowHeightPx]="56"
+      [loading]="loading()"
+      [rowClasses]="calendarRowClasses"
+    >
+      <cq-column header="Calendar" width="18rem">
+        <ng-template cqCalendarCell let-row>
+          <div class="min-w-0">
+            <div class="truncate text-sm font-semibold text-primary">{{ row.name }}</div>
+            <div class="truncate text-xs font-mono text-muted">{{ row.calendarId }}</div>
+          </div>
+        </ng-template>
+      </cq-column>
+
+      <cq-column header="Mode" width="8rem" align="center">
+        <ng-template cqCalendarCell let-row>
+          <span
+            class="inline-flex items-center rounded-full px-2 py-1 text-xs font-medium"
+            [class.bg-success/10]="row.mode === 0"
+            [class.text-success]="row.mode === 0"
+            [class.bg-danger/10]="row.mode === 1"
+            [class.text-danger]="row.mode === 1"
+          >
+            {{ row.modeLabel }}
+          </span>
+        </ng-template>
+      </cq-column>
+
+      <cq-column header="Time Zone" key="timeZoneId" width="12rem" />
+
+      <cq-column header="Rules" width="6rem" align="center">
+        <ng-template cqCalendarCell let-row>
+          @if (row.ruleCount === 0) {
+            <span class="text-xs text-muted">None</span>
+          } @else {
+            <span class="text-sm font-semibold text-primary">{{ row.ruleCount }}</span>
+          }
+        </ng-template>
+      </cq-column>
+
+      <cq-column header="Status" width="8rem" align="center">
+        <ng-template cqCalendarCell let-row>
+          <span
+            class="inline-flex items-center rounded-full px-2 py-1 text-xs font-medium"
+            [class.bg-success/10]="row.enabled"
+            [class.text-success]="row.enabled"
+            [class.bg-white/10]="!row.enabled"
+            [class.text-muted]="!row.enabled"
+          >
+            {{ row.enabled ? 'Enabled' : 'Paused' }}
+          </span>
+        </ng-template>
+      </cq-column>
+
+      <cq-column header="Updated" width="12rem">
+        <ng-template cqCalendarCell let-row>
+          @if (row.updatedAtUtc) {
+            <span class="text-muted">{{ row.updatedAtUtc | date: 'short' }}</span>
+          } @else {
+            <span class="text-muted">-</span>
+          }
+        </ng-template>
+      </cq-column>
+
+      <cq-column width="8rem" align="end">
+        <ng-template cqCalendarCell let-row>
+          <div class="flex items-center justify-end gap-2 opacity-80 hover:opacity-100">
+            <button
+              type="button"
+              (click)="editCalendar(row)"
+              class="rounded p-1 text-muted hover:bg-white/10 hover:text-white"
+              title="Edit"
+            >
+              <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  stroke-width="2"
+                  d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"
+                />
+              </svg>
+            </button>
+            <button
+              type="button"
+              (click)="deleteCalendar(row.calendarId)"
+              class="rounded p-1 text-muted hover:bg-danger/10 hover:text-danger"
+              title="Delete"
+            >
+              <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  stroke-width="2"
+                  d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1 1v3M4 7h16"
+                />
+              </svg>
+            </button>
+          </div>
+        </ng-template>
+      </cq-column>
+    </cq-data-grid>
+  </div>
+</div>

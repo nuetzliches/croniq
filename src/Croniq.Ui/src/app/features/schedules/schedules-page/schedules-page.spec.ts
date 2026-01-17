@@ -10,6 +10,9 @@ class SchedulesStoreStub {
   readonly loading = signal(false);
   readonly error = signal<string | null>(null);
   readonly lastUpdated = signal(nowIso());
+  readonly calendarOptions = signal<ReadonlyArray<{ calendarId: string; label: string }>>([]);
+  readonly calendarOptionsLoading = signal(false);
+  readonly calendarOptionsError = signal<string | null>(null);
 
   readonly scheduleDetail = signal<unknown | null>(null);
   readonly scheduleDetailLoading = signal(false);

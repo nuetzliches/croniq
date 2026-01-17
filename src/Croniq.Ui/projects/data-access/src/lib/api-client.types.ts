@@ -63,6 +63,10 @@ export interface TenantScheduleParams extends TenantEnvironmentParams {
     triggerId: string;
 }
 
+export interface TenantCalendarParams extends TenantEnvironmentParams {
+    calendarId: string;
+}
+
 export interface DashboardForecastParams extends TenantEnvironmentOptionalParams {
     windowMinutes?: number | null;
     bucketMinutes?: number | null;

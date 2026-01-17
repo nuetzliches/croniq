@@ -1,0 +1,157 @@
+<div class="flex h-full w-[720px] flex-col overflow-hidden rounded-xl border border-white/10 bg-surface shadow-2xl">
+  <!-- Header -->
+  <header class="flex items-center justify-between border-b border-white/10 bg-surface-alt px-6 py-4">
+    <h2 class="text-lg font-semibold text-primary">
+      {{ isEdit ? 'Edit Calendar' : 'Create Calendar' }}
+    </h2>
+    <button type="button" (click)="close()" class="text-muted hover:text-primary">
+      <span class="sr-only">Close</span>
+      <svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        <path
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          stroke-width="2"
+          d="M6 18L18 6M6 6l12 12"
+        />
+      </svg>
+    </button>
+  </header>
+
+  <!-- Body -->
+  <div class="flex-1 overflow-y-auto p-6">
+    <form id="calendarForm" class="space-y-4" (submit)="onSubmit($event)" novalidate>
+      <!-- Calendar ID -->
+      <div class="space-y-1">
+        <label for="calendarId" class="text-sm font-medium text-muted">Calendar ID</label>
+        @if (isEdit) {
+          <div
+            class="w-full rounded-lg border border-white/10 bg-surface-alt px-3 py-2 text-sm text-muted opacity-60"
+          >
+            {{ model().calendarId }}
+          </div>
+        } @else {
+          <input
+            id="calendarId"
+            type="text"
+            [field]="form.calendarId"
+            class="w-full rounded-lg border border-white/10 bg-surface-alt px-3 py-2 text-sm text-primary placeholder:text-muted focus:border-accent focus:outline-none"
+            placeholder="e.g. holidays-eu"
+          />
+        }
+        @if (submitAttempted() && calendarIdInvalid()) {
+          <p class="text-xs text-danger">Calendar ID is required.</p>
+        }
+      </div>
+
+      <!-- Name -->
+      <div class="space-y-1">
+        <label for="name" class="text-sm font-medium text-muted">Name</label>
+        <input
+          id="name"
+          type="text"
+          [field]="form.name"
+          class="w-full rounded-lg border border-white/10 bg-surface-alt px-3 py-2 text-sm text-primary placeholder:text-muted focus:border-accent focus:outline-none"
+          placeholder="e.g. EU holidays"
+        />
+        @if (submitAttempted() && nameInvalid()) {
+          <p class="text-xs text-danger">Name is required.</p>
+        }
+      </div>
+
+      <!-- Description -->
+      <div class="space-y-1">
+        <label for="description" class="text-sm font-medium text-muted">Description</label>
+        <textarea
+          id="description"
+          rows="3"
+          [field]="form.description"
+          class="w-full rounded-lg border border-white/10 bg-surface-alt px-3 py-2 text-sm text-primary placeholder:text-muted focus:border-accent focus:outline-none"
+          placeholder="Optional description..."
+        ></textarea>
+      </div>
+
+      <!-- Time Zone -->
+      <div class="space-y-1">
+        <label for="timeZoneId" class="text-sm font-medium text-muted">Time Zone ID</label>
+        <input
+          id="timeZoneId"
+          type="text"
+          [field]="form.timeZoneId"
+          class="w-full rounded-lg border border-white/10 bg-surface-alt px-3 py-2 text-sm text-primary placeholder:text-muted focus:border-accent focus:outline-none"
+          placeholder="e.g. UTC or Europe/Berlin"
+        />
+        <p class="text-xs text-muted">Use a valid IANA or Windows time zone identifier.</p>
+        @if (submitAttempted() && timeZoneInvalid()) {
+          <p class="text-xs text-danger">Time zone is required.</p>
+        }
+      </div>
+
+      <!-- Mode -->
+      <div class="space-y-1">
+        <label for="mode" class="text-sm font-medium text-muted">Mode</label>
+        <select
+          id="mode"
+          [field]="form.mode"
+          class="w-full rounded-lg border border-white/10 bg-surface-alt px-3 py-2 text-sm text-primary focus:border-accent focus:outline-none"
+        >
+          @for (option of modeOptions; track option.value) {
+            <option [value]="option.value">{{ option.label }}</option>
+          }
+        </select>
+        <p class="text-xs text-muted">Include keeps times that match rules; Exclude removes them.</p>
+      </div>
+
+      <!-- Enabled -->
+      <div class="flex items-center gap-2">
+        <input
+          id="enabled"
+          type="checkbox"
+          [field]="form.enabled"
+          class="h-4 w-4 rounded border-white/10 bg-surface-alt text-accent focus:ring-accent"
+        />
+        <label for="enabled" class="text-sm font-medium text-primary">Enabled</label>
+      </div>
+
+      <!-- Rules -->
+      <div class="space-y-1">
+        <label for="rulesJson" class="text-sm font-medium text-muted">Rules (JSON)</label>
+        <textarea
+          id="rulesJson"
+          rows="8"
+          [field]="form.rulesJson"
+          class="w-full rounded-lg border border-white/10 bg-surface-alt px-3 py-2 text-xs font-mono text-primary placeholder:text-muted focus:border-accent focus:outline-none"
+          placeholder='[{"ruleId":"weekday","ruleType":1,"sortOrder":0,"isEnabled":true,"weeklyWindow":{"daysOfWeek":["Mon","Tue","Wed","Thu","Fri"]}}]'
+        ></textarea>
+        <p class="text-xs text-muted">
+          Rules must be a JSON array. Rule types: 0=DailyWindow, 1=WeeklyWindow, 2=AnnualDateList,
+          3=DateList, 4=CronRule.
+        </p>
+        <p class="text-xs text-muted">
+          Each rule needs ruleId, ruleType, sortOrder, isEnabled, and its payload object.
+        </p>
+        @if (submitAttempted() && rulesError()) {
+          <p class="text-xs text-danger">{{ rulesError() }}</p>
+        }
+      </div>
+    </form>
+  </div>
+
+  <!-- Footer -->
+  <footer class="flex items-center justify-end gap-3 border-t border-white/10 bg-surface-alt px-6 py-4">
+    <button
+      type="button"
+      (click)="close()"
+      class="rounded-lg px-4 py-2 text-sm font-medium text-muted hover:bg-white/5 hover:text-primary"
+    >
+      Cancel
+    </button>
+    <button
+      type="submit"
+      form="calendarForm"
+      [disabled]="form().invalid()"
+      class="rounded-lg bg-accent px-4 py-2 text-sm font-semibold text-white transition hover:bg-accent-hover disabled:cursor-not-allowed disabled:opacity-50"
+    >
+      {{ isEdit ? 'Save Changes' : 'Create Calendar' }}
+    </button>
+  </footer>
+</div>

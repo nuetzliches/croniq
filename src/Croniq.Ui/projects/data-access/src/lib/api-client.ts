@@ -1,9 +1,9 @@
 import { HttpClient } from '@angular/common/http';
 import { EnvironmentProviders, InjectionToken, Provider, inject, makeEnvironmentProviders } from '@angular/core';
-import { AuthApi, CreateWebhookIpRuleRequest, HealthApi, IssueApiKeyRequest, IssueTokenRequest, JobsApi, MeApi, PasswordChangePasswordRequest, PasswordLoginRequest, PasswordLogoutRequest, PasswordRefreshRequest, RotateWebhookSecretRequest, RunnerHeartbeatRequest, RunnerListResponse, ScheduleDeadLetterResponse, ScheduleForecastResponse, ScheduleResponse, ScheduleUpsertResult, TenantsApi, TriggerJobRequest, UpsertApiClientRequest, UpsertJobRequest, UpsertScheduleRequest, UpsertTenantRequest, UpsertWebhookEndpointRequest, WebhookCapabilitiesResponse, WorkerHeartbeatRequest, WorkerListResponse, WorkAckRequest, WorkEventsRequest, WorkPollRequest, WorkRenewRequest, type EndpointDefinition } from '@croniq/api-schema';
+import { AuthApi, CalendarResponse, CalendarUpsertResult, CreateWebhookIpRuleRequest, CroniqCalendarSeedDefinition, HealthApi, IssueApiKeyRequest, IssueTokenRequest, JobsApi, MeApi, PasswordChangePasswordRequest, PasswordLoginRequest, PasswordLogoutRequest, PasswordRefreshRequest, RotateWebhookSecretRequest, RunnerHeartbeatRequest, RunnerListResponse, ScheduleDeadLetterResponse, ScheduleForecastResponse, ScheduleResponse, ScheduleUpsertResult, TenantsApi, TriggerJobRequest, UpsertApiClientRequest, UpsertJobRequest, UpsertScheduleRequest, UpsertTenantRequest, UpsertWebhookEndpointRequest, WebhookCapabilitiesResponse, WorkerHeartbeatRequest, WorkerListResponse, WorkAckRequest, WorkEventsRequest, WorkPollRequest, WorkRenewRequest, type EndpointDefinition } from '@croniq/api-schema';
 import type { Observable } from 'rxjs';
 import { z } from 'zod';
-import type { CroniqCredentialSupplier, CroniqRequestOptions, DashboardForecastParams, ExecutionLogParams, ExecutionParams, TenantApiClientParams, TenantApiClientTokenParams, TenantApiKeyParams, TenantDeadLetterParams, TenantEnvironmentOptionalParams, TenantEnvironmentParams, TenantScheduleParams, TenantScopedParams, TenantUpsertApiClientParams, TenantWebhookCapabilitiesParams, TenantWebhookParams, TenantWebhookRuleParams, TenantWebhookUpsertParams, WebhookInvocationParams, WorkEventsParams } from './api-client.types';
+import type { CroniqCredentialSupplier, CroniqRequestOptions, DashboardForecastParams, ExecutionLogParams, ExecutionParams, TenantApiClientParams, TenantApiClientTokenParams, TenantApiKeyParams, TenantCalendarParams, TenantDeadLetterParams, TenantEnvironmentOptionalParams, TenantEnvironmentParams, TenantScheduleParams, TenantScopedParams, TenantUpsertApiClientParams, TenantWebhookCapabilitiesParams, TenantWebhookParams, TenantWebhookRuleParams, TenantWebhookUpsertParams, WebhookInvocationParams, WorkEventsParams } from './api-client.types';
 import type { EndpointCallConfig } from './endpoint-executor';
 import { EndpointExecutor, requireEndpoint } from './endpoint-executor';
 
@@ -108,6 +108,10 @@ const TENANT_ENDPOINTS = {
     upsertJob: requireEndpoint(TenantsApi, 'post', '/tenants/:tenantId/jobs'),
     getJob: requireEndpoint(TenantsApi, 'get', '/tenants/:tenantId/jobs/:jobId'),
     deleteJob: requireEndpoint(TenantsApi, 'delete', '/tenants/:tenantId/jobs/:jobId'),
+    listCalendars: requireEndpoint(TenantsApi, 'get', '/tenants/:tenantId/calendars'),
+    upsertCalendar: requireEndpoint(TenantsApi, 'post', '/tenants/:tenantId/calendars'),
+    getCalendar: requireEndpoint(TenantsApi, 'get', '/tenants/:tenantId/calendars/:calendarId'),
+    deleteCalendar: requireEndpoint(TenantsApi, 'delete', '/tenants/:tenantId/calendars/:calendarId'),
     getSchedule: requireEndpoint(TenantsApi, 'get', '/tenants/:tenantId/schedules/:triggerId'),
     deleteSchedule: requireEndpoint(TenantsApi, 'delete', '/tenants/:tenantId/schedules/:triggerId'),
     dashboardForecast: requireEndpoint(TenantsApi, 'get', '/tenants/:tenantId/dashboard/forecast'),
@@ -175,6 +179,17 @@ export interface CroniqApiClient {
         payload: UpsertScheduleRequest,
         options?: CroniqRequestOptions,
     ): Observable<ScheduleUpsertResult>;
+    listCalendars(
+        params: TenantScopedParams & { environment?: string | null },
+        options?: CroniqRequestOptions,
+    ): Observable<CalendarResponse[]>;
+    upsertCalendar(
+        params: TenantEnvironmentParams,
+        payload: CroniqCalendarSeedDefinition,
+        options?: CroniqRequestOptions,
+    ): Observable<CalendarUpsertResult>;
+    getCalendar(params: TenantCalendarParams, options?: CroniqRequestOptions): Observable<CalendarResponse>;
+    deleteCalendar(params: TenantCalendarParams, options?: CroniqRequestOptions): Observable<void>;
     triggerJob(payload: TriggerJobRequest, options?: CroniqRequestOptions): Observable<void>;
 
     getMe(options?: CroniqRequestOptions): Observable<unknown>;
@@ -354,6 +369,67 @@ class HttpCroniqApiClient implements CroniqApiClient {
                 query: { environment: params.environment },
                 body: payload,
                 responseSchema: ScheduleUpsertResult,
+            },
+            options,
+        );
+    }
+
+    listCalendars(
+        params: TenantScopedParams & { environment?: string | null },
+        options?: CroniqRequestOptions,
+    ): Observable<CalendarResponse[]> {
+        return this.execute$<CalendarResponse[]>(
+            TENANT_ENDPOINTS.listCalendars,
+            {
+                path: { tenantId: params.tenantId },
+                query: {
+                    environment: params.environment ?? options?.context?.environment ?? undefined,
+                },
+            },
+            options,
+        );
+    }
+
+    upsertCalendar(
+        params: TenantEnvironmentParams,
+        payload: CroniqCalendarSeedDefinition,
+        options?: CroniqRequestOptions,
+    ): Observable<CalendarUpsertResult> {
+        return this.execute$<CalendarUpsertResult>(
+            TENANT_ENDPOINTS.upsertCalendar,
+            {
+                path: { tenantId: params.tenantId },
+                query: { environment: params.environment },
+                body: payload,
+                responseSchema: CalendarUpsertResult,
+            },
+            options,
+        );
+    }
+
+    getCalendar(params: TenantCalendarParams, options?: CroniqRequestOptions): Observable<CalendarResponse> {
+        return this.execute$<CalendarResponse>(
+            TENANT_ENDPOINTS.getCalendar,
+            {
+                path: {
+                    tenantId: params.tenantId,
+                    calendarId: params.calendarId,
+                },
+                query: { environment: params.environment },
+            },
+            options,
+        );
+    }
+
+    deleteCalendar(params: TenantCalendarParams, options?: CroniqRequestOptions): Observable<void> {
+        return this.execute$(
+            TENANT_ENDPOINTS.deleteCalendar,
+            {
+                path: {
+                    tenantId: params.tenantId,
+                    calendarId: params.calendarId,
+                },
+                query: { environment: params.environment },
             },
             options,
         );
@@ -1132,5 +1208,5 @@ export function provideCroniqApiClient(config: { baseUrl?: string } = {}): Envir
     return makeEnvironmentProviders(providers);
 }
 
-export type { CallerContext, CroniqCredentialSupplier, CroniqRequestOptions, DashboardForecastParams, ExecutionLogParams, TenantApiClientParams, TenantApiKeyParams, TenantDeadLetterParams, TenantEnvironmentParams, TenantScopedParams, TenantWebhookCapabilitiesParams, TenantWebhookParams, TenantWebhookRuleParams, TenantWebhookUpsertParams, WebhookInvocationParams } from './api-client.types';
+export type { CallerContext, CroniqCredentialSupplier, CroniqRequestOptions, DashboardForecastParams, ExecutionLogParams, TenantApiClientParams, TenantApiKeyParams, TenantCalendarParams, TenantDeadLetterParams, TenantEnvironmentParams, TenantScopedParams, TenantWebhookCapabilitiesParams, TenantWebhookParams, TenantWebhookRuleParams, TenantWebhookUpsertParams, WebhookInvocationParams } from './api-client.types';
 

@@ -86,6 +86,7 @@ _Last updated: 2026-01-16_
 - API coverage: calendar CRUD endpoints plus schedule upsert with calendars.
 - gRPC coverage: calendar-aware schedule upsert (success + not-found).
 - Persistence coverage: calendar CRUD in SqlServer/Postgres provider tests.
+- UI coverage: calendars list + editor implemented in Croniq.Ui; schedule editor calendar assignment added.
 - UI tests for calendar assignment/views are still pending.
 
 ## Open Questions

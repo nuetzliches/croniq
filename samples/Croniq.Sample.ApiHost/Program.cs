@@ -123,6 +123,8 @@ if (app.Environment.IsDevelopment())
                 {
                     CroniqScopes.SchedulesWrite,
                     CroniqScopes.SchedulesDeadLetter,
+                    CroniqScopes.CalendarsRead,
+                    CroniqScopes.CalendarsWrite,
                     CroniqScopes.JobsRead,
                     CroniqScopes.JobsWrite,
                     CroniqScopes.JobsTrigger,

@@ -57,6 +57,37 @@
             </p>
           </div>
 
+          <!-- Calendar Assignment -->
+          <div>
+            <label for="calendarId" class="mb-1 block text-sm font-medium text-muted">Calendar</label>
+            <select
+              id="calendarId"
+              [field]="scheduleForm.calendarId"
+              class="w-full rounded-lg border border-white/10 bg-surface-alt px-3 py-2 text-sm text-white placeholder-muted focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+            >
+              @for (option of calendarSelectOptions(); track option.calendarId) {
+                <option [value]="option.calendarId">{{ option.label }}</option>
+              }
+            </select>
+            <p class="mt-1 text-xs text-muted">
+              Calendars filter occurrences. Choose "No calendar" to disable filtering.
+            </p>
+            @if (calendarOptionsLoading()) {
+              <p class="mt-1 text-xs text-muted">Loading calendars...</p>
+            }
+            @if (calendarOptionsError()) {
+              <p class="mt-1 text-xs text-danger">{{ calendarOptionsError() }}</p>
+            }
+            @if (showCalendarEmptyState()) {
+              <p class="mt-1 text-xs text-muted">No calendars available for this tenant.</p>
+            }
+            @if (calendarSelectionMissing()) {
+              <p class="mt-1 text-xs text-danger">
+                Assigned calendar is missing. Select a new calendar or choose "No calendar".
+              </p>
+            }
+          </div>
+
           <!-- Description -->
           <div>
             <label for="description" class="mb-1 block text-sm font-medium text-muted"

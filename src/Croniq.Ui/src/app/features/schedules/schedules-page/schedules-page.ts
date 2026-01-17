@@ -65,6 +65,9 @@ export class SchedulesPage {
   loading = this.store.loading;
   schedules = this.store.schedules;
   error = this.store.error;
+  calendarOptions = this.store.calendarOptions;
+  calendarOptionsLoading = this.store.calendarOptionsLoading;
+  calendarOptionsError = this.store.calendarOptionsError;
 
   deadLetters = this.store.scheduleDeadLetters;
   deadLettersLoading = this.store.scheduleDeadLettersLoading;
@@ -112,6 +115,7 @@ export class SchedulesPage {
           description: detail.description,
           startAtUtc: detail.startAtUtc,
           endAtUtc: detail.endAtUtc,
+          calendarId: detail.calendarId,
         };
         this.editingSchedule.set(request);
         this.showDialog.set(true);

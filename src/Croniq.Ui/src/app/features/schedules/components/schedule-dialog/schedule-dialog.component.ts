@@ -1,11 +1,13 @@
 import { ChangeDetectionStrategy, Component, computed, input, linkedSignal, output } from '@angular/core';
 import { Field, form, required, submit } from '@angular/forms/signals';
 import { UpsertScheduleRequest } from '@croniq/api-schema';
+import type { CalendarOption } from '@features/schedules/schedules-page/schedules.store';
 
 interface ScheduleFormModel {
     triggerId: string;
     jobKey: string;
     cronExpression: string;
+    calendarId: string;
     description: string;
     enabled: boolean;
     startAtUtc: string | null;
@@ -18,6 +20,7 @@ const getScheduleFormModel = (schedule?: UpsertScheduleRequest | null): Schedule
             triggerId: schedule.triggerId ?? '',
             jobKey: schedule.jobKey ?? '',
             cronExpression: schedule.cronExpression ?? '',
+            calendarId: schedule.calendarId ?? '',
             description: schedule.description ?? '',
             enabled: schedule.enabled ?? true,
             startAtUtc: schedule.startAtUtc ?? null,
@@ -28,6 +31,7 @@ const getScheduleFormModel = (schedule?: UpsertScheduleRequest | null): Schedule
         triggerId: '',
         jobKey: '',
         cronExpression: '',
+        calendarId: '',
         description: '',
         enabled: true,
         startAtUtc: null,
@@ -43,6 +47,9 @@ const getScheduleFormModel = (schedule?: UpsertScheduleRequest | null): Schedule
 })
 export class ScheduleDialogComponent {
     readonly schedule = input<UpsertScheduleRequest | null>(null);
+    readonly calendarOptions = input<ReadonlyArray<CalendarOption>>([]);
+    readonly calendarOptionsLoading = input(false);
+    readonly calendarOptionsError = input<string | null>(null);
 
     readonly save = output<UpsertScheduleRequest>();
     readonly closeDialog = output<void>();
@@ -56,12 +63,58 @@ export class ScheduleDialogComponent {
         required(f.cronExpression);
     });
 
+    readonly calendarOptionsEmpty = computed(() => this.calendarOptions().length === 0);
+
+    readonly calendarSelectionMissing = computed(() => {
+        if (this.calendarOptionsLoading()) {
+            return false;
+        }
+        if (this.calendarOptionsError()) {
+            return false;
+        }
+        const selected = this.model().calendarId.trim();
+        if (!selected) {
+            return false;
+        }
+        return !this.calendarOptions().some((option) => option.calendarId === selected);
+    });
+
+    readonly calendarSelectOptions = computed<ReadonlyArray<CalendarOption>>(() => {
+        const options = this.calendarOptions();
+        const selected = this.model().calendarId.trim();
+        const entries: CalendarOption[] = [{ calendarId: '', label: 'No calendar' }];
+
+        if (selected && !options.some((option) => option.calendarId === selected)) {
+            entries.push({
+                calendarId: selected,
+                label: `Missing calendar (${selected})`,
+            });
+        }
+
+        return entries.concat(options);
+    });
+
+    readonly showCalendarEmptyState = computed(() => {
+        if (this.calendarOptionsLoading()) {
+            return false;
+        }
+        if (this.calendarOptionsError()) {
+            return false;
+        }
+        return this.calendarOptionsEmpty();
+    });
+
     async onSubmit(event: SubmitEvent) {
         event.preventDefault();
 
         await submit(this.scheduleForm, async () => {
             const request = this.model();
-            this.save.emit(request);
+            const calendarId = request.calendarId.trim();
+            const payload: UpsertScheduleRequest = {
+                ...request,
+                calendarId: calendarId ? calendarId : null,
+            };
+            this.save.emit(payload);
         });
     }
 

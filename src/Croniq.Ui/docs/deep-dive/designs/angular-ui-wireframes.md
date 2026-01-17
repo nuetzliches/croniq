@@ -25,6 +25,7 @@ The application uses a persistent sidebar layout.
 │ Dashboard │                                                                  │
 │ Jobs      │                                                                  │
 │ Schedules │                                                                  │
+│ Calendars │                                                                  │
 │ Executions│                                                                  │
 │           │                                                                  │
 │ ── INFRA ─│                                                                  │
@@ -108,7 +109,25 @@ Time-based triggers management.
 └──────────────────────────────────────────────────────────────────────────────┘
 ```
 
-## 4. Executions
+Notes:
+
+- Schedule editor includes optional calendar assignment.
+
+## 4. Calendars
+
+Calendar definitions that include or exclude schedule occurrences.
+
+```
++--------------------------------------------------------------------------------------+
+| [Create Calendar]                                                                    |
++----------------------+-----------+----------------+-------+---------+----------------+
+| Calendar             | Mode      | Time Zone      | Rules | Status  | Actions        |
++----------------------+-----------+----------------+-------+---------+----------------+
+| holidays-eu          | Exclude   | Europe/Berlin  | 4     | Enabled | [Edit] [Delete]|
++--------------------------------------------------------------------------------------+
+```
+
+## 5. Executions
 
 Global execution history and status.
 
@@ -132,7 +151,7 @@ Global execution history and status.
 - **Events**: Structured events (WorkEvents).
 - **Payload**: Input payload (if any).
 
-## 5. Runners (New)
+## 6. Runners (New)
 
 Infrastructure view of connected workers.
 
@@ -149,7 +168,7 @@ Infrastructure view of connected workers.
 └──────────────────────────────────────────────────────────────────────────────┘
 ```
 
-## 6. Webhooks
+## 7. Webhooks
 
 Inbound webhook management.
 
@@ -172,7 +191,7 @@ Inbound webhook management.
 - **IP Rules**: CIDR allow-list management.
 - **Dead Letters**: Failed webhook deliveries (Replay capability).
 
-## 7. API Access
+## 8. API Access
 
 Management of programmatic access.
 
@@ -186,7 +205,7 @@ Management of programmatic access.
 - List of long-lived API keys.
 - **Actions**: Issue New Key, Rotate Key, Revoke.
 
-## 8. Settings / Tenant
+## 9. Settings / Tenant
 
 - **Tenant Metadata**: Name, ID.
 - **Deactivate Tenant**: Danger zone.

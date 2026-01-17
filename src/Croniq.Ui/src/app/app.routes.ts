@@ -63,6 +63,11 @@ export const appRoutes: Routes = [
                     import('./features/schedules/schedules-page/schedules-page').then((m) => m.SchedulesPage),
             },
             {
+                path: 'calendars',
+                loadComponent: () =>
+                    import('./features/calendars/calendars-page/calendars-page').then((m) => m.CalendarsPage),
+            },
+            {
                 path: 'jobs',
                 loadComponent: () =>
                     import('./features/jobs/jobs-page/jobs-page').then((m) => m.JobsPage),

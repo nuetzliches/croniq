@@ -761,6 +761,8 @@ static IReadOnlyCollection<string> ResolveSeedAdminScopes(string seedScopesRaw, 
     {
         CroniqScopes.SchedulesWrite,
         CroniqScopes.SchedulesDeadLetter,
+        CroniqScopes.CalendarsRead,
+        CroniqScopes.CalendarsWrite,
         CroniqScopes.JobsRead,
         CroniqScopes.JobsWrite,
         CroniqScopes.JobsTrigger,
