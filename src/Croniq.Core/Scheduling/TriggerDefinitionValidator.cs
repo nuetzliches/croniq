@@ -40,6 +40,13 @@ public static class TriggerDefinitionValidator
             return false;
         }
 
+        var calendarId = NormalizeCalendarId(definition.CalendarId, out var calendarError);
+        if (calendarError is not null)
+        {
+            error = calendarError;
+            return false;
+        }
+
         var startAtUtc = definition.StartAtUtc?.ToUniversalTime();
         var endAtUtc = definition.EndAtUtc?.ToUniversalTime();
         var timeZoneId = NormalizeTimeZoneId(definition.TimeZoneId, out var timeZoneError);
@@ -91,6 +98,7 @@ public static class TriggerDefinitionValidator
             startAtUtc,
             endAtUtc,
             timeZoneId,
+            calendarId,
             summary);
 
         return true;
@@ -167,6 +175,26 @@ public static class TriggerDefinitionValidator
 
         return resolved!.Id;
     }
+
+    private static string? NormalizeCalendarId(string? calendarId, out string? error)
+    {
+        const int maxCalendarIdLength = 128;
+        error = null;
+
+        if (string.IsNullOrWhiteSpace(calendarId))
+        {
+            return null;
+        }
+
+        var trimmed = calendarId.Trim();
+        if (trimmed.Length > maxCalendarIdLength)
+        {
+            error = $"CalendarId must be {maxCalendarIdLength} characters or fewer.";
+            return null;
+        }
+
+        return trimmed;
+    }
 }
 
 public sealed record TriggerDefinitionValidationResult(
@@ -176,4 +204,5 @@ public sealed record TriggerDefinitionValidationResult(
     DateTimeOffset? StartAtUtc,
     DateTimeOffset? EndAtUtc,
     string? TimeZoneId,
+    string? CalendarId,
     string Summary);

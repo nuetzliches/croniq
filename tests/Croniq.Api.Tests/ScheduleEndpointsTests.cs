@@ -7,6 +7,7 @@ using Croniq.Api.Tests.Infrastructure;
 using Croniq.Auth.Abstractions;
 using Croniq.Auth.Core;
 using Croniq.Options;
+using Croniq.Persistence.Abstractions;
 using Shouldly;
 using Xunit;
 
@@ -130,6 +131,58 @@ public sealed class ScheduleEndpointsTests : IClassFixture<WebhookApiTestHost>
         response.StatusCode.ShouldBe(HttpStatusCode.Forbidden);
     }
 
+    [Fact]
+    public async Task UpsertScheduleRejectsMissingCalendar()
+    {
+        _host.Reset();
+
+        var request = new CroniqTriggerSeedDefinition
+        {
+            JobKey = "ops:calendar-missing",
+            CronExpression = "0 */5 * * * ?",
+            CalendarId = "missing"
+        };
+
+        var response = await _host.Client.PostAsJsonAsync(
+            $"/tenants/{WebhookApiTestHost.TenantId}/schedules?environment={WebhookApiTestHost.Environment}",
+            request);
+
+        response.StatusCode.ShouldBe(HttpStatusCode.BadRequest);
+        var payload = await response.Content.ReadFromJsonAsync<Dictionary<string, string>>();
+        payload.ShouldNotBeNull();
+        payload["error"].ShouldBe("calendar-not-found");
+    }
+
+    [Fact]
+    public async Task UpsertScheduleReturnsCalendarId()
+    {
+        _host.Reset();
+        await CreateCalendarAsync("cal-schedule");
+
+        var request = new CroniqTriggerSeedDefinition
+        {
+            JobKey = "ops:calendar",
+            CronExpression = "0 */5 * * * ?",
+            CalendarId = "cal-schedule"
+        };
+
+        var response = await _host.Client.PostAsJsonAsync(
+            $"/tenants/{WebhookApiTestHost.TenantId}/schedules?environment={WebhookApiTestHost.Environment}",
+            request);
+
+        response.StatusCode.ShouldBe(HttpStatusCode.Created);
+        var upsert = await response.Content.ReadFromJsonAsync<ScheduleUpsertResult>();
+        upsert.ShouldNotBeNull();
+        upsert.CalendarId.ShouldBe("cal-schedule");
+
+        var list = await _host.Client.GetAsync($"/tenants/{WebhookApiTestHost.TenantId}/schedules?environment={WebhookApiTestHost.Environment}");
+        list.StatusCode.ShouldBe(HttpStatusCode.OK);
+        var payload = await list.Content.ReadFromJsonAsync<ScheduleResponse[]>();
+        payload.ShouldNotBeNull();
+        payload.Length.ShouldBe(1);
+        payload[0].CalendarId.ShouldBe("cal-schedule");
+    }
+
     private async Task<string> UpsertScheduleAsync(string jobKey, string? triggerId = null)
     {
         var identifier = triggerId ?? $"{jobKey}:manual";
@@ -148,6 +201,33 @@ public sealed class ScheduleEndpointsTests : IClassFixture<WebhookApiTestHost>
         var response = await _host.Client.PostAsJsonAsync($"/tenants/{WebhookApiTestHost.TenantId}/schedules", request);
         response.StatusCode.ShouldBe(HttpStatusCode.Created);
         return identifier;
+    }
+
+    private async Task CreateCalendarAsync(string calendarId)
+    {
+        var request = new CroniqCalendarSeedDefinition
+        {
+            CalendarId = calendarId,
+            Name = "Schedule Calendar",
+            Description = null,
+            TimeZoneId = "UTC",
+            Mode = CalendarMode.Include,
+            Enabled = true,
+            Rules = new List<CalendarRuleDefinition>
+            {
+                new(
+                    "daily-window",
+                    CalendarRuleType.DailyWindow,
+                    SortOrder: 0,
+                    IsEnabled: true,
+                    DailyWindow: new CalendarDailyWindowRule("09:00", "17:00"))
+            }
+        };
+
+        var response = await _host.Client.PostAsJsonAsync(
+            $"/tenants/{WebhookApiTestHost.TenantId}/calendars?environment={WebhookApiTestHost.Environment}",
+            request);
+        response.StatusCode.ShouldBe(HttpStatusCode.Created);
     }
 
     private void SetCallerApiKey(string apiKey)

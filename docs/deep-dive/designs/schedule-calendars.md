@@ -15,6 +15,14 @@ This document describes the planned schedule calendar feature that mirrors Quart
 - Do not add calendar logic to job code; evaluation stays inside the scheduling pipeline.
 - Do not introduce external holiday providers in v1.
 
+## Decisions (v1)
+
+- CalendarDefinition.TimeZoneId is required and fixed per calendar (no per-trigger inheritance).
+- Each schedule can reference at most one calendar; composition stays inside the calendar rule list.
+- Calendar evaluation is guarded by both max-iteration and max-lookahead limits (defaults: 10,000 iterations or 365 days).
+- Per-schedule overrides are not supported; use dedicated calendars or explicit rules instead.
+- CronRule uses the existing CronExpression parser with the calendar time zone applied.
+
 ## Entity Model
 
 CalendarDefinition:
@@ -64,6 +72,7 @@ CronRule:
 1. Compute the next candidate occurrence from the trigger schedule expression and trigger time zone.
 2. If no calendar is assigned, accept the candidate.
 3. If a calendar is assigned:
+   - Disabled calendars are treated as "no calendar" (candidate accepted).
    - Convert the candidate into the calendar time zone.
    - Evaluate enabled rules in SortOrder.
    - Mode = Exclude: any matching rule excludes the candidate.
@@ -111,9 +120,9 @@ CronRule:
 - Triggers without calendars are unchanged.
 - Adding CalendarId to schedule responses is backward compatible for v1.
 
-## Open Questions
+## Constraints & Future Extensions
 
-1. Should calendar time zone default to the trigger time zone if omitted?
-2. Do we allow multiple calendars per trigger (composition) or single assignment only?
-3. What should be the max skip iteration limit per schedule evaluation?
-4. Should cron-based calendar rules reuse the trigger scheduler parser or a dedicated evaluator?
+- Fixed calendar time zones mean a calendar cannot adapt to per-schedule time zones. To bridge the gap, create dedicated calendars per time zone or introduce tenant defaults; a future option is an explicit `InheritTriggerTimeZone` flag.
+- Single-calendar assignment blocks cross-calendar composition (ex: separate "holidays" + "maintenance"). Use multiple rules within one calendar now; a future enhancement can add ordered calendar assignments with explicit precedence.
+- Guarded evaluation can return no next occurrence for heavily excluded schedules. Increase the guard limits if needed; a future enhancement can allow per-calendar limits or a wider lookahead mode.
+- No per-schedule overrides means ad-hoc exclusions require calendar edits. Use DateList rules or schedule-specific calendars today; a future override layer can merge temporary rules ahead of the base calendar.

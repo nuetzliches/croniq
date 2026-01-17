@@ -719,6 +719,186 @@
         }
       }
     },
+    "/tenants/{tenantId}/calendars": {
+      "get": {
+        "tags": [
+          "Croniq.Sample.ApiHost"
+        ],
+        "summary": "List calendars",
+        "description": "Returns all calendar definitions for the tenant/environment scope.",
+        "operationId": "Calendars_List",
+        "parameters": [
+          {
+            "name": "tenantId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "environment",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/CalendarResponse"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Croniq.Sample.ApiHost"
+        ],
+        "summary": "Create or update a calendar",
+        "description": "Creates or updates a calendar definition for the tenant/environment scope.",
+        "operationId": "Calendars_Upsert",
+        "parameters": [
+          {
+            "name": "tenantId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "environment",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CroniqCalendarSeedDefinition"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CalendarUpsertResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request"
+          }
+        }
+      }
+    },
+    "/tenants/{tenantId}/calendars/{calendarId}": {
+      "get": {
+        "tags": [
+          "Croniq.Sample.ApiHost"
+        ],
+        "summary": "Get calendar",
+        "description": "Returns the calendar definition for the requested calendar id.",
+        "operationId": "Calendars_Get",
+        "parameters": [
+          {
+            "name": "tenantId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "calendarId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "environment",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CalendarResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found"
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Croniq.Sample.ApiHost"
+        ],
+        "summary": "Delete a calendar",
+        "description": "Deletes the calendar definition for the tenant/environment scope.",
+        "operationId": "Calendars_Delete",
+        "parameters": [
+          {
+            "name": "tenantId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "calendarId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "environment",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
+          }
+        }
+      }
+    },
     "/tenants/{tenantId}/schedules/deadletters": {
       "get": {
         "tags": [
@@ -2615,6 +2795,195 @@
         },
         "additionalProperties": false
       },
+      "CalendarAnnualDateListRule": {
+        "type": "object",
+        "properties": {
+          "monthDays": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "nullable": true
+          }
+        },
+        "additionalProperties": false
+      },
+      "CalendarCronRule": {
+        "type": "object",
+        "properties": {
+          "cronExpression": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "additionalProperties": false
+      },
+      "CalendarDailyWindowRule": {
+        "type": "object",
+        "properties": {
+          "startTime": {
+            "type": "string",
+            "nullable": true
+          },
+          "endTime": {
+            "type": "string",
+            "nullable": true
+          },
+          "daysOfWeek": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "nullable": true
+          }
+        },
+        "additionalProperties": false
+      },
+      "CalendarDateListRule": {
+        "type": "object",
+        "properties": {
+          "dates": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "nullable": true
+          }
+        },
+        "additionalProperties": false
+      },
+      "CalendarMode": {
+        "enum": [
+          0,
+          1
+        ],
+        "type": "integer",
+        "format": "int32"
+      },
+      "CalendarResponse": {
+        "type": "object",
+        "properties": {
+          "calendarId": {
+            "type": "string",
+            "nullable": true
+          },
+          "tenantId": {
+            "type": "string",
+            "nullable": true
+          },
+          "environmentTag": {
+            "type": "string",
+            "nullable": true
+          },
+          "name": {
+            "type": "string",
+            "nullable": true
+          },
+          "description": {
+            "type": "string",
+            "nullable": true
+          },
+          "timeZoneId": {
+            "type": "string",
+            "nullable": true
+          },
+          "mode": {
+            "$ref": "#/components/schemas/CalendarMode"
+          },
+          "rules": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CalendarRuleDefinition"
+            },
+            "nullable": true
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "createdAtUtc": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updatedAtUtc": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "additionalProperties": false
+      },
+      "CalendarRuleDefinition": {
+        "type": "object",
+        "properties": {
+          "ruleId": {
+            "type": "string",
+            "nullable": true
+          },
+          "ruleType": {
+            "$ref": "#/components/schemas/CalendarRuleType"
+          },
+          "sortOrder": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "isEnabled": {
+            "type": "boolean"
+          },
+          "dailyWindow": {
+            "$ref": "#/components/schemas/CalendarDailyWindowRule"
+          },
+          "weeklyWindow": {
+            "$ref": "#/components/schemas/CalendarWeeklyWindowRule"
+          },
+          "annualDateList": {
+            "$ref": "#/components/schemas/CalendarAnnualDateListRule"
+          },
+          "dateList": {
+            "$ref": "#/components/schemas/CalendarDateListRule"
+          },
+          "cronRule": {
+            "$ref": "#/components/schemas/CalendarCronRule"
+          }
+        },
+        "additionalProperties": false
+      },
+      "CalendarRuleType": {
+        "enum": [
+          0,
+          1,
+          2,
+          3,
+          4
+        ],
+        "type": "integer",
+        "format": "int32"
+      },
+      "CalendarUpsertResult": {
+        "type": "object",
+        "properties": {
+          "calendarId": {
+            "type": "string",
+            "nullable": true
+          },
+          "name": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "additionalProperties": false
+      },
+      "CalendarWeeklyWindowRule": {
+        "type": "object",
+        "properties": {
+          "daysOfWeek": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "nullable": true
+          }
+        },
+        "additionalProperties": false
+      },
       "CallerInfoResponse": {
         "type": "object",
         "properties": {
@@ -2671,6 +3040,41 @@
         },
         "additionalProperties": false
       },
+      "CroniqCalendarSeedDefinition": {
+        "type": "object",
+        "properties": {
+          "calendarId": {
+            "type": "string",
+            "nullable": true
+          },
+          "name": {
+            "type": "string",
+            "nullable": true
+          },
+          "description": {
+            "type": "string",
+            "nullable": true
+          },
+          "timeZoneId": {
+            "type": "string",
+            "nullable": true
+          },
+          "mode": {
+            "$ref": "#/components/schemas/CalendarMode"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "rules": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CalendarRuleDefinition"
+            },
+            "nullable": true
+          }
+        },
+        "additionalProperties": false
+      },
       "CroniqTriggerSeedDefinition": {
         "type": "object",
         "properties": {
@@ -2715,6 +3119,10 @@
             "nullable": true
           },
           "timeZoneId": {
+            "type": "string",
+            "nullable": true
+          },
+          "calendarId": {
             "type": "string",
             "nullable": true
           }
@@ -3409,6 +3817,10 @@
           "timeZoneId": {
             "type": "string",
             "nullable": true
+          },
+          "calendarId": {
+            "type": "string",
+            "nullable": true
           }
         },
         "additionalProperties": false
@@ -3425,6 +3837,10 @@
             "nullable": true
           },
           "scheduleExpression": {
+            "type": "string",
+            "nullable": true
+          },
+          "calendarId": {
             "type": "string",
             "nullable": true
           }

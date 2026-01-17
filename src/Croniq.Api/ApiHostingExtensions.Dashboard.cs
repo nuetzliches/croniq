@@ -29,6 +29,7 @@ public static partial class ApiHostingExtensions
             string? summaryMinutes,
             [FromServices] ICallerContextAccessor callerContextAccessor,
             [FromServices] IJobPersistenceProvider store,
+            [FromServices] ICalendarStore calendarStore,
             [FromServices] ILoggerFactory loggerFactory,
             CancellationToken cancellationToken) =>
         {
@@ -45,8 +46,10 @@ public static partial class ApiHostingExtensions
 
             var scope = new PartitionScope(tenantId, resolvedEnvironment);
             var triggers = await store.ListTriggersAsync(scope, cancellationToken).ConfigureAwait(false);
+            var calendars = await calendarStore.ListCalendarsAsync(scope, cancellationToken).ConfigureAwait(false);
+            var calendarLookup = calendars.ToDictionary(calendar => calendar.CalendarId, StringComparer.OrdinalIgnoreCase);
             var logger = loggerFactory.CreateLogger("Croniq.Api.DashboardForecast");
-            var response = BuildScheduleForecast(triggers, normalized, logger);
+            var response = BuildScheduleForecast(triggers, calendarLookup, normalized, logger);
             return Results.Ok(response);
         })
         .WithDocs("Dashboard_Forecast", "Get schedule forecast", "Returns an aggregated forecast for schedule executions within the requested window.")
@@ -156,6 +159,7 @@ public static partial class ApiHostingExtensions
 
     private static ScheduleForecastResponse BuildScheduleForecast(
         IReadOnlyCollection<TriggerDefinition> triggers,
+        IReadOnlyDictionary<string, CalendarDefinition> calendars,
         ForecastQuery query,
         ILogger logger)
     {
@@ -165,6 +169,7 @@ public static partial class ApiHostingExtensions
         var bucketSpan = TimeSpan.FromMinutes(query.BucketMinutes);
         var bucketCount = query.WindowMinutes / query.BucketMinutes;
         var bucketCounts = new int[bucketCount];
+        var calendarOptions = new CalendarEvaluationOptions();
 
         foreach (var trigger in triggers)
         {
@@ -183,15 +188,15 @@ public static partial class ApiHostingExtensions
                 continue;
             }
 
-            var timeZone = ResolveTimeZone(trigger.TimeZoneId, logger);
+            var calendar = ResolveCalendar(trigger, calendars, logger);
 
             if (TriggerSchedule.IsOnceExpression(trigger.ScheduleExpression))
             {
-                AddOnceOccurrence(trigger, windowStartUtc, windowEndUtc, bucketSpan, bucketCounts);
+                AddOnceOccurrence(trigger, calendar, calendarOptions, windowStartUtc, windowEndUtc, bucketSpan, bucketCounts, logger);
                 continue;
             }
 
-            AddCronOccurrences(trigger, timeZone, windowStartUtc, windowEndUtc, bucketSpan, bucketCounts, logger);
+            AddCronOccurrences(trigger, calendar, calendarOptions, windowStartUtc, windowEndUtc, bucketSpan, bucketCounts, logger);
         }
 
         var buckets = new ScheduleForecastBucket[bucketCount];
@@ -232,33 +237,38 @@ public static partial class ApiHostingExtensions
 
     private static void AddOnceOccurrence(
         TriggerDefinition trigger,
+        CalendarDefinition? calendar,
+        CalendarEvaluationOptions options,
         DateTimeOffset windowStartUtc,
         DateTimeOffset windowEndUtc,
         TimeSpan bucketSpan,
-        int[] bucketCounts)
+        int[] bucketCounts,
+        ILogger logger)
     {
-        var fireAt = trigger.StartAtUtc ?? windowStartUtc;
-        if (fireAt < windowStartUtc)
-        {
-            fireAt = windowStartUtc;
-        }
+        var next = CalendarEvaluator.GetNextOccurrence(
+            trigger,
+            windowStartUtc,
+            calendar,
+            options,
+            logger);
 
-        if (trigger.EndAtUtc.HasValue && fireAt > trigger.EndAtUtc.Value)
-        {
-            return;
-        }
-
-        if (fireAt >= windowEndUtc)
+        if (!next.HasValue)
         {
             return;
         }
 
-        AddOccurrence(fireAt, windowStartUtc, bucketSpan, bucketCounts);
+        if (next.Value >= windowEndUtc)
+        {
+            return;
+        }
+
+        AddOccurrence(next.Value, windowStartUtc, bucketSpan, bucketCounts);
     }
 
     private static void AddCronOccurrences(
         TriggerDefinition trigger,
-        TimeZoneInfo timeZone,
+        CalendarDefinition? calendar,
+        CalendarEvaluationOptions options,
         DateTimeOffset windowStartUtc,
         DateTimeOffset windowEndUtc,
         TimeSpan bucketSpan,
@@ -278,12 +288,7 @@ public static partial class ApiHostingExtensions
 
         var maxOccurrences = (int)Math.Ceiling((windowEndUtc - cursor).TotalSeconds) + 2;
         var count = 0;
-        var next = TriggerSchedule.GetNextOccurrence(
-            trigger.ScheduleExpression,
-            cursor,
-            trigger.StartAtUtc,
-            trigger.EndAtUtc,
-            timeZone);
+        var next = CalendarEvaluator.GetNextOccurrence(trigger, cursor, calendar, options, logger);
 
         while (next.HasValue && next.Value < windowEndUtc && count < maxOccurrences)
         {
@@ -291,12 +296,7 @@ public static partial class ApiHostingExtensions
             count += 1;
 
             var previous = next.Value;
-            next = TriggerSchedule.GetNextOccurrence(
-                trigger.ScheduleExpression,
-                previous,
-                trigger.StartAtUtc,
-                trigger.EndAtUtc,
-                timeZone);
+            next = CalendarEvaluator.GetNextOccurrence(trigger, previous, calendar, options, logger);
 
             if (next.HasValue && next.Value <= previous)
             {
@@ -314,6 +314,25 @@ public static partial class ApiHostingExtensions
                 "Dashboard forecast reached the max occurrence limit for '{TriggerId}'.",
                 trigger.TriggerId);
         }
+    }
+
+    private static CalendarDefinition? ResolveCalendar(
+        TriggerDefinition trigger,
+        IReadOnlyDictionary<string, CalendarDefinition> calendars,
+        ILogger logger)
+    {
+        if (string.IsNullOrWhiteSpace(trigger.CalendarId))
+        {
+            return null;
+        }
+
+        if (!calendars.TryGetValue(trigger.CalendarId, out var calendar))
+        {
+            logger.LogWarning("Dashboard forecast missing calendar {CalendarId} for trigger {TriggerId}.", trigger.CalendarId, trigger.TriggerId);
+            return null;
+        }
+
+        return calendar.Enabled ? calendar : null;
     }
 
     private static void AddOccurrence(
@@ -335,29 +354,6 @@ public static partial class ApiHostingExtensions
         }
 
         bucketCounts[index] += 1;
-    }
-
-    private static TimeZoneInfo ResolveTimeZone(string? timeZoneId, ILogger logger)
-    {
-        if (string.IsNullOrWhiteSpace(timeZoneId))
-        {
-            return TimeZoneInfo.Utc;
-        }
-
-        try
-        {
-            return TimeZoneInfo.FindSystemTimeZoneById(timeZoneId);
-        }
-        catch (TimeZoneNotFoundException ex)
-        {
-            logger.LogWarning(ex, "Dashboard forecast falling back to UTC for invalid timezone '{TimeZoneId}'.", timeZoneId);
-            return TimeZoneInfo.Utc;
-        }
-        catch (InvalidTimeZoneException ex)
-        {
-            logger.LogWarning(ex, "Dashboard forecast falling back to UTC for invalid timezone '{TimeZoneId}'.", timeZoneId);
-            return TimeZoneInfo.Utc;
-        }
     }
 
     private readonly record struct ForecastQuery(

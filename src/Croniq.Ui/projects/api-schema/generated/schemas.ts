@@ -102,6 +102,7 @@ export const CroniqTriggerSeedDefinition = z
         description: z.string().nullable(),
         managedBy: z.string().nullable(),
         timeZoneId: z.string().nullable(),
+        calendarId: z.string().nullable(),
     })
     .partial();
 export type CroniqTriggerSeedDefinition = z.infer<
@@ -112,6 +113,7 @@ export const ScheduleUpsertResult = z
         triggerId: z.string().nullable(),
         jobKey: z.string().nullable(),
         scheduleExpression: z.string().nullable(),
+        calendarId: z.string().nullable(),
     })
     .partial();
 export type ScheduleUpsertResult = z.infer<typeof ScheduleUpsertResult>;
@@ -127,9 +129,94 @@ export const ScheduleResponse = z
         enabled: z.boolean(),
         metadata: z.record(z.string(), z.string()).nullable(),
         timeZoneId: z.string().nullable(),
+        calendarId: z.string().nullable(),
     })
     .partial();
 export type ScheduleResponse = z.infer<typeof ScheduleResponse>;
+export const CalendarMode = z.union([z.literal(0), z.literal(1)]);
+export type CalendarMode = z.infer<typeof CalendarMode>;
+export const CalendarRuleType = z.union([
+    z.literal(0),
+    z.literal(1),
+    z.literal(2),
+    z.literal(3),
+    z.literal(4),
+]);
+export type CalendarRuleType = z.infer<typeof CalendarRuleType>;
+export const CalendarDailyWindowRule = z
+    .object({
+        startTime: z.string().nullable(),
+        endTime: z.string().nullable(),
+        daysOfWeek: z.array(z.string()).nullable(),
+    })
+    .partial();
+export type CalendarDailyWindowRule = z.infer<typeof CalendarDailyWindowRule>;
+export const CalendarWeeklyWindowRule = z
+    .object({ daysOfWeek: z.array(z.string()).nullable() })
+    .partial();
+export type CalendarWeeklyWindowRule = z.infer<typeof CalendarWeeklyWindowRule>;
+export const CalendarAnnualDateListRule = z
+    .object({ monthDays: z.array(z.string()).nullable() })
+    .partial();
+export type CalendarAnnualDateListRule = z.infer<
+    typeof CalendarAnnualDateListRule
+>;
+export const CalendarDateListRule = z
+    .object({ dates: z.array(z.string()).nullable() })
+    .partial();
+export type CalendarDateListRule = z.infer<typeof CalendarDateListRule>;
+export const CalendarCronRule = z
+    .object({ cronExpression: z.string().nullable() })
+    .partial();
+export type CalendarCronRule = z.infer<typeof CalendarCronRule>;
+export const CalendarRuleDefinition = z
+    .object({
+        ruleId: z.string().nullable(),
+        ruleType: CalendarRuleType,
+        sortOrder: z.number().int(),
+        isEnabled: z.boolean(),
+        dailyWindow: CalendarDailyWindowRule,
+        weeklyWindow: CalendarWeeklyWindowRule,
+        annualDateList: CalendarAnnualDateListRule,
+        dateList: CalendarDateListRule,
+        cronRule: CalendarCronRule,
+    })
+    .partial();
+export type CalendarRuleDefinition = z.infer<typeof CalendarRuleDefinition>;
+export const CalendarResponse = z
+    .object({
+        calendarId: z.string().nullable(),
+        tenantId: z.string().nullable(),
+        environmentTag: z.string().nullable(),
+        name: z.string().nullable(),
+        description: z.string().nullable(),
+        timeZoneId: z.string().nullable(),
+        mode: CalendarMode,
+        rules: z.array(CalendarRuleDefinition).nullable(),
+        enabled: z.boolean(),
+        createdAtUtc: z.iso.datetime({ offset: true }),
+        updatedAtUtc: z.iso.datetime({ offset: true }),
+    })
+    .partial();
+export type CalendarResponse = z.infer<typeof CalendarResponse>;
+export const CroniqCalendarSeedDefinition = z
+    .object({
+        calendarId: z.string().nullable(),
+        name: z.string().nullable(),
+        description: z.string().nullable(),
+        timeZoneId: z.string().nullable(),
+        mode: CalendarMode,
+        enabled: z.boolean(),
+        rules: z.array(CalendarRuleDefinition).nullable(),
+    })
+    .partial();
+export type CroniqCalendarSeedDefinition = z.infer<
+    typeof CroniqCalendarSeedDefinition
+>;
+export const CalendarUpsertResult = z
+    .object({ calendarId: z.string().nullable(), name: z.string().nullable() })
+    .partial();
+export type CalendarUpsertResult = z.infer<typeof CalendarUpsertResult>;
 export const ScheduleDeadLetterResponse = z
     .object({
         id: z.number().int(),
@@ -521,6 +608,17 @@ export const schemas = {
     CroniqTriggerSeedDefinition,
     ScheduleUpsertResult,
     ScheduleResponse,
+    CalendarMode,
+    CalendarRuleType,
+    CalendarDailyWindowRule,
+    CalendarWeeklyWindowRule,
+    CalendarAnnualDateListRule,
+    CalendarDateListRule,
+    CalendarCronRule,
+    CalendarRuleDefinition,
+    CalendarResponse,
+    CroniqCalendarSeedDefinition,
+    CalendarUpsertResult,
     ScheduleDeadLetterResponse,
     ScheduleReplayResult,
     ScheduleForecastBucket,

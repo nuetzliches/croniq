@@ -166,6 +166,7 @@ public static partial class ApiHostingExtensions
             string? environment,
             CroniqTriggerSeedDefinition request,
             [FromServices] ICallerContextAccessor callerContextAccessor,
+            [FromServices] ICalendarStore calendarStore,
             [FromServices] IJobPersistenceProvider store,
             CancellationToken cancellationToken) =>
         {
@@ -199,6 +200,15 @@ public static partial class ApiHostingExtensions
 
             var scope = new PartitionScope(tenantId, resolvedEnvironment);
 
+            if (!string.IsNullOrWhiteSpace(validation.CalendarId))
+            {
+                var calendar = await calendarStore.FindAsync(validation.CalendarId, scope, cancellationToken).ConfigureAwait(false);
+                if (calendar is null)
+                {
+                    return Results.BadRequest(new { error = "calendar-not-found", message = $"Calendar '{validation.CalendarId}' does not exist." });
+                }
+            }
+
             var metadata = ToReadOnly(request.Metadata);
             var job = new JobDefinition(
                 jobKey.Value,
@@ -217,13 +227,16 @@ public static partial class ApiHostingExtensions
                 validation.EndAtUtc,
                 request.Enabled,
                 metadata,
-                validation.TimeZoneId);
+                validation.TimeZoneId,
+                validation.CalendarId);
 
             await store.UpsertJobAsync(job, scope, cancellationToken).ConfigureAwait(false);
             await store.UpsertTriggerAsync(trigger, cancellationToken).ConfigureAwait(false);
             ApiMetrics.RecordScheduleUpsert(scope.TenantId, scope.EnvironmentTag, jobKey.Value);
 
-            return Results.Created($"/tenants/{tenantId}/schedules/{Uri.EscapeDataString(trigger.TriggerId)}", new ScheduleUpsertResult(trigger.TriggerId, trigger.JobKey, trigger.ScheduleExpression));
+            return Results.Created(
+                $"/tenants/{tenantId}/schedules/{Uri.EscapeDataString(trigger.TriggerId)}",
+                new ScheduleUpsertResult(trigger.TriggerId, trigger.JobKey, trigger.ScheduleExpression, trigger.CalendarId));
         })
         .WithDocs("Schedules_Upsert", "Create or update a schedule", "Registers a Cron-based trigger for the specified tenant-scoped job key.")
         .Produces<ScheduleUpsertResult>(StatusCodes.Status201Created)

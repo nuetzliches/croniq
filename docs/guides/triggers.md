@@ -15,9 +15,9 @@ Croniq also supports the special expression `@once` (alias `once`) for a single 
 
 Schedules run in UTC by default. Persisted triggers store the cron expression plus optional start/end bounds.
 
-## Calendars (Planned)
+## Calendars
 
-Croniq plans to support Quartz-like calendars as separate entities that include or exclude candidate fire times. This keeps trigger expressions simple while allowing holiday and business-hour filters. The current design draft lives in `docs/deep-dive/designs/schedule-calendars.md`.
+Croniq supports Quartz-like calendars as separate entities that include or exclude candidate fire times. Attach a calendar by setting `calendarId` on the schedule upsert and manage calendar definitions via `/tenants/{tenantId}/calendars`. For rule types, evaluation semantics, and constraints, see `docs/deep-dive/designs/schedule-calendars.md`.
 
 ## Seed Triggers via Configuration
 
@@ -49,6 +49,8 @@ Worker hosts can seed schedules on startup:
 | TriggerId      | No       | Defaults to `{JobKey}:{base64url(cronExpression)}` (and `:{base64url(timeZoneId)}` when provided). If the result exceeds 512 chars, Croniq uses `JobKey:hash-<sha256>`. |
 | JobKey         | Yes      | Must follow the Croniq job key format (`namespace:name[:variant]`). Tenant/environment are taken from the hosting scope, not from the job key.                          |
 | CronExpression | Yes      | 6-field cron expression (optional year), or `@once` for a one-off trigger.                                                                                              |
+| TimeZoneId     | No       | Time zone id for schedule evaluation; defaults to `UTC` when omitted or invalid.                                                                                        |
+| CalendarId     | No       | Optional calendar definition id to filter occurrences; the calendar must exist in the same tenant/environment.                                                          |
 | StartAtUtc     | No       | Optional UTC start bound (ISO-8601).                                                                                                                                    |
 | EndAtUtc       | No       | Optional UTC end bound (ISO-8601).                                                                                                                                      |
 | Enabled        | No       | Defaults to `true`.                                                                                                                                                     |

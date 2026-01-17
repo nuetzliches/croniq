@@ -23,6 +23,7 @@ internal sealed class SchedulerGrpcService : Scheduler.SchedulerBase
     private readonly IJobExecutionPipeline _pipeline;
     private readonly IPolicyResolver _policyResolver;
     private readonly IJobPersistenceProvider _store;
+    private readonly ICalendarStore _calendarStore;
     private readonly ICallerContextAccessor _callerAccessor;
     private readonly ILogger<SchedulerGrpcService> _logger;
     private readonly IPersistenceHealth? _health;
@@ -32,6 +33,7 @@ internal sealed class SchedulerGrpcService : Scheduler.SchedulerBase
         IJobExecutionPipeline pipeline,
         IPolicyResolver policyResolver,
         IJobPersistenceProvider store,
+        ICalendarStore calendarStore,
         ICallerContextAccessor callerAccessor,
         ILogger<SchedulerGrpcService> logger,
         IPersistenceHealth? health = null)
@@ -40,6 +42,7 @@ internal sealed class SchedulerGrpcService : Scheduler.SchedulerBase
         _pipeline = pipeline ?? throw new ArgumentNullException(nameof(pipeline));
         _policyResolver = policyResolver ?? throw new ArgumentNullException(nameof(policyResolver));
         _store = store ?? throw new ArgumentNullException(nameof(store));
+        _calendarStore = calendarStore ?? throw new ArgumentNullException(nameof(calendarStore));
         _callerAccessor = callerAccessor ?? throw new ArgumentNullException(nameof(callerAccessor));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         _health = health;
@@ -149,7 +152,8 @@ internal sealed class SchedulerGrpcService : Scheduler.SchedulerBase
                 Enabled = enabled,
                 Metadata = metadata,
                 Description = request.Description,
-                TimeZoneId = request.TimeZoneId
+                TimeZoneId = request.TimeZoneId,
+                CalendarId = request.CalendarId
             };
 
             if (!TriggerDefinitionValidator.TryValidate(definition, scope: null, out var validation, out var error))
@@ -175,6 +179,15 @@ internal sealed class SchedulerGrpcService : Scheduler.SchedulerBase
             EnrichActivityForJob(activity, jobKey, scope);
             EnsureTenantOrThrow(TenantGuard.EnsureJobScope(_callerAccessor, scope, CroniqScopes.SchedulesWrite));
 
+            if (!string.IsNullOrWhiteSpace(validation.CalendarId))
+            {
+                var calendar = await _calendarStore.FindAsync(validation.CalendarId, scope, context.CancellationToken).ConfigureAwait(false);
+                if (calendar is null)
+                {
+                    throw new RpcException(new Status(StatusCode.InvalidArgument, $"calendar '{validation.CalendarId}' not found."));
+                }
+            }
+
             var job = new JobDefinition(
                 jobKey.Value,
                 jobKey.NamespaceSegment,
@@ -192,7 +205,8 @@ internal sealed class SchedulerGrpcService : Scheduler.SchedulerBase
                 validation.EndAtUtc,
                 enabled,
                 metadata,
-                validation.TimeZoneId);
+                validation.TimeZoneId,
+                validation.CalendarId);
 
             await _store.UpsertJobAsync(job, scope, context.CancellationToken).ConfigureAwait(false);
             await _store.UpsertTriggerAsync(trigger, context.CancellationToken).ConfigureAwait(false);
@@ -204,7 +218,8 @@ internal sealed class SchedulerGrpcService : Scheduler.SchedulerBase
                 TriggerId = trigger.TriggerId,
                 JobKey = trigger.JobKey,
                 ScheduleExpression = trigger.ScheduleExpression,
-                TimeZoneId = trigger.TimeZoneId ?? string.Empty
+                TimeZoneId = trigger.TimeZoneId ?? string.Empty,
+                CalendarId = trigger.CalendarId ?? string.Empty
             };
         }
         catch (RpcException)

@@ -36,6 +36,7 @@ services:
     environment:
       GF_SECURITY_ADMIN_PASSWORD: ${CRONIQ_GRAFANA_PASSWORD:-admin}
       GF_SECURITY_ADMIN_USER: ${CRONIQ_GRAFANA_USER:-admin}
+      GF_SECURITY_ALLOW_EMBEDDING: "true"
       GF_PATHS_PROVISIONING: /etc/grafana/provisioning
     volumes:
       - grafana-data:/var/lib/grafana

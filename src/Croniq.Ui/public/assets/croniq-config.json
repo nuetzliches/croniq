@@ -1,5 +1,6 @@
 {
   "apiBaseUrl": "http://localhost:5080",
   "swaggerUiUrl": "http://localhost:5080/swagger",
+  "grafanaUrl": "http://localhost:5610/d/croniq-scheduler/croniq-scheduler-health?orgId=1",
   "defaultTenantId": "default"
 }

@@ -15,4 +15,5 @@ public sealed record TriggerDefinition(
     DateTimeOffset? EndAtUtc = null,
     bool Enabled = true,
     IReadOnlyDictionary<string, string>? Metadata = null,
-    string? TimeZoneId = null);
+    string? TimeZoneId = null,
+    string? CalendarId = null);

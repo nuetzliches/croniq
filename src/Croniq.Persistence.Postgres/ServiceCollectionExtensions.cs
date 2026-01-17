@@ -63,6 +63,7 @@ public static class ServiceCollectionExtensions
 
         services.AddSingleton<IJobPersistenceProvider, PostgresJobPersistenceProvider>();
         services.AddSingleton<IJobStore>(sp => (IJobStore)sp.GetRequiredService<IJobPersistenceProvider>());
+        services.AddSingleton<ICalendarStore>(sp => (ICalendarStore)sp.GetRequiredService<IJobPersistenceProvider>());
         services.AddSingleton<IJobDeadLetterStore, PostgresJobDeadLetterStore>();
         services.AddSingleton<IWebhookPersistenceProvider, PostgresWebhookPersistenceProvider>();
         services.AddSingleton<IWebhookDeadLetterStore, PostgresWebhookDeadLetterStore>();

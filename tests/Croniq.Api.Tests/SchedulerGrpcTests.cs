@@ -41,6 +41,7 @@ public sealed class SchedulerGrpcTests
             _pipeline,
             _policies,
             _store,
+            _store,
             _callerAccessor,
             NullLogger<SchedulerGrpcService>.Instance,
             _store);
@@ -90,6 +91,60 @@ public sealed class SchedulerGrpcTests
         response.TriggerId.ShouldNotBeNullOrWhiteSpace();
         response.JobKey.ShouldBe(jobKey);
         response.ScheduleExpression.ShouldBe("0/5 * * * * ?");
+    }
+
+    [Fact]
+    public async Task UpsertSchedule_ReturnsCalendarId_WhenCalendarExists()
+    {
+        _store.Reset();
+        var jobKey = "ops:calendar";
+        _registry.EnsureJob(jobKey);
+
+        var scope = new PartitionScope(TestCallerContextFactory.DefaultTenantId, TestCallerContextFactory.DefaultEnvironment);
+        await _store.UpsertAsync(new CalendarUpsert(
+            "cal-grpc",
+            scope.TenantId,
+            scope.EnvironmentTag,
+            "Grpc Calendar",
+            Description: null,
+            "UTC",
+            CalendarMode.Include,
+            new[]
+            {
+                new CalendarRuleDefinition(
+                    "daily-window",
+                    CalendarRuleType.DailyWindow,
+                    SortOrder: 0,
+                    IsEnabled: true,
+                    DailyWindow: new CalendarDailyWindowRule("09:00", "17:00"))
+            },
+            Enabled: true), CancellationToken.None);
+
+        var response = await _service.UpsertSchedule(new UpsertScheduleRequest
+        {
+            JobKey = jobKey,
+            CronExpression = "0/5 * * * * ?",
+            CalendarId = "cal-grpc"
+        }, CreateContext());
+
+        response.CalendarId.ShouldBe("cal-grpc");
+    }
+
+    [Fact]
+    public async Task UpsertSchedule_RejectsMissingCalendar()
+    {
+        _store.Reset();
+        var jobKey = "ops:calendar-missing";
+        _registry.EnsureJob(jobKey);
+
+        var ex = await Should.ThrowAsync<RpcException>(() => _service.UpsertSchedule(new UpsertScheduleRequest
+        {
+            JobKey = jobKey,
+            CronExpression = "0/5 * * * * ?",
+            CalendarId = "missing"
+        }, CreateContext()));
+
+        ex.StatusCode.ShouldBe(StatusCode.InvalidArgument);
     }
 
     [Fact]

@@ -64,6 +64,7 @@ public sealed class GrpcWorkerTests
         builder.Services.AddSingleton<IJobRegistry>(registry);
         builder.Services.AddSingleton<IPolicyResolver>(policies);
         builder.Services.AddSingleton<IJobPersistenceProvider>(store);
+        builder.Services.AddSingleton<ICalendarStore>(store);
         builder.Services.AddSingleton<IPersistenceHealth>(store);
 
         builder.WebHost.ConfigureKestrel(options =>
@@ -147,6 +148,7 @@ public sealed class GrpcWorkerTests
         builder.Services.AddSingleton<IJobRegistry>(registry);
         builder.Services.AddSingleton<IPolicyResolver>(policies);
         builder.Services.AddSingleton<IJobPersistenceProvider>(store);
+        builder.Services.AddSingleton<ICalendarStore>(store);
         builder.Services.AddSingleton<IJobStore>(store);
         builder.Services.AddSingleton<IPersistenceHealth>(store);
 
@@ -258,6 +260,7 @@ public sealed class GrpcWorkerTests
         builder.Services.AddSingleton<IJobRegistry>(registry);
         builder.Services.AddSingleton<IPolicyResolver>(policies);
         builder.Services.AddSingleton<IJobPersistenceProvider>(store);
+        builder.Services.AddSingleton<ICalendarStore>(store);
         builder.Services.AddSingleton<IJobStore>(store);
         builder.Services.AddSingleton<IPersistenceHealth>(store);
 
@@ -363,6 +366,7 @@ public sealed class GrpcWorkerTests
 
         var store = new NoopJobPersistenceProvider();
         builder.Services.AddSingleton<IJobPersistenceProvider>(store);
+        builder.Services.AddSingleton<ICalendarStore>(store);
         builder.Services.AddSingleton<IPersistenceHealth>(store);
 
         builder.WebHost.ConfigureKestrel(options =>
@@ -443,6 +447,7 @@ public sealed class GrpcWorkerTests
         builder.Services.AddSingleton<IJobRegistry>(registry);
         builder.Services.AddSingleton<IPolicyResolver>(policies);
         builder.Services.AddSingleton<IJobPersistenceProvider>(store);
+        builder.Services.AddSingleton<ICalendarStore>(store);
         builder.Services.AddSingleton<IJobStore>(store);
         builder.Services.AddSingleton<IPersistenceHealth>(store);
 

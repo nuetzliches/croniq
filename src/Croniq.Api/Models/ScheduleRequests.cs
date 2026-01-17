@@ -38,7 +38,8 @@ public sealed record ScheduleResponse(
     DateTimeOffset? EndAtUtc,
     bool Enabled,
     IReadOnlyDictionary<string, string>? Metadata,
-    string? TimeZoneId);
+    string? TimeZoneId,
+    string? CalendarId = null);
 
 public sealed record ScheduleDeadLetterResponse(
     long Id,
@@ -56,7 +57,8 @@ public sealed record ScheduleDeadLetterResponse(
 public sealed record ScheduleUpsertResult(
     string TriggerId,
     string JobKey,
-    string ScheduleExpression);
+    string ScheduleExpression,
+    string? CalendarId = null);
 
 public sealed record ScheduleReplayResult(
     string Status,

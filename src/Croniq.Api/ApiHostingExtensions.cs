@@ -169,6 +169,7 @@ public static partial class ApiHostingExtensions
         MapJobEndpoints(app);
         MapExecutionEndpoints(app);
         MapScheduleEndpoints(app);
+        MapCalendarEndpoints(app);
         MapScheduleDeadLetterEndpoints(app);
         MapDashboardEndpoints(app);
         MapWebhookEndpoints(app);
@@ -576,7 +577,28 @@ public static partial class ApiHostingExtensions
             definition.EndAtUtc,
             definition.Enabled,
             metadata,
-            definition.TimeZoneId);
+            definition.TimeZoneId,
+            definition.CalendarId);
+    }
+
+    private static CalendarResponse ToCalendarResponse(CalendarDefinition definition)
+    {
+        var rules = definition.Rules.Count == 0
+            ? Array.Empty<CalendarRuleDefinition>()
+            : definition.Rules.ToArray();
+
+        return new CalendarResponse(
+            definition.CalendarId,
+            definition.TenantId,
+            definition.EnvironmentTag,
+            definition.Name,
+            definition.Description,
+            definition.TimeZoneId,
+            definition.Mode,
+            rules,
+            definition.Enabled,
+            definition.CreatedAtUtc,
+            definition.UpdatedAtUtc);
     }
 
     private static ScheduleDeadLetterResponse ToScheduleDeadLetterResponse(JobDeadLetterEntry entry)

@@ -19,31 +19,43 @@ classDiagram
         long Id
         string TenantId
         string EnvironmentTag
-        string Namespace
+        string JobKey
+        string NamespaceSegment
         string Name
         string Variant?
         string MetadataJson
-        datetime UpdatedAt
+        datetime UpdatedAtUtc
     }
     class TriggerEntity {
         long Id
         long JobId
-        string TenantId
-        string EnvironmentTag
-        string TriggerType
-        string PayloadJson
+        string TriggerKey
+        string JobKey
+        string CronExpression
+        string TimeZoneId
+        string CalendarId?
+        datetime? StartAtUtc
+        datetime? EndAtUtc
         datetime NextFireAtUtc
         rowversion RowVersion
     }
     class DeadLetterEntity {
         long Id
-        long JobId
-        string TenantId
-        string EnvironmentTag
+        long TriggerId
         string Reason
         string PayloadJson
-        datetime CreatedAt
-        datetime? ResolvedAt
+        datetime CreatedAtUtc
+    }
+    class CalendarEntity {
+        long Id
+        string CalendarId
+        string TenantId
+        string EnvironmentTag
+        string Name
+        string TimeZoneId
+        int Mode
+        string RulesJson
+        datetime UpdatedAtUtc
     }
     class ApiClientEntity {
         long Id
@@ -64,10 +76,11 @@ classDiagram
     }
     JobEntity <|-- TriggerEntity : job
     JobEntity <|-- DeadLetterEntity : job
+    CalendarEntity <.. TriggerEntity : calendar
     ApiClientEntity <|-- ApiKeyEntity : keys
 ```
 
-Additional tables (leases, worker instances) follow the same tenant/environment pattern; audit logging is planned but not yet implemented. Scheduler tables live under `croniq` while auth tables live under `auth`. See `SqlServerDbContext` and `PostgresDbContext` for exact property lists. SqlServer uses `rowversion` for concurrency; Postgres uses the `xmin` system column.
+Additional tables (calendars, leases, worker instances) follow the same tenant/environment pattern; audit logging is planned but not yet implemented. Scheduler tables live under `croniq` while auth tables live under `auth`. See `SqlServerDbContext` and `PostgresDbContext` for exact property lists. SqlServer uses `rowversion` for concurrency; Postgres uses the `xmin` system column.
 
 ## Code Layout
 
@@ -77,6 +90,7 @@ src/Croniq.Data.SqlServer/
   SqlServerOptions.cs
   Entities/
     JobEntity.cs
+    CalendarEntity.cs
     TriggerEntity.cs
     DeadLetterEntity.cs
     ApiClientEntity.cs

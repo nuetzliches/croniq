@@ -59,6 +59,7 @@ public sealed class GrpcE2eTests
         builder.Services.AddSingleton<IJobRegistry>(registry);
         builder.Services.AddSingleton<IPolicyResolver>(policies);
         builder.Services.AddSingleton<IJobPersistenceProvider>(store);
+        builder.Services.AddSingleton<ICalendarStore>(store);
         builder.Services.AddSingleton<IPersistenceHealth>(store);
 
         builder.WebHost.ConfigureKestrel(options =>

@@ -10,6 +10,7 @@ namespace Croniq.Data.Postgres;
 public sealed class PostgresDbContext(DbContextOptions<PostgresDbContext> options) : DbContext(options)
 {
     public DbSet<JobEntity> Jobs => Set<JobEntity>();
+    public DbSet<CalendarEntity> Calendars => Set<CalendarEntity>();
     public DbSet<TriggerEntity> Triggers => Set<TriggerEntity>();
     public DbSet<DeadLetterEntity> DeadLetters => Set<DeadLetterEntity>();
     public DbSet<WorkerInstanceEntity> WorkerInstances => Set<WorkerInstanceEntity>();
@@ -33,6 +34,7 @@ public sealed class PostgresDbContext(DbContextOptions<PostgresDbContext> option
     {
         ConfigureTenants(modelBuilder.Entity<TenantEntity>());
         ConfigureJobs(modelBuilder.Entity<JobEntity>());
+        ConfigureCalendars(modelBuilder.Entity<CalendarEntity>());
         ConfigureTriggers(modelBuilder.Entity<TriggerEntity>());
         ConfigureDeadLetters(modelBuilder.Entity<DeadLetterEntity>());
         ConfigureWorkerInstances(modelBuilder.Entity<WorkerInstanceEntity>());
@@ -67,6 +69,20 @@ public sealed class PostgresDbContext(DbContextOptions<PostgresDbContext> option
         builder.ToTable("Jobs", "croniq");
         builder.HasIndex(x => new { x.TenantId, x.EnvironmentTag, x.JobKey }).IsUnique();
         builder.HasIndex(x => new { x.TenantId, x.EnvironmentTag });
+        builder.HasOne<TenantEntity>()
+            .WithMany()
+            .HasForeignKey(x => x.TenantId)
+            .OnDelete(DeleteBehavior.Restrict);
+        builder.Property(x => x.CreatedAtUtc).HasDefaultValueSql("timezone('utc', now())");
+        builder.Property(x => x.UpdatedAtUtc).HasDefaultValueSql("timezone('utc', now())");
+    }
+
+    private static void ConfigureCalendars(EntityTypeBuilder<CalendarEntity> builder)
+    {
+        builder.ToTable("Calendars", "croniq");
+        builder.HasIndex(x => new { x.TenantId, x.EnvironmentTag, x.CalendarId }).IsUnique();
+        builder.HasIndex(x => new { x.TenantId, x.EnvironmentTag });
+        builder.HasIndex(x => new { x.TenantId, x.EnvironmentTag, x.Name });
         builder.HasOne<TenantEntity>()
             .WithMany()
             .HasForeignKey(x => x.TenantId)

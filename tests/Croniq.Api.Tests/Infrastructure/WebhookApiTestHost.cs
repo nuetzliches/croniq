@@ -141,6 +141,7 @@ public sealed class WebhookApiTestHost : IAsyncLifetime
         builder.Services.AddSingleton(JobStore);
         builder.Services.AddSingleton<IJobPersistenceProvider>(sp => sp.GetRequiredService<NoopJobPersistenceProvider>());
         builder.Services.AddSingleton<IJobStore>(sp => sp.GetRequiredService<NoopJobPersistenceProvider>());
+        builder.Services.AddSingleton<ICalendarStore>(sp => sp.GetRequiredService<NoopJobPersistenceProvider>());
         builder.Services.AddSingleton<IPersistenceHealth>(sp => sp.GetRequiredService<NoopJobPersistenceProvider>());
 
         builder.Services.AddSingleton<IWorkerStore, InMemoryWorkerStore>();

@@ -1,4 +1,5 @@
 using System;
+using Croniq.Core.Scheduling;
 
 namespace Croniq.Persistence.SqlServer;
 
@@ -17,6 +18,8 @@ public sealed class SqlServerPersistenceOptions
 
     public int DeadLetterRetentionDays { get; set; } = 30;
 
+    public CalendarEvaluationOptions CalendarEvaluation { get; set; } = new();
+
     public void Normalize()
     {
         if (LeaseDurationSeconds <= 0)
@@ -26,5 +29,6 @@ public sealed class SqlServerPersistenceOptions
 
         DeadLetterReasonMaxLength = Math.Clamp(DeadLetterReasonMaxLength, 32, MaxReasonLength);
         DeadLetterRetentionDays = Math.Clamp(DeadLetterRetentionDays, 1, MaxRetentionDays);
+        CalendarEvaluation ??= new CalendarEvaluationOptions();
     }
 }

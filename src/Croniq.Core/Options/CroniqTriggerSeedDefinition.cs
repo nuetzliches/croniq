@@ -24,4 +24,6 @@ public sealed class CroniqTriggerSeedDefinition
     public string? ManagedBy { get; set; }
 
     public string? TimeZoneId { get; set; }
+
+    public string? CalendarId { get; set; }
 }

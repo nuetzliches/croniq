@@ -24,6 +24,7 @@ public sealed class PostgresJobPersistenceProviderTests : IAsyncLifetime
     private readonly PostgresContainerFixture _sql;
     private ServiceProvider? _provider;
     private IJobPersistenceProvider? _persistence;
+    private ICalendarStore? _calendarStore;
     private IDbContextFactory<PostgresDbContext>? _dbFactory;
 
     public PostgresJobPersistenceProviderTests(PostgresContainerFixture sql)
@@ -43,6 +44,7 @@ public sealed class PostgresJobPersistenceProviderTests : IAsyncLifetime
         await PostgresDatabaseMigrator.EnsureTenantExistsAsync(_sql.ConnectionString, "tenant-once");
         _provider = BuildServiceProvider(_sql.ConnectionString);
         _persistence = _provider.GetRequiredService<IJobPersistenceProvider>();
+        _calendarStore = _provider.GetRequiredService<ICalendarStore>();
         _dbFactory = _provider.GetRequiredService<IDbContextFactory<PostgresDbContext>>();
     }
 
@@ -358,6 +360,48 @@ public sealed class PostgresJobPersistenceProviderTests : IAsyncLifetime
         row.CronExpression.ShouldBe(TriggerSchedule.OnceExpression);
         row.NextFireAtUtc.ShouldNotBeNull();
         row.NextFireAtUtc!.Value.ShouldBe(startAt.UtcDateTime);
+    }
+
+    [Fact]
+    [Trait(TestCategories.Category, TestCategories.Contract)]
+    public async Task UpsertCalendarAsync_Persists_and_updates_definition()
+    {
+        var scope = new PartitionScope("tenant-a", "dev");
+        var rules = new[]
+        {
+            new CalendarRuleDefinition(
+                "daily-window",
+                CalendarRuleType.DailyWindow,
+                SortOrder: 0,
+                IsEnabled: true,
+                DailyWindow: new CalendarDailyWindowRule("09:00", "17:00"))
+        };
+        var request = new CalendarUpsert(
+            "cal-ops",
+            scope.TenantId,
+            scope.EnvironmentTag,
+            "Ops Calendar",
+            "Default ops window",
+            "UTC",
+            CalendarMode.Include,
+            rules,
+            Enabled: true);
+
+        await _calendarStore!.UpsertAsync(request, CancellationToken.None);
+
+        var fetched = await _calendarStore.FindAsync("cal-ops", scope, CancellationToken.None);
+        fetched.ShouldNotBeNull();
+        fetched!.Name.ShouldBe("Ops Calendar");
+        fetched.Rules.Count.ShouldBe(1);
+        fetched.Rules.Single().RuleId.ShouldBe("daily-window");
+
+        var updated = request with { Name = "Ops Calendar Updated", Enabled = false };
+        await _calendarStore.UpsertAsync(updated, CancellationToken.None);
+
+        var refreshed = await _calendarStore.FindAsync("cal-ops", scope, CancellationToken.None);
+        refreshed.ShouldNotBeNull();
+        refreshed!.Name.ShouldBe("Ops Calendar Updated");
+        refreshed.Enabled.ShouldBeFalse();
     }
 
     private static ServiceProvider BuildServiceProvider(string connectionString)

@@ -86,11 +86,12 @@ public sealed class FakePolicyResolver : IPolicyResolver
     }
 }
 
-public sealed class NoopJobPersistenceProvider : IJobPersistenceProvider, IPersistenceHealth
+public sealed class NoopJobPersistenceProvider : IJobPersistenceProvider, ICalendarStore, IPersistenceHealth
 {
     private readonly object _sync = new();
     private readonly Dictionary<string, JobDefinition> _jobs = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, TriggerDefinition> _triggers = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, CalendarDefinition> _calendars = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, LeaseState> _leases = new(StringComparer.OrdinalIgnoreCase);
     private long _leaseSequence;
 
@@ -350,6 +351,90 @@ public sealed class NoopJobPersistenceProvider : IJobPersistenceProvider, IPersi
         return Task.CompletedTask;
     }
 
+    public Task<CalendarDefinition?> FindAsync(string calendarId, PartitionScope scope, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(calendarId)) throw new ArgumentNullException(nameof(calendarId));
+
+        lock (_sync)
+        {
+            if (_calendars.TryGetValue(BuildScopedCalendarKey(scope, calendarId), out var calendar))
+            {
+                return Task.FromResult<CalendarDefinition?>(calendar);
+            }
+        }
+
+        return Task.FromResult<CalendarDefinition?>(null);
+    }
+
+    public Task<IReadOnlyCollection<CalendarDefinition>> ListCalendarsAsync(PartitionScope scope, CancellationToken cancellationToken)
+    {
+        lock (_sync)
+        {
+            var prefix = BuildScopedCalendarKeyPrefix(scope);
+            var matches = _calendars
+                .Where(pair => pair.Key.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                .Select(pair => pair.Value)
+                .ToArray();
+
+            return Task.FromResult<IReadOnlyCollection<CalendarDefinition>>(matches);
+        }
+    }
+
+    public Task UpsertAsync(CalendarUpsert request, CancellationToken cancellationToken)
+    {
+        if (request is null) throw new ArgumentNullException(nameof(request));
+
+        var scope = new PartitionScope(request.TenantId, request.EnvironmentTag);
+        var key = BuildScopedCalendarKey(scope, request.CalendarId);
+        var now = DateTimeOffset.UtcNow;
+
+        lock (_sync)
+        {
+            if (_calendars.TryGetValue(key, out var existing))
+            {
+                _calendars[key] = existing with
+                {
+                    Name = request.Name,
+                    Description = request.Description,
+                    TimeZoneId = request.TimeZoneId,
+                    Mode = request.Mode,
+                    Rules = request.Rules,
+                    Enabled = request.Enabled,
+                    UpdatedAtUtc = now
+                };
+            }
+            else
+            {
+                _calendars[key] = new CalendarDefinition(
+                    request.CalendarId,
+                    request.TenantId,
+                    request.EnvironmentTag,
+                    request.Name,
+                    request.Description,
+                    request.TimeZoneId,
+                    request.Mode,
+                    request.Rules,
+                    request.Enabled,
+                    now,
+                    now);
+            }
+        }
+
+        return Task.CompletedTask;
+    }
+
+    public Task DeleteAsync(string calendarId, PartitionScope scope, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(calendarId)) throw new ArgumentNullException(nameof(calendarId));
+
+        lock (_sync)
+        {
+            _calendars.Remove(BuildScopedCalendarKey(scope, calendarId));
+        }
+
+        return Task.CompletedTask;
+    }
+
     public Task<PersistenceHealthResult> CheckAsync(CancellationToken cancellationToken = default)
     {
         return Task.FromResult(new PersistenceHealthResult(true, "noop"));
@@ -361,6 +446,7 @@ public sealed class NoopJobPersistenceProvider : IJobPersistenceProvider, IPersi
         {
             _jobs.Clear();
             _triggers.Clear();
+            _calendars.Clear();
             _leases.Clear();
             _leaseSequence = 0;
         }
@@ -380,7 +466,9 @@ public sealed class NoopJobPersistenceProvider : IJobPersistenceProvider, IPersi
             source.StartAtUtc,
             source.EndAtUtc,
             source.Enabled,
-            metadata);
+            metadata,
+            source.TimeZoneId,
+            source.CalendarId);
     }
 
     private static JobDefinition CloneJob(JobDefinition job)
@@ -396,6 +484,12 @@ public sealed class NoopJobPersistenceProvider : IJobPersistenceProvider, IPersi
         => $"{scope.TenantId}|{scope.EnvironmentTag}|{jobKey}";
 
     private static string BuildScopedJobKeyPrefix(PartitionScope scope)
+        => $"{scope.TenantId}|{scope.EnvironmentTag}|";
+
+    private static string BuildScopedCalendarKey(PartitionScope scope, string calendarId)
+        => $"{scope.TenantId}|{scope.EnvironmentTag}|{calendarId}";
+
+    private static string BuildScopedCalendarKeyPrefix(PartitionScope scope)
         => $"{scope.TenantId}|{scope.EnvironmentTag}|";
 }
 
@@ -507,6 +601,8 @@ public sealed class TestCallerContextFactory : ICallerContextFactory
             {
                 CroniqScopes.SchedulesWrite,
                 CroniqScopes.SchedulesDeadLetter,
+                CroniqScopes.CalendarsRead,
+                CroniqScopes.CalendarsWrite,
                 CroniqScopes.JobsRead,
                 CroniqScopes.ExecutionsRead,
                 CroniqScopes.JobsWrite,

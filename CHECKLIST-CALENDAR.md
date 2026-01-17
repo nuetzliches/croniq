@@ -80,11 +80,26 @@ _Last updated: 2026-01-16_
 - Integration tests for persistence CRUD and schedule evaluation with calendars.
 - UI tests for schedule assignment and calendar views.
 
+### Status (Implementation)
+
+- Unit coverage: `CalendarDefinitionValidatorTests`, `CalendarEvaluatorTests`.
+- API coverage: calendar CRUD endpoints plus schedule upsert with calendars.
+- gRPC coverage: calendar-aware schedule upsert (success + not-found).
+- Persistence coverage: calendar CRUD in SqlServer/Postgres provider tests.
+- UI tests for calendar assignment/views are still pending.
+
 ## Open Questions
 
-1. Should calendar time zone default to the trigger time zone when omitted?
-2. Do we allow multiple calendars per schedule (composed rules) or keep single assignment?
-3. What is the max skip iteration limit when filtering candidate occurrences?
-4. Should calendars support ad-hoc overrides per schedule?
+1. Calendar time zone is required and fixed per calendar (no trigger inheritance).
+2. Only one calendar assignment per schedule in v1.
+3. Guard schedule filtering with max-iteration + max-lookahead defaults (10,000 iterations or 365 days).
+4. No per-schedule overrides in v1; use calendar rules or dedicated calendars instead.
+
+## Constraints & Follow-ups
+
+- Fixed time zones require separate calendars per time zone; a future `InheritTriggerTimeZone` flag can relax this.
+- Single-calendar assignment blocks cross-calendar composition; a future ordered assignment list can provide explicit precedence.
+- Guarded evaluation can return no next occurrence for highly excluded schedules; future options can allow per-calendar limits.
+- No per-schedule overrides means ad-hoc exclusions require calendar edits; future overlay rules can address temporary exceptions.
 
 Document decisions here and mirror the finalized design into `docs/deep-dive/designs/schedule-calendars.md`.

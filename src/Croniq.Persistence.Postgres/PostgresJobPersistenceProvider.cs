@@ -18,7 +18,7 @@ namespace Croniq.Persistence.Postgres;
 /// <summary>
 /// EF Core backed implementation of <see cref="IJobPersistenceProvider"/>.
 /// </summary>
-public sealed class PostgresJobPersistenceProvider : IJobPersistenceProvider
+public sealed class PostgresJobPersistenceProvider : IJobPersistenceProvider, ICalendarStore
 {
     private readonly IDbContextFactory<PostgresDbContext> _dbFactory;
     private readonly ILogger<PostgresJobPersistenceProvider> _logger;
@@ -132,6 +132,94 @@ public sealed class PostgresJobPersistenceProvider : IJobPersistenceProvider
         await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
     }
 
+    public async Task<CalendarDefinition?> FindAsync(string calendarId, PartitionScope scope, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(calendarId)) throw new ArgumentNullException(nameof(calendarId));
+        calendarId = calendarId.Trim();
+
+        await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
+        var entity = await db.Calendars
+            .FirstOrDefaultAsync(c => c.CalendarId == calendarId && c.TenantId == scope.TenantId && c.EnvironmentTag == scope.EnvironmentTag, cancellationToken)
+            .ConfigureAwait(false);
+
+        return entity is null ? null : ToCalendarDefinition(entity);
+    }
+
+    public async Task<IReadOnlyCollection<CalendarDefinition>> ListCalendarsAsync(PartitionScope scope, CancellationToken cancellationToken)
+    {
+        await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
+        var rows = await db.Calendars
+            .Where(c => c.TenantId == scope.TenantId && c.EnvironmentTag == scope.EnvironmentTag)
+            .OrderBy(c => c.Name)
+            .ToListAsync(cancellationToken)
+            .ConfigureAwait(false);
+
+        var result = new List<CalendarDefinition>(rows.Count);
+        foreach (var row in rows)
+        {
+            result.Add(ToCalendarDefinition(row));
+        }
+
+        return result;
+    }
+
+    public async Task UpsertAsync(CalendarUpsert request, CancellationToken cancellationToken)
+    {
+        if (request is null) throw new ArgumentNullException(nameof(request));
+
+        var scope = new PartitionScope(request.TenantId, request.EnvironmentTag);
+        await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
+        var now = DateTime.UtcNow;
+        var existing = await FindCalendarEntityAsync(db, request.CalendarId, scope, cancellationToken).ConfigureAwait(false);
+
+        if (existing is null)
+        {
+            existing = new CalendarEntity
+            {
+                CalendarId = request.CalendarId,
+                TenantId = request.TenantId,
+                EnvironmentTag = request.EnvironmentTag,
+                CreatedAtUtc = now
+            };
+            db.Calendars.Add(existing);
+        }
+
+        ApplyCalendarDefinition(existing, request, now);
+
+        try
+        {
+            await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+        }
+        catch (DbUpdateException ex) when (IsUniqueConstraintViolation(ex))
+        {
+            db.ChangeTracker.Clear();
+            var retry = await FindCalendarEntityAsync(db, request.CalendarId, scope, cancellationToken).ConfigureAwait(false);
+            if (retry is null)
+            {
+                throw;
+            }
+
+            ApplyCalendarDefinition(retry, request, now);
+            await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    public async Task DeleteAsync(string calendarId, PartitionScope scope, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(calendarId)) throw new ArgumentNullException(nameof(calendarId));
+        calendarId = calendarId.Trim();
+
+        await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
+        var entity = await FindCalendarEntityAsync(db, calendarId, scope, cancellationToken).ConfigureAwait(false);
+        if (entity is null)
+        {
+            return;
+        }
+
+        db.Calendars.Remove(entity);
+        await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+    }
+
     public async Task UpsertTriggerAsync(TriggerDefinition trigger, CancellationToken cancellationToken)
     {
         if (trigger is null) throw new ArgumentNullException(nameof(trigger));
@@ -142,18 +230,12 @@ public sealed class PostgresJobPersistenceProvider : IJobPersistenceProvider
             .ConfigureAwait(false)
             ?? throw new InvalidOperationException($"Job '{trigger.JobKey}' must be created before triggers can be added.");
 
+        var calendarId = NormalizeCalendarId(trigger.CalendarId);
+        var calendar = await GetRequiredCalendarAsync(db, calendarId, trigger.Scope, trigger.TriggerId, cancellationToken).ConfigureAwait(false);
         var timeZoneId = ResolveTimeZoneId(trigger.TimeZoneId, trigger.TriggerId);
         timeZoneId = ResolveTimeZone(timeZoneId).Id;
-        var nextFire = ComputeNextFireUtc(
-            trigger.ScheduleExpression,
-            timeZoneId,
-            trigger.StartAtUtc?.UtcDateTime,
-            trigger.EndAtUtc?.UtcDateTime,
-            DateTimeOffset.UtcNow);
-        if (nextFire is null)
-        {
-            throw new InvalidOperationException($"Cron expression '{trigger.ScheduleExpression}' produced no future occurrences.");
-        }
+        var normalizedTrigger = trigger with { TimeZoneId = timeZoneId, CalendarId = calendarId };
+        var nextFire = ComputeNextFire(normalizedTrigger, calendar, DateTimeOffset.UtcNow);
 
         var entity = await db.Triggers.FirstOrDefaultAsync(t => t.TriggerKey == trigger.TriggerId, cancellationToken).ConfigureAwait(false);
         var now = DateTime.UtcNow;
@@ -173,9 +255,10 @@ public sealed class PostgresJobPersistenceProvider : IJobPersistenceProvider
         entity.JobKey = trigger.JobKey;
         entity.CronExpression = trigger.ScheduleExpression;
         entity.TimeZoneId = timeZoneId;
+        entity.CalendarId = calendarId;
         entity.StartAtUtc = trigger.StartAtUtc?.UtcDateTime;
         entity.EndAtUtc = trigger.EndAtUtc?.UtcDateTime;
-        entity.NextFireAtUtc = nextFire.Value;
+        entity.NextFireAtUtc = nextFire?.UtcDateTime;
         entity.Enabled = trigger.Enabled;
         entity.MetadataJson = SerializeMetadata(trigger.Metadata);
         entity.IsDeleted = false;
@@ -208,7 +291,8 @@ public sealed class PostgresJobPersistenceProvider : IJobPersistenceProvider
                 row.EndAtUtc is null ? null : new DateTimeOffset(DateTime.SpecifyKind(row.EndAtUtc.Value, DateTimeKind.Utc)),
                 row.Enabled,
                 DeserializeMetadata(row.MetadataJson),
-                row.TimeZoneId));
+                row.TimeZoneId,
+                row.CalendarId));
         }
 
         return result;
@@ -342,7 +426,8 @@ public sealed class PostgresJobPersistenceProvider : IJobPersistenceProvider
         if (request is null) throw new ArgumentNullException(nameof(request));
 
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
-        var trigger = await db.Triggers.FirstOrDefaultAsync(t => t.TriggerKey == request.Lease.TriggerId, cancellationToken).ConfigureAwait(false)
+        var trigger = await db.Triggers.Include(t => t.Job)
+            .FirstOrDefaultAsync(t => t.TriggerKey == request.Lease.TriggerId, cancellationToken).ConfigureAwait(false)
             ?? throw new InvalidOperationException($"Trigger '{request.Lease.TriggerId}' not found.");
 
         if (!string.Equals(trigger.LeaseId, request.Lease.LeaseId, StringComparison.OrdinalIgnoreCase))
@@ -401,24 +486,17 @@ public sealed class PostgresJobPersistenceProvider : IJobPersistenceProvider
 
         if (!request.Succeeded && request.NextFireTimeUtc is null)
         {
-            trigger.Enabled = false;
             trigger.NextFireAtUtc = null;
+            await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+            return;
         }
-        else
-        {
-            var next = request.NextFireTimeUtc?.UtcDateTime
-                ?? ComputeNextFireUtc(
-                    trigger.CronExpression,
-                    trigger.TimeZoneId,
-                    trigger.StartAtUtc,
-                    trigger.EndAtUtc,
-                    request.Lease.FireAtUtc);
-            trigger.NextFireAtUtc = next;
-            if (next is null)
-            {
-                trigger.Enabled = false;
-            }
-        }
+
+        var scope = new PartitionScope(trigger.Job.TenantId, trigger.Job.EnvironmentTag);
+        var calendar = await ResolveCalendarAsync(db, trigger.CalendarId, scope, trigger.TriggerKey, cancellationToken).ConfigureAwait(false);
+        var evaluationTrigger = BuildTriggerDefinition(trigger, scope);
+        var next = request.NextFireTimeUtc?.UtcDateTime
+            ?? ComputeNextFire(evaluationTrigger, calendar, request.Lease.FireAtUtc)?.UtcDateTime;
+        trigger.NextFireAtUtc = next;
 
         await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
     }
@@ -474,6 +552,19 @@ public sealed class PostgresJobPersistenceProvider : IJobPersistenceProvider
         return JsonSerializer.Serialize(metadata, _jsonOptions);
     }
 
+    private string? SerializeRules(IReadOnlyCollection<CalendarRuleDefinition>? rules)
+    {
+        if (rules is null || rules.Count == 0) return null;
+        return JsonSerializer.Serialize(rules, _jsonOptions);
+    }
+
+    private IReadOnlyCollection<CalendarRuleDefinition> DeserializeRules(string? rulesJson)
+    {
+        if (string.IsNullOrWhiteSpace(rulesJson)) return Array.Empty<CalendarRuleDefinition>();
+        var rules = JsonSerializer.Deserialize<List<CalendarRuleDefinition>>(rulesJson, _jsonOptions);
+        return rules is null ? Array.Empty<CalendarRuleDefinition>() : rules;
+    }
+
     private static async Task<JobEntity?> FindJobAsync(
         PostgresDbContext db,
         string jobKey,
@@ -487,6 +578,19 @@ public sealed class PostgresJobPersistenceProvider : IJobPersistenceProvider
             cancellationToken).ConfigureAwait(false);
     }
 
+    private static async Task<CalendarEntity?> FindCalendarEntityAsync(
+        PostgresDbContext db,
+        string calendarId,
+        PartitionScope scope,
+        CancellationToken cancellationToken)
+    {
+        return await db.Calendars.FirstOrDefaultAsync(
+            c => c.CalendarId == calendarId
+                 && c.TenantId == scope.TenantId
+                 && c.EnvironmentTag == scope.EnvironmentTag,
+            cancellationToken).ConfigureAwait(false);
+    }
+
     private void ApplyJobDefinition(JobEntity entity, JobDefinition job, DateTime now)
     {
         entity.NamespaceSegment = job.Namespace;
@@ -495,6 +599,49 @@ public sealed class PostgresJobPersistenceProvider : IJobPersistenceProvider
         entity.Description = job.Description;
         entity.MetadataJson = SerializeMetadata(job.Metadata);
         entity.UpdatedAtUtc = now;
+    }
+
+    private void ApplyCalendarDefinition(CalendarEntity entity, CalendarUpsert request, DateTime now)
+    {
+        entity.Name = request.Name;
+        entity.Description = request.Description;
+        entity.TimeZoneId = request.TimeZoneId;
+        entity.Mode = (int)request.Mode;
+        entity.RulesJson = SerializeRules(request.Rules);
+        entity.Enabled = request.Enabled;
+        entity.UpdatedAtUtc = now;
+    }
+
+    private CalendarMode ResolveCalendarMode(int mode)
+    {
+        if (Enum.IsDefined(typeof(CalendarMode), mode))
+        {
+            return (CalendarMode)mode;
+        }
+
+        _logger.LogWarning("Calendar mode value {Mode} is invalid; defaulting to Include.", mode);
+        return CalendarMode.Include;
+    }
+
+    private CalendarDefinition ToCalendarDefinition(CalendarEntity entity)
+    {
+        return new CalendarDefinition(
+            entity.CalendarId,
+            entity.TenantId,
+            entity.EnvironmentTag,
+            entity.Name,
+            entity.Description,
+            entity.TimeZoneId,
+            ResolveCalendarMode(entity.Mode),
+            DeserializeRules(entity.RulesJson),
+            entity.Enabled,
+            ToUtcOffset(entity.CreatedAtUtc),
+            ToUtcOffset(entity.UpdatedAtUtc));
+    }
+
+    private static DateTimeOffset ToUtcOffset(DateTime value)
+    {
+        return new DateTimeOffset(DateTime.SpecifyKind(value, DateTimeKind.Utc));
     }
 
     private static bool IsUniqueConstraintViolation(DbUpdateException exception)
@@ -520,26 +667,88 @@ public sealed class PostgresJobPersistenceProvider : IJobPersistenceProvider
         return reason.Length <= max ? reason : reason[..max];
     }
 
-    private DateTime? ComputeNextFireUtc(string cronExpression, string timeZoneId, DateTime? startAtUtc, DateTime? endAtUtc, DateTimeOffset referenceUtc)
+    private static string? NormalizeCalendarId(string? calendarId)
     {
-        var start = startAtUtc.HasValue
-            ? new DateTimeOffset(DateTime.SpecifyKind(startAtUtc.Value, DateTimeKind.Utc))
-            : (DateTimeOffset?)null;
-        var end = endAtUtc.HasValue
-            ? new DateTimeOffset(DateTime.SpecifyKind(endAtUtc.Value, DateTimeKind.Utc))
-            : (DateTimeOffset?)null;
-
-        var next = TriggerSchedule.GetNextOccurrence(
-            cronExpression,
-            referenceUtc,
-            start,
-            end,
-            ResolveTimeZone(timeZoneId));
-
-        return next?.UtcDateTime;
+        return string.IsNullOrWhiteSpace(calendarId) ? null : calendarId.Trim();
     }
 
-    private static TimeZoneInfo ResolveTimeZone(string timeZoneId)
+    private async Task<CalendarDefinition?> GetRequiredCalendarAsync(
+        PostgresDbContext db,
+        string? calendarId,
+        PartitionScope scope,
+        string triggerId,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(calendarId))
+        {
+            return null;
+        }
+
+        var entity = await FindCalendarEntityAsync(db, calendarId, scope, cancellationToken).ConfigureAwait(false);
+        if (entity is null)
+        {
+            throw new InvalidOperationException($"Calendar '{calendarId}' not found for trigger '{triggerId}'.");
+        }
+
+        return ToCalendarDefinition(entity);
+    }
+
+    private async Task<CalendarDefinition?> ResolveCalendarAsync(
+        PostgresDbContext db,
+        string? calendarId,
+        PartitionScope scope,
+        string triggerId,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(calendarId))
+        {
+            return null;
+        }
+
+        var entity = await FindCalendarEntityAsync(db, calendarId, scope, cancellationToken).ConfigureAwait(false);
+        if (entity is null)
+        {
+            _logger.LogWarning(
+                "Calendar {CalendarId} not found for trigger {TriggerId}; continuing without calendar filtering.",
+                calendarId,
+                triggerId);
+            return null;
+        }
+
+        return ToCalendarDefinition(entity);
+    }
+
+    private static TriggerDefinition BuildTriggerDefinition(TriggerEntity trigger, PartitionScope scope)
+    {
+        return new TriggerDefinition(
+            trigger.TriggerKey,
+            trigger.JobKey,
+            trigger.CronExpression,
+            scope,
+            trigger.StartAtUtc is null ? null : ToUtcOffset(trigger.StartAtUtc.Value),
+            trigger.EndAtUtc is null ? null : ToUtcOffset(trigger.EndAtUtc.Value),
+            trigger.Enabled,
+            null,
+            trigger.TimeZoneId,
+            trigger.CalendarId);
+    }
+
+    private DateTimeOffset? ComputeNextFire(TriggerDefinition trigger, CalendarDefinition? calendar, DateTimeOffset referenceUtc)
+    {
+        if (calendar is not null && calendar.Enabled)
+        {
+            return CalendarEvaluator.GetNextOccurrence(trigger, referenceUtc, calendar, _options.CalendarEvaluation, _logger);
+        }
+
+        return TriggerSchedule.GetNextOccurrence(
+            trigger.ScheduleExpression,
+            referenceUtc,
+            trigger.StartAtUtc,
+            trigger.EndAtUtc,
+            ResolveTimeZone(trigger.TimeZoneId));
+    }
+
+    private static TimeZoneInfo ResolveTimeZone(string? timeZoneId)
     {
         if (string.IsNullOrWhiteSpace(timeZoneId))
         {

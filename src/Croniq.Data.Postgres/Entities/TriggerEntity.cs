@@ -33,6 +33,9 @@ public sealed class TriggerEntity
     [MaxLength(128)]
     public string TimeZoneId { get; set; } = "UTC";
 
+    [MaxLength(128)]
+    public string? CalendarId { get; set; }
+
     public DateTime? StartAtUtc { get; set; }
 
     public DateTime? EndAtUtc { get; set; }

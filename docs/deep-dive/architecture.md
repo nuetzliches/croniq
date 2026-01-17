@@ -104,11 +104,11 @@ docs/
 - Misfires are retried while `MaxMisfireDelay` (default 5 minutes) is respected. Beyond that the execution is marked as dead letter.
 - Delivery semantics: at-least-once by default. Callers can attach idempotency metadata for their own handlers if needed.
 
-### Schedule Calendars (Planned)
+### Schedule Calendars
 
 - Calendars are separate tenant-scoped entities that include or exclude candidate fire times for schedules.
 - Triggers keep their cron/once semantics; an optional `CalendarId` filters occurrences after the cron evaluation.
-- The concept mirrors Quartz.NET's calendar model and is documented in `docs/deep-dive/designs/schedule-calendars.md`.
+- The REST surface adds `/tenants/{tenantId}/calendars` alongside schedule upserts, and the design/constraints live in `docs/deep-dive/designs/schedule-calendars.md`.
 
 ### Lease Renewal & Long-Running Jobs
 

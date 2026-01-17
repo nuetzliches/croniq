@@ -1,4 +1,5 @@
 using System;
+using Croniq.Core.Scheduling;
 
 namespace Croniq.JobStore.InMemory;
 
@@ -19,6 +20,11 @@ public sealed class InMemoryJobStoreOptions
     /// </summary>
     public Func<DateTimeOffset>? UtcNowProvider { get; set; } = DefaultUtcNow;
 
+    /// <summary>
+    /// Evaluation guard settings for calendar filtering.
+    /// </summary>
+    public CalendarEvaluationOptions CalendarEvaluation { get; set; } = new();
+
     internal static DateTimeOffset DefaultUtcNow() => DateTimeOffset.UtcNow;
 
     internal void Normalize()
@@ -29,5 +35,6 @@ public sealed class InMemoryJobStoreOptions
         }
 
         UtcNowProvider ??= DefaultUtcNow;
+        CalendarEvaluation ??= new CalendarEvaluationOptions();
     }
 }

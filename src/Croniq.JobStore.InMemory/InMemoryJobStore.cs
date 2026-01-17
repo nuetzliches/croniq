@@ -7,6 +7,7 @@ using System.Threading.Tasks;
 using Croniq.Core.Jobs;
 using Croniq.Core.Scheduling;
 using Croniq.Persistence.Abstractions;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
 namespace Croniq.JobStore.InMemory;
@@ -14,20 +15,23 @@ namespace Croniq.JobStore.InMemory;
 /// <summary>
 /// Reference in-memory implementation of the persistence abstractions.
 /// </summary>
-public sealed class InMemoryJobStore : IJobPersistenceProvider, IJobDeadLetterStore
+public sealed class InMemoryJobStore : IJobPersistenceProvider, IJobDeadLetterStore, ICalendarStore
 {
     private readonly object _lock = new();
     private readonly Dictionary<string, JobDefinition> _jobs = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, TriggerEntry> _triggers = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, CalendarDefinition> _calendars = new(StringComparer.OrdinalIgnoreCase);
     private readonly JsonSerializerOptions _jsonOptions = new(JsonSerializerDefaults.Web);
     private readonly InMemoryJobStoreOptions _options;
+    private readonly ILogger<InMemoryJobStore>? _logger;
     private long _leaseSequence;
     private long _deadLetterSequence;
 
-    public InMemoryJobStore(IOptions<InMemoryJobStoreOptions>? options = null)
+    public InMemoryJobStore(IOptions<InMemoryJobStoreOptions>? options = null, ILogger<InMemoryJobStore>? logger = null)
     {
         _options = options?.Value ?? new InMemoryJobStoreOptions();
         _options.Normalize();
+        _logger = logger;
     }
 
     public Task UpsertJobAsync(JobDefinition job, PartitionScope scope, CancellationToken cancellationToken)
@@ -104,6 +108,96 @@ public sealed class InMemoryJobStore : IJobPersistenceProvider, IJobDeadLetterSt
         return Task.CompletedTask;
     }
 
+    public Task<CalendarDefinition?> FindAsync(string calendarId, PartitionScope scope, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(calendarId)) throw new ArgumentNullException(nameof(calendarId));
+        cancellationToken.ThrowIfCancellationRequested();
+
+        lock (_lock)
+        {
+            if (!_calendars.TryGetValue(BuildCalendarIdentity(scope, calendarId), out var calendar))
+            {
+                return Task.FromResult<CalendarDefinition?>(null);
+            }
+
+            return Task.FromResult<CalendarDefinition?>(CloneCalendar(calendar));
+        }
+    }
+
+    public Task<IReadOnlyCollection<CalendarDefinition>> ListCalendarsAsync(PartitionScope scope, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+
+        lock (_lock)
+        {
+            var prefix = BuildScopePrefix(scope);
+            var matches = _calendars
+                .Where(pair => pair.Key.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                .Select(pair => CloneCalendar(pair.Value))
+                .ToArray();
+
+            return Task.FromResult<IReadOnlyCollection<CalendarDefinition>>(matches);
+        }
+    }
+
+    public Task UpsertAsync(CalendarUpsert request, CancellationToken cancellationToken)
+    {
+        if (request is null) throw new ArgumentNullException(nameof(request));
+        cancellationToken.ThrowIfCancellationRequested();
+
+        var scope = new PartitionScope(request.TenantId, request.EnvironmentTag);
+        var identity = BuildCalendarIdentity(scope, request.CalendarId);
+        var now = UtcNow();
+
+        lock (_lock)
+        {
+            if (_calendars.TryGetValue(identity, out var existing))
+            {
+                var updated = existing with
+                {
+                    Name = request.Name,
+                    Description = request.Description,
+                    TimeZoneId = request.TimeZoneId,
+                    Mode = request.Mode,
+                    Rules = CloneRules(request.Rules),
+                    Enabled = request.Enabled,
+                    UpdatedAtUtc = now
+                };
+
+                _calendars[identity] = updated;
+                return Task.CompletedTask;
+            }
+
+            _calendars[identity] = new CalendarDefinition(
+                request.CalendarId,
+                request.TenantId,
+                request.EnvironmentTag,
+                request.Name,
+                request.Description,
+                request.TimeZoneId,
+                request.Mode,
+                CloneRules(request.Rules),
+                request.Enabled,
+                now,
+                now);
+        }
+
+        return Task.CompletedTask;
+    }
+
+    public Task DeleteAsync(string calendarId, PartitionScope scope, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(calendarId)) throw new ArgumentNullException(nameof(calendarId));
+        cancellationToken.ThrowIfCancellationRequested();
+
+        lock (_lock)
+        {
+            _calendars.Remove(BuildCalendarIdentity(scope, calendarId));
+        }
+
+        return Task.CompletedTask;
+    }
+
     private static string BuildScopePrefix(PartitionScope scope)
     {
         return $"{scope.TenantId}\u001F{scope.EnvironmentTag}\u001F";
@@ -112,6 +206,11 @@ public sealed class InMemoryJobStore : IJobPersistenceProvider, IJobDeadLetterSt
     private static string BuildJobIdentity(PartitionScope scope, string jobKey)
     {
         return $"{BuildScopePrefix(scope)}{jobKey}";
+    }
+
+    private static string BuildCalendarIdentity(PartitionScope scope, string calendarId)
+    {
+        return $"{BuildScopePrefix(scope)}{calendarId}";
     }
 
     public Task UpsertTriggerAsync(TriggerDefinition trigger, CancellationToken cancellationToken)
@@ -123,7 +222,8 @@ public sealed class InMemoryJobStore : IJobPersistenceProvider, IJobDeadLetterSt
         var timeZone = ResolveTimeZone(trigger.TimeZoneId);
         var schedule = isOnce ? null : new CronSchedule(trigger.ScheduleExpression, timeZone);
         var now = UtcNow();
-        var nextFire = ComputeNextFire(trigger, schedule, now);
+        var calendar = GetRequiredCalendar(trigger);
+        var nextFire = ComputeNextFire(trigger, schedule, calendar, now);
 
         lock (_lock)
         {
@@ -320,7 +420,8 @@ public sealed class InMemoryJobStore : IJobPersistenceProvider, IJobDeadLetterSt
                 return Task.CompletedTask;
             }
 
-            entry.NextFireAtUtc = request.NextFireTimeUtc ?? ComputeNextFire(entry.Definition, entry.Schedule, request.Lease.FireAtUtc);
+            var calendar = ResolveCalendar(entry.Definition);
+            entry.NextFireAtUtc = request.NextFireTimeUtc ?? ComputeNextFire(entry.Definition, entry.Schedule, calendar, request.Lease.FireAtUtc);
         }
 
         return Task.CompletedTask;
@@ -437,8 +538,22 @@ public sealed class InMemoryJobStore : IJobPersistenceProvider, IJobDeadLetterSt
         return new JobDefinition(job.JobKey, job.Namespace, job.Name, job.Variant, job.Description, metadata);
     }
 
-    private static DateTimeOffset? ComputeNextFire(TriggerDefinition trigger, CronSchedule? schedule, DateTimeOffset referenceUtc)
+    private DateTimeOffset? ComputeNextFire(
+        TriggerDefinition trigger,
+        CronSchedule? schedule,
+        CalendarDefinition? calendar,
+        DateTimeOffset referenceUtc)
     {
+        if (calendar is not null && calendar.Enabled)
+        {
+            return CalendarEvaluator.GetNextOccurrence(
+                trigger,
+                referenceUtc,
+                calendar,
+                _options.CalendarEvaluation,
+                _logger);
+        }
+
         if (TriggerSchedule.IsOnceExpression(trigger.ScheduleExpression))
         {
             return TriggerSchedule.GetNextOccurrence(trigger.ScheduleExpression, referenceUtc, trigger.StartAtUtc, trigger.EndAtUtc);
@@ -482,6 +597,108 @@ public sealed class InMemoryJobStore : IJobPersistenceProvider, IJobDeadLetterSt
     {
         if (metadata is null || metadata.Count == 0) return null;
         return JsonSerializer.Serialize(metadata, _jsonOptions);
+    }
+
+    private CalendarDefinition? ResolveCalendar(TriggerDefinition trigger)
+    {
+        if (string.IsNullOrWhiteSpace(trigger.CalendarId))
+        {
+            return null;
+        }
+
+        var identity = BuildCalendarIdentity(trigger.Scope, trigger.CalendarId);
+        if (_calendars.TryGetValue(identity, out var calendar))
+        {
+            return calendar;
+        }
+
+        _logger?.LogWarning(
+            "Calendar {CalendarId} not found for trigger {TriggerId}; continuing without calendar filtering.",
+            trigger.CalendarId,
+            trigger.TriggerId);
+        return null;
+    }
+
+    private CalendarDefinition? GetRequiredCalendar(TriggerDefinition trigger)
+    {
+        if (string.IsNullOrWhiteSpace(trigger.CalendarId))
+        {
+            return null;
+        }
+
+        var identity = BuildCalendarIdentity(trigger.Scope, trigger.CalendarId);
+        if (_calendars.TryGetValue(identity, out var calendar))
+        {
+            return calendar;
+        }
+
+        throw new InvalidOperationException($"Calendar '{trigger.CalendarId}' not found for trigger '{trigger.TriggerId}'.");
+    }
+
+    private static CalendarDefinition CloneCalendar(CalendarDefinition calendar)
+    {
+        return calendar with { Rules = CloneRules(calendar.Rules) };
+    }
+
+    private static IReadOnlyCollection<CalendarRuleDefinition> CloneRules(IReadOnlyCollection<CalendarRuleDefinition> rules)
+    {
+        if (rules.Count == 0)
+        {
+            return Array.Empty<CalendarRuleDefinition>();
+        }
+
+        var cloned = new List<CalendarRuleDefinition>(rules.Count);
+        foreach (var rule in rules)
+        {
+            cloned.Add(CloneRule(rule));
+        }
+
+        return cloned;
+    }
+
+    private static CalendarRuleDefinition CloneRule(CalendarRuleDefinition rule)
+    {
+        CalendarDailyWindowRule? dailyWindow = null;
+        if (rule.DailyWindow is not null)
+        {
+            var days = rule.DailyWindow.DaysOfWeek is null
+                ? null
+                : rule.DailyWindow.DaysOfWeek.ToArray();
+            dailyWindow = new CalendarDailyWindowRule(rule.DailyWindow.StartTime, rule.DailyWindow.EndTime, days);
+        }
+
+        CalendarWeeklyWindowRule? weeklyWindow = null;
+        if (rule.WeeklyWindow is not null)
+        {
+            weeklyWindow = new CalendarWeeklyWindowRule(rule.WeeklyWindow.DaysOfWeek.ToArray());
+        }
+
+        CalendarAnnualDateListRule? annualDateList = null;
+        if (rule.AnnualDateList is not null)
+        {
+            annualDateList = new CalendarAnnualDateListRule(rule.AnnualDateList.MonthDays.ToArray());
+        }
+
+        CalendarDateListRule? dateList = null;
+        if (rule.DateList is not null)
+        {
+            dateList = new CalendarDateListRule(rule.DateList.Dates.ToArray());
+        }
+
+        CalendarCronRule? cronRule = null;
+        if (rule.CronRule is not null)
+        {
+            cronRule = new CalendarCronRule(rule.CronRule.CronExpression);
+        }
+
+        return rule with
+        {
+            DailyWindow = dailyWindow,
+            WeeklyWindow = weeklyWindow,
+            AnnualDateList = annualDateList,
+            DateList = dateList,
+            CronRule = cronRule
+        };
     }
 
     private static JobDeadLetterEntry MapDeadLetter(DeadLetterEntry entry)

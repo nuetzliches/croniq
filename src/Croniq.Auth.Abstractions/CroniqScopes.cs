@@ -5,6 +5,8 @@ public static class CroniqScopes
 {
     public const string SchedulesWrite = "schedules:write";
     public const string SchedulesDeadLetter = "schedules:deadletter";
+    public const string CalendarsRead = "calendars:read";
+    public const string CalendarsWrite = "calendars:write";
     public const string JobsRead = "jobs:read";
     public const string JobsWrite = "jobs:write";
     public const string JobsTrigger = "jobs:trigger";

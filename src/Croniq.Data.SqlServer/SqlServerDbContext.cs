@@ -10,6 +10,7 @@ namespace Croniq.Data.SqlServer;
 public sealed class SqlServerDbContext(DbContextOptions<SqlServerDbContext> options) : DbContext(options)
 {
     public DbSet<JobEntity> Jobs => Set<JobEntity>();
+    public DbSet<CalendarEntity> Calendars => Set<CalendarEntity>();
     public DbSet<TriggerEntity> Triggers => Set<TriggerEntity>();
     public DbSet<DeadLetterEntity> DeadLetters => Set<DeadLetterEntity>();
     public DbSet<WorkerInstanceEntity> WorkerInstances => Set<WorkerInstanceEntity>();
@@ -33,6 +34,7 @@ public sealed class SqlServerDbContext(DbContextOptions<SqlServerDbContext> opti
     {
         ConfigureTenants(modelBuilder.Entity<TenantEntity>());
         ConfigureJobs(modelBuilder.Entity<JobEntity>());
+        ConfigureCalendars(modelBuilder.Entity<CalendarEntity>());
         ConfigureTriggers(modelBuilder.Entity<TriggerEntity>());
         ConfigureDeadLetters(modelBuilder.Entity<DeadLetterEntity>());
         ConfigureWorkerInstances(modelBuilder.Entity<WorkerInstanceEntity>());
@@ -112,6 +114,20 @@ public sealed class SqlServerDbContext(DbContextOptions<SqlServerDbContext> opti
         builder.Property(x => x.InstanceId).HasMaxLength(256);
         builder.Property(x => x.EnvironmentTag).HasMaxLength(64);
         builder.Property(x => x.TenantId).HasMaxLength(64);
+        builder.Property(x => x.CreatedAtUtc).HasDefaultValueSql("sysutcdatetime()");
+        builder.Property(x => x.UpdatedAtUtc).HasDefaultValueSql("sysutcdatetime()");
+    }
+
+    private static void ConfigureCalendars(EntityTypeBuilder<CalendarEntity> builder)
+    {
+        builder.ToTable("Calendars", "croniq");
+        builder.HasIndex(x => new { x.TenantId, x.EnvironmentTag, x.CalendarId }).IsUnique();
+        builder.HasIndex(x => new { x.TenantId, x.EnvironmentTag });
+        builder.HasIndex(x => new { x.TenantId, x.EnvironmentTag, x.Name });
+        builder.HasOne<TenantEntity>()
+            .WithMany()
+            .HasForeignKey(x => x.TenantId)
+            .OnDelete(DeleteBehavior.Restrict);
         builder.Property(x => x.CreatedAtUtc).HasDefaultValueSql("sysutcdatetime()");
         builder.Property(x => x.UpdatedAtUtc).HasDefaultValueSql("sysutcdatetime()");
     }
