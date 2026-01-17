@@ -132,3 +132,46 @@ The Angular MCP server is a development helper for workspace-aware automation.
 2. MVP data surfaces: dashboard (stubbed), schedules read-only, job registry.
 3. Admin controls: CRUD for schedules/webhooks/API keys; dead-letter wiring.
 4. Observability & polish: embed metrics/log views; accessibility review.
+
+### Webhooks UI Roadmap
+
+**Phase 1: Management baseline**
+
+- Endpoint list view with columns for hook key, job key, status, signature mode, RPM, IP rules, and last delivery.
+- Search + filters (hook key, job key, status, environment) with pagination and empty/error states.
+- Row actions for edit, rotate secret, IP rules, and delete/disable with confirmations.
+- Endpoint detail view (drawer or route) showing effective configuration and derived ingress URL.
+- Create/edit dialog with validation and inline help for hook key, job key, RPM, and signatures.
+- Permission states for `webhooks:read` and `webhooks:write` (blocked view + CTA).
+
+**Phase 2: Security & hygiene**
+
+- Secret rotation flow (activate/grace windows, operator notes) with one-time secret display + copy guardrails.
+- IP allow list management per endpoint (list/create/delete, CIDR validation, bulk import).
+- Signature policy UX driven by capabilities (allow unsigned only when permitted).
+
+**Phase 3: Diagnostics & recovery**
+
+- Dead-letter list with filters, detail view, and replay actions.
+- Delivery event timeline per endpoint (success/failure, reason, timestamps, correlation ID).
+- Action log panel showing recent admin operations from the UI.
+
+**Phase 4: Testing & operator tooling**
+
+- Manual invoke/test payload panel with request preview and safe defaults.
+- Copyable cURL/snippet examples for the configured endpoint.
+- Bulk enable/disable endpoints with confirmation and audit context.
+
+**Phase 5: Observability & insights**
+
+- Webhook KPIs (success rate, latency, rate-limit rejections) and trend tiles.
+- Grafana deep-links or embedded panels where available.
+- Audit summary for rotations, IP rule changes, and failed deliveries.
+
+**Backend dependencies (by phase)**
+
+- **Phase 1** `GET /tenants/{tenantId}/webhooks`, `POST /tenants/{tenantId}/webhooks`, `DELETE /tenants/{tenantId}/webhooks/{hookKey}`, `GET /tenants/{tenantId}/webhooks/capabilities`; list responses should expose `status`, `lastDeliveryAtUtc`, and `ipRules` or `ipRuleCount` for UI columns.
+- **Phase 2** `POST /tenants/{tenantId}/webhooks/{hookKey}/rotate-secret`, `GET/POST/DELETE /tenants/{tenantId}/webhooks/{hookKey}/ip-rules`, plus `allowUnsignedHooks` in capabilities.
+- **Phase 3** `GET /tenants/{tenantId}/webhooks/deadletters`, `POST /tenants/{tenantId}/webhooks/deadletters/{deadLetterId}/replay`, `POST /tenants/{tenantId}/webhooks/deadletters/{deadLetterId}:resolve` (and optional `:fail`), plus an endpoint events feed for per-hook timelines.
+- **Phase 4** `POST /tenants/{tenantId}/environments/{environmentTag}/webhooks/{hookKey}` for manual invoke, published in OpenAPI.
+- **Phase 5** Telemetry-backed aggregates for webhook KPIs (Grafana URL or a dedicated API surface).

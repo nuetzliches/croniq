@@ -25,6 +25,7 @@ class WebhooksStoreStub {
   deleteIpRule = vi.fn();
   replayDeadLetter = vi.fn();
   invokeWebhook = vi.fn();
+  clearRotatedSecret = vi.fn();
 }
 
 describe('WebhooksPage', () => {

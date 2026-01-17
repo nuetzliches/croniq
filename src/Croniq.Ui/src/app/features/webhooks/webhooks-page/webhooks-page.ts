@@ -1,18 +1,88 @@
-import { ChangeDetectionStrategy, Component, inject } from '@angular/core';
+import { DatePipe } from '@angular/common';
+import { ChangeDetectionStrategy, Component, Directive, computed, inject, linkedSignal, signal } from '@angular/core';
 import { Dialog } from '@angular/cdk/dialog';
 import { TenantContextService } from '@core/tenant-context/tenant-context.service';
 import { WebhookDialogComponent } from '@features/webhooks/components/webhook-dialog/webhook-dialog.component';
 import { WebhookCapabilitiesView, WebhookEndpointView, WebhooksStore } from '@features/webhooks/webhooks.store';
 import { UpsertWebhookEndpointRequest } from '@croniq/api-schema';
+import { Field, form } from '@angular/forms/signals';
+import {
+  CqCellDefDirective,
+  CqColumnComponent,
+  CqContextMenuComponent,
+  CqContextMenuItemDirective,
+  CqFormFieldComponent,
+  CqInputDirective,
+  CqSelectDirective,
+  DataGrid,
+} from 'ui-kit';
 
 type WebhookDialogData = {
   endpoint: UpsertWebhookEndpointRequest | null;
   capabilities: WebhookCapabilitiesView | null;
 };
 
+type WebhookStatusFilter = 'all' | WebhookEndpointView['status'];
+
+type WebhookFilterModel = {
+  hookKey: string;
+  jobKey: string;
+  status: WebhookStatusFilter;
+  environment: string;
+};
+
+type OptionEntry = {
+  value: string;
+  label: string;
+};
+
+const ALL_ENVIRONMENTS = 'all';
+
+const STATUS_OPTIONS: ReadonlyArray<{ value: WebhookStatusFilter; label: string }> = [
+  { value: 'all', label: 'All statuses' },
+  { value: 'active', label: 'Active' },
+  { value: 'paused', label: 'Paused' },
+  { value: 'degraded', label: 'Degraded' },
+];
+
+type PageInfo = {
+  total: number;
+  pageIndex: number;
+  pageCount: number;
+  start: number;
+  end: number;
+};
+
+const EMPTY_PAGE_INFO: PageInfo = {
+  total: 0,
+  pageIndex: 0,
+  pageCount: 0,
+  start: 0,
+  end: 0,
+};
+
+@Directive({
+  selector: '[cqWebhookCell]',
+  providers: [{ provide: CqCellDefDirective, useExisting: CqWebhookCellDirective }],
+})
+export class CqWebhookCellDirective extends CqCellDefDirective<WebhookEndpointView> {
+  // Inherits ngTemplateContextGuard from base class
+}
+
 @Component({
   selector: 'cq-webhooks-page',
-  imports: [],
+  imports: [
+    DatePipe,
+    Field,
+    DataGrid,
+    CqColumnComponent,
+    CqWebhookCellDirective,
+    CqFormFieldComponent,
+    CqInputDirective,
+    CqSelectDirective,
+    CqContextMenuComponent,
+    CqContextMenuItemDirective,
+  ],
   providers: [WebhooksStore],
   templateUrl: './webhooks-page.html',
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -25,6 +95,110 @@ export class WebhooksPage {
   readonly endpoints = this.store.endpoints;
   readonly loading = this.store.loading;
   readonly error = this.store.lastError;
+  readonly rotatedSecret = this.store.rotatedSecret;
+
+  readonly filterModel = signal(createDefaultFilters());
+  readonly filterForm = form(this.filterModel, () => {});
+  readonly statusOptions = STATUS_OPTIONS;
+
+  private readonly filterSignature = computed(() => {
+    const model = this.filterModel();
+    return `${model.hookKey}|${model.jobKey}|${model.status}|${model.environment}`;
+  });
+
+  readonly pageSize = signal(25);
+  readonly pageIndex = linkedSignal(() => {
+    this.filterSignature();
+    return 0;
+  });
+
+  readonly environmentOptions = computed<ReadonlyArray<OptionEntry>>(() => {
+    const entries = new Set<string>();
+    this.endpoints().forEach((endpoint) => {
+      if (endpoint.environment) {
+        entries.add(endpoint.environment);
+      }
+    });
+    const sorted = Array.from(entries).sort();
+    return [{ value: ALL_ENVIRONMENTS, label: 'All environments' }].concat(
+      sorted.map((value) => ({ value, label: value })),
+    );
+  });
+
+  readonly filteredEndpoints = computed(() => {
+    const filters = this.filterModel();
+    const hookFilter = filters.hookKey.trim().toLowerCase();
+    const jobFilter = filters.jobKey.trim().toLowerCase();
+    const statusFilter = filters.status === 'all' ? '' : filters.status;
+    const environmentFilter = filters.environment === ALL_ENVIRONMENTS ? '' : filters.environment;
+
+    return this.endpoints().filter((endpoint) => {
+      if (hookFilter && !endpoint.hookKey.toLowerCase().includes(hookFilter)) {
+        return false;
+      }
+      if (jobFilter && !endpoint.jobKey.toLowerCase().includes(jobFilter)) {
+        return false;
+      }
+      if (statusFilter && endpoint.status !== statusFilter) {
+        return false;
+      }
+      if (environmentFilter && endpoint.environment !== environmentFilter) {
+        return false;
+      }
+      return true;
+    });
+  });
+
+  readonly pageInfo = computed(() =>
+    buildPageInfo(this.filteredEndpoints().length, this.pageIndex(), this.pageSize()),
+  );
+
+  readonly pagedEndpoints = computed(() => {
+    const info = this.pageInfo();
+    if (info.total === 0) {
+      return [];
+    }
+    const startIndex = info.pageIndex * this.pageSize();
+    return this.filteredEndpoints().slice(startIndex, startIndex + this.pageSize());
+  });
+
+  readonly pageSummary = computed(() => {
+    const info = this.pageInfo();
+    if (info.total === 0) {
+      return '0 results';
+    }
+    return `Showing ${info.start}-${info.end} of ${info.total}`;
+  });
+
+  readonly pageLabel = computed(() => {
+    const info = this.pageInfo();
+    if (info.total === 0) {
+      return 'Page 0 of 0';
+    }
+    return `Page ${info.pageIndex + 1} of ${info.pageCount}`;
+  });
+
+  readonly isFirstPage = computed(() => this.pageInfo().pageIndex <= 0);
+  readonly isLastPage = computed(() => {
+    const info = this.pageInfo();
+    return info.pageCount === 0 || info.pageIndex >= info.pageCount - 1;
+  });
+
+  readonly filtersActive = computed(() => {
+    const model = this.filterModel();
+    return (
+      model.hookKey.trim().length > 0
+      || model.jobKey.trim().length > 0
+      || model.status !== 'all'
+      || model.environment !== ALL_ENVIRONMENTS
+    );
+  });
+
+  webhookRowKey = (row: WebhookEndpointView, index: number) =>
+    `${row.environment}:${row.hookKey || `webhook-${index}`}`;
+
+  webhookRowClasses = (row: WebhookEndpointView) =>
+    row.status === 'active' ? undefined : ['opacity-80'];
 
   private createDialogData(endpoint: UpsertWebhookEndpointRequest | null): WebhookDialogData {
     return {
@@ -87,4 +261,123 @@ export class WebhooksPage {
     }
     return `IP Whitelist: ${count} rule${count === 1 ? '' : 's'}`;
   }
+
+  statusLabel(status: WebhookEndpointView['status']): string {
+    if (status === 'active') {
+      return 'Active';
+    }
+    if (status === 'degraded') {
+      return 'Degraded';
+    }
+    return 'Paused';
+  }
+
+  requestsPerMinuteLabel(endpoint: WebhookEndpointView): string {
+    return typeof endpoint.requestsPerMinute === 'number'
+      ? String(endpoint.requestsPerMinute)
+      : 'Default';
+  }
+
+  resetFilters(): void {
+    this.filterModel.set(createDefaultFilters());
+  }
+
+  previousPage(): void {
+    if (this.isFirstPage()) {
+      return;
+    }
+    this.pageIndex.update((value) => Math.max(0, value - 1));
+  }
+
+  nextPage(): void {
+    if (this.isLastPage()) {
+      return;
+    }
+    this.pageIndex.update((value) => value + 1);
+  }
+
+  dismissRotatedSecret(): void {
+    this.store.clearRotatedSecret();
+  }
+
+  copyRotatedSecret(): void {
+    const secret = this.rotatedSecret();
+    if (!secret) {
+      return;
+    }
+    if (!navigator.clipboard?.writeText) {
+      console.error('Clipboard API unavailable for webhook secret copy.');
+      return;
+    }
+    navigator.clipboard.writeText(secret).catch((error: unknown) => {
+      console.error('Unable to copy webhook secret', error);
+    });
+  }
+
+  rotateSecret(endpoint: WebhookEndpointView): void {
+    if (!confirm(`Rotate secret for ${endpoint.hookKey}?`)) {
+      return;
+    }
+    const tenantId = this.tenantContext.tenantId();
+    const environment = this.tenantContext.environment();
+    if (!tenantId) {
+      return;
+    }
+    this.store.rotateSecret(
+      {
+        tenantId,
+        environment,
+        hookKey: endpoint.hookKey,
+      },
+      {
+        activateInSeconds: null,
+        gracePeriodSeconds: null,
+        notes: null,
+      },
+    );
+  }
+
+  deleteEndpoint(endpoint: WebhookEndpointView): void {
+    if (!confirm(`Delete webhook ${endpoint.hookKey}?`)) {
+      return;
+    }
+    const tenantId = this.tenantContext.tenantId();
+    const environment = this.tenantContext.environment();
+    if (!tenantId) {
+      return;
+    }
+    this.store.deleteEndpoint({
+      tenantId,
+      environment,
+      hookKey: endpoint.hookKey,
+    });
+  }
+}
+
+function createDefaultFilters(): WebhookFilterModel {
+  return {
+    hookKey: '',
+    jobKey: '',
+    status: 'all',
+    environment: ALL_ENVIRONMENTS,
+  };
+}
+
+function buildPageInfo(total: number, pageIndex: number, pageSize: number): PageInfo {
+  if (total <= 0 || pageSize <= 0) {
+    return EMPTY_PAGE_INFO;
+  }
+
+  const pageCount = Math.ceil(total / pageSize);
+  const safeIndex = Math.min(Math.max(pageIndex, 0), pageCount - 1);
+  const start = safeIndex * pageSize + 1;
+  const end = Math.min(total, start + pageSize - 1);
+
+  return {
+    total,
+    pageIndex: safeIndex,
+    pageCount,
+    start,
+    end,
+  };
 }

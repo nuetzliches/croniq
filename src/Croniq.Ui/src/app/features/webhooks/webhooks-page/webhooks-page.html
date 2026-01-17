@@ -1,77 +1,241 @@
 <div class="flex h-full flex-col space-y-6">
   <!-- Header / Controls -->
   <header class="flex flex-wrap items-center justify-between gap-4">
-    <h1 class="text-lg font-semibold text-primary">Webhook Endpoints</h1>
-    <button
-      type="button"
-      (click)="openWebhookDialog()"
-      class="rounded-lg bg-accent px-4 py-2 text-sm font-semibold text-white transition hover:bg-accent-hover"
-    >
-      Register Endpoint
-    </button>
+    <div>
+      <h1 class="text-lg font-semibold text-primary">Webhook Endpoints</h1>
+      <p class="text-xs text-muted">Manage inbound webhook triggers, secrets, and policies.</p>
+    </div>
+    <div class="flex items-center gap-2">
+      <button
+        type="button"
+        (click)="refresh()"
+        class="rounded-lg border border-white/10 bg-white/5 px-4 py-2 text-sm font-semibold text-primary transition hover:border-accent hover:text-accent"
+        [disabled]="loading()"
+      >
+        {{ loading() ? 'Refreshing...' : 'Refresh' }}
+      </button>
+      <button
+        type="button"
+        (click)="openWebhookDialog()"
+        class="rounded-lg bg-accent px-4 py-2 text-sm font-semibold text-white transition hover:bg-accent-hover"
+      >
+        Register Endpoint
+      </button>
+    </div>
   </header>
+
+  @if (rotatedSecret()) {
+    <div class="rounded-xl border border-white/10 bg-surface-alt p-4 text-sm">
+      <div class="flex flex-wrap items-center justify-between gap-3">
+        <div class="space-y-1">
+          <p class="font-semibold text-primary">New secret generated</p>
+          <p class="text-xs text-muted">Copy it now. It will not be shown again.</p>
+        </div>
+        <div class="flex items-center gap-2">
+          <button
+            type="button"
+            (click)="copyRotatedSecret()"
+            class="rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-xs font-semibold text-primary transition hover:border-accent hover:text-accent"
+          >
+            Copy
+          </button>
+          <button
+            type="button"
+            (click)="dismissRotatedSecret()"
+            class="rounded-lg px-3 py-1.5 text-xs font-semibold text-muted hover:text-primary"
+          >
+            Dismiss
+          </button>
+        </div>
+      </div>
+      <code
+        class="mt-3 block truncate rounded-lg border border-white/10 bg-black/30 px-3 py-2 text-xs text-white"
+      >
+        {{ rotatedSecret() }}
+      </code>
+    </div>
+  }
+
+  <div class="rounded-xl border border-white/10 bg-surface-alt shadow-card">
+    <div class="px-6 py-4">
+      <div class="grid gap-4 md:grid-cols-4">
+        <cq-form-field label="Hook key" forId="filter-hook-key">
+          <input
+            id="filter-hook-key"
+            type="search"
+            placeholder="Search hook key"
+            cqInput
+            [field]="filterForm.hookKey"
+          />
+        </cq-form-field>
+        <cq-form-field label="Job key" forId="filter-job-key">
+          <input
+            id="filter-job-key"
+            type="search"
+            placeholder="Search job key"
+            cqInput
+            [field]="filterForm.jobKey"
+          />
+        </cq-form-field>
+        <cq-form-field label="Status" forId="filter-status">
+          <select id="filter-status" cqSelect [field]="filterForm.status">
+            @for (option of statusOptions; track option.value) {
+              <option [value]="option.value">{{ option.label }}</option>
+            }
+          </select>
+        </cq-form-field>
+        <cq-form-field label="Environment" forId="filter-environment">
+          <select id="filter-environment" cqSelect [field]="filterForm.environment">
+            @for (option of environmentOptions(); track option.value) {
+              <option [value]="option.value">{{ option.label }}</option>
+            }
+          </select>
+        </cq-form-field>
+      </div>
+    </div>
+    <div
+      class="flex flex-wrap items-center justify-between gap-3 border-t border-white/10 px-6 py-3 text-xs text-muted"
+    >
+      <span>{{ pageSummary() }}</span>
+      <div class="flex flex-wrap items-center gap-2">
+        <button
+          type="button"
+          (click)="resetFilters()"
+          class="rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-xs font-semibold text-primary transition hover:border-accent hover:text-accent disabled:opacity-50 disabled:cursor-not-allowed"
+          [disabled]="!filtersActive()"
+        >
+          Reset filters
+        </button>
+        <div class="flex items-center gap-2">
+          <button
+            type="button"
+            (click)="previousPage()"
+            class="rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-xs font-semibold text-primary transition hover:border-accent hover:text-accent disabled:opacity-50 disabled:cursor-not-allowed"
+            [disabled]="isFirstPage()"
+          >
+            Previous
+          </button>
+          <span>{{ pageLabel() }}</span>
+          <button
+            type="button"
+            (click)="nextPage()"
+            class="rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-xs font-semibold text-primary transition hover:border-accent hover:text-accent disabled:opacity-50 disabled:cursor-not-allowed"
+            [disabled]="isLastPage()"
+          >
+            Next
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
 
   <!-- Content -->
   <div class="flex-1 overflow-hidden rounded-xl border border-white/10 bg-surface-alt shadow-card">
-    <div class="overflow-x-auto">
-      <table class="w-full text-left text-sm">
-        <thead class="bg-white/5 text-xs uppercase text-muted">
-          <tr>
-            <th class="px-6 py-3 font-medium">Hook Key</th>
-            <th class="px-6 py-3 font-medium">Target Job</th>
-            <th class="px-6 py-3 font-medium">Security</th>
-            <th class="px-6 py-3 font-medium text-right">Actions</th>
-          </tr>
-        </thead>
-        <tbody class="divide-y divide-white/10">
-          @if (loading()) {
-          <tr>
-            <td colspan="4" class="px-6 py-8 text-center text-muted">Loading endpoints...</td>
-          </tr>
-          } @else if (endpoints().length === 0) {
-          <tr>
-            <td colspan="4" class="px-6 py-8 text-center text-muted">No endpoints found.</td>
-          </tr>
-          } @else { @for (endpoint of endpoints(); track endpoint.hookKey) {
-          <tr class="hover:bg-white/5">
-            <td class="px-6 py-4 font-medium text-primary">{{ endpoint.hookKey }}</td>
-            <td class="px-6 py-4 text-muted">{{ endpoint.jobKey }}</td>
-            <td class="px-6 py-4">
-              <div class="flex flex-col gap-1">
-                @if (endpoint.requireSignature) {
-                <span
-                  class="inline-flex w-fit items-center rounded-full bg-success/10 px-2 py-0.5 text-xs font-medium text-success"
-                >
-                  Signed
-                </span>
-                } @else {
-                <span
-                  class="inline-flex w-fit items-center rounded-full bg-warning/10 px-2 py-0.5 text-xs font-medium text-warning"
-                >
-                  Unsigned
-                </span>
-                }
-                <span class="text-xs text-muted">{{ ipWhitelistLabel(endpoint) }}</span>
-              </div>
-            </td>
-            <td class="px-6 py-4 text-right">
-              <div class="flex justify-end gap-2">
-                <button
-                  (click)="openWebhookDialog(endpoint)"
-                  class="text-xs font-medium text-primary hover:text-accent"
-                >
-                  Edit
-                </button>
-                <button class="text-xs font-medium text-accent hover:text-accent-hover">
-                  Rotate Secret
-                </button>
-                <button class="text-xs font-medium text-muted hover:text-primary">IP Rules</button>
-              </div>
-            </td>
-          </tr>
-          } }
-        </tbody>
-      </table>
-    </div>
+    @if (error()) {
+      <div class="border-b border-white/10 bg-danger/10 px-4 py-3 text-sm text-danger">
+        {{ error() }}
+      </div>
+    }
+    <cq-data-grid
+      class="h-[560px]"
+      [rows]="pagedEndpoints()"
+      [rowKey]="webhookRowKey"
+      [bufferPx]="256"
+      [estimatedRowHeightPx]="56"
+      [loading]="loading()"
+      [rowClasses]="webhookRowClasses"
+    >
+      <cq-column header="Endpoint" width="18rem">
+        <ng-template cqWebhookCell let-row>
+          <div class="min-w-0">
+            <div class="truncate text-sm font-semibold text-primary">{{ row.hookKey }}</div>
+            <div class="truncate text-xs font-mono text-muted">{{ row.environment }}</div>
+          </div>
+        </ng-template>
+      </cq-column>
+
+      <cq-column header="Target Job" width="16rem">
+        <ng-template cqWebhookCell let-row>
+          <span class="truncate text-sm text-muted">{{ row.jobKey }}</span>
+        </ng-template>
+      </cq-column>
+
+      <cq-column header="Status" width="8rem" align="center">
+        <ng-template cqWebhookCell let-row>
+          <span
+            class="inline-flex items-center rounded-full px-2 py-1 text-xs font-medium"
+            [class.bg-success/10]="row.status === 'active'"
+            [class.text-success]="row.status === 'active'"
+            [class.bg-warning/10]="row.status === 'degraded'"
+            [class.text-warning]="row.status === 'degraded'"
+            [class.bg-white/10]="row.status === 'paused'"
+            [class.text-muted]="row.status === 'paused'"
+          >
+            {{ statusLabel(row.status) }}
+          </span>
+        </ng-template>
+      </cq-column>
+
+      <cq-column header="Security" width="12rem">
+        <ng-template cqWebhookCell let-row>
+          <div class="flex flex-col gap-1">
+            @if (row.requireSignature) {
+              <span
+                class="inline-flex w-fit items-center rounded-full bg-success/10 px-2 py-0.5 text-xs font-medium text-success"
+              >
+                Signed
+              </span>
+            } @else {
+              <span
+                class="inline-flex w-fit items-center rounded-full bg-warning/10 px-2 py-0.5 text-xs font-medium text-warning"
+              >
+                Unsigned
+              </span>
+            }
+            <span class="text-xs text-muted">{{ ipWhitelistLabel(row) }}</span>
+          </div>
+        </ng-template>
+      </cq-column>
+
+      <cq-column header="RPM" width="6rem" align="end">
+        <ng-template cqWebhookCell let-row>
+          <span class="text-sm text-muted">
+            {{ requestsPerMinuteLabel(row) }}
+          </span>
+        </ng-template>
+      </cq-column>
+
+      <cq-column header="Last Delivery" width="12rem">
+        <ng-template cqWebhookCell let-row>
+          <span class="text-xs text-muted">{{ row.lastDeliveryAt | date: 'short' }}</span>
+        </ng-template>
+      </cq-column>
+
+      <cq-column width="4rem" align="end">
+        <ng-template cqWebhookCell let-row>
+          <div class="flex items-center justify-end">
+            <cq-context-menu ariaLabel="Open webhook actions">
+              <button type="button" cqContextMenuItem (click)="openWebhookDialog(row)">
+                Edit
+              </button>
+              <button type="button" cqContextMenuItem (click)="rotateSecret(row)">
+                Rotate secret
+              </button>
+              <button type="button" cqContextMenuItem [disabled]="true">
+                IP rules
+              </button>
+              <button
+                type="button"
+                cqContextMenuItem
+                class="text-danger hover:text-danger"
+                (click)="deleteEndpoint(row)"
+              >
+                Delete
+              </button>
+            </cq-context-menu>
+          </div>
+        </ng-template>
+      </cq-column>
+    </cq-data-grid>
   </div>
 </div>

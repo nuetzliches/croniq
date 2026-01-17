@@ -169,7 +169,6 @@ Docs checklist moved to `CHECKLIST-DOCS.md`.
   - [x] Sample: neues `samples/Croniq.Sample.Dmz` (DMZ-Host + DMZ-DB + Admin-API) inkl. Konfig-Beispielen fuer Remote-Mode und Relay-Worker.
   - [x] Doku: `docs/deep-dive/architecture.md` und Deployment-Guide um DMZ-Topologie, Netzpfade und Sicherheitsannahmen erweitern.
 - [x] Fremdsprachige Clients als Job-Runner (Go/Node/Python): Lösungsweg definieren und planen. (2025-12-26)
-
   - Echtes Worker-Protokoll (Claim/Heartbeat/Ack/Logs) + SDKs, damit fremdsprachige Prozesse Jobs direkt ausführen können.
   - Abhängigkeiten: Runner-Identität/Secrets, Availability-Status, Policy/Lease-Semantik, Tenant/Environment-Scoping.
 

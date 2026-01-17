@@ -222,6 +222,10 @@ export class WebhooksStore {
         this.rotatedSecretSignal.set(null);
     }
 
+    clearRotatedSecret(): void {
+        this.rotatedSecretSignal.set(null);
+    }
+
     refreshEndpoints(params: TenantEnvironmentParams): void {
         const tenantId = params.tenantId.trim();
         if (!tenantId) {
