@@ -1,10 +1,10 @@
 import { DatePipe } from '@angular/common';
 import { ChangeDetectionStrategy, Component, Directive, computed, effect, inject, signal } from '@angular/core';
 import { epochMsFromIso, nowMs } from '@core/time/clock';
-import { ScheduleSummary, UpsertScheduleRequest } from '@croniq/api-schema';
+import { UpsertScheduleRequest } from '@croniq/api-schema';
 import { ScheduleDialogComponent } from '@features/schedules/components/schedule-dialog/schedule-dialog.component';
 import { ColumnCellContext, CqCellDefDirective, CqColumnComponent, DataGrid } from 'ui-kit';
-import { SchedulesStore } from './schedules.store';
+import { SchedulesStore, type ScheduleRow } from './schedules.store';
 
 type ScheduleCalendarEntry = {
   entryId: string;
@@ -12,6 +12,7 @@ type ScheduleCalendarEntry = {
   name: string;
   cron: string;
   timezone: string;
+  calendarLabel: string;
   stateLabel: string;
   isActive: boolean;
   timeLabel: string;
@@ -42,7 +43,7 @@ const CALENDAR_DAY_COUNT = 7;
   selector: '[cqScheduleCell]',
   providers: [{ provide: CqCellDefDirective, useExisting: CqScheduleCellDirective }],
 })
-export class CqScheduleCellDirective extends CqCellDefDirective<ScheduleSummary> {
+export class CqScheduleCellDirective extends CqCellDefDirective<ScheduleRow> {
   // Inherits ngTemplateContextGuard from base class
 }
 
@@ -68,6 +69,7 @@ export class SchedulesPage {
   calendarOptions = this.store.calendarOptions;
   calendarOptionsLoading = this.store.calendarOptionsLoading;
   calendarOptionsError = this.store.calendarOptionsError;
+  calendarOptionsPermissionDenied = this.store.calendarOptionsPermissionDenied;
 
   deadLetters = this.store.scheduleDeadLetters;
   deadLettersLoading = this.store.scheduleDeadLettersLoading;
@@ -142,9 +144,9 @@ export class SchedulesPage {
     this.calendarOffsetWeeks.set(0);
   }
 
-  scheduleRowKey = (row: ScheduleSummary, index: number) => row.id ?? `schedule-${index}`;
+  scheduleRowKey = (row: ScheduleRow, index: number) => row.id ?? `schedule-${index}`;
 
-  scheduleRowClasses = (row: ScheduleSummary) =>
+  scheduleRowClasses = (row: ScheduleRow) =>
     row.state === 'active' ? undefined : ['opacity-80'];
 
   createSchedule() {
@@ -152,7 +154,7 @@ export class SchedulesPage {
     this.showDialog.set(true);
   }
 
-  editSchedule(schedule: ScheduleSummary) {
+  editSchedule(schedule: ScheduleRow) {
     this.loadingDetailId.set(schedule.id);
     this.store.refreshScheduleDetail(schedule.id);
   }
@@ -194,7 +196,7 @@ const MONTH_LABELS = [
 ] as const;
 
 function buildCalendarModel(
-  schedules: ReadonlyArray<ScheduleSummary>,
+  schedules: ReadonlyArray<ScheduleRow>,
   startMs: number,
   dayCount: number,
   todayMs: number,
@@ -260,7 +262,7 @@ function buildCalendarModel(
 }
 
 function buildCalendarEntry(
-  schedule: ScheduleSummary,
+  schedule: ScheduleRow,
   index: number,
   fireAtMs: number | null,
 ): ScheduleCalendarEntry {
@@ -268,6 +270,7 @@ function buildCalendarEntry(
   const name = schedule.name?.trim() || scheduleId;
   const cron = schedule.cron?.trim() || 'n/a';
   const timezone = schedule.timezone?.trim() || 'UTC';
+  const calendarLabel = schedule.calendarLabel;
   const isActive = schedule.state === 'active';
   const timeLabel = fireAtMs == null ? 'n/a' : formatTimeLabel(fireAtMs);
   const entryId = fireAtMs == null ? `${scheduleId}:unscheduled` : `${scheduleId}:${fireAtMs}`;
@@ -278,6 +281,7 @@ function buildCalendarEntry(
     name,
     cron,
     timezone,
+    calendarLabel,
     stateLabel: isActive ? 'Active' : 'Paused',
     isActive,
     timeLabel,

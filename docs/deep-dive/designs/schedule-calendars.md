@@ -1,6 +1,6 @@
-# Schedule Calendars (Quartz-like)
+# Schedule Calendars
 
-This document describes the planned schedule calendar feature that mirrors Quartz.NET's calendar concept: a separate entity that includes or excludes candidate fire times for schedules.
+This document describes the planned schedule calendar feature: a separate entity that includes or excludes candidate fire times for schedules.
 
 ## Goals
 

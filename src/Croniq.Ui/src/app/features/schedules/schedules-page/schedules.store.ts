@@ -23,6 +23,11 @@ export type ScheduleDetail = {
     state?: string;
 };
 
+export type ScheduleRow = ScheduleSummary & {
+    calendarId?: string;
+    calendarLabel: string;
+};
+
 export type CalendarOption = {
     calendarId: string;
     label: string;
@@ -50,7 +55,7 @@ export class SchedulesStore {
     private readonly api = inject<CroniqApiClient>(CRONIQ_API_CLIENT);
     private readonly tenantContext = inject(TenantContextService);
 
-    private readonly schedulesSignal = signal<ReadonlyArray<ScheduleSummary>>([]);
+    private readonly schedulesSignal = signal<ReadonlyArray<ScheduleRow>>([]);
     private readonly lastUpdatedSignal = signal<string>(nowIso());
     readonly error = signal<string | null>(null);
 
@@ -99,6 +104,7 @@ export class SchedulesStore {
 
     private readonly calendarOptionsSignal = signal<ReadonlyArray<CalendarOption>>([]);
     private readonly calendarOptionsErrorSignal = signal<string | null>(null);
+    private readonly calendarOptionsPermissionDeniedSignal = signal(false);
     private readonly calendarOptionsResource = tenantRxResource<CalendarResponse[], { tenantId: string; environment: string }>({
         command: 'schedules.list-calendars',
         defaultValue: [],
@@ -108,11 +114,13 @@ export class SchedulesStore {
         },
         stream: ({ params, requestOptions }) => {
             this.calendarOptionsErrorSignal.set(null);
+            this.calendarOptionsPermissionDeniedSignal.set(false);
 
             const tenantId = params.tenantId.trim();
             const environment = params.environment.trim();
             if (!tenantId) {
                 this.calendarOptionsErrorSignal.set('Required context is missing - unable to load calendars.');
+                this.calendarOptionsPermissionDeniedSignal.set(false);
                 this.calendarOptionsSignal.set([]);
                 return of([]);
             }
@@ -131,8 +139,10 @@ export class SchedulesStore {
                     });
                     if (authFailure) {
                         this.calendarOptionsErrorSignal.set(authFailure.message);
+                        this.calendarOptionsPermissionDeniedSignal.set(authFailure.kind === 'forbidden');
                     } else {
                         this.calendarOptionsErrorSignal.set('Unable to load calendars from API.');
+                        this.calendarOptionsPermissionDeniedSignal.set(false);
                     }
                     this.calendarOptionsSignal.set([]);
                     return of([]);
@@ -299,6 +309,7 @@ export class SchedulesStore {
     readonly calendarOptions = this.calendarOptionsSignal.asReadonly();
     readonly calendarOptionsLoading = computed(() => this.calendarOptionsResource.isLoading());
     readonly calendarOptionsError = this.calendarOptionsErrorSignal.asReadonly();
+    readonly calendarOptionsPermissionDenied = this.calendarOptionsPermissionDeniedSignal.asReadonly();
 
     refresh(): void {
         this.schedulesResource.reload();
@@ -475,7 +486,13 @@ export class SchedulesStore {
     }
 }
 
-function mapToSummary(response: ScheduleResponse): ScheduleSummary {
+function mapToSummary(response: ScheduleResponse): ScheduleRow {
+    const calendarId =
+        typeof response.calendarId === 'string' && response.calendarId.trim()
+            ? response.calendarId.trim()
+            : undefined;
+    const calendarLabel = calendarId ?? 'No calendar';
+
     return {
         id: response.triggerId ?? '',
         name: response.jobKey ?? response.triggerId ?? 'Unknown Job',
@@ -488,6 +505,8 @@ function mapToSummary(response: ScheduleResponse): ScheduleSummary {
         lastDurationMs: 0,
         alerts: 0,
         tags: [],
+        calendarId,
+        calendarLabel,
     };
 }
 

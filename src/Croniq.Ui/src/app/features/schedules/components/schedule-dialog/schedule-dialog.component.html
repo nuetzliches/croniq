@@ -75,7 +75,12 @@
             @if (calendarOptionsLoading()) {
               <p class="mt-1 text-xs text-muted">Loading calendars...</p>
             }
-            @if (calendarOptionsError()) {
+            @if (calendarOptionsPermissionDenied()) {
+              <p class="mt-1 text-xs text-muted">
+                Calendar access denied. Ask an administrator to grant calendars:read.
+              </p>
+            }
+            @if (calendarOptionsError() && !calendarOptionsPermissionDenied()) {
               <p class="mt-1 text-xs text-danger">{{ calendarOptionsError() }}</p>
             }
             @if (showCalendarEmptyState()) {

@@ -17,7 +17,7 @@ Schedules run in UTC by default. Persisted triggers store the cron expression pl
 
 ## Calendars
 
-Croniq supports Quartz-like calendars as separate entities that include or exclude candidate fire times. Attach a calendar by setting `calendarId` on the schedule upsert and manage calendar definitions via `/tenants/{tenantId}/calendars`. For rule types, evaluation semantics, and constraints, see `docs/deep-dive/designs/schedule-calendars.md`.
+Croniq supports schedule calendars as separate entities that include or exclude candidate fire times. Attach a calendar by setting `calendarId` on the schedule upsert and manage calendar definitions via `/tenants/{tenantId}/calendars`. For rule types, evaluation semantics, and constraints, see `docs/deep-dive/designs/schedule-calendars.md`.
 
 ## Seed Triggers via Configuration
 

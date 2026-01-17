@@ -1,18 +1,18 @@
 import { provideZonelessChangeDetection, signal } from '@angular/core';
 import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { nowIso } from '@core/time/clock';
-import { ScheduleSummary } from '@croniq/api-schema';
 import { SchedulesPage } from './schedules-page';
-import { SchedulesStore } from './schedules.store';
+import { ScheduleRow, SchedulesStore } from './schedules.store';
 
 class SchedulesStoreStub {
-  readonly schedules = signal<ReadonlyArray<ScheduleSummary>>([]);
+  readonly schedules = signal<ReadonlyArray<ScheduleRow>>([]);
   readonly loading = signal(false);
   readonly error = signal<string | null>(null);
   readonly lastUpdated = signal(nowIso());
   readonly calendarOptions = signal<ReadonlyArray<{ calendarId: string; label: string }>>([]);
   readonly calendarOptionsLoading = signal(false);
   readonly calendarOptionsError = signal<string | null>(null);
+  readonly calendarOptionsPermissionDenied = signal(false);
 
   readonly scheduleDetail = signal<unknown | null>(null);
   readonly scheduleDetailLoading = signal(false);

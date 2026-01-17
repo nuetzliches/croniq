@@ -1,7 +1,7 @@
 import { DialogRef, DIALOG_DATA } from '@angular/cdk/dialog';
 import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@angular/core';
 import { Field, form, required, submit } from '@angular/forms/signals';
-import { CalendarRuleDefinition as CalendarRuleDefinitionSchema } from '@croniq/api-schema';
+import { CalendarRuleDefinitionLooseSchema } from '@croniq/api-schema';
 import type { CalendarMode, CalendarRuleDefinition, CroniqCalendarSeedDefinition } from '@croniq/api-schema';
 
 type CalendarDialogData = CroniqCalendarSeedDefinition | null;
@@ -73,12 +73,20 @@ function parseRulesJson(value: string): RulesParseResult {
         return { rules: [], error: 'Rules must be a JSON array.' };
     }
 
-    const result = CalendarRuleDefinitionSchema.array().safeParse(parsed);
+    const result = CalendarRuleDefinitionLooseSchema.array().safeParse(parsed);
     if (!result.success) {
         return { rules: [], error: 'Rules JSON does not match the expected schema.' };
     }
+    const normalized = result.data.map((rule) => ({
+        ...rule,
+        dailyWindow: rule.dailyWindow ?? undefined,
+        weeklyWindow: rule.weeklyWindow ?? undefined,
+        annualDateList: rule.annualDateList ?? undefined,
+        dateList: rule.dateList ?? undefined,
+        cronRule: rule.cronRule ?? undefined,
+    }));
 
-    return { rules: result.data, error: null };
+    return { rules: normalized, error: null };
 }
 
 function normalizeCalendarMode(value: unknown): CalendarMode {

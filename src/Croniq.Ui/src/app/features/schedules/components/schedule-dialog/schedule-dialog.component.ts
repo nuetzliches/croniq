@@ -1,5 +1,5 @@
 import { ChangeDetectionStrategy, Component, computed, input, linkedSignal, output } from '@angular/core';
-import { Field, form, required, submit } from '@angular/forms/signals';
+import { disabled, Field, form, required, submit } from '@angular/forms/signals';
 import { UpsertScheduleRequest } from '@croniq/api-schema';
 import type { CalendarOption } from '@features/schedules/schedules-page/schedules.store';
 
@@ -50,6 +50,7 @@ export class ScheduleDialogComponent {
     readonly calendarOptions = input<ReadonlyArray<CalendarOption>>([]);
     readonly calendarOptionsLoading = input(false);
     readonly calendarOptionsError = input<string | null>(null);
+    readonly calendarOptionsPermissionDenied = input(false);
 
     readonly save = output<UpsertScheduleRequest>();
     readonly closeDialog = output<void>();
@@ -61,6 +62,7 @@ export class ScheduleDialogComponent {
     readonly scheduleForm = form(this.model, (f) => {
         required(f.jobKey);
         required(f.cronExpression);
+        disabled(f.calendarId, () => this.calendarOptionsLoading() || this.calendarOptionsPermissionDenied());
     });
 
     readonly calendarOptionsEmpty = computed(() => this.calendarOptions().length === 0);
@@ -70,6 +72,9 @@ export class ScheduleDialogComponent {
             return false;
         }
         if (this.calendarOptionsError()) {
+            return false;
+        }
+        if (this.calendarOptionsPermissionDenied()) {
             return false;
         }
         const selected = this.model().calendarId.trim();
@@ -99,6 +104,9 @@ export class ScheduleDialogComponent {
             return false;
         }
         if (this.calendarOptionsError()) {
+            return false;
+        }
+        if (this.calendarOptionsPermissionDenied()) {
             return false;
         }
         return this.calendarOptionsEmpty();

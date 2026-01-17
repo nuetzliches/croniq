@@ -72,6 +72,12 @@
         <cq-column header="Trigger ID" key="id" width="18rem" />
         <cq-column header="Job" key="name" width="16rem" />
         <cq-column header="Cron" key="cron" width="12rem" />
+
+        <cq-column header="Calendar" width="12rem">
+          <ng-template cqScheduleCell let-row>
+            <span class="truncate text-xs text-muted font-mono">{{ row.calendarLabel }}</span>
+          </ng-template>
+        </cq-column>
         
         <cq-column header="Next Fire" width="12rem">
           <ng-template cqScheduleCell let-row>
@@ -195,6 +201,9 @@
                           <div class="min-w-0">
                             <div class="truncate text-xs font-semibold text-primary">{{ entry.name }}</div>
                             <div class="truncate text-[10px] text-muted font-mono">{{ entry.cron }}</div>
+                            <div class="truncate text-[10px] text-muted font-mono">
+                              Calendar: {{ entry.calendarLabel }}
+                            </div>
                           </div>
                           <div class="text-xs text-muted">{{ entry.timeLabel }}</div>
                         </div>
@@ -232,6 +241,9 @@
                   <div class="rounded-lg border border-white/10 bg-white/5 px-3 py-2">
                     <div class="text-xs font-semibold text-primary">{{ entry.name }}</div>
                     <div class="mt-1 text-[10px] text-muted font-mono">{{ entry.cron }}</div>
+                    <div class="mt-1 text-[10px] text-muted font-mono">
+                      Calendar: {{ entry.calendarLabel }}
+                    </div>
                     <div class="mt-2 flex items-center justify-between text-[10px] text-muted">
                       <span
                         class="inline-flex items-center rounded-full px-2 py-0.5 font-semibold uppercase tracking-wide"
@@ -363,6 +375,7 @@
     [calendarOptions]="calendarOptions()"
     [calendarOptionsLoading]="calendarOptionsLoading()"
     [calendarOptionsError]="calendarOptionsError()"
+    [calendarOptionsPermissionDenied]="calendarOptionsPermissionDenied()"
     (save)="onSave($event)"
     (closeDialog)="onCancel()"
   ></app-schedule-dialog>
