@@ -152,6 +152,29 @@
     </div>
   </div>
 
+  <div class="grid gap-3 md:grid-cols-4">
+    <div class="rounded-xl border border-white/10 bg-surface-alt p-4 shadow-card">
+      <p class="text-xs text-muted">Success rate</p>
+      <p class="mt-1 text-xl font-semibold text-primary">{{ kpiSuccessRate() }}</p>
+      <p class="mt-1 text-[11px] text-muted">Derived from dead letters vs endpoints.</p>
+    </div>
+    <div class="rounded-xl border border-white/10 bg-surface-alt p-4 shadow-card">
+      <p class="text-xs text-muted">Latency (p95)</p>
+      <p class="mt-1 text-xl font-semibold text-primary">{{ kpiLatency() }}</p>
+      <p class="mt-1 text-[11px] text-muted">Awaiting telemetry aggregation.</p>
+    </div>
+    <div class="rounded-xl border border-white/10 bg-surface-alt p-4 shadow-card">
+      <p class="text-xs text-muted">Rate-limit rejections</p>
+      <p class="mt-1 text-xl font-semibold text-primary">{{ kpiRateLimitRejections() }}</p>
+      <p class="mt-1 text-[11px] text-muted">Telemetry feed pending.</p>
+    </div>
+    <div class="rounded-xl border border-white/10 bg-surface-alt p-4 shadow-card">
+      <p class="text-xs text-muted">Dead letters</p>
+      <p class="mt-1 text-xl font-semibold text-primary">{{ kpiDeadLetters() }}</p>
+      <p class="mt-1 text-[11px] text-muted">Failed deliveries awaiting replay.</p>
+    </div>
+  </div>
+
   @if (readPermissionDenied()) {
     <div class="rounded-xl border border-danger/40 bg-danger/10 px-4 py-3 text-sm text-danger">
       Webhooks read access is blocked. Request webhooks:read to view endpoints.

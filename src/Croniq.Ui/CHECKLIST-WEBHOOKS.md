@@ -44,7 +44,7 @@ _Last updated: 2026-01-18_
 
 ## Phase 5: Observability & insights
 
-- [ ] Webhook KPIs (success rate, latency, rate-limit rejections) and trend tiles.
+- [x] Webhook KPIs (success rate, latency, rate-limit rejections) and trend tiles.
 - [ ] (backlog) Grafana deep-links or embedded panels where available.
 - [ ] (backlog) Audit summary for rotations, IP rule changes, and failed deliveries.
 
