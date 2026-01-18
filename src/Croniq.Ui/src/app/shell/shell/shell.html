@@ -8,8 +8,7 @@
         <div class="text-xs uppercase tracking-wide text-muted">Tenant</div>
         <div class="text-base font-medium">{{ tenantDisplay() }}</div>
       </div>
-      }
-      @if (hasEnvironment()) {
+      } @if (hasEnvironment()) {
       <div class="rounded-xl border border-white/10 bg-white/5 px-4 py-3" aria-live="polite">
         <div class="text-xs uppercase tracking-wide text-muted">Environment</div>
         <div class="text-base font-medium">{{ environmentDisplay() }}</div>
@@ -76,8 +75,19 @@
         }
       </div>
     </header>
-    <main class="flex-1 p-6">
-      <router-outlet />
+    <main class="flex-1">
+      <div class="flex h-full min-h-[calc(100vh-64px)]">
+        <cq-panel-shell
+          [panelTemplate]="panelTemplate()"
+          [title]="panelTitle()"
+          [subtitle]="panelSubtitle()"
+          [open]="panelOpen()"
+          (toggle)="togglePanel()"
+        />
+        <div class="flex-1 p-6">
+          <router-outlet />
+        </div>
+      </div>
     </main>
   </section>
 </div>

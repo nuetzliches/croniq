@@ -8,6 +8,8 @@ import { AppBrand } from '@shared/app-brand/app-brand';
 import { CommandPalette } from '@shared/command-palette/command-palette';
 import { CommandPaletteController } from '@shared/command-palette/command-palette.controller';
 import { StatusBeacon } from '@shared/status-beacon/status-beacon';
+import { ShellPanelService } from '@shell/panel/shell-panel.service';
+import { CqPanelShellComponent } from 'ui-kit';
 import { finalize } from 'rxjs';
 
 type StatusIntent = 'success' | 'warn' | 'neutral';
@@ -20,7 +22,7 @@ type StatusCard = {
 
 @Component({
   selector: 'cq-shell',
-  imports: [RouterLink, RouterLinkActive, RouterOutlet, AppBrand, CommandPalette, StatusBeacon],
+  imports: [RouterLink, RouterLinkActive, RouterOutlet, AppBrand, CommandPalette, StatusBeacon, CqPanelShellComponent],
   templateUrl: './shell.html',
   host: {
     '(window:keydown)': 'handleGlobalPaletteShortcut($event)',
@@ -33,6 +35,7 @@ export class Shell {
   private readonly runtimeConfig = inject(RuntimeConfigService);
   private readonly passwordAuth = inject(PasswordAuthService);
   private readonly router = inject(Router);
+  private readonly panel = inject(ShellPanelService);
 
   readonly tenantDisplay = this.tenantContext.tenantLabel;
   readonly environmentDisplay = this.tenantContext.environment;
@@ -46,6 +49,10 @@ export class Shell {
     { label: 'Clock Δ', value: '+120 ms', intent: 'neutral' },
   ]);
   readonly commandPaletteOpen = this.commandPalette.isOpen;
+  readonly panelTemplate = this.panel.panelTemplate;
+  readonly panelTitle = this.panel.title;
+  readonly panelSubtitle = this.panel.subtitle;
+  readonly panelOpen = this.panel.isOpen;
 
   openCommandPalette(): void {
     this.commandPalette.open();
@@ -74,6 +81,10 @@ export class Shell {
     } else {
       this.openCommandPalette();
     }
+  }
+
+  togglePanel(): void {
+    this.panel.toggle();
   }
 }
 

@@ -7,7 +7,6 @@ import { CreateWebhookIpRuleRequest } from '@croniq/api-schema';
 import { WebhookEndpointView, WebhookIpRuleView, WebhooksStore } from '@features/webhooks/webhooks.store';
 import {
     CqDialogComponent,
-    CqDialogFooterDirective,
     CqDialogHeaderDirective,
     CqFormFieldComponent,
     CqInputDirective,
@@ -29,7 +28,6 @@ type WebhookIpRulesDialogData = {
         Field,
         CqDialogComponent,
         CqDialogHeaderDirective,
-        CqDialogFooterDirective,
         CqFormFieldComponent,
         CqInputDirective,
         CqTextareaDirective,

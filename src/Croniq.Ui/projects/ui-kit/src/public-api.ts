@@ -12,4 +12,5 @@ export * from './lib/forms/form-textarea';
 export * from './lib/forms/form-toggle';
 export * from './lib/confirm-dialog/confirm-dialog';
 export * from './lib/dialog/dialog';
+export * from './lib/panel-shell/panel-shell';
 

@@ -1,5 +1,5 @@
 import { DatePipe } from '@angular/common';
-import { ChangeDetectionStrategy, Component, Directive, computed, effect, inject, linkedSignal, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, Directive, TemplateRef, computed, effect, inject, linkedSignal, signal, viewChild } from '@angular/core';
 import { CdkMenu } from '@angular/cdk/menu';
 import { TenantContextService } from '@core/tenant-context/tenant-context.service';
 import { RuntimeConfigService } from '@core/runtime-config.service';
@@ -7,6 +7,7 @@ import { WebhookDialogComponent } from '@features/webhooks/components/webhook-di
 import { WebhookIpRulesDialogComponent } from '@features/webhooks/components/webhook-ip-rules-dialog/webhook-ip-rules-dialog.component';
 import { WebhookRotateSecretDialogComponent } from '@features/webhooks/components/webhook-rotate-secret-dialog/webhook-rotate-secret-dialog.component';
 import { WebhookCapabilitiesView, WebhookDeadLetterView, WebhookEndpointView, WebhooksStore } from '@features/webhooks/webhooks.store';
+import { ShellPanelService } from '@shell/panel/shell-panel.service';
 import { RotateWebhookSecretRequest, UpsertWebhookEndpointRequest } from '@croniq/api-schema';
 import { Field, form } from '@angular/forms/signals';
 import { CqCellDefDirective, CqColumnComponent, CqConfirmDialogComponent, CqConfirmDialogData, CqContextMenuItemDirective, CqDialogService, CqFormFieldComponent, CqInputDirective, CqSelectDirective, CqTextareaDirective, DataGrid } from 'ui-kit';
@@ -20,8 +21,6 @@ type WebhookDialogData = {
 type WebhookStatusFilter = 'all' | WebhookEndpointView['status'];
 
 type WebhookFilterModel = {
-  hookKey: string;
-  jobKey: string;
   status: WebhookStatusFilter;
   environment: string;
 };
@@ -31,10 +30,6 @@ type OptionEntry = {
   label: string;
 };
 
-type DeadLetterFilterModel = {
-  hookKey: string;
-  jobKey: string;
-};
 
 type DeliveryEventView = {
   id: string;
@@ -43,6 +38,17 @@ type DeliveryEventView = {
   occurredAt: string;
   reason?: string;
   correlationId?: string;
+};
+
+type HookFilterEntry = {
+  hookKey: string;
+  status: WebhookEndpointView['status'];
+  deadLetterCount: number;
+};
+
+type JobFilterEntry = {
+  jobKey: string;
+  status: WebhookEndpointView['status'];
 };
 
 const ALL_ENVIRONMENTS = 'all';
@@ -102,6 +108,8 @@ export class WebhooksPage {
   private readonly tenantContext = inject(TenantContextService);
   private readonly runtimeConfig = inject(RuntimeConfigService);
   private readonly dialog = inject(CqDialogService);
+  private readonly shellPanel = inject(ShellPanelService);
+  private readonly panelTemplate = viewChild<TemplateRef<unknown>>('webhooksFilterPanel');
 
   readonly endpoints = this.store.endpoints;
   readonly loading = this.store.loading;
@@ -113,11 +121,13 @@ export class WebhooksPage {
   readonly filterModel = signal(createDefaultFilters());
   readonly filterForm = form(this.filterModel, () => { });
   readonly statusOptions = STATUS_OPTIONS;
-  readonly deadLetterFilterModel = signal<DeadLetterFilterModel>({ hookKey: '', jobKey: '' });
-  readonly deadLetterFilterForm = form(this.deadLetterFilterModel, () => { });
   readonly invokePayload = signal('');
   readonly invokePayloadTouched = signal(false);
   readonly invokeNotice = signal<string | null>(null);
+  readonly hookSearch = signal('');
+  readonly jobSearch = signal('');
+  readonly selectedHookKeys = signal<ReadonlyArray<string>>([]);
+  readonly selectedJobKeys = signal<ReadonlyArray<string>>([]);
   readonly kpiSuccessRate = computed(() => {
     const endpoints = this.endpoints().length;
     if (endpoints === 0) {
@@ -134,7 +144,9 @@ export class WebhooksPage {
 
   private readonly filterSignature = computed(() => {
     const model = this.filterModel();
-    return `${model.hookKey}|${model.jobKey}|${model.status}|${model.environment}`;
+    const hooks = [...this.selectedHookKeys()].sort().join(',');
+    const jobs = [...this.selectedJobKeys()].sort().join(',');
+    return `${model.status}|${model.environment}|${hooks}|${jobs}`;
   });
 
   readonly pageSize = signal(25);
@@ -158,22 +170,22 @@ export class WebhooksPage {
 
   readonly filteredEndpoints = computed(() => {
     const filters = this.filterModel();
-    const hookFilter = filters.hookKey.trim().toLowerCase();
-    const jobFilter = filters.jobKey.trim().toLowerCase();
     const statusFilter = filters.status === 'all' ? '' : filters.status;
     const environmentFilter = filters.environment === ALL_ENVIRONMENTS ? '' : filters.environment;
+    const selectedHooks = new Set(this.selectedHookKeys());
+    const selectedJobs = new Set(this.selectedJobKeys());
 
     return this.endpoints().filter((endpoint) => {
-      if (hookFilter && !endpoint.hookKey.toLowerCase().includes(hookFilter)) {
-        return false;
-      }
-      if (jobFilter && !endpoint.jobKey.toLowerCase().includes(jobFilter)) {
-        return false;
-      }
       if (statusFilter && endpoint.status !== statusFilter) {
         return false;
       }
       if (environmentFilter && endpoint.environment !== environmentFilter) {
+        return false;
+      }
+      if (selectedHooks.size > 0 && !selectedHooks.has(endpoint.hookKey)) {
+        return false;
+      }
+      if (selectedJobs.size > 0 && !selectedJobs.has(endpoint.jobKey)) {
         return false;
       }
       return true;
@@ -218,11 +230,71 @@ export class WebhooksPage {
   readonly filtersActive = computed(() => {
     const model = this.filterModel();
     return (
-      model.hookKey.trim().length > 0
-      || model.jobKey.trim().length > 0
+      this.selectedHookKeys().length > 0
+      || this.selectedJobKeys().length > 0
       || model.status !== 'all'
       || model.environment !== ALL_ENVIRONMENTS
     );
+  });
+
+  readonly hookEntries = computed<ReadonlyArray<HookFilterEntry>>(() => {
+    const entries = new Map<string, WebhookEndpointView[]>();
+    this.endpoints().forEach((endpoint) => {
+      const existing = entries.get(endpoint.hookKey);
+      if (existing) {
+        existing.push(endpoint);
+      } else {
+        entries.set(endpoint.hookKey, [endpoint]);
+      }
+    });
+
+    const deadLetterCounts = new Map<string, number>();
+    this.deadLetters().forEach((entry) => {
+      deadLetterCounts.set(entry.hookKey, (deadLetterCounts.get(entry.hookKey) ?? 0) + 1);
+    });
+
+    return Array.from(entries.entries())
+      .map(([hookKey, list]) => ({
+        hookKey,
+        status: deriveStatus(list),
+        deadLetterCount: deadLetterCounts.get(hookKey) ?? 0,
+      }))
+      .sort((a, b) => a.hookKey.localeCompare(b.hookKey));
+  });
+
+  readonly visibleHookEntries = computed(() => {
+    const term = this.hookSearch().trim().toLowerCase();
+    if (!term) {
+      return this.hookEntries();
+    }
+    return this.hookEntries().filter((entry) => entry.hookKey.toLowerCase().includes(term));
+  });
+
+  readonly jobEntries = computed<ReadonlyArray<JobFilterEntry>>(() => {
+    const entries = new Map<string, WebhookEndpointView[]>();
+    this.endpoints().forEach((endpoint) => {
+      const existing = entries.get(endpoint.jobKey);
+      if (existing) {
+        existing.push(endpoint);
+      } else {
+        entries.set(endpoint.jobKey, [endpoint]);
+      }
+    });
+
+    return Array.from(entries.entries())
+      .map(([jobKey, list]) => ({
+        jobKey,
+        status: deriveStatus(list),
+      }))
+      .sort((a, b) => a.jobKey.localeCompare(b.jobKey));
+  });
+
+  readonly visibleJobEntries = computed(() => {
+    const term = this.jobSearch().trim().toLowerCase();
+    if (!term) {
+      return this.jobEntries();
+    }
+    return this.jobEntries().filter((entry) => entry.jobKey.toLowerCase().includes(term));
   });
 
   webhookRowKey = (row: WebhookEndpointView, index: number) =>
@@ -385,17 +457,55 @@ export class WebhooksPage {
 
   resetFilters(): void {
     this.filterModel.set(createDefaultFilters());
+    this.selectedHookKeys.set([]);
+    this.selectedJobKeys.set([]);
+    this.hookSearch.set('');
+    this.jobSearch.set('');
+  }
+
+  setHookSearch(value: string): void {
+    this.hookSearch.set(value);
+  }
+
+  setJobSearch(value: string): void {
+    this.jobSearch.set(value);
+  }
+
+  isHookSelected(hookKey: string): boolean {
+    return this.selectedHookKeys().includes(hookKey);
+  }
+
+  isJobSelected(jobKey: string): boolean {
+    return this.selectedJobKeys().includes(jobKey);
+  }
+
+  toggleHookSelection(hookKey: string, checked: boolean): void {
+    this.selectedHookKeys.update((current) =>
+      checked
+        ? Array.from(new Set([...current, hookKey]))
+        : current.filter((entry) => entry !== hookKey),
+    );
+  }
+
+  toggleJobSelection(jobKey: string, checked: boolean): void {
+    this.selectedJobKeys.update((current) =>
+      checked
+        ? Array.from(new Set([...current, jobKey]))
+        : current.filter((entry) => entry !== jobKey),
+    );
   }
 
   readonly filteredDeadLetters = computed(() => {
-    const filters = this.deadLetterFilterModel();
-    const hookFilter = filters.hookKey.trim().toLowerCase();
-    const jobFilter = filters.jobKey.trim().toLowerCase();
+    const selectedHooks = new Set(this.selectedHookKeys());
+    const selectedJobs = new Set(this.selectedJobKeys());
     return this.deadLetters().filter((entry) => {
-      if (hookFilter && !entry.hookKey.toLowerCase().includes(hookFilter)) {
+      if (selectedHooks.size > 0 && !selectedHooks.has(entry.hookKey)) {
         return false;
       }
-      if (jobFilter && (!entry.jobKey || !entry.jobKey.toLowerCase().includes(jobFilter))) {
+      if (selectedJobs.size > 0 && entry.jobKey && !selectedJobs.has(entry.jobKey)) {
+        return false;
+      }
+      if (selectedJobs.size > 0 && !entry.jobKey) {
         return false;
       }
       return true;
@@ -446,6 +556,15 @@ export class WebhooksPage {
   });
 
   constructor() {
+    effect((onCleanup) => {
+      const template = this.panelTemplate();
+      if (!template) {
+        return;
+      }
+      this.shellPanel.setPanel(template, 'Filters & settings', 'Refine the endpoints list.');
+      onCleanup(() => this.shellPanel.clearPanel(template));
+    });
+
     effect(() => {
       const endpoint = this.selectedEndpoint();
       if (!endpoint) {
@@ -464,9 +583,6 @@ export class WebhooksPage {
     this.selectedDeadLetterId.set(entry.id);
   }
 
-  resetDeadLetterFilters(): void {
-    this.deadLetterFilterModel.set({ hookKey: '', jobKey: '' });
-  }
 
   setInvokePayload(value: string): void {
     this.invokePayloadTouched.set(true);
@@ -672,11 +788,19 @@ export class WebhooksPage {
 
 function createDefaultFilters(): WebhookFilterModel {
   return {
-    hookKey: '',
-    jobKey: '',
     status: 'all',
     environment: ALL_ENVIRONMENTS,
   };
+}
+
+function deriveStatus(entries: ReadonlyArray<WebhookEndpointView>): WebhookEndpointView['status'] {
+  if (entries.some((entry) => entry.status === 'degraded')) {
+    return 'degraded';
+  }
+  if (entries.some((entry) => entry.status === 'paused')) {
+    return 'paused';
+  }
+  return 'active';
 }
 
 function buildPageInfo(total: number, pageIndex: number, pageSize: number): PageInfo {
