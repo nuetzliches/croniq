@@ -780,6 +780,11 @@ export class WebhooksPage {
     if (!endpoint) {
       return;
     }
+    if (endpoint.status === 'paused') {
+      this.invokeNotice.set('Webhook is disabled. Enable it before invoking.');
+      setTimeout(() => this.invokeNotice.set(null), 3500);
+      return;
+    }
     this.store.invokeWebhook({ hookKey: endpoint.hookKey });
     this.invokeNotice.set('Invocation requested.');
     setTimeout(() => this.invokeNotice.set(null), 2500);

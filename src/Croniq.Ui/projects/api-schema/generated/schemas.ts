@@ -289,6 +289,9 @@ export const WebhookEndpointResponse = z
         requestsPerMinute: z.number().int(),
         metadata: z.record(z.string(), z.string()).nullable(),
         ipRules: z.array(WebhookIpRuleResponse).nullable(),
+        status: z.string().nullable(),
+        lastDeliveryAtUtc: z.iso.datetime({ offset: true }).nullable(),
+        ipRuleCount: z.number().int().nullable(),
         createdAtUtc: z.iso.datetime({ offset: true }),
         updatedAtUtc: z.iso.datetime({ offset: true }),
         secret: z.string().nullable(),
@@ -347,6 +350,28 @@ export const CreateWebhookIpRuleRequest = z.object({
 export type CreateWebhookIpRuleRequest = z.infer<
     typeof CreateWebhookIpRuleRequest
 >;
+export const WebhookEndpointEventResponse = z
+    .object({
+        id: z.number().int(),
+        hookKey: z.string().nullable(),
+        eventType: z.string().nullable(),
+        occurredAtUtc: z.iso.datetime({ offset: true }),
+        actor: z.string().nullable(),
+        correlationId: z.string().nullable(),
+    })
+    .partial();
+export type WebhookEndpointEventResponse = z.infer<
+    typeof WebhookEndpointEventResponse
+>;
+export const WebhookInvokeResult = z
+    .object({
+        status: z.string().nullable(),
+        hook: z.string().nullable(),
+        job: z.string().nullable(),
+        executionId: z.string().nullable(),
+    })
+    .partial();
+export type WebhookInvokeResult = z.infer<typeof WebhookInvokeResult>;
 export const WebhookDeadLetterResponse = z
     .object({
         id: z.number().int(),
@@ -631,6 +656,8 @@ export const schemas = {
     RotateWebhookSecretRequest,
     RotateWebhookSecretResponse,
     CreateWebhookIpRuleRequest,
+    WebhookEndpointEventResponse,
+    WebhookInvokeResult,
     WebhookDeadLetterResponse,
     WebhookReplayResult,
     WebhookDeadLetterFailureRequest,

@@ -1483,6 +1483,138 @@
         }
       }
     },
+    "/tenants/{tenantId}/webhooks/{hookKey}/events": {
+      "get": {
+        "tags": [
+          "Croniq.Sample.ApiHost"
+        ],
+        "summary": "List webhook endpoint events",
+        "description": "Returns endpoint changefeed events for a webhook in the tenant/environment scope.",
+        "operationId": "Webhooks_Events",
+        "parameters": [
+          {
+            "name": "tenantId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "hookKey",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "environment",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "afterId",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/WebhookEndpointEventResponse"
+                  }
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable"
+          }
+        }
+      }
+    },
+    "/tenants/{tenantId}/environments/{environmentTag}/webhooks/{hookKey}/invoke": {
+      "post": {
+        "tags": [
+          "Croniq.Sample.ApiHost"
+        ],
+        "summary": "Invoke webhook endpoint",
+        "description": "Triggers a webhook endpoint through the job execution pipeline.",
+        "operationId": "Webhooks_Invoke",
+        "parameters": [
+          {
+            "name": "tenantId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "environmentTag",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "hookKey",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Accepted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WebhookInvokeResult"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found"
+          },
+          "409": {
+            "description": "Conflict"
+          },
+          "500": {
+            "description": "Internal Server Error"
+          },
+          "502": {
+            "description": "Bad Gateway"
+          },
+          "503": {
+            "description": "Service Unavailable"
+          }
+        }
+      }
+    },
     "/tenants/{tenantId}/webhooks/deadletters": {
       "get": {
         "tags": [
@@ -4162,6 +4294,36 @@
         },
         "additionalProperties": false
       },
+      "WebhookEndpointEventResponse": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "hookKey": {
+            "type": "string",
+            "nullable": true
+          },
+          "eventType": {
+            "type": "string",
+            "nullable": true
+          },
+          "occurredAtUtc": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "actor": {
+            "type": "string",
+            "nullable": true
+          },
+          "correlationId": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "additionalProperties": false
+      },
       "WebhookEndpointResponse": {
         "type": "object",
         "properties": {
@@ -4197,6 +4359,20 @@
             },
             "nullable": true
           },
+          "status": {
+            "type": "string",
+            "nullable": true
+          },
+          "lastDeliveryAtUtc": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "ipRuleCount": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
           "createdAtUtc": {
             "type": "string",
             "format": "date-time"
@@ -4206,6 +4382,28 @@
             "format": "date-time"
           },
           "secret": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "additionalProperties": false
+      },
+      "WebhookInvokeResult": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "nullable": true
+          },
+          "hook": {
+            "type": "string",
+            "nullable": true
+          },
+          "job": {
+            "type": "string",
+            "nullable": true
+          },
+          "executionId": {
             "type": "string",
             "nullable": true
           }

@@ -57,6 +57,44 @@ public class WebhookIngressTests
     }
 
     [Fact]
+    public async Task RelayKey_BypassesSignatureValidation()
+    {
+        var relayKey = "relay-key";
+        var (client, pipeline) = CreateClient(relayKey);
+        var payload = "{\"relay\":true}";
+
+        var request = new HttpRequestMessage(HttpMethod.Post, $"/tenants/{TenantId}/environments/{EnvironmentTag}/webhooks/{HookKey}")
+        {
+            Content = new StringContent(payload, Encoding.UTF8, "application/json")
+        };
+        request.Headers.Add("X-Croniq-Relay-Key", relayKey);
+
+        var response = await client.SendAsync(request);
+
+        response.StatusCode.ShouldBe(HttpStatusCode.Accepted);
+        pipeline.Executed.ShouldBeTrue();
+    }
+
+    [Fact]
+    public async Task InvalidRelayKey_StillRequiresSignature()
+    {
+        var relayKey = "relay-key";
+        var (client, pipeline) = CreateClient(relayKey);
+        var payload = "{\"relay\":false}";
+
+        var request = new HttpRequestMessage(HttpMethod.Post, $"/tenants/{TenantId}/environments/{EnvironmentTag}/webhooks/{HookKey}")
+        {
+            Content = new StringContent(payload, Encoding.UTF8, "application/json")
+        };
+        request.Headers.Add("X-Croniq-Relay-Key", "wrong-key");
+
+        var response = await client.SendAsync(request);
+
+        response.StatusCode.ShouldBe(HttpStatusCode.Unauthorized);
+        pipeline.Executed.ShouldBeFalse();
+    }
+
+    [Fact]
     public async Task CoHostedIngress_AllowsAnonymousRequests()
     {
         var (client, pipeline) = CreateCoHostedClient();
@@ -72,7 +110,7 @@ public class WebhookIngressTests
         pipeline.Executed.ShouldBeTrue();
     }
 
-    private static (HttpClient client, StubPipeline pipeline) CreateClient()
+    private static (HttpClient client, StubPipeline pipeline) CreateClient(string? relayKey = null)
     {
         var builder = WebApplication.CreateBuilder();
         builder.WebHost.UseTestServer();
@@ -87,6 +125,10 @@ public class WebhookIngressTests
             ["Croniq:Webhooks:Endpoints:0:RequireSignature"] = "true",
             ["Croniq:Webhooks:Endpoints:0:Secret"] = Secret
         };
+        if (!string.IsNullOrWhiteSpace(relayKey))
+        {
+            config["Croniq:Webhooks:Remote:ApiKey"] = relayKey;
+        }
         builder.Configuration.AddInMemoryCollection(config);
 
         var registry = new StubRegistry();

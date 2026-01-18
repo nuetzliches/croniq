@@ -71,7 +71,7 @@ internal static class EndpointAuthExtensions
         _ = builder ?? throw new ArgumentNullException(nameof(builder));
         _ = environmentRouteKey ?? throw new ArgumentNullException(nameof(environmentRouteKey));
 
-        builder.WithMetadata(new CroniqAuthEndpointGuardMetadata(CroniqAuthGuardKind.TenantScope, requiredScopes ?? Array.Empty<string>(), requireEnvironment: true));
+        builder.WithMetadata(new CroniqAuthEndpointGuardMetadata(CroniqAuthGuardKind.TenantScope, requiredScopes ?? Array.Empty<string>(), RequireEnvironment: true));
 
         builder.AddEndpointFilter(new PasswordChangeRequiredEndpointFilter());
         return builder.AddEndpointFilter(new CroniqTenantScopeFromRouteEndpointFilter(

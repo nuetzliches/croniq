@@ -139,7 +139,7 @@ const WEBHOOK_CAPABILITIES_ENDPOINT = requireEndpoint(
 );
 
 const INVOKE_WEBHOOK_ENDPOINT_PATH =
-    '/tenants/:tenantId/environments/:environmentTag/webhooks/:hookKey';
+    '/tenants/:tenantId/environments/:environmentTag/webhooks/:hookKey/invoke';
 const INVOKE_WEBHOOK_ENDPOINT: EndpointDefinition =
     TenantsApi.find((entry) => entry.method === 'post' && entry.path === INVOKE_WEBHOOK_ENDPOINT_PATH) ?? {
         method: 'post',

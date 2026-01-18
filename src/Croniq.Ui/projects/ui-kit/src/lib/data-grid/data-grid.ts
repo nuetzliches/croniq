@@ -144,61 +144,61 @@ export class CqColumnComponent<T> {
       }
     </ng-template>
 
-    <cdk-virtual-scroll-viewport
-      cdkFixedSizeVirtualScroll
-      #viewport
-      class="cq-data-grid__viewport"
-      role="rowgroup"
-      [itemSize]="estimatedRowHeightPx()"
-      [minBufferPx]="bufferPx()"
-      [maxBufferPx]="bufferPx()"
-    >
-      <ng-container
-        *cdkVirtualFor="let row of validatedRows(); let rowIndex = index; trackBy: trackRow"
+      <cdk-virtual-scroll-viewport
+        cdkFixedSizeVirtualScroll
+        #viewport
+        class="cq-data-grid__viewport"
+        role="rowgroup"
+        [itemSize]="estimatedRowHeightPx()"
+        [minBufferPx]="bufferPx()"
+        [maxBufferPx]="bufferPx()"
       >
-        @if (rowContextMenu()) {
-          <div
-            #rowEl
-            class="cq-data-grid__row"
-            role="row"
-            [attr.data-row-key]="rowKey()(row, rowIndex)"
-            [attr.data-row-index]="rowIndex"
-            [attr.tabindex]="rowIndex === 0 ? 0 : -1"
-            [attr.aria-selected]="isSelected(row, rowIndex) ? 'true' : null"
-            [class.is-selected]="isSelected(row, rowIndex)"
-            [class]="rowClassList(row)"
-            (keydown)="onRowKeydown($event, rowIndex)"
-            (click)="onRowClick(rowIndex)"
-            [cdkContextMenuTriggerFor]="rowContextMenu()!"
-            [cdkContextMenuTriggerData]="rowContextMenuData(row, rowIndex)"
-          >
-            <ng-container
-              [ngTemplateOutlet]="rowCells"
-              [ngTemplateOutletContext]="{ $implicit: row, rowIndex }"
-            />
-          </div>
-        } @else {
-          <div
-            #rowEl
-            class="cq-data-grid__row"
-            role="row"
-            [attr.data-row-key]="rowKey()(row, rowIndex)"
-            [attr.data-row-index]="rowIndex"
-            [attr.tabindex]="rowIndex === 0 ? 0 : -1"
-            [attr.aria-selected]="isSelected(row, rowIndex) ? 'true' : null"
-            [class.is-selected]="isSelected(row, rowIndex)"
-            [class]="rowClassList(row)"
-            (keydown)="onRowKeydown($event, rowIndex)"
-            (click)="onRowClick(rowIndex)"
-          >
-            <ng-container
-              [ngTemplateOutlet]="rowCells"
-              [ngTemplateOutletContext]="{ $implicit: row, rowIndex }"
-            />
-          </div>
-        }
-      </ng-container>
-    </cdk-virtual-scroll-viewport>
+        <ng-container
+          *cdkVirtualFor="let row of validatedRows(); let rowIndex = index; trackBy: trackRow"
+        >
+          @if (rowContextMenu()) {
+            <div
+              #rowEl
+              class="cq-data-grid__row"
+              role="row"
+              [attr.data-row-key]="rowKey()(row, rowIndex)"
+              [attr.data-row-index]="rowIndex"
+              [attr.tabindex]="rowIndex === 0 ? 0 : -1"
+              [attr.aria-selected]="isSelected(row, rowIndex) ? 'true' : null"
+              [class.is-selected]="isSelected(row, rowIndex)"
+              [class]="rowClassList(row)"
+              (keydown)="onRowKeydown($event, rowIndex)"
+              (click)="onRowClick(rowIndex)"
+              [cdkContextMenuTriggerFor]="rowContextMenu()!"
+              [cdkContextMenuTriggerData]="rowContextMenuData(row, rowIndex)"
+            >
+              <ng-container
+                [ngTemplateOutlet]="rowCells"
+                [ngTemplateOutletContext]="{ $implicit: row, rowIndex }"
+              />
+            </div>
+          } @else {
+            <div
+              #rowEl
+              class="cq-data-grid__row"
+              role="row"
+              [attr.data-row-key]="rowKey()(row, rowIndex)"
+              [attr.data-row-index]="rowIndex"
+              [attr.tabindex]="rowIndex === 0 ? 0 : -1"
+              [attr.aria-selected]="isSelected(row, rowIndex) ? 'true' : null"
+              [class.is-selected]="isSelected(row, rowIndex)"
+              [class]="rowClassList(row)"
+              (keydown)="onRowKeydown($event, rowIndex)"
+              (click)="onRowClick(rowIndex)"
+            >
+              <ng-container
+                [ngTemplateOutlet]="rowCells"
+                [ngTemplateOutletContext]="{ $implicit: row, rowIndex }"
+              />
+            </div>
+          }
+        </ng-container>
+      </cdk-virtual-scroll-viewport>
 
     @if (!hasRows()) {
       <div class="cq-data-grid__empty" role="rowgroup">
@@ -222,7 +222,10 @@ export class CqColumnComponent<T> {
   styles: `
     :host {
       --cq-data-grid-row-height: 48px;
-      display: block;
+      display: flex;
+      flex-direction: column;
+      min-height: 0;
+      overflow-x: auto;
       border: 1px solid var(--cq-border, #e5e7eb);
       border-radius: 0.75rem;
       background: var(--cq-surface, #ffffff);
@@ -239,7 +242,10 @@ export class CqColumnComponent<T> {
     .cq-data-grid__viewport {
       height: 100%;
       max-height: 640px;
-      overflow: auto;
+      overflow-y: auto;
+      overflow-x: visible;
+      min-width: max-content;
+      flex: 1 1 auto;
     }
 
     .cq-data-grid__row {
@@ -248,6 +254,8 @@ export class CqColumnComponent<T> {
       min-height: var(--cq-data-grid-row-height);
       padding: 0 0.75rem;
       gap: 0.5rem;
+      min-width: 100%;
+      width: max-content;
       outline: none;
     }
 
@@ -267,6 +275,10 @@ export class CqColumnComponent<T> {
     .cq-data-grid__row--header {
       background: var(--cq-surface-5, #f8fafc);
       border-bottom: 1px solid var(--cq-border, #e5e7eb);
+    }
+
+    .cq-data-grid__head {
+      min-width: max-content;
     }
 
     .cq-data-grid__cell {

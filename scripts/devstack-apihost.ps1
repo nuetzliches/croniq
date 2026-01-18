@@ -69,7 +69,7 @@ $dmzApiKey = Get-EnvOrDotenv 'CRONIQ_DMZ_API_KEY' 'dmz-sample-key'
 $env:Croniq__Webhooks__Mode = 'Remote'
 $env:Croniq__Webhooks__Remote__BaseUrl = $dmzBaseUrl
 $env:Croniq__Webhooks__Remote__ApiKey = $dmzApiKey
-$env:Croniq__Webhooks__Remote__EnableRelay = 'true'
+$env:Croniq__Webhooks__Remote__EnableRelay = 'false'
 
 # Construct SQL Connection String
 $sqlPort = Get-EnvOrDotenv 'CRONIQ_SQL_HOST_PORT' '11433'

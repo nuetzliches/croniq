@@ -366,6 +366,7 @@ public static class WebhookHostingExtensions
             IPolicyResolver policyResolver,
             IExecutionLogStore executionLogStore,
             IOptions<CroniqOptions> coreOptions,
+            IOptions<CroniqAuthOptions> authOptions,
             WebhookMetadataFactory metadataFactory,
             WebhookEndpointResolver endpointResolver,
             WebhookDeadLetterRecorder deadLetterRecorder,
@@ -399,7 +400,19 @@ public static class WebhookHostingExtensions
             var payload = await ReadPayloadAsync(request).ConfigureAwait(false);
 
             var security = webhookOptions.CurrentValue.Security;
-            var shouldValidateSignature = endpoint.RequireSignature || !security.AllowUnsignedHooks;
+            var relayKey = request.Headers["X-Croniq-Relay-Key"].FirstOrDefault();
+            var remoteApiKey = webhookOptions.CurrentValue.Remote.ApiKey;
+            var authMode = authOptions.Value.Mode ?? string.Empty;
+            var inMemoryApiKey = string.Equals(authMode, "InMemory", StringComparison.OrdinalIgnoreCase)
+                ? authOptions.Value.InMemory.ApiKey
+                : null;
+            var relayAllowed = !string.IsNullOrWhiteSpace(relayKey)
+                && (string.Equals(relayKey, remoteApiKey, StringComparison.Ordinal)
+                    || (!string.IsNullOrWhiteSpace(inMemoryApiKey)
+                        && string.Equals(relayKey, inMemoryApiKey, StringComparison.Ordinal)));
+
+            var shouldValidateSignature = !relayAllowed
+                && (endpoint.RequireSignature || !security.AllowUnsignedHooks);
 
             if (shouldValidateSignature)
             {

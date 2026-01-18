@@ -671,7 +671,7 @@ public static partial class ApiHostingExtensions
         var lastDeliveryAtUtc = definition.Metadata is not null
             && definition.Metadata.TryGetValue("lastDeliveryAtUtc", out var lastDeliveryValue)
             && DateTimeOffset.TryParse(lastDeliveryValue, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out var parsed)
-                ? parsed
+                ? (DateTimeOffset?)parsed
                 : null;
         var ipRuleCount = definition.IpRules?.Count;
 

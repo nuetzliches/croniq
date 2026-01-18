@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.Globalization;
 using System.IO;
 using System.Linq;
+using System.Net.Http;
 using System.Text;
 using System.Text.Json;
 using Croniq.Api.Models;
@@ -18,6 +19,7 @@ using Croniq.Sdk;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 
 namespace Croniq.Api;
@@ -450,12 +452,16 @@ public static partial class ApiHostingExtensions
         .Produces(StatusCodes.Status503ServiceUnavailable)
         .RequireCroniqTenantScope(CroniqScopes.WebhooksRead);
 
-        app.MapPost("/tenants/{tenantId}/environments/{environmentTag}/webhooks/{hookKey}", async (
+        app.MapPost("/tenants/{tenantId}/environments/{environmentTag}/webhooks/{hookKey}/invoke", async (
             string tenantId,
             string environmentTag,
             string hookKey,
             HttpRequest request,
             [FromServices] IWebhookPersistenceProvider? webhookStore,
+            [FromServices] IConfiguration configuration,
+            [FromServices] IHttpClientFactory httpClientFactory,
+            [FromServices] IHostEnvironment hostEnvironment,
+            [FromServices] IWebhookIngressEventStore? ingressStore,
             [FromServices] IJobRegistry registry,
             [FromServices] IJobExecutionPipeline pipeline,
             [FromServices] IPolicyResolver policyResolver,
@@ -474,9 +480,80 @@ public static partial class ApiHostingExtensions
 
             var scope = new PartitionScope(tenantId, environmentTag);
             var endpoint = await webhookStore.FindByHookKeyAsync(hookKey, scope, cancellationToken).ConfigureAwait(false);
-            if (endpoint is null || !endpoint.Enabled)
+            if (endpoint is null)
             {
                 return Results.NotFound(new { error = "webhook-not-found", hookKey });
+            }
+
+            if (!endpoint.Enabled)
+            {
+                return Results.Conflict(new { error = "webhook-disabled", hookKey, message = "Webhook is disabled and cannot be invoked." });
+            }
+
+            var payload = await ReadPayloadAsync(request).ConfigureAwait(false);
+
+            var webhooksMode = configuration.GetValue<string?>("Croniq:Webhooks:Mode") ?? string.Empty;
+            if (string.Equals(webhooksMode, "Remote", StringComparison.OrdinalIgnoreCase))
+            {
+                var remoteBaseUrl = configuration.GetValue<string?>("Croniq:Webhooks:Remote:BaseUrl") ?? string.Empty;
+                var remoteApiKey = configuration.GetValue<string?>("Croniq:Webhooks:Remote:ApiKey") ?? string.Empty;
+                if (string.IsNullOrWhiteSpace(remoteBaseUrl) || string.IsNullOrWhiteSpace(remoteApiKey))
+                {
+                    return Results.Problem(statusCode: StatusCodes.Status503ServiceUnavailable, title: "webhook-remote-unavailable", detail: "Remote webhook relay is not configured.");
+                }
+
+                if (!Uri.TryCreate(remoteBaseUrl, UriKind.Absolute, out var remoteUri))
+                {
+                    return Results.Problem(statusCode: StatusCodes.Status503ServiceUnavailable, title: "webhook-remote-unavailable", detail: "Remote webhook relay base URL is invalid.");
+                }
+
+                var allowInvalidCertificate = configuration.GetValue<bool?>("Croniq:Webhooks:Remote:AllowInvalidServerCertificate") ?? false;
+                if (allowInvalidCertificate && !hostEnvironment.IsDevelopment())
+                {
+                    return Results.Problem(statusCode: StatusCodes.Status503ServiceUnavailable, title: "webhook-remote-unavailable", detail: "Croniq:Webhooks:Remote:AllowInvalidServerCertificate is only supported in Development.");
+                }
+
+                var client = allowInvalidCertificate
+                    ? new HttpClient(new HttpClientHandler
+                    {
+                        ServerCertificateCustomValidationCallback = HttpClientHandler.DangerousAcceptAnyServerCertificateValidator
+                    }, disposeHandler: true)
+                    : httpClientFactory.CreateClient();
+                client.BaseAddress = remoteUri;
+                client.DefaultRequestHeaders.Remove("X-Croniq-Key");
+                client.DefaultRequestHeaders.Add("X-Croniq-Key", remoteApiKey);
+                client.DefaultRequestHeaders.Remove("X-Croniq-Relay-Key");
+                client.DefaultRequestHeaders.Add("X-Croniq-Relay-Key", remoteApiKey);
+
+                var path = $"tenants/{Uri.EscapeDataString(tenantId)}/environments/{Uri.EscapeDataString(environmentTag)}/webhooks/{Uri.EscapeDataString(hookKey)}";
+                try
+                {
+                    using var content = new StringContent(payload ?? string.Empty, Encoding.UTF8, "application/json");
+                    using var response = await client.PostAsync(path, content, cancellationToken).ConfigureAwait(false);
+                    if (!response.IsSuccessStatusCode)
+                    {
+                        var errorBody = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
+                        logger.LogWarning(
+                            "remote webhook relay failed for {HookKey} ({TenantId}/{EnvironmentTag}) with status {StatusCode} {ReasonPhrase}. Body: {Body}",
+                            endpoint.HookKey,
+                            tenantId,
+                            environmentTag,
+                            (int)response.StatusCode,
+                            response.ReasonPhrase,
+                            string.IsNullOrWhiteSpace(errorBody) ? "<empty>" : errorBody);
+                        var detail = string.IsNullOrWhiteSpace(errorBody)
+                            ? $"Remote webhook relay failed with status {(int)response.StatusCode} ({response.ReasonPhrase})."
+                            : errorBody;
+                        return Results.Problem(statusCode: (int)response.StatusCode, title: "webhook-relay-failed", detail: detail);
+                    }
+                }
+                catch (HttpRequestException ex)
+                {
+                    logger.LogError(ex, "remote webhook relay failed for {HookKey}", endpoint.HookKey);
+                    return Results.Problem(statusCode: StatusCodes.Status502BadGateway, title: "webhook-relay-failed", detail: ex.Message);
+                }
+
+                return Results.Accepted(value: new WebhookInvokeResult("relayed", endpoint.HookKey, endpoint.JobKey, string.Empty));
             }
 
             if (!JobKey.TryParse(endpoint.JobKey, out var jobKey))
@@ -489,9 +566,33 @@ public static partial class ApiHostingExtensions
                 return Results.NotFound(new { error = "job-not-registered", endpoint.JobKey });
             }
 
-            var payload = await ReadPayloadAsync(request).ConfigureAwait(false);
             var metadata = CreateWebhookMetadata(endpoint, payload);
             metadata["webhook:hook"] = endpoint.HookKey;
+
+            var dispatchMode = configuration.GetValue<string?>("Croniq:Webhooks:Ingress:DispatchMode") ?? string.Empty;
+            if (string.Equals(dispatchMode, "StoreOnly", StringComparison.OrdinalIgnoreCase))
+            {
+                if (ingressStore is null)
+                {
+                    return Results.Problem(statusCode: StatusCodes.Status503ServiceUnavailable, title: "ingress-store-missing", detail: "Webhook ingress store is not configured.");
+                }
+
+                var eventId = Guid.NewGuid().ToString("N");
+                await ingressStore.EnqueueAsync(
+                    new WebhookIngressEventCreate(
+                        eventId,
+                        endpoint.HookKey,
+                        endpoint.JobKey,
+                        scope.TenantId,
+                        scope.EnvironmentTag,
+                        payload,
+                        Headers: null,
+                        metadata,
+                        DateTimeOffset.UtcNow),
+                    cancellationToken).ConfigureAwait(false);
+
+                return Results.Accepted(value: new { status = "stored", eventId, hook = endpoint.HookKey, job = endpoint.JobKey });
+            }
 
             var executionOptions = policyResolver.ResolveExecution(jobKey, scope);
             var executionId = Guid.NewGuid().ToString("N");
@@ -505,7 +606,7 @@ public static partial class ApiHostingExtensions
             {
                 await pipeline.ExecuteAsync(execRequest, cancellationToken).ConfigureAwait(false);
                 invokeActivity?.SetStatus(ActivityStatusCode.Ok);
-                return Results.Accepted(new WebhookInvokeResult("invoked", endpoint.HookKey, endpoint.JobKey, executionId));
+                return Results.Accepted(value: new WebhookInvokeResult("invoked", endpoint.HookKey, endpoint.JobKey, executionId));
             }
             catch (Exception ex)
             {
@@ -517,6 +618,8 @@ public static partial class ApiHostingExtensions
         .WithDocs("Webhooks_Invoke", "Invoke webhook endpoint", "Triggers a webhook endpoint through the job execution pipeline.")
         .Produces<WebhookInvokeResult>(StatusCodes.Status202Accepted)
         .Produces(StatusCodes.Status404NotFound)
+        .Produces(StatusCodes.Status409Conflict)
+        .Produces(StatusCodes.Status502BadGateway)
         .Produces(StatusCodes.Status500InternalServerError)
         .Produces(StatusCodes.Status503ServiceUnavailable)
         .RequireCroniqTenantScopeFromRoute("environmentTag", CroniqScopes.WebhooksWrite);

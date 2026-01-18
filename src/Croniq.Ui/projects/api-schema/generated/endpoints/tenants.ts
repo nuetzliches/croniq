@@ -34,6 +34,8 @@ import {
     RotateWebhookSecretRequest,
     RotateWebhookSecretResponse,
     CreateWebhookIpRuleRequest,
+    WebhookEndpointEventResponse,
+    WebhookInvokeResult,
     WebhookDeadLetterResponse,
     WebhookReplayResult,
     WebhookDeadLetterFailureRequest,
@@ -368,6 +370,33 @@ export const TenantsApi: EndpointDefinition[] = [
         ],
         response: ScheduleForecastResponse,
         errors: [{ status: 400, description: `Bad Request`, schema: z.void() }],
+    },
+    {
+        method: 'post',
+        path: '/tenants/:tenantId/environments/:environmentTag/webhooks/:hookKey/invoke',
+        description: `Triggers a webhook endpoint through the job execution pipeline.`,
+        requestFormat: 'json',
+        parameters: [
+            { name: 'tenantId', type: 'Path', schema: z.string() },
+            { name: 'environmentTag', type: 'Path', schema: z.string() },
+            { name: 'hookKey', type: 'Path', schema: z.string() },
+        ],
+        response: WebhookInvokeResult,
+        errors: [
+            { status: 404, description: `Not Found`, schema: z.void() },
+            { status: 409, description: `Conflict`, schema: z.void() },
+            {
+                status: 500,
+                description: `Internal Server Error`,
+                schema: z.void(),
+            },
+            { status: 502, description: `Bad Gateway`, schema: z.void() },
+            {
+                status: 503,
+                description: `Service Unavailable`,
+                schema: z.void(),
+            },
+        ],
     },
     {
         method: 'get',
@@ -742,6 +771,39 @@ export const TenantsApi: EndpointDefinition[] = [
             },
         ],
         response: z.void(),
+        errors: [
+            {
+                status: 503,
+                description: `Service Unavailable`,
+                schema: z.void(),
+            },
+        ],
+    },
+    {
+        method: 'get',
+        path: '/tenants/:tenantId/webhooks/:hookKey/events',
+        description: `Returns endpoint changefeed events for a webhook in the tenant/environment scope.`,
+        requestFormat: 'json',
+        parameters: [
+            { name: 'tenantId', type: 'Path', schema: z.string() },
+            { name: 'hookKey', type: 'Path', schema: z.string() },
+            {
+                name: 'environment',
+                type: 'Query',
+                schema: z.string().optional(),
+            },
+            {
+                name: 'afterId',
+                type: 'Query',
+                schema: z.number().int().optional(),
+            },
+            {
+                name: 'limit',
+                type: 'Query',
+                schema: z.number().int().optional(),
+            },
+        ],
+        response: z.array(WebhookEndpointEventResponse),
         errors: [
             {
                 status: 503,
