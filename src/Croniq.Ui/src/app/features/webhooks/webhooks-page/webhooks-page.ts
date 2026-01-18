@@ -1,15 +1,15 @@
 import { DatePipe } from '@angular/common';
-import { ChangeDetectionStrategy, Component, Directive, computed, inject, linkedSignal, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, Directive, computed, effect, inject, linkedSignal, signal } from '@angular/core';
 import { CdkMenu } from '@angular/cdk/menu';
 import { TenantContextService } from '@core/tenant-context/tenant-context.service';
 import { RuntimeConfigService } from '@core/runtime-config.service';
 import { WebhookDialogComponent } from '@features/webhooks/components/webhook-dialog/webhook-dialog.component';
 import { WebhookIpRulesDialogComponent } from '@features/webhooks/components/webhook-ip-rules-dialog/webhook-ip-rules-dialog.component';
 import { WebhookRotateSecretDialogComponent } from '@features/webhooks/components/webhook-rotate-secret-dialog/webhook-rotate-secret-dialog.component';
-import { WebhookCapabilitiesView, WebhookEndpointView, WebhooksStore } from '@features/webhooks/webhooks.store';
+import { WebhookCapabilitiesView, WebhookDeadLetterView, WebhookEndpointView, WebhooksStore } from '@features/webhooks/webhooks.store';
 import { RotateWebhookSecretRequest, UpsertWebhookEndpointRequest } from '@croniq/api-schema';
 import { Field, form } from '@angular/forms/signals';
-import { CqCellDefDirective, CqColumnComponent, CqConfirmDialogComponent, CqConfirmDialogData, CqContextMenuItemDirective, CqDialogService, CqFormFieldComponent, CqInputDirective, CqSelectDirective, DataGrid } from 'ui-kit';
+import { CqCellDefDirective, CqColumnComponent, CqConfirmDialogComponent, CqConfirmDialogData, CqContextMenuItemDirective, CqDialogService, CqFormFieldComponent, CqInputDirective, CqSelectDirective, CqTextareaDirective, DataGrid } from 'ui-kit';
 import { filter } from 'rxjs';
 
 type WebhookDialogData = {
@@ -29,6 +29,20 @@ type WebhookFilterModel = {
 type OptionEntry = {
   value: string;
   label: string;
+};
+
+type DeadLetterFilterModel = {
+  hookKey: string;
+  jobKey: string;
+};
+
+type DeliveryEventView = {
+  id: string;
+  status: 'success' | 'failed' | 'warning';
+  label: string;
+  occurredAt: string;
+  reason?: string;
+  correlationId?: string;
 };
 
 const ALL_ENVIRONMENTS = 'all';
@@ -75,6 +89,7 @@ export class CqWebhookCellDirective extends CqCellDefDirective<WebhookEndpointVi
     CqFormFieldComponent,
     CqInputDirective,
     CqSelectDirective,
+    CqTextareaDirective,
     CqContextMenuItemDirective,
     CdkMenu,
   ],
@@ -94,9 +109,28 @@ export class WebhooksPage {
   readonly readPermissionDenied = this.store.readPermissionDenied;
   readonly writePermissionDenied = this.store.writePermissionDenied;
   readonly rotatedSecret = this.store.rotatedSecret;
+  readonly deadLetters = this.store.deadLetters;
   readonly filterModel = signal(createDefaultFilters());
   readonly filterForm = form(this.filterModel, () => { });
   readonly statusOptions = STATUS_OPTIONS;
+  readonly deadLetterFilterModel = signal<DeadLetterFilterModel>({ hookKey: '', jobKey: '' });
+  readonly deadLetterFilterForm = form(this.deadLetterFilterModel, () => { });
+  readonly invokePayload = signal('');
+  readonly invokePayloadTouched = signal(false);
+  readonly invokeNotice = signal<string | null>(null);
+  readonly kpiSuccessRate = computed(() => {
+    const endpoints = this.endpoints().length;
+    if (endpoints === 0) {
+      return 'N/A';
+    }
+    const deadLetters = this.deadLetters().length;
+    const failureRatio = Math.min(1, deadLetters / endpoints);
+    const successRate = Math.max(0, Math.round((1 - failureRatio) * 100));
+    return `${successRate}%`;
+  });
+  readonly kpiLatency = computed(() => 'N/A');
+  readonly kpiRateLimitRejections = computed(() => 'N/A');
+  readonly kpiDeadLetters = computed(() => this.deadLetters().length);
 
   private readonly filterSignature = computed(() => {
     const model = this.filterModel();
@@ -190,6 +224,8 @@ export class WebhooksPage {
       || model.environment !== ALL_ENVIRONMENTS
     );
   });
+
+  readonly canBulkApply = computed(() => this.filteredEndpoints().length > 0);
 
   webhookRowKey = (row: WebhookEndpointView, index: number) =>
     `${row.environment}:${row.hookKey || `webhook-${index}`}`;
@@ -344,6 +380,115 @@ export class WebhooksPage {
     this.filterModel.set(createDefaultFilters());
   }
 
+  readonly filteredDeadLetters = computed(() => {
+    const filters = this.deadLetterFilterModel();
+    const hookFilter = filters.hookKey.trim().toLowerCase();
+    const jobFilter = filters.jobKey.trim().toLowerCase();
+    return this.deadLetters().filter((entry) => {
+      if (hookFilter && !entry.hookKey.toLowerCase().includes(hookFilter)) {
+        return false;
+      }
+      if (jobFilter && (!entry.jobKey || !entry.jobKey.toLowerCase().includes(jobFilter))) {
+        return false;
+      }
+      return true;
+    });
+  });
+
+  readonly selectedDeadLetterId = signal<string | null>(null);
+
+  readonly selectedDeadLetter = computed(() => {
+    const id = this.selectedDeadLetterId();
+    if (!id) {
+      return null;
+    }
+    return this.deadLetters().find((entry) => entry.id === id) ?? null;
+  });
+
+  readonly deliveryEvents = computed<ReadonlyArray<DeliveryEventView>>(() => {
+    const endpoint = this.selectedEndpoint();
+    if (!endpoint) {
+      return [];
+    }
+    const events: DeliveryEventView[] = [];
+
+    if (endpoint.lastDeliveryAt) {
+      events.push({
+        id: `${endpoint.hookKey}-last-delivery`,
+        status: endpoint.status === 'degraded' ? 'warning' : 'success',
+        label: 'Last delivery',
+        occurredAt: endpoint.lastDeliveryAt,
+        reason: endpoint.status === 'degraded' ? 'Endpoint reported degraded status.' : undefined,
+      });
+    }
+
+    this.deadLetters()
+      .filter((entry) => entry.hookKey === endpoint.hookKey)
+      .forEach((entry) => {
+        events.push({
+          id: `deadletter-${entry.id}`,
+          status: 'failed',
+          label: 'Dead letter',
+          occurredAt: entry.occurredAt,
+          reason: entry.reason ?? 'No reason provided.',
+          correlationId: undefined,
+        });
+      });
+
+    return events.sort((a, b) => Date.parse(b.occurredAt) - Date.parse(a.occurredAt));
+  });
+
+  constructor() {
+    effect(() => {
+      const endpoint = this.selectedEndpoint();
+      if (!endpoint) {
+        this.invokePayload.set('');
+        this.invokePayloadTouched.set(false);
+        return;
+      }
+      if (this.invokePayloadTouched()) {
+        return;
+      }
+      this.invokePayload.set(createDefaultInvokePayload(endpoint));
+    });
+  }
+
+  selectDeadLetter(entry: WebhookDeadLetterView): void {
+    this.selectedDeadLetterId.set(entry.id);
+  }
+
+  resetDeadLetterFilters(): void {
+    this.deadLetterFilterModel.set({ hookKey: '', jobKey: '' });
+  }
+
+  setInvokePayload(value: string): void {
+    this.invokePayloadTouched.set(true);
+    this.invokePayload.set(value);
+  }
+
+  copyInvokePayload(): void {
+    const payload = this.invokePayload();
+    if (!payload || !navigator.clipboard?.writeText) {
+      return;
+    }
+    navigator.clipboard.writeText(payload).catch((error: unknown) => {
+      console.error('Unable to copy webhook payload', error);
+    });
+  }
+
+  copyCurlSnippet(): void {
+    const url = this.ingressUrl();
+    const payload = this.invokePayload();
+    if (!url || !navigator.clipboard?.writeText) {
+      return;
+    }
+    const escapedPayload = escapeSingleQuotes(payload || '{}');
+    const curl = `curl -X POST "${url}" -H "Content-Type: application/json" -d '${escapedPayload}'`;
+    navigator.clipboard.writeText(curl).catch((error: unknown) => {
+      console.error('Unable to copy cURL snippet', error);
+    });
+  }
+
   previousPage(): void {
     if (this.isFirstPage()) {
       return;
@@ -467,6 +612,106 @@ export class WebhooksPage {
       this.store.setEndpointEnabled({ tenantId, environment }, endpoint, false);
     });
   }
+
+  replayDeadLetter(entry: WebhookDeadLetterView): void {
+    if (this.writePermissionDenied()) {
+      return;
+    }
+    const deadLetterId = Number(entry.id);
+    if (!Number.isFinite(deadLetterId)) {
+      return;
+    }
+    this.dialog.open<boolean>(CqConfirmDialogComponent, {
+      data: {
+        title: 'Replay dead letter',
+        message: `Replay dead letter ${entry.id}?`,
+        confirmLabel: 'Replay',
+      } satisfies CqConfirmDialogData,
+      width: '420px',
+      panelClass: 'bg-transparent',
+    }).closed.pipe(filter(Boolean)).subscribe(() => {
+      const tenantId = this.tenantContext.tenantId();
+      const environment = this.tenantContext.environment();
+      if (!tenantId) {
+        return;
+      }
+      this.store.replayDeadLetter({ tenantId, environment, deadLetterId });
+    });
+  }
+
+  deliveryStatusClass(entry: DeliveryEventView): string {
+    if (entry.status === 'success') {
+      return 'text-success';
+    }
+    if (entry.status === 'warning') {
+      return 'text-warning';
+    }
+    return 'text-danger';
+  }
+
+  invokeWebhook(): void {
+    if (this.writePermissionDenied()) {
+      return;
+    }
+    const endpoint = this.selectedEndpoint();
+    if (!endpoint) {
+      return;
+    }
+    this.store.invokeWebhook({ hookKey: endpoint.hookKey });
+    this.invokeNotice.set('Invocation requested.');
+    setTimeout(() => this.invokeNotice.set(null), 2500);
+  }
+
+  bulkEnableFiltered(): void {
+    if (this.writePermissionDenied() || !this.canBulkApply()) {
+      return;
+    }
+    const endpoints = this.filteredEndpoints();
+    const tenantId = this.tenantContext.tenantId();
+    const environment = this.tenantContext.environment();
+    if (!tenantId) {
+      return;
+    }
+    this.dialog.open<boolean>(CqConfirmDialogComponent, {
+      data: {
+        title: 'Enable endpoints',
+        message: `Enable ${endpoints.length} endpoints in ${environment || 'this environment'}?`,
+        confirmLabel: 'Enable all',
+      } satisfies CqConfirmDialogData,
+      width: '420px',
+      panelClass: 'bg-transparent',
+    }).closed.pipe(filter(Boolean)).subscribe(() => {
+      endpoints.forEach((endpoint) =>
+        this.store.setEndpointEnabled({ tenantId, environment }, endpoint, true),
+      );
+    });
+  }
+
+  bulkDisableFiltered(): void {
+    if (this.writePermissionDenied() || !this.canBulkApply()) {
+      return;
+    }
+    const endpoints = this.filteredEndpoints();
+    const tenantId = this.tenantContext.tenantId();
+    const environment = this.tenantContext.environment();
+    if (!tenantId) {
+      return;
+    }
+    this.dialog.open<boolean>(CqConfirmDialogComponent, {
+      data: {
+        title: 'Disable endpoints',
+        message: `Disable ${endpoints.length} endpoints in ${environment || 'this environment'}?`,
+        confirmLabel: 'Disable all',
+        variant: 'danger',
+      } satisfies CqConfirmDialogData,
+      width: '420px',
+      panelClass: 'bg-transparent',
+    }).closed.pipe(filter(Boolean)).subscribe(() => {
+      endpoints.forEach((endpoint) =>
+        this.store.setEndpointEnabled({ tenantId, environment }, endpoint, false),
+      );
+    });
+  }
 }
 
 function createDefaultFilters(): WebhookFilterModel {
@@ -495,4 +740,22 @@ function buildPageInfo(total: number, pageIndex: number, pageSize: number): Page
     start,
     end,
   };
+}
+
+function createDefaultInvokePayload(endpoint: WebhookEndpointView): string {
+  return JSON.stringify(
+    {
+      event: 'test',
+      hookKey: endpoint.hookKey,
+      jobKey: endpoint.jobKey,
+      environment: endpoint.environment,
+      timestamp: new Date().toISOString(),
+    },
+    null,
+    2,
+  );
+}
+
+function escapeSingleQuotes(value: string): string {
+  return value.replace(/'/g, `'"'"'`);
 }

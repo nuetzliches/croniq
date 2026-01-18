@@ -32,21 +32,21 @@ _Last updated: 2026-01-18_
 
 ## Phase 3: Diagnostics & recovery
 
-- [ ] Dead-letter list with filters, detail view, and replay actions.
-- [ ] Delivery event timeline per endpoint (status, reason, timestamps, correlation ID).
-- [ ] Action log panel showing recent admin operations from the UI.
+- [x] Dead-letter list with filters, detail view, and replay actions.
+- [x] Delivery event timeline per endpoint (status, reason, timestamps, correlation ID).
+- [ ] (backlog) Action log panel showing recent admin operations from the UI.
 
 ## Phase 4: Testing & operator tooling
 
-- [ ] Manual invoke/test payload panel with request preview and safe defaults.
-- [ ] Copyable cURL/snippet examples for the configured endpoint.
-- [ ] Bulk enable/disable endpoints with confirmation and audit context.
+- [x] Manual invoke/test payload panel with request preview and safe defaults.
+- [x] Copyable cURL/snippet examples for the configured endpoint.
+- [ ] (backlog) Bulk enable/disable endpoints with confirmation and audit context.
 
 ## Phase 5: Observability & insights
 
 - [ ] Webhook KPIs (success rate, latency, rate-limit rejections) and trend tiles.
-- [ ] Grafana deep-links or embedded panels where available.
-- [ ] Audit summary for rotations, IP rule changes, and failed deliveries.
+- [ ] (backlog) Grafana deep-links or embedded panels where available.
+- [ ] (backlog) Audit summary for rotations, IP rule changes, and failed deliveries.
 
 ## Backend dependencies (by phase)
 
