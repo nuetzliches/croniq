@@ -2,6 +2,10 @@
 
 This document captures the current architecture of Croniq and replaces the earlier concept drafts. It records the validated design choices, service layout, and quality targets that already shape the codebase.
 
+::: info Status
+Implemented. Last verified: 2026-01-18.
+:::
+
 ## Product Goals & SLOs
 
 - Provide a modular .NET 10 scheduling platform with a light in-memory execution path, extensible providers, and durable persistence when required.
@@ -18,8 +22,9 @@ This document captures the current architecture of Croniq and replaces the earli
 | Scheduler Core (`Croniq.Core`)                                                 | Trigger parsing, schedule evaluation, policies, execution pipeline, `IJob` contracts.        |
 | Provider Layer (`Croniq.Persistence.*`, `Croniq.Auth.*`, `Croniq.Providers.*`) | Abstractions and default implementations for persistence, auth, logging, telemetry, secrets. |
 | Service Layer (`Croniq.Api`, RPC)                                              | Minimal API endpoints, rate limiting, auth middleware, gRPC/JSON-RPC endpoints.              |
+| Admin UI (`Croniq.Ui`)                                                         | Angular admin console for tenant-scoped management workflows; optional, separately deployed. |
 | Jobs Layer (`Croniq.Sdk`, sample job projects)                                 | Authoring model for jobs, DI helpers, samples.                                               |
-| Infrastructure (`infra/docker`, `tools/Croniq.DbMigrator`)                     | Docker Compose dev stack, EF Core migrations, helper scripts, future UI.                     |
+| Infrastructure (`infra/docker`, `tools/Croniq.DbMigrator`)                     | Docker Compose dev stack, EF Core migrations, helper scripts.                                |
 
 Hosting extensions (`AddCroniqApiServices`, `AddCroniqApiRateLimiter`, `UseCroniqApi`) wire the pieces together. Auth and persistence can run in `InMemory`, `SqlServer`, or `Postgres` modes via configuration (`Croniq:*`).
 
@@ -175,10 +180,10 @@ docs/
 - **Goal**: Allow external systems or internal apps to push HTTP events into Croniq without custom glue code. Each tenant mints webhook receivers that immediately trigger jobs, making Webhooks a first-class trigger source alongside cron, interval, and event streams.
 - **Host Composition**: `Croniq.Webhooks` is a Minimal API host that reuses `Croniq.Hosting` for DI (auth, persistence, policies). Only ingress-specific pieces live here: signature validation, rate limiting, payload inspection, and dispatch into the execution pipeline. `AddCroniqWebhookServices` wires everything up for both the standalone host and co-hosted samples.
 - **Deployment Guidance**: Run `Croniq.Webhooks` as an independent deployment whenever you expect bursty ingress traffic or need separate autoscaling from `Croniq.Api`. Samples (and very small tenants) can co-host both surfaces in a single process by calling `UseCroniqWebhooks(mapHealthEndpoints: false)` inside the API host, but production topologies typically expose two pods / services so management calls stay isolated from webhook storms.
-- **DMZ Ingress-Only**: Remote webhook persistence plus an ingress event stream and relay worker allow DMZ ingress with no outbound connections into the internal network. DMZ hosts run `Croniq.Api` in `WebhookAdminOnly` mode alongside `Croniq.Webhooks` with `Ingress.DispatchMode=StoreOnly`, while internal hosts use `Croniq:Webhooks:Mode=Remote` and the relay worker (requires `webhooks:ingress` scope). See `docs/deep-dive/designs/dmz-ingress-remote-webhooks.md` for topology and config.
+- **DMZ Ingress-Only**: Remote webhook persistence plus an ingress event stream and relay worker allow DMZ ingress with no outbound connections into the internal network. DMZ hosts run `Croniq.Api` in `WebhookAdminOnly` mode alongside `Croniq.Webhooks` with `Ingress.DispatchMode=StoreOnly`. Internal hosts use `Croniq:Webhooks:Mode=Remote` and run the relay worker only on the host that has job registrations (usually the worker host). The API host still needs the remote config for management and `/invoke`, but should keep `Croniq:Webhooks:Remote:EnableRelay=false`. See `docs/deep-dive/designs/dmz-ingress-remote-webhooks.md` for topology and config.
 - **Environment Scoping**: Webhook ingress is partitioned by TenantId + EnvironmentTag; hooks and ingress events stay within the environment in the URL. Relay workers must pull the same environment tag, and cross-environment dispatch is not supported. See [`docs/guides/webhooks.md`](../guides/webhooks.md) for ingress usage.
 - **Endpoints & Protocols**: Ingress routes such as `POST /tenants/{tenantId}/environments/{environmentTag}/webhooks/{hookKey}` accept JSON payloads today, with a standardized event envelope planned. Each hook maps to a registered `JobKey`. Payload metadata is projected into `IJobExecutionContext` with `webhook:*` and `payload:*` prefixes so downstream jobs can branch without re-parsing JSON.
-- **Configuration Source**: Hooks are defined under `Croniq:Webhooks` (in-memory for dev) or persisted via `Croniq.Persistence.SqlServer` or `Croniq.Persistence.Postgres` once the admin API lands. The shape includes `HookKey`, `JobKey`, `Secret`, per-hook `RequestsPerMinute`, and arbitrary metadata. The host falls back to global defaults when per-hook values are omitted.
+- **Configuration Source**: Hooks are defined under `Croniq:Webhooks` (in-memory for dev) or persisted via `Croniq.Persistence.SqlServer` or `Croniq.Persistence.Postgres` through the admin API in production. The shape includes `HookKey`, `JobKey`, `Secret`, per-hook `RequestsPerMinute`, and arbitrary metadata. The host falls back to global defaults when per-hook values are omitted.
 - **Processing Stages**: Request enters `Croniq.Webhooks` -> hook lookup for tenant/environment scope -> HMAC signature validation (`X-Croniq-Signature`) -> named ASP.NET Core rate limiter partitioned per hook -> payload normalization/metadata enrichment -> dispatch. In standard mode the dispatcher executes via `IJobExecutionPipeline`; in DMZ StoreOnly mode it persists a `WebhookIngressEvent` for the internal relay worker. Failures bubble into policy-based retries, logging, and a `WebhookIngressEvent`/dead-letter record for diagnostics.
 - **Security & Observability**: TLS is mandatory; secrets are returned only on create/rotate and stored encrypted at rest via Data Protection (share the key ring across hosts), so treat the database as sensitive; validation runs in constant time to avoid timing attacks. OpenTelemetry spans (`Croniq.Webhooks.Ingress`) capture hook/job tags, and the host exports the same metrics/logging decorators as `Croniq.Api`, making it easy to monitor ingress pressure separately from management traffic.
 - **Docs Impact**: `docs/guides/webhooks.md` demonstrates configuration + curl usage, the quickstart teaches how to co-host webhooks, and this section outlines deployment trade-offs so operators understand when to promote the ingress to a dedicated service.
@@ -188,7 +193,7 @@ docs/
 - **Schema**: `Croniq.Persistence.SqlServer` and `Croniq.Persistence.Postgres` persist hooks in `croniq.WebhookEndpoints`, record cache-invalidation events inside `croniq.WebhookEndpointEvents`, capture failed payloads in `croniq.WebhookDeadLetters`, and store rotation trails inside `croniq.WebhookSecretHistory`. Each record keeps tenant/environment scope, `HookKey`, `JobKey`, encrypted secret material (plus hash), signature version, rate limit, metadata JSON, and audit timestamps.
 - **Migrations**: EF Core migrations ship through `Croniq.DbMigrator`, so Compose/test stacks no longer rely on `EnsureCreated`. Dev/test environments can still fall back to `Croniq:Webhooks` configuration when a relational provider is not available.
 - **Contract tests**: `SqlServerWebhookPersistenceProviderTests` (in `tests/Croniq.Persistence.SqlServer.Tests`) and `PostgresWebhookPersistenceProviderTests` (in `tests/Croniq.Persistence.Postgres.Tests`) exercise CRUD + scope enforcement so providers stay consistent with the admin API.
-- **Admin API**: `Croniq.Api` now exposes tenant-scoped CRUD endpoints (`POST/GET/DELETE /tenants/{tenantId}/webhooks?environment=<tag>`). Each request validates the job key scope, enforces per-hook rate limits, and returns the freshest secret (only when you explicitly send a new one) so automation pipelines can bootstrap callers.
+- **Admin API**: `Croniq.Api` now exposes tenant-scoped CRUD endpoints (`POST/GET/DELETE /tenants/{tenantId}/webhooks?environment=<tag>`). Each request validates the `JobKey` format, enforces per-hook rate limits, and returns the freshest secret (only when you explicitly send a new one) so automation pipelines can bootstrap callers.
 - **Capabilities API**: `GET /tenants/{tenantId}/webhooks/capabilities?environment=<tag>` returns the default rate limit and whether unsigned hooks are permitted, sourced from local config or remote persistence so UIs can avoid configuration drift.
 - **Host Bootstrapping**: `Croniq.Webhooks` prefers the persistence provider, caching lookups per hook and falling back to configuration entries only when no stored definition exists. A hosted `WebhookEndpointCacheInvalidationService` drains the SqlServer/Postgres changefeed and evicts cache entries immediately after CRUD operations; remaining fallback TTLs keep config-defined hooks responsive.
 - **Changefeed & Cache Invalidation**: Every upsert/delete emits a row into `croniq.WebhookEndpointEvents`. `SqlServerWebhookEndpointChangefeed` and `PostgresWebhookEndpointChangefeed` expose those rows as ordered streams, and the hosted invalidation service polls in lightweight batches (configurable interval + batch size under `Croniq:Webhooks:Cache`). This keeps rate limiter metadata and secrets hot without relying on 30-60s cache expirations.
@@ -196,9 +201,9 @@ docs/
 - **Unsigned Hooks Guardrails**: Signature validation stays enabled by default. Operators must set `Croniq:Webhooks:Security:AllowUnsignedHooks=true` (or enable it via remote capabilities) and pass `allowUnsigned=true` in the webhook payload when creating an unsigned hook; ingress warns the first time an unsigned payload is accepted so there is an audit breadcrumb.
 - **Operational Insights**: Use OpenTelemetry spans (`Croniq.Webhooks.Ingress`), the planned API audit log stream, and the Webhook dead-letter table + replay endpoint to rehydrate failed webhook deliveries without digging through raw logs.
 - **Open Tasks**:
-  1. Extend secret rotation with dual-secret windows and `WebhookSecretHistory` persistence so rotations become zero-downtime and auditable.
-  2. Harden the CRUD endpoints with authentication/authorization scopes plus integration tests (currently only happy-path smoke coverage exists).
-  3. Provide CLI/SDK helpers (or scripted samples) for provisioning hooks, including secret export masking rules.
+  1. Add payload size/content-type guardrails for webhook ingress plus smoke coverage.
+  2. Expand integration tests for webhook CRUD, secret rotation, and dead-letter replay paths.
+  3. Provide CLI/SDK helpers for webhook provisioning beyond IP rules and secret rotation.
 
 ## Job Authoring Model
 

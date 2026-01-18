@@ -185,38 +185,38 @@ The `WebhookEndpointIpRules` migration ships with Croniq `main` (Dec 2025) and m
 
 1. **Set the connection string** for the migrator container/CLI:
 
-```cmd
-set CRONIQ_DB_PROVIDER=SqlServer
-set CRONIQ_SQL_CONNECTION=Server=<sql-host>;Database=Croniq;User Id=cronq_admin;Password=<secret>;
-```
+   ```cmd
+   set CRONIQ_DB_PROVIDER=SqlServer
+   set CRONIQ_SQL_CONNECTION=Server=<sql-host>;Database=Croniq;User Id=cronq_admin;Password=<secret>;
+   ```
 
-```cmd
-set CRONIQ_DB_PROVIDER=Postgres
-set CRONIQ_POSTGRES_CONNECTION=Host=<pg-host>;Database=Croniq;Username=croniq_admin;Password=<secret>;
-```
+   ```cmd
+   set CRONIQ_DB_PROVIDER=Postgres
+   set CRONIQ_POSTGRES_CONNECTION=Host=<pg-host>;Database=Croniq;Username=croniq_admin;Password=<secret>;
+   ```
 
 2. **Run the migrator once per environment** (dev/test/prod). The tool is idempotent, so reruns are safe:
 
-```cmd
-dotnet run --project tools/Croniq.DbMigrator
-```
+   ```cmd
+   dotnet run --project tools/Croniq.DbMigrator
+   ```
 
-> Containerized clusters can execute the same step with `docker compose run --rm croniq-db-migrator` as long as the provider connection settings are injected.
+   > Containerized clusters can execute the same step with `docker compose run --rm croniq-db-migrator` as long as the provider connection settings are injected.
 
 3. **Verify the table exists** before exposing the new API endpoints:
 
-```sql
-SELECT TOP (5) HookKey, TenantId, EnvironmentTag, Cidr
-FROM croniq.WebhookEndpointIpRules
-ORDER BY CreatedAtUtc DESC;
-```
+   ```sql
+   SELECT TOP (5) HookKey, TenantId, EnvironmentTag, Cidr
+   FROM croniq.WebhookEndpointIpRules
+   ORDER BY CreatedAtUtc DESC;
+   ```
 
-```sql
-SELECT HookKey, TenantId, EnvironmentTag, Cidr
-FROM croniq.WebhookEndpointIpRules
-ORDER BY CreatedAtUtc DESC
-LIMIT 5;
-```
+   ```sql
+   SELECT HookKey, TenantId, EnvironmentTag, Cidr
+   FROM croniq.WebhookEndpointIpRules
+   ORDER BY CreatedAtUtc DESC
+   LIMIT 5;
+   ```
 
 4. **Rollback plan**: restore from backup if the migration fails. The schema change is additive (new table + indexes), so no data loss occurs when rolling forward again.
 

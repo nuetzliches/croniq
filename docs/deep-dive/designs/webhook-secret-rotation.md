@@ -1,5 +1,9 @@
 # Webhook Secret Rotation & Signature Opt-Out
 
+::: info Status
+Implemented. Last verified: 2026-01-18.
+:::
+
 ## Goals
 
 - Support zero-downtime secret rotation for persisted webhooks by storing previous and upcoming secrets with bounded grace windows.

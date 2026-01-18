@@ -6,11 +6,8 @@ This guide walks you through creating your first Croniq job, registering it with
 >
 > - .NET SDK `net10.0`
 > - Access to the Croniq repository or NuGet feeds (once packages are published)
-> - Docker (optional) for running the reference environment
 >
 > All commands are shown for Windows PowerShell / CMD; adapt paths for your OS if needed.
->
-> Need the full Croniq reference environment? Follow [`docs/deep-dive/devstack.md`](../deep-dive/devstack.md) for compose profiles and helper scripts.
 >
 > Still deciding how to secure the API? Read [`auth.md`](../guides/auth.md) for the consumer-facing guide to API keys vs OAuth2 before exposing your endpoints.
 
@@ -30,15 +27,15 @@ Until official packages exist, you can reference local projects or NuGet prerele
 
 ```cmd
 cd HelloCroniq
- dotnet add package Croniq --version <latest>
- dotnet add package Croniq.Api --version <latest>
+ dotnet add package Croniq --version LATEST_VERSION
+ dotnet add package Croniq.Api --version LATEST_VERSION
 ```
 
 > Always install the latest stable version (see `AGENTS.md`). For local development before packages exist, add project references to `src/Croniq` and `src/Croniq.Api` instead of NuGet packages.
 
 ## 3. Register a Job Class
 
-Implement `IJob` and register it via `AddCroniqJob<TJob>()` inside `HelloCroniq/Program.cs`:
+Implement `IJob` and register it via `AddCroniqJobsFromEntryAssembly()` inside `HelloCroniq/Program.cs`:
 
 ```csharp
 using Croniq;
@@ -52,7 +49,7 @@ builder.Services.AddCroniq(builder.Configuration); // worker defaults (InMemory 
 builder.Services.AddCroniqApiServices(builder.Configuration);
 builder.Services.AddCroniqApiRateLimiter();
 
-builder.Services.AddCroniqJob<HelloWorldJob>();
+builder.Services.AddCroniqJobsFromEntryAssembly();
 
 var app = builder.Build();
 
@@ -95,13 +92,13 @@ With `AddTrigger(...)` the schedule is seeded at startup, so you can skip the AP
 ```cmd
 # Terminal 1
 cd HelloCroniq
- dotnet run
+dotnet run
 ```
 
 ```cmd
-curl -X POST https://localhost:5001/tenants/dev-sandbox/schedules?environment=dev-local \
+curl -X POST https://localhost:5001/tenants/default/schedules?environment=dev \
      -H "Content-Type: application/json" \
-     -H "X-Croniq-Key: <your-dev-key>" \
+     -H "X-Croniq-Key: YOUR_DEV_KEY" \
      -d "{
            \"jobKey\": \"samples:HelloWorld\",
            \"cronExpression\": \"0 * * * * ?\",
@@ -116,7 +113,7 @@ Refer to `/deep-dive/persistence.md` for the exact schedule payload and validati
 Inbound webhooks let external systems trigger the job you just registered without touching the management API. For local development you can co-host the webhook ingress alongside the API by adding the `Croniq.Webhooks` package:
 
 ```cmd
- dotnet add package Croniq.Webhooks --version <latest>
+ dotnet add package Croniq.Webhooks --version LATEST_VERSION
 ```
 
 Register the services in `Program.cs` right after the existing Croniq calls:
@@ -133,7 +130,7 @@ app.UseCroniqWebhooks(mapHealthEndpoints: false); // skip duplicate /health when
 
 `AddCroniqWebhookServices` automatically wires the persistence provider based on `Croniq:Webhooks:Mode` (InMemory for samples, SqlServer/Postgres when you reuse `Croniq:SqlServer` or `Croniq:Postgres`). Set `Croniq:Webhooks:ConfigurePersistence=false` when you need to register a custom `IWebhookPersistenceProvider` before calling `AddCroniqWebhookServices`.
 
-Add a matching configuration block (e.g., in `appsettings.Development.json`). Point the `JobKey` at the handler you registered above so the webhook reuses the same job key used by manual triggers:
+Add a matching configuration block. Point the `JobKey` at the handler you registered above so the webhook reuses the same job key used by manual triggers:
 
 ```json
 {
@@ -145,6 +142,7 @@ Add a matching configuration block (e.g., in `appsettings.Development.json`). Po
           "HookKey": "hello-world",
           "JobKey": "samples:HelloWorld",
           "Secret": "dev-webhook-secret",
+          "RequireSignature": true,
           "Metadata": {
             "source": "quickstart"
           }
@@ -174,6 +172,10 @@ Invoke-WebRequest -Uri "https://localhost:5001/tenants/default/environments/dev/
 
 `Croniq.Webhooks` recomputes the signature, enforces the rate limit, and invokes the job pipeline. You should see the same log output as the manual trigger, plus webhook-specific metadata (e.g., `payload:invoiceId=INV-42`).
 
+If you want to trigger a webhook manually through the admin API (for example, from the UI), use `POST /tenants/{tenantId}/environments/{environmentTag}/webhooks/{hookKey}/invoke`.
+
+When running DMZ ingress with remote persistence, keep `Croniq:Webhooks:Remote:EnableRelay=true` only on the worker host (the one that has job registrations). The API host still needs the remote config for management endpoints, but should not run the relay.
+
 > **Learn more:** The deep dive section [`Webhook Trigger Surface`](../deep-dive/architecture.md#webhook-trigger-surface) explains how the dedicated `Croniq.Webhooks` host scales independently, how persistence works, and what security constraints apply in production.
 
 ### Rotate webhook secrets from the CLI
@@ -189,7 +191,7 @@ scripts/webhook-rotate-secret.ps1 `
   -Notes "rotated during quickstart"
 ```
 
-Pass `-ActivateInSeconds <seconds>` (up to seven days) when you need to stage the new secret before callers switch over. The script prints the activation window plus the plaintext secret-capture it immediately because Croniq never stores or returns it again.
+Pass `-ActivateInSeconds SECONDS` (up to seven days) when you need to stage the new secret before callers switch over. The script prints the activation window plus the plaintext secret-capture it immediately because Croniq never stores or returns it again.
 
 ## 4.1 Publish API & gRPC Schemas
 
@@ -212,7 +214,7 @@ builder.Services.AddGrpcReflection();
 var app = builder.Build();
 
 if (app.Environment.IsDevelopment()
-    || builder.Configuration.GetValue<bool>("Croniq:Api:ExposeSchemas"))
+    || builder.Configuration.GetValue("Croniq:Api:ExposeSchemas", false))
 {
   app.UseSwagger();
   app.UseSwaggerUI(options =>
@@ -228,25 +230,47 @@ app.UseCroniqApi();
 ```
 
 - Default the exposure to local/dev environments and gate it in production via `Croniq:Api:ExposeSchemas` so the management plane stays private.
-- When you need a signed artifact for consumers, install the Swashbuckle CLI (`dotnet tool install --global Swashbuckle.AspNetCore.Cli`) and run `dotnet swagger tofile --output docs/public/api/croniq-api-v1.json <YourApp>.dll v1` as part of CI.
+- When you need a signed artifact for consumers, install the Swashbuckle CLI (`dotnet tool install --global Swashbuckle.AspNetCore.Cli`) and run `dotnet swagger tofile --output docs/public/api/croniq-api-v1.json YourApp.dll v1` as part of CI.
 - Check the `.proto` file into your docs (or push it to a Buf registry) whenever the gRPC contract changes so language-specific clients can regenerate strongly typed stubs without hitting your environment.
+
+Schema exposure configuration:
+
+::: code-group
+
+```json [appsettings.Development.json]
+{
+  "Croniq": {
+    "Api": {
+      "ExposeSchemas": true
+    }
+  }
+}
+```
+
+```dotenv [.env (compose)]
+CRONIQ_API_EXPOSE_SCHEMAS=true
+```
+
+```powershell [PowerShell]
+$Env:Croniq__Api__ExposeSchemas = "true"
+```
+
+:::
 
 ## 5. Run Everything
 
 ```cmd
 # Terminal 1
 cd HelloCroniq
- dotnet run
+dotnet run
 ```
-
-If you need the Croniq dev stack instead of a local SDK host, start it via the instructions in [`docs/deep-dive/devstack.md`](../deep-dive/devstack.md).
 
 Trigger the job manually:
 
 ```cmd
 curl -X POST https://localhost:5001/jobs/trigger \
      -H "Content-Type: application/json" \
-     -H "X-Croniq-Key: <your-dev-key>" \
+     -H "X-Croniq-Key: YOUR_DEV_KEY" \
      -d "{
            \"jobKey\": \"samples:HelloWorld\",
            \"metadata\": { \"initiator\": \"manual\" }
@@ -257,47 +281,61 @@ Watch the API logs; you should see the `HelloWorldJob` message. Logs, metrics, a
 
 ## 6.1 Add Observability (Optional but Recommended)
 
-1. Start the observability stack that ships with Croniq:
+1. Ensure you have an OTLP collector running (self-hosted Grafana/Tempo/Prometheus, a managed collector, or your existing observability stack).
 
-   ```cmd
-   scripts\devstack-up.cmd --profile obs
+2. Configure your quickstart host to export telemetry. The `AddCroniqObservability` helper reads `Croniq:Observability` settings, so add them to `appsettings.Development.json` or export environment variables before running `dotnet run`:
+
+   ::: code-group
+
+   ```json [appsettings.Development.json]
+   {
+     "Croniq": {
+       "Observability": {
+         "OtlpEndpoint": "http://localhost:4317",
+         "OtlpProtocol": "grpc"
+       },
+       "Core": {
+         "TenantId": "default",
+         "EnvironmentTag": "dev"
+       }
+     }
+   }
    ```
 
-By default, the dev stack also starts the Croniq UI dev server at `http://localhost:5081` (disable via `scripts\devstack-up.cmd --no-ui`). The API is reachable at `http://localhost:5080`.
-
-This launches Prometheus (`http://localhost:9090`), Tempo, and Grafana (`http://localhost:5610`, default credentials `admin/admin`).
-
-> **Tenant reminder**: Loki and Grafana share the tenant `croniq-devstack`. If you fork the stack, keep the `X-Scope-OrgID` header (in `infra/docker/observability/grafana/datasources/datasource.yml`) and the OTEL collector header (`infra/docker/observability/otel-collector-config.yaml`) in sync so Explore always queries the tenant that actually receives your logs. Labels exposed by the collector (`service_name`, `service_instance`, `environment`, `tenant`) make it easy to scope queries such as `{tenant="croniq-devstack", environment="dev"}`.
-
-1. Configure your quickstart host to export telemetry. The `AddCroniqObservability` helper reads `Croniq:Observability` settings, so either add them to `appsettings.Development.json` or export environment variables before running `dotnet run`:
-
-   ```cmd
-   setx Croniq__Observability__OtlpEndpoint http://localhost:4317
-   setx Croniq__Observability__OtlpProtocol grpc
-   rem optional overrides
-   setx Croniq__Core__EnvironmentTag dev
-   setx Croniq__Core__TenantId default
+   ```dotenv [.env (compose)]
+   CRONIQ_OBS_OTLP_ENDPOINT=http://localhost:4317
+   CRONIQ_OBS_OTLP_PROTOCOL=grpc
+   CRONIQ_CORE_TENANT_ID=default
+   CRONIQ_ENVIRONMENT=dev
    ```
 
-   Restart the application so the new environment variables take effect. The defaults already point at `otel-collector:4317` inside Docker, so these overrides are only needed when you run the app on your host machine.
+   ```powershell [PowerShell]
+   $Env:Croniq__Observability__OtlpEndpoint = "http://localhost:4317"
+   $Env:Croniq__Observability__OtlpProtocol = "grpc"
+   $Env:Croniq__Core__EnvironmentTag = "dev"
+   $Env:Croniq__Core__TenantId = "default"
+   ```
 
-2. Trigger your job again. Within a few seconds you can:
+   :::
 
+   Restart the application so the new settings take effect. The defaults use OTLP gRPC; override them only when your collector endpoint differs.
+
+3. Trigger your job again. Within a few seconds you can:
    - Open Grafana > Dashboards > _Croniq Scheduler Health_ or _Croniq API Gateway_ to view the panels provisioned from `infra/docker/observability/grafana/dashboards/` (they refresh every 30s).
    - Inspect traces under Grafana > Explore > Tempo, filtering by `service.name="Croniq.Api"`.
    - Check Prometheus > Alerts to see the built-in alerts from `infra/monitoring/rules/scheduler-alerts.yaml`. Alerts fire when dead letters, misfires, queue depth, or latency breach their thresholds (`CroniqDeadLettersHigh`, `CroniqMisfireBurst`, `CroniqQueueDepthHigh`, `CroniqLatencyP95High`, `CroniqJobFailures`).
 
-3. Deploying to your own observability stack? Copy the dashboard JSON + rule file into your Grafana/Prometheus setup and keep the datasource UIDs (`prometheus`, `tempo`) consistent. See [`docs/deep-dive/observability.md`](../deep-dive/observability.md#dashboards--alerts) for detailed instructions.
+Deploying to your own observability stack? Copy the dashboard JSON + rule file into your Grafana/Prometheus setup and keep the datasource UIDs (`prometheus`, `tempo`) consistent. See [`docs/deep-dive/observability.md`](../deep-dive/observability.md#dashboards--alerts) for detailed instructions.
 
 ## 6. Clean Up & Next Steps
 
-- Stop the API, tear down Docker resources (`docker compose down`) if used.
+- Stop the API host when you're done testing.
 - Extend the job to read secrets via `ISecretProvider`, add retry policies, or push telemetry to your observability stack.
 - Continue with:
   - [`configuration.md`](./configuration.md) for tenant/environment options
   - [`auth.md`](../guides/auth.md) to switch between API key and password login
   - [`policies.md`](../guides/policies.md) and [`triggers.md`](../guides/triggers.md) to tune job behavior
   - `/deep-dive/job-registration.md` for internal startup flow and persistence sync details
-- Hit [`troubleshooting.md`](../ops/troubleshooting.md) if any of the steps above fail or you suspect dev stack issues
+- Hit [`troubleshooting.md`](../ops/troubleshooting.md) if any of the steps above fail.
 
 Happy scheduling! Translate findings back into the documentation as you refine the workflow.

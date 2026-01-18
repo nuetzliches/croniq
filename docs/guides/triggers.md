@@ -133,3 +133,5 @@ Update a schedule via the API (or config/seeded triggers) and set `enabled=false
 ## Configuration Overrides
 
 `Croniq:Triggers` uses the normal configuration pipeline, so environment variables can override JSON values when you need per-environment schedules.
+
+> **Learn more:** See the deep dives on [job registration](../deep-dive/job-registration.md) and [schedule calendars](../deep-dive/designs/schedule-calendars.md) for the registration pipeline and rule evaluation semantics.

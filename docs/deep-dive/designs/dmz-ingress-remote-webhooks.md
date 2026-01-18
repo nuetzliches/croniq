@@ -1,5 +1,9 @@
 # DMZ Ingress-Only Remote Webhooks
 
+::: info Status
+Partially implemented (remote persistence + relay + ingress stream). Last verified: 2026-01-18.
+:::
+
 ## Goals
 
 - Accept public webhooks in a DMZ without any outbound connections to the internal network.

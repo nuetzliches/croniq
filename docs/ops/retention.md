@@ -20,14 +20,10 @@ This is only wired when the worker host uses `Persistence.Mode = SqlServer` or `
 | Key                                           | Description                                                                                                                                |
 | --------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
 | `Croniq:Retention:RefreshTokensEnabled`       | Enables pruning `auth.RefreshTokens`. Default `true`.                                                                                      |
-| Key                                           | Description                                                                                                                                |
-| --------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
-| `Croniq:Retention:RefreshTokensEnabled`       | Enables pruning `auth.RefreshTokens`. Default `true`.                                                                                      |
 | `Croniq:Retention:RefreshTokensRetentionDays` | Deletes when `ExpiresAtUtc + days < now` for the current tenant. Use `0` for immediate deletion after expiry; `-1` disables. Default `14`. |
 
 ### Additional retention tasks (opt-in)
 
-| Key                                                     | Description                                                                                              |
 | Key                                                     | Description                                                                                              |
 | ------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
 | `Croniq:Retention:JobDeadLettersEnabled`                | Enables pruning `croniq.DeadLetters` (scoped to current tenant+environment). Default `false`.            |

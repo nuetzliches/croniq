@@ -4,12 +4,25 @@ This guide explains how the Croniq API host (`Croniq.Api`) resolves configuratio
 
 ## 1. Configuration Sources & Priority
 
-`builder.Services.AddCroniqApiServices(builder.Configuration)` binds the following option objects from the provided `IConfiguration` instance: `CroniqApiOptions`, `CroniqOptions`, `CroniqAuthOptions`, `CroniqPersistenceOptions`, `SqlServerOptions`, and `PostgresOptions`. The usual ASP.NET Core precedence applies (later providers win):
+`builder.Services.AddCroniqApiServices(builder.Configuration)` wires API + platform services and binds option objects from these configuration sections:
+
+- `Croniq:Api` (`CroniqApiOptions`)
+- `Croniq:Core` (`CroniqOptions`)
+- `Croniq:Auth` (`CroniqAuthOptions`), plus `Croniq:Auth:Tokens`, `Croniq:Auth:Password`, `Croniq:Auth:Oidc`
+- `Croniq:Persistence` (`CroniqPersistenceOptions`)
+- `Croniq:SqlServer` / `Croniq:Postgres` (`SqlServerOptions`, `PostgresOptions`)
+- `Croniq:Startup`, `Croniq:JobRegistrySync`
+- `Croniq:Policies:Misfire`, `Croniq:Policies:Execution`, `Croniq:Policies:Overrides`
+- `Croniq:Webhooks:Ingress` (webhook ingress stream options)
+
+The usual ASP.NET Core precedence applies (later providers win):
 
 1. `appsettings.json` and other JSON files.
 2. Environment-specific JSON (e.g., `appsettings.Development.json`).
 3. Environment variables (`Croniq__Section__Property` notation with double underscores).
 4. Secret providers such as `dotnet user-secrets`, Azure Key Vault, or custom `IConfiguration` sources.
+
+`.env` files are not loaded automatically by Croniq. In this repo, `.env` is consumed by scripts/containers and uses `CRONIQ_*` keys that are mapped to the `Croniq__...` environment variables shown in the examples below.
 
 For API hosts, `AddCroniqApiServices(...)` stays configuration-first. For worker-only hosts, Croniq exposes `AddCroniq(...)` (package `Croniq`) or `AddCroniqWorkerServices(...)` (package `Croniq.Hosting`) which bind the `Croniq:*` sections and apply defaults.
 
@@ -52,9 +65,11 @@ Supported keys:
 - `Croniq:Jobs:Assemblies` (array of assembly names or file paths)
 - `Croniq:Jobs:IncludeEntryAssembly` (bool)
 
-JSON example:
+Examples:
 
-```json
+::: code-group
+
+```json [appsettings.json]
 {
   "Croniq": {
     "Jobs": {
@@ -64,13 +79,17 @@ JSON example:
 }
 ```
 
-Environment variable example:
+```dotenv [.env (compose)]
+CRONIQ_JOBS_ASSEMBLIES_0=./jobs/Acme.Jobs.dll
+```
 
-```powershell
+```powershell [PowerShell]
 $Env:Croniq__Jobs__Assemblies__0 = "C:\\croniq\\jobs\\Acme.Jobs.dll"
 ```
 
-You can also provide a semicolon-delimited list:
+:::
+
+You can also provide a semicolon-delimited list in a single env var:
 
 ```powershell
 $Env:Croniq__Jobs__Assemblies = "/app/jobs/Acme.Jobs.dll;/app/jobs/Acme.Billing.Jobs.dll"
@@ -205,9 +224,11 @@ See [`auth.md`](../guides/auth.md) for the end-to-end authentication story and w
 
 When running `Croniq.Api` behind a reverse proxy, enable forwarded headers and declare the proxy IPs or networks to trust. If you enable this without any known proxy entries, Croniq only accepts forwarded headers from loopback and logs a warning.
 
-JSON example:
+Examples:
 
-```json
+::: code-group
+
+```json [appsettings.json]
 {
   "Croniq": {
     "Api": {
@@ -222,14 +243,21 @@ JSON example:
 }
 ```
 
-Environment variable example:
+```dotenv [.env (compose)]
+CRONIQ_API_FORWARDED_HEADERS_ENABLED=true
+CRONIQ_API_FORWARDED_HEADERS_FORWARD_LIMIT=2
+CRONIQ_API_FORWARDED_HEADERS_KNOWN_NETWORKS_0=10.0.0.0/8
+CRONIQ_API_FORWARDED_HEADERS_KNOWN_PROXIES_0=192.168.1.10
+```
 
-```powershell
+```powershell [PowerShell]
 $Env:Croniq__Api__ForwardedHeaders__Enabled = "true"
 $Env:Croniq__Api__ForwardedHeaders__ForwardLimit = "2"
 $Env:Croniq__Api__ForwardedHeaders__KnownNetworks__0 = "10.0.0.0/8"
 $Env:Croniq__Api__ForwardedHeaders__KnownProxies__0 = "192.168.1.10"
 ```
+
+:::
 
 ## 6. Authentication Modes
 
@@ -272,7 +300,9 @@ See [docs/deep-dive/password-auth.md](../deep-dive/password-auth.md) for the ful
 
 ## 7. Sample Local Setup
 
-```cmd
+::: code-group
+
+```cmd [Windows cmd]
 set Croniq__Auth__Mode=InMemory
 set Croniq__Auth__InMemory__ApiKey=crq_dev_local_sample
 set Croniq__Core__TenantId=dev-sandbox
@@ -280,13 +310,25 @@ set Croniq__Core__EnvironmentTag=dev-alice
 set Croniq__Api__RequestsPerMinute=60
 ```
 
+```dotenv [.env (compose)]
+CRONIQ_AUTH_MODE=InMemory
+CRONIQ_API_KEY=crq_dev_local_sample
+CRONIQ_CORE_TENANT_ID=dev-sandbox
+CRONIQ_ENVIRONMENT=dev-alice
+CRONIQ_API_REQUESTS_PER_MINUTE=60
+```
+
+:::
+
 To point both persistence and auth at the same database via the shared settings:
 
 ```powershell
+# SqlServer
 $Env:Croniq__Auth__Mode = "SqlServer"
 $Env:Croniq__Persistence__Mode = "SqlServer"
 $Env:Croniq__SqlServer__ConnectionString = "Server=localhost;Database=Croniq;User Id=sa;Password=Secret123!"
 
+# Postgres
 $Env:Croniq__Auth__Mode = "Postgres"
 $Env:Croniq__Persistence__Mode = "Postgres"
 $Env:Croniq__Postgres__ConnectionString = "Host=localhost;Database=Croniq;Username=postgres;Password=Secret123!"

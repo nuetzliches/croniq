@@ -1,5 +1,9 @@
 # Job Execution Log Persistence
 
+::: info Status
+Draft (file-based log store shipped; SQL-backed design pending). Last verified: 2026-01-18.
+:::
+
 ## Goals
 
 - Persist job-scoped logs so job authors and operators can inspect executions alongside job/trigger metadata.

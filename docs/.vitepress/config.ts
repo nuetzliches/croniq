@@ -25,6 +25,9 @@ export default withMermaid(defineConfig({
     themeConfig: {
         siteTitle: 'Croniq Docs',
         logo: '/favicon.svg',
+        search: {
+            provider: 'local'
+        },
         nav: [
             { text: 'Introduction', link: '/introduction/' },
             { text: 'Quickstart', link: '/introduction/quickstart' },

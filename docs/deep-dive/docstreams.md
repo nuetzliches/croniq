@@ -13,12 +13,13 @@ This living note tracks how we keep the consumer-facing docs in sync with the de
 
 ### Consumer Stream (`docs/`)
 
-| Area           | Files                                                                                                                                                   | Notes                                                                                                                                               |
-| -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Landing + Hero | `index.md`, `README.md`                                                                                                                                 | Hero page explains Croniq's value; repo README links to each section and preview commands.                                                          |
-| Introduction   | `introduction/index.md`, `introduction/quickstart.md`, `introduction/configuration.md`                                                                  | Quickstart drives a Hello Croniq scenario, references configuration, dev stack, and troubleshooting pages.                                          |
-| Guides         | `guides/auth.md`, `guides/policies.md`, `guides/triggers.md`, `guides/webhooks.md`, `guides/workers-runners.md`, `guides/grpc.md`, `guides/handlers.md` | Covers auth modes, policy options, trigger payloads, webhooks, worker integration, and handler patterns with "Learn more" callouts into deep dives. |
-| Operations     | `ops/troubleshooting.md`                                                                                                                                | Fast-path troubleshooting with links to dev stack, observability, and CI docs for deeper debugging.                                                 |
+| Area           | Files                                                                                                                                                   | Notes                                                                                                                                                |
+| -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------  |
+| Landing + Hero | `index.md`, `README.md`                                                                                                                                 | Hero page explains Croniq's value; repo README links to each section and preview commands.                                                           |
+| Feature map    | `feature-map.md`                                                                                                                                        | Cross-links features to guides, ops runbooks, and deep-dive references.                                                                              |
+| Introduction   | `introduction/index.md`, `introduction/quickstart.md`, `introduction/configuration.md`, `introduction/deployment-modes.md`                              | Quickstart drives a Hello Croniq scenario, references configuration, dev stack, and troubleshooting pages.                                           |
+| Guides         | `guides/auth.md`, `guides/policies.md`, `guides/triggers.md`, `guides/webhooks.md`, `guides/workers-runners.md`, `guides/grpc.md`, `guides/handlers.md` | Covers auth modes, policy options, trigger payloads, webhooks, worker integration, and handler patterns. Guides should end with a "Learn more" link. |
+| Operations     | `ops/index.md`, `ops/troubleshooting.md`, `ops/retention.md`, `ops/container-images.md`                                                                 | Fast-path troubleshooting plus retention and image lifecycle guidance for operators.                                                                 |
 
 ### Deep-Dive Stream (`docs/deep-dive/`)
 
@@ -59,6 +60,7 @@ Every PR touching `docs/**` must tag at least one representative from each strea
 - Consumer pages stay lean: each section ends with a "Learn more" callout pointing at the matching deep-dive page (templates live under `docs/_templates/`).
 - Deep-dive topics reference the consumer quickstart/configuration docs whenever readers should begin with user-facing instructions.
 - Quickstart and Troubleshooting highlight `docs/deep-dive/devstack.md` and `observability.md` before asking contributors to debug locally.
+- UI implementation notes live in the UI workspace and are intentionally excluded from the VitePress site; avoid linking to UI deep-dive files from `docs/`.
 
 ## Tooling & Governance
 

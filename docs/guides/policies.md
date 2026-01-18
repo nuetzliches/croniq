@@ -91,4 +91,4 @@ POST /tenants/{tenantId}/schedules/deadletters/{id}/replay?environment={env}
 
 The replay endpoint requires the `schedules:deadletter` scope. Replay keeps the stored metadata and adds `deadletter:id` and `deadletter:replay_at` so jobs can trace replays.
 
-See the deep dive in `docs/deep-dive/policies.md` for more background on dead-letter behavior and retention.
+> **Learn more:** See [policies.md](../deep-dive/policies.md) for policy resolution, dead-letter behavior, and retention details.

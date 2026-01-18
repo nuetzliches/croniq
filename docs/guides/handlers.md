@@ -54,3 +54,5 @@ Croniq does not ship a batch-handler DSL yet. For now, model batching inside the
 
 - Configure schedules via [`triggers.md`](./triggers.md).
 - Configure retries, timeouts, and quotas via [`policies.md`](./policies.md).
+
+> **Learn more:** See [job-registration.md](../deep-dive/job-registration.md) for the registration pipeline and [policies.md](../deep-dive/policies.md) for execution/misfire policy details.

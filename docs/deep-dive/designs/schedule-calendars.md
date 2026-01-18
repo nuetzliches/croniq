@@ -1,6 +1,10 @@
 # Schedule Calendars
 
-This document describes the planned schedule calendar feature: a separate entity that includes or excludes candidate fire times for schedules.
+::: info Status
+Implemented. Last verified: 2026-01-18.
+:::
+
+This document describes the schedule calendar feature: a separate entity that includes or excludes candidate fire times for schedules.
 
 ## Goals
 
@@ -51,20 +55,25 @@ Schedule Trigger:
 ## Rule Types
 
 DailyWindow:
+
 - StartTime (HH:mm)
 - EndTime (HH:mm)
 - DaysOfWeek (optional list)
 
 WeeklyWindow:
+
 - DaysOfWeek (list)
 
 AnnualDateList:
+
 - MonthDay pairs (MM-dd)
 
 DateList:
+
 - Explicit dates (yyyy-MM-dd)
 
 CronRule:
+
 - CronExpression (same 6-field syntax as schedules)
 
 ## Evaluation Semantics
@@ -82,7 +91,7 @@ CronRule:
 6. Apply StartAtUtc and EndAtUtc bounds after calendar filtering.
 7. For @once schedules: if excluded, return no next occurrence and log that the calendar filtered the only candidate.
 
-## API Surface (Planned)
+## API Surface
 
 - `GET /tenants/{tenantId}/calendars`
 - `POST /tenants/{tenantId}/calendars`

@@ -23,12 +23,16 @@ You can switch between modes (or enable both) by changing configuration-no code 
 ### Provisioning Flow
 
 1. **Pick a backing store**
+
    - `Croniq:Auth:Mode = InMemory`: single key, best for samples/tests only.
    - `Croniq:Auth:Mode = SqlServer`: production-ready, uses `Croniq.Auth.SqlServer` to hash and store keys.
-- `Croniq:Auth:Mode = Postgres`: production-ready, uses `Croniq.Auth.Postgres` to hash and store keys.
+   - `Croniq:Auth:Mode = Postgres`: production-ready, uses `Croniq.Auth.Postgres` to hash and store keys.
+
 2. **Issue a key**
-   - SQL-backed hosts expose admin endpoints under `/tenants/{id}/api-keys`. Call `IApiKeyStore.IssueAsync` only when you need a bootstrap script or console app.
+
+   - SQL-backed hosts expose admin endpoints under `/tenants/{tenantId}/api-keys`. Call `IApiKeyStore.IssueAsync` only when you need a bootstrap script or console app.
    - In-memory mode reads the secret from `Croniq__Auth__InMemory__ApiKey` (or `appsettings.*`).
+
 3. **Distribute the plaintext** once. Operators copy it into CI/CD variables or `.env.local`. Croniq never stores the plaintext value.
 4. **Call the API** with the header `X-Croniq-Key: <your-secret>`.
 
@@ -46,18 +50,29 @@ API keys are issued for an **API client** (`ClientId`). The client id is the log
 | `Croniq__Auth__InMemory__ApiKey`                          | When `InMemory` mode  | Single dev key used by all callers.                                                        |
 | `Croniq__Core__TenantId` / `Croniq__Core__EnvironmentTag` | Optional              | Embedded in every issued key so rate limiting and future audit trails remain tenant-aware. |
 
-Example local `.cmd` snippet:
+Example local configuration:
 
-```cmd
+::: code-group
+
+```cmd [Windows cmd]
 set Croniq__Auth__Mode=InMemory
 set Croniq__Auth__InMemory__ApiKey=crq_dev_local_sample
 set Croniq__Core__TenantId=dev-sandbox
 set Croniq__Core__EnvironmentTag=dev-jane
 ```
 
+```dotenv [.env (compose)]
+CRONIQ_AUTH_MODE=InMemory
+CRONIQ_API_KEY=crq_dev_local_sample
+CRONIQ_CORE_TENANT_ID=dev-sandbox
+CRONIQ_ENVIRONMENT=dev-jane
+```
+
+:::
+
 ### Rotation & Revocation
 
-- SqlServer/Postgres mode: call `IApiKeyStore.RotateAsync` / `RevokeAsync` (directly or via the future admin API). Structured audit logging is planned; today, rely on API logs and telemetry for change tracking.
+- SqlServer/Postgres mode: rotate via `POST /tenants/{tenantId}/api-keys/{keyId}/rotate` and revoke via `DELETE /tenants/{tenantId}/api-keys/{keyId}`. Use `IApiKeyStore.RotateAsync` / `RevokeAsync` only for bootstrap scripts or direct host integrations. Structured audit logging is planned; today, rely on API logs and telemetry for change tracking.
 - In-memory mode: update the environment variable and restart the host. Any cached callers must pick up the new value.
 - Always remove revoked keys from CI/CD secrets. Croniq rate limiting partitions by Tenant + Caller ID, so stale keys fall back to anonymous throttles and fail fast.
 
@@ -95,3 +110,5 @@ Use `ISecretProvider` (Key Vault, AWS Secrets Manager, etc.). The default sample
 - `/introduction/configuration.md` - environment variable matrix and troubleshooting tips.
 - `/ops/troubleshooting.md` - common auth failures and rate limit issues.
 - `/deep-dive/security.md` - in-depth design, rate limiting, and backlog status.
+
+> **Learn more:** See [security.md](../deep-dive/security.md) and [auth.md](../deep-dive/auth.md) for auth provider contracts, token issuance, and rate-limiting internals.

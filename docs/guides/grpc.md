@@ -59,3 +59,5 @@ catch (CroniqRpcException ex)
 ## Validation and CI hooks
 
 - Quick syntax/build check: `eng/validate-grpc-samples.ps1` checks Node (syntax) and, when generated stubs exist, optionally builds Python/Go. Actual calls require a running `Croniq.Api` host (see the samples).
+
+> **Learn more:** Review [architecture.md](../deep-dive/architecture.md) for the API/RPC surface and [security.md](../deep-dive/security.md) for gRPC guardrails and rate limiting.

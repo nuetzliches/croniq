@@ -37,6 +37,145 @@ Baseline requirements:
 - durable persistence (SqlServer/Postgres)
 - more configuration, in exchange for predictable operations and full management capabilities
 
+### Minimal configuration per host (platform mode)
+
+Use these minimal templates when you split API, worker, and webhooks into separate hosts. Replace the connection string values and swap `SqlServer` for `Postgres` if needed.
+
+#### API host
+
+::: code-group
+
+```json [appsettings.json]
+{
+  "Croniq": {
+    "Core": {
+      "TenantId": "prod",
+      "EnvironmentTag": "prod-cluster"
+    },
+    "Auth": { "Mode": "SqlServer" },
+    "Persistence": { "Mode": "SqlServer" },
+    "SqlServer": {
+      "ConnectionString": "Server=sql;Database=Croniq;User Id=croniq;Password=***;"
+    },
+    "Api": { "RequestsPerMinute": 60 },
+    "Webhooks": { "Mode": "SqlServer" }
+  }
+}
+```
+
+```dotenv [.env (compose)]
+CRONIQ_CORE_TENANT_ID=prod
+CRONIQ_ENVIRONMENT=prod-cluster
+CRONIQ_AUTH_MODE=SqlServer
+CRONIQ_PERSISTENCE_MODE=SqlServer
+CRONIQ_SQL_HOST=sql
+CRONIQ_SQL_DATABASE=Croniq
+CRONIQ_SQL_PASSWORD=***
+CRONIQ_API_REQUESTS_PER_MINUTE=60
+CRONIQ_WEBHOOKS_MODE=SqlServer
+```
+
+```powershell [PowerShell]
+$Env:Croniq__Core__TenantId = "prod"
+$Env:Croniq__Core__EnvironmentTag = "prod-cluster"
+$Env:Croniq__Auth__Mode = "SqlServer"
+$Env:Croniq__Persistence__Mode = "SqlServer"
+$Env:Croniq__SqlServer__ConnectionString = "Server=sql;Database=Croniq;User Id=croniq;Password=***;"
+$Env:Croniq__Api__RequestsPerMinute = "60"
+$Env:Croniq__Webhooks__Mode = "SqlServer"
+```
+
+:::
+
+#### Worker host
+
+::: code-group
+
+```json [appsettings.json]
+{
+  "Croniq": {
+    "Core": {
+      "TenantId": "prod",
+      "EnvironmentTag": "prod-cluster"
+    },
+    "Persistence": { "Mode": "SqlServer" },
+    "SqlServer": {
+      "ConnectionString": "Server=sql;Database=Croniq;User Id=croniq;Password=***;"
+    },
+    "Jobs": {
+      "Assemblies": ["/app/jobs/Acme.Jobs.dll"]
+    }
+  }
+}
+```
+
+```dotenv [.env (compose)]
+CRONIQ_CORE_TENANT_ID=prod
+CRONIQ_ENVIRONMENT=prod-cluster
+CRONIQ_PERSISTENCE_MODE=SqlServer
+CRONIQ_SQL_HOST=sql
+CRONIQ_SQL_DATABASE=Croniq
+CRONIQ_SQL_PASSWORD=***
+CRONIQ_JOBS_ASSEMBLIES_0=/app/jobs/Acme.Jobs.dll
+```
+
+```powershell [PowerShell]
+$Env:Croniq__Core__TenantId = "prod"
+$Env:Croniq__Core__EnvironmentTag = "prod-cluster"
+$Env:Croniq__Persistence__Mode = "SqlServer"
+$Env:Croniq__SqlServer__ConnectionString = "Server=sql;Database=Croniq;User Id=croniq;Password=***;"
+$Env:Croniq__Jobs__Assemblies__0 = "/app/jobs/Acme.Jobs.dll"
+```
+
+:::
+
+#### Webhooks host
+
+::: code-group
+
+```json [appsettings.json]
+{
+  "Croniq": {
+    "Core": {
+      "TenantId": "prod",
+      "EnvironmentTag": "prod-cluster"
+    },
+    "Webhooks": {
+      "Mode": "SqlServer",
+      "Ingress": { "DispatchMode": "TriggerJob" }
+    },
+    "SqlServer": {
+      "ConnectionString": "Server=sql;Database=Croniq;User Id=croniq;Password=***;"
+    },
+    "Jobs": {
+      "Assemblies": ["/app/jobs/Acme.Jobs.dll"]
+    }
+  }
+}
+```
+
+```dotenv [.env (compose)]
+CRONIQ_CORE_TENANT_ID=prod
+CRONIQ_ENVIRONMENT=prod-cluster
+CRONIQ_WEBHOOKS_MODE=SqlServer
+CRONIQ_WEBHOOKS_INGRESS_DISPATCH_MODE=TriggerJob
+CRONIQ_SQL_HOST=sql
+CRONIQ_SQL_DATABASE=Croniq
+CRONIQ_SQL_PASSWORD=***
+CRONIQ_JOBS_ASSEMBLIES_0=/app/jobs/Acme.Jobs.dll
+```
+
+```powershell [PowerShell]
+$Env:Croniq__Core__TenantId = "prod"
+$Env:Croniq__Core__EnvironmentTag = "prod-cluster"
+$Env:Croniq__Webhooks__Mode = "SqlServer"
+$Env:Croniq__Webhooks__Ingress__DispatchMode = "TriggerJob"
+$Env:Croniq__SqlServer__ConnectionString = "Server=sql;Database=Croniq;User Id=croniq;Password=***;"
+$Env:Croniq__Jobs__Assemblies__0 = "/app/jobs/Acme.Jobs.dll"
+```
+
+:::
+
 Why it matters:
 
 - Once operators expect "full management in the UI", Croniq needs a server-side source of truth (persistence), not only an in-process registry.

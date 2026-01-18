@@ -1,5 +1,9 @@
 # Polyglot Worker Protocol (gRPC + HTTP)
 
+::: info Status
+Draft (HTTP work endpoints shipped; gRPC streaming remains a target). Last verified: 2026-01-18.
+:::
+
 ## Goals
 
 - Enable non-.NET workers (Go/Node/Python) to execute Croniq jobs directly (not only trigger them).

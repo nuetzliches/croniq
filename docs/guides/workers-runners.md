@@ -163,3 +163,5 @@ Heartbeat payloads accept `runnerId`, optional `seenAtUtc`, and optional `metada
 ## Protocol Roadmap
 
 The longer-term gRPC streaming protocol, work-item schema, and event/log ingestion plan are tracked in `docs/deep-dive/designs/polyglot-worker-protocol.md`.
+
+> **Learn more:** See the deep dives on [persistence & leases](../deep-dive/persistence.md) and the [polyglot worker protocol](../deep-dive/designs/polyglot-worker-protocol.md).

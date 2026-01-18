@@ -24,20 +24,25 @@ This document describes the continuous integration and delivery strategy require
 ## ci-pr.yml (Validation)
 
 1. **Setup**
+
    - Runner: `ubuntu-latest` (use `windows-latest` matrix for MSSQL-specific tests if needed).
    - Checkout, restore tools (`dotnet workload restore` if required).
 2. **Formatting & analyzers**
+
    - `dotnet format --verify-no-changes`.
    - `dotnet build -warnaserror` to enforce analyzers.
 3. **Unit + contract tests**
-  - Matrix per test project (`Croniq.Core.Tests`, `Croniq.Api.Tests`, `Croniq.JobStore.InMemory.Tests`, `Croniq.Persistence.SqlServer.Tests`, `Croniq.Persistence.Postgres.Tests`, `Croniq.Providers.Default.Tests`, `Croniq.Sdk.Tests`).
+
+   - Matrix per test project (`Croniq.Core.Tests`, `Croniq.Api.Tests`, `Croniq.JobStore.InMemory.Tests`, `Croniq.Persistence.SqlServer.Tests`, `Croniq.Persistence.Postgres.Tests`, `Croniq.Providers.Default.Tests`, `Croniq.Sdk.Tests`).
    - Use `dotnet test <proj> /p:CollectCoverage=true /p:CoverletOutputFormat=cobertura`.
    - Upload coverage report aggregate + test results (TRX) as artifacts.
    - Fail if coverage <73% Core line / <75% overall line / <55% branch (overall + Core).
 4. **Security quick checks**
+
    - `dotnet list package --vulnerable --include-transitive`.
    - `trivy fs --exit-code 0 --severity HIGH,CRITICAL .` (informational in PR until release gating is ready).
 5. **Status reporting**
+
    - `scripts/ci/enforce_coverage_thresholds.py` enforces the line + branch thresholds above.
    - The workflow posts an auto-updating PR comment summarizing overall + Croniq.Core coverage plus per-assembly breakdown.
 

@@ -2,6 +2,10 @@
 
 This document specifies the authentication, authorization, and rate limiting design for Croniq. It extends the guidance captured in `architecture.md` and describes what remains to reach the "Security-Basis" milestone from `CHECKLIST.md`.
 
+::: info Status
+Implemented (baseline). Last verified: 2026-01-18.
+:::
+
 ## Objectives
 
 - Support API key and user bearer-token flows with a shared `ICallerContext` abstraction and tenant-aware partition enforcement.
@@ -84,7 +88,7 @@ This document specifies the authentication, authorization, and rate limiting des
 - **Dedicated Host**: `Croniq.Webhooks` runs as a standalone ingress surface (or co-hosted inside `Croniq.Api` for dev). It reuses the same DI setup (`Croniq.Hosting`) so persistence/auth/telemetry policies are shared. Operators can place it behind their own gateway/WAF while keeping management APIs separate.
 - **Secrets & Signatures**: Every webhook endpoint requires a secret. The host validates `X-Croniq-Signature` using HMAC-SHA256 on the raw request body, then compares hashes in constant time. Persisted webhook secrets are encrypted at rest via ASP.NET Core Data Protection and stored alongside a SHA-256 hash; plaintext is only returned when the admin explicitly creates or rotates the secret via the CRUD API.
 - **Rate Limiting**: ASP.NET rate limiter partitions per hook key (falling back to the global default). Limits are configurable through persistence or `Croniq:Webhooks:RequestsPerMinute`. Burst protection keeps individual tenants from exhausting dispatcher capacity.
-- **Tenant Scoping**: Persisted hooks include `TenantId` and `EnvironmentTag`. The webhook resolver enforces that the mapped `JobKey` belongs to the same partition before invoking the execution pipeline, preventing cross-tenant spoofing even when secrets leak.
+- **Tenant Scoping**: Persisted hooks include `TenantId` and `EnvironmentTag`. Admin and ingress paths enforce the tenant/environment scope, and dispatch uses the same partition when invoking the execution pipeline. Ingress still requires the job to be registered on the host (otherwise it returns `job-not-registered`).
 - **Metadata Sanitization**: Incoming JSON payloads are stored as metadata with `payload:*` prefixes. The factory performs best-effort extraction (strings/numbers/bools) and never stores raw headers. Metadata enrichment is always enabled; keep payloads minimal if data minimization is required.
 - **Secret Rotation Flow**: `POST /tenants/{tenantId}/webhooks` accepts updated secrets and returns them once. Automation can perform staged rotations by creating a temporary hook with the same job key or by coordinating clients to pick up the new secret immediately. Every rotation writes to `croniq.WebhookSecretHistory`, so the previous secret stays valid until the configured grace window expires; the ingress host resolves all active secrets via `GetActiveSecretsAsync` and validates payloads against each value.
 - **Recommended Hardening**: Front webhook hosts with IP allow lists or API Gateway auth, configure OWASP rules for JSON bodies, and send telemetry (`Croniq.Webhooks.Ingress`) to your SIEM for anomaly detection (e.g., spikes in 401/429).
@@ -191,7 +195,7 @@ Minimal configuration example:
 
 - **API key compromise**: (1) call `DELETE /tenants/{tenantId}/api-keys/{keyId}` to revoke the offender, (2) rotate dependent deploy agents via `POST .../rotate`, (3) search `Croniq.Api.Auth` logs for the compromised CallerId to confirm no lingering traffic, and (4) invalidate cached rate-limiter entries by restarting only the edge pod if requests keep flowing (the limiter refreshes partitions automatically once traffic stops).
 - **Webhook secret/IP rule drift**: When secrets or CIDRs must change quickly, batch rotations through the existing CRUD APIs - each call emits a `WebhookEndpointEvents` record and pushes cache invalidations to every ingress replica. No manual recycle is required; confirm the rollout by tailing `Croniq.Webhooks` logs for `cache invalidation completed` and running the smoke tests.
- - **Database least privilege**: Deploy `Croniq.DbMigrator` with a migration role, then run the API/Worker/Webhook hosts under read/write roles scoped to their schemas (`croniq`, `auth`). Deny `ALTER` to runtime identities and audit failed DDL attempts via SQL Server Extended Events or Postgres audit logs.
+- **Database least privilege**: Deploy `Croniq.DbMigrator` with a migration role, then run the API/Worker/Webhook hosts under read/write roles scoped to their schemas (`croniq`, `auth`). Deny `ALTER` to runtime identities and audit failed DDL attempts via SQL Server Extended Events or Postgres audit logs.
 - **Telemetry to SIEM**: Forward `Croniq.Api` and `Croniq.Webhooks` structured logs plus `Croniq.Observability` metrics to your SIEM. Prioritize alerts for `auth.failed`, `rate.limit.rejected`, `ip-blocked`, and unusual spikes in `WebhookDeadLetters`.
 - **Disaster recovery validation**: Quarterly, restore the database backups into a staging cluster, run `Croniq.DbMigrator` to verify schema parity, then execute `scripts/test-e2e.cmd` against the restored environment to ensure creds, secrets, and webhook caches hydrate as expected.
 

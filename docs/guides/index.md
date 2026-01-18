@@ -13,3 +13,8 @@ Use this index when you need to point readers at the guide set from other docume
 - [Handlers](./handlers.md)
 
 Each guide links back to the Quickstart and deep-dive references so you can jump between the consumer and contributor streams without guessing URLs.
+
+## Guide Structure
+
+- [Feature guide template](./guide-template.md)
+- [Feature map](../feature-map.md)

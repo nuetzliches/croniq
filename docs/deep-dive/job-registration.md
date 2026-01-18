@@ -2,6 +2,10 @@
 
 This deep dive explains how Croniq discovers jobs, composes job keys, and persists schedules. It complements the Quickstart by describing what happens behind `AddCroniqJob(...)` and `AddCroniq()`.
 
+::: info Status
+Implemented. Last verified: 2026-01-18.
+:::
+
 ## Discovery Options
 
 Croniq supports multiple registration styles:
@@ -15,8 +19,8 @@ Both paths produce a `JobDescriptor` with a deterministic job key.
 
 ## JobKey Composition
 
-- Format: `TenantId:EnvironmentTag:Namespace:Name[:Variant]`
-- Tenant/environment default to `Croniq:Core:*` unless overridden per host.
+- Format: `namespace:name[:variant]`
+- Tenant/environment are part of the execution scope (`PartitionScope`), not embedded in the job key. Defaults come from `Croniq:Core:*` unless overridden per host or caller.
 - Namespace + name must be deterministic and unique per tenant/environment to avoid collisions.
 
 ## Trigger Persistence & Startup Flow
