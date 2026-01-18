@@ -1,9 +1,9 @@
-import { Dialog } from '@angular/cdk/dialog';
 import { DatePipe } from '@angular/common';
 import { ChangeDetectionStrategy, Component, inject, signal } from '@angular/core';
 import { UpsertJobRequest } from '@croniq/api-schema';
 import { JobDialogComponent } from '@features/jobs/components/job-dialog/job-dialog.component';
 import { JobRegistryEntry, JobsStore } from '@features/jobs/jobs.store';
+import { CqDialogService } from 'ui-kit';
 import { filter } from 'rxjs';
 
 @Component({
@@ -15,7 +15,7 @@ import { filter } from 'rxjs';
 })
 export class JobsPage {
   private readonly store = inject(JobsStore);
-  private readonly dialog = inject(Dialog);
+  private readonly dialog = inject(CqDialogService);
 
   readonly jobs = this.store.jobRegistry;
   readonly loading = this.store.jobRegistryLoading;
@@ -55,7 +55,6 @@ export class JobsPage {
     this.dialog
       .open<UpsertJobRequest>(JobDialogComponent, {
         data,
-        disableClose: true,
         panelClass: 'dialog-panel', // Ensure this class is defined in global styles or component styles
       })
       .closed.pipe(filter((result): result is UpsertJobRequest => !!result))

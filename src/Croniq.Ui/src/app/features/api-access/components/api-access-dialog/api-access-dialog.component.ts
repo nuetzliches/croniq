@@ -1,7 +1,8 @@
+import { DialogRef, DIALOG_DATA } from '@angular/cdk/dialog';
 import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@angular/core';
 import { Field, form, required, submit } from '@angular/forms/signals';
-import { DialogRef, DIALOG_DATA } from '@angular/cdk/dialog';
 import { UpsertApiClientRequest } from '@croniq/api-schema';
+import { CqDialogComponent, CqDialogFooterDirective, CqDialogHeaderDirective } from 'ui-kit';
 
 interface ApiClientFormModel {
     clientId: string;
@@ -20,7 +21,7 @@ function mapToFormModel(data: UpsertApiClientRequest | null): ApiClientFormModel
 
 @Component({
     selector: 'cq-api-access-dialog',
-    imports: [Field],
+    imports: [Field, CqDialogComponent, CqDialogHeaderDirective, CqDialogFooterDirective],
     templateUrl: './api-access-dialog.component.html',
     changeDetection: ChangeDetectionStrategy.OnPush,
 })

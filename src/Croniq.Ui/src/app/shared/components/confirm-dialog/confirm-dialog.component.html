@@ -1,19 +1,17 @@
-<div
-  class="p-6 bg-white dark:bg-zinc-800 rounded-lg shadow-xl border border-zinc-200 dark:border-zinc-700 min-w-[400px] max-w-lg"
->
+<cq-dialog size="sm">
   @if (data.title) {
-  <h2 class="text-lg font-semibold mb-2 text-zinc-900 dark:text-zinc-100">{{ data.title }}</h2>
+  <h2 cqDialogHeader class="text-lg font-semibold text-primary">{{ data.title }}</h2>
   }
 
-  <p class="text-sm text-zinc-600 dark:text-zinc-400 mb-6 leading-relaxed">
+  <p class="text-sm text-muted leading-relaxed">
     {{ data.message }}
   </p>
 
-  <div class="flex justify-end gap-3">
+  <div cqDialogFooter class="flex justify-end gap-3">
     <button
       type="button"
       (click)="cancel()"
-      class="px-4 py-2 text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-700 rounded-md font-medium text-sm transition-colors"
+      class="rounded-lg border border-white/10 bg-white/5 px-4 py-2 text-sm font-semibold text-primary transition hover:border-accent hover:text-accent"
     >
       {{ data.cancelLabel || 'Cancel' }}
     </button>
@@ -22,12 +20,11 @@
       (click)="confirm()"
       [class]="
         data.variant === 'danger'
-          ? 'bg-red-600 hover:bg-red-700'
-          : 'bg-zinc-900 dark:bg-zinc-100 dark:text-zinc-900 hover:opacity-90'
+          ? 'rounded-lg bg-danger px-4 py-2 text-sm font-semibold text-white transition hover:bg-danger/90'
+          : 'rounded-lg bg-accent px-4 py-2 text-sm font-semibold text-white transition hover:bg-accent-hover'
       "
-      class="px-4 py-2 text-white rounded-md font-medium text-sm transition-colors"
     >
       {{ data.confirmLabel || 'Confirm' }}
     </button>
   </div>
-</div>
+</cq-dialog>

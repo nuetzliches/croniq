@@ -1,7 +1,7 @@
 import { CdkContextMenuTrigger } from '@angular/cdk/menu';
 import { CdkFixedSizeVirtualScroll, CdkVirtualForOf, CdkVirtualScrollViewport } from '@angular/cdk/scrolling';
 import { NgTemplateOutlet } from '@angular/common';
-import { ChangeDetectionStrategy, Component, Directive, ElementRef, Input, TemplateRef, ViewEncapsulation, computed, contentChild, contentChildren, inject, input, viewChild, viewChildren } from '@angular/core';
+import { ChangeDetectionStrategy, Component, Directive, ElementRef, Input, TemplateRef, ViewEncapsulation, computed, contentChild, contentChildren, inject, input, output, viewChild, viewChildren } from '@angular/core';
 
 export type ColumnAlign = 'start' | 'center' | 'end';
 
@@ -138,7 +138,7 @@ export class CqColumnComponent<T> {
               [ngTemplateOutletContext]="{ $implicit: row, rowIndex, column }"
             />
           } @else {
-            <span class="cq-data-grid__cell-text">{{ formatCell(row, column, rowIndex) }}</span>
+            <span class="cq-data-grid__cell-text">{{ formatCell(row, column) }}</span>
           }
         </div>
       }
@@ -164,8 +164,11 @@ export class CqColumnComponent<T> {
             [attr.data-row-key]="rowKey()(row, rowIndex)"
             [attr.data-row-index]="rowIndex"
             [attr.tabindex]="rowIndex === 0 ? 0 : -1"
+            [attr.aria-selected]="isSelected(row, rowIndex) ? 'true' : null"
+            [class.is-selected]="isSelected(row, rowIndex)"
             [class]="rowClassList(row)"
             (keydown)="onRowKeydown($event, rowIndex)"
+            (click)="onRowClick(rowIndex)"
             [cdkContextMenuTriggerFor]="rowContextMenu()!"
             [cdkContextMenuTriggerData]="rowContextMenuData(row, rowIndex)"
           >
@@ -182,8 +185,11 @@ export class CqColumnComponent<T> {
             [attr.data-row-key]="rowKey()(row, rowIndex)"
             [attr.data-row-index]="rowIndex"
             [attr.tabindex]="rowIndex === 0 ? 0 : -1"
+            [attr.aria-selected]="isSelected(row, rowIndex) ? 'true' : null"
+            [class.is-selected]="isSelected(row, rowIndex)"
             [class]="rowClassList(row)"
             (keydown)="onRowKeydown($event, rowIndex)"
+            (click)="onRowClick(rowIndex)"
           >
             <ng-container
               [ngTemplateOutlet]="rowCells"
@@ -243,6 +249,15 @@ export class CqColumnComponent<T> {
       padding: 0 0.75rem;
       gap: 0.5rem;
       outline: none;
+    }
+
+    .cq-data-grid__row:hover {
+      background: color-mix(in srgb, var(--cq-surface-5, #f8fafc) 65%, transparent);
+    }
+
+    .cq-data-grid__row.is-selected {
+      background: color-mix(in srgb, var(--cq-accent-500, #2563eb) 12%, transparent);
+      box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--cq-accent-500, #2563eb) 40%, transparent);
     }
 
     .cq-data-grid__row:focus-visible {
@@ -311,6 +326,9 @@ export class DataGrid<T> {
   readonly loading = input(false);
   readonly rowClasses = input<(row: T) => string | readonly string[] | undefined>();
   readonly rowContextMenu = input<TemplateRef<RowContextMenuContext<T>> | null>(null);
+  readonly selectedRowKey = input<string | number | null>(null);
+  readonly selectable = input(true);
+  readonly rowSelected = output<RowContextMenuContext<T>>();
 
   private readonly contentColumns = contentChildren(CqColumnComponent);
 
@@ -381,6 +399,14 @@ export class DataGrid<T> {
     let nextIndex = rowIndex;
 
     switch (event.key) {
+      case 'Enter':
+      case ' ':
+        this.emitSelection(rowIndex);
+        if (this.rowContextMenu()) {
+          this.openContextMenuForRow(rowIndex);
+        }
+        event.preventDefault();
+        return;
       case 'ArrowDown':
         nextIndex = Math.min(total - 1, rowIndex + 1);
         break;
@@ -409,6 +435,45 @@ export class DataGrid<T> {
 
     event.preventDefault();
     this.scrollToIndex(nextIndex);
+  }
+
+  onRowClick(rowIndex: number) {
+    this.emitSelection(rowIndex);
+  }
+
+  isSelected(row: T, rowIndex: number): boolean {
+    if (!this.selectable()) {
+      return false;
+    }
+    const selected = this.selectedRowKey();
+    if (selected === null || selected === undefined) {
+      return false;
+    }
+    return String(selected) === String(this.rowKey()(row, rowIndex));
+  }
+
+  private emitSelection(rowIndex: number) {
+    if (!this.selectable()) {
+      return;
+    }
+    const row = this.validatedRows()[rowIndex];
+    if (!row) {
+      return;
+    }
+    this.rowSelected.emit({ row, rowIndex });
+  }
+
+  private openContextMenuForRow(rowIndex: number) {
+    const rowEl = this.rowEls()[rowIndex]?.nativeElement;
+    if (!rowEl) {
+      return;
+    }
+    const rect = rowEl.getBoundingClientRect();
+    rowEl.dispatchEvent(new MouseEvent('contextmenu', {
+      bubbles: true,
+      clientX: rect.left + rect.width / 2,
+      clientY: rect.top + rect.height / 2,
+    }));
   }
 
   rowClassList(row: T): string {
@@ -465,7 +530,7 @@ export class DataGrid<T> {
     return !!header && typeof header !== 'string';
   }
 
-  formatCell<TValue>(row: T, column: ColumnDef<T>, rowIndex: number): TValue | undefined | null {
+  formatCell<TValue>(row: T, column: ColumnDef<T>): TValue | undefined | null {
     const key = column.key;
     let value = row as unknown as TValue;
 

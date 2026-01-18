@@ -1,5 +1,6 @@
 import { DIALOG_DATA, DialogRef } from '@angular/cdk/dialog';
 import { ChangeDetectionStrategy, Component, inject, signal } from '@angular/core';
+import { CqDialogComponent, CqDialogFooterDirective, CqDialogHeaderDirective } from 'ui-kit';
 
 export interface SecretDisplayData {
     secret: string;
@@ -9,7 +10,7 @@ export interface SecretDisplayData {
     selector: 'cq-secret-display-dialog',
     templateUrl: './secret-display-dialog.component.html',
     changeDetection: ChangeDetectionStrategy.OnPush,
-    imports: [],
+    imports: [CqDialogComponent, CqDialogHeaderDirective, CqDialogFooterDirective],
 })
 export class SecretDisplayDialogComponent {
     private readonly dialogRef = inject(DialogRef);

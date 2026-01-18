@@ -1,8 +1,8 @@
-import { Dialog } from '@angular/cdk/dialog';
 import { DatePipe } from '@angular/common';
 import { ChangeDetectionStrategy, Component, inject, signal } from '@angular/core';
 import { LogViewerDialogComponent } from '@features/executions/components/log-viewer-dialog/log-viewer-dialog.component';
 import { ExecutionsStore } from '@features/executions/executions.store';
+import { CqDialogService } from 'ui-kit';
 
 @Component({
   selector: 'cq-executions-page',
@@ -13,7 +13,7 @@ import { ExecutionsStore } from '@features/executions/executions.store';
 })
 export class ExecutionsPage {
   private readonly store = inject(ExecutionsStore);
-  private readonly dialog = inject(Dialog);
+  private readonly dialog = inject(CqDialogService);
 
   // Filters
   searchQuery = signal('');

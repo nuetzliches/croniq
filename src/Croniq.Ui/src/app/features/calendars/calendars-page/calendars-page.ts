@@ -1,10 +1,9 @@
-import { Dialog } from '@angular/cdk/dialog';
 import { DatePipe } from '@angular/common';
 import { ChangeDetectionStrategy, Component, Directive, inject } from '@angular/core';
 import type { CalendarMode, CalendarResponse, CroniqCalendarSeedDefinition } from '@croniq/api-schema';
 import { CalendarDialogComponent } from '@features/calendars/components/calendar-dialog/calendar-dialog.component';
 import { CalendarSummaryView, CalendarsStore } from '@features/calendars/calendars.store';
-import { CqCellDefDirective, CqColumnComponent, DataGrid } from 'ui-kit';
+import { CqCellDefDirective, CqColumnComponent, CqDialogService, DataGrid } from 'ui-kit';
 import { filter } from 'rxjs';
 
 @Directive({
@@ -24,7 +23,7 @@ export class CqCalendarCellDirective extends CqCellDefDirective<CalendarSummaryV
 })
 export class CalendarsPage {
     private readonly store = inject(CalendarsStore);
-    private readonly dialog = inject(Dialog);
+    private readonly dialog = inject(CqDialogService);
 
     readonly calendars = this.store.calendars;
     readonly calendarDefinitions = this.store.calendarDefinitions;

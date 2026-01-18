@@ -1,7 +1,8 @@
+import { DialogRef, DIALOG_DATA } from '@angular/cdk/dialog';
 import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@angular/core';
 import { disabled, Field, form, required, submit } from '@angular/forms/signals';
-import { DialogRef, DIALOG_DATA } from '@angular/cdk/dialog';
 import { UpsertWebhookEndpointRequest } from '@croniq/api-schema';
+import { CqDialogComponent, CqDialogFooterDirective, CqDialogHeaderDirective } from 'ui-kit';
 type WebhookDialogData = {
     endpoint: UpsertWebhookEndpointRequest | null;
     capabilities: {
@@ -35,7 +36,7 @@ function mapToFormModel(data: UpsertWebhookEndpointRequest | null, forceSignatur
 
 @Component({
     selector: 'cq-webhook-dialog',
-    imports: [Field],
+    imports: [Field, CqDialogComponent, CqDialogHeaderDirective, CqDialogFooterDirective],
     templateUrl: './webhook-dialog.component.html',
     changeDetection: ChangeDetectionStrategy.OnPush,
 })

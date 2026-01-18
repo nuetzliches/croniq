@@ -2,6 +2,7 @@ import { DIALOG_DATA, DialogRef } from '@angular/cdk/dialog';
 import { ChangeDetectionStrategy, Component, DestroyRef, effect, inject, signal } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { ExecutionsStore } from '@features/executions/executions.store';
+import { CqDialogComponent, CqDialogFooterDirective, CqDialogHeaderDirective } from 'ui-kit';
 import { finalize } from 'rxjs';
 
 export interface LogViewerData {
@@ -12,7 +13,7 @@ export interface LogViewerData {
     selector: 'cq-log-viewer-dialog',
     templateUrl: './log-viewer-dialog.component.html',
     changeDetection: ChangeDetectionStrategy.OnPush,
-    imports: [],
+    imports: [CqDialogComponent, CqDialogHeaderDirective, CqDialogFooterDirective],
     providers: [ExecutionsStore] // Note: In this case, we might want to use the parent store or a fresh one. 
     // Since fetchLogs is stateless in the store, a fresh provider is fine, 
     // BUT usually we want to inject the token.

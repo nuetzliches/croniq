@@ -2,6 +2,7 @@ import { DialogRef, DIALOG_DATA } from '@angular/cdk/dialog';
 import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@angular/core';
 import { Field, form, required, submit } from '@angular/forms/signals';
 import { CalendarRuleDefinitionLooseSchema } from '@croniq/api-schema';
+import { CqDialogComponent, CqDialogFooterDirective, CqDialogHeaderDirective } from 'ui-kit';
 import type { CalendarMode, CalendarRuleDefinition, CroniqCalendarSeedDefinition } from '@croniq/api-schema';
 
 type CalendarDialogData = CroniqCalendarSeedDefinition | null;
@@ -98,7 +99,7 @@ function normalizeCalendarMode(value: unknown): CalendarMode {
 
 @Component({
     selector: 'cq-calendar-dialog',
-    imports: [Field],
+    imports: [Field, CqDialogComponent, CqDialogHeaderDirective, CqDialogFooterDirective],
     templateUrl: './calendar-dialog.component.html',
     changeDetection: ChangeDetectionStrategy.OnPush,
 })

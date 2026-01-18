@@ -1,10 +1,5 @@
-<div
-  class="flex h-full w-[500px] flex-col overflow-hidden rounded-xl border border-white/10 bg-surface shadow-2xl"
->
-  <!-- Header -->
-  <header
-    class="flex items-center justify-between border-b border-white/10 bg-surface-alt px-6 py-4"
-  >
+<cq-dialog size="md">
+  <div cqDialogHeader class="flex w-full items-center justify-between">
     <h2 class="text-lg font-semibold text-primary">
       {{ isEdit ? 'Edit API Client' : 'Register API Client' }}
     </h2>
@@ -19,76 +14,70 @@
         />
       </svg>
     </button>
-  </header>
-
-  <!-- Body -->
-  <div class="flex-1 overflow-y-auto p-6">
-    <form id="apiAccessForm" class="space-y-4" (submit)="onSubmit($event)">
-      <!-- Client ID -->
-      <div class="space-y-1">
-        <label for="clientId" class="text-sm font-medium text-muted">Client ID</label>
-        @if (isEdit) {
-        <div
-          class="w-full rounded-lg border border-white/10 bg-surface-alt px-3 py-2 text-sm text-muted opacity-50"
-        >
-          {{ model().clientId }}
-        </div>
-        } @else {
-        <input
-          id="clientId"
-          type="text"
-          [field]="form.clientId"
-          class="w-full rounded-lg border border-white/10 bg-surface-alt px-3 py-2 text-sm text-primary placeholder:text-muted focus:border-accent focus:outline-none"
-          placeholder="e.g. ci-pipeline"
-        />
-        @if (submitAttempted() && clientIdInvalid()) {
-        <p class="text-xs text-danger">Client ID is required.</p>
-        } }
-      </div>
-
-      <!-- Name -->
-      <div class="space-y-1">
-        <label for="name" class="text-sm font-medium text-muted">Display Name</label>
-        <input
-          id="name"
-          type="text"
-          [field]="form.name"
-          class="w-full rounded-lg border border-white/10 bg-surface-alt px-3 py-2 text-sm text-primary placeholder:text-muted focus:border-accent focus:outline-none"
-          placeholder="e.g. CI/CD Primary Worker"
-        />
-      </div>
-
-      <!-- Environment -->
-      <div class="space-y-1">
-        <label for="environment" class="text-sm font-medium text-muted">Environment</label>
-        <input
-          id="environment"
-          type="text"
-          [field]="form.environmentTag"
-          class="w-full rounded-lg border border-white/10 bg-surface-alt px-3 py-2 text-sm text-primary placeholder:text-muted focus:border-accent focus:outline-none"
-          placeholder="e.g. Live"
-        />
-      </div>
-
-      <!-- Scopes -->
-      <div class="space-y-1">
-        <label for="scopes" class="text-sm font-medium text-muted">Scopes (comma separated)</label>
-        <input
-          id="scopes"
-          type="text"
-          [value]="scopesInput()"
-          (input)="setScopes($any($event.target).value)"
-          class="w-full rounded-lg border border-white/10 bg-surface-alt px-3 py-2 text-sm text-primary placeholder:text-muted focus:border-accent focus:outline-none"
-          placeholder="e.g. jobs:read, jobs:write"
-        />
-      </div>
-    </form>
   </div>
 
-  <!-- Footer -->
-  <footer
-    class="flex items-center justify-end gap-3 border-t border-white/10 bg-surface-alt px-6 py-4"
-  >
+  <form id="apiAccessForm" class="space-y-4" (submit)="onSubmit($event)">
+    <!-- Client ID -->
+    <div class="space-y-1">
+      <label for="clientId" class="text-sm font-medium text-muted">Client ID</label>
+      @if (isEdit) {
+      <div
+        class="w-full rounded-lg border border-white/10 bg-surface-alt px-3 py-2 text-sm text-muted opacity-50"
+      >
+        {{ model().clientId }}
+      </div>
+      } @else {
+      <input
+        id="clientId"
+        type="text"
+        [field]="form.clientId"
+        class="w-full rounded-lg border border-white/10 bg-surface-alt px-3 py-2 text-sm text-primary placeholder:text-muted focus:border-accent focus:outline-none"
+        placeholder="e.g. ci-pipeline"
+      />
+      @if (submitAttempted() && clientIdInvalid()) {
+      <p class="text-xs text-danger">Client ID is required.</p>
+      } }
+    </div>
+
+    <!-- Name -->
+    <div class="space-y-1">
+      <label for="name" class="text-sm font-medium text-muted">Display Name</label>
+      <input
+        id="name"
+        type="text"
+        [field]="form.name"
+        class="w-full rounded-lg border border-white/10 bg-surface-alt px-3 py-2 text-sm text-primary placeholder:text-muted focus:border-accent focus:outline-none"
+        placeholder="e.g. CI/CD Primary Worker"
+      />
+    </div>
+
+    <!-- Environment -->
+    <div class="space-y-1">
+      <label for="environment" class="text-sm font-medium text-muted">Environment</label>
+      <input
+        id="environment"
+        type="text"
+        [field]="form.environmentTag"
+        class="w-full rounded-lg border border-white/10 bg-surface-alt px-3 py-2 text-sm text-primary placeholder:text-muted focus:border-accent focus:outline-none"
+        placeholder="e.g. Live"
+      />
+    </div>
+
+    <!-- Scopes -->
+    <div class="space-y-1">
+      <label for="scopes" class="text-sm font-medium text-muted">Scopes (comma separated)</label>
+      <input
+        id="scopes"
+        type="text"
+        [value]="scopesInput()"
+        (input)="setScopes($any($event.target).value)"
+        class="w-full rounded-lg border border-white/10 bg-surface-alt px-3 py-2 text-sm text-primary placeholder:text-muted focus:border-accent focus:outline-none"
+        placeholder="e.g. jobs:read, jobs:write"
+      />
+    </div>
+  </form>
+
+  <div cqDialogFooter class="flex items-center justify-end gap-3">
     <button
       type="button"
       (click)="close()"
@@ -103,5 +92,5 @@
     >
       Save
     </button>
-  </footer>
-</div>
+  </div>
+</cq-dialog>

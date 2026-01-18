@@ -1,5 +1,6 @@
 import { DIALOG_DATA, DialogRef } from '@angular/cdk/dialog';
 import { ChangeDetectionStrategy, Component, inject } from '@angular/core';
+import { CqDialogComponent, CqDialogFooterDirective, CqDialogHeaderDirective } from 'ui-kit';
 
 export interface ConfirmDialogData {
     title?: string;
@@ -13,7 +14,7 @@ export interface ConfirmDialogData {
     selector: 'cq-confirm-dialog',
     templateUrl: './confirm-dialog.component.html',
     changeDetection: ChangeDetectionStrategy.OnPush,
-    imports: [],
+    imports: [CqDialogComponent, CqDialogHeaderDirective, CqDialogFooterDirective],
 })
 export class ConfirmDialogComponent {
     private readonly dialogRef = inject(DialogRef);

@@ -10,4 +10,6 @@ export * from './lib/forms/form-input';
 export * from './lib/forms/form-select';
 export * from './lib/forms/form-textarea';
 export * from './lib/forms/form-toggle';
+export * from './lib/confirm-dialog/confirm-dialog';
+export * from './lib/dialog/dialog';
 

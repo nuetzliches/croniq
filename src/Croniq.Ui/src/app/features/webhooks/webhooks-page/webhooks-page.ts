@@ -1,13 +1,14 @@
 import { DatePipe } from '@angular/common';
 import { ChangeDetectionStrategy, Component, Directive, computed, inject, linkedSignal, signal } from '@angular/core';
-import { Dialog } from '@angular/cdk/dialog';
 import { CdkMenu } from '@angular/cdk/menu';
 import { TenantContextService } from '@core/tenant-context/tenant-context.service';
 import { WebhookDialogComponent } from '@features/webhooks/components/webhook-dialog/webhook-dialog.component';
-import { WebhookCapabilitiesView, WebhookEndpointView, WebhookIpRuleView, WebhooksStore } from '@features/webhooks/webhooks.store';
-import { CreateWebhookIpRuleRequest, UpsertWebhookEndpointRequest } from '@croniq/api-schema';
+import { WebhookIpRulesDialogComponent } from '@features/webhooks/components/webhook-ip-rules-dialog/webhook-ip-rules-dialog.component';
+import { WebhookCapabilitiesView, WebhookEndpointView, WebhooksStore } from '@features/webhooks/webhooks.store';
+import { UpsertWebhookEndpointRequest } from '@croniq/api-schema';
 import { Field, form } from '@angular/forms/signals';
-import { CqCellDefDirective, CqColumnComponent, CqContextMenuComponent, CqContextMenuItemDirective, CqFormFieldComponent, CqInputDirective, CqSelectDirective, DataGrid } from 'ui-kit';
+import { CqCellDefDirective, CqColumnComponent, CqConfirmDialogComponent, CqConfirmDialogData, CqContextMenuItemDirective, CqDialogService, CqFormFieldComponent, CqInputDirective, CqSelectDirective, DataGrid } from 'ui-kit';
+import { filter } from 'rxjs';
 
 type WebhookDialogData = {
   endpoint: UpsertWebhookEndpointRequest | null;
@@ -72,7 +73,6 @@ export class CqWebhookCellDirective extends CqCellDefDirective<WebhookEndpointVi
     CqFormFieldComponent,
     CqInputDirective,
     CqSelectDirective,
-    CqContextMenuComponent,
     CqContextMenuItemDirective,
     CdkMenu,
   ],
@@ -83,13 +83,12 @@ export class CqWebhookCellDirective extends CqCellDefDirective<WebhookEndpointVi
 export class WebhooksPage {
   private readonly store = inject(WebhooksStore);
   private readonly tenantContext = inject(TenantContextService);
-  private readonly dialog = inject(Dialog);
+  private readonly dialog = inject(CqDialogService);
 
   readonly endpoints = this.store.endpoints;
   readonly loading = this.store.loading;
   readonly error = this.store.lastError;
   readonly rotatedSecret = this.store.rotatedSecret;
-  readonly ipRules = this.store.ipRules;
   readonly filterModel = signal(createDefaultFilters());
   readonly filterForm = form(this.filterModel, () => { });
   readonly statusOptions = STATUS_OPTIONS;
@@ -190,30 +189,20 @@ export class WebhooksPage {
   webhookRowKey = (row: WebhookEndpointView, index: number) =>
     `${row.environment}:${row.hookKey || `webhook-${index}`}`;
 
+  readonly selectedRowKey = signal<string | number | null>(null);
+
   webhookRowClasses = (row: WebhookEndpointView) =>
     row.status === 'active' ? undefined : ['opacity-80'];
 
-  menuContext(row: WebhookEndpointView): { row: WebhookEndpointView } {
-    return { row };
+  selectRow(event: { row: WebhookEndpointView }): void {
+    const row = event.row;
+    if (!row) {
+      return;
+    }
+    this.selectedRowKey.set(this.webhookRowKey(row, 0));
   }
 
   readonly selectedIpRulesEndpoint = signal<WebhookEndpointView | null>(null);
-  readonly ipRulesPanelOpen = computed(() => this.selectedIpRulesEndpoint() !== null);
-  readonly ipRuleFormModel = linkedSignal(() => {
-    this.selectedIpRulesEndpoint();
-    return {
-      cidr: '',
-      description: '',
-    };
-  });
-  readonly ipRuleForm = form(this.ipRuleFormModel, () => { });
-  readonly ipRuleCidrError = computed(() => {
-    const cidr = this.ipRuleFormModel().cidr.trim();
-    return cidr ? null : 'CIDR is required.';
-  });
-  readonly canCreateIpRule = computed(() =>
-    Boolean(this.selectedIpRulesEndpoint()) && !this.ipRuleCidrError(),
-  );
 
   private createDialogData(endpoint: UpsertWebhookEndpointRequest | null): WebhookDialogData {
     return {
@@ -247,6 +236,7 @@ export class WebhooksPage {
       data: this.createDialogData(data),
       width: '500px',
       panelClass: 'bg-transparent',
+      restoreFocus: true,
     });
 
     ref.closed.subscribe((result) => {
@@ -266,72 +256,14 @@ export class WebhooksPage {
     });
   }
 
-  openIpRulesPanel(endpoint: WebhookEndpointView): void {
+  openIpRulesDialog(endpoint: WebhookEndpointView): void {
     this.selectedIpRulesEndpoint.set(endpoint);
-    this.store.selectHook(endpoint.hookKey);
-  }
-
-  closeIpRulesPanel(): void {
-    this.selectedIpRulesEndpoint.set(null);
-    this.store.selectHook('');
-  }
-
-  createIpRule(payload: CreateWebhookIpRuleRequest): void {
-    const endpoint = this.selectedIpRulesEndpoint();
-    if (!endpoint) {
-      return;
-    }
-    const tenantId = this.tenantContext.tenantId();
-    const environment = this.tenantContext.environment();
-    if (!tenantId) {
-      return;
-    }
-    this.store.createIpRule(
-      {
-        tenantId,
-        environment,
-        hookKey: endpoint.hookKey,
-      },
-      payload,
-    );
-  }
-
-  submitIpRule(): void {
-    if (!this.canCreateIpRule()) {
-      return;
-    }
-    const model = this.ipRuleFormModel();
-    const cidr = model.cidr.trim();
-    if (!cidr) {
-      return;
-    }
-    const description = model.description.trim();
-    this.createIpRule({
-      cidr,
-      description: description ? description : null,
-    });
-    this.ipRuleFormModel.set({
-      cidr: '',
-      description: '',
-    });
-  }
-
-  deleteIpRule(rule: WebhookIpRuleView): void {
-    const endpoint = this.selectedIpRulesEndpoint();
-    if (!endpoint) {
-      return;
-    }
-    const tenantId = this.tenantContext.tenantId();
-    const environment = this.tenantContext.environment();
-    if (!tenantId) {
-      return;
-    }
-    this.store.deleteIpRule({
-      tenantId,
-      environment,
-      hookKey: endpoint.hookKey,
-      ruleId: rule.ruleId,
-    });
+    this.dialog.open(WebhookIpRulesDialogComponent, {
+      data: { endpoint },
+      width: '560px',
+      panelClass: 'bg-transparent',
+      restoreFocus: true,
+    }).closed.subscribe(() => this.selectedIpRulesEndpoint.set(null));
   }
 
   ipWhitelistLabel(endpoint: WebhookEndpointView): string {
@@ -398,41 +330,59 @@ export class WebhooksPage {
   }
 
   rotateSecret(endpoint: WebhookEndpointView): void {
-    if (!confirm(`Rotate secret for ${endpoint.hookKey}?`)) {
-      return;
-    }
-    const tenantId = this.tenantContext.tenantId();
-    const environment = this.tenantContext.environment();
-    if (!tenantId) {
-      return;
-    }
-    this.store.rotateSecret(
-      {
-        tenantId,
-        environment,
-        hookKey: endpoint.hookKey,
-      },
-      {
-        activateInSeconds: null,
-        gracePeriodSeconds: null,
-        notes: null,
-      },
-    );
+    this.dialog.open<boolean>(CqConfirmDialogComponent, {
+      data: {
+        title: 'Rotate secret',
+        message: `Rotate secret for ${endpoint.hookKey}?`,
+        confirmLabel: 'Rotate',
+        variant: 'danger',
+      } satisfies CqConfirmDialogData,
+      width: '420px',
+      panelClass: 'bg-transparent',
+      restoreFocus: true,
+    }).closed.pipe(filter(Boolean)).subscribe(() => {
+      const tenantId = this.tenantContext.tenantId();
+      const environment = this.tenantContext.environment();
+      if (!tenantId) {
+        return;
+      }
+      this.store.rotateSecret(
+        {
+          tenantId,
+          environment,
+          hookKey: endpoint.hookKey,
+        },
+        {
+          activateInSeconds: null,
+          gracePeriodSeconds: null,
+          notes: null,
+        },
+      );
+    });
   }
 
   deleteEndpoint(endpoint: WebhookEndpointView): void {
-    if (!confirm(`Delete webhook ${endpoint.hookKey}?`)) {
-      return;
-    }
-    const tenantId = this.tenantContext.tenantId();
-    const environment = this.tenantContext.environment();
-    if (!tenantId) {
-      return;
-    }
-    this.store.deleteEndpoint({
-      tenantId,
-      environment,
-      hookKey: endpoint.hookKey,
+    this.dialog.open<boolean>(CqConfirmDialogComponent, {
+      data: {
+        title: 'Delete webhook',
+        message: `Delete webhook ${endpoint.hookKey}?`,
+        confirmLabel: 'Delete',
+        variant: 'danger',
+      } satisfies CqConfirmDialogData,
+      width: '420px',
+      panelClass: 'bg-transparent',
+      restoreFocus: true,
+    }).closed.pipe(filter(Boolean)).subscribe(() => {
+      const tenantId = this.tenantContext.tenantId();
+      const environment = this.tenantContext.environment();
+      if (!tenantId) {
+        return;
+      }
+      this.store.deleteEndpoint({
+        tenantId,
+        environment,
+        hookKey: endpoint.hookKey,
+      });
     });
   }
 
@@ -446,15 +396,24 @@ export class WebhooksPage {
   }
 
   disableEndpoint(endpoint: WebhookEndpointView): void {
-    if (!confirm(`Disable webhook ${endpoint.hookKey}?`)) {
-      return;
-    }
-    const tenantId = this.tenantContext.tenantId();
-    const environment = this.tenantContext.environment();
-    if (!tenantId) {
-      return;
-    }
-    this.store.setEndpointEnabled({ tenantId, environment }, endpoint, false);
+    this.dialog.open<boolean>(CqConfirmDialogComponent, {
+      data: {
+        title: 'Disable webhook',
+        message: `Disable webhook ${endpoint.hookKey}?`,
+        confirmLabel: 'Disable',
+        variant: 'danger',
+      } satisfies CqConfirmDialogData,
+      width: '420px',
+      panelClass: 'bg-transparent',
+      restoreFocus: true,
+    }).closed.pipe(filter(Boolean)).subscribe(() => {
+      const tenantId = this.tenantContext.tenantId();
+      const environment = this.tenantContext.environment();
+      if (!tenantId) {
+        return;
+      }
+      this.store.setEndpointEnabled({ tenantId, environment }, endpoint, false);
+    });
   }
 }
 

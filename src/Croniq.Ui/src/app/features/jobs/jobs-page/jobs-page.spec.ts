@@ -1,7 +1,7 @@
 import { provideZonelessChangeDetection, signal } from '@angular/core';
 import { ComponentFixture, TestBed } from '@angular/core/testing';
-import { Dialog } from '@angular/cdk/dialog';
 import { JobsStore } from '@features/jobs/jobs.store';
+import { CqDialogService } from 'ui-kit';
 import { JobsPage } from './jobs-page';
 
 class JobsStoreStub {
@@ -31,7 +31,7 @@ describe('JobsPage', () => {
       imports: [JobsPage],
       providers: [
         provideZonelessChangeDetection(),
-        { provide: Dialog, useValue: dialogStub }
+        { provide: CqDialogService, useValue: dialogStub }
       ],
     })
       .overrideComponent(JobsPage, {

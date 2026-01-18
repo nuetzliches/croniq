@@ -1,19 +1,21 @@
 @if (isOpen()) {
 <section
   class="fixed inset-0 z-50 flex items-start justify-center pt-[15vh]"
-  role="dialog"
-  aria-modal="true"
-  aria-labelledby="commandPaletteLabel"
   (keydown)="handleKey($event)"
+  cdkTrapFocus
+  cdkTrapFocusAutoCapture
 >
   <div class="absolute inset-0 bg-slate-950/80 backdrop-blur-xl" aria-hidden="true" (click)="close()"></div>
 
   <div class="relative z-10 w-full max-w-2xl px-4">
-    <div
-      class="rounded-2xl border border-white/10 bg-surface-alt/95 shadow-2xl ring-1 ring-black/50"
-      role="document"
+    <cq-dialog
+      size="lg"
+      containerClass="rounded-2xl bg-surface-alt/95 ring-1 ring-black/50"
+      headerClass="bg-transparent px-0 py-0"
+      bodyClass="p-0"
+      ariaLabelledby="commandPaletteLabel"
     >
-      <header class="flex items-center justify-between px-5 pb-3 text-sm text-muted">
+      <div cqDialogHeader class="flex w-full items-center justify-between px-5 pb-3 text-sm text-muted">
         <span id="commandPaletteLabel">Quick actions</span>
         <button
           type="button"
@@ -23,7 +25,7 @@
         >
           Esc
         </button>
-      </header>
+      </div>
 
       <div class="border-b border-white/10 px-5 pb-3">
         <label class="sr-only" for="commandPaletteQuery">Search commands</label>
@@ -67,7 +69,7 @@
         </li>
         } }
       </ul>
-    </div>
+    </cq-dialog>
   </div>
 </section>
 }

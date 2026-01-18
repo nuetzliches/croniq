@@ -1,7 +1,8 @@
+import { DialogRef, DIALOG_DATA } from '@angular/cdk/dialog';
 import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@angular/core';
 import { Field, form, required, submit } from '@angular/forms/signals';
-import { DialogRef, DIALOG_DATA } from '@angular/cdk/dialog';
 import { UpsertJobRequest } from '@croniq/api-schema';
+import { CqDialogComponent, CqDialogFooterDirective, CqDialogHeaderDirective } from 'ui-kit';
 
 interface JobFormModel {
     jobKey: string;
@@ -23,7 +24,7 @@ function mapToFormModel(data: UpsertJobRequest | null): JobFormModel {
 
 @Component({
     selector: 'cq-job-dialog',
-    imports: [Field],
+    imports: [Field, CqDialogComponent, CqDialogHeaderDirective, CqDialogFooterDirective],
     templateUrl: './job-dialog.component.html',
     changeDetection: ChangeDetectionStrategy.OnPush,
 })

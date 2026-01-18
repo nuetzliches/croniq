@@ -1,147 +1,135 @@
 <div
   class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm"
-  role="dialog"
-  aria-modal="true"
+  cdkTrapFocus
+  cdkTrapFocusAutoCapture
+  (keydown.escape)="onCancel()"
+  (click)="onBackdropClick($event)"
 >
-  <div class="w-full max-w-lg rounded-xl border border-white/10 bg-surface shadow-2xl">
-    <form (submit)="onSubmit($event)" novalidate>
-      <!-- Header -->
-      <div class="flex items-center justify-between border-b border-white/10 px-6 py-4">
-        <div class="flex items-center gap-4">
-          <h2 class="text-lg font-semibold text-white">
-            {{ isEditMode() ? 'Edit Schedule' : 'Create Schedule' }}
-          </h2>
-        </div>
-        <button type="button" (click)="onCancel()" class="text-muted hover:text-white">
-          <span class="sr-only">Close</span>
-          <svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path
-              stroke-linecap="round"
-              stroke-linejoin="round"
-              stroke-width="2"
-              d="M6 18L18 6M6 6l12 12"
-            />
-          </svg>
-        </button>
+  <cq-dialog size="lg" (click)="$event.stopPropagation()">
+    <div cqDialogHeader class="flex w-full items-center justify-between">
+      <div class="flex items-center gap-4">
+        <h2 class="text-lg font-semibold text-white">
+          {{ isEditMode() ? 'Edit Schedule' : 'Create Schedule' }}
+        </h2>
+      </div>
+      <button type="button" (click)="onCancel()" class="text-muted hover:text-white">
+        <span class="sr-only">Close</span>
+        <svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            stroke-width="2"
+            d="M6 18L18 6M6 6l12 12"
+          />
+        </svg>
+      </button>
+    </div>
+
+    <form id="scheduleForm" class="space-y-4" (submit)="onSubmit($event)" novalidate>
+      <!-- Job Key -->
+      <div>
+        <label for="jobKey" class="mb-1 block text-sm font-medium text-muted">Job Key</label>
+        <input
+          type="text"
+          id="jobKey"
+          [field]="scheduleForm.jobKey"
+          class="w-full rounded-lg border border-white/10 bg-surface-alt px-3 py-2 text-sm text-white placeholder-muted focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+          placeholder="e.g. billing:invoice-generation"
+        />
       </div>
 
-      <!-- Body -->
-      <div class="px-6 py-6">
-        <div class="space-y-4">
-          <!-- Job Key -->
-          <div>
-            <label for="jobKey" class="mb-1 block text-sm font-medium text-muted">Job Key</label>
-            <input
-              type="text"
-              id="jobKey"
-              [field]="scheduleForm.jobKey"
-              class="w-full rounded-lg border border-white/10 bg-surface-alt px-3 py-2 text-sm text-white placeholder-muted focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
-              placeholder="e.g. billing:invoice-generation"
-            />
-          </div>
-
-          <!-- Cron Expression -->
-          <div>
-            <label for="cronExpression" class="mb-1 block text-sm font-medium text-muted"
-              >Cron Expression</label
-            >
-            <input
-              type="text"
-              id="cronExpression"
-              [field]="scheduleForm.cronExpression"
-              class="w-full rounded-lg border border-white/10 bg-surface-alt px-3 py-2 text-sm text-white placeholder-muted focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
-              placeholder="e.g. 0 0 * * *"
-            />
-            <p class="mt-1 text-xs text-muted">
-              Standard cron syntax (min hour day month day-of-week)
-            </p>
-          </div>
-
-          <!-- Calendar Assignment -->
-          <div>
-            <label for="calendarId" class="mb-1 block text-sm font-medium text-muted">Calendar</label>
-            <select
-              id="calendarId"
-              [field]="scheduleForm.calendarId"
-              class="w-full rounded-lg border border-white/10 bg-surface-alt px-3 py-2 text-sm text-white placeholder-muted focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
-            >
-              @for (option of calendarSelectOptions(); track option.calendarId) {
-                <option [value]="option.calendarId">{{ option.label }}</option>
-              }
-            </select>
-            <p class="mt-1 text-xs text-muted">
-              Calendars filter occurrences. Choose "No calendar" to disable filtering.
-            </p>
-            @if (calendarOptionsLoading()) {
-              <p class="mt-1 text-xs text-muted">Loading calendars...</p>
-            }
-            @if (calendarOptionsPermissionDenied()) {
-              <p class="mt-1 text-xs text-muted">
-                Calendar access denied. Ask an administrator to grant calendars:read.
-              </p>
-            }
-            @if (calendarOptionsError() && !calendarOptionsPermissionDenied()) {
-              <p class="mt-1 text-xs text-danger">{{ calendarOptionsError() }}</p>
-            }
-            @if (showCalendarEmptyState()) {
-              <p class="mt-1 text-xs text-muted">No calendars available for this tenant.</p>
-            }
-            @if (calendarSelectionMissing()) {
-              <p class="mt-1 text-xs text-danger">
-                Assigned calendar is missing. Select a new calendar or choose "No calendar".
-              </p>
-            }
-          </div>
-
-          <!-- Description -->
-          <div>
-            <label for="description" class="mb-1 block text-sm font-medium text-muted"
-              >Description</label
-            >
-            <textarea
-              id="description"
-              [field]="scheduleForm.description"
-              rows="3"
-              class="w-full rounded-lg border border-white/10 bg-surface-alt px-3 py-2 text-sm text-white placeholder-muted focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
-              placeholder="Optional description..."
-            ></textarea>
-          </div>
-
-          <!-- Enabled Toggle -->
-          <div class="flex items-center gap-2">
-            <input
-              type="checkbox"
-              id="enabled"
-              [field]="scheduleForm.enabled"
-              class="h-4 w-4 rounded border-white/10 bg-surface-alt text-accent focus:ring-accent"
-            />
-            <label for="enabled" class="text-sm font-medium text-white">Enabled</label>
-          </div>
-
-          <!-- Hidden Trigger ID for Edit Mode -->
-          <input type="hidden" [field]="scheduleForm.triggerId" />
-        </div>
-      </div>
-
-      <!-- Footer -->
-      <div
-        class="flex items-center justify-end gap-3 border-t border-white/10 px-6 py-4 bg-surface-alt/50 rounded-b-xl"
-      >
-        <button
-          type="button"
-          (click)="onCancel()"
-          class="rounded-lg px-4 py-2 text-sm font-medium text-muted hover:bg-white/5 hover:text-white transition"
+      <!-- Cron Expression -->
+      <div>
+        <label for="cronExpression" class="mb-1 block text-sm font-medium text-muted"
+          >Cron Expression</label
         >
-          Cancel
-        </button>
-        <button
-          type="submit"
-          [disabled]="scheduleForm().invalid()"
-          class="rounded-lg bg-accent px-4 py-2 text-sm font-semibold text-white transition hover:bg-accent-hover disabled:opacity-50 disabled:cursor-not-allowed"
-        >
-          {{ isEditMode() ? 'Save Changes' : 'Create Schedule' }}
-        </button>
+        <input
+          type="text"
+          id="cronExpression"
+          [field]="scheduleForm.cronExpression"
+          class="w-full rounded-lg border border-white/10 bg-surface-alt px-3 py-2 text-sm text-white placeholder-muted focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+          placeholder="e.g. 0 0 * * *"
+        />
+        <p class="mt-1 text-xs text-muted">Standard cron syntax (min hour day month day-of-week)</p>
       </div>
+
+      <!-- Calendar Assignment -->
+      <div>
+        <label for="calendarId" class="mb-1 block text-sm font-medium text-muted">Calendar</label>
+        <select
+          id="calendarId"
+          [field]="scheduleForm.calendarId"
+          class="w-full rounded-lg border border-white/10 bg-surface-alt px-3 py-2 text-sm text-white placeholder-muted focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+        >
+          @for (option of calendarSelectOptions(); track option.calendarId) {
+          <option [value]="option.calendarId">{{ option.label }}</option>
+          }
+        </select>
+        <p class="mt-1 text-xs text-muted">
+          Calendars filter occurrences. Choose "No calendar" to disable filtering.
+        </p>
+        @if (calendarOptionsLoading()) {
+        <p class="mt-1 text-xs text-muted">Loading calendars...</p>
+        } @if (calendarOptionsPermissionDenied()) {
+        <p class="mt-1 text-xs text-muted">
+          Calendar access denied. Ask an administrator to grant calendars:read.
+        </p>
+        } @if (calendarOptionsError() && !calendarOptionsPermissionDenied()) {
+        <p class="mt-1 text-xs text-danger">{{ calendarOptionsError() }}</p>
+        } @if (showCalendarEmptyState()) {
+        <p class="mt-1 text-xs text-muted">No calendars available for this tenant.</p>
+        } @if (calendarSelectionMissing()) {
+        <p class="mt-1 text-xs text-danger">
+          Assigned calendar is missing. Select a new calendar or choose "No calendar".
+        </p>
+        }
+      </div>
+
+      <!-- Description -->
+      <div>
+        <label for="description" class="mb-1 block text-sm font-medium text-muted"
+          >Description</label
+        >
+        <textarea
+          id="description"
+          [field]="scheduleForm.description"
+          rows="3"
+          class="w-full rounded-lg border border-white/10 bg-surface-alt px-3 py-2 text-sm text-white placeholder-muted focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+          placeholder="Optional description..."
+        ></textarea>
+      </div>
+
+      <!-- Enabled Toggle -->
+      <div class="flex items-center gap-2">
+        <input
+          type="checkbox"
+          id="enabled"
+          [field]="scheduleForm.enabled"
+          class="h-4 w-4 rounded border-white/10 bg-surface-alt text-accent focus:ring-accent"
+        />
+        <label for="enabled" class="text-sm font-medium text-white">Enabled</label>
+      </div>
+
+      <!-- Hidden Trigger ID for Edit Mode -->
+      <input type="hidden" [field]="scheduleForm.triggerId" />
     </form>
-  </div>
+
+    <div cqDialogFooter class="flex items-center justify-end gap-3">
+      <button
+        type="button"
+        (click)="onCancel()"
+        class="rounded-lg px-4 py-2 text-sm font-medium text-muted hover:bg-white/5 hover:text-white transition"
+      >
+        Cancel
+      </button>
+      <button
+        type="submit"
+        form="scheduleForm"
+        [disabled]="scheduleForm().invalid()"
+        class="rounded-lg bg-accent px-4 py-2 text-sm font-semibold text-white transition hover:bg-accent-hover disabled:opacity-50 disabled:cursor-not-allowed"
+      >
+        {{ isEditMode() ? 'Save Changes' : 'Create Schedule' }}
+      </button>
+    </div>
+  </cq-dialog>
 </div>

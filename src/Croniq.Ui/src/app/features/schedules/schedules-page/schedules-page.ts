@@ -100,6 +100,7 @@ export class SchedulesPage {
   showDialog = signal(false);
   editingSchedule = signal<UpsertScheduleRequest | null>(null);
   loadingDetailId = signal<string | null>(null);
+  private lastDialogFocus: HTMLElement | null = null;
 
   constructor() {
     effect(() => {
@@ -120,6 +121,7 @@ export class SchedulesPage {
           calendarId: detail.calendarId,
         };
         this.editingSchedule.set(request);
+        this.captureDialogFocus();
         this.showDialog.set(true);
         this.loadingDetailId.set(null);
       }
@@ -151,6 +153,7 @@ export class SchedulesPage {
 
   createSchedule() {
     this.editingSchedule.set(null);
+    this.captureDialogFocus();
     this.showDialog.set(true);
   }
 
@@ -172,10 +175,22 @@ export class SchedulesPage {
   onSave(request: UpsertScheduleRequest) {
     this.store.upsertSchedule(request);
     this.showDialog.set(false);
+    this.restoreDialogFocus();
   }
 
   onCancel() {
     this.showDialog.set(false);
+    this.restoreDialogFocus();
+  }
+
+  private captureDialogFocus() {
+    const active = document.activeElement;
+    this.lastDialogFocus = active instanceof HTMLElement ? active : null;
+  }
+
+  private restoreDialogFocus() {
+    this.lastDialogFocus?.focus();
+    this.lastDialogFocus = null;
   }
 }
 

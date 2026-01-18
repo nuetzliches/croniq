@@ -1,11 +1,10 @@
-import { Dialog } from '@angular/cdk/dialog';
 import { DatePipe } from '@angular/common';
 import { ChangeDetectionStrategy, Component, inject } from '@angular/core';
 import { ApiClientResponse, UpsertApiClientRequest } from '@croniq/api-schema';
 import { ApiAccessStore } from '@features/api-access/api-access.store';
 import { ApiAccessDialogComponent } from '@features/api-access/components/api-access-dialog/api-access-dialog.component';
 import { SecretDisplayDialogComponent } from '@features/api-access/components/secret-display-dialog/secret-display-dialog.component';
-import { ConfirmDialogComponent, ConfirmDialogData } from '@shared/components/confirm-dialog/confirm-dialog.component';
+import { CqConfirmDialogComponent, CqConfirmDialogData, CqDialogService } from 'ui-kit';
 import { filter, of, switchMap } from 'rxjs';
 
 @Component({
@@ -17,7 +16,7 @@ import { filter, of, switchMap } from 'rxjs';
 })
 export class ApiAccessPage {
   private readonly store = inject(ApiAccessStore);
-  private readonly dialog = inject(Dialog);
+  private readonly dialog = inject(CqDialogService);
 
   // Data
   readonly clients = this.store.clients;
@@ -29,7 +28,7 @@ export class ApiAccessPage {
     const ref = this.dialog.open<UpsertApiClientRequest>(ApiAccessDialogComponent, {
       data: null,
       width: '500px',
-      panelClass: 'bg-transparent' // Tailwind classes on component
+      panelClass: 'bg-transparent',
     });
 
     ref.closed.pipe(
@@ -53,14 +52,15 @@ export class ApiAccessPage {
   issueKey(client: ApiClientResponse) {
     if (!client.clientId) return;
 
-    this.dialog.open<boolean>(ConfirmDialogComponent, {
+    this.dialog.open<boolean>(CqConfirmDialogComponent, {
       data: {
         title: 'Generate New Key',
         message: 'Are you sure you want to generate a new API key for this client?',
         confirmLabel: 'Generate',
-      } as ConfirmDialogData,
+      } as CqConfirmDialogData,
       width: '400px',
-      panelClass: 'bg-transparent'
+      panelClass: 'bg-transparent',
+      restoreFocus: true,
     }).closed.pipe(
       filter(result => !!result)
     ).subscribe(() => {
@@ -75,15 +75,16 @@ export class ApiAccessPage {
   }
 
   revokeKey(clientId: string) {
-    this.dialog.open<boolean>(ConfirmDialogComponent, {
+    this.dialog.open<boolean>(CqConfirmDialogComponent, {
       data: {
         title: 'Revoke API Client',
         message: 'Are you sure you want to revoke this API Client? This action cannot be undone.',
         confirmLabel: 'Revoke',
         variant: 'danger'
-      } as ConfirmDialogData,
+      } as CqConfirmDialogData,
       width: '400px',
-      panelClass: 'bg-transparent'
+      panelClass: 'bg-transparent',
+      restoreFocus: true,
     }).closed.pipe(
       filter(result => !!result)
     ).subscribe(() => {
@@ -96,7 +97,8 @@ export class ApiAccessPage {
       this.dialog.open(SecretDisplayDialogComponent, {
         data: { secret },
         width: '500px',
-        panelClass: 'bg-transparent'
+        panelClass: 'bg-transparent',
+        restoreFocus: true,
       });
     }
   }

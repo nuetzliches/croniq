@@ -27,7 +27,7 @@ _Last updated: 2026-01-18_
 ## Phase 2: Security & hygiene
 
 - [ ] Secret rotation flow (activate/grace windows, notes, one-time secret display).
-- [ ] IP allow list management (list/create/delete, CIDR validation, bulk import).
+- [x] IP allow list management (list/create/delete, CIDR validation, bulk import).
 - [ ] Signature policy UX driven by capabilities (allow unsigned only when permitted).
 
 ## Phase 3: Diagnostics & recovery

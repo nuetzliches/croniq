@@ -530,6 +530,7 @@ export class WebhooksStore {
         if (!Array.isArray(value)) {
             return this.endpointsSignal();
         }
+
         const entries: WebhookEndpointView[] = [];
         value.forEach((item, index) => {
             if (typeof item !== 'object' || item === null) {
