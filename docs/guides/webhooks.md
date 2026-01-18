@@ -21,6 +21,8 @@ Content-Type: application/json
 
 The webhook host validates the signature, enforces a per-hook rate limit, then enqueues a trigger with metadata (for example, `payload:invoiceId`).
 
+EnvironmentTag is part of the webhook URL and partitions hooks. A webhook can only trigger jobs in the same tenant/environment scope; to target another environment, create a separate hook under that environment.
+
 Sample configuration (`appsettings.Development.json`) wired up in `Croniq.Sample.ApiHost`:
 
 ```json

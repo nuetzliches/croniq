@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.ComponentModel.DataAnnotations;
 
@@ -22,9 +23,20 @@ public sealed record WebhookEndpointResponse(
     int RequestsPerMinute,
     IDictionary<string, string>? Metadata,
     IReadOnlyCollection<WebhookIpRuleResponse> IpRules,
+    string Status,
+    DateTimeOffset? LastDeliveryAtUtc,
+    int? IpRuleCount,
     DateTimeOffset CreatedAtUtc,
     DateTimeOffset UpdatedAtUtc,
     string? Secret = null);
+
+public sealed record WebhookEndpointEventResponse(
+    long Id,
+    string HookKey,
+    string EventType,
+    DateTime OccurredAtUtc,
+    string? Actor,
+    string? CorrelationId);
 
 public sealed record WebhookCapabilitiesResponse(
     bool AllowUnsignedHooks,
@@ -52,6 +64,12 @@ public sealed record WebhookReplayResult(
     string Status,
     string Hook,
     string Job);
+
+public sealed record WebhookInvokeResult(
+    string Status,
+    string Hook,
+    string Job,
+    string ExecutionId);
 
 public sealed record RotateWebhookSecretRequest(
     int? ActivateInSeconds = null,

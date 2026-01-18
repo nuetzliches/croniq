@@ -225,8 +225,6 @@ export class WebhooksPage {
     );
   });
 
-  readonly canBulkApply = computed(() => this.filteredEndpoints().length > 0);
-
   webhookRowKey = (row: WebhookEndpointView, index: number) =>
     `${row.environment}:${row.hookKey || `webhook-${index}`}`;
 
@@ -374,6 +372,15 @@ export class WebhooksPage {
     return typeof endpoint.requestsPerMinute === 'number'
       ? String(endpoint.requestsPerMinute)
       : 'Default';
+  }
+
+  isEndpointPaused(endpoint: WebhookEndpointView): boolean {
+    const current = this.endpoints().find((entry) =>
+      entry.hookKey === endpoint.hookKey
+      && entry.environment === endpoint.environment,
+    );
+    const status = current?.status ?? endpoint.status;
+    return status === 'paused';
   }
 
   resetFilters(): void {
@@ -660,57 +667,6 @@ export class WebhooksPage {
     this.store.invokeWebhook({ hookKey: endpoint.hookKey });
     this.invokeNotice.set('Invocation requested.');
     setTimeout(() => this.invokeNotice.set(null), 2500);
-  }
-
-  bulkEnableFiltered(): void {
-    if (this.writePermissionDenied() || !this.canBulkApply()) {
-      return;
-    }
-    const endpoints = this.filteredEndpoints();
-    const tenantId = this.tenantContext.tenantId();
-    const environment = this.tenantContext.environment();
-    if (!tenantId) {
-      return;
-    }
-    this.dialog.open<boolean>(CqConfirmDialogComponent, {
-      data: {
-        title: 'Enable endpoints',
-        message: `Enable ${endpoints.length} endpoints in ${environment || 'this environment'}?`,
-        confirmLabel: 'Enable all',
-      } satisfies CqConfirmDialogData,
-      width: '420px',
-      panelClass: 'bg-transparent',
-    }).closed.pipe(filter(Boolean)).subscribe(() => {
-      endpoints.forEach((endpoint) =>
-        this.store.setEndpointEnabled({ tenantId, environment }, endpoint, true),
-      );
-    });
-  }
-
-  bulkDisableFiltered(): void {
-    if (this.writePermissionDenied() || !this.canBulkApply()) {
-      return;
-    }
-    const endpoints = this.filteredEndpoints();
-    const tenantId = this.tenantContext.tenantId();
-    const environment = this.tenantContext.environment();
-    if (!tenantId) {
-      return;
-    }
-    this.dialog.open<boolean>(CqConfirmDialogComponent, {
-      data: {
-        title: 'Disable endpoints',
-        message: `Disable ${endpoints.length} endpoints in ${environment || 'this environment'}?`,
-        confirmLabel: 'Disable all',
-        variant: 'danger',
-      } satisfies CqConfirmDialogData,
-      width: '420px',
-      panelClass: 'bg-transparent',
-    }).closed.pipe(filter(Boolean)).subscribe(() => {
-      endpoints.forEach((endpoint) =>
-        this.store.setEndpointEnabled({ tenantId, environment }, endpoint, false),
-      );
-    });
   }
 }
 

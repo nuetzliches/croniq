@@ -101,8 +101,10 @@ public static partial class ApiHostingExtensions
         {
             var path = context.Request.Path;
             var pathWithBase = context.Request.PathBase.Add(path);
+            var authHeader = context.Request.Headers.Authorization.FirstOrDefault();
             // Webhook ingress is authenticated by signature, not Croniq API keys.
-            if (IsWebhookIngressPath(path) || IsWebhookIngressPath(pathWithBase))
+            if ((IsWebhookIngressPath(path) || IsWebhookIngressPath(pathWithBase))
+                && string.IsNullOrWhiteSpace(authHeader))
             {
                 await next().ConfigureAwait(false);
                 return;
@@ -119,7 +121,6 @@ public static partial class ApiHostingExtensions
             var callerFactory = context.RequestServices.GetRequiredService<ICallerContextFactory>();
             var rateLimitDecider = context.RequestServices.GetRequiredService<TenantRateLimitDecider>();
 
-            var authHeader = context.Request.Headers.Authorization.FirstOrDefault();
             if (!string.IsNullOrWhiteSpace(authHeader))
             {
                 var bearerCaller = await callerFactory.FromBearerTokenAsync(authHeader, context.RequestAborted).ConfigureAwait(false);
@@ -666,6 +667,13 @@ public static partial class ApiHostingExtensions
         var ipRules = definition.IpRules.Count == 0
             ? Array.Empty<WebhookIpRuleResponse>()
             : definition.IpRules.Select(ToWebhookIpRuleResponse).ToArray();
+        var status = definition.Enabled ? "active" : "paused";
+        var lastDeliveryAtUtc = definition.Metadata is not null
+            && definition.Metadata.TryGetValue("lastDeliveryAtUtc", out var lastDeliveryValue)
+            && DateTimeOffset.TryParse(lastDeliveryValue, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out var parsed)
+                ? parsed
+                : null;
+        var ipRuleCount = definition.IpRules?.Count;
 
         return new WebhookEndpointResponse(
             definition.HookKey,
@@ -675,6 +683,9 @@ public static partial class ApiHostingExtensions
             definition.RequestsPerMinute,
             metadata,
             ipRules,
+            status,
+            lastDeliveryAtUtc,
+            ipRuleCount,
             definition.CreatedAtUtc,
             definition.UpdatedAtUtc,
             secretOverride);

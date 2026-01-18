@@ -2,7 +2,10 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Globalization;
+using System.IO;
 using System.Linq;
+using System.Text;
+using System.Text.Json;
 using Croniq.Api.Models;
 using Croniq.Auth.Abstractions;
 using Croniq.Auth.Core;
@@ -402,6 +405,122 @@ public static partial class ApiHostingExtensions
         .Produces(StatusCodes.Status503ServiceUnavailable)
         .RequireCroniqTenantScope(CroniqScopes.WebhooksWrite);
 
+        app.MapGet("/tenants/{tenantId}/webhooks/{hookKey}/events", async (
+            string tenantId,
+            string hookKey,
+            string? environment,
+            long? afterId,
+            int? limit,
+            [FromServices] ICallerContextAccessor callerContextAccessor,
+            [FromServices] IWebhookEndpointChangefeed? changefeed,
+            CancellationToken cancellationToken) =>
+        {
+            if (changefeed is null)
+            {
+                return Results.Problem(statusCode: StatusCodes.Status503ServiceUnavailable, title: "webhook-events-unavailable", detail: "Webhook endpoint changefeed not configured.");
+            }
+
+            var resolvedEnvironment = ResolveEnvironmentTag(environment, callerContextAccessor);
+            if (string.IsNullOrWhiteSpace(resolvedEnvironment))
+            {
+                return MissingEnvironment();
+            }
+
+            var normalizedAfterId = afterId is > 0 ? afterId.Value : 0;
+            var batchSize = Math.Clamp(limit ?? 50, 1, 200);
+
+            var events = await changefeed.FetchAsync(normalizedAfterId, batchSize, cancellationToken).ConfigureAwait(false);
+            var response = events
+                .Where(entry => string.Equals(entry.TenantId, tenantId, StringComparison.OrdinalIgnoreCase)
+                    && string.Equals(entry.EnvironmentTag, resolvedEnvironment, StringComparison.OrdinalIgnoreCase)
+                    && string.Equals(entry.HookKey, hookKey, StringComparison.OrdinalIgnoreCase))
+                .Select(entry => new WebhookEndpointEventResponse(
+                    entry.Id,
+                    entry.HookKey,
+                    entry.EventType,
+                    entry.OccurredAtUtc,
+                    entry.Actor,
+                    entry.CorrelationId))
+                .ToList();
+
+            return Results.Ok(response);
+        })
+        .WithDocs("Webhooks_Events", "List webhook endpoint events", "Returns endpoint changefeed events for a webhook in the tenant/environment scope.")
+        .Produces<List<WebhookEndpointEventResponse>>(StatusCodes.Status200OK)
+        .Produces(StatusCodes.Status503ServiceUnavailable)
+        .RequireCroniqTenantScope(CroniqScopes.WebhooksRead);
+
+        app.MapPost("/tenants/{tenantId}/environments/{environmentTag}/webhooks/{hookKey}", async (
+            string tenantId,
+            string environmentTag,
+            string hookKey,
+            HttpRequest request,
+            [FromServices] IWebhookPersistenceProvider? webhookStore,
+            [FromServices] IJobRegistry registry,
+            [FromServices] IJobExecutionPipeline pipeline,
+            [FromServices] IPolicyResolver policyResolver,
+            [FromServices] ILogger<WebhookEndpointApiMarker> logger,
+            CancellationToken cancellationToken) =>
+        {
+            if (webhookStore is null)
+            {
+                return Results.Problem(statusCode: StatusCodes.Status503ServiceUnavailable, title: "webhooks-unavailable", detail: "Webhook persistence provider not configured.");
+            }
+
+            if (string.IsNullOrWhiteSpace(environmentTag))
+            {
+                return MissingEnvironment("environmentTag");
+            }
+
+            var scope = new PartitionScope(tenantId, environmentTag);
+            var endpoint = await webhookStore.FindByHookKeyAsync(hookKey, scope, cancellationToken).ConfigureAwait(false);
+            if (endpoint is null || !endpoint.Enabled)
+            {
+                return Results.NotFound(new { error = "webhook-not-found", hookKey });
+            }
+
+            if (!JobKey.TryParse(endpoint.JobKey, out var jobKey))
+            {
+                return Results.Problem(statusCode: StatusCodes.Status500InternalServerError, title: "invalid-job-key", detail: "Configured job key is invalid.");
+            }
+
+            if (!registry.TryGet(jobKey, out var descriptor))
+            {
+                return Results.NotFound(new { error = "job-not-registered", endpoint.JobKey });
+            }
+
+            var payload = await ReadPayloadAsync(request).ConfigureAwait(false);
+            var metadata = CreateWebhookMetadata(endpoint, payload);
+            metadata["webhook:hook"] = endpoint.HookKey;
+
+            var executionOptions = policyResolver.ResolveExecution(jobKey, scope);
+            var executionId = Guid.NewGuid().ToString("N");
+            var execRequest = new JobExecutionRequest(executionId, jobKey, scope, descriptor, executionOptions, metadata, TriggerActivitySource);
+
+            using var invokeActivity = TriggerActivitySource.StartActivity("Croniq.Api.WebhookInvoke", ActivityKind.Server);
+            invokeActivity?.SetTag("croniq.webhook.key", endpoint.HookKey);
+            invokeActivity?.SetTag("croniq.job.key", jobKey.Value);
+
+            try
+            {
+                await pipeline.ExecuteAsync(execRequest, cancellationToken).ConfigureAwait(false);
+                invokeActivity?.SetStatus(ActivityStatusCode.Ok);
+                return Results.Accepted(new WebhookInvokeResult("invoked", endpoint.HookKey, endpoint.JobKey, executionId));
+            }
+            catch (Exception ex)
+            {
+                invokeActivity?.SetStatus(ActivityStatusCode.Error, ex.Message);
+                logger.LogError(ex, "failed to invoke webhook {HookKey}", endpoint.HookKey);
+                return Results.Problem(statusCode: StatusCodes.Status500InternalServerError, title: "webhook-invoke-failed", detail: ex.Message);
+            }
+        })
+        .WithDocs("Webhooks_Invoke", "Invoke webhook endpoint", "Triggers a webhook endpoint through the job execution pipeline.")
+        .Produces<WebhookInvokeResult>(StatusCodes.Status202Accepted)
+        .Produces(StatusCodes.Status404NotFound)
+        .Produces(StatusCodes.Status500InternalServerError)
+        .Produces(StatusCodes.Status503ServiceUnavailable)
+        .RequireCroniqTenantScopeFromRoute("environmentTag", CroniqScopes.WebhooksWrite);
+
         app.MapGet("/tenants/{tenantId}/webhooks/deadletters", async (
             string tenantId,
             string? environment,
@@ -583,5 +702,72 @@ public static partial class ApiHostingExtensions
         .Produces(StatusCodes.Status400BadRequest)
         .Produces(StatusCodes.Status503ServiceUnavailable)
         .RequireCroniqTenantScope(CroniqScopes.WebhooksDeadLetter);
+    }
+
+    private static async Task<string> ReadPayloadAsync(HttpRequest request)
+    {
+        if (request.Body.CanSeek)
+        {
+            request.Body.Position = 0;
+        }
+
+        using var reader = new StreamReader(request.Body, Encoding.UTF8, leaveOpen: true);
+        var payload = await reader.ReadToEndAsync().ConfigureAwait(false);
+
+        if (request.Body.CanSeek)
+        {
+            request.Body.Position = 0;
+        }
+
+        return payload;
+    }
+
+    private static Dictionary<string, string> CreateWebhookMetadata(WebhookEndpointDefinition endpoint, string payload)
+    {
+        var metadata = endpoint.Metadata is null
+            ? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            : new Dictionary<string, string>(endpoint.Metadata, StringComparer.OrdinalIgnoreCase);
+
+        if (!string.IsNullOrWhiteSpace(payload))
+        {
+            metadata["webhook:payload"] = payload;
+            TryAddJsonHints(metadata, payload);
+        }
+
+        return metadata;
+    }
+
+    private static void TryAddJsonHints(IDictionary<string, string> metadata, string payload)
+    {
+        try
+        {
+            using var document = JsonDocument.Parse(payload);
+            if (document.RootElement.ValueKind != JsonValueKind.Object)
+            {
+                return;
+            }
+
+            foreach (var property in document.RootElement.EnumerateObject())
+            {
+                var key = $"payload:{property.Name}";
+                switch (property.Value.ValueKind)
+                {
+                    case JsonValueKind.String:
+                        metadata[key] = property.Value.GetString() ?? string.Empty;
+                        break;
+                    case JsonValueKind.Number when property.Value.TryGetDecimal(out var number):
+                        metadata[key] = number.ToString(CultureInfo.InvariantCulture);
+                        break;
+                    case JsonValueKind.True:
+                    case JsonValueKind.False:
+                        metadata[key] = property.Value.GetBoolean().ToString();
+                        break;
+                }
+            }
+        }
+        catch (JsonException)
+        {
+            // ignore malformed payloads
+        }
     }
 }

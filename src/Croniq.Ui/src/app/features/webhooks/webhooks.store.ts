@@ -15,7 +15,7 @@ export type WebhookEndpointView = {
     requestsPerMinute?: number;
     metadata?: Record<string, string> | null;
     status: 'active' | 'paused' | 'degraded';
-    lastDeliveryAt: string;
+    lastDeliveryAt: string | null;
     ipRuleCount: number | null;
 };
 
@@ -330,6 +330,14 @@ export class WebhooksStore {
             )
             .pipe(
                 tap(() => {
+                    this.endpointsSignal.update((current) =>
+                        current.map((entry) =>
+                            entry.hookKey === endpoint.hookKey
+                                && entry.environment === (params.environment ?? entry.environment)
+                                ? { ...entry, status: enabled ? 'active' : 'paused' }
+                                : entry,
+                        ),
+                    );
                     this.recordAction(`${enabled ? 'Enabled' : 'Disabled'} ${endpoint.hookKey}`, 'success');
                     this.endpointsResource.reload();
                 }),
@@ -630,7 +638,7 @@ export class WebhooksStore {
                             ? 'active'
                             : 'paused',
                 lastDeliveryAt:
-                    tryIsoFromUnknown(record['lastDeliveryAt']) ?? nowIso(),
+                    tryIsoFromUnknown(record['lastDeliveryAtUtc'] ?? record['lastDeliveryAt']) ?? null,
                 ipRuleCount,
                 metadata,
             });

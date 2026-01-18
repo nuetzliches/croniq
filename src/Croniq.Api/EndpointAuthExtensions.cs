@@ -63,6 +63,24 @@ internal static class EndpointAuthExtensions
             requiredScopes ?? Array.Empty<string>()));
     }
 
+    internal static RouteHandlerBuilder RequireCroniqTenantScopeFromRoute(
+        this RouteHandlerBuilder builder,
+        string environmentRouteKey,
+        params string[] requiredScopes)
+    {
+        _ = builder ?? throw new ArgumentNullException(nameof(builder));
+        _ = environmentRouteKey ?? throw new ArgumentNullException(nameof(environmentRouteKey));
+
+        builder.WithMetadata(new CroniqAuthEndpointGuardMetadata(CroniqAuthGuardKind.TenantScope, requiredScopes ?? Array.Empty<string>(), requireEnvironment: true));
+
+        builder.AddEndpointFilter(new PasswordChangeRequiredEndpointFilter());
+        return builder.AddEndpointFilter(new CroniqTenantScopeFromRouteEndpointFilter(
+            tenantRouteKey: "tenantId",
+            environmentRouteKey,
+            requireEnvironment: true,
+            requiredScopes ?? Array.Empty<string>()));
+    }
+
     internal static RouteHandlerBuilder RequireCroniqTenantScopeFromBody<TRequest>(
         this RouteHandlerBuilder builder,
         Func<TRequest, string?> environmentSelector,
@@ -285,6 +303,64 @@ internal static class EndpointAuthExtensions
                 if (string.IsNullOrWhiteSpace(environment))
                 {
                     return ValueTask.FromResult<object?>(Results.BadRequest(new { error = "missing-environment", message = $"Query parameter '{_environmentQueryKey}' is required." }));
+                }
+            }
+
+            var failure = TenantGuard.EnsureTenant(callerAccessor, tenantId, environment, _requiredScopes);
+            return failure is not null
+                ? ValueTask.FromResult<object?>(failure)
+                : next(context);
+        }
+    }
+
+    private sealed class CroniqTenantScopeFromRouteEndpointFilter : IEndpointFilter
+    {
+        private readonly string _tenantRouteKey;
+        private readonly string _environmentRouteKey;
+        private readonly bool _requireEnvironment;
+        private readonly string[] _requiredScopes;
+
+        public CroniqTenantScopeFromRouteEndpointFilter(
+            string tenantRouteKey,
+            string environmentRouteKey,
+            bool requireEnvironment,
+            string[] requiredScopes)
+        {
+            _tenantRouteKey = tenantRouteKey;
+            _environmentRouteKey = environmentRouteKey;
+            _requireEnvironment = requireEnvironment;
+            _requiredScopes = requiredScopes;
+        }
+
+        public ValueTask<object?> InvokeAsync(EndpointFilterInvocationContext context, EndpointFilterDelegate next)
+        {
+            var httpContext = context.HttpContext;
+
+            var tenantId = httpContext.Request.RouteValues.TryGetValue(_tenantRouteKey, out var tenantValue)
+                ? tenantValue?.ToString()
+                : null;
+
+            if (string.IsNullOrWhiteSpace(tenantId))
+            {
+                return ValueTask.FromResult<object?>(Results.BadRequest(new { error = "missing-tenant", message = $"Route parameter '{_tenantRouteKey}' is required." }));
+            }
+
+            var environment = httpContext.Request.RouteValues.TryGetValue(_environmentRouteKey, out var envValue)
+                ? envValue?.ToString()
+                : null;
+
+            var callerAccessor = httpContext.RequestServices.GetService(typeof(ICallerContextAccessor)) as ICallerContextAccessor;
+            if (callerAccessor is null)
+            {
+                return ValueTask.FromResult<object?>(Results.Problem(statusCode: StatusCodes.Status500InternalServerError, title: "caller-context-missing", detail: "Caller context accessor not registered."));
+            }
+
+            if (_requireEnvironment && string.IsNullOrWhiteSpace(environment))
+            {
+                environment = callerAccessor.Current?.EnvironmentTag;
+                if (string.IsNullOrWhiteSpace(environment))
+                {
+                    return ValueTask.FromResult<object?>(Results.BadRequest(new { error = "missing-environment", message = $"Route parameter '{_environmentRouteKey}' is required." }));
                 }
             }
 
