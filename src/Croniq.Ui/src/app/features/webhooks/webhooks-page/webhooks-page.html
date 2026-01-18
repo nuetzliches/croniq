@@ -130,7 +130,7 @@
   </div>
 
   <!-- Content -->
-  <div class="flex min-h-0 flex-1">
+  <div class="flex min-h-0 flex-1 flex-col gap-4 lg:flex-row">
     <div class="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-white/10 bg-surface-alt shadow-card">
       @if (error()) {
         <div class="border-b border-white/10 bg-danger/10 px-4 py-3 text-sm text-danger">
@@ -250,5 +250,90 @@
 
       </cq-data-grid>
     </div>
+    <aside class="w-full lg:w-[320px] xl:w-[360px]">
+      <div class="rounded-xl border border-white/10 bg-surface-alt p-4 shadow-card">
+        <div class="flex items-center justify-between">
+          <div>
+            <h2 class="text-sm font-semibold text-primary">Endpoint detail</h2>
+            <p class="text-xs text-muted">Effective configuration & ingress URL</p>
+          </div>
+          @if (selectedEndpoint()) {
+            <button
+              type="button"
+              class="rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-xs font-semibold text-primary transition hover:border-accent hover:text-accent"
+              (click)="openWebhookDialog(selectedEndpoint()!)"
+            >
+              Edit
+            </button>
+          }
+        </div>
+
+        @if (!selectedEndpoint()) {
+          <div class="mt-4 rounded-lg border border-dashed border-white/10 bg-black/10 px-3 py-4 text-xs text-muted">
+            Select an endpoint to view its configuration and ingress URL.
+          </div>
+        } @else {
+          <div class="mt-4 space-y-4">
+            <div class="space-y-2 rounded-lg border border-white/10 bg-black/10 px-3 py-3">
+              <div class="flex items-center justify-between">
+                <div class="text-xs font-semibold uppercase tracking-wide text-muted">Ingress URL</div>
+                <button
+                  type="button"
+                  class="rounded-lg border border-white/10 bg-white/5 px-2 py-1 text-xs font-semibold text-primary transition hover:border-accent hover:text-accent"
+                  (click)="copyIngressUrl()"
+                  [disabled]="!ingressUrl()"
+                >
+                  Copy
+                </button>
+              </div>
+              @if (ingressUrl()) {
+                <code class="block break-all rounded-lg border border-white/10 bg-black/20 px-2 py-1 text-xs text-primary">
+                  {{ ingressUrl() }}
+                </code>
+              } @else {
+                <p class="text-xs text-muted">Ingress URL unavailable for the current tenant.</p>
+              }
+            </div>
+
+            <div class="grid gap-3">
+              <div class="flex items-center justify-between text-xs">
+                <span class="text-muted">Hook key</span>
+                <span class="font-mono text-primary">{{ selectedEndpoint()!.hookKey }}</span>
+              </div>
+              <div class="flex items-center justify-between text-xs">
+                <span class="text-muted">Environment</span>
+                <span class="text-primary">{{ selectedEndpoint()!.environment }}</span>
+              </div>
+              <div class="flex items-center justify-between text-xs">
+                <span class="text-muted">Target job</span>
+                <span class="text-primary">{{ selectedEndpoint()!.jobKey }}</span>
+              </div>
+              <div class="flex items-center justify-between text-xs">
+                <span class="text-muted">Status</span>
+                <span class="text-primary">{{ statusLabel(selectedEndpoint()!.status) }}</span>
+              </div>
+              <div class="flex items-center justify-between text-xs">
+                <span class="text-muted">Signature</span>
+                <span class="text-primary">
+                  {{ selectedEndpoint()!.requireSignature ? 'Required' : 'Optional' }}
+                </span>
+              </div>
+              <div class="flex items-center justify-between text-xs">
+                <span class="text-muted">Rate limit</span>
+                <span class="text-primary">{{ requestsPerMinuteLabel(selectedEndpoint()!) }} RPM</span>
+              </div>
+              <div class="flex items-center justify-between text-xs">
+                <span class="text-muted">IP rules</span>
+                <span class="text-primary">{{ ipWhitelistLabel(selectedEndpoint()!) }}</span>
+              </div>
+              <div class="flex items-center justify-between text-xs">
+                <span class="text-muted">Last delivery</span>
+                <span class="text-primary">{{ selectedEndpoint()!.lastDeliveryAt | date: 'short' }}</span>
+              </div>
+            </div>
+          </div>
+        }
+      </div>
+    </aside>
   </div>
 </div>

@@ -2,6 +2,7 @@ import { DatePipe } from '@angular/common';
 import { ChangeDetectionStrategy, Component, Directive, computed, inject, linkedSignal, signal } from '@angular/core';
 import { CdkMenu } from '@angular/cdk/menu';
 import { TenantContextService } from '@core/tenant-context/tenant-context.service';
+import { RuntimeConfigService } from '@core/runtime-config.service';
 import { WebhookDialogComponent } from '@features/webhooks/components/webhook-dialog/webhook-dialog.component';
 import { WebhookIpRulesDialogComponent } from '@features/webhooks/components/webhook-ip-rules-dialog/webhook-ip-rules-dialog.component';
 import { WebhookCapabilitiesView, WebhookEndpointView, WebhooksStore } from '@features/webhooks/webhooks.store';
@@ -83,6 +84,7 @@ export class CqWebhookCellDirective extends CqCellDefDirective<WebhookEndpointVi
 export class WebhooksPage {
   private readonly store = inject(WebhooksStore);
   private readonly tenantContext = inject(TenantContextService);
+  private readonly runtimeConfig = inject(RuntimeConfigService);
   private readonly dialog = inject(CqDialogService);
 
   readonly endpoints = this.store.endpoints;
@@ -191,6 +193,28 @@ export class WebhooksPage {
 
   readonly selectedRowKey = signal<string | number | null>(null);
 
+  readonly selectedEndpoint = computed(() => {
+    const key = this.selectedRowKey();
+    if (!key) {
+      return null;
+    }
+    return this.endpoints().find((endpoint) => this.webhookRowKey(endpoint, 0) === key) ?? null;
+  });
+
+  readonly ingressUrl = computed(() => {
+    const endpoint = this.selectedEndpoint();
+    const tenantId = this.tenantContext.tenantId();
+    const baseUrl = this.runtimeConfig.apiBaseUrl;
+    if (!endpoint || !tenantId || !baseUrl) {
+      return null;
+    }
+    try {
+      return new URL(`/tenants/${tenantId}/webhooks/${encodeURIComponent(endpoint.hookKey)}`, baseUrl).toString();
+    } catch {
+      return null;
+    }
+  });
+
   webhookRowClasses = (row: WebhookEndpointView) =>
     row.status === 'active' ? undefined : ['opacity-80'];
 
@@ -200,6 +224,20 @@ export class WebhooksPage {
       return;
     }
     this.selectedRowKey.set(this.webhookRowKey(row, 0));
+  }
+
+  copyIngressUrl(): void {
+    const url = this.ingressUrl();
+    if (!url) {
+      return;
+    }
+    if (!navigator.clipboard?.writeText) {
+      console.error('Clipboard API unavailable for webhook ingress URL copy.');
+      return;
+    }
+    navigator.clipboard.writeText(url).catch((error: unknown) => {
+      console.error('Unable to copy webhook ingress URL', error);
+    });
   }
 
   readonly selectedIpRulesEndpoint = signal<WebhookEndpointView | null>(null);
