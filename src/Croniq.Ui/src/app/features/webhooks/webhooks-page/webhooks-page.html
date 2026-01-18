@@ -18,11 +18,18 @@
         type="button"
         (click)="openWebhookDialog()"
         class="rounded-lg bg-accent px-4 py-2 text-sm font-semibold text-white transition hover:bg-accent-hover"
+        [disabled]="writePermissionDenied()"
       >
         Register Endpoint
       </button>
     </div>
   </header>
+
+  @if (writePermissionDenied()) {
+    <div class="rounded-xl border border-warning/40 bg-warning/10 px-4 py-3 text-xs text-warning">
+      You have read-only access. Request webhooks:write to create, update, or delete endpoints.
+    </div>
+  }
 
   @if (rotatedSecret()) {
     <div class="rounded-xl border border-white/10 bg-surface-alt p-4 text-sm">
@@ -129,6 +136,11 @@
     </div>
   </div>
 
+  @if (readPermissionDenied()) {
+    <div class="rounded-xl border border-danger/40 bg-danger/10 px-4 py-3 text-sm text-danger">
+      Webhooks read access is blocked. Request webhooks:read to view endpoints.
+    </div>
+  } @else {
   <!-- Content -->
   <div class="flex min-h-0 flex-1 flex-col gap-4 lg:flex-row">
     <div class="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-white/10 bg-surface-alt shadow-card">
@@ -142,21 +154,51 @@
           cdkMenu
           class="min-w-[180px] rounded-lg border border-white/10 bg-surface p-1 text-sm shadow-xl"
         >
-          <button type="button" cqContextMenuItem (click)="openWebhookDialog(row)">
+          <button
+            type="button"
+            cqContextMenuItem
+            (click)="openWebhookDialog(row)"
+            [disabled]="writePermissionDenied()"
+            [class.opacity-50]="writePermissionDenied()"
+          >
             Edit
           </button>
-          <button type="button" cqContextMenuItem (click)="rotateSecret(row)">
+          <button
+            type="button"
+            cqContextMenuItem
+            (click)="rotateSecret(row)"
+            [disabled]="writePermissionDenied()"
+            [class.opacity-50]="writePermissionDenied()"
+          >
             Rotate secret
           </button>
-          <button type="button" cqContextMenuItem (click)="openIpRulesDialog(row)">
+          <button
+            type="button"
+            cqContextMenuItem
+            (click)="openIpRulesDialog(row)"
+            [disabled]="writePermissionDenied()"
+            [class.opacity-50]="writePermissionDenied()"
+          >
             IP rules
           </button>
           @if (row.status === 'paused') {
-            <button type="button" cqContextMenuItem (click)="enableEndpoint(row)">
+            <button
+              type="button"
+              cqContextMenuItem
+              (click)="enableEndpoint(row)"
+              [disabled]="writePermissionDenied()"
+              [class.opacity-50]="writePermissionDenied()"
+            >
               Enable
             </button>
           } @else {
-            <button type="button" cqContextMenuItem (click)="disableEndpoint(row)">
+            <button
+              type="button"
+              cqContextMenuItem
+              (click)="disableEndpoint(row)"
+              [disabled]="writePermissionDenied()"
+              [class.opacity-50]="writePermissionDenied()"
+            >
               Disable
             </button>
           }
@@ -165,6 +207,8 @@
             cqContextMenuItem
             class="text-danger hover:text-danger"
             (click)="deleteEndpoint(row)"
+            [disabled]="writePermissionDenied()"
+            [class.opacity-50]="writePermissionDenied()"
           >
             Delete
           </button>
@@ -336,4 +380,5 @@
       </div>
     </aside>
   </div>
+  }
 </div>

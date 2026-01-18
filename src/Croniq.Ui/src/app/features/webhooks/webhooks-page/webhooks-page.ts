@@ -5,8 +5,9 @@ import { TenantContextService } from '@core/tenant-context/tenant-context.servic
 import { RuntimeConfigService } from '@core/runtime-config.service';
 import { WebhookDialogComponent } from '@features/webhooks/components/webhook-dialog/webhook-dialog.component';
 import { WebhookIpRulesDialogComponent } from '@features/webhooks/components/webhook-ip-rules-dialog/webhook-ip-rules-dialog.component';
+import { WebhookRotateSecretDialogComponent } from '@features/webhooks/components/webhook-rotate-secret-dialog/webhook-rotate-secret-dialog.component';
 import { WebhookCapabilitiesView, WebhookEndpointView, WebhooksStore } from '@features/webhooks/webhooks.store';
-import { UpsertWebhookEndpointRequest } from '@croniq/api-schema';
+import { RotateWebhookSecretRequest, UpsertWebhookEndpointRequest } from '@croniq/api-schema';
 import { Field, form } from '@angular/forms/signals';
 import { CqCellDefDirective, CqColumnComponent, CqConfirmDialogComponent, CqConfirmDialogData, CqContextMenuItemDirective, CqDialogService, CqFormFieldComponent, CqInputDirective, CqSelectDirective, DataGrid } from 'ui-kit';
 import { filter } from 'rxjs';
@@ -90,6 +91,8 @@ export class WebhooksPage {
   readonly endpoints = this.store.endpoints;
   readonly loading = this.store.loading;
   readonly error = this.store.lastError;
+  readonly readPermissionDenied = this.store.readPermissionDenied;
+  readonly writePermissionDenied = this.store.writePermissionDenied;
   readonly rotatedSecret = this.store.rotatedSecret;
   readonly filterModel = signal(createDefaultFilters());
   readonly filterForm = form(this.filterModel, () => { });
@@ -258,6 +261,9 @@ export class WebhooksPage {
   }
 
   openWebhookDialog(endpoint?: WebhookEndpointView): void {
+    if (this.writePermissionDenied()) {
+      return;
+    }
     const data: UpsertWebhookEndpointRequest | null = endpoint
       ? {
         hookKey: endpoint.hookKey,
@@ -295,6 +301,9 @@ export class WebhooksPage {
   }
 
   openIpRulesDialog(endpoint: WebhookEndpointView): void {
+    if (this.writePermissionDenied()) {
+      return;
+    }
     this.selectedIpRulesEndpoint.set(endpoint);
     this.dialog.open(WebhookIpRulesDialogComponent, {
       data: { endpoint },
@@ -368,38 +377,37 @@ export class WebhooksPage {
   }
 
   rotateSecret(endpoint: WebhookEndpointView): void {
-    this.dialog.open<boolean>(CqConfirmDialogComponent, {
-      data: {
-        title: 'Rotate secret',
-        message: `Rotate secret for ${endpoint.hookKey}?`,
-        confirmLabel: 'Rotate',
-        variant: 'danger',
-      } satisfies CqConfirmDialogData,
-      width: '420px',
-      panelClass: 'bg-transparent',
-      restoreFocus: true,
-    }).closed.pipe(filter(Boolean)).subscribe(() => {
-      const tenantId = this.tenantContext.tenantId();
-      const environment = this.tenantContext.environment();
-      if (!tenantId) {
-        return;
-      }
-      this.store.rotateSecret(
-        {
-          tenantId,
-          environment,
-          hookKey: endpoint.hookKey,
-        },
-        {
-          activateInSeconds: null,
-          gracePeriodSeconds: null,
-          notes: null,
-        },
-      );
-    });
+    if (this.writePermissionDenied()) {
+      return;
+    }
+    this.dialog
+      .open<RotateWebhookSecretRequest>(WebhookRotateSecretDialogComponent, {
+        data: { hookKey: endpoint.hookKey },
+        width: '420px',
+        panelClass: 'bg-transparent',
+      })
+      .closed.pipe(filter((payload): payload is RotateWebhookSecretRequest => !!payload))
+      .subscribe((payload) => {
+        const tenantId = this.tenantContext.tenantId();
+        const environment = this.tenantContext.environment();
+        if (!tenantId) {
+          return;
+        }
+        this.store.rotateSecret(
+          {
+            tenantId,
+            environment,
+            hookKey: endpoint.hookKey,
+          },
+          payload,
+        );
+      });
   }
 
   deleteEndpoint(endpoint: WebhookEndpointView): void {
+    if (this.writePermissionDenied()) {
+      return;
+    }
     this.dialog.open<boolean>(CqConfirmDialogComponent, {
       data: {
         title: 'Delete webhook',
@@ -425,6 +433,9 @@ export class WebhooksPage {
   }
 
   enableEndpoint(endpoint: WebhookEndpointView): void {
+    if (this.writePermissionDenied()) {
+      return;
+    }
     const tenantId = this.tenantContext.tenantId();
     const environment = this.tenantContext.environment();
     if (!tenantId) {
@@ -434,6 +445,9 @@ export class WebhooksPage {
   }
 
   disableEndpoint(endpoint: WebhookEndpointView): void {
+    if (this.writePermissionDenied()) {
+      return;
+    }
     this.dialog.open<boolean>(CqConfirmDialogComponent, {
       data: {
         title: 'Disable webhook',

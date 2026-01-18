@@ -2,7 +2,15 @@ import { DialogRef, DIALOG_DATA } from '@angular/cdk/dialog';
 import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@angular/core';
 import { disabled, Field, form, required, submit } from '@angular/forms/signals';
 import { UpsertWebhookEndpointRequest } from '@croniq/api-schema';
-import { CqDialogComponent, CqDialogFooterDirective, CqDialogHeaderDirective } from 'ui-kit';
+import {
+    CqDialogComponent,
+    CqDialogFooterDirective,
+    CqDialogHeaderDirective,
+    CqFormFieldComponent,
+    CqInputDirective,
+    CqTextareaDirective,
+    CqToggleDirective,
+} from 'ui-kit';
 type WebhookDialogData = {
     endpoint: UpsertWebhookEndpointRequest | null;
     capabilities: {
@@ -36,7 +44,16 @@ function mapToFormModel(data: UpsertWebhookEndpointRequest | null, forceSignatur
 
 @Component({
     selector: 'cq-webhook-dialog',
-    imports: [Field, CqDialogComponent, CqDialogHeaderDirective, CqDialogFooterDirective],
+    imports: [
+        Field,
+        CqDialogComponent,
+        CqDialogHeaderDirective,
+        CqDialogFooterDirective,
+        CqFormFieldComponent,
+        CqInputDirective,
+        CqTextareaDirective,
+        CqToggleDirective,
+    ],
     templateUrl: './webhook-dialog.component.html',
     changeDetection: ChangeDetectionStrategy.OnPush,
 })
@@ -64,6 +81,25 @@ export class WebhookDialogComponent {
     readonly hookKeyInvalid = computed(() => !this.webhookModel().hookKey);
     readonly jobKeyInvalid = computed(() => !this.webhookModel().jobKey);
     readonly secretInvalid = computed(() => !this.isEdit && !this.webhookModel().secret);
+    readonly rpmError = computed(() => {
+        const raw = this.webhookModel().requestsPerMinute as unknown;
+        if (raw === null || raw === undefined || raw === '') {
+            return null;
+        }
+        const value = Number(raw);
+        if (!Number.isFinite(value) || value <= 0) {
+            return 'Rate limit must be a positive number.';
+        }
+        return null;
+    });
+
+    readonly defaultRequestsPerMinuteLabel = computed(() => {
+        const defaultValue = this.data.capabilities?.defaultRequestsPerMinute;
+        if (typeof defaultValue === 'number' && Number.isFinite(defaultValue)) {
+            return `Leave empty to use default (${defaultValue} RPM).`;
+        }
+        return 'Leave empty to use the tenant default.';
+    });
 
     close(): void {
         this.dialogRef.close();
@@ -72,6 +108,10 @@ export class WebhookDialogComponent {
     async onSubmit(event: SubmitEvent) {
         event.preventDefault();
         this.submitAttempted.set(true);
+
+        if (this.rpmError()) {
+            return;
+        }
 
         await submit(this.webhookForm, async () => {
             const model = this.webhookModel();

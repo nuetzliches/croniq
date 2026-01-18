@@ -17,9 +17,12 @@
   </div>
 
   <form id="webhookForm" class="space-y-4" (submit)="onSubmit($event)">
-    <!-- Hook Key -->
-    <div class="space-y-1">
-      <label for="hookKey" class="text-sm font-medium text-muted">Hook Key</label>
+    <cq-form-field
+      label="Hook key"
+      forId="hookKey"
+      hint="Unique identifier used in the webhook URL."
+      [error]="submitAttempted() && hookKeyInvalid() ? 'Hook key is required.' : null"
+    >
       @if (isEdit) {
       <div
         class="w-full rounded-lg border border-white/10 bg-surface-alt px-3 py-2 text-sm text-muted opacity-50"
@@ -30,92 +33,88 @@
       <input
         id="hookKey"
         type="text"
+        cqInput
         [field]="webhookForm.hookKey"
-        class="w-full rounded-lg border border-white/10 bg-surface-alt px-3 py-2 text-sm text-primary placeholder:text-muted focus:border-accent focus:outline-none"
         placeholder="e.g. stripe-events"
       />
-      @if (submitAttempted() && hookKeyInvalid()) {
-      <p class="text-xs text-danger">Hook Key is required.</p>
-      } }
-    </div>
+      }
+    </cq-form-field>
 
-    <!-- Target Job -->
-    <div class="space-y-1">
-      <label for="jobKey" class="text-sm font-medium text-muted">Target Job</label>
+    <cq-form-field
+      label="Target job"
+      forId="jobKey"
+      hint="Job key that will be triggered on inbound deliveries."
+      [error]="submitAttempted() && jobKeyInvalid() ? 'Target job is required.' : null"
+    >
       <input
         id="jobKey"
         type="text"
+        cqInput
         [field]="webhookForm.jobKey"
-        class="w-full rounded-lg border border-white/10 bg-surface-alt px-3 py-2 text-sm text-primary placeholder:text-muted focus:border-accent focus:outline-none"
         placeholder="e.g. billing-sync"
       />
-      @if (submitAttempted() && jobKeyInvalid()) {
-      <p class="text-xs text-danger">Target Job is required.</p>
-      }
-    </div>
+    </cq-form-field>
 
-    <!-- Secret (Create Only) -->
     @if (!isEdit) {
-    <div class="space-y-1">
-      <label for="secret" class="text-sm font-medium text-muted">Signing Secret</label>
+    <cq-form-field
+      label="Signing secret"
+      forId="secret"
+      hint="Used to sign webhook payloads. Store it securely."
+      [error]="
+        submitAttempted() && secretInvalid() ? 'Secret is required for new endpoints.' : null
+      "
+    >
       <input
         id="secret"
         type="text"
+        cqInput
         [field]="webhookForm.secret"
-        class="w-full rounded-lg border border-white/10 bg-surface-alt px-3 py-2 text-sm text-primary placeholder:text-muted focus:border-accent focus:outline-none"
         placeholder="Enter a strong secret..."
       />
-      @if (submitAttempted() && secretInvalid()) {
-      <p class="text-xs text-danger">Secret is required for new endpoints.</p>
-      }
-    </div>
+    </cq-form-field>
     }
 
-    <!-- Description -->
-    <div class="space-y-1">
-      <label for="description" class="text-sm font-medium text-muted">Description (Optional)</label>
+    <cq-form-field label="Description" forId="description" hint="Optional context for operators.">
       <textarea
         id="description"
+        cqTextarea
         [field]="webhookForm.description"
         rows="3"
-        class="w-full rounded-lg border border-white/10 bg-surface-alt px-3 py-2 text-sm text-primary placeholder:text-muted focus:border-accent focus:outline-none"
         placeholder="Describe this webhook endpoint..."
       ></textarea>
-    </div>
+    </cq-form-field>
 
-    <!-- Rate Limit -->
-    <div class="space-y-1">
-      <label for="requestsPerMinute" class="text-sm font-medium text-muted"
-        >Rate Limit (Req/Min)</label
-      >
+    <cq-form-field
+      label="Rate limit (req/min)"
+      forId="requestsPerMinute"
+      [hint]="defaultRequestsPerMinuteLabel()"
+      [error]="submitAttempted() ? rpmError() : null"
+    >
       <input
         id="requestsPerMinute"
         type="number"
+        cqInput
         [field]="$any(webhookForm.requestsPerMinute)"
-        class="w-full rounded-lg border border-white/10 bg-surface-alt px-3 py-2 text-sm text-primary placeholder:text-muted focus:border-accent focus:outline-none"
         placeholder="Optional (e.g. 60)"
       />
-    </div>
+    </cq-form-field>
 
-    <!-- Toggles -->
-    <div class="flex flex-col gap-3 pt-2">
+    <div class="space-y-3 pt-2">
       <label class="flex items-center gap-3">
-        <input
-          type="checkbox"
-          [field]="webhookForm.enabled"
-          class="h-4 w-4 rounded border-white/10 bg-surface-alt text-accent focus:ring-accent"
-        />
+        <input type="checkbox" cqToggle [field]="webhookForm.enabled" />
         <span class="text-sm font-medium text-primary">Enabled</span>
       </label>
+      <p class="text-xs text-muted">Disabling pauses inbound deliveries.</p>
 
       <label class="flex items-center gap-3">
-        <input
-          type="checkbox"
-          [field]="webhookForm.requireSignature"
-          class="h-4 w-4 rounded border-white/10 bg-surface-alt text-accent focus:ring-accent"
-        />
-        <span class="text-sm font-medium text-primary">Require Signature</span>
+        <input type="checkbox" cqToggle [field]="webhookForm.requireSignature" />
+        <span class="text-sm font-medium text-primary">Require signature</span>
       </label>
+      @if (signatureToggleDisabled) {
+      <p class="text-xs text-muted">Unsigned webhooks are blocked by tenant policy.</p>
+      } @else {
+      <p class="text-xs text-muted">If off, unsigned payloads will be accepted.</p>
+      }
     </div>
   </form>
 
@@ -130,6 +129,7 @@
     <button
       type="submit"
       form="webhookForm"
+      [disabled]="webhookForm().invalid() || !!rpmError()"
       class="rounded-lg bg-accent px-4 py-2 text-sm font-semibold text-white transition hover:bg-accent-hover disabled:opacity-50"
     >
       Save

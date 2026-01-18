@@ -15,8 +15,8 @@ _Last updated: 2026-01-18_
 - [x] Search + filters (hook key, job key, status, environment) implemented via Signal Forms, with pagination and empty/error states.
 - [x] Context menu for row actions (edit, rotate secret, IP rules, delete/disable) with confirmations.
 - [x] Endpoint detail view showing effective configuration and derived ingress URL.
-- [ ] Create/edit dialog with validation and inline help for hook key, job key, RPM, and signatures (ui-kit form primitives).
-- [ ] Permission states for `webhooks:read` and `webhooks:write` (blocked view + CTA).
+- [x] Create/edit dialog with validation and inline help for hook key, job key, RPM, and signatures (ui-kit form primitives).
+- [x] Permission states for `webhooks:read` and `webhooks:write` (blocked view + CTA).
 
 ## UI Kit additions (Phase 1)
 
@@ -26,9 +26,9 @@ _Last updated: 2026-01-18_
 
 ## Phase 2: Security & hygiene
 
-- [ ] Secret rotation flow (activate/grace windows, notes, one-time secret display).
+- [x] Secret rotation flow (activate/grace windows, notes, one-time secret display).
 - [x] IP allow list management (list/create/delete, CIDR validation, bulk import).
-- [ ] Signature policy UX driven by capabilities (allow unsigned only when permitted).
+- [x] Signature policy UX driven by capabilities (allow unsigned only when permitted).
 
 ## Phase 3: Diagnostics & recovery
 

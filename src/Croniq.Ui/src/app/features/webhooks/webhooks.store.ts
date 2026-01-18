@@ -1,4 +1,5 @@
 import { Injectable, computed, inject, signal } from '@angular/core';
+import { authFailureFromError } from '@core/auth/auth-failure';
 import { tenantRxResource } from '@core/resource/tenant-rx-resource';
 import { TenantContextService } from '@core/tenant-context/tenant-context.service';
 import { nowIso, nowMs, tryIsoFromUnknown } from '@core/time/clock';
@@ -60,6 +61,8 @@ export class WebhooksStore {
     private readonly capabilitiesSignal = signal<WebhookCapabilitiesView | null>(null);
     private readonly lastErrorSignal = signal<string | null>(null);
     private readonly logNextRefreshSignal = signal(false);
+    private readonly readPermissionDeniedSignal = signal(false);
+    private readonly writePermissionDeniedSignal = signal(false);
 
     private readonly endpointsResource = tenantRxResource<ReadonlyArray<WebhookEndpointView>, { tenantId: string; environment: string }>({
         command: 'webhooks.list',
@@ -70,6 +73,7 @@ export class WebhooksStore {
         },
         stream: ({ params, requestOptions }) => {
             this.lastErrorSignal.set(null);
+            this.readPermissionDeniedSignal.set(false);
 
             const tenantId = params.tenantId.trim();
             const environment = params.environment.trim();
@@ -90,6 +94,15 @@ export class WebhooksStore {
                 }),
                 catchError((error: unknown) => {
                     console.error('Unable to refresh webhooks', error);
+                    const authFailure = authFailureFromError(error, {
+                        forbidden: 'Forbidden (403) - your token is missing webhooks:read permissions.',
+                    });
+                    if (authFailure) {
+                        this.lastErrorSignal.set(authFailure.message);
+                        this.readPermissionDeniedSignal.set(authFailure.kind === 'forbidden');
+                        this.endpointsSignal.set([]);
+                        return of(this.endpointsSignal());
+                    }
                     this.lastErrorSignal.set('Failed to load endpoints from API.');
                     if (this.logNextRefreshSignal()) {
                         this.logNextRefreshSignal.set(false);
@@ -123,9 +136,19 @@ export class WebhooksStore {
 
             return request$.pipe(
                 map((response) => this.normalizeCapabilitiesResponse(response)),
-                tap((capabilities) => this.capabilitiesSignal.set(capabilities)),
+                tap((capabilities) => {
+                    this.capabilitiesSignal.set(capabilities);
+                    this.readPermissionDeniedSignal.set(false);
+                }),
                 catchError((error: unknown) => {
                     console.error('Unable to fetch webhook capabilities', error);
+                    const authFailure = authFailureFromError(error, {
+                        forbidden: 'Forbidden (403) - your token is missing webhooks:read permissions.',
+                    });
+                    if (authFailure) {
+                        this.readPermissionDeniedSignal.set(authFailure.kind === 'forbidden');
+                        this.lastErrorSignal.set(authFailure.message);
+                    }
                     this.capabilitiesSignal.set(null);
                     return of(this.capabilitiesSignal());
                 }),
@@ -205,6 +228,8 @@ export class WebhooksStore {
 
     readonly deadLetterCount = computed(() => this.deadLettersSignal().length);
     readonly lastError = this.lastErrorSignal.asReadonly();
+    readonly readPermissionDenied = this.readPermissionDeniedSignal.asReadonly();
+    readonly writePermissionDenied = this.writePermissionDeniedSignal.asReadonly();
     readonly activeCount = computed(() => this.endpoints().filter((endpoint) => endpoint.status === 'active').length);
 
     constructor() {
@@ -234,6 +259,7 @@ export class WebhooksStore {
             return;
         }
 
+        this.readPermissionDeniedSignal.set(false);
         this.logNextRefreshSignal.set(true);
         this.endpointsResource.reload();
         this.deadLetterCountResource.reload();
@@ -261,6 +287,12 @@ export class WebhooksStore {
                 }),
                 catchError((error: unknown) => {
                     console.error('Unable to upsert webhook', error);
+                    const authFailure = authFailureFromError(error, {
+                        forbidden: 'Forbidden (403) - your token is missing webhooks:write permissions.',
+                    });
+                    if (authFailure) {
+                        this.writePermissionDeniedSignal.set(authFailure.kind === 'forbidden');
+                    }
                     this.recordAction(
                         'Upsert failed',
                         'error',
@@ -303,6 +335,12 @@ export class WebhooksStore {
                 }),
                 catchError((error: unknown) => {
                     console.error('Unable to toggle webhook endpoint', error);
+                    const authFailure = authFailureFromError(error, {
+                        forbidden: 'Forbidden (403) - your token is missing webhooks:write permissions.',
+                    });
+                    if (authFailure) {
+                        this.writePermissionDeniedSignal.set(authFailure.kind === 'forbidden');
+                    }
                     this.recordAction(
                         `${enabled ? 'Enable' : 'Disable'} failed`,
                         'error',
@@ -330,6 +368,12 @@ export class WebhooksStore {
                 }),
                 catchError((error: unknown) => {
                     console.error('Unable to delete webhook', error);
+                    const authFailure = authFailureFromError(error, {
+                        forbidden: 'Forbidden (403) - your token is missing webhooks:write permissions.',
+                    });
+                    if (authFailure) {
+                        this.writePermissionDeniedSignal.set(authFailure.kind === 'forbidden');
+                    }
                     this.recordAction(
                         'Delete failed',
                         'error',
@@ -363,6 +407,12 @@ export class WebhooksStore {
                 }),
                 catchError((error: unknown) => {
                     console.error('Unable to rotate webhook secret', error);
+                    const authFailure = authFailureFromError(error, {
+                        forbidden: 'Forbidden (403) - your token is missing webhooks:write permissions.',
+                    });
+                    if (authFailure) {
+                        this.writePermissionDeniedSignal.set(authFailure.kind === 'forbidden');
+                    }
                     this.recordAction(
                         'Secret rotation failed',
                         'error',
@@ -395,6 +445,12 @@ export class WebhooksStore {
                 }),
                 catchError((error: unknown) => {
                     console.error('Unable to create IP rule', error);
+                    const authFailure = authFailureFromError(error, {
+                        forbidden: 'Forbidden (403) - your token is missing webhooks:write permissions.',
+                    });
+                    if (authFailure) {
+                        this.writePermissionDeniedSignal.set(authFailure.kind === 'forbidden');
+                    }
                     this.recordAction(
                         'IP rule creation failed',
                         'error',
@@ -423,6 +479,12 @@ export class WebhooksStore {
                 }),
                 catchError((error: unknown) => {
                     console.error('Unable to delete IP rule', error);
+                    const authFailure = authFailureFromError(error, {
+                        forbidden: 'Forbidden (403) - your token is missing webhooks:write permissions.',
+                    });
+                    if (authFailure) {
+                        this.writePermissionDeniedSignal.set(authFailure.kind === 'forbidden');
+                    }
                     this.recordAction(
                         'IP rule deletion failed',
                         'error',
@@ -450,6 +512,12 @@ export class WebhooksStore {
                 }),
                 catchError((error: unknown) => {
                     console.error('Unable to replay dead letter', error);
+                    const authFailure = authFailureFromError(error, {
+                        forbidden: 'Forbidden (403) - your token is missing webhooks:write permissions.',
+                    });
+                    if (authFailure) {
+                        this.writePermissionDeniedSignal.set(authFailure.kind === 'forbidden');
+                    }
                     this.recordAction(
                         'Dead letter replay failed',
                         'error',
@@ -470,6 +538,12 @@ export class WebhooksStore {
                 }),
                 catchError((error: unknown) => {
                     console.error('Unable to invoke webhook', error);
+                    const authFailure = authFailureFromError(error, {
+                        forbidden: 'Forbidden (403) - your token is missing webhooks:write permissions.',
+                    });
+                    if (authFailure) {
+                        this.writePermissionDeniedSignal.set(authFailure.kind === 'forbidden');
+                    }
                     this.recordAction(
                         'Invocation failed',
                         'error',
