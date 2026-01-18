@@ -12,6 +12,7 @@ export type WebhookEndpointView = {
     environment: string;
     requireSignature: boolean;
     requestsPerMinute?: number;
+    metadata?: Record<string, string> | null;
     status: 'active' | 'paused' | 'degraded';
     lastDeliveryAt: string;
     ipRuleCount: number | null;
@@ -271,6 +272,48 @@ export class WebhooksStore {
             .subscribe();
     }
 
+    setEndpointEnabled(
+        params: TenantWebhookUpsertParams,
+        endpoint: WebhookEndpointView,
+        enabled: boolean,
+    ): void {
+        const payload: UpsertWebhookEndpointRequest = {
+            hookKey: endpoint.hookKey,
+            jobKey: endpoint.jobKey,
+            enabled,
+            requireSignature: endpoint.requireSignature,
+            allowUnsigned: !endpoint.requireSignature,
+            requestsPerMinute: endpoint.requestsPerMinute ?? null,
+            metadata: endpoint.metadata ?? {},
+        };
+
+        this.api
+            .upsertTenantWebhook(
+                params,
+                payload,
+                this.tenantContext.createRequestOptions('webhooks.toggle', {
+                    tenantId: params.tenantId,
+                    environment: params.environment,
+                }),
+            )
+            .pipe(
+                tap(() => {
+                    this.recordAction(`${enabled ? 'Enabled' : 'Disabled'} ${endpoint.hookKey}`, 'success');
+                    this.endpointsResource.reload();
+                }),
+                catchError((error: unknown) => {
+                    console.error('Unable to toggle webhook endpoint', error);
+                    this.recordAction(
+                        `${enabled ? 'Enable' : 'Disable'} failed`,
+                        'error',
+                        error instanceof Error ? error.message : 'Unknown error',
+                    );
+                    return EMPTY;
+                }),
+            )
+            .subscribe();
+    }
+
     deleteEndpoint(params: TenantWebhookParams): void {
         this.api
             .deleteTenantWebhook(
@@ -348,6 +391,7 @@ export class WebhooksStore {
                 tap(() => {
                     this.recordAction(`Created IP rule for ${params.hookKey}`, 'success');
                     this.ipRulesResource.reload();
+                    this.endpointsResource.reload();
                 }),
                 catchError((error: unknown) => {
                     console.error('Unable to create IP rule', error);
@@ -375,6 +419,7 @@ export class WebhooksStore {
                 tap(() => {
                     this.recordAction(`Removed IP rule ${params.ruleId}`, 'success');
                     this.ipRulesResource.reload();
+                    this.endpointsResource.reload();
                 }),
                 catchError((error: unknown) => {
                     console.error('Unable to delete IP rule', error);
@@ -493,6 +538,10 @@ export class WebhooksStore {
             const record = item as Record<string, unknown>;
             const ipRules = record['ipRules'];
             const ipRuleCount = Array.isArray(ipRules) ? ipRules.length : null;
+            const metadata = typeof record['metadata'] === 'object' && record['metadata'] !== null
+                ? (record['metadata'] as Record<string, string>)
+                : null;
+            const enabled = typeof record['enabled'] === 'boolean' ? record['enabled'] : true;
             entries.push({
                 hookKey: typeof record['hookKey'] === 'string' ? record['hookKey'] : `hook-${index}`,
                 jobKey: typeof record['jobKey'] === 'string' ? record['jobKey'] : 'unknown-job',
@@ -502,10 +551,13 @@ export class WebhooksStore {
                 status:
                     record['status'] === 'paused' || record['status'] === 'degraded'
                         ? record['status']
-                        : 'active',
+                        : enabled
+                            ? 'active'
+                            : 'paused',
                 lastDeliveryAt:
                     tryIsoFromUnknown(record['lastDeliveryAt']) ?? nowIso(),
                 ipRuleCount,
+                metadata,
             });
         });
         return entries.length ? entries : this.endpointsSignal();

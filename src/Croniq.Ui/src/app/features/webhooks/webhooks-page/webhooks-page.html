@@ -130,112 +130,230 @@
   </div>
 
   <!-- Content -->
-  <div class="flex-1 overflow-hidden rounded-xl border border-white/10 bg-surface-alt shadow-card">
-    @if (error()) {
-      <div class="border-b border-white/10 bg-danger/10 px-4 py-3 text-sm text-danger">
-        {{ error() }}
-      </div>
-    }
-    <cq-data-grid
-      class="h-[560px]"
-      [rows]="pagedEndpoints()"
-      [rowKey]="webhookRowKey"
-      [bufferPx]="256"
-      [estimatedRowHeightPx]="56"
-      [loading]="loading()"
-      [rowClasses]="webhookRowClasses"
-    >
-      <cq-column header="Endpoint" width="18rem">
-        <ng-template cqWebhookCell let-row>
-          <div class="min-w-0">
-            <div class="truncate text-sm font-semibold text-primary">{{ row.hookKey }}</div>
-            <div class="truncate text-xs font-mono text-muted">{{ row.environment }}</div>
-          </div>
-        </ng-template>
-      </cq-column>
-
-      <cq-column header="Target Job" width="16rem">
-        <ng-template cqWebhookCell let-row>
-          <span class="truncate text-sm text-muted">{{ row.jobKey }}</span>
-        </ng-template>
-      </cq-column>
-
-      <cq-column header="Status" width="8rem" align="center">
-        <ng-template cqWebhookCell let-row>
-          <span
-            class="inline-flex items-center rounded-full px-2 py-1 text-xs font-medium"
-            [class.bg-success/10]="row.status === 'active'"
-            [class.text-success]="row.status === 'active'"
-            [class.bg-warning/10]="row.status === 'degraded'"
-            [class.text-warning]="row.status === 'degraded'"
-            [class.bg-white/10]="row.status === 'paused'"
-            [class.text-muted]="row.status === 'paused'"
+  <div
+    class="grid flex-1 gap-4"
+    [style.gridTemplateColumns]="ipRulesPanelOpen() ? 'minmax(0,1fr) 360px' : 'minmax(0,1fr)'"
+  >
+    <div class="overflow-hidden rounded-xl border border-white/10 bg-surface-alt shadow-card">
+      @if (error()) {
+        <div class="border-b border-white/10 bg-danger/10 px-4 py-3 text-sm text-danger">
+          {{ error() }}
+        </div>
+      }
+      <ng-template #rowActions let-row="row">
+        <div
+          cdkMenu
+          class="min-w-[180px] rounded-lg border border-white/10 bg-surface p-1 text-sm shadow-xl"
+        >
+          <button type="button" cqContextMenuItem (click)="openWebhookDialog(row)">
+            Edit
+          </button>
+          <button type="button" cqContextMenuItem (click)="rotateSecret(row)">
+            Rotate secret
+          </button>
+          <button type="button" cqContextMenuItem (click)="openIpRulesPanel(row)">
+            IP rules
+          </button>
+          @if (row.status === 'paused') {
+            <button type="button" cqContextMenuItem (click)="enableEndpoint(row)">
+              Enable
+            </button>
+          } @else {
+            <button type="button" cqContextMenuItem (click)="disableEndpoint(row)">
+              Disable
+            </button>
+          }
+          <button
+            type="button"
+            cqContextMenuItem
+            class="text-danger hover:text-danger"
+            (click)="deleteEndpoint(row)"
           >
-            {{ statusLabel(row.status) }}
-          </span>
-        </ng-template>
-      </cq-column>
+            Delete
+          </button>
+        </div>
+      </ng-template>
+      <cq-data-grid
+        class="h-[560px]"
+        [rows]="pagedEndpoints()"
+        [rowKey]="webhookRowKey"
+        [bufferPx]="256"
+        [estimatedRowHeightPx]="56"
+        [loading]="loading()"
+        [rowClasses]="webhookRowClasses"
+        [rowContextMenu]="rowActions"
+      >
+        <cq-column header="Endpoint" width="18rem">
+          <ng-template cqWebhookCell let-row>
+            <div class="min-w-0">
+              <div class="truncate text-sm font-semibold text-primary">{{ row.hookKey }}</div>
+              <div class="truncate text-xs font-mono text-muted">{{ row.environment }}</div>
+            </div>
+          </ng-template>
+        </cq-column>
 
-      <cq-column header="Security" width="12rem">
-        <ng-template cqWebhookCell let-row>
-          <div class="flex flex-col gap-1">
-            @if (row.requireSignature) {
-              <span
-                class="inline-flex w-fit items-center rounded-full bg-success/10 px-2 py-0.5 text-xs font-medium text-success"
+        <cq-column header="Target Job" width="16rem">
+          <ng-template cqWebhookCell let-row>
+            <span class="truncate text-sm text-muted">{{ row.jobKey }}</span>
+          </ng-template>
+        </cq-column>
+
+        <cq-column header="Status" width="8rem" align="center">
+          <ng-template cqWebhookCell let-row>
+            <span
+              class="inline-flex items-center rounded-full px-2 py-1 text-xs font-medium"
+              [class.bg-success/10]="row.status === 'active'"
+              [class.text-success]="row.status === 'active'"
+              [class.bg-warning/10]="row.status === 'degraded'"
+              [class.text-warning]="row.status === 'degraded'"
+              [class.bg-white/10]="row.status === 'paused'"
+              [class.text-muted]="row.status === 'paused'"
+            >
+              {{ statusLabel(row.status) }}
+            </span>
+          </ng-template>
+        </cq-column>
+
+        <cq-column header="Security" width="12rem">
+          <ng-template cqWebhookCell let-row>
+            <div class="flex flex-col gap-1">
+              @if (row.requireSignature) {
+                <span
+                  class="inline-flex w-fit items-center rounded-full bg-success/10 px-2 py-0.5 text-xs font-medium text-success"
+                >
+                  Signed
+                </span>
+              } @else {
+                <span
+                  class="inline-flex w-fit items-center rounded-full bg-warning/10 px-2 py-0.5 text-xs font-medium text-warning"
+                >
+                  Unsigned
+                </span>
+              }
+              <span class="text-xs text-muted">{{ ipWhitelistLabel(row) }}</span>
+            </div>
+          </ng-template>
+        </cq-column>
+
+        <cq-column header="RPM" width="6rem" align="end">
+          <ng-template cqWebhookCell let-row>
+            <span class="text-sm text-muted">
+              {{ requestsPerMinuteLabel(row) }}
+            </span>
+          </ng-template>
+        </cq-column>
+
+        <cq-column header="Last Delivery" width="12rem">
+          <ng-template cqWebhookCell let-row>
+            <span class="text-xs text-muted">{{ row.lastDeliveryAt | date: 'short' }}</span>
+          </ng-template>
+        </cq-column>
+
+        <cq-column width="4rem" align="end">
+          <ng-template cqWebhookCell let-row>
+            <div class="flex items-center justify-end">
+              <cq-context-menu
+                ariaLabel="Open webhook actions"
+                [menu]="rowActions"
+                [menuData]="menuContext(row)"
+              />
+            </div>
+          </ng-template>
+        </cq-column>
+      </cq-data-grid>
+    </div>
+
+    <section
+      class="flex h-full flex-col rounded-xl border border-white/10 bg-surface-alt shadow-card"
+      [class.hidden]="!ipRulesPanelOpen()"
+      [attr.aria-hidden]="ipRulesPanelOpen() ? null : 'true'"
+    >
+      <header class="flex items-start justify-between gap-3 border-b border-white/10 px-4 py-3">
+        <div class="space-y-1">
+          <p class="text-xs font-semibold uppercase tracking-wide text-muted">IP rules</p>
+          <p class="text-sm font-semibold text-primary">
+            {{ selectedIpRulesEndpoint()?.hookKey ?? 'Select an endpoint' }}
+          </p>
+          <p class="text-xs text-muted">
+            {{ selectedIpRulesEndpoint()?.environment ?? 'Environment' }}
+            ·
+            {{ selectedIpRulesEndpoint()?.jobKey ?? 'Job' }}
+          </p>
+        </div>
+        <button
+          type="button"
+          class="rounded-lg px-2 py-1 text-xs font-semibold text-muted hover:text-primary"
+          (click)="closeIpRulesPanel()"
+        >
+          Close
+        </button>
+      </header>
+
+      <div class="flex-1 space-y-4 px-4 py-4">
+        <div class="flex items-center justify-between">
+          <h3 class="text-xs font-semibold uppercase tracking-wide text-muted">Allow list</h3>
+          <span class="text-xs text-muted">
+            {{ ipRules().length }} rule{{ ipRules().length === 1 ? '' : 's' }}
+          </span>
+        </div>
+
+        @if (ipRules().length > 0) {
+          <div class="space-y-2">
+            @for (rule of ipRules(); track rule.ruleId) {
+              <div
+                class="flex items-center justify-between gap-3 rounded-lg border border-white/10 bg-black/10 px-3 py-2"
               >
-                Signed
-              </span>
-            } @else {
-              <span
-                class="inline-flex w-fit items-center rounded-full bg-warning/10 px-2 py-0.5 text-xs font-medium text-warning"
-              >
-                Unsigned
-              </span>
+                <div class="min-w-0">
+                  <p class="truncate text-sm font-mono text-white">{{ rule.cidr }}</p>
+                  @if (rule.description) {
+                    <p class="truncate text-xs text-muted">{{ rule.description }}</p>
+                  }
+                </div>
+                <button
+                  type="button"
+                  class="rounded-md px-2 py-1 text-xs font-semibold text-danger hover:text-danger"
+                  (click)="deleteIpRule(rule)"
+                >
+                  Delete
+                </button>
+              </div>
             }
-            <span class="text-xs text-muted">{{ ipWhitelistLabel(row) }}</span>
           </div>
-        </ng-template>
-      </cq-column>
-
-      <cq-column header="RPM" width="6rem" align="end">
-        <ng-template cqWebhookCell let-row>
-          <span class="text-sm text-muted">
-            {{ requestsPerMinuteLabel(row) }}
-          </span>
-        </ng-template>
-      </cq-column>
-
-      <cq-column header="Last Delivery" width="12rem">
-        <ng-template cqWebhookCell let-row>
-          <span class="text-xs text-muted">{{ row.lastDeliveryAt | date: 'short' }}</span>
-        </ng-template>
-      </cq-column>
-
-      <cq-column width="4rem" align="end">
-        <ng-template cqWebhookCell let-row>
-          <div class="flex items-center justify-end">
-            <cq-context-menu ariaLabel="Open webhook actions">
-              <button type="button" cqContextMenuItem (click)="openWebhookDialog(row)">
-                Edit
-              </button>
-              <button type="button" cqContextMenuItem (click)="rotateSecret(row)">
-                Rotate secret
-              </button>
-              <button type="button" cqContextMenuItem [disabled]="true">
-                IP rules
-              </button>
-              <button
-                type="button"
-                cqContextMenuItem
-                class="text-danger hover:text-danger"
-                (click)="deleteEndpoint(row)"
-              >
-                Delete
-              </button>
-            </cq-context-menu>
+        } @else {
+          <div
+            class="rounded-lg border border-dashed border-white/10 bg-black/10 px-3 py-4 text-xs text-muted"
+          >
+            No IP rules yet. Add a CIDR block to allow inbound requests.
           </div>
-        </ng-template>
-      </cq-column>
-    </cq-data-grid>
+        }
+      </div>
+
+      <form class="grid gap-3 border-t border-white/10 px-4 py-4" (ngSubmit)="submitIpRule()">
+        <cq-form-field
+          label="CIDR"
+          forId="ip-rule-cidr"
+          hint="Example: 203.0.113.0/28"
+          [error]="ipRuleCidrError()"
+        >
+          <input id="ip-rule-cidr" type="text" placeholder="CIDR block" cqInput [field]="ipRuleForm.cidr" />
+        </cq-form-field>
+        <cq-form-field label="Description" forId="ip-rule-description" hint="Optional note for operators">
+          <input
+            id="ip-rule-description"
+            type="text"
+            placeholder="Reason or owner"
+            cqInput
+            [field]="ipRuleForm.description"
+          />
+        </cq-form-field>
+        <button
+          type="submit"
+          class="rounded-lg bg-accent px-3 py-2 text-xs font-semibold text-white transition hover:bg-accent-hover disabled:cursor-not-allowed disabled:opacity-60"
+          [disabled]="!canCreateIpRule()"
+        >
+          Add rule
+        </button>
+      </form>
+    </section>
   </div>
 </div>

@@ -1,5 +1,5 @@
-import { CdkMenu, CdkMenuItem, CdkMenuTrigger } from '@angular/cdk/menu';
-import { ChangeDetectionStrategy, Component, Directive, input } from '@angular/core';
+import { CdkMenuItem, CdkMenuTrigger } from '@angular/cdk/menu';
+import { ChangeDetectionStrategy, Component, Directive, TemplateRef, input } from '@angular/core';
 
 @Directive({
   selector: '[cqContextMenuItem]',
@@ -24,13 +24,14 @@ export class CqContextMenuItemDirective {
 
 @Component({
   selector: 'cq-context-menu',
-  imports: [CdkMenu, CdkMenuTrigger],
+  imports: [CdkMenuTrigger],
   template: `
     <button
       type="button"
       class="rounded p-1 text-muted hover:bg-white/10 hover:text-white"
       [attr.aria-label]="ariaLabel()"
-      [cdkMenuTriggerFor]="menu"
+      [cdkMenuTriggerFor]="menu()"
+      [cdkMenuTriggerData]="menuData()"
       [disabled]="disabled()"
     >
       <span class="sr-only">{{ ariaLabel() }}</span>
@@ -40,18 +41,12 @@ export class CqContextMenuItemDirective {
         />
       </svg>
     </button>
-    <ng-template #menu>
-      <div
-        cdkMenu
-        class="min-w-[180px] rounded-lg border border-white/10 bg-surface p-1 text-sm shadow-xl"
-      >
-        <ng-content />
-      </div>
-    </ng-template>
   `,
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class CqContextMenuComponent {
   readonly ariaLabel = input('Open actions menu');
   readonly disabled = input(false);
+  readonly menu = input.required<TemplateRef<unknown>>();
+  readonly menuData = input<unknown | null>(null);
 }

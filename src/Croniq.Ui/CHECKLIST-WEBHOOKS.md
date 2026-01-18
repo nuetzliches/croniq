@@ -11,18 +11,18 @@ _Last updated: 2026-01-18_
 
 ## Phase 1: Management baseline
 
-- [ ] Endpoints list using `cq-data-grid` with columns (hook key, job key, status, signature mode, RPM, IP rules, last delivery).
-- [ ] Search + filters (hook key, job key, status, environment) implemented via Signal Forms, with pagination and empty/error states.
-- [ ] Context menu for row actions (edit, rotate secret, IP rules, delete/disable) with confirmations.
+- [x] Endpoints list using `cq-data-grid` with columns (hook key, job key, status, signature mode, RPM, IP rules, last delivery).
+- [x] Search + filters (hook key, job key, status, environment) implemented via Signal Forms, with pagination and empty/error states.
+- [x] Context menu for row actions (edit, rotate secret, IP rules, delete/disable) with confirmations.
 - [ ] Endpoint detail view showing effective configuration and derived ingress URL.
 - [ ] Create/edit dialog with validation and inline help for hook key, job key, RPM, and signatures (ui-kit form primitives).
 - [ ] Permission states for `webhooks:read` and `webhooks:write` (blocked view + CTA).
 
 ## UI Kit additions (Phase 1)
 
-- [ ] Form primitives for text input, select, textarea, toggle, hint, and error states.
-- [ ] Form field wrapper layout for label + description + error placement.
-- [ ] Context menu component for row actions (keyboard + pointer).
+- [x] Form primitives for text input, select, textarea, toggle, hint, and error states.
+- [x] Form field wrapper layout for label + description + error placement.
+- [x] Context menu component for row actions (keyboard + pointer).
 
 ## Phase 2: Security & hygiene
 
