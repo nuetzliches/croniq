@@ -1,4 +1,4 @@
-<div class="grid min-h-screen grid-cols-[250px_1fr] bg-surface text-primary">
+<div class="grid min-h-screen grid-cols-[250px_1fr] bg-surface text-primary overflow-x-hidden">
   <aside class="flex flex-col gap-6 border-r border-white/10 bg-surface-alt/95 px-6 py-6">
     <cq-app-brand />
 
@@ -49,7 +49,7 @@
   </aside>
 
   <section
-    class="flex min-h-screen flex-col bg-gradient-to-b from-surface via-surface/80 to-surface/40"
+    class="flex min-h-screen min-w-0 flex-col bg-gradient-to-b from-surface via-surface/80 to-surface/40"
   >
     <header
       class="flex items-center justify-between border-b border-white/10 bg-surface/80 px-6 py-3 backdrop-blur"
@@ -76,7 +76,7 @@
       </div>
     </header>
     <main class="flex-1">
-      <div class="flex h-full min-h-[calc(100vh-64px)]">
+      <div class="flex h-full min-h-[calc(100vh-64px)] min-w-0 overflow-hidden">
         <cq-panel-shell
           [panelTemplate]="panelTemplate()"
           [title]="panelTitle()"
@@ -84,7 +84,7 @@
           [open]="panelOpen()"
           (toggle)="togglePanel()"
         />
-        <div class="flex-1 p-6">
+        <div class="flex-1 min-w-0 p-6">
           <router-outlet />
         </div>
       </div>
