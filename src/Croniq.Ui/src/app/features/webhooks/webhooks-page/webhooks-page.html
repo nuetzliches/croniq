@@ -159,6 +159,59 @@
         </select>
       </div>
 
+      <div class="space-y-2">
+        <div class="text-xs font-semibold uppercase tracking-wide text-muted">Timeline range</div>
+        <div class="grid grid-cols-2 gap-2">
+          <input
+            type="datetime-local"
+            cqInput
+            aria-label="Timeline start"
+            #timelineFromInput
+            [value]="timelineFromLocal()"
+            (input)="setTimelineFromLocal(timelineFromInput.value)"
+          />
+          <input
+            type="datetime-local"
+            cqInput
+            aria-label="Timeline end"
+            #timelineToInput
+            [value]="timelineToLocal()"
+            (input)="setTimelineToLocal(timelineToInput.value)"
+          />
+        </div>
+        <div class="flex flex-wrap gap-2">
+          <button
+            type="button"
+            class="rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-[11px] font-semibold text-primary transition hover:border-accent hover:text-accent"
+            (click)="setTimelinePreset('24h')"
+          >
+            Last 24h
+          </button>
+          <button
+            type="button"
+            class="rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-[11px] font-semibold text-primary transition hover:border-accent hover:text-accent"
+            (click)="setTimelinePreset('7d')"
+          >
+            Last 7d
+          </button>
+          <button
+            type="button"
+            class="rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-[11px] font-semibold text-primary transition hover:border-accent hover:text-accent"
+            (click)="setTimelinePreset('30d')"
+          >
+            Last 30d
+          </button>
+          <button
+            type="button"
+            class="rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-[11px] font-semibold text-primary transition hover:border-accent hover:text-accent disabled:opacity-50 disabled:cursor-not-allowed"
+            (click)="clearTimelineRange()"
+            [disabled]="!timelineRangeActive()"
+          >
+            Clear range
+          </button>
+        </div>
+      </div>
+
       <button
         type="button"
         (click)="resetFilters()"
@@ -259,7 +312,7 @@
       <ng-template #rowActions let-row="row">
         <div
           cdkMenu
-          class="min-w-[180px] rounded-lg border border-white/10 bg-surface p-1 text-sm shadow-xl"
+          class="min-w-45 rounded-lg border border-white/10 bg-surface p-1 text-sm shadow-xl"
         >
           <button
             type="button"
@@ -405,7 +458,7 @@
 
       </cq-data-grid>
     </div>
-    <aside class="w-full lg:w-[320px] xl:w-[360px]">
+    <aside class="w-full lg:w-80 xl:w-90">
       <div class="rounded-xl border border-white/10 bg-surface-alt p-4 shadow-card">
         <div class="flex items-center justify-between">
           <div>
@@ -490,188 +543,180 @@
                 }
               </div>
             </div>
+
+            <details class="rounded-lg border border-white/10 bg-black/10 px-3 py-3">
+              <summary class="cursor-pointer list-none text-xs font-semibold uppercase tracking-wide text-muted">
+                Manual invoke
+              </summary>
+              <div class="mt-3 space-y-3">
+                <p class="text-xs text-muted">
+                  The payload below is a safe default for testing. Use the cURL snippet to send custom
+                  payloads from your terminal.
+                </p>
+                <cq-form-field label="Payload (JSON)" forId="invokePayload">
+                  <textarea
+                    id="invokePayload"
+                    rows="6"
+                    cqTextarea
+                    [value]="invokePayload()"
+                    (input)="setInvokePayload($any($event.target).value)"
+                  ></textarea>
+                </cq-form-field>
+                <div class="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    class="rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-xs font-semibold text-primary transition hover:border-accent hover:text-accent"
+                    (click)="copyInvokePayload()"
+                  >
+                    Copy payload
+                  </button>
+                  <button
+                    type="button"
+                    class="rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-xs font-semibold text-primary transition hover:border-accent hover:text-accent"
+                    (click)="copyCurlSnippet()"
+                    [disabled]="!ingressUrl()"
+                  >
+                    Copy cURL
+                  </button>
+                  <button
+                    type="button"
+                    class="rounded-lg bg-accent px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-accent-hover disabled:opacity-50"
+                    (click)="invokeWebhook()"
+                    [disabled]="writePermissionDenied()"
+                  >
+                    Invoke
+                  </button>
+                </div>
+                <p class="text-[11px] text-muted">
+                  Invoke triggers the backend test path using the selected hook key.
+                </p>
+              </div>
+            </details>
           </div>
         }
       </div>
     </aside>
   </div>
 
-  <div class="grid gap-4 lg:grid-cols-2">
+  <div class="grid gap-4">
     <div class="rounded-xl border border-white/10 bg-surface-alt p-4 shadow-card">
       <div class="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h2 class="text-sm font-semibold text-primary">Dead letters</h2>
-          <p class="text-xs text-muted">Replay or inspect failed deliveries.</p>
+          <h2 class="text-sm font-semibold text-primary">Activity timeline</h2>
+          <p class="text-xs text-muted">Dead letters and delivery signals in one place.</p>
         </div>
-        <div class="text-xs text-muted">{{ filteredDeadLetters().length }} entries</div>
+        <div class="text-xs text-muted">{{ timelineItems().length }} entries</div>
       </div>
-
-      <div class="mt-4 grid gap-3 lg:grid-cols-[1.2fr,1fr]">
-        <div class="space-y-2">
-          @if (filteredDeadLetters().length === 0) {
-            <div class="rounded-lg border border-dashed border-white/10 bg-black/10 px-3 py-4 text-xs text-muted">
-              No dead letters match the active filters.
-            </div>
-          } @else {
-            @for (entry of filteredDeadLetters(); track entry.id) {
+      <div class="mt-4 space-y-3">
+        @if (timelineItems().length === 0) {
+          <div class="rounded-lg border border-dashed border-white/10 bg-black/10 px-3 py-4 text-xs text-muted">
+            No timeline entries match the active filters.
+          </div>
+        } @else {
+          <div class="flex gap-2 overflow-x-auto pb-2">
+            @for (entry of timelineItems(); track entry.id) {
               <button
                 type="button"
-                class="flex w-full flex-col gap-1 rounded-lg border border-white/10 bg-black/10 px-3 py-2 text-left text-xs transition hover:border-accent/60"
-                [class.border-accent]="selectedDeadLetter()?.id === entry.id"
-                [class.bg-accent/10]="selectedDeadLetter()?.id === entry.id"
-                (click)="selectDeadLetter(entry)"
+                class="shrink-0 w-60 rounded-lg border border-white/10 bg-black/10 px-3 py-2 text-left text-xs transition hover:border-accent/60"
+                [class.border-accent]="selectedTimelineItem()?.id === entry.id"
+                [class.bg-accent/10]="selectedTimelineItem()?.id === entry.id"
+                [attr.aria-pressed]="selectedTimelineItem()?.id === entry.id"
+                (click)="selectTimelineItem(entry)"
               >
-                <span class="font-mono text-primary">{{ entry.hookKey }}</span>
-                <span class="text-muted">{{ entry.jobKey || 'Unknown job' }}</span>
-                <span class="text-muted">{{ entry.occurredAt | date: 'short' }}</span>
+                <div class="flex items-center justify-between gap-2">
+                  <span class="inline-flex items-center gap-2">
+                    <span [class]="timelineStatusClass(entry)">{{ timelineStatusGlyph(entry) }}</span>
+                    <span class="truncate font-mono text-primary">{{ entry.hookKey }}</span>
+                  </span>
+                  <span class="shrink-0 text-[11px] text-muted">{{ entry.occurredAt | date: 'short' }}</span>
+                </div>
+                <div class="mt-1 truncate text-[11px] text-muted">{{ entry.jobKey || '—' }}</div>
+                <div class="mt-1 truncate text-muted">{{ entry.kind === 'deadLetter' ? 'Dead letter' : entry.label }}</div>
               </button>
             }
-          }
-        </div>
+          </div>
+        }
 
         <div class="rounded-lg border border-white/10 bg-black/10 px-3 py-3">
-          @if (!selectedDeadLetter()) {
-            <p class="text-xs text-muted">Select a dead letter to view details.</p>
+          @if (!selectedTimelineItem()) {
+            <p class="text-xs text-muted">Select a timeline entry to view details.</p>
+          } @else if (selectedTimelineItem()!.kind === 'deadLetter') {
+            @if (!selectedDeadLetter()) {
+              <p class="text-xs text-muted">Dead letter details unavailable.</p>
+            } @else {
+              <div class="space-y-2 text-xs">
+                <div class="flex items-center justify-between">
+                  <span class="text-muted">ID</span>
+                  <span class="font-mono text-primary">{{ selectedDeadLetter()!.id }}</span>
+                </div>
+                <div class="flex items-center justify-between">
+                  <span class="text-muted">Hook key</span>
+                  <span class="text-primary">{{ selectedDeadLetter()!.hookKey }}</span>
+                </div>
+                <div class="flex items-center justify-between">
+                  <span class="text-muted">Job key</span>
+                  <span class="text-primary">{{ selectedDeadLetter()!.jobKey || '-' }}</span>
+                </div>
+                <div class="flex items-center justify-between">
+                  <span class="text-muted">Occurred</span>
+                  <span class="text-primary">{{ selectedDeadLetter()!.occurredAt | date: 'short' }}</span>
+                </div>
+                <div class="flex items-center justify-between">
+                  <span class="text-muted">Attempts</span>
+                  <span class="text-primary">{{ selectedDeadLetter()!.attempts ?? '-' }}</span>
+                </div>
+                <div class="text-muted">Reason</div>
+                <div class="rounded-md border border-white/10 bg-black/20 px-2 py-2 text-primary">
+                  {{ selectedDeadLetter()!.reason || 'No reason provided.' }}
+                </div>
+              </div>
+              <div class="mt-3 flex justify-end">
+                <button
+                  type="button"
+                  class="rounded-lg bg-accent px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-accent-hover disabled:opacity-50"
+                  [disabled]="writePermissionDenied()"
+                  (click)="replayDeadLetter(selectedDeadLetter()!)"
+                >
+                  Replay
+                </button>
+              </div>
+            }
           } @else {
             <div class="space-y-2 text-xs">
               <div class="flex items-center justify-between">
-                <span class="text-muted">ID</span>
-                <span class="font-mono text-primary">{{ selectedDeadLetter()!.id }}</span>
-              </div>
-              <div class="flex items-center justify-between">
                 <span class="text-muted">Hook key</span>
-                <span class="text-primary">{{ selectedDeadLetter()!.hookKey }}</span>
+                <span class="font-mono text-primary">{{ selectedTimelineItem()!.hookKey }}</span>
               </div>
               <div class="flex items-center justify-between">
                 <span class="text-muted">Job key</span>
-                <span class="text-primary">{{ selectedDeadLetter()!.jobKey || '-' }}</span>
+                <span class="text-primary">{{ selectedTimelineItem()!.jobKey || '-' }}</span>
+              </div>
+              <div class="flex items-center justify-between">
+                <span class="text-muted">Environment</span>
+                <span class="text-primary">{{ selectedTimelineItem()!.environment || '-' }}</span>
               </div>
               <div class="flex items-center justify-between">
                 <span class="text-muted">Occurred</span>
-                <span class="text-primary">{{ selectedDeadLetter()!.occurredAt | date: 'short' }}</span>
+                <span class="text-primary">{{ selectedTimelineItem()!.occurredAt | date: 'short' }}</span>
               </div>
-              <div class="flex items-center justify-between">
-                <span class="text-muted">Attempts</span>
-                <span class="text-primary">{{ selectedDeadLetter()!.attempts ?? '-' }}</span>
-              </div>
-              <div class="text-muted">Reason</div>
+              <div class="text-muted">Notes</div>
               <div class="rounded-md border border-white/10 bg-black/20 px-2 py-2 text-primary">
-                {{ selectedDeadLetter()!.reason || 'No reason provided.' }}
+                {{ selectedTimelineItem()!.reason || '—' }}
               </div>
             </div>
             <div class="mt-3 flex justify-end">
               <button
                 type="button"
-                class="rounded-lg bg-accent px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-accent-hover disabled:opacity-50"
-                [disabled]="writePermissionDenied()"
-                (click)="replayDeadLetter(selectedDeadLetter()!)"
+                class="rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-xs font-semibold text-primary transition hover:border-accent hover:text-accent disabled:opacity-50"
+                (click)="copyIngressUrl()"
+                [disabled]="!ingressUrl()"
               >
-                Replay
+                Copy ingress URL
               </button>
             </div>
           }
         </div>
       </div>
-    </div>
-
-    <div class="rounded-xl border border-white/10 bg-surface-alt p-4 shadow-card">
-      <div class="flex items-center justify-between">
-        <div>
-          <h2 class="text-sm font-semibold text-primary">Delivery timeline</h2>
-          <p class="text-xs text-muted">Per-endpoint delivery history and failures.</p>
-        </div>
-        <span class="text-xs text-muted">{{ deliveryEvents().length }} events</span>
-      </div>
-
-      <div class="mt-4 space-y-3">
-        @if (!selectedEndpoint()) {
-          <div class="rounded-lg border border-dashed border-white/10 bg-black/10 px-3 py-4 text-xs text-muted">
-            Select an endpoint to view its delivery timeline.
-          </div>
-        } @else if (deliveryEvents().length === 0) {
-          <div class="rounded-lg border border-dashed border-white/10 bg-black/10 px-3 py-4 text-xs text-muted">
-            No delivery events recorded for this endpoint yet.
-          </div>
-        } @else {
-          @for (event of deliveryEvents(); track event.id) {
-            <div class="flex items-start gap-2 rounded-lg border border-white/10 bg-black/10 px-3 py-2 text-xs">
-              <span [class]="deliveryStatusClass(event)">
-                {{ event.status === 'success' ? '●' : event.status === 'warning' ? '▲' : '■' }}
-              </span>
-              <div class="flex-1 space-y-1">
-                <div class="text-primary">{{ event.label }}</div>
-                <div class="text-muted">{{ event.reason || '-' }}</div>
-                <div class="flex items-center justify-between text-[11px] text-muted">
-                  <span>Correlation: {{ event.correlationId || '-' }}</span>
-                  <span>{{ event.occurredAt | date: 'short' }}</span>
-                </div>
-              </div>
-            </div>
-          }
-        }
-      </div>
-    </div>
-
-    <div class="rounded-xl border border-white/10 bg-surface-alt p-4 shadow-card">
-      <div class="flex items-center justify-between">
-        <div>
-          <h2 class="text-sm font-semibold text-primary">Manual invoke</h2>
-          <p class="text-xs text-muted">Preview a safe payload and test delivery.</p>
-        </div>
-        @if (invokeNotice()) {
-          <span class="text-xs text-success">{{ invokeNotice() }}</span>
-        }
-      </div>
-
-      @if (!selectedEndpoint()) {
-        <div class="mt-4 rounded-lg border border-dashed border-white/10 bg-black/10 px-3 py-4 text-xs text-muted">
-          Select an endpoint to build a test payload.
-        </div>
-      } @else {
-        <div class="mt-4 space-y-3">
-          <p class="text-xs text-muted">
-            The payload below is a safe default for testing. Use the cURL snippet to send custom
-            payloads from your terminal.
-          </p>
-          <cq-form-field label="Payload (JSON)" forId="invokePayload">
-            <textarea
-              id="invokePayload"
-              rows="6"
-              cqTextarea
-              [value]="invokePayload()"
-              (input)="setInvokePayload($any($event.target).value)"
-            ></textarea>
-          </cq-form-field>
-          <div class="flex flex-wrap items-center gap-2">
-            <button
-              type="button"
-              class="rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-xs font-semibold text-primary transition hover:border-accent hover:text-accent"
-              (click)="copyInvokePayload()"
-            >
-              Copy payload
-            </button>
-            <button
-              type="button"
-              class="rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-xs font-semibold text-primary transition hover:border-accent hover:text-accent"
-              (click)="copyCurlSnippet()"
-              [disabled]="!ingressUrl()"
-            >
-              Copy cURL
-            </button>
-            <button
-              type="button"
-              class="rounded-lg bg-accent px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-accent-hover disabled:opacity-50"
-              (click)="invokeWebhook()"
-              [disabled]="writePermissionDenied()"
-            >
-              Invoke
-            </button>
-          </div>
-          <p class="text-[11px] text-muted">
-            Invoke triggers the backend test path using the selected hook key.
-          </p>
-        </div>
-      }
     </div>
   </div>
   }

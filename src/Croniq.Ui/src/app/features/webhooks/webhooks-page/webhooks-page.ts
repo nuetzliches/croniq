@@ -30,14 +30,21 @@ type OptionEntry = {
   label: string;
 };
 
+type TimelineItemKind = 'delivery' | 'deadLetter';
 
-type DeliveryEventView = {
+type WebhookTimelineItemView = {
   id: string;
+  kind: TimelineItemKind;
   status: 'success' | 'failed' | 'warning';
   label: string;
   occurredAt: string;
+  hookKey: string;
+  jobKey?: string;
+  environment?: string;
+  endpointStatus?: WebhookEndpointView['status'];
   reason?: string;
-  correlationId?: string;
+  deadLetterId?: string;
+  endpointRowKey?: string;
 };
 
 type HookFilterEntry = {
@@ -130,6 +137,8 @@ export class WebhooksPage {
   readonly jobSearch = signal('');
   readonly selectedHookKeys = signal<ReadonlyArray<string>>([]);
   readonly selectedJobKeys = signal<ReadonlyArray<string>>([]);
+  readonly timelineFromIso = signal<string | null>(null);
+  readonly timelineToIso = signal<string | null>(null);
   readonly kpiSuccessRate = computed(() => {
     const endpoints = this.endpoints().length;
     if (endpoints === 0) {
@@ -148,7 +157,9 @@ export class WebhooksPage {
     const model = this.filterModel();
     const hooks = [...this.selectedHookKeys()].sort().join(',');
     const jobs = [...this.selectedJobKeys()].sort().join(',');
-    return `${model.status}|${model.environment}|${hooks}|${jobs}`;
+    const fromIso = this.timelineFromIso() ?? '';
+    const toIso = this.timelineToIso() ?? '';
+    return `${model.status}|${model.environment}|${hooks}|${jobs}|${fromIso}|${toIso}`;
   });
 
   readonly pageSize = signal(25);
@@ -236,8 +247,15 @@ export class WebhooksPage {
       || this.selectedJobKeys().length > 0
       || model.status !== 'all'
       || model.environment !== ALL_ENVIRONMENTS
+      || !!this.timelineFromIso()
+      || !!this.timelineToIso()
     );
   });
+
+  readonly timelineRangeActive = computed(() => !!this.timelineFromIso() || !!this.timelineToIso());
+
+  readonly timelineFromLocal = computed(() => isoToLocalDateTimeInput(this.timelineFromIso()));
+  readonly timelineToLocal = computed(() => isoToLocalDateTimeInput(this.timelineToIso()));
 
   readonly hookEntries = computed<ReadonlyArray<HookFilterEntry>>(() => {
     const entries = new Map<string, WebhookEndpointView[]>();
@@ -463,6 +481,33 @@ export class WebhooksPage {
     this.selectedJobKeys.set([]);
     this.hookSearch.set('');
     this.jobSearch.set('');
+    this.timelineFromIso.set(null);
+    this.timelineToIso.set(null);
+  }
+
+  clearTimelineRange(): void {
+    this.timelineFromIso.set(null);
+    this.timelineToIso.set(null);
+  }
+
+  setTimelineFromLocal(value: string): void {
+    this.timelineFromIso.set(localDateTimeInputToIso(value));
+  }
+
+  setTimelineToLocal(value: string): void {
+    this.timelineToIso.set(localDateTimeInputToIso(value));
+  }
+
+  setTimelinePreset(kind: '24h' | '7d' | '30d'): void {
+    const now = Date.now();
+    const deltaMs = kind === '24h'
+      ? 24 * 60 * 60 * 1000
+      : kind === '7d'
+        ? 7 * 24 * 60 * 60 * 1000
+        : 30 * 24 * 60 * 60 * 1000;
+
+    this.timelineToIso.set(new Date(now).toISOString());
+    this.timelineFromIso.set(new Date(now - deltaMs).toISOString());
   }
 
   setHookSearch(value: string): void {
@@ -524,37 +569,86 @@ export class WebhooksPage {
     return this.deadLetters().find((entry) => entry.id === id) ?? null;
   });
 
-  readonly deliveryEvents = computed<ReadonlyArray<DeliveryEventView>>(() => {
-    const endpoint = this.selectedEndpoint();
-    if (!endpoint) {
-      return [];
-    }
-    const events: DeliveryEventView[] = [];
+  readonly timelineItems = computed<ReadonlyArray<WebhookTimelineItemView>>(() => {
+    const filters = this.filterModel();
+    const restrictToEndpointSet = filters.status !== 'all' || filters.environment !== ALL_ENVIRONMENTS;
+    const endpoints = this.filteredEndpoints();
+    const deadLetters = this.filteredDeadLetters();
 
-    if (endpoint.lastDeliveryAt) {
-      events.push({
-        id: `${endpoint.hookKey}-last-delivery`,
+    const fromMs = tryParseIsoToMs(this.timelineFromIso());
+    const toMs = tryParseIsoToMs(this.timelineToIso());
+
+    const endpointKeys = new Set(endpoints.map((endpoint) => `${endpoint.hookKey}|${endpoint.jobKey}`));
+    const timeline: WebhookTimelineItemView[] = [];
+
+    endpoints.forEach((endpoint) => {
+      if (!endpoint.lastDeliveryAt) {
+        return;
+      }
+      timeline.push({
+        id: `delivery:${this.webhookRowKey(endpoint, 0)}`,
+        kind: 'delivery',
         status: endpoint.status === 'degraded' ? 'warning' : 'success',
         label: 'Last delivery',
         occurredAt: endpoint.lastDeliveryAt,
+        hookKey: endpoint.hookKey,
+        jobKey: endpoint.jobKey,
+        environment: endpoint.environment,
+        endpointStatus: endpoint.status,
         reason: endpoint.status === 'degraded' ? 'Endpoint reported degraded status.' : undefined,
+        endpointRowKey: this.webhookRowKey(endpoint, 0),
       });
-    }
+    });
 
-    this.deadLetters()
-      .filter((entry) => entry.hookKey === endpoint.hookKey)
+    deadLetters
+      .filter((entry) => {
+        if (endpointKeys.size === 0) {
+          return !restrictToEndpointSet;
+        }
+        if (entry.jobKey) {
+          return endpointKeys.has(`${entry.hookKey}|${entry.jobKey}`);
+        }
+        return endpoints.some((endpoint) => endpoint.hookKey === entry.hookKey);
+      })
       .forEach((entry) => {
-        events.push({
-          id: `deadletter-${entry.id}`,
+        timeline.push({
+          id: `deadletter:${entry.id}`,
+          kind: 'deadLetter',
           status: 'failed',
           label: 'Dead letter',
           occurredAt: entry.occurredAt,
+          hookKey: entry.hookKey,
+          jobKey: entry.jobKey,
           reason: entry.reason ?? 'No reason provided.',
-          correlationId: undefined,
+          deadLetterId: entry.id,
         });
       });
 
-    return events.sort((a, b) => Date.parse(b.occurredAt) - Date.parse(a.occurredAt));
+    return timeline
+      .filter((entry) => {
+        const occurredAtMs = Date.parse(entry.occurredAt);
+        if (!Number.isFinite(occurredAtMs)) {
+          return true;
+        }
+        if (typeof fromMs === 'number' && occurredAtMs < fromMs) {
+          return false;
+        }
+        if (typeof toMs === 'number' && occurredAtMs > toMs) {
+          return false;
+        }
+        return true;
+      })
+      .sort((a, b) => Date.parse(b.occurredAt) - Date.parse(a.occurredAt));
+  });
+
+  readonly selectedTimelineItemId = signal<string | null>(null);
+
+  readonly selectedTimelineItem = computed(() => {
+    const id = this.selectedTimelineItemId();
+    if (!id) {
+      return null;
+    }
+    return this.timelineItems().find((entry) => entry.id === id) ?? null;
   });
 
   constructor() {
@@ -585,10 +679,41 @@ export class WebhooksPage {
       }
       this.invokePayload.set(createDefaultInvokePayload(endpoint));
     });
+
+    effect(() => {
+      const currentId = this.selectedTimelineItemId();
+      if (!currentId) {
+        return;
+      }
+      if (!this.timelineItems().some((entry) => entry.id === currentId)) {
+        this.selectedTimelineItemId.set(null);
+      }
+    });
   }
 
   selectDeadLetter(entry: WebhookDeadLetterView): void {
     this.selectedDeadLetterId.set(entry.id);
+  }
+
+  selectTimelineItem(entry: WebhookTimelineItemView): void {
+    this.selectedTimelineItemId.set(entry.id);
+
+    if (entry.kind === 'deadLetter' && entry.deadLetterId) {
+      this.selectedDeadLetterId.set(entry.deadLetterId);
+
+      const match = this.filteredEndpoints().find((endpoint) =>
+        endpoint.hookKey === entry.hookKey
+        && (!entry.jobKey || endpoint.jobKey === entry.jobKey),
+      );
+      if (match) {
+        this.selectedRowKey.set(this.webhookRowKey(match, 0));
+      }
+      return;
+    }
+
+    if (entry.kind === 'delivery' && entry.endpointRowKey) {
+      this.selectedRowKey.set(entry.endpointRowKey);
+    }
   }
 
 
@@ -770,7 +895,7 @@ export class WebhooksPage {
     });
   }
 
-  deliveryStatusClass(entry: DeliveryEventView): string {
+  timelineStatusClass(entry: { status: 'success' | 'failed' | 'warning' }): string {
     if (entry.status === 'success') {
       return 'text-success';
     }
@@ -778,6 +903,10 @@ export class WebhooksPage {
       return 'text-warning';
     }
     return 'text-danger';
+  }
+
+  timelineStatusGlyph(entry: { status: 'success' | 'failed' | 'warning' }): string {
+    return entry.status === 'success' ? '●' : entry.status === 'warning' ? '▲' : '■';
   }
 
   invokeWebhook(): void {
@@ -797,6 +926,43 @@ export class WebhooksPage {
     this.invokeNotice.set('Invocation requested.');
     setTimeout(() => this.invokeNotice.set(null), 2500);
   }
+}
+
+function tryParseIsoToMs(value: string | null): number | null {
+  if (!value) {
+    return null;
+  }
+  const ms = Date.parse(value);
+  return Number.isFinite(ms) ? ms : null;
+}
+
+function isoToLocalDateTimeInput(value: string | null): string {
+  if (!value) {
+    return '';
+  }
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) {
+    return '';
+  }
+  const pad = (entry: number) => String(entry).padStart(2, '0');
+  const yyyy = date.getFullYear();
+  const mm = pad(date.getMonth() + 1);
+  const dd = pad(date.getDate());
+  const hh = pad(date.getHours());
+  const min = pad(date.getMinutes());
+  return `${yyyy}-${mm}-${dd}T${hh}:${min}`;
+}
+
+function localDateTimeInputToIso(value: string): string | null {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return null;
+  }
+  const date = new Date(trimmed);
+  if (!Number.isFinite(date.getTime())) {
+    return null;
+  }
+  return date.toISOString();
 }
 
 function createDefaultFilters(): WebhookFilterModel {

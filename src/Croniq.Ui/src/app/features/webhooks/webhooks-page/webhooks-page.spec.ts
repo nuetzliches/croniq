@@ -13,6 +13,8 @@ class WebhooksStoreStub {
   readonly rotatedSecret = signal<string | null>(null);
   readonly capabilities = signal(null);
   readonly lastError = signal<string | null>(null);
+  readonly readPermissionDenied = signal(false);
+  readonly writePermissionDenied = signal(false);
   readonly activeCount = signal(0);
 
   selectHook = vi.fn();
