@@ -21,10 +21,11 @@ This document dives deeper into the authentication/authorization subsystem than 
 | `Postgres`  | Tenant-aware API clients/keys persisted in Postgres. Rotation, revocation, scopes per key.  | Production.                     |
 
 Croniq inspects headers per request: `Authorization: Bearer ...` first, then `X-Croniq-Key`. Only one `ICallerContext` is produced per request.
+OIDC bearer validation is optional and controlled by `Croniq:Auth:Oidc` (`CroniqOidcOptions`). When enabled, bearer validation uses the OIDC authority only; Croniq-minted bearer tokens are rejected.
 
 ## Caller Context Resolution
 
-1. **Bearer token present** -> `ICallerContextFactory.FromBearerTokenAsync` validates the token against the configured authority, maps tenant/environment/scopes from claims, builds `CallerContext` with `CallerType = User`.
+1. **Bearer token present** -> `ICallerContextFactory.FromBearerTokenAsync` validates against the OIDC authority when enabled, otherwise validates Croniq-minted tokens. Tokens must include a tenant claim; if missing, validation fails. On success, it maps tenant/environment/scopes from claims and builds `CallerContext` with `CallerType = User`.
 2. **API key present** -> `ICallerContextFactory.FromApiKeyAsync` looks up the key via `IApiKeyStore`, verifies hash/scope, sets `CallerType = ApiKey`.
 3. **Neither** -> 401 Unauthorized. Rate limiter partitions fallback to `anonymous` scope when context is missing (should be rare outside health endpoints).
 
@@ -133,17 +134,34 @@ These summaries should remain consistent with OpenAPI descriptions so Swagger/CL
 
 ## Configuration Reference
 
-| Key                                         | Description                                                                      |
-| ------------------------------------------- | -------------------------------------------------------------------------------- |
-| `Croniq:Auth:Mode`                          | `InMemory`, `SqlServer`, or `Postgres`.                                          |
-| `Croniq:Auth:InMemory:ApiKey`               | Plaintext key for in-memory mode.                                                |
-| `Croniq:Auth:SqlServer:ConnectionString`    | Optional connection override. Falls back to `Croniq:SqlServer:ConnectionString`. |
-| `Croniq:Auth:Postgres:ConnectionString`     | Optional connection override. Falls back to `Croniq:Postgres:ConnectionString`.  |
-| `Croniq:Auth:Tokens:Enabled`                | Toggles the built-in Croniq token issuer.                                        |
-| `Croniq:Auth:Tokens:Issuer`                 | Value emitted as `iss` for Croniq-minted tokens.                                 |
-| `Croniq:Auth:Tokens:DefaultAudience`        | Default `aud` claim when callers omit `audience`.                                |
-| `Croniq:Auth:Tokens:SigningKey`             | Base64-encoded symmetric key used for HMAC-SHA256 signing.                       |
-| `Croniq:Auth:Tokens:DefaultLifetimeMinutes` | Fallback TTL for minted tokens when `ttlMinutes` is not provided.                |
+| Key                                           | Description                                                                      |
+| --------------------------------------------- | -------------------------------------------------------------------------------- |
+| `Croniq:Auth:Mode`                            | `InMemory`, `SqlServer`, or `Postgres`.                                          |
+| `Croniq:Auth:InMemory:ApiKey`                 | Plaintext key for in-memory mode.                                                |
+| `Croniq:Auth:SqlServer:ConnectionString`      | Optional connection override. Falls back to `Croniq:SqlServer:ConnectionString`. |
+| `Croniq:Auth:Postgres:ConnectionString`       | Optional connection override. Falls back to `Croniq:Postgres:ConnectionString`.  |
+| `Croniq:Auth:Tokens:Enabled`                  | Toggles the built-in Croniq token issuer.                                        |
+| `Croniq:Auth:Tokens:Issuer`                   | Value emitted as `iss` for Croniq-minted tokens.                                 |
+| `Croniq:Auth:Tokens:DefaultAudience`          | Default `aud` claim when callers omit `audience`.                                |
+| `Croniq:Auth:Tokens:SigningKey`               | Base64-encoded symmetric key used for HMAC-SHA256 signing.                       |
+| `Croniq:Auth:Tokens:DefaultLifetimeMinutes`   | Fallback TTL for minted tokens when `ttlMinutes` is not provided.                |
+| `Croniq:Auth:Oidc:Enabled`                    | Enables OIDC/JWT bearer validation.                                              |
+| `Croniq:Auth:Oidc:Authority`                  | OIDC issuer/authority URL.                                                       |
+| `Croniq:Auth:Oidc:MetadataAddress`            | Optional override for OIDC discovery metadata address.                           |
+| `Croniq:Auth:Oidc:Audience`                   | Expected `aud` claim for bearer tokens.                                          |
+| `Croniq:Auth:Oidc:RequireHttpsMetadata`       | Require HTTPS for discovery metadata (default true).                             |
+| `Croniq:Auth:Oidc:TenantClaim`                | Claim name for tenant id (default `tenant`).                                     |
+| `Croniq:Auth:Oidc:TenantFallbackClaims`       | Fallback tenant claim names (default `tid`).                                     |
+| `Croniq:Auth:Oidc:EnvironmentClaim`           | Claim name for environment tag (default `env`).                                  |
+| `Croniq:Auth:Oidc:EnvironmentFallbackClaims`  | Fallback environment claim names.                                                |
+| `Croniq:Auth:Oidc:CallerIdClaim`              | Claim name for caller id (default `sub`).                                        |
+| `Croniq:Auth:Oidc:CallerIdFallbackClaims`     | Fallback caller id claim names.                                                  |
+| `Croniq:Auth:Oidc:ScopeClaims`                | Claim names inspected for scopes (defaults include `scope`, `scp`).              |
+| `Croniq:Auth:Oidc:RequiredScopes`             | Scopes required to access Croniq endpoints.                                      |
+| `Croniq:Auth:Oidc:DefaultEnvironment`         | Default environment tag when missing in claims.                                  |
+| `Croniq:Auth:Oidc:NormalizeScopesToLowercase` | Normalize scopes to lowercase before evaluation.                                 |
+| `Croniq:Auth:Oidc:ClockSkewSeconds`           | JWT validation clock skew tolerance.                                             |
+| `Croniq:Auth:Oidc:MetadataRefreshInterval`    | Cache duration for OIDC metadata.                                                |
 
 ## Testing & Tooling
 

@@ -77,9 +77,15 @@ public sealed class CallerContextFactory : ICallerContextFactory
         }
 
         var options = _oidcOptions.CurrentValue ?? new CroniqOidcOptions();
-        if (!options.Enabled || string.IsNullOrWhiteSpace(options.Authority))
+        if (!options.Enabled)
         {
             return await TryValidateCroniqTokenAsync(token, cancellationToken).ConfigureAwait(false);
+        }
+
+        if (string.IsNullOrWhiteSpace(options.Authority))
+        {
+            _logger.LogError("OIDC bearer validation is enabled but no authority is configured.");
+            return null;
         }
 
         try

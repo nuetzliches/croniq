@@ -23,13 +23,11 @@ You can switch between modes (or enable both) by changing configuration-no code 
 ### Provisioning Flow
 
 1. **Pick a backing store**
-
    - `Croniq:Auth:Mode = InMemory`: single key, best for samples/tests only.
    - `Croniq:Auth:Mode = SqlServer`: production-ready, uses `Croniq.Auth.SqlServer` to hash and store keys.
    - `Croniq:Auth:Mode = Postgres`: production-ready, uses `Croniq.Auth.Postgres` to hash and store keys.
 
 2. **Issue a key**
-
    - SQL-backed hosts expose admin endpoints under `/tenants/{tenantId}/api-keys`. Call `IApiKeyStore.IssueAsync` only when you need a bootstrap script or console app.
    - In-memory mode reads the secret from `Croniq__Auth__InMemory__ApiKey` (or `appsettings.*`).
 
@@ -86,6 +84,40 @@ Croniq can expose a username/password login for self-hosted deployments.
 - Password changes revoke existing refresh tokens; clients must re-login.
 
 See [docs/deep-dive/password-auth.md](../deep-dive/password-auth.md) for details.
+
+## OIDC Bearer Tokens (Optional)
+
+Croniq can validate external bearer tokens (for example, Authelia) when `Croniq:Auth:Oidc:Enabled=true`.
+When enabled, bearer validation uses the configured OIDC authority only; Croniq-minted bearer tokens
+(password login / token issuance) are rejected. API keys remain supported when no `Authorization` header is present.
+Tokens must include a tenant claim (default `tenant`, fallback `tid`) or validation fails.
+
+### Configuration Checklist
+
+| Setting                                    | Required?               | Description                                                 |
+| ------------------------------------------ | ----------------------- | ----------------------------------------------------------- |
+| `Croniq__Auth__Oidc__Enabled`              | Yes                     | Enables OIDC/JWT bearer validation.                         |
+| `Croniq__Auth__Oidc__Authority`            | Yes                     | OIDC issuer/authority URL.                                  |
+| `Croniq__Auth__Oidc__MetadataAddress`      | Optional                | Override discovery metadata address.                        |
+| `Croniq__Auth__Oidc__Audience`             | Optional                | Expected `aud` claim (or omit to skip audience validation). |
+| `Croniq__Auth__Oidc__RequireHttpsMetadata` | Optional (default true) | Enforce HTTPS for discovery metadata.                       |
+| `Croniq__Auth__Oidc__TenantClaim`          | Optional                | Claim name for tenant id (default: `tenant`).               |
+| `Croniq__Auth__Oidc__EnvironmentClaim`     | Optional                | Claim name for environment tag (default: `env`).            |
+| `Croniq__Auth__Oidc__CallerIdClaim`        | Optional                | Claim name for caller id (default: `sub`).                  |
+| `Croniq__Auth__Oidc__ScopeClaims__0`       | Optional                | Scope claim names (defaults include `scope` and `scp`).     |
+| `Croniq__Auth__Oidc__RequiredScopes__0`    | Optional                | Scopes required for access (e.g., `ui:access`).             |
+| `Croniq__Auth__Oidc__DefaultEnvironment`   | Optional                | Fallback environment tag when not present in claims.        |
+
+Example `.env` snippet:
+
+```dotenv
+# Optional OIDC (Authelia example)
+CRONIQ_AUTH_OIDC_ENABLED=true
+CRONIQ_AUTH_OIDC_AUTHORITY=https://auth.localhost:9091
+CRONIQ_AUTH_OIDC_METADATA_ADDRESS=https://auth.localhost:9091/.well-known/openid-configuration
+CRONIQ_AUTH_OIDC_AUDIENCE=croniq-api
+CRONIQ_AUTH_OIDC_REQUIRED_SCOPES_0=ui:access
+```
 
 ## Local Development
 

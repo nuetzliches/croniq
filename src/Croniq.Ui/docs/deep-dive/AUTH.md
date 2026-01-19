@@ -71,10 +71,53 @@ Current UI scope:
 
 - The tenant-context panel stores the active tenant identity and environment plus feature-flag overrides.
 - It no longer supports manual token entry or token issuance; authentication is handled via the `/login` page.
+- Logout clears auth state, tenant context, and tenant-scoped UI preferences (best-effort).
 
 ## Next Steps for Full Auth
 
-1. Replace password login with real external login client logic (PKCE-based).
-2. Distribute the Croniq session token via HttpInterceptors instead of the shared executor so that feature modules can call `HttpClient` directly when needed.
-3. Wire logout to clear session storage and any relevant client caches.
-4. Document CSP changes once the login redirect domain is finalized.
+- [ ] Replace password login with real external login client logic (PKCE-based).
+- [x] Distribute the Croniq session token via HttpInterceptors instead of the shared executor so that feature modules can call `HttpClient` directly when needed.
+- [x] Wire logout to clear session storage and any relevant client caches.
+- [ ] Document CSP changes once the login redirect domain is finalized.
+
+## Planning: Optional OIDC + PKCE (UI-first)
+
+Goal: Keep the password flow as the default (no external provider required) while adding an optional OIDC path (e.g., Authelia) that can be enabled by configuration.
+
+### Phase 0: Configuration Contract
+
+- Runtime config (UI): add optional OIDC config block in `public/assets/croniq-config.json` (issuer/authority, clientId, redirectUri, scopes, enable flag).
+- Server config (API): keep `Croniq:Auth:Oidc:*` as the bearer validation source; do not require OIDC for API key/password paths.
+- Document environment variables in `.env.example` and in the auth guides (done).
+
+### Phase 1: UI Routing + State Model
+
+- Add `AuthProviderMode = Password | Oidc` derived from runtime config.
+- Introduce routes:
+  - `/auth/login` (current password login form remains)
+  - `/auth/oidc/start` (builds PKCE challenge + redirects to IdP)
+  - `/auth/oidc/callback` (handles code exchange + token storage)
+- Create an `OidcSessionService` to manage PKCE verifier, state nonce, and token exchange.
+
+### Phase 2: Token Exchange + Storage
+
+- Exchange authorization code for tokens via backend token endpoint or via IdP (depending on deployment choice).
+- Store access token in `AuthSessionService` (same as password flow).
+- Do not store refresh token unless the backend issues one and policy allows it.
+- Reuse existing `authRefreshInterceptor` for access token attachment.
+
+### Phase 3: Logout Semantics
+
+- Logout clears auth state and caches (implemented).
+- If OIDC is enabled, also trigger IdP logout (optional, based on provider capabilities).
+
+### Phase 4: CSP + Security Hardening
+
+- Update CSP to allow the IdP domain for redirect and token exchange.
+- Confirm PKCE verifier storage (memory or sessionStorage) aligns with the threat model.
+
+### Open Questions
+
+- Should code exchange happen via the UI directly or via a backend proxy endpoint?
+- Do we require refresh tokens for OIDC sessions, or rely on short-lived access tokens + re-login?
+- Which claim maps should be the defaults for Authelia (tenant/env/scope)?

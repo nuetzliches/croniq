@@ -11,6 +11,8 @@ namespace Croniq.Api.Tests;
 
 public sealed class CallerContextFactoryUnitTests
 {
+    private const string SigningKeyBase64 = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
+
     private static readonly IOptionsMonitor<CroniqOidcOptions> DisabledOidc =
         new StubOptionsMonitor<CroniqOidcOptions>(new CroniqOidcOptions { Enabled = false });
 
@@ -60,6 +62,43 @@ public sealed class CallerContextFactoryUnitTests
             DisabledCroniqTokens,
             NullLogger<CallerContextFactory>.Instance);
         (await enabledNoAuthority.FromBearerTokenAsync("Bearer whatever")).ShouldBeNull();
+    }
+
+    [Fact]
+    public async Task FromBearerTokenAsync_accepts_croniq_token_when_oidc_disabled()
+    {
+        var tokenOptions = CreateTokenOptions();
+        var token = await IssueTokenAsync(tokenOptions);
+
+        var factory = new CallerContextFactory(
+            new InMemoryApiKeyStore(),
+            DisabledOidc,
+            new StubOptionsMonitor<CroniqTokenOptions>(tokenOptions),
+            NullLogger<CallerContextFactory>.Instance);
+
+        var context = await factory.FromBearerTokenAsync($"Bearer {token}");
+
+        context.ShouldNotBeNull();
+        context!.TenantId.ShouldBe("tenant-1");
+        context.EnvironmentTag.ShouldBe("dev");
+        context.CallerType.ShouldBe(CallerType.User);
+        context.CallerId.ShouldBe("client-1");
+        context.Scopes.ShouldContain("jobs:read");
+    }
+
+    [Fact]
+    public async Task FromBearerTokenAsync_rejects_croniq_token_when_oidc_enabled_without_authority()
+    {
+        var tokenOptions = CreateTokenOptions();
+        var token = await IssueTokenAsync(tokenOptions);
+
+        var factory = new CallerContextFactory(
+            new InMemoryApiKeyStore(),
+            new StubOptionsMonitor<CroniqOidcOptions>(new CroniqOidcOptions { Enabled = true, Authority = "" }),
+            new StubOptionsMonitor<CroniqTokenOptions>(tokenOptions),
+            NullLogger<CallerContextFactory>.Instance);
+
+        (await factory.FromBearerTokenAsync($"Bearer {token}")).ShouldBeNull();
     }
 
     [Fact]
@@ -152,6 +191,33 @@ public sealed class CallerContextFactoryUnitTests
         var method = type.GetMethod(methodName, BindingFlags.NonPublic | BindingFlags.Static);
         method.ShouldNotBeNull($"Missing method {type.FullName}.{methodName}");
         return (T)method!.Invoke(null, args)!;
+    }
+
+    private static CroniqTokenOptions CreateTokenOptions()
+    {
+        return new CroniqTokenOptions
+        {
+            Enabled = true,
+            SigningKey = SigningKeyBase64,
+            Issuer = "https://cronqi.local"
+        };
+    }
+
+    private static async Task<string> IssueTokenAsync(CroniqTokenOptions options)
+    {
+        var issuer = new CroniqTokenIssuer(
+            new StubOptionsMonitor<CroniqTokenOptions>(options),
+            NullLogger<CroniqTokenIssuer>.Instance);
+
+        var result = await issuer.IssueAsync(new CroniqTokenIssueRequest(
+            "tenant-1",
+            "client-1",
+            "dev",
+            new[] { "jobs:read" },
+            null,
+            TimeSpan.FromMinutes(5)));
+
+        return result.AccessToken;
     }
 
     private sealed class StubOptionsMonitor<T> : IOptionsMonitor<T>
