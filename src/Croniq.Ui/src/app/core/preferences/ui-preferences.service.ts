@@ -55,6 +55,21 @@ export class UiPreferencesService {
     void this.persistPreferences(this.preferencesSignal());
   }
 
+  async clearForTenant(tenantId: string): Promise<void> {
+    const normalized = tenantId.trim();
+    if (!normalized) {
+      return;
+    }
+
+    await this.storage.clear(normalized);
+
+    if (this.tenantContext.tenantId() === normalized) {
+      this.setPreferences(DEFAULT_UI_PREFERENCES);
+      this.lastSavedAtSignal.set(null);
+      this.saveStateSignal.set('idle');
+    }
+  }
+
   private updatePreferences(patch: Partial<UiPreferences>): void {
     const current = this.preferencesSignal();
     const next = normalizeUiPreferences({ ...current, ...patch });

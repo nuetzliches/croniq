@@ -66,6 +66,12 @@ export class TenantContextService {
     readonly environment = computed(() => this.state().environment);
     readonly featureFlags = computed(() => this.state().featureFlags);
 
+    resetContext(): void {
+        const fallback = createFallbackContext();
+        this.state.set(fallback);
+        clearStoredTenantContext();
+    }
+
     updateContext(patch: Partial<TenantContextState>): void {
         this.state.update((current) => {
             const next: TenantContextState = {
@@ -207,6 +213,17 @@ function persistTenantContext(state: TenantContextState): void {
         window.localStorage.setItem(TENANT_STORAGE_KEY, JSON.stringify(state));
     } catch {
         // ignore persistence failures
+    }
+}
+
+function clearStoredTenantContext(): void {
+    if (!canUseStorage()) {
+        return;
+    }
+    try {
+        window.localStorage.removeItem(TENANT_STORAGE_KEY);
+    } catch {
+        // ignore storage errors
     }
 }
 

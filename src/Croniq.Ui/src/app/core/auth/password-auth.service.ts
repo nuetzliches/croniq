@@ -6,6 +6,7 @@ import { catchError, map, of, throwError } from 'rxjs';
 import type { Observable } from 'rxjs';
 import { z } from 'zod';
 import { AuthSessionService } from './auth-session.service';
+import { AuthLogoutCleanupService } from './auth-logout-cleanup.service';
 
 const passwordLoginResponseSchema = z
     .preprocess((input) => {
@@ -94,6 +95,7 @@ export interface PasswordChangePasswordParams {
 export class PasswordAuthService {
     private readonly apiClient = inject<CroniqApiClient>(CRONIQ_API_CLIENT);
     private readonly authSession = inject(AuthSessionService);
+    private readonly authCleanup = inject(AuthLogoutCleanupService);
 
     login(params: PasswordLoginParams): Observable<PasswordLoginResult> {
         const payload: PasswordLoginRequest = {
@@ -153,7 +155,7 @@ export class PasswordAuthService {
         if (refreshToken) {
             if (!tenantId) {
                 // Best-effort: if we can't resolve tenantId, clear local state without calling the server.
-                this.authSession.clearAuthState();
+                this.authCleanup.clearAll();
                 return of(undefined);
             }
 
@@ -166,12 +168,12 @@ export class PasswordAuthService {
                 catchError(() => of(undefined)),
                 map(() => {
                     // Best-effort: even if the server rejects logout, we still clear local state.
-                    this.authSession.clearAuthState();
+                    this.authCleanup.clearAll();
                 }),
             );
         }
 
-        this.authSession.clearAuthState();
+        this.authCleanup.clearAll();
 
         return of(undefined);
     }

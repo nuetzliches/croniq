@@ -4,6 +4,7 @@ import { epochMsFromIso, nowMs } from '@core/time/clock';
 import { catchError, defer, finalize, map, of, shareReplay } from 'rxjs';
 import type { Observable } from 'rxjs';
 import { AuthSessionService } from './auth-session.service';
+import { AuthLogoutCleanupService } from './auth-logout-cleanup.service';
 import { PasswordAuthService } from './password-auth.service';
 
 const REFRESH_SKEW_MS = 60_000;
@@ -13,6 +14,7 @@ export class AuthRefreshCoordinator {
     private readonly authSession = inject(AuthSessionService);
     private readonly passwordAuth = inject(PasswordAuthService);
     private readonly router = inject(Router);
+    private readonly authCleanup = inject(AuthLogoutCleanupService);
 
     private inFlight$: Observable<string | null> | null = null;
 
@@ -50,7 +52,7 @@ export class AuthRefreshCoordinator {
                 return result.token;
             }),
             catchError(() => {
-                this.authSession.clearAuthState();
+                this.authCleanup.clearAll();
                 void this.router.navigate(['/auth', 'login']);
                 return of(null);
             }),
