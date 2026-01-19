@@ -33,6 +33,10 @@ internal sealed class WebhookIngressRelayService : BackgroundService
     private static readonly ActivitySource ActivitySource = new("Croniq.Webhooks.Ingress.Relay");
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
     private const int PollWaitMaxMs = 30_000;
+    private const string TriggerIdMetadataKey = "trigger_id";
+    private const string InitiatorMetadataKey = "initiator";
+    private const string WebhookHookKeyMetadataKey = "webhook_hook_key";
+    private const string WebhookEventIdMetadataKey = "webhook_event_id";
     private readonly IOptionsMonitor<CroniqWebhookOptions> _webhookOptions;
     private readonly CroniqOptions _coreOptions;
     private readonly IJobRegistry _jobRegistry;
@@ -630,9 +634,13 @@ internal sealed class WebhookIngressRelayService : BackgroundService
             }
 
             var metadata = NormalizeDictionary(entry.Metadata);
+            var mutableMetadata = metadata is null
+                ? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                : new Dictionary<string, string>(metadata, StringComparer.OrdinalIgnoreCase);
+            EnsureWebhookMetadata(mutableMetadata, entry);
             var executionOptions = _policyResolver.ResolveExecution(jobKey, scope);
             var executionId = Guid.NewGuid().ToString("N");
-            var execRequest = new JobExecutionRequest(executionId, jobKey, scope, descriptor, executionOptions, metadata, ActivitySource);
+            var execRequest = new JobExecutionRequest(executionId, jobKey, scope, descriptor, executionOptions, mutableMetadata, ActivitySource);
             var startedAtUtc = DateTimeOffset.UtcNow;
             var fireAtUtc = entry.ReceivedAtUtc > 0
                 ? DateTimeOffset.FromUnixTimeMilliseconds(entry.ReceivedAtUtc)
@@ -644,13 +652,13 @@ internal sealed class WebhookIngressRelayService : BackgroundService
                 jobKey.Value,
                 scope.TenantId,
                 scope.EnvironmentTag,
-                TriggerId: null,
+                TriggerId: GetTriggerId(mutableMetadata),
                 FireAtUtc: fireAtUtc,
                 StartedAtUtc: startedAtUtc,
                 _coreOptions.InstanceId,
                 activity?.TraceId.ToString(),
                 activity?.SpanId.ToString(),
-                TryGetCorrelationId(activity, metadata)), cancellationToken).ConfigureAwait(false);
+                TryGetCorrelationId(activity, mutableMetadata)), cancellationToken).ConfigureAwait(false);
 
             var stopwatch = Stopwatch.StartNew();
             try
@@ -805,6 +813,37 @@ internal sealed class WebhookIngressRelayService : BackgroundService
 
         return new Dictionary<string, string>(metadata, StringComparer.OrdinalIgnoreCase);
     }
+
+    private static void EnsureWebhookMetadata(IDictionary<string, string> metadata, IngressEvent entry)
+    {
+        if (!metadata.ContainsKey(InitiatorMetadataKey))
+        {
+            metadata[InitiatorMetadataKey] = "webhook";
+        }
+
+        if (!metadata.ContainsKey(TriggerIdMetadataKey))
+        {
+            metadata[TriggerIdMetadataKey] = string.IsNullOrWhiteSpace(entry.HookKey)
+                ? "webhook"
+                : $"webhook:{entry.HookKey}";
+        }
+
+        if (!string.IsNullOrWhiteSpace(entry.HookKey) && !metadata.ContainsKey(WebhookHookKeyMetadataKey))
+        {
+            metadata[WebhookHookKeyMetadataKey] = entry.HookKey;
+        }
+
+        if (!string.IsNullOrWhiteSpace(entry.EventId) && !metadata.ContainsKey(WebhookEventIdMetadataKey))
+        {
+            metadata[WebhookEventIdMetadataKey] = entry.EventId;
+        }
+    }
+
+    private static string? GetTriggerId(IReadOnlyDictionary<string, string>? metadata)
+        => metadata is not null && metadata.TryGetValue(TriggerIdMetadataKey, out var triggerId)
+            && !string.IsNullOrWhiteSpace(triggerId)
+            ? triggerId
+            : null;
 
     private static bool IsCancellation(Exception exception, CancellationToken cancellationToken)
         => cancellationToken.IsCancellationRequested && exception is OperationCanceledException;

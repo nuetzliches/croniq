@@ -10,6 +10,7 @@
     <PackageReference Include="Microsoft.Extensions.Hosting" Version="10.0.1" />
     <ProjectReference Include="..\..\samples\Croniq.Sample.Jobs\Croniq.Sample.Jobs.csproj" />
     <ProjectReference Include="..\..\src\Croniq.Core\Croniq.Core.csproj" />
+    <ProjectReference Include="..\..\src\Croniq.Webhooks\Croniq.Webhooks.csproj" />
     <ProjectReference Include="..\..\src\Croniq.Hosting\Croniq.Hosting.csproj" />
   </ItemGroup>
 </Project>

@@ -49,7 +49,7 @@ services:
       retries: 15
       start_period: 15s
     volumes:
-      - ../../logs:/app/logs
+      - ${CRONIQ_LOGS_DIR:-../../logs}:/app/logs
     networks:
       - croniq-net
 
@@ -70,7 +70,10 @@ services:
       Croniq__Webhooks__Mode: Remote
       Croniq__Webhooks__Remote__BaseUrl: ${CRONIQ_SAMPLE_DMZ_BASEURL:-https://host.docker.internal:5001}
       Croniq__Webhooks__Remote__ApiKey: ${CRONIQ_SAMPLE_DMZ_API_KEY:-dmz-sample-key}
+      Croniq__Webhooks__Remote__StreamMode: Grpc
+      Croniq__Webhooks__Remote__StreamFallback: Sse
       Croniq__Webhooks__Remote__EnableRelay: true
+      Croniq__Webhooks__Remote__AllowInvalidServerCertificate: true
       Croniq__Logging__Execution__BasePath: /app/logs
       Croniq__Persistence__Mode: SqlServer
       Croniq__Observability__OtlpEndpoint: ${CRONIQ_OBS_OTLP_ENDPOINT:-http://otel-collector:4317}
@@ -82,7 +85,7 @@ services:
       croniq-db-migrator:
         condition: service_completed_successfully
     volumes:
-      - ../../logs:/app/logs
+      - ${CRONIQ_LOGS_DIR:-../../logs}:/app/logs
     networks:
       - croniq-net
 
