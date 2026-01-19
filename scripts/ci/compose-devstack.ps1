@@ -18,10 +18,10 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
-$composeFiles = @()
+$composeFileArgs = @()
 foreach ($file in $ComposeFiles) {
     if (-not [string]::IsNullOrWhiteSpace($file)) {
-        $composeFiles += @("-f", $file)
+        $composeFileArgs += @("-f", $file)
     }
 }
 
@@ -37,7 +37,7 @@ New-Item -Path $outputPath -ItemType Directory -Force | Out-Null
 
 function Invoke-Compose {
     param([string[]] $AdditionalArgs)
-    & docker compose @composeFiles @profileArgs @AdditionalArgs
+    & docker compose @composeFileArgs @profileArgs @AdditionalArgs
 }
 
 function Capture-ComposeDiagnostics {
@@ -49,10 +49,10 @@ function Capture-ComposeDiagnostics {
     try {
         "[{0:O}] compose-devstack diagnostics: {1} (exit={2})" -f (Get-Date), $Reason, $ExitCode | Out-File -FilePath (Join-Path $outputPath "diagnostics.txt") -Encoding utf8 -Append
 
-        & docker compose @composeFiles @profileArgs ps -a *> (Join-Path $outputPath "ps.txt")
-        & docker compose @composeFiles @profileArgs config *> (Join-Path $outputPath "compose.config.yml")
-        & docker compose @composeFiles @profileArgs logs --no-color *> (Join-Path $outputPath "compose.log")
-        & docker compose @composeFiles @profileArgs logs --no-color --tail=500 croniq-db-migrator *> (Join-Path $outputPath "migrator.log")
+        & docker compose @composeFileArgs @profileArgs ps -a *> (Join-Path $outputPath "ps.txt")
+        & docker compose @composeFileArgs @profileArgs config *> (Join-Path $outputPath "compose.config.yml")
+        & docker compose @composeFileArgs @profileArgs logs --no-color *> (Join-Path $outputPath "compose.log")
+        & docker compose @composeFileArgs @profileArgs logs --no-color --tail=500 croniq-db-migrator *> (Join-Path $outputPath "migrator.log")
     }
     catch {
         "[{0:O}] failed to capture compose diagnostics: {1}" -f (Get-Date), $_ | Out-File -FilePath (Join-Path $outputPath "diagnostics.txt") -Encoding utf8 -Append
@@ -65,9 +65,9 @@ function Get-ComposeServiceContainerId {
         [string] $Service
     )
 
-    $cid = & docker compose @composeFiles @profileArgs ps -q $Service
+    $cid = & docker compose @composeFileArgs @profileArgs ps -q $Service
     if ([string]::IsNullOrWhiteSpace($cid)) {
-        $cid = & docker compose @composeFiles @profileArgs ps -a -q $Service
+        $cid = & docker compose @composeFileArgs @profileArgs ps -a -q $Service
     }
 
     return ($cid | Select-Object -First 1)
@@ -145,7 +145,7 @@ function Write-MigratorTailToConsole {
 
     try {
         Write-Host "--- croniq-db-migrator logs (tail=$Tail) ---" -ForegroundColor Yellow
-        & docker compose @composeFiles @profileArgs logs --no-color --tail=$Tail croniq-db-migrator
+        & docker compose @composeFileArgs @profileArgs logs --no-color --tail=$Tail croniq-db-migrator
         Write-Host "--- end croniq-db-migrator logs ---" -ForegroundColor Yellow
     }
     catch {
@@ -163,7 +163,7 @@ function Write-ServiceTailToConsole {
 
     try {
         Write-Host "--- $Service logs (tail=$Tail) ---" -ForegroundColor Yellow
-        & docker compose @composeFiles @profileArgs logs --no-color --tail=$Tail $Service
+        & docker compose @composeFileArgs @profileArgs logs --no-color --tail=$Tail $Service
         Write-Host "--- end $Service logs ---" -ForegroundColor Yellow
     }
     catch {
@@ -210,7 +210,7 @@ switch ($Action) {
 
         try {
             Write-Host "--- docker compose ps -a ---" -ForegroundColor Yellow
-            & docker compose @composeFiles @profileArgs ps -a
+            & docker compose @composeFileArgs @profileArgs ps -a
             Write-Host "--- end docker compose ps -a ---" -ForegroundColor Yellow
         }
         catch {
