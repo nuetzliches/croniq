@@ -1,5 +1,5 @@
-<div class="grid min-h-screen grid-cols-[250px_1fr] bg-surface text-primary overflow-x-hidden">
-  <aside class="flex flex-col gap-6 border-r border-white/10 bg-surface/80 px-6 py-6">
+<div class="grid min-h-screen grid-cols-[250px_1fr] bg-surface text-primary">
+  <aside class="sticky top-0 flex h-screen flex-col gap-6 overflow-hidden border-r border-white/10 bg-surface/80 px-6 py-6">
     <cq-app-brand />
 
     <div class="space-y-2">
@@ -52,7 +52,7 @@
     class="flex min-h-screen min-w-0 flex-col bg-gradient-to-b from-surface via-surface/80 to-surface/40"
   >
     <header
-      class="flex items-center justify-between border-b border-white/10 bg-surface/80 px-6 py-3 backdrop-blur"
+      class="sticky top-0 z-30 flex h-28 items-center justify-between border-b border-white/10 bg-surface/80 px-6 py-4 backdrop-blur"
       aria-label="Top Bar"
     >
       <div class="text-sm text-muted">Croniq / <span class="text-primary">Dashboard</span></div>
@@ -76,7 +76,7 @@
       </div>
     </header>
     <main class="flex-1">
-      <div class="flex h-full min-h-[calc(100vh-64px)] min-w-0 overflow-hidden">
+      <div class="flex min-w-0">
         <cq-panel-shell
           [panelTemplate]="panelTemplate()"
           [title]="panelTitle()"

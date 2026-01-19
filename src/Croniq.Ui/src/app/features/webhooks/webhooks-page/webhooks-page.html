@@ -1,29 +1,74 @@
-<div class="flex h-full flex-col space-y-6">
-  <!-- Header / Controls -->
-  <header class="flex flex-wrap items-center justify-between gap-4">
-    <div>
-      <h1 class="text-lg font-semibold text-primary">Webhook Endpoints</h1>
-      <p class="text-xs text-muted">Manage inbound webhook triggers, secrets, and policies.</p>
+<div class="flex flex-col space-y-6">
+  <div class="rounded-xl border border-white/10 bg-surface/80 px-4 py-4 shadow-card backdrop-blur">
+    <!-- Header / Controls -->
+    <header class="flex flex-wrap items-center justify-between gap-4">
+      <div class="space-y-1">
+        <h1
+          class="text-lg font-semibold text-primary"
+        >
+          Webhook Endpoints
+        </h1>
+        <p class="text-xs text-muted">Manage inbound webhook triggers, secrets, and policies.</p>
+      </div>
+      <div class="flex flex-wrap items-center gap-2">
+        <button
+          type="button"
+          (click)="refresh()"
+          class="rounded-lg border border-white/10 bg-white/5 px-4 py-2 text-sm font-semibold text-primary transition hover:border-accent hover:text-accent"
+          [disabled]="loading()"
+        >
+          {{ loading() ? 'Refreshing...' : 'Refresh' }}
+        </button>
+        <button
+          type="button"
+          (click)="openWebhookDialog()"
+          class="rounded-lg bg-accent px-4 py-2 text-sm font-semibold text-white transition hover:bg-accent-hover"
+          [disabled]="writePermissionDenied()"
+        >
+          Register Endpoint
+        </button>
+      </div>
+    </header>
+
+    <div class="grid gap-3 md:grid-cols-4">
+      <div class="rounded-xl border border-white/10 bg-surface-alt p-4 shadow-card">
+        <p class="text-xs text-muted">Success rate</p>
+        <p
+          class="mt-1 text-xl font-semibold text-primary"
+        >
+          {{ kpiSuccessRate() }}
+        </p>
+        <p class="mt-1 text-[11px] text-muted">Derived from dead letters vs endpoints.</p>
+      </div>
+      <div class="rounded-xl border border-white/10 bg-surface-alt p-4 shadow-card">
+        <p class="text-xs text-muted">Latency (p95)</p>
+        <p
+          class="mt-1 text-xl font-semibold text-primary"
+        >
+          {{ kpiLatency() }}
+        </p>
+        <p class="mt-1 text-[11px] text-muted">Awaiting telemetry aggregation.</p>
+      </div>
+      <div class="rounded-xl border border-white/10 bg-surface-alt p-4 shadow-card">
+        <p class="text-xs text-muted">Rate-limit rejections</p>
+        <p
+          class="mt-1 text-xl font-semibold text-primary"
+        >
+          {{ kpiRateLimitRejections() }}
+        </p>
+        <p class="mt-1 text-[11px] text-muted">Telemetry feed pending.</p>
+      </div>
+      <div class="rounded-xl border border-white/10 bg-surface-alt p-4 shadow-card">
+        <p class="text-xs text-muted">Dead letters</p>
+        <p
+          class="mt-1 text-xl font-semibold text-primary"
+        >
+          {{ kpiDeadLetters() }}
+        </p>
+        <p class="mt-1 text-[11px] text-muted">Failed deliveries awaiting replay.</p>
+      </div>
     </div>
-    <div class="flex flex-wrap items-center gap-2">
-      <button
-        type="button"
-        (click)="refresh()"
-        class="rounded-lg border border-white/10 bg-white/5 px-4 py-2 text-sm font-semibold text-primary transition hover:border-accent hover:text-accent"
-        [disabled]="loading()"
-      >
-        {{ loading() ? 'Refreshing...' : 'Refresh' }}
-      </button>
-      <button
-        type="button"
-        (click)="openWebhookDialog()"
-        class="rounded-lg bg-accent px-4 py-2 text-sm font-semibold text-white transition hover:bg-accent-hover"
-        [disabled]="writePermissionDenied()"
-      >
-        Register Endpoint
-      </button>
-    </div>
-  </header>
+  </div>
 
   @if (writePermissionDenied()) {
     <div class="rounded-xl border border-warning/40 bg-warning/10 px-4 py-3 text-xs text-warning">
@@ -171,28 +216,7 @@
     </div>
   }
 
-  <div class="grid gap-3 md:grid-cols-4">
-    <div class="rounded-xl border border-white/10 bg-surface-alt p-4 shadow-card">
-      <p class="text-xs text-muted">Success rate</p>
-      <p class="mt-1 text-xl font-semibold text-primary">{{ kpiSuccessRate() }}</p>
-      <p class="mt-1 text-[11px] text-muted">Derived from dead letters vs endpoints.</p>
-    </div>
-    <div class="rounded-xl border border-white/10 bg-surface-alt p-4 shadow-card">
-      <p class="text-xs text-muted">Latency (p95)</p>
-      <p class="mt-1 text-xl font-semibold text-primary">{{ kpiLatency() }}</p>
-      <p class="mt-1 text-[11px] text-muted">Awaiting telemetry aggregation.</p>
-    </div>
-    <div class="rounded-xl border border-white/10 bg-surface-alt p-4 shadow-card">
-      <p class="text-xs text-muted">Rate-limit rejections</p>
-      <p class="mt-1 text-xl font-semibold text-primary">{{ kpiRateLimitRejections() }}</p>
-      <p class="mt-1 text-[11px] text-muted">Telemetry feed pending.</p>
-    </div>
-    <div class="rounded-xl border border-white/10 bg-surface-alt p-4 shadow-card">
-      <p class="text-xs text-muted">Dead letters</p>
-      <p class="mt-1 text-xl font-semibold text-primary">{{ kpiDeadLetters() }}</p>
-      <p class="mt-1 text-[11px] text-muted">Failed deliveries awaiting replay.</p>
-    </div>
-  </div>
+
 
   @if (readPermissionDenied()) {
     <div class="rounded-xl border border-danger/40 bg-danger/10 px-4 py-3 text-sm text-danger">

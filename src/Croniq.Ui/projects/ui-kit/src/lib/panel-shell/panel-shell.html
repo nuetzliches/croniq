@@ -1,6 +1,6 @@
 @if (panelTemplate()) {
 <aside
-  class="flex h-full flex-col shrink-0 border-r border-white/10 bg-surface/80 transition-all"
+  class="sticky top-28 flex h-[calc(100vh-7rem)] flex-col shrink-0 self-start border-r border-white/10 bg-surface/80 transition-all"
   [class.w-[320px]]="open()"
   [class.w-12]="!open()"
 >
@@ -15,7 +15,7 @@
     }
     <button
       type="button"
-      class="rounded-lg border border-white/10 bg-white/5 px-2 py-1 text-[11px] font-semibold text-primary transition hover:border-accent hover:text-accent"
+      class="px-2 py-1 text-[11px] font-semibold text-primary transition hover:border-accent hover:text-accent"
       [attr.aria-label]="open() ? 'Collapse filters panel' : 'Expand filters panel'"
       (click)="handleToggle()"
     >
