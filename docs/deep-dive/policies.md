@@ -1,6 +1,6 @@
 # Croniq Policy Engine Plan
 
-This document explains how Croniq implements the Polly-based policy engine outlined in `architecture.md`. The goal is to close the "Polly-based policy engine" item in `CHECKLIST.md` by defining retry/timeout/circuit and dead-letter behavior across Scheduler and API workloads.
+This document explains how Croniq implements the Polly-based policy engine outlined in `architecture.md`. The goal is to close the "Polly-based policy engine" backlog item tracked in `BACKLOG.md` by defining retry/timeout/circuit and dead-letter behavior across Scheduler and API workloads.
 
 ## Goals
 

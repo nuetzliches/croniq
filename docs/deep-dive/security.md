@@ -1,6 +1,6 @@
 # Croniq Security Baseline
 
-This document specifies the authentication, authorization, and rate limiting design for Croniq. It extends the guidance captured in `architecture.md` and describes what remains to reach the "Security-Basis" milestone from `CHECKLIST.md`.
+This document specifies the authentication, authorization, and rate limiting design for Croniq. It extends the guidance captured in `architecture.md` and describes what remains to reach the "Security-Basis" milestone tracked in `BACKLOG.md`.
 
 ::: info Status
 Implemented (baseline). Last verified: 2026-01-18.
@@ -21,7 +21,6 @@ Implemented (baseline). Last verified: 2026-01-18.
 2. **Persistence**: SqlServer/Postgres stores only hashed secrets (HMAC SHA-256 + per-key salt). The plaintext is returned once to the operator and never persisted.
 3. **Request Flow**: Callers send the key in `X-Croniq-Key`. Middleware resolves the key via `ICallerContextFactory.FromApiKeyAsync`, creating an `ICallerContext` with TenantId, EnvironmentTag, CallerId (API client id), and Scopes.
 4. **Admin APIs**: Tenant-scoped routes now expose key lifecycle operations behind `api-keys:manage`:
-
    - `POST /tenants/{tenantId}/api-keys` issues a key for a given client/environment scope and returns the plaintext secret once.
    - `POST /tenants/{tenantId}/api-keys/{keyId}/rotate` deactivates the old secret, issues a replacement, and returns the new secret payload immediately.
    - `DELETE /tenants/{tenantId}/api-keys/{keyId}` revokes a key idempotently.
@@ -98,7 +97,6 @@ Implemented (baseline). Last verified: 2026-01-18.
 - **Schema & rollout**: The `WebhookEndpointIpRules` table stores CIDR blocks per hook/tenant/environment. Apply the EF Core migration via `Croniq.DbMigrator` before enabling the feature (runbook in `docs/deep-dive/persistence.md`). The schema addition is backward compatible, so existing hooks stay open until rules are created.
 - **Ingress enforcement**: `Croniq.Webhooks` compiles the stored CIDRs into `IpNetwork` instances during endpoint hydration. Requests are rejected with `403 ip-blocked` when the remote address falls outside every configured network. Empty rule sets keep endpoints open, letting operators stage the rollout hook-by-hook.
 - **Admin APIs**: Tenant-scoped management APIs expose CRUD operations guarded by `webhooks:read`/`webhooks:write`:
-
   - `GET /tenants/{tenantId}/webhooks/{hookKey}/ip-rules?environment=prod`
   - `POST /tenants/{tenantId}/webhooks/{hookKey}/ip-rules?environment=prod`
   - `DELETE /tenants/{tenantId}/webhooks/{hookKey}/ip-rules/{ruleId}?environment=prod`

@@ -1,6 +1,6 @@
 # Croniq Observability Plan
 
-This document captures the logging, metrics, and tracing strategy for Croniq services and libraries. It operationalizes the guidance recorded in `architecture.md` and defines the work required to close the "Observability" item in `CHECKLIST.md`.
+This document captures the logging, metrics, and tracing strategy for Croniq services and libraries. It operationalizes the guidance recorded in `architecture.md` and defines the work required to close the "Observability" backlog item tracked in `BACKLOG.md`.
 
 ## Objectives
 
@@ -27,10 +27,10 @@ This document captures the logging, metrics, and tracing strategy for Croniq ser
           "Microsoft.EntityFrameworkCore.Database.Command": "Warning",
           "Microsoft.Hosting.Lifetime": "Warning",
           "Microsoft.AspNetCore.Hosting.Diagnostics": "Warning",
-          "Microsoft.AspNetCore.Mvc.Infrastructure.DefaultActionDescriptorCollectionProvider": "Warning"
-        }
-      }
-    }
+          "Microsoft.AspNetCore.Mvc.Infrastructure.DefaultActionDescriptorCollectionProvider": "Warning",
+        },
+      },
+    },
   }
   ```
 
@@ -134,4 +134,4 @@ Keep `IdentifierHashKey` in your secret provider and share the same key across h
 - [x] Update this document with instructions for enabling telemetry exports and viewing dashboards.
 - [x] Add automated smoke tests verifying OTLP export (e.g., assert metrics appear in a test collector during CI).
 
-All backlog items are complete; the "Observability" entry in `CHECKLIST.md` can be marked done.
+All backlog items are complete; the "Observability" entry in `BACKLOG.md` can be marked done.
