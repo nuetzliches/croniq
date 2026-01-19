@@ -1,6 +1,7 @@
 # syntax=docker/dockerfile:1.7
 
 ARG DOTNET_VERSION=10.0
+ARG MINVER_SKIP=false
 
 FROM mcr.microsoft.com/dotnet/sdk:${DOTNET_VERSION} AS build-base
 WORKDIR /src
@@ -47,19 +48,31 @@ RUN --mount=type=cache,id=nuget-packages,target=/root/.nuget/packages,sharing=lo
 COPY . .
 
 FROM build-base AS publish-api
+ARG MINVER_SKIP=false
 RUN --mount=type=cache,id=nuget-packages,target=/root/.nuget/packages,sharing=locked \
     --mount=type=cache,id=nuget-http-cache,target=/root/.local/share/NuGet/v3-cache,sharing=locked \
-    dotnet publish samples/Croniq.Sample.ApiHost/Croniq.Sample.ApiHost.csproj -c Release -o /app/publish /p:UseAppHost=false --no-restore
+    set -eux; \
+    MINVER_ARG=""; \
+    if [ "${MINVER_SKIP}" = "true" ]; then MINVER_ARG="/p:MinVerSkip=true"; fi; \
+    dotnet publish samples/Croniq.Sample.ApiHost/Croniq.Sample.ApiHost.csproj -c Release -o /app/publish /p:UseAppHost=false --no-restore $MINVER_ARG
 
 FROM build-base AS publish-worker
+ARG MINVER_SKIP=false
 RUN --mount=type=cache,id=nuget-packages,target=/root/.nuget/packages,sharing=locked \
     --mount=type=cache,id=nuget-http-cache,target=/root/.local/share/NuGet/v3-cache,sharing=locked \
-    dotnet publish samples/Croniq.Sample.WorkerHost/Croniq.Sample.WorkerHost.csproj -c Release -o /app/publish /p:UseAppHost=false --no-restore
+    set -eux; \
+    MINVER_ARG=""; \
+    if [ "${MINVER_SKIP}" = "true" ]; then MINVER_ARG="/p:MinVerSkip=true"; fi; \
+    dotnet publish samples/Croniq.Sample.WorkerHost/Croniq.Sample.WorkerHost.csproj -c Release -o /app/publish /p:UseAppHost=false --no-restore $MINVER_ARG
 
 FROM build-base AS publish-migrator
+ARG MINVER_SKIP=false
 RUN --mount=type=cache,id=nuget-packages,target=/root/.nuget/packages,sharing=locked \
     --mount=type=cache,id=nuget-http-cache,target=/root/.local/share/NuGet/v3-cache,sharing=locked \
-    dotnet publish tools/Croniq.DbMigrator/Croniq.DbMigrator.csproj -c Release -o /app/publish /p:UseAppHost=false --no-restore
+    set -eux; \
+    MINVER_ARG=""; \
+    if [ "${MINVER_SKIP}" = "true" ]; then MINVER_ARG="/p:MinVerSkip=true"; fi; \
+    dotnet publish tools/Croniq.DbMigrator/Croniq.DbMigrator.csproj -c Release -o /app/publish /p:UseAppHost=false --no-restore $MINVER_ARG
 
 FROM mcr.microsoft.com/dotnet/aspnet:${DOTNET_VERSION} AS api
 WORKDIR /app
