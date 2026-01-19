@@ -48,8 +48,8 @@ $env:ASPNETCORE_URLS = "https://0.0.0.0:$GrpcPort;http://0.0.0.0:$HttpPort"
 
 if ($env:CRONIQ_DOTNET_ENVIRONMENT) { $env:DOTNET_ENVIRONMENT = $env:CRONIQ_DOTNET_ENVIRONMENT }
 
-$env:Croniq__Auth__Mode = Get-EnvOrDotenv 'CRONIQ_DMZ_AUTH_MODE' 'InMemory'
-$env:Croniq__Auth__InMemory__ApiKey = Get-EnvOrDotenv 'CRONIQ_DMZ_API_KEY' 'dmz-sample-key'
+$env:Croniq__Auth__Mode = Get-EnvOrDotenv 'CRONIQ_SAMPLE_DMZ_AUTH_MODE' 'InMemory'
+$env:Croniq__Auth__InMemory__ApiKey = Get-EnvOrDotenv 'CRONIQ_SAMPLE_DMZ_API_KEY' 'dmz-sample-key'
 $env:Croniq__Auth__InMemory__TenantId = Get-EnvOrDotenv 'CRONIQ_CORE_TENANT_ID' 'default'
 $env:Croniq__Auth__InMemory__EnvironmentTag = Get-EnvOrDotenv 'CRONIQ_ENVIRONMENT' 'dev'
 
@@ -58,11 +58,11 @@ $env:Croniq__Persistence__Mode = 'SqlServer'
 $env:Croniq__Core__TenantId = Get-EnvOrDotenv 'CRONIQ_CORE_TENANT_ID' 'default'
 $env:Croniq__Core__TenantMode = Get-EnvOrDotenv 'CRONIQ_CORE_TENANT_MODE' ''
 $env:Croniq__Core__EnvironmentTag = Get-EnvOrDotenv 'CRONIQ_ENVIRONMENT' 'dev'
-$env:Croniq__Core__InstanceId = Get-EnvOrDotenv 'CRONIQ_DMZ_INSTANCE_ID' 'dmz-dev'
+$env:Croniq__Core__InstanceId = Get-EnvOrDotenv 'CRONIQ_SAMPLE_DMZ_INSTANCE_ID' 'dmz-dev'
 
 # Construct SQL Connection String
 $sqlPort = Get-EnvOrDotenv 'CRONIQ_SQL_HOST_PORT' '11433'
-$sqlDb = Get-EnvOrDotenv 'CRONIQ_DMZ_SQL_DATABASE' 'CroniqDmz'
+$sqlDb = Get-EnvOrDotenv 'CRONIQ_SAMPLE_DMZ_SQL_DATABASE' 'CroniqDmz'
 $sqlPw = Get-EnvOrDotenv 'CRONIQ_SQL_PASSWORD' 'CroniqSqlP@ssw0rd!'
 $env:Croniq__SqlServer__ConnectionString = "Server=localhost,$sqlPort;Database=$sqlDb;User Id=sa;Password=$sqlPw;Encrypt=False;TrustServerCertificate=True;"
 

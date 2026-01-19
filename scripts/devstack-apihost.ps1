@@ -63,9 +63,9 @@ $env:Croniq__Core__InstanceId = Get-EnvOrDotenv 'CRONIQ_API_INSTANCE_ID' ''
 $env:Croniq__Logging__Execution__BasePath = (Join-Path $repoRoot 'logs')
 
 # Remote webhook ingress (DMZ simulation).
-$dmzGrpcPort = Get-EnvOrDotenv 'CRONIQ_DMZ_GRPC_PORT' '5001'
-$dmzBaseUrl = Get-EnvOrDotenv 'CRONIQ_DMZ_BASEURL' "https://localhost:$dmzGrpcPort"
-$dmzApiKey = Get-EnvOrDotenv 'CRONIQ_DMZ_API_KEY' 'dmz-sample-key'
+$dmzGrpcPort = Get-EnvOrDotenv 'CRONIQ_SAMPLE_DMZ_GRPC_PORT' '5001'
+$dmzBaseUrl = Get-EnvOrDotenv 'CRONIQ_SAMPLE_DMZ_BASEURL' "https://localhost:$dmzGrpcPort"
+$dmzApiKey = Get-EnvOrDotenv 'CRONIQ_SAMPLE_DMZ_API_KEY' 'dmz-sample-key'
 $env:Croniq__Webhooks__Mode = 'Remote'
 $env:Croniq__Webhooks__Remote__BaseUrl = $dmzBaseUrl
 $env:Croniq__Webhooks__Remote__ApiKey = $dmzApiKey

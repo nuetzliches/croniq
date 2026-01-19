@@ -24,8 +24,8 @@ services:
       Croniq__Core__TenantId: ${CRONIQ_CORE_TENANT_ID:-default}
       Croniq__Core__EnvironmentTag: ${CRONIQ_ENVIRONMENT:-dev}
       Croniq__Core__InstanceId: ${CRONIQ_API_INSTANCE_ID:-api-dev}
-      Croniq__Webhooks__Remote__BaseUrl: ${CRONIQ_DMZ_BASEURL:-https://host.docker.internal:5001}
-      Croniq__Webhooks__Remote__ApiKey: ${CRONIQ_DMZ_API_KEY:-dmz-sample-key}
+      Croniq__Webhooks__Remote__BaseUrl: ${CRONIQ_SAMPLE_DMZ_BASEURL:-https://host.docker.internal:5001}
+      Croniq__Webhooks__Remote__ApiKey: ${CRONIQ_SAMPLE_DMZ_API_KEY:-dmz-sample-key}
       Croniq__Webhooks__Remote__EnableRelay: false
       Croniq__Logging__Execution__BasePath: /app/logs
       Croniq__Observability__OtlpEndpoint: ${CRONIQ_OBS_OTLP_ENDPOINT:-http://otel-collector:4317}
@@ -68,8 +68,8 @@ services:
       Croniq__Core__EnvironmentTag: ${CRONIQ_ENVIRONMENT:-dev}
       Croniq__Core__InstanceId: ${CRONIQ_WORKER_INSTANCE_ID:-worker-dev}
       Croniq__Webhooks__Mode: Remote
-      Croniq__Webhooks__Remote__BaseUrl: ${CRONIQ_DMZ_BASEURL:-https://host.docker.internal:5001}
-      Croniq__Webhooks__Remote__ApiKey: ${CRONIQ_DMZ_API_KEY:-dmz-sample-key}
+      Croniq__Webhooks__Remote__BaseUrl: ${CRONIQ_SAMPLE_DMZ_BASEURL:-https://host.docker.internal:5001}
+      Croniq__Webhooks__Remote__ApiKey: ${CRONIQ_SAMPLE_DMZ_API_KEY:-dmz-sample-key}
       Croniq__Webhooks__Remote__EnableRelay: true
       Croniq__Logging__Execution__BasePath: /app/logs
       Croniq__Persistence__Mode: SqlServer
