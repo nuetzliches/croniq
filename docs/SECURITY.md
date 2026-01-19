@@ -4,7 +4,7 @@ This document summarizes how Croniq secures releases and how consumers can verif
 
 ## What we ship
 
-- Signed container images (`croniq-api`, `croniq-worker`, `croniq-webhooks`, `croniq-db-migrator`) published to GHCR with cosign.
+- Signed container images (`croniq-api`, `croniq-worker`, `croniq-ui`, `croniq-webhooks`, `croniq-db-migrator`) published to GHCR with cosign.
 - Signed NuGet packages published from the release workflow.
 - Attached SBOMs (SPDX), Trivy scan reports (filesystems + images), and license scan output for every release.
 
@@ -17,7 +17,7 @@ This document summarizes how Croniq secures releases and how consumers can verif
 
 ## How to verify
 
-- Containers: `cosign verify --key infra/signing/cosign.pub ghcr.io/<owner>/croniq-api:<tag>` (repeat for `croniq-worker`, `croniq-webhooks`, `croniq-db-migrator`). See `docs/deep-dive/release-verification.md` for step-by-step commands.
+- Containers: `cosign verify --key infra/signing/cosign.pub ghcr.io/<owner>/croniq-api:<tag>` (repeat for `croniq-worker`, `croniq-ui`, `croniq-webhooks`, `croniq-db-migrator`). See `docs/deep-dive/release-verification.md` for step-by-step commands.
 - NuGet: `dotnet nuget verify <package>.nupkg --certificates infra/signing/nuget-signing.cer --signature-verification-mode require`.
 - SBOM/Scans: Compare attached SPDX files and Trivy SARIF reports with the artifacts you consume.
 

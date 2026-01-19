@@ -58,6 +58,16 @@ Set `CRONIQ_UI_DEFAULT_TENANT_ID` to emit `defaultTenantId` for single-tenant de
 
 Webhook capability flags (for example, unsigned webhook support) are resolved from the API capabilities endpoint and are not read from runtime config.
 
+## Hosting & Container Image
+
+Croniq.Ui ships as static assets hosted by `Croniq.UiHost`, the ASP.NET Core wrapper used for the `croniq-ui` container image. The host exposes `/health` and serves the Angular bundle plus a dynamic `assets/croniq-config.json` response.
+
+- The response starts from the on-disk `wwwroot/assets/croniq-config.json` (use this for `grafanaUrl` defaults) and applies environment overrides.
+- Supported overrides: `CRONIQ_UI_API_BASEURL` (preferred) or `CRONIQ_UI_API_PORT` plus optional `CRONIQ_UI_API_HOST`/`CRONIQ_UI_API_SCHEME`, `CRONIQ_UI_SWAGGER_UI_URL` (or `CRONIQ_UI_SWAGGER_URL`), `CRONIQ_UI_DEFAULT_TENANT_ID`.
+- The API base URL must be reachable from the browser (avoid internal container hostnames).
+
+Small deployments can still serve the static assets behind `Croniq.Api`, but the default production path is the `croniq-ui` container so health checks and observability align with other services.
+
 ## Tenancy (Single Tenant)
 
 Croniq.Ui currently targets single-tenant deployments. The UI does not expose tenant management routes or command palette entries. API Access remains available for managing tenant API keys/clients within the active tenant. Multi-tenant UI is deferred to vNext.

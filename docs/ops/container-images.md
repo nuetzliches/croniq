@@ -6,6 +6,7 @@ This guide describes the production container images and the configuration contr
 
 - `croniq-api`: management API + gRPC (scheduler + worker) surfaces.
 - `croniq-worker`: scheduler/worker host that executes jobs.
+- `croniq-ui`: Angular admin UI host (static assets + runtime config endpoint).
 - `croniq-webhooks`: webhook ingress host (ingress-only surface).
 - `croniq-db-migrator`: applies EF Core migrations for Croniq schemas.
 
@@ -16,11 +17,13 @@ For local or ad-hoc registry uploads, build from the production Dockerfile targe
 ```bash
 docker build -f infra/docker/Dockerfile.production --target api -t registry.example.com/croniq-api:0.1.0 .
 docker build -f infra/docker/Dockerfile.production --target worker -t registry.example.com/croniq-worker:0.1.0 .
+docker build -f infra/docker/Dockerfile.production --target ui -t registry.example.com/croniq-ui:0.1.0 .
 docker build -f infra/docker/Dockerfile.production --target webhooks -t registry.example.com/croniq-webhooks:0.1.0 .
 docker build -f infra/docker/Dockerfile.production --target migrator -t registry.example.com/croniq-db-migrator:0.1.0 .
 
 docker push registry.example.com/croniq-api:0.1.0
 docker push registry.example.com/croniq-worker:0.1.0
+docker push registry.example.com/croniq-ui:0.1.0
 docker push registry.example.com/croniq-webhooks:0.1.0
 docker push registry.example.com/croniq-db-migrator:0.1.0
 ```
@@ -34,6 +37,7 @@ docker compose -f infra/docker/docker-compose.production.yml up --build
 ```
 
 Defaults use in-memory auth for quick smoke tests. Use `X-Croniq-Key: ${CRONIQ_API_KEY}` when calling the API.
+The UI container listens on `CRONIQ_UI_HTTP_PORT` (default `5081`) and reads `CRONIQ_UI_*` to populate runtime config for browsers.
 To exercise SQL auth instead, set `Croniq__Auth__Mode=SqlServer` and `Croniq__Auth__Password__Enabled=true` (keep `CRONIQ_SEED_ADMIN=true` so the migrator seeds the admin user).
 To use Postgres instead, run a Postgres instance and set `CRONIQ_DB_PROVIDER=Postgres` plus `CRONIQ_POSTGRES_CONNECTION` (or `Croniq__Postgres__ConnectionString`).
 
@@ -112,6 +116,19 @@ Optional:
 Persisted webhook secrets rely on ASP.NET Core Data Protection. Share the key ring across API/webhook hosts; see [`docs/deep-dive/security.md`](../deep-dive/security.md).
 
 The API host does not expose webhook ingress endpoints. Use `croniq-webhooks` for inbound webhooks.
+
+### croniq-ui
+
+Required for production:
+
+- `CRONIQ_UI_API_BASEURL` (or `CRONIQ_UI_API_PORT` plus optional `CRONIQ_UI_API_HOST`/`CRONIQ_UI_API_SCHEME`)
+
+Optional:
+
+- `CRONIQ_UI_SWAGGER_UI_URL`
+- `CRONIQ_UI_DEFAULT_TENANT_ID`
+
+The UI host serves `/health` and a dynamic `assets/croniq-config.json` response that merges the on-disk file with environment overrides. Set `CRONIQ_UI_API_BASEURL` to a browser-reachable URL (avoid internal container hostnames). To customize `grafanaUrl` or other defaults, mount a file at `/app/wwwroot/assets/croniq-config.json`. See [`docs/deep-dive/ui.md`](../deep-dive/ui.md) for the runtime config contract.
 
 ### croniq-worker
 

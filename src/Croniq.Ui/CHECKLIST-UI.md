@@ -59,7 +59,7 @@ Derived from [docs/deep-dive/designs/angular-ui-concept.md](docs/deep-dive/desig
     - Important: if `cronExpression` changes and UI omits `triggerId`, the server will create a new trigger.
   - [x] OpenAPI responses are modeled (avoid `z.void()` for critical flows): schedules list/detail, upsert result (at least persisted `triggerId`), dead-letters list, replay result.
   - [ ] Error behavior is stable and documented: `400` validation, `401/403`, `404`, and idempotency expectations for replay.
-- [ ] Document hosting decision (static assets behind Croniq.Api vs. dedicated `Croniq.Ui` container) and readiness/liveness expectations.
+- [x] Document hosting decision (static assets behind Croniq.Api vs. dedicated `Croniq.Ui` container) and readiness/liveness expectations. _(Recorded in `docs/deep-dive/ui.md` with `croniq-ui` container + `/health`.)_
 - [ ] Validate new npm dependencies meet the MIT/Apache/BSD policy and record any exceptions before merge.
 - [x] Publish the ARIA playbook (based on https://angular.dev/guide/aria/overview) in `docs/ai/aria.md` and reference it from the PR template so every feature answers for roles, focus order, and keyboard shortcuts.
 

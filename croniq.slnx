@@ -30,6 +30,7 @@
     <Project Path="src/Croniq.Rpc.Client/Croniq.Rpc.Client.csproj" />
     <Project Path="src/Croniq.Sdk/Croniq.Sdk.csproj" />
     <Project Path="src/Croniq.Usings/Croniq.Usings.csproj" />
+    <Project Path="src/Croniq.UiHost/Croniq.UiHost.csproj" />
     <Project Path="src/Croniq.Webhooks/Croniq.Webhooks.csproj" />
     <Project Path="src/Croniq.WebhooksHost/Croniq.WebhooksHost.csproj" />
     <Project Path="src/Croniq.WorkerHost/Croniq.WorkerHost.csproj" />

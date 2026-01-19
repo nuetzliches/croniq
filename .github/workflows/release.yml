@@ -195,6 +195,8 @@ jobs:
           echo "api_latest=${{ env.REGISTRY }}/${{ github.repository_owner }}/croniq-api:latest" >> $GITHUB_OUTPUT
           echo "worker_image=${{ env.REGISTRY }}/${{ github.repository_owner }}/croniq-worker:$VERSION" >> $GITHUB_OUTPUT
           echo "worker_latest=${{ env.REGISTRY }}/${{ github.repository_owner }}/croniq-worker:latest" >> $GITHUB_OUTPUT
+          echo "ui_image=${{ env.REGISTRY }}/${{ github.repository_owner }}/croniq-ui:$VERSION" >> $GITHUB_OUTPUT
+          echo "ui_latest=${{ env.REGISTRY }}/${{ github.repository_owner }}/croniq-ui:latest" >> $GITHUB_OUTPUT
           echo "webhooks_image=${{ env.REGISTRY }}/${{ github.repository_owner }}/croniq-webhooks:$VERSION" >> $GITHUB_OUTPUT
           echo "webhooks_latest=${{ env.REGISTRY }}/${{ github.repository_owner }}/croniq-webhooks:latest" >> $GITHUB_OUTPUT
           echo "migrator_image=${{ env.REGISTRY }}/${{ github.repository_owner }}/croniq-db-migrator:$VERSION" >> $GITHUB_OUTPUT
@@ -233,6 +235,12 @@ jobs:
           docker push ${{ steps.version.outputs.worker_image }}
           docker push ${{ steps.version.outputs.worker_latest }}
 
+      - name: Build Croniq UI image
+        run: |
+          docker build -f infra/docker/Dockerfile.production --target ui -t ${{ steps.version.outputs.ui_image }} -t ${{ steps.version.outputs.ui_latest }} .
+          docker push ${{ steps.version.outputs.ui_image }}
+          docker push ${{ steps.version.outputs.ui_latest }}
+
       - name: Build Croniq Webhooks image
         run: |
           docker build -f infra/docker/Dockerfile.production --target webhooks -t ${{ steps.version.outputs.webhooks_image }} -t ${{ steps.version.outputs.webhooks_latest }} .
@@ -254,6 +262,7 @@ jobs:
         run: |
           syft ${{ steps.version.outputs.api_image }} -o spdx-json=artifacts/images/sbom/api-${{ steps.version.outputs.version }}.spdx.json
           syft ${{ steps.version.outputs.worker_image }} -o spdx-json=artifacts/images/sbom/worker-${{ steps.version.outputs.version }}.spdx.json
+          syft ${{ steps.version.outputs.ui_image }} -o spdx-json=artifacts/images/sbom/ui-${{ steps.version.outputs.version }}.spdx.json
           syft ${{ steps.version.outputs.webhooks_image }} -o spdx-json=artifacts/images/sbom/webhooks-${{ steps.version.outputs.version }}.spdx.json
           syft ${{ steps.version.outputs.migrator_image }} -o spdx-json=artifacts/images/sbom/db-migrator-${{ steps.version.outputs.version }}.spdx.json
 
@@ -271,6 +280,13 @@ jobs:
             --ignore-unfixed \
             --format sarif \
             --output artifacts/images/trivy/worker.sarif \
+            --exit-code 1 \
+            --no-progress
+          trivy image ${{ steps.version.outputs.ui_image }} \
+            --severity HIGH,CRITICAL \
+            --ignore-unfixed \
+            --format sarif \
+            --output artifacts/images/trivy/ui.sarif \
             --exit-code 1 \
             --no-progress
           trivy image ${{ steps.version.outputs.webhooks_image }} \
@@ -299,6 +315,7 @@ jobs:
           fi
           ./bin/cosign sign --yes $KEYFLAG ${{ steps.version.outputs.api_image }}
           ./bin/cosign sign --yes $KEYFLAG ${{ steps.version.outputs.worker_image }}
+          ./bin/cosign sign --yes $KEYFLAG ${{ steps.version.outputs.ui_image }}
           ./bin/cosign sign --yes $KEYFLAG ${{ steps.version.outputs.webhooks_image }}
           ./bin/cosign sign --yes $KEYFLAG ${{ steps.version.outputs.migrator_image }}
         shell: bash

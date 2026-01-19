@@ -13,7 +13,7 @@ This plan details how we will fulfill the checklist item "SBOM/Signierung und Vu
 
 - **Tooling**: Use `syft` for SBOM generation (SPDX JSON) across source + built artifacts. Versions are defined in `eng/versions/supplychain-tools.json` and installed locally/CI via `scripts/ci/install-supplychain-tool.ps1 -Tool syft`, which places the binary in `bin/` and appends it to `PATH`.
 - **NuGet packages**: After `dotnet pack`, run `syft packages ./artifacts/nuget -o spdx-json=sbom-nuget.json`.
-- **Container images**: After Docker builds finish, run `syft ghcr.io/<owner>/croniq-<api|worker|webhooks|db-migrator>:<tag> -o spdx-json=sbom-api.json` (the release workflow already emits `api-<version>.spdx.json`, `worker-<version>.spdx.json`, `webhooks-<version>.spdx.json`, and `db-migrator-<version>.spdx.json`).
+- **Container images**: After Docker builds finish, run `syft ghcr.io/<owner>/croniq-<api|worker|ui|webhooks|db-migrator>:<tag> -o spdx-json=sbom-api.json` (the release workflow already emits `api-<version>.spdx.json`, `worker-<version>.spdx.json`, `ui-<version>.spdx.json`, `webhooks-<version>.spdx.json`, and `db-migrator-<version>.spdx.json`).
 - **Storage**: Attach SBOM files to GitHub Releases and upload as workflow artifacts. Keep a copy under `artifacts/sbom/` in build output.
 
 ## Vulnerability Scanning

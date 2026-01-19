@@ -28,6 +28,10 @@ cosign verify \
 
 cosign verify \
   --key infra/signing/cosign.pub \
+  ghcr.io/<owner>/croniq-ui:<tag>
+
+cosign verify \
+  --key infra/signing/cosign.pub \
   ghcr.io/<owner>/croniq-webhooks:<tag>
 
 cosign verify \
@@ -38,7 +42,7 @@ cosign verify \
 Notes:
 
 - If the key is not yet published, verification will fail; do not deploy unsigned images.
-- The release assets include SBOMs (`api-<tag>.spdx.json`, `worker-<tag>.spdx.json`, `webhooks-<tag>.spdx.json`, `db-migrator-<tag>.spdx.json`) and Trivy reports. Compare `cosign verify` output with the image digests listed on the Release page.
+- The release assets include SBOMs (`api-<tag>.spdx.json`, `worker-<tag>.spdx.json`, `ui-<tag>.spdx.json`, `webhooks-<tag>.spdx.json`, `db-migrator-<tag>.spdx.json`) and Trivy reports. Compare `cosign verify` output with the image digests listed on the Release page.
 
 ## Verify NuGet packages
 
@@ -55,7 +59,7 @@ Use the same command for other Croniq packages. If you prefer fingerprints, add 
 ## Inspect SBOMs and scan evidence
 
 - SBOMs: Compare the attached SPDX files against the images or packages you consume (`syft packages ghcr.io/<owner>/croniq-api:<tag> -o spdx-json` should yield the same package set).
-- Vulnerability scans: Review `api.sarif`, `worker.sarif`, `webhooks.sarif`, `db-migrator.sarif`, and `trivy-fs.sarif` attached to the release. The release gate blocks CRITICAL/HIGH unless a waiver exists.
+- Vulnerability scans: Review `api.sarif`, `worker.sarif`, `ui.sarif`, `webhooks.sarif`, `db-migrator.sarif`, and `trivy-fs.sarif` attached to the release. The release gate blocks CRITICAL/HIGH unless a waiver exists.
 - License scan: `artifacts/licenses/license-scan.json` is attached to the release; it must show only allow-listed SPDX IDs.
 
 If any verification step fails, halt deployment and open an incident/issue referencing the failing artifact and command.

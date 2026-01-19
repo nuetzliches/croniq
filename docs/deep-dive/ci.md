@@ -51,7 +51,7 @@ This document describes the continuous integration and delivery strategy require
 - Inherits steps from `ci-pr` via reusable workflow `workflow_call` or composite action.
 - Additional jobs:
   1. **Docker build + compose E2E**
-     - Build images (`croniq-api`, `croniq-worker`, `croniq-webhooks`, `croniq-db-migrator`) with BuildKit cache.
+     - Build images (`croniq-api`, `croniq-worker`, `croniq-ui`, `croniq-webhooks`, `croniq-db-migrator`) with BuildKit cache.
      - Use `scripts/ci/compose-devstack.ps1 -Action Up` to start the stack (wraps the `docker compose -f ... --profile api|worker|obs up --build -d` invocation shared with `scripts/devstack-up.cmd`).
      - Execute `tests/Croniq.Api.Smoke` suite against the stack.
      - Collect logs from containers, upload as artifacts.
@@ -71,7 +71,7 @@ This document describes the continuous integration and delivery strategy require
 3. **Package Publishing**
    - `packages` job executes `dotnet pack`, generates SBOMs with `syft dir:artifacts/nuget -o spdx-json`, runs `dotnet list package --vulnerable --include-transitive`, signs `.nupkg` files when signing secrets exist, and optionally pushes to NuGet.org via `NUGET_API_KEY`.
 4. **Container Images**
-   - `images` job builds the production hosts via `infra/docker/Dockerfile.production`, tags/pushes them to `ghcr.io/<owner>/croniq-{api|worker|webhooks|db-migrator}:<tag>` plus `:latest`, and creates SBOMs directly from the pushed images.
+   - `images` job builds the production hosts via `infra/docker/Dockerfile.production`, tags/pushes them to `ghcr.io/<owner>/croniq-{api|worker|ui|webhooks|db-migrator}:<tag>` plus `:latest`, and creates SBOMs directly from the pushed images.
 5. **Compose Smoke Verification**
    - `smoke` job uses `scripts/ci/compose-devstack.ps1` to spin up the API/worker/observability stack, waits for `/health`, runs `tests/Croniq.Api.Smoke`, and uploads collected logs before teardown.
 6. **Security & Compliance**

@@ -87,6 +87,31 @@ services:
     networks:
       - croniq-net
 
+  croniq-ui:
+    image: croniq-ui:local
+    build:
+      context: ../..
+      dockerfile: infra/docker/Dockerfile.production
+      target: ui
+    environment:
+      DOTNET_ENVIRONMENT: ${CRONIQ_DOTNET_ENVIRONMENT:-Production}
+      CRONIQ_UI_API_BASEURL: ${CRONIQ_UI_API_BASEURL:-http://localhost:${CRONIQ_API_HTTP_PORT:-5080}}
+      CRONIQ_UI_SWAGGER_UI_URL: ${CRONIQ_UI_SWAGGER_UI_URL:-http://localhost:${CRONIQ_API_HTTP_PORT:-5080}/swagger}
+      CRONIQ_UI_DEFAULT_TENANT_ID: ${CRONIQ_UI_DEFAULT_TENANT_ID:-default}
+    depends_on:
+      croniq-api:
+        condition: service_healthy
+    ports:
+      - "${CRONIQ_UI_HTTP_PORT:-5081}:8080"
+    healthcheck:
+      test: ["CMD-SHELL", "curl --fail http://localhost:8080/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 15
+      start_period: 15s
+    networks:
+      - croniq-net
+
   croniq-worker:
     image: croniq-worker:local
     build:
