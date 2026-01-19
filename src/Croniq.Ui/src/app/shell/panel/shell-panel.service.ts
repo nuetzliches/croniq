@@ -5,6 +5,7 @@ const PANEL_OPEN_STORAGE_KEY = 'croniq.shell.panel.open';
 @Injectable({ providedIn: 'root' })
 export class ShellPanelService {
     readonly panelTemplate = signal<TemplateRef<unknown> | null>(null);
+    readonly collapsedTemplate = signal<TemplateRef<unknown> | null>(null);
     readonly title = signal('Filters & settings');
     readonly subtitle = signal('');
     readonly isOpen = signal(readPanelOpen());
@@ -20,8 +21,14 @@ export class ShellPanelService {
         });
     }
 
-    setPanel(template: TemplateRef<unknown>, title: string, subtitle?: string): void {
+    setPanel(
+        template: TemplateRef<unknown>,
+        title: string,
+        subtitle?: string,
+        collapsedTemplate?: TemplateRef<unknown> | null,
+    ): void {
         this.panelTemplate.set(template);
+        this.collapsedTemplate.set(collapsedTemplate ?? null);
         this.title.set(title);
         this.subtitle.set(subtitle ?? '');
     }
@@ -30,6 +37,7 @@ export class ShellPanelService {
         const current = this.panelTemplate();
         if (!template || current === template) {
             this.panelTemplate.set(null);
+            this.collapsedTemplate.set(null);
         }
     }
 

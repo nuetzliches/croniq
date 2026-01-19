@@ -53,6 +53,7 @@ export class Shell {
   readonly panelTitle = this.panel.title;
   readonly panelSubtitle = this.panel.subtitle;
   readonly panelOpen = this.panel.isOpen;
+  readonly panelCollapsedTemplate = this.panel.collapsedTemplate;
 
   openCommandPalette(): void {
     this.commandPalette.open();

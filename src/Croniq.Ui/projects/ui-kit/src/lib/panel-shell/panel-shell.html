@@ -2,25 +2,47 @@
 <aside
   class="sticky top-28 flex h-[calc(100vh-7rem)] flex-col shrink-0 self-start border-r border-white/10 bg-surface/80 transition-all"
   [class.w-[320px]]="open()"
-  [class.w-12]="!open()"
+  [class.w-8]="!open()"
 >
-  <div class="flex items-start justify-between gap-2 border-b border-white/10 px-3 py-3">
+  <div
+    class="py-3"
+    [class.border-b]="open()"
+    [class.border-white/10]="open()"
+    [class.px-4]="open()"
+    [class.px-1]="!open()"
+  >
     @if (open()) {
-    <div class="min-w-0">
-      <h2 class="truncate text-sm font-semibold text-primary">{{ title() }}</h2>
-      @if (subtitle()) {
-      <p class="text-xs text-muted">{{ subtitle() }}</p>
+    <div class="flex items-start justify-between gap-2">
+      <div class="min-w-0">
+        <h2 class="truncate text-sm font-semibold text-primary">{{ title() }}</h2>
+        @if (subtitle()) {
+        <p class="text-xs text-muted">{{ subtitle() }}</p>
+        }
+      </div>
+      <button
+        type="button"
+        class="inline-flex items-center justify-center p-1 text-primary transition hover:text-accent"
+        [attr.aria-label]="open() ? 'Collapse filters panel' : 'Expand filters panel'"
+        (click)="handleToggle()"
+      >
+        <cq-icon [name]="toggleIcon()" size="20" aria-hidden="true"></cq-icon>
+      </button>
+    </div>
+    } @else {
+    <div class="flex flex-col items-center gap-2">
+      <button
+        type="button"
+        class="inline-flex items-center justify-center p-1 text-primary transition hover:border-accent hover:text-accent"
+        [attr.aria-label]="open() ? 'Collapse filters panel' : 'Expand filters panel'"
+        (click)="handleToggle()"
+      >
+        <cq-icon [name]="toggleIcon()" size="20" aria-hidden="true"></cq-icon>
+      </button>
+      @if (collapsedTemplate()) {
+      <ng-container [ngTemplateOutlet]="collapsedTemplate()"></ng-container>
       }
     </div>
     }
-    <button
-      type="button"
-      class="px-2 py-1 text-[11px] font-semibold text-primary transition hover:border-accent hover:text-accent"
-      [attr.aria-label]="open() ? 'Collapse filters panel' : 'Expand filters panel'"
-      (click)="handleToggle()"
-    >
-      <span aria-hidden="true">{{ open() ? '⟨' : '⟩' }}</span>
-    </button>
   </div>
 
   @if (open()) {

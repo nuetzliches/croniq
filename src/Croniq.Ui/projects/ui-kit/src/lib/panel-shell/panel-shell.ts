@@ -1,18 +1,21 @@
-import { ChangeDetectionStrategy, Component, TemplateRef, input, output } from '@angular/core';
+import { ChangeDetectionStrategy, Component, TemplateRef, computed, input, output } from '@angular/core';
 import { NgTemplateOutlet } from '@angular/common';
+import { CqIconComponent, type MdiIconName } from '@ui-kit/icon/icon';
 
 @Component({
     selector: 'cq-panel-shell',
-    imports: [NgTemplateOutlet],
+    imports: [NgTemplateOutlet, CqIconComponent],
     templateUrl: './panel-shell.html',
     changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class CqPanelShellComponent {
     readonly panelTemplate = input<TemplateRef<unknown> | null>(null);
+    readonly collapsedTemplate = input<TemplateRef<unknown> | null>(null);
     readonly title = input<string>('Filters & settings');
     readonly subtitle = input<string>('');
     readonly open = input<boolean>(true);
     readonly toggleRequested = output<void>();
+    readonly toggleIcon = computed<MdiIconName>(() => (this.open() ? 'chevron-left' : 'chevron-right'));
 
     handleToggle(): void {
         this.toggleRequested.emit();

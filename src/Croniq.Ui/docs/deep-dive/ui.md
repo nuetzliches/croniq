@@ -76,6 +76,21 @@ Croniq.Ui currently targets single-tenant deployments. The UI does not expose te
 
 Design tokens (ramps, typography, motion durations) and layout primitives are implemented in `src/styles.css` and `tailwind.config.js`. The current token catalog and guidance live in `docs/deep-dive/designs/angular-ui-theme.md`.
 
+## Icons
+
+Croniq.Ui bundles a curated Material Design Icons (MDI) subset locally (no runtime icon fetch).
+
+- Component: `cq-icon` from `projects/ui-kit/src/lib/icon/icon.ts`.
+- Registry: `projects/ui-kit/src/lib/icon/mdi-icons.ts`.
+- Names follow the Iconify MDI set (`https://icon-sets.iconify.design/mdi/`).
+- Default registry includes: `magnify`, `refresh`, `plus`, `pencil`, `trash-can-outline`, `chevron-left`, `chevron-right`, `chevron-up`, `chevron-down`, `close`, `check`, `alert-outline`, `information-outline`, `content-copy`, `filter-remove`.
+- Extend the registry by copying the icon body from `https://api.iconify.design/mdi.json?icons=<name>` and adding it to `mdi-icons.ts`.
+- Size defaults to `1em` and inherits font-size; omit `size` to scale with surrounding text, or set an explicit value.
+- Usage:
+  ```html
+  <cq-icon name="magnify" ariaLabel="Search" />
+  ```
+
 ## Preferences
 
 - UI preferences (theme, table density) are stored per tenant in IndexedDB via `UiPreferencesService`.

@@ -10,7 +10,7 @@ import { WebhookCapabilitiesView, WebhookDeadLetterView, WebhookEndpointView, We
 import { ShellPanelService } from '@shell/panel/shell-panel.service';
 import { RotateWebhookSecretRequest, UpsertWebhookEndpointRequest } from '@croniq/api-schema';
 import { FormField, form } from '@angular/forms/signals';
-import { CqCellDefDirective, CqColumnComponent, CqConfirmDialogComponent, CqConfirmDialogData, CqContextMenuItemDirective, CqDialogService, CqFormFieldComponent, CqInputDirective, CqSelectDirective, CqTextareaDirective, DataGrid } from 'ui-kit';
+import { CqCellDefDirective, CqColumnComponent, CqConfirmDialogComponent, CqConfirmDialogData, CqContextMenuItemDirective, CqDialogService, CqFormFieldComponent, CqIconComponent, CqInputDirective, CqSelectDirective, CqTextareaDirective, DataGrid } from 'ui-kit';
 import { filter } from 'rxjs';
 
 type WebhookDialogData = {
@@ -93,6 +93,7 @@ export class CqWebhookCellDirective extends CqCellDefDirective<WebhookEndpointVi
     CqColumnComponent,
     CqWebhookCellDirective,
     CqFormFieldComponent,
+    CqIconComponent,
     CqInputDirective,
     CqSelectDirective,
     CqTextareaDirective,
@@ -110,6 +111,7 @@ export class WebhooksPage {
   private readonly dialog = inject(CqDialogService);
   private readonly shellPanel = inject(ShellPanelService);
   private readonly panelTemplate = viewChild<TemplateRef<unknown>>('webhooksFilterPanel');
+  private readonly collapsedTemplate = viewChild<TemplateRef<unknown>>('webhooksFilterCollapsed');
 
   readonly endpoints = this.store.endpoints;
   readonly loading = this.store.loading;
@@ -558,10 +560,16 @@ export class WebhooksPage {
   constructor() {
     effect((onCleanup) => {
       const template = this.panelTemplate();
+      const collapsedTemplate = this.collapsedTemplate();
       if (!template) {
         return;
       }
-      this.shellPanel.setPanel(template, 'Filters & settings', 'Refine the endpoints list.');
+      this.shellPanel.setPanel(
+        template,
+        'Filters & settings',
+        'Refine the endpoints list.',
+        collapsedTemplate ?? null,
+      );
       onCleanup(() => this.shellPanel.clearPanel(template));
     });
 
