@@ -10,6 +10,7 @@
       "@shared/*": ["./src/app/shared/*"],
       "@features/*": ["./src/app/features/*"],
       "@shell/*": ["./src/app/shell/*"],
+      "@ui-kit/*": ["./projects/ui-kit/src/lib/*"],
       "data-access": ["./projects/data-access/src/public-api.ts", "./dist/data-access"],
       "telemetry": ["./projects/telemetry/src/public-api.ts", "./dist/telemetry"],
       "ui-kit": ["./projects/ui-kit/src/public-api.ts", "./dist/ui-kit"],

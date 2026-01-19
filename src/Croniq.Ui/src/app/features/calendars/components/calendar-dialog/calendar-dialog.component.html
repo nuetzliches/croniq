@@ -30,7 +30,7 @@
       <input
         id="calendarId"
         type="text"
-        [field]="form.calendarId"
+        [formField]="form.calendarId"
         class="w-full rounded-lg border border-white/10 bg-surface-alt px-3 py-2 text-sm text-primary placeholder:text-muted focus:border-accent focus:outline-none"
         placeholder="e.g. holidays-eu"
       />
@@ -45,7 +45,7 @@
       <input
         id="name"
         type="text"
-        [field]="form.name"
+        [formField]="form.name"
         class="w-full rounded-lg border border-white/10 bg-surface-alt px-3 py-2 text-sm text-primary placeholder:text-muted focus:border-accent focus:outline-none"
         placeholder="e.g. EU holidays"
       />
@@ -60,7 +60,7 @@
       <textarea
         id="description"
         rows="3"
-        [field]="form.description"
+        [formField]="form.description"
         class="w-full rounded-lg border border-white/10 bg-surface-alt px-3 py-2 text-sm text-primary placeholder:text-muted focus:border-accent focus:outline-none"
         placeholder="Optional description..."
       ></textarea>
@@ -72,7 +72,7 @@
       <input
         id="timeZoneId"
         type="text"
-        [field]="form.timeZoneId"
+        [formField]="form.timeZoneId"
         class="w-full rounded-lg border border-white/10 bg-surface-alt px-3 py-2 text-sm text-primary placeholder:text-muted focus:border-accent focus:outline-none"
         placeholder="e.g. UTC or Europe/Berlin"
       />
@@ -87,7 +87,7 @@
       <label for="mode" class="text-sm font-medium text-muted">Mode</label>
       <select
         id="mode"
-        [field]="form.mode"
+        [formField]="form.mode"
         class="w-full rounded-lg border border-white/10 bg-surface-alt px-3 py-2 text-sm text-primary focus:border-accent focus:outline-none"
       >
         @for (option of modeOptions; track option.value) {
@@ -102,7 +102,7 @@
       <input
         id="enabled"
         type="checkbox"
-        [field]="form.enabled"
+        [formField]="form.enabled"
         class="h-4 w-4 rounded border-white/10 bg-surface-alt text-accent focus:ring-accent"
       />
       <label for="enabled" class="text-sm font-medium text-primary">Enabled</label>
@@ -114,7 +114,7 @@
       <textarea
         id="rulesJson"
         rows="8"
-        [field]="form.rulesJson"
+        [formField]="form.rulesJson"
         class="w-full rounded-lg border border-white/10 bg-surface-alt px-3 py-2 text-xs font-mono text-primary placeholder:text-muted focus:border-accent focus:outline-none"
         placeholder='[{"ruleId":"weekday","ruleType":1,"sortOrder":0,"isEnabled":true,"weeklyWindow":{"daysOfWeek":["Mon","Tue","Wed","Thu","Fri"]}}]'
       ></textarea>

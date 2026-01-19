@@ -1,5 +1,5 @@
 import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@angular/core';
-import { Field, form, required, submit } from '@angular/forms/signals';
+import { FormField, form, required, submit } from '@angular/forms/signals';
 import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 import { AuthSessionService } from '@core/auth/auth-session.service';
 import { PasswordAuthService } from '@core/auth/password-auth.service';
@@ -10,7 +10,7 @@ import { finalize } from 'rxjs';
 
 @Component({
     selector: 'cq-login-page',
-    imports: [RouterLink, Field, AppBrand],
+    imports: [RouterLink, FormField, AppBrand],
     templateUrl: './login-page.html',
     changeDetection: ChangeDetectionStrategy.OnPush,
 })

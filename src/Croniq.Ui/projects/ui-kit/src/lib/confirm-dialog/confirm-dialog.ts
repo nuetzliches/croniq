@@ -1,6 +1,6 @@
 import { DIALOG_DATA, DialogRef } from '@angular/cdk/dialog';
 import { ChangeDetectionStrategy, Component, inject } from '@angular/core';
-import { CqDialogComponent, CqDialogFooterDirective, CqDialogHeaderDirective } from '../dialog/dialog';
+import { CqDialogComponent, CqDialogFooterDirective, CqDialogHeaderDirective } from '@ui-kit/dialog/dialog';
 
 type ConfirmVariant = 'default' | 'danger';
 

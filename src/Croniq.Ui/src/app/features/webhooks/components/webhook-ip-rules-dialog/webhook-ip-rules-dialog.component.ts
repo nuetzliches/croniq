@@ -1,17 +1,11 @@
 import { DIALOG_DATA, DialogRef } from '@angular/cdk/dialog';
 import { ChangeDetectionStrategy, Component, DestroyRef, computed, inject, linkedSignal, signal } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
-import { Field, form } from '@angular/forms/signals';
+import { FormField, form } from '@angular/forms/signals';
 import { TenantContextService } from '@core/tenant-context/tenant-context.service';
 import { CreateWebhookIpRuleRequest } from '@croniq/api-schema';
 import { WebhookEndpointView, WebhookIpRuleView, WebhooksStore } from '@features/webhooks/webhooks.store';
-import {
-    CqDialogComponent,
-    CqDialogHeaderDirective,
-    CqFormFieldComponent,
-    CqInputDirective,
-    CqTextareaDirective,
-} from 'ui-kit';
+import { CqDialogComponent, CqDialogHeaderDirective, CqFormFieldComponent, CqInputDirective, CqTextareaDirective } from 'ui-kit';
 
 type IpRuleFormModel = {
     cidr: string;
@@ -25,7 +19,7 @@ type WebhookIpRulesDialogData = {
 @Component({
     selector: 'cq-webhook-ip-rules-dialog',
     imports: [
-        Field,
+        FormField,
         CqDialogComponent,
         CqDialogHeaderDirective,
         CqFormFieldComponent,

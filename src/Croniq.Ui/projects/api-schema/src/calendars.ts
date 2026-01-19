@@ -1,14 +1,6 @@
 import { z } from 'zod';
 import type { CalendarResponse, CalendarRuleDefinition } from '../generated/schemas';
-import {
-    CalendarAnnualDateListRule,
-    CalendarCronRule,
-    CalendarDailyWindowRule,
-    CalendarDateListRule,
-    CalendarResponse as CalendarResponseSchema,
-    CalendarRuleDefinition as CalendarRuleDefinitionSchema,
-    CalendarWeeklyWindowRule,
-} from '../generated/schemas';
+import { CalendarAnnualDateListRule, CalendarCronRule, CalendarDailyWindowRule, CalendarDateListRule, CalendarResponse as CalendarResponseSchema, CalendarRuleDefinition as CalendarRuleDefinitionSchema, CalendarWeeklyWindowRule } from '../generated/schemas';
 
 const optionalNullable = <T extends z.ZodTypeAny>(schema: T) => schema.nullable().optional();
 

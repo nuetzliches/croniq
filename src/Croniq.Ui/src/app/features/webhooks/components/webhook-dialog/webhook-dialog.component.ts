@@ -1,16 +1,8 @@
 import { DialogRef, DIALOG_DATA } from '@angular/cdk/dialog';
 import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@angular/core';
-import { disabled, Field, form, required, submit } from '@angular/forms/signals';
+import { disabled, FormField, form, required, submit } from '@angular/forms/signals';
 import { UpsertWebhookEndpointRequest } from '@croniq/api-schema';
-import {
-    CqDialogComponent,
-    CqDialogFooterDirective,
-    CqDialogHeaderDirective,
-    CqFormFieldComponent,
-    CqInputDirective,
-    CqTextareaDirective,
-    CqToggleDirective,
-} from 'ui-kit';
+import { CqDialogComponent, CqDialogFooterDirective, CqDialogHeaderDirective, CqFormFieldComponent, CqInputDirective, CqTextareaDirective, CqToggleDirective } from 'ui-kit';
 type WebhookDialogData = {
     endpoint: UpsertWebhookEndpointRequest | null;
     capabilities: {
@@ -45,7 +37,7 @@ function mapToFormModel(data: UpsertWebhookEndpointRequest | null, forceSignatur
 @Component({
     selector: 'cq-webhook-dialog',
     imports: [
-        Field,
+        FormField,
         CqDialogComponent,
         CqDialogHeaderDirective,
         CqDialogFooterDirective,

@@ -30,7 +30,7 @@
       <input
         id="clientId"
         type="text"
-        [field]="form.clientId"
+        [formField]="form.clientId"
         class="w-full rounded-lg border border-white/10 bg-surface-alt px-3 py-2 text-sm text-primary placeholder:text-muted focus:border-accent focus:outline-none"
         placeholder="e.g. ci-pipeline"
       />
@@ -45,7 +45,7 @@
       <input
         id="name"
         type="text"
-        [field]="form.name"
+        [formField]="form.name"
         class="w-full rounded-lg border border-white/10 bg-surface-alt px-3 py-2 text-sm text-primary placeholder:text-muted focus:border-accent focus:outline-none"
         placeholder="e.g. CI/CD Primary Worker"
       />
@@ -57,7 +57,7 @@
       <input
         id="environment"
         type="text"
-        [field]="form.environmentTag"
+        [formField]="form.environmentTag"
         class="w-full rounded-lg border border-white/10 bg-surface-alt px-3 py-2 text-sm text-primary placeholder:text-muted focus:border-accent focus:outline-none"
         placeholder="e.g. Live"
       />

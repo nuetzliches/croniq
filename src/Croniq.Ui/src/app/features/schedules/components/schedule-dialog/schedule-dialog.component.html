@@ -32,7 +32,7 @@
         <input
           type="text"
           id="jobKey"
-          [field]="scheduleForm.jobKey"
+          [formField]="scheduleForm.jobKey"
           class="w-full rounded-lg border border-white/10 bg-surface-alt px-3 py-2 text-sm text-white placeholder-muted focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
           placeholder="e.g. billing:invoice-generation"
         />
@@ -46,7 +46,7 @@
         <input
           type="text"
           id="cronExpression"
-          [field]="scheduleForm.cronExpression"
+          [formField]="scheduleForm.cronExpression"
           class="w-full rounded-lg border border-white/10 bg-surface-alt px-3 py-2 text-sm text-white placeholder-muted focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
           placeholder="e.g. 0 0 * * *"
         />
@@ -58,7 +58,7 @@
         <label for="calendarId" class="mb-1 block text-sm font-medium text-muted">Calendar</label>
         <select
           id="calendarId"
-          [field]="scheduleForm.calendarId"
+          [formField]="scheduleForm.calendarId"
           class="w-full rounded-lg border border-white/10 bg-surface-alt px-3 py-2 text-sm text-white placeholder-muted focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
         >
           @for (option of calendarSelectOptions(); track option.calendarId) {
@@ -92,7 +92,7 @@
         >
         <textarea
           id="description"
-          [field]="scheduleForm.description"
+          [formField]="scheduleForm.description"
           rows="3"
           class="w-full rounded-lg border border-white/10 bg-surface-alt px-3 py-2 text-sm text-white placeholder-muted focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
           placeholder="Optional description..."
@@ -104,14 +104,14 @@
         <input
           type="checkbox"
           id="enabled"
-          [field]="scheduleForm.enabled"
+          [formField]="scheduleForm.enabled"
           class="h-4 w-4 rounded border-white/10 bg-surface-alt text-accent focus:ring-accent"
         />
         <label for="enabled" class="text-sm font-medium text-white">Enabled</label>
       </div>
 
       <!-- Hidden Trigger ID for Edit Mode -->
-      <input type="hidden" [field]="scheduleForm.triggerId" />
+      <input type="hidden" [formField]="scheduleForm.triggerId" />
     </form>
 
     <div cqDialogFooter class="flex items-center justify-end gap-3">

@@ -1,6 +1,6 @@
 import { DIALOG_DATA, DialogRef } from '@angular/cdk/dialog';
 import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@angular/core';
-import { Field, form, min, submit } from '@angular/forms/signals';
+import { FormField, form, min, submit } from '@angular/forms/signals';
 import { RotateWebhookSecretRequest } from '@croniq/api-schema';
 import { CqDialogComponent, CqDialogFooterDirective, CqDialogHeaderDirective, CqFormFieldComponent, CqInputDirective, CqTextareaDirective } from 'ui-kit';
 
@@ -25,7 +25,7 @@ const DEFAULT_MODEL: RotateSecretFormModel = {
     templateUrl: './webhook-rotate-secret-dialog.component.html',
     changeDetection: ChangeDetectionStrategy.OnPush,
     imports: [
-        Field,
+        FormField,
         CqDialogComponent,
         CqDialogHeaderDirective,
         CqDialogFooterDirective,

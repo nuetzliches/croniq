@@ -21,7 +21,7 @@
           <input
             id="login-tenant-id"
             type="text"
-            [field]="loginForm.tenantId"
+            [formField]="loginForm.tenantId"
             class="w-full rounded-lg border border-white/10 bg-white/5 px-4 py-2.5 text-sm text-primary placeholder-white/20 transition focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
             placeholder="Enter your tenant ID"
             autocomplete="organization"
@@ -47,7 +47,7 @@
           <input
             id="login-username"
             type="text"
-            [field]="loginForm.username"
+            [formField]="loginForm.username"
             class="w-full rounded-lg border border-white/10 bg-white/5 px-4 py-2.5 text-sm text-primary placeholder-white/20 transition focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
             placeholder="Enter your username"
             autocomplete="username"
@@ -72,7 +72,7 @@
           <input
             id="login-password"
             type="password"
-            [field]="loginForm.password"
+            [formField]="loginForm.password"
             class="w-full rounded-lg border border-white/10 bg-white/5 px-4 py-2.5 text-sm text-primary placeholder-white/20 transition focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
             placeholder="Enter your password"
             autocomplete="current-password"

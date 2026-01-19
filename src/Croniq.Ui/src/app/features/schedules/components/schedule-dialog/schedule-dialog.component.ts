@@ -1,6 +1,6 @@
 import { CdkTrapFocus } from '@angular/cdk/a11y';
 import { ChangeDetectionStrategy, Component, computed, input, linkedSignal, output } from '@angular/core';
-import { disabled, Field, form, required, submit } from '@angular/forms/signals';
+import { disabled, FormField, form, required, submit } from '@angular/forms/signals';
 import { UpsertScheduleRequest } from '@croniq/api-schema';
 import type { CalendarOption } from '@features/schedules/schedules-page/schedules.store';
 import { CqDialogComponent, CqDialogFooterDirective, CqDialogHeaderDirective } from 'ui-kit';
@@ -43,7 +43,7 @@ const getScheduleFormModel = (schedule?: UpsertScheduleRequest | null): Schedule
 
 @Component({
     selector: 'app-schedule-dialog',
-    imports: [Field, CdkTrapFocus, CqDialogComponent, CqDialogHeaderDirective, CqDialogFooterDirective],
+    imports: [FormField, CdkTrapFocus, CqDialogComponent, CqDialogHeaderDirective, CqDialogFooterDirective],
     templateUrl: './schedule-dialog.component.html',
     changeDetection: ChangeDetectionStrategy.OnPush,
 })

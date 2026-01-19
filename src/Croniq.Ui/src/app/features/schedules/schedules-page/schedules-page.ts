@@ -3,7 +3,7 @@ import { ChangeDetectionStrategy, Component, Directive, computed, effect, inject
 import { epochMsFromIso, nowMs } from '@core/time/clock';
 import { UpsertScheduleRequest } from '@croniq/api-schema';
 import { ScheduleDialogComponent } from '@features/schedules/components/schedule-dialog/schedule-dialog.component';
-import { ColumnCellContext, CqCellDefDirective, CqColumnComponent, DataGrid } from 'ui-kit';
+import { CqCellDefDirective, CqColumnComponent, DataGrid } from 'ui-kit';
 import { SchedulesStore, type ScheduleRow } from './schedules.store';
 
 type ScheduleCalendarEntry = {

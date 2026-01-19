@@ -34,7 +34,7 @@
         id="hookKey"
         type="text"
         cqInput
-        [field]="webhookForm.hookKey"
+        [formField]="webhookForm.hookKey"
         placeholder="e.g. stripe-events"
       />
       }
@@ -50,7 +50,7 @@
         id="jobKey"
         type="text"
         cqInput
-        [field]="webhookForm.jobKey"
+        [formField]="webhookForm.jobKey"
         placeholder="e.g. billing-sync"
       />
     </cq-form-field>
@@ -68,7 +68,7 @@
         id="secret"
         type="text"
         cqInput
-        [field]="webhookForm.secret"
+        [formField]="webhookForm.secret"
         placeholder="Enter a strong secret..."
       />
     </cq-form-field>
@@ -78,7 +78,7 @@
       <textarea
         id="description"
         cqTextarea
-        [field]="webhookForm.description"
+        [formField]="webhookForm.description"
         rows="3"
         placeholder="Describe this webhook endpoint..."
       ></textarea>
@@ -94,20 +94,20 @@
         id="requestsPerMinute"
         type="number"
         cqInput
-        [field]="$any(webhookForm.requestsPerMinute)"
+        [formField]="$any(webhookForm.requestsPerMinute)"
         placeholder="Optional (e.g. 60)"
       />
     </cq-form-field>
 
     <div class="space-y-3 pt-2">
       <label class="flex items-center gap-3">
-        <input type="checkbox" cqToggle [field]="webhookForm.enabled" />
+        <input type="checkbox" cqToggle [formField]="webhookForm.enabled" />
         <span class="text-sm font-medium text-primary">Enabled</span>
       </label>
       <p class="text-xs text-muted">Disabling pauses inbound deliveries.</p>
 
       <label class="flex items-center gap-3">
-        <input type="checkbox" cqToggle [field]="webhookForm.requireSignature" />
+        <input type="checkbox" cqToggle [formField]="webhookForm.requireSignature" />
         <span class="text-sm font-medium text-primary">Require signature</span>
       </label>
       @if (signatureToggleDisabled) {

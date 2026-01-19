@@ -19,7 +19,7 @@
             <select
               id="settings-theme"
               class="h-10 w-full rounded-lg border border-white/10 bg-white/5 px-3 text-sm text-primary focus:border-accent focus:outline-none"
-              [field]="preferencesForm.theme"
+              [formField]="preferencesForm.theme"
               (change)="onThemeChange()"
             >
               <option value="ops-dark">Ops Dark</option>
@@ -33,7 +33,7 @@
             <select
               id="settings-density"
               class="h-10 w-full rounded-lg border border-white/10 bg-white/5 px-3 text-sm text-primary focus:border-accent focus:outline-none"
-              [field]="preferencesForm.tableDensity"
+              [formField]="preferencesForm.tableDensity"
               (change)="onDensityChange()"
             >
               <option value="comfortable">Comfortable</option>

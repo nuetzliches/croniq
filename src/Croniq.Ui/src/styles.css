@@ -1,5 +1,8 @@
-@tailwind base;
-@tailwind components;
+@config "../tailwind.config.js";
+@source "../src/**/*.{html,ts}";
+@source "../projects/**/*.{html,ts}";
+@import "tailwindcss/preflight";
+@import "tailwindcss/theme";
 @tailwind utilities;
 
 :root {

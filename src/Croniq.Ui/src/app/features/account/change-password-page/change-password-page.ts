@@ -1,5 +1,5 @@
 import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@angular/core';
-import { Field, form, required, submit } from '@angular/forms/signals';
+import { FormField, form, required, submit } from '@angular/forms/signals';
 import { Router, RouterLink } from '@angular/router';
 import { PasswordAuthService } from '@core/auth/password-auth.service';
 import { AppBrand } from '@shared/app-brand/app-brand';
@@ -7,7 +7,7 @@ import { finalize } from 'rxjs';
 
 @Component({
     selector: 'cq-change-password-page',
-    imports: [Field, RouterLink, AppBrand],
+    imports: [FormField, RouterLink, AppBrand],
     templateUrl: './change-password-page.html',
     changeDetection: ChangeDetectionStrategy.OnPush,
 })

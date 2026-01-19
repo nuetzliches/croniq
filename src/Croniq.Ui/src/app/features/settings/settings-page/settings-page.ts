@@ -1,6 +1,6 @@
 import { DatePipe } from '@angular/common';
 import { ChangeDetectionStrategy, Component, computed, inject, linkedSignal } from '@angular/core';
-import { Field, form } from '@angular/forms/signals';
+import { FormField, form } from '@angular/forms/signals';
 import { UiPreferencesService } from '@core/preferences/ui-preferences.service';
 import { type UiPreferences, type UiTableDensityPreference, type UiThemePreference } from '@core/preferences/ui-preferences.types';
 import { TenantContextService } from '@core/tenant-context/tenant-context.service';
@@ -19,7 +19,7 @@ function mapToFormModel(preferences: UiPreferences): PreferencesFormModel {
 
 @Component({
   selector: 'cq-settings-page',
-  imports: [DatePipe, Field],
+  imports: [DatePipe, FormField],
   templateUrl: './settings-page.html',
   changeDetection: ChangeDetectionStrategy.OnPush,
 })

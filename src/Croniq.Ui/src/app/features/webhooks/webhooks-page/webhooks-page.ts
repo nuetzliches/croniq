@@ -9,7 +9,7 @@ import { WebhookRotateSecretDialogComponent } from '@features/webhooks/component
 import { WebhookCapabilitiesView, WebhookDeadLetterView, WebhookEndpointView, WebhooksStore } from '@features/webhooks/webhooks.store';
 import { ShellPanelService } from '@shell/panel/shell-panel.service';
 import { RotateWebhookSecretRequest, UpsertWebhookEndpointRequest } from '@croniq/api-schema';
-import { Field, form } from '@angular/forms/signals';
+import { FormField, form } from '@angular/forms/signals';
 import { CqCellDefDirective, CqColumnComponent, CqConfirmDialogComponent, CqConfirmDialogData, CqContextMenuItemDirective, CqDialogService, CqFormFieldComponent, CqInputDirective, CqSelectDirective, CqTextareaDirective, DataGrid } from 'ui-kit';
 import { filter } from 'rxjs';
 
@@ -88,7 +88,7 @@ export class CqWebhookCellDirective extends CqCellDefDirective<WebhookEndpointVi
   selector: 'cq-webhooks-page',
   imports: [
     DatePipe,
-    Field,
+    FormField,
     DataGrid,
     CqColumnComponent,
     CqWebhookCellDirective,

@@ -12,9 +12,9 @@ export class CqPanelShellComponent {
     readonly title = input<string>('Filters & settings');
     readonly subtitle = input<string>('');
     readonly open = input<boolean>(true);
-    readonly toggle = output<void>();
+    readonly toggleRequested = output<void>();
 
     handleToggle(): void {
-        this.toggle.emit();
+        this.toggleRequested.emit();
     }
 }

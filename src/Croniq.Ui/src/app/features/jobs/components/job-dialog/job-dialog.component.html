@@ -30,7 +30,7 @@
       <input
         id="jobKey"
         type="text"
-        [field]="jobForm.jobKey"
+        [formField]="jobForm.jobKey"
         class="w-full rounded-lg border border-white/10 bg-surface-alt px-3 py-2 text-sm text-primary placeholder:text-muted focus:border-accent focus:outline-none"
         placeholder="e.g. billing-sync"
       />
@@ -45,7 +45,7 @@
       <input
         id="namespace"
         type="text"
-        [field]="jobForm.namespace"
+        [formField]="jobForm.namespace"
         class="w-full rounded-lg border border-white/10 bg-surface-alt px-3 py-2 text-sm text-primary placeholder:text-muted focus:border-accent focus:outline-none"
         placeholder="e.g. default"
       />
@@ -60,7 +60,7 @@
       <input
         id="name"
         type="text"
-        [field]="jobForm.name"
+        [formField]="jobForm.name"
         class="w-full rounded-lg border border-white/10 bg-surface-alt px-3 py-2 text-sm text-primary placeholder:text-muted focus:border-accent focus:outline-none"
         placeholder="Display name"
       />
@@ -75,7 +75,7 @@
       <input
         id="variant"
         type="text"
-        [field]="jobForm.variant"
+        [formField]="jobForm.variant"
         class="w-full rounded-lg border border-white/10 bg-surface-alt px-3 py-2 text-sm text-primary placeholder:text-muted focus:border-accent focus:outline-none"
         placeholder="e.g. v1"
       />
@@ -86,7 +86,7 @@
       <label for="description" class="text-sm font-medium text-muted">Description (Optional)</label>
       <textarea
         id="description"
-        [field]="jobForm.description"
+        [formField]="jobForm.description"
         rows="3"
         class="w-full rounded-lg border border-white/10 bg-surface-alt px-3 py-2 text-sm text-primary placeholder:text-muted focus:border-accent focus:outline-none"
         placeholder="Describe what this job does..."

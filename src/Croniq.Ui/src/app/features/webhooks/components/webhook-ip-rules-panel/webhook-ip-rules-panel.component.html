@@ -64,7 +64,7 @@
       hint="Example: 203.0.113.0/28"
       [error]="cidrError()"
     >
-      <input id="ip-rule-cidr" type="text" placeholder="CIDR block" cqInput [field]="form.cidr" />
+      <input id="ip-rule-cidr" type="text" placeholder="CIDR block" cqInput [formField]="form.cidr" />
     </cq-form-field>
     <cq-form-field
       label="Description"
@@ -76,7 +76,7 @@
         rows="2"
         placeholder="Reason or owner"
         cqTextarea
-        [field]="form.description"
+        [formField]="form.description"
       ></textarea>
     </cq-form-field>
     <button

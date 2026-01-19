@@ -1,5 +1,5 @@
 import { ChangeDetectionStrategy, Component, computed, input, linkedSignal, output } from '@angular/core';
-import { Field, form } from '@angular/forms/signals';
+import { FormField, form } from '@angular/forms/signals';
 import { WebhookEndpointView, WebhookIpRuleView } from '@features/webhooks/webhooks.store';
 import { CqFormFieldComponent, CqInputDirective, CqTextareaDirective } from 'ui-kit';
 
@@ -10,7 +10,7 @@ type IpRuleFormModel = {
 
 @Component({
     selector: 'cq-webhook-ip-rules-panel',
-    imports: [Field, CqFormFieldComponent, CqInputDirective, CqTextareaDirective],
+    imports: [FormField, CqFormFieldComponent, CqInputDirective, CqTextareaDirective],
     templateUrl: './webhook-ip-rules-panel.component.html',
     changeDetection: ChangeDetectionStrategy.OnPush,
 })

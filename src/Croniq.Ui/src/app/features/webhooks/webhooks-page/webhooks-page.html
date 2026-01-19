@@ -112,7 +112,7 @@
 
       <div class="space-y-2">
         <div class="text-xs font-semibold uppercase tracking-wide text-muted">Status</div>
-        <select id="filter-status" cqSelect [field]="filterForm.status">
+        <select id="filter-status" cqSelect [formField]="filterForm.status">
           @for (option of statusOptions; track option.value) {
             <option [value]="option.value">{{ option.label }}</option>
           }
@@ -121,7 +121,7 @@
 
       <div class="space-y-2">
         <div class="text-xs font-semibold uppercase tracking-wide text-muted">Environment</div>
-        <select id="filter-environment" cqSelect [field]="filterForm.environment">
+        <select id="filter-environment" cqSelect [formField]="filterForm.environment">
           @for (option of environmentOptions(); track option.value) {
             <option [value]="option.value">{{ option.label }}</option>
           }

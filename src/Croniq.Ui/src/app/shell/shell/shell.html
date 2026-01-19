@@ -82,7 +82,7 @@
           [title]="panelTitle()"
           [subtitle]="panelSubtitle()"
           [open]="panelOpen()"
-          (toggle)="togglePanel()"
+          (toggleRequested)="togglePanel()"
         />
         <div class="flex-1 min-w-0 p-6">
           <router-outlet />
