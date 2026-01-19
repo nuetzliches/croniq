@@ -6,17 +6,24 @@ param(
 
     [string] $OutputDirectory = "artifacts/ci-compose",
 
-    [switch] $CaptureLogs
+    [switch] $CaptureLogs,
+
+    [string[]] $ComposeFiles = @(
+        "infra/docker/docker-compose.yml",
+        "infra/docker/docker-compose.dev.yml",
+        "infra/docker/docker-compose.observability.yml"
+    )
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
-$composeFiles = @(
-    "-f", "infra/docker/docker-compose.yml",
-    "-f", "infra/docker/docker-compose.dev.yml",
-    "-f", "infra/docker/docker-compose.observability.yml"
-)
+$composeFiles = @()
+foreach ($file in $ComposeFiles) {
+    if (-not [string]::IsNullOrWhiteSpace($file)) {
+        $composeFiles += @("-f", $file)
+    }
+}
 
 $profileArgs = @()
 foreach ($profile in $Profiles) {

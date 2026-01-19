@@ -16,7 +16,7 @@ This document extends the quality vision captured in `architecture.md` and descr
 | `Unit` (`tests/Croniq.*.Tests`)                      | Pure logic, options, schedulers, API surface guards                                                                          | Every PR + local pre-push    | `xUnit`, `Shouldly`, `dotnet test`                      | Fail blocks merge                 |
 | `Contract` (`*.ContractTests`)                       | Provider contracts (SqlServer/Postgres persistence/auth, secrets) via Testcontainers                                         | Every PR (parallel)          | `Testcontainers`, seeded SQL, `Croniq.TestKit`          | Fail blocks merge                 |
 | `Observability` (`tests/Croniq.Observability.Tests`) | Verifies OTLP exporter wiring using an in-memory collector + host builder                                                    | Every PR + nightly + release | `dotnet test`, ASP.NET host, lightweight OTLP server    | Fail blocks merge/release         |
-| `Smoke`/`E2E` (`tests/Croniq.Api.Smoke`)             | `Croniq.Sample.ApiHost` + `Croniq.Sample.WorkerHost` via Compose (InMemory auth, SqlServer persistence by default, migrator) | Nightly + release candidate  | `scripts/test-e2e.cmd` (Docker Compose + `dotnet test`) | Fail blocks release/nightly badge |
+| `Smoke`/`E2E` (`tests/Croniq.Api.Smoke`)             | Local: `Croniq.Sample.ApiHost` + `Croniq.Sample.WorkerHost`. CI: `Croniq.ApiHost` + `Croniq.WorkerHost` + `Croniq.WebhooksHost` (StoreOnly ingress). | Nightly + release candidate  | `scripts/test-e2e.cmd` (Docker Compose + `dotnet test`) | Fail blocks release/nightly badge |
 | `Compliance`                                         | SBOM, Trivy scan, dependency audit                                                                                           | Nightly + release            | `Syft`, `Trivy`, GitHub Actions reusable workflows      | Fail blocks release               |
 | `Perf/Burn-in` (planned)                             | Long-running stress on scheduler leases + quotas                                                                             | On-demand / before GA        | Testcontainers + perf harness (to be defined)           | Informational                     |
 
@@ -57,8 +57,8 @@ This document extends the quality vision captured in `architecture.md` and descr
 
 ### End-to-End & Smoke Tests
 
-- **Scope**: Validates that the sample API host, worker host, SqlServer persistence (default), and migrator collaborate successfully.
-- **Frameworks**: `xUnit` harness under `tests/Croniq.Api.Smoke`, `Shouldly`, Docker Compose stack defined in `infra/docker/docker-compose.tests.yml`.
+- **Scope**: Validates that the API, worker, SqlServer persistence (default), and migrator collaborate successfully. CI runs production hosts with a StoreOnly webhooks ingress to avoid embedding sample jobs.
+- **Frameworks**: `xUnit` harness under `tests/Croniq.Api.Smoke`, `Shouldly`, Docker Compose stacks defined in `infra/docker/docker-compose.tests.yml` (local) and `infra/docker/docker-compose.ci.yml` (CI override).
 - **Execution**: `scripts\test-e2e.cmd` orchestrates build, compose up, readiness polling, `dotnet test tests/Croniq.Api.Smoke/...`, and teardown. Override `CRONIQ_API_BASEURL`/`CRONIQ_API_KEY` to target remote environments.
 - **Cadence**: Nightly + release candidate builds; run manually before large API refactors. Failures block releases.
 - **Scenarios**: `Webhook_ip_rule_crud_roundtrip` validates the management APIs, and `Webhook_ingress_respects_ip_rules` now hits the live ingress twice - first expecting `403 ip-blocked`, then `202 accepted` after adding a catch-all rule - alongside the existing health/schedule checks.

@@ -27,11 +27,14 @@ var app = builder.Build();
 
 app.MapHealthChecks("/health");
 
-app.MapGet("/assets/croniq-config.json", async (HttpContext context, IWebHostEnvironment env) =>
+app.Map("/assets/croniq-config.json", configApp =>
 {
-    var config = LoadRuntimeConfig(env, app.Logger);
-    context.Response.Headers.CacheControl = "no-store";
-    await context.Response.WriteAsJsonAsync(config, JsonOptions.Output);
+    configApp.Run(async context =>
+    {
+        var config = LoadRuntimeConfig(context.RequestServices.GetRequiredService<IWebHostEnvironment>(), app.Logger);
+        context.Response.Headers.CacheControl = "no-store";
+        await context.Response.WriteAsJsonAsync(config, JsonOptions.Output);
+    });
 });
 
 app.UseDefaultFiles();

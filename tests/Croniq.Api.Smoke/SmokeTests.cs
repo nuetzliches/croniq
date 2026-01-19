@@ -166,7 +166,7 @@ public sealed class SmokeTests
                 allowedResponse.StatusCode.ShouldBe(HttpStatusCode.Accepted);
                 var body = await allowedResponse.Content.ReadFromJsonAsync<WebhookTriggerResponse>();
                 body.ShouldNotBeNull();
-                body!.Status.ShouldBe("triggered");
+                new[] { "triggered", "stored" }.ShouldContain(body!.Status);
                 body.Hook.ShouldBe(hookKey);
                 body.Job.ShouldBe(jobKey);
             }

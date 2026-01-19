@@ -74,6 +74,12 @@ jobs:
           ./scripts/ci/compose-devstack.ps1
           -Action Up
           -Profiles @('api','worker','obs')
+          -ComposeFiles @(
+            'infra/docker/docker-compose.yml',
+            'infra/docker/docker-compose.dev.yml',
+            'infra/docker/docker-compose.ci.yml',
+            'infra/docker/docker-compose.observability.yml'
+          )
 
       - name: Wait for API health
         shell: pwsh
@@ -81,18 +87,20 @@ jobs:
           try {
             ./scripts/ci/wait-for-http.ps1 -Uri "http://localhost:5080/health"
           } catch {
-            ./scripts/ci/compose-devstack.ps1 -Action Logs -Profiles @('api','worker','obs') -OutputDirectory artifacts
+            ./scripts/ci/compose-devstack.ps1 -Action Logs -Profiles @('api','worker','obs') -OutputDirectory artifacts -ComposeFiles @('infra/docker/docker-compose.yml','infra/docker/docker-compose.dev.yml','infra/docker/docker-compose.ci.yml','infra/docker/docker-compose.observability.yml')
             throw
           }
 
       - name: Run Croniq.Api.Smoke tests
         run: dotnet test tests/Croniq.Api.Smoke/Croniq.Api.Smoke.csproj --configuration Release
+        env:
+          CRONIQ_WEBHOOK_BASEURL: http://localhost:5081
 
       - name: Collect docker logs
         if: always()
         shell: pwsh
         run: >-
-          ./scripts/ci/compose-devstack.ps1 -Action Logs -Profiles @('api','worker','obs') -OutputDirectory artifacts
+          ./scripts/ci/compose-devstack.ps1 -Action Logs -Profiles @('api','worker','obs') -OutputDirectory artifacts -ComposeFiles @('infra/docker/docker-compose.yml','infra/docker/docker-compose.dev.yml','infra/docker/docker-compose.ci.yml','infra/docker/docker-compose.observability.yml')
 
       - name: Upload docker logs
         if: always()
@@ -105,7 +113,7 @@ jobs:
         if: always()
         shell: pwsh
         run: >-
-          ./scripts/ci/compose-devstack.ps1 -Action Down -Profiles @('api','worker','obs') -CaptureLogs
+          ./scripts/ci/compose-devstack.ps1 -Action Down -Profiles @('api','worker','obs') -CaptureLogs -ComposeFiles @('infra/docker/docker-compose.yml','infra/docker/docker-compose.dev.yml','infra/docker/docker-compose.ci.yml','infra/docker/docker-compose.observability.yml')
 
   compliance:
     name: SBOM & Vulnerability Scan

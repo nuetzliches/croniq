@@ -1,0 +1,55 @@
+services:
+  croniq-db-migrator:
+    build:
+      context: ../..
+      dockerfile: infra/docker/Dockerfile.production
+      target: migrator
+
+  croniq-api:
+    build:
+      context: ../..
+      dockerfile: infra/docker/Dockerfile.production
+      target: api
+    environment:
+      Croniq__Webhooks__Mode: SqlServer
+
+  croniq-worker:
+    build:
+      context: ../..
+      dockerfile: infra/docker/Dockerfile.production
+      target: worker
+
+  croniq-webhooks:
+    build:
+      context: ../..
+      dockerfile: infra/docker/Dockerfile.production
+      target: webhooks
+    environment:
+      DOTNET_ENVIRONMENT: ${CRONIQ_DOTNET_ENVIRONMENT:-Development}
+      Croniq__Auth__Mode: ${CRONIQ_AUTH_MODE:-InMemory}
+      Croniq__Auth__InMemory__ApiKey: ${CRONIQ_API_KEY:-smoke-key}
+      Croniq__Auth__InMemory__TenantId: ${CRONIQ_CORE_TENANT_ID:-default}
+      Croniq__Auth__InMemory__EnvironmentTag: ${CRONIQ_ENVIRONMENT:-dev}
+      Croniq__Auth__Password__Enabled: ${CRONIQ_AUTH_PASSWORD_ENABLED:-false}
+      Croniq__Persistence__Mode: SqlServer
+      Croniq__Webhooks__Mode: SqlServer
+      Croniq__Webhooks__Ingress__DispatchMode: StoreOnly
+      Croniq__Core__TenantId: ${CRONIQ_CORE_TENANT_ID:-default}
+      Croniq__Core__EnvironmentTag: ${CRONIQ_ENVIRONMENT:-dev}
+      Croniq__Core__InstanceId: ${CRONIQ_WEBHOOKS_INSTANCE_ID:-webhooks-ci}
+      Croniq__SqlServer__ConnectionString: Server=${CRONIQ_SQL_HOST:-mssql-22},1433;Database=${CRONIQ_SQL_DATABASE:-CroniqDev};User Id=sa;Password=${CRONIQ_SQL_PASSWORD:-CroniqSqlP@ssw0rd!};Encrypt=False;TrustServerCertificate=True;
+    depends_on:
+      mssql-22:
+        condition: service_healthy
+      croniq-db-migrator:
+        condition: service_completed_successfully
+    ports:
+      - "${CRONIQ_WEBHOOKS_HTTP_PORT:-5081}:8080"
+    healthcheck:
+      test: ["CMD-SHELL", "curl --fail http://localhost:8080/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 15
+      start_period: 15s
+    networks:
+      - croniq-net
