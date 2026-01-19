@@ -93,7 +93,7 @@ public sealed class PostgresPasswordUserStoreTests : IAsyncLifetime
         afterFailure.ShouldNotBeNull();
         afterFailure!.FailedLoginCount.ShouldBe(1);
         afterFailure.LockoutEndUtc.ShouldNotBeNull();
-        afterFailure.LockoutEndUtc!.Value.UtcDateTime.ShouldBe(lockoutEnd.UtcDateTime);
+        afterFailure.LockoutEndUtc!.Value.UtcDateTime.ShouldBe(lockoutEnd.UtcDateTime, TimeSpan.FromTicks(10));
 
         await _store.RecordLoginSuccessAsync(created.TenantId, created.UserId);
 

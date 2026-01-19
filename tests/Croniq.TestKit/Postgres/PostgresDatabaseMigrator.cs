@@ -89,6 +89,7 @@ public static class PostgresDatabaseMigrator
         DELETE FROM "croniq"."WorkerInstances";
         DELETE FROM "croniq"."ApiKeys";
         DELETE FROM "croniq"."ApiClients";
+        DELETE FROM "croniq"."Calendars";
         DELETE FROM "croniq"."Tenants";
         """;
 
