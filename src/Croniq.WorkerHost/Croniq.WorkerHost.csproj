@@ -8,5 +8,6 @@
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\Croniq.Hosting\Croniq.Hosting.csproj" />
+    <ProjectReference Include="..\Croniq.Webhooks\Croniq.Webhooks.csproj" />
   </ItemGroup>
 </Project>
