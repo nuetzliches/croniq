@@ -55,3 +55,7 @@
 - [x] Auth concept: route access-token distribution through HttpInterceptors so feature modules can call `HttpClient` directly.
 - [x] Auth concept: logout clears session storage and any relevant client caches.
 - [ ] Auth concept: document CSP changes once the login redirect domain is finalized.
+- [ ] Auth concept: define and document default claim mappings for Authelia (tenant/env/scope/callerId) with a minimal example.
+- [ ] Auth concept: add audit logging (auth.AuditLog table + structured logs) for key issuance/rotation/revocation, token issue/failure, login failures, and password changes.
+- [ ] Auth concept: add tenant lifecycle hooks for create/update/deactivate (audit events, quota metadata, default environment tags).
+- [ ] Auth concept: add CLI automation scripts for issuing/rotating keys and minting tokens (PowerShell + optional Bash), documented in guides.
