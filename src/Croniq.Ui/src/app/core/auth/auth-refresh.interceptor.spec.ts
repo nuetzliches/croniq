@@ -49,16 +49,41 @@ describe('authRefreshInterceptor', () => {
         expect(coordinator.ensureFreshAccessToken).not.toHaveBeenCalled();
     });
 
-    it('skips /auth/* endpoints', async () => {
+    it('skips auth endpoints that must stay anonymous', async () => {
         coordinator.ensureFreshAccessToken.mockReturnValue(of('access-1'));
 
-        const req = new HttpRequest('POST', 'https://api.example/auth/login', null);
+        const next = vi.fn((r: HttpRequest<unknown>) => of(new HttpResponse({ status: 200, url: r.url })));
+
+        const urls = [
+            'https://api.example/auth/login',
+            'https://api.example/auth/refresh',
+            'https://api.example/auth/logout',
+            'https://api.example/auth/oidc/start?returnUrl=%2F',
+        ];
+
+        for (const url of urls) {
+            const req = new HttpRequest('POST', url, null);
+            await firstValueFrom(TestBed.runInInjectionContext(() => authRefreshInterceptor(req, next)));
+        }
+
+        expect(coordinator.ensureFreshAccessToken).not.toHaveBeenCalled();
+    });
+
+    it('adds Authorization for /auth/change-password', async () => {
+        coordinator.ensureFreshAccessToken.mockReturnValue(of('access-1'));
+
+        const req = new HttpRequest('POST', 'https://api.example/auth/change-password', {
+            currentPassword: 'old',
+            newPassword: 'new',
+        });
         const next = vi.fn((r: HttpRequest<unknown>) => of(new HttpResponse({ status: 200, url: r.url })));
 
         await firstValueFrom(TestBed.runInInjectionContext(() => authRefreshInterceptor(req, next)));
 
+        expect(coordinator.ensureFreshAccessToken).toHaveBeenCalledTimes(1);
         expect(next).toHaveBeenCalledTimes(1);
-        expect(coordinator.ensureFreshAccessToken).not.toHaveBeenCalled();
+        const forwarded = next.mock.calls[0]![0];
+        expect(forwarded.headers.get('Authorization')).toBe('Bearer access-1');
     });
 
     it('injects Authorization header when a token is available', async () => {

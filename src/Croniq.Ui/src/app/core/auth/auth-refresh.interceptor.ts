@@ -6,11 +6,34 @@ import { catchError, switchMap, throwError } from 'rxjs';
 import { AuthRefreshCoordinator } from './auth-refresh-coordinator.service';
 
 const DID_RETRY_WITH_REFRESH = new HttpContextToken<boolean>(() => false);
+const AUTH_BYPASS_PATHS = new Set(['/auth/login', '/auth/refresh', '/auth/logout']);
 
-function isAuthEndpoint(url: string, baseUrl: string): boolean {
-    const normalizedBase = baseUrl.endsWith('/') ? baseUrl.slice(0, -1) : baseUrl;
-    const authPrefix = `${normalizedBase}/auth/`;
-    return url.startsWith(authPrefix);
+function normalizeBaseUrl(baseUrl: string): string {
+    return baseUrl.endsWith('/') ? baseUrl.slice(0, -1) : baseUrl;
+}
+
+function extractApiPath(url: string, baseUrl: string): string | null {
+    const normalizedBase = normalizeBaseUrl(baseUrl);
+    if (!url.startsWith(normalizedBase)) {
+        return null;
+    }
+    const pathWithQuery = url.slice(normalizedBase.length);
+    if (!pathWithQuery) {
+        return '/';
+    }
+    const queryIndex = pathWithQuery.indexOf('?');
+    return queryIndex >= 0 ? pathWithQuery.slice(0, queryIndex) : pathWithQuery;
+}
+
+function shouldBypassAuthRefresh(url: string, baseUrl: string): boolean {
+    const path = extractApiPath(url, baseUrl);
+    if (!path) {
+        return false;
+    }
+    if (path.startsWith('/auth/oidc')) {
+        return true;
+    }
+    return AUTH_BYPASS_PATHS.has(path);
 }
 
 export const authRefreshInterceptor: HttpInterceptorFn = (req, next) => {
@@ -19,7 +42,7 @@ export const authRefreshInterceptor: HttpInterceptorFn = (req, next) => {
     const router = inject(Router);
 
     const isApiCall = typeof baseUrl === 'string' && baseUrl.length > 0 && req.url.startsWith(baseUrl);
-    if (!isApiCall || isAuthEndpoint(req.url, baseUrl)) {
+    if (!isApiCall || shouldBypassAuthRefresh(req.url, baseUrl)) {
         return next(req);
     }
 
