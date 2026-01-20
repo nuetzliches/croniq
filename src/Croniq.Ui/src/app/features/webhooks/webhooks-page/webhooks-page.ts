@@ -1,20 +1,20 @@
+import { CdkMenu } from '@angular/cdk/menu';
 import { DatePipe } from '@angular/common';
 import { ChangeDetectionStrategy, Component, Directive, TemplateRef, computed, effect, inject, linkedSignal, signal, viewChild } from '@angular/core';
-import { CdkMenu } from '@angular/cdk/menu';
-import { TenantContextService } from '@core/tenant-context/tenant-context.service';
+import { FormField, form } from '@angular/forms/signals';
 import { RuntimeConfigService } from '@core/runtime-config.service';
+import { TenantContextService } from '@core/tenant-context/tenant-context.service';
+import { RotateWebhookSecretRequest, UpsertWebhookEndpointRequest } from '@croniq/api-schema';
 import { WebhookDialogComponent } from '@features/webhooks/components/webhook-dialog/webhook-dialog.component';
 import { WebhookIpRulesDialogComponent } from '@features/webhooks/components/webhook-ip-rules-dialog/webhook-ip-rules-dialog.component';
 import { WebhookRotateSecretDialogComponent } from '@features/webhooks/components/webhook-rotate-secret-dialog/webhook-rotate-secret-dialog.component';
 import { ActivityBucket, WebhookActivityQuery, WebhookCapabilitiesView, WebhookDeadLetterView, WebhookEndpointView, WebhookTimelineItemView, WebhooksStore } from '@features/webhooks/webhooks.store';
+import { CqEchartsChartComponent } from '@shared/charts/echarts-chart/echarts-chart';
 import { ShellPanelService } from '@shell/panel/shell-panel.service';
-import { RotateWebhookSecretRequest, UpsertWebhookEndpointRequest } from '@croniq/api-schema';
 import type { SeriesOption } from 'echarts';
 import type { EChartsCoreOption } from 'echarts/core';
-import { FormField, form } from '@angular/forms/signals';
-import { CqCellDefDirective, CqColumnComponent, CqConfirmDialogComponent, CqConfirmDialogData, CqContextMenuItemDirective, CqDialogService, CqFormFieldComponent, CqIconComponent, CqInputDirective, CqSelectDirective, CqTextareaDirective, DataGrid } from 'ui-kit';
 import { filter } from 'rxjs';
-import { CqEchartsChartComponent } from '@shared/charts/echarts-chart/echarts-chart';
+import { CqCellDefDirective, CqColumnComponent, CqConfirmDialogComponent, CqConfirmDialogData, CqContextMenuItemDirective, CqDialogService, CqFormFieldComponent, CqIconComponent, CqInputDirective, CqSelectDirective, CqTextareaDirective, DataGrid } from 'ui-kit';
 
 type WebhookDialogData = {
   endpoint: UpsertWebhookEndpointRequest | null;
@@ -1319,7 +1319,7 @@ function buildTimelineEntrySeries(
       name: entry.id,
       type: 'bar',
       stack: 'activity',
-      barWidth: 16,
+      barWidth: 0,
       barCategoryGap: '28%',
       barMinHeight: 0,
       data,
