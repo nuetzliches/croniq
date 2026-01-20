@@ -472,8 +472,7 @@ public static class WebhookHostingExtensions
                 }
             }
 
-            var metadata = metadataFactory.Create(endpoint, payload);
-            metadata[WebhookActivityMetadata.SourceKey] = activitySource;
+            var metadata = metadataFactory.Create(endpoint, payload, activitySource);
             var ingressOptions = webhookOptions.CurrentValue.Ingress;
             if (ingressOptions.DispatchMode == WebhookIngressDispatchMode.StoreOnly)
             {
@@ -698,14 +697,16 @@ public static class WebhookHostingExtensions
 
     private sealed class WebhookMetadataFactory
     {
-        public IReadOnlyDictionary<string, string> Create(WebhookEndpointDescriptor endpoint, string payload)
+        public Dictionary<string, string> Create(WebhookEndpointDescriptor endpoint, string payload, string source)
         {
             var metadata = endpoint.Metadata is null
                 ? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
                 : new Dictionary<string, string>(endpoint.Metadata, StringComparer.OrdinalIgnoreCase);
 
             metadata["webhook:hook"] = endpoint.HookKey;
-            metadata[WebhookActivityMetadata.SourceKey] = WebhookActivitySources.Ingress;
+            metadata[WebhookActivityMetadata.SourceKey] = string.IsNullOrWhiteSpace(source)
+                ? WebhookActivitySources.Ingress
+                : source;
             if (!string.IsNullOrWhiteSpace(payload))
             {
                 metadata["webhook:payload"] = payload;
