@@ -180,4 +180,8 @@ button {
   .cq-cluster-xl {
     --cq-cluster-gap: 1.5rem;
   }
+  .cq-data-grid--stretch {
+    --cq-data-grid-min-height: 0;
+    --cq-data-grid-max-height: none;
+  }
 }
