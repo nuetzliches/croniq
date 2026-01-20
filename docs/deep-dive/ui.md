@@ -8,4 +8,6 @@ This VitePress site keeps UI internals out of the public documentation set. UI-s
 
 Webhook activity streams prefer gRPC (via gRPC-Web/HTTP2 proxy), fall back to SSE when gRPC is unavailable, and finally fall back to polling. Until streaming is available, the UI uses polling with pause/retry controls.
 
+The SSE endpoint for activity updates is `GET /tenants/{tenantId}/webhooks/activity/stream` and emits JSON payloads that signal `activity.updated`.
+
 When documenting user-visible behavior (new fields, endpoints, workflows), update the relevant guides or deep-dive references in `docs/` rather than UI internals.

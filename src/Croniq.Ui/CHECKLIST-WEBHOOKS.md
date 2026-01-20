@@ -12,9 +12,9 @@ Purpose: track the remaining work to expand the Webhooks UI with an activity tim
 ## Transport (Stream vs Poll)
 
 - [x] Decide on transport: prefer gRPC (via gRPC-Web/proxy) -> SSE fallback -> polling fallback.
-- [ ] Confirm gRPC-Web/HTTP2 proxy support for browser clients; keep polling until SSE/gRPC is ready.
+- [ ] Confirm gRPC-Web/HTTP2 proxy support for browser clients (SSE fallback now available).
 - [ ] Document reconnect/backoff rules and max staleness acceptable for the UI.
-- [ ] Ensure auth headers and tenant/environment filters are supported by gRPC/SSE/polling.
+- [x] Ensure auth headers and tenant/environment filters are supported by gRPC/SSE/polling.
 
 ## Data Access and State
 

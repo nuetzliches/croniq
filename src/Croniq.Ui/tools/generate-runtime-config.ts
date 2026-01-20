@@ -7,6 +7,13 @@ type RuntimeConfig = {
     swaggerUiUrl?: string;
     grafanaUrl?: string;
     defaultTenantId?: string;
+    webhooks?: {
+        activityStream?: {
+            mode?: string;
+            grpcBaseUrl?: string;
+            sseBaseUrl?: string;
+        };
+    };
 };
 
 const CONFIG_RELATIVE_PATH = join('public', 'assets', 'croniq-config.json');
@@ -29,6 +36,13 @@ async function main(): Promise<void> {
     if (existing.config.defaultTenantId) {
         next.defaultTenantId = existing.config.defaultTenantId;
     }
+    if (existing.config.webhooks?.activityStream) {
+        next.webhooks = {
+            activityStream: {
+                ...existing.config.webhooks.activityStream,
+            },
+        };
+    }
 
     const apiBaseUrl = resolveApiBaseUrl(env);
     if (apiBaseUrl) {
@@ -43,6 +57,19 @@ async function main(): Promise<void> {
     const defaultTenantId = resolveDefaultTenantId(env);
     if (defaultTenantId) {
         next.defaultTenantId = defaultTenantId;
+    }
+
+    const streamMode = resolveWebhooksActivityStreamMode(env);
+    const grpcBaseUrl = resolveWebhooksActivityGrpcBaseUrl(env);
+    const sseBaseUrl = resolveWebhooksActivitySseBaseUrl(env);
+    if (streamMode || grpcBaseUrl || sseBaseUrl) {
+        next.webhooks ??= {};
+        next.webhooks.activityStream = {
+            ...(next.webhooks.activityStream ?? {}),
+            ...(streamMode ? { mode: streamMode } : {}),
+            ...(grpcBaseUrl ? { grpcBaseUrl } : {}),
+            ...(sseBaseUrl ? { sseBaseUrl } : {}),
+        };
     }
 
     const serialized = JSON.stringify(next, null, 2) + '\n';
@@ -174,6 +201,18 @@ function resolveSwaggerUiUrl(env: Record<string, string>): string | undefined {
 
 function resolveDefaultTenantId(env: Record<string, string>): string | undefined {
     return pick(env, ['CRONIQ_UI_DEFAULT_TENANT_ID']);
+}
+
+function resolveWebhooksActivityStreamMode(env: Record<string, string>): string | undefined {
+    return pick(env, ['CRONIQ_UI_WEBHOOKS_ACTIVITY_STREAM_MODE']);
+}
+
+function resolveWebhooksActivityGrpcBaseUrl(env: Record<string, string>): string | undefined {
+    return pick(env, ['CRONIQ_UI_WEBHOOKS_ACTIVITY_GRPC_BASEURL']);
+}
+
+function resolveWebhooksActivitySseBaseUrl(env: Record<string, string>): string | undefined {
+    return pick(env, ['CRONIQ_UI_WEBHOOKS_ACTIVITY_SSE_BASEURL']);
 }
 
 

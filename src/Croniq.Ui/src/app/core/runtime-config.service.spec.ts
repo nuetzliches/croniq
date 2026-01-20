@@ -61,4 +61,26 @@ describe('RuntimeConfigService', () => {
 
     expect(service.defaultTenantId).toBe('tenant-a');
   });
+
+  it('exposes webhooks activity stream settings', async () => {
+    const loadPromise = firstValueFrom(service.load());
+
+    const req = http.expectOne('assets/croniq-config.json');
+    req.flush({
+      apiBaseUrl: 'http://localhost:5080/',
+      webhooks: {
+        activityStream: {
+          mode: 'sse',
+          grpcBaseUrl: 'http://localhost:5082/',
+          sseBaseUrl: '/streams/',
+        },
+      },
+    });
+
+    await loadPromise;
+
+    expect(service.webhooksActivityStreamMode).toBe('sse');
+    expect(service.webhooksActivityGrpcBaseUrl).toBe('http://localhost:5082');
+    expect(service.webhooksActivitySseBaseUrl).toBe('/streams');
+  });
 });

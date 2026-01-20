@@ -1,7 +1,12 @@
 import { HttpBackend, HttpClient } from '@angular/common/http';
 import { Injectable, inject, isDevMode } from '@angular/core';
 import { catchError, map, of, tap, type Observable } from 'rxjs';
-import { croniqUiRuntimeConfigSchema, resolveSwaggerUiUrl, type CroniqUiRuntimeConfig } from './api-config';
+import {
+    croniqUiRuntimeConfigSchema,
+    resolveSwaggerUiUrl,
+    type CroniqUiRuntimeConfig,
+    type WebhookActivityStreamMode,
+} from './api-config';
 
 const DEFAULT_DEV_API_BASE_URL = 'http://localhost:5080';
 
@@ -41,7 +46,7 @@ export class RuntimeConfigService {
 
     get apiBaseUrl(): string {
         const resolved = this.config.apiBaseUrl?.trim() || this.defaultApiBaseUrl();
-        return resolved.endsWith('/') ? resolved.replace(/\/+$/, '') : resolved;
+        return this.normalizeUrlLike(resolved);
     }
 
     get swaggerUiUrl(): string {
@@ -55,5 +60,34 @@ export class RuntimeConfigService {
     get authMode(): 'password' | 'oidc' {
         const mode = this.config.auth?.mode?.trim().toLowerCase();
         return mode === 'oidc' ? 'oidc' : 'password';
+    }
+
+    get webhooksActivityStreamMode(): WebhookActivityStreamMode {
+        const mode = this.config.webhooks?.activityStream?.mode?.trim().toLowerCase();
+        if (mode === 'sse' || mode === 'polling' || mode === 'grpc') {
+            return mode;
+        }
+        return 'grpc';
+    }
+
+    get webhooksActivityGrpcBaseUrl(): string {
+        const raw = this.config.webhooks?.activityStream?.grpcBaseUrl;
+        return raw ? this.normalizeUrlLike(raw) : '';
+    }
+
+    get webhooksActivitySseBaseUrl(): string {
+        const raw = this.config.webhooks?.activityStream?.sseBaseUrl;
+        if (raw) {
+            return this.normalizeUrlLike(raw);
+        }
+        return this.apiBaseUrl;
+    }
+
+    private normalizeUrlLike(value: string): string {
+        const trimmed = value.trim();
+        if (!trimmed) {
+            return '';
+        }
+        return trimmed.endsWith('/') ? trimmed.replace(/\/+$/, '') : trimmed;
     }
 }

@@ -60,12 +60,17 @@ static RuntimeConfig LoadRuntimeConfig(IWebHostEnvironment env, ILogger logger)
     var apiBaseUrl = ResolveApiBaseUrl();
     var swaggerUiUrl = ResolveSwaggerUiUrl();
     var defaultTenantId = ResolveDefaultTenantId();
+    var streamMode = ResolveWebhooksActivityStreamMode();
+    var grpcBaseUrl = ResolveWebhooksActivityGrpcBaseUrl();
+    var sseBaseUrl = ResolveWebhooksActivitySseBaseUrl();
+    var webhooks = MergeWebhooksConfig(fromFile.Webhooks, streamMode, grpcBaseUrl, sseBaseUrl);
 
     return fromFile with
     {
         ApiBaseUrl = apiBaseUrl ?? fromFile.ApiBaseUrl,
         SwaggerUiUrl = swaggerUiUrl ?? fromFile.SwaggerUiUrl,
-        DefaultTenantId = defaultTenantId ?? fromFile.DefaultTenantId
+        DefaultTenantId = defaultTenantId ?? fromFile.DefaultTenantId,
+        Webhooks = webhooks
     };
 }
 
@@ -122,6 +127,21 @@ static string? ResolveDefaultTenantId()
     return GetEnv("CRONIQ_UI_DEFAULT_TENANT_ID");
 }
 
+static string? ResolveWebhooksActivityStreamMode()
+{
+    return GetEnv("CRONIQ_UI_WEBHOOKS_ACTIVITY_STREAM_MODE");
+}
+
+static string? ResolveWebhooksActivityGrpcBaseUrl()
+{
+    return GetEnv("CRONIQ_UI_WEBHOOKS_ACTIVITY_GRPC_BASEURL");
+}
+
+static string? ResolveWebhooksActivitySseBaseUrl()
+{
+    return GetEnv("CRONIQ_UI_WEBHOOKS_ACTIVITY_SSE_BASEURL");
+}
+
 static string? GetEnv(params string[] keys)
 {
     foreach (var key in keys)
@@ -154,6 +174,24 @@ static class JsonOptions
     };
 }
 
+internal sealed record WebhooksRuntimeConfig
+{
+    [JsonPropertyName("activityStream")]
+    public WebhookActivityStreamRuntimeConfig? ActivityStream { get; init; }
+}
+
+internal sealed record WebhookActivityStreamRuntimeConfig
+{
+    [JsonPropertyName("mode")]
+    public string? Mode { get; init; }
+
+    [JsonPropertyName("grpcBaseUrl")]
+    public string? GrpcBaseUrl { get; init; }
+
+    [JsonPropertyName("sseBaseUrl")]
+    public string? SseBaseUrl { get; init; }
+}
+
 internal sealed record RuntimeConfig
 {
     [JsonPropertyName("apiBaseUrl")]
@@ -167,4 +205,30 @@ internal sealed record RuntimeConfig
 
     [JsonPropertyName("defaultTenantId")]
     public string? DefaultTenantId { get; init; }
+
+    [JsonPropertyName("webhooks")]
+    public WebhooksRuntimeConfig? Webhooks { get; init; }
+}
+
+static WebhooksRuntimeConfig? MergeWebhooksConfig(
+    WebhooksRuntimeConfig? current,
+    string? mode,
+    string? grpcBaseUrl,
+    string? sseBaseUrl)
+{
+    if (mode is null && grpcBaseUrl is null && sseBaseUrl is null)
+    {
+        return current;
+    }
+
+    var currentActivity = current?.ActivityStream;
+    return new WebhooksRuntimeConfig
+    {
+        ActivityStream = new WebhookActivityStreamRuntimeConfig
+        {
+            Mode = mode ?? currentActivity?.Mode,
+            GrpcBaseUrl = grpcBaseUrl ?? currentActivity?.GrpcBaseUrl,
+            SseBaseUrl = sseBaseUrl ?? currentActivity?.SseBaseUrl
+        }
+    };
 }

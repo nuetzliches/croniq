@@ -30,3 +30,8 @@ public sealed record WebhookActivitySummary(
     DateTimeOffset WindowStartUtc,
     DateTimeOffset WindowEndUtc,
     IReadOnlyCollection<WebhookActivityBucket> Buckets);
+
+public sealed record WebhookActivityStreamEvent(
+    string Type,
+    DateTimeOffset EmittedAtUtc,
+    DateTimeOffset? LatestOccurredAtUtc);

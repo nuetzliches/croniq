@@ -9,6 +9,19 @@ const urlLikeSchema = z
     });
 const nonEmptyStringSchema = z.string().trim().min(1);
 const authModeSchema = z.enum(['password', 'oidc']);
+const activityStreamModeSchema = z.enum(['grpc', 'sse', 'polling']);
+const webhooksActivityStreamSchema = z
+    .object({
+        mode: activityStreamModeSchema.optional(),
+        grpcBaseUrl: urlLikeSchema.optional(),
+        sseBaseUrl: urlLikeSchema.optional(),
+    })
+    .strict();
+const webhooksSchema = z
+    .object({
+        activityStream: webhooksActivityStreamSchema.optional(),
+    })
+    .strict();
 
 export const croniqUiRuntimeConfigSchema = z
     .object({
@@ -22,10 +35,13 @@ export const croniqUiRuntimeConfigSchema = z
             })
             .strict()
             .optional(),
+        webhooks: webhooksSchema.optional(),
     })
     .strict();
 
 export type CroniqUiRuntimeConfig = z.infer<typeof croniqUiRuntimeConfigSchema>;
+export type WebhookActivityStreamMode = z.infer<typeof activityStreamModeSchema>;
+export type WebhookActivityStreamConfig = z.infer<typeof webhooksActivityStreamSchema>;
 
 export function resolveSwaggerUiUrl(apiBaseUrl: string, explicitSwaggerUiUrl?: string | null): string {
     const trimmed = explicitSwaggerUiUrl?.trim();

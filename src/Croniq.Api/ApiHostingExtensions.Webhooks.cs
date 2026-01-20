@@ -28,6 +28,9 @@ namespace Croniq.Api;
 
 public static partial class ApiHostingExtensions
 {
+    private static readonly JsonSerializerOptions WebhookActivityStreamJsonOptions = new(JsonSerializerDefaults.Web);
+    private static readonly TimeSpan WebhookActivityStreamPollInterval = TimeSpan.FromSeconds(5);
+
     private static void MapWebhookEndpoints(WebApplication app)
     {
         _ = app ?? throw new ArgumentNullException(nameof(app));
@@ -726,6 +729,99 @@ public static partial class ApiHostingExtensions
         })
         .WithDocs("WebhookActivity_List", "List webhook activity", "Returns webhook activity entries for the tenant/environment scope.")
         .Produces<List<WebhookActivityTimelineEntry>>(StatusCodes.Status200OK)
+        .Produces(StatusCodes.Status400BadRequest)
+        .Produces(StatusCodes.Status503ServiceUnavailable)
+        .RequireCroniqTenantScope(CroniqScopes.WebhooksRead);
+
+        app.MapGet("/tenants/{tenantId}/webhooks/activity/stream", async (
+            string tenantId,
+            string? environment,
+            DateTimeOffset? fromUtc,
+            DateTimeOffset? toUtc,
+            string? hookKeys,
+            string? jobKeys,
+            int? limit,
+            [FromServices] ICallerContextAccessor callerContextAccessor,
+            [FromServices] IWebhookActivityStore? activityStore,
+            HttpContext httpContext,
+            CancellationToken cancellationToken) =>
+        {
+            var resolvedEnvironment = ResolveEnvironmentTag(environment, callerContextAccessor);
+            if (string.IsNullOrWhiteSpace(resolvedEnvironment))
+            {
+                await MissingEnvironment().ExecuteAsync(httpContext);
+                return;
+            }
+
+            if (activityStore is null)
+            {
+                await Results.Problem(statusCode: StatusCodes.Status503ServiceUnavailable, title: "webhook-activity-unavailable", detail: "Webhook activity store not configured.")
+                    .ExecuteAsync(httpContext);
+                return;
+            }
+
+            var parsedHookKeys = ParseWebhookActivityKeys(hookKeys);
+            var parsedJobKeys = ParseWebhookActivityKeys(jobKeys);
+            var resolvedLimit = limit ?? 1;
+            if (!TryNormalizeWebhookActivityQuery(fromUtc, toUtc, resolvedLimit, parsedHookKeys, parsedJobKeys, out var query, out var error))
+            {
+                await Results.BadRequest(new { error = "invalid-activity-stream-query", message = error }).ExecuteAsync(httpContext);
+                return;
+            }
+
+            var scope = new PartitionScope(tenantId, resolvedEnvironment);
+
+            httpContext.Response.StatusCode = StatusCodes.Status200OK;
+            httpContext.Response.ContentType = "text/event-stream";
+            httpContext.Response.Headers["Cache-Control"] = "no-cache";
+            httpContext.Response.Headers.Append("X-Accel-Buffering", "no");
+
+            var lastSeenUtc = query.FromUtc ?? DateTimeOffset.UtcNow;
+            if (query.ToUtc.HasValue && query.ToUtc.Value < lastSeenUtc)
+            {
+                lastSeenUtc = query.ToUtc.Value;
+            }
+
+            try
+            {
+                while (!cancellationToken.IsCancellationRequested)
+                {
+                    var probeQuery = new WebhookActivityQuery
+                    {
+                        FromUtc = lastSeenUtc,
+                        ToUtc = query.ToUtc,
+                        HookKeys = query.HookKeys,
+                        JobKeys = query.JobKeys,
+                        Limit = query.Limit
+                    }.Normalize();
+
+                    var entries = await activityStore.ListAsync(scope, probeQuery, cancellationToken).ConfigureAwait(false);
+                    if (entries.Count > 0)
+                    {
+                        var latestOccurredAtUtc = entries.Max(entry => entry.OccurredAtUtc);
+                        var payload = new WebhookActivityStreamEvent(
+                            "activity.updated",
+                            DateTimeOffset.UtcNow,
+                            latestOccurredAtUtc);
+                        var json = JsonSerializer.Serialize(payload, WebhookActivityStreamJsonOptions);
+                        await WriteSseDataAsync(httpContext.Response, json, cancellationToken).ConfigureAwait(false);
+                    }
+                    else
+                    {
+                        await WriteSseCommentAsync(httpContext.Response, "heartbeat", cancellationToken).ConfigureAwait(false);
+                    }
+
+                    lastSeenUtc = DateTimeOffset.UtcNow;
+                    await Task.Delay(WebhookActivityStreamPollInterval, cancellationToken).ConfigureAwait(false);
+                }
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                // ignore cancellation
+            }
+        })
+        .WithDocs("WebhookActivity_Stream", "Stream webhook activity", "Server-sent events stream for webhook activity updates.")
+        .Produces(StatusCodes.Status200OK)
         .Produces(StatusCodes.Status400BadRequest)
         .Produces(StatusCodes.Status503ServiceUnavailable)
         .RequireCroniqTenantScope(CroniqScopes.WebhooksRead);

@@ -2,5 +2,12 @@
   "apiBaseUrl": "http://localhost:5080",
   "swaggerUiUrl": "http://localhost:5080/swagger",
   "grafanaUrl": "http://localhost:5610/d/croniq-logs/croniq-log-pulse?orgId=1",
-  "defaultTenantId": "default"
+  "defaultTenantId": "default",
+  "webhooks": {
+    "activityStream": {
+      "mode": "grpc",
+      "grpcBaseUrl": "http://localhost:5080",
+      "sseBaseUrl": "http://localhost:5080"
+    }
+  }
 }

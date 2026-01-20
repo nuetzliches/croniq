@@ -1,11 +1,14 @@
 import { Injectable, computed, inject, signal } from '@angular/core';
 import { authFailureFromError } from '@core/auth/auth-failure';
+import { AuthSessionService } from '@core/auth/auth-session.service';
 import { tenantRxResource } from '@core/resource/tenant-rx-resource';
+import { RuntimeConfigService } from '@core/runtime-config.service';
+import { createSseStream } from '@core/streaming/sse';
 import { TenantContextService } from '@core/tenant-context/tenant-context.service';
 import { nowIso, nowMs, tryIsoFromUnknown } from '@core/time/clock';
 import { CreateWebhookIpRuleRequest, RotateWebhookSecretRequest, UpsertWebhookEndpointRequest, WebhookActivitySummary, WebhookActivityTimelineResponse, type WebhookCapabilitiesResponse } from '@croniq/api-schema';
-import { CRONIQ_API_CLIENT, CroniqApiClient, TenantDeadLetterParams, TenantEnvironmentParams, TenantWebhookActivityParams, TenantWebhookActivitySummaryParams, TenantWebhookParams, TenantWebhookRuleParams, TenantWebhookUpsertParams, WebhookInvocationParams } from 'data-access';
-import { EMPTY, catchError, forkJoin, fromEvent, map, of, switchMap, takeUntil, tap, timer } from 'rxjs';
+import { CRONIQ_API_CLIENT, CallerContext, CroniqApiClient, TenantDeadLetterParams, TenantEnvironmentParams, TenantWebhookActivityParams, TenantWebhookActivitySummaryParams, TenantWebhookParams, TenantWebhookRuleParams, TenantWebhookUpsertParams, WebhookInvocationParams } from 'data-access';
+import { EMPTY, catchError, defer, forkJoin, fromEvent, map, merge, of, switchMap, takeUntil, tap, throwError, timer } from 'rxjs';
 
 export type WebhookEndpointView = {
     hookKey: string;
@@ -89,8 +92,12 @@ export type WebhookActivityQuery = {
 
 export type ActivityConnectionState = 'idle' | 'connected' | 'retrying' | 'offline' | 'paused';
 
+type ActivityStreamMode = 'grpc' | 'sse' | 'polling';
+
 const ACTIVITY_TIMELINE_LIMIT = 200;
 const ACTIVITY_POLL_INTERVAL_MS = 15000;
+const ACTIVITY_STREAM_LIMIT = 1;
+const ACTIVITY_STREAM_COMMAND = 'webhooks.activity.stream';
 const EMPTY_ACTIVITY_BUCKETS: ReadonlyArray<ActivityBucket> = [];
 const EMPTY_ACTIVITY_TIMELINE: ReadonlyArray<WebhookTimelineItemView> = [];
 
@@ -98,6 +105,8 @@ const EMPTY_ACTIVITY_TIMELINE: ReadonlyArray<WebhookTimelineItemView> = [];
 export class WebhooksStore {
     private readonly api = inject<CroniqApiClient>(CRONIQ_API_CLIENT);
     private readonly tenantContext = inject(TenantContextService);
+    private readonly runtimeConfig = inject(RuntimeConfigService);
+    private readonly authSession = inject(AuthSessionService);
 
     private readonly selectedHookKeySignal = signal('');
     private readonly endpointsSignal = signal<ReadonlyArray<WebhookEndpointView>>([]);
@@ -323,9 +332,9 @@ export class WebhooksStore {
             };
 
             const abort$ = fromEvent(abortSignal, 'abort');
-            const poll$ = ACTIVITY_POLL_INTERVAL_MS > 0
-                ? timer(0, ACTIVITY_POLL_INTERVAL_MS)
-                : of(0);
+            const streamMode = this.runtimeConfig.webhooksActivityStreamMode;
+            const grpcBaseUrl = this.runtimeConfig.webhooksActivityGrpcBaseUrl;
+            const sseBaseUrl = this.runtimeConfig.webhooksActivitySseBaseUrl;
 
             const fetchTimeline = () =>
                 this.api.listTenantWebhookActivity(timelineParams, requestOptions).pipe(
@@ -359,7 +368,18 @@ export class WebhooksStore {
                     }),
                 );
 
-            return poll$.pipe(
+            const refresh$ = createActivityRefreshStream({
+                tenantId,
+                query: normalized,
+                streamMode,
+                grpcBaseUrl,
+                sseBaseUrl,
+                requestContext: requestOptions.context,
+                sessionToken: this.authSession.getSessionToken(),
+                abortSignal,
+            });
+
+            return refresh$.pipe(
                 takeUntil(abort$),
                 switchMap(() => forkJoin({ timeline: fetchTimeline(), buckets: fetchSummary() })),
                 tap(({ timeline, buckets }) => {
@@ -873,6 +893,144 @@ type NormalizedActivityQuery = {
     limit?: number | null;
     bucketMinutes?: number | null;
 };
+
+type ActivityStreamContext = {
+    tenantId: string;
+    query: NormalizedActivityQuery;
+    streamMode: ActivityStreamMode;
+    grpcBaseUrl: string;
+    sseBaseUrl: string;
+    requestContext: CallerContext;
+    sessionToken: string | null;
+    abortSignal: AbortSignal;
+};
+
+function createActivityRefreshStream(context: ActivityStreamContext) {
+    const poll$ = createPollingRefreshStream();
+    const sse$ = createSseRefreshStream(context).pipe(
+        catchError((error: unknown) => {
+            console.warn('Webhook activity SSE stream unavailable; falling back to polling.', error);
+            return poll$;
+        }),
+    );
+
+    if (context.streamMode === 'polling') {
+        return poll$;
+    }
+
+    if (context.streamMode === 'sse') {
+        return merge(of(0), sse$);
+    }
+
+    const grpc$ = createGrpcRefreshStream(context).pipe(
+        catchError((error: unknown) => {
+            console.warn('Webhook activity gRPC stream unavailable; falling back to SSE.', error);
+            return sse$;
+        }),
+    );
+
+    return merge(of(0), grpc$);
+}
+
+function createPollingRefreshStream() {
+    if (ACTIVITY_POLL_INTERVAL_MS <= 0) {
+        return of(0);
+    }
+    return timer(0, ACTIVITY_POLL_INTERVAL_MS);
+}
+
+function createGrpcRefreshStream(context: ActivityStreamContext) {
+    if (!context.grpcBaseUrl) {
+        return throwError(() => new Error('gRPC base URL not configured.'));
+    }
+    return defer(() => throwError(() => new Error('gRPC streaming is not yet supported in the UI.')));
+}
+
+function createSseRefreshStream(context: ActivityStreamContext) {
+    const url = buildActivityStreamUrl(context.sseBaseUrl, context.tenantId, context.query);
+    if (!url) {
+        return throwError(() => new Error('SSE base URL not configured.'));
+    }
+
+    const streamContext: CallerContext = {
+        ...context.requestContext,
+        command: ACTIVITY_STREAM_COMMAND,
+    };
+    const headers = buildStreamHeaders(streamContext, context.sessionToken);
+    return createSseStream(url, { headers, signal: context.abortSignal }).pipe(
+        map(() => 0),
+    );
+}
+
+function buildActivityStreamUrl(baseUrl: string, tenantId: string, query: NormalizedActivityQuery): string | null {
+    const trimmedBase = baseUrl?.trim();
+    if (!trimmedBase) {
+        return null;
+    }
+
+    const params = new URLSearchParams();
+    if (query.environment) {
+        params.set('environment', query.environment);
+    }
+    if (query.fromUtc) {
+        params.set('fromUtc', query.fromUtc);
+    }
+    if (query.toUtc) {
+        params.set('toUtc', query.toUtc);
+    }
+    if (query.hookKeys && query.hookKeys.length > 0) {
+        params.set('hookKeys', query.hookKeys.join(','));
+    }
+    if (query.jobKeys && query.jobKeys.length > 0) {
+        params.set('jobKeys', query.jobKeys.join(','));
+    }
+    params.set('limit', String(ACTIVITY_STREAM_LIMIT));
+
+    const normalizedBase = trimmedBase.endsWith('/') ? trimmedBase.replace(/\/+$/, '') : trimmedBase;
+    const path = `/tenants/${encodeURIComponent(tenantId)}/webhooks/activity/stream`;
+    const queryString = params.toString();
+    const relative = queryString ? `${path}?${queryString}` : path;
+
+    if (normalizedBase.startsWith('/')) {
+        return `${normalizedBase}${relative}`;
+    }
+
+    try {
+        return new URL(relative, normalizedBase).toString();
+    } catch {
+        return null;
+    }
+}
+
+function buildStreamHeaders(context: CallerContext, sessionToken: string | null): Record<string, string> {
+    const headers: Record<string, string> = {
+        'X-Croniq-Client': 'Croniq.Ui',
+        'Cache-Control': 'no-store, no-cache, max-age=0',
+        Pragma: 'no-cache',
+    };
+
+    if (context.source) {
+        headers['X-Croniq-Source'] = context.source;
+    }
+    if (context.actor) {
+        headers['X-Croniq-Actor'] = context.actor;
+    }
+    if (context.tenantId) {
+        headers['X-Croniq-Tenant'] = context.tenantId;
+    }
+    if (context.environment) {
+        headers['X-Croniq-Environment'] = context.environment;
+    }
+    if (context.command) {
+        headers['X-Croniq-Command'] = context.command;
+    }
+
+    if (sessionToken) {
+        headers['Authorization'] = `Bearer ${sessionToken}`;
+    }
+
+    return headers;
+}
 
 function normalizeActivityQuery(query: WebhookActivityQuery, fallbackEnvironment: string): NormalizedActivityQuery {
     const hookKeys = normalizeKeyList(query.hookKeys);
