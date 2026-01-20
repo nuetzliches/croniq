@@ -67,7 +67,8 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<IJobDeadLetterStore, SqlServerJobDeadLetterStore>();
         services.AddSingleton<IWebhookPersistenceProvider, SqlServerWebhookPersistenceProvider>();
         services.AddSingleton<IWebhookDeadLetterStore, SqlServerWebhookDeadLetterStore>();
-        services.AddSingleton<IWebhookActivityStore, SqlServerWebhookActivityStore>();
+        services.AddSingleton<SqlServerWebhookActivityStore>();
+        services.AddSingleton<IWebhookActivityStore>(sp => sp.GetRequiredService<SqlServerWebhookActivityStore>());
         services.AddSingleton<IWebhookActivityRecorder>(sp => sp.GetRequiredService<SqlServerWebhookActivityStore>());
         services.AddSingleton<IWebhookIngressEventStore, SqlServerWebhookIngressEventStore>();
         services.AddSingleton<IWebhookEndpointChangefeed, SqlServerWebhookEndpointChangefeed>();

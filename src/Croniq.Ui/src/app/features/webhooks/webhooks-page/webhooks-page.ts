@@ -9,6 +9,7 @@ import { WebhookRotateSecretDialogComponent } from '@features/webhooks/component
 import { ActivityBucket, WebhookActivityQuery, WebhookCapabilitiesView, WebhookDeadLetterView, WebhookEndpointView, WebhookTimelineItemView, WebhooksStore } from '@features/webhooks/webhooks.store';
 import { ShellPanelService } from '@shell/panel/shell-panel.service';
 import { RotateWebhookSecretRequest, UpsertWebhookEndpointRequest } from '@croniq/api-schema';
+import type { SeriesOption } from 'echarts';
 import type { EChartsCoreOption } from 'echarts/core';
 import { FormField, form } from '@angular/forms/signals';
 import { CqCellDefDirective, CqColumnComponent, CqConfirmDialogComponent, CqConfirmDialogData, CqContextMenuItemDirective, CqDialogService, CqFormFieldComponent, CqIconComponent, CqInputDirective, CqSelectDirective, CqTextareaDirective, DataGrid } from 'ui-kit';
@@ -682,8 +683,15 @@ export class WebhooksPage {
   );
 
   readonly activityChartOptions = computed<EChartsCoreOption | null>(() => {
+    const items = this.timelineItems();
+    if (items.length === 0) {
+      return null;
+    }
     const buckets = this.activityBuckets();
-    return buckets.length ? buildActivityChartOptions(buckets) : null;
+    const chartBuckets = buckets.length
+      ? buckets
+      : buildActivityBuckets(items, this.timelineFromIso(), this.timelineToIso());
+    return buildTimelineChartOptions(items, chartBuckets, this.selectedTimelineItemId());
   });
 
   constructor() {
@@ -764,6 +772,18 @@ export class WebhooksPage {
       if (match) {
         this.selectedRowKey.set(this.webhookRowKey(match, 0));
       }
+    }
+  }
+
+  handleTimelineChartClick(event: unknown): void {
+    const entryId = extractTimelineEntryId(event);
+    if (!entryId) {
+      return;
+    }
+
+    const entry = this.timelineItems().find((item) => item.id === entryId);
+    if (entry) {
+      this.selectTimelineItem(entry);
     }
   }
 
@@ -1091,10 +1111,34 @@ function escapeSingleQuotes(value: string): string {
 }
 
 type ChartPalette = {
-  total: string;
-  error: string;
+  success: string;
+  warning: string;
+  failed: string;
   muted: string;
   border: string;
+  accent: string;
+};
+
+type TimelineChartDatum = {
+  value: number;
+  entryId: string;
+  occurredAt: string;
+  entryLabel: string;
+  hookKey: string;
+  jobKey?: string;
+  kind: WebhookTimelineItemView['kind'];
+  source?: WebhookTimelineItemView['source'];
+  status: WebhookTimelineItemView['status'];
+  itemStyle?: {
+    borderColor?: string;
+    borderWidth?: number;
+  };
+};
+
+type TimelineBucketRange = {
+  startMs: number;
+  endMs: number;
+  label: string;
 };
 
 type TooltipSeriesEntry = {
@@ -1177,38 +1221,50 @@ function summarizeActivity(buckets: ReadonlyArray<ActivityBucket>): ActivitySumm
   };
 }
 
-function buildActivityChartOptions(buckets: ReadonlyArray<ActivityBucket>): EChartsCoreOption {
+function buildTimelineChartOptions(
+  items: ReadonlyArray<WebhookTimelineItemView>,
+  buckets: ReadonlyArray<ActivityBucket>,
+  selectedId: string | null,
+): EChartsCoreOption {
   const palette = resolveChartPalette();
-  const totals = buckets.map((bucket) => ({
-    value: [bucket.bucketStart, bucket.total],
-    bucketEnd: bucket.bucketEnd ?? null,
-  }));
-  const errors = buckets.map((bucket) => ({
-    value: [bucket.bucketStart, bucket.errors],
-    bucketEnd: bucket.bucketEnd ?? null,
-  }));
+  const bucketRanges = resolveTimelineBucketRanges(items, buckets);
+  if (bucketRanges.length === 0) {
+    return {
+      animation: false,
+      series: [],
+    };
+  }
+
+  const orderedItems = sortTimelineItems(items);
+  const categories = bucketRanges.map((range) => range.label);
+  const labelInterval = resolveAxisLabelInterval(categories.length);
+  const series = buildTimelineEntrySeries(orderedItems, bucketRanges, selectedId, palette);
+  const bucketCounts = countTimelineItemsByBucket(orderedItems, bucketRanges);
+  const maxStack = Math.max(1, ...bucketCounts);
 
   return {
     animation: false,
-    color: [palette.total, palette.error],
     grid: {
-      left: 28,
+      left: 24,
       right: 16,
-      top: 16,
-      bottom: 24,
+      top: 24,
+      bottom: 48,
       containLabel: true,
     },
     tooltip: {
-      trigger: 'axis',
+      trigger: 'item',
       axisPointer: {
-        type: 'line',
+        type: 'shadow',
       },
-      formatter: (params: unknown) => formatActivityTooltip(params),
+      formatter: (params: unknown) => formatTimelineTooltip(params),
     },
     xAxis: {
-      type: 'time',
+      type: 'category',
+      data: categories,
       axisLabel: {
         color: palette.muted,
+        rotate: 0,
+        interval: labelInterval,
       },
       axisLine: {
         lineStyle: {
@@ -1221,7 +1277,9 @@ function buildActivityChartOptions(buckets: ReadonlyArray<ActivityBucket>): ECha
     },
     yAxis: {
       type: 'value',
-      minInterval: 1,
+      min: 0,
+      max: maxStack,
+      interval: 1,
       axisLabel: {
         color: palette.muted,
       },
@@ -1232,152 +1290,324 @@ function buildActivityChartOptions(buckets: ReadonlyArray<ActivityBucket>): ECha
         },
       },
     },
-    series: [
-      {
-        name: 'Total',
-        type: 'line',
-        smooth: true,
-        showSymbol: false,
-        data: totals,
-        lineStyle: {
-          width: 2,
-        },
-        areaStyle: {
-          opacity: 0.12,
-        },
-      },
-      {
-        name: 'Errors',
-        type: 'line',
-        smooth: true,
-        showSymbol: false,
-        data: errors,
-        lineStyle: {
-          width: 2,
-        },
-        areaStyle: {
-          opacity: 0.12,
-        },
-      },
-    ],
+    series,
   };
 }
 
-function formatActivityTooltip(params: unknown): string {
-  const entries = Array.isArray(params)
-    ? (params as TooltipSeriesEntry[])
-    : params
-      ? [params as TooltipSeriesEntry]
-      : [];
+function buildTimelineEntrySeries(
+  items: ReadonlyArray<WebhookTimelineItemView>,
+  bucketRanges: ReadonlyArray<TimelineBucketRange>,
+  selectedId: string | null,
+  palette: ChartPalette,
+): SeriesOption[] {
+  if (bucketRanges.length === 0) {
+    return [];
+  }
 
-  if (entries.length === 0) {
+  const series: SeriesOption[] = [];
+  items.forEach((entry) => {
+    const bucketIndex = resolveBucketIndex(entry.occurredAt, bucketRanges);
+    if (bucketIndex < 0) {
+      return;
+    }
+
+    const data = Array.from({ length: bucketRanges.length }, (_, index) =>
+      index === bucketIndex ? createTimelineDatum(entry, selectedId, palette.accent) : null,
+    );
+
+    series.push({
+      name: entry.id,
+      type: 'bar',
+      stack: 'activity',
+      barWidth: 16,
+      barCategoryGap: '28%',
+      barMinHeight: 0,
+      data,
+      itemStyle: {
+        color: resolveStatusColor(entry.status, palette),
+      },
+      label: {
+        show: false,
+      },
+      emphasis: {
+        focus: 'series',
+      },
+      legendHoverLink: false,
+    });
+  });
+
+  return series;
+}
+
+function createTimelineDatum(
+  entry: WebhookTimelineItemView,
+  selectedId: string | null,
+  accent: string,
+): TimelineChartDatum {
+  const isSelected = entry.id === selectedId;
+
+  return {
+    value: 1,
+    entryId: entry.id,
+    occurredAt: entry.occurredAt,
+    entryLabel: entry.label,
+    hookKey: entry.hookKey,
+    jobKey: entry.jobKey,
+    kind: entry.kind,
+    source: entry.source,
+    status: entry.status,
+    itemStyle: isSelected ? { borderColor: accent, borderWidth: 2 } : undefined,
+  };
+}
+
+function resolveTimelineBucketRanges(
+  items: ReadonlyArray<WebhookTimelineItemView>,
+  buckets: ReadonlyArray<ActivityBucket>,
+): ReadonlyArray<TimelineBucketRange> {
+  const sourceBuckets = buckets.length > 0
+    ? buckets
+    : buildActivityBuckets(items, null, null);
+
+  if (sourceBuckets.length === 0) {
+    return [];
+  }
+
+  const parsed = sourceBuckets
+    .map((bucket) => {
+      const startMs = tryParseIsoToMs(bucket.bucketStart);
+      const endMs = bucket.bucketEnd ? tryParseIsoToMs(bucket.bucketEnd) : null;
+      if (startMs === null) {
+        return null;
+      }
+      return {
+        startMs,
+        endMs: endMs ?? null,
+      };
+    })
+    .filter((entry): entry is { startMs: number; endMs: number | null } => !!entry)
+    .sort((left, right) => left.startMs - right.startMs);
+
+  if (parsed.length === 0) {
+    return [];
+  }
+
+  return parsed.map((entry, index) => {
+    const nextStart = parsed[index + 1]?.startMs;
+    let endMs = entry.endMs ?? (typeof nextStart === 'number' ? nextStart : entry.startMs + DEFAULT_BUCKET_MS);
+    if (!Number.isFinite(endMs) || endMs <= entry.startMs) {
+      endMs = entry.startMs + DEFAULT_BUCKET_MS;
+    }
+
+    return {
+      startMs: entry.startMs,
+      endMs,
+      label: formatTimelineAxisLabel(entry.startMs),
+    };
+  });
+}
+
+function countTimelineItemsByBucket(
+  items: ReadonlyArray<WebhookTimelineItemView>,
+  bucketRanges: ReadonlyArray<TimelineBucketRange>,
+): number[] {
+  const counts = new Array(bucketRanges.length).fill(0);
+  if (bucketRanges.length === 0) {
+    return counts;
+  }
+
+  items.forEach((entry) => {
+    const bucketIndex = resolveBucketIndex(entry.occurredAt, bucketRanges);
+    if (bucketIndex >= 0) {
+      counts[bucketIndex] += 1;
+    }
+  });
+
+  return counts;
+}
+
+function resolveBucketIndex(occurredAt: string, bucketRanges: ReadonlyArray<TimelineBucketRange>): number {
+  const occurredMs = Date.parse(occurredAt);
+  if (!Number.isFinite(occurredMs)) {
+    return -1;
+  }
+
+  for (let i = 0; i < bucketRanges.length; i += 1) {
+    const range = bucketRanges[i];
+    if (occurredMs >= range.startMs && occurredMs < range.endMs) {
+      return i;
+    }
+  }
+
+  return -1;
+}
+
+function resolveStatusColor(status: WebhookTimelineItemView['status'], palette: ChartPalette): string {
+  if (status === 'failed') {
+    return palette.failed;
+  }
+  if (status === 'warning') {
+    return palette.warning;
+  }
+  return palette.success;
+}
+
+function sortTimelineItems(items: ReadonlyArray<WebhookTimelineItemView>): ReadonlyArray<WebhookTimelineItemView> {
+  return items
+    .slice()
+    .sort((left, right) => {
+      const leftMs = Date.parse(left.occurredAt);
+      const rightMs = Date.parse(right.occurredAt);
+      if (Number.isFinite(leftMs) && Number.isFinite(rightMs)) {
+        return leftMs - rightMs;
+      }
+      return left.occurredAt.localeCompare(right.occurredAt);
+    });
+}
+
+function resolveAxisLabelInterval(count: number): number {
+  if (count <= 8) {
+    return 0;
+  }
+  return Math.ceil(count / 8);
+}
+
+function formatTimelineTooltip(params: unknown): string {
+  const entries = normalizeTooltipEntries(params);
+  const datum = entries
+    .map((entry) => extractTimelineDatum(entry))
+    .find((entry) => entry && entry.value > 0) ?? null;
+
+  if (!datum) {
     return '';
   }
 
-  const axisValue = entries[0]?.axisValue ?? entries[0]?.axisValueLabel ?? extractAxisValue(entries[0]?.value);
-  const bucketEndValue = extractBucketEnd(entries[0]?.data);
-  const bucketStartMs = parseTooltipAxisValue(axisValue);
-  const bucketEndMs = parseTooltipAxisValue(bucketEndValue);
-  const bucketLabel = bucketStartMs !== null ? formatBucketLabel(bucketStartMs, bucketEndMs) : 'Unknown bucket';
-
-  const series = entries.map((entry) => ({
-    label: typeof entry.seriesName === 'string' ? entry.seriesName : 'Series',
-    value: extractTooltipValue(entry.value),
-    marker: typeof entry.marker === 'string' ? entry.marker : '',
-  }));
-
-  const total = series.find((entry) => entry.label === 'Total')?.value ?? 0;
-  const errors = series.find((entry) => entry.label === 'Errors')?.value ?? 0;
-  const errorRate = total > 0 ? `${Math.round((errors / total) * 100)}%` : 'N/A';
-
-  const seriesRows = series
-    .map((entry) => `
-      <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;">
-        <span>${entry.marker}${entry.label}</span>
-        <span>${entry.value}</span>
-      </div>
-    `)
-    .join('');
+  const title = datum.kind === 'deadLetter' ? 'Dead letter' : datum.entryLabel;
+  const statusLabel = formatTimelineStatusLabel(datum.status);
+  const sourceLabel = formatTimelineSourceLabel(datum.source);
+  const occurredAt = formatTimelineDate(datum.occurredAt);
 
   return `
-    <div style="min-width: 180px;">
-      <div style="font-weight:600;margin-bottom:4px;">${bucketLabel}</div>
-      ${seriesRows}
-      <div style="margin-top:4px;padding-top:4px;border-top:1px solid rgba(255,255,255,0.12);display:flex;justify-content:space-between;gap:8px;">
-        <span>Error rate</span>
-        <span>${errorRate}</span>
+    <div style="min-width: 200px;">
+      <div style="font-weight:600;margin-bottom:6px;">${escapeTooltipValue(title)}</div>
+      <div style="display:flex;justify-content:space-between;gap:8px;">
+        <span>Status</span>
+        <span>${escapeTooltipValue(statusLabel)}</span>
+      </div>
+      <div style="display:flex;justify-content:space-between;gap:8px;">
+        <span>Source</span>
+        <span>${escapeTooltipValue(sourceLabel)}</span>
+      </div>
+      <div style="display:flex;justify-content:space-between;gap:8px;">
+        <span>Hook</span>
+        <span>${escapeTooltipValue(datum.hookKey)}</span>
+      </div>
+      <div style="display:flex;justify-content:space-between;gap:8px;">
+        <span>Job</span>
+        <span>${escapeTooltipValue(datum.jobKey ?? '-')}</span>
+      </div>
+      <div style="display:flex;justify-content:space-between;gap:8px;">
+        <span>Occurred</span>
+        <span>${escapeTooltipValue(occurredAt)}</span>
       </div>
     </div>
   `;
 }
 
-function extractAxisValue(value: unknown): unknown {
-  if (Array.isArray(value) && value.length > 0) {
-    return value[0];
+function normalizeTooltipEntries(params: unknown): TooltipSeriesEntry[] {
+  if (Array.isArray(params)) {
+    return params as TooltipSeriesEntry[];
   }
-  return value;
+  if (params) {
+    return [params as TooltipSeriesEntry];
+  }
+  return [];
 }
 
-function extractBucketEnd(data: unknown): unknown {
-  if (!data || typeof data !== 'object') {
-    return undefined;
-  }
-  if ('bucketEnd' in data) {
-    return (data as { bucketEnd?: unknown }).bucketEnd;
-  }
-  return undefined;
-}
-
-function extractTooltipValue(value: unknown): number {
-  if (Array.isArray(value) && value.length > 0) {
-    const last = value[value.length - 1];
-    return typeof last === 'number' && Number.isFinite(last) ? last : 0;
-  }
-  return typeof value === 'number' && Number.isFinite(value) ? value : 0;
-}
-
-function parseTooltipAxisValue(value: unknown): number | null {
-  if (typeof value === 'number' && Number.isFinite(value)) {
-    return value;
-  }
-  if (typeof value === 'string' && value.trim()) {
-    const parsed = Date.parse(value);
-    return Number.isFinite(parsed) ? parsed : null;
+function extractTimelineDatum(entry: TooltipSeriesEntry): TimelineChartDatum | null {
+  if (isTimelineChartDatum(entry.data)) {
+    return entry.data;
   }
   return null;
 }
 
-function formatBucketLabel(startMs: number, endMs?: number | null): string {
-  const start = new Date(startMs);
-  if (!Number.isFinite(start.getTime())) {
-    return 'Unknown bucket';
+function extractTimelineEntryId(event: unknown): string | null {
+  if (!event || typeof event !== 'object') {
+    return null;
   }
-  const end = new Date(endMs ?? startMs + DEFAULT_BUCKET_MS);
-  const dateLabel = start.toLocaleDateString(undefined, { month: 'short', day: '2-digit' });
-  const startTime = start.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
-  const endTime = end.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
-  if (start.toDateString() === end.toDateString()) {
-    return `${dateLabel} ${startTime}-${endTime}`;
+  const data = (event as { data?: unknown }).data;
+  return isTimelineChartDatum(data) ? data.entryId : null;
+}
+
+function isTimelineChartDatum(value: unknown): value is TimelineChartDatum {
+  if (!value || typeof value !== 'object') {
+    return false;
   }
-  const endDateLabel = end.toLocaleDateString(undefined, { month: 'short', day: '2-digit' });
-  return `${dateLabel} ${startTime} - ${endDateLabel} ${endTime}`;
+  const record = value as { entryId?: unknown };
+  return typeof record.entryId === 'string' && record.entryId.length > 0;
+}
+
+function formatTimelineAxisLabel(value: string | number): string {
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) {
+    return String(value);
+  }
+  const dateLabel = date.toLocaleDateString(undefined, { month: '2-digit', day: '2-digit' });
+  const timeLabel = date.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', hour12: false });
+  return `${dateLabel}\n${timeLabel}`;
+}
+
+function formatTimelineDate(value: string): string {
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) {
+    return value;
+  }
+  const dateLabel = date.toLocaleDateString(undefined, { month: '2-digit', day: '2-digit' });
+  const timeLabel = date.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', hour12: false });
+  return `${dateLabel} ${timeLabel}`;
+}
+
+function formatTimelineStatusLabel(value: WebhookTimelineItemView['status']): string {
+  if (value === 'failed') {
+    return 'Failed';
+  }
+  if (value === 'warning') {
+    return 'Warning';
+  }
+  return 'Success';
+}
+
+function formatTimelineSourceLabel(value: WebhookTimelineItemView['source']): string {
+  return value === 'invoke' ? 'Manual invoke' : 'Ingress';
+}
+
+function escapeTooltipValue(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 }
 
 function resolveChartPalette(): ChartPalette {
   if (typeof window === 'undefined') {
     return {
-      total: '#93c5fd',
-      error: '#fb7181',
+      success: '#34d399',
+      warning: '#facc15',
+      failed: '#fb7181',
       muted: '#94a3b8',
       border: '#27344d',
+      accent: '#a78bfa',
     };
   }
   const styles = getComputedStyle(document.documentElement);
   const read = (name: string, fallback: string) => styles.getPropertyValue(name).trim() || fallback;
   return {
-    total: read('--cq-graph-1', '#93c5fd'),
-    error: read('--cq-danger-2', '#fb7181'),
+    success: read('--cq-success', '#34d399'),
+    warning: read('--cq-warning', '#facc15'),
+    failed: read('--cq-danger-2', '#fb7181'),
     muted: read('--cq-text-secondary', '#94a3b8'),
     border: read('--cq-border', '#27344d'),
+    accent: read('--cq-accent-3', '#a78bfa'),
   };
 }

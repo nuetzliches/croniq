@@ -614,10 +614,14 @@
               Loading activity...
             </div>
           } @else if (activityChartOptions(); as chartOptions) {
-            <cq-echarts-chart ariaLabel="Webhook activity chart" [options]="chartOptions"></cq-echarts-chart>
+            <cq-echarts-chart
+              ariaLabel="Webhook activity chart"
+              [options]="chartOptions"
+              (chartClick)="handleTimelineChartClick($event)"
+            ></cq-echarts-chart>
           } @else {
             <div class="flex h-full items-center justify-center text-xs text-muted">
-              Awaiting activity aggregation.
+              No timeline entries to chart.
             </div>
           }
         </div>
@@ -674,27 +678,8 @@
             No timeline entries match the active filters.
           </div>
         } @else {
-          <div class="flex gap-2 overflow-x-auto pb-2">
-            @for (entry of timelineItems(); track entry.id) {
-              <button
-                type="button"
-                class="shrink-0 w-60 rounded-lg border border-white/10 bg-black/10 px-3 py-2 text-left text-xs transition hover:border-accent/60"
-                [class.border-accent]="selectedTimelineItem()?.id === entry.id"
-                [class.bg-accent/10]="selectedTimelineItem()?.id === entry.id"
-                [attr.aria-pressed]="selectedTimelineItem()?.id === entry.id"
-                (click)="selectTimelineItem(entry)"
-              >
-                <div class="flex items-center justify-between gap-2">
-                  <span class="inline-flex items-center gap-2">
-                    <span [class]="timelineStatusClass(entry)">{{ timelineStatusGlyph(entry) }}</span>
-                    <span class="truncate font-mono text-primary">{{ entry.hookKey }}</span>
-                  </span>
-                  <span class="shrink-0 text-[11px] text-muted">{{ entry.occurredAt | date: 'short' }}</span>
-                </div>
-                <div class="mt-1 truncate text-[11px] text-muted">{{ entry.jobKey || '—' }}</div>
-                <div class="mt-1 truncate text-muted">{{ entry.kind === 'deadLetter' ? 'Dead letter' : entry.label }}</div>
-              </button>
-            }
+          <div class="rounded-lg border border-white/10 bg-black/10 px-3 py-2 text-[11px] text-muted">
+            Click a bar in the timeline chart to preview the event details.
           </div>
         }
 
