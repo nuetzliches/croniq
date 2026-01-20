@@ -6,6 +6,14 @@ using OpenTelemetry.Trace;
 
 var builder = WebApplication.CreateBuilder(args);
 
+var webRootPath = builder.Environment.WebRootPath
+    ?? Path.Combine(builder.Environment.ContentRootPath, "wwwroot");
+var browserWebRootPath = Path.Combine(webRootPath, "browser");
+if (File.Exists(Path.Combine(browserWebRootPath, "index.html")))
+{
+    builder.WebHost.UseWebRoot(browserWebRootPath);
+}
+
 builder.Services.AddHealthChecks();
 
 var observability = builder.Services.AddCroniqObservability(
