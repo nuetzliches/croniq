@@ -499,6 +499,15 @@ export const PasswordRefreshRequest = z
     })
     .partial();
 export type PasswordRefreshRequest = z.infer<typeof PasswordRefreshRequest>;
+export const OidcAuthResponse = z
+    .object({
+        accessToken: z.string().nullable(),
+        tokenType: z.string().nullable(),
+        expiresIn: z.number().int().nullable(),
+        tenantId: z.string().nullable(),
+    })
+    .partial();
+export type OidcAuthResponse = z.infer<typeof OidcAuthResponse>;
 export const PasswordLogoutRequest = z
     .object({
         refreshToken: z.string().nullable(),
@@ -670,6 +679,7 @@ export const schemas = {
     PasswordLoginRequest,
     PasswordAuthResponse,
     PasswordRefreshRequest,
+    OidcAuthResponse,
     PasswordLogoutRequest,
     PasswordChangePasswordRequest,
     TriggerJobRequest,

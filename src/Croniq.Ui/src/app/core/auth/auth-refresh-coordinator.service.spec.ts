@@ -1,10 +1,13 @@
 import { provideZonelessChangeDetection, signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { Router } from '@angular/router';
+import { RuntimeConfigService } from '@core/runtime-config.service';
 import { firstValueFrom, of, Subject, throwError } from 'rxjs';
 import type { Observable } from 'rxjs';
 import { AuthRefreshCoordinator } from './auth-refresh-coordinator.service';
+import { AuthLogoutCleanupService } from './auth-logout-cleanup.service';
 import { AuthSessionService } from './auth-session.service';
+import { OidcAuthService } from './oidc-auth.service';
 import type { PasswordRefreshResult } from './password-auth.service';
 import { PasswordAuthService } from './password-auth.service';
 
@@ -20,15 +23,31 @@ class PasswordAuthStub {
     refresh = vi.fn<() => Observable<PasswordRefreshResult>>();
 }
 
+class OidcAuthStub {
+    hasSession = vi.fn<() => boolean>();
+    refresh = vi.fn<() => Observable<PasswordRefreshResult>>();
+}
+
 class RouterStub {
     navigate = vi.fn<Router['navigate']>().mockResolvedValue(true as never);
+}
+
+class RuntimeConfigStub {
+    authMode: 'password' | 'oidc' = 'password';
+}
+
+class AuthCleanupStub {
+    clearAll = vi.fn();
 }
 
 describe('AuthRefreshCoordinator', () => {
     let coordinator: AuthRefreshCoordinator;
     let authSession: AuthSessionStub;
     let passwordAuth: PasswordAuthStub;
+    let oidcAuth: OidcAuthStub;
+    let runtimeConfig: RuntimeConfigStub;
     let router: RouterStub;
+    let authCleanup: AuthCleanupStub;
 
     beforeEach(() => {
         TestBed.configureTestingModule({
@@ -36,15 +55,23 @@ describe('AuthRefreshCoordinator', () => {
                 provideZonelessChangeDetection(),
                 AuthRefreshCoordinator,
                 { provide: AuthSessionService, useClass: AuthSessionStub },
+                { provide: RuntimeConfigService, useClass: RuntimeConfigStub },
+                { provide: OidcAuthService, useClass: OidcAuthStub },
                 { provide: PasswordAuthService, useClass: PasswordAuthStub },
+                { provide: AuthLogoutCleanupService, useClass: AuthCleanupStub },
                 { provide: Router, useClass: RouterStub },
             ],
         });
 
         coordinator = TestBed.inject(AuthRefreshCoordinator);
         authSession = TestBed.inject(AuthSessionService) as unknown as AuthSessionStub;
+        runtimeConfig = TestBed.inject(RuntimeConfigService) as unknown as RuntimeConfigStub;
+        oidcAuth = TestBed.inject(OidcAuthService) as unknown as OidcAuthStub;
         passwordAuth = TestBed.inject(PasswordAuthService) as unknown as PasswordAuthStub;
+        authCleanup = TestBed.inject(AuthLogoutCleanupService) as unknown as AuthCleanupStub;
         router = TestBed.inject(Router) as unknown as RouterStub;
+
+        runtimeConfig.authMode = 'password';
 
         vi.useFakeTimers();
         vi.setSystemTime(new Date('2025-12-19T12:00:00.000Z'));
@@ -64,6 +91,18 @@ describe('AuthRefreshCoordinator', () => {
         expect(passwordAuth.refresh).not.toHaveBeenCalled();
     });
 
+    it('returns current token when oidc mode has no session cookie', async () => {
+        runtimeConfig.authMode = 'oidc';
+        oidcAuth.hasSession.mockReturnValue(false);
+
+        authSession.sessionToken.set({ value: 'access-1', expiresAt: '2025-12-19T13:00:00.000Z' });
+
+        const token = await firstValueFrom(coordinator.ensureFreshAccessToken());
+
+        expect(token).toBe('access-1');
+        expect(oidcAuth.refresh).not.toHaveBeenCalled();
+    });
+
     it('does not refresh when expiry is outside the skew window', async () => {
         authSession.sessionToken.set({ value: 'access-1', expiresAt: '2025-12-19T12:10:00.000Z' });
         authSession.refreshToken.set('refresh-1');
@@ -72,6 +111,26 @@ describe('AuthRefreshCoordinator', () => {
 
         expect(token).toBe('access-1');
         expect(passwordAuth.refresh).not.toHaveBeenCalled();
+    });
+
+    it('refreshes with oidc when session cookie exists', async () => {
+        runtimeConfig.authMode = 'oidc';
+        oidcAuth.hasSession.mockReturnValue(true);
+        authSession.sessionToken.set(null);
+
+        oidcAuth.refresh.mockReturnValue(of({
+            storedInSession: true,
+            token: 'access-oidc',
+            expiresAt: null,
+            refreshTokenPresent: true,
+            passwordChangeRequired: false,
+            raw: {},
+        }));
+
+        const token = await firstValueFrom(coordinator.ensureFreshAccessToken());
+
+        expect(token).toBe('access-oidc');
+        expect(oidcAuth.refresh).toHaveBeenCalledTimes(1);
     });
 
     it('refreshes when token is missing but refresh token exists', async () => {
@@ -168,7 +227,7 @@ describe('AuthRefreshCoordinator', () => {
         const token = await firstValueFrom(coordinator.forceRefresh());
 
         expect(token).toBe(null);
-        expect(authSession.clearAuthState).toHaveBeenCalled();
+        expect(authCleanup.clearAll).toHaveBeenCalled();
         expect(router.navigate).toHaveBeenCalledWith(['/auth', 'login']);
     });
 });

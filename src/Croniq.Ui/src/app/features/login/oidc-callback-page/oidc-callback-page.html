@@ -1,0 +1,39 @@
+<div class="flex min-h-screen flex-col items-center justify-center bg-surface p-6">
+  <div class="w-full max-w-md space-y-6 text-center">
+    <cq-app-brand class="scale-125" />
+    <div class="space-y-2">
+      <h1 class="text-2xl tracking-tight text-primary">Signing you in</h1>
+      <p class="text-sm text-muted">{{ message() }}</p>
+    </div>
+
+    @if (isLoading()) {
+    <div class="flex items-center justify-center text-accent">
+      <svg class="h-6 w-6 animate-spin" viewBox="0 0 24 24" fill="none">
+        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+        <path
+          class="opacity-75"
+          fill="currentColor"
+          d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+        ></path>
+      </svg>
+      <span class="sr-only">Loading</span>
+    </div>
+    } @else {
+    <div class="space-y-3">
+      <button
+        type="button"
+        class="w-full rounded-lg bg-accent px-4 py-2.5 text-sm font-semibold text-white shadow-lg shadow-accent/20 transition hover:bg-accent-hover"
+        (click)="retry()"
+      >
+        Try again
+      </button>
+      <a
+        routerLink="/auth/login"
+        class="text-sm font-semibold text-accent hover:text-accent-hover hover:underline"
+      >
+        Back to login
+      </a>
+    </div>
+    }
+  </div>
+</div>

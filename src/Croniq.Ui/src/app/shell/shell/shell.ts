@@ -1,6 +1,6 @@
 import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@angular/core';
 import { Router, RouterLink, RouterLinkActive, RouterOutlet } from '@angular/router';
-import { PasswordAuthService } from '@core/auth/password-auth.service';
+import { AuthSignOutService } from '@core/auth/auth-sign-out.service';
 import { NAV_SECTIONS, NavSection } from '@core/navigation/nav-items';
 import { RuntimeConfigService } from '@core/runtime-config.service';
 import { TenantContextService } from '@core/tenant-context/tenant-context.service';
@@ -33,7 +33,7 @@ export class Shell {
   private readonly commandPalette = inject(CommandPaletteController);
   private readonly tenantContext = inject(TenantContextService);
   private readonly runtimeConfig = inject(RuntimeConfigService);
-  private readonly passwordAuth = inject(PasswordAuthService);
+  private readonly authSignOut = inject(AuthSignOutService);
   private readonly router = inject(Router);
   private readonly panel = inject(ShellPanelService);
 
@@ -65,8 +65,8 @@ export class Shell {
   }
 
   logout(): void {
-    this.passwordAuth
-      .logout()
+    this.authSignOut
+      .signOut()
       .pipe(finalize(() => void this.router.navigate(['/auth', 'login'])))
       .subscribe();
   }

@@ -1,7 +1,9 @@
 import { provideZonelessChangeDetection, signal } from '@angular/core';
 import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { ActivatedRoute, Router, UrlTree, convertToParamMap, provideRouter } from '@angular/router';
+import { AuthRefreshCoordinator } from '@core/auth/auth-refresh-coordinator.service';
 import { AuthSessionService } from '@core/auth/auth-session.service';
+import { OidcAuthService } from '@core/auth/oidc-auth.service';
 import { PasswordAuthService } from '@core/auth/password-auth.service';
 import { redirectIfSessionTokenGuard } from '@core/auth/redirect-if-session-token.guard';
 import { RuntimeConfigService } from '@core/runtime-config.service';
@@ -30,8 +32,17 @@ class PasswordAuthStub {
     login = vi.fn();
 }
 
+class OidcAuthStub {
+    startLogin = vi.fn();
+}
+
+class AuthRefreshCoordinatorStub {
+    ensureFreshAccessToken = vi.fn(() => of(null));
+}
+
 class RuntimeConfigStub {
     defaultTenantId = '';
+    authMode: 'password' | 'oidc' = 'password';
 }
 
 describe('LoginPage', () => {
@@ -57,6 +68,8 @@ describe('LoginPage', () => {
                     },
                 },
                 { provide: AuthSessionService, useClass: AuthSessionStub },
+                { provide: AuthRefreshCoordinator, useClass: AuthRefreshCoordinatorStub },
+                { provide: OidcAuthService, useClass: OidcAuthStub },
                 { provide: PasswordAuthService, useClass: PasswordAuthStub },
                 { provide: RuntimeConfigService, useClass: RuntimeConfigStub },
             ],

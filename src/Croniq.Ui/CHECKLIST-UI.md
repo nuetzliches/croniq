@@ -6,8 +6,8 @@ Long-term documentation lives in:
 
 - `README.md` (dev commands: start/tests/zoneless/OpenAPI generation/MCP)
 - `docs/deep-dive/ui.md` (current architecture + backlog)
-- `docs/deep-dive/api-schema.md` (OpenAPI → Zod generation)
-- `docs/deep-dive/AUTH.md` (auth notes)
+- `docs/deep-dive/api-schema.md` (OpenAPI to Zod generation)
+- `docs/deep-dive/auth.md` (auth notes)
 
 Derived from [docs/deep-dive/designs/angular-ui-concept.md](docs/deep-dive/designs/angular-ui-concept.md).
 
@@ -15,10 +15,10 @@ Derived from [docs/deep-dive/designs/angular-ui-concept.md](docs/deep-dive/desig
 
 - [x] Design Spike – produce wireframes and refreshed design tokens aligned with the concept doc. _(Wireframes captured in [docs/deep-dive/designs/angular-ui-wireframes.md](docs/deep-dive/designs/angular-ui-wireframes.md); token inventory drafted, awaiting stakeholder review.)_
 - [x] Design Spike – finalize Tailwind theme plus typography approvals with stakeholders. _(Theme + typographic tokens documented in [docs/deep-dive/designs/angular-ui-theme.md](docs/deep-dive/designs/angular-ui-theme.md); awaiting stakeholder sign-off recorded there.)_
-- [ ] Scaffolding & Auth – keep this phase as a tracker; implementation details are documented in `README.md` and `docs/deep-dive/AUTH.md`. _(Original plan: [docs/deep-dive/designs/angular-ui-scaffolding.md](docs/deep-dive/designs/angular-ui-scaffolding.md).)_
-  - [x] Auth session persistence: store the opaque Croniq session token in `sessionStorage` only; never persist refresh data in `localStorage`/IndexedDB. _(Implemented via [src/app/core/auth/auth-session.service.ts](src/app/core/auth/auth-session.service.ts); forms wired in [src/app/core/tenant-context/tenant-context.html](src/app/core/tenant-context/tenant-context.html); rationale captured in [docs/deep-dive/AUTH.md](docs/deep-dive/AUTH.md).)_
+- [ ] Scaffolding & Auth - keep this phase as a tracker; implementation details are documented in `README.md` and `docs/deep-dive/auth.md`. _(Original plan: [docs/deep-dive/designs/angular-ui-scaffolding.md](docs/deep-dive/designs/angular-ui-scaffolding.md).)_
+  - [x] Auth session persistence: store the opaque Croniq session token in `sessionStorage` only; never persist refresh data in `localStorage`/IndexedDB. _(Implemented via [src/app/core/auth/auth-session.service.ts](src/app/core/auth/auth-session.service.ts); forms wired in [src/app/core/tenant-context/tenant-context.html](src/app/core/tenant-context/tenant-context.html); rationale captured in [docs/deep-dive/auth.md](docs/deep-dive/auth.md).)_
   - [x] External login expansion: leave hooks for a PKCE-based login bootstrap (deferred) so we can swap session auth for standards-based login once backend is ready.
-  - [x] Operator impersonation vs. delegated auth: document the interim plan (manual tenant/operator context vs. delegated auth) and revisit once backend signals GA for full delegated auth. _(Plan recorded in [docs/deep-dive/AUTH.md](docs/deep-dive/AUTH.md).)_
+  - [x] Operator impersonation vs. delegated auth: document the interim plan (manual tenant/operator context vs. delegated auth) and revisit once backend signals GA for full delegated auth. _(Plan recorded in [docs/deep-dive/auth.md](docs/deep-dive/auth.md).)_
 - [x] MVP Data Surfaces – deliver the dashboard metrics (stubbed), schedules read-only grid, and job registry view.
 - [x] Admin Controls – implement CRUD for schedules, webhooks, and API keys, including dead-letter replay wiring.
   - [x] Schedules (CRUD)

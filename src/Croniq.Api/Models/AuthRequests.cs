@@ -30,3 +30,9 @@ public sealed record PasswordAuthResponse(
     int? ExpiresIn,
     string RefreshToken,
     bool PasswordChangeRequired);
+
+public sealed record OidcAuthResponse(
+    string AccessToken,
+    string TokenType,
+    int? ExpiresIn,
+    string? TenantId);

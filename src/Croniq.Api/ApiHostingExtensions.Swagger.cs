@@ -114,6 +114,7 @@ public static partial class ApiHostingExtensions
             "health",
             "webhooks",
             "auth/login",
+            "auth/oidc",
             "auth/refresh",
             "auth/logout",
         ];

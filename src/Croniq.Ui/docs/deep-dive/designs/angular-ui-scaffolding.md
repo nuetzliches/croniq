@@ -152,7 +152,7 @@ Note: this repo uses runtime config via `public/assets/croniq-config.json` inste
 - `AuthSessionService` (`src/app/core/auth/auth-session.service.ts`) now owns the opaque Croniq session token. The value lives exclusively in `sessionStorage`, and the service auto-purges expired entries so nothing lingers between tabs.
 - `TenantContext` exposes an input form for the token plus a login-bootstrap stub button. The UI masks the stored value (last four characters only) so operators can confirm which secret is active without leaking the full string.
 - `EndpointExecutor` receives a credential supplier instance, allowing it to inject the `Authorization` bearer token on every API call. Feature modules can still override the value per request when needed via `CroniqRequestOptions`.
-- Details, guardrails, and future steps are tracked in `docs/deep-dive/AUTH.md`.
+- Details, guardrails, and future steps are tracked in `docs/deep-dive/auth.md`.
 
 ## Command Palette & Shell
 

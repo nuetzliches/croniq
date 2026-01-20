@@ -8,6 +8,7 @@ const urlLikeSchema = z
         message: 'Expected an absolute URL (http/https) or an absolute path starting with /',
     });
 const nonEmptyStringSchema = z.string().trim().min(1);
+const authModeSchema = z.enum(['password', 'oidc']);
 
 export const croniqUiRuntimeConfigSchema = z
     .object({
@@ -15,6 +16,12 @@ export const croniqUiRuntimeConfigSchema = z
         swaggerUiUrl: urlLikeSchema.optional(),
         grafanaUrl: urlLikeSchema.optional(),
         defaultTenantId: nonEmptyStringSchema.optional(),
+        auth: z
+            .object({
+                mode: authModeSchema.optional(),
+            })
+            .strict()
+            .optional(),
     })
     .strict();
 

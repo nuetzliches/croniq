@@ -19,7 +19,7 @@ This document describes the current Croniq UI implementation (Angular 21 + Tailw
 - This includes all user-facing copy in templates, UI-kit components, command palette labels, and accessibility text (`aria-*`, `sr-only`).
 - Avoid introducing German strings in the Angular application; keep internal identifiers and API field names unchanged.
 
-Auth notes and guardrails live in `docs/deep-dive/AUTH.md`.
+Auth notes and guardrails live in `docs/deep-dive/auth.md`.
 
 ## Repository Layout (current)
 

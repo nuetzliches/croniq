@@ -1,4 +1,5 @@
 using Croniq.Api.Models;
+using Croniq.Api.Security;
 using Croniq.Auth.Abstractions;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Options;
@@ -101,133 +102,211 @@ public static partial class ApiHostingExtensions
         .Produces(StatusCodes.Status500InternalServerError);
 
         app.MapPost("/auth/refresh", async (
-            PasswordRefreshRequest request,
+            PasswordRefreshRequest? request,
             [FromServices] IServiceProvider services,
             [FromServices] IOptionsMonitor<PasswordAuthOptions> options,
+            [FromServices] OidcLoginService oidcLogin,
+            HttpContext context,
             CancellationToken cancellationToken) =>
         {
-            if (!(options.CurrentValue?.Enabled ?? false))
+            if (request is not null && !string.IsNullOrWhiteSpace(request.RefreshToken))
             {
-                return Results.NotFound();
+                var refreshRequest = request;
+                if (!(options.CurrentValue?.Enabled ?? false))
+                {
+                    return Results.NotFound();
+                }
+
+                var auth = services.GetService<IPasswordAuthService>();
+                if (auth is null)
+                {
+                    return Results.NotFound();
+                }
+
+                var tenants = services.GetService<ITenantStore>();
+                if (tenants is null)
+                {
+                    return Results.NotFound();
+                }
+
+                if (string.IsNullOrWhiteSpace(refreshRequest.TenantId))
+                {
+                    return Results.BadRequest(new { error = "missing-tenant", message = "tenantId is required." });
+                }
+
+                var tenantId = refreshRequest.TenantId.Trim();
+                var tenant = await tenants.GetByIdAsync(tenantId, cancellationToken).ConfigureAwait(false);
+                if (tenant is null || !tenant.IsActive)
+                {
+                    // Do not leak whether the tenant exists.
+                    return Results.Unauthorized();
+                }
+
+                var result = await auth.RefreshAsync(
+                        tenant.TenantId,
+                        refreshRequest.RefreshToken,
+                        refreshRequest.EnvironmentTag,
+                        refreshRequest.Scopes,
+                        refreshRequest.Audience,
+                        cancellationToken)
+                    .ConfigureAwait(false);
+
+                if (result is null)
+                {
+                    return Results.NotFound();
+                }
+
+                if (!result.Success)
+                {
+                    return Results.Unauthorized();
+                }
+
+                if (string.IsNullOrWhiteSpace(result.AccessToken) || string.IsNullOrWhiteSpace(result.RefreshToken))
+                {
+                    return Results.Problem(
+                        statusCode: StatusCodes.Status500InternalServerError,
+                        title: "auth-token-missing",
+                        detail: "Authentication token response was incomplete.");
+                }
+
+                return Results.Ok(new PasswordAuthResponse(
+                    tenant.TenantId,
+                    result.AccessToken,
+                    "Bearer",
+                    result.ExpiresInSeconds,
+                    result.RefreshToken,
+                    result.PasswordChangeRequired));
             }
 
-            var auth = services.GetService<IPasswordAuthService>();
-            if (auth is null)
+            if (!oidcLogin.IsEnabled)
             {
-                return Results.NotFound();
+                return Results.BadRequest(new { error = "missing-refresh", message = "refreshToken is required." });
             }
 
-            var tenants = services.GetService<ITenantStore>();
-            if (tenants is null)
+            if (!oidcLogin.TryResolveOptions(out var oidcOptions, out var loginOptions, out var error))
             {
-                return Results.NotFound();
+                return error!;
             }
 
-            if (string.IsNullOrWhiteSpace(request.TenantId))
+            if (!oidcLogin.ValidateCsrf(context, loginOptions, out var csrfError))
             {
-                return Results.BadRequest(new { error = "missing-tenant", message = "tenantId is required." });
+                return csrfError!;
             }
 
-            var tenantId = request.TenantId.Trim();
-            var tenant = await tenants.GetByIdAsync(tenantId, cancellationToken).ConfigureAwait(false);
-            if (tenant is null || !tenant.IsActive)
+            if (!oidcLogin.TryGetRefreshToken(context, out var refreshToken))
             {
-                // Do not leak whether the tenant exists.
                 return Results.Unauthorized();
             }
 
-            var result = await auth.RefreshAsync(
-                    tenant.TenantId,
-                    request.RefreshToken,
-                    request.EnvironmentTag,
-                    request.Scopes,
-                    request.Audience,
-                    cancellationToken)
+            var tokenResponse = await oidcLogin.RefreshAsync(oidcOptions, loginOptions, refreshToken, cancellationToken)
                 .ConfigureAwait(false);
 
-            if (result is null)
-            {
-                return Results.NotFound();
-            }
-
-            if (!result.Success)
+            if (tokenResponse is null || string.IsNullOrWhiteSpace(tokenResponse.AccessToken))
             {
                 return Results.Unauthorized();
             }
 
-            if (string.IsNullOrWhiteSpace(result.AccessToken) || string.IsNullOrWhiteSpace(result.RefreshToken))
+            if (!string.IsNullOrWhiteSpace(tokenResponse.RefreshToken))
             {
-                return Results.Problem(
-                    statusCode: StatusCodes.Status500InternalServerError,
-                    title: "auth-token-missing",
-                    detail: "Authentication token response was incomplete.");
+                oidcLogin.SetRefreshCookie(context, tokenResponse.RefreshToken, loginOptions);
             }
 
-            return Results.Ok(new PasswordAuthResponse(
-                tenant.TenantId,
-                result.AccessToken,
-                "Bearer",
-                result.ExpiresInSeconds,
-                result.RefreshToken,
-                result.PasswordChangeRequired));
+            oidcLogin.EnsureCsrfCookie(context, loginOptions);
+
+            var resolvedTenantId = oidcLogin.ResolveTenantId(tokenResponse.AccessToken, oidcOptions);
+
+            return Results.Ok(new OidcAuthResponse(
+                tokenResponse.AccessToken,
+                tokenResponse.TokenType ?? "Bearer",
+                tokenResponse.ExpiresIn,
+                resolvedTenantId));
         })
-        .WithDocs("Auth_Refresh", "Refresh access token", "Rotates the refresh token and returns a new access token.")
+        .WithDocs("Auth_Refresh", "Refresh access token", "Rotates the refresh token and returns a new access token (password or OIDC cookie flow).")
         .Produces<PasswordAuthResponse>(StatusCodes.Status200OK)
+        .Produces<OidcAuthResponse>(StatusCodes.Status200OK)
         .Produces(StatusCodes.Status400BadRequest)
         .Produces(StatusCodes.Status401Unauthorized)
         .Produces(StatusCodes.Status404NotFound)
         .Produces(StatusCodes.Status500InternalServerError);
 
         app.MapPost("/auth/logout", async (
-            PasswordLogoutRequest request,
+            PasswordLogoutRequest? request,
             [FromServices] IServiceProvider services,
             [FromServices] IOptionsMonitor<PasswordAuthOptions> options,
+            [FromServices] OidcLoginService oidcLogin,
+            HttpContext context,
             CancellationToken cancellationToken) =>
         {
-            if (!(options.CurrentValue?.Enabled ?? false))
+            if (request is not null && !string.IsNullOrWhiteSpace(request.RefreshToken))
             {
-                return Results.NotFound();
-            }
+                var logoutRequest = request;
+                if (!(options.CurrentValue?.Enabled ?? false))
+                {
+                    return Results.NotFound();
+                }
 
-            var auth = services.GetService<IPasswordAuthService>();
-            if (auth is null)
-            {
-                return Results.NotFound();
-            }
+                var auth = services.GetService<IPasswordAuthService>();
+                if (auth is null)
+                {
+                    return Results.NotFound();
+                }
 
-            var tenants = services.GetService<ITenantStore>();
-            if (tenants is null)
-            {
-                return Results.NotFound();
-            }
+                var tenants = services.GetService<ITenantStore>();
+                if (tenants is null)
+                {
+                    return Results.NotFound();
+                }
 
-            if (string.IsNullOrWhiteSpace(request.TenantId))
-            {
-                return Results.BadRequest(new { error = "missing-tenant", message = "tenantId is required." });
-            }
+                if (string.IsNullOrWhiteSpace(logoutRequest.TenantId))
+                {
+                    return Results.BadRequest(new { error = "missing-tenant", message = "tenantId is required." });
+                }
 
-            var tenantId = request.TenantId.Trim();
-            var tenant = await tenants.GetByIdAsync(tenantId, cancellationToken).ConfigureAwait(false);
-            if (tenant is null || !tenant.IsActive)
-            {
-                // Do not leak whether the tenant exists.
-                return Results.Unauthorized();
-            }
+                var tenantId = logoutRequest.TenantId.Trim();
+                var tenant = await tenants.GetByIdAsync(tenantId, cancellationToken).ConfigureAwait(false);
+                if (tenant is null || !tenant.IsActive)
+                {
+                    // Do not leak whether the tenant exists.
+                    return Results.Unauthorized();
+                }
 
-            var revoked = await auth.LogoutAsync(tenant.TenantId, request.RefreshToken, cancellationToken).ConfigureAwait(false);
-            if (revoked is null)
-            {
-                return Results.NotFound();
-            }
+                var revoked = await auth.LogoutAsync(
+                        tenant.TenantId,
+                        logoutRequest.RefreshToken,
+                        cancellationToken)
+                    .ConfigureAwait(false);
+                if (revoked is null)
+                {
+                    return Results.NotFound();
+                }
 
-            if (revoked == false)
-            {
+                if (revoked == false)
+                {
+                    return Results.NoContent();
+                }
+
                 return Results.NoContent();
             }
 
+            if (!oidcLogin.IsEnabled)
+            {
+                return Results.BadRequest(new { error = "missing-refresh", message = "refreshToken is required." });
+            }
+
+            if (!oidcLogin.TryResolveOptions(out _, out var loginOptions, out var error))
+            {
+                return error!;
+            }
+
+            if (!oidcLogin.ValidateCsrf(context, loginOptions, out var csrfError))
+            {
+                return csrfError!;
+            }
+
+            oidcLogin.ClearRefreshCookies(context, loginOptions);
             return Results.NoContent();
         })
-        .WithDocs("Auth_Logout", "Logout", "Revokes the provided refresh token.")
+        .WithDocs("Auth_Logout", "Logout", "Revokes the provided refresh token or clears the OIDC refresh cookie.")
         .Produces(StatusCodes.Status204NoContent)
         .Produces(StatusCodes.Status400BadRequest)
         .Produces(StatusCodes.Status401Unauthorized)

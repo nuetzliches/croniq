@@ -28,6 +28,7 @@ import {
     IssueTokenRequest,
     IssueTokenResponse,
     JobResponse,
+    OidcAuthResponse,
     PasswordAuthResponse,
     PasswordChangePasswordRequest,
     PasswordLoginRequest,

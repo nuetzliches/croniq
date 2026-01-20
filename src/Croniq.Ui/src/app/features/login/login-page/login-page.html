@@ -7,6 +7,21 @@
     </div>
 
     <div class="rounded-2xl border border-white/10 bg-surface-alt/50 p-8 shadow-xl backdrop-blur-sm">
+      @if (isOidcMode()) {
+      <div class="space-y-6">
+        <div class="space-y-1">
+          <h2 class="text-lg font-semibold text-primary">Continue with SSO</h2>
+          <p class="text-sm text-muted">Use your identity provider to sign in.</p>
+        </div>
+        <button
+          type="button"
+          class="w-full rounded-lg bg-accent px-4 py-2.5 text-sm font-semibold text-white shadow-lg shadow-accent/20 transition hover:bg-accent-hover"
+          (click)="startOidcLogin()"
+        >
+          Sign in with SSO
+        </button>
+      </div>
+      } @else {
       <form
         class="space-y-6"
         novalidate
@@ -120,6 +135,7 @@
           }
         </button>
       </form>
+      }
     </div>
 
     @if (sessionToken()) {
@@ -141,4 +157,3 @@
     }
   </div>
 </div>
-

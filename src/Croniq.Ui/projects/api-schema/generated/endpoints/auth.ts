@@ -4,6 +4,7 @@ import {
     PasswordLoginRequest,
     PasswordAuthResponse,
     PasswordRefreshRequest,
+    OidcAuthResponse,
     PasswordLogoutRequest,
     PasswordChangePasswordRequest,
     ApiClientResponse,
@@ -116,7 +117,7 @@ export const AuthApi: EndpointDefinition[] = [
     {
         method: 'post',
         path: '/auth/logout',
-        description: `Revokes the provided refresh token.`,
+        description: `Revokes the provided refresh token or clears the OIDC refresh cookie.`,
         requestFormat: 'json',
         parameters: [
             { name: 'body', type: 'Body', schema: PasswordLogoutRequest },
@@ -129,14 +130,61 @@ export const AuthApi: EndpointDefinition[] = [
         ],
     },
     {
+        method: 'get',
+        path: '/auth/oidc/callback',
+        description: `Handles the OIDC code exchange and sets the refresh cookie.`,
+        requestFormat: 'json',
+        parameters: [
+            { name: 'code', type: 'Query', schema: z.string().optional() },
+            { name: 'state', type: 'Query', schema: z.string().optional() },
+            { name: 'error', type: 'Query', schema: z.string().optional() },
+            {
+                name: 'error_description',
+                type: 'Query',
+                schema: z.string().optional(),
+            },
+        ],
+        response: z.void(),
+        errors: [
+            { status: 302, description: `Found`, schema: z.void() },
+            { status: 400, description: `Bad Request`, schema: z.void() },
+            { status: 401, description: `Unauthorized`, schema: z.void() },
+            { status: 404, description: `Not Found`, schema: z.void() },
+            {
+                status: 500,
+                description: `Internal Server Error`,
+                schema: z.void(),
+            },
+        ],
+    },
+    {
+        method: 'get',
+        path: '/auth/oidc/start',
+        description: `Redirects to the configured OIDC provider for login.`,
+        requestFormat: 'json',
+        parameters: [
+            { name: 'returnUrl', type: 'Query', schema: z.string().optional() },
+        ],
+        response: z.void(),
+        errors: [
+            { status: 302, description: `Found`, schema: z.void() },
+            { status: 404, description: `Not Found`, schema: z.void() },
+            {
+                status: 500,
+                description: `Internal Server Error`,
+                schema: z.void(),
+            },
+        ],
+    },
+    {
         method: 'post',
         path: '/auth/refresh',
-        description: `Rotates the refresh token and returns a new access token.`,
+        description: `Rotates the refresh token and returns a new access token (password or OIDC cookie flow).`,
         requestFormat: 'json',
         parameters: [
             { name: 'body', type: 'Body', schema: PasswordRefreshRequest },
         ],
-        response: PasswordAuthResponse,
+        response: OidcAuthResponse,
         errors: [
             { status: 400, description: `Bad Request`, schema: z.void() },
             { status: 401, description: `Unauthorized`, schema: z.void() },

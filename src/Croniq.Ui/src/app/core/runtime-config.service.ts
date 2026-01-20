@@ -51,4 +51,9 @@ export class RuntimeConfigService {
     get defaultTenantId(): string {
         return this.config.defaultTenantId?.trim() ?? '';
     }
+
+    get authMode(): 'password' | 'oidc' {
+        const mode = this.config.auth?.mode?.trim().toLowerCase();
+        return mode === 'oidc' ? 'oidc' : 'password';
+    }
 }

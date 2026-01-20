@@ -62,6 +62,7 @@ import {
     CallerType,
     CallerInfoResponse,
     HealthStatusResponse,
+    OidcAuthResponse,
     PasswordAuthResponse,
     PasswordChangePasswordRequest,
     PasswordLoginRequest,

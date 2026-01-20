@@ -36,6 +36,111 @@ OIDC bearer validation is optional and controlled by `Croniq:Auth:Oidc` (`Croniq
 
 Forward-looking notes about federated login are intentionally out of scope for these public docs.
 
+## Croniq UI Auth Notes
+
+Interim plan for securing the Angular admin surface until the backend completes the delegated operator flow and external identity provider integration.
+
+### Access Token Handling
+
+- The UI stores the access token via `AuthSessionService` (`src/Croniq.Ui/src/app/core/auth/auth-session.service.ts`).
+- Storage backend for the access token is always `sessionStorage`; no auth artifacts land in `localStorage` or IndexedDB.
+- Expiration metadata is optional but recommended. Expired secrets are purged automatically.
+
+### Refresh Token Handling
+
+- Refresh tokens are treated as sensitive and are not persisted in browser storage.
+- Password login keeps refresh tokens memory-only (per tab/session). Reloading the page requires re-login.
+- OIDC login keeps refresh tokens HttpOnly in a backend-issued cookie; the UI never reads them.
+
+#### Transport (decision)
+
+Croniq uses two refresh transports:
+
+- Password login (Variant A): `/auth/login` returns `refreshToken` in the JSON response body; `/auth/refresh` and `/auth/logout` expect it in the JSON request body.
+- OIDC login: refresh tokens remain in an HttpOnly cookie; the UI sends `X-CSRF` from the `croniq.oidc.csrf` cookie on `/auth/refresh` and `/auth/logout`.
+
+The UI must not rely on refresh-token cookies for password login.
+
+### Password Login (`/auth/*`)
+
+The backend exposes these routes:
+
+- `POST /auth/login` (request: `PasswordLoginRequest`)
+- `POST /auth/refresh` (request: `PasswordRefreshRequest`)
+- `POST /auth/logout` (request: `PasswordLogoutRequest`)
+
+Important: The current OpenAPI snapshot documents request shapes, but may not include a response schema for these routes.
+The UI therefore parses the response defensively.
+
+#### Concrete response shapes (backend)
+
+The backend implementation lives in `src/Croniq.Api/ApiHostingExtensions.PasswordAuth.cs` and currently returns:
+
+- `POST /auth/login` -> `200 OK`
+  - `tenantId: string | null`
+  - `accessToken: string`
+  - `tokenType: "Bearer"`
+  - `expiresIn: number` (seconds)
+  - `refreshToken: string | null`
+  - `passwordChangeRequired: boolean | null`
+- `POST /auth/refresh` -> `200 OK`
+  - `accessToken: string`
+  - `tokenType: "Bearer"`
+  - `expiresIn: number` (seconds)
+  - `refreshToken: string | null`
+  - `passwordChangeRequired: boolean | null`
+- `POST /auth/logout` -> `204 NoContent`
+
+The UI computes a best-effort `expiresAt` from `expiresIn` when the backend does not return an absolute timestamp.
+
+### Tenant / Environment resolution
+
+- The UI provides `tenantId` for password auth requests.
+- The UI also does not set `environmentTag` in login/refresh; environment selection is part of the UI shell context.
+- Tenant selection remains part of the UI shell context.
+
+Current UI scope:
+
+- The Tenants feature module is intentionally excluded from the UI navigation (no menu entries or command palette shortcuts).
+- The UI still needs a tenant identifier for tenant-scoped API routes (for example, `/tenants/:tenantId/*`).
+- The tenant id must be treated as an explicit identifier: the UI must not rely on server-side defaults or mode-specific fallbacks.
+- The UI persists the tenant id from the login response in `sessionStorage` (see `AuthSessionService`). Refresh/logout use that stored value.
+
+### Tenant Context in the UI
+
+- The tenant-context panel stores the active tenant identity and environment plus feature-flag overrides.
+- It no longer supports manual token entry or token issuance; authentication is handled via the `/login` page.
+- Logout clears auth state, tenant context, and tenant-scoped UI preferences (best-effort).
+
+### OIDC Login (Backend Exchange)
+
+Goal: Keep the password flow as the default (no external provider required) while adding an optional OIDC path (for example, Authelia) that can be enabled by configuration.
+
+Implementation notes:
+
+- Runtime config (UI): `public/assets/croniq-config.json` exposes `auth.mode = "password" | "oidc"`.
+- Backend config: `Croniq:Auth:OidcLogin:*` configures the confidential OIDC client and refresh-cookie behavior.
+- Routes:
+  - `GET /auth/oidc/start` (backend creates PKCE + state and redirects to the IdP)
+  - `GET /auth/oidc/callback` (backend exchanges the code, sets cookies, redirects to the UI)
+  - UI `/auth/oidc/callback` calls `POST /auth/refresh` with `withCredentials` + `X-CSRF` to obtain the access token
+- Cookie semantics:
+  - `croniq.oidc.refresh` (HttpOnly) holds the refresh token
+  - `croniq.oidc.csrf` is readable by the UI and must be sent as `X-CSRF` on `/auth/refresh` and `/auth/logout`
+- Logout clears auth state and calls `/auth/logout` (cookie-based in OIDC mode).
+- Access tokens are IdP-issued; therefore, `Croniq:Auth:Oidc:Enabled=true` is required so the API accepts them.
+
+### Next Steps for Full Auth
+
+- [x] Add external login flow using backend OIDC exchange (PKCE) + refresh cookie.
+- [x] Distribute the Croniq session token via HttpInterceptors instead of the shared executor so that feature modules can call `HttpClient` directly when needed.
+- [x] Wire logout to clear session storage and any relevant client caches.
+- [ ] Document CSP changes once the login redirect domain is finalized.
+
+### Open questions
+
+- Which claim maps should be the defaults for Authelia (tenant/env/scope)?
+
 ## API & Admin Endpoints
 
 Admin routes (scope `tenants:admin`) expose:
@@ -134,34 +239,45 @@ These summaries should remain consistent with OpenAPI descriptions so Swagger/CL
 
 ## Configuration Reference
 
-| Key                                           | Description                                                                      |
-| --------------------------------------------- | -------------------------------------------------------------------------------- |
-| `Croniq:Auth:Mode`                            | `InMemory`, `SqlServer`, or `Postgres`.                                          |
-| `Croniq:Auth:InMemory:ApiKey`                 | Plaintext key for in-memory mode.                                                |
-| `Croniq:Auth:SqlServer:ConnectionString`      | Optional connection override. Falls back to `Croniq:SqlServer:ConnectionString`. |
-| `Croniq:Auth:Postgres:ConnectionString`       | Optional connection override. Falls back to `Croniq:Postgres:ConnectionString`.  |
-| `Croniq:Auth:Tokens:Enabled`                  | Toggles the built-in Croniq token issuer.                                        |
-| `Croniq:Auth:Tokens:Issuer`                   | Value emitted as `iss` for Croniq-minted tokens.                                 |
-| `Croniq:Auth:Tokens:DefaultAudience`          | Default `aud` claim when callers omit `audience`.                                |
-| `Croniq:Auth:Tokens:SigningKey`               | Base64-encoded symmetric key used for HMAC-SHA256 signing.                       |
-| `Croniq:Auth:Tokens:DefaultLifetimeMinutes`   | Fallback TTL for minted tokens when `ttlMinutes` is not provided.                |
-| `Croniq:Auth:Oidc:Enabled`                    | Enables OIDC/JWT bearer validation.                                              |
-| `Croniq:Auth:Oidc:Authority`                  | OIDC issuer/authority URL.                                                       |
-| `Croniq:Auth:Oidc:MetadataAddress`            | Optional override for OIDC discovery metadata address.                           |
-| `Croniq:Auth:Oidc:Audience`                   | Expected `aud` claim for bearer tokens.                                          |
-| `Croniq:Auth:Oidc:RequireHttpsMetadata`       | Require HTTPS for discovery metadata (default true).                             |
-| `Croniq:Auth:Oidc:TenantClaim`                | Claim name for tenant id (default `tenant`).                                     |
-| `Croniq:Auth:Oidc:TenantFallbackClaims`       | Fallback tenant claim names (default `tid`).                                     |
-| `Croniq:Auth:Oidc:EnvironmentClaim`           | Claim name for environment tag (default `env`).                                  |
-| `Croniq:Auth:Oidc:EnvironmentFallbackClaims`  | Fallback environment claim names.                                                |
-| `Croniq:Auth:Oidc:CallerIdClaim`              | Claim name for caller id (default `sub`).                                        |
-| `Croniq:Auth:Oidc:CallerIdFallbackClaims`     | Fallback caller id claim names.                                                  |
-| `Croniq:Auth:Oidc:ScopeClaims`                | Claim names inspected for scopes (defaults include `scope`, `scp`).              |
-| `Croniq:Auth:Oidc:RequiredScopes`             | Scopes required to access Croniq endpoints.                                      |
-| `Croniq:Auth:Oidc:DefaultEnvironment`         | Default environment tag when missing in claims.                                  |
-| `Croniq:Auth:Oidc:NormalizeScopesToLowercase` | Normalize scopes to lowercase before evaluation.                                 |
-| `Croniq:Auth:Oidc:ClockSkewSeconds`           | JWT validation clock skew tolerance.                                             |
-| `Croniq:Auth:Oidc:MetadataRefreshInterval`    | Cache duration for OIDC metadata.                                                |
+| Key                                               | Description                                                                      |
+| ------------------------------------------------- | -------------------------------------------------------------------------------- |
+| `Croniq:Auth:Mode`                                | `InMemory`, `SqlServer`, or `Postgres`.                                          |
+| `Croniq:Auth:InMemory:ApiKey`                     | Plaintext key for in-memory mode.                                                |
+| `Croniq:Auth:SqlServer:ConnectionString`          | Optional connection override. Falls back to `Croniq:SqlServer:ConnectionString`. |
+| `Croniq:Auth:Postgres:ConnectionString`           | Optional connection override. Falls back to `Croniq:Postgres:ConnectionString`.  |
+| `Croniq:Auth:Tokens:Enabled`                      | Toggles the built-in Croniq token issuer.                                        |
+| `Croniq:Auth:Tokens:Issuer`                       | Value emitted as `iss` for Croniq-minted tokens.                                 |
+| `Croniq:Auth:Tokens:DefaultAudience`              | Default `aud` claim when callers omit `audience`.                                |
+| `Croniq:Auth:Tokens:SigningKey`                   | Base64-encoded symmetric key used for HMAC-SHA256 signing.                       |
+| `Croniq:Auth:Tokens:DefaultLifetimeMinutes`       | Fallback TTL for minted tokens when `ttlMinutes` is not provided.                |
+| `Croniq:Auth:Oidc:Enabled`                        | Enables OIDC/JWT bearer validation.                                              |
+| `Croniq:Auth:Oidc:Authority`                      | OIDC issuer/authority URL.                                                       |
+| `Croniq:Auth:Oidc:MetadataAddress`                | Optional override for OIDC discovery metadata address.                           |
+| `Croniq:Auth:Oidc:Audience`                       | Expected `aud` claim for bearer tokens.                                          |
+| `Croniq:Auth:Oidc:RequireHttpsMetadata`           | Require HTTPS for discovery metadata (default true).                             |
+| `Croniq:Auth:Oidc:TenantClaim`                    | Claim name for tenant id (default `tenant`).                                     |
+| `Croniq:Auth:Oidc:TenantFallbackClaims`           | Fallback tenant claim names (default `tid`).                                     |
+| `Croniq:Auth:Oidc:EnvironmentClaim`               | Claim name for environment tag (default `env`).                                  |
+| `Croniq:Auth:Oidc:EnvironmentFallbackClaims`      | Fallback environment claim names.                                                |
+| `Croniq:Auth:Oidc:CallerIdClaim`                  | Claim name for caller id (default `sub`).                                        |
+| `Croniq:Auth:Oidc:CallerIdFallbackClaims`         | Fallback caller id claim names.                                                  |
+| `Croniq:Auth:Oidc:ScopeClaims`                    | Claim names inspected for scopes (defaults include `scope`, `scp`).              |
+| `Croniq:Auth:Oidc:RequiredScopes`                 | Scopes required to access Croniq endpoints.                                      |
+| `Croniq:Auth:Oidc:DefaultEnvironment`             | Default environment tag when missing in claims.                                  |
+| `Croniq:Auth:Oidc:NormalizeScopesToLowercase`     | Normalize scopes to lowercase before evaluation.                                 |
+| `Croniq:Auth:Oidc:ClockSkewSeconds`               | JWT validation clock skew tolerance.                                             |
+| `Croniq:Auth:Oidc:MetadataRefreshInterval`        | Cache duration for OIDC metadata.                                                |
+| `Croniq:Auth:OidcLogin:Enabled`                   | Enables the backend OIDC login flow for the UI.                                  |
+| `Croniq:Auth:OidcLogin:ClientId`                  | OIDC client id for the UI login flow.                                            |
+| `Croniq:Auth:OidcLogin:ClientSecret`              | OIDC client secret for the UI login flow.                                        |
+| `Croniq:Auth:OidcLogin:RedirectUri`               | Redirect URI registered with the IdP.                                            |
+| `Croniq:Auth:OidcLogin:UiBaseUrl`                 | Base URL used to redirect back to the UI after login.                            |
+| `Croniq:Auth:OidcLogin:Scopes`                    | Scopes requested during the login flow.                                          |
+| `Croniq:Auth:OidcLogin:StateTtlMinutes`           | PKCE state cookie TTL in minutes.                                                |
+| `Croniq:Auth:OidcLogin:RefreshCookieLifetimeDays` | Refresh cookie lifetime in days.                                                 |
+| `Croniq:Auth:OidcLogin:CookieSameSite`            | Refresh/CSRF cookie SameSite policy.                                             |
+| `Croniq:Auth:OidcLogin:CookieDomain`              | Optional cookie domain override.                                                 |
+| `Croniq:Auth:OidcLogin:CookieSecure`              | Force the Secure cookie flag.                                                    |
 
 ## Testing & Tooling
 

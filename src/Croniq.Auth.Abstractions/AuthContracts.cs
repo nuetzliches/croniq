@@ -212,6 +212,32 @@ public sealed class PasswordAuthOptions
     public int LockoutMinutes { get; set; } = 15;
 }
 
+/// <summary>Configuration for OIDC login via backend code exchange.</summary>
+public sealed class CroniqOidcLoginOptions
+{
+    public bool Enabled { get; set; }
+
+    public string ClientId { get; set; } = string.Empty;
+
+    public string? ClientSecret { get; set; }
+
+    public string RedirectUri { get; set; } = string.Empty;
+
+    public string UiBaseUrl { get; set; } = string.Empty;
+
+    public string[] Scopes { get; set; } = new[] { "openid", "profile", "offline_access" };
+
+    public int StateTtlMinutes { get; set; } = 5;
+
+    public int? RefreshCookieLifetimeDays { get; set; } = 7;
+
+    public string CookieSameSite { get; set; } = "Lax";
+
+    public string? CookieDomain { get; set; }
+
+    public bool CookieSecure { get; set; } = true;
+}
+
 public sealed record PasswordLoginResult(
     bool Success,
     string? AccessToken,

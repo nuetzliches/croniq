@@ -2,6 +2,7 @@ import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@a
 import { FormField, form, required, submit } from '@angular/forms/signals';
 import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 import { AuthSessionService } from '@core/auth/auth-session.service';
+import { OidcAuthService } from '@core/auth/oidc-auth.service';
 import { PasswordAuthService } from '@core/auth/password-auth.service';
 import { RuntimeConfigService } from '@core/runtime-config.service';
 import { TenantContextService } from '@core/tenant-context/tenant-context.service';
@@ -16,6 +17,7 @@ import { finalize } from 'rxjs';
 })
 export class LoginPage {
     private readonly authSession = inject(AuthSessionService);
+    private readonly oidcAuth = inject(OidcAuthService);
     private readonly passwordAuth = inject(PasswordAuthService);
     private readonly runtimeConfig = inject(RuntimeConfigService);
     private readonly tenantContext = inject(TenantContextService);
@@ -24,6 +26,7 @@ export class LoginPage {
 
     readonly sessionToken = this.authSession.sessionToken;
     readonly sessionTokenExpired = this.authSession.sessionTokenExpired;
+    readonly isOidcMode = computed(() => this.runtimeConfig.authMode === 'oidc');
 
     readonly maskedSessionToken = computed(() => {
         const raw = this.sessionToken()?.value?.trim();
@@ -95,6 +98,11 @@ export class LoginPage {
             return;
         }
 
+        if (this.isOidcMode()) {
+            this.startOidcLogin();
+            return;
+        }
+
         this.submitAttempted.set(true);
 
         await submit(this.loginForm, async () => {
@@ -156,6 +164,10 @@ export class LoginPage {
         this.authSession.clearAuthState();
         this.lastAction.set('Token cleared.');
         this.lastActionTone.set('info');
+    }
+
+    startOidcLogin(): void {
+        this.oidcAuth.startLogin(this.resolveReturnUrl());
     }
 
     onCredentialEdit(): void {

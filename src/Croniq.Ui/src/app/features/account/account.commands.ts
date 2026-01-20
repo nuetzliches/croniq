@@ -1,6 +1,6 @@
 import { Provider, inject } from '@angular/core';
 import { Router } from '@angular/router';
-import { PasswordAuthService } from '@core/auth/password-auth.service';
+import { AuthSignOutService } from '@core/auth/auth-sign-out.service';
 import { COMMAND_PALETTE_COMMANDS, type CommandPaletteCommand } from '@shared/command-palette/command-palette.controller';
 import { finalize } from 'rxjs';
 
@@ -18,7 +18,7 @@ export const ACCOUNT_COMMANDS_PROVIDER: Provider = {
     provide: COMMAND_PALETTE_COMMANDS,
     multi: true,
     useFactory: (): ReadonlyArray<CommandPaletteCommand> => {
-        const passwordAuth = inject(PasswordAuthService);
+        const authSignOut = inject(AuthSignOutService);
         const router = inject(Router);
 
         return [
@@ -30,8 +30,8 @@ export const ACCOUNT_COMMANDS_PROVIDER: Provider = {
                 description: 'Sign out and return to login',
                 keywords: ['logout', 'sign out', 'session'],
                 execute: () => {
-                    passwordAuth
-                        .logout()
+                    authSignOut
+                        .signOut()
                         .pipe(finalize(() => void router.navigate(['/auth', 'login'])))
                         .subscribe();
                 },

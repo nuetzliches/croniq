@@ -51,7 +51,7 @@
 ## Auth
 
 - [x] Make OIDC optional + configurable (e.g., Authelia) while keeping the default password login fully supported by croniq-api without external providers.
-- [ ] Auth concept: replace password login with external login flow using PKCE (OIDC).
+- [x] Auth concept: replace password login with external login flow using PKCE (OIDC).
 - [x] Auth concept: route access-token distribution through HttpInterceptors so feature modules can call `HttpClient` directly.
 - [x] Auth concept: logout clears session storage and any relevant client caches.
 - [ ] Auth concept: document CSP changes once the login redirect domain is finalized.

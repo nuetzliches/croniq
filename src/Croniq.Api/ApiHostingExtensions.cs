@@ -45,6 +45,8 @@ public static partial class ApiHostingExtensions
         services.AddCroniqPlatformServices(configuration);
         services.AddSingleton<TenantRateLimitDecider>();
         services.TryAddSingleton<WebhookIngressConsumerTracker>();
+        services.AddHttpClient();
+        services.AddSingleton<OidcLoginService>();
         services.AddGrpc(options => options.Interceptors.Add<TenantRateLimitInterceptor>());
         return services;
     }
@@ -80,6 +82,7 @@ public static partial class ApiHostingExtensions
             "/health",
             "/webhooks",
             "/auth/login",
+            "/auth/oidc",
             "/auth/refresh",
             "/auth/logout",
             // When hosted behind a reverse proxy that prefixes routes with /api,
@@ -88,6 +91,7 @@ public static partial class ApiHostingExtensions
             "/api/health",
             "/api/webhooks",
             "/api/auth/login",
+            "/api/auth/oidc",
             "/api/auth/refresh",
             "/api/auth/logout"
         };
@@ -177,6 +181,7 @@ public static partial class ApiHostingExtensions
         MapApiClientEndpoints(app);
         MapApiKeyEndpoints(app);
         MapTokenEndpoints(app);
+        MapOidcAuthEndpoints(app);
         MapPasswordAuthEndpoints(app);
         MapExecutionLogEndpoints(app);
         MapJobTriggerEndpoints(app);

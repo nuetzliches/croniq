@@ -2269,6 +2269,95 @@
         }
       }
     },
+    "/auth/oidc/start": {
+      "get": {
+        "tags": [
+          "Croniq.Sample.ApiHost"
+        ],
+        "summary": "OIDC login start",
+        "description": "Redirects to the configured OIDC provider for login.",
+        "operationId": "Auth_OidcStart",
+        "parameters": [
+          {
+            "name": "returnUrl",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "302": {
+            "description": "Found"
+          },
+          "404": {
+            "description": "Not Found"
+          },
+          "500": {
+            "description": "Internal Server Error"
+          }
+        },
+        "security": []
+      }
+    },
+    "/auth/oidc/callback": {
+      "get": {
+        "tags": [
+          "Croniq.Sample.ApiHost"
+        ],
+        "summary": "OIDC login callback",
+        "description": "Handles the OIDC code exchange and sets the refresh cookie.",
+        "operationId": "Auth_OidcCallback",
+        "parameters": [
+          {
+            "name": "code",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "state",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "error",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "error_description",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "302": {
+            "description": "Found"
+          },
+          "400": {
+            "description": "Bad Request"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "404": {
+            "description": "Not Found"
+          },
+          "500": {
+            "description": "Internal Server Error"
+          }
+        },
+        "security": []
+      }
+    },
     "/auth/login": {
       "post": {
         "tags": [
@@ -2323,7 +2412,7 @@
           "Croniq.Sample.ApiHost"
         ],
         "summary": "Refresh access token",
-        "description": "Rotates the refresh token and returns a new access token.",
+        "description": "Rotates the refresh token and returns a new access token (password or OIDC cookie flow).",
         "operationId": "Auth_Refresh",
         "requestBody": {
           "content": {
@@ -2332,8 +2421,7 @@
                 "$ref": "#/components/schemas/PasswordRefreshRequest"
               }
             }
-          },
-          "required": true
+          }
         },
         "responses": {
           "200": {
@@ -2341,7 +2429,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/PasswordAuthResponse"
+                  "$ref": "#/components/schemas/OidcAuthResponse"
                 }
               }
             }
@@ -2368,7 +2456,7 @@
           "Croniq.Sample.ApiHost"
         ],
         "summary": "Logout",
-        "description": "Revokes the provided refresh token.",
+        "description": "Revokes the provided refresh token or clears the OIDC refresh cookie.",
         "operationId": "Auth_Logout",
         "requestBody": {
           "content": {
@@ -2377,8 +2465,7 @@
                 "$ref": "#/components/schemas/PasswordLogoutRequest"
               }
             }
-          },
-          "required": true
+          }
         },
         "responses": {
           "204": {
@@ -3490,6 +3577,29 @@
             "additionalProperties": {
               "type": "string"
             },
+            "nullable": true
+          }
+        },
+        "additionalProperties": false
+      },
+      "OidcAuthResponse": {
+        "type": "object",
+        "properties": {
+          "accessToken": {
+            "type": "string",
+            "nullable": true
+          },
+          "tokenType": {
+            "type": "string",
+            "nullable": true
+          },
+          "expiresIn": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "tenantId": {
+            "type": "string",
             "nullable": true
           }
         },

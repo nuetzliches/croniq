@@ -4,11 +4,11 @@ This consumer-focused guide explains how to secure Croniq hosts with API keys an
 
 ## Choose an Authentication Mode
 
-| Scenario                                  | Recommended Mode    | Notes                                                                                                                   |
-| ----------------------------------------- | ------------------- | ----------------------------------------------------------------------------------------------------------------------- |
-| Automation, schedulers, integration tests | API keys            | Lowest friction, scopes enforced per key, easiest to rotate non-interactive callers.                                    |
-| Human operators via UI                    | Password login      | Self-hosted option; Croniq issues access + refresh tokens.                                                              |
-| Hybrid workloads                          | Mixed (enable both) | Croniq inspects `Authorization: Bearer ...` first, then `X-Croniq-Key`. Only one caller context is created per request. |
+| Scenario                                  | Recommended Mode             | Notes                                                                                                                    |
+| ----------------------------------------- | ---------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| Automation, schedulers, integration tests | API keys                     | Lowest friction, scopes enforced per key, easiest to rotate non-interactive callers.                                     |
+| Human operators via UI                    | OIDC login or password login | OIDC login uses your IdP with backend code exchange + HttpOnly refresh cookie; password login uses Croniq-issued tokens. |
+| Hybrid workloads                          | Mixed (enable both)          | Croniq inspects `Authorization: Bearer ...` first, then `X-Croniq-Key`. Only one caller context is created per request.  |
 
 You can switch between modes (or enable both) by changing configuration-no code changes are required.
 
@@ -85,6 +85,45 @@ Croniq can expose a username/password login for self-hosted deployments.
 
 See [docs/deep-dive/password-auth.md](../deep-dive/password-auth.md) for details.
 
+## OIDC Login (UI)
+
+Croniq can act as a confidential OIDC client for the admin UI. The browser is redirected to the IdP, the backend exchanges the code, and the UI receives only the access token. Refresh tokens stay in an HttpOnly cookie.
+
+Flow overview:
+
+- `GET /auth/oidc/start` -> redirect to the IdP (PKCE + state handled server-side).
+- `GET /auth/oidc/callback` -> backend exchanges the authorization code, sets cookies, and redirects to the UI.
+- UI calls `POST /auth/refresh` (with `withCredentials` + `X-CSRF` header from `croniq.oidc.csrf`) to obtain an access token.
+- UI calls `POST /auth/logout` with the same CSRF header to clear the refresh cookie.
+
+Configuration checklist (`Croniq:Auth:OidcLogin`):
+
+| Setting                                              | Required? | Description                                         |
+| ---------------------------------------------------- | --------- | --------------------------------------------------- |
+| `Croniq__Auth__OidcLogin__Enabled`                   | Yes       | Enables the OIDC login flow for the UI.             |
+| `Croniq__Auth__OidcLogin__ClientId`                  | Yes       | OIDC client id (confidential client).               |
+| `Croniq__Auth__OidcLogin__ClientSecret`              | Yes       | OIDC client secret.                                 |
+| `Croniq__Auth__OidcLogin__RedirectUri`               | Yes       | Absolute redirect URI registered with the IdP.      |
+| `Croniq__Auth__OidcLogin__UiBaseUrl`                 | Yes       | Base URL of the UI for post-login redirect.         |
+| `Croniq__Auth__OidcLogin__Scopes__0`                 | Yes       | Scopes to request (repeat `__Scopes__N` as needed). |
+| `Croniq__Auth__OidcLogin__StateTtlMinutes`           | Optional  | PKCE state cookie TTL (minutes).                    |
+| `Croniq__Auth__OidcLogin__RefreshCookieLifetimeDays` | Optional  | Refresh cookie lifetime.                            |
+| `Croniq__Auth__OidcLogin__CookieSameSite`            | Optional  | Cookie SameSite policy.                             |
+| `Croniq__Auth__OidcLogin__CookieDomain`              | Optional  | Cookie domain (omit for host-only).                 |
+| `Croniq__Auth__OidcLogin__CookieSecure`              | Optional  | Force Secure flag (defaults to HTTPS).              |
+
+UI runtime config (in `public/assets/croniq-config.json`):
+
+```json
+{
+  "auth": {
+    "mode": "oidc"
+  }
+}
+```
+
+Note: the OIDC login flow issues IdP access tokens. You must enable OIDC bearer validation (`Croniq:Auth:Oidc:Enabled=true`) so the API accepts those tokens.
+
 ## OIDC Bearer Tokens (Optional)
 
 Croniq can validate external bearer tokens (for example, Authelia) when `Croniq:Auth:Oidc:Enabled=true`.
@@ -92,7 +131,7 @@ When enabled, bearer validation uses the configured OIDC authority only; Croniq-
 (password login / token issuance) are rejected. API keys remain supported when no `Authorization` header is present.
 Tokens must include a tenant claim (default `tenant`, fallback `tid`) or validation fails.
 
-### Configuration Checklist
+### OIDC Bearer Configuration Checklist
 
 | Setting                                    | Required?               | Description                                                 |
 | ------------------------------------------ | ----------------------- | ----------------------------------------------------------- |

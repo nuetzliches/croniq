@@ -37,6 +37,14 @@ export const appRoutes: Routes = [
                     import('./features/login/login-page/login-page').then((m) => m.LoginPage),
             },
             {
+                path: 'oidc/callback',
+                canDeactivate: [blockAuthPopstateGuard],
+                loadComponent: () =>
+                    import('./features/login/oidc-callback-page/oidc-callback-page').then(
+                        (m) => m.OidcCallbackPage,
+                    ),
+            },
+            {
                 path: 'change-password',
                 canActivate: [requireSessionTokenGuard, requirePasswordChangeGuard],
                 canDeactivate: [blockAuthPopstateGuard],
