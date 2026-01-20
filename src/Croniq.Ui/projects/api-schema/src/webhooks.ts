@@ -6,6 +6,7 @@ export const rotateWebhookSecretRequestSchema = RotateWebhookSecretRequest;
 export const upsertWebhookEndpointRequestSchema = UpsertWebhookEndpointRequest;
 
 export const webhookActivityStatusSchema = z.enum(['success', 'failed', 'warning']);
+export const webhookActivitySourceSchema = z.enum(['ingress', 'invoke']);
 
 export const WebhookActivityTimelineEntry = z.object({
     id: z.string().optional(),
@@ -14,6 +15,7 @@ export const WebhookActivityTimelineEntry = z.object({
     hookKey: z.string().optional(),
     jobKey: z.string().nullable().optional(),
     environment: z.string().nullable().optional(),
+    source: webhookActivitySourceSchema.nullable().optional(),
     occurredAtUtc: z.iso.datetime({ offset: true }).optional(),
     latencyMs: z.number().int().nonnegative().nullable().optional(),
     payloadBytes: z.number().int().nonnegative().nullable().optional(),
@@ -40,6 +42,7 @@ export const WebhookActivitySummary = z.object({
 });
 
 export type WebhookActivityStatus = z.infer<typeof webhookActivityStatusSchema>;
+export type WebhookActivitySource = z.infer<typeof webhookActivitySourceSchema>;
 export type WebhookActivityTimelineEntry = z.infer<typeof WebhookActivityTimelineEntry>;
 export type WebhookActivityTimelineResponse = z.infer<typeof WebhookActivityTimelineResponse>;
 export type WebhookActivityBucket = z.infer<typeof WebhookActivityBucket>;

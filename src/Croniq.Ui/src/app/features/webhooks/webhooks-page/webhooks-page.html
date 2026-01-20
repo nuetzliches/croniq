@@ -757,6 +757,10 @@
                 <span class="text-primary">{{ selectedTimelineItem()!.environment || '-' }}</span>
               </div>
               <div class="flex items-center justify-between">
+                <span class="text-muted">Source</span>
+                <span class="text-primary">{{ timelineSourceLabel(selectedTimelineItem()!) }}</span>
+              </div>
+              <div class="flex items-center justify-between">
                 <span class="text-muted">Occurred</span>
                 <span class="text-primary">{{ selectedTimelineItem()!.occurredAt | date: 'short' }}</span>
               </div>

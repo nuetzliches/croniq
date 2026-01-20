@@ -1,4 +1,5 @@
 using System;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Reflection;
@@ -15,6 +16,8 @@ namespace Croniq.TestKit.Diagnostics;
 /// </summary>
 public static class TestcontainerLogCollector
 {
+    private static long _sequence;
+
     public static async Task<string> CaptureContainerLogsAsync(
         ITestcontainersContainer container,
         string artifactName,
@@ -25,7 +28,9 @@ public static class TestcontainerLogCollector
 
         var sanitized = Sanitize(artifactName);
         var directory = RepositoryLocator.GetArtifactsDirectory(Path.Combine("containers", sanitized));
-        var filePath = Path.Combine(directory, $"{sanitized}.log");
+        var suffix = FormattableString.Invariant(
+            $"{DateTimeOffset.UtcNow:yyyyMMddHHmmssfff}-{Environment.ProcessId}-{Interlocked.Increment(ref _sequence)}");
+        var filePath = Path.Combine(directory, $"{sanitized}-{suffix}.log");
 
         var logs = await TryGetLogsAsync(container, cancellationToken).ConfigureAwait(false)
             ?? $"[{DateTime.UtcNow:O}] Container log capture is not available for the current Testcontainers version.";

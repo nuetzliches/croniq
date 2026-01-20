@@ -95,6 +95,8 @@ public static class WebhookHostingExtensions
 
         services.TryAddSingleton<IWebhookPersistenceProvider, SqlServerWebhookPersistenceProvider>();
         services.TryAddSingleton<IWebhookDeadLetterStore, SqlServerWebhookDeadLetterStore>();
+        services.TryAddSingleton<IWebhookActivityStore, SqlServerWebhookActivityStore>();
+        services.TryAddSingleton<IWebhookActivityRecorder>(sp => sp.GetRequiredService<SqlServerWebhookActivityStore>());
         services.TryAddSingleton<IWebhookIngressEventStore, SqlServerWebhookIngressEventStore>();
         services.TryAddSingleton<IWebhookEndpointChangefeed, SqlServerWebhookEndpointChangefeed>();
         return services;
@@ -123,6 +125,8 @@ public static class WebhookHostingExtensions
 
         services.TryAddSingleton<IWebhookPersistenceProvider, PostgresWebhookPersistenceProvider>();
         services.TryAddSingleton<IWebhookDeadLetterStore, PostgresWebhookDeadLetterStore>();
+        services.TryAddSingleton<IWebhookActivityStore, PostgresWebhookActivityStore>();
+        services.TryAddSingleton<IWebhookActivityRecorder>(sp => sp.GetRequiredService<PostgresWebhookActivityStore>());
         services.TryAddSingleton<IWebhookIngressEventStore, PostgresWebhookIngressEventStore>();
         services.TryAddSingleton<IWebhookEndpointChangefeed, PostgresWebhookEndpointChangefeed>();
         return services;
@@ -202,6 +206,7 @@ public static class WebhookHostingExtensions
 
         services.AddSingleton<IWebhookPersistenceProvider, RemoteWebhookPersistenceProvider>();
         services.AddSingleton<IWebhookDeadLetterStore, RemoteWebhookDeadLetterStore>();
+        services.AddSingleton<IWebhookActivityStore, RemoteWebhookActivityStore>();
         services.AddSingleton<IWebhookCapabilitiesProvider, RemoteWebhookCapabilitiesProvider>();
         return services;
     }
@@ -210,6 +215,8 @@ public static class WebhookHostingExtensions
     {
         services.RemoveAll<IWebhookPersistenceProvider>();
         services.RemoveAll<IWebhookDeadLetterStore>();
+        services.RemoveAll<IWebhookActivityStore>();
+        services.RemoveAll<IWebhookActivityRecorder>();
         services.RemoveAll<IWebhookIngressEventStore>();
         services.RemoveAll<IWebhookEndpointChangefeed>();
     }
@@ -455,7 +462,18 @@ public static class WebhookHostingExtensions
                 }
             }
 
+            var activitySource = WebhookActivitySources.Ingress;
+            if (relayAllowed)
+            {
+                var sourceOverride = request.Headers[WebhookActivityHeaders.SourceHeaderName].FirstOrDefault();
+                if (string.Equals(sourceOverride, WebhookActivitySources.Invoke, StringComparison.OrdinalIgnoreCase))
+                {
+                    activitySource = WebhookActivitySources.Invoke;
+                }
+            }
+
             var metadata = metadataFactory.Create(endpoint, payload);
+            metadata[WebhookActivityMetadata.SourceKey] = activitySource;
             var ingressOptions = webhookOptions.CurrentValue.Ingress;
             if (ingressOptions.DispatchMode == WebhookIngressDispatchMode.StoreOnly)
             {
@@ -687,6 +705,7 @@ public static class WebhookHostingExtensions
                 : new Dictionary<string, string>(endpoint.Metadata, StringComparer.OrdinalIgnoreCase);
 
             metadata["webhook:hook"] = endpoint.HookKey;
+            metadata[WebhookActivityMetadata.SourceKey] = WebhookActivitySources.Ingress;
             if (!string.IsNullOrWhiteSpace(payload))
             {
                 metadata["webhook:payload"] = payload;

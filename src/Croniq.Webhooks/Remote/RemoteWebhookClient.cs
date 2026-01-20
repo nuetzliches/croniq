@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Linq;
 using System.Net.Http;
 using System.Net.Http.Json;
@@ -14,6 +15,8 @@ public sealed class RemoteWebhookClient
 {
     private readonly HttpClient _httpClient;
     private readonly JsonSerializerOptions _jsonOptions = new(JsonSerializerDefaults.Web);
+    private const string DeliveryPrefix = "delivery:";
+    private const string DeadLetterPrefix = "deadletter:";
 
     public RemoteWebhookClient(HttpClient httpClient)
     {
@@ -153,6 +156,113 @@ public sealed class RemoteWebhookClient
         response.EnsureSuccessStatusCode();
     }
 
+    public async Task<IReadOnlyCollection<WebhookActivityEntry>> ListActivityAsync(
+        PartitionScope scope,
+        WebhookActivityQuery query,
+        CancellationToken cancellationToken)
+    {
+        if (query is null) throw new ArgumentNullException(nameof(query));
+
+        var normalized = query.Normalize();
+        if (normalized.Limit <= 0)
+        {
+            return Array.Empty<WebhookActivityEntry>();
+        }
+
+        var queryParams = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["limit"] = normalized.Limit.ToString(CultureInfo.InvariantCulture)
+        };
+
+        if (normalized.FromUtc.HasValue)
+        {
+            queryParams["fromUtc"] = normalized.FromUtc.Value.ToString("O", CultureInfo.InvariantCulture);
+        }
+
+        if (normalized.ToUtc.HasValue)
+        {
+            queryParams["toUtc"] = normalized.ToUtc.Value.ToString("O", CultureInfo.InvariantCulture);
+        }
+
+        var hookKeys = NormalizeKeys(normalized.HookKeys);
+        if (hookKeys is { Count: > 0 })
+        {
+            queryParams["hookKeys"] = JoinKeys(hookKeys);
+        }
+
+        var jobKeys = NormalizeKeys(normalized.JobKeys);
+        if (jobKeys is { Count: > 0 })
+        {
+            queryParams["jobKeys"] = JoinKeys(jobKeys);
+        }
+
+        var url = BuildUrl($"tenants/{Escape(scope.TenantId)}/webhooks/activity", scope, queryParams);
+        var payload = await _httpClient
+            .GetFromJsonAsync<List<WebhookActivityTimelineResponseDto>>(url, _jsonOptions, cancellationToken)
+            .ConfigureAwait(false);
+
+        if (payload is null || payload.Count == 0)
+        {
+            return Array.Empty<WebhookActivityEntry>();
+        }
+
+        return payload.Select(entry => MapActivityTimelineEntry(entry, scope)).ToArray();
+    }
+
+    public async Task<WebhookActivitySummary> SummarizeActivityAsync(
+        PartitionScope scope,
+        WebhookActivitySummaryQuery query,
+        CancellationToken cancellationToken)
+    {
+        if (query is null) throw new ArgumentNullException(nameof(query));
+
+        var normalized = query.Normalize(DateTimeOffset.UtcNow);
+        var bucketMinutes = normalized.BucketMinutes ?? WebhookActivitySummaryQuery.DefaultBucketMinutes;
+        if (bucketMinutes <= 0)
+        {
+            bucketMinutes = WebhookActivitySummaryQuery.DefaultBucketMinutes;
+        }
+
+        var queryParams = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["bucketMinutes"] = bucketMinutes.ToString(CultureInfo.InvariantCulture)
+        };
+
+        if (normalized.FromUtc.HasValue)
+        {
+            queryParams["fromUtc"] = normalized.FromUtc.Value.ToString("O", CultureInfo.InvariantCulture);
+        }
+
+        if (normalized.ToUtc.HasValue)
+        {
+            queryParams["toUtc"] = normalized.ToUtc.Value.ToString("O", CultureInfo.InvariantCulture);
+        }
+
+        var hookKeys = NormalizeKeys(normalized.HookKeys);
+        if (hookKeys is { Count: > 0 })
+        {
+            queryParams["hookKeys"] = JoinKeys(hookKeys);
+        }
+
+        var jobKeys = NormalizeKeys(normalized.JobKeys);
+        if (jobKeys is { Count: > 0 })
+        {
+            queryParams["jobKeys"] = JoinKeys(jobKeys);
+        }
+
+        var url = BuildUrl($"tenants/{Escape(scope.TenantId)}/webhooks/activity/summary", scope, queryParams);
+        var payload = await _httpClient
+            .GetFromJsonAsync<WebhookActivitySummaryResponseDto>(url, _jsonOptions, cancellationToken)
+            .ConfigureAwait(false);
+
+        if (payload is null)
+        {
+            throw new InvalidOperationException("Remote webhook activity summary did not return a response.");
+        }
+
+        return MapActivitySummary(payload);
+    }
+
     public async Task<IReadOnlyCollection<WebhookDeadLetterEntry>> ListDeadLettersAsync(PartitionScope scope, CancellationToken cancellationToken)
     {
         var url = BuildUrl($"tenants/{Escape(scope.TenantId)}/webhooks/deadletters", scope);
@@ -280,6 +390,175 @@ public sealed class RemoteWebhookClient
             entry.ExpiresAtUtc);
     }
 
+    private static WebhookActivityEntry MapActivityTimelineEntry(WebhookActivityTimelineResponseDto entry, PartitionScope scope)
+    {
+        var kind = ParseActivityKind(entry.Kind);
+        var status = ParseActivityStatus(entry.Status);
+        var source = string.IsNullOrWhiteSpace(entry.Source) ? WebhookActivitySources.Ingress : entry.Source;
+        var environment = string.IsNullOrWhiteSpace(entry.Environment) ? scope.EnvironmentTag : entry.Environment!;
+        var id = ResolveActivityId(entry, kind);
+        var deadLetterId = ResolveDeadLetterId(entry, kind);
+
+        return new WebhookActivityEntry(
+            id,
+            kind,
+            status,
+            entry.HookKey,
+            entry.JobKey,
+            scope.TenantId,
+            environment,
+            source,
+            entry.OccurredAtUtc,
+            entry.Reason,
+            entry.PayloadBytes,
+            deadLetterId);
+    }
+
+    private static WebhookActivitySummary MapActivitySummary(WebhookActivitySummaryResponseDto payload)
+    {
+        var bucketMinutes = payload.BucketMinutes > 0
+            ? payload.BucketMinutes
+            : WebhookActivitySummaryQuery.DefaultBucketMinutes;
+        if (bucketMinutes <= 0)
+        {
+            bucketMinutes = 1;
+        }
+
+        var buckets = payload.Buckets is null || payload.Buckets.Count == 0
+            ? Array.Empty<WebhookActivityBucket>()
+            : payload.Buckets.Select(bucket => new WebhookActivityBucket(
+                bucket.BucketStartUtc,
+                bucket.BucketEndUtc ?? bucket.BucketStartUtc.AddMinutes(bucketMinutes),
+                bucket.TotalCount,
+                bucket.ErrorCount,
+                bucket.P95LatencyMs))
+            .ToArray();
+
+        return new WebhookActivitySummary(
+            bucketMinutes,
+            payload.WindowStartUtc,
+            payload.WindowEndUtc,
+            buckets);
+    }
+
+    private static WebhookActivityKind ParseActivityKind(string? value)
+    {
+        if (string.Equals(value, "deadLetter", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(value, "deadletter", StringComparison.OrdinalIgnoreCase))
+        {
+            return WebhookActivityKind.DeadLetter;
+        }
+
+        return WebhookActivityKind.Delivery;
+    }
+
+    private static WebhookActivityStatus ParseActivityStatus(string? value)
+    {
+        if (string.Equals(value, "failed", StringComparison.OrdinalIgnoreCase))
+        {
+            return WebhookActivityStatus.Failed;
+        }
+
+        if (string.Equals(value, "warning", StringComparison.OrdinalIgnoreCase))
+        {
+            return WebhookActivityStatus.Warning;
+        }
+
+        return WebhookActivityStatus.Success;
+    }
+
+    private static string ResolveActivityId(WebhookActivityTimelineResponseDto entry, WebhookActivityKind kind)
+    {
+        if (kind == WebhookActivityKind.DeadLetter)
+        {
+            if (entry.DeadLetterId.HasValue)
+            {
+                return entry.DeadLetterId.Value.ToString(CultureInfo.InvariantCulture);
+            }
+
+            if (!string.IsNullOrWhiteSpace(entry.Id))
+            {
+                var trimmed = StripPrefix(entry.Id, DeadLetterPrefix);
+                if (!string.IsNullOrWhiteSpace(trimmed))
+                {
+                    return trimmed;
+                }
+            }
+
+            return entry.Id ?? string.Empty;
+        }
+
+        if (!string.IsNullOrWhiteSpace(entry.RequestId))
+        {
+            return entry.RequestId;
+        }
+
+        if (!string.IsNullOrWhiteSpace(entry.Id))
+        {
+            var trimmed = StripPrefix(entry.Id, DeliveryPrefix);
+            if (!string.IsNullOrWhiteSpace(trimmed))
+            {
+                return trimmed;
+            }
+        }
+
+        return entry.Id ?? string.Empty;
+    }
+
+    private static long? ResolveDeadLetterId(WebhookActivityTimelineResponseDto entry, WebhookActivityKind kind)
+    {
+        if (kind != WebhookActivityKind.DeadLetter)
+        {
+            return null;
+        }
+
+        if (entry.DeadLetterId.HasValue)
+        {
+            return entry.DeadLetterId.Value;
+        }
+
+        if (string.IsNullOrWhiteSpace(entry.Id))
+        {
+            return null;
+        }
+
+        var trimmed = StripPrefix(entry.Id, DeadLetterPrefix);
+        return long.TryParse(trimmed, NumberStyles.Integer, CultureInfo.InvariantCulture, out var id) ? id : null;
+    }
+
+    private static string StripPrefix(string value, string prefix)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return value;
+        }
+
+        return value.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)
+            ? value[prefix.Length..]
+            : value;
+    }
+
+    private static IReadOnlyCollection<string>? NormalizeKeys(IReadOnlyCollection<string>? values)
+    {
+        if (values is null || values.Count == 0)
+        {
+            return null;
+        }
+
+        var normalized = values
+            .Where(value => !string.IsNullOrWhiteSpace(value))
+            .Select(value => value.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
+        return normalized.Length == 0 ? null : normalized;
+    }
+
+    private static string JoinKeys(IReadOnlyCollection<string> values)
+    {
+        return string.Join(",", values);
+    }
+
     private static IReadOnlyDictionary<string, string>? ToReadOnlyDictionary(IDictionary<string, string>? values)
     {
         if (values is null || values.Count == 0)
@@ -360,6 +639,34 @@ public sealed class RemoteWebhookClient
         int? StatusCode,
         string? ErrorDetails,
         DateTimeOffset? NextAttemptAtUtc);
+
+    private sealed record WebhookActivityTimelineResponseDto(
+        string Id,
+        string Kind,
+        string Status,
+        string HookKey,
+        string? JobKey,
+        string? Environment,
+        string? Source,
+        DateTimeOffset OccurredAtUtc,
+        int? LatencyMs,
+        int? PayloadBytes,
+        string? RequestId,
+        string? Reason,
+        long? DeadLetterId);
+
+    private sealed record WebhookActivitySummaryResponseDto(
+        int BucketMinutes,
+        DateTimeOffset WindowStartUtc,
+        DateTimeOffset WindowEndUtc,
+        IReadOnlyCollection<WebhookActivityBucketResponseDto> Buckets);
+
+    private sealed record WebhookActivityBucketResponseDto(
+        DateTimeOffset BucketStartUtc,
+        DateTimeOffset? BucketEndUtc,
+        int TotalCount,
+        int ErrorCount,
+        int? P95LatencyMs);
 
     private sealed record WebhookCapabilitiesResponseDto(
         bool AllowUnsignedHooks,

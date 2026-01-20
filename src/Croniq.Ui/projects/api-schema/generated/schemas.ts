@@ -395,6 +395,45 @@ export const WebhookDeadLetterResponse = z
 export type WebhookDeadLetterResponse = z.infer<
     typeof WebhookDeadLetterResponse
 >;
+export const WebhookActivityTimelineEntry = z
+    .object({
+        id: z.string().nullable(),
+        kind: z.string().nullable(),
+        status: z.string().nullable(),
+        hookKey: z.string().nullable(),
+        jobKey: z.string().nullable(),
+        environment: z.string().nullable(),
+        source: z.string().nullable(),
+        occurredAtUtc: z.iso.datetime({ offset: true }),
+        latencyMs: z.number().int().nullable(),
+        payloadBytes: z.number().int().nullable(),
+        requestId: z.string().nullable(),
+        reason: z.string().nullable(),
+        deadLetterId: z.number().int().nullable(),
+    })
+    .partial();
+export type WebhookActivityTimelineEntry = z.infer<
+    typeof WebhookActivityTimelineEntry
+>;
+export const WebhookActivityBucket = z
+    .object({
+        bucketStartUtc: z.iso.datetime({ offset: true }),
+        bucketEndUtc: z.iso.datetime({ offset: true }).nullable(),
+        totalCount: z.number().int(),
+        errorCount: z.number().int(),
+        p95LatencyMs: z.number().int().nullable(),
+    })
+    .partial();
+export type WebhookActivityBucket = z.infer<typeof WebhookActivityBucket>;
+export const WebhookActivitySummary = z
+    .object({
+        bucketMinutes: z.number().int(),
+        windowStartUtc: z.iso.datetime({ offset: true }),
+        windowEndUtc: z.iso.datetime({ offset: true }),
+        buckets: z.array(WebhookActivityBucket).nullable(),
+    })
+    .partial();
+export type WebhookActivitySummary = z.infer<typeof WebhookActivitySummary>;
 export const WebhookReplayResult = z
     .object({
         status: z.string().nullable(),
@@ -668,6 +707,9 @@ export const schemas = {
     WebhookEndpointEventResponse,
     WebhookInvokeResult,
     WebhookDeadLetterResponse,
+    WebhookActivityTimelineEntry,
+    WebhookActivityBucket,
+    WebhookActivitySummary,
     WebhookReplayResult,
     WebhookDeadLetterFailureRequest,
     ApiClientResponse,

@@ -48,6 +48,7 @@ export type WebhookDeadLetterView = {
 };
 
 export type TimelineItemKind = 'delivery' | 'deadLetter';
+export type TimelineItemSource = 'ingress' | 'invoke';
 
 export type WebhookTimelineItemView = {
     id: string;
@@ -65,6 +66,7 @@ export type WebhookTimelineItemView = {
     payloadBytes?: number;
     deadLetterId?: string;
     endpointRowKey?: string;
+    source?: TimelineItemSource;
 };
 
 export type ActivityBucket = {
@@ -867,6 +869,7 @@ function normalizeActivityTimeline(entries: WebhookActivityTimelineResponse): Re
     const mapped = entries.map((entry, index) => {
         const kind = resolveActivityKind(entry.kind);
         const status = resolveActivityStatus(entry.status);
+        const source = resolveActivitySource(entry.source);
         const hookKey = resolveNonEmptyString(entry.hookKey) ?? 'unknown-hook';
         const jobKey = resolveNonEmptyString(entry.jobKey);
         const environment = resolveNonEmptyString(entry.environment);
@@ -876,7 +879,7 @@ function normalizeActivityTimeline(entries: WebhookActivityTimelineResponse): Re
             id: resolveNonEmptyString(entry.id) ?? `${kind}:${index}`,
             kind,
             status,
-            label: kind === 'deadLetter' ? 'Dead letter' : 'Delivery',
+            label: resolveActivityLabel(kind, source),
             occurredAt,
             hookKey,
             jobKey,
@@ -886,6 +889,7 @@ function normalizeActivityTimeline(entries: WebhookActivityTimelineResponse): Re
             latencyMs: resolveOptionalNumber(entry.latencyMs),
             payloadBytes: resolveOptionalNumber(entry.payloadBytes),
             deadLetterId,
+            source,
         };
     });
 
@@ -932,6 +936,23 @@ function resolveNonEmptyString(value: unknown): string | undefined {
 
 function resolveActivityKind(value: unknown): TimelineItemKind {
     return value === 'deadLetter' ? 'deadLetter' : 'delivery';
+}
+
+function resolveActivitySource(value: unknown): TimelineItemSource | undefined {
+    if (value === 'invoke') {
+        return 'invoke';
+    }
+    if (value === 'ingress') {
+        return 'ingress';
+    }
+    return undefined;
+}
+
+function resolveActivityLabel(kind: TimelineItemKind, source?: TimelineItemSource): string {
+    if (kind === 'deadLetter') {
+        return 'Dead letter';
+    }
+    return source === 'invoke' ? 'Manual invoke' : 'Delivery';
 }
 
 function resolveActivityStatus(value: unknown): WebhookTimelineItemView['status'] {

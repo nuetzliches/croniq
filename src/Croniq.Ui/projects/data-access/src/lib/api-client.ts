@@ -139,8 +139,8 @@ const WEBHOOK_CAPABILITIES_ENDPOINT = requireEndpoint(
 );
 
 const WEBHOOK_ACTIVITY_TIMELINE_ENDPOINT_PATH = '/tenants/:tenantId/webhooks/activity';
-const WEBHOOK_ACTIVITY_TIMELINE_ENDPOINT: EndpointDefinition =
-    TenantsApi.find((entry) => entry.method === 'get' && entry.path === WEBHOOK_ACTIVITY_TIMELINE_ENDPOINT_PATH) ?? {
+const WEBHOOK_ACTIVITY_TIMELINE_ENDPOINT: EndpointDefinition = {
+    ...(TenantsApi.find((entry) => entry.method === 'get' && entry.path === WEBHOOK_ACTIVITY_TIMELINE_ENDPOINT_PATH) ?? {
         method: 'get',
         path: WEBHOOK_ACTIVITY_TIMELINE_ENDPOINT_PATH,
         requestFormat: 'json',
@@ -153,8 +153,9 @@ const WEBHOOK_ACTIVITY_TIMELINE_ENDPOINT: EndpointDefinition =
             { name: 'jobKeys', type: 'Query', schema: z.string().optional() },
             { name: 'limit', type: 'Query', schema: z.number().int().optional() },
         ],
-        response: WebhookActivityTimelineResponse,
-    };
+    }),
+    response: WebhookActivityTimelineResponse,
+};
 
 const WEBHOOK_ACTIVITY_SUMMARY_ENDPOINT_PATH = '/tenants/:tenantId/webhooks/activity/summary';
 const WEBHOOK_ACTIVITY_SUMMARY_ENDPOINT: EndpointDefinition =

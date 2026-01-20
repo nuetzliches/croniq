@@ -607,6 +607,7 @@ export class WebhooksPage {
         endpointStatus: endpoint.status,
         reason: endpoint.status === 'degraded' ? 'Endpoint reported degraded status.' : undefined,
         endpointRowKey: this.webhookRowKey(endpoint, 0),
+        source: 'ingress',
       });
     });
 
@@ -631,6 +632,7 @@ export class WebhooksPage {
           jobKey: entry.jobKey,
           reason: entry.reason ?? 'No reason provided.',
           deadLetterId: entry.id,
+          source: 'ingress',
         });
       });
 
@@ -956,6 +958,10 @@ export class WebhooksPage {
 
   timelineStatusGlyph(entry: { status: 'success' | 'failed' | 'warning' }): string {
     return entry.status === 'success' ? '●' : entry.status === 'warning' ? '▲' : '■';
+  }
+
+  timelineSourceLabel(entry: WebhookTimelineItemView): string {
+    return entry.source === 'invoke' ? 'Manual invoke' : 'Ingress';
   }
 
   invokeWebhook(): void {

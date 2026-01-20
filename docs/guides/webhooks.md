@@ -10,7 +10,11 @@ Croniq.Webhooks lets external systems trigger Croniq jobs via HTTP. This guide f
 - Manual invoke (admin): `POST /tenants/{tenantId}/environments/{environmentTag}/webhooks/{hookKey}/invoke`
 - Management: `POST/GET/DELETE /tenants/{tenantId}/webhooks?environment=<tag>` + `POST /tenants/{tenantId}/webhooks/{hookKey}/rotate-secret?environment=<tag>`
 - Diagnostics: dead letters under `/tenants/{tenantId}/webhooks/deadletters` and IP rules under `/tenants/{tenantId}/webhooks/{hookKey}/ip-rules`
+- Activity timeline: `GET /tenants/{tenantId}/webhooks/activity?environment=<tag>&fromUtc=<iso>&toUtc=<iso>&hookKeys=a,b&jobKeys=c,d&limit=200`
+- Activity summary: `GET /tenants/{tenantId}/webhooks/activity/summary?environment=<tag>&fromUtc=<iso>&toUtc=<iso>&bucketMinutes=60`
 - DMZ ingress relay/streaming: see [`docs/deep-dive/designs/dmz-ingress-remote-webhooks.md`](../deep-dive/designs/dmz-ingress-remote-webhooks.md)
+
+Activity timeline entries include a `source` field (`ingress` or `invoke`) so operators can distinguish manual invokes from inbound deliveries.
 
 ## Ingress Endpoint
 
@@ -148,6 +152,8 @@ PY
 ## Operations & Monitoring
 
 Audit usage through telemetry (`Croniq.Webhooks.Ingress` spans) and the `croniq.WebhookDeadLetters` table when dead-lettering is enabled. Configure with `Croniq:Webhooks:DeadLetter:Enabled` and `Croniq:Webhooks:DeadLetter:RetentionDays`. In in-memory mode, structured logs remain the source of truth for per-hook activity.
+
+When using SqlServer or Postgres webhook persistence, the activity endpoints provide a timeline and bucketed summary sourced from ingress events and dead letters. If the activity store is not configured (for example in-memory mode), the endpoints return `503 webhook-activity-unavailable`.
 
 ## Webhook Security Guidance
 

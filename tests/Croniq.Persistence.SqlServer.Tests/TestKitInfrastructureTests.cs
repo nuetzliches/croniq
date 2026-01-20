@@ -38,7 +38,7 @@ public class TestKitInfrastructureTests
             CancellationToken.None);
 
         var fileName = Path.GetFileNameWithoutExtension(path);
-        fileName.ShouldBe("my-container-name");
+        fileName.ShouldStartWith("my-container-name-");
         File.ReadAllText(path).ShouldContain("Container log capture is not available");
 
         File.Delete(path);

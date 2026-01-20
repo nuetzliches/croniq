@@ -8,6 +8,8 @@ using System.Net.Http;
 using System.Text;
 using System.Text.Json;
 using Croniq.Api.Models;
+using ApiWebhookActivityBucket = Croniq.Api.Models.WebhookActivityBucket;
+using ApiWebhookActivitySummary = Croniq.Api.Models.WebhookActivitySummary;
 using Croniq.Auth.Abstractions;
 using Croniq.Auth.Core;
 using Croniq.Core.Execution;
@@ -462,6 +464,7 @@ public static partial class ApiHostingExtensions
             [FromServices] IHttpClientFactory httpClientFactory,
             [FromServices] IHostEnvironment hostEnvironment,
             [FromServices] IWebhookIngressEventStore? ingressStore,
+            [FromServices] IWebhookActivityRecorder? activityRecorder,
             [FromServices] IJobRegistry registry,
             [FromServices] IJobExecutionPipeline pipeline,
             [FromServices] IPolicyResolver policyResolver,
@@ -524,6 +527,8 @@ public static partial class ApiHostingExtensions
                 client.DefaultRequestHeaders.Add("X-Croniq-Key", remoteApiKey);
                 client.DefaultRequestHeaders.Remove("X-Croniq-Relay-Key");
                 client.DefaultRequestHeaders.Add("X-Croniq-Relay-Key", remoteApiKey);
+                client.DefaultRequestHeaders.Remove(WebhookActivityHeaders.SourceHeaderName);
+                client.DefaultRequestHeaders.Add(WebhookActivityHeaders.SourceHeaderName, WebhookActivitySources.Invoke);
 
                 var path = $"tenants/{Uri.EscapeDataString(tenantId)}/environments/{Uri.EscapeDataString(environmentTag)}/webhooks/{Uri.EscapeDataString(hookKey)}";
                 try
@@ -566,8 +571,7 @@ public static partial class ApiHostingExtensions
                 return Results.NotFound(new { error = "job-not-registered", endpoint.JobKey });
             }
 
-            var metadata = CreateWebhookMetadata(endpoint, payload);
-            metadata["webhook:hook"] = endpoint.HookKey;
+            var metadata = CreateWebhookMetadata(endpoint, payload, WebhookActivitySources.Invoke);
 
             var dispatchMode = configuration.GetValue<string?>("Croniq:Webhooks:Ingress:DispatchMode") ?? string.Empty;
             if (string.Equals(dispatchMode, "StoreOnly", StringComparison.OrdinalIgnoreCase))
@@ -597,6 +601,7 @@ public static partial class ApiHostingExtensions
             var executionOptions = policyResolver.ResolveExecution(jobKey, scope);
             var executionId = Guid.NewGuid().ToString("N");
             var execRequest = new JobExecutionRequest(executionId, jobKey, scope, descriptor, executionOptions, metadata, TriggerActivitySource);
+            var occurredAtUtc = DateTimeOffset.UtcNow;
 
             using var invokeActivity = TriggerActivitySource.StartActivity("Croniq.Api.WebhookInvoke", ActivityKind.Server);
             invokeActivity?.SetTag("croniq.webhook.key", endpoint.HookKey);
@@ -606,12 +611,44 @@ public static partial class ApiHostingExtensions
             {
                 await pipeline.ExecuteAsync(execRequest, cancellationToken).ConfigureAwait(false);
                 invokeActivity?.SetStatus(ActivityStatusCode.Ok);
+                await TryRecordInvokeActivityAsync(
+                    activityRecorder,
+                    logger,
+                    new WebhookActivityRecord(
+                        executionId,
+                        endpoint.HookKey,
+                        jobKey.Value,
+                        scope.TenantId,
+                        scope.EnvironmentTag,
+                        occurredAtUtc,
+                        WebhookActivityStatus.Success,
+                        WebhookActivitySources.Invoke,
+                        Reason: null,
+                        Payload: payload,
+                        Metadata: metadata),
+                    cancellationToken).ConfigureAwait(false);
                 return Results.Accepted(value: new WebhookInvokeResult("invoked", endpoint.HookKey, endpoint.JobKey, executionId));
             }
             catch (Exception ex)
             {
                 invokeActivity?.SetStatus(ActivityStatusCode.Error, ex.Message);
                 logger.LogError(ex, "failed to invoke webhook {HookKey}", endpoint.HookKey);
+                await TryRecordInvokeActivityAsync(
+                    activityRecorder,
+                    logger,
+                    new WebhookActivityRecord(
+                        executionId,
+                        endpoint.HookKey,
+                        jobKey.Value,
+                        scope.TenantId,
+                        scope.EnvironmentTag,
+                        occurredAtUtc,
+                        WebhookActivityStatus.Failed,
+                        WebhookActivitySources.Invoke,
+                        Reason: ex.Message,
+                        Payload: payload,
+                        Metadata: metadata),
+                    cancellationToken).ConfigureAwait(false);
                 return Results.Problem(statusCode: StatusCodes.Status500InternalServerError, title: "webhook-invoke-failed", detail: ex.Message);
             }
         })
@@ -651,6 +688,87 @@ public static partial class ApiHostingExtensions
         .Produces<List<WebhookDeadLetterResponse>>(StatusCodes.Status200OK)
         .Produces(StatusCodes.Status503ServiceUnavailable)
         .RequireCroniqTenantScope(CroniqScopes.WebhooksDeadLetter);
+
+        app.MapGet("/tenants/{tenantId}/webhooks/activity", async (
+            string tenantId,
+            string? environment,
+            DateTimeOffset? fromUtc,
+            DateTimeOffset? toUtc,
+            string? hookKeys,
+            string? jobKeys,
+            int? limit,
+            [FromServices] ICallerContextAccessor callerContextAccessor,
+            [FromServices] IWebhookActivityStore? activityStore,
+            CancellationToken cancellationToken) =>
+        {
+            var resolvedEnvironment = ResolveEnvironmentTag(environment, callerContextAccessor);
+            if (string.IsNullOrWhiteSpace(resolvedEnvironment))
+            {
+                return MissingEnvironment();
+            }
+
+            if (activityStore is null)
+            {
+                return Results.Problem(statusCode: StatusCodes.Status503ServiceUnavailable, title: "webhook-activity-unavailable", detail: "Webhook activity store not configured.");
+            }
+
+            var parsedHookKeys = ParseWebhookActivityKeys(hookKeys);
+            var parsedJobKeys = ParseWebhookActivityKeys(jobKeys);
+            if (!TryNormalizeWebhookActivityQuery(fromUtc, toUtc, limit, parsedHookKeys, parsedJobKeys, out var query, out var error))
+            {
+                return Results.BadRequest(new { error = "invalid-activity-query", message = error });
+            }
+
+            var scope = new PartitionScope(tenantId, resolvedEnvironment);
+            var entries = await activityStore.ListAsync(scope, query, cancellationToken).ConfigureAwait(false);
+            var response = entries.Select(ToWebhookActivityTimelineEntry).ToList();
+            return Results.Ok(response);
+        })
+        .WithDocs("WebhookActivity_List", "List webhook activity", "Returns webhook activity entries for the tenant/environment scope.")
+        .Produces<List<WebhookActivityTimelineEntry>>(StatusCodes.Status200OK)
+        .Produces(StatusCodes.Status400BadRequest)
+        .Produces(StatusCodes.Status503ServiceUnavailable)
+        .RequireCroniqTenantScope(CroniqScopes.WebhooksRead);
+
+        app.MapGet("/tenants/{tenantId}/webhooks/activity/summary", async (
+            string tenantId,
+            string? environment,
+            DateTimeOffset? fromUtc,
+            DateTimeOffset? toUtc,
+            string? hookKeys,
+            string? jobKeys,
+            int? bucketMinutes,
+            [FromServices] ICallerContextAccessor callerContextAccessor,
+            [FromServices] IWebhookActivityStore? activityStore,
+            CancellationToken cancellationToken) =>
+        {
+            var resolvedEnvironment = ResolveEnvironmentTag(environment, callerContextAccessor);
+            if (string.IsNullOrWhiteSpace(resolvedEnvironment))
+            {
+                return MissingEnvironment();
+            }
+
+            if (activityStore is null)
+            {
+                return Results.Problem(statusCode: StatusCodes.Status503ServiceUnavailable, title: "webhook-activity-unavailable", detail: "Webhook activity store not configured.");
+            }
+
+            var parsedHookKeys = ParseWebhookActivityKeys(hookKeys);
+            var parsedJobKeys = ParseWebhookActivityKeys(jobKeys);
+            if (!TryNormalizeWebhookActivitySummaryQuery(fromUtc, toUtc, bucketMinutes, parsedHookKeys, parsedJobKeys, out var query, out var error))
+            {
+                return Results.BadRequest(new { error = "invalid-activity-summary-query", message = error });
+            }
+
+            var scope = new PartitionScope(tenantId, resolvedEnvironment);
+            var summary = await activityStore.SummarizeAsync(scope, query, cancellationToken).ConfigureAwait(false);
+            return Results.Ok(ToWebhookActivitySummaryResponse(summary));
+        })
+        .WithDocs("WebhookActivity_Summary", "Summarize webhook activity", "Returns aggregated webhook activity counts for the tenant/environment scope.")
+        .Produces<ApiWebhookActivitySummary>(StatusCodes.Status200OK)
+        .Produces(StatusCodes.Status400BadRequest)
+        .Produces(StatusCodes.Status503ServiceUnavailable)
+        .RequireCroniqTenantScope(CroniqScopes.WebhooksRead);
 
         app.MapPost("/tenants/{tenantId}/webhooks/deadletters/{deadLetterId}/replay", async (
             string tenantId,
@@ -825,11 +943,203 @@ public static partial class ApiHostingExtensions
         return payload;
     }
 
-    private static Dictionary<string, string> CreateWebhookMetadata(WebhookEndpointDefinition endpoint, string payload)
+    private static IReadOnlyCollection<string>? ParseWebhookActivityKeys(string? raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw))
+        {
+            return null;
+        }
+
+        var values = raw
+            .Split(new[] { ',', ';', ' ' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Where(value => !string.IsNullOrWhiteSpace(value))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
+        return values.Length == 0 ? null : values;
+    }
+
+    private static bool TryNormalizeWebhookActivityQuery(
+        DateTimeOffset? fromUtc,
+        DateTimeOffset? toUtc,
+        int? limit,
+        IReadOnlyCollection<string>? hookKeys,
+        IReadOnlyCollection<string>? jobKeys,
+        out WebhookActivityQuery normalized,
+        out string error)
+    {
+        normalized = new WebhookActivityQuery();
+        error = string.Empty;
+
+        if (fromUtc.HasValue && toUtc.HasValue && fromUtc > toUtc)
+        {
+            error = "fromUtc must be earlier than toUtc.";
+            return false;
+        }
+
+        var query = new WebhookActivityQuery
+        {
+            FromUtc = fromUtc,
+            ToUtc = toUtc,
+            HookKeys = hookKeys,
+            JobKeys = jobKeys,
+            Limit = limit ?? WebhookActivityQuery.DefaultLimit
+        };
+
+        normalized = query.Normalize();
+        return true;
+    }
+
+    private static bool TryNormalizeWebhookActivitySummaryQuery(
+        DateTimeOffset? fromUtc,
+        DateTimeOffset? toUtc,
+        int? bucketMinutes,
+        IReadOnlyCollection<string>? hookKeys,
+        IReadOnlyCollection<string>? jobKeys,
+        out WebhookActivitySummaryQuery normalized,
+        out string error)
+    {
+        normalized = new WebhookActivitySummaryQuery();
+        error = string.Empty;
+
+        var nowUtc = DateTimeOffset.UtcNow;
+        var windowEnd = toUtc ?? nowUtc;
+        var windowStart = fromUtc ?? windowEnd.AddMinutes(-WebhookActivitySummaryQuery.DefaultWindowMinutes);
+
+        if (windowStart > windowEnd)
+        {
+            error = "fromUtc must be earlier than toUtc.";
+            return false;
+        }
+
+        var windowMinutes = (int)Math.Ceiling((windowEnd - windowStart).TotalMinutes);
+        if (windowMinutes <= 0)
+        {
+            error = "window must be at least 1 minute.";
+            return false;
+        }
+
+        if (windowMinutes > WebhookActivitySummaryQuery.MaxWindowMinutes)
+        {
+            error = $"window cannot exceed {WebhookActivitySummaryQuery.MaxWindowMinutes} minutes.";
+            return false;
+        }
+
+        var resolvedBucket = bucketMinutes ?? WebhookActivitySummaryQuery.DefaultBucketMinutes;
+        if (resolvedBucket <= 0)
+        {
+            error = "bucketMinutes must be greater than zero.";
+            return false;
+        }
+
+        if (resolvedBucket > WebhookActivitySummaryQuery.MaxBucketMinutes)
+        {
+            error = $"bucketMinutes must be between 1 and {WebhookActivitySummaryQuery.MaxBucketMinutes}.";
+            return false;
+        }
+
+        if (resolvedBucket > windowMinutes)
+        {
+            error = "bucketMinutes must be less than or equal to the window size.";
+            return false;
+        }
+
+        normalized = new WebhookActivitySummaryQuery
+        {
+            FromUtc = windowStart,
+            ToUtc = windowEnd,
+            HookKeys = hookKeys,
+            JobKeys = jobKeys,
+            BucketMinutes = resolvedBucket
+        };
+
+        return true;
+    }
+
+    private static WebhookActivityTimelineEntry ToWebhookActivityTimelineEntry(WebhookActivityEntry entry)
+    {
+        var kind = entry.Kind == WebhookActivityKind.DeadLetter ? "deadLetter" : "delivery";
+        var status = entry.Status switch
+        {
+            WebhookActivityStatus.Success => "success",
+            WebhookActivityStatus.Failed => "failed",
+            _ => "warning"
+        };
+        var id = entry.Kind == WebhookActivityKind.DeadLetter
+            ? $"deadletter:{entry.Id}"
+            : $"delivery:{entry.Id}";
+        var requestId = entry.Kind == WebhookActivityKind.Delivery ? entry.Id : null;
+        var source = string.IsNullOrWhiteSpace(entry.Source)
+            ? WebhookActivitySources.Ingress
+            : entry.Source;
+
+        return new WebhookActivityTimelineEntry(
+            id,
+            kind,
+            status,
+            entry.HookKey,
+            entry.JobKey,
+            entry.EnvironmentTag,
+            source,
+            entry.OccurredAtUtc,
+            LatencyMs: null,
+            PayloadBytes: entry.PayloadBytes,
+            RequestId: requestId,
+            Reason: entry.Reason,
+            DeadLetterId: entry.DeadLetterId);
+    }
+
+    private static ApiWebhookActivitySummary ToWebhookActivitySummaryResponse(
+        Croniq.Persistence.Abstractions.WebhookActivitySummary summary)
+    {
+        var buckets = summary.Buckets
+            .Select(bucket => new ApiWebhookActivityBucket(
+                bucket.BucketStartUtc,
+                bucket.BucketEndUtc,
+                bucket.TotalCount,
+                bucket.ErrorCount,
+                bucket.P95LatencyMs))
+            .ToArray();
+
+        return new ApiWebhookActivitySummary(
+            summary.BucketMinutes,
+            summary.WindowStartUtc,
+            summary.WindowEndUtc,
+            buckets);
+    }
+
+    private static async Task TryRecordInvokeActivityAsync(
+        IWebhookActivityRecorder? recorder,
+        ILogger logger,
+        WebhookActivityRecord record,
+        CancellationToken cancellationToken)
+    {
+        if (recorder is null)
+        {
+            return;
+        }
+
+        try
+        {
+            await recorder.RecordAsync(record, cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Failed to record webhook invoke activity for {HookKey}", record.HookKey);
+        }
+    }
+
+    private static Dictionary<string, string> CreateWebhookMetadata(
+        WebhookEndpointDefinition endpoint,
+        string payload,
+        string source)
     {
         var metadata = endpoint.Metadata is null
             ? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
             : new Dictionary<string, string>(endpoint.Metadata, StringComparer.OrdinalIgnoreCase);
+
+        metadata["webhook:hook"] = endpoint.HookKey;
+        metadata[WebhookActivityMetadata.SourceKey] = source;
 
         if (!string.IsNullOrWhiteSpace(payload))
         {

@@ -4,4 +4,12 @@ export * from './calendars';
 export * from './api-keys';
 export * from './jobs';
 export * from './schedules';
-export * from './webhooks';
+export {
+    createWebhookIpRuleRequestSchema,
+    rotateWebhookSecretRequestSchema,
+    upsertWebhookEndpointRequestSchema,
+    webhookActivityStatusSchema,
+    webhookActivitySourceSchema,
+    WebhookActivityTimelineResponse,
+} from './webhooks';
+export type { WebhookActivitySource, WebhookActivityStatus } from './webhooks';
