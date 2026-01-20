@@ -12,7 +12,7 @@ Purpose: track the remaining work to expand the Webhooks UI with an activity tim
 ## Transport (Stream vs Poll)
 
 - [x] Decide on transport: prefer gRPC (via gRPC-Web/proxy) -> SSE fallback -> polling fallback.
-- [ ] Confirm gRPC-Web/HTTP2 proxy support for browser clients; otherwise start with SSE -> polling.
+- [ ] Confirm gRPC-Web/HTTP2 proxy support for browser clients; keep polling until SSE/gRPC is ready.
 - [ ] Document reconnect/backoff rules and max staleness acceptable for the UI.
 - [ ] Ensure auth headers and tenant/environment filters are supported by gRPC/SSE/polling.
 
@@ -25,7 +25,7 @@ Purpose: track the remaining work to expand the Webhooks UI with an activity tim
 
 ## UI: Timeline
 
-- [ ] Implement a virtualized timeline list (group by time buckets, sticky date labels).
+- [x] Drop the virtualized timeline list (chart + detail panel instead).
 - [ ] Show status + delivery outcome (success, retry, failure) and surface key metadata.
 - [ ] Provide a compact empty state and a clear "filters applied" indicator.
 
@@ -44,9 +44,9 @@ Purpose: track the remaining work to expand the Webhooks UI with an activity tim
 
 ## Telemetry and Error Handling
 
-- [ ] Track stream connection state (connected, retrying, offline).
+- [x] Track stream connection state (connected, retrying, offline).
 - [ ] Emit telemetry for reconnects, errors, and dropped events.
-- [ ] Provide retry UI and "pause live updates" control.
+- [x] Provide retry UI and "pause live updates" control.
 
 ## Testing
 

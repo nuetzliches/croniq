@@ -8,13 +8,14 @@ import { RotateWebhookSecretRequest, UpsertWebhookEndpointRequest } from '@croni
 import { WebhookDialogComponent } from '@features/webhooks/components/webhook-dialog/webhook-dialog.component';
 import { WebhookIpRulesDialogComponent } from '@features/webhooks/components/webhook-ip-rules-dialog/webhook-ip-rules-dialog.component';
 import { WebhookRotateSecretDialogComponent } from '@features/webhooks/components/webhook-rotate-secret-dialog/webhook-rotate-secret-dialog.component';
-import { ActivityBucket, WebhookActivityQuery, WebhookCapabilitiesView, WebhookDeadLetterView, WebhookEndpointView, WebhookTimelineItemView, WebhooksStore } from '@features/webhooks/webhooks.store';
+import { ActivityBucket, ActivityConnectionState, WebhookActivityQuery, WebhookCapabilitiesView, WebhookDeadLetterView, WebhookEndpointView, WebhookTimelineItemView, WebhooksStore } from '@features/webhooks/webhooks.store';
+import { ChartLegendItem } from '@shared/charts/chart-legend-item/chart-legend-item';
 import { CqEchartsChartComponent } from '@shared/charts/echarts-chart/echarts-chart';
 import { ShellPanelService } from '@shell/panel/shell-panel.service';
 import type { BarSeriesOption, SeriesOption } from 'echarts';
 import type { EChartsCoreOption } from 'echarts/core';
 import { filter } from 'rxjs';
-import { CqCellDefDirective, CqColumnComponent, CqConfirmDialogComponent, CqConfirmDialogData, CqContextMenuItemDirective, CqDialogService, CqFormFieldComponent, CqIconComponent, CqInputDirective, CqSelectDirective, CqTextareaDirective, DataGrid } from 'ui-kit';
+import { CqCellDefDirective, CqColumnComponent, CqConfirmDialogComponent, CqConfirmDialogData, CqContextMenuItemDirective, CqDialogService, CqFormFieldComponent, CqIconComponent, CqInputDirective, CqSelectDirective, CqTextareaDirective, CqToggleDirective, DataGrid } from 'ui-kit';
 
 type WebhookDialogData = {
   endpoint: UpsertWebhookEndpointRequest | null;
@@ -33,11 +34,11 @@ type OptionEntry = {
   label: string;
 };
 
-type ActivitySummary = {
-  total: number;
-  errors: number;
-  errorRateLabel: string;
-  bucketCount: number;
+type ActivityLegendEntry = {
+  status: WebhookTimelineItemView['status'];
+  label: string;
+  count: number;
+  percentLabel: string;
 };
 
 type HookFilterEntry = {
@@ -60,7 +61,49 @@ const STATUS_OPTIONS: ReadonlyArray<{ value: WebhookStatusFilter; label: string 
   { value: 'degraded', label: 'Degraded' },
 ];
 
-const DEFAULT_BUCKET_MS = 60 * 60 * 1000;
+const TIMELINE_PRESET_LOOKBACK_MS = {
+  '5m': 5 * 60 * 1000,
+  '30m': 30 * 60 * 1000,
+  '3h': 3 * 60 * 60 * 1000,
+  '24h': 24 * 60 * 60 * 1000,
+  '7d': 7 * 24 * 60 * 60 * 1000,
+  // '21d': 21 * 24 * 60 * 60 * 1000,
+} as const;
+
+type TimelinePresetKey = keyof typeof TIMELINE_PRESET_LOOKBACK_MS;
+
+const TIMELINE_PRESET_OPTIONS: ReadonlyArray<{ key: TimelinePresetKey; label: string }> = [
+  { key: '5m', label: '5m' },
+  { key: '30m', label: '30m' },
+  { key: '3h', label: '3h' },
+  { key: '24h', label: '24h' },
+  { key: '7d', label: '7d' },
+  // { key: '21d', label: '21d' },
+];
+
+const DEFAULT_TIMELINE_PRESET: TimelinePresetKey = '24h';
+const DEFAULT_LOOKBACK_MS = TIMELINE_PRESET_LOOKBACK_MS[DEFAULT_TIMELINE_PRESET];
+
+const TIMELINE_BUCKET_MS_OPTIONS = [
+  60 * 1000,
+  2 * 60 * 1000,
+  5 * 60 * 1000,
+  10 * 60 * 1000,
+  15 * 60 * 1000,
+  30 * 60 * 1000,
+  60 * 60 * 1000,
+  3 * 60 * 60 * 1000,
+  6 * 60 * 60 * 1000,
+  12 * 60 * 60 * 1000,
+  24 * 60 * 60 * 1000,
+] as const;
+const MAX_TIMELINE_BUCKETS = 24;
+
+const ACTIVITY_LEGEND_ENTRIES: ReadonlyArray<{ status: WebhookTimelineItemView['status']; label: string }> = [
+  { status: 'success', label: 'Success' },
+  { status: 'warning', label: 'Warning' },
+  { status: 'failed', label: 'Failed' },
+];
 
 type PageInfo = {
   total: number;
@@ -99,9 +142,11 @@ export class CqWebhookCellDirective extends CqCellDefDirective<WebhookEndpointVi
     CqInputDirective,
     CqSelectDirective,
     CqTextareaDirective,
+    CqToggleDirective,
     CqContextMenuItemDirective,
     CdkMenu,
     CqEchartsChartComponent,
+    ChartLegendItem,
   ],
   providers: [WebhooksStore],
   templateUrl: './webhooks-page.html',
@@ -124,10 +169,17 @@ export class WebhooksPage {
   readonly rotatedSecret = this.store.rotatedSecret;
   readonly deadLetters = this.store.deadLetters;
   readonly activityTimeline = this.store.activityTimeline;
-  readonly backendActivityBuckets = this.store.activityBuckets;
   readonly activityLoading = this.store.activityLoading;
   readonly activityBackendReady = this.store.activityBackendReady;
   readonly activityError = this.store.activityError;
+  readonly activityLiveUpdatesEnabled = this.store.activityLiveUpdatesEnabled;
+  readonly activityConnectionState = this.store.activityConnectionState;
+  readonly activityConnectionLabel = computed(() =>
+    formatActivityConnectionLabel(this.activityConnectionState()),
+  );
+  readonly activityConnectionTone = computed(() =>
+    resolveActivityConnectionTone(this.activityConnectionState()),
+  );
   readonly filterModel = signal(createDefaultFilters());
   readonly filterForm = form(this.filterModel, () => { });
   readonly statusOptions = STATUS_OPTIONS;
@@ -140,6 +192,8 @@ export class WebhooksPage {
   readonly selectedJobKeys = signal<ReadonlyArray<string>>([]);
   readonly timelineFromIso = signal<string | null>(null);
   readonly timelineToIso = signal<string | null>(null);
+  readonly timelineLookbackMs = signal(DEFAULT_LOOKBACK_MS);
+  readonly timelinePresets = TIMELINE_PRESET_OPTIONS;
   readonly kpiSuccessRate = computed(() => {
     const endpoints = this.endpoints().length;
     if (endpoints === 0) {
@@ -168,7 +222,6 @@ export class WebhooksPage {
       this.filterModel(),
       this.selectedHookKeys(),
       this.selectedJobKeys(),
-      this.timelineFromIso(),
       this.timelineToIso(),
     ),
   );
@@ -258,12 +311,12 @@ export class WebhooksPage {
       || this.selectedJobKeys().length > 0
       || model.status !== 'all'
       || model.environment !== ALL_ENVIRONMENTS
-      || !!this.timelineFromIso()
+      || this.timelineLookbackMs() !== DEFAULT_LOOKBACK_MS
       || !!this.timelineToIso()
     );
   });
 
-  readonly timelineRangeActive = computed(() => !!this.timelineFromIso() || !!this.timelineToIso());
+  readonly timelineRangeActive = computed(() => !!this.timelineToIso());
 
   readonly timelineFromLocal = computed(() => isoToLocalDateTimeInput(this.timelineFromIso()));
   readonly timelineToLocal = computed(() => isoToLocalDateTimeInput(this.timelineToIso()));
@@ -492,8 +545,7 @@ export class WebhooksPage {
     this.selectedJobKeys.set([]);
     this.hookSearch.set('');
     this.jobSearch.set('');
-    this.timelineFromIso.set(null);
-    this.timelineToIso.set(null);
+    this.setTimelinePreset(DEFAULT_TIMELINE_PRESET);
   }
 
   clearTimelineRange(): void {
@@ -501,24 +553,26 @@ export class WebhooksPage {
     this.timelineToIso.set(null);
   }
 
-  setTimelineFromLocal(value: string): void {
-    this.timelineFromIso.set(localDateTimeInputToIso(value));
+  setTimelineFromLocal(_value: string): void {
+    this.timelineFromIso.set(null);
   }
 
   setTimelineToLocal(value: string): void {
     this.timelineToIso.set(localDateTimeInputToIso(value));
   }
 
-  setTimelinePreset(kind: '24h' | '7d' | '30d'): void {
-    const now = Date.now();
-    const deltaMs = kind === '24h'
-      ? 24 * 60 * 60 * 1000
-      : kind === '7d'
-        ? 7 * 24 * 60 * 60 * 1000
-        : 30 * 24 * 60 * 60 * 1000;
+  setTimelinePreset(kind: TimelinePresetKey): void {
+    this.timelineLookbackMs.set(TIMELINE_PRESET_LOOKBACK_MS[kind]);
+    this.timelineFromIso.set(null);
+    this.timelineToIso.set(null);
+  }
 
-    this.timelineToIso.set(new Date(now).toISOString());
-    this.timelineFromIso.set(new Date(now - deltaMs).toISOString());
+  setActivityLiveUpdates(enabled: boolean): void {
+    this.store.setActivityLiveUpdatesEnabled(enabled);
+  }
+
+  retryActivity(): void {
+    this.store.refreshActivity();
   }
 
   setHookSearch(value: string): void {
@@ -570,24 +624,11 @@ export class WebhooksPage {
     });
   });
 
-  readonly selectedDeadLetterId = signal<string | null>(null);
-
-  readonly selectedDeadLetter = computed(() => {
-    const id = this.selectedDeadLetterId();
-    if (!id) {
-      return null;
-    }
-    return this.deadLetters().find((entry) => entry.id === id) ?? null;
-  });
-
   readonly fallbackTimelineItems = computed<ReadonlyArray<WebhookTimelineItemView>>(() => {
     const filters = this.filterModel();
     const restrictToEndpointSet = filters.status !== 'all' || filters.environment !== ALL_ENVIRONMENTS;
     const endpoints = this.filteredEndpoints();
     const deadLetters = this.filteredDeadLetters();
-
-    const fromMs = tryParseIsoToMs(this.timelineFromIso());
-    const toMs = tryParseIsoToMs(this.timelineToIso());
 
     const endpointKeys = new Set(endpoints.map((endpoint) => `${endpoint.hookKey}|${endpoint.jobKey}`));
     const timeline: WebhookTimelineItemView[] = [];
@@ -637,50 +678,58 @@ export class WebhooksPage {
         });
       });
 
-    return timeline
-      .filter((entry) => {
-        const occurredAtMs = Date.parse(entry.occurredAt);
-        if (!Number.isFinite(occurredAtMs)) {
-          return true;
-        }
-        if (typeof fromMs === 'number' && occurredAtMs < fromMs) {
-          return false;
-        }
-        if (typeof toMs === 'number' && occurredAtMs > toMs) {
-          return false;
-        }
-        return true;
-      })
-      .sort((a, b) => Date.parse(b.occurredAt) - Date.parse(a.occurredAt));
+    return timeline.sort((a, b) => Date.parse(b.occurredAt) - Date.parse(a.occurredAt));
   });
 
   readonly timelineItems = computed<ReadonlyArray<WebhookTimelineItemView>>(() => {
-    if (this.activityBackendReady()) {
-      return this.activityTimeline();
-    }
-    return this.fallbackTimelineItems();
-  });
-
-  readonly selectedTimelineItemId = signal<string | null>(null);
-
-  readonly selectedTimelineItem = computed(() => {
-    const id = this.selectedTimelineItemId();
-    if (!id) {
-      return null;
-    }
-    return this.timelineItems().find((entry) => entry.id === id) ?? null;
+    const items = this.activityBackendReady()
+      ? this.activityTimeline()
+      : this.fallbackTimelineItems();
+    const range = resolveTimelineRangeMs(this.timelineLookbackMs(), this.timelineToIso());
+    return filterTimelineItemsByRange(items, range);
   });
 
   readonly activityBuckets = computed<ReadonlyArray<ActivityBucket>>(() => {
-    if (this.activityBackendReady()) {
-      return this.backendActivityBuckets();
+    const items = this.timelineItems();
+    if (items.length === 0) {
+      return [];
     }
-    return buildActivityBuckets(this.fallbackTimelineItems(), this.timelineFromIso(), this.timelineToIso());
+    const range = resolveTimelineRangeMs(this.timelineLookbackMs(), this.timelineToIso());
+    const bucketMs = resolveTimelineBucketMs(this.timelineLookbackMs());
+    return buildActivityBuckets(
+      items,
+      new Date(range.fromMs).toISOString(),
+      new Date(range.toMs).toISOString(),
+      bucketMs,
+    );
   });
 
-  readonly activitySummary = computed<ActivitySummary>(() =>
-    summarizeActivity(this.activityBuckets()),
-  );
+  readonly activityTotalEntries = computed(() => this.timelineItems().length);
+  readonly activityBucketCount = computed(() => this.activityBuckets().length);
+  readonly activityLegendEntries = computed<ReadonlyArray<ActivityLegendEntry>>(() => {
+    const items = this.timelineItems();
+    const counts: Record<WebhookTimelineItemView['status'], number> = {
+      success: 0,
+      warning: 0,
+      failed: 0,
+    };
+
+    items.forEach((entry) => {
+      counts[entry.status] += 1;
+    });
+
+    const total = items.length;
+    return ACTIVITY_LEGEND_ENTRIES.map((definition) => {
+      const count = counts[definition.status];
+      const percentLabel = total > 0 ? `${Math.round((count / total) * 100)}%` : '0%';
+      return {
+        status: definition.status,
+        label: definition.label,
+        count,
+        percentLabel,
+      };
+    });
+  });
 
   readonly activityChartOptions = computed<EChartsCoreOption | null>(() => {
     const items = this.timelineItems();
@@ -688,13 +737,42 @@ export class WebhooksPage {
       return null;
     }
     const buckets = this.activityBuckets();
+    const range = resolveTimelineRangeMs(this.timelineLookbackMs(), this.timelineToIso());
+    const bucketMs = resolveTimelineBucketMs(this.timelineLookbackMs());
     const chartBuckets = buckets.length
       ? buckets
-      : buildActivityBuckets(items, this.timelineFromIso(), this.timelineToIso());
-    return buildTimelineChartOptions(items, chartBuckets, this.selectedTimelineItemId());
+      : buildActivityBuckets(
+        items,
+        new Date(range.fromMs).toISOString(),
+        new Date(range.toMs).toISOString(),
+        bucketMs,
+      );
+    return buildTimelineChartOptions(items, chartBuckets, bucketMs);
   });
 
   constructor() {
+    this.setTimelinePreset(DEFAULT_TIMELINE_PRESET);
+
+    effect((onCleanup) => {
+      // Auto-clear the "to" filter after the selected day ends.
+      const toIso = this.timelineToIso();
+      if (!toIso) {
+        return;
+      }
+      const endOfDayMs = resolveLocalEndOfDayMs(toIso);
+      if (endOfDayMs === null) {
+        this.timelineToIso.set(null);
+        return;
+      }
+      const delayMs = endOfDayMs - Date.now();
+      if (delayMs <= 0) {
+        this.timelineToIso.set(null);
+        return;
+      }
+      const timeoutId = setTimeout(() => this.timelineToIso.set(null), delayMs);
+      onCleanup(() => clearTimeout(timeoutId));
+    });
+
     effect((onCleanup) => {
       const template = this.panelTemplate();
       const collapsedTemplate = this.collapsedTemplate();
@@ -727,66 +805,7 @@ export class WebhooksPage {
       // Keep the store activity stream in sync with the active filters.
       this.store.setActivityQuery(this.activityQuery());
     });
-
-    effect(() => {
-      const currentId = this.selectedTimelineItemId();
-      if (!currentId) {
-        return;
-      }
-      if (!this.timelineItems().some((entry) => entry.id === currentId)) {
-        this.selectedTimelineItemId.set(null);
-      }
-    });
   }
-
-  selectDeadLetter(entry: WebhookDeadLetterView): void {
-    this.selectedDeadLetterId.set(entry.id);
-  }
-
-  selectTimelineItem(entry: WebhookTimelineItemView): void {
-    this.selectedTimelineItemId.set(entry.id);
-
-    if (entry.kind === 'deadLetter' && entry.deadLetterId) {
-      this.selectedDeadLetterId.set(entry.deadLetterId);
-
-      const match = this.filteredEndpoints().find((endpoint) =>
-        endpoint.hookKey === entry.hookKey
-        && (!entry.jobKey || endpoint.jobKey === entry.jobKey),
-      );
-      if (match) {
-        this.selectedRowKey.set(this.webhookRowKey(match, 0));
-      }
-      return;
-    }
-
-    if (entry.kind === 'delivery') {
-      if (entry.endpointRowKey) {
-        this.selectedRowKey.set(entry.endpointRowKey);
-        return;
-      }
-
-      const match = this.filteredEndpoints().find((endpoint) =>
-        endpoint.hookKey === entry.hookKey
-        && (!entry.jobKey || endpoint.jobKey === entry.jobKey),
-      );
-      if (match) {
-        this.selectedRowKey.set(this.webhookRowKey(match, 0));
-      }
-    }
-  }
-
-  handleTimelineChartClick(event: unknown): void {
-    const entryId = extractTimelineEntryId(event);
-    if (!entryId) {
-      return;
-    }
-
-    const entry = this.timelineItems().find((item) => item.id === entryId);
-    if (entry) {
-      this.selectTimelineItem(entry);
-    }
-  }
-
 
   setInvokePayload(value: string): void {
     this.invokePayloadTouched.set(true);
@@ -966,24 +985,6 @@ export class WebhooksPage {
     });
   }
 
-  timelineStatusClass(entry: { status: 'success' | 'failed' | 'warning' }): string {
-    if (entry.status === 'success') {
-      return 'text-success';
-    }
-    if (entry.status === 'warning') {
-      return 'text-warning';
-    }
-    return 'text-danger';
-  }
-
-  timelineStatusGlyph(entry: { status: 'success' | 'failed' | 'warning' }): string {
-    return entry.status === 'success' ? '●' : entry.status === 'warning' ? '▲' : '■';
-  }
-
-  timelineSourceLabel(entry: WebhookTimelineItemView): string {
-    return entry.source === 'invoke' ? 'Manual invoke' : 'Ingress';
-  }
-
   invokeWebhook(): void {
     if (this.writePermissionDenied()) {
       return;
@@ -1040,6 +1041,55 @@ function localDateTimeInputToIso(value: string): string | null {
   return date.toISOString();
 }
 
+function resolveTimelineRangeMs(lookbackMs: number, toIso: string | null): { fromMs: number; toMs: number } {
+  const resolvedLookback = Math.max(0, lookbackMs);
+  const toMs = tryParseIsoToMs(toIso);
+  const anchorMs = typeof toMs === 'number' ? toMs : Date.now();
+  return {
+    fromMs: anchorMs - resolvedLookback,
+    toMs: anchorMs,
+  };
+}
+
+function resolveTimelineBucketMs(lookbackMs: number): number {
+  const rangeMs = Math.max(1, Math.abs(lookbackMs));
+  for (const candidate of TIMELINE_BUCKET_MS_OPTIONS) {
+    if (Math.ceil(rangeMs / candidate) <= MAX_TIMELINE_BUCKETS) {
+      return candidate;
+    }
+  }
+  return TIMELINE_BUCKET_MS_OPTIONS[TIMELINE_BUCKET_MS_OPTIONS.length - 1];
+}
+
+function filterTimelineItemsByRange(
+  items: ReadonlyArray<WebhookTimelineItemView>,
+  range: { fromMs: number; toMs: number },
+): ReadonlyArray<WebhookTimelineItemView> {
+  return items.filter((entry) => {
+    const occurredAtMs = Date.parse(entry.occurredAt);
+    if (!Number.isFinite(occurredAtMs)) {
+      return true;
+    }
+    if (occurredAtMs < range.fromMs) {
+      return false;
+    }
+    if (occurredAtMs > range.toMs) {
+      return false;
+    }
+    return true;
+  });
+}
+
+function resolveLocalEndOfDayMs(value: string): number | null {
+  const timestamp = Date.parse(value);
+  if (!Number.isFinite(timestamp)) {
+    return null;
+  }
+  const date = new Date(timestamp);
+  date.setHours(23, 59, 59, 999);
+  return date.getTime();
+}
+
 function createDefaultFilters(): WebhookFilterModel {
   return {
     status: 'all',
@@ -1051,14 +1101,12 @@ function buildActivityQuery(
   model: WebhookFilterModel,
   hookKeys: ReadonlyArray<string>,
   jobKeys: ReadonlyArray<string>,
-  fromIso: string | null,
   toIso: string | null,
 ): WebhookActivityQuery {
   return {
     environment: model.environment === ALL_ENVIRONMENTS ? null : model.environment,
     hookKeys,
     jobKeys,
-    fromUtc: fromIso,
     toUtc: toIso,
   };
 }
@@ -1110,13 +1158,45 @@ function escapeSingleQuotes(value: string): string {
   return value.replace(/'/g, `'"'"'`);
 }
 
+type ActivityConnectionTone = 'success' | 'warning' | 'danger' | 'muted';
+
+function resolveActivityConnectionTone(state: ActivityConnectionState): ActivityConnectionTone {
+  if (state === 'connected') {
+    return 'success';
+  }
+  if (state === 'retrying') {
+    return 'warning';
+  }
+  if (state === 'offline') {
+    return 'danger';
+  }
+  return 'muted';
+}
+
+function formatActivityConnectionLabel(state: ActivityConnectionState): string {
+  if (state === 'connected') {
+    return 'Connected';
+  }
+  if (state === 'retrying') {
+    return 'Retrying';
+  }
+  if (state === 'offline') {
+    return 'Offline';
+  }
+  if (state === 'paused') {
+    return 'Paused';
+  }
+  return 'Idle';
+}
+
 type ChartPalette = {
   success: string;
   warning: string;
   failed: string;
   muted: string;
   border: string;
-  accent: string;
+  surface: string;
+  text: string;
 };
 
 type TimelineChartDatum = {
@@ -1129,10 +1209,6 @@ type TimelineChartDatum = {
   kind: WebhookTimelineItemView['kind'];
   source?: WebhookTimelineItemView['source'];
   status: WebhookTimelineItemView['status'];
-  itemStyle?: {
-    borderColor?: string;
-    borderWidth?: number;
-  };
 };
 
 type TimelineBarDatum = NonNullable<BarSeriesOption['data']>[number] & {
@@ -1158,11 +1234,13 @@ function buildActivityBuckets(
   items: ReadonlyArray<WebhookTimelineItemView>,
   fromIso: string | null,
   toIso: string | null,
+  bucketMs: number,
 ): ReadonlyArray<ActivityBucket> {
   if (items.length === 0) {
     return [];
   }
 
+  const resolvedBucketMs = Math.max(1, Math.floor(bucketMs));
   const fromMs = tryParseIsoToMs(fromIso);
   const toMs = tryParseIsoToMs(toIso);
   const timestamps = items
@@ -1180,15 +1258,17 @@ function buildActivityBuckets(
     return [];
   }
 
-  const start = Math.floor(resolvedFrom / DEFAULT_BUCKET_MS) * DEFAULT_BUCKET_MS;
-  const end = Math.ceil(resolvedTo / DEFAULT_BUCKET_MS) * DEFAULT_BUCKET_MS;
-  const bucketCount = Math.max(1, Math.ceil((end - start) / DEFAULT_BUCKET_MS));
+  const start = resolvedFrom;
+  const end = resolvedTo;
+  const bucketCount = Math.max(1, Math.ceil((end - start) / resolvedBucketMs));
 
   const buckets = new Map<number, ActivityBucket>();
   for (let i = 0; i < bucketCount; i += 1) {
-    const bucketStart = start + i * DEFAULT_BUCKET_MS;
+    const bucketStart = start + i * resolvedBucketMs;
+    const bucketEnd = i === bucketCount - 1 ? end : bucketStart + resolvedBucketMs;
     buckets.set(bucketStart, {
       bucketStart: new Date(bucketStart).toISOString(),
+      bucketEnd: new Date(bucketEnd).toISOString(),
       total: 0,
       errors: 0,
     });
@@ -1199,7 +1279,8 @@ function buildActivityBuckets(
     if (!Number.isFinite(timestamp) || timestamp < start || timestamp > end) {
       return;
     }
-    const bucketStart = start + Math.floor((timestamp - start) / DEFAULT_BUCKET_MS) * DEFAULT_BUCKET_MS;
+    const bucketIndex = Math.min(bucketCount - 1, Math.floor((timestamp - start) / resolvedBucketMs));
+    const bucketStart = start + bucketIndex * resolvedBucketMs;
     const bucket = buckets.get(bucketStart);
     if (!bucket) {
       return;
@@ -1213,25 +1294,13 @@ function buildActivityBuckets(
   return Array.from(buckets.values());
 }
 
-function summarizeActivity(buckets: ReadonlyArray<ActivityBucket>): ActivitySummary {
-  const total = buckets.reduce((sum, bucket) => sum + bucket.total, 0);
-  const errors = buckets.reduce((sum, bucket) => sum + bucket.errors, 0);
-  const errorRateLabel = total > 0 ? `${Math.round((errors / total) * 100)}%` : 'N/A';
-  return {
-    total,
-    errors,
-    errorRateLabel,
-    bucketCount: buckets.length,
-  };
-}
-
 function buildTimelineChartOptions(
   items: ReadonlyArray<WebhookTimelineItemView>,
   buckets: ReadonlyArray<ActivityBucket>,
-  selectedId: string | null,
+  bucketMs: number,
 ): EChartsCoreOption {
   const palette = resolveChartPalette();
-  const bucketRanges = resolveTimelineBucketRanges(items, buckets);
+  const bucketRanges = resolveTimelineBucketRanges(items, buckets, bucketMs);
   if (bucketRanges.length === 0) {
     return {
       animation: false,
@@ -1242,7 +1311,7 @@ function buildTimelineChartOptions(
   const orderedItems = sortTimelineItems(items);
   const categories = bucketRanges.map((range) => range.label);
   const labelInterval = resolveAxisLabelInterval(categories.length);
-  const series = buildTimelineEntrySeries(orderedItems, bucketRanges, selectedId, palette);
+  const series = buildTimelineEntrySeries(orderedItems, bucketRanges, palette);
   const bucketCounts = countTimelineItemsByBucket(orderedItems, bucketRanges);
   const maxStack = Math.max(1, ...bucketCounts);
 
@@ -1258,8 +1327,15 @@ function buildTimelineChartOptions(
     tooltip: {
       trigger: 'item',
       axisPointer: {
-        type: 'shadow',
+        show: false,
       },
+      backgroundColor: palette.surface,
+      borderColor: palette.border,
+      borderWidth: 1,
+      textStyle: {
+        color: palette.text,
+      },
+      extraCssText: 'border-radius: 10px; box-shadow: 0 10px 24px rgba(0,0,0,0.35);',
       formatter: (params: unknown) => formatTimelineTooltip(params),
     },
     xAxis: {
@@ -1301,7 +1377,6 @@ function buildTimelineChartOptions(
 function buildTimelineEntrySeries(
   items: ReadonlyArray<WebhookTimelineItemView>,
   bucketRanges: ReadonlyArray<TimelineBucketRange>,
-  selectedId: string | null,
   palette: ChartPalette,
 ): SeriesOption[] {
   if (bucketRanges.length === 0) {
@@ -1316,7 +1391,7 @@ function buildTimelineEntrySeries(
     }
 
     const data = Array.from({ length: bucketRanges.length }, (_, index) =>
-      index === bucketIndex ? createTimelineDatum(entry, selectedId, palette.accent) : createEmptyTimelineDatum(),
+      index === bucketIndex ? createTimelineDatum(entry) : createEmptyTimelineDatum(),
     );
 
     series.push({
@@ -1334,7 +1409,7 @@ function buildTimelineEntrySeries(
         show: false,
       },
       emphasis: {
-        focus: 'series',
+        focus: 'self',
       },
       legendHoverLink: false,
     });
@@ -1343,13 +1418,7 @@ function buildTimelineEntrySeries(
   return series;
 }
 
-function createTimelineDatum(
-  entry: WebhookTimelineItemView,
-  selectedId: string | null,
-  accent: string,
-): TimelineChartDatum {
-  const isSelected = entry.id === selectedId;
-
+function createTimelineDatum(entry: WebhookTimelineItemView): TimelineChartDatum {
   return {
     value: 1,
     entryId: entry.id,
@@ -1360,7 +1429,6 @@ function createTimelineDatum(
     kind: entry.kind,
     source: entry.source,
     status: entry.status,
-    itemStyle: isSelected ? { borderColor: accent, borderWidth: 2 } : undefined,
   };
 }
 
@@ -1379,10 +1447,12 @@ function createEmptyTimelineDatum(): TimelineBarDatum {
 function resolveTimelineBucketRanges(
   items: ReadonlyArray<WebhookTimelineItemView>,
   buckets: ReadonlyArray<ActivityBucket>,
+  bucketMs: number,
 ): ReadonlyArray<TimelineBucketRange> {
+  const resolvedBucketMs = Math.max(1, Math.floor(bucketMs));
   const sourceBuckets = buckets.length > 0
     ? buckets
-    : buildActivityBuckets(items, null, null);
+    : buildActivityBuckets(items, null, null, resolvedBucketMs);
 
   if (sourceBuckets.length === 0) {
     return [];
@@ -1409,9 +1479,9 @@ function resolveTimelineBucketRanges(
 
   return parsed.map((entry, index) => {
     const nextStart = parsed[index + 1]?.startMs;
-    let endMs = entry.endMs ?? (typeof nextStart === 'number' ? nextStart : entry.startMs + DEFAULT_BUCKET_MS);
+    let endMs = entry.endMs ?? (typeof nextStart === 'number' ? nextStart : entry.startMs + resolvedBucketMs);
     if (!Number.isFinite(endMs) || endMs <= entry.startMs) {
-      endMs = entry.startMs + DEFAULT_BUCKET_MS;
+      endMs = entry.startMs + resolvedBucketMs;
     }
 
     return {
@@ -1546,14 +1616,6 @@ function extractTimelineDatum(entry: TooltipSeriesEntry): TimelineChartDatum | n
   return null;
 }
 
-function extractTimelineEntryId(event: unknown): string | null {
-  if (!event || typeof event !== 'object') {
-    return null;
-  }
-  const data = (event as { data?: unknown }).data;
-  return isTimelineChartDatum(data) ? data.entryId : null;
-}
-
 function isTimelineChartDatum(value: unknown): value is TimelineChartDatum {
   if (!value || typeof value !== 'object') {
     return false;
@@ -1613,17 +1675,20 @@ function resolveChartPalette(): ChartPalette {
       failed: '#fb7181',
       muted: '#94a3b8',
       border: '#27344d',
-      accent: '#a78bfa',
+      surface: '#162033',
+      text: '#f8fafc',
     };
   }
   const styles = getComputedStyle(document.documentElement);
   const read = (name: string, fallback: string) => styles.getPropertyValue(name).trim() || fallback;
+  const surface = read('--cq-surface-3', '#162033');
   return {
     success: read('--cq-success', '#34d399'),
     warning: read('--cq-warning', '#facc15'),
     failed: read('--cq-danger-2', '#fb7181'),
     muted: read('--cq-text-secondary', '#94a3b8'),
     border: read('--cq-border', '#27344d'),
-    accent: read('--cq-accent-3', '#a78bfa'),
+    surface,
+    text: read('--cq-text-primary', '#f8fafc'),
   };
 }

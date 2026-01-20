@@ -76,7 +76,9 @@ export class CqEchartsChartComponent {
       }
 
       chart.on('click', this.clickHandler);
-      onCleanup(() => chart.off('click', this.clickHandler));
+      onCleanup(() => {
+        chart.off('click', this.clickHandler);
+      });
     });
 
     effect(() => {

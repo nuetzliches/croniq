@@ -1,0 +1,10 @@
+<span
+  aria-hidden="true"
+  class="h-2 w-2 rounded-full"
+  [class.bg-success]="intent() === 'success'"
+  [class.bg-warning]="intent() === 'warning'"
+  [class.bg-danger]="intent() === 'failed'"
+></span>
+<span>{{ label() }}</span>
+<span class="text-primary">{{ count() }}</span>
+<span>({{ percentLabel() }})</span>

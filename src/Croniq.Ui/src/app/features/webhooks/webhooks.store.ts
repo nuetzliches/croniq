@@ -87,6 +87,8 @@ export type WebhookActivityQuery = {
     bucketMinutes?: number | null;
 };
 
+export type ActivityConnectionState = 'idle' | 'connected' | 'retrying' | 'offline' | 'paused';
+
 const ACTIVITY_TIMELINE_LIMIT = 200;
 const ACTIVITY_POLL_INTERVAL_MS = 15000;
 const EMPTY_ACTIVITY_BUCKETS: ReadonlyArray<ActivityBucket> = [];
@@ -110,6 +112,8 @@ export class WebhooksStore {
     private readonly activityBucketsSignal = signal<ReadonlyArray<ActivityBucket>>(EMPTY_ACTIVITY_BUCKETS);
     private readonly activityErrorSignal = signal<string | null>(null);
     private readonly activityBackendReadySignal = signal(false);
+    private readonly activityLiveUpdatesEnabledSignal = signal(true);
+    private readonly activityConnectionStateSignal = signal<ActivityConnectionState>('idle');
     private readonly logNextRefreshSignal = signal(false);
     private readonly readPermissionDeniedSignal = signal(false);
     private readonly writePermissionDeniedSignal = signal(false);
@@ -276,17 +280,27 @@ export class WebhooksStore {
             return { tenantId, environment, query: this.activityQuerySignal() };
         },
         stream: ({ params, requestOptions, abortSignal }) => {
-            this.activityErrorSignal.set(null);
-            this.activityBackendReadySignal.set(false);
-
             const tenantId = params.tenantId.trim();
             const query = params.query;
             if (!tenantId || !query) {
+                this.activityConnectionStateSignal.set('idle');
                 return of({
                     timeline: this.activityTimelineSignal(),
                     buckets: this.activityBucketsSignal(),
                 });
             }
+
+            if (!this.activityLiveUpdatesEnabledSignal()) {
+                this.activityConnectionStateSignal.set('paused');
+                return of({
+                    timeline: this.activityTimelineSignal(),
+                    buckets: this.activityBucketsSignal(),
+                });
+            }
+
+            this.activityErrorSignal.set(null);
+            this.activityBackendReadySignal.set(false);
+            this.activityConnectionStateSignal.set(resolveRetryConnectionState());
 
             const normalized = normalizeActivityQuery(query, params.environment);
             const timelineParams: TenantWebhookActivityParams = {
@@ -351,7 +365,11 @@ export class WebhooksStore {
                 tap(({ timeline, buckets }) => {
                     this.activityTimelineSignal.set(timeline.value);
                     this.activityBucketsSignal.set(buckets.value);
-                    this.activityBackendReadySignal.set(timeline.ok || buckets.ok);
+                    const hasSuccess = timeline.ok || buckets.ok;
+                    this.activityBackendReadySignal.set(hasSuccess);
+                    this.activityConnectionStateSignal.set(
+                        hasSuccess ? 'connected' : resolveRetryConnectionState(),
+                    );
                 }),
                 map(({ timeline, buckets }) => ({
                     timeline: timeline.value,
@@ -371,6 +389,8 @@ export class WebhooksStore {
     readonly activityBuckets = this.activityBucketsSignal.asReadonly();
     readonly activityError = this.activityErrorSignal.asReadonly();
     readonly activityBackendReady = this.activityBackendReadySignal.asReadonly();
+    readonly activityLiveUpdatesEnabled = this.activityLiveUpdatesEnabledSignal.asReadonly();
+    readonly activityConnectionState = this.activityConnectionStateSignal.asReadonly();
 
     readonly loading = computed(() =>
         this.endpointsResource.isLoading()
@@ -405,6 +425,19 @@ export class WebhooksStore {
     setActivityQuery(query: WebhookActivityQuery): void {
         this.activityQuerySignal.set(query);
         this.activityBackendReadySignal.set(false);
+    }
+
+    setActivityLiveUpdatesEnabled(enabled: boolean): void {
+        if (this.activityLiveUpdatesEnabledSignal() === enabled) {
+            return;
+        }
+        this.activityLiveUpdatesEnabledSignal.set(enabled);
+        this.activityConnectionStateSignal.set(enabled ? resolveRetryConnectionState() : 'paused');
+        this.activityResource.reload();
+    }
+
+    refreshActivity(): void {
+        this.activityResource.reload();
     }
 
     clearRotatedSecret(): void {
@@ -997,6 +1030,16 @@ function normalizePositiveInt(value: number | null | undefined): number | null {
         return null;
     }
     return Math.max(1, Math.floor(value));
+}
+
+function isBrowserOffline(): boolean {
+    return typeof navigator !== 'undefined'
+        && 'onLine' in navigator
+        && navigator.onLine === false;
+}
+
+function resolveRetryConnectionState(): ActivityConnectionState {
+    return isBrowserOffline() ? 'offline' : 'retrying';
 }
 
 function resolveEnvironment(preferred: string | null | undefined, fallback: string): string | undefined {

@@ -1,6 +1,6 @@
 import { provideZonelessChangeDetection, signal } from '@angular/core';
 import { ComponentFixture, TestBed } from '@angular/core/testing';
-import { WebhookDeadLetterView, WebhookEndpointView, WebhooksStore } from '@features/webhooks/webhooks.store';
+import { ActivityConnectionState, WebhookDeadLetterView, WebhookEndpointView, WebhooksStore } from '@features/webhooks/webhooks.store';
 import { WebhooksPage } from './webhooks-page';
 
 class WebhooksStoreStub {
@@ -21,9 +21,13 @@ class WebhooksStoreStub {
   readonly activityLoading = signal(false);
   readonly activityBackendReady = signal(false);
   readonly activityError = signal<string | null>(null);
+  readonly activityLiveUpdatesEnabled = signal(true);
+  readonly activityConnectionState = signal<ActivityConnectionState>('connected');
 
   selectHook = vi.fn();
   setActivityQuery = vi.fn();
+  setActivityLiveUpdatesEnabled = vi.fn();
+  refreshActivity = vi.fn();
 
   refreshEndpoints = vi.fn();
   upsertEndpoint = vi.fn();
@@ -61,7 +65,7 @@ describe('WebhooksPage', () => {
     expect(component).toBeTruthy();
   });
 
-  it('summarizes timeline activity for charting', () => {
+  it('summarizes timeline activity for legend entries', () => {
     const store = fixture.componentRef.injector.get(WebhooksStore) as unknown as WebhooksStoreStub;
 
     store.endpoints.set([
@@ -102,70 +106,28 @@ describe('WebhooksPage', () => {
       },
     ]);
 
-    const buckets = component.activityBuckets();
-    expect(buckets.map((bucket) => bucket.bucketStart)).toEqual([
-      '2026-01-20T09:00:00.000Z',
-      '2026-01-20T10:00:00.000Z',
-    ]);
-    expect(buckets.map((bucket) => bucket.total)).toEqual([2, 2]);
-    expect(buckets.map((bucket) => bucket.errors)).toEqual([1, 1]);
-
-    const summary = component.activitySummary();
-    expect(summary).toEqual({
-      total: 4,
-      errors: 2,
-      errorRateLabel: '50%',
-      bucketCount: 2,
-    });
-
-    const options = component.activityChartOptions() as {
-      series?: Array<{ name?: string; data?: Array<[string, number]> }>;
-      tooltip?: { formatter?: unknown };
-    } | null;
-
-    expect(options).not.toBeNull();
-    const series = options?.series ?? [];
-    const totalSeries = series.find((entry) => entry.name === 'Total');
-    const errorSeries = series.find((entry) => entry.name === 'Errors');
-
-    const resolveSeriesValue = (entry: unknown): [string, number] => {
-      if (entry && typeof entry === 'object' && 'value' in entry) {
-        return (entry as { value: [string, number] }).value;
-      }
-      if (Array.isArray(entry) && entry.length === 2 && typeof entry[0] === 'string' && typeof entry[1] === 'number') {
-        return [entry[0], entry[1]];
-      }
-      return ['unknown', 0];
-    };
-
-    const totalValues = (totalSeries?.data ?? []).map(resolveSeriesValue);
-    const errorValues = (errorSeries?.data ?? []).map(resolveSeriesValue);
-
-    expect(totalValues).toEqual([
-      ['2026-01-20T09:00:00.000Z', 2],
-      ['2026-01-20T10:00:00.000Z', 2],
-    ]);
-    expect(errorValues).toEqual([
-      ['2026-01-20T09:00:00.000Z', 1],
-      ['2026-01-20T10:00:00.000Z', 1],
-    ]);
-
-    const formatter = options?.tooltip?.formatter;
-    expect(typeof formatter).toBe('function');
-    const tooltip = (formatter as (params: unknown) => string)([
+    const legend = component.activityLegendEntries();
+    expect(legend).toEqual([
       {
-        axisValue: '2026-01-20T09:00:00.000Z',
-        seriesName: 'Total',
-        value: ['2026-01-20T09:00:00.000Z', 2],
-        marker: '',
+        status: 'success',
+        label: 'Success',
+        count: 1,
+        percentLabel: '25%',
       },
       {
-        axisValue: '2026-01-20T09:00:00.000Z',
-        seriesName: 'Errors',
-        value: ['2026-01-20T09:00:00.000Z', 1],
-        marker: '',
+        status: 'warning',
+        label: 'Warning',
+        count: 1,
+        percentLabel: '25%',
+      },
+      {
+        status: 'failed',
+        label: 'Failed',
+        count: 2,
+        percentLabel: '50%',
       },
     ]);
-    expect(tooltip).toContain('Error rate');
+
+    expect(component.activityChartOptions()).not.toBeNull();
   });
 });
