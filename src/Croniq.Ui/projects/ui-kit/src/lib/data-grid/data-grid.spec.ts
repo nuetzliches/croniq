@@ -26,7 +26,16 @@ type Row = { id: string; name: string; status: 'active' | 'paused' };
       [columns]="columns"
     />
   `,
-    styles: [],
+    styles: [`
+    :host {
+      display: block;
+      height: 240px;
+    }
+
+    cq-data-grid {
+      height: 100%;
+    }
+  `],
 })
 class HostComponent {
     @ViewChild('nameHeader', { static: true })
