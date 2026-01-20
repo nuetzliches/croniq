@@ -92,9 +92,12 @@ public sealed class PasswordAuthApiTestHost : IAsyncLifetime
         builder.Services.AddLogging();
         builder.Services.AddRouting();
         builder.Services.AddOptions();
+        builder.Services.AddHttpClient();
+        builder.Services.AddDataProtection();
 
         builder.Services.Configure<CroniqApiOptions>(builder.Configuration.GetSection("Croniq:Api"));
         builder.Services.Configure<CroniqOidcOptions>(builder.Configuration.GetSection("Croniq:Auth:Oidc"));
+        builder.Services.Configure<CroniqOidcLoginOptions>(builder.Configuration.GetSection("Croniq:Auth:OidcLogin"));
         builder.Services.Configure<CroniqTokenOptions>(builder.Configuration.GetSection("Croniq:Auth:Tokens"));
         builder.Services.Configure<PasswordAuthOptions>(builder.Configuration.GetSection("Croniq:Auth:Password"));
 
@@ -106,6 +109,7 @@ public sealed class PasswordAuthApiTestHost : IAsyncLifetime
         builder.Services.AddSingleton<ICallerContextAccessor, CallerContextAccessor>();
         builder.Services.AddSingleton<IApiKeyStore>(ApiKeys);
         builder.Services.AddSingleton<ICroniqTokenIssuer, CroniqTokenIssuer>();
+        builder.Services.AddSingleton<OidcLoginService>();
 
         builder.Services.AddSingleton<ICallerContextFactory, CallerContextFactory>();
 
