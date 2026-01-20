@@ -11,7 +11,7 @@ import { WebhookRotateSecretDialogComponent } from '@features/webhooks/component
 import { ActivityBucket, WebhookActivityQuery, WebhookCapabilitiesView, WebhookDeadLetterView, WebhookEndpointView, WebhookTimelineItemView, WebhooksStore } from '@features/webhooks/webhooks.store';
 import { CqEchartsChartComponent } from '@shared/charts/echarts-chart/echarts-chart';
 import { ShellPanelService } from '@shell/panel/shell-panel.service';
-import type { BarDataItemOption, SeriesOption } from 'echarts';
+import type { BarSeriesOption, SeriesOption } from 'echarts';
 import type { EChartsCoreOption } from 'echarts/core';
 import { filter } from 'rxjs';
 import { CqCellDefDirective, CqColumnComponent, CqConfirmDialogComponent, CqConfirmDialogData, CqContextMenuItemDirective, CqDialogService, CqFormFieldComponent, CqIconComponent, CqInputDirective, CqSelectDirective, CqTextareaDirective, DataGrid } from 'ui-kit';
@@ -1135,6 +1135,10 @@ type TimelineChartDatum = {
   };
 };
 
+type TimelineBarDatum = NonNullable<BarSeriesOption['data']>[number] & {
+  tooltip?: NonNullable<BarSeriesOption['tooltip']>;
+};
+
 type TimelineBucketRange = {
   startMs: number;
   endMs: number;
@@ -1360,7 +1364,7 @@ function createTimelineDatum(
   };
 }
 
-function createEmptyTimelineDatum(): BarDataItemOption {
+function createEmptyTimelineDatum(): TimelineBarDatum {
   return {
     value: 0,
     itemStyle: {
