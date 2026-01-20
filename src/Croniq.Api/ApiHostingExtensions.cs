@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Globalization;
+using System.IO;
 using System.Linq;
 using System.Linq.Expressions;
 using System.Reflection;
@@ -22,6 +23,7 @@ using Croniq.Persistence.Abstractions;
 using Croniq.Providers.Default;
 using Croniq.Sdk;
 using Croniq.Hosting;
+using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
@@ -42,6 +44,7 @@ public static partial class ApiHostingExtensions
     {
         services.Configure<CroniqApiOptions>(configuration.GetSection("Croniq:Api"));
         services.Configure<WebhookIngressStreamOptions>(configuration.GetSection("Croniq:Webhooks:Ingress"));
+        ConfigureDataProtection(services, configuration);
         services.AddCroniqPlatformServices(configuration);
         services.AddSingleton<TenantRateLimitDecider>();
         services.TryAddSingleton<WebhookIngressConsumerTracker>();
@@ -746,5 +749,33 @@ public static partial class ApiHostingExtensions
 
     private sealed class ApiKeyAdminApiMarker
     {
+    }
+
+    private const string DataProtectionSectionName = "Croniq:Security:DataProtection";
+    private const string DefaultDataProtectionAppName = "Croniq";
+
+    private static void ConfigureDataProtection(IServiceCollection services, IConfiguration configuration)
+    {
+        var builder = services.AddDataProtection();
+        var section = configuration.GetSection(DataProtectionSectionName);
+        var keyRingPath = section.GetValue<string>("KeyRingPath");
+        var applicationName = section.GetValue<string>("ApplicationName");
+
+        if (!string.IsNullOrWhiteSpace(keyRingPath))
+        {
+            builder.PersistKeysToFileSystem(new DirectoryInfo(keyRingPath));
+        }
+
+        var resolvedName = string.IsNullOrWhiteSpace(applicationName)
+            ? DefaultDataProtectionAppName
+            : applicationName;
+
+        services.PostConfigure<DataProtectionOptions>(options =>
+        {
+            if (string.IsNullOrWhiteSpace(options.ApplicationDiscriminator))
+            {
+                options.ApplicationDiscriminator = resolvedName;
+            }
+        });
     }
 }

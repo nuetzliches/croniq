@@ -58,11 +58,13 @@ public sealed class EndpointGuardMetadataTests
             "/health",
             "/webhooks",
             "/auth/login",
+            "/auth/oidc",
             "/auth/refresh",
             "/auth/logout",
             "/api/health",
             "/api/webhooks",
             "/api/auth/login",
+            "/api/auth/oidc",
             "/api/auth/refresh",
             "/api/auth/logout"
         };

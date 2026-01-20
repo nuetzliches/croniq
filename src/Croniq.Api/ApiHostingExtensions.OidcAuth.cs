@@ -13,7 +13,7 @@ public static partial class ApiHostingExtensions
         app.MapGet("/auth/oidc/start", async (
             [FromQuery] string? returnUrl,
             HttpContext context,
-            OidcLoginService oidcLogin,
+            [FromServices] OidcLoginService oidcLogin,
             CancellationToken cancellationToken) =>
         {
             if (!oidcLogin.TryResolveOptions(out var oidcOptions, out var loginOptions, out var error))
@@ -60,7 +60,7 @@ public static partial class ApiHostingExtensions
             [FromQuery(Name = "error")] string? errorCode,
             [FromQuery(Name = "error_description")] string? errorDescription,
             HttpContext context,
-            OidcLoginService oidcLogin,
+            [FromServices] OidcLoginService oidcLogin,
             CancellationToken cancellationToken) =>
         {
             if (!oidcLogin.TryResolveOptions(out var oidcOptions, out var loginOptions, out var error))
