@@ -1314,6 +1314,7 @@ function buildTimelineChartOptions(
   const series = buildTimelineEntrySeries(orderedItems, bucketRanges, palette);
   const bucketCounts = countTimelineItemsByBucket(orderedItems, bucketRanges);
   const maxStack = Math.max(1, ...bucketCounts);
+  const yAxisInterval = resolveYAxisInterval(maxStack);
 
   return {
     animation: false,
@@ -1359,7 +1360,7 @@ function buildTimelineChartOptions(
       type: 'value',
       min: 0,
       max: maxStack,
-      interval: 1,
+      interval: yAxisInterval,
       axisLabel: {
         color: palette.muted,
       },
@@ -1555,6 +1556,12 @@ function resolveAxisLabelInterval(count: number): number {
     return 0;
   }
   return Math.ceil(count / 8);
+}
+
+function resolveYAxisInterval(maxValue: number): number {
+  const safeMax = Math.max(1, Math.floor(maxValue));
+  const maxLabels = 10;
+  return Math.max(1, Math.ceil(safeMax / (maxLabels - 1)));
 }
 
 function formatTimelineTooltip(params: unknown): string {
