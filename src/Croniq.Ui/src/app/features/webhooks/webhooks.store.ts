@@ -3,9 +3,9 @@ import { authFailureFromError } from '@core/auth/auth-failure';
 import { tenantRxResource } from '@core/resource/tenant-rx-resource';
 import { TenantContextService } from '@core/tenant-context/tenant-context.service';
 import { nowIso, nowMs, tryIsoFromUnknown } from '@core/time/clock';
-import { CreateWebhookIpRuleRequest, RotateWebhookSecretRequest, UpsertWebhookEndpointRequest, type WebhookCapabilitiesResponse } from '@croniq/api-schema';
-import { CRONIQ_API_CLIENT, CroniqApiClient, TenantDeadLetterParams, TenantEnvironmentParams, TenantWebhookParams, TenantWebhookRuleParams, TenantWebhookUpsertParams, WebhookInvocationParams } from 'data-access';
-import { EMPTY, catchError, map, of, tap } from 'rxjs';
+import { CreateWebhookIpRuleRequest, RotateWebhookSecretRequest, UpsertWebhookEndpointRequest, WebhookActivitySummary, WebhookActivityTimelineResponse, type WebhookCapabilitiesResponse } from '@croniq/api-schema';
+import { CRONIQ_API_CLIENT, CroniqApiClient, TenantDeadLetterParams, TenantEnvironmentParams, TenantWebhookActivityParams, TenantWebhookActivitySummaryParams, TenantWebhookParams, TenantWebhookRuleParams, TenantWebhookUpsertParams, WebhookInvocationParams } from 'data-access';
+import { EMPTY, catchError, forkJoin, fromEvent, map, of, switchMap, takeUntil, tap, timer } from 'rxjs';
 
 export type WebhookEndpointView = {
     hookKey: string;
@@ -47,6 +47,49 @@ export type WebhookDeadLetterView = {
     reason?: string;
 };
 
+export type TimelineItemKind = 'delivery' | 'deadLetter';
+
+export type WebhookTimelineItemView = {
+    id: string;
+    kind: TimelineItemKind;
+    status: 'success' | 'failed' | 'warning';
+    label: string;
+    occurredAt: string;
+    hookKey: string;
+    jobKey?: string;
+    environment?: string;
+    endpointStatus?: WebhookEndpointView['status'];
+    reason?: string;
+    requestId?: string;
+    latencyMs?: number;
+    payloadBytes?: number;
+    deadLetterId?: string;
+    endpointRowKey?: string;
+};
+
+export type ActivityBucket = {
+    bucketStart: string;
+    total: number;
+    errors: number;
+    bucketEnd?: string | null;
+    p95LatencyMs?: number | null;
+};
+
+export type WebhookActivityQuery = {
+    fromUtc?: string | null;
+    toUtc?: string | null;
+    hookKeys?: ReadonlyArray<string>;
+    jobKeys?: ReadonlyArray<string>;
+    environment?: string | null;
+    limit?: number | null;
+    bucketMinutes?: number | null;
+};
+
+const ACTIVITY_TIMELINE_LIMIT = 200;
+const ACTIVITY_POLL_INTERVAL_MS = 15000;
+const EMPTY_ACTIVITY_BUCKETS: ReadonlyArray<ActivityBucket> = [];
+const EMPTY_ACTIVITY_TIMELINE: ReadonlyArray<WebhookTimelineItemView> = [];
+
 @Injectable()
 export class WebhooksStore {
     private readonly api = inject<CroniqApiClient>(CRONIQ_API_CLIENT);
@@ -60,6 +103,11 @@ export class WebhooksStore {
     private readonly rotatedSecretSignal = signal<string | null>(null);
     private readonly capabilitiesSignal = signal<WebhookCapabilitiesView | null>(null);
     private readonly lastErrorSignal = signal<string | null>(null);
+    private readonly activityQuerySignal = signal<WebhookActivityQuery | null>(null);
+    private readonly activityTimelineSignal = signal<ReadonlyArray<WebhookTimelineItemView>>(EMPTY_ACTIVITY_TIMELINE);
+    private readonly activityBucketsSignal = signal<ReadonlyArray<ActivityBucket>>(EMPTY_ACTIVITY_BUCKETS);
+    private readonly activityErrorSignal = signal<string | null>(null);
+    private readonly activityBackendReadySignal = signal(false);
     private readonly logNextRefreshSignal = signal(false);
     private readonly readPermissionDeniedSignal = signal(false);
     private readonly writePermissionDeniedSignal = signal(false);
@@ -212,12 +260,115 @@ export class WebhooksStore {
         },
     });
 
+    private readonly activityResource = tenantRxResource<
+        { timeline: ReadonlyArray<WebhookTimelineItemView>; buckets: ReadonlyArray<ActivityBucket> },
+        { tenantId: string; environment: string; query: WebhookActivityQuery | null }
+    >({
+        command: 'webhooks.activity',
+        defaultValue: {
+            timeline: this.activityTimelineSignal(),
+            buckets: this.activityBucketsSignal(),
+        },
+        params: () => {
+            const { tenantId, environment } = this.tenantContext.snapshot();
+            return { tenantId, environment, query: this.activityQuerySignal() };
+        },
+        stream: ({ params, requestOptions, abortSignal }) => {
+            this.activityErrorSignal.set(null);
+            this.activityBackendReadySignal.set(false);
+
+            const tenantId = params.tenantId.trim();
+            const query = params.query;
+            if (!tenantId || !query) {
+                return of({
+                    timeline: this.activityTimelineSignal(),
+                    buckets: this.activityBucketsSignal(),
+                });
+            }
+
+            const normalized = normalizeActivityQuery(query, params.environment);
+            const timelineParams: TenantWebhookActivityParams = {
+                tenantId,
+                environment: normalized.environment,
+                fromUtc: normalized.fromUtc,
+                toUtc: normalized.toUtc,
+                hookKeys: normalized.hookKeys,
+                jobKeys: normalized.jobKeys,
+                limit: normalized.limit ?? ACTIVITY_TIMELINE_LIMIT,
+            };
+            const summaryParams: TenantWebhookActivitySummaryParams = {
+                tenantId,
+                environment: normalized.environment,
+                fromUtc: normalized.fromUtc,
+                toUtc: normalized.toUtc,
+                hookKeys: normalized.hookKeys,
+                jobKeys: normalized.jobKeys,
+                bucketMinutes: normalized.bucketMinutes,
+            };
+
+            const abort$ = fromEvent(abortSignal, 'abort');
+            const poll$ = ACTIVITY_POLL_INTERVAL_MS > 0
+                ? timer(0, ACTIVITY_POLL_INTERVAL_MS)
+                : of(0);
+
+            const fetchTimeline = () =>
+                this.api.listTenantWebhookActivity(timelineParams, requestOptions).pipe(
+                    map((response) => ({
+                        ok: true,
+                        value: normalizeActivityTimeline(response),
+                    })),
+                    catchError((error: unknown) => {
+                        console.error('Unable to load webhook activity timeline', error);
+                        this.activityErrorSignal.set('Unable to load webhook activity timeline.');
+                        return of({
+                            ok: false,
+                            value: this.activityTimelineSignal(),
+                        });
+                    }),
+                );
+
+            const fetchSummary = () =>
+                this.api.getTenantWebhookActivitySummary(summaryParams, requestOptions).pipe(
+                    map((response) => ({
+                        ok: true,
+                        value: normalizeActivityBuckets(response),
+                    })),
+                    catchError((error: unknown) => {
+                        console.error('Unable to load webhook activity summary', error);
+                        this.activityErrorSignal.set('Unable to load webhook activity summary.');
+                        return of({
+                            ok: false,
+                            value: this.activityBucketsSignal(),
+                        });
+                    }),
+                );
+
+            return poll$.pipe(
+                takeUntil(abort$),
+                switchMap(() => forkJoin({ timeline: fetchTimeline(), buckets: fetchSummary() })),
+                tap(({ timeline, buckets }) => {
+                    this.activityTimelineSignal.set(timeline.value);
+                    this.activityBucketsSignal.set(buckets.value);
+                    this.activityBackendReadySignal.set(timeline.ok || buckets.ok);
+                }),
+                map(({ timeline, buckets }) => ({
+                    timeline: timeline.value,
+                    buckets: buckets.value,
+                })),
+            );
+        },
+    });
+
     readonly endpoints = this.endpointsSignal.asReadonly();
     readonly actionLog = this.actionLogSignal.asReadonly();
     readonly ipRules = this.ipRulesSignal.asReadonly();
     readonly deadLetters = this.deadLettersSignal.asReadonly();
     readonly rotatedSecret = this.rotatedSecretSignal.asReadonly();
     readonly capabilities = this.capabilitiesSignal.asReadonly();
+    readonly activityTimeline = this.activityTimelineSignal.asReadonly();
+    readonly activityBuckets = this.activityBucketsSignal.asReadonly();
+    readonly activityError = this.activityErrorSignal.asReadonly();
+    readonly activityBackendReady = this.activityBackendReadySignal.asReadonly();
 
     readonly loading = computed(() =>
         this.endpointsResource.isLoading()
@@ -225,6 +376,7 @@ export class WebhooksStore {
         || this.ipRulesResource.isLoading()
         || this.capabilitiesResource.isLoading(),
     );
+    readonly activityLoading = computed(() => this.activityResource.isLoading());
 
     readonly deadLetterCount = computed(() => this.deadLettersSignal().length);
     readonly lastError = this.lastErrorSignal.asReadonly();
@@ -248,6 +400,11 @@ export class WebhooksStore {
         this.rotatedSecretSignal.set(null);
     }
 
+    setActivityQuery(query: WebhookActivityQuery): void {
+        this.activityQuerySignal.set(query);
+        this.activityBackendReadySignal.set(false);
+    }
+
     clearRotatedSecret(): void {
         this.rotatedSecretSignal.set(null);
     }
@@ -265,6 +422,7 @@ export class WebhooksStore {
         this.deadLetterCountResource.reload();
         this.ipRulesResource.reload();
         this.capabilitiesResource.reload();
+        this.activityResource.reload();
     }
 
     upsertEndpoint(
@@ -669,6 +827,163 @@ export class WebhooksStore {
         };
         this.actionLogSignal.set([entry, ...this.actionLogSignal()].slice(0, 20));
     }
+}
+
+type NormalizedActivityQuery = {
+    fromUtc?: string | null;
+    toUtc?: string | null;
+    hookKeys?: ReadonlyArray<string>;
+    jobKeys?: ReadonlyArray<string>;
+    environment?: string;
+    limit?: number | null;
+    bucketMinutes?: number | null;
+};
+
+function normalizeActivityQuery(query: WebhookActivityQuery, fallbackEnvironment: string): NormalizedActivityQuery {
+    const hookKeys = normalizeKeyList(query.hookKeys);
+    const jobKeys = normalizeKeyList(query.jobKeys);
+    const fromUtc = tryIsoFromUnknown(query.fromUtc) ?? null;
+    const toUtc = tryIsoFromUnknown(query.toUtc) ?? null;
+    const environment = resolveEnvironment(query.environment, fallbackEnvironment);
+    const limit = normalizePositiveInt(query.limit);
+    const bucketMinutes = normalizePositiveInt(query.bucketMinutes);
+
+    return {
+        fromUtc,
+        toUtc,
+        hookKeys,
+        jobKeys,
+        environment,
+        limit,
+        bucketMinutes,
+    };
+}
+
+function normalizeActivityTimeline(entries: WebhookActivityTimelineResponse): ReadonlyArray<WebhookTimelineItemView> {
+    if (!Array.isArray(entries)) {
+        return EMPTY_ACTIVITY_TIMELINE;
+    }
+
+    const mapped = entries.map((entry, index) => {
+        const kind = resolveActivityKind(entry.kind);
+        const status = resolveActivityStatus(entry.status);
+        const hookKey = resolveNonEmptyString(entry.hookKey) ?? 'unknown-hook';
+        const jobKey = resolveNonEmptyString(entry.jobKey);
+        const environment = resolveNonEmptyString(entry.environment);
+        const occurredAt = tryIsoFromUnknown(entry.occurredAtUtc) ?? nowIso();
+        const deadLetterId = resolveDeadLetterId(entry.deadLetterId);
+        return {
+            id: resolveNonEmptyString(entry.id) ?? `${kind}:${index}`,
+            kind,
+            status,
+            label: kind === 'deadLetter' ? 'Dead letter' : 'Delivery',
+            occurredAt,
+            hookKey,
+            jobKey,
+            environment,
+            reason: resolveNonEmptyString(entry.reason),
+            requestId: resolveNonEmptyString(entry.requestId),
+            latencyMs: resolveOptionalNumber(entry.latencyMs),
+            payloadBytes: resolveOptionalNumber(entry.payloadBytes),
+            deadLetterId,
+        };
+    });
+
+    return mapped.sort((left, right) => right.occurredAt.localeCompare(left.occurredAt));
+}
+
+function normalizeActivityBuckets(summary: WebhookActivitySummary): ReadonlyArray<ActivityBucket> {
+    if (!summary || !Array.isArray(summary.buckets)) {
+        return EMPTY_ACTIVITY_BUCKETS;
+    }
+
+    const buckets: ActivityBucket[] = [];
+    summary.buckets.forEach((bucket) => {
+        const bucketStart = tryIsoFromUnknown(bucket.bucketStartUtc);
+        if (!bucketStart) {
+            return;
+        }
+        const bucketEnd = tryIsoFromUnknown(bucket.bucketEndUtc) ?? null;
+        const total = resolveOptionalNumber(bucket.totalCount) ?? 0;
+        const errors = resolveOptionalNumber(bucket.errorCount) ?? 0;
+        const p95LatencyMs = resolveOptionalNumber(bucket.p95LatencyMs);
+        buckets.push({
+            bucketStart,
+            bucketEnd,
+            total,
+            errors,
+            p95LatencyMs,
+        });
+    });
+
+    if (!buckets.length) {
+        return EMPTY_ACTIVITY_BUCKETS;
+    }
+    return buckets.slice().sort((left, right) => left.bucketStart.localeCompare(right.bucketStart));
+}
+
+function resolveNonEmptyString(value: unknown): string | undefined {
+    if (typeof value !== 'string') {
+        return undefined;
+    }
+    const trimmed = value.trim();
+    return trimmed.length > 0 ? trimmed : undefined;
+}
+
+function resolveActivityKind(value: unknown): TimelineItemKind {
+    return value === 'deadLetter' ? 'deadLetter' : 'delivery';
+}
+
+function resolveActivityStatus(value: unknown): WebhookTimelineItemView['status'] {
+    if (value === 'failed') {
+        return 'failed';
+    }
+    if (value === 'warning') {
+        return 'warning';
+    }
+    return 'success';
+}
+
+function resolveOptionalNumber(value: unknown): number | undefined {
+    return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+}
+
+function resolveDeadLetterId(value: unknown): string | undefined {
+    if (typeof value === 'number' && Number.isFinite(value)) {
+        return String(value);
+    }
+    if (typeof value === 'string' && value.trim().length > 0) {
+        return value;
+    }
+    return undefined;
+}
+
+function normalizeKeyList(values?: ReadonlyArray<string> | null): ReadonlyArray<string> | undefined {
+    if (!values || values.length === 0) {
+        return undefined;
+    }
+    const normalized = values
+        .map((value) => value.trim())
+        .filter((value) => value.length > 0);
+    if (!normalized.length) {
+        return undefined;
+    }
+    return Array.from(new Set(normalized));
+}
+
+function normalizePositiveInt(value: number | null | undefined): number | null {
+    if (typeof value !== 'number' || !Number.isFinite(value)) {
+        return null;
+    }
+    return Math.max(1, Math.floor(value));
+}
+
+function resolveEnvironment(preferred: string | null | undefined, fallback: string): string | undefined {
+    if (preferred === null) {
+        return undefined;
+    }
+    const chosen = resolveNonEmptyString(preferred) ?? resolveNonEmptyString(fallback);
+    return chosen ?? undefined;
 }
 
 function extractRotatedSecret(payload: unknown): string | null {

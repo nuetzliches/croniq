@@ -11,16 +11,16 @@ Purpose: track the remaining work to expand the Webhooks UI with an activity tim
 
 ## Transport (Stream vs Poll)
 
-- [ ] Decide on transport: prefer gRPC (via gRPC-Web/proxy) -> SSE fallback -> polling fallback.
+- [x] Decide on transport: prefer gRPC (via gRPC-Web/proxy) -> SSE fallback -> polling fallback.
 - [ ] Confirm gRPC-Web/HTTP2 proxy support for browser clients; otherwise start with SSE -> polling.
 - [ ] Document reconnect/backoff rules and max staleness acceptable for the UI.
 - [ ] Ensure auth headers and tenant/environment filters are supported by gRPC/SSE/polling.
 
 ## Data Access and State
 
-- [ ] Add data-access endpoints for timeline + chart; align response parsing with Zod schemas.
-- [ ] Drive data fetching from filter signals using `linkedSignal()` and `switchMap()`.
-- [ ] Recreate/terminate the stream when filters change and on route teardown.
+- [x] Add data-access endpoints for timeline + chart; align response parsing with Zod schemas.
+- [x] Drive data fetching from filter signals using `linkedSignal()` and `switchMap()`.
+- [x] Recreate/terminate the stream when filters change and on route teardown.
 - [ ] Cache only when needed; avoid stale data across tenant/environment switches.
 
 ## UI: Timeline
@@ -31,15 +31,15 @@ Purpose: track the remaining work to expand the Webhooks UI with an activity tim
 
 ## UI: Chart
 
-- [ ] Choose chart library: ECharts with a custom Angular wrapper (no third-party ng* wrapper); verify license compatibility.
-- [ ] Build a minimal timeseries chart (line or area) for total vs error counts.
-- [ ] Add a tooltip that mirrors the timeline bucket metadata.
-- [ ] Provide an accessible summary table for screen readers.
+- [x] Choose chart library: ECharts with a custom Angular wrapper (no third-party ng* wrapper); Apache-2.0 license confirmed.
+- [x] Build a minimal timeseries chart (line or area) for total vs error counts.
+- [x] Add a tooltip that mirrors the timeline bucket metadata.
+- [x] Provide an accessible summary table for screen readers.
 
 ## Filters Panel Integration
 
-- [ ] Define filter model (time range, hookKey, jobKey, environment); keep status filter local-only if needed.
-- [ ] Normalize filters into a single query object for both timeline + chart endpoints.
+- [x] Define filter model (time range, hookKey, jobKey, environment); keep status filter local-only if needed.
+- [x] Normalize filters into a single query object for both timeline + chart endpoints.
 - [ ] Ensure filter changes update the stream without UI flicker.
 
 ## Telemetry and Error Handling
@@ -52,7 +52,7 @@ Purpose: track the remaining work to expand the Webhooks UI with an activity tim
 
 - [ ] Unit tests for filter -> query mapping.
 - [ ] Unit tests for stream lifecycle (start, reconnect, stop).
-- [ ] Snapshot or unit tests for chart config generation.
+- [x] Snapshot or unit tests for chart config generation.
 
 ## Docs
 

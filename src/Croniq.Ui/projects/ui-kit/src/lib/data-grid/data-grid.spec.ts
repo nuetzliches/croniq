@@ -1,6 +1,8 @@
 import { provideZonelessChangeDetection } from '@angular/core';
 import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { Component, TemplateRef, ViewChild } from '@angular/core';
+import { By } from '@angular/platform-browser';
+import { CdkVirtualScrollViewport } from '@angular/cdk/scrolling';
 import { DataGrid, ColumnDef, ColumnCellContext, ColumnHeaderContext } from './data-grid';
 
 type Row = { id: string; name: string; status: 'active' | 'paused' };
@@ -72,6 +74,20 @@ describe('DataGrid', () => {
         }).compileComponents();
 
         fixture = TestBed.createComponent(HostComponent);
+        fixture.detectChanges();
+        await fixture.whenStable();
+        const viewportElement = fixture.nativeElement.querySelector('cdk-virtual-scroll-viewport') as HTMLElement | null;
+        if (viewportElement) {
+            Object.defineProperty(viewportElement, 'clientHeight', { value: 240, configurable: true });
+            Object.defineProperty(viewportElement, 'clientWidth', { value: 800, configurable: true });
+        }
+        const viewport = fixture.debugElement.query(By.directive(CdkVirtualScrollViewport))?.componentInstance;
+        viewport?.checkViewportSize();
+        if (viewport) {
+            viewport.setRenderedRange({ start: 0, end: fixture.componentInstance.rows.length });
+            viewport.setRenderedContentOffset(0);
+            await Promise.resolve();
+        }
         fixture.detectChanges();
     });
 

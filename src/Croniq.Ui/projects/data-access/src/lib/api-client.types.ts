@@ -42,6 +42,21 @@ export interface WebhookInvocationParams {
     hookKey: string;
 }
 
+export type WebhookActivityStatus = 'success' | 'failed' | 'warning';
+
+export interface TenantWebhookActivityParams extends TenantEnvironmentOptionalParams {
+    hookKeys?: ReadonlyArray<string> | null;
+    jobKeys?: ReadonlyArray<string> | null;
+    statuses?: ReadonlyArray<WebhookActivityStatus> | null;
+    fromUtc?: string | null;
+    toUtc?: string | null;
+    limit?: number | null;
+}
+
+export interface TenantWebhookActivitySummaryParams extends TenantWebhookActivityParams {
+    bucketMinutes?: number | null;
+}
+
 export interface ExecutionLogParams extends TenantScopedParams {
     executionId: string;
 }

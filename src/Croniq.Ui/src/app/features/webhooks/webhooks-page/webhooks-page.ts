@@ -6,12 +6,14 @@ import { RuntimeConfigService } from '@core/runtime-config.service';
 import { WebhookDialogComponent } from '@features/webhooks/components/webhook-dialog/webhook-dialog.component';
 import { WebhookIpRulesDialogComponent } from '@features/webhooks/components/webhook-ip-rules-dialog/webhook-ip-rules-dialog.component';
 import { WebhookRotateSecretDialogComponent } from '@features/webhooks/components/webhook-rotate-secret-dialog/webhook-rotate-secret-dialog.component';
-import { WebhookCapabilitiesView, WebhookDeadLetterView, WebhookEndpointView, WebhooksStore } from '@features/webhooks/webhooks.store';
+import { ActivityBucket, WebhookActivityQuery, WebhookCapabilitiesView, WebhookDeadLetterView, WebhookEndpointView, WebhookTimelineItemView, WebhooksStore } from '@features/webhooks/webhooks.store';
 import { ShellPanelService } from '@shell/panel/shell-panel.service';
 import { RotateWebhookSecretRequest, UpsertWebhookEndpointRequest } from '@croniq/api-schema';
+import type { EChartsCoreOption } from 'echarts/core';
 import { FormField, form } from '@angular/forms/signals';
 import { CqCellDefDirective, CqColumnComponent, CqConfirmDialogComponent, CqConfirmDialogData, CqContextMenuItemDirective, CqDialogService, CqFormFieldComponent, CqIconComponent, CqInputDirective, CqSelectDirective, CqTextareaDirective, DataGrid } from 'ui-kit';
 import { filter } from 'rxjs';
+import { CqEchartsChartComponent } from '@shared/charts/echarts-chart/echarts-chart';
 
 type WebhookDialogData = {
   endpoint: UpsertWebhookEndpointRequest | null;
@@ -30,21 +32,11 @@ type OptionEntry = {
   label: string;
 };
 
-type TimelineItemKind = 'delivery' | 'deadLetter';
-
-type WebhookTimelineItemView = {
-  id: string;
-  kind: TimelineItemKind;
-  status: 'success' | 'failed' | 'warning';
-  label: string;
-  occurredAt: string;
-  hookKey: string;
-  jobKey?: string;
-  environment?: string;
-  endpointStatus?: WebhookEndpointView['status'];
-  reason?: string;
-  deadLetterId?: string;
-  endpointRowKey?: string;
+type ActivitySummary = {
+  total: number;
+  errors: number;
+  errorRateLabel: string;
+  bucketCount: number;
 };
 
 type HookFilterEntry = {
@@ -66,6 +58,8 @@ const STATUS_OPTIONS: ReadonlyArray<{ value: WebhookStatusFilter; label: string 
   { value: 'paused', label: 'Paused' },
   { value: 'degraded', label: 'Degraded' },
 ];
+
+const DEFAULT_BUCKET_MS = 60 * 60 * 1000;
 
 type PageInfo = {
   total: number;
@@ -106,6 +100,7 @@ export class CqWebhookCellDirective extends CqCellDefDirective<WebhookEndpointVi
     CqTextareaDirective,
     CqContextMenuItemDirective,
     CdkMenu,
+    CqEchartsChartComponent,
   ],
   providers: [WebhooksStore],
   templateUrl: './webhooks-page.html',
@@ -127,6 +122,11 @@ export class WebhooksPage {
   readonly writePermissionDenied = this.store.writePermissionDenied;
   readonly rotatedSecret = this.store.rotatedSecret;
   readonly deadLetters = this.store.deadLetters;
+  readonly activityTimeline = this.store.activityTimeline;
+  readonly backendActivityBuckets = this.store.activityBuckets;
+  readonly activityLoading = this.store.activityLoading;
+  readonly activityBackendReady = this.store.activityBackendReady;
+  readonly activityError = this.store.activityError;
   readonly filterModel = signal(createDefaultFilters());
   readonly filterForm = form(this.filterModel, () => { });
   readonly statusOptions = STATUS_OPTIONS;
@@ -161,6 +161,16 @@ export class WebhooksPage {
     const toIso = this.timelineToIso() ?? '';
     return `${model.status}|${model.environment}|${hooks}|${jobs}|${fromIso}|${toIso}`;
   });
+
+  readonly activityQuery = linkedSignal<WebhookActivityQuery>(() =>
+    buildActivityQuery(
+      this.filterModel(),
+      this.selectedHookKeys(),
+      this.selectedJobKeys(),
+      this.timelineFromIso(),
+      this.timelineToIso(),
+    ),
+  );
 
   readonly pageSize = signal(25);
   readonly pageIndex = linkedSignal(() => {
@@ -569,7 +579,7 @@ export class WebhooksPage {
     return this.deadLetters().find((entry) => entry.id === id) ?? null;
   });
 
-  readonly timelineItems = computed<ReadonlyArray<WebhookTimelineItemView>>(() => {
+  readonly fallbackTimelineItems = computed<ReadonlyArray<WebhookTimelineItemView>>(() => {
     const filters = this.filterModel();
     const restrictToEndpointSet = filters.status !== 'all' || filters.environment !== ALL_ENVIRONMENTS;
     const endpoints = this.filteredEndpoints();
@@ -641,6 +651,13 @@ export class WebhooksPage {
       .sort((a, b) => Date.parse(b.occurredAt) - Date.parse(a.occurredAt));
   });
 
+  readonly timelineItems = computed<ReadonlyArray<WebhookTimelineItemView>>(() => {
+    if (this.activityBackendReady()) {
+      return this.activityTimeline();
+    }
+    return this.fallbackTimelineItems();
+  });
+
   readonly selectedTimelineItemId = signal<string | null>(null);
 
   readonly selectedTimelineItem = computed(() => {
@@ -649,6 +666,22 @@ export class WebhooksPage {
       return null;
     }
     return this.timelineItems().find((entry) => entry.id === id) ?? null;
+  });
+
+  readonly activityBuckets = computed<ReadonlyArray<ActivityBucket>>(() => {
+    if (this.activityBackendReady()) {
+      return this.backendActivityBuckets();
+    }
+    return buildActivityBuckets(this.fallbackTimelineItems(), this.timelineFromIso(), this.timelineToIso());
+  });
+
+  readonly activitySummary = computed<ActivitySummary>(() =>
+    summarizeActivity(this.activityBuckets()),
+  );
+
+  readonly activityChartOptions = computed<EChartsCoreOption | null>(() => {
+    const buckets = this.activityBuckets();
+    return buckets.length ? buildActivityChartOptions(buckets) : null;
   });
 
   constructor() {
@@ -678,6 +711,11 @@ export class WebhooksPage {
         return;
       }
       this.invokePayload.set(createDefaultInvokePayload(endpoint));
+    });
+
+    effect(() => {
+      // Keep the store activity stream in sync with the active filters.
+      this.store.setActivityQuery(this.activityQuery());
     });
 
     effect(() => {
@@ -711,8 +749,19 @@ export class WebhooksPage {
       return;
     }
 
-    if (entry.kind === 'delivery' && entry.endpointRowKey) {
-      this.selectedRowKey.set(entry.endpointRowKey);
+    if (entry.kind === 'delivery') {
+      if (entry.endpointRowKey) {
+        this.selectedRowKey.set(entry.endpointRowKey);
+        return;
+      }
+
+      const match = this.filteredEndpoints().find((endpoint) =>
+        endpoint.hookKey === entry.hookKey
+        && (!entry.jobKey || endpoint.jobKey === entry.jobKey),
+      );
+      if (match) {
+        this.selectedRowKey.set(this.webhookRowKey(match, 0));
+      }
     }
   }
 
@@ -972,6 +1021,22 @@ function createDefaultFilters(): WebhookFilterModel {
   };
 }
 
+function buildActivityQuery(
+  model: WebhookFilterModel,
+  hookKeys: ReadonlyArray<string>,
+  jobKeys: ReadonlyArray<string>,
+  fromIso: string | null,
+  toIso: string | null,
+): WebhookActivityQuery {
+  return {
+    environment: model.environment === ALL_ENVIRONMENTS ? null : model.environment,
+    hookKeys,
+    jobKeys,
+    fromUtc: fromIso,
+    toUtc: toIso,
+  };
+}
+
 function deriveStatus(entries: ReadonlyArray<WebhookEndpointView>): WebhookEndpointView['status'] {
   if (entries.some((entry) => entry.status === 'degraded')) {
     return 'degraded';
@@ -1017,4 +1082,296 @@ function createDefaultInvokePayload(endpoint: WebhookEndpointView): string {
 
 function escapeSingleQuotes(value: string): string {
   return value.replace(/'/g, `'"'"'`);
+}
+
+type ChartPalette = {
+  total: string;
+  error: string;
+  muted: string;
+  border: string;
+};
+
+type TooltipSeriesEntry = {
+  axisValue?: unknown;
+  axisValueLabel?: unknown;
+  seriesName?: unknown;
+  value?: unknown;
+  marker?: unknown;
+  data?: unknown;
+};
+
+function buildActivityBuckets(
+  items: ReadonlyArray<WebhookTimelineItemView>,
+  fromIso: string | null,
+  toIso: string | null,
+): ReadonlyArray<ActivityBucket> {
+  if (items.length === 0) {
+    return [];
+  }
+
+  const fromMs = tryParseIsoToMs(fromIso);
+  const toMs = tryParseIsoToMs(toIso);
+  const timestamps = items
+    .map((entry) => Date.parse(entry.occurredAt))
+    .filter((value) => Number.isFinite(value)) as number[];
+
+  if (timestamps.length === 0) {
+    return [];
+  }
+
+  const resolvedFrom = typeof fromMs === 'number' ? fromMs : Math.min(...timestamps);
+  const resolvedTo = typeof toMs === 'number' ? toMs : Math.max(...timestamps);
+
+  if (!Number.isFinite(resolvedFrom) || !Number.isFinite(resolvedTo) || resolvedTo < resolvedFrom) {
+    return [];
+  }
+
+  const start = Math.floor(resolvedFrom / DEFAULT_BUCKET_MS) * DEFAULT_BUCKET_MS;
+  const end = Math.ceil(resolvedTo / DEFAULT_BUCKET_MS) * DEFAULT_BUCKET_MS;
+  const bucketCount = Math.max(1, Math.ceil((end - start) / DEFAULT_BUCKET_MS));
+
+  const buckets = new Map<number, ActivityBucket>();
+  for (let i = 0; i < bucketCount; i += 1) {
+    const bucketStart = start + i * DEFAULT_BUCKET_MS;
+    buckets.set(bucketStart, {
+      bucketStart: new Date(bucketStart).toISOString(),
+      total: 0,
+      errors: 0,
+    });
+  }
+
+  items.forEach((entry) => {
+    const timestamp = Date.parse(entry.occurredAt);
+    if (!Number.isFinite(timestamp) || timestamp < start || timestamp > end) {
+      return;
+    }
+    const bucketStart = start + Math.floor((timestamp - start) / DEFAULT_BUCKET_MS) * DEFAULT_BUCKET_MS;
+    const bucket = buckets.get(bucketStart);
+    if (!bucket) {
+      return;
+    }
+    bucket.total += 1;
+    if (entry.status === 'failed') {
+      bucket.errors += 1;
+    }
+  });
+
+  return Array.from(buckets.values());
+}
+
+function summarizeActivity(buckets: ReadonlyArray<ActivityBucket>): ActivitySummary {
+  const total = buckets.reduce((sum, bucket) => sum + bucket.total, 0);
+  const errors = buckets.reduce((sum, bucket) => sum + bucket.errors, 0);
+  const errorRateLabel = total > 0 ? `${Math.round((errors / total) * 100)}%` : 'N/A';
+  return {
+    total,
+    errors,
+    errorRateLabel,
+    bucketCount: buckets.length,
+  };
+}
+
+function buildActivityChartOptions(buckets: ReadonlyArray<ActivityBucket>): EChartsCoreOption {
+  const palette = resolveChartPalette();
+  const totals = buckets.map((bucket) => ({
+    value: [bucket.bucketStart, bucket.total],
+    bucketEnd: bucket.bucketEnd ?? null,
+  }));
+  const errors = buckets.map((bucket) => ({
+    value: [bucket.bucketStart, bucket.errors],
+    bucketEnd: bucket.bucketEnd ?? null,
+  }));
+
+  return {
+    animation: false,
+    color: [palette.total, palette.error],
+    grid: {
+      left: 28,
+      right: 16,
+      top: 16,
+      bottom: 24,
+      containLabel: true,
+    },
+    tooltip: {
+      trigger: 'axis',
+      axisPointer: {
+        type: 'line',
+      },
+      formatter: (params: unknown) => formatActivityTooltip(params),
+    },
+    xAxis: {
+      type: 'time',
+      axisLabel: {
+        color: palette.muted,
+      },
+      axisLine: {
+        lineStyle: {
+          color: palette.border,
+        },
+      },
+      axisTick: {
+        show: false,
+      },
+    },
+    yAxis: {
+      type: 'value',
+      minInterval: 1,
+      axisLabel: {
+        color: palette.muted,
+      },
+      splitLine: {
+        lineStyle: {
+          color: palette.border,
+          opacity: 0.25,
+        },
+      },
+    },
+    series: [
+      {
+        name: 'Total',
+        type: 'line',
+        smooth: true,
+        showSymbol: false,
+        data: totals,
+        lineStyle: {
+          width: 2,
+        },
+        areaStyle: {
+          opacity: 0.12,
+        },
+      },
+      {
+        name: 'Errors',
+        type: 'line',
+        smooth: true,
+        showSymbol: false,
+        data: errors,
+        lineStyle: {
+          width: 2,
+        },
+        areaStyle: {
+          opacity: 0.12,
+        },
+      },
+    ],
+  };
+}
+
+function formatActivityTooltip(params: unknown): string {
+  const entries = Array.isArray(params)
+    ? (params as TooltipSeriesEntry[])
+    : params
+      ? [params as TooltipSeriesEntry]
+      : [];
+
+  if (entries.length === 0) {
+    return '';
+  }
+
+  const axisValue = entries[0]?.axisValue ?? entries[0]?.axisValueLabel ?? extractAxisValue(entries[0]?.value);
+  const bucketEndValue = extractBucketEnd(entries[0]?.data);
+  const bucketStartMs = parseTooltipAxisValue(axisValue);
+  const bucketEndMs = parseTooltipAxisValue(bucketEndValue);
+  const bucketLabel = bucketStartMs !== null ? formatBucketLabel(bucketStartMs, bucketEndMs) : 'Unknown bucket';
+
+  const series = entries.map((entry) => ({
+    label: typeof entry.seriesName === 'string' ? entry.seriesName : 'Series',
+    value: extractTooltipValue(entry.value),
+    marker: typeof entry.marker === 'string' ? entry.marker : '',
+  }));
+
+  const total = series.find((entry) => entry.label === 'Total')?.value ?? 0;
+  const errors = series.find((entry) => entry.label === 'Errors')?.value ?? 0;
+  const errorRate = total > 0 ? `${Math.round((errors / total) * 100)}%` : 'N/A';
+
+  const seriesRows = series
+    .map((entry) => `
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;">
+        <span>${entry.marker}${entry.label}</span>
+        <span>${entry.value}</span>
+      </div>
+    `)
+    .join('');
+
+  return `
+    <div style="min-width: 180px;">
+      <div style="font-weight:600;margin-bottom:4px;">${bucketLabel}</div>
+      ${seriesRows}
+      <div style="margin-top:4px;padding-top:4px;border-top:1px solid rgba(255,255,255,0.12);display:flex;justify-content:space-between;gap:8px;">
+        <span>Error rate</span>
+        <span>${errorRate}</span>
+      </div>
+    </div>
+  `;
+}
+
+function extractAxisValue(value: unknown): unknown {
+  if (Array.isArray(value) && value.length > 0) {
+    return value[0];
+  }
+  return value;
+}
+
+function extractBucketEnd(data: unknown): unknown {
+  if (!data || typeof data !== 'object') {
+    return undefined;
+  }
+  if ('bucketEnd' in data) {
+    return (data as { bucketEnd?: unknown }).bucketEnd;
+  }
+  return undefined;
+}
+
+function extractTooltipValue(value: unknown): number {
+  if (Array.isArray(value) && value.length > 0) {
+    const last = value[value.length - 1];
+    return typeof last === 'number' && Number.isFinite(last) ? last : 0;
+  }
+  return typeof value === 'number' && Number.isFinite(value) ? value : 0;
+}
+
+function parseTooltipAxisValue(value: unknown): number | null {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return value;
+  }
+  if (typeof value === 'string' && value.trim()) {
+    const parsed = Date.parse(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+}
+
+function formatBucketLabel(startMs: number, endMs?: number | null): string {
+  const start = new Date(startMs);
+  if (!Number.isFinite(start.getTime())) {
+    return 'Unknown bucket';
+  }
+  const end = new Date(endMs ?? startMs + DEFAULT_BUCKET_MS);
+  const dateLabel = start.toLocaleDateString(undefined, { month: 'short', day: '2-digit' });
+  const startTime = start.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+  const endTime = end.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+  if (start.toDateString() === end.toDateString()) {
+    return `${dateLabel} ${startTime}-${endTime}`;
+  }
+  const endDateLabel = end.toLocaleDateString(undefined, { month: 'short', day: '2-digit' });
+  return `${dateLabel} ${startTime} - ${endDateLabel} ${endTime}`;
+}
+
+function resolveChartPalette(): ChartPalette {
+  if (typeof window === 'undefined') {
+    return {
+      total: '#93c5fd',
+      error: '#fb7181',
+      muted: '#94a3b8',
+      border: '#27344d',
+    };
+  }
+  const styles = getComputedStyle(document.documentElement);
+  const read = (name: string, fallback: string) => styles.getPropertyValue(name).trim() || fallback;
+  return {
+    total: read('--cq-graph-1', '#93c5fd'),
+    error: read('--cq-danger-2', '#fb7181'),
+    muted: read('--cq-text-secondary', '#94a3b8'),
+    border: read('--cq-border', '#27344d'),
+  };
 }

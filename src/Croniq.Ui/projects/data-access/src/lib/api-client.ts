@@ -1,9 +1,9 @@
 import { HttpClient } from '@angular/common/http';
 import { EnvironmentProviders, InjectionToken, Provider, inject, makeEnvironmentProviders } from '@angular/core';
-import { AuthApi, CalendarResponse, CalendarResponseLooseSchema, CalendarUpsertResult, CreateWebhookIpRuleRequest, CroniqCalendarSeedDefinition, HealthApi, IssueApiKeyRequest, IssueTokenRequest, JobsApi, MeApi, PasswordChangePasswordRequest, PasswordLoginRequest, PasswordLogoutRequest, PasswordRefreshRequest, RotateWebhookSecretRequest, RunnerHeartbeatRequest, RunnerListResponse, ScheduleDeadLetterResponse, ScheduleForecastResponse, ScheduleResponse, ScheduleUpsertResult, TenantsApi, TriggerJobRequest, UpsertApiClientRequest, UpsertJobRequest, UpsertScheduleRequest, UpsertTenantRequest, UpsertWebhookEndpointRequest, WebhookCapabilitiesResponse, WorkerHeartbeatRequest, WorkerListResponse, WorkAckRequest, WorkEventsRequest, WorkPollRequest, WorkRenewRequest, type EndpointDefinition } from '@croniq/api-schema';
+import { AuthApi, CalendarResponse, CalendarResponseLooseSchema, CalendarUpsertResult, CreateWebhookIpRuleRequest, CroniqCalendarSeedDefinition, HealthApi, IssueApiKeyRequest, IssueTokenRequest, JobsApi, MeApi, PasswordChangePasswordRequest, PasswordLoginRequest, PasswordLogoutRequest, PasswordRefreshRequest, RotateWebhookSecretRequest, RunnerHeartbeatRequest, RunnerListResponse, ScheduleDeadLetterResponse, ScheduleForecastResponse, ScheduleResponse, ScheduleUpsertResult, TenantsApi, TriggerJobRequest, UpsertApiClientRequest, UpsertJobRequest, UpsertScheduleRequest, UpsertTenantRequest, UpsertWebhookEndpointRequest, WebhookActivitySummary, WebhookActivityTimelineResponse, WebhookCapabilitiesResponse, WorkerHeartbeatRequest, WorkerListResponse, WorkAckRequest, WorkEventsRequest, WorkPollRequest, WorkRenewRequest, type EndpointDefinition } from '@croniq/api-schema';
 import type { Observable } from 'rxjs';
 import { z } from 'zod';
-import type { CroniqCredentialSupplier, CroniqRequestOptions, DashboardForecastParams, ExecutionLogParams, ExecutionParams, TenantApiClientParams, TenantApiClientTokenParams, TenantApiKeyParams, TenantCalendarParams, TenantDeadLetterParams, TenantEnvironmentOptionalParams, TenantEnvironmentParams, TenantScheduleParams, TenantScopedParams, TenantUpsertApiClientParams, TenantWebhookCapabilitiesParams, TenantWebhookParams, TenantWebhookRuleParams, TenantWebhookUpsertParams, WebhookInvocationParams, WorkEventsParams } from './api-client.types';
+import type { CroniqCredentialSupplier, CroniqRequestOptions, DashboardForecastParams, ExecutionLogParams, ExecutionParams, TenantApiClientParams, TenantApiClientTokenParams, TenantApiKeyParams, TenantCalendarParams, TenantDeadLetterParams, TenantEnvironmentOptionalParams, TenantEnvironmentParams, TenantScheduleParams, TenantScopedParams, TenantUpsertApiClientParams, TenantWebhookActivityParams, TenantWebhookActivitySummaryParams, TenantWebhookCapabilitiesParams, TenantWebhookParams, TenantWebhookRuleParams, TenantWebhookUpsertParams, WebhookInvocationParams, WorkEventsParams } from './api-client.types';
 import type { EndpointCallConfig } from './endpoint-executor';
 import { EndpointExecutor, requireEndpoint } from './endpoint-executor';
 
@@ -138,6 +138,42 @@ const WEBHOOK_CAPABILITIES_ENDPOINT = requireEndpoint(
     '/tenants/:tenantId/webhooks/capabilities',
 );
 
+const WEBHOOK_ACTIVITY_TIMELINE_ENDPOINT_PATH = '/tenants/:tenantId/webhooks/activity';
+const WEBHOOK_ACTIVITY_TIMELINE_ENDPOINT: EndpointDefinition =
+    TenantsApi.find((entry) => entry.method === 'get' && entry.path === WEBHOOK_ACTIVITY_TIMELINE_ENDPOINT_PATH) ?? {
+        method: 'get',
+        path: WEBHOOK_ACTIVITY_TIMELINE_ENDPOINT_PATH,
+        requestFormat: 'json',
+        parameters: [
+            { name: 'tenantId', type: 'Path', schema: z.string() },
+            { name: 'environment', type: 'Query', schema: z.string().optional() },
+            { name: 'fromUtc', type: 'Query', schema: z.string().optional() },
+            { name: 'toUtc', type: 'Query', schema: z.string().optional() },
+            { name: 'hookKeys', type: 'Query', schema: z.string().optional() },
+            { name: 'jobKeys', type: 'Query', schema: z.string().optional() },
+            { name: 'limit', type: 'Query', schema: z.number().int().optional() },
+        ],
+        response: WebhookActivityTimelineResponse,
+    };
+
+const WEBHOOK_ACTIVITY_SUMMARY_ENDPOINT_PATH = '/tenants/:tenantId/webhooks/activity/summary';
+const WEBHOOK_ACTIVITY_SUMMARY_ENDPOINT: EndpointDefinition =
+    TenantsApi.find((entry) => entry.method === 'get' && entry.path === WEBHOOK_ACTIVITY_SUMMARY_ENDPOINT_PATH) ?? {
+        method: 'get',
+        path: WEBHOOK_ACTIVITY_SUMMARY_ENDPOINT_PATH,
+        requestFormat: 'json',
+        parameters: [
+            { name: 'tenantId', type: 'Path', schema: z.string() },
+            { name: 'environment', type: 'Query', schema: z.string().optional() },
+            { name: 'fromUtc', type: 'Query', schema: z.string().optional() },
+            { name: 'toUtc', type: 'Query', schema: z.string().optional() },
+            { name: 'hookKeys', type: 'Query', schema: z.string().optional() },
+            { name: 'jobKeys', type: 'Query', schema: z.string().optional() },
+            { name: 'bucketMinutes', type: 'Query', schema: z.number().int().optional() },
+        ],
+        response: WebhookActivitySummary,
+    };
+
 const INVOKE_WEBHOOK_ENDPOINT_PATH =
     '/tenants/:tenantId/environments/:environmentTag/webhooks/:hookKey/invoke';
 const INVOKE_WEBHOOK_ENDPOINT: EndpointDefinition =
@@ -161,6 +197,13 @@ const EXECUTION_LOG_ENDPOINT = requireEndpoint(
 const HEALTH_ENDPOINTS = {
     service: requireEndpoint(HealthApi, 'get', '/health'),
     persistence: requireEndpoint(HealthApi, 'get', '/health/persistence'),
+};
+
+const joinCsv = (values?: ReadonlyArray<string> | null): string | undefined => {
+    if (!values || values.length === 0) {
+        return undefined;
+    }
+    return Array.from(new Set(values)).join(',');
 };
 
 
@@ -255,6 +298,14 @@ export interface CroniqApiClient {
         options?: CroniqRequestOptions,
     ): Observable<unknown>;
     replayTenantWebhookDeadLetter(params: TenantDeadLetterParams, options?: CroniqRequestOptions): Observable<void>;
+    listTenantWebhookActivity(
+        params: TenantWebhookActivityParams,
+        options?: CroniqRequestOptions,
+    ): Observable<WebhookActivityTimelineResponse>;
+    getTenantWebhookActivitySummary(
+        params: TenantWebhookActivitySummaryParams,
+        options?: CroniqRequestOptions,
+    ): Observable<WebhookActivitySummary>;
     invokeWebhook(params: WebhookInvocationParams, options?: CroniqRequestOptions): Observable<void>;
 
     listExecutions(params: ExecutionParams, options?: CroniqRequestOptions): Observable<unknown>;
@@ -990,6 +1041,48 @@ class HttpCroniqApiClient implements CroniqApiClient {
         );
     }
 
+    listTenantWebhookActivity(
+        params: TenantWebhookActivityParams,
+        options?: CroniqRequestOptions,
+    ): Observable<WebhookActivityTimelineResponse> {
+        return this.execute$<WebhookActivityTimelineResponse>(
+            WEBHOOK_ACTIVITY_TIMELINE_ENDPOINT,
+            {
+                path: { tenantId: params.tenantId },
+                query: {
+                    environment: params.environment ?? undefined,
+                    fromUtc: params.fromUtc ?? undefined,
+                    toUtc: params.toUtc ?? undefined,
+                    hookKeys: joinCsv(params.hookKeys),
+                    jobKeys: joinCsv(params.jobKeys),
+                    limit: params.limit ?? undefined,
+                },
+            },
+            options,
+        );
+    }
+
+    getTenantWebhookActivitySummary(
+        params: TenantWebhookActivitySummaryParams,
+        options?: CroniqRequestOptions,
+    ): Observable<WebhookActivitySummary> {
+        return this.execute$<WebhookActivitySummary>(
+            WEBHOOK_ACTIVITY_SUMMARY_ENDPOINT,
+            {
+                path: { tenantId: params.tenantId },
+                query: {
+                    environment: params.environment ?? undefined,
+                    fromUtc: params.fromUtc ?? undefined,
+                    toUtc: params.toUtc ?? undefined,
+                    hookKeys: joinCsv(params.hookKeys),
+                    jobKeys: joinCsv(params.jobKeys),
+                    bucketMinutes: params.bucketMinutes ?? undefined,
+                },
+            },
+            options,
+        );
+    }
+
     listRunners(params: TenantEnvironmentOptionalParams, options?: CroniqRequestOptions): Observable<RunnerListResponse> {
         return this.execute$(
             TENANT_ENDPOINTS.listRunners,
@@ -1210,5 +1303,4 @@ export function provideCroniqApiClient(config: { baseUrl?: string } = {}): Envir
     return makeEnvironmentProviders(providers);
 }
 
-export type { CallerContext, CroniqCredentialSupplier, CroniqRequestOptions, DashboardForecastParams, ExecutionLogParams, TenantApiClientParams, TenantApiKeyParams, TenantCalendarParams, TenantDeadLetterParams, TenantEnvironmentParams, TenantScopedParams, TenantWebhookCapabilitiesParams, TenantWebhookParams, TenantWebhookRuleParams, TenantWebhookUpsertParams, WebhookInvocationParams } from './api-client.types';
-
+export type { CallerContext, CroniqCredentialSupplier, CroniqRequestOptions, DashboardForecastParams, ExecutionLogParams, TenantApiClientParams, TenantApiKeyParams, TenantCalendarParams, TenantDeadLetterParams, TenantEnvironmentParams, TenantScopedParams, TenantWebhookActivityParams, TenantWebhookActivitySummaryParams, TenantWebhookCapabilitiesParams, TenantWebhookParams, TenantWebhookRuleParams, TenantWebhookUpsertParams, WebhookActivityStatus, WebhookInvocationParams } from './api-client.types';
