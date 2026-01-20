@@ -12,7 +12,7 @@ Purpose: track the remaining work to expand the Webhooks UI with an activity tim
 ## Transport (Stream vs Poll)
 
 - [x] Decide on transport: prefer gRPC (via gRPC-Web/proxy) -> SSE fallback -> polling fallback.
-- [ ] Confirm gRPC-Web/HTTP2 proxy support for browser clients (SSE fallback now available).
+- [ ] Confirm gRPC-Web/HTTP2 proxy support for browser clients (SSE fallback now available; tracked in `src/Croniq.Ui/BACKLOG.md`).
 - [ ] Document reconnect/backoff rules and max staleness acceptable for the UI.
 - [x] Ensure auth headers and tenant/environment filters are supported by gRPC/SSE/polling.
 
@@ -56,5 +56,5 @@ Purpose: track the remaining work to expand the Webhooks UI with an activity tim
 
 ## Docs
 
-- [ ] Update `docs/deep-dive/ui.md` with timeline data source, transport, and filters.
+- [x] Update `docs/deep-dive/ui.md` with timeline data source, transport, and filters.
 - [ ] Record any backend contract decisions in `docs/deep-dive/auth.md` or relevant webhook docs.
