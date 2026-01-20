@@ -11,7 +11,7 @@ import { WebhookRotateSecretDialogComponent } from '@features/webhooks/component
 import { ActivityBucket, WebhookActivityQuery, WebhookCapabilitiesView, WebhookDeadLetterView, WebhookEndpointView, WebhookTimelineItemView, WebhooksStore } from '@features/webhooks/webhooks.store';
 import { CqEchartsChartComponent } from '@shared/charts/echarts-chart/echarts-chart';
 import { ShellPanelService } from '@shell/panel/shell-panel.service';
-import type { SeriesOption } from 'echarts';
+import type { BarDataItemOption, SeriesOption } from 'echarts';
 import type { EChartsCoreOption } from 'echarts/core';
 import { filter } from 'rxjs';
 import { CqCellDefDirective, CqColumnComponent, CqConfirmDialogComponent, CqConfirmDialogData, CqContextMenuItemDirective, CqDialogService, CqFormFieldComponent, CqIconComponent, CqInputDirective, CqSelectDirective, CqTextareaDirective, DataGrid } from 'ui-kit';
@@ -1312,7 +1312,7 @@ function buildTimelineEntrySeries(
     }
 
     const data = Array.from({ length: bucketRanges.length }, (_, index) =>
-      index === bucketIndex ? createTimelineDatum(entry, selectedId, palette.accent) : null,
+      index === bucketIndex ? createTimelineDatum(entry, selectedId, palette.accent) : createEmptyTimelineDatum(),
     );
 
     series.push({
@@ -1357,6 +1357,18 @@ function createTimelineDatum(
     source: entry.source,
     status: entry.status,
     itemStyle: isSelected ? { borderColor: accent, borderWidth: 2 } : undefined,
+  };
+}
+
+function createEmptyTimelineDatum(): BarDataItemOption {
+  return {
+    value: 0,
+    itemStyle: {
+      opacity: 0,
+    },
+    tooltip: {
+      show: false,
+    },
   };
 }
 
