@@ -97,6 +97,7 @@ type ActivityStreamMode = 'grpc' | 'sse' | 'polling';
 const ACTIVITY_TIMELINE_LIMIT = 200;
 const ACTIVITY_POLL_INTERVAL_MS = 15000;
 const ACTIVITY_STREAM_LIMIT = 1;
+const ACTIVITY_RESOURCE_COMMAND = 'webhooks.activity';
 const ACTIVITY_STREAM_COMMAND = 'webhooks.activity.stream';
 const EMPTY_ACTIVITY_BUCKETS: ReadonlyArray<ActivityBucket> = [];
 const EMPTY_ACTIVITY_TIMELINE: ReadonlyArray<WebhookTimelineItemView> = [];
@@ -279,7 +280,7 @@ export class WebhooksStore {
         { timeline: ReadonlyArray<WebhookTimelineItemView>; buckets: ReadonlyArray<ActivityBucket> },
         { tenantId: string; environment: string; query: WebhookActivityQuery | null }
     >({
-        command: 'webhooks.activity',
+        command: ACTIVITY_RESOURCE_COMMAND,
         defaultValue: {
             timeline: this.activityTimelineSignal(),
             buckets: this.activityBucketsSignal(),
@@ -335,6 +336,11 @@ export class WebhooksStore {
             const streamMode = this.runtimeConfig.webhooksActivityStreamMode;
             const grpcBaseUrl = this.runtimeConfig.webhooksActivityGrpcBaseUrl;
             const sseBaseUrl = this.runtimeConfig.webhooksActivitySseBaseUrl;
+            const requestContext = requestOptions.context
+                ?? this.tenantContext.createCallerContext(ACTIVITY_RESOURCE_COMMAND, {
+                    tenantId,
+                    environment: normalized.environment,
+                });
 
             const fetchTimeline = () =>
                 this.api.listTenantWebhookActivity(timelineParams, requestOptions).pipe(
@@ -374,7 +380,7 @@ export class WebhooksStore {
                 streamMode,
                 grpcBaseUrl,
                 sseBaseUrl,
-                requestContext: requestOptions.context,
+                requestContext,
                 sessionToken: this.authSession.getSessionToken(),
                 abortSignal,
             });

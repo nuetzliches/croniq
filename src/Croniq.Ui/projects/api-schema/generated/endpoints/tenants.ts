@@ -964,6 +964,46 @@ export const TenantsApi: EndpointDefinition[] = [
     },
     {
         method: 'get',
+        path: '/tenants/:tenantId/webhooks/activity/stream',
+        description: `Server-sent events stream for webhook activity updates.`,
+        requestFormat: 'json',
+        parameters: [
+            { name: 'tenantId', type: 'Path', schema: z.string() },
+            {
+                name: 'environment',
+                type: 'Query',
+                schema: z.string().optional(),
+            },
+            {
+                name: 'fromUtc',
+                type: 'Query',
+                schema: z.iso.datetime({ offset: true }).optional(),
+            },
+            {
+                name: 'toUtc',
+                type: 'Query',
+                schema: z.iso.datetime({ offset: true }).optional(),
+            },
+            { name: 'hookKeys', type: 'Query', schema: z.string().optional() },
+            { name: 'jobKeys', type: 'Query', schema: z.string().optional() },
+            {
+                name: 'limit',
+                type: 'Query',
+                schema: z.number().int().optional(),
+            },
+        ],
+        response: z.void(),
+        errors: [
+            { status: 400, description: `Bad Request`, schema: z.void() },
+            {
+                status: 503,
+                description: `Service Unavailable`,
+                schema: z.void(),
+            },
+        ],
+    },
+    {
+        method: 'get',
         path: '/tenants/:tenantId/webhooks/activity/summary',
         description: `Returns aggregated webhook activity counts for the tenant/environment scope.`,
         requestFormat: 'json',
