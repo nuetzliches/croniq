@@ -165,3 +165,6 @@ CRONIQ_DB_PROVIDER=Postgres \
 CRONIQ_POSTGRES_CONNECTION="Host=postgres;Database=Croniq;Username=postgres;Password=..." \
   dotnet Croniq.DbMigrator.dll
 ```
+
+If you disable admin seeding but still need a tenant row (for example, SQL persistence with `WebhookAdminOnly` surface),
+set `CRONIQ_SEED_TENANT=true` and provide `CRONIQ_CORE_TENANT_ID` or `CRONIQ_SEED_TENANT_ID`.

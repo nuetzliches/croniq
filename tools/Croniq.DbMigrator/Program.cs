@@ -103,6 +103,25 @@ try
 
     try
     {
+        await SeedTenantAsync(serviceProvider, token).ConfigureAwait(false);
+    }
+    catch (Exception ex)
+    {
+        // Seeding is a dev convenience. It should not block containers/CI by default.
+        // If you want seeding failures to fail the migrator, set CRONIQ_SEED_TENANT_REQUIRED=true.
+        var required = Environment.GetEnvironmentVariable("CRONIQ_SEED_TENANT_REQUIRED");
+        var isRequired = string.Equals(required, "true", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(required, "1", StringComparison.OrdinalIgnoreCase);
+
+        Console.Error.WriteLine($"Tenant seeding failed: {ex}");
+        if (isRequired)
+        {
+            throw;
+        }
+    }
+
+    try
+    {
         await SeedAdminAsync(serviceProvider, token).ConfigureAwait(false);
     }
     catch (Exception ex)
@@ -753,6 +772,40 @@ static async Task SeedAdminAsync(IServiceProvider provider, CancellationToken to
         username,
         tenant.TenantId,
         isPasswordChangeRequired);
+}
+
+static async Task SeedTenantAsync(IServiceProvider provider, CancellationToken token)
+{
+    var seedEnabled = Environment.GetEnvironmentVariable("CRONIQ_SEED_TENANT");
+    if (!string.Equals(seedEnabled, "true", StringComparison.OrdinalIgnoreCase)
+        && !string.Equals(seedEnabled, "1", StringComparison.OrdinalIgnoreCase))
+    {
+        return;
+    }
+
+    using var scope = provider.CreateScope();
+    var loggerFactory = scope.ServiceProvider.GetRequiredService<ILoggerFactory>();
+    var logger = loggerFactory.CreateLogger("Croniq.DbMigrator.Seed");
+
+    var tenants = scope.ServiceProvider.GetRequiredService<ITenantStore>();
+
+    var tenantId = ResolveEnv("CRONIQ_SEED_TENANT_ID")
+        ?? ResolveEnv("CRONIQ_CORE_TENANT_ID")
+        ?? new CroniqOptions().TenantId.Trim();
+    var tenantName = ResolveEnv("CRONIQ_SEED_TENANT_NAME")
+        ?? ResolveEnv("CRONIQ_CORE_TENANT_NAME")
+        ?? tenantId;
+    var tenantReference = ResolveEnv("CRONIQ_SEED_TENANT_REFERENCE")
+        ?? tenantId;
+
+    if (string.IsNullOrWhiteSpace(tenantId))
+    {
+        logger.LogWarning("Tenant seeding enabled but tenant id could not be resolved; set CRONIQ_SEED_TENANT_ID or CRONIQ_CORE_TENANT_ID. Skipping.");
+        return;
+    }
+
+    var tenant = await tenants.CreateAsync(new TenantCreateRequest(tenantName, tenantId, tenantReference), token).ConfigureAwait(false);
+    logger.LogInformation("Seeded tenant '{TenantId}'.", tenant.TenantId);
 }
 
 static IReadOnlyCollection<string> ResolveSeedAdminScopes(string seedScopesRaw, ILogger logger)
