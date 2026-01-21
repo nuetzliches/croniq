@@ -1,6 +1,6 @@
 # Croniq Docker Dev Stack Plan
 
-This document describes the local Docker Compose environment required to satisfy the checklist item "Docker Compose Dev-Stack (API, Worker, SqlServer, OTel/Grafana) bereitstellen". It ties together the API, scheduler workers, SQL Server database, and observability components for day-to-day development and smoke tests.
+This document describes the local Docker Compose environment required to satisfy the checklist item "Docker Compose Dev-Stack (API, Worker, SqlServer, OTel/Grafana) bereitstellen". It ties together the API, scheduler workers, SQL Server database, and observability components for day-to-day development and smoke tests. It also tracks the transition to an Aspire-based devstack for local development.
 
 ## Objectives
 
@@ -8,6 +8,17 @@ This document describes the local Docker Compose environment required to satisfy
 - Keep configuration discoverable via `.env` and `appsettings.Development.json`, with secrets injected through `.env.local` or user secrets.
 - Reuse the same Compose definitions in nightly CI workflows and local troubleshooting to minimize drift.
 - Provide helpers for running EF Core migrations (via `Croniq.DbMigrator`) and exposing dashboards/logs for debugging.
+
+## Aspire Devstack (Preferred for Local Development)
+
+- AppHost location: `tools/Croniq.Devstack.AppHost` (net10.0).
+- Run locally: `dotnet run --project tools/Croniq.Devstack.AppHost`.
+- The AppHost loads `.env` from the repo root when present; process env vars override file values.
+- SQL Server runs in a container with host port `CRONIQ_SQL_HOST_PORT` (default 11433); connection strings use `localhost` rather than the Compose host name.
+- Enable observability containers with `dotnet run --project tools/Croniq.Devstack.AppHost -- --profile obs`, `CRONIQ_DEVSTACK_PROFILES=--profile obs`, or `CRONIQ_DEVSTACK_OBS=true`.
+- When the `obs` profile is enabled, AppHost maps the OTLP endpoint to `http://localhost:${CRONIQ_OTLP_GRPC_PORT}` if `.env` still targets `http://otel-collector:4317`.
+- Aspire dashboard defaults to `http://localhost:18888` (`ASPIRE_DASHBOARD_PORT`) and uses `ASPIRE_DASHBOARD_OTLP_ENDPOINT_URL` (default `http://localhost:18889`) so it does not clash with the Grafana stack. Croniq telemetry continues to flow to the collector; point `CRONIQ_OBS_OTLP_ENDPOINT` to the dashboard OTLP endpoint if you want the Aspire UI to show spans/metrics.
+- Docker Compose remains the CI baseline until Aspire reaches parity. Track progress in `CHECKLIST-ASPIRE.md`.
 
 ## Target Services
 
@@ -50,11 +61,20 @@ All services share a `croniq-net` bridge network. Ports are exposed via `.env` d
 ## Configuration & Secrets
 
 - `.env.example` (root) now lists the required ports, database credentials, and Croniq defaults. Copy it to `.env`, adjust secrets, and Compose will pick the variables up automatically. `.env` stays ignored via `.gitignore`.
+- Aspire AppHost uses `.env` as an input source and applies the same `CRONIQ_*` values to the API/worker/migrator resources.
 - `Croniq.Sample.ApiHost` reads configuration from `appsettings.Development.json` + environment variables injected via Compose (`Croniq__SqlServer__ConnectionString`, `Croniq__Auth__Mode`, etc.). Keep sensitive overrides in `.env.local` or user secrets when running locally.
 - Postgres is supported for local/dev environments by pointing `CRONIQ_DB_PROVIDER=Postgres` and `CRONIQ_POSTGRES_CONNECTION` at an external instance; the default Compose stack still uses SQL Server.
 - The `croniq-db-migrator` service (defined in the base compose file) waits for `mssql-22` to report healthy status and then applies EF Core migrations using `CRONIQ_SQL_CONNECTION`. Compose derives that connection string from `CRONIQ_SQL_HOST`, `CRONIQ_SQL_DATABASE`, and `CRONIQ_SQL_PASSWORD` (with `sa` on port 1433). When troubleshooting, you can still run `docker compose run --rm croniq-db-migrator` or `dotnet run --project tools/Croniq.DbMigrator` manually after setting `CRONIQ_SQL_CONNECTION`.
 
 ## Developer Workflow
+
+### Aspire (Preferred)
+
+1. `cd <repo-root>`
+2. `copy .env.example .env` (first run) and adjust secrets/ports as needed.
+3. `dotnet run --project tools/Croniq.Devstack.AppHost` (add `-- --profile obs` to start Grafana/Tempo/Prometheus/Loki)
+
+### Docker Compose (CI + Fallback)
 
 1. `cd <repo-root>`
 2. `copy .env.example .env` (first run) and adjust secrets/ports as needed.
@@ -69,7 +89,7 @@ All services share a `croniq-net` bridge network. Ports are exposed via `.env` d
 
 ## CI Integration
 
-- Nightly workflow (`nightly.yml`) uses the same compose files with `--profile api --profile worker --profile obs`. Tests (`Croniq.Api.Smoke`) run after health checks pass.
+- Nightly workflow (`nightly.yml`) uses the Compose files with `--profile api --profile worker --profile obs` until Aspire reaches parity. Tests (`Croniq.Api.Smoke`) run after health checks pass.
 - Logs (`docker compose logs --timestamps`) and metrics snapshots are uploaded as artifacts for debugging.
 - Compose env also seeds sample tenants/jobs to support E2E tests.
 
