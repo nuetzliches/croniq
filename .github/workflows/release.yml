@@ -386,9 +386,9 @@ jobs:
         shell: pwsh
         run: |
           if (Test-Path "artifacts/release-devstack/aspire-devstack.pid") {
-            $pid = Get-Content "artifacts/release-devstack/aspire-devstack.pid" | Select-Object -First 1
-            if ($pid) {
-              Stop-Process -Id $pid -Force -ErrorAction SilentlyContinue
+            $processId = Get-Content "artifacts/release-devstack/aspire-devstack.pid" | Select-Object -First 1
+            if ($processId) {
+              Stop-Process -Id $processId -Force -ErrorAction SilentlyContinue
             }
           }
 
