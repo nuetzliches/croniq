@@ -2,6 +2,7 @@ import { provideHttpClient, withFetch, withInterceptors } from '@angular/common/
 import { ApplicationConfig, inject, provideAppInitializer, provideZonelessChangeDetection } from '@angular/core';
 import { provideRouter, withEnabledBlockingInitialNavigation } from '@angular/router';
 import { CRONIQ_API_BASE_URL } from 'data-access';
+import { firstValueFrom } from 'rxjs';
 import { appRoutes } from './app.routes';
 import { authRefreshInterceptor } from './core/auth/auth-refresh.interceptor';
 import { RuntimeConfigService } from './core/runtime-config.service';
@@ -14,7 +15,7 @@ export const appConfig: ApplicationConfig = {
         provideHttpClient(withFetch(), withInterceptors([authRefreshInterceptor])),
         provideAppInitializer(() => {
             const config = inject(RuntimeConfigService);
-            return config.load();
+            return firstValueFrom(config.load());
         }),
         {
             provide: CRONIQ_API_BASE_URL,
