@@ -6,7 +6,7 @@ _Last updated: 2026-01-21_
 
 - Replace the current devstack PowerShell/CMD scripts with a .NET Aspire app host.
 - Keep local onboarding one-command and predictable (API + worker + database + optional observability).
-- Preserve the existing configuration contract (CRONIQ_* envs, .env semantics) while we transition.
+- Preserve the existing configuration contract (CRONIQ\_\* envs, .env semantics) while we transition.
 - Make the devstack ready for gRPC-Web via a local TLS proxy (Caddy preferred).
 
 ## Decisions
@@ -41,7 +41,7 @@ _Last updated: 2026-01-21_
 
 ## Configuration Strategy
 
-- Keep CRONIQ_* env variable support and map into resources via `WithEnvironment` and `WithReference`.
+- Keep CRONIQ\_\* env variable support and map into resources via `WithEnvironment` and `WithReference`.
 - Keep `.env` as the local source of truth; process env vars override file values.
 - Centralize port assignments in the AppHost to avoid per-script duplication.
 
@@ -54,35 +54,41 @@ _Last updated: 2026-01-21_
 ## Checklist
 
 ### Planning & Docs
+
 - [x] Capture Aspire design decisions in `docs/deep-dive/devstack.md` and link from `docs/deep-dive/architecture.md`.
 - [x] Define the intended AppHost location/name and solution structure (net10.0).
 - [x] Decide whether `.env` remains supported or migrates to user-secrets/appsettings.
 
 ### AppHost Foundation
+
 - [x] Create the Aspire AppHost project (net10.0) with service defaults.
 - [x] Wire SQL Server container + `Croniq.DbMigrator` run-before dependency.
 - [x] Add API and Worker project resources with the same env vars as the Compose stack.
 - [x] Add DMZ project resource for webhook relay scenarios.
 
 ### Observability & Tooling
+
 - [x] Integrate the observability containers (otel-collector, grafana, tempo, prometheus) behind an `obs` toggle.
 - [x] Align OTLP ports and tenant headers with existing observability config.
 - [x] Document how Aspire dashboard coexists with Grafana/Tempo/Prometheus.
 
 ### TLS / gRPC-Web (Caddy)
+
 - [x] Add a Caddy container resource (or sidecar) for local TLS termination.
 - [x] Provide a Caddyfile for routing API + gRPC-Web endpoints (and UI if needed).
 - [x] Document local trust steps (`caddy trust`) and default URLs.
 
 ### UI Integration
+
 - [x] Decide whether the Angular UI is launched by Aspire or remains manual.
 - [x] If Aspire-managed: add a Node/NPM resource with health checks + ports.
 
 ### Back-Compat & Cleanup
-- [ ] Keep Compose-based CI (`scripts/ci/compose-devstack.ps1`) until Aspire parity.
+
+- [x] Switch CI smoke workflows (nightly + release) to the Aspire AppHost and keep Compose for fallback debugging.
 - [ ] Deprecate `scripts/devstack-up.cmd`, `devstack-down.cmd`, `devstack-restart.cmd`.
 - [ ] Remove devstack PowerShell helpers (`devstack-*.ps1`) after migration.
-- [ ] Update troubleshooting docs to reference Aspire instead of scripts.
+- [ ] Update docs to reference Aspire instead of scripts.
 
 ## Open Questions
 

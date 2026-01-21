@@ -327,7 +327,7 @@ jobs:
           path: artifacts/images
 
   smoke:
-    name: Compose Smoke Verification
+    name: Aspire Smoke Verification
     needs: tests
     runs-on: ubuntu-latest
     timeout-minutes: 45
@@ -346,18 +346,23 @@ jobs:
         shell: bash
         run: cp .env.example .env
 
-      - name: Start Croniq dev stack
+      - name: Ensure HTTPS development certificate
+        run: dotnet dev-certs https
+
+      - name: Start Aspire dev stack
         shell: pwsh
-        run: >-
-          ./scripts/ci/compose-devstack.ps1
-          -Action Up
-          -OutputDirectory "artifacts/release-devstack"
-          -ComposeFiles @(
-            'infra/docker/docker-compose.yml',
-            'infra/docker/docker-compose.dev.yml',
-            'infra/docker/docker-compose.ci.yml',
-            'infra/docker/docker-compose.observability.yml'
-          )
+        run: |
+          New-Item -ItemType Directory -Force -Path artifacts/release-devstack | Out-Null
+          $env:CRONIQ_DEVSTACK_CADDY = "false"
+          $env:CRONIQ_DEVSTACK_UI = "false"
+          $process = Start-Process -FilePath dotnet -ArgumentList @(
+            "run",
+            "--project", "tools/Croniq.Devstack.AppHost/Croniq.Devstack.AppHost.csproj",
+            "--configuration", "Release",
+            "--",
+            "--profile", "obs"
+          ) -RedirectStandardOutput "artifacts/release-devstack/aspire-devstack.log" -RedirectStandardError "artifacts/release-devstack/aspire-devstack.err.log" -PassThru
+          $process.Id | Out-File -FilePath artifacts/release-devstack/aspire-devstack.pid -Encoding ascii
 
       - name: Wait for API health
         shell: pwsh
@@ -365,24 +370,27 @@ jobs:
           try {
             ./scripts/ci/wait-for-http.ps1 -Uri "http://localhost:5080/health"
           } catch {
-            ./scripts/ci/compose-devstack.ps1 -Action Logs -OutputDirectory "artifacts/release-devstack" -ComposeFiles @('infra/docker/docker-compose.yml','infra/docker/docker-compose.dev.yml','infra/docker/docker-compose.ci.yml','infra/docker/docker-compose.observability.yml')
+            if (Test-Path "artifacts/release-devstack/aspire-devstack.err.log") {
+              Get-Content "artifacts/release-devstack/aspire-devstack.err.log" -Tail 200
+            }
             throw
           }
 
       - name: Run Croniq.Api.Smoke tests
         run: dotnet test tests/Croniq.Api.Smoke/Croniq.Api.Smoke.csproj --configuration Release
         env:
-          CRONIQ_WEBHOOK_BASEURL: http://localhost:5081
+          CRONIQ_WEBHOOK_BASEURL: http://localhost:5000
 
-      - name: Collect docker logs
+      - name: Shut down Aspire dev stack
         if: always()
         shell: pwsh
-        run: ./scripts/ci/compose-devstack.ps1 -Action Logs -OutputDirectory "artifacts/release-devstack" -ComposeFiles @('infra/docker/docker-compose.yml','infra/docker/docker-compose.dev.yml','infra/docker/docker-compose.ci.yml','infra/docker/docker-compose.observability.yml')
-
-      - name: Shut down stack
-        if: always()
-        shell: pwsh
-        run: ./scripts/ci/compose-devstack.ps1 -Action Down -OutputDirectory "artifacts/release-devstack" -CaptureLogs -ComposeFiles @('infra/docker/docker-compose.yml','infra/docker/docker-compose.dev.yml','infra/docker/docker-compose.ci.yml','infra/docker/docker-compose.observability.yml')
+        run: |
+          if (Test-Path "artifacts/release-devstack/aspire-devstack.pid") {
+            $pid = Get-Content "artifacts/release-devstack/aspire-devstack.pid" | Select-Object -First 1
+            if ($pid) {
+              Stop-Process -Id $pid -Force -ErrorAction SilentlyContinue
+            }
+          }
 
       - name: Upload smoke logs
         if: always()

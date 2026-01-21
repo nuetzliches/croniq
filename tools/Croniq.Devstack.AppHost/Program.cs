@@ -1,4 +1,7 @@
 using System.Globalization;
+using Microsoft.Data.SqlClient;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Diagnostics.HealthChecks;
 
 var repoRoot = FindRepoRoot(Directory.GetCurrentDirectory()) ?? Directory.GetCurrentDirectory();
 var envValues = LoadEnvFile(Path.Combine(repoRoot, ".env"));
@@ -66,6 +69,16 @@ var caddyUpstreamHost = GetEnvValueOrDefault("CRONIQ_CADDY_UPSTREAM_HOST", "host
 var caddyHttpPort = GetInt("CRONIQ_CADDY_HTTP_PORT", 8080);
 var caddyHttpsPort = GetInt("CRONIQ_CADDY_HTTPS_PORT", 8443);
 var caddyEnabled = !IsFalse(GetEnvValue("CRONIQ_DEVSTACK_CADDY"));
+var caddyHttpsPortValue = caddyHttpsPort.ToString(CultureInfo.InvariantCulture);
+var caddyApiUrl = caddyEnabled
+    ? string.Concat("https://api.", caddyDomain, ":", caddyHttpsPortValue)
+    : null;
+var caddyUiUrl = caddyEnabled
+    ? string.Concat("https://ui.", caddyDomain, ":", caddyHttpsPortValue)
+    : null;
+var caddyDmzUrl = caddyEnabled
+    ? string.Concat("https://dmz.", caddyDomain, ":", caddyHttpsPortValue)
+    : null;
 var uiApiBaseUrl = GetEnvValue("CRONIQ_UI_API_BASEURL");
 var uiSwaggerUiUrl = GetEnvValue("CRONIQ_UI_SWAGGER_UI_URL") ?? GetEnvValue("CRONIQ_UI_SWAGGER_URL");
 var uiDefaultTenantId = GetEnvValue("CRONIQ_UI_DEFAULT_TENANT_ID");
@@ -135,7 +148,7 @@ string ResolveSqlHost()
 {
     if (string.IsNullOrWhiteSpace(sqlHost) || string.Equals(sqlHost, "mssql-22", StringComparison.OrdinalIgnoreCase))
     {
-        return "localhost";
+        return "127.0.0.1";
     }
 
     return sqlHost;
@@ -155,6 +168,14 @@ var dmzUrls = string.Concat(
     ";http://0.0.0.0:",
     dmzHttpPort.ToString(CultureInfo.InvariantCulture));
 var dmzSqlConnection = $"Server={ResolveSqlHost()},{sqlHostPort};Database={dmzSqlDatabase};User Id=sa;Password={sqlPassword};Encrypt=False;TrustServerCertificate=True;";
+const string sqlReadyHealthCheckName = "croniq-sql-ready";
+var sqlHealthConnectionString = sqlConnection ?? dmzSqlConnection;
+if (needsSqlServer && !string.IsNullOrWhiteSpace(sqlHealthConnectionString))
+{
+    builder.Services
+        .AddHealthChecks()
+        .AddCheck(sqlReadyHealthCheckName, new SqlServerReadyHealthCheck(sqlHealthConnectionString));
+}
 
 IResourceBuilder<ContainerResource>? sqlServer = null;
 if (needsSqlServer)
@@ -172,6 +193,11 @@ if (needsSqlServer)
             isExternal: true,
             isProxied: false)
         .WithVolume("croniq-mssql-data", "/var/opt/mssql", isReadOnly: false);
+
+    if (!string.IsNullOrWhiteSpace(sqlHealthConnectionString))
+    {
+        sqlServer.WithHealthCheck(sqlReadyHealthCheckName);
+    }
 }
 
 var migrator = builder.AddProject(
@@ -368,8 +394,15 @@ if (caddyEnabled)
 
 var api = builder.AddProject(
         "croniq-api",
-        Path.Combine(repoRoot, "samples", "Croniq.Sample.ApiHost", "Croniq.Sample.ApiHost.csproj"))
+        Path.Combine(repoRoot, "samples", "Croniq.Sample.ApiHost", "Croniq.Sample.ApiHost.csproj"),
+        options =>
+        {
+            options.ExcludeLaunchProfile = true;
+            options.ExcludeKestrelEndpoints = true;
+        })
+    .WithHttpEndpoint(targetPort: apiPort, port: apiPort, name: "http", env: null, isProxied: false)
     .WithEnvironment("DOTNET_ENVIRONMENT", dotnetEnvironment)
+    .WithEnvironment("ASPNETCORE_ENVIRONMENT", dotnetEnvironment)
     .WithEnvironment("ASPNETCORE_URLS", apiUrls)
     .WithEnvironment("Croniq__Core__TenantMode", tenantMode)
     .WithEnvironment("Croniq__Core__TenantId", tenantId)
@@ -388,6 +421,20 @@ var api = builder.AddProject(
     .WithEnvironment("Croniq__Webhooks__Remote__EnableRelay", "false")
     .WithEnvironment("Croniq__Logging__Execution__BasePath", logsPath)
     .WaitForCompletion(migrator, exitCode: 0);
+
+if (!string.IsNullOrWhiteSpace(caddyApiUrl))
+{
+    api.WithUrlForEndpoint("http", url =>
+    {
+        url.Url = caddyApiUrl;
+        // url.DisplayText = caddyApiUrl;
+    });
+}
+
+if (!string.IsNullOrWhiteSpace(caddyUiUrl))
+{
+    api.WithEnvironment("CroniqSample__Api__Cors__AllowedOrigins__2", caddyUiUrl);
+}
 
 if (usePostgres)
 {
@@ -442,6 +489,15 @@ if (uiEnabled)
         .WithHttpEndpoint(targetPort: uiPort, port: uiPort, isProxied: false)
         .WithEnvironment("CRONIQ_UI_HTTP_PORT", uiPort.ToString(CultureInfo.InvariantCulture))
         .WaitFor(api);
+
+    if (!string.IsNullOrWhiteSpace(caddyUiUrl))
+    {
+        ui.WithUrlForEndpoint("http", url =>
+        {
+            url.Url = caddyUiUrl;
+            // url.DisplayText = caddyUiUrl;
+        });
+    }
 
     if (!string.IsNullOrWhiteSpace(uiApiBaseUrl))
     {
@@ -518,8 +574,16 @@ if (!string.IsNullOrWhiteSpace(otlpProtocol))
 
 var dmz = builder.AddProject(
         "croniq-dmz",
-        Path.Combine(repoRoot, "samples", "Croniq.Sample.Dmz", "Croniq.Sample.Dmz.csproj"))
+        Path.Combine(repoRoot, "samples", "Croniq.Sample.Dmz", "Croniq.Sample.Dmz.csproj"),
+        options =>
+        {
+            options.ExcludeLaunchProfile = true;
+            options.ExcludeKestrelEndpoints = true;
+        })
+    .WithHttpEndpoint(targetPort: dmzHttpPort, port: dmzHttpPort, name: "http", env: null, isProxied: false)
+    .WithHttpsEndpoint(targetPort: dmzGrpcPort, port: dmzGrpcPort, name: "https", env: null, isProxied: false)
     .WithEnvironment("DOTNET_ENVIRONMENT", dotnetEnvironment)
+    .WithEnvironment("ASPNETCORE_ENVIRONMENT", dotnetEnvironment)
     .WithEnvironment("ASPNETCORE_URLS", dmzUrls)
     .WithEnvironment("Croniq__Auth__Mode", dmzAuthMode)
     .WithEnvironment("Croniq__Auth__InMemory__ApiKey", dmzApiKey)
@@ -532,6 +596,21 @@ var dmz = builder.AddProject(
     .WithEnvironment("Croniq__Core__InstanceId", dmzInstanceId)
     .WithEnvironment("Croniq__SqlServer__ConnectionString", dmzSqlConnection)
     .WaitForCompletion(dmzMigrator, exitCode: 0);
+
+if (!string.IsNullOrWhiteSpace(caddyDmzUrl))
+{
+    dmz.WithUrlForEndpoint("http", url =>
+    {
+        url.Url = caddyDmzUrl;
+        url.DisplayText = "Caddy (HTTP)";
+    });
+
+    dmz.WithUrlForEndpoint("https", url =>
+    {
+        url.Url = caddyDmzUrl;
+        url.DisplayText = "Caddy (gRPC)";
+    });
+}
 
 if (!string.IsNullOrWhiteSpace(otlpEndpoint))
 {
@@ -722,4 +801,45 @@ static string? FindRepoRoot(string startDirectory)
     }
 
     return null;
+}
+
+sealed class SqlServerReadyHealthCheck : IHealthCheck
+{
+    private readonly string _connectionString;
+
+    public SqlServerReadyHealthCheck(string connectionString)
+    {
+        _connectionString = connectionString;
+    }
+
+    public async Task<HealthCheckResult> CheckHealthAsync(
+        HealthCheckContext context,
+        CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            var builder = new SqlConnectionStringBuilder(_connectionString)
+            {
+                InitialCatalog = "master",
+                ConnectTimeout = 2
+            };
+
+            await using var connection = new SqlConnection(builder.ConnectionString);
+            await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
+
+            await using var command = connection.CreateCommand();
+            command.CommandText = "SELECT 1";
+            command.CommandTimeout = builder.ConnectTimeout;
+            await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
+
+            return HealthCheckResult.Healthy();
+        }
+        catch (Exception ex)
+        {
+            return new HealthCheckResult(
+                context.Registration.FailureStatus,
+                "SQL Server not ready.",
+                ex);
+        }
+    }
 }

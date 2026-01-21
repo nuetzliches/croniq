@@ -1,43 +1,44 @@
 {
-    http_port {$CRONIQ_CADDY_HTTP_PORT}
-    https_port {$CRONIQ_CADDY_HTTPS_PORT}
-    local_certs
+	http_port {$CRONIQ_CADDY_HTTP_PORT}
+	https_port {$CRONIQ_CADDY_HTTPS_PORT}
+	local_certs
+
+	servers {
+		protocols h1 h2
+	}
 }
 
 (api_upstream) {
-    reverse_proxy http://{$CRONIQ_CADDY_UPSTREAM_HOST}:{$CRONIQ_API_HTTP_PORT} {
-        transport http {
-            versions h2c 1.1
-        }
-    }
+	reverse_proxy http://{$CRONIQ_CADDY_UPSTREAM_HOST}:{$CRONIQ_API_HTTP_PORT} {
+	}
 }
 
 (dmz_upstream) {
-    reverse_proxy http://{$CRONIQ_CADDY_UPSTREAM_HOST}:{$CRONIQ_SAMPLE_DMZ_HTTP_PORT} {
-        transport http {
-            versions h2c 1.1
-        }
-    }
+	reverse_proxy http://{$CRONIQ_CADDY_UPSTREAM_HOST}:{$CRONIQ_SAMPLE_DMZ_HTTP_PORT} {
+		transport http {
+			versions h2c 1.1
+		}
+	}
 }
 
 (ui_upstream) {
-    reverse_proxy http://{$CRONIQ_CADDY_UPSTREAM_HOST}:{$CRONIQ_UI_HTTP_PORT} {
-        header_up Host localhost
-    }
+	reverse_proxy http://{$CRONIQ_CADDY_UPSTREAM_HOST}:{$CRONIQ_UI_HTTP_PORT} {
+		header_up Host localhost
+	}
 }
 
 api.{$CRONIQ_CADDY_DOMAIN} {
-    import api_upstream
+	import api_upstream
 }
 
 dmz.{$CRONIQ_CADDY_DOMAIN} {
-    import dmz_upstream
+	import dmz_upstream
 }
 
 hooks.{$CRONIQ_CADDY_DOMAIN} {
-    import dmz_upstream
+	import dmz_upstream
 }
 
 ui.{$CRONIQ_CADDY_DOMAIN} {
-    import ui_upstream
+	import ui_upstream
 }

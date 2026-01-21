@@ -224,7 +224,7 @@ docs/
 - Logging: uses `ILoggerFactory` by default; `AddCroniqObservability` can enable Serilog with optional OpenTelemetry log export. Structured fields include tenant/environment/job context.
 - Metrics/Traces: OpenTelemetry SDK emitting OTLP by default. Dev stack ships with collector + Grafana + Tempo + Prometheus + Loki (optional).
 - Docker strategy: multi-stage .NET 10 images, Compose stack for API, worker, SQL Server (default), observability, optional RPC sample. Postgres is supported when you supply an external instance.
-- Devstack direction: local dev is moving to an Aspire AppHost (`tools/Croniq.Devstack.AppHost`); Docker Compose remains the CI baseline until parity. See `docs/deep-dive/devstack.md`.
+- Devstack direction: local dev and CI smoke checks run via the Aspire AppHost (`tools/Croniq.Devstack.AppHost`); Docker Compose remains available as a fallback for troubleshooting. See `docs/deep-dive/devstack.md`.
 - GitHub Actions build/test/publish NuGet packages and OCI images, uploading docs previews as artifacts.
 
 ## Reliability, Recovery & Tenant Isolation

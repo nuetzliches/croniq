@@ -15,6 +15,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using System.Collections.Generic;
+using System.ComponentModel;
 using System.Globalization;
 using System.IO;
 using System.Linq;
@@ -892,10 +893,15 @@ static bool IsDatabaseProvisioningError(SqlException exception)
 {
     foreach (SqlError error in exception.Errors)
     {
-        if (error.Number is 4060 or 1801 or 18456)
+        if (error.Number is 258 or 4060 or 1801 or 18456)
         {
             return true;
         }
+    }
+
+    if (exception.InnerException is Win32Exception { NativeErrorCode: 258 })
+    {
+        return true;
     }
 
     return false;

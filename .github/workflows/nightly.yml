@@ -50,7 +50,7 @@ jobs:
           if-no-files-found: ignore
 
   smoke:
-    name: Compose Smoke Tests
+    name: Aspire Smoke Tests
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
@@ -68,18 +68,23 @@ jobs:
       - name: Copy environment defaults
         run: cp .env.example .env
 
-      - name: Start Croniq dev stack
+      - name: Ensure HTTPS development certificate
+        run: dotnet dev-certs https
+
+      - name: Start Aspire dev stack
         shell: pwsh
-        run: >-
-          ./scripts/ci/compose-devstack.ps1
-          -Action Up
-          -Profiles @('api','worker','obs')
-          -ComposeFiles @(
-            'infra/docker/docker-compose.yml',
-            'infra/docker/docker-compose.dev.yml',
-            'infra/docker/docker-compose.ci.yml',
-            'infra/docker/docker-compose.observability.yml'
-          )
+        run: |
+          New-Item -ItemType Directory -Force -Path artifacts | Out-Null
+          $env:CRONIQ_DEVSTACK_CADDY = "false"
+          $env:CRONIQ_DEVSTACK_UI = "false"
+          $process = Start-Process -FilePath dotnet -ArgumentList @(
+            "run",
+            "--project", "tools/Croniq.Devstack.AppHost/Croniq.Devstack.AppHost.csproj",
+            "--configuration", "Release",
+            "--",
+            "--profile", "obs"
+          ) -RedirectStandardOutput "artifacts/aspire-devstack.log" -RedirectStandardError "artifacts/aspire-devstack.err.log" -PassThru
+          $process.Id | Out-File -FilePath artifacts/aspire-devstack.pid -Encoding ascii
 
       - name: Wait for API health
         shell: pwsh
@@ -87,33 +92,34 @@ jobs:
           try {
             ./scripts/ci/wait-for-http.ps1 -Uri "http://localhost:5080/health"
           } catch {
-            ./scripts/ci/compose-devstack.ps1 -Action Logs -Profiles @('api','worker','obs') -OutputDirectory artifacts -ComposeFiles @('infra/docker/docker-compose.yml','infra/docker/docker-compose.dev.yml','infra/docker/docker-compose.ci.yml','infra/docker/docker-compose.observability.yml')
+            if (Test-Path "artifacts/aspire-devstack.err.log") {
+              Get-Content "artifacts/aspire-devstack.err.log" -Tail 200
+            }
             throw
           }
 
       - name: Run Croniq.Api.Smoke tests
         run: dotnet test tests/Croniq.Api.Smoke/Croniq.Api.Smoke.csproj --configuration Release
         env:
-          CRONIQ_WEBHOOK_BASEURL: http://localhost:5081
+          CRONIQ_WEBHOOK_BASEURL: http://localhost:5000
 
-      - name: Collect docker logs
-        if: always()
-        shell: pwsh
-        run: >-
-          ./scripts/ci/compose-devstack.ps1 -Action Logs -Profiles @('api','worker','obs') -OutputDirectory artifacts -ComposeFiles @('infra/docker/docker-compose.yml','infra/docker/docker-compose.dev.yml','infra/docker/docker-compose.ci.yml','infra/docker/docker-compose.observability.yml')
-
-      - name: Upload docker logs
+      - name: Upload Aspire logs
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: devstack-logs
-          path: artifacts/devstack.log
+          path: artifacts/aspire-devstack.*
 
-      - name: Shut down stack
+      - name: Shut down Aspire dev stack
         if: always()
         shell: pwsh
-        run: >-
-          ./scripts/ci/compose-devstack.ps1 -Action Down -Profiles @('api','worker','obs') -CaptureLogs -ComposeFiles @('infra/docker/docker-compose.yml','infra/docker/docker-compose.dev.yml','infra/docker/docker-compose.ci.yml','infra/docker/docker-compose.observability.yml')
+        run: |
+          if (Test-Path "artifacts/aspire-devstack.pid") {
+            $pid = Get-Content "artifacts/aspire-devstack.pid" | Select-Object -First 1
+            if ($pid) {
+              Stop-Process -Id $pid -Force -ErrorAction SilentlyContinue
+            }
+          }
 
   compliance:
     name: SBOM & Vulnerability Scan

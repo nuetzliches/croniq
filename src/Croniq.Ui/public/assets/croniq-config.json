@@ -1,6 +1,6 @@
 {
-  "apiBaseUrl": "http://localhost:5080",
-  "swaggerUiUrl": "http://localhost:5080/swagger",
+  "apiBaseUrl": "https://api.croniq.local:8443",
+  "swaggerUiUrl": "https://api.croniq.local:8443/swagger",
   "grafanaUrl": "http://localhost:5610/d/croniq-logs/croniq-log-pulse?orgId=1",
   "defaultTenantId": "default",
   "webhooks": {

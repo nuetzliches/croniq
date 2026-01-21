@@ -21,7 +21,7 @@ This document describes the local Docker Compose environment required to satisfy
 - Caddy runs by default as the local TLS proxy for `*.croniq.local` (disable with `CRONIQ_DEVSTACK_CADDY=false`). Defaults: `api.croniq.local`, `dmz.croniq.local`, `hooks.croniq.local`, and `ui.croniq.local` on `CRONIQ_CADDY_HTTPS_PORT` (8443).
 - Caddy proxies to `CRONIQ_CADDY_UPSTREAM_HOST` (default `host.docker.internal`). On Linux, set it to `host-gateway` or your host IP if `host.docker.internal` is unavailable.
 - The AppHost can launch the Angular UI via `npm start` (requires Node.js + npm). Disable with `CRONIQ_DEVSTACK_UI=false`.
-- Docker Compose remains the CI baseline until Aspire reaches parity. Track progress in `CHECKLIST-ASPIRE.md`.
+- CI smoke checks run the Aspire AppHost; Docker Compose remains available as a fallback. Track progress in `CHECKLIST-ASPIRE.md`.
 
 ## Target Services
 
@@ -59,7 +59,7 @@ All services share a `croniq-net` bridge network. Ports are exposed via `.env` d
 - `infra/docker/docker-compose.observability.yml`: overlay enabling the observability toolchain (OTel Collector, Prometheus, Tempo, Grafana) behind the `obs` profile.
 - The API/worker/migrator images are built from a shared multi-target Dockerfile (`infra/docker/Dockerfile.services`). Compose selects the right output with `build.target` (`api`, `worker`, `migrator`) so restore/build layers are reused across services.
 - The helper scripts always load all three files, so adding `--profile obs` is enough to wire up Grafana/Tempo/Prometheus without custom compose commands.
-- Use Compose profiles (`api`, `worker`, `obs`) to allow lightweight setups (`docker compose --profile api up`). Nightly CI runs all profiles.
+- Use Compose profiles (`api`, `worker`, `obs`) to allow lightweight setups (`docker compose --profile api up`) during troubleshooting.
 
 ## Configuration & Secrets
 
@@ -86,15 +86,19 @@ All services share a `croniq-net` bridge network. Ports are exposed via `.env` d
    - `127.0.0.1 hooks.croniq.local`
    - `127.0.0.1 ui.croniq.local`
 2. Start the AppHost so the Caddy container creates its local CA.
-3. Trust the Caddy root CA on the host (Windows example). If you run Caddy directly on the host, `caddy trust` installs the CA for you.
+3. Trust the Caddy root CA on the host (Windows example). If you run Caddy directly on the host, `caddy trust` installs the CA for you. (solves: net::ERR_CERT_AUTHORITY_INVALID)
+   - Run an elevated PowerShell (Administrator).
+   - `cd <repo-root> to store the cert in untracked `artifacts`.
+   - `New-Item -ItemType Directory -Path artifacts -Force`
    - `docker ps --filter "name=caddy" --format "{{.Names}}"`
-   - `docker cp <caddy-container>:/data/caddy/pki/authorities/local/root.crt .\\caddy-root.crt`
-   - `certutil -addstore -f Root .\\caddy-root.crt`
+   - `docker cp <caddy-container>:/data/caddy/pki/authorities/local/root.crt .\\artifacts\\caddy-root.crt`
+   - `certutil -addstore -f Root .\\artifacts\\caddy-root.crt`
+   - Note: the Caddy container may log that `certutil` is missing; that warning is expected because it cannot update the Windows trust store from inside the container.
 4. Update `.env` for UI/DMZ base URLs if you want to go through Caddy:
    - `CRONIQ_UI_API_BASEURL=https://api.croniq.local:8443`
    - `CRONIQ_SAMPLE_DMZ_BASEURL=https://dmz.croniq.local:8443`
 
-### Docker Compose (CI + Fallback)
+### Docker Compose (Fallback)
 
 1. `cd <repo-root>`
 2. `copy .env.example .env` (first run) and adjust secrets/ports as needed.
@@ -109,9 +113,9 @@ All services share a `croniq-net` bridge network. Ports are exposed via `.env` d
 
 ## CI Integration
 
-- Nightly workflow (`nightly.yml`) uses the Compose files with `--profile api --profile worker --profile obs` until Aspire reaches parity. Tests (`Croniq.Api.Smoke`) run after health checks pass.
-- Logs (`docker compose logs --timestamps`) and metrics snapshots are uploaded as artifacts for debugging.
-- Compose env also seeds sample tenants/jobs to support E2E tests.
+- Nightly + release workflows start `tools/Croniq.Devstack.AppHost` with the `obs` profile and wait for `/health` before running `Croniq.Api.Smoke`.
+- AppHost stdout/stderr logs are captured as CI artifacts for debugging.
+- Compose remains available for local troubleshooting or parity checks.
 
 ## Backlog to Finish the Dev Stack Milestone
 
@@ -119,7 +123,7 @@ All services share a `croniq-net` bridge network. Ports are exposed via `.env` d
 - [x] Create `docker-compose.dev.yml` defining API, worker, RPC sample, and referencing shared build context or published images.
 - [x] Add observability overlay compose file + Grafana dashboards + Tempo/Prometheus volumes, aligning with `observability.md`.
 - [x] Provide helper scripts (`scripts/devstack-up.cmd`, `scripts/devstack-down.cmd`) wrapping the compose commands and health checks.
-- [x] Update CI workflow (`nightly.yml`) to call the same compose stack for smoke tests.
+- [x] Switch CI smoke workflows (nightly + release) to the Aspire AppHost and archive AppHost logs.
 - [x] Ensure SQL initialization script runs automatically on first boot (entrypoint or helper container) so developers don't run manual apply steps.
 
 Completing these tasks enables a reproducible dev/test environment and closes the checklist item.
