@@ -1,7 +1,6 @@
 using Croniq.Api;
 using Croniq.Core;
 using Croniq.Core.Execution;
-using Croniq.Sample.Jobs;
 using Croniq.Webhooks;
 using Croniq.Webhooks.Options;
 using Microsoft.Extensions.Options;
@@ -63,7 +62,6 @@ builder.Services.AddCroniqWebhookObservability(
     builder.Logging,
     builder: otelBuilder);
 
-builder.Services.AddCroniqSampleJobs();
 builder.Services.AddCroniqApiSchemas();
 
 var app = builder.Build();

@@ -14,9 +14,10 @@
 }
 
 (dmz_upstream) {
-	reverse_proxy http://{$CRONIQ_CADDY_UPSTREAM_HOST}:{$CRONIQ_SAMPLE_DMZ_HTTP_PORT} {
+	reverse_proxy https://{$CRONIQ_CADDY_UPSTREAM_HOST}:{$CRONIQ_SAMPLE_DMZ_GRPC_PORT} {
 		transport http {
-			versions h2c 1.1
+			versions h2 1.1
+			tls_insecure_skip_verify
 		}
 	}
 }

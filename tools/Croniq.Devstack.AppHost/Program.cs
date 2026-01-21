@@ -66,18 +66,20 @@ var dmzBaseUrl = GetEnvValueOrDefault("CRONIQ_SAMPLE_DMZ_BASEURL", $"https://loc
 var dmzApiKey = GetEnvValueOrDefault("CRONIQ_SAMPLE_DMZ_API_KEY", "dmz-sample-key");
 var caddyDomain = GetEnvValueOrDefault("CRONIQ_CADDY_DOMAIN", "croniq.local");
 var caddyUpstreamHost = GetEnvValueOrDefault("CRONIQ_CADDY_UPSTREAM_HOST", "host.docker.internal");
-var caddyHttpPort = GetInt("CRONIQ_CADDY_HTTP_PORT", 8080);
-var caddyHttpsPort = GetInt("CRONIQ_CADDY_HTTPS_PORT", 8443);
+var caddyHttpPort = GetInt("CRONIQ_CADDY_HTTP_PORT", 80);
+var caddyHttpsPort = GetInt("CRONIQ_CADDY_HTTPS_PORT", 443);
 var caddyEnabled = !IsFalse(GetEnvValue("CRONIQ_DEVSTACK_CADDY"));
-var caddyHttpsPortValue = caddyHttpsPort.ToString(CultureInfo.InvariantCulture);
+var caddyHttpsPortSuffix = caddyHttpsPort == 443
+    ? string.Empty
+    : string.Concat(":", caddyHttpsPort.ToString(CultureInfo.InvariantCulture));
 var caddyApiUrl = caddyEnabled
-    ? string.Concat("https://api.", caddyDomain, ":", caddyHttpsPortValue)
+    ? string.Concat("https://api.", caddyDomain, caddyHttpsPortSuffix)
     : null;
 var caddyUiUrl = caddyEnabled
-    ? string.Concat("https://ui.", caddyDomain, ":", caddyHttpsPortValue)
+    ? string.Concat("https://ui.", caddyDomain, caddyHttpsPortSuffix)
     : null;
 var caddyDmzUrl = caddyEnabled
-    ? string.Concat("https://dmz.", caddyDomain, ":", caddyHttpsPortValue)
+    ? string.Concat("https://dmz.", caddyDomain, caddyHttpsPortSuffix)
     : null;
 var uiApiBaseUrl = GetEnvValue("CRONIQ_UI_API_BASEURL");
 var uiSwaggerUiUrl = GetEnvValue("CRONIQ_UI_SWAGGER_UI_URL") ?? GetEnvValue("CRONIQ_UI_SWAGGER_URL");
@@ -122,8 +124,7 @@ if (caddyEnabled)
         uiApiBaseUrl = string.Concat(
             "https://api.",
             caddyDomain,
-            ":",
-            caddyHttpsPort.ToString(CultureInfo.InvariantCulture));
+            caddyHttpsPortSuffix);
     }
 }
 
@@ -373,6 +374,7 @@ if (caddyEnabled)
         .WithEnvironment("CRONIQ_CADDY_HTTPS_PORT", caddyHttpsPort.ToString(CultureInfo.InvariantCulture))
         .WithEnvironment("CRONIQ_API_HTTP_PORT", apiPort.ToString(CultureInfo.InvariantCulture))
         .WithEnvironment("CRONIQ_SAMPLE_DMZ_HTTP_PORT", dmzHttpPort.ToString(CultureInfo.InvariantCulture))
+        .WithEnvironment("CRONIQ_SAMPLE_DMZ_GRPC_PORT", dmzGrpcPort.ToString(CultureInfo.InvariantCulture))
         .WithEnvironment("CRONIQ_UI_HTTP_PORT", uiPort.ToString(CultureInfo.InvariantCulture))
         .WithEndpoint(
             targetPort: caddyHttpPort,
@@ -602,14 +604,14 @@ if (!string.IsNullOrWhiteSpace(caddyDmzUrl))
     dmz.WithUrlForEndpoint("http", url =>
     {
         url.Url = caddyDmzUrl;
-        url.DisplayText = "Caddy (HTTP)";
+        url.DisplayText = caddyDmzUrl;
     });
 
-    dmz.WithUrlForEndpoint("https", url =>
-    {
-        url.Url = caddyDmzUrl;
-        url.DisplayText = "Caddy (gRPC)";
-    });
+    // dmz.WithUrlForEndpoint("https", url =>
+    // {
+    //     url.Url = caddyDmzUrl;
+    //     url.DisplayText = "Caddy (gRPC)";
+    // });
 }
 
 if (!string.IsNullOrWhiteSpace(otlpEndpoint))

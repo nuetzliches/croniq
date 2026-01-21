@@ -5,7 +5,7 @@ This document describes the local Docker Compose environment required to satisfy
 ## Objectives
 
 - Offer a one-command environment (`docker compose up`) that mirrors the production topology (API + worker + SQL Server (default) + observability) for developers and CI smoke tests.
-- Keep configuration discoverable via `.env` and `appsettings.Development.json`, with secrets injected through `.env.local` or user secrets.
+- Keep configuration discoverable via `.env` (AppHost/Compose) with sample-only overrides in `appsettings.Development.json`, and inject secrets through `.env.local` or user secrets.
 - Reuse the same Compose definitions in nightly CI workflows and local troubleshooting to minimize drift.
 - Provide helpers for running EF Core migrations (via `Croniq.DbMigrator`) and exposing dashboards/logs for debugging.
 
@@ -18,7 +18,7 @@ This document describes the local Docker Compose environment required to satisfy
 - Enable observability containers with `dotnet run --project tools/Croniq.Devstack.AppHost -- --profile obs`, `CRONIQ_DEVSTACK_PROFILES=--profile obs`, or `CRONIQ_DEVSTACK_OBS=true`.
 - When the `obs` profile is enabled, AppHost maps the OTLP endpoint to `http://localhost:${CRONIQ_OTLP_GRPC_PORT}` if `.env` still targets `http://otel-collector:4317`.
 - Aspire dashboard defaults to `http://localhost:18888` (`ASPIRE_DASHBOARD_PORT`) and uses `ASPIRE_DASHBOARD_OTLP_ENDPOINT_URL` (default `http://localhost:18889`) so it does not clash with the Grafana stack. Croniq telemetry continues to flow to the collector; point `CRONIQ_OBS_OTLP_ENDPOINT` to the dashboard OTLP endpoint if you want the Aspire UI to show spans/metrics.
-- Caddy runs by default as the local TLS proxy for `*.croniq.local` (disable with `CRONIQ_DEVSTACK_CADDY=false`). Defaults: `api.croniq.local`, `dmz.croniq.local`, `hooks.croniq.local`, and `ui.croniq.local` on `CRONIQ_CADDY_HTTPS_PORT` (8443).
+- Caddy runs by default as the local TLS proxy for `*.croniq.local` (disable with `CRONIQ_DEVSTACK_CADDY=false`). Defaults: `api.croniq.local`, `dmz.croniq.local`, `hooks.croniq.local`, and `ui.croniq.local` on `CRONIQ_CADDY_HTTPS_PORT` (443). If port 443 is unavailable, set `CRONIQ_CADDY_HTTPS_PORT` (and `CRONIQ_CADDY_HTTP_PORT`) to alternate values such as 8443/8080.
 - Caddy proxies to `CRONIQ_CADDY_UPSTREAM_HOST` (default `host.docker.internal`). On Linux, set it to `host-gateway` or your host IP if `host.docker.internal` is unavailable.
 - The AppHost can launch the Angular UI via `npm start` (requires Node.js + npm). Disable with `CRONIQ_DEVSTACK_UI=false`.
 - CI smoke checks run the Aspire AppHost; Docker Compose remains available as a fallback. Track progress in `CHECKLIST-ASPIRE.md`.
@@ -65,7 +65,7 @@ All services share a `croniq-net` bridge network. Ports are exposed via `.env` d
 
 - `.env.example` (root) now lists the required ports, database credentials, and Croniq defaults. Copy it to `.env`, adjust secrets, and Compose will pick the variables up automatically. `.env` stays ignored via `.gitignore`.
 - Aspire AppHost uses `.env` as an input source and applies the same `CRONIQ_*` values to the API/worker/migrator resources.
-- `Croniq.Sample.ApiHost` reads configuration from `appsettings.Development.json` + environment variables injected via Compose (`Croniq__SqlServer__ConnectionString`, `Croniq__Auth__Mode`, etc.). Keep sensitive overrides in `.env.local` or user secrets when running locally.
+- `Croniq.Sample.*` hosts still load `appsettings.Development.json`, but core connectivity (auth mode, persistence, connection strings, webhook routing) is driven by environment variables injected via AppHost/Compose. Keep sample-only tweaks (CORS, DMZ surface/ingress, job registry sync, auth toggles) in appsettings and sensitive overrides in `.env.local` or user secrets when running locally.
 - Postgres is supported for local/dev environments by pointing `CRONIQ_DB_PROVIDER=Postgres` and `CRONIQ_POSTGRES_CONNECTION` at an external instance; the default Compose stack still uses SQL Server.
 - The `croniq-db-migrator` service (defined in the base compose file) waits for `mssql-22` to report healthy status and then applies EF Core migrations using `CRONIQ_SQL_CONNECTION`. Compose derives that connection string from `CRONIQ_SQL_HOST`, `CRONIQ_SQL_DATABASE`, and `CRONIQ_SQL_PASSWORD` (with `sa` on port 1433). When troubleshooting, you can still run `docker compose run --rm croniq-db-migrator` or `dotnet run --project tools/Croniq.DbMigrator` manually after setting `CRONIQ_SQL_CONNECTION`.
 
@@ -80,7 +80,7 @@ All services share a `croniq-net` bridge network. Ports are exposed via `.env` d
 
 ### Local TLS (Caddy)
 
-1. Add host entries (Windows: `C:\Windows\System32\drivers\etc\hosts`):
+1. Add host entries (Windows: `C:\Windows\System32\drivers\etc\hosts`), or run `scripts\devstack-hosts.ps1` from an elevated PowerShell:
    - `127.0.0.1 api.croniq.local`
    - `127.0.0.1 dmz.croniq.local`
    - `127.0.0.1 hooks.croniq.local`
@@ -88,15 +88,16 @@ All services share a `croniq-net` bridge network. Ports are exposed via `.env` d
 2. Start the AppHost so the Caddy container creates its local CA.
 3. Trust the Caddy root CA on the host (Windows example). If you run Caddy directly on the host, `caddy trust` installs the CA for you. (solves: net::ERR_CERT_AUTHORITY_INVALID)
    - Run an elevated PowerShell (Administrator).
-   - `cd <repo-root> to store the cert in untracked `artifacts`.
+   - `cd <repo-root>`
    - `New-Item -ItemType Directory -Path artifacts -Force`
    - `docker ps --filter "name=caddy" --format "{{.Names}}"`
    - `docker cp <caddy-container>:/data/caddy/pki/authorities/local/root.crt .\\artifacts\\caddy-root.crt`
    - `certutil -addstore -f Root .\\artifacts\\caddy-root.crt`
+   - Shortcut: `scripts\devstack-import-caddy-cert.ps1` (also requires an elevated PowerShell).
    - Note: the Caddy container may log that `certutil` is missing; that warning is expected because it cannot update the Windows trust store from inside the container.
 4. Update `.env` for UI/DMZ base URLs if you want to go through Caddy:
-   - `CRONIQ_UI_API_BASEURL=https://api.croniq.local:8443`
-   - `CRONIQ_SAMPLE_DMZ_BASEURL=https://dmz.croniq.local:8443`
+   - `CRONIQ_UI_API_BASEURL=https://api.croniq.local`
+   - `CRONIQ_SAMPLE_DMZ_BASEURL=https://dmz.croniq.local`
 
 ### Docker Compose (Fallback)
 
