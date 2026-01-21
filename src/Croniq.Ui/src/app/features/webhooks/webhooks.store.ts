@@ -8,7 +8,7 @@ import { TenantContextService } from '@core/tenant-context/tenant-context.servic
 import { nowIso, nowMs, tryIsoFromUnknown } from '@core/time/clock';
 import { CreateWebhookIpRuleRequest, RotateWebhookSecretRequest, UpsertWebhookEndpointRequest, WebhookActivitySummary, WebhookActivityTimelineResponse, type WebhookCapabilitiesResponse } from '@croniq/api-schema';
 import { CRONIQ_API_CLIENT, CallerContext, CroniqApiClient, TenantDeadLetterParams, TenantEnvironmentParams, TenantWebhookActivityParams, TenantWebhookActivitySummaryParams, TenantWebhookParams, TenantWebhookRuleParams, TenantWebhookUpsertParams, WebhookInvocationParams } from 'data-access';
-import { EMPTY, catchError, defer, forkJoin, fromEvent, map, merge, of, switchMap, takeUntil, tap, throwError, timer } from 'rxjs';
+import { EMPTY, catchError, defer, finalize, forkJoin, fromEvent, map, merge, of, switchMap, takeUntil, tap, throwError, timer } from 'rxjs';
 
 export type WebhookEndpointView = {
     hookKey: string;
@@ -76,6 +76,7 @@ export type ActivityBucket = {
     bucketStart: string;
     total: number;
     errors: number;
+    warnings: number;
     bucketEnd?: string | null;
     p95LatencyMs?: number | null;
 };
@@ -115,6 +116,7 @@ export class WebhooksStore {
     private readonly ipRulesSignal = signal<ReadonlyArray<WebhookIpRuleView>>([]);
     private readonly deadLettersSignal = signal<ReadonlyArray<WebhookDeadLetterView>>([]);
     private readonly rotatedSecretSignal = signal<string | null>(null);
+    private readonly invokeLoadingSignal = signal(false);
     private readonly capabilitiesSignal = signal<WebhookCapabilitiesView | null>(null);
     private readonly lastErrorSignal = signal<string | null>(null);
     private readonly activityQuerySignal = signal<WebhookActivityQuery | null>(null);
@@ -410,6 +412,7 @@ export class WebhooksStore {
     readonly ipRules = this.ipRulesSignal.asReadonly();
     readonly deadLetters = this.deadLettersSignal.asReadonly();
     readonly rotatedSecret = this.rotatedSecretSignal.asReadonly();
+    readonly invokeLoading = this.invokeLoadingSignal.asReadonly();
     readonly capabilities = this.capabilitiesSignal.asReadonly();
     readonly activityTimeline = this.activityTimelineSignal.asReadonly();
     readonly activityBuckets = this.activityBucketsSignal.asReadonly();
@@ -757,6 +760,11 @@ export class WebhooksStore {
     }
 
     invokeWebhook(params: WebhookInvocationParams): void {
+        if (this.invokeLoadingSignal()) {
+            return;
+        }
+
+        this.invokeLoadingSignal.set(true);
         this.api
             .invokeWebhook(params, this.tenantContext.createRequestOptions(`webhooks.invoke:${params.hookKey}`))
             .pipe(
@@ -778,6 +786,7 @@ export class WebhooksStore {
                     );
                     return EMPTY;
                 }),
+                finalize(() => this.invokeLoadingSignal.set(false)),
             )
             .subscribe();
     }
@@ -1107,12 +1116,14 @@ function normalizeActivityBuckets(summary: WebhookActivitySummary): ReadonlyArra
         const bucketEnd = tryIsoFromUnknown(bucket.bucketEndUtc) ?? null;
         const total = resolveOptionalNumber(bucket.totalCount) ?? 0;
         const errors = resolveOptionalNumber(bucket.errorCount) ?? 0;
+        const warnings = resolveOptionalNumber(bucket.warningCount) ?? 0;
         const p95LatencyMs = resolveOptionalNumber(bucket.p95LatencyMs);
         buckets.push({
             bucketStart,
             bucketEnd,
             total,
             errors,
+            warnings,
             p95LatencyMs,
         });
     });

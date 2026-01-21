@@ -77,7 +77,7 @@ public sealed class SqlServerWebhookActivityStoreTests : IAsyncLifetime
 
         entries.Count.ShouldBe(3);
         entries.ShouldContain(entry => entry.Kind == WebhookActivityKind.Delivery
-            && entry.Status == WebhookActivityStatus.Success);
+            && entry.Status == WebhookActivityStatus.Warning);
         entries.ShouldContain(entry => entry.Kind == WebhookActivityKind.Delivery
             && entry.Status == WebhookActivityStatus.Failed
             && entry.Reason == "boom");
@@ -115,8 +115,10 @@ public sealed class SqlServerWebhookActivityStoreTests : IAsyncLifetime
         var buckets = summary.Buckets.ToArray();
         buckets[0].TotalCount.ShouldBe(2);
         buckets[0].ErrorCount.ShouldBe(1);
+        buckets[0].WarningCount.ShouldBe(1);
         buckets[1].TotalCount.ShouldBe(1);
         buckets[1].ErrorCount.ShouldBe(1);
+        buckets[1].WarningCount.ShouldBe(0);
     }
 
     [Fact]
@@ -172,7 +174,7 @@ public sealed class SqlServerWebhookActivityStoreTests : IAsyncLifetime
                 Payload = "{}",
                 ReceivedAtUtc = deliveredAt.UtcDateTime,
                 Status = "Delivered",
-                AttemptCount = 1,
+                AttemptCount = 2,
                 CreatedAtUtc = deliveredAt.UtcDateTime,
                 UpdatedAtUtc = deliveredAt.UtcDateTime
             },

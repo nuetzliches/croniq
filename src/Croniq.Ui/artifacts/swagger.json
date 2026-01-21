@@ -4549,6 +4549,10 @@
             "type": "integer",
             "format": "int32"
           },
+          "warningCount": {
+            "type": "integer",
+            "format": "int32"
+          },
           "p95LatencyMs": {
             "type": "integer",
             "format": "int32",

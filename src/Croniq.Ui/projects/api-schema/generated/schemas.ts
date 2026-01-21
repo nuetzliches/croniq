@@ -421,6 +421,7 @@ export const WebhookActivityBucket = z
         bucketEndUtc: z.iso.datetime({ offset: true }).nullable(),
         totalCount: z.number().int(),
         errorCount: z.number().int(),
+        warningCount: z.number().int(),
         p95LatencyMs: z.number().int().nullable(),
     })
     .partial();

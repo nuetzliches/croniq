@@ -5,7 +5,7 @@ import type { Observable } from 'rxjs';
 import { z } from 'zod';
 import type { CroniqCredentialSupplier, CroniqRequestOptions, DashboardForecastParams, ExecutionLogParams, ExecutionParams, TenantApiClientParams, TenantApiClientTokenParams, TenantApiKeyParams, TenantCalendarParams, TenantDeadLetterParams, TenantEnvironmentOptionalParams, TenantEnvironmentParams, TenantScheduleParams, TenantScopedParams, TenantUpsertApiClientParams, TenantWebhookActivityParams, TenantWebhookActivitySummaryParams, TenantWebhookCapabilitiesParams, TenantWebhookParams, TenantWebhookRuleParams, TenantWebhookUpsertParams, WebhookInvocationParams, WorkEventsParams } from './api-client.types';
 import type { EndpointCallConfig } from './endpoint-executor';
-import { EndpointExecutor, requireEndpoint } from './endpoint-executor';
+import { EndpointExecutor, requireEndpoint, type BaseUrlResolver } from './endpoint-executor';
 
 const TENANT_LIST_SCHEDULES_ENDPOINT = requireEndpoint(TenantsApi, 'get', '/tenants/:tenantId/schedules');
 const LIST_SCHEDULES_ENDPOINT: EndpointDefinition = {
@@ -371,7 +371,9 @@ export interface CroniqApiClient {
     checkPersistenceHealth(options?: CroniqRequestOptions): Observable<void>;
 }
 
-export const CRONIQ_API_BASE_URL = new InjectionToken<string>('CRONIQ_API_BASE_URL', {
+export type CroniqApiBaseUrlResolver = BaseUrlResolver;
+
+export const CRONIQ_API_BASE_URL = new InjectionToken<CroniqApiBaseUrlResolver>('CRONIQ_API_BASE_URL', {
     providedIn: 'root',
     factory: () => 'https://api.croniq.dev',
 });
@@ -387,7 +389,7 @@ export const CRONIQ_CREDENTIAL_SUPPLIER = new InjectionToken<CroniqCredentialSup
 class HttpCroniqApiClient implements CroniqApiClient {
     private readonly executor: EndpointExecutor;
 
-    constructor(http: HttpClient, baseUrl: string, credentials?: CroniqCredentialSupplier | null) {
+    constructor(http: HttpClient, baseUrl: CroniqApiBaseUrlResolver, credentials?: CroniqCredentialSupplier | null) {
         this.executor = new EndpointExecutor(http, baseUrl, 'Croniq.Ui', credentials);
     }
 
@@ -1296,7 +1298,7 @@ export const CRONIQ_API_CLIENT = new InjectionToken<CroniqApiClient>('CRONIQ_API
         ),
 });
 
-export function provideCroniqApiClient(config: { baseUrl?: string } = {}): EnvironmentProviders {
+export function provideCroniqApiClient(config: { baseUrl?: CroniqApiBaseUrlResolver } = {}): EnvironmentProviders {
     const providers: Provider[] = [];
     if (config.baseUrl) {
         providers.push({ provide: CRONIQ_API_BASE_URL, useValue: config.baseUrl });

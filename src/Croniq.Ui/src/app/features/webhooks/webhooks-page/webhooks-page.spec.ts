@@ -11,6 +11,7 @@ class WebhooksStoreStub {
   readonly deadLetters = signal<ReadonlyArray<WebhookDeadLetterView>>([]);
   readonly ipRules = signal([]);
   readonly rotatedSecret = signal<string | null>(null);
+  readonly invokeLoading = signal(false);
   readonly capabilities = signal(null);
   readonly lastError = signal<string | null>(null);
   readonly readPermissionDenied = signal(false);
@@ -65,7 +66,7 @@ describe('WebhooksPage', () => {
     expect(component).toBeTruthy();
   });
 
-  it('summarizes timeline activity for legend entries', () => {
+  it('renders chart series for timeline statuses', () => {
     const store = fixture.componentRef.injector.get(WebhooksStore) as unknown as WebhooksStoreStub;
 
     store.endpoints.set([
@@ -106,28 +107,35 @@ describe('WebhooksPage', () => {
       },
     ]);
 
-    const legend = component.activityLegendEntries();
-    expect(legend).toEqual([
-      {
-        status: 'success',
-        label: 'Success',
-        count: 1,
-        percentLabel: '25%',
-      },
-      {
-        status: 'warning',
-        label: 'Warning',
-        count: 1,
-        percentLabel: '25%',
-      },
-      {
-        status: 'failed',
-        label: 'Failed',
-        count: 2,
-        percentLabel: '50%',
-      },
-    ]);
+    component.timelineToIso.set('2026-01-20T11:00:00.000Z');
 
-    expect(component.activityChartOptions()).not.toBeNull();
+    const options = component.activityChartOptions();
+    expect(options).not.toBeNull();
+    expect(options?.['legend']).toBeTruthy();
+    const legend = options?.['legend'] as { data?: string[]; formatter?: (name: string) => string };
+    expect(legend.data).toEqual(['Success', 'Warning', 'Failed']);
+    expect(typeof legend.formatter).toBe('function');
+    const formatter = legend.formatter as (name: string) => string;
+    expect(formatter('Success')).toBe('Success 1 (25%)');
+    expect(formatter('Warning')).toBe('Warning 1 (25%)');
+    expect(formatter('Failed')).toBe('Failed 2 (50%)');
+
+    const series = Array.isArray(options?.['series']) ? options?.['series'] : [];
+    const totals = series.reduce((acc, entry) => {
+      const name = (entry as { name?: string }).name;
+      const data = (entry as { data?: unknown[] }).data ?? [];
+      const numericData = data.filter((value): value is number => typeof value === 'number');
+      const sum = numericData.reduce((total, value) => total + value, 0);
+      if (name === 'Success') {
+        acc.success += sum;
+      } else if (name === 'Warning') {
+        acc.warning += sum;
+      } else if (name === 'Failed') {
+        acc.failed += sum;
+      }
+      return acc;
+    }, { success: 0, warning: 0, failed: 0 });
+
+    expect(totals).toEqual({ success: 1, warning: 1, failed: 2 });
   });
 });

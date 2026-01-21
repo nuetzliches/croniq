@@ -1194,6 +1194,7 @@ public static partial class ApiHostingExtensions
                 bucket.BucketEndUtc,
                 bucket.TotalCount,
                 bucket.ErrorCount,
+                bucket.WarningCount,
                 bucket.P95LatencyMs))
             .ToArray();
 

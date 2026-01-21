@@ -9,10 +9,9 @@ import { WebhookDialogComponent } from '@features/webhooks/components/webhook-di
 import { WebhookIpRulesDialogComponent } from '@features/webhooks/components/webhook-ip-rules-dialog/webhook-ip-rules-dialog.component';
 import { WebhookRotateSecretDialogComponent } from '@features/webhooks/components/webhook-rotate-secret-dialog/webhook-rotate-secret-dialog.component';
 import { ActivityBucket, ActivityConnectionState, WebhookActivityQuery, WebhookCapabilitiesView, WebhookDeadLetterView, WebhookEndpointView, WebhookTimelineItemView, WebhooksStore } from '@features/webhooks/webhooks.store';
-import { ChartLegendItem } from '@shared/charts/chart-legend-item/chart-legend-item';
 import { CqEchartsChartComponent } from '@shared/charts/echarts-chart/echarts-chart';
 import { ShellPanelService } from '@shell/panel/shell-panel.service';
-import type { BarSeriesOption, SeriesOption } from 'echarts';
+import type { SeriesOption } from 'echarts';
 import type { EChartsCoreOption } from 'echarts/core';
 import { filter } from 'rxjs';
 import { CqCellDefDirective, CqColumnComponent, CqConfirmDialogComponent, CqConfirmDialogData, CqContextMenuItemDirective, CqDialogService, CqFormFieldComponent, CqIconComponent, CqInputDirective, CqSelectDirective, CqTextareaDirective, CqToggleDirective, DataGrid } from 'ui-kit';
@@ -32,13 +31,6 @@ type WebhookFilterModel = {
 type OptionEntry = {
   value: string;
   label: string;
-};
-
-type ActivityLegendEntry = {
-  status: WebhookTimelineItemView['status'];
-  label: string;
-  count: number;
-  percentLabel: string;
 };
 
 type HookFilterEntry = {
@@ -99,7 +91,7 @@ const TIMELINE_BUCKET_MS_OPTIONS = [
 ] as const;
 const MAX_TIMELINE_BUCKETS = 24;
 
-const ACTIVITY_LEGEND_ENTRIES: ReadonlyArray<{ status: WebhookTimelineItemView['status']; label: string }> = [
+const ACTIVITY_STATUS_DEFINITIONS: ReadonlyArray<{ status: WebhookTimelineItemView['status']; label: string }> = [
   { status: 'success', label: 'Success' },
   { status: 'warning', label: 'Warning' },
   { status: 'failed', label: 'Failed' },
@@ -146,7 +138,6 @@ export class CqWebhookCellDirective extends CqCellDefDirective<WebhookEndpointVi
     CqContextMenuItemDirective,
     CdkMenu,
     CqEchartsChartComponent,
-    ChartLegendItem,
   ],
   providers: [WebhooksStore],
   templateUrl: './webhooks-page.html',
@@ -167,6 +158,7 @@ export class WebhooksPage {
   readonly readPermissionDenied = this.store.readPermissionDenied;
   readonly writePermissionDenied = this.store.writePermissionDenied;
   readonly rotatedSecret = this.store.rotatedSecret;
+  readonly invokeLoading = this.store.invokeLoading;
   readonly deadLetters = this.store.deadLetters;
   readonly activityTimeline = this.store.activityTimeline;
   readonly activityLoading = this.store.activityLoading;
@@ -706,30 +698,6 @@ export class WebhooksPage {
 
   readonly activityTotalEntries = computed(() => this.timelineItems().length);
   readonly activityBucketCount = computed(() => this.activityBuckets().length);
-  readonly activityLegendEntries = computed<ReadonlyArray<ActivityLegendEntry>>(() => {
-    const items = this.timelineItems();
-    const counts: Record<WebhookTimelineItemView['status'], number> = {
-      success: 0,
-      warning: 0,
-      failed: 0,
-    };
-
-    items.forEach((entry) => {
-      counts[entry.status] += 1;
-    });
-
-    const total = items.length;
-    return ACTIVITY_LEGEND_ENTRIES.map((definition) => {
-      const count = counts[definition.status];
-      const percentLabel = total > 0 ? `${Math.round((count / total) * 100)}%` : '0%';
-      return {
-        status: definition.status,
-        label: definition.label,
-        count,
-        percentLabel,
-      };
-    });
-  });
 
   readonly activityChartOptions = computed<EChartsCoreOption | null>(() => {
     const items = this.timelineItems();
@@ -986,7 +954,7 @@ export class WebhooksPage {
   }
 
   invokeWebhook(): void {
-    if (this.writePermissionDenied()) {
+    if (this.writePermissionDenied() || this.invokeLoading()) {
       return;
     }
     const endpoint = this.selectedEndpoint();
@@ -1199,20 +1167,11 @@ type ChartPalette = {
   text: string;
 };
 
-type TimelineChartDatum = {
-  value: number;
-  entryId: string;
-  occurredAt: string;
-  entryLabel: string;
-  hookKey: string;
-  jobKey?: string;
-  kind: WebhookTimelineItemView['kind'];
-  source?: WebhookTimelineItemView['source'];
-  status: WebhookTimelineItemView['status'];
-};
-
-type TimelineBarDatum = NonNullable<BarSeriesOption['data']>[number] & {
-  tooltip?: NonNullable<BarSeriesOption['tooltip']>;
+type BucketStatusCount = {
+  success: number;
+  warning: number;
+  failed: number;
+  total: number;
 };
 
 type TimelineBucketRange = {
@@ -1228,6 +1187,7 @@ type TooltipSeriesEntry = {
   value?: unknown;
   marker?: unknown;
   data?: unknown;
+  dataIndex?: unknown;
 };
 
 function buildActivityBuckets(
@@ -1263,16 +1223,17 @@ function buildActivityBuckets(
   const bucketCount = Math.max(1, Math.ceil((end - start) / resolvedBucketMs));
 
   const buckets = new Map<number, ActivityBucket>();
-  for (let i = 0; i < bucketCount; i += 1) {
-    const bucketStart = start + i * resolvedBucketMs;
-    const bucketEnd = i === bucketCount - 1 ? end : bucketStart + resolvedBucketMs;
-    buckets.set(bucketStart, {
-      bucketStart: new Date(bucketStart).toISOString(),
-      bucketEnd: new Date(bucketEnd).toISOString(),
-      total: 0,
-      errors: 0,
-    });
-  }
+    for (let i = 0; i < bucketCount; i += 1) {
+      const bucketStart = start + i * resolvedBucketMs;
+      const bucketEnd = i === bucketCount - 1 ? end : bucketStart + resolvedBucketMs;
+      buckets.set(bucketStart, {
+        bucketStart: new Date(bucketStart).toISOString(),
+        bucketEnd: new Date(bucketEnd).toISOString(),
+        total: 0,
+        errors: 0,
+        warnings: 0,
+      });
+    }
 
   items.forEach((entry) => {
     const timestamp = Date.parse(entry.occurredAt);
@@ -1285,11 +1246,13 @@ function buildActivityBuckets(
     if (!bucket) {
       return;
     }
-    bucket.total += 1;
-    if (entry.status === 'failed') {
-      bucket.errors += 1;
-    }
-  });
+      bucket.total += 1;
+      if (entry.status === 'failed') {
+        bucket.errors += 1;
+      } else if (entry.status === 'warning') {
+        bucket.warnings += 1;
+      }
+    });
 
   return Array.from(buckets.values());
 }
@@ -1311,24 +1274,37 @@ function buildTimelineChartOptions(
   const orderedItems = sortTimelineItems(items);
   const categories = bucketRanges.map((range) => range.label);
   const labelInterval = resolveAxisLabelInterval(categories.length);
-  const series = buildTimelineEntrySeries(orderedItems, bucketRanges, palette);
-  const bucketCounts = countTimelineItemsByBucket(orderedItems, bucketRanges);
-  const maxStack = Math.max(1, ...bucketCounts);
+  const bucketCounts = buildBucketStatusCounts(orderedItems, bucketRanges);
+  const series = buildTimelineStatusSeries(bucketCounts, palette);
+  const maxStack = Math.max(1, ...bucketCounts.map((entry) => entry.total));
   const yAxisInterval = resolveYAxisInterval(maxStack);
 
   return {
     animation: false,
+    legend: {
+      top: 0,
+      left: 0,
+      data: ACTIVITY_STATUS_DEFINITIONS.map((definition) => definition.label),
+      icon: 'circle',
+      itemWidth: 10,
+      itemHeight: 10,
+      textStyle: {
+        color: palette.muted,
+        fontSize: 11,
+      },
+      formatter: buildLegendSummaryFormatter(bucketCounts),
+    },
     grid: {
       left: 24,
       right: 16,
-      top: 24,
+      top: 48,
       bottom: 48,
       containLabel: true,
     },
     tooltip: {
-      trigger: 'item',
+      trigger: 'axis',
       axisPointer: {
-        show: false,
+        type: 'shadow',
       },
       backgroundColor: palette.surface,
       borderColor: palette.border,
@@ -1337,7 +1313,7 @@ function buildTimelineChartOptions(
         color: palette.text,
       },
       extraCssText: 'border-radius: 10px; box-shadow: 0 10px 24px rgba(0,0,0,0.35);',
-      formatter: (params: unknown) => formatTimelineTooltip(params),
+      formatter: (params: unknown) => formatTimelineBucketTooltip(params, bucketRanges, bucketCounts),
     },
     xAxis: {
       type: 'category',
@@ -1375,73 +1351,90 @@ function buildTimelineChartOptions(
   };
 }
 
-function buildTimelineEntrySeries(
+function buildBucketStatusCounts(
   items: ReadonlyArray<WebhookTimelineItemView>,
   bucketRanges: ReadonlyArray<TimelineBucketRange>,
-  palette: ChartPalette,
-): SeriesOption[] {
+): ReadonlyArray<BucketStatusCount> {
   if (bucketRanges.length === 0) {
     return [];
   }
 
-  const series: SeriesOption[] = [];
+  const buckets = bucketRanges.map(() => ({
+    success: 0,
+    warning: 0,
+    failed: 0,
+    total: 0,
+  }));
+
   items.forEach((entry) => {
     const bucketIndex = resolveBucketIndex(entry.occurredAt, bucketRanges);
     if (bucketIndex < 0) {
       return;
     }
-
-    const data = Array.from({ length: bucketRanges.length }, (_, index) =>
-      index === bucketIndex ? createTimelineDatum(entry) : createEmptyTimelineDatum(),
-    );
-
-    series.push({
-      name: entry.id,
-      type: 'bar',
-      stack: 'activity',
-      barWidth: 0,
-      barCategoryGap: '28%',
-      barMinHeight: 0,
-      data,
-      itemStyle: {
-        color: resolveStatusColor(entry.status, palette),
-      },
-      label: {
-        show: false,
-      },
-      emphasis: {
-        focus: 'self',
-      },
-      legendHoverLink: false,
-    });
+    const bucket = buckets[bucketIndex];
+    bucket[entry.status] += 1;
+    bucket.total += 1;
   });
 
-  return series;
+  return buckets;
 }
 
-function createTimelineDatum(entry: WebhookTimelineItemView): TimelineChartDatum {
-  return {
-    value: 1,
-    entryId: entry.id,
-    occurredAt: entry.occurredAt,
-    entryLabel: entry.label,
-    hookKey: entry.hookKey,
-    jobKey: entry.jobKey,
-    kind: entry.kind,
-    source: entry.source,
-    status: entry.status,
-  };
-}
+function buildTimelineStatusSeries(
+  bucketCounts: ReadonlyArray<BucketStatusCount>,
+  palette: ChartPalette,
+): SeriesOption[] {
+  if (bucketCounts.length === 0) {
+    return [];
+  }
 
-function createEmptyTimelineDatum(): TimelineBarDatum {
-  return {
-    value: 0,
+  return ACTIVITY_STATUS_DEFINITIONS.map((definition) => ({
+    name: definition.label,
+    type: 'bar',
+    stack: 'activity',
+    barMaxWidth: 18,
+    barCategoryGap: '32%',
+    data: bucketCounts.map((entry) => entry[definition.status]),
     itemStyle: {
-      opacity: 0,
+      color: resolveStatusColor(definition.status, palette),
     },
-    tooltip: {
+    label: {
       show: false,
     },
+    emphasis: {
+      focus: 'series',
+    },
+  }));
+}
+
+function buildLegendSummaryFormatter(
+  bucketCounts: ReadonlyArray<BucketStatusCount>,
+): (name: string) => string {
+  const totals: Record<WebhookTimelineItemView['status'], number> = {
+    success: 0,
+    warning: 0,
+    failed: 0,
+  };
+
+  bucketCounts.forEach((bucket) => {
+    totals.success += bucket.success;
+    totals.warning += bucket.warning;
+    totals.failed += bucket.failed;
+  });
+
+  const totalCount = totals.success + totals.warning + totals.failed;
+  const labelTotals = new Map<string, number>();
+  ACTIVITY_STATUS_DEFINITIONS.forEach((definition) => {
+    labelTotals.set(definition.label, totals[definition.status]);
+  });
+
+  return (name: string): string => {
+    const count = labelTotals.get(name);
+    if (count === undefined) {
+      return name;
+    }
+
+    const percent = totalCount > 0 ? Math.round((count / totalCount) * 100) : 0;
+    return `${name} ${count} (${percent}%)`;
   };
 }
 
@@ -1491,25 +1484,6 @@ function resolveTimelineBucketRanges(
       label: formatTimelineAxisLabel(entry.startMs),
     };
   });
-}
-
-function countTimelineItemsByBucket(
-  items: ReadonlyArray<WebhookTimelineItemView>,
-  bucketRanges: ReadonlyArray<TimelineBucketRange>,
-): number[] {
-  const counts = new Array(bucketRanges.length).fill(0);
-  if (bucketRanges.length === 0) {
-    return counts;
-  }
-
-  items.forEach((entry) => {
-    const bucketIndex = resolveBucketIndex(entry.occurredAt, bucketRanges);
-    if (bucketIndex >= 0) {
-      counts[bucketIndex] += 1;
-    }
-  });
-
-  return counts;
 }
 
 function resolveBucketIndex(occurredAt: string, bucketRanges: ReadonlyArray<TimelineBucketRange>): number {
@@ -1564,43 +1538,43 @@ function resolveYAxisInterval(maxValue: number): number {
   return Math.max(1, Math.ceil(safeMax / (maxLabels - 1)));
 }
 
-function formatTimelineTooltip(params: unknown): string {
+function formatTimelineBucketTooltip(
+  params: unknown,
+  bucketRanges: ReadonlyArray<TimelineBucketRange>,
+  bucketCounts: ReadonlyArray<BucketStatusCount>,
+): string {
   const entries = normalizeTooltipEntries(params);
-  const datum = entries
-    .map((entry) => extractTimelineDatum(entry))
-    .find((entry) => entry && entry.value > 0) ?? null;
-
-  if (!datum) {
+  const bucketIndex = resolveTooltipBucketIndex(entries);
+  if (bucketIndex === null) {
     return '';
   }
 
-  const title = datum.kind === 'deadLetter' ? 'Dead letter' : datum.entryLabel;
-  const statusLabel = formatTimelineStatusLabel(datum.status);
-  const sourceLabel = formatTimelineSourceLabel(datum.source);
-  const occurredAt = formatTimelineDate(datum.occurredAt);
+  const bucket = bucketRanges[bucketIndex];
+  const counts = bucketCounts[bucketIndex];
+  if (!bucket || !counts) {
+    return '';
+  }
+
+  const rangeLabel = formatTimelineBucketRange(bucket);
 
   return `
     <div style="min-width: 200px;">
-      <div style="font-weight:600;margin-bottom:6px;">${escapeTooltipValue(title)}</div>
+      <div style="font-weight:600;margin-bottom:6px;">${escapeTooltipValue(rangeLabel)}</div>
       <div style="display:flex;justify-content:space-between;gap:8px;">
-        <span>Status</span>
-        <span>${escapeTooltipValue(statusLabel)}</span>
+        <span>Total</span>
+        <span>${counts.total}</span>
       </div>
       <div style="display:flex;justify-content:space-between;gap:8px;">
-        <span>Source</span>
-        <span>${escapeTooltipValue(sourceLabel)}</span>
+        <span>Success</span>
+        <span>${counts.success}</span>
       </div>
       <div style="display:flex;justify-content:space-between;gap:8px;">
-        <span>Hook</span>
-        <span>${escapeTooltipValue(datum.hookKey)}</span>
+        <span>Warning</span>
+        <span>${counts.warning}</span>
       </div>
       <div style="display:flex;justify-content:space-between;gap:8px;">
-        <span>Job</span>
-        <span>${escapeTooltipValue(datum.jobKey ?? '-')}</span>
-      </div>
-      <div style="display:flex;justify-content:space-between;gap:8px;">
-        <span>Occurred</span>
-        <span>${escapeTooltipValue(occurredAt)}</span>
+        <span>Failed</span>
+        <span>${counts.failed}</span>
       </div>
     </div>
   `;
@@ -1616,19 +1590,20 @@ function normalizeTooltipEntries(params: unknown): TooltipSeriesEntry[] {
   return [];
 }
 
-function extractTimelineDatum(entry: TooltipSeriesEntry): TimelineChartDatum | null {
-  if (isTimelineChartDatum(entry.data)) {
-    return entry.data;
+function resolveTooltipBucketIndex(entries: TooltipSeriesEntry[]): number | null {
+  const entry = entries.find((item) => typeof item.dataIndex === 'number');
+  if (!entry || typeof entry.dataIndex !== 'number') {
+    return null;
   }
-  return null;
+  return entry.dataIndex;
 }
 
-function isTimelineChartDatum(value: unknown): value is TimelineChartDatum {
-  if (!value || typeof value !== 'object') {
-    return false;
-  }
-  const record = value as { entryId?: unknown };
-  return typeof record.entryId === 'string' && record.entryId.length > 0;
+function formatTimelineBucketRange(bucket: TimelineBucketRange): string {
+  const startIso = new Date(bucket.startMs).toISOString();
+  const endIso = new Date(bucket.endMs).toISOString();
+  const startLabel = formatTimelineDate(startIso);
+  const endLabel = formatTimelineDate(endIso);
+  return `${startLabel} — ${endLabel}`;
 }
 
 function formatTimelineAxisLabel(value: string | number): string {
@@ -1649,20 +1624,6 @@ function formatTimelineDate(value: string): string {
   const dateLabel = date.toLocaleDateString(undefined, { month: '2-digit', day: '2-digit' });
   const timeLabel = date.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', hour12: false });
   return `${dateLabel} ${timeLabel}`;
-}
-
-function formatTimelineStatusLabel(value: WebhookTimelineItemView['status']): string {
-  if (value === 'failed') {
-    return 'Failed';
-  }
-  if (value === 'warning') {
-    return 'Warning';
-  }
-  return 'Success';
-}
-
-function formatTimelineSourceLabel(value: WebhookTimelineItemView['source']): string {
-  return value === 'invoke' ? 'Manual invoke' : 'Ingress';
 }
 
 function escapeTooltipValue(value: string): string {

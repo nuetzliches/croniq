@@ -57,6 +57,7 @@ public sealed class SqlServerWebhookActivityStore : IWebhookActivityStore, IWebh
                 entry.EnvironmentTag,
                 entry.ReceivedAtUtc,
                 entry.Status,
+                entry.AttemptCount,
                 entry.LastError,
                 entry.Payload,
                 entry.MetadataJson))
@@ -126,7 +127,7 @@ public sealed class SqlServerWebhookActivityStore : IWebhookActivityStore, IWebh
                 windowEndUtc.UtcDateTime)
             .Select(entry => new ActivitySample(
                 new DateTimeOffset(DateTime.SpecifyKind(entry.ReceivedAtUtc, DateTimeKind.Utc)),
-                entry.Status == StatusFailed))
+                ResolveIngressStatus(entry.Status, entry.AttemptCount)))
             .ToListAsync(cancellationToken)
             .ConfigureAwait(false);
 
@@ -139,7 +140,7 @@ public sealed class SqlServerWebhookActivityStore : IWebhookActivityStore, IWebh
                 windowEndUtc.UtcDateTime)
             .Select(entry => new ActivitySample(
                 new DateTimeOffset(DateTime.SpecifyKind(entry.CreatedAtUtc, DateTimeKind.Utc)),
-                true))
+                WebhookActivityStatus.Failed))
             .ToListAsync(cancellationToken)
             .ConfigureAwait(false);
 
@@ -291,9 +292,7 @@ public sealed class SqlServerWebhookActivityStore : IWebhookActivityStore, IWebh
 
     private static WebhookActivityEntry MapIngress(IngressSnapshot entry)
     {
-        var status = entry.Status == StatusDelivered
-            ? WebhookActivityStatus.Success
-            : WebhookActivityStatus.Failed;
+        var status = ResolveIngressStatus(entry.Status, entry.AttemptCount);
         var source = ResolveSource(entry.MetadataJson);
 
         return new WebhookActivityEntry(
@@ -330,6 +329,21 @@ public sealed class SqlServerWebhookActivityStore : IWebhookActivityStore, IWebh
             reason,
             ComputePayloadBytes(entry.Payload),
             entry.Id);
+    }
+
+    private static WebhookActivityStatus ResolveIngressStatus(string status, int attemptCount)
+    {
+        if (string.Equals(status, StatusFailed, StringComparison.OrdinalIgnoreCase))
+        {
+            return WebhookActivityStatus.Failed;
+        }
+
+        if (string.Equals(status, StatusDelivered, StringComparison.OrdinalIgnoreCase) && attemptCount > 1)
+        {
+            return WebhookActivityStatus.Warning;
+        }
+
+        return WebhookActivityStatus.Success;
     }
 
     private static int? ComputePayloadBytes(string? payload)
@@ -439,6 +453,7 @@ public sealed class SqlServerWebhookActivityStore : IWebhookActivityStore, IWebh
                 start.Add(bucketSpan),
                 TotalCount: 0,
                 ErrorCount: 0,
+                WarningCount: 0,
                 P95LatencyMs: null);
         }
 
@@ -460,7 +475,8 @@ public sealed class SqlServerWebhookActivityStore : IWebhookActivityStore, IWebh
             bucket = bucket with
             {
                 TotalCount = bucket.TotalCount + 1,
-                ErrorCount = bucket.ErrorCount + (sample.IsError ? 1 : 0)
+                ErrorCount = bucket.ErrorCount + (sample.Status == WebhookActivityStatus.Failed ? 1 : 0),
+                WarningCount = bucket.WarningCount + (sample.Status == WebhookActivityStatus.Warning ? 1 : 0)
             };
             buckets[bucketIndex] = bucket;
         }
@@ -491,6 +507,7 @@ public sealed class SqlServerWebhookActivityStore : IWebhookActivityStore, IWebh
         string EnvironmentTag,
         DateTime ReceivedAtUtc,
         string Status,
+        int AttemptCount,
         string? LastError,
         string? Payload,
         string? MetadataJson);
@@ -506,5 +523,5 @@ public sealed class SqlServerWebhookActivityStore : IWebhookActivityStore, IWebh
         string? ErrorDetails,
         string? Payload);
 
-    private sealed record ActivitySample(DateTimeOffset OccurredAtUtc, bool IsError);
+    private sealed record ActivitySample(DateTimeOffset OccurredAtUtc, WebhookActivityStatus Status);
 }

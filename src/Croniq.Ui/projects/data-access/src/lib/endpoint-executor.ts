@@ -5,6 +5,7 @@ import { z } from 'zod';
 import type { CallerContext, CroniqCredentialSupplier } from './api-client.types';
 
 type AnyZodSchema = z.ZodType<unknown>;
+export type BaseUrlResolver = string | (() => string);
 
 export interface EndpointCallConfig {
     path?: Record<string, unknown>;
@@ -21,7 +22,7 @@ export interface EndpointCallConfig {
 export class EndpointExecutor {
     constructor(
         private readonly http: HttpClient,
-        private readonly baseUrl: string,
+        private readonly baseUrl: BaseUrlResolver,
         private readonly clientId = 'Croniq.Ui',
         private readonly credentials?: CroniqCredentialSupplier | null,
     ) { }
@@ -157,7 +158,8 @@ export class EndpointExecutor {
             }
             return encodeURIComponent(values[key]);
         });
-        return `${this.baseUrl}${path}`;
+        const baseUrl = resolveBaseUrl(this.baseUrl);
+        return `${baseUrl}${path}`;
     }
 
     private parseResponse<T>(endpoint: EndpointDefinition, payload: unknown, config: EndpointCallConfig): T {
@@ -188,4 +190,9 @@ export function requireEndpoint(
 
 function isZodSchema(value: unknown): value is AnyZodSchema {
     return Boolean(value && typeof (value as { parse?: unknown }).parse === 'function');
+}
+
+function resolveBaseUrl(baseUrl: BaseUrlResolver): string {
+    const resolved = typeof baseUrl === 'function' ? baseUrl() : baseUrl;
+    return resolved?.trim() ?? '';
 }

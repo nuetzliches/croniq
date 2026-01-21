@@ -23,6 +23,7 @@ public sealed record WebhookActivityBucket(
     DateTimeOffset? BucketEndUtc,
     int TotalCount,
     int ErrorCount,
+    int WarningCount,
     int? P95LatencyMs);
 
 public sealed record WebhookActivitySummary(

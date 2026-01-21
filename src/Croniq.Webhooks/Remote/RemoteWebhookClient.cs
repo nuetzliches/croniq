@@ -431,6 +431,7 @@ public sealed class RemoteWebhookClient
                 bucket.BucketEndUtc ?? bucket.BucketStartUtc.AddMinutes(bucketMinutes),
                 bucket.TotalCount,
                 bucket.ErrorCount,
+                bucket.WarningCount,
                 bucket.P95LatencyMs))
             .ToArray();
 
@@ -666,6 +667,7 @@ public sealed class RemoteWebhookClient
         DateTimeOffset? BucketEndUtc,
         int TotalCount,
         int ErrorCount,
+        int WarningCount,
         int? P95LatencyMs);
 
     private sealed record WebhookCapabilitiesResponseDto(

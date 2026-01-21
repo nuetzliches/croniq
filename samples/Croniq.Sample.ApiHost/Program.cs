@@ -1,17 +1,10 @@
 using Croniq.Api;
-using Croniq.Auth.Abstractions;
 using Croniq.Core;
 using Croniq.Core.Execution;
 using Croniq.Sample.Jobs;
 using Croniq.Webhooks;
 using Croniq.Webhooks.Options;
-using Croniq.Data.Postgres;
-using Croniq.Data.SqlServer;
-using Microsoft.AspNetCore.Identity;
-using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
-using System.Linq;
-using System.Reflection;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -74,142 +67,6 @@ builder.Services.AddCroniqSampleJobs();
 builder.Services.AddCroniqApiSchemas();
 
 var app = builder.Build();
-
-if (app.Environment.IsDevelopment())
-{
-    await using var scope = app.Services.CreateAsyncScope();
-    var services = scope.ServiceProvider;
-
-    var passwordAuthOptions = services.GetRequiredService<IOptions<PasswordAuthOptions>>().Value;
-    if (passwordAuthOptions.Enabled)
-    {
-        var config = services.GetRequiredService<IConfiguration>();
-        var authMode = (config["Croniq:Auth:Mode"] ?? string.Empty).Trim();
-        if (string.Equals(authMode, "SqlServer", StringComparison.OrdinalIgnoreCase))
-        {
-            var dbFactory = services.GetRequiredService<IDbContextFactory<SqlServerDbContext>>();
-            await using (var db = await dbFactory.CreateDbContextAsync())
-            {
-                await db.Database.MigrateAsync();
-            }
-        }
-        else if (string.Equals(authMode, "Postgres", StringComparison.OrdinalIgnoreCase))
-        {
-            var dbFactory = services.GetRequiredService<IDbContextFactory<PostgresDbContext>>();
-            await using (var db = await dbFactory.CreateDbContextAsync())
-            {
-                await db.Database.MigrateAsync();
-            }
-        }
-        else
-        {
-            app.Logger.LogInformation("Password auth seeding is enabled, but Croniq:Auth:Mode is '{AuthMode}'. Skipping password auth seeding.", authMode);
-            goto after_password_seed;
-        }
-
-        var seedSection = config.GetSection("CroniqSample:Auth:Password");
-
-        static string? Env(string name)
-        {
-            var value = Environment.GetEnvironmentVariable(name);
-            return string.IsNullOrWhiteSpace(value) ? null : value.Trim();
-        }
-
-        static IReadOnlyCollection<string> ResolveSeedScopes(string? raw)
-        {
-            if (string.IsNullOrWhiteSpace(raw))
-            {
-                return new[]
-                {
-                    CroniqScopes.SchedulesWrite,
-                    CroniqScopes.SchedulesDeadLetter,
-                    CroniqScopes.CalendarsRead,
-                    CroniqScopes.CalendarsWrite,
-                    CroniqScopes.JobsRead,
-                    CroniqScopes.JobsWrite,
-                    CroniqScopes.JobsTrigger,
-                    CroniqScopes.WorkPoll,
-                    CroniqScopes.WorkRenew,
-                    CroniqScopes.WorkAck,
-                    CroniqScopes.WorkEvents,
-                    CroniqScopes.WorkersHeartbeat,
-                    CroniqScopes.WorkersRead,
-                    CroniqScopes.RunnersHeartbeat,
-                    CroniqScopes.RunnersRead,
-                    CroniqScopes.ExecutionsRead,
-                    CroniqScopes.WebhooksRead,
-                    CroniqScopes.WebhooksWrite,
-                    CroniqScopes.WebhooksRotate,
-                    CroniqScopes.WebhooksDeadLetter,
-                    CroniqScopes.WebhooksIngress,
-                    CroniqScopes.ApiKeysManage,
-                    CroniqScopes.TenantsAdmin,
-                };
-            }
-
-            if (string.Equals(raw, "all", StringComparison.OrdinalIgnoreCase))
-            {
-                return typeof(CroniqScopes)
-                    .GetFields(BindingFlags.Public | BindingFlags.Static)
-                    .Where(field => field is { IsLiteral: true, IsInitOnly: false } && field.FieldType == typeof(string))
-                    .Select(field => (string)field.GetRawConstantValue()!)
-                    .Distinct(StringComparer.OrdinalIgnoreCase)
-                    .OrderBy(scope => scope, StringComparer.OrdinalIgnoreCase)
-                    .ToArray();
-            }
-
-            return raw
-                .Split(new[] { ' ', '\t', '\r', '\n', ',' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-                .Distinct(StringComparer.OrdinalIgnoreCase)
-                .OrderBy(scope => scope, StringComparer.OrdinalIgnoreCase)
-                .ToArray();
-        }
-
-        // Prefer CRONIQ_SEED_* env vars so Sample.ApiHost and devstack db-migrator seed the same tenant/user by default.
-        var tenantId = Env("CRONIQ_SEED_TENANT_ID")
-            ?? Env("CRONIQ_CORE_TENANT_ID")
-            ?? seedSection["TenantId"]?.Trim();
-        tenantId = string.IsNullOrWhiteSpace(tenantId) ? "default" : tenantId;
-
-        var tenantName = Env("CRONIQ_SEED_TENANT_NAME")
-            ?? Env("CRONIQ_CORE_TENANT_NAME")
-            ?? seedSection["TenantName"]?.Trim();
-        tenantName = string.IsNullOrWhiteSpace(tenantName) ? tenantId : tenantName;
-
-        var tenantReference = Env("CRONIQ_SEED_TENANT_REFERENCE")
-            ?? tenantId;
-
-        var username = Env("CRONIQ_SEED_ADMIN_USERNAME") ?? seedSection["Username"]?.Trim();
-        username ??= "admin";
-
-        var password = Env("CRONIQ_SEED_ADMIN_PASSWORD") ?? seedSection["Password"];
-        password ??= "admin";
-
-        var scopes = ResolveSeedScopes(Env("CRONIQ_SEED_ADMIN_SCOPES"));
-
-        var tenants = services.GetRequiredService<ITenantStore>();
-        var tenant = await tenants.CreateAsync(new TenantCreateRequest(tenantName, tenantId, tenantReference));
-
-        var hasher = new PasswordHasher<object>();
-        var passwordHash = hasher.HashPassword(new object(), password);
-
-        var users = services.GetService<IPasswordUserStore>();
-        if (users is null)
-        {
-            app.Logger.LogWarning("Password auth seeding requested, but IPasswordUserStore is not registered. Ensure Croniq auth mode is SqlServer or Postgres and the auth provider services are wired.");
-            goto after_password_seed;
-        }
-        await users.UpsertAsync(new PasswordUserUpsertRequest(
-            tenant.TenantId,
-            username,
-            passwordHash,
-            scopes,
-            IsActive: true,
-            PasswordChangeRequired: true));
-    }
-
-after_password_seed:;
-}
 
 app.UseCroniqApiSwaggerUi(builder.Configuration);
 

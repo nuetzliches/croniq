@@ -12,6 +12,11 @@ function normalizeBaseUrl(baseUrl: string): string {
     return baseUrl.endsWith('/') ? baseUrl.slice(0, -1) : baseUrl;
 }
 
+function resolveBaseUrl(value: string | (() => string)): string {
+    const resolved = typeof value === 'function' ? value() : value;
+    return resolved?.trim() ?? '';
+}
+
 function extractApiPath(url: string, baseUrl: string): string | null {
     const normalizedBase = normalizeBaseUrl(baseUrl);
     if (!url.startsWith(normalizedBase)) {
@@ -37,7 +42,7 @@ function shouldBypassAuthRefresh(url: string, baseUrl: string): boolean {
 }
 
 export const authRefreshInterceptor: HttpInterceptorFn = (req, next) => {
-    const baseUrl = inject(CRONIQ_API_BASE_URL);
+    const baseUrl = resolveBaseUrl(inject(CRONIQ_API_BASE_URL));
     const refreshCoordinator = inject(AuthRefreshCoordinator);
     const router = inject(Router);
 
