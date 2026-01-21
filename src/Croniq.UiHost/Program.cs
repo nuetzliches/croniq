@@ -4,15 +4,15 @@ using Croniq.Core;
 using OpenTelemetry.Metrics;
 using OpenTelemetry.Trace;
 
-var builder = WebApplication.CreateBuilder(args);
+var browserWebRootPath = ResolveBrowserWebRootPath(args);
 
-var webRootPath = builder.Environment.WebRootPath
-    ?? Path.Combine(builder.Environment.ContentRootPath, "wwwroot");
-var browserWebRootPath = Path.Combine(webRootPath, "browser");
-if (File.Exists(Path.Combine(browserWebRootPath, "index.html")))
+var builderOptions = new WebApplicationOptions { Args = args };
+if (browserWebRootPath is not null)
 {
-    builder.WebHost.UseWebRoot(browserWebRootPath);
+    builderOptions.WebRootPath = browserWebRootPath;
 }
+
+var builder = WebApplication.CreateBuilder(builderOptions);
 
 builder.Services.AddHealthChecks();
 
@@ -159,6 +159,62 @@ static string? GetEnv(params string[] keys)
 static string? Normalize(string? value)
 {
     return string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+}
+
+static string? ResolveBrowserWebRootPath(string[] args)
+{
+    var contentRoot = ResolveContentRootPath(args);
+    var webRoot = ResolveWebRootPath(args, contentRoot);
+    var browserWebRoot = Path.Combine(webRoot, "browser");
+    return File.Exists(Path.Combine(browserWebRoot, "index.html")) ? browserWebRoot : null;
+}
+
+static string ResolveContentRootPath(string[] args)
+{
+    var fromArgs = GetArgValue(args, "--contentroot", "--contentRoot");
+    if (!string.IsNullOrWhiteSpace(fromArgs))
+    {
+        return fromArgs;
+    }
+
+    var fromEnv = GetEnv("ASPNETCORE_CONTENTROOT");
+    return string.IsNullOrWhiteSpace(fromEnv) ? Directory.GetCurrentDirectory() : fromEnv;
+}
+
+static string ResolveWebRootPath(string[] args, string contentRoot)
+{
+    var fromArgs = GetArgValue(args, "--webroot", "--webRoot");
+    var fromEnv = string.IsNullOrWhiteSpace(fromArgs) ? GetEnv("ASPNETCORE_WEBROOT") : null;
+    var webRoot = string.IsNullOrWhiteSpace(fromArgs) ? fromEnv : fromArgs;
+    if (string.IsNullOrWhiteSpace(webRoot))
+    {
+        webRoot = "wwwroot";
+    }
+
+    return Path.IsPathRooted(webRoot) ? webRoot : Path.Combine(contentRoot, webRoot);
+}
+
+static string? GetArgValue(string[] args, params string[] keys)
+{
+    for (var i = 0; i < args.Length; i++)
+    {
+        var arg = args[i];
+        foreach (var key in keys)
+        {
+            if (string.Equals(arg, key, StringComparison.OrdinalIgnoreCase))
+            {
+                return i + 1 < args.Length ? args[i + 1] : null;
+            }
+
+            var prefix = key + "=";
+            if (arg.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+            {
+                return arg.Substring(prefix.Length);
+            }
+        }
+    }
+
+    return null;
 }
 
 static class JsonOptions
