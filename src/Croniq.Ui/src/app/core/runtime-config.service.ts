@@ -39,6 +39,9 @@ export class RuntimeConfigService {
     }
 
     private defaultApiBaseUrl(): string {
+        if (!isDevMode()) {
+            return '';
+        }
         const hostname = globalThis.location?.hostname;
         const isLocalhost = !hostname || hostname === 'localhost' || hostname === '127.0.0.1';
         return isLocalhost ? DEFAULT_DEV_API_BASE_URL : '';

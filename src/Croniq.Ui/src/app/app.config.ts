@@ -19,7 +19,7 @@ export const appConfig: ApplicationConfig = {
         }),
         {
             provide: CRONIQ_API_BASE_URL,
-            useFactory: (config: RuntimeConfigService) => config.apiBaseUrl,
+            useFactory: (config: RuntimeConfigService) => () => config.apiBaseUrl,
             deps: [RuntimeConfigService],
         },
         ...FEATURE_COMMAND_PROVIDERS,

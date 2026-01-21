@@ -112,7 +112,11 @@ static string? ResolveApiBaseUrl()
         return null;
     }
 
-    var host = GetEnv("CRONIQ_UI_API_HOST") ?? "localhost";
+    var host = GetEnv("CRONIQ_UI_API_HOST");
+    if (host is null)
+    {
+        return null;
+    }
     var scheme = GetEnv("CRONIQ_UI_API_SCHEME") ?? "http";
     return $"{scheme}://{host}:{port}";
 }
