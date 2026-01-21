@@ -6,11 +6,11 @@ using OpenTelemetry.Trace;
 
 var browserWebRootPath = ResolveBrowserWebRootPath(args);
 
-var builderOptions = new WebApplicationOptions { Args = args };
-if (browserWebRootPath is not null)
+var builderOptions = new WebApplicationOptions
 {
-    builderOptions.WebRootPath = browserWebRootPath;
-}
+    Args = args,
+    WebRootPath = browserWebRootPath
+};
 
 var builder = WebApplication.CreateBuilder(builderOptions);
 
@@ -217,6 +217,29 @@ static string? GetArgValue(string[] args, params string[] keys)
     return null;
 }
 
+static WebhooksRuntimeConfig? MergeWebhooksConfig(
+    WebhooksRuntimeConfig? current,
+    string? mode,
+    string? grpcBaseUrl,
+    string? sseBaseUrl)
+{
+    if (mode is null && grpcBaseUrl is null && sseBaseUrl is null)
+    {
+        return current;
+    }
+
+    var currentActivity = current?.ActivityStream;
+    return new WebhooksRuntimeConfig
+    {
+        ActivityStream = new WebhookActivityStreamRuntimeConfig
+        {
+            Mode = mode ?? currentActivity?.Mode,
+            GrpcBaseUrl = grpcBaseUrl ?? currentActivity?.GrpcBaseUrl,
+            SseBaseUrl = sseBaseUrl ?? currentActivity?.SseBaseUrl
+        }
+    };
+}
+
 static class JsonOptions
 {
     internal static readonly JsonSerializerOptions File = new()
@@ -264,27 +287,4 @@ internal sealed record RuntimeConfig
 
     [JsonPropertyName("webhooks")]
     public WebhooksRuntimeConfig? Webhooks { get; init; }
-}
-
-static WebhooksRuntimeConfig? MergeWebhooksConfig(
-    WebhooksRuntimeConfig? current,
-    string? mode,
-    string? grpcBaseUrl,
-    string? sseBaseUrl)
-{
-    if (mode is null && grpcBaseUrl is null && sseBaseUrl is null)
-    {
-        return current;
-    }
-
-    var currentActivity = current?.ActivityStream;
-    return new WebhooksRuntimeConfig
-    {
-        ActivityStream = new WebhookActivityStreamRuntimeConfig
-        {
-            Mode = mode ?? currentActivity?.Mode,
-            GrpcBaseUrl = grpcBaseUrl ?? currentActivity?.GrpcBaseUrl,
-            SseBaseUrl = sseBaseUrl ?? currentActivity?.SseBaseUrl
-        }
-    };
 }

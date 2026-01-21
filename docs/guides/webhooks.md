@@ -16,6 +16,12 @@ Croniq.Webhooks lets external systems trigger Croniq jobs via HTTP. This guide f
 
 Activity timeline entries include a `source` field (`ingress` or `invoke`) so operators can distinguish manual invokes from inbound deliveries.
 
+### Activity SLA (preview)
+
+- Availability: activity endpoints require SqlServer/Postgres webhook persistence; in-memory mode returns `503 webhook-activity-unavailable`.
+- Freshness: TriggerJob records successful dispatches (failures surface via dead letters), StoreOnly reflects relay acknowledgements. The SSE stream polls every 5 seconds, so expect short (seconds) staleness.
+- Defaults: timeline `limit` defaults to 200 (max 500). Summary defaults to a 24h window with 60-minute buckets; max window 31 days, max bucket 24 hours.
+
 ## Ingress Endpoint
 
 The `Croniq.Webhooks` host exposes tenant-scoped endpoints such as `POST /tenants/{tenantId}/environments/{environmentTag}/webhooks/{hookKey}`. Each hook references a job key and forwards request metadata into the job execution.

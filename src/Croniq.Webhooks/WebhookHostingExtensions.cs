@@ -23,6 +23,7 @@ using Croniq.Webhooks.InMemory;
 using Croniq.Webhooks.Options;
 using Croniq.Webhooks.Relay;
 using Croniq.Webhooks.Remote;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.Extensions.Caching.Memory;
@@ -377,6 +378,7 @@ public static class WebhookHostingExtensions
             WebhookMetadataFactory metadataFactory,
             WebhookEndpointResolver endpointResolver,
             WebhookDeadLetterRecorder deadLetterRecorder,
+            [FromServices] IWebhookActivityRecorder? activityRecorder,
             IOptionsMonitor<CroniqWebhookOptions> webhookOptions,
             ILogger<WebhookRequestHandlerMarker> logger,
             CancellationToken cancellationToken) =>
@@ -567,6 +569,22 @@ public static class WebhookHostingExtensions
                     stopwatch.Elapsed.TotalMilliseconds,
                     error: null,
                     cancellationToken).ConfigureAwait(false);
+                await TryRecordActivityAsync(
+                    activityRecorder,
+                    logger,
+                    new WebhookActivityRecord(
+                        executionId,
+                        endpoint.HookKey,
+                        jobKey.Value,
+                        scope.TenantId,
+                        scope.EnvironmentTag,
+                        startedAtUtc,
+                        WebhookActivityStatus.Success,
+                        activitySource,
+                        Reason: null,
+                        Payload: payload,
+                        Metadata: metadata),
+                    cancellationToken).ConfigureAwait(false);
                 return Results.Accepted(value: new { status = "triggered", hook = endpoint.HookKey, job = endpoint.JobKey });
             }
             catch (Exception ex)
@@ -665,6 +683,27 @@ public static class WebhookHostingExtensions
         catch (Exception ex)
         {
             logger.LogWarning(ex, "Failed to persist execution start for {ExecutionId}", record.ExecutionId);
+        }
+    }
+
+    private static async Task TryRecordActivityAsync(
+        IWebhookActivityRecorder? recorder,
+        ILogger logger,
+        WebhookActivityRecord record,
+        CancellationToken cancellationToken)
+    {
+        if (recorder is null)
+        {
+            return;
+        }
+
+        try
+        {
+            await recorder.RecordAsync(record, cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Failed to record webhook activity for {HookKey}", record.HookKey);
         }
     }
 

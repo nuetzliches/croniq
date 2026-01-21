@@ -6,11 +6,12 @@ using System.Net.Http;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
-using Croniq.Api.Models;
 using Croniq.Api.Tests.Infrastructure;
 using Croniq.Auth.Abstractions;
 using Croniq.Auth.Core;
 using Croniq.Persistence.Abstractions;
+using PersistenceWebhookActivityBucket = Croniq.Persistence.Abstractions.WebhookActivityBucket;
+using PersistenceWebhookActivitySummary = Croniq.Persistence.Abstractions.WebhookActivitySummary;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Server.Kestrel.Core;
@@ -164,7 +165,7 @@ public sealed class WebhookActivityStreamTests
             return Task.FromResult<IReadOnlyCollection<WebhookActivityEntry>>(result);
         }
 
-        public Task<WebhookActivitySummary> SummarizeAsync(
+        public Task<PersistenceWebhookActivitySummary> SummarizeAsync(
             PartitionScope scope,
             WebhookActivitySummaryQuery query,
             CancellationToken cancellationToken)
@@ -172,7 +173,11 @@ public sealed class WebhookActivityStreamTests
             var bucketMinutes = query.BucketMinutes ?? WebhookActivitySummaryQuery.DefaultBucketMinutes;
             var windowStart = query.FromUtc ?? DateTimeOffset.UtcNow;
             var windowEnd = query.ToUtc ?? windowStart;
-            return Task.FromResult(new WebhookActivitySummary(bucketMinutes, windowStart, windowEnd, Array.Empty<WebhookActivityBucket>()));
+            return Task.FromResult(new PersistenceWebhookActivitySummary(
+                bucketMinutes,
+                windowStart,
+                windowEnd,
+                Array.Empty<PersistenceWebhookActivityBucket>()));
         }
     }
 }

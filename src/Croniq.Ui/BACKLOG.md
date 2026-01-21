@@ -13,3 +13,4 @@ _Last updated: 2026-01-18_
 ## Webhooks Backend
 
 - Telemetry-backed aggregates for webhook KPIs (Grafana URL or a dedicated API surface).
+- Activity warning semantics: start with `delivered after retry` (status=warning); other options to consider are latency-over-threshold, degraded delivery/backlog, or partial acceptance signals.

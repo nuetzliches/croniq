@@ -31,7 +31,7 @@ public class WebhookIngressTests
     [Fact]
     public async Task ValidSignature_ReturnsAccepted_AndExecutesPipeline()
     {
-        var (client, pipeline) = CreateClient();
+        var (client, pipeline, activityRecorder) = CreateClient();
         var payload = "{\"hello\":\"world\"}";
         var signature = ComputeSignature(Secret, payload);
 
@@ -42,25 +42,28 @@ public class WebhookIngressTests
 
         response.StatusCode.ShouldBe(HttpStatusCode.Accepted);
         pipeline.Executed.ShouldBeTrue();
+        activityRecorder.Records.Count.ShouldBe(1);
+        activityRecorder.Records[0].HookKey.ShouldBe(HookKey);
     }
 
     [Fact]
     public async Task MissingSignature_Returns401()
     {
-        var (client, pipeline) = CreateClient();
+        var (client, pipeline, activityRecorder) = CreateClient();
         var payload = "{}";
 
         var response = await client.PostAsJsonAsync($"/tenants/{TenantId}/environments/{EnvironmentTag}/webhooks/{HookKey}", payload);
 
         response.StatusCode.ShouldBe(HttpStatusCode.Unauthorized);
         pipeline.Executed.ShouldBeFalse();
+        activityRecorder.Records.Count.ShouldBe(0);
     }
 
     [Fact]
     public async Task RelayKey_BypassesSignatureValidation()
     {
         var relayKey = "relay-key";
-        var (client, pipeline) = CreateClient(relayKey);
+        var (client, pipeline, activityRecorder) = CreateClient(relayKey);
         var payload = "{\"relay\":true}";
 
         var request = new HttpRequestMessage(HttpMethod.Post, $"/tenants/{TenantId}/environments/{EnvironmentTag}/webhooks/{HookKey}")
@@ -73,13 +76,14 @@ public class WebhookIngressTests
 
         response.StatusCode.ShouldBe(HttpStatusCode.Accepted);
         pipeline.Executed.ShouldBeTrue();
+        activityRecorder.Records.Count.ShouldBe(1);
     }
 
     [Fact]
     public async Task InvalidRelayKey_StillRequiresSignature()
     {
         var relayKey = "relay-key";
-        var (client, pipeline) = CreateClient(relayKey);
+        var (client, pipeline, activityRecorder) = CreateClient(relayKey);
         var payload = "{\"relay\":false}";
 
         var request = new HttpRequestMessage(HttpMethod.Post, $"/tenants/{TenantId}/environments/{EnvironmentTag}/webhooks/{HookKey}")
@@ -92,6 +96,7 @@ public class WebhookIngressTests
 
         response.StatusCode.ShouldBe(HttpStatusCode.Unauthorized);
         pipeline.Executed.ShouldBeFalse();
+        activityRecorder.Records.Count.ShouldBe(0);
     }
 
     [Fact]
@@ -110,7 +115,7 @@ public class WebhookIngressTests
         pipeline.Executed.ShouldBeTrue();
     }
 
-    private static (HttpClient client, StubPipeline pipeline) CreateClient(string? relayKey = null)
+    private static (HttpClient client, StubPipeline pipeline, StubActivityRecorder activityRecorder) CreateClient(string? relayKey = null)
     {
         var builder = WebApplication.CreateBuilder();
         builder.WebHost.UseTestServer();
@@ -134,10 +139,12 @@ public class WebhookIngressTests
         var registry = new StubRegistry();
         var pipeline = new StubPipeline();
         var policies = new StubPolicies();
+        var activityRecorder = new StubActivityRecorder();
 
         builder.Services.AddSingleton<IJobRegistry>(registry);
         builder.Services.AddSingleton<IJobExecutionPipeline>(pipeline);
         builder.Services.AddSingleton<IPolicyResolver>(policies);
+        builder.Services.AddSingleton<IWebhookActivityRecorder>(activityRecorder);
         builder.Services.AddCroniqWebhookServices(builder.Configuration);
         builder.Services.AddCroniqWebhookRateLimiter();
 
@@ -147,7 +154,7 @@ public class WebhookIngressTests
         app.UseCroniqWebhooks();
 
         app.StartAsync().GetAwaiter().GetResult();
-        return (app.GetTestClient(), pipeline);
+        return (app.GetTestClient(), pipeline, activityRecorder);
     }
 
     private static (HttpClient client, StubPipeline pipeline) CreateCoHostedClient()
@@ -229,6 +236,17 @@ public class WebhookIngressTests
         public Task ExecuteAsync(JobExecutionRequest request, CancellationToken cancellationToken)
         {
             Executed = true;
+            return Task.CompletedTask;
+        }
+    }
+
+    private sealed class StubActivityRecorder : IWebhookActivityRecorder
+    {
+        public List<WebhookActivityRecord> Records { get; } = new();
+
+        public Task RecordAsync(WebhookActivityRecord record, CancellationToken cancellationToken)
+        {
+            Records.Add(record);
             return Task.CompletedTask;
         }
     }
