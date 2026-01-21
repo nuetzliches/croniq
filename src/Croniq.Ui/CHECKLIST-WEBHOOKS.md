@@ -5,9 +5,9 @@ Purpose: track the remaining work to expand the Webhooks UI with an activity tim
 ## Scope and Backend Contract
 
 - [x] Create the backend source for timeline data (stream + aggregation endpoints) and document its SLA.
-- [ ] Define the timeline event schema (timestamp, hookKey, status, latency, requestId, environment, payload size).
-- [ ] Define the chart aggregation schema using backend standard defaults (bucket size, total count, warning/error counts, p95 latency).
-- [ ] Add/extend OpenAPI definitions for the timeline + chart endpoints and regenerate UI schemas.
+- [x] Define the timeline event schema (timestamp, hookKey, status, latency, requestId, environment, payload size).
+- [x] Define the chart aggregation schema using backend standard defaults (bucket size, total count, warning/error counts, p95 latency).
+- [x] Add/extend OpenAPI definitions for the timeline + chart endpoints and regenerate UI schemas.
 
 ## Transport (Stream vs Poll)
 

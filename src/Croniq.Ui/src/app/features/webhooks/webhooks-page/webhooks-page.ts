@@ -970,6 +970,12 @@ export class WebhooksPage {
     this.invokeNotice.set('Invocation requested.');
     setTimeout(() => this.invokeNotice.set(null), 2500);
   }
+
+  invokeWebhookFromHeader(event: MouseEvent): void {
+    event.preventDefault();
+    event.stopPropagation();
+    this.invokeWebhook();
+  }
 }
 
 function tryParseIsoToMs(value: string | null): number | null {
