@@ -1305,7 +1305,8 @@ function buildTimelineChartOptions(
       right: 16,
       top: 48,
       bottom: 48,
-      containLabel: true,
+      outerBoundsMode: 'same',
+      outerBoundsContain: 'axisLabel',
     },
     tooltip: {
       trigger: 'axis',
