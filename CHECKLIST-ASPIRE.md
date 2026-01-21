@@ -14,7 +14,7 @@ _Last updated: 2026-01-21_
 - Use `tools/Croniq.Devstack.AppHost` (net10.0) as the Aspire app host location and keep it in the solution.
 - Keep `.env` as a supported configuration source; process env vars override file values.
 - Prefer Aspire for local development; keep Docker Compose for CI until parity is proven.
-- Keep the Angular UI as a manual `npm start` step for now; revisit once the AppHost stabilizes.
+- Run the Angular UI via the AppHost (disable with `CRONIQ_DEVSTACK_UI=false`).
 - Run `Croniq.Sample.Dmz` in the AppHost by default (always on).
 
 ## Current Devstack Baseline (Must Keep Working)
@@ -70,13 +70,13 @@ _Last updated: 2026-01-21_
 - [x] Document how Aspire dashboard coexists with Grafana/Tempo/Prometheus.
 
 ### TLS / gRPC-Web (Caddy)
-- [ ] Add a Caddy container resource (or sidecar) for local TLS termination.
-- [ ] Provide a Caddyfile for routing API + gRPC-Web endpoints (and UI if needed).
-- [ ] Document local trust steps (`caddy trust`) and default URLs.
+- [x] Add a Caddy container resource (or sidecar) for local TLS termination.
+- [x] Provide a Caddyfile for routing API + gRPC-Web endpoints (and UI if needed).
+- [x] Document local trust steps (`caddy trust`) and default URLs.
 
 ### UI Integration
-- [ ] Decide whether the Angular UI is launched by Aspire or remains manual.
-- [ ] If Aspire-managed: add a Node/NPM resource with health checks + ports.
+- [x] Decide whether the Angular UI is launched by Aspire or remains manual.
+- [x] If Aspire-managed: add a Node/NPM resource with health checks + ports.
 
 ### Back-Compat & Cleanup
 - [ ] Keep Compose-based CI (`scripts/ci/compose-devstack.ps1`) until Aspire parity.

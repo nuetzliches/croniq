@@ -49,6 +49,7 @@ var apiRequestsPerMinute = GetEnvValueOrDefault("CRONIQ_API_REQUESTS_PER_MINUTE"
 var apiKey = GetEnvValueOrDefault("CRONIQ_API_KEY", "smoke-key");
 var authMode = GetEnvValueOrDefault("CRONIQ_AUTH_MODE", "InMemory");
 var apiPort = GetInt("CRONIQ_API_HTTP_PORT", GetInt("CRONIQ_API_INTERNAL_PORT", 5080));
+var uiPort = GetInt("CRONIQ_UI_HTTP_PORT", 5081);
 var sqlHostPort = GetInt("CRONIQ_SQL_HOST_PORT", 11433);
 var sqlDatabase = GetEnvValueOrDefault("CRONIQ_SQL_DATABASE", "CroniqDev");
 var sqlPassword = GetEnvValueOrDefault("CRONIQ_SQL_PASSWORD", "CroniqSqlP@ssw0rd!");
@@ -60,6 +61,18 @@ var dmzAuthMode = GetEnvValueOrDefault("CRONIQ_SAMPLE_DMZ_AUTH_MODE", "InMemory"
 var dmzInstanceId = GetEnvValueOrDefault("CRONIQ_SAMPLE_DMZ_INSTANCE_ID", "dmz-dev");
 var dmzBaseUrl = GetEnvValueOrDefault("CRONIQ_SAMPLE_DMZ_BASEURL", $"https://localhost:{dmzGrpcPort}");
 var dmzApiKey = GetEnvValueOrDefault("CRONIQ_SAMPLE_DMZ_API_KEY", "dmz-sample-key");
+var caddyDomain = GetEnvValueOrDefault("CRONIQ_CADDY_DOMAIN", "croniq.local");
+var caddyUpstreamHost = GetEnvValueOrDefault("CRONIQ_CADDY_UPSTREAM_HOST", "host.docker.internal");
+var caddyHttpPort = GetInt("CRONIQ_CADDY_HTTP_PORT", 8080);
+var caddyHttpsPort = GetInt("CRONIQ_CADDY_HTTPS_PORT", 8443);
+var caddyEnabled = !IsFalse(GetEnvValue("CRONIQ_DEVSTACK_CADDY"));
+var uiApiBaseUrl = GetEnvValue("CRONIQ_UI_API_BASEURL");
+var uiSwaggerUiUrl = GetEnvValue("CRONIQ_UI_SWAGGER_UI_URL") ?? GetEnvValue("CRONIQ_UI_SWAGGER_URL");
+var uiDefaultTenantId = GetEnvValue("CRONIQ_UI_DEFAULT_TENANT_ID");
+var uiActivityStreamMode = GetEnvValue("CRONIQ_UI_WEBHOOKS_ACTIVITY_STREAM_MODE");
+var uiActivityGrpcBaseUrl = GetEnvValue("CRONIQ_UI_WEBHOOKS_ACTIVITY_GRPC_BASEURL");
+var uiActivitySseBaseUrl = GetEnvValue("CRONIQ_UI_WEBHOOKS_ACTIVITY_SSE_BASEURL");
+var uiEnabled = !IsFalse(GetEnvValue("CRONIQ_DEVSTACK_UI"));
 var otlpEndpoint = GetEnvValue("CRONIQ_OBS_OTLP_ENDPOINT");
 var otlpProtocol = GetEnvValue("CRONIQ_OBS_OTLP_PROTOCOL");
 var otlpGrpcPort = GetInt("CRONIQ_OTLP_GRPC_PORT", 4317);
@@ -87,6 +100,24 @@ if (obsEnabled)
     {
         otlpProtocol = "grpc";
     }
+}
+
+if (caddyEnabled)
+{
+    if (string.IsNullOrWhiteSpace(uiApiBaseUrl))
+    {
+        uiApiBaseUrl = string.Concat(
+            "https://api.",
+            caddyDomain,
+            ":",
+            caddyHttpsPort.ToString(CultureInfo.InvariantCulture));
+    }
+}
+
+if (!string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("CI"))
+    || !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("GITHUB_ACTIONS")))
+{
+    uiEnabled = false;
 }
 
 var forwardedHeadersEnabled = GetEnvValueOrDefault("CRONIQ_API_FORWARDED_HEADERS_ENABLED", "false");
@@ -303,6 +334,38 @@ if (obsEnabled)
         .WaitFor(loki);
 }
 
+if (caddyEnabled)
+{
+    var caddyFile = Path.Combine(repoRoot, "infra", "docker", "caddy", "Caddyfile");
+    builder.AddContainer("caddy", "caddy", "2.8.4")
+        .WithBindMount(caddyFile, "/etc/caddy/Caddyfile", isReadOnly: true)
+        .WithVolume("caddy-data", "/data", isReadOnly: false)
+        .WithVolume("caddy-config", "/config", isReadOnly: false)
+        .WithEnvironment("CRONIQ_CADDY_DOMAIN", caddyDomain)
+        .WithEnvironment("CRONIQ_CADDY_UPSTREAM_HOST", caddyUpstreamHost)
+        .WithEnvironment("CRONIQ_CADDY_HTTP_PORT", caddyHttpPort.ToString(CultureInfo.InvariantCulture))
+        .WithEnvironment("CRONIQ_CADDY_HTTPS_PORT", caddyHttpsPort.ToString(CultureInfo.InvariantCulture))
+        .WithEnvironment("CRONIQ_API_HTTP_PORT", apiPort.ToString(CultureInfo.InvariantCulture))
+        .WithEnvironment("CRONIQ_SAMPLE_DMZ_HTTP_PORT", dmzHttpPort.ToString(CultureInfo.InvariantCulture))
+        .WithEnvironment("CRONIQ_UI_HTTP_PORT", uiPort.ToString(CultureInfo.InvariantCulture))
+        .WithEndpoint(
+            targetPort: caddyHttpPort,
+            port: caddyHttpPort,
+            scheme: "http",
+            name: "caddy-http",
+            env: null,
+            isExternal: true,
+            isProxied: false)
+        .WithEndpoint(
+            targetPort: caddyHttpsPort,
+            port: caddyHttpsPort,
+            scheme: "https",
+            name: "caddy-https",
+            env: null,
+            isExternal: true,
+            isProxied: false);
+}
+
 var api = builder.AddProject(
         "croniq-api",
         Path.Combine(repoRoot, "samples", "Croniq.Sample.ApiHost", "Croniq.Sample.ApiHost.csproj"))
@@ -358,6 +421,57 @@ if (!string.IsNullOrWhiteSpace(otlpEndpoint))
 if (!string.IsNullOrWhiteSpace(otlpProtocol))
 {
     api.WithEnvironment("Croniq__Observability__OtlpProtocol", otlpProtocol);
+}
+
+if (uiEnabled)
+{
+    var uiPath = Path.Combine(repoRoot, "src", "Croniq.Ui");
+    var npmCommand = OperatingSystem.IsWindows() ? "npm.cmd" : "npm";
+    var uiArgs = new[]
+    {
+        "run",
+        "start",
+        "--",
+        "--port",
+        uiPort.ToString(CultureInfo.InvariantCulture),
+        "--host",
+        "0.0.0.0"
+    };
+
+    var ui = builder.AddExecutable("croniq-ui", npmCommand, uiPath, uiArgs)
+        .WithHttpEndpoint(targetPort: uiPort, port: uiPort, isProxied: false)
+        .WithEnvironment("CRONIQ_UI_HTTP_PORT", uiPort.ToString(CultureInfo.InvariantCulture))
+        .WaitFor(api);
+
+    if (!string.IsNullOrWhiteSpace(uiApiBaseUrl))
+    {
+        ui.WithEnvironment("CRONIQ_UI_API_BASEURL", uiApiBaseUrl);
+    }
+
+    if (!string.IsNullOrWhiteSpace(uiSwaggerUiUrl))
+    {
+        ui.WithEnvironment("CRONIQ_UI_SWAGGER_UI_URL", uiSwaggerUiUrl);
+    }
+
+    if (!string.IsNullOrWhiteSpace(uiDefaultTenantId))
+    {
+        ui.WithEnvironment("CRONIQ_UI_DEFAULT_TENANT_ID", uiDefaultTenantId);
+    }
+
+    if (!string.IsNullOrWhiteSpace(uiActivityStreamMode))
+    {
+        ui.WithEnvironment("CRONIQ_UI_WEBHOOKS_ACTIVITY_STREAM_MODE", uiActivityStreamMode);
+    }
+
+    if (!string.IsNullOrWhiteSpace(uiActivityGrpcBaseUrl))
+    {
+        ui.WithEnvironment("CRONIQ_UI_WEBHOOKS_ACTIVITY_GRPC_BASEURL", uiActivityGrpcBaseUrl);
+    }
+
+    if (!string.IsNullOrWhiteSpace(uiActivitySseBaseUrl))
+    {
+        ui.WithEnvironment("CRONIQ_UI_WEBHOOKS_ACTIVITY_SSE_BASEURL", uiActivitySseBaseUrl);
+    }
 }
 
 var worker = builder.AddProject(
@@ -466,10 +580,10 @@ bool IsObsEnabled(string[] args, string? profileArgs, string? obsOverride)
         return false;
     }
 
-    return HasProfile(args, "obs") || HasProfile(profileArgs, "obs");
+    return HasProfileTokens(args, "obs") || HasProfileRaw(profileArgs, "obs");
 }
 
-bool HasProfile(string? rawArgs, string profile)
+bool HasProfileRaw(string? rawArgs, string profile)
 {
     if (string.IsNullOrWhiteSpace(rawArgs))
     {
@@ -479,10 +593,10 @@ bool HasProfile(string? rawArgs, string profile)
     var tokens = rawArgs.Split(
         ' ',
         StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-    return HasProfile(tokens, profile);
+    return HasProfileTokens(tokens, profile);
 }
 
-bool HasProfile(IEnumerable<string> args, string profile)
+bool HasProfileTokens(IEnumerable<string> args, string profile)
 {
     string? previous = null;
     foreach (var arg in args)

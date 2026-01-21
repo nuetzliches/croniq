@@ -18,6 +18,9 @@ This document describes the local Docker Compose environment required to satisfy
 - Enable observability containers with `dotnet run --project tools/Croniq.Devstack.AppHost -- --profile obs`, `CRONIQ_DEVSTACK_PROFILES=--profile obs`, or `CRONIQ_DEVSTACK_OBS=true`.
 - When the `obs` profile is enabled, AppHost maps the OTLP endpoint to `http://localhost:${CRONIQ_OTLP_GRPC_PORT}` if `.env` still targets `http://otel-collector:4317`.
 - Aspire dashboard defaults to `http://localhost:18888` (`ASPIRE_DASHBOARD_PORT`) and uses `ASPIRE_DASHBOARD_OTLP_ENDPOINT_URL` (default `http://localhost:18889`) so it does not clash with the Grafana stack. Croniq telemetry continues to flow to the collector; point `CRONIQ_OBS_OTLP_ENDPOINT` to the dashboard OTLP endpoint if you want the Aspire UI to show spans/metrics.
+- Caddy runs by default as the local TLS proxy for `*.croniq.local` (disable with `CRONIQ_DEVSTACK_CADDY=false`). Defaults: `api.croniq.local`, `dmz.croniq.local`, `hooks.croniq.local`, and `ui.croniq.local` on `CRONIQ_CADDY_HTTPS_PORT` (8443).
+- Caddy proxies to `CRONIQ_CADDY_UPSTREAM_HOST` (default `host.docker.internal`). On Linux, set it to `host-gateway` or your host IP if `host.docker.internal` is unavailable.
+- The AppHost can launch the Angular UI via `npm start` (requires Node.js + npm). Disable with `CRONIQ_DEVSTACK_UI=false`.
 - Docker Compose remains the CI baseline until Aspire reaches parity. Track progress in `CHECKLIST-ASPIRE.md`.
 
 ## Target Services
@@ -73,6 +76,23 @@ All services share a `croniq-net` bridge network. Ports are exposed via `.env` d
 1. `cd <repo-root>`
 2. `copy .env.example .env` (first run) and adjust secrets/ports as needed.
 3. `dotnet run --project tools/Croniq.Devstack.AppHost` (add `-- --profile obs` to start Grafana/Tempo/Prometheus/Loki)
+   - If you do not have Node.js installed, set `CRONIQ_DEVSTACK_UI=false` in `.env`.
+
+### Local TLS (Caddy)
+
+1. Add host entries (Windows: `C:\Windows\System32\drivers\etc\hosts`):
+   - `127.0.0.1 api.croniq.local`
+   - `127.0.0.1 dmz.croniq.local`
+   - `127.0.0.1 hooks.croniq.local`
+   - `127.0.0.1 ui.croniq.local`
+2. Start the AppHost so the Caddy container creates its local CA.
+3. Trust the Caddy root CA on the host (Windows example). If you run Caddy directly on the host, `caddy trust` installs the CA for you.
+   - `docker ps --filter "name=caddy" --format "{{.Names}}"`
+   - `docker cp <caddy-container>:/data/caddy/pki/authorities/local/root.crt .\\caddy-root.crt`
+   - `certutil -addstore -f Root .\\caddy-root.crt`
+4. Update `.env` for UI/DMZ base URLs if you want to go through Caddy:
+   - `CRONIQ_UI_API_BASEURL=https://api.croniq.local:8443`
+   - `CRONIQ_SAMPLE_DMZ_BASEURL=https://dmz.croniq.local:8443`
 
 ### Docker Compose (CI + Fallback)
 
