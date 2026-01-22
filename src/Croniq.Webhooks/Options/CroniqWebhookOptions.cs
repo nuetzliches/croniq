@@ -119,6 +119,8 @@ public sealed class WebhookRemoteOptions
 {
     public string? BaseUrl { get; set; }
 
+    public string? IngressBaseUrl { get; set; }
+
     public string? ApiKey { get; set; }
 
     public int TimeoutSeconds { get; set; } = 10;

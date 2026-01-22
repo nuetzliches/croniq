@@ -30,6 +30,8 @@ export type TenantWebhookUpsertParams = TenantEnvironmentParams;
 
 export type TenantWebhookCapabilitiesParams = TenantEnvironmentParams;
 
+export type TenantWebhookRemoteHealthParams = TenantEnvironmentParams;
+
 export interface TenantWebhookRuleParams extends TenantWebhookParams {
     ruleId: string;
 }

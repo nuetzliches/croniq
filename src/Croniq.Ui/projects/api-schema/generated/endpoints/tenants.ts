@@ -31,6 +31,7 @@ import {
     WebhookEndpointResponse,
     UpsertWebhookEndpointRequest,
     WebhookCapabilitiesResponse,
+    WebhookRemoteHealthResponse,
     RotateWebhookSecretRequest,
     RotateWebhookSecretResponse,
     CreateWebhookIpRuleRequest,
@@ -1159,6 +1160,21 @@ export const TenantsApi: EndpointDefinition[] = [
                 schema: z.void(),
             },
         ],
+    },
+    {
+        method: 'get',
+        path: '/tenants/:tenantId/webhooks/remote/health',
+        description: `Proxies /health against the remote webhook host when Croniq:Webhooks:Mode&#x3D;Remote.`,
+        requestFormat: 'json',
+        parameters: [
+            { name: 'tenantId', type: 'Path', schema: z.string() },
+            {
+                name: 'environment',
+                type: 'Query',
+                schema: z.string().optional(),
+            },
+        ],
+        response: WebhookRemoteHealthResponse,
     },
     {
         method: 'post',

@@ -6,7 +6,7 @@ import { RuntimeConfigService } from '@core/runtime-config.service';
 import { createSseStream } from '@core/streaming/sse';
 import { TenantContextService } from '@core/tenant-context/tenant-context.service';
 import { nowIso, nowMs, tryIsoFromUnknown } from '@core/time/clock';
-import { CreateWebhookIpRuleRequest, RotateWebhookSecretRequest, UpsertWebhookEndpointRequest, WebhookActivitySummary, WebhookActivityTimelineResponse, type WebhookCapabilitiesResponse } from '@croniq/api-schema';
+import { CreateWebhookIpRuleRequest, RotateWebhookSecretRequest, UpsertWebhookEndpointRequest, WebhookActivitySummary, WebhookActivityTimelineResponse, type WebhookCapabilitiesResponse, type WebhookRemoteHealthResponse } from '@croniq/api-schema';
 import { CRONIQ_API_CLIENT, CallerContext, CroniqApiClient, TenantDeadLetterParams, TenantEnvironmentParams, TenantWebhookActivityParams, TenantWebhookActivitySummaryParams, TenantWebhookParams, TenantWebhookRuleParams, TenantWebhookUpsertParams, WebhookInvocationParams } from 'data-access';
 import { EMPTY, catchError, defer, finalize, forkJoin, fromEvent, map, merge, of, switchMap, takeUntil, tap, throwError, timer } from 'rxjs';
 
@@ -22,9 +22,23 @@ export type WebhookEndpointView = {
     ipRuleCount: number | null;
 };
 
+export type WebhookMode = 'Remote' | 'InMemory' | 'SqlServer' | 'Postgres' | 'Unknown';
+
+export type WebhookRemoteHealthStatus = 'ok' | 'unhealthy' | 'unreachable' | 'unavailable' | 'not-configured';
+
+export type WebhookRemoteHealthView = {
+    status: WebhookRemoteHealthStatus;
+    checkedAt: string;
+    statusCode?: number | null;
+    detail?: string | null;
+};
+
 export type WebhookCapabilitiesView = {
     allowUnsignedHooks: boolean;
     defaultRequestsPerMinute: number;
+    mode: WebhookMode;
+    remoteBaseUrl: string | null;
+    remoteIngressBaseUrl: string | null;
 };
 
 export type WebhookActionEntry = {
@@ -118,6 +132,7 @@ export class WebhooksStore {
     private readonly rotatedSecretSignal = signal<string | null>(null);
     private readonly invokeLoadingSignal = signal(false);
     private readonly capabilitiesSignal = signal<WebhookCapabilitiesView | null>(null);
+    private readonly remoteHealthSignal = signal<WebhookRemoteHealthView | null>(null);
     private readonly lastErrorSignal = signal<string | null>(null);
     private readonly activityQuerySignal = signal<WebhookActivityQuery | null>(null);
     private readonly activityTimelineSignal = signal<ReadonlyArray<WebhookTimelineItemView>>(EMPTY_ACTIVITY_TIMELINE);
@@ -219,6 +234,47 @@ export class WebhooksStore {
                     return of(this.capabilitiesSignal());
                 }),
             );
+        },
+    });
+
+    private readonly remoteHealthResource = tenantRxResource<
+        WebhookRemoteHealthView | null,
+        { tenantId: string; environment: string; mode: WebhookMode }
+    >({
+        command: 'webhooks.remote.health',
+        defaultValue: this.remoteHealthSignal(),
+        params: () => {
+            const { tenantId, environment } = this.tenantContext.snapshot();
+            const mode = this.capabilitiesSignal()?.mode ?? 'Unknown';
+            return { tenantId, environment, mode };
+        },
+        stream: ({ params, requestOptions }) => {
+            const tenantId = params.tenantId.trim();
+            if (!tenantId || params.mode !== 'Remote') {
+                this.remoteHealthSignal.set(null);
+                return of(this.remoteHealthSignal());
+            }
+
+            return this.api
+                .getTenantWebhookRemoteHealth(
+                    { tenantId, environment: params.environment },
+                    requestOptions,
+                )
+                .pipe(
+                    map((response) => this.normalizeRemoteHealthResponse(response)),
+                    tap((health) => this.remoteHealthSignal.set(health)),
+                    catchError((error: unknown) => {
+                        console.error('Unable to fetch remote webhook health', error);
+                        const fallback: WebhookRemoteHealthView = {
+                            status: 'unreachable',
+                            checkedAt: nowIso(),
+                            statusCode: null,
+                            detail: error instanceof Error ? error.message : 'Unknown error',
+                        };
+                        this.remoteHealthSignal.set(fallback);
+                        return of(fallback);
+                    }),
+                );
         },
     });
 
@@ -414,6 +470,7 @@ export class WebhooksStore {
     readonly rotatedSecret = this.rotatedSecretSignal.asReadonly();
     readonly invokeLoading = this.invokeLoadingSignal.asReadonly();
     readonly capabilities = this.capabilitiesSignal.asReadonly();
+    readonly remoteHealth = this.remoteHealthSignal.asReadonly();
     readonly activityTimeline = this.activityTimelineSignal.asReadonly();
     readonly activityBuckets = this.activityBucketsSignal.asReadonly();
     readonly activityError = this.activityErrorSignal.asReadonly();
@@ -428,6 +485,7 @@ export class WebhooksStore {
         || this.capabilitiesResource.isLoading(),
     );
     readonly activityLoading = computed(() => this.activityResource.isLoading());
+    readonly remoteHealthLoading = computed(() => this.remoteHealthResource.isLoading());
 
     readonly deadLetterCount = computed(() => this.deadLettersSignal().length);
     readonly lastError = this.lastErrorSignal.asReadonly();
@@ -469,6 +527,15 @@ export class WebhooksStore {
         this.activityResource.reload();
     }
 
+    refreshRemoteHealth(): void {
+        if (this.capabilitiesSignal()?.mode !== 'Remote') {
+            this.remoteHealthSignal.set(null);
+            return;
+        }
+
+        this.remoteHealthResource.reload();
+    }
+
     clearRotatedSecret(): void {
         this.rotatedSecretSignal.set(null);
     }
@@ -486,6 +553,7 @@ export class WebhooksStore {
         this.deadLetterCountResource.reload();
         this.ipRulesResource.reload();
         this.capabilitiesResource.reload();
+        this.remoteHealthResource.reload();
         this.activityResource.reload();
     }
 
@@ -880,10 +948,34 @@ export class WebhooksStore {
             && Number.isFinite(value.defaultRequestsPerMinute)
             ? Math.max(1, Math.floor(value.defaultRequestsPerMinute))
             : 60;
+        const mode = normalizeWebhookMode(value.mode);
+        const remoteBaseUrl = mode === 'Remote'
+            ? normalizeOptionalString(value.remoteBaseUrl)
+            : null;
+        const remoteIngressBaseUrl = mode === 'Remote'
+            ? normalizeOptionalString(value.remoteIngressBaseUrl) ?? remoteBaseUrl
+            : null;
 
         return {
             allowUnsignedHooks,
             defaultRequestsPerMinute,
+            mode,
+            remoteBaseUrl,
+            remoteIngressBaseUrl,
+        };
+    }
+
+    private normalizeRemoteHealthResponse(value: WebhookRemoteHealthResponse): WebhookRemoteHealthView {
+        const status = normalizeRemoteHealthStatus(value.status);
+        const checkedAt = tryIsoFromUnknown(value.checkedAtUtc) ?? nowIso();
+        const statusCode = resolveOptionalNumber(value.statusCode) ?? null;
+        const detail = normalizeOptionalString(value.detail);
+
+        return {
+            status,
+            checkedAt,
+            statusCode,
+            detail,
         };
     }
 
@@ -1175,6 +1267,59 @@ function resolveActivityStatus(value: unknown): WebhookTimelineItemView['status'
 
 function resolveOptionalNumber(value: unknown): number | undefined {
     return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+}
+
+function normalizeOptionalString(value: unknown): string | null {
+    if (typeof value !== 'string') {
+        return null;
+    }
+    const trimmed = value.trim();
+    return trimmed.length > 0 ? trimmed : null;
+}
+
+function normalizeWebhookMode(value: unknown): WebhookMode {
+    if (typeof value !== 'string') {
+        return 'Unknown';
+    }
+
+    const trimmed = value.trim();
+    if (!trimmed) {
+        return 'Unknown';
+    }
+
+    switch (trimmed.toLowerCase()) {
+        case 'remote':
+            return 'Remote';
+        case 'sqlserver':
+            return 'SqlServer';
+        case 'postgres':
+            return 'Postgres';
+        case 'inmemory':
+            return 'InMemory';
+        default:
+            return 'Unknown';
+    }
+}
+
+function normalizeRemoteHealthStatus(value: unknown): WebhookRemoteHealthStatus {
+    if (typeof value !== 'string') {
+        return 'unavailable';
+    }
+
+    switch (value.trim().toLowerCase()) {
+        case 'ok':
+            return 'ok';
+        case 'unhealthy':
+            return 'unhealthy';
+        case 'unreachable':
+            return 'unreachable';
+        case 'not-configured':
+            return 'not-configured';
+        case 'unavailable':
+            return 'unavailable';
+        default:
+            return 'unavailable';
+    }
 }
 
 function resolveDeadLetterId(value: unknown): string | undefined {

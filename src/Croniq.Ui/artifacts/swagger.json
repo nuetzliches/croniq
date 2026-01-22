@@ -1200,6 +1200,45 @@
         }
       }
     },
+    "/tenants/{tenantId}/webhooks/remote/health": {
+      "get": {
+        "tags": [
+          "Croniq.Sample.ApiHost"
+        ],
+        "summary": "Check remote webhook health",
+        "description": "Proxies /health against the remote webhook host when Croniq:Webhooks:Mode=Remote.",
+        "operationId": "Webhooks_RemoteHealth",
+        "parameters": [
+          {
+            "name": "tenantId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "environment",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WebhookRemoteHealthResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/tenants/{tenantId}/webhooks/{hookKey}": {
       "delete": {
         "tags": [
@@ -4656,6 +4695,39 @@
           "defaultRequestsPerMinute": {
             "type": "integer",
             "format": "int32"
+          },
+          "mode": {
+            "type": "string"
+          },
+          "remoteBaseUrl": {
+            "type": "string",
+            "nullable": true
+          },
+          "remoteIngressBaseUrl": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "additionalProperties": false
+      },
+      "WebhookRemoteHealthResponse": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string"
+          },
+          "checkedAtUtc": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "statusCode": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "detail": {
+            "type": "string",
+            "nullable": true
           }
         },
         "additionalProperties": false

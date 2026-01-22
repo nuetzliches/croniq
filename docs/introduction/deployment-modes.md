@@ -228,4 +228,3 @@ Security expectations:
 
 - Use API keys with least-privilege scopes (`webhooks:read|write|rotate|deadletter` for admin, `webhooks:ingress` for the relay).
 - Apply `Croniq:Api:AllowedIpCidrs` on the ingress host to restrict admin access to internal egress ranges.
-

@@ -984,16 +984,18 @@ internal sealed class WebhookIngressRelayService : BackgroundService
         endpoint = new Uri("http://localhost");
         apiKey = string.Empty;
 
-        var baseUrl = remote.BaseUrl?.Trim();
+        var baseUrl = string.IsNullOrWhiteSpace(remote.IngressBaseUrl)
+            ? remote.BaseUrl?.Trim()
+            : remote.IngressBaseUrl.Trim();
         if (string.IsNullOrWhiteSpace(baseUrl))
         {
-            _logger.LogWarning("Webhook ingress relay base URL is not configured.");
+            _logger.LogWarning("Webhook ingress relay base URL is not configured. Set Croniq:Webhooks:Remote:IngressBaseUrl or Croniq:Webhooks:Remote:BaseUrl.");
             return false;
         }
 
         if (!Uri.TryCreate(baseUrl, UriKind.Absolute, out var parsed) || parsed is null)
         {
-            _logger.LogWarning("Webhook ingress relay base URL is not configured.");
+            _logger.LogWarning("Webhook ingress relay base URL is invalid.");
             return false;
         }
 

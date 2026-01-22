@@ -91,15 +91,159 @@ public static partial class ApiHostingExtensions
                 capabilities = new WebhookCapabilities(allowUnsignedHooks, defaultRequestsPerMinute);
             }
 
+            var mode = configuration.GetValue<string?>("Croniq:Webhooks:Mode") ?? "InMemory";
+            mode = string.IsNullOrWhiteSpace(mode) ? "InMemory" : mode.Trim();
+
+            string? remoteBaseUrl = null;
+            string? remoteIngressBaseUrl = null;
+            if (string.Equals(mode, "Remote", StringComparison.OrdinalIgnoreCase))
+            {
+                var rawBaseUrl = configuration.GetValue<string?>("Croniq:Webhooks:Remote:BaseUrl");
+                remoteBaseUrl = string.IsNullOrWhiteSpace(rawBaseUrl) ? null : rawBaseUrl.Trim();
+                var rawIngressBaseUrl = configuration.GetValue<string?>("Croniq:Webhooks:Remote:IngressBaseUrl");
+                remoteIngressBaseUrl = string.IsNullOrWhiteSpace(rawIngressBaseUrl)
+                    ? remoteBaseUrl
+                    : rawIngressBaseUrl.Trim();
+            }
+
             return Results.Ok(new WebhookCapabilitiesResponse(
                 capabilities.AllowUnsignedHooks,
-                capabilities.DefaultRequestsPerMinute));
+                capabilities.DefaultRequestsPerMinute,
+                mode,
+                remoteBaseUrl,
+                remoteIngressBaseUrl));
         })
         .WithDocs(
             "Webhooks_Capabilities",
             "Get webhook capabilities",
             "Returns the webhook defaults/capabilities for the tenant/environment scope.")
         .Produces<WebhookCapabilitiesResponse>(StatusCodes.Status200OK)
+        .RequireCroniqTenantScope(CroniqScopes.WebhooksRead);
+
+        app.MapGet("/tenants/{tenantId}/webhooks/remote/health", async (
+            string tenantId,
+            string? environment,
+            [FromServices] ICallerContextAccessor callerContextAccessor,
+            [FromServices] IConfiguration configuration,
+            [FromServices] IHttpClientFactory httpClientFactory,
+            [FromServices] IHostEnvironment hostEnvironment,
+            [FromServices] ILogger<WebhookEndpointApiMarker> logger,
+            CancellationToken cancellationToken) =>
+        {
+            var resolvedEnvironment = ResolveEnvironmentTag(environment, callerContextAccessor);
+            if (string.IsNullOrWhiteSpace(resolvedEnvironment))
+            {
+                return MissingEnvironment();
+            }
+
+            var mode = configuration.GetValue<string?>("Croniq:Webhooks:Mode") ?? string.Empty;
+            if (!string.Equals(mode, "Remote", StringComparison.OrdinalIgnoreCase))
+            {
+                return Results.Ok(new WebhookRemoteHealthResponse(
+                    "not-configured",
+                    DateTimeOffset.UtcNow,
+                    null,
+                    "Webhook mode is not Remote."));
+            }
+
+            var remoteBaseUrl = configuration.GetValue<string?>("Croniq:Webhooks:Remote:BaseUrl") ?? string.Empty;
+            var remoteIngressBaseUrl = configuration.GetValue<string?>("Croniq:Webhooks:Remote:IngressBaseUrl");
+            var resolvedIngressBaseUrl = string.IsNullOrWhiteSpace(remoteIngressBaseUrl)
+                ? remoteBaseUrl
+                : remoteIngressBaseUrl;
+            var remoteApiKey = configuration.GetValue<string?>("Croniq:Webhooks:Remote:ApiKey") ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(resolvedIngressBaseUrl) || string.IsNullOrWhiteSpace(remoteApiKey))
+            {
+                return Results.Ok(new WebhookRemoteHealthResponse(
+                    "unavailable",
+                    DateTimeOffset.UtcNow,
+                    null,
+                    "Remote webhook relay is not configured."));
+            }
+
+            if (!Uri.TryCreate(resolvedIngressBaseUrl, UriKind.Absolute, out var remoteUri))
+            {
+                return Results.Ok(new WebhookRemoteHealthResponse(
+                    "unavailable",
+                    DateTimeOffset.UtcNow,
+                    null,
+                    "Remote webhook relay ingress base URL is invalid."));
+            }
+
+            var allowInvalidCertificate = configuration.GetValue<bool?>("Croniq:Webhooks:Remote:AllowInvalidServerCertificate") ?? false;
+            if (allowInvalidCertificate && !hostEnvironment.IsDevelopment())
+            {
+                return Results.Ok(new WebhookRemoteHealthResponse(
+                    "unavailable",
+                    DateTimeOffset.UtcNow,
+                    null,
+                    "Croniq:Webhooks:Remote:AllowInvalidServerCertificate is only supported in Development."));
+            }
+
+            HttpClient? client = null;
+            try
+            {
+                client = allowInvalidCertificate
+                    ? new HttpClient(new HttpClientHandler
+                    {
+                        ServerCertificateCustomValidationCallback = HttpClientHandler.DangerousAcceptAnyServerCertificateValidator
+                    }, disposeHandler: true)
+                    : httpClientFactory.CreateClient();
+
+                client.BaseAddress = remoteUri;
+                client.DefaultRequestHeaders.Remove("X-Croniq-Key");
+                client.DefaultRequestHeaders.Add("X-Croniq-Key", remoteApiKey);
+                client.DefaultRequestHeaders.Remove("X-Croniq-Relay-Key");
+                client.DefaultRequestHeaders.Add("X-Croniq-Relay-Key", remoteApiKey);
+
+                using var response = await client.GetAsync("health", cancellationToken).ConfigureAwait(false);
+                if (!response.IsSuccessStatusCode)
+                {
+                    var body = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
+                    var detail = string.IsNullOrWhiteSpace(body)
+                        ? $"Remote health probe failed with status {(int)response.StatusCode} ({response.ReasonPhrase})."
+                        : body;
+
+                    logger.LogWarning(
+                        "remote webhook health check failed with status {StatusCode} {ReasonPhrase}",
+                        (int)response.StatusCode,
+                        response.ReasonPhrase);
+
+                    return Results.Ok(new WebhookRemoteHealthResponse(
+                        "unhealthy",
+                        DateTimeOffset.UtcNow,
+                        (int)response.StatusCode,
+                        detail));
+                }
+
+                return Results.Ok(new WebhookRemoteHealthResponse(
+                    "ok",
+                    DateTimeOffset.UtcNow,
+                    (int)response.StatusCode,
+                    null));
+            }
+            catch (HttpRequestException ex)
+            {
+                logger.LogWarning(ex, "remote webhook health check failed");
+                return Results.Ok(new WebhookRemoteHealthResponse(
+                    "unreachable",
+                    DateTimeOffset.UtcNow,
+                    null,
+                    ex.Message));
+            }
+            finally
+            {
+                if (allowInvalidCertificate)
+                {
+                    client?.Dispose();
+                }
+            }
+        })
+        .WithDocs(
+            "Webhooks_RemoteHealth",
+            "Check remote webhook health",
+            "Proxies /health against the remote webhook host when Croniq:Webhooks:Mode=Remote.")
+        .Produces<WebhookRemoteHealthResponse>(StatusCodes.Status200OK)
         .RequireCroniqTenantScope(CroniqScopes.WebhooksRead);
 
         app.MapPost("/tenants/{tenantId}/webhooks", async (
@@ -502,15 +646,19 @@ public static partial class ApiHostingExtensions
             if (string.Equals(webhooksMode, "Remote", StringComparison.OrdinalIgnoreCase))
             {
                 var remoteBaseUrl = configuration.GetValue<string?>("Croniq:Webhooks:Remote:BaseUrl") ?? string.Empty;
+                var remoteIngressBaseUrl = configuration.GetValue<string?>("Croniq:Webhooks:Remote:IngressBaseUrl");
+                var resolvedIngressBaseUrl = string.IsNullOrWhiteSpace(remoteIngressBaseUrl)
+                    ? remoteBaseUrl
+                    : remoteIngressBaseUrl;
                 var remoteApiKey = configuration.GetValue<string?>("Croniq:Webhooks:Remote:ApiKey") ?? string.Empty;
-                if (string.IsNullOrWhiteSpace(remoteBaseUrl) || string.IsNullOrWhiteSpace(remoteApiKey))
+                if (string.IsNullOrWhiteSpace(resolvedIngressBaseUrl) || string.IsNullOrWhiteSpace(remoteApiKey))
                 {
                     return Results.Problem(statusCode: StatusCodes.Status503ServiceUnavailable, title: "webhook-remote-unavailable", detail: "Remote webhook relay is not configured.");
                 }
 
-                if (!Uri.TryCreate(remoteBaseUrl, UriKind.Absolute, out var remoteUri))
+                if (!Uri.TryCreate(resolvedIngressBaseUrl, UriKind.Absolute, out var remoteUri))
                 {
-                    return Results.Problem(statusCode: StatusCodes.Status503ServiceUnavailable, title: "webhook-remote-unavailable", detail: "Remote webhook relay base URL is invalid.");
+                    return Results.Problem(statusCode: StatusCodes.Status503ServiceUnavailable, title: "webhook-remote-unavailable", detail: "Remote webhook relay ingress base URL is invalid.");
                 }
 
                 var allowInvalidCertificate = configuration.GetValue<bool?>("Croniq:Webhooks:Remote:AllowInvalidServerCertificate") ?? false;

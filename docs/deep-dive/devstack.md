@@ -68,4 +68,3 @@ Caddy proxies to `CRONIQ_CADDY_UPSTREAM_HOST` (default `host.docker.internal`). 
 ## CI Smoke Checks
 
 - Nightly and release workflows start the AppHost, wait for `/health`, run `tests/Croniq.Api.Smoke`, and upload logs from `artifacts/release-devstack`.
-

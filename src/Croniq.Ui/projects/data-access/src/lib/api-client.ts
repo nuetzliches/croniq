@@ -1,9 +1,9 @@
 import { HttpClient } from '@angular/common/http';
 import { EnvironmentProviders, InjectionToken, Provider, inject, makeEnvironmentProviders } from '@angular/core';
-import { AuthApi, CalendarResponse, CalendarResponseLooseSchema, CalendarUpsertResult, CreateWebhookIpRuleRequest, CroniqCalendarSeedDefinition, HealthApi, IssueApiKeyRequest, IssueTokenRequest, JobsApi, MeApi, PasswordChangePasswordRequest, PasswordLoginRequest, PasswordLogoutRequest, PasswordRefreshRequest, RotateWebhookSecretRequest, RunnerHeartbeatRequest, RunnerListResponse, ScheduleDeadLetterResponse, ScheduleForecastResponse, ScheduleResponse, ScheduleUpsertResult, TenantsApi, TriggerJobRequest, UpsertApiClientRequest, UpsertJobRequest, UpsertScheduleRequest, UpsertTenantRequest, UpsertWebhookEndpointRequest, WebhookActivitySummary, WebhookActivityTimelineResponse, WebhookCapabilitiesResponse, WorkerHeartbeatRequest, WorkerListResponse, WorkAckRequest, WorkEventsRequest, WorkPollRequest, WorkRenewRequest, type EndpointDefinition } from '@croniq/api-schema';
+import { AuthApi, CalendarResponse, CalendarResponseLooseSchema, CalendarUpsertResult, CreateWebhookIpRuleRequest, CroniqCalendarSeedDefinition, HealthApi, IssueApiKeyRequest, IssueTokenRequest, JobsApi, MeApi, PasswordChangePasswordRequest, PasswordLoginRequest, PasswordLogoutRequest, PasswordRefreshRequest, RotateWebhookSecretRequest, RunnerHeartbeatRequest, RunnerListResponse, ScheduleDeadLetterResponse, ScheduleForecastResponse, ScheduleResponse, ScheduleUpsertResult, TenantsApi, TriggerJobRequest, UpsertApiClientRequest, UpsertJobRequest, UpsertScheduleRequest, UpsertTenantRequest, UpsertWebhookEndpointRequest, WebhookActivitySummary, WebhookActivityTimelineResponse, WebhookCapabilitiesResponse, WebhookRemoteHealthResponse, WorkerHeartbeatRequest, WorkerListResponse, WorkAckRequest, WorkEventsRequest, WorkPollRequest, WorkRenewRequest, type EndpointDefinition } from '@croniq/api-schema';
 import type { Observable } from 'rxjs';
 import { z } from 'zod';
-import type { CroniqCredentialSupplier, CroniqRequestOptions, DashboardForecastParams, ExecutionLogParams, ExecutionParams, TenantApiClientParams, TenantApiClientTokenParams, TenantApiKeyParams, TenantCalendarParams, TenantDeadLetterParams, TenantEnvironmentOptionalParams, TenantEnvironmentParams, TenantScheduleParams, TenantScopedParams, TenantUpsertApiClientParams, TenantWebhookActivityParams, TenantWebhookActivitySummaryParams, TenantWebhookCapabilitiesParams, TenantWebhookParams, TenantWebhookRuleParams, TenantWebhookUpsertParams, WebhookInvocationParams, WorkEventsParams } from './api-client.types';
+import type { CroniqCredentialSupplier, CroniqRequestOptions, DashboardForecastParams, ExecutionLogParams, ExecutionParams, TenantApiClientParams, TenantApiClientTokenParams, TenantApiKeyParams, TenantCalendarParams, TenantDeadLetterParams, TenantEnvironmentOptionalParams, TenantEnvironmentParams, TenantScheduleParams, TenantScopedParams, TenantUpsertApiClientParams, TenantWebhookActivityParams, TenantWebhookActivitySummaryParams, TenantWebhookCapabilitiesParams, TenantWebhookRemoteHealthParams, TenantWebhookParams, TenantWebhookRuleParams, TenantWebhookUpsertParams, WebhookInvocationParams, WorkEventsParams } from './api-client.types';
 import type { EndpointCallConfig } from './endpoint-executor';
 import { EndpointExecutor, requireEndpoint, type BaseUrlResolver } from './endpoint-executor';
 
@@ -136,6 +136,12 @@ const WEBHOOK_CAPABILITIES_ENDPOINT = requireEndpoint(
     TenantsApi,
     'get',
     '/tenants/:tenantId/webhooks/capabilities',
+);
+
+const WEBHOOK_REMOTE_HEALTH_ENDPOINT = requireEndpoint(
+    TenantsApi,
+    'get',
+    '/tenants/:tenantId/webhooks/remote/health',
 );
 
 const WEBHOOK_ACTIVITY_TIMELINE_ENDPOINT_PATH = '/tenants/:tenantId/webhooks/activity';
@@ -273,6 +279,10 @@ export interface CroniqApiClient {
         params: TenantWebhookCapabilitiesParams,
         options?: CroniqRequestOptions,
     ): Observable<WebhookCapabilitiesResponse>;
+    getTenantWebhookRemoteHealth(
+        params: TenantWebhookRemoteHealthParams,
+        options?: CroniqRequestOptions,
+    ): Observable<WebhookRemoteHealthResponse>;
     upsertTenantWebhook(
         params: TenantWebhookUpsertParams,
         payload: UpsertWebhookEndpointRequest,
@@ -908,6 +918,20 @@ class HttpCroniqApiClient implements CroniqApiClient {
         );
     }
 
+    getTenantWebhookRemoteHealth(
+        params: TenantWebhookRemoteHealthParams,
+        options?: CroniqRequestOptions,
+    ): Observable<WebhookRemoteHealthResponse> {
+        return this.execute$<WebhookRemoteHealthResponse>(
+            WEBHOOK_REMOTE_HEALTH_ENDPOINT,
+            {
+                path: { tenantId: params.tenantId },
+                query: { environment: params.environment },
+            },
+            options,
+        );
+    }
+
     upsertTenantWebhook(
         params: TenantWebhookUpsertParams,
         payload: UpsertWebhookEndpointRequest,
@@ -1306,4 +1330,4 @@ export function provideCroniqApiClient(config: { baseUrl?: CroniqApiBaseUrlResol
     return makeEnvironmentProviders(providers);
 }
 
-export type { CallerContext, CroniqCredentialSupplier, CroniqRequestOptions, DashboardForecastParams, ExecutionLogParams, TenantApiClientParams, TenantApiKeyParams, TenantCalendarParams, TenantDeadLetterParams, TenantEnvironmentParams, TenantScopedParams, TenantWebhookActivityParams, TenantWebhookActivitySummaryParams, TenantWebhookCapabilitiesParams, TenantWebhookParams, TenantWebhookRuleParams, TenantWebhookUpsertParams, WebhookActivityStatus, WebhookInvocationParams } from './api-client.types';
+export type { CallerContext, CroniqCredentialSupplier, CroniqRequestOptions, DashboardForecastParams, ExecutionLogParams, TenantApiClientParams, TenantApiKeyParams, TenantCalendarParams, TenantDeadLetterParams, TenantEnvironmentParams, TenantScopedParams, TenantWebhookActivityParams, TenantWebhookActivitySummaryParams, TenantWebhookCapabilitiesParams, TenantWebhookRemoteHealthParams, TenantWebhookParams, TenantWebhookRuleParams, TenantWebhookUpsertParams, WebhookActivityStatus, WebhookInvocationParams } from './api-client.types';

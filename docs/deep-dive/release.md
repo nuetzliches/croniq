@@ -20,19 +20,24 @@ This document extends `ci.md` with the steps every Croniq release must follow: v
 
 1. **Tagging** - create a signed tag `vX.Y.Z` on the main branch.
 2. **Build phase**:
-  - `dotnet build` + `dotnet test` (unit + contract suites).
-  - Aspire smoke tests (see `ci.md`) triggered for release candidates.
+
+   - `dotnet build` + `dotnet test` (unit + contract suites).
+   - Aspire smoke tests (see `ci.md`) triggered for release candidates.
 3. **Packaging**:
-   - `dotnet pack` produces NuGet packages (Croniq.\*).
+
+   - `dotnet pack` produces NuGet packages (Croniq.*).
    - Docker images built with multi-stage Dockerfiles (`infra/docker`).
 4. **Security evidence**:
+
    - Generate SBOM via Syft: `syft dir:artifacts/nuget -o spdx-json` plus image SBOMs from the built tags.
    - Scan images/packages with Trivy; fail on high-severity issues.
    - Sign container images with Cosign when keys are available. NuGet signing is gated and currently disabled until a public CA certificate is available.
 5. **Publishing**:
+
    - Push NuGet packages with `dotnet nuget push`.
    - Push container images to GHCR.
 6. **Verification**:
+
    - `cosign verify --certificate-identity <issuer> ghcr.io/...:0.6.0`.
    - `dotnet nuget verify Croniq.Core.0.6.0.nupkg --certificate-fingerprint <fingerprint>`.
    - Run `Croniq.DbMigrator` against the staging database (set `CRONIQ_DB_PROVIDER` plus `CRONIQ_SQL_CONNECTION` or `CRONIQ_POSTGRES_CONNECTION` in the environment) to confirm migrations apply cleanly.

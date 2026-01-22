@@ -378,4 +378,3 @@ Need a bigger checklist? Jump to [`troubleshooting.md`](../ops/troubleshooting.m
 - Consult `docs/deep-dive/job-registration.md` for the in-depth view on how the runtime persists job metadata during startup.
 - Switch to [`auth.md`](../guides/auth.md) when you need detailed guidance on caller flows and secret rotation.
 - Keep [`troubleshooting.md`](../ops/troubleshooting.md) handy when startup or dev stack issues block you.
-

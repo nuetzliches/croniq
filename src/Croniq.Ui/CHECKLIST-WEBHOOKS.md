@@ -9,6 +9,14 @@ Purpose: track the remaining work to expand the Webhooks UI with an activity tim
 - [x] Define the chart aggregation schema using backend standard defaults (bucket size, total count, warning/error counts, p95 latency).
 - [x] Add/extend OpenAPI definitions for the timeline + chart endpoints and regenerate UI schemas.
 
+## Remote Mode Visibility (Concept)
+
+- [ ] Surface a "Remote" delivery mode badge/row only when the backend reports Mode = Remote.
+- [ ] Display the configured remote base URL in the UI (from the ApiHost contract, not from env vars).
+- [ ] Add an ApiHost endpoint that proxies the remote `/health` check (browser must not call the DMZ directly).
+- [ ] Show health status + last checked timestamp in the UI, with a manual refresh action.
+- [ ] Define UX for failure states (timeout, unreachable, auth error) with concise guidance.
+
 ## Transport (Stream vs Poll)
 
 - [x] Decide on transport: prefer gRPC (via gRPC-Web/proxy) -> SSE fallback -> polling fallback.

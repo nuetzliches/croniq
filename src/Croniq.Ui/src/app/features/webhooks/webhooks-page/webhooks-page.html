@@ -25,36 +25,124 @@
     </div>
   </header>
 
-  <div class="grid gap-3 md:grid-cols-4">
-    <div class="rounded-xl border border-white/10 bg-surface-alt p-4 shadow-card">
-      <p class="text-xs text-muted">Success rate</p>
-      <p class="mt-1 text-xl font-semibold text-primary">
-        {{ kpiSuccessRate() }}
-      </p>
-      <p class="mt-1 text-[11px] text-muted">Derived from dead letters vs endpoints.</p>
+  @if (remoteModeEnabled()) {
+    <div class="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+      <div class="rounded-xl border border-white/10 bg-surface-alt p-4 shadow-card">
+        <div class="flex flex-wrap items-start justify-between gap-3">
+          <div class="space-y-1">
+            <p class="text-xs text-muted">Delivery mode</p>
+            <p class="text-sm font-semibold text-primary">Remote</p>
+            <p class="text-[11px] text-muted">Webhook admin calls are proxied to the remote host.</p>
+          </div>
+          <div
+            class="inline-flex items-center gap-2 rounded-full px-2 py-1 text-[11px] font-semibold"
+            [class.bg-success/10]="remoteHealthTone() === 'success'"
+            [class.text-success]="remoteHealthTone() === 'success'"
+            [class.bg-warning/10]="remoteHealthTone() === 'warning'"
+            [class.text-warning]="remoteHealthTone() === 'warning'"
+            [class.bg-danger/10]="remoteHealthTone() === 'danger'"
+            [class.text-danger]="remoteHealthTone() === 'danger'"
+            [class.bg-white/10]="remoteHealthTone() === 'muted'"
+            [class.text-muted]="remoteHealthTone() === 'muted'"
+          >
+            <span
+              class="h-2 w-2 rounded-full"
+              [class.bg-success]="remoteHealthTone() === 'success'"
+              [class.bg-warning]="remoteHealthTone() === 'warning'"
+              [class.bg-danger]="remoteHealthTone() === 'danger'"
+              [class.bg-white/40]="remoteHealthTone() === 'muted'"
+            ></span>
+            {{ remoteHealthLabel() }}
+          </div>
+        </div>
+        <div class="mt-3 space-y-2">
+          <div class="text-[11px] font-semibold uppercase tracking-wide text-muted">Remote base URL</div>
+          <code class="block break-all rounded-lg border border-white/10 bg-black/20 px-2 py-1 text-xs text-primary">
+            {{ remoteBaseUrlLabel() }}
+          </code>
+          <div class="flex flex-wrap items-center gap-2 text-[11px] text-muted">
+            <button
+              type="button"
+              class="rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-[11px] font-semibold text-primary transition hover:border-accent hover:text-accent disabled:cursor-not-allowed disabled:opacity-50"
+              (click)="refreshRemoteHealth()"
+              [disabled]="remoteHealthLoading()"
+            >
+              {{ remoteHealthLoading() ? 'Checking...' : 'Check health' }}
+            </button>
+            @if (remoteHealthCheckedAt()) {
+              <span>Last check: {{ remoteHealthCheckedAt() | date: 'short' }}</span>
+            } @else {
+              <span>No check yet.</span>
+            }
+          </div>
+          @if (remoteHealthDetailLabel()) {
+            <p class="text-[11px] text-warning">{{ remoteHealthDetailLabel() }}</p>
+          }
+        </div>
+      </div>
+      <div class="grid gap-3 md:grid-cols-2">
+        <div class="rounded-xl border border-white/10 bg-surface-alt p-4 shadow-card">
+          <p class="text-xs text-muted">Success rate</p>
+          <p class="mt-1 text-xl font-semibold text-primary">
+            {{ kpiSuccessRate() }}
+          </p>
+          <p class="mt-1 text-[11px] text-muted">Derived from dead letters vs endpoints.</p>
+        </div>
+        <div class="rounded-xl border border-white/10 bg-surface-alt p-4 shadow-card">
+          <p class="text-xs text-muted">Latency (p95)</p>
+          <p class="mt-1 text-xl font-semibold text-primary">
+            {{ kpiLatency() }}
+          </p>
+          <p class="mt-1 text-[11px] text-muted">Awaiting telemetry aggregation.</p>
+        </div>
+        <div class="rounded-xl border border-white/10 bg-surface-alt p-4 shadow-card">
+          <p class="text-xs text-muted">Rate-limit rejections</p>
+          <p class="mt-1 text-xl font-semibold text-primary">
+            {{ kpiRateLimitRejections() }}
+          </p>
+          <p class="mt-1 text-[11px] text-muted">Telemetry feed pending.</p>
+        </div>
+        <div class="rounded-xl border border-white/10 bg-surface-alt p-4 shadow-card">
+          <p class="text-xs text-muted">Dead letters</p>
+          <p class="mt-1 text-xl font-semibold text-primary">
+            {{ kpiDeadLetters() }}
+          </p>
+          <p class="mt-1 text-[11px] text-muted">Failed deliveries awaiting replay.</p>
+        </div>
+      </div>
     </div>
-    <div class="rounded-xl border border-white/10 bg-surface-alt p-4 shadow-card">
-      <p class="text-xs text-muted">Latency (p95)</p>
-      <p class="mt-1 text-xl font-semibold text-primary">
-        {{ kpiLatency() }}
-      </p>
-      <p class="mt-1 text-[11px] text-muted">Awaiting telemetry aggregation.</p>
+  } @else {
+    <div class="grid gap-3 md:grid-cols-4">
+      <div class="rounded-xl border border-white/10 bg-surface-alt p-4 shadow-card">
+        <p class="text-xs text-muted">Success rate</p>
+        <p class="mt-1 text-xl font-semibold text-primary">
+          {{ kpiSuccessRate() }}
+        </p>
+        <p class="mt-1 text-[11px] text-muted">Derived from dead letters vs endpoints.</p>
+      </div>
+      <div class="rounded-xl border border-white/10 bg-surface-alt p-4 shadow-card">
+        <p class="text-xs text-muted">Latency (p95)</p>
+        <p class="mt-1 text-xl font-semibold text-primary">
+          {{ kpiLatency() }}
+        </p>
+        <p class="mt-1 text-[11px] text-muted">Awaiting telemetry aggregation.</p>
+      </div>
+      <div class="rounded-xl border border-white/10 bg-surface-alt p-4 shadow-card">
+        <p class="text-xs text-muted">Rate-limit rejections</p>
+        <p class="mt-1 text-xl font-semibold text-primary">
+          {{ kpiRateLimitRejections() }}
+        </p>
+        <p class="mt-1 text-[11px] text-muted">Telemetry feed pending.</p>
+      </div>
+      <div class="rounded-xl border border-white/10 bg-surface-alt p-4 shadow-card">
+        <p class="text-xs text-muted">Dead letters</p>
+        <p class="mt-1 text-xl font-semibold text-primary">
+          {{ kpiDeadLetters() }}
+        </p>
+        <p class="mt-1 text-[11px] text-muted">Failed deliveries awaiting replay.</p>
+      </div>
     </div>
-    <div class="rounded-xl border border-white/10 bg-surface-alt p-4 shadow-card">
-      <p class="text-xs text-muted">Rate-limit rejections</p>
-      <p class="mt-1 text-xl font-semibold text-primary">
-        {{ kpiRateLimitRejections() }}
-      </p>
-      <p class="mt-1 text-[11px] text-muted">Telemetry feed pending.</p>
-    </div>
-    <div class="rounded-xl border border-white/10 bg-surface-alt p-4 shadow-card">
-      <p class="text-xs text-muted">Dead letters</p>
-      <p class="mt-1 text-xl font-semibold text-primary">
-        {{ kpiDeadLetters() }}
-      </p>
-      <p class="mt-1 text-[11px] text-muted">Failed deliveries awaiting replay.</p>
-    </div>
-  </div>
+  }
 
   @if (writePermissionDenied()) {
     <div class="rounded-xl border border-warning/40 bg-warning/10 px-4 py-3 text-xs text-warning">
@@ -469,24 +557,72 @@
           </div>
         } @else {
           <div class="mt-4 space-y-4">
-            <div class="space-y-2 rounded-lg border border-white/10 bg-black/10 px-3 py-3">
-              <div class="flex items-center justify-between">
-                <div class="text-xs font-semibold uppercase tracking-wide text-muted">Ingress URL</div>
-                <button
-                  type="button"
-                  class="rounded-lg border border-white/10 bg-white/5 px-2 py-1 text-xs font-semibold text-primary transition hover:border-accent hover:text-accent"
-                  (click)="copyIngressUrl()"
-                  [disabled]="!ingressUrl()"
-                >
-                  Copy
-                </button>
-              </div>
-              @if (ingressUrl()) {
-                <code class="block break-all rounded-lg border border-white/10 bg-black/20 px-2 py-1 text-xs text-primary">
-                  {{ ingressUrl() }}
-                </code>
+            <div class="space-y-3 rounded-lg border border-white/10 bg-black/10 px-3 py-3">
+              @if (remoteModeEnabled()) {
+                <div class="space-y-2">
+                  <div class="text-xs font-semibold uppercase tracking-wide text-muted">Ingress URLs</div>
+                  <div class="space-y-2">
+                    <div class="flex items-center justify-between">
+                      <div class="text-[11px] font-semibold uppercase tracking-wide text-muted">API host</div>
+                      <button
+                        type="button"
+                        class="rounded-lg border border-white/10 bg-white/5 px-2 py-1 text-[11px] font-semibold text-primary transition hover:border-accent hover:text-accent"
+                        (click)="copyIngressUrl('internal')"
+                        [disabled]="!internalIngressUrl()"
+                      >
+                        Copy
+                      </button>
+                    </div>
+                    @if (internalIngressUrl()) {
+                      <code class="block break-all rounded-lg border border-white/10 bg-black/20 px-2 py-1 text-xs text-primary">
+                        {{ internalIngressUrl() }}
+                      </code>
+                    } @else {
+                      <p class="text-xs text-muted">API host ingress URL unavailable.</p>
+                    }
+                  </div>
+                  <div class="space-y-2">
+                    <div class="flex items-center justify-between">
+                      <div class="text-[11px] font-semibold uppercase tracking-wide text-muted">Remote</div>
+                      <button
+                        type="button"
+                        class="rounded-lg border border-white/10 bg-white/5 px-2 py-1 text-[11px] font-semibold text-primary transition hover:border-accent hover:text-accent"
+                        (click)="copyIngressUrl('remote')"
+                        [disabled]="!remoteIngressUrl()"
+                      >
+                        Copy
+                      </button>
+                    </div>
+                    @if (remoteIngressUrl()) {
+                      <code class="block break-all rounded-lg border border-white/10 bg-black/20 px-2 py-1 text-xs text-primary">
+                        {{ remoteIngressUrl() }}
+                      </code>
+                    } @else {
+                      <p class="text-xs text-muted">Remote ingress URL unavailable.</p>
+                    }
+                  </div>
+                </div>
               } @else {
-                <p class="text-xs text-muted">Ingress URL unavailable for the current tenant.</p>
+                <div class="space-y-2">
+                  <div class="flex items-center justify-between">
+                    <div class="text-xs font-semibold uppercase tracking-wide text-muted">Ingress URL</div>
+                    <button
+                      type="button"
+                      class="rounded-lg border border-white/10 bg-white/5 px-2 py-1 text-xs font-semibold text-primary transition hover:border-accent hover:text-accent"
+                      (click)="copyIngressUrl()"
+                      [disabled]="!ingressUrl()"
+                    >
+                      Copy
+                    </button>
+                  </div>
+                  @if (ingressUrl()) {
+                    <code class="block break-all rounded-lg border border-white/10 bg-black/20 px-2 py-1 text-xs text-primary">
+                      {{ ingressUrl() }}
+                    </code>
+                  } @else {
+                    <p class="text-xs text-muted">Ingress URL unavailable for the current tenant.</p>
+                  }
+                </div>
               }
             </div>
 

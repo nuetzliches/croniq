@@ -56,6 +56,7 @@ import {
     WebhookActivitySummary,
     WebhookActivityTimelineEntry,
     WebhookCapabilitiesResponse,
+    WebhookRemoteHealthResponse,
     WebhookDeadLetterFailureRequest,
     WebhookDeadLetterResponse,
     WebhookEndpointEventResponse,

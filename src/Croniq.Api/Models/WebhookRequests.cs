@@ -40,7 +40,16 @@ public sealed record WebhookEndpointEventResponse(
 
 public sealed record WebhookCapabilitiesResponse(
     bool AllowUnsignedHooks,
-    int DefaultRequestsPerMinute);
+    int DefaultRequestsPerMinute,
+    string Mode,
+    string? RemoteBaseUrl,
+    string? RemoteIngressBaseUrl);
+
+public sealed record WebhookRemoteHealthResponse(
+    string Status,
+    DateTimeOffset CheckedAtUtc,
+    int? StatusCode,
+    string? Detail);
 
 public sealed record WebhookDeadLetterResponse(
     long Id,

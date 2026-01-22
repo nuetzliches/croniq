@@ -12,6 +12,7 @@ Croniq.Webhooks lets external systems trigger Croniq jobs via HTTP. This guide f
 - Diagnostics: dead letters under `/tenants/{tenantId}/webhooks/deadletters` and IP rules under `/tenants/{tenantId}/webhooks/{hookKey}/ip-rules`
 - Activity timeline: `GET /tenants/{tenantId}/webhooks/activity?environment=<tag>&fromUtc=<iso>&toUtc=<iso>&hookKeys=a,b&jobKeys=c,d&limit=200`
 - Activity summary: `GET /tenants/{tenantId}/webhooks/activity/summary?environment=<tag>&fromUtc=<iso>&toUtc=<iso>&bucketMinutes=60`
+- Remote health (proxy): `GET /tenants/{tenantId}/webhooks/remote/health?environment=<tag>` (API host checks the remote `/health` when `Croniq:Webhooks:Mode=Remote`)
 - DMZ ingress relay/streaming: see [`docs/deep-dive/designs/dmz-ingress-remote-webhooks.md`](../deep-dive/designs/dmz-ingress-remote-webhooks.md)
 
 Activity timeline entries include a `source` field (`ingress` or `invoke`) so operators can distinguish manual invokes from inbound deliveries.
@@ -96,6 +97,8 @@ $Env:Croniq__Webhooks__Endpoints__0__Metadata__type = "invoice"
 This exposes `POST /tenants/default/environments/dev/webhooks/invoice-paid` locally. The sample job logs every invocation, and metadata keys such as `payload:invoiceId` become available via `IJobExecutionContext.Metadata`.
 
 For DMZ deployments with `Croniq:Webhooks:Mode=Remote`, keep `Croniq:Webhooks:Remote:EnableRelay=true` on the worker host (the host that registers jobs) and disable it on the API host. The API host still needs the remote config to manage hooks and invoke `/invoke`, but it should not execute ingress relay itself.
+
+If the remote admin API and ingress endpoints are hosted on different domains, set `Croniq:Webhooks:Remote:IngressBaseUrl` on the API host. When omitted, the API host uses `Croniq:Webhooks:Remote:BaseUrl` for both admin and ingress relay/invoke calls.
 
 Example request against the sample host:
 
@@ -228,4 +231,3 @@ Treat secrets as credentials: read them from your secret manager at runtime, nev
 - [`triggers.md`](./triggers.md) for cron schedules and `@once` triggers.
 
 > **Learn more:** Dive into [architecture.md](../deep-dive/architecture.md#webhook-trigger-surface), the [DMZ ingress design](../deep-dive/designs/dmz-ingress-remote-webhooks.md), and [secret rotation](../deep-dive/designs/webhook-secret-rotation.md) for operational internals.
-

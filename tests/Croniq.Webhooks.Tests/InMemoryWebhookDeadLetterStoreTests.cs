@@ -32,7 +32,8 @@ public sealed class InMemoryWebhookDeadLetterStoreTests
         var entry = await store.FindAsync(id, DefaultScope, CancellationToken.None);
         entry.ShouldNotBeNull();
         entry!.Attempts.ShouldBe(1);
-        entry.Metadata.ShouldContainKeyAndValue("source", "unit");
+        entry.Metadata.ShouldNotBeNull();
+        entry.Metadata!.ShouldContainKeyAndValue("source", "unit");
 
         await store.RecordFailureAsync(
             id,

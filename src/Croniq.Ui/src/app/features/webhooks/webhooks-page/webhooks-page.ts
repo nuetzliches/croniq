@@ -8,7 +8,7 @@ import { RotateWebhookSecretRequest, UpsertWebhookEndpointRequest } from '@croni
 import { WebhookDialogComponent } from '@features/webhooks/components/webhook-dialog/webhook-dialog.component';
 import { WebhookIpRulesDialogComponent } from '@features/webhooks/components/webhook-ip-rules-dialog/webhook-ip-rules-dialog.component';
 import { WebhookRotateSecretDialogComponent } from '@features/webhooks/components/webhook-rotate-secret-dialog/webhook-rotate-secret-dialog.component';
-import { ActivityBucket, ActivityConnectionState, WebhookActivityQuery, WebhookCapabilitiesView, WebhookDeadLetterView, WebhookEndpointView, WebhookTimelineItemView, WebhooksStore } from '@features/webhooks/webhooks.store';
+import { ActivityBucket, ActivityConnectionState, WebhookActivityQuery, WebhookCapabilitiesView, WebhookDeadLetterView, WebhookEndpointView, WebhookRemoteHealthView, WebhookTimelineItemView, WebhooksStore } from '@features/webhooks/webhooks.store';
 import { CqEchartsChartComponent } from '@shared/charts/echarts-chart/echarts-chart';
 import { ShellPanelService } from '@shell/panel/shell-panel.service';
 import type { SeriesOption } from 'echarts';
@@ -172,6 +172,24 @@ export class WebhooksPage {
   readonly activityConnectionTone = computed(() =>
     resolveActivityConnectionTone(this.activityConnectionState()),
   );
+  readonly capabilities = this.store.capabilities;
+  readonly remoteHealth = this.store.remoteHealth;
+  readonly remoteHealthLoading = this.store.remoteHealthLoading;
+  readonly remoteMode = computed(() => this.capabilities()?.mode ?? 'Unknown');
+  readonly remoteModeEnabled = computed(() => this.remoteMode() === 'Remote');
+  readonly remoteBaseUrl = computed(() => this.capabilities()?.remoteBaseUrl ?? null);
+  readonly remoteBaseUrlLabel = computed(() => this.remoteBaseUrl() ?? 'Not configured');
+  readonly remoteIngressBaseUrl = computed(() =>
+    this.capabilities()?.remoteIngressBaseUrl ?? this.remoteBaseUrl(),
+  );
+  readonly remoteHealthTone = computed(() =>
+    resolveRemoteHealthTone(this.remoteHealth(), this.remoteHealthLoading()),
+  );
+  readonly remoteHealthLabel = computed(() =>
+    formatRemoteHealthLabel(this.remoteHealth(), this.remoteHealthLoading()),
+  );
+  readonly remoteHealthCheckedAt = computed(() => this.remoteHealth()?.checkedAt ?? null);
+  readonly remoteHealthDetailLabel = computed(() => formatRemoteHealthDetail(this.remoteHealth()));
   readonly filterModel = signal(createDefaultFilters());
   readonly filterForm = form(this.filterModel, () => { });
   readonly statusOptions = STATUS_OPTIONS;
@@ -386,18 +404,17 @@ export class WebhooksPage {
     return this.endpoints().find((endpoint) => this.webhookRowKey(endpoint, 0) === key) ?? null;
   });
 
+  readonly internalIngressUrl = computed(() =>
+    this.resolveIngressUrlFromBase(this.runtimeConfig.apiBaseUrl),
+  );
+
+  readonly remoteIngressUrl = computed(() =>
+    this.remoteModeEnabled() ? this.resolveIngressUrlFromBase(this.remoteIngressBaseUrl()) : null,
+  );
+
   readonly ingressUrl = computed(() => {
-    const endpoint = this.selectedEndpoint();
-    const tenantId = this.tenantContext.tenantId();
-    const baseUrl = this.runtimeConfig.apiBaseUrl;
-    if (!endpoint || !tenantId || !baseUrl) {
-      return null;
-    }
-    try {
-      return new URL(`/tenants/${tenantId}/webhooks/${encodeURIComponent(endpoint.hookKey)}`, baseUrl).toString();
-    } catch {
-      return null;
-    }
+    const remoteUrl = this.remoteModeEnabled() ? this.remoteIngressUrl() : null;
+    return remoteUrl ?? this.internalIngressUrl();
   });
 
   webhookRowClasses = (row: WebhookEndpointView) =>
@@ -411,8 +428,12 @@ export class WebhooksPage {
     this.selectedRowKey.set(this.webhookRowKey(row, 0));
   }
 
-  copyIngressUrl(): void {
-    const url = this.ingressUrl();
+  copyIngressUrl(target?: 'internal' | 'remote'): void {
+    const url = target === 'internal'
+      ? this.internalIngressUrl()
+      : target === 'remote'
+        ? this.remoteIngressUrl()
+        : this.ingressUrl();
     if (!url) {
       return;
     }
@@ -440,6 +461,25 @@ export class WebhooksPage {
     if (tenantId) {
       void this.store.refreshEndpoints({ tenantId, environment });
     }
+  }
+
+  refreshRemoteHealth(): void {
+    this.store.refreshRemoteHealth();
+  }
+
+  private resolveIngressUrlFromBase(baseUrl: string | null): string | null {
+    const endpoint = this.selectedEndpoint();
+    const tenantId = resolveNonEmptyString(this.tenantContext.tenantId());
+    if (!endpoint || !tenantId) {
+      return null;
+    }
+    const environment = resolveNonEmptyString(endpoint.environment)
+      ?? resolveNonEmptyString(this.tenantContext.environment());
+    const normalizedBase = resolveNonEmptyString(baseUrl);
+    if (!environment || !normalizedBase) {
+      return null;
+    }
+    return buildIngressUrl(normalizedBase, tenantId, environment, endpoint.hookKey);
   }
 
   openWebhookDialog(endpoint?: WebhookEndpointView): void {
@@ -1132,6 +1172,38 @@ function escapeSingleQuotes(value: string): string {
   return value.replace(/'/g, `'"'"'`);
 }
 
+function buildIngressUrl(baseUrl: string, tenantId: string, environment: string, hookKey: string): string | null {
+  const normalizedBase = normalizeBaseForJoin(baseUrl);
+  if (!normalizedBase) {
+    return null;
+  }
+  const relative = `tenants/${encodeURIComponent(tenantId)}/environments/${encodeURIComponent(environment)}/webhooks/${encodeURIComponent(hookKey)}`;
+  if (normalizedBase.startsWith('/')) {
+    return `${normalizedBase.replace(/\/+$/, '')}/${relative}`;
+  }
+  try {
+    return new URL(relative, normalizedBase).toString();
+  } catch {
+    return null;
+  }
+}
+
+function normalizeBaseForJoin(value: string): string {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return '';
+  }
+  return trimmed.endsWith('/') ? trimmed : `${trimmed}/`;
+}
+
+function resolveNonEmptyString(value: unknown): string | null {
+  if (typeof value !== 'string') {
+    return null;
+  }
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
 type ActivityConnectionTone = 'success' | 'warning' | 'danger' | 'muted';
 
 function resolveActivityConnectionTone(state: ActivityConnectionState): ActivityConnectionTone {
@@ -1161,6 +1233,78 @@ function formatActivityConnectionLabel(state: ActivityConnectionState): string {
     return 'Paused';
   }
   return 'Idle';
+}
+
+type RemoteHealthTone = ActivityConnectionTone;
+
+function resolveRemoteHealthTone(
+  health: WebhookRemoteHealthView | null,
+  isLoading: boolean,
+): RemoteHealthTone {
+  if (isLoading) {
+    return 'warning';
+  }
+  if (!health) {
+    return 'muted';
+  }
+
+  switch (health.status) {
+    case 'ok':
+      return 'success';
+    case 'unhealthy':
+      return 'danger';
+    case 'unreachable':
+    case 'unavailable':
+      return 'warning';
+    case 'not-configured':
+      return 'muted';
+    default:
+      return 'muted';
+  }
+}
+
+function formatRemoteHealthLabel(
+  health: WebhookRemoteHealthView | null,
+  isLoading: boolean,
+): string {
+  if (isLoading) {
+    return 'Checking...';
+  }
+  if (!health) {
+    return 'No check yet';
+  }
+
+  switch (health.status) {
+    case 'ok':
+      return 'Healthy';
+    case 'unhealthy':
+      return 'Unhealthy';
+    case 'unreachable':
+      return 'Unreachable';
+    case 'unavailable':
+      return 'Unavailable';
+    case 'not-configured':
+      return 'Not configured';
+    default:
+      return 'Unknown';
+  }
+}
+
+function formatRemoteHealthDetail(health: WebhookRemoteHealthView | null): string | null {
+  if (!health) {
+    return null;
+  }
+
+  const detail = health.detail?.trim() ?? '';
+  const statusCode = typeof health.statusCode === 'number' ? health.statusCode : null;
+  if (!detail) {
+    if (typeof statusCode === 'number' && statusCode >= 400) {
+      return `HTTP ${statusCode}`;
+    }
+    return null;
+  }
+
+  return typeof statusCode === 'number' ? `HTTP ${statusCode}: ${detail}` : detail;
 }
 
 type ChartPalette = {

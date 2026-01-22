@@ -47,9 +47,12 @@ Croniq:
     Mode: Remote
     Remote:
       BaseUrl: https://dmz-croniq.example
+      IngressBaseUrl: https://dmz-webhooks.example
       ApiKey: <dmz-admin-key>
       TimeoutSeconds: 10
 ```
+
+`Remote:IngressBaseUrl` is optional. If it is not provided, the API host uses `Remote:BaseUrl` for both admin endpoints and ingress relay/invoke calls.
 
 ## Event Delivery (Ingress -> Internal Execution)
 

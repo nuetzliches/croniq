@@ -316,10 +316,24 @@ export const WebhookCapabilitiesResponse = z
     .object({
         allowUnsignedHooks: z.boolean(),
         defaultRequestsPerMinute: z.number().int(),
+        mode: z.string(),
+        remoteBaseUrl: z.string().nullable(),
+        remoteIngressBaseUrl: z.string().nullable(),
     })
     .partial();
 export type WebhookCapabilitiesResponse = z.infer<
     typeof WebhookCapabilitiesResponse
+>;
+export const WebhookRemoteHealthResponse = z
+    .object({
+        status: z.string(),
+        checkedAtUtc: z.iso.datetime({ offset: true }),
+        statusCode: z.number().int().nullable(),
+        detail: z.string().nullable(),
+    })
+    .partial();
+export type WebhookRemoteHealthResponse = z.infer<
+    typeof WebhookRemoteHealthResponse
 >;
 export const RotateWebhookSecretRequest = z
     .object({
@@ -702,6 +716,7 @@ export const schemas = {
     WebhookEndpointResponse,
     UpsertWebhookEndpointRequest,
     WebhookCapabilitiesResponse,
+    WebhookRemoteHealthResponse,
     RotateWebhookSecretRequest,
     RotateWebhookSecretResponse,
     CreateWebhookIpRuleRequest,

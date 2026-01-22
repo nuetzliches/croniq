@@ -189,6 +189,7 @@ The Angular MCP server is a development helper for workspace-aware automation.
 - Manual invoke/test payload panel with request preview and safe defaults.
 - Copyable cURL/snippet examples for the configured endpoint.
 - Bulk enable/disable endpoints with confirmation and audit context.
+- Remote delivery status (show base URL + `/health` probe when `Croniq:Webhooks:Mode=Remote`).
 
 **Phase 5: Observability & insights**
 
