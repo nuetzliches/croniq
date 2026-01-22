@@ -47,6 +47,7 @@
     <Project Path="tests/Croniq.Providers.Default.Tests/Croniq.Providers.Default.Tests.csproj" />
     <Project Path="tests/Croniq.Sdk.Tests/Croniq.Sdk.Tests.csproj" />
     <Project Path="tests/Croniq.TestKit/Croniq.TestKit.csproj" />
+    <Project Path="tests/Croniq.Webhooks.Tests/Croniq.Webhooks.Tests.csproj" />
   </Folder>
   <Folder Name="/tools/">
     <Project Path="tools/Croniq.Devstack.AppHost/Croniq.Devstack.AppHost.csproj" />
