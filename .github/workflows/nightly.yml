@@ -90,7 +90,7 @@ jobs:
         shell: pwsh
         run: |
           try {
-            ./scripts/ci/wait-for-http.ps1 -Uri "http://localhost:5080/health"
+            ./scripts/ci/wait-for-http.ps1 -Uri "http://localhost:5080/health" -Attempts 120 -DelaySeconds 2 -TimeoutSeconds 10
           } catch {
             if (Test-Path "artifacts/aspire-devstack.err.log") {
               Get-Content "artifacts/aspire-devstack.err.log" -Tail 200
@@ -115,9 +115,9 @@ jobs:
         shell: pwsh
         run: |
           if (Test-Path "artifacts/aspire-devstack.pid") {
-            $pid = Get-Content "artifacts/aspire-devstack.pid" | Select-Object -First 1
-            if ($pid) {
-              Stop-Process -Id $pid -Force -ErrorAction SilentlyContinue
+            $processId = Get-Content "artifacts/aspire-devstack.pid" | Select-Object -First 1
+            if ($processId) {
+              Stop-Process -Id $processId -Force -ErrorAction SilentlyContinue
             }
           }
 
