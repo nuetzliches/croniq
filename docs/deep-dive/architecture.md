@@ -24,7 +24,7 @@ Implemented. Last verified: 2026-01-18.
 | Service Layer (`Croniq.Api`, RPC)                                              | Minimal API endpoints, rate limiting, auth middleware, gRPC/JSON-RPC endpoints.              |
 | Admin UI (`Croniq.Ui`)                                                         | Angular admin console for tenant-scoped management workflows; optional, separately deployed. |
 | Jobs Layer (`Croniq.Sdk`, sample job projects)                                 | Authoring model for jobs, DI helpers, samples.                                               |
-| Infrastructure (`infra/docker`, `tools/Croniq.DbMigrator`)                     | Docker Compose dev stack, EF Core migrations, helper scripts.                                |
+| Infrastructure (`infra/docker`, `tools/Croniq.DbMigrator`)                     | Aspire AppHost dev stack, EF Core migrations, container configs.                             |
 
 Hosting extensions (`AddCroniqApiServices`, `AddCroniqApiRateLimiter`, `UseCroniqApi`) wire the pieces together. Auth and persistence can run in `InMemory`, `SqlServer`, or `Postgres` modes via configuration (`Croniq:*`).
 
@@ -191,7 +191,7 @@ docs/
 ### Webhook Persistence & Admin Lifecycle (Preview)
 
 - **Schema**: `Croniq.Persistence.SqlServer` and `Croniq.Persistence.Postgres` persist hooks in `croniq.WebhookEndpoints`, record cache-invalidation events inside `croniq.WebhookEndpointEvents`, capture failed payloads in `croniq.WebhookDeadLetters`, and store rotation trails inside `croniq.WebhookSecretHistory`. Each record keeps tenant/environment scope, `HookKey`, `JobKey`, encrypted secret material (plus hash), signature version, rate limit, metadata JSON, and audit timestamps.
-- **Migrations**: EF Core migrations ship through `Croniq.DbMigrator`, so Compose/test stacks no longer rely on `EnsureCreated`. Dev/test environments can still fall back to `Croniq:Webhooks` configuration when a relational provider is not available.
+- **Migrations**: EF Core migrations ship through `Croniq.DbMigrator`, so dev/test flows no longer rely on `EnsureCreated`. Dev/test environments can still fall back to `Croniq:Webhooks` configuration when a relational provider is not available.
 - **Contract tests**: `SqlServerWebhookPersistenceProviderTests` (in `tests/Croniq.Persistence.SqlServer.Tests`) and `PostgresWebhookPersistenceProviderTests` (in `tests/Croniq.Persistence.Postgres.Tests`) exercise CRUD + scope enforcement so providers stay consistent with the admin API.
 - **Admin API**: `Croniq.Api` now exposes tenant-scoped CRUD endpoints (`POST/GET/DELETE /tenants/{tenantId}/webhooks?environment=<tag>`). Each request validates the `JobKey` format, enforces per-hook rate limits, and returns the freshest secret (only when you explicitly send a new one) so automation pipelines can bootstrap callers.
 - **Capabilities API**: `GET /tenants/{tenantId}/webhooks/capabilities?environment=<tag>` returns the default rate limit and whether unsigned hooks are permitted, sourced from local config or remote persistence so UIs can avoid configuration drift.
@@ -223,8 +223,8 @@ docs/
 
 - Logging: uses `ILoggerFactory` by default; `AddCroniqObservability` can enable Serilog with optional OpenTelemetry log export. Structured fields include tenant/environment/job context.
 - Metrics/Traces: OpenTelemetry SDK emitting OTLP by default. Dev stack ships with collector + Grafana + Tempo + Prometheus + Loki (optional).
-- Docker strategy: multi-stage .NET 10 images, Compose stack for API, worker, SQL Server (default), observability, optional RPC sample. Postgres is supported when you supply an external instance.
-- Devstack direction: local dev and CI smoke checks run via the Aspire AppHost (`tools/Croniq.Devstack.AppHost`); Docker Compose remains available as a fallback for troubleshooting. See `docs/deep-dive/devstack.md`.
+- Docker strategy: multi-stage .NET 10 images for API/worker/UI/webhooks/migrator; the Aspire AppHost runs local containers using the configs in `infra/docker`. Postgres is supported when you supply an external instance.
+- Devstack direction: local dev and CI smoke checks run via the Aspire AppHost (`tools/Croniq.Devstack.AppHost`). See `docs/deep-dive/devstack.md`.
 - GitHub Actions build/test/publish NuGet packages and OCI images, uploading docs previews as artifacts.
 
 ## Reliability, Recovery & Tenant Isolation
@@ -237,7 +237,7 @@ docs/
 ## Release, Testing & Compliance
 
 - Versioning: SemVer for libraries/SDKs, `/v1` routes for HTTP APIs. Breaking changes require new majors plus deprecation windows.
-- Testing strategy: unit tests (xUnit) + contract tests (provider fixtures/Testcontainers) + Compose-based smoke/e2e suites (nightly and pre-release). Coverage gates: Core line >=73%, overall line >=75%, branch coverage >=55% (overall + Core).
+- Testing strategy: unit tests (xUnit) + contract tests (provider fixtures/Testcontainers) + Aspire AppHost smoke/e2e suites (nightly and pre-release). Coverage gates: Core line >=73%, overall line >=75%, branch coverage >=55% (overall + Core).
 - Release pipeline runs migrations (`Croniq.DbMigrator`), executes smoke tests, produces SBOMs (Syft) and signs artifacts (Cosign/SignPath). Dependency updates are scanned via Trivy/Snyk and tracked by Renovate.
 
 ## Roadmap Snapshots

@@ -71,7 +71,7 @@ Sample configuration (`appsettings.Development.json`) wired up in `Croniq.Sample
 }
 ```
 
-```dotenv [.env (compose)]
+```dotenv [.env]
 CRONIQ_WEBHOOKS_REQUESTS_PER_MINUTE=30
 CRONIQ_WEBHOOKS_ENDPOINTS_0_HOOK_KEY=invoice-paid
 CRONIQ_WEBHOOKS_ENDPOINTS_0_JOB_KEY=samples:smoke
@@ -146,7 +146,7 @@ PY
      -HookKey invoice-paid `
      -ActivateInSeconds 900 `
      -GracePeriodSeconds 86400 `
-     -Notes "rotated via devstack"
+     -Notes "rotated via aspire devstack"
    ```
 
    :::
@@ -228,3 +228,4 @@ Treat secrets as credentials: read them from your secret manager at runtime, nev
 - [`triggers.md`](./triggers.md) for cron schedules and `@once` triggers.
 
 > **Learn more:** Dive into [architecture.md](../deep-dive/architecture.md#webhook-trigger-surface), the [DMZ ingress design](../deep-dive/designs/dmz-ingress-remote-webhooks.md), and [secret rotation](../deep-dive/designs/webhook-secret-rotation.md) for operational internals.
+

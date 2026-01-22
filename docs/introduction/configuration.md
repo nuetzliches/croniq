@@ -79,7 +79,7 @@ Examples:
 }
 ```
 
-```dotenv [.env (compose)]
+```dotenv [.env]
 CRONIQ_JOBS_ASSEMBLIES_0=./jobs/Acme.Jobs.dll
 ```
 
@@ -243,7 +243,7 @@ Examples:
 }
 ```
 
-```dotenv [.env (compose)]
+```dotenv [.env]
 CRONIQ_API_FORWARDED_HEADERS_ENABLED=true
 CRONIQ_API_FORWARDED_HEADERS_FORWARD_LIMIT=2
 CRONIQ_API_FORWARDED_HEADERS_KNOWN_NETWORKS_0=10.0.0.0/8
@@ -310,7 +310,7 @@ set Croniq__Core__EnvironmentTag=dev-alice
 set Croniq__Api__RequestsPerMinute=60
 ```
 
-```dotenv [.env (compose)]
+```dotenv [.env]
 CRONIQ_AUTH_MODE=InMemory
 CRONIQ_API_KEY=crq_dev_local_sample
 CRONIQ_CORE_TENANT_ID=dev-sandbox
@@ -378,3 +378,4 @@ Need a bigger checklist? Jump to [`troubleshooting.md`](../ops/troubleshooting.m
 - Consult `docs/deep-dive/job-registration.md` for the in-depth view on how the runtime persists job metadata during startup.
 - Switch to [`auth.md`](../guides/auth.md) when you need detailed guidance on caller flows and secret rotation.
 - Keep [`troubleshooting.md`](../ops/troubleshooting.md) handy when startup or dev stack issues block you.
+

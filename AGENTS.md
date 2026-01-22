@@ -28,6 +28,7 @@ All AI-generated contributions must align with the architectural ground rules do
    - Validate input aggressively; prefer `ArgumentException`/`Guard` helpers over silent failures.
    - Write unit tests (xUnit + Shouldly) for new logic; update integration tests when touching provider or persistence layers.
    - Keep secrets/config values outside source control; rely on the `ISecretProvider` abstractions instead of inline secrets.
+   - Use the Aspire AppHost (`tools/Croniq.Devstack.AppHost`) as the canonical dev stack and CI smoke entrypoint; do not add new Compose-based devstack scripts unless explicitly requested.
 
 5. **Auth Direction (V1)**
 

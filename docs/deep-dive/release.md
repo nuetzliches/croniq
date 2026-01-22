@@ -20,8 +20,8 @@ This document extends `ci.md` with the steps every Croniq release must follow: v
 
 1. **Tagging** - create a signed tag `vX.Y.Z` on the main branch.
 2. **Build phase**:
-   - `dotnet build` + `dotnet test` (unit + contract suites).
-   - Compose smoke tests (see `ci.md`) triggered for release candidates.
+  - `dotnet build` + `dotnet test` (unit + contract suites).
+  - Aspire smoke tests (see `ci.md`) triggered for release candidates.
 3. **Packaging**:
    - `dotnet pack` produces NuGet packages (Croniq.\*).
    - Docker images built with multi-stage Dockerfiles (`infra/docker`).

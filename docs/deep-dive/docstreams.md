@@ -28,7 +28,7 @@ This living note tracks how we keep the consumer-facing docs in sync with the de
 | Overview           | `index.md`, `architecture.md`                                                   | Architecture reference plus service boundaries, SLOs, and system diagram (Mermaid).                   |
 | Delivery & Release | `ci.md`, `release.md`, `supplychain.md`                                         | CI/nightly strategy, SemVer/SBOM playbook, signing, and compliance artifacts.                         |
 | Runtime Internals  | `persistence.md`, `job-registration.md`, `auth.md`, `policies.md`, `testing.md` | Persistence schema, job discovery flow, auth provider contracts, policy engine, and testing approach. |
-| Operations         | `devstack.md`, `observability.md`, `security.md`, `kubernetes.md`, `ui.md`      | Docker dev stack, telemetry stack, security posture, future Kubernetes/UI plans.                      |
+| Operations         | `devstack.md`, `observability.md`, `security.md`, `kubernetes.md`, `ui.md`      | Aspire dev stack, telemetry stack, security posture, future Kubernetes/UI plans.                      |
 | Governance         | `docstreams.md` (this file)                                                     | Tracks ownership, tooling, and outstanding backlog.                                                   |
 
 ## Sync Cadence & Owners

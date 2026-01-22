@@ -63,7 +63,7 @@ Use these minimal templates when you split API, worker, and webhooks into separa
 }
 ```
 
-```dotenv [.env (compose)]
+```dotenv [.env]
 CRONIQ_CORE_TENANT_ID=prod
 CRONIQ_ENVIRONMENT=prod-cluster
 CRONIQ_AUTH_MODE=SqlServer
@@ -109,7 +109,7 @@ $Env:Croniq__Webhooks__Mode = "SqlServer"
 }
 ```
 
-```dotenv [.env (compose)]
+```dotenv [.env]
 CRONIQ_CORE_TENANT_ID=prod
 CRONIQ_ENVIRONMENT=prod-cluster
 CRONIQ_PERSISTENCE_MODE=SqlServer
@@ -154,7 +154,7 @@ $Env:Croniq__Jobs__Assemblies__0 = "/app/jobs/Acme.Jobs.dll"
 }
 ```
 
-```dotenv [.env (compose)]
+```dotenv [.env]
 CRONIQ_CORE_TENANT_ID=prod
 CRONIQ_ENVIRONMENT=prod-cluster
 CRONIQ_WEBHOOKS_MODE=SqlServer
@@ -228,3 +228,4 @@ Security expectations:
 
 - Use API keys with least-privilege scopes (`webhooks:read|write|rotate|deadletter` for admin, `webhooks:ingress` for the relay).
 - Apply `Croniq:Api:AllowedIpCidrs` on the ingress host to restrict admin access to internal egress ranges.
+

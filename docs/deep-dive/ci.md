@@ -14,7 +14,7 @@ This document describes the continuous integration and delivery strategy require
 | Workflow             | Trigger                                | Purpose                                                                                                                                                        |
 | -------------------- | -------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `ci-pr.yml`          | Pull request to `main`                 | Lint, build, unit + contract tests with coverage, basic security checks.                                                                                       |
-| `nightly.yml`        | Scheduled (UTC 02:00) + manual run     | Full stack validation: PR steps + Compose E2E tests (dev stack), Docker image build, integration smoke, dependency scanning.                                   |
+| `nightly.yml`        | Scheduled (UTC 02:00) + manual run     | Full stack validation: PR steps + Aspire smoke tests, Docker image build, integration smoke, dependency scanning.                                           |
 | `release.yml`        | Tag `v*` pushes or manual dispatch     | Build & test release artifacts, publish NuGet packages and container images, gate on SBOM/vulnerability checks, sign assets, attach reports to GitHub Release. |
 | `deploy-staging.yml` | Manual (`workflow_dispatch`) + staging | Helm deploy Croniq to the staging cluster, run HTTPS health probes, execute smoke tests against the staging ingress, and collect Kubernetes diagnostics.       |
 | `dacpac.yml`         | Manual (`workflow_dispatch`) + guard   | Provision Azure SQL Edge locally and publish a DACPAC for schema validation; jobs stay skipped until `run_workflow` is set to true.                            |
@@ -50,11 +50,11 @@ This document describes the continuous integration and delivery strategy require
 
 - Inherits steps from `ci-pr` via reusable workflow `workflow_call` or composite action.
 - Additional jobs:
-  1. **Docker build + compose E2E**
+  1. **Docker build + Aspire smoke**
      - Build images (`croniq-api`, `croniq-worker`, `croniq-ui`, `croniq-webhooks`, `croniq-db-migrator`) with BuildKit cache.
-     - Use `scripts/ci/compose-devstack.ps1 -Action Up` to start the stack (wraps the `docker compose -f ... --profile api|worker|obs up --build -d` invocation shared with `scripts/devstack-up.cmd`).
-     - Execute `tests/Croniq.Api.Smoke` suite against the stack.
-     - Collect logs from containers, upload as artifacts.
+     - Start `tools/Croniq.Devstack.AppHost` (obs profile), wait for `/health`.
+     - Execute `tests/Croniq.Api.Smoke` against the AppHost.
+     - Collect AppHost logs as artifacts.
   2. **Observability verification**
      - Start OTel collector service container and run a lightweight probe to ensure OTLP export works.
   3. **Dependency + license scan**
@@ -72,8 +72,8 @@ This document describes the continuous integration and delivery strategy require
    - `packages` job executes `dotnet pack`, generates SBOMs with `syft dir:artifacts/nuget -o spdx-json`, runs `dotnet list package --vulnerable --include-transitive`, signs `.nupkg` files when signing secrets exist, and optionally pushes to NuGet.org via `NUGET_API_KEY`.
 4. **Container Images**
    - `images` job builds the production hosts via `infra/docker/Dockerfile.production`, tags/pushes them to `ghcr.io/<owner>/croniq-{api|worker|ui|webhooks|db-migrator}:<tag>` plus `:latest`, and creates SBOMs directly from the pushed images.
-5. **Compose Smoke Verification**
-   - `smoke` job uses `scripts/ci/compose-devstack.ps1` to spin up the API/worker/observability stack, waits for `/health`, runs `tests/Croniq.Api.Smoke`, and uploads collected logs before teardown.
+5. **Aspire Smoke Verification**
+   - `smoke` job starts `tools/Croniq.Devstack.AppHost` (obs profile), waits for `/health`, runs `tests/Croniq.Api.Smoke`, and uploads collected logs before teardown.
 6. **Security & Compliance**
    - `trivy fs` runs before packaging to gate dependency vulnerabilities, `trivy image` scans each GHCR image, and SBOMs + SARIF reports upload as workflow artifacts. Cosign signing is executed when `COSIGN_KEY`/`COSIGN_PASSWORD` secrets are available.
 7. **Release Publishing**
@@ -99,7 +99,7 @@ Release builds automatically call this workflow; you can still dispatch it manua
 
 - Triggered only via `workflow_dispatch` and gated by the `run_workflow` boolean input (defaults to `false`). Unless you explicitly toggle it to `true`, the job is a no-op - this keeps the workflow checked in but effectively disabled.
 - Installs `sqlpackage` via a .NET global tool, provisions Azure SQL Edge through `scripts/ci/setup-sql.ps1`, and immediately executes `scripts/ci/deploy-dacpac.ps1` with the provided DACPAC/database inputs.
-- Accepts inputs for container name, host port, database, DACPAC path, and Compose vs. single-container provisioning so you can mirror local layouts. Update the defaults if artifacts move.
+- Accepts inputs for container name, host port, database, and DACPAC path so you can mirror local layouts. Update the defaults if artifacts move.
 - Optionally set the `SQL_EDGE_SA_PASSWORD` repository secret to override the default `sa` password when running the workflow; the script falls back to `P@ssw0rd1234` otherwise.
 - Use this workflow when you need a manual, audit-friendly way to prove DACPAC compatibility (e.g., before enabling the SQL-dependent test suites in CI) without turning on Azure SQL resources.
 
@@ -114,7 +114,7 @@ Release builds automatically call this workflow; you can still dispatch it manua
 ## Tooling & Repo Layout
 
 - Add `.github/workflows/` with the three YAML workflows.
-- Define reusable helpers in `scripts/ci/` (e.g., `scripts/ci/run-tests.ps1` for dotnet suites, `scripts/ci/compose-devstack.ps1` for Compose orchestration).
+- Define reusable helpers in `scripts/ci/` (e.g., `scripts/ci/run-tests.ps1` for dotnet suites, `scripts/ci/wait-for-http.ps1` for health probes).
 - Provide `Directory.Build.props` enabling analyzers and coverlet instrumentation defaults.
 - Use `.config/dotnet-tools.json` to pin CLI tools (dotnet-format, coverlet, gitversion, etc.).
 - Add `eng/` directory for common pipelines assets (templates, env files).
@@ -127,9 +127,9 @@ Release builds automatically call this workflow; you can still dispatch it manua
 2. **Coverage summary + gates**
    - Run `reportgenerator "-reports:coverage/**/coverage.cobertura.xml" "-targetdir:coverage/report" -reporttypes:JsonSummary`.
    - Enforce thresholds with `python scripts/ci/enforce_coverage_thresholds.py coverage/report/Summary.json --core-assembly Croniq.Core --core-threshold 73 --overall-threshold 75 --core-branch-threshold 55 --overall-branch-threshold 55` (same logic as CI).
-3. **Compose-driven dev stack**
-   - `pwsh ./scripts/ci/compose-devstack.ps1 -Action Up` starts the API/worker/observability profiles.
-   - `pwsh ./scripts/ci/compose-devstack.ps1 -Action Down -CaptureLogs` stops the stack and collects logs to `artifacts/ci-compose/`.
+3. **Aspire dev stack**
+   - `dotnet run --project tools/Croniq.Devstack.AppHost -- --profile obs` starts the devstack.
+   - Use the Aspire dashboard or `docker logs` to inspect container output.
 4. **HTTP health probes**
    - `pwsh ./scripts/ci/wait-for-http.ps1 -Uri http://localhost:5080/health` blocks until the liveness probe returns 200 (mirrors the nightly/release workflows).
    - `pwsh ./scripts/ci/wait-for-http.ps1 -Uri http://localhost:5080/health/persistence` validates persistence readiness and returns 503 when the configured store is unavailable.
@@ -148,13 +148,13 @@ Reference `eng/pipelines/secrets.template.md` when provisioning secrets so the i
 
 - Store secrets (NuGet API key, registry tokens, cosign key, staging kubeconfig) in GitHub Actions secrets and rotate them regularly.
 - Use environments for release/staging so deployments require manual approval.
-- Use `scripts/ci/setup-sql.ps1` when CI or local dev needs an Azure SQL Edge instance for contract tests (defaults to a docker container on port 1433, can switch to compose via `-UseDockerCompose`).
+- Use `scripts/ci/setup-sql.ps1` when CI or local dev needs an Azure SQL Edge instance for contract tests (defaults to a docker container on port 1433).
 - Provide a DACPAC when you need schema deployment: `pwsh ./scripts/ci/setup-sql.ps1 -DacpacPath artifacts/db/Croniq.dacpac -Database CroniqLocal -HostPort 14330`. The script forwards parameters to `scripts/ci/deploy-dacpac.ps1`, so the DACPAC publish happens immediately after the container is healthy. Add `-AllowDataLoss` when intentionally running destructive migrations.
 
 ## Backlog to Complete CI/CD Milestone
 
 - [x] Create `.github/workflows/ci-pr.yml` implementing the described validation stages (nightly + release workflows already added).
-- [x] Add reusable composite actions or scripts for test execution, coverage aggregation, and Compose orchestration (`scripts/ci/run-tests.ps1`, `scripts/ci/enforce_coverage_thresholds.py`, `scripts/ci/compose-devstack.ps1`).
+- [x] Add reusable composite actions or scripts for test execution and coverage aggregation (`scripts/ci/run-tests.ps1`, `scripts/ci/enforce_coverage_thresholds.py`).
 - [x] Check in `Directory.Build.props`, `.config/dotnet-tools.json`, and `eng/` helpers referenced by the workflows.
 - [x] Document local reproduction steps (`docs/deep-dive/ci.md` + contributor guidance) so developers can mimic CI commands.
 - [x] Configure required secrets/environments in GitHub with least privilege and document them in an internal runbook (`eng/pipelines/secrets.template.md`).

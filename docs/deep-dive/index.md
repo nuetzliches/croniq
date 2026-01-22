@@ -7,7 +7,7 @@ This section targets maintainers, platform engineers, and contributors working o
 - Architecture deep dive (`architecture.md`)
 - Persistence model & SqlServer/Postgres schema references
 - Provider extension guides (logging, telemetry, secrets, etc.)
-- Deployment playbooks (Docker Compose, Kubernetes, CI/CD)
+- Deployment playbooks (Kubernetes, CI/CD)
 - Observability standards (Serilog + OpenTelemetry)
 - Release, compliance, and security checklists
 - Testing strategy & tooling (`testing.md`)
@@ -15,7 +15,7 @@ This section targets maintainers, platform engineers, and contributors working o
 - Observability plan (`observability.md`)
 - Policy engine rollout (`policies.md`)
 - CI/CD pipelines (`ci.md`)
-- Docker dev stack (`devstack.md`) - canonical source for Compose profiles, debugging shortcuts, and advanced setup steps referenced from the consumer Quickstart.
+- Aspire dev stack (`devstack.md`) - canonical source for AppHost usage, TLS setup, observability, and CI smoke references.
 - Documentation streams (`docstreams.md`)
 - Supply chain & release security (`supplychain.md`)
 - UI backlog & strategy (`ui.md`)

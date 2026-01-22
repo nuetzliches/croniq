@@ -4,7 +4,7 @@ layout: doc
 
 # Croniq Documentation
 
-Croniq orchestrates distributed workloads for microservice platforms: register jobs once, enforce policies centrally, and stream telemetry into the same observability stack. A tenant-aware scheduler, SqlServer/Postgres-backed durability, and gRPC/REST gateways let platform teams coordinate releases, maintenance tasks, and recurring automations without bolting on per-service cron logic. Operators get one place for throttling and rotating credentials (audit logging is on the roadmap) - while developers stay productive with fluent SDKs and a Docker dev stack. Choose your path:
+Croniq orchestrates distributed workloads for microservice platforms: register jobs once, enforce policies centrally, and stream telemetry into the same observability stack. A tenant-aware scheduler, SqlServer/Postgres-backed durability, and gRPC/REST gateways let platform teams coordinate releases, maintenance tasks, and recurring automations without bolting on per-service cron logic. Operators get one place for throttling and rotating credentials (audit logging is on the roadmap) - while developers stay productive with fluent SDKs and an Aspire dev stack. Choose your path:
 
 - [Introduction](./introduction/index.md) - What Croniq is, how to get started, and essential configuration.
 - [Deployment modes](./introduction/deployment-modes.md) - Minimal samples vs a separated, self-hosted platform setup.

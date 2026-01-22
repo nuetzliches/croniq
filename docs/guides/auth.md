@@ -59,7 +59,7 @@ set Croniq__Core__TenantId=dev-sandbox
 set Croniq__Core__EnvironmentTag=dev-jane
 ```
 
-```dotenv [.env (compose)]
+```dotenv [.env]
 CRONIQ_AUTH_MODE=InMemory
 CRONIQ_API_KEY=crq_dev_local_sample
 CRONIQ_CORE_TENANT_ID=dev-sandbox
@@ -162,7 +162,7 @@ CRONIQ_AUTH_OIDC_REQUIRED_SCOPES_0=ui:access
 
 | Task                      | Tip                                                                                                                                                     |
 | ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Use a single shared key   | Keep `Croniq__Auth__Mode=InMemory` for local runs and place the key in `.env`. Scripts in `scripts/` already load `.env` when they start the dev stack. |
+| Use a single shared key   | Keep `Croniq__Auth__Mode=InMemory` for local runs and place the key in `.env`. The AppHost loads `.env` when it starts the dev stack. |
 | Simulate multiple tenants | Override `Croniq__Core__TenantId` and `Croniq__Core__EnvironmentTag` per terminal session to see how rate limiting and observability labels change.     |
 
 ## FAQs
@@ -183,3 +183,4 @@ Use `ISecretProvider` (Key Vault, AWS Secrets Manager, etc.). The default sample
 - `/deep-dive/security.md` - in-depth design, rate limiting, and backlog status.
 
 > **Learn more:** See [security.md](../deep-dive/security.md) and [auth.md](../deep-dive/auth.md) for auth provider contracts, token issuance, and rate-limiting internals.
+

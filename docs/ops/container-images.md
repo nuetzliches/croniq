@@ -28,18 +28,9 @@ docker push registry.example.com/croniq-webhooks:0.1.0
 docker push registry.example.com/croniq-db-migrator:0.1.0
 ```
 
-## Local testing with Docker Compose
+## Local testing (Aspire)
 
-Use the sample compose file to spin up SQL Server plus the production images:
-
-```bash
-docker compose -f infra/docker/docker-compose.production.yml up --build
-```
-
-Defaults use in-memory auth for quick smoke tests. Use `X-Croniq-Key: ${CRONIQ_API_KEY}` when calling the API.
-The UI container listens on `CRONIQ_UI_HTTP_PORT` (default `5081`) and reads `CRONIQ_UI_*` to populate runtime config for browsers.
-To exercise SQL auth instead, set `Croniq__Auth__Mode=SqlServer` and `Croniq__Auth__Password__Enabled=true` (keep `CRONIQ_SEED_ADMIN=true` so the migrator seeds the admin user).
-To use Postgres instead, run a Postgres instance and set `CRONIQ_DB_PROVIDER=Postgres` plus `CRONIQ_POSTGRES_CONNECTION` (or `Croniq__Postgres__ConnectionString`).
+For local dev and smoke checks, use the Aspire AppHost (`tools/Croniq.Devstack.AppHost`). It wires SQL Server, migrator, API/worker, UI (optional), and observability (optional). See `docs/deep-dive/devstack.md` for the full workflow and configuration.
 
 ## Quick run (single host)
 
@@ -68,7 +59,6 @@ Croniq__Core__EnvironmentTag=dev
 :::
 
 To load the `.env` file with Docker, run `docker run --rm --env-file .env -p 5080:8080 croniq-api:0.1.0`.
-For Docker Compose, use the root `.env` with `CRONIQ_*` keys (see `.env.example`); the compose file maps those into `Croniq__...` settings inside the container.
 
 ## Common configuration
 

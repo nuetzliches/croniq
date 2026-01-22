@@ -184,8 +184,8 @@ builder.WithMetrics(metrics => metrics.AddMeter("Croniq.Core.Policy", "Croniq.Co
 ## Dashboards & Alerts
 
 - **Metrics**: `cronipolicy_retry_attempts`, `cronipolicy_circuit_open`, `cronipolicy_deadletter_total` are emitted from the execution pipeline. Ensure your OTel collector forwards them to Prometheus (devstack does this by default).
-- **Grafana**: `infra/docker/observability/grafana/dashboards/api-gateway.json` and `scheduler.json` surface the policy counters (retry/circuit/dead-letter) per tenant/environment. Load them via the devstack overlay or by mounting the JSON into your Grafana deployment.
-- **Alerts**: `infra/monitoring/rules/scheduler-alerts.yaml` ships alert rules that watch `cronipolicy_deadletter_total` and related scheduler signals. Mount the rule file into Prometheus (already done in the devstack compose) to trigger `CroniqDeadLettersHigh` when DLQs rise.
+- **Grafana**: `infra/docker/observability/grafana/dashboards/api-gateway.json` and `scheduler.json` surface the policy counters (retry/circuit/dead-letter) per tenant/environment. Load them via the devstack obs profile or by mounting the JSON into your Grafana deployment.
+- **Alerts**: `infra/monitoring/rules/scheduler-alerts.yaml` ships alert rules that watch `cronipolicy_deadletter_total` and related scheduler signals. The AppHost mounts the rule file into Prometheus by default so `CroniqDeadLettersHigh` fires when DLQs rise.
 - **Runbook hints**: Dead-letter entries store the `OperatorHint` alongside policy snapshots; include actionable text there to shorten triage when alerts fire.
 
 ## Backlog to Complete the Policy Engine Milestone

@@ -201,7 +201,7 @@ The `WebhookEndpointIpRules` migration ships with Croniq `main` (Dec 2025) and m
    dotnet run --project tools/Croniq.DbMigrator
    ```
 
-   > Containerized clusters can execute the same step with `docker compose run --rm croniq-db-migrator` as long as the provider connection settings are injected.
+   > Containerized clusters can execute the same step by running the `croniq-db-migrator` image (or the CLI) with the provider connection settings injected.
 
 3. **Verify the table exists** before exposing the new API endpoints:
 
@@ -222,10 +222,9 @@ The `WebhookEndpointIpRules` migration ships with Croniq `main` (Dec 2025) and m
 
 ## Local Development & Dev Stack
 
-- The Docker dev stack (`infra/docker/docker-compose.yml`) launches SQL Server 2022 with the Croniq schema. Compose derives `CRONIQ_SQL_CONNECTION` from `CRONIQ_SQL_HOST`, `CRONIQ_SQL_DATABASE`, and `CRONIQ_SQL_PASSWORD` (using `sa` on port 1433) based on `.env`.
-- `scripts\devstack-up.cmd` waits for SQL health before running the migrator container (`croniq-db-migrator`).
+- The Aspire AppHost starts SQL Server 2022 with the Croniq schema and runs `Croniq.DbMigrator` before API/worker startup. Set `CRONIQ_SQL_HOST_PORT` to override the host port when needed.
 - Developers can also run `dotnet run --project tools/Croniq.DbMigrator` manually (reads `CRONIQ_SQL_CONNECTION` or `CRONIQ_POSTGRES_CONNECTION` when set).
-- Postgres is supported for local/dev environments by pointing `CRONIQ_DB_PROVIDER=Postgres` and `CRONIQ_POSTGRES_CONNECTION` at an external Postgres instance (the default Compose stack does not yet include a Postgres container).
+- Postgres is supported for local/dev environments by pointing `CRONIQ_DB_PROVIDER=Postgres` and `CRONIQ_POSTGRES_CONNECTION` at an external Postgres instance.
 - Test projects rely on Testcontainers to spin up SqlServer and Postgres and call the migrator automatically.
 
 ## Clustering & Leases (Future)

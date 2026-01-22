@@ -247,7 +247,7 @@ Schema exposure configuration:
 }
 ```
 
-```dotenv [.env (compose)]
+```dotenv [.env]
 CRONIQ_API_EXPOSE_SCHEMAS=true
 ```
 
@@ -302,7 +302,7 @@ Watch the API logs; you should see the `HelloWorldJob` message. Logs, metrics, a
    }
    ```
 
-   ```dotenv [.env (compose)]
+   ```dotenv [.env]
    CRONIQ_OBS_OTLP_ENDPOINT=http://localhost:4317
    CRONIQ_OBS_OTLP_PROTOCOL=grpc
    CRONIQ_CORE_TENANT_ID=default
@@ -339,3 +339,4 @@ Deploying to your own observability stack? Copy the dashboard JSON + rule file i
 - Hit [`troubleshooting.md`](../ops/troubleshooting.md) if any of the steps above fail.
 
 Happy scheduling! Translate findings back into the documentation as you refine the workflow.
+

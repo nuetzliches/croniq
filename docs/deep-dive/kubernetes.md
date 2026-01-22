@@ -7,7 +7,7 @@ This document expands the backlog captured in `architecture.md` and describes th
 ## Objectives
 
 - Provide a single Helm chart (or Kustomize base) that deploys Croniq API, worker(s), optional UI, and dependencies (SQL Server/Postgres, observability sidecars) across dev/stage/prod clusters.
-- Keep the chart in sync with the Docker dev stack and CI pipelines to minimize configuration drift.
+- Keep the chart in sync with the Aspire dev stack and CI pipelines to minimize configuration drift.
 - Ship secure-by-default manifests (least privilege, TLS, resource limits) while remaining customizable via `values.yaml` overlays.
 
 ## Target Components

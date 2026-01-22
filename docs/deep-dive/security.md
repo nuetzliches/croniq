@@ -195,7 +195,7 @@ Minimal configuration example:
 - **Webhook secret/IP rule drift**: When secrets or CIDRs must change quickly, batch rotations through the existing CRUD APIs - each call emits a `WebhookEndpointEvents` record and pushes cache invalidations to every ingress replica. No manual recycle is required; confirm the rollout by tailing `Croniq.Webhooks` logs for `cache invalidation completed` and running the smoke tests.
 - **Database least privilege**: Deploy `Croniq.DbMigrator` with a migration role, then run the API/Worker/Webhook hosts under read/write roles scoped to their schemas (`croniq`, `auth`). Deny `ALTER` to runtime identities and audit failed DDL attempts via SQL Server Extended Events or Postgres audit logs.
 - **Telemetry to SIEM**: Forward `Croniq.Api` and `Croniq.Webhooks` structured logs plus `Croniq.Observability` metrics to your SIEM. Prioritize alerts for `auth.failed`, `rate.limit.rejected`, `ip-blocked`, and unusual spikes in `WebhookDeadLetters`.
-- **Disaster recovery validation**: Quarterly, restore the database backups into a staging cluster, run `Croniq.DbMigrator` to verify schema parity, then execute `scripts/test-e2e.cmd` against the restored environment to ensure creds, secrets, and webhook caches hydrate as expected.
+- **Disaster recovery validation**: Quarterly, restore the database backups into a staging cluster, run `Croniq.DbMigrator` to verify schema parity, then execute the Aspire smoke flow (`tools/Croniq.Devstack.AppHost` + `tests/Croniq.Api.Smoke`) against the restored environment to ensure creds, secrets, and webhook caches hydrate as expected.
 
 ## Webhook Consumer Guidance
 

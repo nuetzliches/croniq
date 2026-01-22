@@ -16,7 +16,7 @@ This document extends the quality vision captured in `architecture.md` and descr
 | `Unit` (`tests/Croniq.*.Tests`)                      | Pure logic, options, schedulers, API surface guards                                                                                                           | Every PR + local pre-push    | `xUnit`, `Shouldly`, `dotnet test`                   | Fail blocks merge                 |
 | `Contract` (`*.ContractTests`)                       | Provider contracts (SqlServer/Postgres persistence/auth, secrets) via Testcontainers                                                                          | Every PR (parallel)          | `Testcontainers`, seeded SQL, `Croniq.TestKit`       | Fail blocks merge                 |
 | `Observability` (`tests/Croniq.Observability.Tests`) | Verifies OTLP exporter wiring using an in-memory collector + host builder                                                                                     | Every PR + nightly + release | `dotnet test`, ASP.NET host, lightweight OTLP server | Fail blocks merge/release         |
-| `Smoke`/`E2E` (`tests/Croniq.Api.Smoke`)             | Local: `Croniq.Sample.ApiHost` + `Croniq.Sample.WorkerHost`. CI: Aspire AppHost (`Croniq.Sample.ApiHost` + `Croniq.Sample.WorkerHost` + `Croniq.Sample.Dmz`). | Nightly + release candidate  | Aspire AppHost + `dotnet test` (Compose fallback)    | Fail blocks release/nightly badge |
+| `Smoke`/`E2E` (`tests/Croniq.Api.Smoke`)             | Local + CI: Aspire AppHost (`Croniq.Sample.ApiHost` + `Croniq.Sample.WorkerHost` + `Croniq.Sample.Dmz`).                                                     | Nightly + release candidate  | Aspire AppHost + `dotnet test`                      | Fail blocks release/nightly badge |
 | `Compliance`                                         | SBOM, Trivy scan, dependency audit                                                                                                                            | Nightly + release            | `Syft`, `Trivy`, GitHub Actions reusable workflows   | Fail blocks release               |
 | `Perf/Burn-in` (planned)                             | Long-running stress on scheduler leases + quotas                                                                                                              | On-demand / before GA        | Testcontainers + perf harness (to be defined)        | Informational                     |
 
@@ -58,8 +58,8 @@ This document extends the quality vision captured in `architecture.md` and descr
 ### End-to-End & Smoke Tests
 
 - **Scope**: Validates that the API, worker, SqlServer persistence (default), and migrator collaborate successfully. CI runs production hosts with a StoreOnly webhooks ingress to avoid embedding sample jobs.
-- **Frameworks**: `xUnit` harness under `tests/Croniq.Api.Smoke`, `Shouldly`, Aspire AppHost for CI, Docker Compose stacks defined in `infra/docker/docker-compose.tests.yml` for local fallback.
-- **Execution**: Local runs use `scripts\test-e2e.cmd` (Compose + `dotnet test`). CI starts `tools/Croniq.Devstack.AppHost` with the `obs` profile, waits for `/health`, then runs `dotnet test tests/Croniq.Api.Smoke/...`. Override `CRONIQ_API_BASEURL`/`CRONIQ_API_KEY` to target remote environments.
+- **Frameworks**: `xUnit` harness under `tests/Croniq.Api.Smoke`, `Shouldly`, Aspire AppHost for local + CI runs.
+- **Execution**: Start `tools/Croniq.Devstack.AppHost` (optionally `--profile obs`), wait for `/health`, then run `dotnet test tests/Croniq.Api.Smoke/...`. Override `CRONIQ_API_BASEURL`/`CRONIQ_API_KEY` to target remote environments.
 - **Cadence**: Nightly + release candidate builds; run manually before large API refactors. Failures block releases.
 - **Scenarios**: `Webhook_ip_rule_crud_roundtrip` validates the management APIs, and `Webhook_ingress_respects_ip_rules` now hits the live ingress twice - first expecting `403 ip-blocked`, then `202 accepted` after adding a catch-all rule - alongside the existing health/schedule checks.
 - **Configuration**: `CRONIQ_TENANT_ID`, `CRONIQ_ENVIRONMENT`, and `CRONIQ_WEBHOOK_BASEURL` let the suite point at non-default partitions and webhook hosts while sharing the same API base URL and key overrides.
@@ -88,7 +88,7 @@ This document extends the quality vision captured in `architecture.md` and descr
 ### Croniq.TestKit
 
 - SqlServer and Postgres container fixtures with automatic migration + seed execution.
-- Repository path resolver to locate sample data and compose files from any test project.
+- Repository path resolver to locate sample data and shared assets from any test project.
 - Deterministic `TestClock`, payload/job builders, and canonical `TestCategories` constants.
 - `CaptureContainerLogsAsync` helper exporting Docker logs to disk (CI attaches them as artifacts).
 
@@ -101,7 +101,7 @@ This document extends the quality vision captured in `architecture.md` and descr
 ### Diagnostics
 
 - Tests log TenantId, ScheduleId, TriggerId alongside correlation IDs; this is required for triage.
-- When SQL or Compose containers fail, inspect exported logs under `artifacts/containers/<suite>/` (CI) or the local folder returned by `CaptureContainerLogsAsync`.
+- When SQL or test containers fail, inspect exported logs under `artifacts/containers/<suite>/` (CI) or the local folder returned by `CaptureContainerLogsAsync`.
 - `tests/README.md` documents common failure signatures and suggested fixes.
 
 ## Local Developer Workflow
@@ -112,7 +112,7 @@ This document extends the quality vision captured in `architecture.md` and descr
    - Unit: `dotnet test tests/Croniq.Core.Tests/Croniq.Core.Tests.csproj`.
    - Contract: `CRONIQ_SQL=` or `CRONIQ_POSTGRES=` optional override, then `dotnet test --filter Category=Contract` inside the desired project.
    - Observability: `dotnet test tests/Croniq.Observability.Tests/...`.
-   - E2E: `scripts\test-e2e.cmd` (requires Docker + ports 5080/5081 free).
+   - E2E: start the AppHost (`dotnet run --project tools/Croniq.Devstack.AppHost`) and run `dotnet test tests/Croniq.Api.Smoke/...`.
 4. Inspect coverage locally: `dotnet test --collect:"XPlat Code Coverage"` followed by `reportgenerator` if deeper insight is needed.
 5. Document flaky results immediately in `tests/README.md` and open a GitHub issue.
 
@@ -137,21 +137,21 @@ This document extends the quality vision captured in `architecture.md` and descr
 ### Release Workflow (`.github/workflows/release.yml`)
 
 - Trigger: tags `v*` or manual dispatch.
-- Steps: full unit/contract/E2E suite, NuGet packing/publishing, multi-arch Docker buildx push, SBOM generation, `cosign` signing (when keys provisioned), Trivy image scan, staging smoke deploy (Compose or Helm) followed by `tests/Croniq.Api.Smoke` targeting staging URL (CI smoke runs via Aspire AppHost).
+- Steps: full unit/contract/E2E suite, NuGet packing/publishing, multi-arch Docker buildx push, SBOM generation, `cosign` signing (when keys provisioned), Trivy image scan, staging smoke deploy (Helm) followed by `tests/Croniq.Api.Smoke` targeting staging URL (CI smoke runs via Aspire AppHost).
 - Outputs: Release notes (e.g., `git-cliff`), uploaded coverage + SBOM artifacts, signed container digests.
 
 ## Troubleshooting & Escalation
 
 - **SQL container fails to start**: confirm Docker Desktop resources, inspect `artifacts/containers/sqlserver.log` or `artifacts/containers/postgres.log`, rerun with `CRONIQ_SQL`/`CRONIQ_POSTGRES` pointing to a local database if needed.
 - **Coverage gate fails**: run `reportgenerator -reports coverage/**/coverage.cobertura.xml -targetdir coverage/report` locally to inspect per-file breakdown, add missing tests, rerun.
-- **Intermittent E2E failure**: capture Compose logs (`docker compose logs`) before teardown by passing `KEEP_STACK=1` to `scripts/test-e2e.cmd`; open an issue with logs attached.
+- **Intermittent E2E failure**: capture the AppHost output plus container logs (Aspire dashboard or `docker logs`) before teardown; open an issue with logs attached.
 - **Category filters ignored**: ensure `[Trait(TestCategories.Category, TestCategories.Contract)]` is present and that `TestCategories` constants are referenced directly.
 - Escalation path: post failures in `#croniq-alerts`, assign owners according to the backlog table below.
 
 ## Ownership & Backlog
 
 - **Owners**: Core (unit coverage, schedulers), Persistence (contract tests, SQL fixtures), Platform (observability + CI), Release Engineering (compliance + signing), Solutions (E2E harness).
-- **Delivered**: `Croniq.TestKit`, Shouldly/NSubstitute rollout, `[Category]` traits, Aspire-backed `Croniq.Api.Smoke` (Compose fallback), this document + `tests/README.md`, GitHub Actions workflows for PR and nightly builds.
+- **Delivered**: `Croniq.TestKit`, Shouldly/NSubstitute rollout, `[Category]` traits, Aspire-backed `Croniq.Api.Smoke`, this document + `tests/README.md`, GitHub Actions workflows for PR and nightly builds.
 - **Open Backlog**:
   1. Hook container log export into CI artifacts automatically (partially implemented via `TestcontainerLogCollector`).
   2. Add response snapshot helpers to `Croniq.TestKit` for API regression detection.
@@ -165,7 +165,7 @@ This document extends the quality vision captured in `architecture.md` and descr
 | DONE   | Coverlet instrumentation enabled for every `*.Tests` project | `Directory.Build.props` sets `CollectCoverage=true` and wires `coverlet.msbuild`.                                                                       |
 | DONE   | PR workflow runs lint/build/unit suites with coverage gates  | `.github/workflows/ci-pr.yml` executes all current unit suites, aggregates coverage, and enforces >=73% core / >=75% overall + >=55% branch thresholds. |
 | DONE   | Observability suite covered in CI                            | `Run Croniq.Observability.Tests` step in `ci-pr.yml` validates OTLP wiring on every PR.                                                                 |
-| DONE   | Smoke harness available for manual/Nightly use               | CI runs the Aspire AppHost + `tests/Croniq.Api.Smoke`; local fallback remains `scripts/test-e2e.cmd` (Compose).                                         |
+| DONE   | Smoke harness available for manual/Nightly use               | CI runs the Aspire AppHost + `tests/Croniq.Api.Smoke`; local runs use the same AppHost flow.                                                           |
 | DONE   | Croniq.TestKit shared fixtures committed                     | `tests/Croniq.TestKit/` now ships SqlServer + Postgres fixtures, log collectors, and canonical trait constants.                                         |
 | DONE   | Contract suites for SqlServer/Postgres providers run in CI   | `tests/Croniq.Persistence.SqlServer.Tests` and `tests/Croniq.Persistence.Postgres.Tests` are wired into `.github/workflows/ci-pr.yml`.                  |
 | DONE   | Nightly workflow with Aspire smoke + SBOM/Trivy              | `.github/workflows/nightly.yml` now runs the AppHost dev stack and a compliance job (Syft SBOM + Trivy scan) with blocking gates.                       |

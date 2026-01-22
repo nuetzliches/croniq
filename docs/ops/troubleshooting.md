@@ -11,15 +11,15 @@ Use this checklist to diagnose the most common issues developers hit while worki
 | `403 Forbidden` even though the token looks valid | Missing scopes or tenant claim                   | Ensure the token contains the expected scope + tenant claims. Missing claims/scopes are rejected at ingress.                                                                        |
 | Requests rate-limited immediately                 | Tenant/caller resolved to `anonymous`            | Inspect logs for `RateLimitPartition` messages. Provide either a valid key or bearer token so Croniq can derive the caller context before rate limiting.                            |
 
-## 2. Dev Stack (Docker) Issues
+## 2. Dev Stack (Aspire) Issues
 
-| Symptom                                                                 | Likely Cause                                | Fix                                                                                                                                                                                                                                                                                                      |
-| ----------------------------------------------------------------------- | ------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `mssql-22` container never becomes healthy                              | Port already in use or volume corruption    | Stop other SQL instances on port 1433, then rerun `scripts\devstack-down.cmd --volumes` (wipes local DB). Reference `/deep-dive/devstack.md` for port overrides in `.env`.                                                                                                                               |
-| `croniq-db-migrator` exits with "login failed"                          | Wrong SQL/Postgres credentials in `.env`    | Update `CRONIQ_DB_PROVIDER` and the relevant connection settings (`CRONIQ_SQL_HOST`/`CRONIQ_SQL_PASSWORD`/`CRONIQ_SQL_DATABASE` or `CRONIQ_POSTGRES_CONNECTION`), or override `Croniq__SqlServer__ConnectionString`/`Croniq__Postgres__ConnectionString`. Recreate `.env` from `.env.example` if unsure. |
-| `croniq-db-migrator` exits with "No EF Core migrations were discovered" | Migration designer files missing or ignored | Ensure `src/**/Migrations/*.Designer.cs` plus `SqlServerDbContextModelSnapshot.cs` and `PostgresDbContextModelSnapshot.cs` are committed (not ignored by `.gitignore`), then rebuild and rerun the dev stack.                                                                                            |
-| API container restarts constantly                                       | Missing auth or persistence config          | Check `docker compose logs api -f`. Ensure the env file includes `Croniq__Auth__Mode` and persistence settings.                                                                                                                                                                                          |
-| Observability profile fails (`loki` issues)                             | Overlapping port bindings or stale volumes  | Run `scripts\devstack-down.cmd --profile obs --volumes` to reset observability containers before starting again.                                                                                                                                                                                         |
+| Symptom                                                                 | Likely Cause                                | Fix                                                                                                                                                                                                                                                                                 |
+| ----------------------------------------------------------------------- | ------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `mssql-22` container never becomes healthy                              | Port already in use or volume corruption    | Stop other SQL instances on `CRONIQ_SQL_HOST_PORT` and restart the AppHost. If the volume is corrupted, remove `croniq-mssql-data` with `docker volume rm croniq-mssql-data` and start again.                                                                                        |
+| `croniq-db-migrator` exits with "login failed"                          | Wrong SQL/Postgres credentials in `.env`    | Update `CRONIQ_DB_PROVIDER` and the relevant connection settings (`CRONIQ_SQL_HOST`/`CRONIQ_SQL_PASSWORD`/`CRONIQ_SQL_DATABASE` or `CRONIQ_POSTGRES_CONNECTION`), or override `Croniq__SqlServer__ConnectionString`/`Croniq__Postgres__ConnectionString`.                              |
+| `croniq-db-migrator` exits with "No EF Core migrations were discovered" | Migration designer files missing or ignored | Ensure `src/**/Migrations/*.Designer.cs` plus `SqlServerDbContextModelSnapshot.cs` and `PostgresDbContextModelSnapshot.cs` are committed (not ignored by `.gitignore`), then rebuild and rerun the dev stack.                                                                       |
+| API resource restarts constantly                                        | Missing auth or persistence config          | Check the AppHost output, Aspire dashboard logs, or `docker logs <api-container>`. Ensure the env file includes `Croniq__Auth__Mode` and persistence settings.                                                                                                                      |
+| Observability profile fails (`loki` issues)                             | Overlapping port bindings or stale volumes  | Stop the AppHost, free the conflicting port, and delete the related volumes (`grafana-data`, `tempo-data`, `loki-data`, `prom-data`) before starting again.                                                                                                                        |
 
 ## 3. Jobs Do Not Run
 
@@ -40,14 +40,14 @@ Use this checklist to diagnose the most common issues developers hit while worki
 
 ## 5. Scripts & CLI Helpers
 
-| Symptom                                             | Likely Cause       | Fix                                                                                                         |
-| --------------------------------------------------- | ------------------ | ----------------------------------------------------------------------------------------------------------- |
-| `scripts\devstack-up.cmd` fails with ".env missing" | `.env` not created | Copy `.env.example` to `.env` and edit the secrets. The script checks for the file before launching Docker. |
-| `scripts\devstack-trigger-job.cmd` returns `401`    | Missing API key    | Populate `CRONIQ_API_KEY` in `.env`. The script forwards it as `X-Croniq-Key`.                              |
+| Symptom                                              | Likely Cause                  | Fix                                                                                                                   |
+| ---------------------------------------------------- | ----------------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| `scripts\\devstack-hosts.ps1` fails with permissions | Not running as Administrator  | Run PowerShell as Administrator and re-run the script.                                                                 |
+| `scripts\\devstack-import-caddy-cert.ps1` fails      | Caddy disabled or not running | Ensure `CRONIQ_DEVSTACK_CADDY` is `true` and the AppHost is running, then rerun the script from an elevated terminal. |
 
 ## Still Stuck?
 
-1. Capture `docker compose ps` and `docker compose logs <service> --tail=200` outputs.
+1. Capture the AppHost console output plus `docker ps` and `docker logs <service> --tail=200`.
 2. Note the Croniq version/commit you are running.
 3. Share the details in your team channel or file an issue with the steps to reproduce.
 

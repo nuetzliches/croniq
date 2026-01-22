@@ -12,7 +12,7 @@ Croniq is a tenant-aware scheduling platform built on .NET 10. It combines a flu
 - **Central guardrails:** Apply retry, timeout, concurrency, and quota policies globally while keeping tenant isolation.
 - **Operational clarity:** Stream logs/metrics/traces via the built-in OpenTelemetry stack and inspect dead letters centrally.
 - **Secure access:** Mix API keys and bearer tokens with per-tenant scopes, rate limits, and planned audit logging.
-- **Easy onboarding:** Spin up the Docker dev stack, run the quickstart, and grow into the deeper architecture guides at your own pace.
+- **Easy onboarding:** Spin up the Aspire dev stack, run the quickstart, and grow into the deeper architecture guides at your own pace.
 
 Whenever you need implementation details (dev stack bootstrap, CI/CD, troubleshooting), jump into `/deep-dive/`.
 
@@ -24,7 +24,7 @@ Whenever you need implementation details (dev stack bootstrap, CI/CD, troublesho
 4. Configure endpoints, API keys, and tenant scopes via the [Configuration Guide](./configuration.md).
 5. Learn about job policies and trigger options via [`policies.md`](../guides/policies.md) and [`triggers.md`](../guides/triggers.md).
 6. Use [`/guides/handlers.md`](../guides/handlers.md) for `IJob`/`IJobExecutionContext` patterns and [`/deep-dive/job-registration.md`](../deep-dive/job-registration.md) for attributes and startup registration details.
-7. Need diagnostics, observability, or CI internals? Follow the "Learn more" links that point into `/deep-dive/*` (for example, the Docker dev stack lives in `/deep-dive/devstack.md`).
+7. Need diagnostics, observability, or CI internals? Follow the "Learn more" links that point into `/deep-dive/*` (for example, the Aspire dev stack lives in `/deep-dive/devstack.md`).
 
 ## Minimal Worker Host (InMemory)
 
