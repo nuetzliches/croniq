@@ -149,13 +149,7 @@ public static class WebhookHostingExtensions
             ? DefaultDataProtectionAppName
             : applicationName;
 
-        services.PostConfigure<DataProtectionOptions>(options =>
-        {
-            if (string.IsNullOrWhiteSpace(options.ApplicationDiscriminator))
-            {
-                options.ApplicationDiscriminator = resolvedName;
-            }
-        });
+        builder.SetApplicationName(resolvedName);
     }
 
     private static IServiceCollection ConfigureWebhookRemotePersistence(IServiceCollection services, CroniqWebhookOptions options)

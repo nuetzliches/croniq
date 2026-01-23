@@ -87,6 +87,8 @@ var uiDefaultTenantId = GetEnvValue("CRONIQ_UI_DEFAULT_TENANT_ID");
 var uiActivityStreamMode = GetEnvValue("CRONIQ_UI_WEBHOOKS_ACTIVITY_STREAM_MODE");
 var uiActivityGrpcBaseUrl = GetEnvValue("CRONIQ_UI_WEBHOOKS_ACTIVITY_GRPC_BASEURL");
 var uiActivitySseBaseUrl = GetEnvValue("CRONIQ_UI_WEBHOOKS_ACTIVITY_SSE_BASEURL");
+var dataProtectionAppName = GetEnvValue("CRONIQ_SECURITY_DATAPROTECTION_APPLICATIONNAME");
+var dataProtectionKeyRingPath = GetEnvValue("CRONIQ_SECURITY_DATAPROTECTION_KEYRINGPATH");
 var uiEnabled = !IsFalse(GetEnvValue("CRONIQ_DEVSTACK_UI"));
 var otlpEndpoint = GetEnvValue("CRONIQ_OBS_OTLP_ENDPOINT");
 var otlpProtocol = GetEnvValue("CRONIQ_OBS_OTLP_PROTOCOL");
@@ -470,6 +472,16 @@ if (!string.IsNullOrWhiteSpace(otlpEndpoint))
 if (!string.IsNullOrWhiteSpace(otlpProtocol))
 {
     api.WithEnvironment("Croniq__Observability__OtlpProtocol", otlpProtocol);
+}
+
+if (!string.IsNullOrWhiteSpace(dataProtectionAppName))
+{
+    api.WithEnvironment("Croniq__Security__DataProtection__ApplicationName", dataProtectionAppName);
+}
+
+if (!string.IsNullOrWhiteSpace(dataProtectionKeyRingPath))
+{
+    api.WithEnvironment("Croniq__Security__DataProtection__KeyRingPath", dataProtectionKeyRingPath);
 }
 
 if (uiEnabled)

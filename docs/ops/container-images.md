@@ -71,6 +71,8 @@ Most hosts rely on the same Croniq core + persistence/auth settings:
 - `Croniq__Persistence__Mode` (`InMemory`, `SqlServer`, or `Postgres`)
 - `Croniq__SqlServer__ConnectionString` (shared fallback for SqlServer auth + persistence)
 - `Croniq__Postgres__ConnectionString` (shared fallback for Postgres auth + persistence)
+- `Croniq__Security__DataProtection__KeyRingPath` (shared key ring path for webhook secret encryption)
+- `Croniq__Security__DataProtection__ApplicationName` (keep consistent across API/webhooks; defaults to `Croniq`)
 
 ## Job assembly loading
 
@@ -103,7 +105,13 @@ Optional:
 - `Croniq__Webhooks__Mode=SqlServer|Postgres|Remote` (webhook admin persistence)
 - `Croniq__Webhooks__Remote__BaseUrl` + `Croniq__Webhooks__Remote__ApiKey` when `Mode=Remote`
 
-Persisted webhook secrets rely on ASP.NET Core Data Protection. Share the key ring across API/webhook hosts; see [`docs/deep-dive/security.md`](../deep-dive/security.md).
+Persisted webhook secrets rely on ASP.NET Core Data Protection. Share the key ring across API/webhook hosts and keep the application name consistent:
+
+- `Croniq__Security__DataProtection__KeyRingPath=/var/lib/croniq/keys`
+- `Croniq__Security__DataProtection__ApplicationName=Croniq`
+
+Mount the same volume at `/var/lib/croniq/keys` in both containers. Rotate webhook secrets after changing the key ring.
+See [`docs/deep-dive/security.md`](../deep-dive/security.md) for details.
 
 The API host does not expose webhook ingress endpoints. Use `croniq-webhooks` for inbound webhooks.
 

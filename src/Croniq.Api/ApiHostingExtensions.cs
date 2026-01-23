@@ -770,12 +770,6 @@ public static partial class ApiHostingExtensions
             ? DefaultDataProtectionAppName
             : applicationName;
 
-        services.PostConfigure<DataProtectionOptions>(options =>
-        {
-            if (string.IsNullOrWhiteSpace(options.ApplicationDiscriminator))
-            {
-                options.ApplicationDiscriminator = resolvedName;
-            }
-        });
+        builder.SetApplicationName(resolvedName);
     }
 }

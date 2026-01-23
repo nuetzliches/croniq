@@ -30,7 +30,18 @@ Use this checklist to diagnose the most common issues developers hit while worki
 | Schedules never fire       | Worker host offline or policy blocked | Confirm the worker container/service is running. Check scheduler logs for policy rejections (quota, concurrency).                                                                   |
 | Dead-lettered executions   | Exceptions bubble from handler        | Review Serilog logs or Grafana panels for the job. Add retries/policies as needed.                                                                                                  |
 
-## 4. Observability & Telemetry
+## 4. Webhooks & Secrets
+
+| Symptom                                                                        | Likely Cause                                  | Fix                                                                                        |
+| ------------------------------------------------------------------------------ | --------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| Webhook ingress/admin returns `500` (`secret material could not be decrypted`) | Data Protection key ring or app name mismatch | Configure shared Data Protection settings for API + webhooks, then rotate webhook secrets. |
+
+Set:
+
+- `Croniq__Security__DataProtection__KeyRingPath=/var/lib/croniq/keys`
+- `Croniq__Security__DataProtection__ApplicationName=Croniq`
+
+## 5. Observability & Telemetry
 
 | Symptom                              | Likely Cause                         | Fix                                                                                                                                                                               |
 | ------------------------------------ | ------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -38,7 +49,7 @@ Use this checklist to diagnose the most common issues developers hit while worki
 | Loki log panels missing data         | Tenant headers out of sync           | Ensure both the OTEL collector and Grafana Datasource use the same tenant ID (`croniq-devstack` by default). Update `infra/docker/observability/*` together.                      |
 | Prometheus alerts firing immediately | Dev stack running without workload   | Silence alerts or disable the rules when using a tiny dev stack. When investigating actual problems, read `infra/monitoring/rules/` annotations for runbooks.                     |
 
-## 5. Scripts & CLI Helpers
+## 6. Scripts & CLI Helpers
 
 | Symptom                                              | Likely Cause                  | Fix                                                                                                                   |
 | ---------------------------------------------------- | ----------------------------- | --------------------------------------------------------------------------------------------------------------------- |

@@ -95,12 +95,6 @@ public static class ServiceCollectionExtensions
             ? DefaultDataProtectionAppName
             : applicationName;
 
-        services.PostConfigure<DataProtectionOptions>(options =>
-        {
-            if (string.IsNullOrWhiteSpace(options.ApplicationDiscriminator))
-            {
-                options.ApplicationDiscriminator = resolvedName;
-            }
-        });
+        builder.SetApplicationName(resolvedName);
     }
 }

@@ -185,7 +185,10 @@ Minimal configuration example:
 ## Secrets & Transport
 
 - `ISecretProvider` remains the abstraction for loading API keys/connection strings in hosts; production deployments plug into Vault/KeyVault/Secrets Manager. Local dev may use `.env` or user-secrets.
-- Webhook secret encryption relies on ASP.NET Core Data Protection; API and webhook hosts must share the same key ring (`Croniq:Security:DataProtection:ApplicationName` plus `KeyRingPath` or another shared key store) to decrypt persisted secrets.
+- Webhook secret encryption relies on ASP.NET Core Data Protection; API and webhook hosts must share the same key ring (`Croniq:Security:DataProtection:KeyRingPath`) and application name (`Croniq:Security:DataProtection:ApplicationName`, defaults to `Croniq`) to decrypt persisted secrets.
+  - Remote Compose (API + webhooks): set `Croniq__Security__DataProtection__KeyRingPath=/var/lib/croniq/keys` and (optionally) `Croniq__Security__DataProtection__ApplicationName=Croniq` on both containers and mount the same volume to `/var/lib/croniq/keys`.
+  - The production compose template wires this up via `CRONIQ_SECURITY_DATAPROTECTION_KEYRINGPATH` + `CRONIQ_SECURITY_DATAPROTECTION_APPLICATIONNAME` and a shared `croniq-dp-keys` volume.
+  - Rotate webhook secrets after changing the key ring path or application name.
 - All traffic assumes HTTPS. Self-hosted scenarios must trust dev certificates; production requires TLS termination before the API.
 - Log and metric hooks redact secrets. TenantId/CallerId are hashed when `Croniq:Observability:HashIdentifiers=true` with `Croniq:Observability:IdentifierHashKey`; otherwise they remain clear text.
 
