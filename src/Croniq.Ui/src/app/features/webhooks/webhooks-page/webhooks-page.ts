@@ -657,6 +657,39 @@ export class WebhooksPage {
     return 'Leased';
   }
 
+  activityOutcomeLabel(item: WebhookTimelineItemView): string {
+    if (item.kind === 'deadLetter') {
+      return 'Dead lettered';
+    }
+    if (item.status === 'success') {
+      return 'Delivered';
+    }
+    if (item.status === 'warning') {
+      return 'Delivered with warning';
+    }
+    if (item.status === 'failed') {
+      return 'Failed delivery';
+    }
+    if (item.status === 'pending') {
+      return 'Pending delivery';
+    }
+    return 'Leased for delivery';
+  }
+
+  activityMetadataLabel(item: WebhookTimelineItemView): string {
+    const parts: string[] = [];
+    if (item.environment) {
+      parts.push(`Env ${item.environment}`);
+    }
+    if (item.source) {
+      parts.push(`Source ${item.source}`);
+    }
+    if (item.endpointStatus) {
+      parts.push(`Endpoint ${item.endpointStatus}`);
+    }
+    return parts.join(' · ');
+  }
+
   replayDeadLetterItem(item: WebhookTimelineItemView): void {
     if (this.writePermissionDenied() || item.kind !== 'deadLetter') {
       return;
