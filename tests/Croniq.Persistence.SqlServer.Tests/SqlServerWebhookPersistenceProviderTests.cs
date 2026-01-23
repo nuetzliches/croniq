@@ -175,6 +175,7 @@ public sealed class SqlServerWebhookPersistenceProviderTests : IAsyncLifetime
         var results = await _persistence!.ListAsync(tenantScope, CancellationToken.None);
 
         results.Count.ShouldBe(2);
+        results.All(endpoint => string.IsNullOrEmpty(endpoint.Secret)).ShouldBeTrue();
         results.Select(x => x.HookKey)
             .OrderBy(x => x, StringComparer.Ordinal)
             .ToArray()

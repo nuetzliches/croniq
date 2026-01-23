@@ -106,7 +106,7 @@ public sealed class PostgresWebhookPersistenceProvider : IWebhookPersistenceProv
                 var rules = ruleLookup.TryGetValue(row.HookKey, out var mappedRules)
                     ? mappedRules
                     : Array.Empty<WebhookIpRuleDefinition>();
-                return Map(row, rules);
+                return Map(row, rules, includeSecret: false);
             })
             .ToList();
     }
@@ -564,13 +564,17 @@ public sealed class PostgresWebhookPersistenceProvider : IWebhookPersistenceProv
         };
     }
 
-    private WebhookEndpointDefinition Map(WebhookEndpointEntity entity, IReadOnlyCollection<WebhookIpRuleDefinition>? ipRules = null)
+    private WebhookEndpointDefinition Map(
+        WebhookEndpointEntity entity,
+        IReadOnlyCollection<WebhookIpRuleDefinition>? ipRules = null,
+        bool includeSecret = true)
     {
         var metadata = DeserializeMetadata(entity.MetadataJson);
+        var secret = includeSecret ? UnprotectSecret(entity.Secret) : string.Empty;
         return new WebhookEndpointDefinition(
             entity.HookKey,
             entity.JobKey,
-            UnprotectSecret(entity.Secret),
+            secret,
             entity.Enabled,
             entity.RequireSignature,
             entity.RequestsPerMinute,

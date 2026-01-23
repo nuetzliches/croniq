@@ -29,15 +29,26 @@ if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
 }
 
 if ([string]::IsNullOrWhiteSpace($ContainerName)) {
-    $names = & docker ps --filter 'name=caddy' --format '{{.Names}}'
-    $names = $names | ForEach-Object { $_.Trim() } | Where-Object { $_ }
-    if (-not $names -or $names.Count -eq 0) {
+    $names = @(
+        & docker ps --filter 'name=caddy' --format '{{.Names}}' |
+            ForEach-Object { $_.Trim() } |
+            Where-Object { $_ }
+    )
+    if ($names.Count -eq 0) {
         throw 'No running Caddy container found. Start the devstack first.'
     }
     $ContainerName = $names[0]
     if ($names.Count -gt 1) {
         Write-Host "[devstack] Multiple Caddy containers found. Using $ContainerName." -ForegroundColor DarkGray
     }
+}
+
+if ([string]::IsNullOrWhiteSpace($ContainerName)) {
+    throw 'Caddy container name resolved to empty. Provide -ContainerName explicitly.'
+}
+
+if ([string]::IsNullOrWhiteSpace($ContainerCertPath)) {
+    throw 'Container cert path is required.'
 }
 
 $certFullPath = Join-Path $repoRoot $CertPath
@@ -48,6 +59,13 @@ if ($certDir -and -not (Test-Path -LiteralPath $certDir)) {
 
 Write-Host "[devstack] Copying Caddy root cert from $ContainerName..." -ForegroundColor DarkGray
 & docker cp "$ContainerName`:$ContainerCertPath" $certFullPath
+if ($LASTEXITCODE -ne 0) {
+    throw "docker cp failed with exit code $LASTEXITCODE."
+}
+
+if (-not (Test-Path -LiteralPath $certFullPath -PathType Leaf)) {
+    throw "Caddy root certificate was not copied to $certFullPath."
+}
 
 if (-not $CopyOnly) {
     if (-not (Test-IsAdmin)) {
