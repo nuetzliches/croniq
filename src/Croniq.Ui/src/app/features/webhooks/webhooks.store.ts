@@ -70,7 +70,7 @@ export type TimelineItemSource = 'ingress' | 'invoke';
 export type WebhookTimelineItemView = {
     id: string;
     kind: TimelineItemKind;
-    status: 'success' | 'failed' | 'warning';
+    status: 'success' | 'failed' | 'warning' | 'pending' | 'leased';
     label: string;
     occurredAt: string;
     hookKey: string;
@@ -91,6 +91,9 @@ export type ActivityBucket = {
     total: number;
     errors: number;
     warnings: number;
+    pending: number;
+    leased: number;
+    deadLetters: number;
     bucketEnd?: string | null;
     p95LatencyMs?: number | null;
 };
@@ -1209,6 +1212,9 @@ function normalizeActivityBuckets(summary: WebhookActivitySummary): ReadonlyArra
         const total = resolveOptionalNumber(bucket.totalCount) ?? 0;
         const errors = resolveOptionalNumber(bucket.errorCount) ?? 0;
         const warnings = resolveOptionalNumber(bucket.warningCount) ?? 0;
+        const pending = resolveOptionalNumber(bucket.pendingCount) ?? 0;
+        const leased = resolveOptionalNumber(bucket.leasedCount) ?? 0;
+        const deadLetters = resolveOptionalNumber(bucket.deadLetterCount) ?? 0;
         const p95LatencyMs = resolveOptionalNumber(bucket.p95LatencyMs);
         buckets.push({
             bucketStart,
@@ -1216,6 +1222,9 @@ function normalizeActivityBuckets(summary: WebhookActivitySummary): ReadonlyArra
             total,
             errors,
             warnings,
+            pending,
+            leased,
+            deadLetters,
             p95LatencyMs,
         });
     });
@@ -1261,6 +1270,12 @@ function resolveActivityStatus(value: unknown): WebhookTimelineItemView['status'
     }
     if (value === 'warning') {
         return 'warning';
+    }
+    if (value === 'pending') {
+        return 'pending';
+    }
+    if (value === 'leased') {
+        return 'leased';
     }
     return 'success';
 }

@@ -316,7 +316,7 @@ export const WebhookCapabilitiesResponse = z
     .object({
         allowUnsignedHooks: z.boolean(),
         defaultRequestsPerMinute: z.number().int(),
-        mode: z.string(),
+        mode: z.string().nullable(),
         remoteBaseUrl: z.string().nullable(),
         remoteIngressBaseUrl: z.string().nullable(),
     })
@@ -326,7 +326,7 @@ export type WebhookCapabilitiesResponse = z.infer<
 >;
 export const WebhookRemoteHealthResponse = z
     .object({
-        status: z.string(),
+        status: z.string().nullable(),
         checkedAtUtc: z.iso.datetime({ offset: true }),
         statusCode: z.number().int().nullable(),
         detail: z.string().nullable(),
@@ -436,6 +436,9 @@ export const WebhookActivityBucket = z
         totalCount: z.number().int(),
         errorCount: z.number().int(),
         warningCount: z.number().int(),
+        pendingCount: z.number().int(),
+        leasedCount: z.number().int(),
+        deadLetterCount: z.number().int(),
         p95LatencyMs: z.number().int().nullable(),
     })
     .partial();

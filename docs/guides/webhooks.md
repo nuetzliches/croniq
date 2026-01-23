@@ -23,6 +23,20 @@ Activity timeline entries include a `source` field (`ingress` or `invoke`) so op
 - Freshness: TriggerJob records successful dispatches (failures surface via dead letters), StoreOnly reflects relay acknowledgements. The SSE stream polls every 5 seconds, so expect short (seconds) staleness.
 - Defaults: timeline `limit` defaults to 200 (max 500). Summary defaults to a 24h window with 60-minute buckets; max window 31 days, max bucket 24 hours.
 
+### Activity statuses and summary fields
+
+Activity timeline entries include `status` values that map to the ingress lifecycle:
+
+- `pending`: ingress stored but not yet leased by a relay worker
+- `leased`: relay worker has leased the ingress event but has not confirmed delivery
+- `success`: delivery completed without errors
+- `warning`: delivery completed after retries (attempt count greater than 1)
+- `failed`: delivery failed or an entry represents a dead letter
+
+Activity summary buckets include `totalCount`, `errorCount`, `warningCount`, `pendingCount`, `leasedCount`, `deadLetterCount`, and optional `p95LatencyMs`.
+
+For relay flow details that generate pending/leased transitions, see [`dmz-ingress-remote-webhooks.md`](../deep-dive/designs/dmz-ingress-remote-webhooks.md).
+
 ## Ingress Endpoint
 
 The `Croniq.Webhooks` host exposes tenant-scoped endpoints such as `POST /tenants/{tenantId}/environments/{environmentTag}/webhooks/{hookKey}`. Each hook references a job key and forwards request metadata into the job execution.

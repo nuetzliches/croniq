@@ -891,6 +891,7 @@ public static partial class ApiHostingExtensions
             int? limit,
             [FromServices] ICallerContextAccessor callerContextAccessor,
             [FromServices] IWebhookActivityStore? activityStore,
+            [FromServices] ILogger<WebhookEndpointApiMarker> logger,
             HttpContext httpContext,
             CancellationToken cancellationToken) =>
         {
@@ -943,7 +944,26 @@ public static partial class ApiHostingExtensions
                         Limit = query.Limit
                     }.Normalize();
 
-                    var entries = await activityStore.ListAsync(scope, probeQuery, cancellationToken).ConfigureAwait(false);
+                    IReadOnlyCollection<WebhookActivityEntry> entries;
+                    try
+                    {
+                        entries = await activityStore.ListAsync(scope, probeQuery, cancellationToken).ConfigureAwait(false);
+                    }
+                    catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                    {
+                        break;
+                    }
+                    catch (Exception ex)
+                    {
+                        logger.LogWarning(
+                            ex,
+                            "webhook activity stream poll failed for {TenantId}/{EnvironmentTag}",
+                            scope.TenantId,
+                            scope.EnvironmentTag);
+                        await WriteSseCommentAsync(httpContext.Response, "upstream-error", cancellationToken).ConfigureAwait(false);
+                        await Task.Delay(WebhookActivityStreamPollInterval, cancellationToken).ConfigureAwait(false);
+                        continue;
+                    }
                     if (entries.Count > 0)
                     {
                         var latestOccurredAtUtc = entries.Max(entry => entry.OccurredAtUtc);
@@ -1307,6 +1327,9 @@ public static partial class ApiHostingExtensions
         {
             WebhookActivityStatus.Success => "success",
             WebhookActivityStatus.Failed => "failed",
+            WebhookActivityStatus.Warning => "warning",
+            WebhookActivityStatus.Pending => "pending",
+            WebhookActivityStatus.Leased => "leased",
             _ => "warning"
         };
         var id = entry.Kind == WebhookActivityKind.DeadLetter
@@ -1343,6 +1366,9 @@ public static partial class ApiHostingExtensions
                 bucket.TotalCount,
                 bucket.ErrorCount,
                 bucket.WarningCount,
+                bucket.PendingCount,
+                bucket.LeasedCount,
+                bucket.DeadLetterCount,
                 bucket.P95LatencyMs))
             .ToArray();
 

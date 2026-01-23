@@ -24,6 +24,9 @@ public sealed record WebhookActivityBucket(
     int TotalCount,
     int ErrorCount,
     int WarningCount,
+    int PendingCount,
+    int LeasedCount,
+    int DeadLetterCount,
     int? P95LatencyMs);
 
 public sealed record WebhookActivitySummary(

@@ -15,7 +15,9 @@ public enum WebhookActivityStatus
 {
     Success = 0,
     Failed = 1,
-    Warning = 2
+    Warning = 2,
+    Pending = 3,
+    Leased = 4
 }
 
 public static class WebhookActivitySources
@@ -54,6 +56,9 @@ public sealed record WebhookActivityBucket(
     int TotalCount,
     int ErrorCount,
     int WarningCount,
+    int PendingCount,
+    int LeasedCount,
+    int DeadLetterCount,
     int? P95LatencyMs);
 
 public sealed record WebhookActivitySummary(

@@ -44,7 +44,7 @@ export interface WebhookInvocationParams {
     hookKey: string;
 }
 
-export type WebhookActivityStatus = 'success' | 'failed' | 'warning';
+export type WebhookActivityStatus = 'success' | 'failed' | 'warning' | 'pending' | 'leased';
 
 export interface TenantWebhookActivityParams extends TenantEnvironmentOptionalParams {
     hookKeys?: ReadonlyArray<string> | null;

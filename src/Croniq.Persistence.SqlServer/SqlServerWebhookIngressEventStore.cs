@@ -149,14 +149,26 @@ public sealed class SqlServerWebhookIngressEventStore : IWebhookIngressEventStor
     {
         if (ack is null) throw new ArgumentNullException(nameof(ack));
         if (string.IsNullOrWhiteSpace(ack.EventId)) throw new ArgumentNullException(nameof(ack.EventId));
-        if (string.IsNullOrWhiteSpace(ack.LeaseId)) throw new ArgumentNullException(nameof(ack.LeaseId));
+        var leaseId = string.IsNullOrWhiteSpace(ack.LeaseId) ? null : ack.LeaseId.Trim();
 
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
         var entity = await db.WebhookIngressEvents
             .FirstOrDefaultAsync(x => x.EventId == ack.EventId, cancellationToken)
             .ConfigureAwait(false);
 
-        if (entity is null || !string.Equals(entity.LeaseId, ack.LeaseId, StringComparison.OrdinalIgnoreCase))
+        if (entity is null)
+        {
+            return;
+        }
+
+        if (leaseId is null)
+        {
+            if (!string.IsNullOrWhiteSpace(entity.LeaseId))
+            {
+                return;
+            }
+        }
+        else if (!string.Equals(entity.LeaseId, leaseId, StringComparison.OrdinalIgnoreCase))
         {
             return;
         }

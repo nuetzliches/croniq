@@ -92,6 +92,8 @@ const TIMELINE_BUCKET_MS_OPTIONS = [
 const MAX_TIMELINE_BUCKETS = 24;
 
 const ACTIVITY_STATUS_DEFINITIONS: ReadonlyArray<{ status: WebhookTimelineItemView['status']; label: string }> = [
+  { status: 'pending', label: 'Pending' },
+  { status: 'leased', label: 'Leased' },
   { status: 'success', label: 'Success' },
   { status: 'warning', label: 'Warning' },
   { status: 'failed', label: 'Failed' },
@@ -1308,6 +1310,8 @@ function formatRemoteHealthDetail(health: WebhookRemoteHealthView | null): strin
 }
 
 type ChartPalette = {
+  pending: string;
+  leased: string;
   success: string;
   warning: string;
   failed: string;
@@ -1318,6 +1322,8 @@ type ChartPalette = {
 };
 
 type BucketStatusCount = {
+  pending: number;
+  leased: number;
   success: number;
   warning: number;
   failed: number;
@@ -1373,17 +1379,20 @@ function buildActivityBuckets(
   const bucketCount = Math.max(1, Math.ceil((end - start) / resolvedBucketMs));
 
   const buckets = new Map<number, ActivityBucket>();
-    for (let i = 0; i < bucketCount; i += 1) {
-      const bucketStart = start + i * resolvedBucketMs;
-      const bucketEnd = i === bucketCount - 1 ? end : bucketStart + resolvedBucketMs;
-      buckets.set(bucketStart, {
-        bucketStart: new Date(bucketStart).toISOString(),
-        bucketEnd: new Date(bucketEnd).toISOString(),
-        total: 0,
-        errors: 0,
-        warnings: 0,
-      });
-    }
+  for (let i = 0; i < bucketCount; i += 1) {
+    const bucketStart = start + i * resolvedBucketMs;
+    const bucketEnd = i === bucketCount - 1 ? end : bucketStart + resolvedBucketMs;
+    buckets.set(bucketStart, {
+      bucketStart: new Date(bucketStart).toISOString(),
+      bucketEnd: new Date(bucketEnd).toISOString(),
+      total: 0,
+      errors: 0,
+      warnings: 0,
+      pending: 0,
+      leased: 0,
+      deadLetters: 0,
+    });
+  }
 
   items.forEach((entry) => {
     const timestamp = Date.parse(entry.occurredAt);
@@ -1396,13 +1405,20 @@ function buildActivityBuckets(
     if (!bucket) {
       return;
     }
-      bucket.total += 1;
-      if (entry.status === 'failed') {
-        bucket.errors += 1;
-      } else if (entry.status === 'warning') {
-        bucket.warnings += 1;
-      }
-    });
+    bucket.total += 1;
+    if (entry.kind === 'deadLetter') {
+      bucket.deadLetters += 1;
+    }
+    if (entry.status === 'failed') {
+      bucket.errors += 1;
+    } else if (entry.status === 'warning') {
+      bucket.warnings += 1;
+    } else if (entry.status === 'pending') {
+      bucket.pending += 1;
+    } else if (entry.status === 'leased') {
+      bucket.leased += 1;
+    }
+  });
 
   return Array.from(buckets.values());
 }
@@ -1511,6 +1527,8 @@ function buildBucketStatusCounts(
   }
 
   const buckets = bucketRanges.map(() => ({
+    pending: 0,
+    leased: 0,
     success: 0,
     warning: 0,
     failed: 0,
@@ -1561,18 +1579,22 @@ function buildLegendSummaryFormatter(
   bucketCounts: ReadonlyArray<BucketStatusCount>,
 ): (name: string) => string {
   const totals: Record<WebhookTimelineItemView['status'], number> = {
+    pending: 0,
+    leased: 0,
     success: 0,
     warning: 0,
     failed: 0,
   };
 
   bucketCounts.forEach((bucket) => {
+    totals.pending += bucket.pending;
+    totals.leased += bucket.leased;
     totals.success += bucket.success;
     totals.warning += bucket.warning;
     totals.failed += bucket.failed;
   });
 
-  const totalCount = totals.success + totals.warning + totals.failed;
+  const totalCount = totals.pending + totals.leased + totals.success + totals.warning + totals.failed;
   const labelTotals = new Map<string, number>();
   ACTIVITY_STATUS_DEFINITIONS.forEach((definition) => {
     labelTotals.set(definition.label, totals[definition.status]);
@@ -1660,6 +1682,12 @@ function resolveStatusColor(status: WebhookTimelineItemView['status'], palette: 
   if (status === 'warning') {
     return palette.warning;
   }
+  if (status === 'pending') {
+    return palette.pending;
+  }
+  if (status === 'leased') {
+    return palette.leased;
+  }
   return palette.success;
 }
 
@@ -1714,6 +1742,14 @@ function formatTimelineBucketTooltip(
       <div style="display:flex;justify-content:space-between;gap:8px;">
         <span>Total</span>
         <span>${counts.total}</span>
+      </div>
+      <div style="display:flex;justify-content:space-between;gap:8px;">
+        <span>Pending</span>
+        <span>${counts.pending}</span>
+      </div>
+      <div style="display:flex;justify-content:space-between;gap:8px;">
+        <span>Leased</span>
+        <span>${counts.leased}</span>
       </div>
       <div style="display:flex;justify-content:space-between;gap:8px;">
         <span>Success</span>
@@ -1789,6 +1825,8 @@ function escapeTooltipValue(value: string): string {
 function resolveChartPalette(): ChartPalette {
   if (typeof window === 'undefined') {
     return {
+      pending: '#93c5fd',
+      leased: '#f9a8d4',
       success: '#34d399',
       warning: '#facc15',
       failed: '#fb7181',
@@ -1802,6 +1840,8 @@ function resolveChartPalette(): ChartPalette {
   const read = (name: string, fallback: string) => styles.getPropertyValue(name).trim() || fallback;
   const surface = read('--cq-surface-3', '#162033');
   return {
+    pending: read('--cq-graph-1', '#93c5fd'),
+    leased: read('--cq-graph-2', '#f9a8d4'),
     success: read('--cq-success', '#34d399'),
     warning: read('--cq-warning', '#facc15'),
     failed: read('--cq-danger-2', '#fb7181'),

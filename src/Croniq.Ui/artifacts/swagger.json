@@ -4592,6 +4592,18 @@
             "type": "integer",
             "format": "int32"
           },
+          "pendingCount": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "leasedCount": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "deadLetterCount": {
+            "type": "integer",
+            "format": "int32"
+          },
           "p95LatencyMs": {
             "type": "integer",
             "format": "int32",
@@ -4697,35 +4709,14 @@
             "format": "int32"
           },
           "mode": {
-            "type": "string"
+            "type": "string",
+            "nullable": true
           },
           "remoteBaseUrl": {
             "type": "string",
             "nullable": true
           },
           "remoteIngressBaseUrl": {
-            "type": "string",
-            "nullable": true
-          }
-        },
-        "additionalProperties": false
-      },
-      "WebhookRemoteHealthResponse": {
-        "type": "object",
-        "properties": {
-          "status": {
-            "type": "string"
-          },
-          "checkedAtUtc": {
-            "type": "string",
-            "format": "date-time"
-          },
-          "statusCode": {
-            "type": "integer",
-            "format": "int32",
-            "nullable": true
-          },
-          "detail": {
             "type": "string",
             "nullable": true
           }
@@ -4981,6 +4972,29 @@
           "updatedAtUtc": {
             "type": "string",
             "format": "date-time"
+          }
+        },
+        "additionalProperties": false
+      },
+      "WebhookRemoteHealthResponse": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "nullable": true
+          },
+          "checkedAtUtc": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "statusCode": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "detail": {
+            "type": "string",
+            "nullable": true
           }
         },
         "additionalProperties": false

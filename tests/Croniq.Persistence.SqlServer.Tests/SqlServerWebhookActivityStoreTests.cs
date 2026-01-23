@@ -116,9 +116,15 @@ public sealed class SqlServerWebhookActivityStoreTests : IAsyncLifetime
         buckets[0].TotalCount.ShouldBe(2);
         buckets[0].ErrorCount.ShouldBe(1);
         buckets[0].WarningCount.ShouldBe(1);
+        buckets[0].PendingCount.ShouldBe(0);
+        buckets[0].LeasedCount.ShouldBe(0);
+        buckets[0].DeadLetterCount.ShouldBe(0);
         buckets[1].TotalCount.ShouldBe(1);
         buckets[1].ErrorCount.ShouldBe(1);
         buckets[1].WarningCount.ShouldBe(0);
+        buckets[1].PendingCount.ShouldBe(0);
+        buckets[1].LeasedCount.ShouldBe(0);
+        buckets[1].DeadLetterCount.ShouldBe(1);
     }
 
     [Fact]

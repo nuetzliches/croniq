@@ -432,6 +432,9 @@ public sealed class RemoteWebhookClient
                 bucket.TotalCount,
                 bucket.ErrorCount,
                 bucket.WarningCount,
+                bucket.PendingCount,
+                bucket.LeasedCount,
+                bucket.DeadLetterCount,
                 bucket.P95LatencyMs))
             .ToArray();
 
@@ -463,6 +466,16 @@ public sealed class RemoteWebhookClient
         if (string.Equals(value, "warning", StringComparison.OrdinalIgnoreCase))
         {
             return WebhookActivityStatus.Warning;
+        }
+
+        if (string.Equals(value, "pending", StringComparison.OrdinalIgnoreCase))
+        {
+            return WebhookActivityStatus.Pending;
+        }
+
+        if (string.Equals(value, "leased", StringComparison.OrdinalIgnoreCase))
+        {
+            return WebhookActivityStatus.Leased;
         }
 
         return WebhookActivityStatus.Success;
@@ -668,6 +681,9 @@ public sealed class RemoteWebhookClient
         int TotalCount,
         int ErrorCount,
         int WarningCount,
+        int PendingCount,
+        int LeasedCount,
+        int DeadLetterCount,
         int? P95LatencyMs);
 
     private sealed record WebhookCapabilitiesResponseDto(

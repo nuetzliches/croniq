@@ -14,6 +14,8 @@ namespace Croniq.Persistence.Postgres;
 
 public sealed class PostgresWebhookActivityStore : IWebhookActivityStore, IWebhookActivityRecorder
 {
+    private const string StatusPending = "Pending";
+    private const string StatusLeased = "Leased";
     private const string StatusDelivered = "Delivered";
     private const string StatusFailed = "Failed";
     private const int ErrorMaxLength = 1024;
@@ -127,7 +129,8 @@ public sealed class PostgresWebhookActivityStore : IWebhookActivityStore, IWebho
                 windowEndUtc.UtcDateTime)
             .Select(entry => new ActivitySample(
                 new DateTimeOffset(DateTime.SpecifyKind(entry.ReceivedAtUtc, DateTimeKind.Utc)),
-                ResolveIngressStatus(entry.Status, entry.AttemptCount)))
+                ResolveIngressStatus(entry.Status, entry.AttemptCount),
+                WebhookActivityKind.Delivery))
             .ToListAsync(cancellationToken)
             .ConfigureAwait(false);
 
@@ -140,7 +143,8 @@ public sealed class PostgresWebhookActivityStore : IWebhookActivityStore, IWebho
                 windowEndUtc.UtcDateTime)
             .Select(entry => new ActivitySample(
                 new DateTimeOffset(DateTime.SpecifyKind(entry.CreatedAtUtc, DateTimeKind.Utc)),
-                WebhookActivityStatus.Failed))
+                WebhookActivityStatus.Failed,
+                WebhookActivityKind.DeadLetter))
             .ToListAsync(cancellationToken)
             .ConfigureAwait(false);
 
@@ -176,8 +180,14 @@ public sealed class PostgresWebhookActivityStore : IWebhookActivityStore, IWebho
             HeadersJson = null,
             MetadataJson = SerializeDictionary(metadata),
             ReceivedAtUtc = record.OccurredAtUtc.UtcDateTime,
-            Status = record.Status == WebhookActivityStatus.Failed ? StatusFailed : StatusDelivered,
-            AttemptCount = 1,
+            Status = record.Status switch
+            {
+                WebhookActivityStatus.Pending => StatusPending,
+                WebhookActivityStatus.Leased => StatusLeased,
+                WebhookActivityStatus.Failed => StatusFailed,
+                _ => StatusDelivered
+            },
+            AttemptCount = record.Status == WebhookActivityStatus.Pending ? 0 : 1,
             LastError = record.Status == WebhookActivityStatus.Failed ? TruncateError(record.Reason) : null,
             CreatedAtUtc = nowUtc,
             UpdatedAtUtc = nowUtc
@@ -214,7 +224,10 @@ public sealed class PostgresWebhookActivityStore : IWebhookActivityStore, IWebho
         var query = db.WebhookIngressEvents
             .AsNoTracking()
             .Where(entry => entry.TenantId == scope.TenantId && entry.EnvironmentTag == scope.EnvironmentTag)
-            .Where(entry => entry.Status == StatusDelivered || entry.Status == StatusFailed);
+            .Where(entry => entry.Status == StatusPending
+                            || entry.Status == StatusLeased
+                            || entry.Status == StatusDelivered
+                            || entry.Status == StatusFailed);
 
         if (fromUtc.HasValue)
         {
@@ -333,6 +346,16 @@ public sealed class PostgresWebhookActivityStore : IWebhookActivityStore, IWebho
 
     private static WebhookActivityStatus ResolveIngressStatus(string status, int attemptCount)
     {
+        if (string.Equals(status, StatusPending, StringComparison.OrdinalIgnoreCase))
+        {
+            return WebhookActivityStatus.Pending;
+        }
+
+        if (string.Equals(status, StatusLeased, StringComparison.OrdinalIgnoreCase))
+        {
+            return WebhookActivityStatus.Leased;
+        }
+
         if (string.Equals(status, StatusFailed, StringComparison.OrdinalIgnoreCase))
         {
             return WebhookActivityStatus.Failed;
@@ -343,7 +366,12 @@ public sealed class PostgresWebhookActivityStore : IWebhookActivityStore, IWebho
             return WebhookActivityStatus.Warning;
         }
 
-        return WebhookActivityStatus.Success;
+        if (string.Equals(status, StatusDelivered, StringComparison.OrdinalIgnoreCase))
+        {
+            return WebhookActivityStatus.Success;
+        }
+
+        return WebhookActivityStatus.Pending;
     }
 
     private static int? ComputePayloadBytes(string? payload)
@@ -454,6 +482,9 @@ public sealed class PostgresWebhookActivityStore : IWebhookActivityStore, IWebho
                 TotalCount: 0,
                 ErrorCount: 0,
                 WarningCount: 0,
+                PendingCount: 0,
+                LeasedCount: 0,
+                DeadLetterCount: 0,
                 P95LatencyMs: null);
         }
 
@@ -476,7 +507,10 @@ public sealed class PostgresWebhookActivityStore : IWebhookActivityStore, IWebho
             {
                 TotalCount = bucket.TotalCount + 1,
                 ErrorCount = bucket.ErrorCount + (sample.Status == WebhookActivityStatus.Failed ? 1 : 0),
-                WarningCount = bucket.WarningCount + (sample.Status == WebhookActivityStatus.Warning ? 1 : 0)
+                WarningCount = bucket.WarningCount + (sample.Status == WebhookActivityStatus.Warning ? 1 : 0),
+                PendingCount = bucket.PendingCount + (sample.Status == WebhookActivityStatus.Pending ? 1 : 0),
+                LeasedCount = bucket.LeasedCount + (sample.Status == WebhookActivityStatus.Leased ? 1 : 0),
+                DeadLetterCount = bucket.DeadLetterCount + (sample.Kind == WebhookActivityKind.DeadLetter ? 1 : 0)
             };
             buckets[bucketIndex] = bucket;
         }
@@ -523,5 +557,5 @@ public sealed class PostgresWebhookActivityStore : IWebhookActivityStore, IWebho
         string? ErrorDetails,
         string? Payload);
 
-    private sealed record ActivitySample(DateTimeOffset OccurredAtUtc, WebhookActivityStatus Status);
+    private sealed record ActivitySample(DateTimeOffset OccurredAtUtc, WebhookActivityStatus Status, WebhookActivityKind Kind);
 }

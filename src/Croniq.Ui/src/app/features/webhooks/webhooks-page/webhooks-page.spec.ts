@@ -113,9 +113,11 @@ describe('WebhooksPage', () => {
     expect(options).not.toBeNull();
     expect(options?.['legend']).toBeTruthy();
     const legend = options?.['legend'] as { data?: string[]; formatter?: (name: string) => string };
-    expect(legend.data).toEqual(['Success', 'Warning', 'Failed']);
+    expect(legend.data).toEqual(['Pending', 'Leased', 'Success', 'Warning', 'Failed']);
     expect(typeof legend.formatter).toBe('function');
     const formatter = legend.formatter as (name: string) => string;
+    expect(formatter('Pending')).toBe('Pending 0 (0%)');
+    expect(formatter('Leased')).toBe('Leased 0 (0%)');
     expect(formatter('Success')).toBe('Success 1 (25%)');
     expect(formatter('Warning')).toBe('Warning 1 (25%)');
     expect(formatter('Failed')).toBe('Failed 2 (50%)');
@@ -126,7 +128,11 @@ describe('WebhooksPage', () => {
       const data = (entry as { data?: unknown[] }).data ?? [];
       const numericData = data.filter((value): value is number => typeof value === 'number');
       const sum = numericData.reduce((total, value) => total + value, 0);
-      if (name === 'Success') {
+      if (name === 'Pending') {
+        acc.pending += sum;
+      } else if (name === 'Leased') {
+        acc.leased += sum;
+      } else if (name === 'Success') {
         acc.success += sum;
       } else if (name === 'Warning') {
         acc.warning += sum;
@@ -134,8 +140,8 @@ describe('WebhooksPage', () => {
         acc.failed += sum;
       }
       return acc;
-    }, { success: 0, warning: 0, failed: 0 });
+    }, { pending: 0, leased: 0, success: 0, warning: 0, failed: 0 });
 
-    expect(totals).toEqual({ success: 1, warning: 1, failed: 2 });
+    expect(totals).toEqual({ pending: 0, leased: 0, success: 1, warning: 1, failed: 2 });
   });
 });

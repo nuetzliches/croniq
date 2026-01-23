@@ -5,7 +5,7 @@ export const createWebhookIpRuleRequestSchema = CreateWebhookIpRuleRequest;
 export const rotateWebhookSecretRequestSchema = RotateWebhookSecretRequest;
 export const upsertWebhookEndpointRequestSchema = UpsertWebhookEndpointRequest;
 
-export const webhookActivityStatusSchema = z.enum(['success', 'failed', 'warning']);
+export const webhookActivityStatusSchema = z.enum(['success', 'failed', 'warning', 'pending', 'leased']);
 export const webhookActivitySourceSchema = z.enum(['ingress', 'invoke']);
 
 export const WebhookActivityTimelineEntry = z.object({
@@ -32,6 +32,9 @@ export const WebhookActivityBucket = z.object({
     totalCount: z.number().int().nonnegative().optional(),
     errorCount: z.number().int().nonnegative().optional(),
     warningCount: z.number().int().nonnegative().optional(),
+    pendingCount: z.number().int().nonnegative().optional(),
+    leasedCount: z.number().int().nonnegative().optional(),
+    deadLetterCount: z.number().int().nonnegative().optional(),
     p95LatencyMs: z.number().int().nonnegative().nullable().optional(),
 });
 
