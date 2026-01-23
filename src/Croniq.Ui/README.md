@@ -19,8 +19,8 @@ Runtime config is loaded from `public/assets/croniq-config.json` (optional). Sup
 - `apiBaseUrl`: absolute URL (`http/https`) or absolute path (`/...`)
 - `swaggerUiUrl`: optional override (absolute URL or absolute path)
 - `webhooks.activityStream.mode`: `grpc`, `sse`, or `polling`
-- `webhooks.activityStream.grpcBaseUrl`: optional override for the gRPC-Web proxy (absolute URL or absolute path)
-- `webhooks.activityStream.sseBaseUrl`: optional override for the SSE endpoint (absolute URL or absolute path)
+- `webhooks.activityStream.grpcBaseUrl`: optional override for the gRPC-Web proxy (absolute URL or absolute path; defaults to `apiBaseUrl`)
+- `webhooks.activityStream.sseBaseUrl`: optional override for the SSE endpoint (absolute URL or absolute path; defaults to `apiBaseUrl`)
 
 Generate the file via `npm run generate:runtime-config` (runs automatically for `npm start`, `npm run build`, and `npm run watch`).
 Environment variables: `CRONIQ_UI_API_BASEURL`, `CRONIQ_UI_SWAGGER_UI_URL`,

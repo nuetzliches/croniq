@@ -52,8 +52,8 @@ Supported keys:
 - `grafanaUrl` (optional absolute URL for the Grafana embed)
 - `defaultTenantId` (optional; pre-fills tenant ID on the login screen and hides the tenant input)
 - `webhooks.activityStream.mode` (`grpc`, `sse`, or `polling`)
-- `webhooks.activityStream.grpcBaseUrl` (optional absolute URL or path for gRPC-Web proxy)
-- `webhooks.activityStream.sseBaseUrl` (optional absolute URL or path for SSE endpoint)
+- `webhooks.activityStream.grpcBaseUrl` (optional absolute URL or path for gRPC-Web proxy; defaults to `apiBaseUrl`)
+- `webhooks.activityStream.sseBaseUrl` (optional absolute URL or path for SSE endpoint; defaults to `apiBaseUrl`)
 
 Generate `public/assets/croniq-config.json` via `npm run generate:runtime-config` (runs automatically for `npm start`, `npm run build`, and `npm run watch`).
 If `CRONIQ_UI_API_BASEURL` is not set, `CRONIQ_UI_API_PORT` plus optional `CRONIQ_UI_API_HOST` / `CRONIQ_UI_API_SCHEME` are used.

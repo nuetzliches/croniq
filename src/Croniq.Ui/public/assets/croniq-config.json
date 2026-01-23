@@ -5,9 +5,7 @@
   "defaultTenantId": "default",
   "webhooks": {
     "activityStream": {
-      "mode": "grpc",
-      "grpcBaseUrl": "http://localhost:5080",
-      "sseBaseUrl": "http://localhost:5080"
+      "mode": "grpc"
     }
   }
 }

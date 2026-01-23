@@ -83,4 +83,23 @@ describe('RuntimeConfigService', () => {
     expect(service.webhooksActivityGrpcBaseUrl).toBe('http://localhost:5082');
     expect(service.webhooksActivitySseBaseUrl).toBe('/streams');
   });
+
+  it('falls back to apiBaseUrl for activity stream base urls', async () => {
+    const loadPromise = firstValueFrom(service.load());
+
+    const req = http.expectOne('assets/croniq-config.json');
+    req.flush({
+      apiBaseUrl: 'http://localhost:5090/',
+      webhooks: {
+        activityStream: {
+          mode: 'grpc',
+        },
+      },
+    });
+
+    await loadPromise;
+
+    expect(service.webhooksActivityGrpcBaseUrl).toBe('http://localhost:5090');
+    expect(service.webhooksActivitySseBaseUrl).toBe('http://localhost:5090');
+  });
 });

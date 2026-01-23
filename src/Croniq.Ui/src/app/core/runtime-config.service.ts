@@ -70,7 +70,10 @@ export class RuntimeConfigService {
 
     get webhooksActivityGrpcBaseUrl(): string {
         const raw = this.config.webhooks?.activityStream?.grpcBaseUrl;
-        return raw ? this.normalizeUrlLike(raw) : '';
+        if (raw) {
+            return this.normalizeUrlLike(raw);
+        }
+        return this.apiBaseUrl;
     }
 
     get webhooksActivitySseBaseUrl(): string {
