@@ -39,10 +39,36 @@ Purpose: track the remaining work to expand the Webhooks UI with an activity tim
 
 ## UI: Chart
 
-- [x] Choose chart library: ECharts with a custom Angular wrapper (no third-party ng* wrapper); Apache-2.0 license confirmed.
-- [x] Build a minimal timeseries chart (line or area) for total vs error counts.
-- [x] Add a tooltip that mirrors the timeline bucket metadata.
-- [x] Provide an accessible summary table for screen readers.
+- [x] Choose chart library: ECharts with a custom Angular wrapper (no third-party ng\* wrapper); Apache-2.0 license confirmed.
+
+### UX Concept (Activity Timeline)
+
+Goal: make webhook activity trends easier to read, more precise over time ranges, and stable under live updates.
+
+- Default visualization should optimize for precision (trend/health) over composition.
+- Bucketing must be stable (aligned to time boundaries) to avoid visual jitter.
+
+Concept decisions:
+
+- Prefer a time axis (`xAxis.type = 'time'`) over category axis labels.
+- Default view: **Volume + Error rate**
+  - Bar: total deliveries/events per bucket.
+  - Line: failed rate per bucket (optionally failed+warning rate).
+  - Tooltip: counts per status + totals + rate.
+- Optional secondary view: **Distribution** (stacked status bars) for composition analysis.
+- Add `dataZoom`:
+  - `inside` zoom (scroll/pinch) always.
+  - `slider` zoom when bucket count exceeds the comfortable label threshold.
+
+Implementation checklist:
+
+- [x] Switch chart to time axis and ensure tooltip/index mapping still works.
+- [x] Align bucket boundaries (`floor/ceil` by bucketMs) to stabilize buckets and labels.
+- [x] Add `dataZoom` support in the ECharts wrapper (register component) and in chart options.
+- [x] Implement Volume + Error rate as the default series.
+- [x] Add a view toggle for Distribution (stacked) vs Volume+Rate.
+- [x] Ensure legend and accessible summaries match the active view.
+- [x] Keep chart usable in compact height (avoid zoom slider crowding; adjust grid as needed).
 
 ## Filters Panel Integration
 

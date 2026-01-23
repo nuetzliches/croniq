@@ -1,11 +1,20 @@
 import { ChangeDetectionStrategy, Component, ElementRef, effect, input, output, signal, viewChild } from '@angular/core';
 import * as echarts from 'echarts/core';
-import { BarChart, LineChart } from 'echarts/charts';
-import { GridComponent, LegendComponent, TooltipComponent } from 'echarts/components';
+import { BarChart, LineChart, ScatterChart } from 'echarts/charts';
+import { DataZoomComponent, GridComponent, LegendComponent, TooltipComponent } from 'echarts/components';
 import { CanvasRenderer } from 'echarts/renderers';
 import type { EChartsCoreOption } from 'echarts/core';
 
-echarts.use([BarChart, LineChart, GridComponent, LegendComponent, TooltipComponent, CanvasRenderer]);
+echarts.use([
+  BarChart,
+  LineChart,
+  ScatterChart,
+  GridComponent,
+  LegendComponent,
+  TooltipComponent,
+  DataZoomComponent,
+  CanvasRenderer,
+]);
 
 @Component({
   selector: 'cq-echarts-chart',
@@ -36,20 +45,54 @@ export class CqEchartsChartComponent {
         return;
       }
 
-      const chart = echarts.init(host);
-      this.chartSignal.set(chart);
+      let chart: echarts.ECharts | null = null;
+      let resizeObserver: ResizeObserver | null = null;
+      let rafId: number | null = null;
 
-      const resizeObserver = typeof ResizeObserver !== 'undefined'
-        ? new ResizeObserver(() => chart.resize())
-        : null;
+      const hasSize = () => host.clientWidth > 0 && host.clientHeight > 0;
+      const tryInit = () => {
+        if (chart || !hasSize()) {
+          return;
+        }
+        chart = echarts.init(host);
+        this.chartSignal.set(chart);
+      };
 
-      if (resizeObserver) {
+      const scheduleCheck = () => {
+        if (typeof requestAnimationFrame === 'undefined' || rafId !== null) {
+          return;
+        }
+        rafId = requestAnimationFrame(() => {
+          rafId = null;
+          tryInit();
+          chart?.resize();
+        });
+      };
+
+      if (typeof ResizeObserver !== 'undefined') {
+        resizeObserver = new ResizeObserver(() => {
+          tryInit();
+          chart?.resize();
+        });
         resizeObserver.observe(host);
+      }
+
+      tryInit();
+      if (!chart) {
+        scheduleCheck();
+        if (typeof window !== 'undefined') {
+          const onLoad = () => tryInit();
+          window.addEventListener('load', onLoad, { once: true });
+          onCleanup(() => window.removeEventListener('load', onLoad));
+        }
       }
 
       onCleanup(() => {
         resizeObserver?.disconnect();
-        chart.dispose();
+        if (rafId !== null && typeof cancelAnimationFrame !== 'undefined') {
+          cancelAnimationFrame(rafId);
+        }
+        chart?.dispose();
         this.chartSignal.set(null);
       });
     });

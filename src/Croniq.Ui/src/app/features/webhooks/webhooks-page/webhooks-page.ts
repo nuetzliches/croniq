@@ -1,5 +1,6 @@
 import { CdkMenu } from '@angular/cdk/menu';
 import { DatePipe } from '@angular/common';
+import { Tab, TabContent, TabList, TabPanel, Tabs } from '@angular/aria/tabs';
 import { ChangeDetectionStrategy, Component, Directive, TemplateRef, computed, effect, inject, linkedSignal, signal, viewChild } from '@angular/core';
 import { FormField, form } from '@angular/forms/signals';
 import { RuntimeConfigService } from '@core/runtime-config.service';
@@ -99,6 +100,15 @@ const ACTIVITY_STATUS_DEFINITIONS: ReadonlyArray<{ status: WebhookTimelineItemVi
   { status: 'failed', label: 'Failed' },
 ];
 
+type ActivityChartView = 'volume-rate' | 'distribution';
+
+const ACTIVITY_CHART_VIEW_OPTIONS: ReadonlyArray<{ value: ActivityChartView; label: string }> = [
+  { value: 'distribution', label: 'Distribution' },
+  { value: 'volume-rate', label: 'Volume + rate' },
+];
+
+const DEFAULT_ACTIVITY_CHART_VIEW: ActivityChartView = 'distribution';
+
 type PageInfo = {
   total: number;
   pageIndex: number;
@@ -127,6 +137,11 @@ export class CqWebhookCellDirective extends CqCellDefDirective<WebhookEndpointVi
   selector: 'cq-webhooks-page',
   imports: [
     DatePipe,
+    Tabs,
+    TabList,
+    Tab,
+    TabPanel,
+    TabContent,
     FormField,
     DataGrid,
     CqColumnComponent,
@@ -605,6 +620,69 @@ export class WebhooksPage {
     this.store.setActivityLiveUpdatesEnabled(enabled);
   }
 
+  setSelectedChartView(nextTab: ActivityChartView | string | null | undefined): void {
+    this.selectedChartView.set(resolveChartView(nextTab));
+    this.selectedBucketIndex.set(null);
+  }
+
+  selectActivityBucket(event: unknown): void {
+    const index = resolveChartBucketIndex(event);
+    if (index === null) {
+      return;
+    }
+    this.selectedBucketIndex.set(index);
+  }
+
+  clearSelectedBucket(): void {
+    this.selectedBucketIndex.set(null);
+  }
+
+  isDeadLetterItem(item: WebhookTimelineItemView): boolean {
+    return item.kind === 'deadLetter' && typeof item.deadLetterId === 'string';
+  }
+
+  activityStatusLabel(status: WebhookTimelineItemView['status']): string {
+    if (status === 'success') {
+      return 'Success';
+    }
+    if (status === 'warning') {
+      return 'Warning';
+    }
+    if (status === 'failed') {
+      return 'Failed';
+    }
+    if (status === 'pending') {
+      return 'Pending';
+    }
+    return 'Leased';
+  }
+
+  replayDeadLetterItem(item: WebhookTimelineItemView): void {
+    if (this.writePermissionDenied() || item.kind !== 'deadLetter') {
+      return;
+    }
+    const deadLetterId = Number(item.deadLetterId);
+    if (!Number.isFinite(deadLetterId)) {
+      return;
+    }
+    this.dialog.open<boolean>(CqConfirmDialogComponent, {
+      data: {
+        title: 'Replay dead letter',
+        message: `Replay dead letter ${item.deadLetterId}?`,
+        confirmLabel: 'Replay',
+      } satisfies CqConfirmDialogData,
+      width: '420px',
+      panelClass: 'bg-transparent',
+    }).closed.pipe(filter(Boolean)).subscribe(() => {
+      const tenantId = this.tenantContext.tenantId();
+      const environment = this.tenantContext.environment();
+      if (!tenantId) {
+        return;
+      }
+      this.store.replayDeadLetter({ tenantId, environment, deadLetterId });
+    });
+  }
+
   retryActivity(): void {
     this.store.refreshActivity();
   }
@@ -740,25 +818,64 @@ export class WebhooksPage {
 
   readonly activityTotalEntries = computed(() => this.timelineItems().length);
   readonly activityBucketCount = computed(() => this.activityBuckets().length);
-
-  readonly activityChartOptions = computed<EChartsCoreOption | null>(() => {
-    const items = this.timelineItems();
-    if (items.length === 0) {
-      return null;
-    }
-    const buckets = this.activityBuckets();
-    const range = resolveTimelineRangeMs(this.timelineLookbackMs(), this.timelineToIso());
-    const bucketMs = resolveTimelineBucketMs(this.timelineLookbackMs());
-    const chartBuckets = buckets.length
-      ? buckets
-      : buildActivityBuckets(
-        items,
-        new Date(range.fromMs).toISOString(),
-        new Date(range.toMs).toISOString(),
-        bucketMs,
-      );
-    return buildTimelineChartOptions(items, chartBuckets, bucketMs);
+  readonly activityChartViews = ACTIVITY_CHART_VIEW_OPTIONS;
+  readonly selectedChartView = signal<ActivityChartView>(DEFAULT_ACTIVITY_CHART_VIEW);
+  readonly activityChartSummary = computed(() =>
+    buildActivityChartSummary(
+      this.selectedChartView(),
+      this.timelineItems(),
+      this.activityBuckets(),
+      this.timelineLookbackMs(),
+      this.timelineToIso(),
+    ),
+  );
+  readonly activityChartData = computed(() =>
+    buildActivityChartData(
+      this.timelineItems(),
+      this.activityBuckets(),
+      this.timelineLookbackMs(),
+      this.timelineToIso(),
+    ),
+  );
+  readonly selectedBucketIndex = linkedSignal<number | null>(() => {
+    this.filterSignature();
+    return null;
   });
+  readonly activityDetailItems = computed<ReadonlyArray<WebhookTimelineItemView>>(() =>
+    buildActivityDetailItems(this.timelineItems(), this.activityChartData(), this.selectedBucketIndex()),
+  );
+  readonly activityDetailLabel = computed(() =>
+    buildActivityDetailLabel(this.activityChartData(), this.selectedBucketIndex()),
+  );
+  readonly activityDetailHint = computed(() =>
+    this.selectedBucketIndex() === null
+      ? 'Select a bucket to filter items.'
+      : 'Showing items in the selected bucket.',
+  );
+  readonly activityDetailEmptyLabel = computed(() =>
+    this.selectedBucketIndex() === null
+      ? 'No activity items yet.'
+      : 'No items in the selected bucket.',
+  );
+
+  readonly activityVolumeRateChartOptions = computed<EChartsCoreOption | null>(() =>
+    buildActivityChartOptions(
+      'volume-rate',
+      this.timelineItems(),
+      this.activityBuckets(),
+      this.timelineLookbackMs(),
+      this.timelineToIso(),
+    ),
+  );
+  readonly activityDistributionChartOptions = computed<EChartsCoreOption | null>(() =>
+    buildActivityChartOptions(
+      'distribution',
+      this.timelineItems(),
+      this.activityBuckets(),
+      this.timelineLookbackMs(),
+      this.timelineToIso(),
+    ),
+  );
 
   constructor() {
     this.setTimelinePreset(DEFAULT_TIMELINE_PRESET);
@@ -1206,6 +1323,13 @@ function resolveNonEmptyString(value: unknown): string | null {
   return trimmed.length > 0 ? trimmed : null;
 }
 
+function resolveChartView(value: ActivityChartView | string | null | undefined): ActivityChartView {
+  if (value === 'distribution' || value === 'volume-rate') {
+    return value;
+  }
+  return DEFAULT_ACTIVITY_CHART_VIEW;
+}
+
 type ActivityConnectionTone = 'success' | 'warning' | 'danger' | 'muted';
 
 function resolveActivityConnectionTone(state: ActivityConnectionState): ActivityConnectionTone {
@@ -1321,6 +1445,10 @@ type ChartPalette = {
   text: string;
 };
 
+type YAxisOption = EChartsCoreOption['yAxis'] extends (infer U)[]
+  ? U
+  : NonNullable<EChartsCoreOption['yAxis']>;
+
 type BucketStatusCount = {
   pending: number;
   leased: number;
@@ -1329,6 +1457,7 @@ type BucketStatusCount = {
   failed: number;
   total: number;
 };
+
 
 type TimelineBucketRange = {
   startMs: number;
@@ -1374,8 +1503,14 @@ function buildActivityBuckets(
     return [];
   }
 
-  const start = resolvedFrom;
-  const end = resolvedTo;
+  const startAligned = Math.floor(resolvedFrom / resolvedBucketMs) * resolvedBucketMs;
+  let endAligned = Math.ceil(resolvedTo / resolvedBucketMs) * resolvedBucketMs;
+  if (endAligned <= startAligned) {
+    endAligned = startAligned + resolvedBucketMs;
+  }
+
+  const start = startAligned;
+  const end = endAligned;
   const bucketCount = Math.max(1, Math.ceil((end - start) / resolvedBucketMs));
 
   const buckets = new Map<number, ActivityBucket>();
@@ -1396,10 +1531,12 @@ function buildActivityBuckets(
 
   items.forEach((entry) => {
     const timestamp = Date.parse(entry.occurredAt);
-    if (!Number.isFinite(timestamp) || timestamp < start || timestamp > end) {
+    if (!Number.isFinite(timestamp) || timestamp < start || timestamp > resolvedTo) {
       return;
     }
-    const bucketIndex = Math.min(bucketCount - 1, Math.floor((timestamp - start) / resolvedBucketMs));
+
+    const clampedTimestamp = Math.min(timestamp, end - 1);
+    const bucketIndex = Math.min(bucketCount - 1, Math.floor((clampedTimestamp - start) / resolvedBucketMs));
     const bucketStart = start + bucketIndex * resolvedBucketMs;
     const bucket = buckets.get(bucketStart);
     if (!bucket) {
@@ -1423,7 +1560,169 @@ function buildActivityBuckets(
   return Array.from(buckets.values());
 }
 
-function buildTimelineChartOptions(
+function buildActivityChartOptions(
+  view: ActivityChartView,
+  items: ReadonlyArray<WebhookTimelineItemView>,
+  buckets: ReadonlyArray<ActivityBucket>,
+  lookbackMs: number,
+  toIso: string | null,
+): EChartsCoreOption | null {
+  if (items.length === 0) {
+    return null;
+  }
+
+  const range = resolveTimelineRangeMs(lookbackMs, toIso);
+  const bucketMs = resolveTimelineBucketMs(lookbackMs);
+  const chartBuckets = buckets.length
+    ? buckets
+    : buildActivityBuckets(
+      items,
+      new Date(range.fromMs).toISOString(),
+      new Date(range.toMs).toISOString(),
+      bucketMs,
+    );
+
+  return view === 'distribution'
+    ? buildTimelineDistributionChartOptions(items, chartBuckets, bucketMs)
+    : buildTimelineVolumeRateOptions(items, chartBuckets, bucketMs);
+}
+
+function buildActivityChartSummary(
+  view: ActivityChartView,
+  items: ReadonlyArray<WebhookTimelineItemView>,
+  buckets: ReadonlyArray<ActivityBucket>,
+  lookbackMs: number,
+  toIso: string | null,
+): string {
+  if (items.length === 0) {
+    return 'No webhook activity to chart.';
+  }
+
+  const range = resolveTimelineRangeMs(lookbackMs, toIso);
+  const bucketMs = resolveTimelineBucketMs(lookbackMs);
+  const chartBuckets = buckets.length
+    ? buckets
+    : buildActivityBuckets(
+      items,
+      new Date(range.fromMs).toISOString(),
+      new Date(range.toMs).toISOString(),
+      bucketMs,
+    );
+  const bucketRanges = resolveTimelineBucketRanges(items, chartBuckets, bucketMs);
+  if (bucketRanges.length === 0) {
+    return 'No webhook activity buckets available.';
+  }
+
+  const orderedItems = sortTimelineItems(items);
+  const bucketCounts = buildBucketStatusCounts(orderedItems, bucketRanges);
+  const totals = bucketCounts.reduce((acc, bucket) => acc + bucket.total, 0);
+  const failed = bucketCounts.reduce((acc, bucket) => acc + bucket.failed, 0);
+  const warning = bucketCounts.reduce((acc, bucket) => acc + bucket.warning, 0);
+  const success = bucketCounts.reduce((acc, bucket) => acc + bucket.success, 0);
+  const pending = bucketCounts.reduce((acc, bucket) => acc + bucket.pending, 0);
+  const leased = bucketCounts.reduce((acc, bucket) => acc + bucket.leased, 0);
+
+  if (view === 'volume-rate') {
+    const failedRate = totals > 0 ? Math.round((failed / totals) * 100) : 0;
+    return `Volume and failed rate view. Total ${totals} events. Failed rate ${failedRate} percent.`;
+  }
+
+  const latencySeries = buildLatencyP95Series(orderedItems, bucketRanges, chartBuckets);
+  const latencyValues = latencySeries.filter((value): value is number => typeof value === 'number');
+  const latencyAvg = latencyValues.length > 0
+    ? Math.round(latencyValues.reduce((acc, value) => acc + value, 0) / latencyValues.length)
+    : null;
+  const latencyLabel = latencyAvg === null ? '' : ` Average p95 latency ${latencyAvg} ms.`;
+
+  return `Distribution view. Total ${totals} events. Success ${success}, Warning ${warning}, Failed ${failed}, Pending ${pending}, Leased ${leased}.${latencyLabel}`;
+}
+
+function buildActivityChartData(
+  items: ReadonlyArray<WebhookTimelineItemView>,
+  buckets: ReadonlyArray<ActivityBucket>,
+  lookbackMs: number,
+  toIso: string | null,
+): { bucketRanges: ReadonlyArray<TimelineBucketRange>; bucketCounts: ReadonlyArray<BucketStatusCount>; latencySeries: ReadonlyArray<number | null> } | null {
+  if (items.length === 0) {
+    return null;
+  }
+
+  const range = resolveTimelineRangeMs(lookbackMs, toIso);
+  const bucketMs = resolveTimelineBucketMs(lookbackMs);
+  const chartBuckets = buckets.length
+    ? buckets
+    : buildActivityBuckets(
+      items,
+      new Date(range.fromMs).toISOString(),
+      new Date(range.toMs).toISOString(),
+      bucketMs,
+    );
+
+  const bucketRanges = resolveTimelineBucketRanges(items, chartBuckets, bucketMs);
+  if (bucketRanges.length === 0) {
+    return null;
+  }
+
+  const orderedItems = sortTimelineItems(items);
+  const bucketCounts = buildBucketStatusCounts(orderedItems, bucketRanges);
+  const latencySeries = buildLatencyP95Series(orderedItems, bucketRanges, chartBuckets);
+  return { bucketRanges, bucketCounts, latencySeries };
+}
+
+function buildActivityDetailItems(
+  items: ReadonlyArray<WebhookTimelineItemView>,
+  chartData: { bucketRanges: ReadonlyArray<TimelineBucketRange> } | null,
+  selectedIndex: number | null,
+): ReadonlyArray<WebhookTimelineItemView> {
+  if (items.length === 0) {
+    return [];
+  }
+  const ordered = sortTimelineItemsDesc(items);
+  if (selectedIndex === null || !chartData) {
+    return ordered.slice(0, 25);
+  }
+  if (selectedIndex < 0 || selectedIndex >= chartData.bucketRanges.length) {
+    return ordered.slice(0, 25);
+  }
+  const range = chartData.bucketRanges[selectedIndex];
+  return ordered.filter((entry) => isItemWithinRange(entry, range));
+}
+
+function buildActivityDetailLabel(
+  chartData: { bucketRanges: ReadonlyArray<TimelineBucketRange> } | null,
+  selectedIndex: number | null,
+): string {
+  if (!chartData || selectedIndex === null) {
+    return 'Latest activity items';
+  }
+  if (selectedIndex < 0 || selectedIndex >= chartData.bucketRanges.length) {
+    return 'Latest activity items';
+  }
+  return `Items for ${formatTimelineBucketRange(chartData.bucketRanges[selectedIndex])}`;
+}
+
+function isItemWithinRange(item: WebhookTimelineItemView, range: TimelineBucketRange): boolean {
+  const occurredMs = Date.parse(item.occurredAt);
+  if (!Number.isFinite(occurredMs)) {
+    return false;
+  }
+  return occurredMs >= range.startMs && occurredMs < range.endMs;
+}
+
+function resolveChartBucketIndex(event: unknown): number | null {
+  if (!event || typeof event !== 'object') {
+    return null;
+  }
+  const candidate = event as { dataIndex?: unknown; dataIndexInside?: unknown };
+  const dataIndex = typeof candidate.dataIndex === 'number'
+    ? candidate.dataIndex
+    : typeof candidate.dataIndexInside === 'number'
+      ? candidate.dataIndexInside
+      : null;
+  return typeof dataIndex === 'number' && Number.isFinite(dataIndex) ? dataIndex : null;
+}
+
+function buildTimelineVolumeRateOptions(
   items: ReadonlyArray<WebhookTimelineItemView>,
   buckets: ReadonlyArray<ActivityBucket>,
   bucketMs: number,
@@ -1438,19 +1737,63 @@ function buildTimelineChartOptions(
   }
 
   const orderedItems = sortTimelineItems(items);
-  const categories = bucketRanges.map((range) => range.label);
-  const labelInterval = resolveAxisLabelInterval(categories.length);
   const bucketCounts = buildBucketStatusCounts(orderedItems, bucketRanges);
-  const series = buildTimelineStatusSeries(bucketCounts, palette);
-  const maxStack = Math.max(1, ...bucketCounts.map((entry) => entry.total));
-  const yAxisInterval = resolveYAxisInterval(maxStack);
+  const totals = bucketCounts.map((entry) => entry.total);
+  const failures = bucketCounts.map((entry) => entry.failed);
+  const maxTotal = Math.max(1, ...totals);
+  const yAxisInterval = resolveYAxisInterval(maxTotal);
+
+  const failedRateSeries = bucketCounts.map((entry) =>
+    entry.total > 0 ? Math.round((entry.failed / entry.total) * 1000) / 10 : 0,
+  );
+
+  const showZoomSlider = bucketRanges.length > 12;
+  const dataZoom = buildTimelineDataZoom(showZoomSlider, palette);
+
+  const totalCount = totals.reduce((acc, value) => acc + value, 0);
+  const failedCount = failures.reduce((acc, value) => acc + value, 0);
+  const failedPercent = totalCount > 0 ? Math.round((failedCount / totalCount) * 100) : 0;
+
+  const series: SeriesOption[] = [
+    {
+      name: 'Total',
+      type: 'bar',
+      barMaxWidth: 18,
+      data: bucketRanges.map((range, index) => [range.startMs, totals[index]]),
+      itemStyle: {
+        color: palette.pending,
+      },
+      emphasis: {
+        focus: 'series',
+      },
+    },
+    {
+      name: 'Failed rate',
+      type: 'line',
+      yAxisIndex: 1,
+      smooth: true,
+      symbol: 'circle',
+      symbolSize: 6,
+      data: bucketRanges.map((range, index) => [range.startMs, failedRateSeries[index]]),
+      lineStyle: {
+        color: palette.failed,
+        width: 2,
+      },
+      itemStyle: {
+        color: palette.failed,
+      },
+      emphasis: {
+        focus: 'series',
+      },
+    },
+  ];
 
   return {
     animation: false,
     legend: {
       top: 0,
       left: 0,
-      data: ACTIVITY_STATUS_DEFINITIONS.map((definition) => definition.label),
+      data: ['Total', 'Failed rate'],
       icon: 'circle',
       itemWidth: 10,
       itemHeight: 10,
@@ -1458,13 +1801,21 @@ function buildTimelineChartOptions(
         color: palette.muted,
         fontSize: 11,
       },
-      formatter: buildLegendSummaryFormatter(bucketCounts),
+      formatter: (name: string) => {
+        if (name === 'Total') {
+          return `${name} ${totalCount}`;
+        }
+        if (name === 'Failed rate') {
+          return `${name} ${failedPercent}%`;
+        }
+        return name;
+      },
     },
     grid: {
       left: 24,
       right: 16,
       top: 48,
-      bottom: 48,
+      bottom: showZoomSlider ? 64 : 48,
       outerBoundsMode: 'same',
       outerBoundsContain: 'axisLabel',
     },
@@ -1480,14 +1831,152 @@ function buildTimelineChartOptions(
         color: palette.text,
       },
       extraCssText: 'border-radius: 10px; box-shadow: 0 10px 24px rgba(0,0,0,0.35);',
-      formatter: (params: unknown) => formatTimelineBucketTooltip(params, bucketRanges, bucketCounts),
+      formatter: (params: unknown) => formatTimelineBucketTooltip(params, bucketRanges, bucketCounts, null),
+    },
+    xAxis: {
+      type: 'time',
+      axisLabel: {
+        color: palette.muted,
+        formatter: (value: unknown) => formatTimelineAxisLabel(typeof value === 'number' ? value : String(value)),
+      },
+      axisLine: {
+        lineStyle: {
+          color: palette.border,
+        },
+      },
+      axisTick: {
+        show: false,
+      },
+    },
+    yAxis: [
+      {
+        type: 'value',
+        min: 0,
+        max: maxTotal,
+        interval: yAxisInterval,
+        axisLabel: {
+          color: palette.muted,
+        },
+        splitLine: {
+          lineStyle: {
+            color: palette.border,
+            opacity: 0.25,
+          },
+        },
+      },
+      {
+        type: 'value',
+        min: 0,
+        max: 100,
+        interval: 25,
+        axisLabel: {
+          color: palette.muted,
+          formatter: '{value}%',
+        },
+        splitLine: {
+          show: false,
+        },
+      },
+    ],
+    dataZoom,
+    series,
+  };
+}
+
+function buildTimelineDistributionChartOptions(
+  items: ReadonlyArray<WebhookTimelineItemView>,
+  buckets: ReadonlyArray<ActivityBucket>,
+  bucketMs: number,
+): EChartsCoreOption {
+  const palette = resolveChartPalette();
+  const bucketRanges = resolveTimelineBucketRanges(items, buckets, bucketMs);
+  if (bucketRanges.length === 0) {
+    return {
+      animation: false,
+      series: [],
+    };
+  }
+
+  const orderedItems = sortTimelineItems(items);
+  const bucketCounts = buildBucketStatusCounts(orderedItems, bucketRanges);
+  const latencySeries = buildLatencyP95Series(orderedItems, bucketRanges, buckets);
+  const hasLatency = latencySeries.some((value) => typeof value === 'number' && Number.isFinite(value));
+  const categories = bucketRanges.map((range) => range.label);
+  const labelInterval = resolveAxisLabelInterval(categories.length);
+  const series = buildTimelineStatusSeries(bucketCounts, palette, hasLatency, true);
+  if (hasLatency) {
+    series.push({
+      name: 'p95 latency',
+      type: 'line',
+      yAxisIndex: 1,
+      smooth: true,
+      symbol: 'circle',
+      symbolSize: 6,
+      data: latencySeries.map((value) => value ?? null),
+      lineStyle: {
+        color: palette.success,
+        width: 2,
+      },
+      itemStyle: {
+        color: palette.success,
+      },
+      emphasis: {
+        focus: 'series',
+      },
+    });
+  }
+  const maxStack = Math.max(1, ...bucketCounts.map((entry) => entry.total));
+  const yAxisInterval = resolveYAxisInterval(maxStack);
+  const showZoomSlider = bucketRanges.length > 12;
+  const dataZoom = buildTimelineDataZoom(showZoomSlider, palette);
+  const latencyMax = hasLatency
+    ? Math.max(1, ...latencySeries.filter((value): value is number => typeof value === 'number'))
+    : 0;
+
+  return {
+    animation: false,
+    legend: {
+      top: 0,
+      left: 0,
+      data: hasLatency
+        ? ACTIVITY_STATUS_DEFINITIONS.map((definition) => definition.label).concat('p95 latency')
+        : ACTIVITY_STATUS_DEFINITIONS.map((definition) => definition.label),
+      icon: 'circle',
+      itemWidth: 10,
+      itemHeight: 10,
+      textStyle: {
+        color: palette.muted,
+        fontSize: 11,
+      },
+      formatter: buildDistributionLegendFormatter(bucketCounts, latencySeries, hasLatency),
+    },
+    grid: {
+      left: 24,
+      right: 16,
+      top: 48,
+      bottom: showZoomSlider ? 64 : 48,
+      outerBoundsMode: 'same',
+      outerBoundsContain: 'axisLabel',
+    },
+    tooltip: {
+      trigger: 'axis',
+      axisPointer: {
+        type: 'shadow',
+      },
+      backgroundColor: palette.surface,
+      borderColor: palette.border,
+      borderWidth: 1,
+      textStyle: {
+        color: palette.text,
+      },
+      extraCssText: 'border-radius: 10px; box-shadow: 0 10px 24px rgba(0,0,0,0.35);',
+      formatter: (params: unknown) => formatTimelineBucketTooltip(params, bucketRanges, bucketCounts, latencySeries),
     },
     xAxis: {
       type: 'category',
       data: categories,
       axisLabel: {
         color: palette.muted,
-        rotate: 0,
         interval: labelInterval,
       },
       axisLine: {
@@ -1499,23 +1988,93 @@ function buildTimelineChartOptions(
         show: false,
       },
     },
-    yAxis: {
-      type: 'value',
-      min: 0,
-      max: maxStack,
-      interval: yAxisInterval,
-      axisLabel: {
-        color: palette.muted,
-      },
-      splitLine: {
-        lineStyle: {
-          color: palette.border,
-          opacity: 0.25,
-        },
-      },
-    },
+    yAxis: (() => {
+      const axes: YAxisOption[] = hasLatency
+        ? [
+          {
+            type: 'value',
+            min: 0,
+            max: maxStack,
+            interval: yAxisInterval,
+            axisLabel: {
+              color: palette.muted,
+            },
+            splitLine: {
+              lineStyle: {
+                color: palette.border,
+                opacity: 0.25,
+              },
+            },
+          },
+          {
+            type: 'value',
+            min: 0,
+            max: latencyMax,
+            interval: resolveYAxisInterval(latencyMax),
+            axisLabel: {
+              color: palette.muted,
+              formatter: '{value} ms',
+            },
+            splitLine: {
+              show: false,
+            },
+          },
+        ]
+        : [
+          {
+            type: 'value',
+            min: 0,
+            max: maxStack,
+            interval: yAxisInterval,
+            axisLabel: {
+              color: palette.muted,
+            },
+            splitLine: {
+              lineStyle: {
+                color: palette.border,
+                opacity: 0.25,
+              },
+            },
+          },
+        ];
+      return axes;
+    })(),
+    dataZoom,
     series,
   };
+}
+
+function buildTimelineDataZoom(showSlider: boolean, palette: ChartPalette): EChartsCoreOption['dataZoom'] {
+  const inside = {
+    type: 'inside',
+    xAxisIndex: 0,
+    filterMode: 'none',
+  };
+
+  if (!showSlider) {
+    return [inside];
+  }
+
+  return [
+    inside,
+    {
+      type: 'slider',
+      xAxisIndex: 0,
+      height: 18,
+      bottom: 10,
+      borderColor: palette.border,
+      fillerColor: `${palette.border}66`,
+      backgroundColor: `${palette.border}22`,
+      handleStyle: {
+        color: palette.muted,
+        borderColor: palette.border,
+      },
+      textStyle: {
+        color: palette.muted,
+        fontSize: 10,
+      },
+    },
+  ];
 }
 
 function buildBucketStatusCounts(
@@ -1548,9 +2107,69 @@ function buildBucketStatusCounts(
   return buckets;
 }
 
+function buildLatencyP95Series(
+  items: ReadonlyArray<WebhookTimelineItemView>,
+  bucketRanges: ReadonlyArray<TimelineBucketRange>,
+  buckets: ReadonlyArray<ActivityBucket>,
+): ReadonlyArray<number | null> {
+  if (bucketRanges.length === 0) {
+    return [];
+  }
+
+  const bucketLatency = new Map<number, number>();
+  buckets.forEach((bucket) => {
+    const startMs = tryParseIsoToMs(bucket.bucketStart);
+    if (startMs === null) {
+      return;
+    }
+    const value = typeof bucket.p95LatencyMs === 'number' ? bucket.p95LatencyMs : null;
+    if (value !== null && Number.isFinite(value)) {
+      bucketLatency.set(startMs, value);
+    }
+  });
+
+  const latencies = bucketRanges.map(() => [] as number[]);
+  items.forEach((entry) => {
+    const latencyMs = entry.latencyMs;
+    if (typeof latencyMs !== 'number' || !Number.isFinite(latencyMs)) {
+      return;
+    }
+    const bucketIndex = resolveBucketIndex(entry.occurredAt, bucketRanges);
+    if (bucketIndex < 0) {
+      return;
+    }
+    latencies[bucketIndex].push(latencyMs);
+  });
+
+  return bucketRanges.map((range, index) => {
+    const fromBucket = bucketLatency.get(range.startMs);
+    if (typeof fromBucket === 'number') {
+      return fromBucket;
+    }
+    const values = latencies[index];
+    if (!values || values.length === 0) {
+      return null;
+    }
+    return calculatePercentile(values, 0.95);
+  });
+}
+
+function calculatePercentile(values: ReadonlyArray<number>, percentile: number): number | null {
+  if (values.length === 0) {
+    return null;
+  }
+  const sorted = values.slice().sort((a, b) => a - b);
+  const clamped = Math.min(1, Math.max(0, percentile));
+  const index = Math.ceil(clamped * sorted.length) - 1;
+  const resolvedIndex = Math.min(sorted.length - 1, Math.max(0, index));
+  return sorted[resolvedIndex];
+}
+
 function buildTimelineStatusSeries(
   bucketCounts: ReadonlyArray<BucketStatusCount>,
   palette: ChartPalette,
+  hasLatency: boolean,
+  useCategoryAxis: boolean,
 ): SeriesOption[] {
   if (bucketCounts.length === 0) {
     return [];
@@ -1559,10 +2178,12 @@ function buildTimelineStatusSeries(
   return ACTIVITY_STATUS_DEFINITIONS.map((definition) => ({
     name: definition.label,
     type: 'bar',
-    stack: 'activity',
-    barMaxWidth: 18,
-    barCategoryGap: '32%',
-    data: bucketCounts.map((entry) => entry[definition.status]),
+    barMaxWidth: hasLatency ? 12 : 14,
+    barGap: '20%',
+    barCategoryGap: '40%',
+    data: useCategoryAxis
+      ? bucketCounts.map((bucket) => bucket[definition.status])
+      : bucketCounts.map((bucket, index) => [index, bucket[definition.status]]),
     itemStyle: {
       color: resolveStatusColor(definition.status, palette),
     },
@@ -1610,6 +2231,30 @@ function buildLegendSummaryFormatter(
     return `${name} ${count} (${percent}%)`;
   };
 }
+
+function buildDistributionLegendFormatter(
+  bucketCounts: ReadonlyArray<BucketStatusCount>,
+  latencySeries: ReadonlyArray<number | null>,
+  hasLatency: boolean,
+): (name: string) => string {
+  const statusFormatter = buildLegendSummaryFormatter(bucketCounts);
+  if (!hasLatency) {
+    return statusFormatter;
+  }
+
+  const latencyValues = latencySeries.filter((value): value is number => typeof value === 'number');
+  const latencyAvg = latencyValues.length > 0
+    ? Math.round(latencyValues.reduce((acc, value) => acc + value, 0) / latencyValues.length)
+    : null;
+
+  return (name: string): string => {
+    if (name === 'p95 latency') {
+      return latencyAvg === null ? name : `${name} ${latencyAvg} ms`;
+    }
+    return statusFormatter(name);
+  };
+}
+
 
 function resolveTimelineBucketRanges(
   items: ReadonlyArray<WebhookTimelineItemView>,
@@ -1691,6 +2336,13 @@ function resolveStatusColor(status: WebhookTimelineItemView['status'], palette: 
   return palette.success;
 }
 
+function resolveAxisLabelInterval(count: number): number {
+  if (count <= 8) {
+    return 0;
+  }
+  return Math.ceil(count / 8);
+}
+
 function sortTimelineItems(items: ReadonlyArray<WebhookTimelineItemView>): ReadonlyArray<WebhookTimelineItemView> {
   return items
     .slice()
@@ -1704,11 +2356,17 @@ function sortTimelineItems(items: ReadonlyArray<WebhookTimelineItemView>): Reado
     });
 }
 
-function resolveAxisLabelInterval(count: number): number {
-  if (count <= 8) {
-    return 0;
-  }
-  return Math.ceil(count / 8);
+function sortTimelineItemsDesc(items: ReadonlyArray<WebhookTimelineItemView>): ReadonlyArray<WebhookTimelineItemView> {
+  return items
+    .slice()
+    .sort((left, right) => {
+      const leftMs = Date.parse(left.occurredAt);
+      const rightMs = Date.parse(right.occurredAt);
+      if (Number.isFinite(leftMs) && Number.isFinite(rightMs)) {
+        return rightMs - leftMs;
+      }
+      return right.occurredAt.localeCompare(left.occurredAt);
+    });
 }
 
 function resolveYAxisInterval(maxValue: number): number {
@@ -1721,6 +2379,7 @@ function formatTimelineBucketTooltip(
   params: unknown,
   bucketRanges: ReadonlyArray<TimelineBucketRange>,
   bucketCounts: ReadonlyArray<BucketStatusCount>,
+  latencySeries: ReadonlyArray<number | null> | null,
 ): string {
   const entries = normalizeTooltipEntries(params);
   const bucketIndex = resolveTooltipBucketIndex(entries);
@@ -1735,6 +2394,8 @@ function formatTimelineBucketTooltip(
   }
 
   const rangeLabel = formatTimelineBucketRange(bucket);
+  const latency = latencySeries?.[bucketIndex] ?? null;
+  const latencyLabel = typeof latency === 'number' ? `${Math.round(latency)} ms` : null;
 
   return `
     <div style="min-width: 200px;">
@@ -1763,6 +2424,12 @@ function formatTimelineBucketTooltip(
         <span>Failed</span>
         <span>${counts.failed}</span>
       </div>
+      ${latencyLabel ? `
+      <div style="display:flex;justify-content:space-between;gap:8px;">
+        <span>p95 latency</span>
+        <span>${latencyLabel}</span>
+      </div>
+      ` : ''}
     </div>
   `;
 }
