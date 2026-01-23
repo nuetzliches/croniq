@@ -3,7 +3,7 @@
         "version": "1.38.2"
     },
     "trivy": {
-        "version": "0.68.1"
+        "version": "0.68.2"
     },
     "cosign": {
         "version": "2.2.3"
