@@ -54,6 +54,7 @@ var authMode = GetEnvValueOrDefault("CRONIQ_AUTH_MODE", "InMemory");
 var apiPort = GetInt("CRONIQ_API_HTTP_PORT", GetInt("CRONIQ_API_INTERNAL_PORT", 5080));
 var uiPort = GetInt("CRONIQ_UI_HTTP_PORT", 5081);
 var docsPort = GetInt("CRONIQ_DOCS_HTTP_PORT", 5173);
+var remoteTimeoutSeconds = GetInt("CRONIQ_WEBHOOKS_REMOTE_TIMEOUT_SECONDS", 30);
 var sqlHostPort = GetInt("CRONIQ_SQL_HOST_PORT", 11433);
 var sqlDatabase = GetEnvValueOrDefault("CRONIQ_SQL_DATABASE", "CroniqDev");
 var sqlPassword = GetEnvValueOrDefault("CRONIQ_SQL_PASSWORD", "CroniqSqlP@ssw0rd!");
@@ -426,6 +427,7 @@ var api = builder.AddProject(
     .WithEnvironment("Croniq__Webhooks__Remote__ApiKey", dmzApiKey)
     .WithEnvironment("Croniq__Webhooks__Remote__AllowInvalidServerCertificate", "true")
     .WithEnvironment("Croniq__Webhooks__Remote__EnableRelay", "false")
+    .WithEnvironment("Croniq__Webhooks__Remote__TimeoutSeconds", remoteTimeoutSeconds.ToString(CultureInfo.InvariantCulture))
     .WithEnvironment("Croniq__Logging__Execution__BasePath", logsPath)
     .WaitForCompletion(migrator, exitCode: 0);
 
@@ -582,6 +584,7 @@ var worker = builder.AddProject(
     .WithEnvironment("Croniq__Webhooks__Remote__StreamFallback", "Sse")
     .WithEnvironment("Croniq__Webhooks__Remote__EnableRelay", "true")
     .WithEnvironment("Croniq__Webhooks__Remote__AllowInvalidServerCertificate", "true")
+    .WithEnvironment("Croniq__Webhooks__Remote__TimeoutSeconds", remoteTimeoutSeconds.ToString(CultureInfo.InvariantCulture))
     .WithEnvironment("Croniq__Logging__Execution__BasePath", logsPath)
     .WaitForCompletion(migrator, exitCode: 0);
 
