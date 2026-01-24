@@ -547,6 +547,16 @@ if (uiEnabled)
     {
         ui.WithEnvironment("CRONIQ_UI_WEBHOOKS_ACTIVITY_SSE_BASEURL", uiActivitySseBaseUrl);
     }
+
+    var uiSnapshotArgs = new[]
+    {
+        "run",
+        "generate:api:server:snapshot"
+    };
+
+    builder.AddExecutable("croniq-ui-api-snapshot", npmCommand, uiPath, uiSnapshotArgs)
+        .WithExplicitStart()
+        .WaitFor(api);
 }
 
 var docsPath = Path.Combine(repoRoot, "docs");
