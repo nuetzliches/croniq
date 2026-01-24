@@ -1,7 +1,7 @@
 import { CdkContextMenuTrigger } from '@angular/cdk/menu';
 import { CdkFixedSizeVirtualScroll, CdkVirtualForOf, CdkVirtualScrollViewport } from '@angular/cdk/scrolling';
 import { NgTemplateOutlet } from '@angular/common';
-import { ChangeDetectionStrategy, Component, Directive, ElementRef, Input, TemplateRef, ViewEncapsulation, computed, contentChild, contentChildren, inject, input, output, viewChild, viewChildren } from '@angular/core';
+import { ChangeDetectionStrategy, Component, Directive, ElementRef, Input, TemplateRef, computed, contentChild, contentChildren, inject, input, output, viewChild, viewChildren } from '@angular/core';
 
 export type ColumnAlign = 'start' | 'center' | 'end';
 
@@ -120,104 +120,108 @@ export class CqColumnComponent<T> {
       }
     </ng-template>
 
-    <div class="cq-data-grid__head" role="rowgroup">
-      <div class="cq-data-grid__row cq-data-grid__row--header" role="row">
-        @for (column of effectiveColumns(); track columnTrackId(column, $index); let columnIndex = $index) {
-          <div
-            class="cq-data-grid__cell cq-data-grid__cell--header"
-            role="columnheader"
-            [attr.aria-label]="column.ariaLabel ?? headerLabel(column, columnIndex)"
-            [style.width]="column.width ?? null"
-            [class.is-align-center]="column.align === 'center'"
-            [class.is-align-end]="column.align === 'end'"
+    <div class="cq-data-grid__scroll" role="presentation">
+      <div class="cq-data-grid__content" role="presentation">
+        <div class="cq-data-grid__head" role="rowgroup">
+          <div class="cq-data-grid__row cq-data-grid__row--header" role="row">
+            @for (column of effectiveColumns(); track columnTrackId(column, $index); let columnIndex = $index) {
+              <div
+                class="cq-data-grid__cell cq-data-grid__cell--header"
+                role="columnheader"
+                [attr.aria-label]="column.ariaLabel ?? headerLabel(column, columnIndex)"
+                [style.width]="column.width ?? null"
+                [class.is-align-center]="column.align === 'center'"
+                [class.is-align-end]="column.align === 'end'"
+              >
+                @if (isTemplateHeader(column.header)) {
+                  <ng-container
+                    [ngTemplateOutlet]="column.header"
+                    [ngTemplateOutletContext]="{ column, columnIndex }"
+                  />
+                } @else {
+                  <span class="cq-data-grid__cell-text">{{ headerLabel(column, columnIndex) }}</span>
+                }
+              </div>
+            }
+          </div>
+        </div>
+
+        <cdk-virtual-scroll-viewport
+          cdkFixedSizeVirtualScroll
+          #viewport
+          class="cq-data-grid__viewport"
+          role="rowgroup"
+          [itemSize]="estimatedRowHeightPx()"
+          [minBufferPx]="bufferPx()"
+          [maxBufferPx]="bufferPx()"
+        >
+          <ng-container
+            *cdkVirtualFor="let row of validatedRows(); let rowIndex = index; trackBy: trackRow"
           >
-            @if (isTemplateHeader(column.header)) {
+            @if (rowContextMenu()) {
+              <div
+                #rowEl
+                class="cq-data-grid__row"
+                role="row"
+                [attr.data-row-key]="rowKey()(row, rowIndex)"
+                [attr.data-row-index]="rowIndex"
+                [attr.tabindex]="rowIndex === 0 ? 0 : -1"
+                [attr.aria-selected]="isSelected(row, rowIndex) ? 'true' : null"
+                [class.is-selected]="isSelected(row, rowIndex)"
+                [class]="rowClassList(row)"
+                (keydown)="onRowKeydown($event, rowIndex)"
+                (click)="onRowClick(rowIndex)"
+                [cdkContextMenuTriggerFor]="rowContextMenu()!"
+                [cdkContextMenuTriggerData]="rowContextMenuData(row, rowIndex)"
+              >
+                <ng-container
+                  [ngTemplateOutlet]="rowCells"
+                  [ngTemplateOutletContext]="{ $implicit: row, rowIndex }"
+                />
+              </div>
+            } @else {
+              <div
+                #rowEl
+                class="cq-data-grid__row"
+                role="row"
+                [attr.data-row-key]="rowKey()(row, rowIndex)"
+                [attr.data-row-index]="rowIndex"
+                [attr.tabindex]="rowIndex === 0 ? 0 : -1"
+                [attr.aria-selected]="isSelected(row, rowIndex) ? 'true' : null"
+                [class.is-selected]="isSelected(row, rowIndex)"
+                [class]="rowClassList(row)"
+                (keydown)="onRowKeydown($event, rowIndex)"
+                (click)="onRowClick(rowIndex)"
+              >
+                <ng-container
+                  [ngTemplateOutlet]="rowCells"
+                  [ngTemplateOutletContext]="{ $implicit: row, rowIndex }"
+                />
+              </div>
+            }
+          </ng-container>
+        </cdk-virtual-scroll-viewport>
+
+        @if (!hasRows()) {
+          <div class="cq-data-grid__empty" role="rowgroup">
+            @if (emptyStateTemplate()) {
               <ng-container
-                [ngTemplateOutlet]="column.header"
-                [ngTemplateOutletContext]="{ column, columnIndex }"
+                [ngTemplateOutlet]="emptyStateTemplate()!"
+                [ngTemplateOutletContext]="{ rows: validatedRows() }"
               />
             } @else {
-              <span class="cq-data-grid__cell-text">{{ headerLabel(column, columnIndex) }}</span>
+              <div class="cq-data-grid__cell-text">
+                @if (loading()) {
+                  Loading rows...
+                } @else {
+                  No rows found.
+                }
+              </div>
             }
           </div>
         }
       </div>
     </div>
-
-    <cdk-virtual-scroll-viewport
-      cdkFixedSizeVirtualScroll
-      #viewport
-      class="cq-data-grid__viewport"
-      role="rowgroup"
-      [itemSize]="estimatedRowHeightPx()"
-      [minBufferPx]="bufferPx()"
-      [maxBufferPx]="bufferPx()"
-    >
-      <ng-container
-        *cdkVirtualFor="let row of validatedRows(); let rowIndex = index; trackBy: trackRow"
-      >
-        @if (rowContextMenu()) {
-          <div
-            #rowEl
-            class="cq-data-grid__row"
-            role="row"
-            [attr.data-row-key]="rowKey()(row, rowIndex)"
-            [attr.data-row-index]="rowIndex"
-            [attr.tabindex]="rowIndex === 0 ? 0 : -1"
-            [attr.aria-selected]="isSelected(row, rowIndex) ? 'true' : null"
-            [class.is-selected]="isSelected(row, rowIndex)"
-            [class]="rowClassList(row)"
-            (keydown)="onRowKeydown($event, rowIndex)"
-            (click)="onRowClick(rowIndex)"
-            [cdkContextMenuTriggerFor]="rowContextMenu()!"
-            [cdkContextMenuTriggerData]="rowContextMenuData(row, rowIndex)"
-          >
-            <ng-container
-              [ngTemplateOutlet]="rowCells"
-              [ngTemplateOutletContext]="{ $implicit: row, rowIndex }"
-            />
-          </div>
-        } @else {
-          <div
-            #rowEl
-            class="cq-data-grid__row"
-            role="row"
-            [attr.data-row-key]="rowKey()(row, rowIndex)"
-            [attr.data-row-index]="rowIndex"
-            [attr.tabindex]="rowIndex === 0 ? 0 : -1"
-            [attr.aria-selected]="isSelected(row, rowIndex) ? 'true' : null"
-            [class.is-selected]="isSelected(row, rowIndex)"
-            [class]="rowClassList(row)"
-            (keydown)="onRowKeydown($event, rowIndex)"
-            (click)="onRowClick(rowIndex)"
-          >
-            <ng-container
-              [ngTemplateOutlet]="rowCells"
-              [ngTemplateOutletContext]="{ $implicit: row, rowIndex }"
-            />
-          </div>
-        }
-      </ng-container>
-    </cdk-virtual-scroll-viewport>
-
-    @if (!hasRows()) {
-      <div class="cq-data-grid__empty" role="rowgroup">
-        @if (emptyStateTemplate()) {
-          <ng-container
-            [ngTemplateOutlet]="emptyStateTemplate()!"
-            [ngTemplateOutletContext]="{ rows: validatedRows() }"
-          />
-        } @else {
-          <div class="cq-data-grid__cell-text">
-            @if (loading()) {
-              Loading rows...
-            } @else {
-              No rows found.
-            }
-          </div>
-        }
-      </div>
-    }
   `,
   styles: `
     :host {
@@ -228,10 +232,24 @@ export class CqColumnComponent<T> {
       overflow-x: auto;
       overflow-y: hidden;
       border: 1px solid var(--cq-border, #e5e7eb);
-      border-radius: 0.75rem;
-      background: var(--cq-surface, #ffffff);
       color: inherit;
       font-size: 0.875rem;
+    }
+
+    .cq-data-grid__scroll {
+      display: flex;
+      flex-direction: column;
+      flex: 1 1 auto;
+      min-height: 0;
+      min-width: 100%;
+      width: 100%;
+    }
+
+    .cq-data-grid__content {
+      display: flex;
+      flex-direction: column;
+      min-width: 100%;
+      width: max-content;
     }
 
     .cq-data-grid__head,
@@ -241,6 +259,8 @@ export class CqColumnComponent<T> {
     }
 
     .cq-data-grid__viewport {
+      flex: 1 1 auto;
+      min-height: 0;
       min-height: max(
         0px,
         calc(var(--cq-data-grid-min-height, 500px) - var(--cq-data-grid-row-height, 48px))
@@ -248,8 +268,13 @@ export class CqColumnComponent<T> {
       max-height: var(--cq-data-grid-max-height, 640px);
       overflow-y: auto;
       overflow-x: hidden;
-      min-width: max-content;
-      flex: 1 1 auto;
+      min-width: 100%;
+      width: max-content;
+    }
+
+    .cq-data-grid__viewport .cdk-virtual-scroll-content-wrapper {
+      min-width: 100%;
+      width: max-content;
     }
 
     .cq-data-grid__row {
@@ -282,7 +307,8 @@ export class CqColumnComponent<T> {
     }
 
     .cq-data-grid__head {
-      min-width: max-content;
+      min-width: 100%;
+      width: max-content;
     }
 
     .cq-data-grid__cell {
@@ -295,8 +321,7 @@ export class CqColumnComponent<T> {
     }
 
     .cq-data-grid__cell--header {
-      font-size: 0.75rem;
-      font-weight: 600;
+      min-width: 0;
       text-transform: uppercase;
       letter-spacing: 0.02em;
       color: var(--cq-text-secondary);
@@ -325,7 +350,6 @@ export class CqColumnComponent<T> {
     }
   `,
   changeDetection: ChangeDetectionStrategy.OnPush,
-  encapsulation: ViewEncapsulation.None,
   host: {
     role: 'table',
     class: 'cq-data-grid',
