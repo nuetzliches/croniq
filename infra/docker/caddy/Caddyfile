@@ -2,6 +2,7 @@
 	http_port {$CRONIQ_CADDY_HTTP_PORT}
 	https_port {$CRONIQ_CADDY_HTTPS_PORT}
 	local_certs
+	debug
 
 	servers {
 		protocols h1 h2
@@ -13,12 +14,20 @@
 	}
 }
 
-(dmz_upstream) {
+(dmz_http_upstream) {
+	reverse_proxy http://{$CRONIQ_CADDY_UPSTREAM_HOST}:{$CRONIQ_SAMPLE_DMZ_HTTP_PORT} {
+		header_up Host localhost
+	}
+}
+
+(dmz_grpc_upstream) {
 	reverse_proxy https://{$CRONIQ_CADDY_UPSTREAM_HOST}:{$CRONIQ_SAMPLE_DMZ_GRPC_PORT} {
 		transport http {
-			versions h2 1.1
+			versions h2
+			tls_server_name localhost
 			tls_insecure_skip_verify
 		}
+		header_up Host localhost
 	}
 }
 
@@ -33,11 +42,33 @@ api.{$CRONIQ_CADDY_DOMAIN} {
 }
 
 dmz.{$CRONIQ_CADDY_DOMAIN} {
-	import dmz_upstream
+	log {
+		output file /data/caddy/dmz-access.log
+		format json
+	}
+	@grpc_ingress {
+		method POST
+		path /croniq.rpc.WebhookIngress/*
+	}
+	handle @grpc_ingress {
+		import dmz_grpc_upstream
+	}
+	import dmz_http_upstream
 }
 
 hooks.{$CRONIQ_CADDY_DOMAIN} {
-	import dmz_upstream
+	log {
+		output file /data/caddy/dmz-access.log
+		format json
+	}
+	@grpc_ingress {
+		method POST
+		path /croniq.rpc.WebhookIngress/*
+	}
+	handle @grpc_ingress {
+		import dmz_grpc_upstream
+	}
+	import dmz_http_upstream
 }
 
 ui.{$CRONIQ_CADDY_DOMAIN} {

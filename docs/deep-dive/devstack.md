@@ -52,6 +52,8 @@ The Aspire dashboard defaults to `http://localhost:18888` (`ASPIRE_DASHBOARD_POR
 
 Caddy proxies to `CRONIQ_CADDY_UPSTREAM_HOST` (default `host.docker.internal`). On Linux, use `host-gateway` or a host IP if `host.docker.internal` is unavailable.
 
+Webhook gRPC relay requires HTTP/2 over TLS. Keep `CRONIQ_SAMPLE_DMZ_BASEURL` (and optional `CRONIQ_SAMPLE_DMZ_INGRESS_BASEURL`) set to `https://...`, and ensure the DMZ upstream stays on the HTTPS port.
+
 ## Observability (obs profile)
 
 - Enable via `--profile obs`, `CRONIQ_DEVSTACK_PROFILES=--profile obs`, or `CRONIQ_DEVSTACK_OBS=true`.

@@ -6,6 +6,8 @@ using System.Net;
 using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
+using System.Net.Security;
+using System.Security.Cryptography.X509Certificates;
 using System.Runtime.CompilerServices;
 using System.Text;
 using System.Text.Json;
@@ -152,8 +154,19 @@ internal sealed class WebhookIngressRelayService : BackgroundService
             return;
         }
 
+        if (!string.Equals(endpoint.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException(
+                "Webhook ingress relay requires HTTPS for gRPC (HTTP/2). Configure Croniq:Webhooks:Remote:IngressBaseUrl or Croniq:Webhooks:Remote:BaseUrl with an https:// endpoint, or switch the stream mode to SSE/polling.");
+        }
+
         using var httpClient = BuildGrpcHttpClient(endpoint, apiKey, remote.TimeoutSeconds, remote.AllowInvalidServerCertificate);
-        using var channel = GrpcChannel.ForAddress(endpoint, new GrpcChannelOptions { HttpClient = httpClient });
+        using var channel = GrpcChannel.ForAddress(endpoint, new GrpcChannelOptions
+        {
+            HttpClient = httpClient,
+            HttpVersion = HttpVersion.Version20,
+            HttpVersionPolicy = HttpVersionPolicy.RequestVersionExact
+        });
         var client = new WebhookIngress.WebhookIngressClient(channel);
 
         using var call = client.Connect(cancellationToken: stoppingToken);
@@ -906,15 +919,33 @@ internal sealed class WebhookIngressRelayService : BackgroundService
     }
     private static HttpClient BuildGrpcHttpClient(Uri endpoint, string apiKey, int timeoutSeconds, bool allowInvalidServerCertificate)
     {
-        var handler = BuildHttpClientHandler(allowInvalidServerCertificate);
+        var handler = new SocketsHttpHandler
+        {
+            EnableMultipleHttp2Connections = true
+        };
+
+        if (allowInvalidServerCertificate)
+        {
+            handler.SslOptions = new SslClientAuthenticationOptions
+            {
+                TargetHost = endpoint.Host,
+                CertificateRevocationCheckMode = X509RevocationMode.NoCheck,
+                ApplicationProtocols = new List<SslApplicationProtocol>
+                {
+                    SslApplicationProtocol.Http2
+                },
+                RemoteCertificateValidationCallback = static (_, _, _, _) => true
+            };
+        }
+
         var client = new HttpClient(handler)
         {
             BaseAddress = endpoint,
             Timeout = TimeSpan.FromSeconds(Math.Max(1, timeoutSeconds))
         };
 
-        client.DefaultRequestVersion = new Version(2, 0);
-        client.DefaultVersionPolicy = HttpVersionPolicy.RequestVersionOrHigher;
+        client.DefaultRequestVersion = HttpVersion.Version20;
+        client.DefaultVersionPolicy = HttpVersionPolicy.RequestVersionExact;
         client.DefaultRequestHeaders.Add("X-Croniq-Key", apiKey);
         return client;
     }

@@ -63,6 +63,7 @@ var dmzSqlDatabase = GetEnvValueOrDefault("CRONIQ_SAMPLE_DMZ_SQL_DATABASE", "Cro
 var dmzAuthMode = GetEnvValueOrDefault("CRONIQ_SAMPLE_DMZ_AUTH_MODE", "InMemory");
 var dmzInstanceId = GetEnvValueOrDefault("CRONIQ_SAMPLE_DMZ_INSTANCE_ID", "dmz-dev");
 var dmzBaseUrl = GetEnvValueOrDefault("CRONIQ_SAMPLE_DMZ_BASEURL", $"https://localhost:{dmzGrpcPort}");
+var dmzIngressBaseUrl = GetEnvValue("CRONIQ_SAMPLE_DMZ_INGRESS_BASEURL");
 var dmzApiKey = GetEnvValueOrDefault("CRONIQ_SAMPLE_DMZ_API_KEY", "dmz-sample-key");
 var caddyDomain = GetEnvValueOrDefault("CRONIQ_CADDY_DOMAIN", "croniq.local");
 var caddyUpstreamHost = GetEnvValueOrDefault("CRONIQ_CADDY_UPSTREAM_HOST", "host.docker.internal");
@@ -561,6 +562,11 @@ var worker = builder.AddProject(
     .WithEnvironment("Croniq__Webhooks__Remote__AllowInvalidServerCertificate", "true")
     .WithEnvironment("Croniq__Logging__Execution__BasePath", logsPath)
     .WaitForCompletion(migrator, exitCode: 0);
+
+if (!string.IsNullOrWhiteSpace(dmzIngressBaseUrl))
+{
+    worker.WithEnvironment("Croniq__Webhooks__Remote__IngressBaseUrl", dmzIngressBaseUrl);
+}
 
 if (usePostgres)
 {
