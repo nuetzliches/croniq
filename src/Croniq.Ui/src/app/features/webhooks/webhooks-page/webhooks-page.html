@@ -247,46 +247,6 @@
         </select>
       </div>
 
-      <div class="space-y-2">
-        <div class="text-xs font-semibold uppercase tracking-wide text-muted">Timeline range</div>
-        <div class="grid grid-cols-2 gap-2">
-          <input
-            type="datetime-local"
-            cqInput
-            aria-label="Timeline start"
-            [value]="timelineFromLocal()"
-            disabled
-          />
-          <input
-            type="datetime-local"
-            cqInput
-            aria-label="Timeline end"
-            #timelineToInput
-            [value]="timelineToLocal()"
-            (input)="setTimelineToLocal(timelineToInput.value)"
-          />
-        </div>
-        <div class="flex flex-wrap gap-2">
-          @for (preset of timelinePresets; track preset.key) {
-            <button
-              type="button"
-              class="rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-[11px] font-semibold text-primary transition hover:border-accent hover:text-accent"
-              (click)="setTimelinePreset(preset.key)"
-            >
-              {{ preset.label }}
-            </button>
-          }
-          <button
-            type="button"
-            class="rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-[11px] font-semibold text-primary transition hover:border-accent hover:text-accent disabled:opacity-50 disabled:cursor-not-allowed"
-            (click)="clearTimelineRange()"
-            [disabled]="!timelineRangeActive()"
-          >
-            Clear range
-          </button>
-        </div>
-      </div>
-
       <button
         type="button"
         (click)="resetFilters()"
@@ -800,7 +760,7 @@
   </div>
 
   <div class="grid gap-4">
-    <div class="min-w-0 rounded-xl border border-white/10 bg-surface-alt p-4 shadow-card" ngTabs #activityTabs="ngTabs">
+    <div class="min-w-0 rounded-xl border border-white/10 bg-surface-alt p-4 shadow-card">
       <div class="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h2 class="text-sm font-semibold text-primary">Activity timeline</h2>
@@ -843,85 +803,27 @@
             Retry
           </button>
           <span>{{ activityTotalEntries() }} entries</span>
-          <span>{{ activityBucketCount() }} buckets</span>
         </div>
       </div>
       <div class="mt-3 flex min-w-0 flex-wrap items-center justify-between gap-3">
-        <div
-          ngTabList
-          #activityTabList="ngTabList"
-          selectionMode="explicit"
-          class="inline-flex min-w-0 max-w-full flex-1 flex-wrap items-center gap-1 rounded-lg border border-white/10 bg-black/10 p-1 text-[11px]"
-          [selectedTab]="selectedChartView()"
-          (selectedTabChange)="setSelectedChartView($event)"
-        >
-          @for (view of activityChartViews; track view.value) {
-            <button
-              type="button"
-              ngTab
-              #viewTab="ngTab"
-              [value]="view.value"
-              class="rounded-md px-3 py-1.5 font-semibold transition"
-              [class.bg-white/10]="viewTab.selected()"
-              [class.text-primary]="viewTab.selected()"
-              [class.text-muted]="!viewTab.selected()"
-            >
-              {{ view.label }}
-            </button>
-          }
-        </div>
+        <div class="text-[11px] text-muted">Live time-series (auto scrolls as new events arrive).</div>
         <div class="text-[11px] text-muted">Zoom with scroll/pinch or drag.</div>
       </div>
       <div class="mt-4">
         <div class="h-80 rounded-lg border border-white/10 bg-black/10 p-3">
           <p class="sr-only" aria-live="polite">{{ activityChartSummary() }}</p>
-          <div
-            ngTabPanel
-            #volumePanel="ngTabPanel"
-            value="volume-rate"
-            class="h-full"
-            [class.hidden]="!volumePanel.visible()"
-          >
-            <ng-template ngTabContent>
-              <div class="h-full">
-                @if (activityVolumeRateChartOptions(); as chartOptions) {
-                  <cq-echarts-chart
-                    ariaLabel="Webhook activity chart"
-                    [options]="chartOptions"
-                    [loading]="activityLoading()"
-                    (chartClick)="selectActivityBucket($event)"
-                  ></cq-echarts-chart>
-                } @else {
-                  <div class="flex h-full items-center justify-center text-xs text-muted">
-                    No timeline entries to chart.
-                  </div>
-                }
+          <div class="h-full">
+            @if (activityTimeSeriesChartOptions(); as chartOptions) {
+              <cq-echarts-chart
+                ariaLabel="Webhook activity chart"
+                [options]="chartOptions"
+                [loading]="activityLoading()"
+              ></cq-echarts-chart>
+            } @else {
+              <div class="flex h-full items-center justify-center text-xs text-muted">
+                No timeline entries to chart.
               </div>
-            </ng-template>
-          </div>
-          <div
-            ngTabPanel
-            #distributionPanel="ngTabPanel"
-            value="distribution"
-            class="h-full"
-            [class.hidden]="!distributionPanel.visible()"
-          >
-            <ng-template ngTabContent>
-              <div class="h-full">
-                @if (activityDistributionChartOptions(); as chartOptions) {
-                  <cq-echarts-chart
-                    ariaLabel="Webhook activity chart"
-                    [options]="chartOptions"
-                    [loading]="activityLoading()"
-                    (chartClick)="selectActivityBucket($event)"
-                  ></cq-echarts-chart>
-                } @else {
-                  <div class="flex h-full items-center justify-center text-xs text-muted">
-                    No timeline entries to chart.
-                  </div>
-                }
-              </div>
-            </ng-template>
+            }
           </div>
         </div>
           <div class="mt-3 rounded-lg border border-white/10 bg-surface p-3 text-xs text-muted">
@@ -935,15 +837,6 @@
                   Filters applied
                 </span>
               }
-              @if (selectedBucketIndex() !== null) {
-              <button
-                type="button"
-                class="rounded-lg border border-white/10 bg-white/5 px-2 py-1 text-[11px] font-semibold text-primary transition hover:border-accent hover:text-accent"
-                  (click)="clearSelectedBucket()"
-              >
-                  Clear bucket filter
-              </button>
-            }
           </div>
           <p class="mt-1 text-[11px] text-muted">{{ activityDetailHint() }}</p>
             @if (activityDetailItems().length === 0) {
@@ -998,7 +891,7 @@
                         @if (item.requestId) {
                           <div class="text-[11px] text-muted">Request ID: {{ item.requestId }}</div>
                         }
-                        @if (item.latencyMs) {
+                        @if (item.latencyMs !== null && item.latencyMs !== undefined) {
                           <div class="text-[11px] text-muted">Latency: {{ item.latencyMs }} ms</div>
                         }
                         @if (item.payloadBytes) {

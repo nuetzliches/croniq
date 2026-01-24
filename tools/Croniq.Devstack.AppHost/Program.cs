@@ -1,10 +1,14 @@
+using System.Diagnostics;
 using System.Globalization;
+using System.Threading;
 using Microsoft.Data.SqlClient;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 
 var repoRoot = FindRepoRoot(Directory.GetCurrentDirectory()) ?? Directory.GetCurrentDirectory();
 var envValues = LoadEnvFile(Path.Combine(repoRoot, ".env"));
+
+RegisterShutdownCleanup(repoRoot);
 
 string? GetEnvValue(string name)
 {
@@ -67,6 +71,8 @@ var dmzInstanceId = GetEnvValueOrDefault("CRONIQ_SAMPLE_DMZ_INSTANCE_ID", "dmz-d
 var dmzBaseUrl = GetEnvValueOrDefault("CRONIQ_SAMPLE_DMZ_BASEURL", $"https://localhost:{dmzGrpcPort}");
 var dmzIngressBaseUrl = GetEnvValue("CRONIQ_SAMPLE_DMZ_INGRESS_BASEURL");
 var dmzApiKey = GetEnvValueOrDefault("CRONIQ_SAMPLE_DMZ_API_KEY", "dmz-sample-key");
+var dmzDataProtectionAppName = GetEnvValue("CRONIQ_SAMPLE_DMZ_DATAPROTECTION_APPLICATIONNAME");
+var dmzDataProtectionKeyRingPath = GetEnvValue("CRONIQ_SAMPLE_DMZ_DATAPROTECTION_KEYRINGPATH");
 var caddyDomain = GetEnvValueOrDefault("CRONIQ_CADDY_DOMAIN", "croniq.local");
 var caddyUpstreamHost = GetEnvValueOrDefault("CRONIQ_CADDY_UPSTREAM_HOST", "host.docker.internal");
 var caddyHttpPort = GetInt("CRONIQ_CADDY_HTTP_PORT", 80);
@@ -652,6 +658,16 @@ var dmz = builder.AddProject(
     .WithEnvironment("Croniq__SqlServer__ConnectionString", dmzSqlConnection)
     .WaitForCompletion(dmzMigrator, exitCode: 0);
 
+if (!string.IsNullOrWhiteSpace(dmzDataProtectionAppName))
+{
+    dmz.WithEnvironment("Croniq__Security__DataProtection__ApplicationName", dmzDataProtectionAppName);
+}
+
+if (!string.IsNullOrWhiteSpace(dmzDataProtectionKeyRingPath))
+{
+    dmz.WithEnvironment("Croniq__Security__DataProtection__KeyRingPath", dmzDataProtectionKeyRingPath);
+}
+
 if (!string.IsNullOrWhiteSpace(caddyDmzUrl))
 {
     dmz.WithUrlForEndpoint("http", url =>
@@ -678,6 +694,95 @@ if (!string.IsNullOrWhiteSpace(otlpProtocol))
 }
 
 builder.Build().Run();
+
+void RegisterShutdownCleanup(string repositoryRoot)
+{
+    var cleanupCompleted = 0;
+
+    void TryCleanup()
+    {
+        if (Interlocked.Exchange(ref cleanupCompleted, 1) != 0)
+        {
+            return;
+        }
+
+        try
+        {
+            CleanupDevstackProcesses(repositoryRoot);
+        }
+        catch
+        {
+            // Ignore cleanup failures on shutdown.
+        }
+    }
+
+    Console.CancelKeyPress += (_, _) => TryCleanup();
+    AppDomain.CurrentDomain.ProcessExit += (_, _) => TryCleanup();
+}
+
+void CleanupDevstackProcesses(string repositoryRoot)
+{
+    var pidRoot = Path.Combine(repositoryRoot, "artifacts", "devstack");
+    if (!Directory.Exists(pidRoot))
+    {
+        return;
+    }
+
+    foreach (var pidFile in Directory.EnumerateFiles(pidRoot, "*.pid", SearchOption.TopDirectoryOnly))
+    {
+        var pid = TryReadPid(pidFile);
+        if (pid is null || pid.Value <= 0 || pid.Value == Environment.ProcessId)
+        {
+            TryDeletePid(pidFile);
+            continue;
+        }
+
+        try
+        {
+            using var process = Process.GetProcessById(pid.Value);
+            if (!process.HasExited)
+            {
+                process.Kill(entireProcessTree: true);
+                process.WaitForExit(TimeSpan.FromSeconds(5));
+            }
+        }
+        catch
+        {
+            // Ignore failures; process may have already exited or be inaccessible.
+        }
+        finally
+        {
+            TryDeletePid(pidFile);
+        }
+    }
+}
+
+int? TryReadPid(string pidFile)
+{
+    try
+    {
+        var line = File.ReadLines(pidFile).FirstOrDefault();
+        return int.TryParse(line?.Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var pid)
+            ? pid
+            : null;
+    }
+    catch
+    {
+        return null;
+    }
+}
+
+void TryDeletePid(string pidFile)
+{
+    try
+    {
+        File.Delete(pidFile);
+    }
+    catch
+    {
+        // Ignore cleanup failures.
+    }
+}
 
 void EnsureDashboardEnvironment()
 {

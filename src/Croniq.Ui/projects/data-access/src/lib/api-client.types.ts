@@ -52,6 +52,7 @@ export interface TenantWebhookActivityParams extends TenantEnvironmentOptionalPa
     statuses?: ReadonlyArray<WebhookActivityStatus> | null;
     fromUtc?: string | null;
     toUtc?: string | null;
+    updatedSinceUtc?: string | null;
     limit?: number | null;
 }
 

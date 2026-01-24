@@ -1,6 +1,5 @@
 import { CdkMenu } from '@angular/cdk/menu';
 import { DatePipe } from '@angular/common';
-import { Tab, TabContent, TabList, TabPanel, Tabs } from '@angular/aria/tabs';
 import { ChangeDetectionStrategy, Component, Directive, TemplateRef, computed, effect, inject, linkedSignal, signal, viewChild } from '@angular/core';
 import { FormField, form } from '@angular/forms/signals';
 import { RuntimeConfigService } from '@core/runtime-config.service';
@@ -9,7 +8,7 @@ import { RotateWebhookSecretRequest, UpsertWebhookEndpointRequest } from '@croni
 import { WebhookDialogComponent } from '@features/webhooks/components/webhook-dialog/webhook-dialog.component';
 import { WebhookIpRulesDialogComponent } from '@features/webhooks/components/webhook-ip-rules-dialog/webhook-ip-rules-dialog.component';
 import { WebhookRotateSecretDialogComponent } from '@features/webhooks/components/webhook-rotate-secret-dialog/webhook-rotate-secret-dialog.component';
-import { ActivityBucket, ActivityConnectionState, WebhookActivityQuery, WebhookCapabilitiesView, WebhookDeadLetterView, WebhookEndpointView, WebhookRemoteHealthView, WebhookTimelineItemView, WebhooksStore } from '@features/webhooks/webhooks.store';
+import { ActivityBucket, ActivityConnectionState, WEBHOOK_ACTIVITY_MAX_RANGE_MS, WebhookActivityQuery, WebhookCapabilitiesView, WebhookDeadLetterView, WebhookEndpointView, WebhookRemoteHealthView, WebhookTimelineItemView, WebhooksStore } from '@features/webhooks/webhooks.store';
 import { CqEchartsChartComponent } from '@shared/charts/echarts-chart/echarts-chart';
 import { ShellPanelService } from '@shell/panel/shell-panel.service';
 import type { SeriesOption } from 'echarts';
@@ -54,29 +53,6 @@ const STATUS_OPTIONS: ReadonlyArray<{ value: WebhookStatusFilter; label: string 
   { value: 'degraded', label: 'Degraded' },
 ];
 
-const TIMELINE_PRESET_LOOKBACK_MS = {
-  '5m': 5 * 60 * 1000,
-  '30m': 30 * 60 * 1000,
-  '3h': 3 * 60 * 60 * 1000,
-  '24h': 24 * 60 * 60 * 1000,
-  '7d': 7 * 24 * 60 * 60 * 1000,
-  // '21d': 21 * 24 * 60 * 60 * 1000,
-} as const;
-
-type TimelinePresetKey = keyof typeof TIMELINE_PRESET_LOOKBACK_MS;
-
-const TIMELINE_PRESET_OPTIONS: ReadonlyArray<{ key: TimelinePresetKey; label: string }> = [
-  { key: '5m', label: '5m' },
-  { key: '30m', label: '30m' },
-  { key: '3h', label: '3h' },
-  { key: '24h', label: '24h' },
-  { key: '7d', label: '7d' },
-  // { key: '21d', label: '21d' },
-];
-
-const DEFAULT_TIMELINE_PRESET: TimelinePresetKey = '24h';
-const DEFAULT_LOOKBACK_MS = TIMELINE_PRESET_LOOKBACK_MS[DEFAULT_TIMELINE_PRESET];
-
 const TIMELINE_BUCKET_MS_OPTIONS = [
   60 * 1000,
   2 * 60 * 1000,
@@ -99,15 +75,6 @@ const ACTIVITY_STATUS_DEFINITIONS: ReadonlyArray<{ status: WebhookTimelineItemVi
   { status: 'warning', label: 'Warning' },
   { status: 'failed', label: 'Failed' },
 ];
-
-type ActivityChartView = 'volume-rate' | 'distribution';
-
-const ACTIVITY_CHART_VIEW_OPTIONS: ReadonlyArray<{ value: ActivityChartView; label: string }> = [
-  { value: 'distribution', label: 'Distribution' },
-  { value: 'volume-rate', label: 'Volume + rate' },
-];
-
-const DEFAULT_ACTIVITY_CHART_VIEW: ActivityChartView = 'distribution';
 
 type PageInfo = {
   total: number;
@@ -137,11 +104,6 @@ export class CqWebhookCellDirective extends CqCellDefDirective<WebhookEndpointVi
   selector: 'cq-webhooks-page',
   imports: [
     DatePipe,
-    Tabs,
-    TabList,
-    Tab,
-    TabPanel,
-    TabContent,
     FormField,
     DataGrid,
     CqColumnComponent,
@@ -217,10 +179,6 @@ export class WebhooksPage {
   readonly jobSearch = signal('');
   readonly selectedHookKeys = signal<ReadonlyArray<string>>([]);
   readonly selectedJobKeys = signal<ReadonlyArray<string>>([]);
-  readonly timelineFromIso = signal<string | null>(null);
-  readonly timelineToIso = signal<string | null>(null);
-  readonly timelineLookbackMs = signal(DEFAULT_LOOKBACK_MS);
-  readonly timelinePresets = TIMELINE_PRESET_OPTIONS;
   readonly kpiSuccessRate = computed(() => {
     const endpoints = this.endpoints().length;
     if (endpoints === 0) {
@@ -239,9 +197,7 @@ export class WebhooksPage {
     const model = this.filterModel();
     const hooks = [...this.selectedHookKeys()].sort().join(',');
     const jobs = [...this.selectedJobKeys()].sort().join(',');
-    const fromIso = this.timelineFromIso() ?? '';
-    const toIso = this.timelineToIso() ?? '';
-    return `${model.status}|${model.environment}|${hooks}|${jobs}|${fromIso}|${toIso}`;
+    return `${model.status}|${model.environment}|${hooks}|${jobs}`;
   });
 
   readonly activityQuery = linkedSignal<WebhookActivityQuery>(() =>
@@ -249,7 +205,6 @@ export class WebhooksPage {
       this.filterModel(),
       this.selectedHookKeys(),
       this.selectedJobKeys(),
-      this.timelineToIso(),
     ),
   );
 
@@ -338,15 +293,8 @@ export class WebhooksPage {
       || this.selectedJobKeys().length > 0
       || model.status !== 'all'
       || model.environment !== ALL_ENVIRONMENTS
-      || this.timelineLookbackMs() !== DEFAULT_LOOKBACK_MS
-      || !!this.timelineToIso()
     );
   });
-
-  readonly timelineRangeActive = computed(() => !!this.timelineToIso());
-
-  readonly timelineFromLocal = computed(() => isoToLocalDateTimeInput(this.timelineFromIso()));
-  readonly timelineToLocal = computed(() => isoToLocalDateTimeInput(this.timelineToIso()));
 
   readonly hookEntries = computed<ReadonlyArray<HookFilterEntry>>(() => {
     const entries = new Map<string, WebhookEndpointView[]>();
@@ -434,740 +382,644 @@ export class WebhooksPage {
     return remoteUrl ?? this.internalIngressUrl();
   });
 
-  webhookRowClasses = (row: WebhookEndpointView) =>
-    row.status === 'active' ? undefined : ['opacity-80'];
+webhookRowClasses = (row: WebhookEndpointView) =>
+  row.status === 'active' ? undefined : ['opacity-80'];
 
-  selectRow(event: { row: WebhookEndpointView }): void {
-    const row = event.row;
-    if (!row) {
-      return;
-    }
-    this.selectedRowKey.set(this.webhookRowKey(row, 0));
+selectRow(event: { row: WebhookEndpointView }): void {
+  const row = event.row;
+  if(!row) {
+    return;
   }
+    this.selectedRowKey.set(this.webhookRowKey(row, 0));
+}
 
-  copyIngressUrl(target?: 'internal' | 'remote'): void {
-    const url = target === 'internal'
-      ? this.internalIngressUrl()
-      : target === 'remote'
-        ? this.remoteIngressUrl()
-        : this.ingressUrl();
-    if (!url) {
-      return;
-    }
-    if (!navigator.clipboard?.writeText) {
-      console.error('Clipboard API unavailable for webhook ingress URL copy.');
-      return;
-    }
-    navigator.clipboard.writeText(url).catch((error: unknown) => {
-      console.error('Unable to copy webhook ingress URL', error);
-    });
+copyIngressUrl(target ?: 'internal' | 'remote'): void {
+  const url = target === 'internal'
+    ? this.internalIngressUrl()
+    : target === 'remote'
+      ? this.remoteIngressUrl()
+      : this.ingressUrl();
+  if(!url) {
+    return;
+  }
+    if(!navigator.clipboard?.writeText) {
+  console.error('Clipboard API unavailable for webhook ingress URL copy.');
+  return;
+}
+navigator.clipboard.writeText(url).catch((error: unknown) => {
+  console.error('Unable to copy webhook ingress URL', error);
+});
   }
 
   readonly selectedIpRulesEndpoint = signal<WebhookEndpointView | null>(null);
 
   private createDialogData(endpoint: UpsertWebhookEndpointRequest | null): WebhookDialogData {
-    return {
-      endpoint,
-      capabilities: this.store.capabilities(),
-    };
-  }
+  return {
+    endpoint,
+    capabilities: this.store.capabilities(),
+  };
+}
 
-  refresh(): void {
+refresh(): void {
+  const tenantId = this.tenantContext.tenantId();
+  const environment = this.tenantContext.environment();
+  if(tenantId) {
+    void this.store.refreshEndpoints({ tenantId, environment });
+  }
+}
+
+refreshRemoteHealth(): void {
+  this.store.refreshRemoteHealth();
+}
+
+  private resolveIngressUrlFromBase(baseUrl: string | null): string | null {
+  const endpoint = this.selectedEndpoint();
+  const tenantId = resolveNonEmptyString(this.tenantContext.tenantId());
+  if (!endpoint || !tenantId) {
+    return null;
+  }
+  const environment = resolveNonEmptyString(endpoint.environment)
+    ?? resolveNonEmptyString(this.tenantContext.environment());
+  const normalizedBase = resolveNonEmptyString(baseUrl);
+  if (!environment || !normalizedBase) {
+    return null;
+  }
+  return buildIngressUrl(normalizedBase, tenantId, environment, endpoint.hookKey);
+}
+
+openWebhookDialog(endpoint ?: WebhookEndpointView): void {
+  if(this.writePermissionDenied()) {
+  return;
+}
+const data: UpsertWebhookEndpointRequest | null = endpoint
+  ? {
+    hookKey: endpoint.hookKey,
+    jobKey: endpoint.jobKey,
+    enabled: endpoint.status === 'active',
+    requireSignature: endpoint.requireSignature,
+    allowUnsigned: !endpoint.requireSignature,
+    requestsPerMinute: endpoint.requestsPerMinute ?? null,
+    metadata: {},
+  }
+  : null;
+
+const ref = this.dialog.open<UpsertWebhookEndpointRequest>(WebhookDialogComponent, {
+  data: this.createDialogData(data),
+  width: '500px',
+  panelClass: 'bg-transparent',
+  restoreFocus: true,
+});
+
+ref.closed.subscribe((result) => {
+  if (result) {
     const tenantId = this.tenantContext.tenantId();
     const environment = this.tenantContext.environment();
     if (tenantId) {
-      void this.store.refreshEndpoints({ tenantId, environment });
+      this.store.upsertEndpoint(
+        {
+          tenantId,
+          environment,
+        },
+        result,
+      );
     }
   }
-
-  refreshRemoteHealth(): void {
-    this.store.refreshRemoteHealth();
+});
   }
 
-  private resolveIngressUrlFromBase(baseUrl: string | null): string | null {
-    const endpoint = this.selectedEndpoint();
-    const tenantId = resolveNonEmptyString(this.tenantContext.tenantId());
-    if (!endpoint || !tenantId) {
-      return null;
-    }
-    const environment = resolveNonEmptyString(endpoint.environment)
-      ?? resolveNonEmptyString(this.tenantContext.environment());
-    const normalizedBase = resolveNonEmptyString(baseUrl);
-    if (!environment || !normalizedBase) {
-      return null;
-    }
-    return buildIngressUrl(normalizedBase, tenantId, environment, endpoint.hookKey);
+openIpRulesDialog(endpoint: WebhookEndpointView): void {
+  if(this.writePermissionDenied()) {
+  return;
+}
+this.selectedIpRulesEndpoint.set(endpoint);
+this.dialog.open(WebhookIpRulesDialogComponent, {
+  data: { endpoint },
+  width: '560px',
+  panelClass: 'bg-transparent',
+  restoreFocus: true,
+}).closed.subscribe(() => this.selectedIpRulesEndpoint.set(null));
   }
 
-  openWebhookDialog(endpoint?: WebhookEndpointView): void {
-    if (this.writePermissionDenied()) {
-      return;
-    }
-    const data: UpsertWebhookEndpointRequest | null = endpoint
-      ? {
-        hookKey: endpoint.hookKey,
-        jobKey: endpoint.jobKey,
-        enabled: endpoint.status === 'active',
-        requireSignature: endpoint.requireSignature,
-        allowUnsigned: !endpoint.requireSignature,
-        requestsPerMinute: endpoint.requestsPerMinute ?? null,
-        metadata: {},
-      }
-      : null;
+ipWhitelistLabel(endpoint: WebhookEndpointView): string {
+  const count = endpoint.ipRuleCount;
+  if (count === null || count === undefined) {
+    return 'IP Whitelist: Unavailable';
+  }
+  if (count === 0) {
+    return 'IP Whitelist: None';
+  }
+  return `IP Whitelist: ${count} rule${count === 1 ? '' : 's'}`;
+}
 
-    const ref = this.dialog.open<UpsertWebhookEndpointRequest>(WebhookDialogComponent, {
-      data: this.createDialogData(data),
-      width: '500px',
-      panelClass: 'bg-transparent',
-      restoreFocus: true,
-    });
+statusLabel(status: WebhookEndpointView['status']): string {
+  if (status === 'active') {
+    return 'Active';
+  }
+  if (status === 'degraded') {
+    return 'Degraded';
+  }
+  return 'Paused';
+}
 
-    ref.closed.subscribe((result) => {
-      if (result) {
-        const tenantId = this.tenantContext.tenantId();
-        const environment = this.tenantContext.environment();
-        if (tenantId) {
-          this.store.upsertEndpoint(
-            {
-              tenantId,
-              environment,
-            },
-            result,
-          );
-        }
-      }
-    });
+requestsPerMinuteLabel(endpoint: WebhookEndpointView): string {
+  return typeof endpoint.requestsPerMinute === 'number'
+    ? String(endpoint.requestsPerMinute)
+    : 'Default';
+}
+
+isEndpointPaused(endpoint: WebhookEndpointView): boolean {
+  const current = this.endpoints().find((entry) =>
+    entry.hookKey === endpoint.hookKey
+    && entry.environment === endpoint.environment,
+  );
+  const status = current?.status ?? endpoint.status;
+  return status === 'paused';
+}
+
+resetFilters(): void {
+  this.filterModel.set(createDefaultFilters());
+  this.selectedHookKeys.set([]);
+  this.selectedJobKeys.set([]);
+  this.hookSearch.set('');
+  this.jobSearch.set('');
+}
+
+setActivityLiveUpdates(enabled: boolean): void {
+  this.store.setActivityLiveUpdatesEnabled(enabled);
+}
+
+isDeadLetterItem(item: WebhookTimelineItemView): boolean {
+  return item.kind === 'deadLetter' && typeof item.deadLetterId === 'string';
+}
+
+activityStatusLabel(status: WebhookTimelineItemView['status']): string {
+  if (status === 'success') {
+    return 'Success';
+  }
+  if (status === 'warning') {
+    return 'Warning';
+  }
+  if (status === 'failed') {
+    return 'Failed';
+  }
+  if (status === 'pending') {
+    return 'Pending';
+  }
+  return 'Leased';
+}
+
+activityOutcomeLabel(item: WebhookTimelineItemView): string {
+  if (item.kind === 'deadLetter') {
+    return 'Dead lettered';
+  }
+  if (item.status === 'success') {
+    return 'Delivered';
+  }
+  if (item.status === 'warning') {
+    return 'Delivered with warning';
+  }
+  if (item.status === 'failed') {
+    return 'Failed delivery';
+  }
+  if (item.status === 'pending') {
+    return 'Pending delivery';
+  }
+  return 'Leased for delivery';
+}
+
+activityMetadataLabel(item: WebhookTimelineItemView): string {
+  const parts: string[] = [];
+  if (item.environment) {
+    parts.push(`Env ${item.environment}`);
+  }
+  if (item.source) {
+    parts.push(`Source ${item.source}`);
+  }
+  if (item.endpointStatus) {
+    parts.push(`Endpoint ${item.endpointStatus}`);
+  }
+  return parts.join(' · ');
+}
+
+replayDeadLetterItem(item: WebhookTimelineItemView): void {
+  if(this.writePermissionDenied() || item.kind !== 'deadLetter') {
+  return;
+}
+const deadLetterId = Number(item.deadLetterId);
+if (!Number.isFinite(deadLetterId)) {
+  return;
+}
+this.dialog.open<boolean>(CqConfirmDialogComponent, {
+  data: {
+    title: 'Replay dead letter',
+    message: `Replay dead letter ${item.deadLetterId}?`,
+    confirmLabel: 'Replay',
+  } satisfies CqConfirmDialogData,
+  width: '420px',
+  panelClass: 'bg-transparent',
+}).closed.pipe(filter(Boolean)).subscribe(() => {
+  const tenantId = this.tenantContext.tenantId();
+  const environment = this.tenantContext.environment();
+  if (!tenantId) {
+    return;
+  }
+  this.store.replayDeadLetter({ tenantId, environment, deadLetterId });
+});
   }
 
-  openIpRulesDialog(endpoint: WebhookEndpointView): void {
-    if (this.writePermissionDenied()) {
-      return;
-    }
-    this.selectedIpRulesEndpoint.set(endpoint);
-    this.dialog.open(WebhookIpRulesDialogComponent, {
-      data: { endpoint },
-      width: '560px',
-      panelClass: 'bg-transparent',
-      restoreFocus: true,
-    }).closed.subscribe(() => this.selectedIpRulesEndpoint.set(null));
-  }
+retryActivity(): void {
+  this.store.refreshActivity();
+}
 
-  ipWhitelistLabel(endpoint: WebhookEndpointView): string {
-    const count = endpoint.ipRuleCount;
-    if (count === null || count === undefined) {
-      return 'IP Whitelist: Unavailable';
-    }
-    if (count === 0) {
-      return 'IP Whitelist: None';
-    }
-    return `IP Whitelist: ${count} rule${count === 1 ? '' : 's'}`;
-  }
+setHookSearch(value: string): void {
+  this.hookSearch.set(value);
+}
 
-  statusLabel(status: WebhookEndpointView['status']): string {
-    if (status === 'active') {
-      return 'Active';
-    }
-    if (status === 'degraded') {
-      return 'Degraded';
-    }
-    return 'Paused';
-  }
+setJobSearch(value: string): void {
+  this.jobSearch.set(value);
+}
 
-  requestsPerMinuteLabel(endpoint: WebhookEndpointView): string {
-    return typeof endpoint.requestsPerMinute === 'number'
-      ? String(endpoint.requestsPerMinute)
-      : 'Default';
-  }
+isHookSelected(hookKey: string): boolean {
+  return this.selectedHookKeys().includes(hookKey);
+}
 
-  isEndpointPaused(endpoint: WebhookEndpointView): boolean {
-    const current = this.endpoints().find((entry) =>
-      entry.hookKey === endpoint.hookKey
-      && entry.environment === endpoint.environment,
-    );
-    const status = current?.status ?? endpoint.status;
-    return status === 'paused';
-  }
+isJobSelected(jobKey: string): boolean {
+  return this.selectedJobKeys().includes(jobKey);
+}
 
-  resetFilters(): void {
-    this.filterModel.set(createDefaultFilters());
-    this.selectedHookKeys.set([]);
-    this.selectedJobKeys.set([]);
-    this.hookSearch.set('');
-    this.jobSearch.set('');
-    this.setTimelinePreset(DEFAULT_TIMELINE_PRESET);
-  }
+toggleHookSelection(hookKey: string, checked: boolean): void {
+  this.selectedHookKeys.update((current) =>
+    checked
+      ? Array.from(new Set([...current, hookKey]))
+      : current.filter((entry) => entry !== hookKey),
+  );
+}
 
-  clearTimelineRange(): void {
-    this.timelineFromIso.set(null);
-    this.timelineToIso.set(null);
-  }
-
-  setTimelineFromLocal(_value: string): void {
-    this.timelineFromIso.set(null);
-  }
-
-  setTimelineToLocal(value: string): void {
-    this.timelineToIso.set(localDateTimeInputToIso(value));
-  }
-
-  setTimelinePreset(kind: TimelinePresetKey): void {
-    this.timelineLookbackMs.set(TIMELINE_PRESET_LOOKBACK_MS[kind]);
-    this.timelineFromIso.set(null);
-    this.timelineToIso.set(null);
-  }
-
-  setActivityLiveUpdates(enabled: boolean): void {
-    this.store.setActivityLiveUpdatesEnabled(enabled);
-  }
-
-  setSelectedChartView(nextTab: ActivityChartView | string | null | undefined): void {
-    this.selectedChartView.set(resolveChartView(nextTab));
-    this.selectedBucketIndex.set(null);
-  }
-
-  selectActivityBucket(event: unknown): void {
-    const index = resolveChartBucketIndex(event);
-    if (index === null) {
-      return;
-    }
-    this.selectedBucketIndex.set(index);
-  }
-
-  clearSelectedBucket(): void {
-    this.selectedBucketIndex.set(null);
-  }
-
-  isDeadLetterItem(item: WebhookTimelineItemView): boolean {
-    return item.kind === 'deadLetter' && typeof item.deadLetterId === 'string';
-  }
-
-  activityStatusLabel(status: WebhookTimelineItemView['status']): string {
-    if (status === 'success') {
-      return 'Success';
-    }
-    if (status === 'warning') {
-      return 'Warning';
-    }
-    if (status === 'failed') {
-      return 'Failed';
-    }
-    if (status === 'pending') {
-      return 'Pending';
-    }
-    return 'Leased';
-  }
-
-  activityOutcomeLabel(item: WebhookTimelineItemView): string {
-    if (item.kind === 'deadLetter') {
-      return 'Dead lettered';
-    }
-    if (item.status === 'success') {
-      return 'Delivered';
-    }
-    if (item.status === 'warning') {
-      return 'Delivered with warning';
-    }
-    if (item.status === 'failed') {
-      return 'Failed delivery';
-    }
-    if (item.status === 'pending') {
-      return 'Pending delivery';
-    }
-    return 'Leased for delivery';
-  }
-
-  activityMetadataLabel(item: WebhookTimelineItemView): string {
-    const parts: string[] = [];
-    if (item.environment) {
-      parts.push(`Env ${item.environment}`);
-    }
-    if (item.source) {
-      parts.push(`Source ${item.source}`);
-    }
-    if (item.endpointStatus) {
-      parts.push(`Endpoint ${item.endpointStatus}`);
-    }
-    return parts.join(' · ');
-  }
-
-  replayDeadLetterItem(item: WebhookTimelineItemView): void {
-    if (this.writePermissionDenied() || item.kind !== 'deadLetter') {
-      return;
-    }
-    const deadLetterId = Number(item.deadLetterId);
-    if (!Number.isFinite(deadLetterId)) {
-      return;
-    }
-    this.dialog.open<boolean>(CqConfirmDialogComponent, {
-      data: {
-        title: 'Replay dead letter',
-        message: `Replay dead letter ${item.deadLetterId}?`,
-        confirmLabel: 'Replay',
-      } satisfies CqConfirmDialogData,
-      width: '420px',
-      panelClass: 'bg-transparent',
-    }).closed.pipe(filter(Boolean)).subscribe(() => {
-      const tenantId = this.tenantContext.tenantId();
-      const environment = this.tenantContext.environment();
-      if (!tenantId) {
-        return;
-      }
-      this.store.replayDeadLetter({ tenantId, environment, deadLetterId });
-    });
-  }
-
-  retryActivity(): void {
-    this.store.refreshActivity();
-  }
-
-  setHookSearch(value: string): void {
-    this.hookSearch.set(value);
-  }
-
-  setJobSearch(value: string): void {
-    this.jobSearch.set(value);
-  }
-
-  isHookSelected(hookKey: string): boolean {
-    return this.selectedHookKeys().includes(hookKey);
-  }
-
-  isJobSelected(jobKey: string): boolean {
-    return this.selectedJobKeys().includes(jobKey);
-  }
-
-  toggleHookSelection(hookKey: string, checked: boolean): void {
-    this.selectedHookKeys.update((current) =>
-      checked
-        ? Array.from(new Set([...current, hookKey]))
-        : current.filter((entry) => entry !== hookKey),
-    );
-  }
-
-  toggleJobSelection(jobKey: string, checked: boolean): void {
-    this.selectedJobKeys.update((current) =>
-      checked
-        ? Array.from(new Set([...current, jobKey]))
-        : current.filter((entry) => entry !== jobKey),
-    );
-  }
+toggleJobSelection(jobKey: string, checked: boolean): void {
+  this.selectedJobKeys.update((current) =>
+    checked
+      ? Array.from(new Set([...current, jobKey]))
+      : current.filter((entry) => entry !== jobKey),
+  );
+}
 
   readonly filteredDeadLetters = computed(() => {
-    const selectedHooks = new Set(this.selectedHookKeys());
-    const selectedJobs = new Set(this.selectedJobKeys());
-    return this.deadLetters().filter((entry) => {
-      if (selectedHooks.size > 0 && !selectedHooks.has(entry.hookKey)) {
-        return false;
-      }
-      if (selectedJobs.size > 0 && entry.jobKey && !selectedJobs.has(entry.jobKey)) {
-        return false;
-      }
-      if (selectedJobs.size > 0 && !entry.jobKey) {
-        return false;
-      }
-      return true;
+  const selectedHooks = new Set(this.selectedHookKeys());
+  const selectedJobs = new Set(this.selectedJobKeys());
+  return this.deadLetters().filter((entry) => {
+    if (selectedHooks.size > 0 && !selectedHooks.has(entry.hookKey)) {
+      return false;
+    }
+    if (selectedJobs.size > 0 && entry.jobKey && !selectedJobs.has(entry.jobKey)) {
+      return false;
+    }
+    if (selectedJobs.size > 0 && !entry.jobKey) {
+      return false;
+    }
+    return true;
+  });
+});
+
+  readonly fallbackTimelineItems = computed<ReadonlyArray<WebhookTimelineItemView>>(() => {
+  const filters = this.filterModel();
+  const restrictToEndpointSet = filters.status !== 'all' || filters.environment !== ALL_ENVIRONMENTS;
+  const endpoints = this.filteredEndpoints();
+  const deadLetters = this.filteredDeadLetters();
+
+  const endpointKeys = new Set(endpoints.map((endpoint) => `${endpoint.hookKey}|${endpoint.jobKey}`));
+  const timeline: WebhookTimelineItemView[] = [];
+
+  endpoints.forEach((endpoint) => {
+    if (!endpoint.lastDeliveryAt) {
+      return;
+    }
+    timeline.push({
+      id: `delivery:${this.webhookRowKey(endpoint, 0)}`,
+      kind: 'delivery',
+      status: endpoint.status === 'degraded' ? 'warning' : 'success',
+      label: 'Last delivery',
+      occurredAt: endpoint.lastDeliveryAt,
+      hookKey: endpoint.hookKey,
+      jobKey: endpoint.jobKey,
+      environment: endpoint.environment,
+      endpointStatus: endpoint.status,
+      reason: endpoint.status === 'degraded' ? 'Endpoint reported degraded status.' : undefined,
+      endpointRowKey: this.webhookRowKey(endpoint, 0),
+      source: 'ingress',
     });
   });
 
-  readonly fallbackTimelineItems = computed<ReadonlyArray<WebhookTimelineItemView>>(() => {
-    const filters = this.filterModel();
-    const restrictToEndpointSet = filters.status !== 'all' || filters.environment !== ALL_ENVIRONMENTS;
-    const endpoints = this.filteredEndpoints();
-    const deadLetters = this.filteredDeadLetters();
-
-    const endpointKeys = new Set(endpoints.map((endpoint) => `${endpoint.hookKey}|${endpoint.jobKey}`));
-    const timeline: WebhookTimelineItemView[] = [];
-
-    endpoints.forEach((endpoint) => {
-      if (!endpoint.lastDeliveryAt) {
-        return;
+  deadLetters
+    .filter((entry) => {
+      if (endpointKeys.size === 0) {
+        return !restrictToEndpointSet;
       }
+      if (entry.jobKey) {
+        return endpointKeys.has(`${entry.hookKey}|${entry.jobKey}`);
+      }
+      return endpoints.some((endpoint) => endpoint.hookKey === entry.hookKey);
+    })
+    .forEach((entry) => {
       timeline.push({
-        id: `delivery:${this.webhookRowKey(endpoint, 0)}`,
-        kind: 'delivery',
-        status: endpoint.status === 'degraded' ? 'warning' : 'success',
-        label: 'Last delivery',
-        occurredAt: endpoint.lastDeliveryAt,
-        hookKey: endpoint.hookKey,
-        jobKey: endpoint.jobKey,
-        environment: endpoint.environment,
-        endpointStatus: endpoint.status,
-        reason: endpoint.status === 'degraded' ? 'Endpoint reported degraded status.' : undefined,
-        endpointRowKey: this.webhookRowKey(endpoint, 0),
+        id: `deadletter:${entry.id}`,
+        kind: 'deadLetter',
+        status: 'failed',
+        label: 'Dead letter',
+        occurredAt: entry.occurredAt,
+        hookKey: entry.hookKey,
+        jobKey: entry.jobKey,
+        reason: entry.reason ?? 'No reason provided.',
+        deadLetterId: entry.id,
         source: 'ingress',
       });
     });
 
-    deadLetters
-      .filter((entry) => {
-        if (endpointKeys.size === 0) {
-          return !restrictToEndpointSet;
-        }
-        if (entry.jobKey) {
-          return endpointKeys.has(`${entry.hookKey}|${entry.jobKey}`);
-        }
-        return endpoints.some((endpoint) => endpoint.hookKey === entry.hookKey);
-      })
-      .forEach((entry) => {
-        timeline.push({
-          id: `deadletter:${entry.id}`,
-          kind: 'deadLetter',
-          status: 'failed',
-          label: 'Dead letter',
-          occurredAt: entry.occurredAt,
-          hookKey: entry.hookKey,
-          jobKey: entry.jobKey,
-          reason: entry.reason ?? 'No reason provided.',
-          deadLetterId: entry.id,
-          source: 'ingress',
-        });
-      });
-
-    return timeline.sort((a, b) => Date.parse(b.occurredAt) - Date.parse(a.occurredAt));
-  });
+  return timeline.sort((a, b) => Date.parse(b.occurredAt) - Date.parse(a.occurredAt));
+});
 
   readonly timelineItems = computed<ReadonlyArray<WebhookTimelineItemView>>(() => {
-    const items = this.activityBackendReady()
-      ? this.activityTimeline()
-      : this.fallbackTimelineItems();
-    const range = resolveTimelineRangeMs(this.timelineLookbackMs(), this.timelineToIso());
-    return filterTimelineItemsByRange(items, range);
-  });
+  const items = this.activityBackendReady()
+    ? this.activityTimeline()
+    : this.fallbackTimelineItems();
+  const range = resolveActivityRangeMs();
+  return filterTimelineItemsByRange(items, range);
+});
 
   readonly activityBuckets = computed<ReadonlyArray<ActivityBucket>>(() => {
-    const items = this.timelineItems();
-    if (items.length === 0) {
-      return [];
-    }
-    const range = resolveTimelineRangeMs(this.timelineLookbackMs(), this.timelineToIso());
-    const bucketMs = resolveTimelineBucketMs(this.timelineLookbackMs());
-    return buildActivityBuckets(
-      items,
-      new Date(range.fromMs).toISOString(),
-      new Date(range.toMs).toISOString(),
-      bucketMs,
-    );
-  });
+  const items = this.timelineItems();
+  if (items.length === 0) {
+    return [];
+  }
+  const range = resolveActivityRangeMs();
+  const bucketMs = resolveTimelineBucketMs(WEBHOOK_ACTIVITY_MAX_RANGE_MS);
+  return buildActivityBuckets(
+    items,
+    new Date(range.fromMs).toISOString(),
+    new Date(range.toMs).toISOString(),
+    bucketMs,
+  );
+});
 
   readonly activityTotalEntries = computed(() => this.timelineItems().length);
-  readonly activityBucketCount = computed(() => this.activityBuckets().length);
-  readonly activityChartViews = ACTIVITY_CHART_VIEW_OPTIONS;
-  readonly selectedChartView = signal<ActivityChartView>(DEFAULT_ACTIVITY_CHART_VIEW);
   readonly activityChartSummary = computed(() =>
-    buildActivityChartSummary(
-      this.selectedChartView(),
-      this.timelineItems(),
-      this.activityBuckets(),
-      this.timelineLookbackMs(),
-      this.timelineToIso(),
-    ),
-  );
-  readonly activityChartData = computed(() =>
-    buildActivityChartData(
-      this.timelineItems(),
-      this.activityBuckets(),
-      this.timelineLookbackMs(),
-      this.timelineToIso(),
-    ),
-  );
-  readonly selectedBucketIndex = linkedSignal<number | null>(() => {
-    this.filterSignature();
-    return null;
-  });
+  buildActivityChartSummary(this.timelineItems(), this.activityBuckets()),
+);
   readonly activityDetailItems = computed<ReadonlyArray<WebhookTimelineItemView>>(() =>
-    buildActivityDetailItems(this.timelineItems(), this.activityChartData(), this.selectedBucketIndex()),
-  );
+  buildActivityDetailItems(this.timelineItems()),
+);
   readonly activityDetailLabel = computed(() =>
-    buildActivityDetailLabel(this.activityChartData(), this.selectedBucketIndex()),
-  );
+  buildActivityDetailLabel(),
+);
   readonly activityDetailHint = computed(() =>
-    this.selectedBucketIndex() === null
-      ? 'Select a bucket to filter items.'
-      : 'Showing items in the selected bucket.',
-  );
+  'Zoom the chart to focus the timeline.',
+);
   readonly activityDetailEmptyLabel = computed(() =>
-    this.selectedBucketIndex() === null
-      ? 'No activity items yet.'
-      : 'No items in the selected bucket.',
-  );
+  'No activity items yet.',
+);
 
-  readonly activityVolumeRateChartOptions = computed<EChartsCoreOption | null>(() =>
-    buildActivityChartOptions(
-      'volume-rate',
-      this.timelineItems(),
-      this.activityBuckets(),
-      this.timelineLookbackMs(),
-      this.timelineToIso(),
-    ),
-  );
-  readonly activityDistributionChartOptions = computed<EChartsCoreOption | null>(() =>
-    buildActivityChartOptions(
-      'distribution',
-      this.timelineItems(),
-      this.activityBuckets(),
-      this.timelineLookbackMs(),
-      this.timelineToIso(),
-    ),
-  );
+  readonly activityTimeSeriesChartOptions = computed<EChartsCoreOption | null>(() =>
+  buildActivityTimeSeriesOptions(
+    this.timelineItems(),
+    this.activityBuckets(),
+  ),
+);
 
-  constructor() {
-    this.setTimelinePreset(DEFAULT_TIMELINE_PRESET);
-
-    effect((onCleanup) => {
-      // Auto-clear the "to" filter after the selected day ends.
-      const toIso = this.timelineToIso();
-      if (!toIso) {
-        return;
-      }
-      const endOfDayMs = resolveLocalEndOfDayMs(toIso);
-      if (endOfDayMs === null) {
-        this.timelineToIso.set(null);
-        return;
-      }
-      const delayMs = endOfDayMs - Date.now();
-      if (delayMs <= 0) {
-        this.timelineToIso.set(null);
-        return;
-      }
-      const timeoutId = setTimeout(() => this.timelineToIso.set(null), delayMs);
-      onCleanup(() => clearTimeout(timeoutId));
-    });
-
-    effect((onCleanup) => {
-      const template = this.panelTemplate();
-      const collapsedTemplate = this.collapsedTemplate();
-      if (!template) {
-        return;
-      }
-      this.shellPanel.setPanel(
-        template,
-        'Filters & settings',
-        'Refine the endpoints list.',
-        collapsedTemplate ?? null,
-      );
-      onCleanup(() => this.shellPanel.clearPanel(template));
-    });
-
-    effect(() => {
-      const endpoint = this.selectedEndpoint();
-      if (!endpoint) {
-        this.invokePayload.set('');
-        this.invokePayloadTouched.set(false);
-        return;
-      }
-      if (this.invokePayloadTouched()) {
-        return;
-      }
-      this.invokePayload.set(createDefaultInvokePayload(endpoint));
-    });
-
-    effect(() => {
-      // Keep the store activity stream in sync with the active filters.
-      this.store.setActivityQuery(this.activityQuery());
-    });
-  }
-
-  setInvokePayload(value: string): void {
-    this.invokePayloadTouched.set(true);
-    this.invokePayload.set(value);
-  }
-
-  copyInvokePayload(): void {
-    const payload = this.invokePayload();
-    if (!payload || !navigator.clipboard?.writeText) {
+constructor() {
+  effect((onCleanup) => {
+    const template = this.panelTemplate();
+    const collapsedTemplate = this.collapsedTemplate();
+    if (!template) {
       return;
     }
-    navigator.clipboard.writeText(payload).catch((error: unknown) => {
-      console.error('Unable to copy webhook payload', error);
-    });
-  }
+    this.shellPanel.setPanel(
+      template,
+      'Filters & settings',
+      'Refine the endpoints list.',
+      collapsedTemplate ?? null,
+    );
+    onCleanup(() => this.shellPanel.clearPanel(template));
+  });
 
-  copyCurlSnippet(): void {
-    const url = this.ingressUrl();
-    const payload = this.invokePayload();
-    if (!url || !navigator.clipboard?.writeText) {
+  effect(() => {
+    const endpoint = this.selectedEndpoint();
+    if (!endpoint) {
+      this.invokePayload.set('');
+      this.invokePayloadTouched.set(false);
       return;
     }
-    const escapedPayload = escapeSingleQuotes(payload || '{}');
-    const curl = `curl -X POST "${url}" -H "Content-Type: application/json" -d '${escapedPayload}'`;
-    navigator.clipboard.writeText(curl).catch((error: unknown) => {
-      console.error('Unable to copy cURL snippet', error);
-    });
-  }
-
-  previousPage(): void {
-    if (this.isFirstPage()) {
+    if (this.invokePayloadTouched()) {
       return;
     }
-    this.pageIndex.update((value) => Math.max(0, value - 1));
+    this.invokePayload.set(createDefaultInvokePayload(endpoint));
+  });
+
+  effect(() => {
+    // Keep the store activity stream in sync with the active filters.
+    this.store.setActivityQuery(this.activityQuery());
+  });
+}
+
+setInvokePayload(value: string): void {
+  this.invokePayloadTouched.set(true);
+  this.invokePayload.set(value);
+}
+
+copyInvokePayload(): void {
+  const payload = this.invokePayload();
+  if(!payload || !navigator.clipboard?.writeText) {
+  return;
+}
+navigator.clipboard.writeText(payload).catch((error: unknown) => {
+  console.error('Unable to copy webhook payload', error);
+});
   }
 
-  nextPage(): void {
-    if (this.isLastPage()) {
-      return;
-    }
-    this.pageIndex.update((value) => value + 1);
+copyCurlSnippet(): void {
+  const url = this.ingressUrl();
+  const payload = this.invokePayload();
+  if(!url || !navigator.clipboard?.writeText) {
+  return;
+}
+const escapedPayload = escapeSingleQuotes(payload || '{}');
+const curl = `curl -X POST "${url}" -H "Content-Type: application/json" -d '${escapedPayload}'`;
+navigator.clipboard.writeText(curl).catch((error: unknown) => {
+  console.error('Unable to copy cURL snippet', error);
+});
   }
 
-  dismissRotatedSecret(): void {
-    this.store.clearRotatedSecret();
+previousPage(): void {
+  if(this.isFirstPage()) {
+  return;
+}
+this.pageIndex.update((value) => Math.max(0, value - 1));
   }
 
-  copyRotatedSecret(): void {
-    const secret = this.rotatedSecret();
-    if (!secret) {
-      return;
-    }
-    if (!navigator.clipboard?.writeText) {
-      console.error('Clipboard API unavailable for webhook secret copy.');
-      return;
-    }
-    navigator.clipboard.writeText(secret).catch((error: unknown) => {
-      console.error('Unable to copy webhook secret', error);
-    });
+nextPage(): void {
+  if(this.isLastPage()) {
+  return;
+}
+this.pageIndex.update((value) => value + 1);
   }
 
-  rotateSecret(endpoint: WebhookEndpointView): void {
-    if (this.writePermissionDenied()) {
-      return;
-    }
-    this.dialog
-      .open<RotateWebhookSecretRequest>(WebhookRotateSecretDialogComponent, {
-        data: { hookKey: endpoint.hookKey },
-        width: '420px',
-        panelClass: 'bg-transparent',
-      })
-      .closed.pipe(filter((payload): payload is RotateWebhookSecretRequest => !!payload))
-      .subscribe((payload) => {
-        const tenantId = this.tenantContext.tenantId();
-        const environment = this.tenantContext.environment();
-        if (!tenantId) {
-          return;
-        }
-        this.store.rotateSecret(
-          {
-            tenantId,
-            environment,
-            hookKey: endpoint.hookKey,
-          },
-          payload,
-        );
-      });
+dismissRotatedSecret(): void {
+  this.store.clearRotatedSecret();
+}
+
+copyRotatedSecret(): void {
+  const secret = this.rotatedSecret();
+  if(!secret) {
+    return;
+  }
+    if(!navigator.clipboard?.writeText) {
+  console.error('Clipboard API unavailable for webhook secret copy.');
+  return;
+}
+navigator.clipboard.writeText(secret).catch((error: unknown) => {
+  console.error('Unable to copy webhook secret', error);
+});
   }
 
-  deleteEndpoint(endpoint: WebhookEndpointView): void {
-    if (this.writePermissionDenied()) {
-      return;
-    }
-    this.dialog.open<boolean>(CqConfirmDialogComponent, {
-      data: {
-        title: 'Delete webhook',
-        message: `Delete webhook ${endpoint.hookKey}?`,
-        confirmLabel: 'Delete',
-        variant: 'danger',
-      } satisfies CqConfirmDialogData,
-      width: '420px',
-      panelClass: 'bg-transparent',
-      restoreFocus: true,
-    }).closed.pipe(filter(Boolean)).subscribe(() => {
-      const tenantId = this.tenantContext.tenantId();
-      const environment = this.tenantContext.environment();
-      if (!tenantId) {
-        return;
-      }
-      this.store.deleteEndpoint({
-        tenantId,
-        environment,
-        hookKey: endpoint.hookKey,
-      });
-    });
-  }
-
-  enableEndpoint(endpoint: WebhookEndpointView): void {
-    if (this.writePermissionDenied()) {
-      return;
-    }
+rotateSecret(endpoint: WebhookEndpointView): void {
+  if(this.writePermissionDenied()) {
+  return;
+}
+this.dialog
+  .open<RotateWebhookSecretRequest>(WebhookRotateSecretDialogComponent, {
+    data: { hookKey: endpoint.hookKey },
+    width: '420px',
+    panelClass: 'bg-transparent',
+  })
+  .closed.pipe(filter((payload): payload is RotateWebhookSecretRequest => !!payload))
+  .subscribe((payload) => {
     const tenantId = this.tenantContext.tenantId();
     const environment = this.tenantContext.environment();
     if (!tenantId) {
       return;
     }
-    this.store.setEndpointEnabled({ tenantId, environment }, endpoint, true);
+    this.store.rotateSecret(
+      {
+        tenantId,
+        environment,
+        hookKey: endpoint.hookKey,
+      },
+      payload,
+    );
+  });
   }
 
-  disableEndpoint(endpoint: WebhookEndpointView): void {
-    if (this.writePermissionDenied()) {
-      return;
-    }
-    this.dialog.open<boolean>(CqConfirmDialogComponent, {
-      data: {
-        title: 'Disable webhook',
-        message: `Disable webhook ${endpoint.hookKey}?`,
-        confirmLabel: 'Disable',
-        variant: 'danger',
-      } satisfies CqConfirmDialogData,
-      width: '420px',
-      panelClass: 'bg-transparent',
-      restoreFocus: true,
-    }).closed.pipe(filter(Boolean)).subscribe(() => {
-      const tenantId = this.tenantContext.tenantId();
-      const environment = this.tenantContext.environment();
-      if (!tenantId) {
-        return;
-      }
-      this.store.setEndpointEnabled({ tenantId, environment }, endpoint, false);
-    });
+deleteEndpoint(endpoint: WebhookEndpointView): void {
+  if(this.writePermissionDenied()) {
+  return;
+}
+this.dialog.open<boolean>(CqConfirmDialogComponent, {
+  data: {
+    title: 'Delete webhook',
+    message: `Delete webhook ${endpoint.hookKey}?`,
+    confirmLabel: 'Delete',
+    variant: 'danger',
+  } satisfies CqConfirmDialogData,
+  width: '420px',
+  panelClass: 'bg-transparent',
+  restoreFocus: true,
+}).closed.pipe(filter(Boolean)).subscribe(() => {
+  const tenantId = this.tenantContext.tenantId();
+  const environment = this.tenantContext.environment();
+  if (!tenantId) {
+    return;
+  }
+  this.store.deleteEndpoint({
+    tenantId,
+    environment,
+    hookKey: endpoint.hookKey,
+  });
+});
   }
 
-  replayDeadLetter(entry: WebhookDeadLetterView): void {
-    if (this.writePermissionDenied()) {
-      return;
-    }
-    const deadLetterId = Number(entry.id);
-    if (!Number.isFinite(deadLetterId)) {
-      return;
-    }
-    this.dialog.open<boolean>(CqConfirmDialogComponent, {
-      data: {
-        title: 'Replay dead letter',
-        message: `Replay dead letter ${entry.id}?`,
-        confirmLabel: 'Replay',
-      } satisfies CqConfirmDialogData,
-      width: '420px',
-      panelClass: 'bg-transparent',
-    }).closed.pipe(filter(Boolean)).subscribe(() => {
-      const tenantId = this.tenantContext.tenantId();
-      const environment = this.tenantContext.environment();
-      if (!tenantId) {
-        return;
-      }
-      this.store.replayDeadLetter({ tenantId, environment, deadLetterId });
-    });
+enableEndpoint(endpoint: WebhookEndpointView): void {
+  if(this.writePermissionDenied()) {
+  return;
+}
+const tenantId = this.tenantContext.tenantId();
+const environment = this.tenantContext.environment();
+if (!tenantId) {
+  return;
+}
+this.store.setEndpointEnabled({ tenantId, environment }, endpoint, true);
   }
 
-  invokeWebhook(): void {
-    if (this.writePermissionDenied() || this.invokeLoading()) {
-      return;
-    }
-    const endpoint = this.selectedEndpoint();
-    if (!endpoint) {
-      return;
-    }
-    if (endpoint.status === 'paused') {
-      this.invokeNotice.set('Webhook is disabled. Enable it before invoking.');
-      setTimeout(() => this.invokeNotice.set(null), 3500);
-      return;
-    }
-    this.store.invokeWebhook({ hookKey: endpoint.hookKey });
-    this.invokeNotice.set('Invocation requested.');
-    setTimeout(() => this.invokeNotice.set(null), 2500);
+disableEndpoint(endpoint: WebhookEndpointView): void {
+  if(this.writePermissionDenied()) {
+  return;
+}
+this.dialog.open<boolean>(CqConfirmDialogComponent, {
+  data: {
+    title: 'Disable webhook',
+    message: `Disable webhook ${endpoint.hookKey}?`,
+    confirmLabel: 'Disable',
+    variant: 'danger',
+  } satisfies CqConfirmDialogData,
+  width: '420px',
+  panelClass: 'bg-transparent',
+  restoreFocus: true,
+}).closed.pipe(filter(Boolean)).subscribe(() => {
+  const tenantId = this.tenantContext.tenantId();
+  const environment = this.tenantContext.environment();
+  if (!tenantId) {
+    return;
+  }
+  this.store.setEndpointEnabled({ tenantId, environment }, endpoint, false);
+});
   }
 
-  invokeWebhookFromHeader(event: MouseEvent): void {
-    event.preventDefault();
-    event.stopPropagation();
-    this.invokeWebhook();
+replayDeadLetter(entry: WebhookDeadLetterView): void {
+  if(this.writePermissionDenied()) {
+  return;
+}
+const deadLetterId = Number(entry.id);
+if (!Number.isFinite(deadLetterId)) {
+  return;
+}
+this.dialog.open<boolean>(CqConfirmDialogComponent, {
+  data: {
+    title: 'Replay dead letter',
+    message: `Replay dead letter ${entry.id}?`,
+    confirmLabel: 'Replay',
+  } satisfies CqConfirmDialogData,
+  width: '420px',
+  panelClass: 'bg-transparent',
+}).closed.pipe(filter(Boolean)).subscribe(() => {
+  const tenantId = this.tenantContext.tenantId();
+  const environment = this.tenantContext.environment();
+  if (!tenantId) {
+    return;
   }
+  this.store.replayDeadLetter({ tenantId, environment, deadLetterId });
+});
+  }
+
+invokeWebhook(): void {
+  if(this.writePermissionDenied() || this.invokeLoading()) {
+  return;
+}
+const endpoint = this.selectedEndpoint();
+if (!endpoint) {
+  return;
+}
+if (endpoint.status === 'paused') {
+  this.invokeNotice.set('Webhook is disabled. Enable it before invoking.');
+  setTimeout(() => this.invokeNotice.set(null), 3500);
+  return;
+}
+this.store.invokeWebhook({ hookKey: endpoint.hookKey });
+this.invokeNotice.set('Invocation requested.');
+setTimeout(() => this.invokeNotice.set(null), 2500);
+  }
+
+invokeWebhookFromHeader(event: MouseEvent): void {
+  event.preventDefault();
+  event.stopPropagation();
+  this.invokeWebhook();
+}
 }
 
 function tryParseIsoToMs(value: string | null): number | null {
@@ -1178,49 +1030,18 @@ function tryParseIsoToMs(value: string | null): number | null {
   return Number.isFinite(ms) ? ms : null;
 }
 
-function isoToLocalDateTimeInput(value: string | null): string {
-  if (!value) {
-    return '';
-  }
-  const date = new Date(value);
-  if (!Number.isFinite(date.getTime())) {
-    return '';
-  }
-  const pad = (entry: number) => String(entry).padStart(2, '0');
-  const yyyy = date.getFullYear();
-  const mm = pad(date.getMonth() + 1);
-  const dd = pad(date.getDate());
-  const hh = pad(date.getHours());
-  const min = pad(date.getMinutes());
-  return `${yyyy}-${mm}-${dd}T${hh}:${min}`;
-}
-
-function localDateTimeInputToIso(value: string): string | null {
-  const trimmed = value.trim();
-  if (!trimmed) {
-    return null;
-  }
-  const date = new Date(trimmed);
-  if (!Number.isFinite(date.getTime())) {
-    return null;
-  }
-  return date.toISOString();
-}
-
-function resolveTimelineRangeMs(lookbackMs: number, toIso: string | null): { fromMs: number; toMs: number } {
-  const resolvedLookback = Math.max(0, lookbackMs);
-  const toMs = tryParseIsoToMs(toIso);
-  const anchorMs = typeof toMs === 'number' ? toMs : Date.now();
+function resolveActivityRangeMs(): { fromMs: number; toMs: number } {
+  const toMs = Date.now();
   return {
-    fromMs: anchorMs - resolvedLookback,
-    toMs: anchorMs,
+    fromMs: Math.max(0, toMs - WEBHOOK_ACTIVITY_MAX_RANGE_MS),
+    toMs,
   };
 }
 
-function resolveTimelineBucketMs(lookbackMs: number): number {
-  const rangeMs = Math.max(1, Math.abs(lookbackMs));
+function resolveTimelineBucketMs(rangeMs: number): number {
+  const resolvedRange = Math.max(1, Math.abs(rangeMs));
   for (const candidate of TIMELINE_BUCKET_MS_OPTIONS) {
-    if (Math.ceil(rangeMs / candidate) <= MAX_TIMELINE_BUCKETS) {
+    if (Math.ceil(resolvedRange / candidate) <= MAX_TIMELINE_BUCKETS) {
       return candidate;
     }
   }
@@ -1246,15 +1067,6 @@ function filterTimelineItemsByRange(
   });
 }
 
-function resolveLocalEndOfDayMs(value: string): number | null {
-  const timestamp = Date.parse(value);
-  if (!Number.isFinite(timestamp)) {
-    return null;
-  }
-  const date = new Date(timestamp);
-  date.setHours(23, 59, 59, 999);
-  return date.getTime();
-}
 
 function createDefaultFilters(): WebhookFilterModel {
   return {
@@ -1267,13 +1079,11 @@ function buildActivityQuery(
   model: WebhookFilterModel,
   hookKeys: ReadonlyArray<string>,
   jobKeys: ReadonlyArray<string>,
-  toIso: string | null,
 ): WebhookActivityQuery {
   return {
     environment: model.environment === ALL_ENVIRONMENTS ? null : model.environment,
     hookKeys,
     jobKeys,
-    toUtc: toIso,
   };
 }
 
@@ -1354,13 +1164,6 @@ function resolveNonEmptyString(value: unknown): string | null {
   }
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : null;
-}
-
-function resolveChartView(value: ActivityChartView | string | null | undefined): ActivityChartView {
-  if (value === 'distribution' || value === 'volume-rate') {
-    return value;
-  }
-  return DEFAULT_ACTIVITY_CHART_VIEW;
 }
 
 type ActivityConnectionTone = 'success' | 'warning' | 'danger' | 'muted';
@@ -1593,19 +1396,16 @@ function buildActivityBuckets(
   return Array.from(buckets.values());
 }
 
-function buildActivityChartOptions(
-  view: ActivityChartView,
+function buildActivityTimeSeriesOptions(
   items: ReadonlyArray<WebhookTimelineItemView>,
   buckets: ReadonlyArray<ActivityBucket>,
-  lookbackMs: number,
-  toIso: string | null,
 ): EChartsCoreOption | null {
   if (items.length === 0) {
     return null;
   }
 
-  const range = resolveTimelineRangeMs(lookbackMs, toIso);
-  const bucketMs = resolveTimelineBucketMs(lookbackMs);
+  const range = resolveActivityRangeMs();
+  const bucketMs = resolveTimelineBucketMs(WEBHOOK_ACTIVITY_MAX_RANGE_MS);
   const chartBuckets = buckets.length
     ? buckets
     : buildActivityBuckets(
@@ -1615,24 +1415,19 @@ function buildActivityChartOptions(
       bucketMs,
     );
 
-  return view === 'distribution'
-    ? buildTimelineDistributionChartOptions(items, chartBuckets, bucketMs)
-    : buildTimelineVolumeRateOptions(items, chartBuckets, bucketMs);
+  return buildTimelineTimeSeriesOptions(items, chartBuckets, bucketMs, range);
 }
 
 function buildActivityChartSummary(
-  view: ActivityChartView,
   items: ReadonlyArray<WebhookTimelineItemView>,
   buckets: ReadonlyArray<ActivityBucket>,
-  lookbackMs: number,
-  toIso: string | null,
 ): string {
   if (items.length === 0) {
     return 'No webhook activity to chart.';
   }
 
-  const range = resolveTimelineRangeMs(lookbackMs, toIso);
-  const bucketMs = resolveTimelineBucketMs(lookbackMs);
+  const range = resolveActivityRangeMs();
+  const bucketMs = resolveTimelineBucketMs(WEBHOOK_ACTIVITY_MAX_RANGE_MS);
   const chartBuckets = buckets.length
     ? buckets
     : buildActivityBuckets(
@@ -1655,11 +1450,6 @@ function buildActivityChartSummary(
   const pending = bucketCounts.reduce((acc, bucket) => acc + bucket.pending, 0);
   const leased = bucketCounts.reduce((acc, bucket) => acc + bucket.leased, 0);
 
-  if (view === 'volume-rate') {
-    const failedRate = totals > 0 ? Math.round((failed / totals) * 100) : 0;
-    return `Volume and failed rate view. Total ${totals} events. Failed rate ${failedRate} percent.`;
-  }
-
   const latencySeries = buildLatencyP95Series(orderedItems, bucketRanges, chartBuckets);
   const latencyValues = latencySeries.filter((value): value is number => typeof value === 'number');
   const latencyAvg = latencyValues.length > 0
@@ -1667,259 +1457,29 @@ function buildActivityChartSummary(
     : null;
   const latencyLabel = latencyAvg === null ? '' : ` Average p95 latency ${latencyAvg} ms.`;
 
-  return `Distribution view. Total ${totals} events. Success ${success}, Warning ${warning}, Failed ${failed}, Pending ${pending}, Leased ${leased}.${latencyLabel}`;
-}
-
-function buildActivityChartData(
-  items: ReadonlyArray<WebhookTimelineItemView>,
-  buckets: ReadonlyArray<ActivityBucket>,
-  lookbackMs: number,
-  toIso: string | null,
-): { bucketRanges: ReadonlyArray<TimelineBucketRange>; bucketCounts: ReadonlyArray<BucketStatusCount>; latencySeries: ReadonlyArray<number | null> } | null {
-  if (items.length === 0) {
-    return null;
-  }
-
-  const range = resolveTimelineRangeMs(lookbackMs, toIso);
-  const bucketMs = resolveTimelineBucketMs(lookbackMs);
-  const chartBuckets = buckets.length
-    ? buckets
-    : buildActivityBuckets(
-      items,
-      new Date(range.fromMs).toISOString(),
-      new Date(range.toMs).toISOString(),
-      bucketMs,
-    );
-
-  const bucketRanges = resolveTimelineBucketRanges(items, chartBuckets, bucketMs);
-  if (bucketRanges.length === 0) {
-    return null;
-  }
-
-  const orderedItems = sortTimelineItems(items);
-  const bucketCounts = buildBucketStatusCounts(orderedItems, bucketRanges);
-  const latencySeries = buildLatencyP95Series(orderedItems, bucketRanges, chartBuckets);
-  return { bucketRanges, bucketCounts, latencySeries };
+  return `Time-series view. Total ${totals} events. Success ${success}, Warning ${warning}, Failed ${failed}, Pending ${pending}, Leased ${leased}.${latencyLabel}`;
 }
 
 function buildActivityDetailItems(
   items: ReadonlyArray<WebhookTimelineItemView>,
-  chartData: { bucketRanges: ReadonlyArray<TimelineBucketRange> } | null,
-  selectedIndex: number | null,
 ): ReadonlyArray<WebhookTimelineItemView> {
   if (items.length === 0) {
     return [];
   }
   const ordered = sortTimelineItemsDesc(items);
-  if (selectedIndex === null || !chartData) {
-    return ordered.slice(0, 25);
-  }
-  if (selectedIndex < 0 || selectedIndex >= chartData.bucketRanges.length) {
-    return ordered.slice(0, 25);
-  }
-  const range = chartData.bucketRanges[selectedIndex];
-  return ordered.filter((entry) => isItemWithinRange(entry, range));
+  return ordered.slice(0, 25);
 }
 
-function buildActivityDetailLabel(
-  chartData: { bucketRanges: ReadonlyArray<TimelineBucketRange> } | null,
-  selectedIndex: number | null,
-): string {
-  if (!chartData || selectedIndex === null) {
-    return 'Latest activity items';
-  }
-  if (selectedIndex < 0 || selectedIndex >= chartData.bucketRanges.length) {
-    return 'Latest activity items';
-  }
-  return `Items for ${formatTimelineBucketRange(chartData.bucketRanges[selectedIndex])}`;
+function buildActivityDetailLabel(): string {
+  return 'Latest activity items';
 }
 
-function isItemWithinRange(item: WebhookTimelineItemView, range: TimelineBucketRange): boolean {
-  const occurredMs = Date.parse(item.occurredAt);
-  if (!Number.isFinite(occurredMs)) {
-    return false;
-  }
-  return occurredMs >= range.startMs && occurredMs < range.endMs;
-}
 
-function resolveChartBucketIndex(event: unknown): number | null {
-  if (!event || typeof event !== 'object') {
-    return null;
-  }
-  const candidate = event as { dataIndex?: unknown; dataIndexInside?: unknown };
-  const dataIndex = typeof candidate.dataIndex === 'number'
-    ? candidate.dataIndex
-    : typeof candidate.dataIndexInside === 'number'
-      ? candidate.dataIndexInside
-      : null;
-  return typeof dataIndex === 'number' && Number.isFinite(dataIndex) ? dataIndex : null;
-}
-
-function buildTimelineVolumeRateOptions(
+function buildTimelineTimeSeriesOptions(
   items: ReadonlyArray<WebhookTimelineItemView>,
   buckets: ReadonlyArray<ActivityBucket>,
   bucketMs: number,
-): EChartsCoreOption {
-  const palette = resolveChartPalette();
-  const bucketRanges = resolveTimelineBucketRanges(items, buckets, bucketMs);
-  if (bucketRanges.length === 0) {
-    return {
-      animation: false,
-      series: [],
-    };
-  }
-
-  const orderedItems = sortTimelineItems(items);
-  const bucketCounts = buildBucketStatusCounts(orderedItems, bucketRanges);
-  const totals = bucketCounts.map((entry) => entry.total);
-  const failures = bucketCounts.map((entry) => entry.failed);
-  const maxTotal = Math.max(1, ...totals);
-  const yAxisInterval = resolveYAxisInterval(maxTotal);
-
-  const failedRateSeries = bucketCounts.map((entry) =>
-    entry.total > 0 ? Math.round((entry.failed / entry.total) * 1000) / 10 : 0,
-  );
-
-  const showZoomSlider = bucketRanges.length > 12;
-  const dataZoom = buildTimelineDataZoom(showZoomSlider, palette);
-
-  const totalCount = totals.reduce((acc, value) => acc + value, 0);
-  const failedCount = failures.reduce((acc, value) => acc + value, 0);
-  const failedPercent = totalCount > 0 ? Math.round((failedCount / totalCount) * 100) : 0;
-
-  const series: SeriesOption[] = [
-    {
-      name: 'Total',
-      type: 'bar',
-      barMaxWidth: 18,
-      data: bucketRanges.map((range, index) => [range.startMs, totals[index]]),
-      itemStyle: {
-        color: palette.pending,
-      },
-      emphasis: {
-        focus: 'series',
-      },
-    },
-    {
-      name: 'Failed rate',
-      type: 'line',
-      yAxisIndex: 1,
-      smooth: true,
-      symbol: 'circle',
-      symbolSize: 6,
-      data: bucketRanges.map((range, index) => [range.startMs, failedRateSeries[index]]),
-      lineStyle: {
-        color: palette.failed,
-        width: 2,
-      },
-      itemStyle: {
-        color: palette.failed,
-      },
-      emphasis: {
-        focus: 'series',
-      },
-    },
-  ];
-
-  return {
-    animation: false,
-    legend: {
-      top: 0,
-      left: 0,
-      data: ['Total', 'Failed rate'],
-      icon: 'circle',
-      itemWidth: 10,
-      itemHeight: 10,
-      textStyle: {
-        color: palette.muted,
-        fontSize: 11,
-      },
-      formatter: (name: string) => {
-        if (name === 'Total') {
-          return `${name} ${totalCount}`;
-        }
-        if (name === 'Failed rate') {
-          return `${name} ${failedPercent}%`;
-        }
-        return name;
-      },
-    },
-    grid: {
-      left: 24,
-      right: 16,
-      top: 48,
-      bottom: showZoomSlider ? 64 : 48,
-      outerBoundsMode: 'same',
-      outerBoundsContain: 'axisLabel',
-    },
-    tooltip: {
-      trigger: 'axis',
-      axisPointer: {
-        type: 'shadow',
-      },
-      backgroundColor: palette.surface,
-      borderColor: palette.border,
-      borderWidth: 1,
-      textStyle: {
-        color: palette.text,
-      },
-      extraCssText: 'border-radius: 10px; box-shadow: 0 10px 24px rgba(0,0,0,0.35);',
-      formatter: (params: unknown) => formatTimelineBucketTooltip(params, bucketRanges, bucketCounts, null),
-    },
-    xAxis: {
-      type: 'time',
-      axisLabel: {
-        color: palette.muted,
-        formatter: (value: unknown) => formatTimelineAxisLabel(typeof value === 'number' ? value : String(value)),
-      },
-      axisLine: {
-        lineStyle: {
-          color: palette.border,
-        },
-      },
-      axisTick: {
-        show: false,
-      },
-    },
-    yAxis: [
-      {
-        type: 'value',
-        min: 0,
-        max: maxTotal,
-        interval: yAxisInterval,
-        axisLabel: {
-          color: palette.muted,
-        },
-        splitLine: {
-          lineStyle: {
-            color: palette.border,
-            opacity: 0.25,
-          },
-        },
-      },
-      {
-        type: 'value',
-        min: 0,
-        max: 100,
-        interval: 25,
-        axisLabel: {
-          color: palette.muted,
-          formatter: '{value}%',
-        },
-        splitLine: {
-          show: false,
-        },
-      },
-    ],
-    dataZoom,
-    series,
-  };
-}
-
-function buildTimelineDistributionChartOptions(
-  items: ReadonlyArray<WebhookTimelineItemView>,
-  buckets: ReadonlyArray<ActivityBucket>,
-  bucketMs: number,
+  range: { fromMs: number; toMs: number },
 ): EChartsCoreOption {
   const palette = resolveChartPalette();
   const bucketRanges = resolveTimelineBucketRanges(items, buckets, bucketMs);
@@ -1934,30 +1494,48 @@ function buildTimelineDistributionChartOptions(
   const bucketCounts = buildBucketStatusCounts(orderedItems, bucketRanges);
   const latencySeries = buildLatencyP95Series(orderedItems, bucketRanges, buckets);
   const hasLatency = latencySeries.some((value) => typeof value === 'number' && Number.isFinite(value));
-  const categories = bucketRanges.map((range) => range.label);
-  const labelInterval = resolveAxisLabelInterval(categories.length);
-  const series = buildTimelineStatusSeries(bucketCounts, palette, hasLatency, true);
+  const series: SeriesOption[] = ACTIVITY_STATUS_DEFINITIONS.map((definition) => ({
+    name: definition.label,
+    type: 'bar',
+    barMaxWidth: hasLatency ? 12 : 14,
+    barGap: '20%',
+    barCategoryGap: '40%',
+    data: bucketRanges.map((rangeEntry, index) => [rangeEntry.startMs, bucketCounts[index][definition.status]]),
+    itemStyle: {
+      color: resolveStatusColor(definition.status, palette),
+    },
+    label: {
+      show: false,
+    },
+    emphasis: {
+      focus: 'series',
+    },
+  }));
+
   if (hasLatency) {
     series.push({
       name: 'p95 latency',
       type: 'line',
       yAxisIndex: 1,
       smooth: true,
+      connectNulls: true,
       symbol: 'circle',
       symbolSize: 6,
-      data: latencySeries.map((value) => value ?? null),
+      z: 3,
+      data: bucketRanges.map((rangeEntry, index) => [rangeEntry.startMs, latencySeries[index] ?? null]),
       lineStyle: {
-        color: palette.success,
+        color: palette.muted,
         width: 2,
       },
       itemStyle: {
-        color: palette.success,
+        color: palette.muted,
       },
       emphasis: {
         focus: 'series',
       },
     });
   }
+
   const maxStack = Math.max(1, ...bucketCounts.map((entry) => entry.total));
   const yAxisInterval = resolveYAxisInterval(maxStack);
   const showZoomSlider = bucketRanges.length > 12;
@@ -2006,11 +1584,12 @@ function buildTimelineDistributionChartOptions(
       formatter: (params: unknown) => formatTimelineBucketTooltip(params, bucketRanges, bucketCounts, latencySeries),
     },
     xAxis: {
-      type: 'category',
-      data: categories,
+      type: 'time',
+      min: range.fromMs,
+      max: range.toMs,
       axisLabel: {
         color: palette.muted,
-        interval: labelInterval,
+        formatter: (value: unknown) => formatTimelineAxisLabel(typeof value === 'number' ? value : String(value)),
       },
       axisLine: {
         lineStyle: {
@@ -2044,6 +1623,7 @@ function buildTimelineDistributionChartOptions(
             min: 0,
             max: latencyMax,
             interval: resolveYAxisInterval(latencyMax),
+            show: false,
             axisLabel: {
               color: palette.muted,
               formatter: '{value} ms',
@@ -2198,37 +1778,6 @@ function calculatePercentile(values: ReadonlyArray<number>, percentile: number):
   return sorted[resolvedIndex];
 }
 
-function buildTimelineStatusSeries(
-  bucketCounts: ReadonlyArray<BucketStatusCount>,
-  palette: ChartPalette,
-  hasLatency: boolean,
-  useCategoryAxis: boolean,
-): SeriesOption[] {
-  if (bucketCounts.length === 0) {
-    return [];
-  }
-
-  return ACTIVITY_STATUS_DEFINITIONS.map((definition) => ({
-    name: definition.label,
-    type: 'bar',
-    barMaxWidth: hasLatency ? 12 : 14,
-    barGap: '20%',
-    barCategoryGap: '40%',
-    data: useCategoryAxis
-      ? bucketCounts.map((bucket) => bucket[definition.status])
-      : bucketCounts.map((bucket, index) => [index, bucket[definition.status]]),
-    itemStyle: {
-      color: resolveStatusColor(definition.status, palette),
-    },
-    label: {
-      show: false,
-    },
-    emphasis: {
-      focus: 'series',
-    },
-  }));
-}
-
 function buildLegendSummaryFormatter(
   bucketCounts: ReadonlyArray<BucketStatusCount>,
 ): (name: string) => string {
@@ -2367,13 +1916,6 @@ function resolveStatusColor(status: WebhookTimelineItemView['status'], palette: 
     return palette.leased;
   }
   return palette.success;
-}
-
-function resolveAxisLabelInterval(count: number): number {
-  if (count <= 8) {
-    return 0;
-  }
-  return Math.ceil(count / 8);
 }
 
 function sortTimelineItems(items: ReadonlyArray<WebhookTimelineItemView>): ReadonlyArray<WebhookTimelineItemView> {

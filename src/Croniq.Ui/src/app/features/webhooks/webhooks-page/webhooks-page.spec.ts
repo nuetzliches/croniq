@@ -67,6 +67,8 @@ describe('WebhooksPage', () => {
   });
 
   it('renders chart series for timeline statuses', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-01-24T12:00:00.000Z'));
     const store = fixture.componentRef.injector.get(WebhooksStore) as unknown as WebhooksStoreStub;
 
     store.endpoints.set([
@@ -107,9 +109,7 @@ describe('WebhooksPage', () => {
       },
     ]);
 
-    component.timelineToIso.set('2026-01-20T11:00:00.000Z');
-
-    const options = component.activityChartOptions();
+    const options = component.activityTimeSeriesChartOptions();
     expect(options).not.toBeNull();
     expect(options?.['legend']).toBeTruthy();
     const legend = options?.['legend'] as { data?: string[]; formatter?: (name: string) => string };
@@ -143,5 +143,6 @@ describe('WebhooksPage', () => {
     }, { pending: 0, leased: 0, success: 0, warning: 0, failed: 0 });
 
     expect(totals).toEqual({ pending: 0, leased: 0, success: 1, warning: 1, failed: 2 });
+    vi.useRealTimers();
   });
 });

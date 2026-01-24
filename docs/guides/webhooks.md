@@ -24,6 +24,7 @@ Activity timeline entries include a `source` field (`ingress` or `invoke`) so op
 - Availability: activity endpoints require SqlServer/Postgres webhook persistence; in-memory mode returns `503 webhook-activity-unavailable`.
 - Freshness: TriggerJob records successful dispatches (failures surface via dead letters), StoreOnly reflects relay acknowledgements. The SSE stream polls every 5 seconds, so expect short (seconds) staleness.
 - Defaults: timeline `limit` defaults to 200 (max 500). Summary defaults to a 24h window with 60-minute buckets; max window 31 days, max bucket 24 hours.
+- UI behavior: the webhooks activity timeline loads a rolling 3-month window (most recent data within the max range) and uses `updatedSinceUtc` for incremental refreshes instead of reloading the full timeline every stream tick.
 
 ### Activity stream events
 
@@ -120,7 +121,14 @@ $Env:Croniq__Webhooks__Endpoints__0__Metadata__type = "invoice"
 
 This exposes `POST /tenants/default/environments/dev/webhooks/invoice-paid` locally. The sample job logs every invocation, and metadata keys such as `payload:invoiceId` become available via `IJobExecutionContext.Metadata`.
 
-For DMZ deployments with `Croniq:Webhooks:Mode=Remote`, keep `Croniq:Webhooks:Remote:EnableRelay=true` on the worker host (the host that registers jobs) and disable it on the API host. The API host still needs the remote config to manage hooks and invoke `/invoke`, but it should not execute ingress relay itself.
+For DMZ deployments with `Croniq:Webhooks:Mode=Remote`, keep `Croniq:Webhooks:Remote:EnableRelay=true` on the worker host (the host that registers jobs) and disable it on the API host. The API host still needs the remote config to manage hooks and proxy **invoke + ingress** to the DMZ ingress URL, but it should not execute ingress relay itself.
+
+When `Mode=Remote`, the internal API host **relays both**:
+
+- `POST /tenants/{tenantId}/environments/{environmentTag}/webhooks/{hookKey}` (ingress)
+- `POST /tenants/{tenantId}/environments/{environmentTag}/webhooks/{hookKey}/invoke` (manual invoke)
+
+to the DMZ ingress base URL (`Croniq:Webhooks:Remote:IngressBaseUrl` or `Remote:BaseUrl`), so the DMZ host performs signature validation and secret decryption.
 
 If the remote admin API and ingress endpoints are hosted on different domains, set `Croniq:Webhooks:Remote:IngressBaseUrl` on the API host. When omitted, the API host uses `Croniq:Webhooks:Remote:BaseUrl` for both admin and ingress relay/invoke calls.
 

@@ -35,6 +35,135 @@ public static partial class ApiHostingExtensions
     {
         _ = app ?? throw new ArgumentNullException(nameof(app));
 
+        var webhooksMode = app.Configuration.GetValue<string?>("Croniq:Webhooks:Mode") ?? string.Empty;
+        if (string.Equals(webhooksMode, "Remote", StringComparison.OrdinalIgnoreCase))
+        {
+            app.MapPost("/tenants/{tenantId}/environments/{environmentTag}/webhooks/{hookKey}", async (
+                string tenantId,
+                string environmentTag,
+                string hookKey,
+                HttpRequest request,
+                [FromServices] IConfiguration configuration,
+                [FromServices] IHttpClientFactory httpClientFactory,
+                [FromServices] IHostEnvironment hostEnvironment,
+                [FromServices] ILogger<WebhookEndpointApiMarker> logger,
+                CancellationToken cancellationToken) =>
+            {
+                if (string.IsNullOrWhiteSpace(environmentTag))
+                {
+                    return MissingEnvironment("environmentTag");
+                }
+
+                var remoteBaseUrl = configuration.GetValue<string?>("Croniq:Webhooks:Remote:BaseUrl") ?? string.Empty;
+                var remoteIngressBaseUrl = configuration.GetValue<string?>("Croniq:Webhooks:Remote:IngressBaseUrl");
+                var resolvedIngressBaseUrl = string.IsNullOrWhiteSpace(remoteIngressBaseUrl)
+                    ? remoteBaseUrl
+                    : remoteIngressBaseUrl;
+                var remoteApiKey = configuration.GetValue<string?>("Croniq:Webhooks:Remote:ApiKey") ?? string.Empty;
+
+                if (string.IsNullOrWhiteSpace(resolvedIngressBaseUrl))
+                {
+                    return Results.Problem(statusCode: StatusCodes.Status503ServiceUnavailable, title: "webhook-remote-unavailable", detail: "Remote webhook relay is not configured.");
+                }
+
+                if (!Uri.TryCreate(resolvedIngressBaseUrl, UriKind.Absolute, out var remoteUri))
+                {
+                    return Results.Problem(statusCode: StatusCodes.Status503ServiceUnavailable, title: "webhook-remote-unavailable", detail: "Remote webhook relay ingress base URL is invalid.");
+                }
+
+                var allowInvalidCertificate = configuration.GetValue<bool?>("Croniq:Webhooks:Remote:AllowInvalidServerCertificate") ?? false;
+                if (allowInvalidCertificate && !hostEnvironment.IsDevelopment())
+                {
+                    return Results.Problem(statusCode: StatusCodes.Status503ServiceUnavailable, title: "webhook-remote-unavailable", detail: "Croniq:Webhooks:Remote:AllowInvalidServerCertificate is only supported in Development.");
+                }
+
+                var client = allowInvalidCertificate
+                    ? new HttpClient(new HttpClientHandler
+                    {
+                        ServerCertificateCustomValidationCallback = HttpClientHandler.DangerousAcceptAnyServerCertificateValidator
+                    }, disposeHandler: true)
+                    : httpClientFactory.CreateClient();
+
+                client.BaseAddress = remoteUri;
+                if (!string.IsNullOrWhiteSpace(remoteApiKey))
+                {
+                    client.DefaultRequestHeaders.Remove("X-Croniq-Relay-Key");
+                    client.DefaultRequestHeaders.Add("X-Croniq-Relay-Key", remoteApiKey);
+                }
+
+                var path = $"tenants/{Uri.EscapeDataString(tenantId)}/environments/{Uri.EscapeDataString(environmentTag)}/webhooks/{Uri.EscapeDataString(hookKey)}{request.QueryString.Value}";
+                try
+                {
+                    await using var payloadStream = new MemoryStream();
+                    await request.Body.CopyToAsync(payloadStream, cancellationToken).ConfigureAwait(false);
+                    payloadStream.Position = 0;
+
+                    using var content = new StreamContent(payloadStream);
+                    if (!string.IsNullOrWhiteSpace(request.ContentType))
+                    {
+                        content.Headers.TryAddWithoutValidation("Content-Type", request.ContentType);
+                    }
+
+                    var forward = new HttpRequestMessage(HttpMethod.Post, path)
+                    {
+                        Content = content
+                    };
+
+                    foreach (var header in request.Headers)
+                    {
+                        if (string.Equals(header.Key, "Host", StringComparison.OrdinalIgnoreCase)
+                            || string.Equals(header.Key, "Content-Length", StringComparison.OrdinalIgnoreCase))
+                        {
+                            continue;
+                        }
+
+                        if (!forward.Headers.TryAddWithoutValidation(header.Key, header.Value.ToArray()))
+                        {
+                            forward.Content?.Headers.TryAddWithoutValidation(header.Key, header.Value.ToArray());
+                        }
+                    }
+
+                    using var response = await client.SendAsync(forward, cancellationToken).ConfigureAwait(false);
+                    var responseBody = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
+
+                    if (!response.IsSuccessStatusCode)
+                    {
+                        logger.LogWarning(
+                            "remote webhook ingress relay failed for {HookKey} ({TenantId}/{EnvironmentTag}) with status {StatusCode} {ReasonPhrase}. Body: {Body}",
+                            hookKey,
+                            tenantId,
+                            environmentTag,
+                            (int)response.StatusCode,
+                            response.ReasonPhrase,
+                            string.IsNullOrWhiteSpace(responseBody) ? "<empty>" : responseBody);
+
+                        var detail = string.IsNullOrWhiteSpace(responseBody)
+                            ? $"Remote webhook relay failed with status {(int)response.StatusCode} ({response.ReasonPhrase})."
+                            : responseBody;
+                        return Results.Problem(statusCode: (int)response.StatusCode, title: "webhook-relay-failed", detail: detail);
+                    }
+
+                    if (string.IsNullOrWhiteSpace(responseBody))
+                    {
+                        return Results.Accepted();
+                    }
+
+                    return Results.Content(
+                        responseBody,
+                        contentType: response.Content.Headers.ContentType?.ToString(),
+                        statusCode: (int)response.StatusCode);
+                }
+                catch (HttpRequestException ex)
+                {
+                    logger.LogError(ex, "remote webhook ingress relay failed for {HookKey}", hookKey);
+                    return Results.Problem(statusCode: StatusCodes.Status502BadGateway, title: "webhook-relay-failed", detail: ex.Message);
+                }
+            })
+            .WithDocs("Webhooks_Ingress_Relay", "Relay webhook ingress", "Relays webhook ingress to the DMZ host when Mode=Remote.")
+            .Produces(StatusCodes.Status202Accepted)
+            .Produces(StatusCodes.Status502BadGateway);
+        }
+
         app.MapGet("/tenants/{tenantId}/webhooks", async (
             string tenantId,
             string? environment,
@@ -1355,7 +1484,7 @@ public static partial class ApiHostingExtensions
             entry.EnvironmentTag,
             source,
             entry.OccurredAtUtc,
-            LatencyMs: null,
+            entry.LatencyMs,
             PayloadBytes: entry.PayloadBytes,
             RequestId: requestId,
             Reason: entry.Reason,

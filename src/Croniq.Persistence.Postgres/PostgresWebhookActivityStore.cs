@@ -59,6 +59,7 @@ public sealed class PostgresWebhookActivityStore : IWebhookActivityStore, IWebho
                 entry.TenantId,
                 entry.EnvironmentTag,
                 entry.ReceivedAtUtc,
+                entry.UpdatedAtUtc,
                 entry.Status,
                 entry.AttemptCount,
                 entry.LastError,
@@ -322,6 +323,7 @@ public sealed class PostgresWebhookActivityStore : IWebhookActivityStore, IWebho
     {
         var status = ResolveIngressStatus(entry.Status, entry.AttemptCount);
         var source = ResolveSource(entry.MetadataJson);
+        var latencyMs = ResolveLatencyMs(entry.ReceivedAtUtc, entry.UpdatedAtUtc, status);
 
         return new WebhookActivityEntry(
             entry.EventId,
@@ -333,6 +335,7 @@ public sealed class PostgresWebhookActivityStore : IWebhookActivityStore, IWebho
             entry.EnvironmentTag,
             source,
             new DateTimeOffset(DateTime.SpecifyKind(entry.ReceivedAtUtc, DateTimeKind.Utc)),
+            latencyMs,
             status == WebhookActivityStatus.Failed ? entry.LastError : null,
             ComputePayloadBytes(entry.Payload),
             DeadLetterId: null);
@@ -354,6 +357,7 @@ public sealed class PostgresWebhookActivityStore : IWebhookActivityStore, IWebho
             entry.EnvironmentTag,
             WebhookActivitySources.Ingress,
             new DateTimeOffset(DateTime.SpecifyKind(entry.CreatedAtUtc, DateTimeKind.Utc)),
+                LatencyMs: null,
             reason,
             ComputePayloadBytes(entry.Payload),
             entry.Id);
@@ -387,6 +391,28 @@ public sealed class PostgresWebhookActivityStore : IWebhookActivityStore, IWebho
         }
 
         return WebhookActivityStatus.Pending;
+    }
+
+    private static int? ResolveLatencyMs(DateTime receivedAtUtc, DateTime updatedAtUtc, WebhookActivityStatus status)
+    {
+        if (status is WebhookActivityStatus.Pending or WebhookActivityStatus.Leased)
+        {
+            return null;
+        }
+
+        var delta = updatedAtUtc - receivedAtUtc;
+        if (delta <= TimeSpan.Zero)
+        {
+            return null;
+        }
+
+        var rounded = (long)Math.Round(delta.TotalMilliseconds, MidpointRounding.AwayFromZero);
+        if (rounded <= 0)
+        {
+            return 0;
+        }
+
+        return rounded > int.MaxValue ? int.MaxValue : (int)rounded;
     }
 
     private static int? ComputePayloadBytes(string? payload)
@@ -555,6 +581,7 @@ public sealed class PostgresWebhookActivityStore : IWebhookActivityStore, IWebho
         string TenantId,
         string EnvironmentTag,
         DateTime ReceivedAtUtc,
+        DateTime UpdatedAtUtc,
         string Status,
         int AttemptCount,
         string? LastError,

@@ -113,13 +113,14 @@ export type ActivityConnectionState = 'idle' | 'connected' | 'retrying' | 'offli
 
 type ActivityStreamMode = 'grpc' | 'sse' | 'polling';
 
-const ACTIVITY_TIMELINE_LIMIT = 200;
+const ACTIVITY_TIMELINE_LIMIT = 500;
 const ACTIVITY_POLL_INTERVAL_MS = 15000;
 const ACTIVITY_STREAM_LIMIT = 1;
 const ACTIVITY_RESOURCE_COMMAND = 'webhooks.activity';
 const ACTIVITY_STREAM_COMMAND = 'webhooks.activity.stream';
 const EMPTY_ACTIVITY_BUCKETS: ReadonlyArray<ActivityBucket> = [];
 const EMPTY_ACTIVITY_TIMELINE: ReadonlyArray<WebhookTimelineItemView> = [];
+export const WEBHOOK_ACTIVITY_MAX_RANGE_MS = 90 * 24 * 60 * 60 * 1000;
 
 @Injectable()
 export class WebhooksStore {
@@ -141,6 +142,7 @@ export class WebhooksStore {
     private readonly activityQuerySignal = signal<WebhookActivityQuery | null>(null);
     private readonly activityTimelineSignal = signal<ReadonlyArray<WebhookTimelineItemView>>(EMPTY_ACTIVITY_TIMELINE);
     private readonly activityBucketsSignal = signal<ReadonlyArray<ActivityBucket>>(EMPTY_ACTIVITY_BUCKETS);
+    private readonly activityUpdatedSinceSignal = signal<string | null>(null);
     private readonly activityErrorSignal = signal<string | null>(null);
     private readonly activityBackendReadySignal = signal(false);
     private readonly activityLiveUpdatesEnabledSignal = signal(true);
@@ -375,11 +377,14 @@ export class WebhooksStore {
             this.activityConnectionStateSignal.set(resolveRetryConnectionState());
 
             const normalized = normalizeActivityQuery(query, params.environment);
+            const updatedSinceUtc = this.activityUpdatedSinceSignal();
+            const isIncremental = !!updatedSinceUtc;
             const timelineParams: TenantWebhookActivityParams = {
                 tenantId,
                 environment: normalized.environment,
                 fromUtc: normalized.fromUtc,
                 toUtc: normalized.toUtc,
+                updatedSinceUtc: updatedSinceUtc ?? undefined,
                 hookKeys: normalized.hookKeys,
                 jobKeys: normalized.jobKeys,
                 limit: normalized.limit ?? ACTIVITY_TIMELINE_LIMIT,
@@ -409,6 +414,7 @@ export class WebhooksStore {
                     map((response) => ({
                         ok: true,
                         value: normalizeActivityTimeline(response),
+                        incremental: isIncremental,
                     })),
                     catchError((error: unknown) => {
                         console.error('Unable to load webhook activity timeline', error);
@@ -416,29 +422,33 @@ export class WebhooksStore {
                         return of({
                             ok: false,
                             value: this.activityTimelineSignal(),
+                            incremental: false,
                         });
                     }),
                 );
 
             const fetchSummary = () =>
-                this.api.getTenantWebhookActivitySummary(summaryParams, requestOptions).pipe(
-                    map((response) => ({
-                        ok: true,
-                        value: normalizeActivityBuckets(response),
-                    })),
-                    catchError((error: unknown) => {
-                        console.error('Unable to load webhook activity summary', error);
-                        this.activityErrorSignal.set('Unable to load webhook activity summary.');
-                        return of({
-                            ok: false,
-                            value: this.activityBucketsSignal(),
-                        });
-                    }),
-                );
+                isIncremental
+                    ? of({ ok: true, value: this.activityBucketsSignal() })
+                    : this.api.getTenantWebhookActivitySummary(summaryParams, requestOptions).pipe(
+                        map((response) => ({
+                            ok: true,
+                            value: normalizeActivityBuckets(response),
+                        })),
+                        catchError((error: unknown) => {
+                            console.error('Unable to load webhook activity summary', error);
+                            this.activityErrorSignal.set('Unable to load webhook activity summary.');
+                            return of({
+                                ok: false,
+                                value: this.activityBucketsSignal(),
+                            });
+                        }),
+                    );
 
             const refresh$ = createActivityRefreshStream({
                 tenantId,
                 query: normalized,
+                updatedSinceUtc,
                 streamMode,
                 grpcBaseUrl,
                 sseBaseUrl,
@@ -450,8 +460,26 @@ export class WebhooksStore {
             return refresh$.pipe(
                 takeUntil(abort$),
                 switchMap(() => forkJoin({ timeline: fetchTimeline(), buckets: fetchSummary() })),
-                tap(({ timeline, buckets }) => {
-                    this.activityTimelineSignal.set(timeline.value);
+                map(({ timeline, buckets }) => ({
+                    timeline,
+                    buckets,
+                    mergedTimeline: timeline.ok
+                        ? mergeActivityTimeline(
+                            this.activityTimelineSignal(),
+                            timeline.value,
+                            timeline.incremental,
+                            normalized.fromUtc ?? null,
+                            normalized.toUtc ?? null,
+                            ACTIVITY_TIMELINE_LIMIT,
+                        )
+                        : this.activityTimelineSignal(),
+                })),
+                tap(({ timeline, buckets, mergedTimeline }) => {
+                    if (timeline.ok) {
+                        this.activityUpdatedSinceSignal.set(nowIso());
+                    }
+
+                    this.activityTimelineSignal.set(mergedTimeline);
                     this.activityBucketsSignal.set(buckets.value);
                     const hasSuccess = timeline.ok || buckets.ok;
                     this.activityBackendReadySignal.set(hasSuccess);
@@ -459,8 +487,8 @@ export class WebhooksStore {
                         hasSuccess ? 'connected' : resolveRetryConnectionState(),
                     );
                 }),
-                map(({ timeline, buckets }) => ({
-                    timeline: timeline.value,
+                map(({ mergedTimeline, buckets }) => ({
+                    timeline: mergedTimeline,
                     buckets: buckets.value,
                 })),
             );
@@ -516,6 +544,7 @@ export class WebhooksStore {
     setActivityQuery(query: WebhookActivityQuery): void {
         this.activityQuerySignal.set(query);
         this.activityBackendReadySignal.set(false);
+        this.activityUpdatedSinceSignal.set(null);
     }
 
     setActivityLiveUpdatesEnabled(enabled: boolean): void {
@@ -524,10 +553,12 @@ export class WebhooksStore {
         }
         this.activityLiveUpdatesEnabledSignal.set(enabled);
         this.activityConnectionStateSignal.set(enabled ? resolveRetryConnectionState() : 'paused');
+        this.activityUpdatedSinceSignal.set(null);
         this.activityResource.reload();
     }
 
     refreshActivity(): void {
+        this.activityUpdatedSinceSignal.set(null);
         this.activityResource.reload();
     }
 
@@ -1008,6 +1039,7 @@ type NormalizedActivityQuery = {
 type ActivityStreamContext = {
     tenantId: string;
     query: NormalizedActivityQuery;
+    updatedSinceUtc: string | null;
     streamMode: ActivityStreamMode;
     grpcBaseUrl: string;
     sseBaseUrl: string;
@@ -1076,7 +1108,7 @@ function createGrpcRefreshStream(context: ActivityStreamContext) {
 }
 
 function createSseRefreshStream(context: ActivityStreamContext) {
-    const url = buildActivityStreamUrl(context.sseBaseUrl, context.tenantId, context.query);
+    const url = buildActivityStreamUrl(context.sseBaseUrl, context.tenantId, context.query, context.updatedSinceUtc);
     if (!url) {
         return throwError(() => new Error('SSE base URL not configured.'));
     }
@@ -1095,20 +1127,26 @@ function buildGrpcActivityStreamRequest(context: ActivityStreamContext): Webhook
     const fromUtc = context.query.fromUtc ? epochMsFromIso(context.query.fromUtc) : null;
     const toUtc = context.query.toUtc ? epochMsFromIso(context.query.toUtc) : null;
     const environmentTag = resolveNonEmptyString(context.query.environment ?? context.requestContext.environment);
+    const updatedSinceUtc = context.updatedSinceUtc ? epochMsFromIso(context.updatedSinceUtc) : null;
 
     return {
         tenantId: context.tenantId,
         environmentTag,
         fromUtc: fromUtc ?? undefined,
         toUtc: toUtc ?? undefined,
-        updatedSinceUtc: nowMs(),
+        updatedSinceUtc: updatedSinceUtc ?? nowMs(),
         hookKeys: context.query.hookKeys,
         jobKeys: context.query.jobKeys,
         limit: ACTIVITY_STREAM_LIMIT,
     };
 }
 
-function buildActivityStreamUrl(baseUrl: string, tenantId: string, query: NormalizedActivityQuery): string | null {
+function buildActivityStreamUrl(
+    baseUrl: string,
+    tenantId: string,
+    query: NormalizedActivityQuery,
+    updatedSinceUtc: string | null,
+): string | null {
     const trimmedBase = baseUrl?.trim();
     if (!trimmedBase) {
         return null;
@@ -1123,6 +1161,9 @@ function buildActivityStreamUrl(baseUrl: string, tenantId: string, query: Normal
     }
     if (query.toUtc) {
         params.set('toUtc', query.toUtc);
+    }
+    if (updatedSinceUtc) {
+        params.set('updatedSinceUtc', updatedSinceUtc);
     }
     if (query.hookKeys && query.hookKeys.length > 0) {
         params.set('hookKeys', query.hookKeys.join(','));
@@ -1181,8 +1222,11 @@ function buildStreamHeaders(context: CallerContext, sessionToken: string | null)
 function normalizeActivityQuery(query: WebhookActivityQuery, fallbackEnvironment: string): NormalizedActivityQuery {
     const hookKeys = normalizeKeyList(query.hookKeys);
     const jobKeys = normalizeKeyList(query.jobKeys);
-    const fromUtc = tryIsoFromUnknown(query.fromUtc) ?? null;
-    const toUtc = tryIsoFromUnknown(query.toUtc) ?? null;
+    const resolvedToUtc = tryIsoFromUnknown(query.toUtc) ?? nowIso();
+    const resolvedToMs = Date.parse(resolvedToUtc);
+    const toUtc = Number.isFinite(resolvedToMs) ? resolvedToUtc : nowIso();
+    const fromUtc = tryIsoFromUnknown(query.fromUtc)
+        ?? new Date(Math.max(0, Date.parse(toUtc) - WEBHOOK_ACTIVITY_MAX_RANGE_MS)).toISOString();
     const environment = resolveEnvironment(query.environment, fallbackEnvironment);
     const limit = normalizePositiveInt(query.limit);
     const bucketMinutes = normalizePositiveInt(query.bucketMinutes);
@@ -1269,6 +1313,46 @@ function normalizeActivityBuckets(summary: WebhookActivitySummary): ReadonlyArra
         return EMPTY_ACTIVITY_BUCKETS;
     }
     return buckets.slice().sort((left, right) => left.bucketStart.localeCompare(right.bucketStart));
+}
+
+function mergeActivityTimeline(
+    existing: ReadonlyArray<WebhookTimelineItemView>,
+    incoming: ReadonlyArray<WebhookTimelineItemView>,
+    incremental: boolean,
+    fromUtc: string | null,
+    toUtc: string | null,
+    limit: number,
+): ReadonlyArray<WebhookTimelineItemView> {
+    const base = incremental ? existing : [];
+    const byId = new Map<string, WebhookTimelineItemView>();
+    base.forEach((entry) => {
+        byId.set(entry.id, entry);
+    });
+    incoming.forEach((entry) => {
+        byId.set(entry.id, entry);
+    });
+
+    const fromMs = fromUtc ? Date.parse(fromUtc) : null;
+    const toMs = toUtc ? Date.parse(toUtc) : null;
+    const filtered = Array.from(byId.values()).filter((entry) => {
+        const occurredMs = Date.parse(entry.occurredAt);
+        if (!Number.isFinite(occurredMs)) {
+            return true;
+        }
+        if (typeof fromMs === 'number' && Number.isFinite(fromMs) && occurredMs < fromMs) {
+            return false;
+        }
+        if (typeof toMs === 'number' && Number.isFinite(toMs) && occurredMs > toMs) {
+            return false;
+        }
+        return true;
+    });
+
+    const ordered = filtered.sort((left, right) => right.occurredAt.localeCompare(left.occurredAt));
+    if (!Number.isFinite(limit) || limit <= 0) {
+        return ordered;
+    }
+    return ordered.slice(0, limit);
 }
 
 function resolveNonEmptyString(value: unknown): string | undefined {

@@ -414,6 +414,7 @@ public sealed class RemoteWebhookClient
             environment,
             source,
             entry.OccurredAtUtc,
+            entry.LatencyMs,
             entry.Reason,
             entry.PayloadBytes,
             deadLetterId);

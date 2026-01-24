@@ -35,7 +35,7 @@ Internal network:
 ## Mode Semantics
 
 DMZ remains `Croniq:Webhooks:Mode=SqlServer` or `Croniq:Webhooks:Mode=Postgres` and stores webhook definitions locally.
-Internal API uses a new `Croniq:Webhooks:Mode=Remote` to call the DMZ admin API.
+Internal API uses `Croniq:Webhooks:Mode=Remote` to call the DMZ admin API and to relay ingress + manual invoke requests to the DMZ ingress URL.
 
 EnvironmentTag is part of the partition key. Ingress events are stored under TenantId + EnvironmentTag, and the relay pulls a single environment via `environment=...`; it dispatches jobs only within the same scope. Cross-environment dispatch is not supported, so the DMZ ingress URL and internal relay must use the same environment tag when they are meant to connect.
 
@@ -56,9 +56,9 @@ Croniq:
 
 ## Event Delivery (Ingress -> Internal Execution)
 
-1) DMZ ingress validates signature and writes a `WebhookIngressEvent` (DB or queue).
-2) Internal relay worker connects outward (stream/queue pull).
-3) Relay worker triggers jobs internally (`IJobTrigger` or `/jobs/trigger`).
+1. DMZ ingress validates signature and writes a `WebhookIngressEvent` (DB or queue).
+2. Internal relay worker connects outward (stream/queue pull).
+3. Relay worker triggers jobs internally (`IJobTrigger` or `/jobs/trigger`).
 
 Streaming is preferred; polling is a fallback with cursor-based paging.
 
@@ -194,7 +194,7 @@ DMZ (ingress-only, no outbound):
 ```yaml
 Croniq:
   Webhooks:
-    Mode: SqlServer  # or Postgres
+    Mode: SqlServer # or Postgres
     Ingress:
       DispatchMode: StoreOnly
     Security:
@@ -257,7 +257,7 @@ while stream open:
 
 ## Implementation Slices
 
-1) Remote persistence provider + config options + tests.
-2) DMZ event store + streaming endpoint (gRPC default, SSE fallback).
-3) Internal relay worker + end-to-end tests.
-4) DMZ sample + docs update for the topology.
+1. Remote persistence provider + config options + tests.
+2. DMZ event store + streaming endpoint (gRPC default, SSE fallback).
+3. Internal relay worker + end-to-end tests.
+4. DMZ sample + docs update for the topology.

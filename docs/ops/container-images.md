@@ -113,7 +113,7 @@ Persisted webhook secrets rely on ASP.NET Core Data Protection. Share the key ri
 Mount the same volume at `/var/lib/croniq/keys` in both containers. Rotate webhook secrets after changing the key ring.
 See [`docs/deep-dive/security.md`](../deep-dive/security.md) for details.
 
-The API host does not expose webhook ingress endpoints. Use `croniq-webhooks` for inbound webhooks.
+The API host does not expose webhook ingress endpoints unless it runs in `Croniq:Webhooks:Mode=Remote`. In Remote mode, the API host relays ingress and manual invoke calls to the DMZ ingress URL. Use `croniq-webhooks` for direct inbound webhooks.
 
 ### croniq-ui
 
