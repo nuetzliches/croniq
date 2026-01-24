@@ -1740,6 +1740,14 @@
             }
           },
           {
+            "name": "updatedSinceUtc",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            }
+          },
+          {
             "name": "hookKeys",
             "in": "query",
             "schema": {
@@ -1819,6 +1827,14 @@
           },
           {
             "name": "toUtc",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            }
+          },
+          {
+            "name": "updatedSinceUtc",
             "in": "query",
             "schema": {
               "type": "string",

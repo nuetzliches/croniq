@@ -945,6 +945,11 @@ export const TenantsApi: EndpointDefinition[] = [
                 type: 'Query',
                 schema: z.iso.datetime({ offset: true }).optional(),
             },
+            {
+                name: 'updatedSinceUtc',
+                type: 'Query',
+                schema: z.iso.datetime({ offset: true }).optional(),
+            },
             { name: 'hookKeys', type: 'Query', schema: z.string().optional() },
             { name: 'jobKeys', type: 'Query', schema: z.string().optional() },
             {
@@ -982,6 +987,11 @@ export const TenantsApi: EndpointDefinition[] = [
             },
             {
                 name: 'toUtc',
+                type: 'Query',
+                schema: z.iso.datetime({ offset: true }).optional(),
+            },
+            {
+                name: 'updatedSinceUtc',
                 type: 'Query',
                 schema: z.iso.datetime({ offset: true }).optional(),
             },
