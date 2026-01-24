@@ -535,19 +535,23 @@
     </div>
     <aside class="w-full lg:w-80 xl:w-90">
       <div class="rounded-xl border border-white/10 bg-surface-alt p-4 shadow-card">
-        <div class="flex items-center justify-between">
+        <div class="flex items-start justify-between gap-3">
           <div>
             <h2 class="text-sm font-semibold text-primary">Endpoint detail</h2>
             <p class="text-xs text-muted">Effective configuration & ingress URL</p>
           </div>
-          @if (selectedEndpoint()) {
-            <button
-              type="button"
-              class="rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-xs font-semibold text-primary transition hover:border-accent hover:text-accent"
-              (click)="openWebhookDialog(selectedEndpoint()!)"
+          @if (selectedEndpoint(); as endpoint) {
+            <span
+              class="inline-flex items-center rounded-full px-2 py-1 text-[11px] font-semibold"
+              [class.bg-success/10]="endpoint.status === 'active'"
+              [class.text-success]="endpoint.status === 'active'"
+              [class.bg-warning/10]="endpoint.status === 'degraded'"
+              [class.text-warning]="endpoint.status === 'degraded'"
+              [class.bg-white/10]="endpoint.status === 'paused'"
+              [class.text-muted]="endpoint.status === 'paused'"
             >
-              Edit
-            </button>
+              {{ statusLabel(endpoint.status) }}
+            </span>
           }
         </div>
 
@@ -556,7 +560,70 @@
             Select an endpoint to view its configuration and ingress URL.
           </div>
         } @else {
-          <div class="mt-4 space-y-4">
+          @if (selectedEndpoint(); as endpoint) {
+            <div class="mt-4 space-y-4">
+              <div class="rounded-lg border border-white/10 bg-black/10 px-3 py-3">
+                <div class="flex items-center justify-between gap-2">
+                  <div class="text-[11px] font-semibold uppercase tracking-wide text-muted">Quick actions</div>
+                  @if (writePermissionDenied()) {
+                    <span class="text-[11px] text-muted">Read-only</span>
+                  }
+                </div>
+                <div class="mt-3 grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    class="rounded-md border border-white/10 bg-white/5 px-2 py-1.5 text-[11px] font-semibold text-primary transition hover:border-accent hover:text-accent disabled:cursor-not-allowed disabled:opacity-50"
+                    (click)="openWebhookDialog(endpoint)"
+                    [disabled]="writePermissionDenied()"
+                  >
+                    Edit
+                  </button>
+                  <button
+                    type="button"
+                    class="rounded-md border border-white/10 bg-white/5 px-2 py-1.5 text-[11px] font-semibold text-primary transition hover:border-accent hover:text-accent disabled:cursor-not-allowed disabled:opacity-50"
+                    (click)="rotateSecret(endpoint)"
+                    [disabled]="writePermissionDenied()"
+                  >
+                    Rotate secret
+                  </button>
+                  <button
+                    type="button"
+                    class="rounded-md border border-white/10 bg-white/5 px-2 py-1.5 text-[11px] font-semibold text-primary transition hover:border-accent hover:text-accent disabled:cursor-not-allowed disabled:opacity-50"
+                    (click)="openIpRulesDialog(endpoint)"
+                    [disabled]="writePermissionDenied()"
+                  >
+                    IP rules
+                  </button>
+                  @if (isEndpointPaused(endpoint)) {
+                    <button
+                      type="button"
+                      class="rounded-md border border-white/10 bg-white/5 px-2 py-1.5 text-[11px] font-semibold text-primary transition hover:border-accent hover:text-accent disabled:cursor-not-allowed disabled:opacity-50"
+                      (click)="enableEndpoint(endpoint)"
+                      [disabled]="writePermissionDenied()"
+                    >
+                      Enable
+                    </button>
+                  } @else {
+                    <button
+                      type="button"
+                      class="rounded-md border border-white/10 bg-white/5 px-2 py-1.5 text-[11px] font-semibold text-primary transition hover:border-accent hover:text-accent disabled:cursor-not-allowed disabled:opacity-50"
+                      (click)="disableEndpoint(endpoint)"
+                      [disabled]="writePermissionDenied()"
+                    >
+                      Disable
+                    </button>
+                  }
+                </div>
+                <button
+                  type="button"
+                  class="mt-2 w-full rounded-md border border-danger/40 bg-danger/10 px-2 py-1.5 text-[11px] font-semibold text-danger transition hover:border-danger hover:bg-danger/20 disabled:cursor-not-allowed disabled:opacity-50"
+                  (click)="deleteEndpoint(endpoint)"
+                  [disabled]="writePermissionDenied()"
+                >
+                  Delete endpoint
+                </button>
+              </div>
+
             <div class="space-y-3 rounded-lg border border-white/10 bg-black/10 px-3 py-3">
               @if (remoteModeEnabled()) {
                 <div class="space-y-2">
@@ -629,38 +696,38 @@
             <div class="grid gap-3">
               <div class="flex items-center justify-between text-xs">
                 <span class="text-muted">Hook key</span>
-                <span class="font-mono text-primary">{{ selectedEndpoint()!.hookKey }}</span>
+                <span class="font-mono text-primary">{{ endpoint.hookKey }}</span>
               </div>
               <div class="flex items-center justify-between text-xs">
                 <span class="text-muted">Environment</span>
-                <span class="text-primary">{{ selectedEndpoint()!.environment }}</span>
+                <span class="text-primary">{{ endpoint.environment }}</span>
               </div>
               <div class="flex items-center justify-between text-xs">
                 <span class="text-muted">Target job</span>
-                <span class="text-primary">{{ selectedEndpoint()!.jobKey }}</span>
+                <span class="text-primary">{{ endpoint.jobKey }}</span>
               </div>
               <div class="flex items-center justify-between text-xs">
                 <span class="text-muted">Status</span>
-                <span class="text-primary">{{ statusLabel(selectedEndpoint()!.status) }}</span>
+                <span class="text-primary">{{ statusLabel(endpoint.status) }}</span>
               </div>
               <div class="flex items-center justify-between text-xs">
                 <span class="text-muted">Signature</span>
                 <span class="text-primary">
-                  {{ selectedEndpoint()!.requireSignature ? 'Required' : 'Optional' }}
+                  {{ endpoint.requireSignature ? 'Required' : 'Optional' }}
                 </span>
               </div>
               <div class="flex items-center justify-between text-xs">
                 <span class="text-muted">Rate limit</span>
-                <span class="text-primary">{{ requestsPerMinuteLabel(selectedEndpoint()!) }} RPM</span>
+                <span class="text-primary">{{ requestsPerMinuteLabel(endpoint) }} RPM</span>
               </div>
               <div class="flex items-center justify-between text-xs">
                 <span class="text-muted">IP rules</span>
-                <span class="text-primary">{{ ipWhitelistLabel(selectedEndpoint()!) }}</span>
+                <span class="text-primary">{{ ipWhitelistLabel(endpoint) }}</span>
               </div>
               <div class="flex items-center justify-between text-xs">
                 <span class="text-muted">Last delivery</span>
-                @if (selectedEndpoint()!.lastDeliveryAt) {
-                  <span class="text-primary">{{ selectedEndpoint()!.lastDeliveryAt | date: 'short' }}</span>
+                @if (endpoint.lastDeliveryAt) {
+                  <span class="text-primary">{{ endpoint.lastDeliveryAt | date: 'short' }}</span>
                 } @else {
                   <span class="text-muted">—</span>
                 }
@@ -725,7 +792,8 @@
                 </p>
               </div>
             </details>
-          </div>
+            </div>
+          }
         }
       </div>
     </aside>
