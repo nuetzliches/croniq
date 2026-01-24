@@ -184,6 +184,11 @@ public sealed class RemoteWebhookClient
             queryParams["toUtc"] = normalized.ToUtc.Value.ToString("O", CultureInfo.InvariantCulture);
         }
 
+        if (normalized.UpdatedSinceUtc.HasValue)
+        {
+            queryParams["updatedSinceUtc"] = normalized.UpdatedSinceUtc.Value.ToString("O", CultureInfo.InvariantCulture);
+        }
+
         var hookKeys = NormalizeKeys(normalized.HookKeys);
         if (hookKeys is { Count: > 0 })
         {

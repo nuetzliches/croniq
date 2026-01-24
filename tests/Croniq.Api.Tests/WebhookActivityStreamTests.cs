@@ -77,6 +77,57 @@ public sealed class WebhookActivityStreamTests
         payload.ShouldContain("data:");
     }
 
+    [Fact]
+    public async Task WebhookActivityStream_Sets_UpdatedSinceUtc()
+    {
+        var apiKey = "ak_webhook_activity_stream_updated";
+        var tenantId = "tenant-activity-updated";
+        var environmentTag = "dev";
+        var caller = CreateCaller(tenantId, environmentTag, new[] { CroniqScopes.WebhooksRead });
+
+        var store = new AssertingWebhookActivityStore(new[]
+        {
+            new WebhookActivityEntry(
+                Id: "evt-2",
+                Kind: WebhookActivityKind.Delivery,
+                Status: WebhookActivityStatus.Success,
+                HookKey: "hook-b",
+                JobKey: "jobs:demo",
+                TenantId: tenantId,
+                EnvironmentTag: environmentTag,
+                Source: WebhookActivitySources.Ingress,
+                OccurredAtUtc: DateTimeOffset.UtcNow,
+                Reason: null,
+                PayloadBytes: null,
+                DeadLetterId: null)
+        });
+
+        var callerFactory = CreateCallerFactory(apiKey, caller);
+        var builder = CreateBuilder(apiKey, tenantId, environmentTag, callerFactory, store);
+        await using var app = builder.Build();
+        app.UseCroniqApi();
+
+        await app.StartAsync();
+        var address = app.Urls.First();
+
+        using var client = CreateClient(address, apiKey);
+
+        using var response = await client.GetAsync(
+            $"/tenants/{tenantId}/webhooks/activity/stream?environment={environmentTag}",
+            HttpCompletionOption.ResponseHeadersRead);
+
+        response.StatusCode.ShouldBe(HttpStatusCode.OK);
+        response.Content.Headers.ContentType?.MediaType.ShouldBe("text/event-stream");
+
+        await using var stream = await response.Content.ReadAsStreamAsync();
+        var buffer = new byte[2048];
+        var read = await stream.ReadAsync(buffer.AsMemory(0, buffer.Length), CancellationToken.None);
+
+        read.ShouldBeGreaterThan(0);
+        var payload = Encoding.UTF8.GetString(buffer, 0, read);
+        payload.ShouldContain("data:");
+    }
+
     private static WebApplicationBuilder CreateBuilder(
         string apiKey,
         string tenantId,
@@ -163,6 +214,40 @@ public sealed class WebhookActivityStreamTests
                 .ToArray();
 
             return Task.FromResult<IReadOnlyCollection<WebhookActivityEntry>>(result);
+        }
+
+        public Task<PersistenceWebhookActivitySummary> SummarizeAsync(
+            PartitionScope scope,
+            WebhookActivitySummaryQuery query,
+            CancellationToken cancellationToken)
+        {
+            var bucketMinutes = query.BucketMinutes ?? WebhookActivitySummaryQuery.DefaultBucketMinutes;
+            var windowStart = query.FromUtc ?? DateTimeOffset.UtcNow;
+            var windowEnd = query.ToUtc ?? windowStart;
+            return Task.FromResult(new PersistenceWebhookActivitySummary(
+                bucketMinutes,
+                windowStart,
+                windowEnd,
+                Array.Empty<PersistenceWebhookActivityBucket>()));
+        }
+    }
+
+    private sealed class AssertingWebhookActivityStore : IWebhookActivityStore
+    {
+        private readonly IReadOnlyCollection<WebhookActivityEntry> _entries;
+
+        public AssertingWebhookActivityStore(IReadOnlyCollection<WebhookActivityEntry> entries)
+        {
+            _entries = entries;
+        }
+
+        public Task<IReadOnlyCollection<WebhookActivityEntry>> ListAsync(
+            PartitionScope scope,
+            WebhookActivityQuery query,
+            CancellationToken cancellationToken)
+        {
+            query.UpdatedSinceUtc.ShouldNotBeNull();
+            return Task.FromResult(_entries);
         }
 
         public Task<PersistenceWebhookActivitySummary> SummarizeAsync(

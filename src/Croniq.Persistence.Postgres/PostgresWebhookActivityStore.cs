@@ -44,10 +44,11 @@ public sealed class PostgresWebhookActivityStore : IWebhookActivityStore, IWebho
         var jobKeys = NormalizeKeys(normalized.JobKeys);
         var fromUtc = normalized.FromUtc?.UtcDateTime;
         var toUtc = normalized.ToUtc?.UtcDateTime;
+        var updatedSinceUtc = normalized.UpdatedSinceUtc?.UtcDateTime;
 
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
 
-        var ingress = await BuildIngressQuery(db, scope, hookKeys, jobKeys, fromUtc, toUtc)
+        var ingress = await BuildIngressQuery(db, scope, hookKeys, jobKeys, fromUtc, toUtc, updatedSinceUtc)
             .OrderByDescending(entry => entry.ReceivedAtUtc)
             .ThenByDescending(entry => entry.Id)
             .Take(normalized.Limit)
@@ -66,7 +67,7 @@ public sealed class PostgresWebhookActivityStore : IWebhookActivityStore, IWebho
             .ToListAsync(cancellationToken)
             .ConfigureAwait(false);
 
-        var deadLetters = await BuildDeadLetterQuery(db, scope, hookKeys, jobKeys, fromUtc, toUtc)
+        var deadLetters = await BuildDeadLetterQuery(db, scope, hookKeys, jobKeys, fromUtc, toUtc, updatedSinceUtc)
             .OrderByDescending(entry => entry.CreatedAtUtc)
             .ThenByDescending(entry => entry.Id)
             .Take(normalized.Limit)
@@ -126,7 +127,8 @@ public sealed class PostgresWebhookActivityStore : IWebhookActivityStore, IWebho
                 hookKeys,
                 jobKeys,
                 windowStartUtc.UtcDateTime,
-                windowEndUtc.UtcDateTime)
+                windowEndUtc.UtcDateTime,
+                updatedSinceUtc: null)
             .Select(entry => new ActivitySample(
                 new DateTimeOffset(DateTime.SpecifyKind(entry.ReceivedAtUtc, DateTimeKind.Utc)),
                 ResolveIngressStatus(entry.Status, entry.AttemptCount),
@@ -140,7 +142,8 @@ public sealed class PostgresWebhookActivityStore : IWebhookActivityStore, IWebho
                 hookKeys,
                 jobKeys,
                 windowStartUtc.UtcDateTime,
-                windowEndUtc.UtcDateTime)
+                windowEndUtc.UtcDateTime,
+                updatedSinceUtc: null)
             .Select(entry => new ActivitySample(
                 new DateTimeOffset(DateTime.SpecifyKind(entry.CreatedAtUtc, DateTimeKind.Utc)),
                 WebhookActivityStatus.Failed,
@@ -219,7 +222,8 @@ public sealed class PostgresWebhookActivityStore : IWebhookActivityStore, IWebho
         IReadOnlyCollection<string>? hookKeys,
         IReadOnlyCollection<string>? jobKeys,
         DateTime? fromUtc,
-        DateTime? toUtc)
+        DateTime? toUtc,
+        DateTime? updatedSinceUtc)
     {
         var query = db.WebhookIngressEvents
             .AsNoTracking()
@@ -237,6 +241,11 @@ public sealed class PostgresWebhookActivityStore : IWebhookActivityStore, IWebho
         if (toUtc.HasValue)
         {
             query = query.Where(entry => entry.ReceivedAtUtc <= toUtc.Value);
+        }
+
+        if (updatedSinceUtc.HasValue)
+        {
+            query = query.Where(entry => entry.UpdatedAtUtc >= updatedSinceUtc.Value);
         }
 
         if (hookKeys is { Count: > 0 })
@@ -258,7 +267,8 @@ public sealed class PostgresWebhookActivityStore : IWebhookActivityStore, IWebho
         IReadOnlyCollection<string>? hookKeys,
         IReadOnlyCollection<string>? jobKeys,
         DateTime? fromUtc,
-        DateTime? toUtc)
+        DateTime? toUtc,
+        DateTime? updatedSinceUtc)
     {
         var query = db.WebhookDeadLetters
             .AsNoTracking()
@@ -272,6 +282,11 @@ public sealed class PostgresWebhookActivityStore : IWebhookActivityStore, IWebho
         if (toUtc.HasValue)
         {
             query = query.Where(entry => entry.CreatedAtUtc <= toUtc.Value);
+        }
+
+        if (updatedSinceUtc.HasValue)
+        {
+            query = query.Where(entry => entry.CreatedAtUtc >= updatedSinceUtc.Value);
         }
 
         if (hookKeys is { Count: > 0 })

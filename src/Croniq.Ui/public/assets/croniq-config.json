@@ -5,7 +5,7 @@
   "defaultTenantId": "default",
   "webhooks": {
     "activityStream": {
-      "mode": "grpc"
+      "mode": "sse"
     }
   }
 }

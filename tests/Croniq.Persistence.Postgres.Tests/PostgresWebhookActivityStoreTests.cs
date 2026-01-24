@@ -163,6 +163,57 @@ public sealed class PostgresWebhookActivityStoreTests : IAsyncLifetime
             && entry.Source == WebhookActivitySources.Invoke);
     }
 
+    [Fact]
+    [Trait(TestCategories.Category, TestCategories.Contract)]
+    public async Task ListAsync_filters_by_updated_since()
+    {
+        var receivedAt = new DateTimeOffset(2025, 1, 3, 9, 0, 0, TimeSpan.Zero);
+        var updatedAt = receivedAt.AddMinutes(10);
+
+        await using (var db = await _dbFactory!.CreateDbContextAsync())
+        {
+            db.WebhookIngressEvents.Add(new WebhookIngressEventEntity
+            {
+                EventId = Guid.NewGuid().ToString("N"),
+                HookKey = "hook-updated",
+                JobKey = "samples:updated",
+                TenantId = TenantId,
+                EnvironmentTag = EnvironmentTag,
+                Payload = "{}",
+                ReceivedAtUtc = receivedAt.UtcDateTime,
+                Status = "Delivered",
+                AttemptCount = 1,
+                CreatedAtUtc = receivedAt.UtcDateTime,
+                UpdatedAtUtc = updatedAt.UtcDateTime
+            });
+
+            await db.SaveChangesAsync();
+        }
+
+        var scope = new PartitionScope(TenantId, EnvironmentTag);
+        var recent = await _store!.ListAsync(
+            scope,
+            new WebhookActivityQuery
+            {
+                UpdatedSinceUtc = updatedAt.AddMinutes(-1),
+                Limit = 10
+            },
+            CancellationToken.None);
+
+        recent.ShouldContain(entry => entry.HookKey == "hook-updated");
+
+        var empty = await _store.ListAsync(
+            scope,
+            new WebhookActivityQuery
+            {
+                UpdatedSinceUtc = updatedAt.AddMinutes(1),
+                Limit = 10
+            },
+            CancellationToken.None);
+
+        empty.ShouldBeEmpty();
+    }
+
     private async Task SeedActivityAsync(
         DateTimeOffset deliveredAt,
         DateTimeOffset failedAt,

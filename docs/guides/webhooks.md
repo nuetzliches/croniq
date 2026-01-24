@@ -10,7 +10,7 @@ Croniq.Webhooks lets external systems trigger Croniq jobs via HTTP. This guide f
 - Manual invoke (admin): `POST /tenants/{tenantId}/environments/{environmentTag}/webhooks/{hookKey}/invoke`
 - Management: `POST/GET/DELETE /tenants/{tenantId}/webhooks?environment=<tag>` + `POST /tenants/{tenantId}/webhooks/{hookKey}/rotate-secret?environment=<tag>`
 - Diagnostics: dead letters under `/tenants/{tenantId}/webhooks/deadletters` and IP rules under `/tenants/{tenantId}/webhooks/{hookKey}/ip-rules`
-- Activity timeline: `GET /tenants/{tenantId}/webhooks/activity?environment=<tag>&fromUtc=<iso>&toUtc=<iso>&hookKeys=a,b&jobKeys=c,d&limit=200`
+- Activity timeline: `GET /tenants/{tenantId}/webhooks/activity?environment=<tag>&fromUtc=<iso>&toUtc=<iso>&updatedSinceUtc=<iso>&hookKeys=a,b&jobKeys=c,d&limit=200`
 - Activity summary: `GET /tenants/{tenantId}/webhooks/activity/summary?environment=<tag>&fromUtc=<iso>&toUtc=<iso>&bucketMinutes=60`
 - Remote health (proxy): `GET /tenants/{tenantId}/webhooks/remote/health?environment=<tag>` (API host checks the remote `/health` when `Croniq:Webhooks:Mode=Remote`)
 - DMZ ingress relay/streaming: see [`docs/deep-dive/designs/dmz-ingress-remote-webhooks.md`](../deep-dive/designs/dmz-ingress-remote-webhooks.md)
@@ -22,6 +22,10 @@ Activity timeline entries include a `source` field (`ingress` or `invoke`) so op
 - Availability: activity endpoints require SqlServer/Postgres webhook persistence; in-memory mode returns `503 webhook-activity-unavailable`.
 - Freshness: TriggerJob records successful dispatches (failures surface via dead letters), StoreOnly reflects relay acknowledgements. The SSE stream polls every 5 seconds, so expect short (seconds) staleness.
 - Defaults: timeline `limit` defaults to 200 (max 500). Summary defaults to a 24h window with 60-minute buckets; max window 31 days, max bucket 24 hours.
+
+### Activity stream events
+
+The SSE stream (`GET /tenants/{tenantId}/webhooks/activity/stream`) emits JSON payloads with `type: "activity.updated"` whenever new activity arrives **or** an existing ingress entry changes status (pending -> leased -> success/failed). Use `updatedSinceUtc=<iso>` on the timeline endpoint to query entries updated after a specific status-change timestamp.
 
 ### Activity statuses and summary fields
 

@@ -89,6 +89,8 @@ public sealed class WebhookActivityQuery
 
     public DateTimeOffset? ToUtc { get; init; }
 
+    public DateTimeOffset? UpdatedSinceUtc { get; init; }
+
     public IReadOnlyCollection<string>? HookKeys { get; init; }
 
     public IReadOnlyCollection<string>? JobKeys { get; init; }
@@ -104,6 +106,7 @@ public sealed class WebhookActivityQuery
         {
             FromUtc = FromUtc,
             ToUtc = ToUtc,
+            UpdatedSinceUtc = UpdatedSinceUtc,
             HookKeys = HookKeys,
             JobKeys = JobKeys,
             Limit = limit

@@ -845,6 +845,7 @@ public static partial class ApiHostingExtensions
             string? environment,
             DateTimeOffset? fromUtc,
             DateTimeOffset? toUtc,
+            DateTimeOffset? updatedSinceUtc,
             string? hookKeys,
             string? jobKeys,
             int? limit,
@@ -865,7 +866,7 @@ public static partial class ApiHostingExtensions
 
             var parsedHookKeys = ParseWebhookActivityKeys(hookKeys);
             var parsedJobKeys = ParseWebhookActivityKeys(jobKeys);
-            if (!TryNormalizeWebhookActivityQuery(fromUtc, toUtc, limit, parsedHookKeys, parsedJobKeys, out var query, out var error))
+            if (!TryNormalizeWebhookActivityQuery(fromUtc, toUtc, updatedSinceUtc, limit, parsedHookKeys, parsedJobKeys, out var query, out var error))
             {
                 return Results.BadRequest(new { error = "invalid-activity-query", message = error });
             }
@@ -886,6 +887,7 @@ public static partial class ApiHostingExtensions
             string? environment,
             DateTimeOffset? fromUtc,
             DateTimeOffset? toUtc,
+            DateTimeOffset? updatedSinceUtc,
             string? hookKeys,
             string? jobKeys,
             int? limit,
@@ -912,7 +914,7 @@ public static partial class ApiHostingExtensions
             var parsedHookKeys = ParseWebhookActivityKeys(hookKeys);
             var parsedJobKeys = ParseWebhookActivityKeys(jobKeys);
             var resolvedLimit = limit ?? 1;
-            if (!TryNormalizeWebhookActivityQuery(fromUtc, toUtc, resolvedLimit, parsedHookKeys, parsedJobKeys, out var query, out var error))
+            if (!TryNormalizeWebhookActivityQuery(fromUtc, toUtc, updatedSinceUtc, resolvedLimit, parsedHookKeys, parsedJobKeys, out var query, out var error))
             {
                 await Results.BadRequest(new { error = "invalid-activity-stream-query", message = error }).ExecuteAsync(httpContext);
                 return;
@@ -925,7 +927,7 @@ public static partial class ApiHostingExtensions
             httpContext.Response.Headers["Cache-Control"] = "no-cache";
             httpContext.Response.Headers.Append("X-Accel-Buffering", "no");
 
-            var lastSeenUtc = query.FromUtc ?? DateTimeOffset.UtcNow;
+            var lastSeenUtc = query.UpdatedSinceUtc ?? query.FromUtc ?? DateTimeOffset.UtcNow;
             if (query.ToUtc.HasValue && query.ToUtc.Value < lastSeenUtc)
             {
                 lastSeenUtc = query.ToUtc.Value;
@@ -935,10 +937,12 @@ public static partial class ApiHostingExtensions
             {
                 while (!cancellationToken.IsCancellationRequested)
                 {
+                    var pollStartedAt = DateTimeOffset.UtcNow;
                     var probeQuery = new WebhookActivityQuery
                     {
-                        FromUtc = lastSeenUtc,
+                        FromUtc = query.FromUtc,
                         ToUtc = query.ToUtc,
+                        UpdatedSinceUtc = lastSeenUtc,
                         HookKeys = query.HookKeys,
                         JobKeys = query.JobKeys,
                         Limit = query.Limit
@@ -979,7 +983,7 @@ public static partial class ApiHostingExtensions
                         await WriteSseCommentAsync(httpContext.Response, "heartbeat", cancellationToken).ConfigureAwait(false);
                     }
 
-                    lastSeenUtc = DateTimeOffset.UtcNow;
+                    lastSeenUtc = pollStartedAt;
                     await Task.Delay(WebhookActivityStreamPollInterval, cancellationToken).ConfigureAwait(false);
                 }
             }
@@ -1226,6 +1230,7 @@ public static partial class ApiHostingExtensions
     private static bool TryNormalizeWebhookActivityQuery(
         DateTimeOffset? fromUtc,
         DateTimeOffset? toUtc,
+        DateTimeOffset? updatedSinceUtc,
         int? limit,
         IReadOnlyCollection<string>? hookKeys,
         IReadOnlyCollection<string>? jobKeys,
@@ -1245,6 +1250,7 @@ public static partial class ApiHostingExtensions
         {
             FromUtc = fromUtc,
             ToUtc = toUtc,
+            UpdatedSinceUtc = updatedSinceUtc,
             HookKeys = hookKeys,
             JobKeys = jobKeys,
             Limit = limit ?? WebhookActivityQuery.DefaultLimit

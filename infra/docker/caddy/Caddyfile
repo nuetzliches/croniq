@@ -2,7 +2,6 @@
 	http_port {$CRONIQ_CADDY_HTTP_PORT}
 	https_port {$CRONIQ_CADDY_HTTPS_PORT}
 	local_certs
-	debug
 
 	servers {
 		protocols h1 h2
@@ -42,10 +41,6 @@ api.{$CRONIQ_CADDY_DOMAIN} {
 }
 
 dmz.{$CRONIQ_CADDY_DOMAIN} {
-	log {
-		output file /data/caddy/dmz-access.log
-		format json
-	}
 	@grpc_ingress {
 		method POST
 		path /croniq.rpc.WebhookIngress/*
@@ -57,10 +52,6 @@ dmz.{$CRONIQ_CADDY_DOMAIN} {
 }
 
 hooks.{$CRONIQ_CADDY_DOMAIN} {
-	log {
-		output file /data/caddy/dmz-access.log
-		format json
-	}
 	@grpc_ingress {
 		method POST
 		path /croniq.rpc.WebhookIngress/*
