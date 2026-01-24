@@ -30,6 +30,11 @@ These instructions complement `.github/copilot.instructions.md` and capture repo
   - signals + `computed()` for state
   - `takeUntilDestroyed(inject(DestroyRef))` for teardown
     (Enforced by ESLint.)
+- **Route-bound selection (required)**:
+  - For list/detail pages, bind the selected entity to a query param and keep it in sync.
+  - Use `cq-data-grid` with `idKey`, `selectedId`, and `selectedIdChange` to drive selection.
+  - Read initial selection from `ActivatedRoute.queryParamMap`, update it via `Router.navigate` with `queryParamsHandling: 'merge'`.
+  - Never rely on component-local selection state alone for cross-page navigation.
 
 ## Accessibility (A11y)
 

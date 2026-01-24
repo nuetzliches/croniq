@@ -442,7 +442,8 @@ export class JobsStore {
                 }),
                 catchError((error: unknown) => {
                     console.error('Failed to trigger job', error);
-                    this.lastErrorSignal.set('Unable to trigger job via API — entry retained locally.');
+                    const resolvedMessage = resolveTriggerErrorMessage(error);
+                    this.lastErrorSignal.set(resolvedMessage);
                     this.updateEntry(entry.id, {
                         status: 'error',
                         completedAt: nowIso(),
@@ -560,9 +561,9 @@ function normalizeJobRegistry(
 }
 
 function mapExecutionStatus(status: unknown): string {
-    if (status === 1 || status === '1' || status === 'Success') return 'Success';
-    if (status === 2 || status === '2' || status === 'Failure') return 'Failure';
-    if (status === 0 || status === '0' || status === 'Pending') return 'Pending';
+    if (status === 0 || status === '0' || status === 'Succeeded' || status === 'Success') return 'Success';
+    if (status === 1 || status === '1' || status === 'Failed' || status === 'Failure') return 'Failure';
+    if (status === 2 || status === '2' || status === 'Canceled' || status === 'Cancelled') return 'Canceled';
     return 'Unknown';
 }
 
@@ -635,4 +636,16 @@ function normalizeJobDetail(value: unknown, fallbackId: string): JobDetail | nul
         jobKey: jobKey || undefined,
         description: description || undefined,
     };
+}
+
+function resolveTriggerErrorMessage(error: unknown): string {
+    if (error instanceof HttpErrorResponse) {
+        const payload = error.error as { error?: string; jobKey?: string } | null;
+        if (payload?.error === 'job-not-registered') {
+            const key = payload.jobKey ?? 'this job';
+            return `Unable to trigger ${key}: the API host has not registered the job. Ensure the job assembly is loaded or JobRegistrySync is enabled.`;
+        }
+    }
+
+    return 'Unable to trigger job via API — entry retained locally.';
 }

@@ -107,3 +107,47 @@ export class ExampleDialogComponent {
   }
 }
 ```
+
+## Route-bound Selection (Required)
+
+List/detail pages must bind selection to query params to enable deep-linking and cross-page navigation.
+
+**Rules:**
+
+- Use `cq-data-grid` with `idKey`, `selectedId`, and `selectedIdChange`.
+- Read the initial selection from `ActivatedRoute.queryParamMap`.
+- On user selection, update the query param via `Router.navigate` using `queryParamsHandling: 'merge'` and `replaceUrl: true`.
+- Keep selections in signals and derive detail data from the selected id.
+
+**Example (Jobs):**
+
+```ts
+readonly selectedJobKey = signal<string | null>(null);
+
+constructor() {
+  this.route.queryParamMap
+    .pipe(takeUntilDestroyed(this.destroyRef))
+    .subscribe((params) => this.selectedJobKey.set(params.get('jobKey')));
+}
+
+setSelectedJobKey(value: string | number | null): void {
+  const key = typeof value === 'string' ? value.trim() : value ? String(value) : null;
+  this.selectedJobKey.set(key);
+  void this.router.navigate([], {
+    relativeTo: this.route,
+    queryParams: { jobKey: key },
+    queryParamsHandling: 'merge',
+    replaceUrl: true,
+  });
+}
+```
+
+```html
+<cq-data-grid
+  [rows]="rows()"
+  [rowKey]="rowKey"
+  [idKey]="'jobKey'"
+  [selectedId]="selectedJobKey()"
+  (selectedIdChange)="setSelectedJobKey($event)"
+></cq-data-grid>
+```

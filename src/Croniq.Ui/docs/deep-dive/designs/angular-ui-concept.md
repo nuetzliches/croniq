@@ -71,6 +71,7 @@ public/
    - `jobs`: registry browser, ability to trigger jobs manually, show last N executions.
    - `webhooks`: ingress status, secret rotation controls, IP allow-list grid.
    - `API keys`: manage quotas, rotate keys, view policy overrides.
+   - **Routing contract**: list/detail pages bind selection to query params (e.g., `/jobs?jobKey=...`) to enable deep links and cross-page navigation.
 
 3. **Data Access**
 

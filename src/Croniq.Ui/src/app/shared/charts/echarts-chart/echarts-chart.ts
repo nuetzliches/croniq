@@ -31,11 +31,15 @@ export class CqEchartsChartComponent {
   readonly loading = input(false);
   readonly ariaLabel = input('Chart');
   readonly chartClick = output<unknown>();
+  readonly chartZoom = output<unknown>();
 
   private readonly hostRef = viewChild<ElementRef<HTMLDivElement>>('host');
   private readonly chartSignal = signal<echarts.ECharts | null>(null);
   private readonly clickHandler = (event: unknown) => {
     this.chartClick.emit(event);
+  };
+  private readonly zoomHandler = (event: unknown) => {
+    this.chartZoom.emit(event);
   };
 
   constructor() {
@@ -119,8 +123,10 @@ export class CqEchartsChartComponent {
       }
 
       chart.on('click', this.clickHandler);
+      chart.on('datazoom', this.zoomHandler);
       onCleanup(() => {
         chart.off('click', this.clickHandler);
+        chart.off('datazoom', this.zoomHandler);
       });
     });
 

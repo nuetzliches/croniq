@@ -1,7 +1,7 @@
 import { CdkContextMenuTrigger } from '@angular/cdk/menu';
 import { CdkFixedSizeVirtualScroll, CdkVirtualForOf, CdkVirtualScrollViewport } from '@angular/cdk/scrolling';
 import { NgTemplateOutlet } from '@angular/common';
-import { ChangeDetectionStrategy, Component, Directive, ElementRef, Input, TemplateRef, computed, contentChild, contentChildren, inject, input, output, viewChild, viewChildren } from '@angular/core';
+import { ChangeDetectionStrategy, Component, Directive, ElementRef, Input, TemplateRef, computed, contentChild, contentChildren, effect, inject, input, output, signal, viewChild, viewChildren } from '@angular/core';
 
 export type ColumnAlign = 'start' | 'center' | 'end';
 
@@ -359,6 +359,7 @@ export class CqColumnComponent<T> {
 export class DataGrid<T> {
   readonly rows = input<readonly T[]>([]);
   readonly rowKey = input.required<(row: T, index: number) => string | number>();
+  readonly idKey = input<NestedKeyOf<T> | null>(null);
   readonly columns = input<readonly ColumnDef<T>[]>([]);
   readonly estimatedRowHeightPx = input(48);
   readonly bufferPx = input(256);
@@ -367,6 +368,8 @@ export class DataGrid<T> {
   readonly rowClasses = input<(row: T) => string | readonly string[] | undefined>();
   readonly rowContextMenu = input<TemplateRef<RowContextMenuContext<T>> | null>(null);
   readonly selectedRowKey = input<string | number | null>(null);
+  readonly selectedId = input<string | number | null>(null);
+  readonly selectedIdChange = output<string | number | null>();
   readonly selectable = input(true);
   readonly rowSelected = output<RowContextMenuContext<T>>();
 
@@ -418,7 +421,78 @@ export class DataGrid<T> {
 
   readonly hasRows = computed(() => this.validatedRows().length > 0);
 
+  private readonly resolvedSelectedRowKey = computed<string | number | null>(() => {
+    const explicitKey = this.selectedRowKey();
+    if (explicitKey !== null && explicitKey !== undefined) {
+      return explicitKey;
+    }
+
+    const idKey = this.idKey();
+    const selectedId = this.selectedId();
+    if (!idKey || selectedId === null || selectedId === undefined) {
+      return null;
+    }
+
+    const rows = this.validatedRows();
+    for (let index = 0; index < rows.length; index += 1) {
+      const row = rows[index];
+      if (this.isKeyMatch(row, idKey, selectedId)) {
+        return this.rowKey()(row, index);
+      }
+    }
+
+    return null;
+  });
+
+  private readonly resolvedSelectedRowIndex = computed<number | null>(() => {
+    const rows = this.validatedRows();
+    const explicitKey = this.selectedRowKey();
+    if (explicitKey !== null && explicitKey !== undefined) {
+      const target = String(explicitKey);
+      for (let index = 0; index < rows.length; index += 1) {
+        if (String(this.rowKey()(rows[index], index)) === target) {
+          return index;
+        }
+      }
+      return null;
+    }
+
+    const idKey = this.idKey();
+    const selectedId = this.selectedId();
+    if (!idKey || selectedId === null || selectedId === undefined) {
+      return null;
+    }
+
+    for (let index = 0; index < rows.length; index += 1) {
+      if (this.isKeyMatch(rows[index], idKey, selectedId)) {
+        return index;
+      }
+    }
+
+    return null;
+  });
+
+  private readonly lastScrollKey = signal<string | number | null>(null);
+
   trackRow = (index: number, row: T) => this.rowKey()(row, index);
+
+  constructor() {
+    effect(() => {
+      if (!this.selectable()) {
+        return;
+      }
+      const key = this.resolvedSelectedRowKey();
+      const index = this.resolvedSelectedRowIndex();
+      if (key === null || index === null) {
+        return;
+      }
+      if (this.lastScrollKey() === key) {
+        return;
+      }
+      this.lastScrollKey.set(key);
+      this.scrollToIndex(index);
+    });
+  }
 
   scrollToIndex(index: number) {
     if (index < 0 || index >= this.validatedRows().length) {
@@ -485,7 +559,7 @@ export class DataGrid<T> {
     if (!this.selectable()) {
       return false;
     }
-    const selected = this.selectedRowKey();
+    const selected = this.resolvedSelectedRowKey();
     if (selected === null || selected === undefined) {
       return false;
     }
@@ -501,6 +575,14 @@ export class DataGrid<T> {
       return;
     }
     this.rowSelected.emit({ row, rowIndex });
+    const idKey = this.idKey();
+    if (idKey) {
+      const idValue = this.resolveValueByKey(row, idKey);
+      this.selectedIdChange.emit(typeof idValue === 'string' || typeof idValue === 'number' ? idValue : null);
+    } else {
+      const keyValue = this.rowKey()(row, rowIndex);
+      this.selectedIdChange.emit(keyValue ?? null);
+    }
   }
 
   private openContextMenuForRow(rowIndex: number) {
@@ -536,6 +618,29 @@ export class DataGrid<T> {
 
   rowContextMenuData(row: T, rowIndex: number): RowContextMenuContext<T> {
     return { row, rowIndex };
+  }
+
+  private resolveValueByKey(row: T, key: NestedKeyOf<T>): unknown {
+    if (!key) {
+      return null;
+    }
+    const parts = String(key).split('.');
+    let value: unknown = row as unknown;
+    for (const part of parts) {
+      if (value == null) {
+        return null;
+      }
+      value = (value as Record<string, unknown>)[part];
+    }
+    return value;
+  }
+
+  private isKeyMatch(row: T, key: NestedKeyOf<T>, expected: string | number): boolean {
+    const value = this.resolveValueByKey(row, key);
+    if (value === null || value === undefined) {
+      return false;
+    }
+    return String(value) === String(expected);
   }
 
   private focusRow(rowIndex: number) {

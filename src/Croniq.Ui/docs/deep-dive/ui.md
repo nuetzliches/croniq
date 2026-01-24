@@ -81,6 +81,24 @@ Croniq.Ui currently targets single-tenant deployments. The UI does not expose te
 
 Design tokens (ramps, typography, motion durations) and layout primitives are implemented in `src/styles.css` and `tailwind.config.js`. The current token catalog and guidance live in `docs/deep-dive/designs/angular-ui-theme.md`.
 
+## Route-bound Selection (Required)
+
+List/detail experiences must be deep-linkable and support cross-page navigation. Every page that
+selects a row (jobs, schedules, webhooks, executions, etc.) binds the selection to a query
+parameter and keeps it in sync with the UI.
+
+**Expected behavior:**
+
+- Selecting a row updates the query param (for example, `/jobs?jobKey=samples:logging-job`).
+- Loading a page with a query param pre-selects the matching row and scrolls it into view.
+- Cross-page links carry the selection param (e.g., from Jobs → Webhooks, preserve `jobKey`).
+
+**Implementation:**
+
+- Use `cq-data-grid` with `idKey`, `selectedId`, and `selectedIdChange`.
+- Read query params from `ActivatedRoute.queryParamMap` and update them via `Router.navigate`.
+- Keep selection in a signal and derive detail views from the selected id.
+
 ## Icons
 
 Croniq.Ui bundles a curated Material Design Icons (MDI) subset locally (no runtime icon fetch).

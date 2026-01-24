@@ -382,644 +382,653 @@ export class WebhooksPage {
     return remoteUrl ?? this.internalIngressUrl();
   });
 
-webhookRowClasses = (row: WebhookEndpointView) =>
-  row.status === 'active' ? undefined : ['opacity-80'];
+  webhookRowClasses = (row: WebhookEndpointView) =>
+    row.status === 'active' ? undefined : ['opacity-80'];
 
-selectRow(event: { row: WebhookEndpointView }): void {
-  const row = event.row;
-  if(!row) {
-    return;
-  }
+  selectRow(event: { row: WebhookEndpointView }): void {
+    const row = event.row;
+    if (!row) {
+      return;
+    }
     this.selectedRowKey.set(this.webhookRowKey(row, 0));
-}
-
-copyIngressUrl(target ?: 'internal' | 'remote'): void {
-  const url = target === 'internal'
-    ? this.internalIngressUrl()
-    : target === 'remote'
-      ? this.remoteIngressUrl()
-      : this.ingressUrl();
-  if(!url) {
-    return;
   }
-    if(!navigator.clipboard?.writeText) {
-  console.error('Clipboard API unavailable for webhook ingress URL copy.');
-  return;
-}
-navigator.clipboard.writeText(url).catch((error: unknown) => {
-  console.error('Unable to copy webhook ingress URL', error);
-});
+
+  copyIngressUrl(target?: 'internal' | 'remote'): void {
+    const url = target === 'internal'
+      ? this.internalIngressUrl()
+      : target === 'remote'
+        ? this.remoteIngressUrl()
+        : this.ingressUrl();
+    if (!url) {
+      return;
+    }
+    if (!navigator.clipboard?.writeText) {
+      console.error('Clipboard API unavailable for webhook ingress URL copy.');
+      return;
+    }
+    navigator.clipboard.writeText(url).catch((error: unknown) => {
+      console.error('Unable to copy webhook ingress URL', error);
+    });
   }
 
   readonly selectedIpRulesEndpoint = signal<WebhookEndpointView | null>(null);
 
   private createDialogData(endpoint: UpsertWebhookEndpointRequest | null): WebhookDialogData {
-  return {
-    endpoint,
-    capabilities: this.store.capabilities(),
-  };
-}
-
-refresh(): void {
-  const tenantId = this.tenantContext.tenantId();
-  const environment = this.tenantContext.environment();
-  if(tenantId) {
-    void this.store.refreshEndpoints({ tenantId, environment });
+    return {
+      endpoint,
+      capabilities: this.store.capabilities(),
+    };
   }
-}
 
-refreshRemoteHealth(): void {
-  this.store.refreshRemoteHealth();
-}
-
-  private resolveIngressUrlFromBase(baseUrl: string | null): string | null {
-  const endpoint = this.selectedEndpoint();
-  const tenantId = resolveNonEmptyString(this.tenantContext.tenantId());
-  if (!endpoint || !tenantId) {
-    return null;
-  }
-  const environment = resolveNonEmptyString(endpoint.environment)
-    ?? resolveNonEmptyString(this.tenantContext.environment());
-  const normalizedBase = resolveNonEmptyString(baseUrl);
-  if (!environment || !normalizedBase) {
-    return null;
-  }
-  return buildIngressUrl(normalizedBase, tenantId, environment, endpoint.hookKey);
-}
-
-openWebhookDialog(endpoint ?: WebhookEndpointView): void {
-  if(this.writePermissionDenied()) {
-  return;
-}
-const data: UpsertWebhookEndpointRequest | null = endpoint
-  ? {
-    hookKey: endpoint.hookKey,
-    jobKey: endpoint.jobKey,
-    enabled: endpoint.status === 'active',
-    requireSignature: endpoint.requireSignature,
-    allowUnsigned: !endpoint.requireSignature,
-    requestsPerMinute: endpoint.requestsPerMinute ?? null,
-    metadata: {},
-  }
-  : null;
-
-const ref = this.dialog.open<UpsertWebhookEndpointRequest>(WebhookDialogComponent, {
-  data: this.createDialogData(data),
-  width: '500px',
-  panelClass: 'bg-transparent',
-  restoreFocus: true,
-});
-
-ref.closed.subscribe((result) => {
-  if (result) {
+  refresh(): void {
     const tenantId = this.tenantContext.tenantId();
     const environment = this.tenantContext.environment();
     if (tenantId) {
-      this.store.upsertEndpoint(
-        {
-          tenantId,
-          environment,
-        },
-        result,
-      );
+      void this.store.refreshEndpoints({ tenantId, environment });
     }
   }
-});
+
+  refreshRemoteHealth(): void {
+    this.store.refreshRemoteHealth();
   }
 
-openIpRulesDialog(endpoint: WebhookEndpointView): void {
-  if(this.writePermissionDenied()) {
-  return;
-}
-this.selectedIpRulesEndpoint.set(endpoint);
-this.dialog.open(WebhookIpRulesDialogComponent, {
-  data: { endpoint },
-  width: '560px',
-  panelClass: 'bg-transparent',
-  restoreFocus: true,
-}).closed.subscribe(() => this.selectedIpRulesEndpoint.set(null));
-  }
-
-ipWhitelistLabel(endpoint: WebhookEndpointView): string {
-  const count = endpoint.ipRuleCount;
-  if (count === null || count === undefined) {
-    return 'IP Whitelist: Unavailable';
-  }
-  if (count === 0) {
-    return 'IP Whitelist: None';
-  }
-  return `IP Whitelist: ${count} rule${count === 1 ? '' : 's'}`;
-}
-
-statusLabel(status: WebhookEndpointView['status']): string {
-  if (status === 'active') {
-    return 'Active';
-  }
-  if (status === 'degraded') {
-    return 'Degraded';
-  }
-  return 'Paused';
-}
-
-requestsPerMinuteLabel(endpoint: WebhookEndpointView): string {
-  return typeof endpoint.requestsPerMinute === 'number'
-    ? String(endpoint.requestsPerMinute)
-    : 'Default';
-}
-
-isEndpointPaused(endpoint: WebhookEndpointView): boolean {
-  const current = this.endpoints().find((entry) =>
-    entry.hookKey === endpoint.hookKey
-    && entry.environment === endpoint.environment,
-  );
-  const status = current?.status ?? endpoint.status;
-  return status === 'paused';
-}
-
-resetFilters(): void {
-  this.filterModel.set(createDefaultFilters());
-  this.selectedHookKeys.set([]);
-  this.selectedJobKeys.set([]);
-  this.hookSearch.set('');
-  this.jobSearch.set('');
-}
-
-setActivityLiveUpdates(enabled: boolean): void {
-  this.store.setActivityLiveUpdatesEnabled(enabled);
-}
-
-isDeadLetterItem(item: WebhookTimelineItemView): boolean {
-  return item.kind === 'deadLetter' && typeof item.deadLetterId === 'string';
-}
-
-activityStatusLabel(status: WebhookTimelineItemView['status']): string {
-  if (status === 'success') {
-    return 'Success';
-  }
-  if (status === 'warning') {
-    return 'Warning';
-  }
-  if (status === 'failed') {
-    return 'Failed';
-  }
-  if (status === 'pending') {
-    return 'Pending';
-  }
-  return 'Leased';
-}
-
-activityOutcomeLabel(item: WebhookTimelineItemView): string {
-  if (item.kind === 'deadLetter') {
-    return 'Dead lettered';
-  }
-  if (item.status === 'success') {
-    return 'Delivered';
-  }
-  if (item.status === 'warning') {
-    return 'Delivered with warning';
-  }
-  if (item.status === 'failed') {
-    return 'Failed delivery';
-  }
-  if (item.status === 'pending') {
-    return 'Pending delivery';
-  }
-  return 'Leased for delivery';
-}
-
-activityMetadataLabel(item: WebhookTimelineItemView): string {
-  const parts: string[] = [];
-  if (item.environment) {
-    parts.push(`Env ${item.environment}`);
-  }
-  if (item.source) {
-    parts.push(`Source ${item.source}`);
-  }
-  if (item.endpointStatus) {
-    parts.push(`Endpoint ${item.endpointStatus}`);
-  }
-  return parts.join(' · ');
-}
-
-replayDeadLetterItem(item: WebhookTimelineItemView): void {
-  if(this.writePermissionDenied() || item.kind !== 'deadLetter') {
-  return;
-}
-const deadLetterId = Number(item.deadLetterId);
-if (!Number.isFinite(deadLetterId)) {
-  return;
-}
-this.dialog.open<boolean>(CqConfirmDialogComponent, {
-  data: {
-    title: 'Replay dead letter',
-    message: `Replay dead letter ${item.deadLetterId}?`,
-    confirmLabel: 'Replay',
-  } satisfies CqConfirmDialogData,
-  width: '420px',
-  panelClass: 'bg-transparent',
-}).closed.pipe(filter(Boolean)).subscribe(() => {
-  const tenantId = this.tenantContext.tenantId();
-  const environment = this.tenantContext.environment();
-  if (!tenantId) {
-    return;
-  }
-  this.store.replayDeadLetter({ tenantId, environment, deadLetterId });
-});
-  }
-
-retryActivity(): void {
-  this.store.refreshActivity();
-}
-
-setHookSearch(value: string): void {
-  this.hookSearch.set(value);
-}
-
-setJobSearch(value: string): void {
-  this.jobSearch.set(value);
-}
-
-isHookSelected(hookKey: string): boolean {
-  return this.selectedHookKeys().includes(hookKey);
-}
-
-isJobSelected(jobKey: string): boolean {
-  return this.selectedJobKeys().includes(jobKey);
-}
-
-toggleHookSelection(hookKey: string, checked: boolean): void {
-  this.selectedHookKeys.update((current) =>
-    checked
-      ? Array.from(new Set([...current, hookKey]))
-      : current.filter((entry) => entry !== hookKey),
-  );
-}
-
-toggleJobSelection(jobKey: string, checked: boolean): void {
-  this.selectedJobKeys.update((current) =>
-    checked
-      ? Array.from(new Set([...current, jobKey]))
-      : current.filter((entry) => entry !== jobKey),
-  );
-}
-
-  readonly filteredDeadLetters = computed(() => {
-  const selectedHooks = new Set(this.selectedHookKeys());
-  const selectedJobs = new Set(this.selectedJobKeys());
-  return this.deadLetters().filter((entry) => {
-    if (selectedHooks.size > 0 && !selectedHooks.has(entry.hookKey)) {
-      return false;
+  private resolveIngressUrlFromBase(baseUrl: string | null): string | null {
+    const endpoint = this.selectedEndpoint();
+    const tenantId = resolveNonEmptyString(this.tenantContext.tenantId());
+    if (!endpoint || !tenantId) {
+      return null;
     }
-    if (selectedJobs.size > 0 && entry.jobKey && !selectedJobs.has(entry.jobKey)) {
-      return false;
+    const environment = resolveNonEmptyString(endpoint.environment)
+      ?? resolveNonEmptyString(this.tenantContext.environment());
+    const normalizedBase = resolveNonEmptyString(baseUrl);
+    if (!environment || !normalizedBase) {
+      return null;
     }
-    if (selectedJobs.size > 0 && !entry.jobKey) {
-      return false;
-    }
-    return true;
-  });
-});
+    return buildIngressUrl(normalizedBase, tenantId, environment, endpoint.hookKey);
+  }
 
-  readonly fallbackTimelineItems = computed<ReadonlyArray<WebhookTimelineItemView>>(() => {
-  const filters = this.filterModel();
-  const restrictToEndpointSet = filters.status !== 'all' || filters.environment !== ALL_ENVIRONMENTS;
-  const endpoints = this.filteredEndpoints();
-  const deadLetters = this.filteredDeadLetters();
-
-  const endpointKeys = new Set(endpoints.map((endpoint) => `${endpoint.hookKey}|${endpoint.jobKey}`));
-  const timeline: WebhookTimelineItemView[] = [];
-
-  endpoints.forEach((endpoint) => {
-    if (!endpoint.lastDeliveryAt) {
+  openWebhookDialog(endpoint?: WebhookEndpointView): void {
+    if (this.writePermissionDenied()) {
       return;
     }
-    timeline.push({
-      id: `delivery:${this.webhookRowKey(endpoint, 0)}`,
-      kind: 'delivery',
-      status: endpoint.status === 'degraded' ? 'warning' : 'success',
-      label: 'Last delivery',
-      occurredAt: endpoint.lastDeliveryAt,
-      hookKey: endpoint.hookKey,
-      jobKey: endpoint.jobKey,
-      environment: endpoint.environment,
-      endpointStatus: endpoint.status,
-      reason: endpoint.status === 'degraded' ? 'Endpoint reported degraded status.' : undefined,
-      endpointRowKey: this.webhookRowKey(endpoint, 0),
-      source: 'ingress',
+    const data: UpsertWebhookEndpointRequest | null = endpoint
+      ? {
+        hookKey: endpoint.hookKey,
+        jobKey: endpoint.jobKey,
+        enabled: endpoint.status === 'active',
+        requireSignature: endpoint.requireSignature,
+        allowUnsigned: !endpoint.requireSignature,
+        requestsPerMinute: endpoint.requestsPerMinute ?? null,
+        metadata: {},
+      }
+      : null;
+
+    const ref = this.dialog.open<UpsertWebhookEndpointRequest>(WebhookDialogComponent, {
+      data: this.createDialogData(data),
+      width: '500px',
+      panelClass: 'bg-transparent',
+      restoreFocus: true,
+    });
+
+    ref.closed.subscribe((result) => {
+      if (result) {
+        const tenantId = this.tenantContext.tenantId();
+        const environment = this.tenantContext.environment();
+        if (tenantId) {
+          this.store.upsertEndpoint(
+            {
+              tenantId,
+              environment,
+            },
+            result,
+          );
+        }
+      }
+    });
+  }
+
+  openIpRulesDialog(endpoint: WebhookEndpointView): void {
+    if (this.writePermissionDenied()) {
+      return;
+    }
+    this.selectedIpRulesEndpoint.set(endpoint);
+    this.dialog.open(WebhookIpRulesDialogComponent, {
+      data: { endpoint },
+      width: '560px',
+      panelClass: 'bg-transparent',
+      restoreFocus: true,
+    }).closed.subscribe(() => this.selectedIpRulesEndpoint.set(null));
+  }
+
+  ipWhitelistLabel(endpoint: WebhookEndpointView): string {
+    const count = endpoint.ipRuleCount;
+    if (count === null || count === undefined) {
+      return 'IP Whitelist: Unavailable';
+    }
+    if (count === 0) {
+      return 'IP Whitelist: None';
+    }
+    return `IP Whitelist: ${count} rule${count === 1 ? '' : 's'}`;
+  }
+
+  statusLabel(status: WebhookEndpointView['status']): string {
+    if (status === 'active') {
+      return 'Active';
+    }
+    if (status === 'degraded') {
+      return 'Degraded';
+    }
+    return 'Paused';
+  }
+
+  requestsPerMinuteLabel(endpoint: WebhookEndpointView): string {
+    return typeof endpoint.requestsPerMinute === 'number'
+      ? String(endpoint.requestsPerMinute)
+      : 'Default';
+  }
+
+  isEndpointPaused(endpoint: WebhookEndpointView): boolean {
+    const current = this.endpoints().find((entry) =>
+      entry.hookKey === endpoint.hookKey
+      && entry.environment === endpoint.environment,
+    );
+    const status = current?.status ?? endpoint.status;
+    return status === 'paused';
+  }
+
+  resetFilters(): void {
+    this.filterModel.set(createDefaultFilters());
+    this.selectedHookKeys.set([]);
+    this.selectedJobKeys.set([]);
+    this.hookSearch.set('');
+    this.jobSearch.set('');
+  }
+
+  setActivityLiveUpdates(enabled: boolean): void {
+    this.store.setActivityLiveUpdatesEnabled(enabled);
+  }
+
+  setActivityZoomRange(event: unknown): void {
+    const range = resolveZoomRangeFromEvent(event, this.activityChartRange());
+    this.activityZoomRange.set(range);
+  }
+
+  isDeadLetterItem(item: WebhookTimelineItemView): boolean {
+    return item.kind === 'deadLetter' && typeof item.deadLetterId === 'string';
+  }
+
+  activityStatusLabel(status: WebhookTimelineItemView['status']): string {
+    if (status === 'success') {
+      return 'Success';
+    }
+    if (status === 'warning') {
+      return 'Warning';
+    }
+    if (status === 'failed') {
+      return 'Failed';
+    }
+    if (status === 'pending') {
+      return 'Pending';
+    }
+    return 'Leased';
+  }
+
+  activityOutcomeLabel(item: WebhookTimelineItemView): string {
+    if (item.kind === 'deadLetter') {
+      return 'Dead lettered';
+    }
+    if (item.status === 'success') {
+      return 'Delivered';
+    }
+    if (item.status === 'warning') {
+      return 'Delivered with warning';
+    }
+    if (item.status === 'failed') {
+      return 'Failed delivery';
+    }
+    if (item.status === 'pending') {
+      return 'Pending delivery';
+    }
+    return 'Leased for delivery';
+  }
+
+  activityMetadataLabel(item: WebhookTimelineItemView): string {
+    const parts: string[] = [];
+    if (item.environment) {
+      parts.push(`Env ${item.environment}`);
+    }
+    if (item.source) {
+      parts.push(`Source ${item.source}`);
+    }
+    if (item.endpointStatus) {
+      parts.push(`Endpoint ${item.endpointStatus}`);
+    }
+    return parts.join(' · ');
+  }
+
+  replayDeadLetterItem(item: WebhookTimelineItemView): void {
+    if (this.writePermissionDenied() || item.kind !== 'deadLetter') {
+      return;
+    }
+    const deadLetterId = Number(item.deadLetterId);
+    if (!Number.isFinite(deadLetterId)) {
+      return;
+    }
+    this.dialog.open<boolean>(CqConfirmDialogComponent, {
+      data: {
+        title: 'Replay dead letter',
+        message: `Replay dead letter ${item.deadLetterId}?`,
+        confirmLabel: 'Replay',
+      } satisfies CqConfirmDialogData,
+      width: '420px',
+      panelClass: 'bg-transparent',
+    }).closed.pipe(filter(Boolean)).subscribe(() => {
+      const tenantId = this.tenantContext.tenantId();
+      const environment = this.tenantContext.environment();
+      if (!tenantId) {
+        return;
+      }
+      this.store.replayDeadLetter({ tenantId, environment, deadLetterId });
+    });
+  }
+
+  retryActivity(): void {
+    this.store.refreshActivity();
+  }
+
+  setHookSearch(value: string): void {
+    this.hookSearch.set(value);
+  }
+
+  setJobSearch(value: string): void {
+    this.jobSearch.set(value);
+  }
+
+  isHookSelected(hookKey: string): boolean {
+    return this.selectedHookKeys().includes(hookKey);
+  }
+
+  isJobSelected(jobKey: string): boolean {
+    return this.selectedJobKeys().includes(jobKey);
+  }
+
+  toggleHookSelection(hookKey: string, checked: boolean): void {
+    this.selectedHookKeys.update((current) =>
+      checked
+        ? Array.from(new Set([...current, hookKey]))
+        : current.filter((entry) => entry !== hookKey),
+    );
+  }
+
+  toggleJobSelection(jobKey: string, checked: boolean): void {
+    this.selectedJobKeys.update((current) =>
+      checked
+        ? Array.from(new Set([...current, jobKey]))
+        : current.filter((entry) => entry !== jobKey),
+    );
+  }
+
+  readonly filteredDeadLetters = computed(() => {
+    const selectedHooks = new Set(this.selectedHookKeys());
+    const selectedJobs = new Set(this.selectedJobKeys());
+    return this.deadLetters().filter((entry) => {
+      if (selectedHooks.size > 0 && !selectedHooks.has(entry.hookKey)) {
+        return false;
+      }
+      if (selectedJobs.size > 0 && entry.jobKey && !selectedJobs.has(entry.jobKey)) {
+        return false;
+      }
+      if (selectedJobs.size > 0 && !entry.jobKey) {
+        return false;
+      }
+      return true;
     });
   });
 
-  deadLetters
-    .filter((entry) => {
-      if (endpointKeys.size === 0) {
-        return !restrictToEndpointSet;
+  readonly fallbackTimelineItems = computed<ReadonlyArray<WebhookTimelineItemView>>(() => {
+    const filters = this.filterModel();
+    const restrictToEndpointSet = filters.status !== 'all' || filters.environment !== ALL_ENVIRONMENTS;
+    const endpoints = this.filteredEndpoints();
+    const deadLetters = this.filteredDeadLetters();
+
+    const endpointKeys = new Set(endpoints.map((endpoint) => `${endpoint.hookKey}|${endpoint.jobKey}`));
+    const timeline: WebhookTimelineItemView[] = [];
+
+    endpoints.forEach((endpoint) => {
+      if (!endpoint.lastDeliveryAt) {
+        return;
       }
-      if (entry.jobKey) {
-        return endpointKeys.has(`${entry.hookKey}|${entry.jobKey}`);
-      }
-      return endpoints.some((endpoint) => endpoint.hookKey === entry.hookKey);
-    })
-    .forEach((entry) => {
       timeline.push({
-        id: `deadletter:${entry.id}`,
-        kind: 'deadLetter',
-        status: 'failed',
-        label: 'Dead letter',
-        occurredAt: entry.occurredAt,
-        hookKey: entry.hookKey,
-        jobKey: entry.jobKey,
-        reason: entry.reason ?? 'No reason provided.',
-        deadLetterId: entry.id,
+        id: `delivery:${this.webhookRowKey(endpoint, 0)}`,
+        kind: 'delivery',
+        status: endpoint.status === 'degraded' ? 'warning' : 'success',
+        label: 'Last delivery',
+        occurredAt: endpoint.lastDeliveryAt,
+        hookKey: endpoint.hookKey,
+        jobKey: endpoint.jobKey,
+        environment: endpoint.environment,
+        endpointStatus: endpoint.status,
+        reason: endpoint.status === 'degraded' ? 'Endpoint reported degraded status.' : undefined,
+        endpointRowKey: this.webhookRowKey(endpoint, 0),
         source: 'ingress',
       });
     });
 
-  return timeline.sort((a, b) => Date.parse(b.occurredAt) - Date.parse(a.occurredAt));
-});
+    deadLetters
+      .filter((entry) => {
+        if (endpointKeys.size === 0) {
+          return !restrictToEndpointSet;
+        }
+        if (entry.jobKey) {
+          return endpointKeys.has(`${entry.hookKey}|${entry.jobKey}`);
+        }
+        return endpoints.some((endpoint) => endpoint.hookKey === entry.hookKey);
+      })
+      .forEach((entry) => {
+        timeline.push({
+          id: `deadletter:${entry.id}`,
+          kind: 'deadLetter',
+          status: 'failed',
+          label: 'Dead letter',
+          occurredAt: entry.occurredAt,
+          hookKey: entry.hookKey,
+          jobKey: entry.jobKey,
+          reason: entry.reason ?? 'No reason provided.',
+          deadLetterId: entry.id,
+          source: 'ingress',
+        });
+      });
+
+    return timeline.sort((a, b) => Date.parse(b.occurredAt) - Date.parse(a.occurredAt));
+  });
 
   readonly timelineItems = computed<ReadonlyArray<WebhookTimelineItemView>>(() => {
-  const items = this.activityBackendReady()
-    ? this.activityTimeline()
-    : this.fallbackTimelineItems();
-  const range = resolveActivityRangeMs();
-  return filterTimelineItemsByRange(items, range);
-});
+    const items = this.activityBackendReady()
+      ? this.activityTimeline()
+      : this.fallbackTimelineItems();
+    const range = resolveActivityRangeMs();
+    return filterTimelineItemsByRange(items, range);
+  });
+
+  readonly activityZoomRange = signal<{ fromMs: number; toMs: number } | null>(null);
+  readonly activityChartRange = computed(() => resolveActivityRangeMs(this.activityZoomRange()));
 
   readonly activityBuckets = computed<ReadonlyArray<ActivityBucket>>(() => {
-  const items = this.timelineItems();
-  if (items.length === 0) {
-    return [];
-  }
-  const range = resolveActivityRangeMs();
-  const bucketMs = resolveTimelineBucketMs(WEBHOOK_ACTIVITY_MAX_RANGE_MS);
-  return buildActivityBuckets(
-    items,
-    new Date(range.fromMs).toISOString(),
-    new Date(range.toMs).toISOString(),
-    bucketMs,
-  );
-});
+    const items = this.timelineItems();
+    if (items.length === 0) {
+      return [];
+    }
+    const range = this.activityChartRange();
+    const bucketMs = resolveTimelineBucketMs(range.toMs - range.fromMs);
+    return buildActivityBuckets(
+      items,
+      new Date(range.fromMs).toISOString(),
+      new Date(range.toMs).toISOString(),
+      bucketMs,
+    );
+  });
 
   readonly activityTotalEntries = computed(() => this.timelineItems().length);
   readonly activityChartSummary = computed(() =>
-  buildActivityChartSummary(this.timelineItems(), this.activityBuckets()),
-);
+    buildActivityChartSummary(this.timelineItems(), this.activityBuckets(), this.activityChartRange()),
+  );
   readonly activityDetailItems = computed<ReadonlyArray<WebhookTimelineItemView>>(() =>
-  buildActivityDetailItems(this.timelineItems()),
-);
+    buildActivityDetailItems(this.timelineItems()),
+  );
   readonly activityDetailLabel = computed(() =>
-  buildActivityDetailLabel(),
-);
+    buildActivityDetailLabel(),
+  );
   readonly activityDetailHint = computed(() =>
-  'Zoom the chart to focus the timeline.',
-);
+    'Zoom the chart to focus the timeline.',
+  );
   readonly activityDetailEmptyLabel = computed(() =>
-  'No activity items yet.',
-);
+    'No activity items yet.',
+  );
 
   readonly activityTimeSeriesChartOptions = computed<EChartsCoreOption | null>(() =>
-  buildActivityTimeSeriesOptions(
-    this.timelineItems(),
-    this.activityBuckets(),
-  ),
-);
+    buildActivityTimeSeriesOptions(
+      this.timelineItems(),
+      this.activityBuckets(),
+      this.activityChartRange(),
+    ),
+  );
 
-constructor() {
-  effect((onCleanup) => {
-    const template = this.panelTemplate();
-    const collapsedTemplate = this.collapsedTemplate();
-    if (!template) {
+  constructor() {
+    effect((onCleanup) => {
+      const template = this.panelTemplate();
+      const collapsedTemplate = this.collapsedTemplate();
+      if (!template) {
+        return;
+      }
+      this.shellPanel.setPanel(
+        template,
+        'Filters & settings',
+        'Refine the endpoints list.',
+        collapsedTemplate ?? null,
+      );
+      onCleanup(() => this.shellPanel.clearPanel(template));
+    });
+
+    effect(() => {
+      const endpoint = this.selectedEndpoint();
+      if (!endpoint) {
+        this.invokePayload.set('');
+        this.invokePayloadTouched.set(false);
+        return;
+      }
+      if (this.invokePayloadTouched()) {
+        return;
+      }
+      this.invokePayload.set(createDefaultInvokePayload(endpoint));
+    });
+
+    effect(() => {
+      // Keep the store activity stream in sync with the active filters.
+      this.store.setActivityQuery(this.activityQuery());
+    });
+  }
+
+  setInvokePayload(value: string): void {
+    this.invokePayloadTouched.set(true);
+    this.invokePayload.set(value);
+  }
+
+  copyInvokePayload(): void {
+    const payload = this.invokePayload();
+    if (!payload || !navigator.clipboard?.writeText) {
       return;
     }
-    this.shellPanel.setPanel(
-      template,
-      'Filters & settings',
-      'Refine the endpoints list.',
-      collapsedTemplate ?? null,
-    );
-    onCleanup(() => this.shellPanel.clearPanel(template));
-  });
+    navigator.clipboard.writeText(payload).catch((error: unknown) => {
+      console.error('Unable to copy webhook payload', error);
+    });
+  }
 
-  effect(() => {
-    const endpoint = this.selectedEndpoint();
-    if (!endpoint) {
-      this.invokePayload.set('');
-      this.invokePayloadTouched.set(false);
+  copyCurlSnippet(): void {
+    const url = this.ingressUrl();
+    const payload = this.invokePayload();
+    if (!url || !navigator.clipboard?.writeText) {
       return;
     }
-    if (this.invokePayloadTouched()) {
+    const escapedPayload = escapeSingleQuotes(payload || '{}');
+    const curl = `curl -X POST "${url}" -H "Content-Type: application/json" -d '${escapedPayload}'`;
+    navigator.clipboard.writeText(curl).catch((error: unknown) => {
+      console.error('Unable to copy cURL snippet', error);
+    });
+  }
+
+  previousPage(): void {
+    if (this.isFirstPage()) {
       return;
     }
-    this.invokePayload.set(createDefaultInvokePayload(endpoint));
-  });
-
-  effect(() => {
-    // Keep the store activity stream in sync with the active filters.
-    this.store.setActivityQuery(this.activityQuery());
-  });
-}
-
-setInvokePayload(value: string): void {
-  this.invokePayloadTouched.set(true);
-  this.invokePayload.set(value);
-}
-
-copyInvokePayload(): void {
-  const payload = this.invokePayload();
-  if(!payload || !navigator.clipboard?.writeText) {
-  return;
-}
-navigator.clipboard.writeText(payload).catch((error: unknown) => {
-  console.error('Unable to copy webhook payload', error);
-});
+    this.pageIndex.update((value) => Math.max(0, value - 1));
   }
 
-copyCurlSnippet(): void {
-  const url = this.ingressUrl();
-  const payload = this.invokePayload();
-  if(!url || !navigator.clipboard?.writeText) {
-  return;
-}
-const escapedPayload = escapeSingleQuotes(payload || '{}');
-const curl = `curl -X POST "${url}" -H "Content-Type: application/json" -d '${escapedPayload}'`;
-navigator.clipboard.writeText(curl).catch((error: unknown) => {
-  console.error('Unable to copy cURL snippet', error);
-});
+  nextPage(): void {
+    if (this.isLastPage()) {
+      return;
+    }
+    this.pageIndex.update((value) => value + 1);
   }
 
-previousPage(): void {
-  if(this.isFirstPage()) {
-  return;
-}
-this.pageIndex.update((value) => Math.max(0, value - 1));
+  dismissRotatedSecret(): void {
+    this.store.clearRotatedSecret();
   }
 
-nextPage(): void {
-  if(this.isLastPage()) {
-  return;
-}
-this.pageIndex.update((value) => value + 1);
+  copyRotatedSecret(): void {
+    const secret = this.rotatedSecret();
+    if (!secret) {
+      return;
+    }
+    if (!navigator.clipboard?.writeText) {
+      console.error('Clipboard API unavailable for webhook secret copy.');
+      return;
+    }
+    navigator.clipboard.writeText(secret).catch((error: unknown) => {
+      console.error('Unable to copy webhook secret', error);
+    });
   }
 
-dismissRotatedSecret(): void {
-  this.store.clearRotatedSecret();
-}
-
-copyRotatedSecret(): void {
-  const secret = this.rotatedSecret();
-  if(!secret) {
-    return;
+  rotateSecret(endpoint: WebhookEndpointView): void {
+    if (this.writePermissionDenied()) {
+      return;
+    }
+    this.dialog
+      .open<RotateWebhookSecretRequest>(WebhookRotateSecretDialogComponent, {
+        data: { hookKey: endpoint.hookKey },
+        width: '420px',
+        panelClass: 'bg-transparent',
+      })
+      .closed.pipe(filter((payload): payload is RotateWebhookSecretRequest => !!payload))
+      .subscribe((payload) => {
+        const tenantId = this.tenantContext.tenantId();
+        const environment = this.tenantContext.environment();
+        if (!tenantId) {
+          return;
+        }
+        this.store.rotateSecret(
+          {
+            tenantId,
+            environment,
+            hookKey: endpoint.hookKey,
+          },
+          payload,
+        );
+      });
   }
-    if(!navigator.clipboard?.writeText) {
-  console.error('Clipboard API unavailable for webhook secret copy.');
-  return;
-}
-navigator.clipboard.writeText(secret).catch((error: unknown) => {
-  console.error('Unable to copy webhook secret', error);
-});
+
+  deleteEndpoint(endpoint: WebhookEndpointView): void {
+    if (this.writePermissionDenied()) {
+      return;
+    }
+    this.dialog.open<boolean>(CqConfirmDialogComponent, {
+      data: {
+        title: 'Delete webhook',
+        message: `Delete webhook ${endpoint.hookKey}?`,
+        confirmLabel: 'Delete',
+        variant: 'danger',
+      } satisfies CqConfirmDialogData,
+      width: '420px',
+      panelClass: 'bg-transparent',
+      restoreFocus: true,
+    }).closed.pipe(filter(Boolean)).subscribe(() => {
+      const tenantId = this.tenantContext.tenantId();
+      const environment = this.tenantContext.environment();
+      if (!tenantId) {
+        return;
+      }
+      this.store.deleteEndpoint({
+        tenantId,
+        environment,
+        hookKey: endpoint.hookKey,
+      });
+    });
   }
 
-rotateSecret(endpoint: WebhookEndpointView): void {
-  if(this.writePermissionDenied()) {
-  return;
-}
-this.dialog
-  .open<RotateWebhookSecretRequest>(WebhookRotateSecretDialogComponent, {
-    data: { hookKey: endpoint.hookKey },
-    width: '420px',
-    panelClass: 'bg-transparent',
-  })
-  .closed.pipe(filter((payload): payload is RotateWebhookSecretRequest => !!payload))
-  .subscribe((payload) => {
+  enableEndpoint(endpoint: WebhookEndpointView): void {
+    if (this.writePermissionDenied()) {
+      return;
+    }
     const tenantId = this.tenantContext.tenantId();
     const environment = this.tenantContext.environment();
     if (!tenantId) {
       return;
     }
-    this.store.rotateSecret(
-      {
-        tenantId,
-        environment,
-        hookKey: endpoint.hookKey,
-      },
-      payload,
-    );
-  });
+    this.store.setEndpointEnabled({ tenantId, environment }, endpoint, true);
   }
 
-deleteEndpoint(endpoint: WebhookEndpointView): void {
-  if(this.writePermissionDenied()) {
-  return;
-}
-this.dialog.open<boolean>(CqConfirmDialogComponent, {
-  data: {
-    title: 'Delete webhook',
-    message: `Delete webhook ${endpoint.hookKey}?`,
-    confirmLabel: 'Delete',
-    variant: 'danger',
-  } satisfies CqConfirmDialogData,
-  width: '420px',
-  panelClass: 'bg-transparent',
-  restoreFocus: true,
-}).closed.pipe(filter(Boolean)).subscribe(() => {
-  const tenantId = this.tenantContext.tenantId();
-  const environment = this.tenantContext.environment();
-  if (!tenantId) {
-    return;
-  }
-  this.store.deleteEndpoint({
-    tenantId,
-    environment,
-    hookKey: endpoint.hookKey,
-  });
-});
+  disableEndpoint(endpoint: WebhookEndpointView): void {
+    if (this.writePermissionDenied()) {
+      return;
+    }
+    this.dialog.open<boolean>(CqConfirmDialogComponent, {
+      data: {
+        title: 'Disable webhook',
+        message: `Disable webhook ${endpoint.hookKey}?`,
+        confirmLabel: 'Disable',
+        variant: 'danger',
+      } satisfies CqConfirmDialogData,
+      width: '420px',
+      panelClass: 'bg-transparent',
+      restoreFocus: true,
+    }).closed.pipe(filter(Boolean)).subscribe(() => {
+      const tenantId = this.tenantContext.tenantId();
+      const environment = this.tenantContext.environment();
+      if (!tenantId) {
+        return;
+      }
+      this.store.setEndpointEnabled({ tenantId, environment }, endpoint, false);
+    });
   }
 
-enableEndpoint(endpoint: WebhookEndpointView): void {
-  if(this.writePermissionDenied()) {
-  return;
-}
-const tenantId = this.tenantContext.tenantId();
-const environment = this.tenantContext.environment();
-if (!tenantId) {
-  return;
-}
-this.store.setEndpointEnabled({ tenantId, environment }, endpoint, true);
+  replayDeadLetter(entry: WebhookDeadLetterView): void {
+    if (this.writePermissionDenied()) {
+      return;
+    }
+    const deadLetterId = Number(entry.id);
+    if (!Number.isFinite(deadLetterId)) {
+      return;
+    }
+    this.dialog.open<boolean>(CqConfirmDialogComponent, {
+      data: {
+        title: 'Replay dead letter',
+        message: `Replay dead letter ${entry.id}?`,
+        confirmLabel: 'Replay',
+      } satisfies CqConfirmDialogData,
+      width: '420px',
+      panelClass: 'bg-transparent',
+    }).closed.pipe(filter(Boolean)).subscribe(() => {
+      const tenantId = this.tenantContext.tenantId();
+      const environment = this.tenantContext.environment();
+      if (!tenantId) {
+        return;
+      }
+      this.store.replayDeadLetter({ tenantId, environment, deadLetterId });
+    });
   }
 
-disableEndpoint(endpoint: WebhookEndpointView): void {
-  if(this.writePermissionDenied()) {
-  return;
-}
-this.dialog.open<boolean>(CqConfirmDialogComponent, {
-  data: {
-    title: 'Disable webhook',
-    message: `Disable webhook ${endpoint.hookKey}?`,
-    confirmLabel: 'Disable',
-    variant: 'danger',
-  } satisfies CqConfirmDialogData,
-  width: '420px',
-  panelClass: 'bg-transparent',
-  restoreFocus: true,
-}).closed.pipe(filter(Boolean)).subscribe(() => {
-  const tenantId = this.tenantContext.tenantId();
-  const environment = this.tenantContext.environment();
-  if (!tenantId) {
-    return;
-  }
-  this.store.setEndpointEnabled({ tenantId, environment }, endpoint, false);
-});
+  invokeWebhook(): void {
+    if (this.writePermissionDenied() || this.invokeLoading()) {
+      return;
+    }
+    const endpoint = this.selectedEndpoint();
+    if (!endpoint) {
+      return;
+    }
+    if (endpoint.status === 'paused') {
+      this.invokeNotice.set('Webhook is disabled. Enable it before invoking.');
+      setTimeout(() => this.invokeNotice.set(null), 3500);
+      return;
+    }
+    this.store.invokeWebhook({ hookKey: endpoint.hookKey });
+    this.invokeNotice.set('Invocation requested.');
+    setTimeout(() => this.invokeNotice.set(null), 2500);
   }
 
-replayDeadLetter(entry: WebhookDeadLetterView): void {
-  if(this.writePermissionDenied()) {
-  return;
-}
-const deadLetterId = Number(entry.id);
-if (!Number.isFinite(deadLetterId)) {
-  return;
-}
-this.dialog.open<boolean>(CqConfirmDialogComponent, {
-  data: {
-    title: 'Replay dead letter',
-    message: `Replay dead letter ${entry.id}?`,
-    confirmLabel: 'Replay',
-  } satisfies CqConfirmDialogData,
-  width: '420px',
-  panelClass: 'bg-transparent',
-}).closed.pipe(filter(Boolean)).subscribe(() => {
-  const tenantId = this.tenantContext.tenantId();
-  const environment = this.tenantContext.environment();
-  if (!tenantId) {
-    return;
+  invokeWebhookFromHeader(event: MouseEvent): void {
+    event.preventDefault();
+    event.stopPropagation();
+    this.invokeWebhook();
   }
-  this.store.replayDeadLetter({ tenantId, environment, deadLetterId });
-});
-  }
-
-invokeWebhook(): void {
-  if(this.writePermissionDenied() || this.invokeLoading()) {
-  return;
-}
-const endpoint = this.selectedEndpoint();
-if (!endpoint) {
-  return;
-}
-if (endpoint.status === 'paused') {
-  this.invokeNotice.set('Webhook is disabled. Enable it before invoking.');
-  setTimeout(() => this.invokeNotice.set(null), 3500);
-  return;
-}
-this.store.invokeWebhook({ hookKey: endpoint.hookKey });
-this.invokeNotice.set('Invocation requested.');
-setTimeout(() => this.invokeNotice.set(null), 2500);
-  }
-
-invokeWebhookFromHeader(event: MouseEvent): void {
-  event.preventDefault();
-  event.stopPropagation();
-  this.invokeWebhook();
-}
 }
 
 function tryParseIsoToMs(value: string | null): number | null {
@@ -1030,12 +1039,126 @@ function tryParseIsoToMs(value: string | null): number | null {
   return Number.isFinite(ms) ? ms : null;
 }
 
-function resolveActivityRangeMs(): { fromMs: number; toMs: number } {
+function resolveActivityRangeMs(
+  zoomRange?: { fromMs: number; toMs: number } | null,
+): { fromMs: number; toMs: number } {
   const toMs = Date.now();
-  return {
+  const baseRange = {
     fromMs: Math.max(0, toMs - WEBHOOK_ACTIVITY_MAX_RANGE_MS),
     toMs,
   };
+  if (!zoomRange) {
+    return baseRange;
+  }
+  const fromMs = Math.min(Math.max(zoomRange.fromMs, baseRange.fromMs), baseRange.toMs);
+  const clampedToMs = Math.min(Math.max(zoomRange.toMs, baseRange.fromMs), baseRange.toMs);
+  if (!Number.isFinite(fromMs) || !Number.isFinite(clampedToMs)) {
+    return baseRange;
+  }
+  if (fromMs <= baseRange.fromMs && clampedToMs >= baseRange.toMs) {
+    return baseRange;
+  }
+  const safeFrom = Math.min(fromMs, clampedToMs);
+  const safeTo = Math.max(fromMs, clampedToMs);
+  return {
+    fromMs: safeFrom,
+    toMs: safeTo,
+  };
+}
+
+function resolveZoomRangeFromEvent(
+  event: unknown,
+  baseRange: { fromMs: number; toMs: number },
+): { fromMs: number; toMs: number } | null {
+  if (!event || typeof event !== 'object') {
+    return null;
+  }
+  const payload = event as {
+    start?: unknown;
+    end?: unknown;
+    startValue?: unknown;
+    endValue?: unknown;
+    batch?: Array<{ start?: unknown; end?: unknown; startValue?: unknown; endValue?: unknown }>;
+  };
+  const candidate = Array.isArray(payload.batch) && payload.batch.length > 0 ? payload.batch[0] : payload;
+  const startValue = candidate?.startValue;
+  const endValue = candidate?.endValue;
+  if (typeof startValue === 'number' && typeof endValue === 'number') {
+    if (isZoomValueInRange(startValue, endValue, baseRange)) {
+      return normalizeZoomRange(startValue, endValue, baseRange);
+    }
+  }
+  if (typeof startValue === 'string' && typeof endValue === 'string') {
+    const parsedStart = Date.parse(startValue);
+    const parsedEnd = Date.parse(endValue);
+    if (Number.isFinite(parsedStart) && Number.isFinite(parsedEnd)) {
+      if (isZoomValueInRange(parsedStart, parsedEnd, baseRange)) {
+        return normalizeZoomRange(parsedStart, parsedEnd, baseRange);
+      }
+    }
+  }
+  const startPercent = typeof candidate?.start === 'number' ? candidate.start : null;
+  const endPercent = typeof candidate?.end === 'number' ? candidate.end : null;
+  if (startPercent === null || endPercent === null) {
+    return null;
+  }
+  if (startPercent <= 0 && endPercent >= 100) {
+    return null;
+  }
+  const rangeMs = baseRange.toMs - baseRange.fromMs;
+  const startMs = baseRange.fromMs + (Math.max(0, startPercent) / 100) * rangeMs;
+  const endMs = baseRange.fromMs + (Math.min(100, endPercent) / 100) * rangeMs;
+  return normalizeZoomRange(startMs, endMs, baseRange);
+}
+
+function isZoomValueInRange(
+  startValue: number,
+  endValue: number,
+  baseRange: { fromMs: number; toMs: number },
+): boolean {
+  const rangeMs = baseRange.toMs - baseRange.fromMs;
+  const min = baseRange.fromMs - rangeMs;
+  const max = baseRange.toMs + rangeMs;
+  return startValue >= min && startValue <= max && endValue >= min && endValue <= max;
+}
+
+function normalizeZoomRange(
+  fromMs: number,
+  toMs: number,
+  baseRange: { fromMs: number; toMs: number },
+): { fromMs: number; toMs: number } {
+  const safeFrom = Math.min(Math.max(fromMs, baseRange.fromMs), baseRange.toMs);
+  const safeTo = Math.min(Math.max(toMs, baseRange.fromMs), baseRange.toMs);
+  return {
+    fromMs: Math.min(safeFrom, safeTo),
+    toMs: Math.max(safeFrom, safeTo),
+  };
+}
+
+function resolveAxisRange(
+  range: { fromMs: number; toMs: number },
+  bucketRanges: ReadonlyArray<TimelineBucketRange>,
+): { fromMs: number; toMs: number } {
+  const first = bucketRanges[0];
+  const last = bucketRanges[bucketRanges.length - 1];
+  const fallback = {
+    fromMs: first?.startMs ?? range.fromMs,
+    toMs: last?.endMs ?? range.toMs,
+  };
+  const fromMs = Number.isFinite(range.fromMs) ? range.fromMs : fallback.fromMs;
+  const toMs = Number.isFinite(range.toMs) ? range.toMs : fallback.toMs;
+  if (!Number.isFinite(fromMs) || !Number.isFinite(toMs)) {
+    return fallback;
+  }
+  if (fromMs >= toMs) {
+    return fallback;
+  }
+  const clampedFrom = Math.max(fromMs, fallback.fromMs);
+  const clampedTo = Math.min(toMs, fallback.toMs);
+  if (clampedFrom >= clampedTo) {
+    return fallback;
+  }
+  return { fromMs: clampedFrom, toMs: clampedTo };
 }
 
 function resolveTimelineBucketMs(rangeMs: number): number {
@@ -1399,13 +1522,13 @@ function buildActivityBuckets(
 function buildActivityTimeSeriesOptions(
   items: ReadonlyArray<WebhookTimelineItemView>,
   buckets: ReadonlyArray<ActivityBucket>,
+  range: { fromMs: number; toMs: number },
 ): EChartsCoreOption | null {
   if (items.length === 0) {
     return null;
   }
 
-  const range = resolveActivityRangeMs();
-  const bucketMs = resolveTimelineBucketMs(WEBHOOK_ACTIVITY_MAX_RANGE_MS);
+  const bucketMs = resolveTimelineBucketMs(range.toMs - range.fromMs);
   const chartBuckets = buckets.length
     ? buckets
     : buildActivityBuckets(
@@ -1421,13 +1544,13 @@ function buildActivityTimeSeriesOptions(
 function buildActivityChartSummary(
   items: ReadonlyArray<WebhookTimelineItemView>,
   buckets: ReadonlyArray<ActivityBucket>,
+  range: { fromMs: number; toMs: number },
 ): string {
   if (items.length === 0) {
     return 'No webhook activity to chart.';
   }
 
-  const range = resolveActivityRangeMs();
-  const bucketMs = resolveTimelineBucketMs(WEBHOOK_ACTIVITY_MAX_RANGE_MS);
+  const bucketMs = resolveTimelineBucketMs(range.toMs - range.fromMs);
   const chartBuckets = buckets.length
     ? buckets
     : buildActivityBuckets(
@@ -1489,6 +1612,8 @@ function buildTimelineTimeSeriesOptions(
       series: [],
     };
   }
+
+  const axisRange = resolveAxisRange(range, bucketRanges);
 
   const orderedItems = sortTimelineItems(items);
   const bucketCounts = buildBucketStatusCounts(orderedItems, bucketRanges);
@@ -1585,8 +1710,8 @@ function buildTimelineTimeSeriesOptions(
     },
     xAxis: {
       type: 'time',
-      min: range.fromMs,
-      max: range.toMs,
+      min: axisRange.fromMs,
+      max: axisRange.toMs,
       axisLabel: {
         color: palette.muted,
         formatter: (value: unknown) => formatTimelineAxisLabel(typeof value === 'number' ? value : String(value)),

@@ -120,7 +120,7 @@ const ACTIVITY_RESOURCE_COMMAND = 'webhooks.activity';
 const ACTIVITY_STREAM_COMMAND = 'webhooks.activity.stream';
 const EMPTY_ACTIVITY_BUCKETS: ReadonlyArray<ActivityBucket> = [];
 const EMPTY_ACTIVITY_TIMELINE: ReadonlyArray<WebhookTimelineItemView> = [];
-export const WEBHOOK_ACTIVITY_MAX_RANGE_MS = 90 * 24 * 60 * 60 * 1000;
+export const WEBHOOK_ACTIVITY_MAX_RANGE_MS = 31 * 24 * 60 * 60 * 1000;
 
 @Injectable()
 export class WebhooksStore {

@@ -93,6 +93,8 @@ Registry of all defined jobs.
 - **History**: List of recent Executions for this job.
 - **Definition**: JSON/YAML view of the job definition.
 
+**Routing:** Job selection is bound to `?jobKey=`. Selecting a row updates the query param and the detail panel reads from it. Cross-page links (e.g., to Schedules or Webhooks) must carry `jobKey`.
+
 ## 3. Schedules
 
 Time-based triggers management.
@@ -112,6 +114,7 @@ Time-based triggers management.
 Notes:
 
 - Schedule editor includes optional calendar assignment.
+- **Routing:** Schedule selection is bound to `?triggerId=` and should honor `?jobKey=` when navigating from Jobs.
 
 ## 4. Calendars
 
@@ -190,6 +193,8 @@ Inbound webhook management.
 - **Overview**: Endpoint URL, Secret management.
 - **IP Rules**: CIDR allow-list management.
 - **Dead Letters**: Failed webhook deliveries (Replay capability).
+
+**Routing:** Endpoint selection is bound to `?hookKey=` and accepts `?jobKey=` for cross-page navigation.
 
 ## 8. API Access
 
