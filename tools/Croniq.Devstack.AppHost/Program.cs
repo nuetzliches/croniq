@@ -53,6 +53,7 @@ var apiKey = GetEnvValueOrDefault("CRONIQ_API_KEY", "smoke-key");
 var authMode = GetEnvValueOrDefault("CRONIQ_AUTH_MODE", "InMemory");
 var apiPort = GetInt("CRONIQ_API_HTTP_PORT", GetInt("CRONIQ_API_INTERNAL_PORT", 5080));
 var uiPort = GetInt("CRONIQ_UI_HTTP_PORT", 5081);
+var docsPort = GetInt("CRONIQ_DOCS_HTTP_PORT", 5173);
 var sqlHostPort = GetInt("CRONIQ_SQL_HOST_PORT", 11433);
 var sqlDatabase = GetEnvValueOrDefault("CRONIQ_SQL_DATABASE", "CroniqDev");
 var sqlPassword = GetEnvValueOrDefault("CRONIQ_SQL_PASSWORD", "CroniqSqlP@ssw0rd!");
@@ -91,6 +92,7 @@ var uiActivitySseBaseUrl = GetEnvValue("CRONIQ_UI_WEBHOOKS_ACTIVITY_SSE_BASEURL"
 var dataProtectionAppName = GetEnvValue("CRONIQ_SECURITY_DATAPROTECTION_APPLICATIONNAME");
 var dataProtectionKeyRingPath = GetEnvValue("CRONIQ_SECURITY_DATAPROTECTION_KEYRINGPATH");
 var uiEnabled = !IsFalse(GetEnvValue("CRONIQ_DEVSTACK_UI"));
+var docsEnabled = IsTrue(GetEnvValue("CRONIQ_DEVSTACK_DOCS"));
 var otlpEndpoint = GetEnvValue("CRONIQ_OBS_OTLP_ENDPOINT");
 var otlpProtocol = GetEnvValue("CRONIQ_OBS_OTLP_PROTOCOL");
 var otlpGrpcPort = GetInt("CRONIQ_OTLP_GRPC_PORT", 4317);
@@ -543,6 +545,26 @@ if (uiEnabled)
     {
         ui.WithEnvironment("CRONIQ_UI_WEBHOOKS_ACTIVITY_SSE_BASEURL", uiActivitySseBaseUrl);
     }
+}
+
+var docsPath = Path.Combine(repoRoot, "docs");
+if (docsEnabled && Directory.Exists(docsPath))
+{
+    var npmCommand = OperatingSystem.IsWindows() ? "npm.cmd" : "npm";
+    var docsArgs = new[]
+    {
+        "run",
+        "docs:dev",
+        "--",
+        "--host",
+        "0.0.0.0",
+        "--port",
+        docsPort.ToString(CultureInfo.InvariantCulture)
+    };
+
+    builder.AddExecutable("croniq-docs", npmCommand, docsPath, docsArgs)
+        .WithHttpEndpoint(targetPort: docsPort, port: docsPort, isProxied: false)
+        .WithExplicitStart();
 }
 
 var worker = builder.AddProject(

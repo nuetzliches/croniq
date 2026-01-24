@@ -95,6 +95,7 @@ app.UseCroniqApi();
 
 app.MapCroniqSchedulerGrpc();
 app.MapCroniqWorkerGrpc();
+app.MapCroniqWebhookActivityGrpc();
 
 var webhookOptions = app.Services.GetRequiredService<IOptions<CroniqWebhookOptions>>().Value;
 if (webhookOptions.Ingress.DispatchMode == WebhookIngressDispatchMode.StoreOnly

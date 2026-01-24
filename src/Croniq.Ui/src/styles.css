@@ -1,8 +1,8 @@
 @config "../tailwind.config.js";
 @source "../src/**/*.{html,ts}";
 @source "../projects/**/*.{html,ts}";
-@import "tailwindcss/preflight";
-@import "tailwindcss/theme";
+@import 'tailwindcss/preflight';
+@import 'tailwindcss/theme';
 @tailwind utilities;
 
 :root {
@@ -35,6 +35,11 @@
   --cq-danger-3: #f43f5e;
   --cq-danger-4: #e11d48;
   --cq-danger-5: #9f1239;
+
+  --cq-scrollbar-size: 8px;
+  --cq-scrollbar-track: color-mix(in srgb, var(--cq-surface) 65%, transparent);
+  --cq-scrollbar-thumb: color-mix(in srgb, var(--cq-text-secondary) 45%, transparent);
+  --cq-scrollbar-thumb-hover: color-mix(in srgb, var(--cq-text-primary) 60%, transparent);
 
   --cq-motion-fast: 120ms;
   --cq-motion-medium: 220ms;
@@ -75,6 +80,10 @@
   --cq-danger-3: #f05252;
   --cq-danger-4: #dc2626;
   --cq-danger-5: #991b1b;
+
+  --cq-scrollbar-track: color-mix(in srgb, var(--cq-surface) 75%, transparent);
+  --cq-scrollbar-thumb: color-mix(in srgb, var(--cq-text-secondary) 55%, transparent);
+  --cq-scrollbar-thumb-hover: color-mix(in srgb, var(--cq-text-primary) 70%, transparent);
 }
 
 :root[data-theme='ops-dark'] {
@@ -106,6 +115,10 @@
   --cq-danger-3: #f43f5e;
   --cq-danger-4: #e11d48;
   --cq-danger-5: #9f1239;
+
+  --cq-scrollbar-track: color-mix(in srgb, var(--cq-surface) 65%, transparent);
+  --cq-scrollbar-thumb: color-mix(in srgb, var(--cq-text-secondary) 45%, transparent);
+  --cq-scrollbar-thumb-hover: color-mix(in srgb, var(--cq-text-primary) 60%, transparent);
 }
 
 html,
@@ -115,6 +128,36 @@ body {
 
 body {
   font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--cq-scrollbar-thumb) var(--cq-scrollbar-track);
+}
+
+*:hover {
+  scrollbar-color: var(--cq-scrollbar-thumb-hover) var(--cq-scrollbar-track);
+}
+
+*::-webkit-scrollbar {
+  width: var(--cq-scrollbar-size);
+  height: var(--cq-scrollbar-size);
+}
+
+*::-webkit-scrollbar-track {
+  background: var(--cq-scrollbar-track);
+}
+
+*::-webkit-scrollbar-thumb {
+  background-color: var(--cq-scrollbar-thumb);
+  border-radius: 999px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+  transition: background-color var(--cq-motion-medium) var(--cq-motion-ease);
+}
+
+*:hover::-webkit-scrollbar-thumb {
+  background-color: var(--cq-scrollbar-thumb-hover);
 }
 
 button {

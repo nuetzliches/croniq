@@ -5,10 +5,11 @@ import { tenantRxResource } from '@core/resource/tenant-rx-resource';
 import { RuntimeConfigService } from '@core/runtime-config.service';
 import { createSseStream } from '@core/streaming/sse';
 import { TenantContextService } from '@core/tenant-context/tenant-context.service';
-import { nowIso, nowMs, tryIsoFromUnknown } from '@core/time/clock';
+import { epochMsFromIso, nowIso, nowMs, tryIsoFromUnknown } from '@core/time/clock';
 import { CreateWebhookIpRuleRequest, RotateWebhookSecretRequest, UpsertWebhookEndpointRequest, WebhookActivitySummary, WebhookActivityTimelineResponse, type WebhookCapabilitiesResponse, type WebhookRemoteHealthResponse } from '@croniq/api-schema';
 import { CRONIQ_API_CLIENT, CallerContext, CroniqApiClient, TenantDeadLetterParams, TenantEnvironmentParams, TenantWebhookActivityParams, TenantWebhookActivitySummaryParams, TenantWebhookParams, TenantWebhookRuleParams, TenantWebhookUpsertParams, WebhookInvocationParams } from 'data-access';
-import { EMPTY, catchError, defer, finalize, forkJoin, fromEvent, map, merge, of, switchMap, takeUntil, tap, throwError, timer } from 'rxjs';
+import { EMPTY, catchError, concatWith, defer, finalize, forkJoin, from, fromEvent, map, merge, of, switchMap, takeUntil, tap, throwError, timer } from 'rxjs';
+import { createWebhookActivityGrpcStream, type WebhookActivityGrpcStreamRequest } from './webhook-activity.grpc';
 
 export type WebhookEndpointView = {
     hookKey: string;
@@ -1053,7 +1054,25 @@ function createGrpcRefreshStream(context: ActivityStreamContext) {
     if (!context.grpcBaseUrl) {
         return throwError(() => new Error('gRPC base URL not configured.'));
     }
-    return defer(() => throwError(() => new Error('gRPC streaming is not yet supported in the UI.')));
+
+    return defer(() => {
+        const streamContext: CallerContext = {
+            ...context.requestContext,
+            command: ACTIVITY_STREAM_COMMAND,
+        };
+        const headers = buildStreamHeaders(streamContext, context.sessionToken);
+        const request = buildGrpcActivityStreamRequest(context);
+        const stream = createWebhookActivityGrpcStream(request, {
+            baseUrl: context.grpcBaseUrl,
+            headers,
+            signal: context.abortSignal,
+        });
+
+        return from(stream).pipe(
+            map(() => 0),
+            concatWith(throwError(() => new Error('gRPC stream closed unexpectedly.'))),
+        );
+    });
 }
 
 function createSseRefreshStream(context: ActivityStreamContext) {
@@ -1070,6 +1089,23 @@ function createSseRefreshStream(context: ActivityStreamContext) {
     return createSseStream(url, { headers, signal: context.abortSignal }).pipe(
         map(() => 0),
     );
+}
+
+function buildGrpcActivityStreamRequest(context: ActivityStreamContext): WebhookActivityGrpcStreamRequest {
+    const fromUtc = context.query.fromUtc ? epochMsFromIso(context.query.fromUtc) : null;
+    const toUtc = context.query.toUtc ? epochMsFromIso(context.query.toUtc) : null;
+    const environmentTag = resolveNonEmptyString(context.query.environment ?? context.requestContext.environment);
+
+    return {
+        tenantId: context.tenantId,
+        environmentTag,
+        fromUtc: fromUtc ?? undefined,
+        toUtc: toUtc ?? undefined,
+        updatedSinceUtc: nowMs(),
+        hookKeys: context.query.hookKeys,
+        jobKeys: context.query.jobKeys,
+        limit: ACTIVITY_STREAM_LIMIT,
+    };
 }
 
 function buildActivityStreamUrl(baseUrl: string, tenantId: string, query: NormalizedActivityQuery): string | null {

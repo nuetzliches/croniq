@@ -1,13 +1,11 @@
 # BACKLOG
 
-_Last updated: 2026-01-23_
+_Last updated: 2026-01-24_
 
 ## Webhooks UI
 
 - Action log panel showing recent admin operations from the UI.
 - Telemetry data UX: define status/latency/throughput KPIs, data freshness/staleness rules, and UI fallbacks while telemetry is unavailable.
-- Activity timeline: add gRPC-Web/HTTP2 streaming support (true push) to remove SSE poll latency; keep SSE/polling fallback.
-- Activity stream: implement gRPC-Web client integration (including proxy config and runtime config wiring) so the UI can use gRPC streaming in browsers.
 - Expose delivery attempts in webhook activity API so the UI can show retries.
 - Telemetry for activity stream: emit events for reconnects, errors, and dropped updates in the UI.
 - Tests: filter → query mapping for webhook activity.

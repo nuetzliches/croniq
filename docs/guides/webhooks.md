@@ -12,6 +12,8 @@ Croniq.Webhooks lets external systems trigger Croniq jobs via HTTP. This guide f
 - Diagnostics: dead letters under `/tenants/{tenantId}/webhooks/deadletters` and IP rules under `/tenants/{tenantId}/webhooks/{hookKey}/ip-rules`
 - Activity timeline: `GET /tenants/{tenantId}/webhooks/activity?environment=<tag>&fromUtc=<iso>&toUtc=<iso>&updatedSinceUtc=<iso>&hookKeys=a,b&jobKeys=c,d&limit=200`
 - Activity summary: `GET /tenants/{tenantId}/webhooks/activity/summary?environment=<tag>&fromUtc=<iso>&toUtc=<iso>&bucketMinutes=60`
+- Activity stream (SSE): `GET /tenants/{tenantId}/webhooks/activity/stream?environment=<tag>&fromUtc=<iso>&toUtc=<iso>&hookKeys=a,b&jobKeys=c,d&limit=1`
+- Activity stream (gRPC): `croniq.rpc.WebhookActivity/Stream` (server streaming, gRPC-Web supported; timestamps are unix ms)
 - Remote health (proxy): `GET /tenants/{tenantId}/webhooks/remote/health?environment=<tag>` (API host checks the remote `/health` when `Croniq:Webhooks:Mode=Remote`)
 - DMZ ingress relay/streaming: see [`docs/deep-dive/designs/dmz-ingress-remote-webhooks.md`](../deep-dive/designs/dmz-ingress-remote-webhooks.md)
 
@@ -26,6 +28,8 @@ Activity timeline entries include a `source` field (`ingress` or `invoke`) so op
 ### Activity stream events
 
 The SSE stream (`GET /tenants/{tenantId}/webhooks/activity/stream`) emits JSON payloads with `type: "activity.updated"` whenever new activity arrives **or** an existing ingress entry changes status (pending -> leased -> success/failed). Use `updatedSinceUtc=<iso>` on the timeline endpoint to query entries updated after a specific status-change timestamp.
+
+The gRPC stream (`croniq.rpc.WebhookActivity/Stream`) emits the same `activity.updated` events but expects `fromUtc`, `toUtc`, and `updatedSinceUtc` as unix timestamps in milliseconds. gRPC-Web clients should use the gRPC-Web proxy (Caddy/Aspire devstack already provides it).
 
 ### Activity statuses and summary fields
 

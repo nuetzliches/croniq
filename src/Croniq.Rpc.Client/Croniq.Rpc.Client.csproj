@@ -15,5 +15,6 @@
     <Protobuf Include="Protos\scheduler.proto" GrpcServices="Client" />
     <Protobuf Include="Protos\worker.proto" GrpcServices="Client" />
     <Protobuf Include="Protos\webhook_ingress.proto" GrpcServices="Client" />
+    <Protobuf Include="Protos\webhook_activity.proto" GrpcServices="Client" />
   </ItemGroup>
 </Project>

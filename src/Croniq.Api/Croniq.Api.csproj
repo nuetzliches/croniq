@@ -29,6 +29,7 @@
     <PackageReference Include="OpenTelemetry.Instrumentation.Runtime" Version="1.14.0" />
     <PackageReference Include="Grpc.AspNetCore.Server" Version="2.71.0" />
     <PackageReference Include="Grpc.AspNetCore.Server.Reflection" Version="2.71.0" />
+    <PackageReference Include="Grpc.AspNetCore.Web" Version="2.71.0" />
     <PackageReference Include="Grpc.Tools" Version="2.71.0" PrivateAssets="All" />
   </ItemGroup>
   <ItemGroup>
@@ -38,5 +39,7 @@
       Link="Protos\worker.proto" />
     <Protobuf Include="..\Croniq.Rpc.Client\Protos\webhook_ingress.proto" GrpcServices="Both"
       Link="Protos\webhook_ingress.proto" />
+    <Protobuf Include="..\Croniq.Rpc.Client\Protos\webhook_activity.proto" GrpcServices="Both"
+      Link="Protos\webhook_activity.proto" />
   </ItemGroup>
 </Project>

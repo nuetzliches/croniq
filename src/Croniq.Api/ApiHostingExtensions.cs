@@ -23,6 +23,7 @@ using Croniq.Persistence.Abstractions;
 using Croniq.Providers.Default;
 using Croniq.Sdk;
 using Croniq.Hosting;
+using Grpc.AspNetCore.Web;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
@@ -79,6 +80,8 @@ public static partial class ApiHostingExtensions
         {
             app.UseRateLimiter();
         }
+
+        app.UseGrpcWeb();
 
         var anonymousPrefixes = new List<PathString>
         {
@@ -480,6 +483,13 @@ public static partial class ApiHostingExtensions
     {
         app.MapGrpcService<WebhookIngressGrpcService>();
         MapWebhookIngressHttpEndpoints(app);
+        return app;
+    }
+
+    public static WebApplication MapCroniqWebhookActivityGrpc(this WebApplication app)
+    {
+        app.MapGrpcService<WebhookActivityGrpcService>()
+            .EnableGrpcWeb();
         return app;
     }
 
