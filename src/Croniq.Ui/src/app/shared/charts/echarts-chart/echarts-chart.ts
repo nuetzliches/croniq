@@ -1,7 +1,7 @@
 import { ChangeDetectionStrategy, Component, ElementRef, effect, input, output, signal, viewChild } from '@angular/core';
 import * as echarts from 'echarts/core';
 import { BarChart, LineChart, ScatterChart } from 'echarts/charts';
-import { DataZoomComponent, GridComponent, LegendComponent, TooltipComponent, ToolboxComponent } from 'echarts/components';
+import { BrushComponent, DataZoomComponent, GridComponent, LegendComponent, TooltipComponent, ToolboxComponent } from 'echarts/components';
 import { CanvasRenderer } from 'echarts/renderers';
 import type { EChartsCoreOption } from 'echarts/core';
 
@@ -14,6 +14,7 @@ echarts.use([
   TooltipComponent,
   DataZoomComponent,
   ToolboxComponent,
+  BrushComponent,
   CanvasRenderer,
 ]);
 
@@ -42,6 +43,9 @@ export class CqEchartsChartComponent {
   };
   private readonly zoomHandler = (event: unknown) => {
     this.chartZoom.emit(event);
+  };
+  private readonly restoreHandler = (event: unknown) => {
+    this.chartZoom.emit({ type: 'restore' });
   };
 
   constructor() {
@@ -115,7 +119,7 @@ export class CqEchartsChartComponent {
         return;
       }
 
-      chart.setOption(options, { notMerge: true, lazyUpdate: true });
+      chart.setOption(options, { notMerge: false, lazyUpdate: true });
       if (this.enableZoomSelect()) {
         chart.dispatchAction({
           type: 'takeGlobalCursor',
@@ -132,10 +136,14 @@ export class CqEchartsChartComponent {
       }
 
       chart.on('click', this.clickHandler);
+      chart.on('dataZoom', this.zoomHandler);
       chart.on('datazoom', this.zoomHandler);
+      chart.on('restore', this.restoreHandler);
       onCleanup(() => {
         chart.off('click', this.clickHandler);
+        chart.off('dataZoom', this.zoomHandler);
         chart.off('datazoom', this.zoomHandler);
+        chart.off('restore', this.restoreHandler);
       });
     });
 

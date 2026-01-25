@@ -546,10 +546,17 @@ export class WebhooksPage {
 
   setActivityLiveUpdates(enabled: boolean): void {
     this.store.setActivityLiveUpdatesEnabled(enabled);
+    if (enabled) {
+      this.activityZoomRange.set(null);
+    }
   }
 
   setActivityZoomRange(event: unknown): void {
-    const range = resolveZoomRangeFromEvent(event, this.activityChartRange());
+    if (event && typeof event === 'object' && (event as { type?: unknown }).type === 'restore') {
+      this.activityZoomRange.set(null);
+      return;
+    }
+    const range = resolveZoomRangeFromEvent(event, this.activityFullRange());
     this.activityZoomRange.set(range);
   }
 
@@ -751,7 +758,14 @@ export class WebhooksPage {
   });
 
   readonly activityZoomRange = signal<{ fromMs: number; toMs: number } | null>(null);
-  readonly activityChartRange = computed(() => resolveActivityRangeMs(this.activityZoomRange()));
+  readonly activityFullRange = computed(() => resolveActivityRangeMs());
+  readonly activityChartRange = computed(() =>
+    resolveActivityRangeMs(
+      this.activityZoomRange(),
+      this.activityFullRange(),
+      this.activityLiveUpdatesEnabled(),
+    ),
+  );
 
   readonly activityBuckets = computed<ReadonlyArray<ActivityBucket>>(() => {
     const items = this.timelineItems();
@@ -773,7 +787,7 @@ export class WebhooksPage {
     buildActivityChartSummary(this.timelineItems(), this.activityBuckets(), this.activityChartRange()),
   );
   readonly activityDetailItems = computed<ReadonlyArray<WebhookTimelineItemView>>(() =>
-    buildActivityDetailItems(this.timelineItems()),
+    buildActivityDetailItems(this.timelineItems(), this.activityChartRange()),
   );
   readonly activityDetailLabel = computed(() =>
     buildActivityDetailLabel(),
@@ -790,6 +804,7 @@ export class WebhooksPage {
       this.timelineItems(),
       this.activityBuckets(),
       this.activityChartRange(),
+      this.activityFullRange(),
     ),
   );
 
@@ -1041,22 +1056,36 @@ function tryParseIsoToMs(value: string | null): number | null {
 
 function resolveActivityRangeMs(
   zoomRange?: { fromMs: number; toMs: number } | null,
+  baseRange?: { fromMs: number; toMs: number },
+  snapToNow?: boolean,
 ): { fromMs: number; toMs: number } {
   const toMs = Date.now();
-  const baseRange = {
+  const resolvedBase = baseRange ?? {
     fromMs: Math.max(0, toMs - WEBHOOK_ACTIVITY_MAX_RANGE_MS),
     toMs,
   };
   if (!zoomRange) {
-    return baseRange;
+    return resolvedBase;
   }
-  const fromMs = Math.min(Math.max(zoomRange.fromMs, baseRange.fromMs), baseRange.toMs);
-  const clampedToMs = Math.min(Math.max(zoomRange.toMs, baseRange.fromMs), baseRange.toMs);
+  if (snapToNow) {
+    const durationMs = Math.max(1, zoomRange.toMs - zoomRange.fromMs);
+    if (durationMs >= resolvedBase.toMs - resolvedBase.fromMs) {
+      return resolvedBase;
+    }
+    const anchoredToMs = resolvedBase.toMs;
+    const anchoredFromMs = Math.max(resolvedBase.fromMs, anchoredToMs - durationMs);
+    return {
+      fromMs: anchoredFromMs,
+      toMs: anchoredToMs,
+    };
+  }
+  const fromMs = Math.min(Math.max(zoomRange.fromMs, resolvedBase.fromMs), resolvedBase.toMs);
+  const clampedToMs = Math.min(Math.max(zoomRange.toMs, resolvedBase.fromMs), resolvedBase.toMs);
   if (!Number.isFinite(fromMs) || !Number.isFinite(clampedToMs)) {
-    return baseRange;
+    return resolvedBase;
   }
-  if (fromMs <= baseRange.fromMs && clampedToMs >= baseRange.toMs) {
-    return baseRange;
+  if (fromMs <= resolvedBase.fromMs && clampedToMs >= resolvedBase.toMs) {
+    return resolvedBase;
   }
   const safeFrom = Math.min(fromMs, clampedToMs);
   const safeTo = Math.max(fromMs, clampedToMs);
@@ -1523,6 +1552,7 @@ function buildActivityTimeSeriesOptions(
   items: ReadonlyArray<WebhookTimelineItemView>,
   buckets: ReadonlyArray<ActivityBucket>,
   range: { fromMs: number; toMs: number },
+  axisRange: { fromMs: number; toMs: number },
 ): EChartsCoreOption | null {
   if (items.length === 0) {
     return null;
@@ -1538,7 +1568,7 @@ function buildActivityTimeSeriesOptions(
       bucketMs,
     );
 
-  return buildTimelineTimeSeriesOptions(items, chartBuckets, bucketMs, range);
+  return buildTimelineTimeSeriesOptions(items, chartBuckets, bucketMs, range, axisRange);
 }
 
 function buildActivityChartSummary(
@@ -1585,11 +1615,16 @@ function buildActivityChartSummary(
 
 function buildActivityDetailItems(
   items: ReadonlyArray<WebhookTimelineItemView>,
+  range: { fromMs: number; toMs: number },
 ): ReadonlyArray<WebhookTimelineItemView> {
   if (items.length === 0) {
     return [];
   }
-  const ordered = sortTimelineItemsDesc(items);
+  const filtered = filterTimelineItemsByRange(items, range);
+  if (filtered.length === 0) {
+    return [];
+  }
+  const ordered = sortTimelineItemsDesc(filtered);
   return ordered.slice(0, 25);
 }
 
@@ -1603,6 +1638,7 @@ function buildTimelineTimeSeriesOptions(
   buckets: ReadonlyArray<ActivityBucket>,
   bucketMs: number,
   range: { fromMs: number; toMs: number },
+  axisRange: { fromMs: number; toMs: number },
 ): EChartsCoreOption {
   const palette = resolveChartPalette();
   const bucketRanges = resolveTimelineBucketRanges(items, buckets, bucketMs);
@@ -1613,7 +1649,7 @@ function buildTimelineTimeSeriesOptions(
     };
   }
 
-  const axisRange = resolveAxisRange(range, bucketRanges);
+  const resolvedAxisRange = resolveAxisRange(axisRange, bucketRanges);
 
   const orderedItems = sortTimelineItems(items);
   const bucketCounts = buildBucketStatusCounts(orderedItems, bucketRanges);
@@ -1663,7 +1699,7 @@ function buildTimelineTimeSeriesOptions(
 
   const maxStack = Math.max(1, ...bucketCounts.map((entry) => entry.total));
   const yAxisInterval = resolveYAxisInterval(maxStack);
-  const dataZoom = buildTimelineDataZoom(palette);
+  const dataZoom = buildTimelineDataZoom();
   const latencyMax = hasLatency
     ? Math.max(1, ...latencySeries.filter((value): value is number => typeof value === 'number'))
     : 0;
@@ -1727,8 +1763,8 @@ function buildTimelineTimeSeriesOptions(
     },
     xAxis: {
       type: 'time',
-      min: axisRange.fromMs,
-      max: axisRange.toMs,
+      min: resolvedAxisRange.fromMs,
+      max: resolvedAxisRange.toMs,
       axisLabel: {
         color: palette.muted,
         formatter: (value: unknown) => formatTimelineAxisLabel(typeof value === 'number' ? value : String(value)),
@@ -1799,12 +1835,18 @@ function buildTimelineTimeSeriesOptions(
   };
 }
 
-function buildTimelineDataZoom(_palette: ChartPalette): EChartsCoreOption['dataZoom'] {
+function buildTimelineDataZoom(): EChartsCoreOption['dataZoom'] {
   return [
     {
       type: 'inside',
       xAxisIndex: 0,
       filterMode: 'none',
+    },
+    {
+      type: 'slider',
+      xAxisIndex: 0,
+      filterMode: 'none',
+      show: false,
     },
   ];
 }
