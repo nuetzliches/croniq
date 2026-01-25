@@ -106,25 +106,25 @@
   </ng-template>
 
   <div class="flex flex-1 flex-col gap-4 lg:flex-row">
-    <ng-template #rowActions let-row>
+    <ng-template #rowActions let-row="row">
       <div
         class="min-w-45 rounded-lg border border-white/10 bg-surface p-1 text-sm shadow-xl"
         cdkMenu
       >
         <button type="button" cqContextMenuItem class="inline-flex items-center gap-2" (click)="triggerJob(row.jobKey)">
-          <cq-icon name="rocket" size="14" aria-hidden="true"></cq-icon>
+            <cq-icon name="rocket" size="14" aria-hidden="true"></cq-icon>
           Trigger
         </button>
         <button type="button" cqContextMenuItem class="inline-flex items-center gap-2" (click)="openJobDialog(row)">
-          <cq-icon name="pencil" size="14" aria-hidden="true"></cq-icon>
+            <cq-icon name="pencil" size="14" aria-hidden="true"></cq-icon>
           Edit
         </button>
         <button type="button" cqContextMenuItem class="inline-flex items-center gap-2" (click)="openSchedulesForJob(row.jobKey)">
-          <cq-icon name="chevron-right" size="14" aria-hidden="true"></cq-icon>
+            <cq-icon name="chevron-right" size="14" aria-hidden="true"></cq-icon>
           View schedules
         </button>
         <button type="button" cqContextMenuItem class="inline-flex items-center gap-2" (click)="openWebhooksForJob(row.jobKey)">
-          <cq-icon name="information-outline" size="14" aria-hidden="true"></cq-icon>
+            <cq-icon name="information-outline" size="14" aria-hidden="true"></cq-icon>
           View webhooks
         </button>
         <button
@@ -134,7 +134,7 @@
           (click)="deleteJob(row)"
           [disabled]="isSeedLocked(row) || deleteJobLoading()"
         >
-          <cq-icon name="trash-can-outline" size="14" aria-hidden="true"></cq-icon>
+            <cq-icon name="trash-can-outline" size="14" aria-hidden="true"></cq-icon>
           Delete
         </button>
       </div>

@@ -356,6 +356,7 @@
             [disabled]="writePermissionDenied()"
             [class.opacity-50]="writePermissionDenied()"
           >
+            <cq-icon name="pencil" size="14" aria-hidden="true"></cq-icon>
             Edit
           </button>
           <button
@@ -365,6 +366,7 @@
             [disabled]="writePermissionDenied()"
             [class.opacity-50]="writePermissionDenied()"
           >
+            <cq-icon name="rotate-360" size="14" aria-hidden="true"></cq-icon>
             Rotate secret
           </button>
           <button
@@ -374,6 +376,7 @@
             [disabled]="writePermissionDenied()"
             [class.opacity-50]="writePermissionDenied()"
           >
+            <cq-icon name="information-outline" size="14" aria-hidden="true"></cq-icon>
             IP rules
           </button>
           @if (isEndpointPaused(row)) {
@@ -384,6 +387,7 @@
               [disabled]="writePermissionDenied()"
               [class.opacity-50]="writePermissionDenied()"
             >
+              <cq-icon name="check" size="14" aria-hidden="true"></cq-icon>
               Enable
             </button>
           } @else {
@@ -394,6 +398,7 @@
               [disabled]="writePermissionDenied()"
               [class.opacity-50]="writePermissionDenied()"
             >
+              <cq-icon name="close" size="14" aria-hidden="true"></cq-icon>
               Disable
             </button>
           }
@@ -405,6 +410,7 @@
             [disabled]="writePermissionDenied()"
             [class.opacity-50]="writePermissionDenied()"
           >
+            <cq-icon name="trash-can-outline" size="14" aria-hidden="true"></cq-icon>
             Delete
           </button>
         </div>
