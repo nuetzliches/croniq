@@ -1,0 +1,42 @@
+# Samples to Aspire Hosts
+
+::: info Status
+Draft.
+:::
+
+## Intent
+
+- Replace Croniq.Sample.\* hosts with Aspire-hosted containers built from Croniq.ApiHost, Croniq.WorkerHost, Croniq.WebhooksHost, and Croniq.DbMigrator.
+- Remove Croniq.Sample.Jobs for now; reintroduce runner samples once multi-language SDKs are available.
+
+## Decisions
+
+- Delete Croniq.Sample.ApiHost, Croniq.Sample.WorkerHost, and Croniq.Sample.Dmz.
+- Replace Croniq.Sample.Dmz with a Croniq.WebhooksHost container configured for StoreOnly ingress and `WebhookAdminOnly` API mode.
+- Keep the Aspire AppHost as the canonical dev/CI entrypoint; do not add new Compose-based devstack flows.
+- Run Croniq.WebhooksHost by default in devstack; allow an opt-out flag/profile for lighter local runs.
+
+## Recommendation
+
+- Runner samples should be owned by the SDK for their language and updated alongside SDK releases.
+- Keep one canonical runner per language with minimal jobs to reduce maintenance.
+- Integrate runner samples into the AppHost via opt-in profiles so the default devstack stays fast.
+
+## Future runner samples (deferred)
+
+- Prerequisites: multi-language SDKs and the polyglot worker protocol.
+- Location: `samples/runners/<language>/<name>`.
+- Scope:
+  - Use only public Croniq APIs.
+  - Prefer gRPC-first dispatch with SSE and HTTP polling fallback.
+  - Require explicit tenantId and environment tag; no default tenant fallback.
+  - Read configuration from `Croniq__*` environment variables.
+- Devstack integration: runner samples are opt-in and added via AppHost profiles once SDKs exist.
+- Documentation: each runner sample ships its own README with setup, expected outputs, and verification steps.
+
+## References
+
+- `../architecture.md`
+- `../devstack.md`
+- `polyglot-worker-protocol.md`
+- `../../../CHECKLIST-SAMPLES-ASPIRATION.md`

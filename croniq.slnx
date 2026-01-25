@@ -6,7 +6,6 @@
   </Configurations>
   <Folder Name="/samples/">
     <Project Path="samples/Croniq.Sample.ApiHost/Croniq.Sample.ApiHost.csproj" />
-    <Project Path="samples/Croniq.Sample.GrpcClient/Croniq.Sample.GrpcClient.csproj" />
     <Project Path="samples/Croniq.Sample.Jobs/Croniq.Sample.Jobs.csproj" />
     <Project Path="samples/Croniq.Sample/Croniq.Sample.csproj" />
     <Project Path="samples/Croniq.Sample.WorkerHost/Croniq.Sample.WorkerHost.csproj" />
