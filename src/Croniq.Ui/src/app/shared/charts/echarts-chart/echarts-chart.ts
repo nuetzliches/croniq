@@ -1,7 +1,7 @@
 import { ChangeDetectionStrategy, Component, ElementRef, effect, input, output, signal, viewChild } from '@angular/core';
 import * as echarts from 'echarts/core';
 import { BarChart, LineChart, ScatterChart } from 'echarts/charts';
-import { DataZoomComponent, GridComponent, LegendComponent, TooltipComponent } from 'echarts/components';
+import { DataZoomComponent, GridComponent, LegendComponent, TooltipComponent, ToolboxComponent } from 'echarts/components';
 import { CanvasRenderer } from 'echarts/renderers';
 import type { EChartsCoreOption } from 'echarts/core';
 
@@ -13,6 +13,7 @@ echarts.use([
   LegendComponent,
   TooltipComponent,
   DataZoomComponent,
+  ToolboxComponent,
   CanvasRenderer,
 ]);
 
@@ -30,6 +31,7 @@ export class CqEchartsChartComponent {
   readonly options = input<EChartsCoreOption | null>(null);
   readonly loading = input(false);
   readonly ariaLabel = input('Chart');
+  readonly enableZoomSelect = input(false);
   readonly chartClick = output<unknown>();
   readonly chartZoom = output<unknown>();
 
@@ -114,6 +116,13 @@ export class CqEchartsChartComponent {
       }
 
       chart.setOption(options, { notMerge: true, lazyUpdate: true });
+      if (this.enableZoomSelect()) {
+        chart.dispatchAction({
+          type: 'takeGlobalCursor',
+          key: 'dataZoomSelect',
+          dataZoomSelectActive: true,
+        });
+      }
     });
 
     effect((onCleanup) => {

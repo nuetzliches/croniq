@@ -818,6 +818,7 @@
                 ariaLabel="Webhook activity chart"
                 [options]="chartOptions"
                 [loading]="activityLoading()"
+                [enableZoomSelect]="true"
                 (chartZoom)="setActivityZoomRange($event)"
               ></cq-echarts-chart>
             } @else {

@@ -1663,8 +1663,7 @@ function buildTimelineTimeSeriesOptions(
 
   const maxStack = Math.max(1, ...bucketCounts.map((entry) => entry.total));
   const yAxisInterval = resolveYAxisInterval(maxStack);
-  const showZoomSlider = bucketRanges.length > 12;
-  const dataZoom = buildTimelineDataZoom(showZoomSlider, palette);
+  const dataZoom = buildTimelineDataZoom(palette);
   const latencyMax = hasLatency
     ? Math.max(1, ...latencySeries.filter((value): value is number => typeof value === 'number'))
     : 0;
@@ -1686,11 +1685,29 @@ function buildTimelineTimeSeriesOptions(
       },
       formatter: buildDistributionLegendFormatter(bucketCounts, latencySeries, hasLatency),
     },
+    toolbox: {
+      right: 8,
+      top: 0,
+      feature: {
+        dataZoom: {
+          yAxisIndex: 'none',
+        },
+        restore: {},
+      },
+      iconStyle: {
+        borderColor: palette.muted,
+      },
+      emphasis: {
+        iconStyle: {
+          borderColor: palette.text,
+        },
+      },
+    },
     grid: {
       left: 24,
       right: 16,
-      top: 48,
-      bottom: showZoomSlider ? 64 : 48,
+      top: 56,
+      bottom: 48,
       outerBoundsMode: 'same',
       outerBoundsContain: 'axisLabel',
     },
@@ -1782,35 +1799,12 @@ function buildTimelineTimeSeriesOptions(
   };
 }
 
-function buildTimelineDataZoom(showSlider: boolean, palette: ChartPalette): EChartsCoreOption['dataZoom'] {
-  const inside = {
-    type: 'inside',
-    xAxisIndex: 0,
-    filterMode: 'none',
-  };
-
-  if (!showSlider) {
-    return [inside];
-  }
-
+function buildTimelineDataZoom(_palette: ChartPalette): EChartsCoreOption['dataZoom'] {
   return [
-    inside,
     {
-      type: 'slider',
+      type: 'inside',
       xAxisIndex: 0,
-      height: 18,
-      bottom: 10,
-      borderColor: palette.border,
-      fillerColor: `${palette.border}66`,
-      backgroundColor: `${palette.border}22`,
-      handleStyle: {
-        color: palette.muted,
-        borderColor: palette.border,
-      },
-      textStyle: {
-        color: palette.muted,
-        fontSize: 10,
-      },
+      filterMode: 'none',
     },
   ];
 }
