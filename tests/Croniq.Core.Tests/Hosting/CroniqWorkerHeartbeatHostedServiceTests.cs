@@ -41,6 +41,7 @@ public sealed class CroniqWorkerHeartbeatHostedServiceTests
             hostOptions,
             workerOptions,
             startupOptions,
+            dispatchStatusProvider: null,
             NullLogger<CroniqWorkerHeartbeatHostedService>.Instance);
 
         await service.StartAsync(CancellationToken.None);
@@ -89,6 +90,7 @@ public sealed class CroniqWorkerHeartbeatHostedServiceTests
             hostOptions,
             workerOptions,
             startupOptions,
+            dispatchStatusProvider: null,
             NullLogger<CroniqWorkerHeartbeatHostedService>.Instance);
 
         await service.StartAsync(CancellationToken.None);

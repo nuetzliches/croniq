@@ -36,6 +36,7 @@
 ## Core
 
 - [ ] Address or document the performance TODO in `CronExpression.cs`.
+- [ ] Add registry sync/remote lookup so ApiHost can trigger jobs without local registrations.
 
 ## Engineering Hygiene
 

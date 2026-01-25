@@ -45,6 +45,7 @@ public sealed class WebhookActivityStreamTests
                 EnvironmentTag: environmentTag,
                 Source: WebhookActivitySources.Ingress,
                 OccurredAtUtc: DateTimeOffset.UtcNow,
+                LatencyMs: null,
                 Reason: null,
                 PayloadBytes: null,
                 DeadLetterId: null)
@@ -97,6 +98,7 @@ public sealed class WebhookActivityStreamTests
                 EnvironmentTag: environmentTag,
                 Source: WebhookActivitySources.Ingress,
                 OccurredAtUtc: DateTimeOffset.UtcNow,
+                LatencyMs: null,
                 Reason: null,
                 PayloadBytes: null,
                 DeadLetterId: null)

@@ -25,6 +25,7 @@ public sealed class CroniqWorkerHeartbeatHostedService : BackgroundService
     private readonly WorkerHostOptions _hostOptions;
     private readonly WorkerStoreOptions _workerOptions;
     private readonly CroniqStartupOptions _startupOptions;
+    private readonly IWorkerDispatchStatusProvider? _dispatchStatusProvider;
     private readonly ILogger<CroniqWorkerHeartbeatHostedService> _logger;
     private readonly TimeSpan _heartbeatInterval;
     private readonly string? _metadataJson;
@@ -35,6 +36,7 @@ public sealed class CroniqWorkerHeartbeatHostedService : BackgroundService
         IOptions<WorkerHostOptions> hostOptions,
         IOptions<WorkerStoreOptions> workerOptions,
         IOptions<CroniqStartupOptions> startupOptions,
+        IWorkerDispatchStatusProvider? dispatchStatusProvider,
         ILogger<CroniqWorkerHeartbeatHostedService> logger)
     {
         _workerStore = workerStore ?? throw new ArgumentNullException(nameof(workerStore));
@@ -43,6 +45,7 @@ public sealed class CroniqWorkerHeartbeatHostedService : BackgroundService
         _workerOptions = workerOptions?.Value ?? new WorkerStoreOptions();
         _workerOptions.Normalize();
         _startupOptions = startupOptions?.Value ?? new CroniqStartupOptions();
+        _dispatchStatusProvider = dispatchStatusProvider;
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         _heartbeatInterval = ResolveInterval(_hostOptions.HeartbeatInterval, _workerOptions.OnlineTtl);
         _metadataJson = BuildMetadataJson();
@@ -125,7 +128,7 @@ public sealed class CroniqWorkerHeartbeatHostedService : BackgroundService
         return configured > maxInterval ? maxInterval : configured;
     }
 
-    private static string? BuildMetadataJson()
+    private string? BuildMetadataJson()
     {
         var hostname = Environment.MachineName;
         if (string.IsNullOrWhiteSpace(hostname))
@@ -133,9 +136,10 @@ public sealed class CroniqWorkerHeartbeatHostedService : BackgroundService
             return null;
         }
 
-        var metadata = new WorkerMetadata("worker", hostname);
+        var dispatch = _dispatchStatusProvider?.GetStatus();
+        var metadata = new WorkerMetadata("worker", hostname, dispatch);
         return JsonSerializer.Serialize(metadata, MetadataSerializerOptions);
     }
 
-    private sealed record WorkerMetadata(string Kind, string Hostname);
+    private sealed record WorkerMetadata(string Kind, string Hostname, WorkerDispatchStatus? Dispatch);
 }

@@ -119,6 +119,7 @@ public sealed class GrpcWebhookActivityTests
                 EnvironmentTag: _environmentTag,
                 Source: WebhookActivitySources.Ingress,
                 OccurredAtUtc: DateTimeOffset.UtcNow,
+                LatencyMs: null,
                 Reason: null,
                 PayloadBytes: null,
                 DeadLetterId: null);

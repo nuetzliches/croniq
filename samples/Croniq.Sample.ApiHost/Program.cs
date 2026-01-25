@@ -3,6 +3,7 @@ using Croniq.Core;
 using Croniq.Core.Execution;
 using Croniq.Webhooks;
 using Croniq.Webhooks.Options;
+using Croniq.Sample.Jobs;
 using Microsoft.Extensions.Options;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -16,6 +17,7 @@ builder.Services.AddCroniqApiRateLimiter();
 
 builder.Services.AddCroniqWebhookServices(builder.Configuration, includePlatformServices: false);
 builder.Services.AddCroniqWebhookRateLimiter();
+builder.Services.AddCroniqSampleJobs();
 
 var otelBuilder = builder.Services.AddCroniqApiObservability(
     builder.Configuration,

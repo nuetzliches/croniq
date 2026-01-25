@@ -36,6 +36,7 @@
             <th class="px-6 py-3 font-medium">Worker ID</th>
             <th class="px-6 py-3 font-medium">Hostname</th>
             <th class="px-6 py-3 font-medium">Status</th>
+            <th class="px-6 py-3 font-medium">Dispatch</th>
             <th class="px-6 py-3 font-medium">Last Heartbeat</th>
             <th class="px-6 py-3 font-medium">Load</th>
             <th class="px-6 py-3 font-medium">Tags</th>
@@ -62,6 +63,38 @@
               <span
                 class="inline-flex items-center rounded-full bg-warning/10 px-2 py-0.5 text-xs font-medium text-warning"
                 >Draining</span
+              >
+              } }
+            </td>
+            <td class="px-6 py-4">
+              @switch (worker.dispatchState) { @case ('Connected') {
+              <div class="flex flex-col gap-1">
+                <span
+                  class="inline-flex items-center rounded-full bg-success/10 px-2 py-0.5 text-xs font-medium text-success"
+                  >Connected</span
+                >
+                @if (worker.dispatchLastConnectedAt) {
+                <span class="text-xs text-muted"
+                  >Last connect {{ worker.dispatchLastConnectedAt | date : 'short' }}</span
+                >
+                }
+              </div>
+              } @case ('Fallback') {
+              <div class="flex flex-col gap-1">
+                <span
+                  class="inline-flex items-center rounded-full bg-warning/10 px-2 py-0.5 text-xs font-medium text-warning"
+                  >Fallback</span
+                >
+                @if (worker.dispatchLastFallbackAt) {
+                <span class="text-xs text-muted"
+                  >Last fallback {{ worker.dispatchLastFallbackAt | date : 'short' }}</span
+                >
+                }
+              </div>
+              } @case ('Unknown') {
+              <span
+                class="inline-flex items-center rounded-full bg-white/5 px-2 py-0.5 text-xs font-medium text-muted"
+                >Unknown</span
               >
               } }
             </td>
@@ -105,7 +138,7 @@
           </tr>
           } @empty {
           <tr>
-            <td class="px-6 py-6 text-sm text-muted" colspan="7">No workers reported yet.</td>
+            <td class="px-6 py-6 text-sm text-muted" colspan="8">No workers reported yet.</td>
           </tr>
           }
         </tbody>

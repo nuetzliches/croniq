@@ -5,6 +5,19 @@ The HTTP work endpoints expose the same lease lifecycle so non-.NET workers can 
 Worker host presence is tracked separately via `/workers`; this guide focuses on runner identities used by the `/work/*` surface.
 For gRPC streaming clients, see [`grpc.md`](./grpc.md).
 
+## Worker Presence (Heartbeat)
+
+Worker hosts publish heartbeats to `/tenants/{tenantId}/workers/heartbeat` and are listed via `/tenants/{tenantId}/workers`.
+Heartbeat metadata (`metadataJson`) is optional and currently carries host identity plus dispatch status:
+
+- `kind`: `"worker"`
+- `hostname`: machine name
+- `dispatch.grpcConnected`: `true` when the gRPC dispatch stream is connected
+- `dispatch.lastConnectedAtUtc`: ISO timestamp of the last successful gRPC connection
+- `dispatch.lastFallbackAtUtc`: ISO timestamp of the last fallback polling window
+
+The Workers UI reads this metadata to surface gRPC vs fallback state. Presence is informational; it does not affect lease correctness.
+
 ## Authentication & Scoping
 
 All work endpoints:

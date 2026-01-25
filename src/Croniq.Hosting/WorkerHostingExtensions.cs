@@ -37,6 +37,7 @@ public static class WorkerHostingExtensions
         services.Configure<SqlServerOptions>(configuration.GetSection("Croniq:SqlServer"));
         services.Configure<PostgresOptions>(configuration.GetSection("Croniq:Postgres"));
         services.Configure<CroniqRetentionOptions>(configuration.GetSection("Croniq:Retention"));
+        services.Configure<WorkerDispatchOptions>(configuration.GetSection("Croniq:WorkerDispatch"));
 
         services.AddCroniqCore();
         services.AddCroniqDefaultProviders();
@@ -45,6 +46,7 @@ public static class WorkerHostingExtensions
         services.AddHostedService<CroniqTriggerSeedingHostedService>();
         services.AddHostedService<CroniqTriggerSummaryHostedService>();
         services.AddCroniqWorkerHost();
+
 
         var persistenceOpts = configuration.GetSection("Croniq:Persistence").Get<CroniqPersistenceOptions>() ?? new CroniqPersistenceOptions();
         var sharedSqlServer = configuration.GetSection("Croniq:SqlServer").Get<SqlServerOptions>() ?? new SqlServerOptions();

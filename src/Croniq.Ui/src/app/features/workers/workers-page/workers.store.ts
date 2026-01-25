@@ -9,6 +9,9 @@ export interface Worker {
     id: string;
     hostname: string;
     status: 'Online' | 'Offline' | 'Draining';
+    dispatchState: 'Connected' | 'Fallback' | 'Unknown';
+    dispatchLastConnectedAt?: string;
+    dispatchLastFallbackAt?: string;
     lastHeartbeatAt: string;
     activeJobs: number;
     capacity: number;
@@ -22,6 +25,11 @@ interface WorkerMetadata {
     tags?: string[];
     capacity?: number;
     activeJobs?: number;
+    dispatch?: {
+        grpcConnected?: boolean;
+        lastConnectedAtUtc?: string;
+        lastFallbackAtUtc?: string;
+    };
 }
 
 const DEFAULT_LOAD_LABEL = 'n/a';
@@ -42,6 +50,7 @@ const parseWorkerMetadata = (metadataJson?: string | null): WorkerMetadata => {
         const tagsValue = record['tags'];
         const capacityValue = record['capacity'];
         const activeJobsValue = record['activeJobs'];
+        const dispatchValue = record['dispatch'];
 
         const hostname = typeof hostnameValue === 'string' ? hostnameValue : undefined;
         const tags = Array.isArray(tagsValue)
@@ -49,12 +58,31 @@ const parseWorkerMetadata = (metadataJson?: string | null): WorkerMetadata => {
             : undefined;
         const capacity = typeof capacityValue === 'number' ? capacityValue : undefined;
         const activeJobs = typeof activeJobsValue === 'number' ? activeJobsValue : undefined;
+        const dispatch = dispatchValue && typeof dispatchValue === 'object'
+            ? (dispatchValue as Record<string, unknown>)
+            : undefined;
+        const grpcConnected = typeof dispatch?.['grpcConnected'] === 'boolean'
+            ? (dispatch['grpcConnected'] as boolean)
+            : undefined;
+        const lastConnectedAtUtc = typeof dispatch?.['lastConnectedAtUtc'] === 'string'
+            ? (dispatch['lastConnectedAtUtc'] as string)
+            : undefined;
+        const lastFallbackAtUtc = typeof dispatch?.['lastFallbackAtUtc'] === 'string'
+            ? (dispatch['lastFallbackAtUtc'] as string)
+            : undefined;
 
         return {
             hostname,
             tags,
             capacity,
             activeJobs,
+            dispatch: dispatch
+                ? {
+                    grpcConnected,
+                    lastConnectedAtUtc,
+                    lastFallbackAtUtc,
+                }
+                : undefined,
         };
     } catch {
         return {};
@@ -67,11 +95,20 @@ const mapWorkerStatus = (worker: WorkerStatusModel): Worker => {
     const activeJobs = metadata.activeJobs ?? 0;
     const loadPercent = capacity > 0 ? Math.min(100, (activeJobs / capacity) * 100) : 0;
     const loadLabel = capacity > 0 ? `${activeJobs}/${capacity}` : DEFAULT_LOAD_LABEL;
+    const dispatch = metadata.dispatch;
+    const dispatchState = dispatch?.grpcConnected
+        ? 'Connected'
+        : dispatch?.lastFallbackAtUtc
+            ? 'Fallback'
+            : 'Unknown';
 
     return {
         id: worker.instanceId,
         hostname: metadata.hostname ?? worker.instanceId,
         status: worker.isOnline ? 'Online' : 'Offline',
+        dispatchState,
+        dispatchLastConnectedAt: dispatch?.lastConnectedAtUtc,
+        dispatchLastFallbackAt: dispatch?.lastFallbackAtUtc,
         lastHeartbeatAt: worker.lastSeenAtUtc ?? '',
         activeJobs,
         capacity,

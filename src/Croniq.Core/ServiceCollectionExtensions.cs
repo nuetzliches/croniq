@@ -167,13 +167,31 @@ public static class ServiceCollectionExtensions
         services.AddOptions<WorkerHostOptions>()
             .Validate(ValidateWorkerHostOptions, "Croniq:WorkerHost must set BatchSize > 0 and non-negative delays.")
             .ValidateOnStart();
+        services.AddOptions<WorkerDispatchOptions>()
+            .Validate(ValidateWorkerDispatchOptions, "Croniq:WorkerDispatch must set non-negative delays and MaxInflight >= 0.")
+            .ValidateOnStart();
         if (configure is not null)
         {
             services.Configure(configure);
         }
+        services.TryAddSingleton<IWorkerDispatchStatusProvider, NoOpWorkerDispatchStatusProvider>();
         services.AddHostedService<CroniqWorkerHostedService>();
         services.AddHostedService<CroniqWorkerHeartbeatHostedService>();
         return services;
+    }
+
+    private static bool ValidateWorkerDispatchOptions(WorkerDispatchOptions options)
+    {
+        if (options is null)
+        {
+            return false;
+        }
+
+        return options.MaxInflight >= 0
+            && options.ReconnectDelay >= TimeSpan.Zero
+            && options.FallbackIdleDelay >= TimeSpan.Zero
+            && options.FallbackBusyDelay >= TimeSpan.Zero
+            && options.FallbackErrorDelay >= TimeSpan.Zero;
     }
 
     public static IServiceCollection AddCroniqHealthChecks(

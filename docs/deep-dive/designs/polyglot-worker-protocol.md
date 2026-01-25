@@ -25,6 +25,7 @@ Draft (HTTP work endpoints shipped; gRPC streaming remains a target). Last verif
 
 - Croniq has tenant/env scoping (`TenantId`, `EnvironmentTag`) and a worker host that executes jobs.
 - Worker host presence is tracked separately via `POST /tenants/{tenantId}/workers/heartbeat` and `GET /tenants/{tenantId}/workers`.
+- Worker heartbeat metadata can include dispatch status (`dispatch.grpcConnected`, `dispatch.lastConnectedAtUtc`, `dispatch.lastFallbackAtUtc`) for UI/ops visibility.
 - gRPC exists for scheduler-facing operations (e.g. `Scheduler` service).
 - Long-running execution already uses a lease/extend model internally.
 - The HTTP work endpoints (`/work/poll`, `/work/renew`, `/work/ack`, `/work/{executionId}:events`) expose the lease lifecycle for polyglot workers.

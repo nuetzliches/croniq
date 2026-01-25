@@ -40,6 +40,7 @@ public sealed class TriggerWorker
     private readonly IExecutionLogStore _executionLogStore;
     private readonly IWorkItemStore _workItemStore;
     private readonly JsonSerializerOptions _jsonOptions = new(JsonSerializerDefaults.Web);
+    private readonly ITriggerWorkerDispatchSink _dispatchSink;
 
     public TriggerWorker(
         IJobStore jobStore,
@@ -67,6 +68,7 @@ public sealed class TriggerWorker
         _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
         _hostOptions = hostOptions?.Value ?? throw new ArgumentNullException(nameof(hostOptions));
         _activitySource = activitySource ?? new ActivitySource("Croniq.Core.TriggerWorker");
+        _dispatchSink = new JobStoreDispatchSink(this);
     }
 
     public async Task<int> ProcessBatchAsync(DateTimeOffset nowUtc, int batchSize, CancellationToken cancellationToken)
@@ -90,162 +92,187 @@ public sealed class TriggerWorker
         foreach (var lease in leases)
         {
             cancellationToken.ThrowIfCancellationRequested();
-
-            var normalizedLease = EnsureExecutionId(lease);
-            await TryTrackAssignmentAsync(normalizedLease, cancellationToken).ConfigureAwait(false);
-
-            if (!JobKey.TryParse(normalizedLease.JobKey, out var jobKey) || !_registry.TryGet(jobKey, out var descriptor))
+            if (await ProcessLeaseAsync(lease, nowUtc, _dispatchSink, cancellationToken).ConfigureAwait(false))
             {
-                _logger.LogWarning("No job registered for JobKey {JobKey}, releasing lease {LeaseId} as dead-letter", normalizedLease.JobKey, normalizedLease.LeaseId);
-                await ReleaseAsync(normalizedLease, succeeded: false, deadLetterReason: "job-not-registered", nextFireTimeUtc: null, cancellationToken).ConfigureAwait(false);
-                continue;
-            }
-
-            SchedulerMetrics.AdjustQueueDepth(jobKey, 1, lease.Scope);
-            using var leaseActivity = _activitySource.StartActivity("Croniq.Trigger.Dispatch", ActivityKind.Internal);
-            leaseActivity?.SetTag("croniq.job.key", jobKey.Value);
-            leaseActivity?.SetTag("croniq.trigger.lease_id", normalizedLease.LeaseId);
-            leaseActivity?.SetTag("croniq.trigger.fire_at", normalizedLease.FireAtUtc.ToUnixTimeMilliseconds());
-
-            try
-            {
-                var misfireOptions = _policyResolver.ResolveMisfire(jobKey, lease.Scope);
-                var misfire = _misfirePolicy.Evaluate(normalizedLease, misfireOptions, nowUtc);
-                if (misfire.IsMisfire)
-                {
-                    _logger.LogWarning("Misfire detected for lease {LeaseId} at {FireAt}, reason {Reason}", normalizedLease.LeaseId, normalizedLease.FireAtUtc, misfire.Reason);
-                    SchedulerMetrics.RecordMisfire(jobKey, misfire.Reason ?? "unknown", lease.Scope);
-                    leaseActivity?.SetStatus(ActivityStatusCode.Error, "misfire");
-                    await ReleaseAsync(
-                        normalizedLease,
-                        succeeded: false,
-                        deadLetterReason: misfireOptions.DeadLetterOnMisfire ? misfire.Reason : null,
-                        nextFireTimeUtc: misfireOptions.DeadLetterOnMisfire ? null : nowUtc.Add(misfireOptions.RescheduleBackoff ?? TimeSpan.FromSeconds(30)),
-                        cancellationToken).ConfigureAwait(false);
-                    continue;
-                }
-
-                var quotaOptions = _policyResolver.ResolveQuota(jobKey, lease.Scope);
-                if (!_quotaGuard.TryAcquire(jobKey, quotaOptions, nowUtc, out var retryAt))
-                {
-                    _logger.LogWarning("Quota limit reached for {JobKey}; lease {LeaseId} will be rescheduled", normalizedLease.JobKey, normalizedLease.LeaseId);
-                    SchedulerMetrics.RecordQuotaReschedule(jobKey, lease.Scope);
-                    leaseActivity?.SetStatus(ActivityStatusCode.Error, "quota-limit");
-                    await ReleaseAsync(
-                        normalizedLease,
-                        succeeded: false,
-                        deadLetterReason: "quota-limit",
-                        nextFireTimeUtc: retryAt ?? nowUtc.AddSeconds(5),
-                        cancellationToken).ConfigureAwait(false);
-                    continue;
-                }
-
-                var executionOptions = _policyResolver.ResolveExecution(jobKey, lease.Scope);
-                var metadata = BuildExecutionMetadata(lease);
-
-                var executionId = normalizedLease.ExecutionId!;
-                leaseActivity?.SetTag("croniq.execution_id", executionId);
-                await TryStoreExecutionStartedAsync(executionId, normalizedLease, jobKey, leaseActivity, cancellationToken).ConfigureAwait(false);
-
-                Stopwatch? executionTimer = null;
-                using var jobCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-                var renewTask = StartLeaseRenewalAsync(normalizedLease, jobKey, jobCancellation, cancellationToken);
-
-                try
-                {
-                    var request = new JobExecutionRequest(executionId, jobKey, normalizedLease.Scope, descriptor, executionOptions, metadata, _activitySource);
-                    executionTimer = Stopwatch.StartNew();
-                    await _pipeline.ExecuteAsync(request, jobCancellation.Token).ConfigureAwait(false);
-
-                    var elapsedMs = executionTimer.Elapsed.TotalMilliseconds;
-                    var leaseLost = await CompleteLeaseRenewalAsync(renewTask, jobCancellation).ConfigureAwait(false);
-                    if (leaseLost)
-                    {
-                        SchedulerMetrics.RecordJobExecution(jobKey, succeeded: false, elapsedMs, lease.Scope);
-                        leaseActivity?.SetStatus(ActivityStatusCode.Error, "lease-lost");
-                        await TryStoreExecutionCompletedAsync(executionId, ExecutionStatus.Canceled, elapsedMs, null, cancellationToken).ConfigureAwait(false);
-                        _logger.LogWarning("Lease {LeaseId} for job {JobKey} was lost; skipping release.", normalizedLease.LeaseId, normalizedLease.JobKey);
-                    }
-                    else
-                    {
-                        SchedulerMetrics.RecordJobExecution(jobKey, succeeded: true, elapsedMs, lease.Scope);
-                        leaseActivity?.SetStatus(ActivityStatusCode.Ok);
-                        await TryStoreExecutionCompletedAsync(executionId, ExecutionStatus.Succeeded, elapsedMs, null, cancellationToken).ConfigureAwait(false);
-
-                        await ReleaseAsync(normalizedLease, succeeded: true, deadLetterReason: null, nextFireTimeUtc: null, cancellationToken).ConfigureAwait(false);
-                        processed++;
-                    }
-                }
-                catch (Exception ex)
-                {
-                    var elapsedMs = executionTimer?.Elapsed.TotalMilliseconds ?? 0d;
-                    var leaseLost = await CompleteLeaseRenewalAsync(renewTask, jobCancellation).ConfigureAwait(false);
-                    var canceled = IsCancellation(ex, jobCancellation.Token);
-                    SchedulerMetrics.RecordJobExecution(jobKey, succeeded: false, elapsedMs, lease.Scope);
-                    if (canceled)
-                    {
-                        leaseActivity?.SetStatus(ActivityStatusCode.Error, "canceled");
-                        _logger.LogWarning("Execution canceled for job {JobKey} (lease {LeaseId})", normalizedLease.JobKey, normalizedLease.LeaseId);
-                    }
-                    else
-                    {
-                        leaseActivity?.SetStatus(ActivityStatusCode.Error, ex.Message);
-                        _logger.LogError(ex, "Error executing job {JobKey} for lease {LeaseId}", normalizedLease.JobKey, normalizedLease.LeaseId);
-                    }
-
-                    var releaseReason = "execution-error";
-                    var status = canceled ? ExecutionStatus.Canceled : ExecutionStatus.Failed;
-                    await TryStoreExecutionCompletedAsync(executionId, status, elapsedMs, canceled ? null : ex, cancellationToken).ConfigureAwait(false);
-
-                    if (executionOptions.DeadLetter.Enabled && !canceled && !leaseLost)
-                    {
-                        var occurredAtUtc = DateTimeOffset.UtcNow;
-                        var metadataSnapshot = CloneMetadata(metadata);
-                        metadataSnapshot["exception.type"] = ex.GetType().FullName ?? ex.GetType().Name;
-                        metadataSnapshot["exception.message"] = ex.Message;
-                        metadataSnapshot["execution.reason"] = "policy-deadletter";
-                        if (!string.IsNullOrWhiteSpace(executionOptions.DeadLetter.OperatorHint))
-                        {
-                            metadataSnapshot["deadletter.hint"] = executionOptions.DeadLetter.OperatorHint!;
-                        }
-
-                        var deadLetterPayload = BuildDeadLetterPayload(normalizedLease, metadataSnapshot, executionOptions, ex, occurredAtUtc);
-                        var metadataView = metadataSnapshot.Count == 0 ? null : metadataSnapshot;
-                        var deadLetter = new DeadLetterRequest(
-                            normalizedLease,
-                            releaseReason,
-                            occurredAtUtc,
-                            executionOptions.DeadLetter.Retention,
-                            deadLetterPayload,
-                            metadataView);
-
-                        await TryDeadLetterAsync(jobKey, deadLetter, cancellationToken).ConfigureAwait(false);
-                        releaseReason = null;
-                    }
-
-                    if (!leaseLost)
-                    {
-                        await ReleaseAsync(normalizedLease, succeeded: false, deadLetterReason: releaseReason, nextFireTimeUtc: null, cancellationToken).ConfigureAwait(false);
-                    }
-                }
-                finally
-                {
-                    _quotaGuard.Release(jobKey);
-                }
-            }
-            finally
-            {
-                SchedulerMetrics.AdjustQueueDepth(jobKey, -1, lease.Scope);
+                processed++;
             }
         }
 
         return processed;
     }
 
-    private Task ReleaseAsync(TriggerLease lease, bool succeeded, string? deadLetterReason, DateTimeOffset? nextFireTimeUtc, CancellationToken cancellationToken)
+    public async Task<bool> ProcessLeaseAsync(
+        TriggerLease lease,
+        DateTimeOffset nowUtc,
+        ITriggerWorkerDispatchSink dispatchSink,
+        CancellationToken cancellationToken)
+    {
+        if (dispatchSink is null)
+        {
+            throw new ArgumentNullException(nameof(dispatchSink));
+        }
+
+        var normalizedLease = EnsureExecutionId(lease);
+        await dispatchSink.OnAssignmentAsync(normalizedLease, cancellationToken).ConfigureAwait(false);
+
+        if (!JobKey.TryParse(normalizedLease.JobKey, out var jobKey) || !_registry.TryGet(jobKey, out var descriptor))
+        {
+            _logger.LogWarning("No job registered for JobKey {JobKey}, releasing lease {LeaseId} as dead-letter", normalizedLease.JobKey, normalizedLease.LeaseId);
+            await ReleaseAsync(dispatchSink, normalizedLease, succeeded: false, deadLetterReason: "job-not-registered", nextFireTimeUtc: null, cancellationToken).ConfigureAwait(false);
+            return false;
+        }
+
+        SchedulerMetrics.AdjustQueueDepth(jobKey, 1, lease.Scope);
+        using var leaseActivity = _activitySource.StartActivity("Croniq.Trigger.Dispatch", ActivityKind.Internal);
+        leaseActivity?.SetTag("croniq.job.key", jobKey.Value);
+        leaseActivity?.SetTag("croniq.trigger.lease_id", normalizedLease.LeaseId);
+        leaseActivity?.SetTag("croniq.trigger.fire_at", normalizedLease.FireAtUtc.ToUnixTimeMilliseconds());
+
+        try
+        {
+            var misfireOptions = _policyResolver.ResolveMisfire(jobKey, lease.Scope);
+            var misfire = _misfirePolicy.Evaluate(normalizedLease, misfireOptions, nowUtc);
+            if (misfire.IsMisfire)
+            {
+                _logger.LogWarning("Misfire detected for lease {LeaseId} at {FireAt}, reason {Reason}", normalizedLease.LeaseId, normalizedLease.FireAtUtc, misfire.Reason);
+                SchedulerMetrics.RecordMisfire(jobKey, misfire.Reason ?? "unknown", lease.Scope);
+                leaseActivity?.SetStatus(ActivityStatusCode.Error, "misfire");
+                await ReleaseAsync(
+                    dispatchSink,
+                    normalizedLease,
+                    succeeded: false,
+                    deadLetterReason: misfireOptions.DeadLetterOnMisfire ? misfire.Reason : null,
+                    nextFireTimeUtc: misfireOptions.DeadLetterOnMisfire ? null : nowUtc.Add(misfireOptions.RescheduleBackoff ?? TimeSpan.FromSeconds(30)),
+                    cancellationToken).ConfigureAwait(false);
+                return false;
+            }
+
+            var quotaOptions = _policyResolver.ResolveQuota(jobKey, lease.Scope);
+            if (!_quotaGuard.TryAcquire(jobKey, quotaOptions, nowUtc, out var retryAt))
+            {
+                _logger.LogWarning("Quota limit reached for {JobKey}; lease {LeaseId} will be rescheduled", normalizedLease.JobKey, normalizedLease.LeaseId);
+                SchedulerMetrics.RecordQuotaReschedule(jobKey, lease.Scope);
+                leaseActivity?.SetStatus(ActivityStatusCode.Error, "quota-limit");
+                await ReleaseAsync(
+                    dispatchSink,
+                    normalizedLease,
+                    succeeded: false,
+                    deadLetterReason: "quota-limit",
+                    nextFireTimeUtc: retryAt ?? nowUtc.AddSeconds(5),
+                    cancellationToken).ConfigureAwait(false);
+                return false;
+            }
+
+            var executionOptions = _policyResolver.ResolveExecution(jobKey, lease.Scope);
+            var metadata = BuildExecutionMetadata(lease);
+
+            var executionId = normalizedLease.ExecutionId!;
+            leaseActivity?.SetTag("croniq.execution_id", executionId);
+            await dispatchSink.OnExecutionStartedAsync(executionId, normalizedLease, jobKey, leaseActivity, cancellationToken).ConfigureAwait(false);
+
+            Stopwatch? executionTimer = null;
+            using var jobCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            var renewTask = StartLeaseRenewalAsync(normalizedLease, jobKey, jobCancellation, cancellationToken);
+
+            try
+            {
+                var request = new JobExecutionRequest(executionId, jobKey, normalizedLease.Scope, descriptor, executionOptions, metadata, _activitySource);
+                executionTimer = Stopwatch.StartNew();
+                await _pipeline.ExecuteAsync(request, jobCancellation.Token).ConfigureAwait(false);
+
+                var elapsedMs = executionTimer.Elapsed.TotalMilliseconds;
+                var leaseLost = await CompleteLeaseRenewalAsync(renewTask, jobCancellation).ConfigureAwait(false);
+                if (leaseLost)
+                {
+                    SchedulerMetrics.RecordJobExecution(jobKey, succeeded: false, elapsedMs, lease.Scope);
+                    leaseActivity?.SetStatus(ActivityStatusCode.Error, "lease-lost");
+                    await dispatchSink.OnExecutionCompletedAsync(executionId, ExecutionStatus.Canceled, elapsedMs, null, cancellationToken).ConfigureAwait(false);
+                    _logger.LogWarning("Lease {LeaseId} for job {JobKey} was lost; skipping release.", normalizedLease.LeaseId, normalizedLease.JobKey);
+                    return false;
+                }
+
+                SchedulerMetrics.RecordJobExecution(jobKey, succeeded: true, elapsedMs, lease.Scope);
+                leaseActivity?.SetStatus(ActivityStatusCode.Ok);
+                await dispatchSink.OnExecutionCompletedAsync(executionId, ExecutionStatus.Succeeded, elapsedMs, null, cancellationToken).ConfigureAwait(false);
+
+                await ReleaseAsync(dispatchSink, normalizedLease, succeeded: true, deadLetterReason: null, nextFireTimeUtc: null, cancellationToken).ConfigureAwait(false);
+                return true;
+            }
+            catch (Exception ex)
+            {
+                var elapsedMs = executionTimer?.Elapsed.TotalMilliseconds ?? 0d;
+                var leaseLost = await CompleteLeaseRenewalAsync(renewTask, jobCancellation).ConfigureAwait(false);
+                var canceled = IsCancellation(ex, jobCancellation.Token);
+                SchedulerMetrics.RecordJobExecution(jobKey, succeeded: false, elapsedMs, lease.Scope);
+                if (canceled)
+                {
+                    leaseActivity?.SetStatus(ActivityStatusCode.Error, "canceled");
+                    _logger.LogWarning("Execution canceled for job {JobKey} (lease {LeaseId})", normalizedLease.JobKey, normalizedLease.LeaseId);
+                }
+                else
+                {
+                    leaseActivity?.SetStatus(ActivityStatusCode.Error, ex.Message);
+                    _logger.LogError(ex, "Error executing job {JobKey} for lease {LeaseId}", normalizedLease.JobKey, normalizedLease.LeaseId);
+                }
+
+                var releaseReason = "execution-error";
+                var status = canceled ? ExecutionStatus.Canceled : ExecutionStatus.Failed;
+                await dispatchSink.OnExecutionCompletedAsync(executionId, status, elapsedMs, canceled ? null : ex, cancellationToken).ConfigureAwait(false);
+
+                if (executionOptions.DeadLetter.Enabled && !canceled && !leaseLost)
+                {
+                    var occurredAtUtc = DateTimeOffset.UtcNow;
+                    var metadataSnapshot = CloneMetadata(metadata);
+                    metadataSnapshot["exception.type"] = ex.GetType().FullName ?? ex.GetType().Name;
+                    metadataSnapshot["exception.message"] = ex.Message;
+                    metadataSnapshot["execution.reason"] = "policy-deadletter";
+                    if (!string.IsNullOrWhiteSpace(executionOptions.DeadLetter.OperatorHint))
+                    {
+                        metadataSnapshot["deadletter.hint"] = executionOptions.DeadLetter.OperatorHint!;
+                    }
+
+                    var deadLetterPayload = BuildDeadLetterPayload(normalizedLease, metadataSnapshot, executionOptions, ex, occurredAtUtc);
+                    var metadataView = metadataSnapshot.Count == 0 ? null : metadataSnapshot;
+                    var deadLetter = new DeadLetterRequest(
+                        normalizedLease,
+                        releaseReason,
+                        occurredAtUtc,
+                        executionOptions.DeadLetter.Retention,
+                        deadLetterPayload,
+                        metadataView);
+
+                    await TryDeadLetterAsync(jobKey, deadLetter, cancellationToken).ConfigureAwait(false);
+                    releaseReason = null;
+                }
+
+                if (!leaseLost)
+                {
+                    await ReleaseAsync(dispatchSink, normalizedLease, succeeded: false, deadLetterReason: releaseReason, nextFireTimeUtc: null, cancellationToken).ConfigureAwait(false);
+                }
+
+                return false;
+            }
+            finally
+            {
+                _quotaGuard.Release(jobKey);
+            }
+        }
+        finally
+        {
+            SchedulerMetrics.AdjustQueueDepth(jobKey, -1, lease.Scope);
+        }
+    }
+
+    private Task ReleaseAsync(
+        ITriggerWorkerDispatchSink dispatchSink,
+        TriggerLease lease,
+        bool succeeded,
+        string? deadLetterReason,
+        DateTimeOffset? nextFireTimeUtc,
+        CancellationToken cancellationToken)
     {
         var release = new TriggerReleaseRequest(lease, _options.InstanceId, succeeded, nextFireTimeUtc, deadLetterReason);
-        return ReleaseAndTrackAsync(release, cancellationToken);
+        return dispatchSink.OnReleaseAsync(release, cancellationToken);
     }
 
     private async Task ReleaseAndTrackAsync(TriggerReleaseRequest release, CancellationToken cancellationToken)
@@ -713,4 +740,26 @@ public sealed class TriggerWorker
     private sealed record DeadLetterCircuitBreakerSnapshot(bool Enabled, int FailureThreshold, TimeSpan SamplingWindow, TimeSpan BreakDuration, int MinimumThroughput);
 
     private sealed record DeadLetterDeadLetterOptionsSnapshot(bool Enabled, TimeSpan Retention, string? OperatorHint);
+
+    private sealed class JobStoreDispatchSink : ITriggerWorkerDispatchSink
+    {
+        private readonly TriggerWorker _owner;
+
+        public JobStoreDispatchSink(TriggerWorker owner)
+        {
+            _owner = owner ?? throw new ArgumentNullException(nameof(owner));
+        }
+
+        public Task OnAssignmentAsync(TriggerLease lease, CancellationToken cancellationToken)
+            => _owner.TryTrackAssignmentAsync(lease, cancellationToken);
+
+        public Task OnExecutionStartedAsync(string executionId, TriggerLease lease, JobKey jobKey, Activity? activity, CancellationToken cancellationToken)
+            => _owner.TryStoreExecutionStartedAsync(executionId, lease, jobKey, activity, cancellationToken);
+
+        public Task OnExecutionCompletedAsync(string executionId, ExecutionStatus status, double? durationMs, Exception? error, CancellationToken cancellationToken)
+            => _owner.TryStoreExecutionCompletedAsync(executionId, status, durationMs, error, cancellationToken);
+
+        public Task OnReleaseAsync(TriggerReleaseRequest release, CancellationToken cancellationToken)
+            => _owner.ReleaseAndTrackAsync(release, cancellationToken);
+    }
 }

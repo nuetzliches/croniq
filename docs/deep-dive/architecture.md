@@ -129,6 +129,20 @@ docs/
 - Presence is tracked via heartbeats (`POST /tenants/{tenantId}/workers/heartbeat`) and listed via `GET /tenants/{tenantId}/workers`. The TTL is controlled by `WorkerStoreOptions.OnlineTtl`.
 - Worker presence endpoints require `workers:heartbeat` (post) and `workers:read` (list) scopes.
 - Worker hosts emit heartbeats on `Croniq:WorkerHost:HeartbeatInterval` (set to `00:00:00` to disable). The heartbeat interval should remain comfortably below the online TTL.
+- Heartbeat `metadataJson` includes basic host identity plus optional dispatch status (`dispatch.grpcConnected`, `dispatch.lastConnectedAtUtc`, `dispatch.lastFallbackAtUtc`) so the UI can surface gRPC vs fallback state.
+
+## Worker Dispatch (gRPC-first)
+
+- Worker hosts can switch to gRPC-first dispatch via `Croniq:WorkerDispatch:EnableGrpc=true` with `Croniq:WorkerDispatch:GrpcEndpoint` set to the API host gRPC base URL.
+- `Croniq:WorkerDispatch:RunnerId` must match the authenticated caller identity; when omitted the worker uses `Croniq:Core:InstanceId`.
+- The gRPC stream (`Worker.Connect`) is the primary dispatch path; the API host acquires leases and streams assignments, while the worker executes and acknowledges work.
+- Polling fallback remains available via `Croniq:WorkerDispatch:EnablePollingFallback` and uses `Croniq:WorkerDispatch:Fallback*Delay` (defaults target a 5–10s worst-case delay).
+- The persistence layer remains the single source of truth; gRPC dispatch still relies on leases in the store.
+- gRPC dispatch is opt-in; when disabled, workers use polling only.
+- Switch-over to fallback happens on gRPC connection failures, deadline timeouts, or retry backoff exhaustion. Workers retry gRPC after `Croniq:WorkerDispatch:ReconnectDelay`; the first successful `Worker.Connect` resumes streaming dispatch.
+- SSE is not used for worker fallback; it is reserved for UI streaming.
+- Max inflight assignments default to `WorkerHostOptions.BatchSize`.
+- Observability: worker dispatch emits `croniq.worker_dispatch.grpc.connected`, `croniq.worker_dispatch.grpc.reconnects`, and `croniq.worker_dispatch.fallback.activations` metrics; UI uses heartbeat metadata for status.
 
 ## Runner Identity & Availability
 

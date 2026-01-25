@@ -127,7 +127,7 @@ public sealed class WebhookIngressRelayE2eTests
 
         builder.WebHost.ConfigureKestrel(options =>
         {
-            options.Listen(IPAddress.Loopback, 0, listenOptions => listenOptions.Protocols = HttpProtocols.Http2);
+            options.Listen(IPAddress.Loopback, 0, listenOptions => listenOptions.Protocols = HttpProtocols.Http1AndHttp2);
         });
 
         var app = builder.Build();
@@ -160,6 +160,7 @@ public sealed class WebhookIngressRelayE2eTests
                     ["Croniq:Webhooks:Mode"] = "Remote",
                     ["Croniq:Webhooks:Remote:BaseUrl"] = baseUrl,
                     ["Croniq:Webhooks:Remote:ApiKey"] = apiKey,
+                    ["Croniq:Webhooks:Remote:StreamMode"] = "Polling",
                     ["Croniq:Webhooks:Remote:MaxInflight"] = "1",
                     ["Croniq:Webhooks:Remote:ReconnectDelaySeconds"] = "1",
                     ["Croniq:Webhooks:Remote:TimeoutSeconds"] = "5",

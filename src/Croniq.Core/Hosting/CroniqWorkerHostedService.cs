@@ -17,11 +17,13 @@ public sealed class CroniqWorkerHostedService : BackgroundService
     private readonly CroniqOptions _options;
     private readonly WorkerHostOptions _hostOptions;
     private readonly CroniqStartupOptions _startupOptions;
+    private readonly WorkerDispatchOptions _dispatchOptions;
 
     public CroniqWorkerHostedService(
         TriggerWorker worker,
         IOptions<CroniqOptions> options,
         IOptions<WorkerHostOptions> hostOptions,
+        IOptions<WorkerDispatchOptions> dispatchOptions,
         IOptions<CroniqStartupOptions> startupOptions,
         ILogger<CroniqWorkerHostedService> logger)
     {
@@ -29,6 +31,7 @@ public sealed class CroniqWorkerHostedService : BackgroundService
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
         _hostOptions = hostOptions?.Value ?? throw new ArgumentNullException(nameof(hostOptions));
+        _dispatchOptions = dispatchOptions?.Value ?? new WorkerDispatchOptions();
         _startupOptions = startupOptions?.Value ?? new CroniqStartupOptions();
     }
 
@@ -38,6 +41,12 @@ public sealed class CroniqWorkerHostedService : BackgroundService
         if (startupMode == CroniqStartupMode.Validate)
         {
             _logger.LogInformation("Croniq startup mode is Validate; worker loops are disabled.");
+            return;
+        }
+
+        if (_dispatchOptions.EnableGrpc)
+        {
+            _logger.LogInformation("Croniq worker polling loop is disabled because gRPC dispatch is enabled.");
             return;
         }
 
