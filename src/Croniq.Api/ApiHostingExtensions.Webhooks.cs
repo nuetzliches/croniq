@@ -1485,6 +1485,7 @@ public static partial class ApiHostingExtensions
             source,
             entry.OccurredAtUtc,
             entry.LatencyMs,
+            entry.Attempts,
             PayloadBytes: entry.PayloadBytes,
             RequestId: requestId,
             Reason: entry.Reason,

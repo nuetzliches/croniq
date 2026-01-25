@@ -47,6 +47,7 @@ public sealed record WebhookActivityEntry(
     string? Source,
     DateTimeOffset OccurredAtUtc,
     int? LatencyMs,
+    int? Attempts,
     string? Reason,
     int? PayloadBytes,
     long? DeadLetterId);

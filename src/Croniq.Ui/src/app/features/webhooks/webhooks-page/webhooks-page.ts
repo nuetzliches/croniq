@@ -585,9 +585,15 @@ export class WebhooksPage {
       return 'Dead lettered';
     }
     if (item.status === 'success') {
+      if ((item.attempts ?? 0) > 1) {
+        return `Delivered after ${item.attempts} attempts`;
+      }
       return 'Delivered';
     }
     if (item.status === 'warning') {
+      if ((item.attempts ?? 0) > 1) {
+        return `Delivered after ${item.attempts} attempts`;
+      }
       return 'Delivered with warning';
     }
     if (item.status === 'failed') {

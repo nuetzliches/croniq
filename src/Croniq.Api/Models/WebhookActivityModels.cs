@@ -13,6 +13,7 @@ public sealed record WebhookActivityTimelineEntry(
     string? Source,
     DateTimeOffset OccurredAtUtc,
     int? LatencyMs,
+    int? Attempts,
     int? PayloadBytes,
     string? RequestId,
     string? Reason,

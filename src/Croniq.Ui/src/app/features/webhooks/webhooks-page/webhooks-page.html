@@ -893,6 +893,9 @@
                         @if (item.requestId) {
                           <div class="text-[11px] text-muted">Request ID: {{ item.requestId }}</div>
                         }
+                        @if (item.attempts !== null && item.attempts !== undefined) {
+                          <div class="text-[11px] text-muted">Attempts: {{ item.attempts }}</div>
+                        }
                         @if (item.latencyMs !== null && item.latencyMs !== undefined) {
                           <div class="text-[11px] text-muted">Latency: {{ item.latencyMs }} ms</div>
                         }

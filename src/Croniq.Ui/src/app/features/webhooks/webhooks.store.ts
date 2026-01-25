@@ -82,6 +82,7 @@ export type WebhookTimelineItemView = {
     requestId?: string;
     latencyMs?: number;
     payloadBytes?: number;
+    attempts?: number;
     deadLetterId?: string;
     endpointRowKey?: string;
     source?: TimelineItemSource;
@@ -1269,6 +1270,7 @@ function normalizeActivityTimeline(entries: WebhookActivityTimelineResponse): Re
             requestId: resolveNonEmptyString(entry.requestId),
             latencyMs: resolveOptionalNumber(entry.latencyMs),
             payloadBytes: resolveOptionalNumber(entry.payloadBytes),
+            attempts: resolveOptionalNumber(entry.attempts),
             deadLetterId,
             source,
         };

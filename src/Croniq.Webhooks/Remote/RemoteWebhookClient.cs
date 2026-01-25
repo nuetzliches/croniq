@@ -415,6 +415,7 @@ public sealed class RemoteWebhookClient
             source,
             entry.OccurredAtUtc,
             entry.LatencyMs,
+            entry.Attempts,
             entry.Reason,
             entry.PayloadBytes,
             deadLetterId);
@@ -670,6 +671,7 @@ public sealed class RemoteWebhookClient
         string? Source,
         DateTimeOffset OccurredAtUtc,
         int? LatencyMs,
+        int? Attempts,
         int? PayloadBytes,
         string? RequestId,
         string? Reason,

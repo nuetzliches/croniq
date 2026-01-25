@@ -81,6 +81,7 @@ public sealed class PostgresWebhookActivityStore : IWebhookActivityStore, IWebho
                 entry.CreatedAtUtc,
                 entry.FailureReason,
                 entry.ErrorDetails,
+                entry.Attempts,
                 entry.Payload))
             .ToListAsync(cancellationToken)
             .ConfigureAwait(false);
@@ -336,6 +337,7 @@ public sealed class PostgresWebhookActivityStore : IWebhookActivityStore, IWebho
             source,
             new DateTimeOffset(DateTime.SpecifyKind(entry.ReceivedAtUtc, DateTimeKind.Utc)),
             latencyMs,
+            entry.AttemptCount,
             status == WebhookActivityStatus.Failed ? entry.LastError : null,
             ComputePayloadBytes(entry.Payload),
             DeadLetterId: null);
@@ -357,7 +359,8 @@ public sealed class PostgresWebhookActivityStore : IWebhookActivityStore, IWebho
             entry.EnvironmentTag,
             WebhookActivitySources.Ingress,
             new DateTimeOffset(DateTime.SpecifyKind(entry.CreatedAtUtc, DateTimeKind.Utc)),
-                LatencyMs: null,
+            LatencyMs: null,
+            Attempts: entry.Attempts,
             reason,
             ComputePayloadBytes(entry.Payload),
             entry.Id);
@@ -597,6 +600,7 @@ public sealed class PostgresWebhookActivityStore : IWebhookActivityStore, IWebho
         DateTime CreatedAtUtc,
         string FailureReason,
         string? ErrorDetails,
+        int Attempts,
         string? Payload);
 
     private sealed record ActivitySample(DateTimeOffset OccurredAtUtc, WebhookActivityStatus Status, WebhookActivityKind Kind);

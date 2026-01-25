@@ -18,6 +18,7 @@ export const WebhookActivityTimelineEntry = z.object({
     source: webhookActivitySourceSchema.nullable().optional(),
     occurredAtUtc: z.iso.datetime({ offset: true }).optional(),
     latencyMs: z.number().int().nonnegative().nullable().optional(),
+    attempts: z.number().int().nonnegative().nullable().optional(),
     payloadBytes: z.number().int().nonnegative().nullable().optional(),
     requestId: z.string().nullable().optional(),
     reason: z.string().nullable().optional(),

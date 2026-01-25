@@ -46,6 +46,7 @@ public sealed class WebhookActivityStreamTests
                 Source: WebhookActivitySources.Ingress,
                 OccurredAtUtc: DateTimeOffset.UtcNow,
                 LatencyMs: null,
+                Attempts: 1,
                 Reason: null,
                 PayloadBytes: null,
                 DeadLetterId: null)
@@ -99,6 +100,7 @@ public sealed class WebhookActivityStreamTests
                 Source: WebhookActivitySources.Ingress,
                 OccurredAtUtc: DateTimeOffset.UtcNow,
                 LatencyMs: null,
+                Attempts: 1,
                 Reason: null,
                 PayloadBytes: null,
                 DeadLetterId: null)

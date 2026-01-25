@@ -120,6 +120,7 @@ public sealed class GrpcWebhookActivityTests
                 Source: WebhookActivitySources.Ingress,
                 OccurredAtUtc: DateTimeOffset.UtcNow,
                 LatencyMs: null,
+                Attempts: 1,
                 Reason: null,
                 PayloadBytes: null,
                 DeadLetterId: null);

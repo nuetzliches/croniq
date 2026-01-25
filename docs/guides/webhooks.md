@@ -44,7 +44,7 @@ Activity timeline entries include `status` values that map to the ingress lifecy
 
 Activity summary buckets include `totalCount`, `errorCount`, `warningCount`, `pendingCount`, `leasedCount`, `deadLetterCount`, and optional `p95LatencyMs`.
 
-> Note: UI retry/outcome labeling currently infers retries from `warning` status. A dedicated `attempts` field is not yet exposed in the activity timeline response; see UI backlog entry for adding it.
+> Note: Activity timeline entries include `attempts` when available; `warning` still indicates a delivery completed after retries.
 
 For relay flow details that generate pending/leased transitions, see [`dmz-ingress-remote-webhooks.md`](../deep-dive/designs/dmz-ingress-remote-webhooks.md).
 
