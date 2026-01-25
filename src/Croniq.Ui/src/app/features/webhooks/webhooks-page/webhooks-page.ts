@@ -1,6 +1,7 @@
 import { CdkMenu } from '@angular/cdk/menu';
 import { DatePipe } from '@angular/common';
 import { ChangeDetectionStrategy, Component, Directive, TemplateRef, computed, effect, inject, linkedSignal, signal, viewChild } from '@angular/core';
+import { RouterLink } from '@angular/router';
 import { FormField, form } from '@angular/forms/signals';
 import { RuntimeConfigService } from '@core/runtime-config.service';
 import { TenantContextService } from '@core/tenant-context/tenant-context.service';
@@ -104,6 +105,7 @@ export class CqWebhookCellDirective extends CqCellDefDirective<WebhookEndpointVi
   selector: 'cq-webhooks-page',
   imports: [
     DatePipe,
+    RouterLink,
     FormField,
     DataGrid,
     CqColumnComponent,
@@ -175,6 +177,7 @@ export class WebhooksPage {
   readonly invokePayload = signal('');
   readonly invokePayloadTouched = signal(false);
   readonly invokeNotice = signal<string | null>(null);
+  readonly ingressTab = signal<'internal' | 'remote'>('internal');
   readonly hookSearch = signal('');
   readonly jobSearch = signal('');
   readonly selectedHookKeys = signal<ReadonlyArray<string>>([]);
@@ -394,11 +397,7 @@ export class WebhooksPage {
   }
 
   copyIngressUrl(target?: 'internal' | 'remote'): void {
-    const url = target === 'internal'
-      ? this.internalIngressUrl()
-      : target === 'remote'
-        ? this.remoteIngressUrl()
-        : this.ingressUrl();
+    const url = this.resolveIngressUrl(target);
     if (!url) {
       return;
     }
@@ -525,6 +524,15 @@ export class WebhooksPage {
     return typeof endpoint.requestsPerMinute === 'number'
       ? String(endpoint.requestsPerMinute)
       : 'Default';
+  }
+
+  endpointDescription(endpoint: WebhookEndpointView): string | null {
+    const raw = endpoint.metadata?.['description'] ?? endpoint.metadata?.['note'] ?? null;
+    if (!raw || typeof raw !== 'string') {
+      return null;
+    }
+    const normalized = raw.trim();
+    return normalized.length > 0 ? normalized : null;
   }
 
   isEndpointPaused(endpoint: WebhookEndpointView): boolean {
@@ -865,7 +873,7 @@ export class WebhooksPage {
   }
 
   copyCurlSnippet(): void {
-    const url = this.ingressUrl();
+    const url = this.resolveIngressUrl();
     const payload = this.invokePayload();
     if (!url || !navigator.clipboard?.writeText) {
       return;
@@ -875,6 +883,33 @@ export class WebhooksPage {
     navigator.clipboard.writeText(curl).catch((error: unknown) => {
       console.error('Unable to copy cURL snippet', error);
     });
+  }
+
+  copyCurlSnippetFor(target: 'internal' | 'remote'): void {
+    const url = this.resolveIngressUrl(target);
+    const payload = this.invokePayload();
+    if (!url || !navigator.clipboard?.writeText) {
+      return;
+    }
+    const escapedPayload = escapeSingleQuotes(payload || '{}');
+    const curl = `curl -X POST "${url}" -H "Content-Type: application/json" -d '${escapedPayload}'`;
+    navigator.clipboard.writeText(curl).catch((error: unknown) => {
+      console.error('Unable to copy cURL snippet', error);
+    });
+  }
+
+  setIngressTab(tab: 'internal' | 'remote'): void {
+    this.ingressTab.set(tab);
+  }
+
+  private resolveIngressUrl(target?: 'internal' | 'remote'): string | null {
+    if (target === 'internal') {
+      return this.internalIngressUrl();
+    }
+    if (target === 'remote') {
+      return this.remoteIngressUrl();
+    }
+    return this.ingressUrl();
   }
 
   previousPage(): void {

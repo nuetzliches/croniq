@@ -169,6 +169,7 @@ public static partial class ApiHostingExtensions
             string? environment,
             [FromServices] ICallerContextAccessor callerContextAccessor,
             [FromServices] IWebhookPersistenceProvider? webhookStore,
+            [FromServices] IWebhookActivityStore? activityStore,
             CancellationToken cancellationToken) =>
         {
             if (webhookStore is null)
@@ -184,7 +185,22 @@ public static partial class ApiHostingExtensions
 
             var scope = new PartitionScope(tenantId, resolvedEnvironment);
             var endpoints = await webhookStore.ListAsync(scope, cancellationToken).ConfigureAwait(false);
-            var response = endpoints.Select(def => ToWebhookResponse(def)).ToList();
+            var lastDeliveries = await TryResolveLastDeliveriesAsync(activityStore, scope, endpoints, cancellationToken)
+                .ConfigureAwait(false);
+            var response = endpoints
+                .Select(def =>
+                {
+                    var endpoint = ToWebhookResponse(def);
+                    if (endpoint.LastDeliveryAtUtc.HasValue || lastDeliveries.Count == 0)
+                    {
+                        return endpoint;
+                    }
+
+                    return lastDeliveries.TryGetValue(def.HookKey, out var lastDeliveryAtUtc)
+                        ? endpoint with { LastDeliveryAtUtc = lastDeliveryAtUtc }
+                        : endpoint;
+                })
+                .ToList();
             return Results.Ok(response);
         })
         .WithDocs("Webhooks_List", "List webhook endpoints", "Returns all webhook endpoints for the specified tenant/environment scope.")
@@ -829,15 +845,18 @@ public static partial class ApiHostingExtensions
                         var detail = string.IsNullOrWhiteSpace(errorBody)
                             ? $"Remote webhook relay failed with status {(int)response.StatusCode} ({response.ReasonPhrase})."
                             : errorBody;
+                        await TryUpdateLastDeliveryAsync(webhookStore, endpoint, DateTimeOffset.UtcNow, cancellationToken).ConfigureAwait(false);
                         return Results.Problem(statusCode: (int)response.StatusCode, title: "webhook-relay-failed", detail: detail);
                     }
                 }
                 catch (HttpRequestException ex)
                 {
                     logger.LogError(ex, "remote webhook relay failed for {HookKey}", endpoint.HookKey);
+                    await TryUpdateLastDeliveryAsync(webhookStore, endpoint, DateTimeOffset.UtcNow, cancellationToken).ConfigureAwait(false);
                     return Results.Problem(statusCode: StatusCodes.Status502BadGateway, title: "webhook-relay-failed", detail: ex.Message);
                 }
 
+                await TryUpdateLastDeliveryAsync(webhookStore, endpoint, DateTimeOffset.UtcNow, cancellationToken).ConfigureAwait(false);
                 return Results.Accepted(value: new WebhookInvokeResult("relayed", endpoint.HookKey, endpoint.JobKey, string.Empty));
             }
 
@@ -907,6 +926,7 @@ public static partial class ApiHostingExtensions
                         Payload: payload,
                         Metadata: metadata),
                     cancellationToken).ConfigureAwait(false);
+                await TryUpdateLastDeliveryAsync(webhookStore, endpoint, occurredAtUtc, cancellationToken).ConfigureAwait(false);
                 return Results.Accepted(value: new WebhookInvokeResult("invoked", endpoint.HookKey, endpoint.JobKey, executionId));
             }
             catch (Exception ex)
@@ -929,6 +949,7 @@ public static partial class ApiHostingExtensions
                         Payload: payload,
                         Metadata: metadata),
                     cancellationToken).ConfigureAwait(false);
+                await TryUpdateLastDeliveryAsync(webhookStore, endpoint, occurredAtUtc, cancellationToken).ConfigureAwait(false);
                 return Results.Problem(statusCode: StatusCodes.Status500InternalServerError, title: "webhook-invoke-failed", detail: ex.Message);
             }
         })
@@ -1492,6 +1513,65 @@ public static partial class ApiHostingExtensions
             DeadLetterId: entry.DeadLetterId);
     }
 
+    private static async Task<IReadOnlyDictionary<string, DateTimeOffset>> TryResolveLastDeliveriesAsync(
+        IWebhookActivityStore? activityStore,
+        PartitionScope scope,
+        IReadOnlyCollection<WebhookEndpointDefinition> endpoints,
+        CancellationToken cancellationToken)
+    {
+        if (activityStore is null || endpoints.Count == 0)
+        {
+            return new Dictionary<string, DateTimeOffset>(StringComparer.OrdinalIgnoreCase);
+        }
+
+        var results = new Dictionary<string, DateTimeOffset>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var endpoint in endpoints)
+        {
+            if (string.IsNullOrWhiteSpace(endpoint.HookKey))
+            {
+                continue;
+            }
+
+            var query = new WebhookActivityQuery
+            {
+                HookKeys = new[] { endpoint.HookKey },
+                Limit = 10
+            }.Normalize();
+
+            IReadOnlyCollection<WebhookActivityEntry> entries;
+            try
+            {
+                entries = await activityStore.ListAsync(scope, query, cancellationToken).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch
+            {
+                continue;
+            }
+
+            if (entries.Count == 0)
+            {
+                continue;
+            }
+
+            var latestDelivery = entries
+                .Where(entry => entry.Kind == WebhookActivityKind.Delivery)
+                .OrderByDescending(entry => entry.OccurredAtUtc)
+                .FirstOrDefault();
+
+            if (latestDelivery is not null)
+            {
+                results[endpoint.HookKey] = latestDelivery.OccurredAtUtc;
+            }
+        }
+
+        return results;
+    }
+
     private static ApiWebhookActivitySummary ToWebhookActivitySummaryResponse(
         Croniq.Persistence.Abstractions.WebhookActivitySummary summary)
     {
@@ -1533,6 +1613,52 @@ public static partial class ApiHostingExtensions
         catch (Exception ex)
         {
             logger.LogWarning(ex, "Failed to record webhook invoke activity for {HookKey}", record.HookKey);
+        }
+    }
+
+    private static async Task TryUpdateLastDeliveryAsync(
+        IWebhookPersistenceProvider? webhookStore,
+        WebhookEndpointDefinition endpoint,
+        DateTimeOffset occurredAtUtc,
+        CancellationToken cancellationToken)
+    {
+        if (webhookStore is null)
+        {
+            return;
+        }
+
+        var metadata = endpoint.Metadata is null
+            ? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            : new Dictionary<string, string>(endpoint.Metadata, StringComparer.OrdinalIgnoreCase);
+
+        if (metadata.TryGetValue("lastDeliveryAtUtc", out var existing)
+            && DateTimeOffset.TryParse(existing, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out var parsed)
+            && parsed >= occurredAtUtc)
+        {
+            return;
+        }
+
+        metadata["lastDeliveryAtUtc"] = occurredAtUtc.ToString("O", CultureInfo.InvariantCulture);
+
+        try
+        {
+            await webhookStore.UpsertAsync(
+                new WebhookEndpointUpsert(
+                    endpoint.HookKey,
+                    endpoint.JobKey,
+                    endpoint.TenantId,
+                    endpoint.EnvironmentTag,
+                    endpoint.Enabled,
+                    endpoint.RequireSignature,
+                    endpoint.RequestsPerMinute,
+                    Secret: null,
+                    endpoint.SignatureVersion,
+                    metadata),
+                cancellationToken).ConfigureAwait(false);
+        }
+        catch
+        {
+            // Ignore failures - last delivery is informational.
         }
     }
 

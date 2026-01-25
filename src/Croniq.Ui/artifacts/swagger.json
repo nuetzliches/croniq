@@ -1060,6 +1060,50 @@
         }
       }
     },
+    "/tenants/{tenantId}/environments/{environmentTag}/webhooks/{hookKey}": {
+      "post": {
+        "tags": [
+          "Croniq.Sample.ApiHost"
+        ],
+        "summary": "Relay webhook ingress",
+        "description": "Relays webhook ingress to the DMZ host when Mode=Remote.",
+        "operationId": "Webhooks_Ingress_Relay",
+        "parameters": [
+          {
+            "name": "tenantId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "environmentTag",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "hookKey",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Accepted"
+          },
+          "502": {
+            "description": "Bad Gateway"
+          }
+        }
+      }
+    },
     "/tenants/{tenantId}/webhooks": {
       "get": {
         "tags": [
@@ -4689,6 +4733,11 @@
             "format": "date-time"
           },
           "latencyMs": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "attempts": {
             "type": "integer",
             "format": "int32",
             "nullable": true

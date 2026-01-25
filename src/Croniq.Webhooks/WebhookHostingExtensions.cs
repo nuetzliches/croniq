@@ -372,6 +372,7 @@ public static class WebhookHostingExtensions
             WebhookMetadataFactory metadataFactory,
             WebhookEndpointResolver endpointResolver,
             WebhookDeadLetterRecorder deadLetterRecorder,
+            [FromServices] IWebhookPersistenceProvider? webhookStore,
             [FromServices] IWebhookActivityRecorder? activityRecorder,
             IOptionsMonitor<CroniqWebhookOptions> webhookOptions,
             ILogger<WebhookRequestHandlerMarker> logger,
@@ -579,6 +580,7 @@ public static class WebhookHostingExtensions
                         Payload: payload,
                         Metadata: metadata),
                     cancellationToken).ConfigureAwait(false);
+                await TryUpdateLastDeliveryAsync(webhookStore, endpoint, scope, startedAtUtc, cancellationToken).ConfigureAwait(false);
                 return Results.Accepted(value: new { status = "triggered", hook = endpoint.HookKey, job = endpoint.JobKey });
             }
             catch (Exception ex)
@@ -596,6 +598,7 @@ public static class WebhookHostingExtensions
                 activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
                 logger.LogError(ex, "error executing job {JobKey} for webhook {HookKey}", endpoint.JobKey, endpoint.HookKey);
                 await deadLetterRecorder.TryRecordAsync(jobKey, scope, endpoint, payload, headers, metadata, failureReason: "execution-error", statusCode: StatusCodes.Status500InternalServerError, errorDetails: ex.Message, cancellationToken: cancellationToken).ConfigureAwait(false);
+                await TryUpdateLastDeliveryAsync(webhookStore, endpoint, scope, startedAtUtc, cancellationToken).ConfigureAwait(false);
                 throw;
             }
         }).RequireRateLimiting("cronq-webhooks");
@@ -698,6 +701,53 @@ public static class WebhookHostingExtensions
         catch (Exception ex)
         {
             logger.LogWarning(ex, "Failed to record webhook activity for {HookKey}", record.HookKey);
+        }
+    }
+
+    private static async Task TryUpdateLastDeliveryAsync(
+        IWebhookPersistenceProvider? webhookStore,
+        WebhookEndpointDescriptor endpoint,
+        PartitionScope scope,
+        DateTimeOffset occurredAtUtc,
+        CancellationToken cancellationToken)
+    {
+        if (webhookStore is null)
+        {
+            return;
+        }
+
+        var metadata = endpoint.Metadata is null
+            ? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            : new Dictionary<string, string>(endpoint.Metadata, StringComparer.OrdinalIgnoreCase);
+
+        if (metadata.TryGetValue("lastDeliveryAtUtc", out var existing)
+            && DateTimeOffset.TryParse(existing, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out var parsed)
+            && parsed >= occurredAtUtc)
+        {
+            return;
+        }
+
+        metadata["lastDeliveryAtUtc"] = occurredAtUtc.ToString("O", CultureInfo.InvariantCulture);
+
+        try
+        {
+            await webhookStore.UpsertAsync(
+                new WebhookEndpointUpsert(
+                    endpoint.HookKey,
+                    endpoint.JobKey,
+                    scope.TenantId,
+                    scope.EnvironmentTag,
+                    endpoint.Enabled,
+                    endpoint.RequireSignature,
+                    endpoint.RequestsPerMinute,
+                    Secret: null,
+                    endpoint.SignatureVersion,
+                    metadata),
+                cancellationToken).ConfigureAwait(false);
+        }
+        catch
+        {
+            // Ignore failures - last delivery is informational.
         }
     }
 
@@ -1197,7 +1247,8 @@ public static class WebhookHostingExtensions
             int requestsPerMinute,
             IReadOnlyDictionary<string, string>? metadata,
             IReadOnlyList<string> activeSecrets,
-            IReadOnlyList<IpNetwork> allowedNetworks)
+            IReadOnlyList<IpNetwork> allowedNetworks,
+            int signatureVersion)
         {
             HookKey = hookKey;
             JobKey = jobKey;
@@ -1207,6 +1258,7 @@ public static class WebhookHostingExtensions
             Metadata = metadata;
             ActiveSecrets = activeSecrets;
             AllowedNetworks = allowedNetworks;
+            SignatureVersion = signatureVersion;
         }
 
         public string HookKey { get; }
@@ -1217,6 +1269,7 @@ public static class WebhookHostingExtensions
         public IReadOnlyDictionary<string, string>? Metadata { get; }
         public IReadOnlyList<string> ActiveSecrets { get; }
         public IReadOnlyList<IpNetwork> AllowedNetworks { get; }
+        public int SignatureVersion { get; }
 
         public bool IsIpAllowed(IPAddress? address)
         {
@@ -1256,7 +1309,8 @@ public static class WebhookHostingExtensions
                 definition.RequestsPerMinute,
                 metadata,
                 activeSecrets,
-                networks);
+                networks,
+                definition.SignatureVersion);
         }
 
         public static WebhookEndpointDescriptor FromOptions(WebhookEndpointOptions options, int defaultLimit, WebhookSecurityOptions security)
@@ -1284,7 +1338,8 @@ public static class WebhookHostingExtensions
                 limit,
                 metadata,
                 new List<string> { options.Secret },
-                Array.Empty<IpNetwork>());
+                Array.Empty<IpNetwork>(),
+                signatureVersion: 1);
         }
 
         private static IReadOnlyList<IpNetwork> BuildNetworks(IReadOnlyCollection<WebhookIpRuleDefinition> ipRules)

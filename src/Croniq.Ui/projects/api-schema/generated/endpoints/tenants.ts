@@ -378,6 +378,19 @@ export const TenantsApi: EndpointDefinition[] = [
     },
     {
         method: 'post',
+        path: '/tenants/:tenantId/environments/:environmentTag/webhooks/:hookKey',
+        description: `Relays webhook ingress to the DMZ host when Mode&#x3D;Remote.`,
+        requestFormat: 'json',
+        parameters: [
+            { name: 'tenantId', type: 'Path', schema: z.string() },
+            { name: 'environmentTag', type: 'Path', schema: z.string() },
+            { name: 'hookKey', type: 'Path', schema: z.string() },
+        ],
+        response: z.void(),
+        errors: [{ status: 502, description: `Bad Gateway`, schema: z.void() }],
+    },
+    {
+        method: 'post',
         path: '/tenants/:tenantId/environments/:environmentTag/webhooks/:hookKey/invoke',
         description: `Triggers a webhook endpoint through the job execution pipeline.`,
         requestFormat: 'json',

@@ -7,7 +7,6 @@ Croniq.Webhooks lets external systems trigger Croniq jobs via HTTP. This guide f
 ## API Surface
 
 - Ingress: `POST /tenants/{tenantId}/environments/{environmentTag}/webhooks/{hookKey}`
-- Manual invoke (admin): `POST /tenants/{tenantId}/environments/{environmentTag}/webhooks/{hookKey}/invoke`
 - Management: `POST/GET/DELETE /tenants/{tenantId}/webhooks?environment=<tag>` + `POST /tenants/{tenantId}/webhooks/{hookKey}/rotate-secret?environment=<tag>`
 - Diagnostics: dead letters under `/tenants/{tenantId}/webhooks/deadletters` and IP rules under `/tenants/{tenantId}/webhooks/{hookKey}/ip-rules`
 - Activity timeline: `GET /tenants/{tenantId}/webhooks/activity?environment=<tag>&fromUtc=<iso>&toUtc=<iso>&updatedSinceUtc=<iso>&hookKeys=a,b&jobKeys=c,d&limit=200`
@@ -16,8 +15,6 @@ Croniq.Webhooks lets external systems trigger Croniq jobs via HTTP. This guide f
 - Activity stream (gRPC): `croniq.rpc.WebhookActivity/Stream` (server streaming, gRPC-Web supported; timestamps are unix ms)
 - Remote health (proxy): `GET /tenants/{tenantId}/webhooks/remote/health?environment=<tag>` (API host checks the remote `/health` when `Croniq:Webhooks:Mode=Remote`)
 - DMZ ingress relay/streaming: see [`docs/deep-dive/designs/dmz-ingress-remote-webhooks.md`](../deep-dive/designs/dmz-ingress-remote-webhooks.md)
-
-Activity timeline entries include a `source` field (`ingress` or `invoke`) so operators can distinguish manual invokes from inbound deliveries.
 
 ### Activity SLA (preview)
 
@@ -48,22 +45,65 @@ Activity summary buckets include `totalCount`, `errorCount`, `warningCount`, `pe
 
 For relay flow details that generate pending/leased transitions, see [`dmz-ingress-remote-webhooks.md`](../deep-dive/designs/dmz-ingress-remote-webhooks.md).
 
-## Ingress Endpoint
+## Ingress URLs
 
 The `Croniq.Webhooks` host exposes tenant-scoped endpoints such as `POST /tenants/{tenantId}/environments/{environmentTag}/webhooks/{hookKey}`. Each hook references a job key and forwards request metadata into the job execution.
 
-```http
-POST /tenants/default/environments/dev/webhooks/invoice-paid HTTP/1.1
-Host: hooks.croniq.local
-X-Croniq-Signature: sha256=...
-Content-Type: application/json
+::: code-group
 
+```text [Direct ingress (Croniq.Webhooks)]
+Ingress URL:
+POST /tenants/{tenantId}/environments/{environmentTag}/webhooks/{hookKey}
+Host: hooks.croniq.local
+
+Payload (JSON):
 {
-    "invoiceId": "INV-2024-991",
-    "tenant": "eu-shared",
-    "amount": 349.0
+  "invoiceId": "INV-2024-991",
+  "tenant": "eu-shared",
+  "amount": 349.0
 }
+
+Action:
+curl -X POST http://hooks.croniq.local/tenants/default/environments/dev/webhooks/invoice-paid \
+  -H "Content-Type: application/json" \
+  -H "X-Croniq-Signature: $(python - <<'PY'
+import hmac, hashlib, json
+secret = b'dev-webhook-secret'
+payload = json.dumps({"invoiceId": "INV-2024-991", "amount": 349.0})
+sig = hmac.new(secret, payload.encode(), hashlib.sha256).hexdigest()
+print(f"sha256={sig}")
+PY
+)" \
+  -d '{"invoiceId":"INV-2024-991","amount":349.0}'
 ```
+
+```text [Remote ingress (via API host)]
+Ingress URL:
+POST /tenants/{tenantId}/environments/{environmentTag}/webhooks/{hookKey}
+Host: api.croniq.local
+
+Payload (JSON):
+{
+  "invoiceId": "INV-2024-991",
+  "tenant": "eu-shared",
+  "amount": 349.0
+}
+
+Action:
+curl -X POST http://api.croniq.local/tenants/default/environments/dev/webhooks/invoice-paid \
+  -H "Content-Type: application/json" \
+  -H "X-Croniq-Signature: $(python - <<'PY'
+import hmac, hashlib, json
+secret = b'dev-webhook-secret'
+payload = json.dumps({"invoiceId": "INV-2024-991", "amount": 349.0})
+sig = hmac.new(secret, payload.encode(), hashlib.sha256).hexdigest()
+print(f"sha256={sig}")
+PY
+)" \
+  -d '{"invoiceId":"INV-2024-991","amount":349.0}'
+```
+
+:::
 
 The webhook host validates the signature, enforces a per-hook rate limit, then enqueues a trigger with metadata (for example, `payload:invoiceId`).
 
@@ -121,32 +161,11 @@ $Env:Croniq__Webhooks__Endpoints__0__Metadata__type = "invoice"
 
 This exposes `POST /tenants/default/environments/dev/webhooks/invoice-paid` locally. The sample job logs every invocation, and metadata keys such as `payload:invoiceId` become available via `IJobExecutionContext.Metadata`.
 
-For DMZ deployments with `Croniq:Webhooks:Mode=Remote`, keep `Croniq:Webhooks:Remote:EnableRelay=true` on the worker host (the host that registers jobs) and disable it on the API host. The API host still needs the remote config to manage hooks and proxy **invoke + ingress** to the DMZ ingress URL, but it should not execute ingress relay itself.
+For DMZ deployments with `Croniq:Webhooks:Mode=Remote`, keep `Croniq:Webhooks:Remote:EnableRelay=true` on the worker host (the host that registers jobs) and disable it on the API host. The API host still needs the remote config to manage hooks and proxy ingress to the DMZ ingress URL, but it should not execute ingress relay itself.
 
-When `Mode=Remote`, the internal API host **relays both**:
+When `Mode=Remote`, the internal API host relays ingress calls to the DMZ ingress base URL (`Croniq:Webhooks:Remote:IngressBaseUrl` or `Remote:BaseUrl`), so the DMZ host performs signature validation and secret decryption.
 
-- `POST /tenants/{tenantId}/environments/{environmentTag}/webhooks/{hookKey}` (ingress)
-- `POST /tenants/{tenantId}/environments/{environmentTag}/webhooks/{hookKey}/invoke` (manual invoke)
-
-to the DMZ ingress base URL (`Croniq:Webhooks:Remote:IngressBaseUrl` or `Remote:BaseUrl`), so the DMZ host performs signature validation and secret decryption.
-
-If the remote admin API and ingress endpoints are hosted on different domains, set `Croniq:Webhooks:Remote:IngressBaseUrl` on the API host. When omitted, the API host uses `Croniq:Webhooks:Remote:BaseUrl` for both admin and ingress relay/invoke calls.
-
-Example request against the sample host:
-
-```bash
-curl -X POST http://localhost:5199/tenants/default/environments/dev/webhooks/invoice-paid \
-  -H "Content-Type: application/json" \
-  -H "X-Croniq-Signature: $(python - <<'PY'
-import hmac, hashlib, json
-secret = b'dev-webhook-secret'
-payload = json.dumps({\"invoiceId\": \"INV-2024-991\", \"amount\": 349.0})
-sig = hmac.new(secret, payload.encode(), hashlib.sha256).hexdigest()
-print(f\"sha256={sig}\")
-PY
-)" \
-  -d '{"invoiceId":"INV-2024-991","amount":349.0}'
-```
+If the remote admin API and ingress endpoints are hosted on different domains, set `Croniq:Webhooks:Remote:IngressBaseUrl` on the API host. When omitted, the API host uses `Croniq:Webhooks:Remote:BaseUrl` for both admin and ingress relay calls.
 
 `Croniq.Webhooks` recomputes the `sha256=<hex>` signature server-side, applies the per-hook rate limit (default 30 rpm above), and then dispatches the configured job.
 

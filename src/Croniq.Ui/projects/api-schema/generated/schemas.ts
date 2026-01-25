@@ -420,6 +420,7 @@ export const WebhookActivityTimelineEntry = z
         source: z.string().nullable(),
         occurredAtUtc: z.iso.datetime({ offset: true }),
         latencyMs: z.number().int().nullable(),
+        attempts: z.number().int().nullable(),
         payloadBytes: z.number().int().nullable(),
         requestId: z.string().nullable(),
         reason: z.string().nullable(),

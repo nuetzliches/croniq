@@ -432,7 +432,17 @@
 
         <cq-column header="Target Job" width="16rem">
           <ng-template cqWebhookCell let-row>
-            <span class="truncate text-sm text-muted">{{ row.jobKey }}</span>
+            @if (row.jobKey) {
+              <a
+                class="truncate text-sm text-accent hover:underline"
+                [routerLink]="['/jobs']"
+                [queryParams]="{ jobKey: row.jobKey }"
+              >
+                {{ row.jobKey }}
+              </a>
+            } @else {
+              <span class="truncate text-sm text-muted">—</span>
+            }
           </ng-template>
         </cq-column>
 
@@ -496,23 +506,44 @@
     <aside class="w-full lg:w-80 xl:w-90">
       <div class="rounded-xl border border-white/10 bg-surface-alt p-4 shadow-card">
         <div class="flex items-start justify-between gap-3">
-          <div>
-            <h2 class="text-sm font-semibold text-primary">Endpoint detail</h2>
-            <p class="text-xs text-muted">Effective configuration & ingress URL</p>
+          <div class="space-y-1">
+            <div class="flex flex-wrap items-center gap-2">
+              <h2 class="text-sm font-semibold text-primary">
+                @if (selectedEndpoint(); as endpoint) {
+                  {{ endpoint.hookKey }}
+                } @else {
+                  Webhook detail
+                }
+              </h2>
+              @if (selectedEndpoint(); as endpoint) {
+                <span
+                  class="inline-flex items-center rounded-full border border-white/10 px-2 py-0.5 text-[11px] font-semibold"
+                  [class.text-success]="endpoint.status === 'active'"
+                  [class.text-warning]="endpoint.status === 'degraded'"
+                  [class.text-muted]="endpoint.status === 'paused'"
+                >
+                  {{ statusLabel(endpoint.status) }}
+                </span>
+                <span class="inline-flex items-center rounded-full border border-white/10 px-2 py-0.5 text-[11px] font-semibold text-primary">
+                  {{ endpoint.environment }}
+                </span>
+                <span
+                  class="inline-flex items-center rounded-full border border-white/10 px-2 py-0.5 text-[11px] font-semibold"
+                  [class.text-success]="endpoint.requireSignature"
+                  [class.text-warning]="!endpoint.requireSignature"
+                >
+                  {{ endpoint.requireSignature ? 'Signature: Required' : 'Signature: Optional' }}
+                </span>
+              }
+            </div>
+            <p class="text-xs text-muted">
+              @if (selectedEndpoint(); as endpoint) {
+                {{ endpointDescription(endpoint) ?? 'No description provided.' }}
+              } @else {
+                Select an endpoint to view details.
+              }
+            </p>
           </div>
-          @if (selectedEndpoint(); as endpoint) {
-            <span
-              class="inline-flex items-center rounded-full px-2 py-1 text-[11px] font-semibold"
-              [class.bg-success/10]="endpoint.status === 'active'"
-              [class.text-success]="endpoint.status === 'active'"
-              [class.bg-warning/10]="endpoint.status === 'degraded'"
-              [class.text-warning]="endpoint.status === 'degraded'"
-              [class.bg-white/10]="endpoint.status === 'paused'"
-              [class.text-muted]="endpoint.status === 'paused'"
-            >
-              {{ statusLabel(endpoint.status) }}
-            </span>
-          }
         </div>
 
         @if (!selectedEndpoint()) {
@@ -522,6 +553,32 @@
         } @else {
           @if (selectedEndpoint(); as endpoint) {
             <div class="mt-4 space-y-4">
+
+              <div class="grid gap-3 rounded-lg border border-white/10 bg-black/10 px-3 py-3">
+                <div class="flex items-center justify-between text-xs">
+                  <span class="text-muted">Target job</span>
+                  <a
+                    class="text-primary hover:underline"
+                    [routerLink]="['/jobs']"
+                    [queryParams]="{ jobKey: endpoint.jobKey }"
+                  >
+                    {{ endpoint.jobKey }}
+                  </a>
+                </div>
+                <div class="flex items-center justify-between text-xs">
+                  <span class="text-muted">Rate limit</span>
+                  <span class="text-primary">{{ requestsPerMinuteLabel(endpoint) }} RPM</span>
+                </div>
+                <div class="flex items-center justify-between text-xs">
+                  <span class="text-muted">Last delivery</span>
+                  @if (endpoint.lastDeliveryAt) {
+                    <span class="text-primary">{{ endpoint.lastDeliveryAt | date: 'short' }}</span>
+                  } @else {
+                    <span class="text-muted">—</span>
+                  }
+                </div>
+              </div>
+
               <div class="rounded-lg border border-white/10 bg-black/10 px-3 py-3">
                 <div class="flex items-center justify-between gap-2">
                   <div class="text-[11px] font-semibold uppercase tracking-wide text-muted">Quick actions</div>
@@ -532,73 +589,113 @@
                 <div class="mt-3 grid grid-cols-2 gap-2">
                   <button
                     type="button"
-                    class="rounded-md border border-white/10 bg-white/5 px-2 py-1.5 text-[11px] font-semibold text-primary transition hover:border-accent hover:text-accent disabled:cursor-not-allowed disabled:opacity-50"
+                    class="inline-flex items-center justify-center gap-1 rounded-md border border-white/10 bg-white/5 px-2 py-1.5 text-[11px] font-semibold text-primary transition hover:border-accent hover:text-accent disabled:cursor-not-allowed disabled:opacity-50"
                     (click)="openWebhookDialog(endpoint)"
                     [disabled]="writePermissionDenied()"
                   >
+                    <cq-icon name="pencil" size="14" aria-hidden="true"></cq-icon>
                     Edit
                   </button>
                   <button
                     type="button"
-                    class="rounded-md border border-white/10 bg-white/5 px-2 py-1.5 text-[11px] font-semibold text-primary transition hover:border-accent hover:text-accent disabled:cursor-not-allowed disabled:opacity-50"
+                    class="inline-flex items-center justify-center gap-1 rounded-md border border-white/10 bg-white/5 px-2 py-1.5 text-[11px] font-semibold text-primary transition hover:border-accent hover:text-accent disabled:cursor-not-allowed disabled:opacity-50"
                     (click)="rotateSecret(endpoint)"
                     [disabled]="writePermissionDenied()"
                   >
+                    <cq-icon name="rotate-360" size="14" aria-hidden="true"></cq-icon>
                     Rotate secret
                   </button>
                   <button
                     type="button"
-                    class="rounded-md border border-white/10 bg-white/5 px-2 py-1.5 text-[11px] font-semibold text-primary transition hover:border-accent hover:text-accent disabled:cursor-not-allowed disabled:opacity-50"
+                    class="inline-flex items-center justify-center gap-1 rounded-md border border-white/10 bg-white/5 px-2 py-1.5 text-[11px] font-semibold text-primary transition hover:border-accent hover:text-accent disabled:cursor-not-allowed disabled:opacity-50"
                     (click)="openIpRulesDialog(endpoint)"
                     [disabled]="writePermissionDenied()"
                   >
+                    <cq-icon name="information-outline" size="14" aria-hidden="true"></cq-icon>
                     IP rules
                   </button>
                   @if (isEndpointPaused(endpoint)) {
                     <button
                       type="button"
-                      class="rounded-md border border-white/10 bg-white/5 px-2 py-1.5 text-[11px] font-semibold text-primary transition hover:border-accent hover:text-accent disabled:cursor-not-allowed disabled:opacity-50"
+                      class="inline-flex items-center justify-center gap-1 rounded-md border border-white/10 bg-white/5 px-2 py-1.5 text-[11px] font-semibold text-primary transition hover:border-accent hover:text-accent disabled:cursor-not-allowed disabled:opacity-50"
                       (click)="enableEndpoint(endpoint)"
                       [disabled]="writePermissionDenied()"
                     >
+                      <cq-icon name="check" size="14" aria-hidden="true"></cq-icon>
                       Enable
                     </button>
                   } @else {
                     <button
                       type="button"
-                      class="rounded-md border border-white/10 bg-white/5 px-2 py-1.5 text-[11px] font-semibold text-primary transition hover:border-accent hover:text-accent disabled:cursor-not-allowed disabled:opacity-50"
+                      class="inline-flex items-center justify-center gap-1 rounded-md border border-white/10 bg-white/5 px-2 py-1.5 text-[11px] font-semibold text-primary transition hover:border-accent hover:text-accent disabled:cursor-not-allowed disabled:opacity-50"
                       (click)="disableEndpoint(endpoint)"
                       [disabled]="writePermissionDenied()"
                     >
+                      <cq-icon name="close" size="14" aria-hidden="true"></cq-icon>
                       Disable
                     </button>
                   }
                 </div>
                 <button
                   type="button"
-                  class="mt-2 w-full rounded-md border border-danger/40 bg-danger/10 px-2 py-1.5 text-[11px] font-semibold text-danger transition hover:border-danger hover:bg-danger/20 disabled:cursor-not-allowed disabled:opacity-50"
+                  class="mt-2 inline-flex w-full items-center justify-center gap-1 rounded-md border border-danger/40 bg-danger/10 px-2 py-1.5 text-[11px] font-semibold text-danger transition hover:border-danger hover:bg-danger/20 disabled:cursor-not-allowed disabled:opacity-50"
                   (click)="deleteEndpoint(endpoint)"
                   [disabled]="writePermissionDenied()"
                 >
+                  <cq-icon name="trash-can-outline" size="14" aria-hidden="true"></cq-icon>
                   Delete endpoint
                 </button>
               </div>
 
             <div class="space-y-3 rounded-lg border border-white/10 bg-black/10 px-3 py-3">
+              <div class="text-xs font-semibold uppercase tracking-wide text-muted">Ingress URLs</div>
               @if (remoteModeEnabled()) {
-                <div class="space-y-2">
-                  <div class="text-xs font-semibold uppercase tracking-wide text-muted">Ingress URLs</div>
-                  <div class="space-y-2">
+                <div class="inline-flex items-center gap-1 rounded-lg border border-white/10 bg-white/5 p-1">
+                  <button
+                    type="button"
+                    class="rounded-md px-2 py-1 text-[11px] font-semibold transition"
+                    [class.bg-accent]="ingressTab() === 'internal'"
+                    [class.text-white]="ingressTab() === 'internal'"
+                    [class.text-muted]="ingressTab() !== 'internal'"
+                    (click)="setIngressTab('internal')"
+                  >
+                    API host
+                  </button>
+                  <button
+                    type="button"
+                    class="rounded-md px-2 py-1 text-[11px] font-semibold transition"
+                    [class.bg-accent]="ingressTab() === 'remote'"
+                    [class.text-white]="ingressTab() === 'remote'"
+                    [class.text-muted]="ingressTab() !== 'remote'"
+                    (click)="setIngressTab('remote')"
+                  >
+                    Remote
+                  </button>
+                </div>
+                @if (ingressTab() === 'internal') {
+                  <div class="space-y-3">
                     <div class="flex items-center justify-between">
-                      <div class="text-[11px] font-semibold uppercase tracking-wide text-muted">API host</div>
-                      <button
-                        type="button"
-                        class="rounded-lg border border-white/10 bg-white/5 px-2 py-1 text-[11px] font-semibold text-primary transition hover:border-accent hover:text-accent"
-                        (click)="copyIngressUrl('internal')"
-                        [disabled]="!internalIngressUrl()"
-                      >
-                        Copy
-                      </button>
+                      <div class="text-[11px] font-semibold uppercase tracking-wide text-muted">API host ingress</div>
+                      <div class="flex items-center gap-2">
+                        <button
+                          type="button"
+                          class="inline-flex items-center gap-1 rounded-lg bg-accent px-2 py-1 text-[11px] font-semibold text-white transition hover:bg-accent-hover disabled:opacity-50"
+                          (click)="invokeWebhook()"
+                          [disabled]="writePermissionDenied() || invokeLoading()"
+                        >
+                          <cq-icon name="rocket" size="14" aria-hidden="true"></cq-icon>
+                          Invoke
+                        </button>
+                        <button
+                          type="button"
+                          class="inline-flex items-center gap-1 rounded-lg border border-white/10 bg-white/5 px-2 py-1 text-[11px] font-semibold text-primary transition hover:border-accent hover:text-accent"
+                          (click)="copyIngressUrl('internal')"
+                          [disabled]="!internalIngressUrl()"
+                        >
+                          <cq-icon name="content-copy" size="14" aria-hidden="true"></cq-icon>
+                          Copy URL
+                        </button>
+                      </div>
                     </div>
                     @if (internalIngressUrl()) {
                       <code class="block break-all rounded-lg border border-white/10 bg-black/20 px-2 py-1 text-xs text-primary">
@@ -607,18 +704,59 @@
                     } @else {
                       <p class="text-xs text-muted">API host ingress URL unavailable.</p>
                     }
-                  </div>
-                  <div class="space-y-2">
-                    <div class="flex items-center justify-between">
-                      <div class="text-[11px] font-semibold uppercase tracking-wide text-muted">Remote</div>
+                    <cq-form-field label="Payload (JSON)" forId="ingressPayloadInternal">
+                      <textarea
+                        id="ingressPayloadInternal"
+                        rows="6"
+                        cqTextarea
+                        [value]="invokePayload()"
+                        (input)="setInvokePayload($any($event.target).value)"
+                      ></textarea>
+                    </cq-form-field>
+                    <div class="flex flex-wrap items-center gap-2">
                       <button
                         type="button"
-                        class="rounded-lg border border-white/10 bg-white/5 px-2 py-1 text-[11px] font-semibold text-primary transition hover:border-accent hover:text-accent"
-                        (click)="copyIngressUrl('remote')"
-                        [disabled]="!remoteIngressUrl()"
+                        class="inline-flex items-center gap-1 rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-xs font-semibold text-primary transition hover:border-accent hover:text-accent"
+                        (click)="copyInvokePayload()"
                       >
-                        Copy
+                        <cq-icon name="content-copy" size="14" aria-hidden="true"></cq-icon>
+                        Copy payload
                       </button>
+                      <button
+                        type="button"
+                        class="inline-flex items-center gap-1 rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-xs font-semibold text-primary transition hover:border-accent hover:text-accent"
+                        (click)="copyCurlSnippetFor('internal')"
+                        [disabled]="!internalIngressUrl()"
+                      >
+                        <cq-icon name="content-copy" size="14" aria-hidden="true"></cq-icon>
+                        Copy cURL
+                      </button>
+                    </div>
+                  </div>
+                } @else {
+                  <div class="space-y-3">
+                    <div class="flex items-center justify-between">
+                      <div class="text-[11px] font-semibold uppercase tracking-wide text-muted">Remote ingress</div>
+                      <div class="flex items-center gap-2">
+                        <button
+                          type="button"
+                          class="inline-flex items-center gap-1 rounded-lg bg-accent px-2 py-1 text-[11px] font-semibold text-white transition hover:bg-accent-hover disabled:opacity-50"
+                          (click)="invokeWebhook()"
+                          [disabled]="writePermissionDenied() || invokeLoading()"
+                        >
+                          <cq-icon name="rocket" size="14" aria-hidden="true"></cq-icon>
+                          Invoke
+                        </button>
+                        <button
+                          type="button"
+                          class="inline-flex items-center gap-1 rounded-lg border border-white/10 bg-white/5 px-2 py-1 text-[11px] font-semibold text-primary transition hover:border-accent hover:text-accent"
+                          (click)="copyIngressUrl('remote')"
+                          [disabled]="!remoteIngressUrl()"
+                        >
+                          <cq-icon name="content-copy" size="14" aria-hidden="true"></cq-icon>
+                          Copy URL
+                        </button>
+                      </div>
                     </div>
                     @if (remoteIngressUrl()) {
                       <code class="block break-all rounded-lg border border-white/10 bg-black/20 px-2 py-1 text-xs text-primary">
@@ -627,20 +765,60 @@
                     } @else {
                       <p class="text-xs text-muted">Remote ingress URL unavailable.</p>
                     }
+                    <cq-form-field label="Payload (JSON)" forId="ingressPayloadRemote">
+                      <textarea
+                        id="ingressPayloadRemote"
+                        rows="6"
+                        cqTextarea
+                        [value]="invokePayload()"
+                        (input)="setInvokePayload($any($event.target).value)"
+                      ></textarea>
+                    </cq-form-field>
+                    <div class="flex flex-wrap items-center gap-2">
+                      <button
+                        type="button"
+                        class="inline-flex items-center gap-1 rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-xs font-semibold text-primary transition hover:border-accent hover:text-accent"
+                        (click)="copyInvokePayload()"
+                      >
+                        <cq-icon name="content-copy" size="14" aria-hidden="true"></cq-icon>
+                        Copy payload
+                      </button>
+                      <button
+                        type="button"
+                        class="inline-flex items-center gap-1 rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-xs font-semibold text-primary transition hover:border-accent hover:text-accent"
+                        (click)="copyCurlSnippetFor('remote')"
+                        [disabled]="!remoteIngressUrl()"
+                      >
+                        <cq-icon name="content-copy" size="14" aria-hidden="true"></cq-icon>
+                        Copy cURL
+                      </button>
+                    </div>
                   </div>
-                </div>
+                }
               } @else {
-                <div class="space-y-2">
+                <div class="space-y-3">
                   <div class="flex items-center justify-between">
                     <div class="text-xs font-semibold uppercase tracking-wide text-muted">Ingress URL</div>
-                    <button
-                      type="button"
-                      class="rounded-lg border border-white/10 bg-white/5 px-2 py-1 text-xs font-semibold text-primary transition hover:border-accent hover:text-accent"
-                      (click)="copyIngressUrl()"
-                      [disabled]="!ingressUrl()"
-                    >
-                      Copy
-                    </button>
+                    <div class="flex items-center gap-2">
+                      <button
+                        type="button"
+                        class="inline-flex items-center gap-1 rounded-lg bg-accent px-2 py-1 text-xs font-semibold text-white transition hover:bg-accent-hover disabled:opacity-50"
+                        (click)="invokeWebhook()"
+                        [disabled]="writePermissionDenied() || invokeLoading()"
+                      >
+                        <cq-icon name="rocket" size="14" aria-hidden="true"></cq-icon>
+                        Invoke
+                      </button>
+                      <button
+                        type="button"
+                        class="inline-flex items-center gap-1 rounded-lg border border-white/10 bg-white/5 px-2 py-1 text-xs font-semibold text-primary transition hover:border-accent hover:text-accent"
+                        (click)="copyIngressUrl()"
+                        [disabled]="!ingressUrl()"
+                      >
+                        <cq-icon name="content-copy" size="14" aria-hidden="true"></cq-icon>
+                        Copy URL
+                      </button>
+                    </div>
                   </div>
                   @if (ingressUrl()) {
                     <code class="block break-all rounded-lg border border-white/10 bg-black/20 px-2 py-1 text-xs text-primary">
@@ -649,109 +827,54 @@
                   } @else {
                     <p class="text-xs text-muted">Ingress URL unavailable for the current tenant.</p>
                   }
+                  <cq-form-field label="Payload (JSON)" forId="ingressPayloadDefault">
+                    <textarea
+                      id="ingressPayloadDefault"
+                      rows="6"
+                      cqTextarea
+                      [value]="invokePayload()"
+                      (input)="setInvokePayload($any($event.target).value)"
+                    ></textarea>
+                  </cq-form-field>
+                  <div class="flex flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      class="inline-flex items-center gap-1 rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-xs font-semibold text-primary transition hover:border-accent hover:text-accent"
+                      (click)="copyInvokePayload()"
+                    >
+                      <cq-icon name="content-copy" size="14" aria-hidden="true"></cq-icon>
+                      Copy payload
+                    </button>
+                    <button
+                      type="button"
+                      class="inline-flex items-center gap-1 rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-xs font-semibold text-primary transition hover:border-accent hover:text-accent"
+                      (click)="copyCurlSnippet()"
+                      [disabled]="!ingressUrl()"
+                    >
+                      <cq-icon name="content-copy" size="14" aria-hidden="true"></cq-icon>
+                      Copy cURL
+                    </button>
+                  </div>
                 </div>
               }
             </div>
 
-            <div class="grid gap-3">
-              <div class="flex items-center justify-between text-xs">
-                <span class="text-muted">Hook key</span>
-                <span class="font-mono text-primary">{{ endpoint.hookKey }}</span>
-              </div>
-              <div class="flex items-center justify-between text-xs">
-                <span class="text-muted">Environment</span>
-                <span class="text-primary">{{ endpoint.environment }}</span>
-              </div>
-              <div class="flex items-center justify-between text-xs">
-                <span class="text-muted">Target job</span>
-                <span class="text-primary">{{ endpoint.jobKey }}</span>
-              </div>
-              <div class="flex items-center justify-between text-xs">
-                <span class="text-muted">Status</span>
-                <span class="text-primary">{{ statusLabel(endpoint.status) }}</span>
-              </div>
-              <div class="flex items-center justify-between text-xs">
-                <span class="text-muted">Signature</span>
-                <span class="text-primary">
-                  {{ endpoint.requireSignature ? 'Required' : 'Optional' }}
-                </span>
-              </div>
-              <div class="flex items-center justify-between text-xs">
-                <span class="text-muted">Rate limit</span>
-                <span class="text-primary">{{ requestsPerMinuteLabel(endpoint) }} RPM</span>
-              </div>
-              <div class="flex items-center justify-between text-xs">
-                <span class="text-muted">IP rules</span>
-                <span class="text-primary">{{ ipWhitelistLabel(endpoint) }}</span>
-              </div>
-              <div class="flex items-center justify-between text-xs">
-                <span class="text-muted">Last delivery</span>
-                @if (endpoint.lastDeliveryAt) {
-                  <span class="text-primary">{{ endpoint.lastDeliveryAt | date: 'short' }}</span>
-                } @else {
-                  <span class="text-muted">—</span>
-                }
-              </div>
-            </div>
-
-            <details class="rounded-lg border border-white/10 bg-black/10 px-3 py-3">
-              <summary class="flex items-center justify-between gap-2 cursor-pointer list-none text-xs font-semibold uppercase tracking-wide text-muted">
-                <span>Manual invoke</span>
+            <div class="rounded-lg border border-white/10 bg-black/10 px-3 py-3">
+              <div class="flex items-center justify-between gap-2">
+                <div class="text-[11px] font-semibold uppercase tracking-wide text-muted">IP rules</div>
                 <button
                   type="button"
-                  class="rounded-lg bg-accent px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-accent-hover disabled:opacity-50"
-                  (click)="invokeWebhookFromHeader($event)"
-                  [disabled]="writePermissionDenied() || invokeLoading()"
+                  class="inline-flex items-center gap-1 rounded-lg border border-white/10 bg-white/5 px-2 py-1 text-[11px] font-semibold text-primary transition hover:border-accent hover:text-accent disabled:opacity-50"
+                  (click)="openIpRulesDialog(endpoint)"
+                  [disabled]="writePermissionDenied()"
                 >
-                  @if (invokeLoading()) {
-                    <span class="inline-flex items-center gap-2">
-                      <svg class="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none">
-                        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-                        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                      </svg>
-                      Invoking...
-                    </span>
-                  } @else {
-                    Invoke
-                  }
+                  <cq-icon name="pencil" size="14" aria-hidden="true"></cq-icon>
+                  Manage
                 </button>
-              </summary>
-              <div class="mt-3 space-y-3">
-                <p class="text-xs text-muted">
-                  The payload below is a safe default for testing. Use the cURL snippet to send custom
-                  payloads from your terminal.
-                </p>
-                <cq-form-field label="Payload (JSON)" forId="invokePayload">
-                  <textarea
-                    id="invokePayload"
-                    rows="6"
-                    cqTextarea
-                    [value]="invokePayload()"
-                    (input)="setInvokePayload($any($event.target).value)"
-                  ></textarea>
-                </cq-form-field>
-                <div class="flex flex-wrap items-center gap-2">
-                  <button
-                    type="button"
-                    class="rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-xs font-semibold text-primary transition hover:border-accent hover:text-accent"
-                    (click)="copyInvokePayload()"
-                  >
-                    Copy payload
-                  </button>
-                  <button
-                    type="button"
-                    class="rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-xs font-semibold text-primary transition hover:border-accent hover:text-accent"
-                    (click)="copyCurlSnippet()"
-                    [disabled]="!ingressUrl()"
-                  >
-                    Copy cURL
-                  </button>
-                </div>
-                <p class="text-[11px] text-muted">
-                  Invoke triggers the backend test path using the selected hook key.
-                </p>
               </div>
-            </details>
+              <p class="mt-2 text-xs text-primary">{{ ipWhitelistLabel(endpoint) }}</p>
+            </div>
+
             </div>
           }
         }
@@ -828,95 +951,95 @@
             }
           </div>
         </div>
-          <div class="mt-3 rounded-lg border border-white/10 bg-surface p-3 text-xs text-muted">
+        <div class="mt-3 rounded-lg border border-white/10 bg-surface p-3 text-xs text-muted">
           <div class="flex flex-wrap items-center justify-between gap-2">
             <div>
-                <div class="text-xs font-semibold text-primary">Activity items</div>
+              <div class="text-xs font-semibold text-primary">Activity items</div>
               <div class="text-[11px] text-muted">{{ activityDetailLabel() }}</div>
             </div>
-              @if (filtersActive()) {
-                <span class="inline-flex items-center gap-1 rounded-full bg-warning/10 px-2 py-0.5 text-[10px] font-semibold text-warning">
-                  Filters applied
-                </span>
-              }
+            @if (filtersActive()) {
+              <span class="inline-flex items-center gap-1 rounded-full bg-warning/10 px-2 py-0.5 text-[10px] font-semibold text-warning">
+                Filters applied
+              </span>
+            }
           </div>
           <p class="mt-1 text-[11px] text-muted">{{ activityDetailHint() }}</p>
-            @if (activityDetailItems().length === 0) {
-              <div class="mt-3 rounded-lg border border-white/10 bg-black/10 p-4">
-                <div class="text-xs font-semibold text-primary">No activity yet</div>
-                <p class="mt-1 text-[11px] text-muted">{{ activityDetailEmptyLabel() }}</p>
-                @if (filtersActive()) {
-                  <button
-                    type="button"
-                    class="mt-3 rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-[11px] font-semibold text-primary transition hover:border-accent hover:text-accent"
-                    (click)="resetFilters()"
-                  >
-                    Clear all filters
-                  </button>
-                }
-              </div>
+          @if (activityDetailItems().length === 0) {
+            <div class="mt-3 rounded-lg border border-white/10 bg-black/10 p-4">
+              <div class="text-xs font-semibold text-primary">No activity yet</div>
+              <p class="mt-1 text-[11px] text-muted">{{ activityDetailEmptyLabel() }}</p>
+              @if (filtersActive()) {
+                <button
+                  type="button"
+                  class="mt-3 rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-[11px] font-semibold text-primary transition hover:border-accent hover:text-accent"
+                  (click)="resetFilters()"
+                >
+                  Clear all filters
+                </button>
+              }
+            </div>
           } @else {
-              <div class="mt-3 space-y-2">
-                @for (item of activityDetailItems(); track item.id) {
-                  <div class="rounded-lg border border-white/10 bg-black/10 p-3">
-                    <div class="flex flex-wrap items-start justify-between gap-2">
-                      <div class="space-y-1">
-                        <div class="flex flex-wrap items-center gap-2">
-                          <span
-                            class="inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold"
-                            [class.bg-success/10]="item.status === 'success'"
-                            [class.text-success]="item.status === 'success'"
-                            [class.bg-warning/10]="item.status === 'warning'"
-                            [class.text-warning]="item.status === 'warning'"
-                            [class.bg-danger/10]="item.status === 'failed'"
-                            [class.text-danger]="item.status === 'failed'"
-                            [class.bg-white/10]="item.status === 'pending' || item.status === 'leased'"
-                            [class.text-muted]="item.status === 'pending' || item.status === 'leased'"
-                          >
-                            {{ activityStatusLabel(item.status) }}
-                          </span>
-                          <span class="text-xs font-semibold text-primary">{{ item.label }}</span>
-                        </div>
-                        <div class="text-[11px] text-muted">
-                          {{ item.occurredAt | date: 'short' }} · Hook {{ item.hookKey }}
-                          @if (item.jobKey) {
-                            · Job {{ item.jobKey }}
-                          }
-                        </div>
-                        <div class="text-[11px] text-primary">{{ activityOutcomeLabel(item) }}</div>
-                        @if (activityMetadataLabel(item)) {
-                          <div class="text-[11px] text-muted">{{ activityMetadataLabel(item) }}</div>
-                        }
-                        @if (item.reason) {
-                          <div class="text-[11px] text-warning">{{ item.reason }}</div>
-                        }
-                        @if (item.requestId) {
-                          <div class="text-[11px] text-muted">Request ID: {{ item.requestId }}</div>
-                        }
-                        @if (item.attempts !== null && item.attempts !== undefined) {
-                          <div class="text-[11px] text-muted">Attempts: {{ item.attempts }}</div>
-                        }
-                        @if (item.latencyMs !== null && item.latencyMs !== undefined) {
-                          <div class="text-[11px] text-muted">Latency: {{ item.latencyMs }} ms</div>
-                        }
-                        @if (item.payloadBytes) {
-                          <div class="text-[11px] text-muted">Payload: {{ item.payloadBytes }} bytes</div>
+            <div class="mt-3 space-y-2">
+              @for (item of activityDetailItems(); track item.id) {
+                <div class="rounded-lg border border-white/10 bg-black/10 p-3">
+                  <div class="flex flex-wrap items-start justify-between gap-2">
+                    <div class="space-y-1">
+                      <div class="flex flex-wrap items-center gap-2">
+                        <span
+                          class="inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold"
+                          [class.bg-success/10]="item.status === 'success'"
+                          [class.text-success]="item.status === 'success'"
+                          [class.bg-warning/10]="item.status === 'warning'"
+                          [class.text-warning]="item.status === 'warning'"
+                          [class.bg-danger/10]="item.status === 'failed'"
+                          [class.text-danger]="item.status === 'failed'"
+                          [class.bg-white/10]="item.status === 'pending' || item.status === 'leased'"
+                          [class.text-muted]="item.status === 'pending' || item.status === 'leased'"
+                        >
+                          {{ activityStatusLabel(item.status) }}
+                        </span>
+                        <span class="text-xs font-semibold text-primary">{{ item.label }}</span>
+                      </div>
+                      <div class="text-[11px] text-muted">
+                        {{ item.occurredAt | date: 'short' }} · Hook {{ item.hookKey }}
+                        @if (item.jobKey) {
+                          · Job {{ item.jobKey }}
                         }
                       </div>
-                      @if (isDeadLetterItem(item)) {
-                        <button
-                          type="button"
-                          class="rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-[11px] font-semibold text-primary transition hover:border-accent hover:text-accent disabled:opacity-50 disabled:cursor-not-allowed"
-                          [disabled]="writePermissionDenied()"
-                          (click)="replayDeadLetterItem(item)"
-                        >
-                          Replay
-                        </button>
+                      <div class="text-[11px] text-primary">{{ activityOutcomeLabel(item) }}</div>
+                      @if (activityMetadataLabel(item)) {
+                        <div class="text-[11px] text-muted">{{ activityMetadataLabel(item) }}</div>
+                      }
+                      @if (item.reason) {
+                        <div class="text-[11px] text-warning">{{ item.reason }}</div>
+                      }
+                      @if (item.requestId) {
+                        <div class="text-[11px] text-muted">Request ID: {{ item.requestId }}</div>
+                      }
+                      @if (item.attempts !== null && item.attempts !== undefined) {
+                        <div class="text-[11px] text-muted">Attempts: {{ item.attempts }}</div>
+                      }
+                      @if (item.latencyMs !== null && item.latencyMs !== undefined) {
+                        <div class="text-[11px] text-muted">Latency: {{ item.latencyMs }} ms</div>
+                      }
+                      @if (item.payloadBytes) {
+                        <div class="text-[11px] text-muted">Payload: {{ item.payloadBytes }} bytes</div>
                       }
                     </div>
+                    @if (isDeadLetterItem(item)) {
+                      <button
+                        type="button"
+                        class="rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-[11px] font-semibold text-primary transition hover:border-accent hover:text-accent disabled:opacity-50 disabled:cursor-not-allowed"
+                        [disabled]="writePermissionDenied()"
+                        (click)="replayDeadLetterItem(item)"
+                      >
+                        Replay
+                      </button>
+                    }
                   </div>
-                }
-              </div>
+                </div>
+              }
+            </div>
           }
         </div>
       </div>

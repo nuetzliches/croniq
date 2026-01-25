@@ -1,14 +1,14 @@
 import { CdkMenu } from '@angular/cdk/menu';
 import { DatePipe } from '@angular/common';
 import { ChangeDetectionStrategy, Component, DestroyRef, Directive, TemplateRef, computed, effect, inject, signal, viewChild } from '@angular/core';
-import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
+import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 import { UpsertJobRequest } from '@croniq/api-schema';
 import { JobDialogComponent } from '@features/jobs/components/job-dialog/job-dialog.component';
 import { JobRegistryEntry, JobsStore } from '@features/jobs/jobs.store';
 import { ShellPanelService } from '@shell/panel/shell-panel.service';
-import { CqCellDefDirective, CqColumnComponent, CqContextMenuItemDirective, CqDialogService, CqInputDirective, CqSelectDirective, DataGrid } from 'ui-kit';
 import { filter } from 'rxjs';
+import { CqCellDefDirective, CqColumnComponent, CqContextMenuItemDirective, CqDialogService, CqIconComponent, CqInputDirective, CqSelectDirective, DataGrid } from 'ui-kit';
 
 const DEFAULT_NAMESPACE = 'default';
 
@@ -28,7 +28,7 @@ export class CqJobCellDirective extends CqCellDefDirective<JobRegistryEntry> {
 
 @Component({
   selector: 'cq-jobs-page',
-  imports: [CdkMenu, DatePipe, RouterLink, DataGrid, CqColumnComponent, CqJobCellDirective, CqInputDirective, CqSelectDirective, CqContextMenuItemDirective],
+  imports: [CdkMenu, DatePipe, RouterLink, DataGrid, CqColumnComponent, CqJobCellDirective, CqInputDirective, CqSelectDirective, CqContextMenuItemDirective, CqIconComponent],
   providers: [JobsStore],
   templateUrl: './jobs-page.html',
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -111,6 +111,10 @@ export class JobsPage {
   readonly jobDetail = this.store.jobDetail;
   readonly jobDetailLoading = this.store.jobDetailLoading;
   readonly jobDetailError = this.store.jobDetailError;
+  readonly deleteJobLoading = this.store.deleteJobLoading;
+  readonly deleteJobError = this.store.deleteJobError;
+  readonly toggleSchedulesLoading = this.store.toggleSchedulesLoading;
+  readonly toggleSchedulesError = this.store.toggleSchedulesError;
   readonly executions = this.store.executions;
   readonly executionsLoading = this.store.executionsLoading;
   readonly executionsError = this.store.executionsError;
@@ -218,14 +222,49 @@ export class JobsPage {
       : undefined;
 
     this.dialog
-      .open<UpsertJobRequest>(JobDialogComponent, {
+      .open<boolean>(JobDialogComponent, {
         data,
         panelClass: 'dialog-panel', // Ensure this class is defined in global styles or component styles
       })
-      .closed.pipe(filter((result): result is UpsertJobRequest => !!result))
-      .subscribe((payload) => {
-        this.store.upsertJob(payload);
+      .closed.pipe(filter((result): result is boolean => !!result))
+      .subscribe(() => {
+        this.store.refreshJobRegistry();
       });
+  }
+
+  deleteJob(job: JobRegistryEntry): void {
+    if (job.isSeeded) {
+      return;
+    }
+    if (confirm(`Delete ${job.jobKey}? This removes the job and all schedules.`)) {
+      this.store.deleteJob(job.jobKey);
+    }
+  }
+
+  disableSchedules(job: JobRegistryEntry): void {
+    if (job.isSeeded) {
+      return;
+    }
+    this.store.setJobSchedulesEnabled(job.jobKey, false);
+  }
+
+  enableSchedules(job: JobRegistryEntry): void {
+    if (job.isSeeded) {
+      return;
+    }
+    this.store.setJobSchedulesEnabled(job.jobKey, true);
+  }
+
+  hasActiveSchedules(job: JobRegistryEntry): boolean {
+    return job.activeScheduleCount > 0;
+  }
+
+  hasDisabledSchedules(job: JobRegistryEntry): boolean {
+    return job.activeScheduleCount < job.scheduleCount;
+  }
+
+  isSeedLocked(job: JobRegistryEntry): boolean {
+    return job.isSeeded;
   }
 
   clearFilters(): void {

@@ -6,7 +6,7 @@ import { TenantContextService } from '@core/tenant-context/tenant-context.servic
 import { isoFromEpochMs, nowIso, nowMs } from '@core/time/clock';
 import { CRONIQ_API_CLIENT, CallerContext, CroniqApiClient } from 'data-access';
 import { EMPTY, catchError, finalize, map, of, tap, forkJoin } from 'rxjs';
-import { JobResponse, ScheduleResponse, ExecutionResponse, UpsertJobRequest } from '@croniq/api-schema';
+import { ExecutionResponse, JobResponse, ScheduleResponse, UpsertJobRequest, UpsertScheduleRequest } from '@croniq/api-schema';
 
 export type ManualTriggerStatus = 'pending' | 'success' | 'error';
 export type ManualTriggerEntry = {
@@ -27,6 +27,10 @@ export type JobRegistryEntry = {
     description?: string;
     metadata?: Record<string, string>;
     scheduleCount: number;
+    activeScheduleCount: number;
+    hasDisabledSchedules: boolean;
+    managedBy?: string;
+    isSeeded: boolean;
     lastExecution?: {
         status: string;
         time: string;
@@ -54,6 +58,7 @@ export class JobsStore {
     private readonly triggerLog = signal<ReadonlyArray<ManualTriggerEntry>>(seedManualTriggers());
     private readonly jobRegistrySignal = signal<ReadonlyArray<JobRegistryEntry>>([]);
     private readonly jobRegistryErrorSignal = signal<string | null>(null);
+    private readonly jobSchedulesSignal = signal<ReadonlyArray<ScheduleResponse>>([]);
 
     private readonly jobRegistryResource = tenantRxResource<
         { jobs: JobResponse[]; schedules: ScheduleResponse[]; executions: ExecutionResponse[] },
@@ -74,6 +79,7 @@ export class JobsStore {
             if (!tenantId) {
                 this.jobRegistryErrorSignal.set('Required context is missing — unable to load jobs.');
                 this.jobRegistrySignal.set([]);
+                this.jobSchedulesSignal.set([]);
                 return of({ jobs: [], schedules: [], executions: [] });
             }
 
@@ -100,6 +106,7 @@ export class JobsStore {
                 map(data => {
                     const normalized = normalizeJobRegistry(data.jobs, data.schedules, data.executions);
                     this.jobRegistrySignal.set(normalized);
+                    this.jobSchedulesSignal.set(data.schedules);
                     return data;
                 }),
                 catchError((error: unknown) => {
@@ -113,6 +120,7 @@ export class JobsStore {
                         this.jobRegistryErrorSignal.set('Unable to load jobs from API.');
                     }
                     this.jobRegistrySignal.set([]);
+                    this.jobSchedulesSignal.set([]);
                     return of({ jobs: [], schedules: [], executions: [] });
                 }),
             );
@@ -250,6 +258,9 @@ export class JobsStore {
     private readonly deleteJobLoadingSignal = signal(false);
     private readonly deleteJobErrorSignal = signal<string | null>(null);
 
+    private readonly toggleSchedulesLoadingSignal = signal(false);
+    private readonly toggleSchedulesErrorSignal = signal<string | null>(null);
+
     private readonly upsertJobLoadingSignal = signal(false);
     private readonly upsertJobErrorSignal = signal<string | null>(null);
 
@@ -272,6 +283,8 @@ export class JobsStore {
     readonly jobDetailError = this.jobDetailErrorSignal.asReadonly();
     readonly deleteJobLoading = this.deleteJobLoadingSignal.asReadonly();
     readonly deleteJobError = this.deleteJobErrorSignal.asReadonly();
+    readonly toggleSchedulesLoading = this.toggleSchedulesLoadingSignal.asReadonly();
+    readonly toggleSchedulesError = this.toggleSchedulesErrorSignal.asReadonly();
     readonly upsertJobLoading = this.upsertJobLoadingSignal.asReadonly();
     readonly upsertJobError = this.upsertJobErrorSignal.asReadonly();
 
@@ -407,6 +420,89 @@ export class JobsStore {
             .subscribe();
     }
 
+    setJobSchedulesEnabled(jobKey: string, enabled: boolean): void {
+        const trimmedKey = jobKey.trim();
+        if (!trimmedKey) {
+            this.toggleSchedulesErrorSignal.set('Job key is required to update schedules.');
+            return;
+        }
+
+        const { tenantId, environment } = this.tenantContext.snapshot();
+        if (!tenantId.trim()) {
+            this.toggleSchedulesErrorSignal.set('Required context is missing — unable to update schedules.');
+            return;
+        }
+
+        const schedules = this.jobSchedulesSignal().filter((schedule) => {
+            const key = typeof schedule.jobKey === 'string' ? schedule.jobKey.trim() : '';
+            return key && key.toLowerCase() === trimmedKey.toLowerCase();
+        });
+
+        if (schedules.length === 0) {
+            this.toggleSchedulesErrorSignal.set('No schedules found for this job.');
+            return;
+        }
+
+        const payloads: UpsertScheduleRequest[] = [];
+        for (const schedule of schedules) {
+            const scheduleJobKey = typeof schedule.jobKey === 'string' ? schedule.jobKey.trim() : '';
+            const cronExpression = typeof schedule.cronExpression === 'string' ? schedule.cronExpression.trim() : '';
+            if (!scheduleJobKey || !cronExpression) {
+                continue;
+            }
+
+            payloads.push({
+                triggerId: typeof schedule.triggerId === 'string' ? schedule.triggerId : undefined,
+                jobKey: scheduleJobKey,
+                cronExpression,
+                enabled,
+                startAtUtc: schedule.startAtUtc ?? undefined,
+                endAtUtc: schedule.endAtUtc ?? undefined,
+                metadata: schedule.metadata ?? undefined,
+                timeZoneId: schedule.timeZoneId ?? undefined,
+                calendarId: schedule.calendarId ?? undefined,
+            });
+        }
+
+        if (payloads.length === 0) {
+            this.toggleSchedulesErrorSignal.set('Schedules are missing required data and cannot be updated.');
+            return;
+        }
+
+        this.toggleSchedulesLoadingSignal.set(true);
+        this.toggleSchedulesErrorSignal.set(null);
+
+        const requestOptions = this.tenantContext.createRequestOptions('schedules.upsert', {
+            tenantId,
+            environment,
+        });
+
+        forkJoin(
+            payloads.map((payload) => this.api.upsertSchedule({ tenantId, environment }, payload, requestOptions)),
+        )
+            .pipe(
+                tap(() => {
+                    this.refreshJobRegistry();
+                }),
+                catchError((error: unknown) => {
+                    console.error('Failed to update schedules', error);
+                    const authFailure = authFailureFromError(error, {
+                        forbidden: 'Forbidden (403) — your token is missing schedules permissions.',
+                    });
+                    if (authFailure) {
+                        this.toggleSchedulesErrorSignal.set(authFailure.message);
+                        return EMPTY;
+                    }
+                    this.toggleSchedulesErrorSignal.set('Unable to update schedules via API.');
+                    return EMPTY;
+                }),
+                finalize(() => {
+                    this.toggleSchedulesLoadingSignal.set(false);
+                }),
+            )
+            .subscribe();
+    }
+
     triggerJob(jobKey: string, metadata: Record<string, string>): void {
         const trimmedKey = jobKey.trim();
         if (!trimmedKey) {
@@ -516,12 +612,18 @@ function normalizeJobRegistry(
     const entries: JobRegistryEntry[] = [];
 
     // Index schedules by jobKey
-    const schedulesByJob = new Map<string, number>();
-    for (const s of schedules) {
-        if (s.jobKey) {
-            const count = schedulesByJob.get(s.jobKey) || 0;
-            schedulesByJob.set(s.jobKey, count + 1);
+    const scheduleStatsByJob = new Map<string, { total: number; active: number }>();
+    for (const schedule of schedules) {
+        const key = typeof schedule.jobKey === 'string' ? schedule.jobKey.trim().toLowerCase() : '';
+        if (!key) {
+            continue;
         }
+        const stats = scheduleStatsByJob.get(key) ?? { total: 0, active: 0 };
+        stats.total += 1;
+        if (schedule.enabled ?? false) {
+            stats.active += 1;
+        }
+        scheduleStatsByJob.set(key, stats);
     }
 
     // Index latest execution by jobKey
@@ -545,6 +647,11 @@ function normalizeJobRegistry(
     for (const job of jobs) {
         if (!job.jobKey) continue;
 
+        const managedBy = resolveManagedBy(job.metadata ?? undefined);
+        const scheduleStats = scheduleStatsByJob.get(job.jobKey.trim().toLowerCase()) ?? { total: 0, active: 0 };
+        const totalSchedules = scheduleStats.total;
+        const activeSchedules = scheduleStats.active;
+
         entries.push({
             jobKey: job.jobKey,
             namespace: job.namespace || undefined,
@@ -552,7 +659,11 @@ function normalizeJobRegistry(
             variant: job.variant || undefined,
             description: job.description || undefined,
             metadata: job.metadata || undefined,
-            scheduleCount: schedulesByJob.get(job.jobKey) || 0,
+            scheduleCount: totalSchedules,
+            activeScheduleCount: activeSchedules,
+            hasDisabledSchedules: activeSchedules < totalSchedules,
+            managedBy: managedBy || undefined,
+            isSeeded: !!managedBy,
             lastExecution: latestExecutionByJob.get(job.jobKey)
         });
     }
@@ -636,6 +747,21 @@ function normalizeJobDetail(value: unknown, fallbackId: string): JobDetail | nul
         jobKey: jobKey || undefined,
         description: description || undefined,
     };
+}
+
+function resolveManagedBy(metadata?: Record<string, string>): string | null {
+    if (!metadata) {
+        return null;
+    }
+
+    for (const [key, value] of Object.entries(metadata)) {
+        if (key.trim().toLowerCase() === 'managedby') {
+            const trimmed = value?.trim();
+            return trimmed ? trimmed : null;
+        }
+    }
+
+    return null;
 }
 
 function resolveTriggerErrorMessage(error: unknown): string {

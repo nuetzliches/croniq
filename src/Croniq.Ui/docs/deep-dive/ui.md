@@ -106,8 +106,19 @@ Croniq.Ui bundles a curated Material Design Icons (MDI) subset locally (no runti
 - Component: `cq-icon` from `projects/ui-kit/src/lib/icon/icon.ts`.
 - Registry: `projects/ui-kit/src/lib/icon/mdi-icons.ts`.
 - Names follow the Iconify MDI set (`https://icon-sets.iconify.design/mdi/`).
-- Default registry includes: `magnify`, `refresh`, `plus`, `pencil`, `trash-can-outline`, `chevron-left`, `chevron-right`, `chevron-up`, `chevron-down`, `close`, `check`, `alert-outline`, `information-outline`, `content-copy`, `filter-remove`.
+- Default registry includes: `magnify`, `refresh`, `rotate-360`, `plus`, `pencil`, `trash-can-outline`, `chevron-left`, `chevron-right`, `chevron-up`, `chevron-down`, `close`, `check`, `alert-outline`, `information-outline`, `content-copy`, `filter-remove`, `rocket`.
 - Extend the registry by copying the icon body from `https://api.iconify.design/mdi.json?icons=<name>` and adding it to `mdi-icons.ts`.
+- Example (mdi:rocket):
+  1.  Fetch `https://api.iconify.design/mdi.json?icons=rocket`.
+  2.  Copy the `body` and optional `viewBox` (use `0 0 24 24` if omitted).
+  3.  Add to `projects/ui-kit/src/lib/icon/mdi-icons.ts`:
+      ```ts
+      rocket: {
+      	 viewBox: DEFAULT_VIEW_BOX,
+      	 body: '<path fill="currentColor" d="..."/>'
+      },
+      ```
+  4.  Use it via `<cq-icon name="rocket" size="14" aria-hidden="true"></cq-icon>`.
 - Size defaults to `1em` and inherits font-size; omit `size` to scale with surrounding text, or set an explicit value.
 - Usage:
   ```html
