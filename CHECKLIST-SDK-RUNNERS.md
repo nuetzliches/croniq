@@ -28,7 +28,7 @@ Goal: deliver runner SDKs that execute Croniq jobs via the `/work` endpoints wit
 
 - [ ] Add execution intent fields to work items and lease payloads:
   - `executionMode`: `normal|test` (no test value in `invocationSource`).
-  - `invocationSource`: `schedule|manual|webhook-ingress|webhook-invoke|api` (align with UI activity sources).
+  - `invocationSource`: `schedule|manual|webhook-ingress|webhook-invoke|api` (verify naming against UI activity sources).
 - [ ] Add runner capability flags to poll + gRPC Hello (`allowTestExecutions`, `maxInflight`, optional `capabilities` tags).
 - [ ] Define how a runner rejects a test execution (e.g., `AckFailure` with reason `test-not-allowed`, `retryable=false`, or a dedicated `Reject` message).
 - [ ] Specify server-side behavior when a test call is rejected:
@@ -83,6 +83,7 @@ Goal: deliver runner SDKs that execute Croniq jobs via the `/work` endpoints wit
 
 - [ ] Move runner SDKs out of samples into a dedicated SDK folder (e.g., `sdk/worker-go`, `sdk/worker-node`, `sdk/worker-python`, `sdk/worker-dotnet`).
 - [ ] Place runner samples under `samples/runners/<language>/<name>` and wire them into the AppHost via opt-in profiles (per `docs/deep-dive/designs/samples-to-aspire-hosts.md`).
+- [ ] Register one runner per language in the Aspire Devstack (AppHost profiles) so each SDK has a runnable dev example (P0/blocker).
 - [ ] Expand `docs/guides/workers-runners.md` with transport fallback behavior and test execution semantics.
 - [ ] Update `docs/deep-dive/sdk-worker-integration.md` with new env vars and rejection rules.
 - [ ] Update `docs/deep-dive/designs/polyglot-worker-protocol.md` to include `executionMode` and the gRPC + polling fallback.
