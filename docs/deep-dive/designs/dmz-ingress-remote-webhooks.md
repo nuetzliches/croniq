@@ -37,6 +37,8 @@ Internal network:
 DMZ remains `Croniq:Webhooks:Mode=SqlServer` or `Croniq:Webhooks:Mode=Postgres` and stores webhook definitions locally.
 Internal API uses `Croniq:Webhooks:Mode=Remote` to call the DMZ admin API and to relay ingress + manual invoke requests to the DMZ ingress URL.
 
+Relay requests from the internal API include the `X-Croniq-Relay-Key` header. The DMZ ingress accepts this when it matches `Croniq:Webhooks:Remote:ApiKey` (or the in-memory API key when `Croniq:Auth:Mode=InMemory`).
+
 EnvironmentTag is part of the partition key. Ingress events are stored under TenantId + EnvironmentTag, and the relay pulls a single environment via `environment=...`; it dispatches jobs only within the same scope. Cross-environment dispatch is not supported, so the DMZ ingress URL and internal relay must use the same environment tag when they are meant to connect.
 
 Example (internal API):
@@ -253,7 +255,7 @@ while stream open:
 - DMZ admin hardening: scope restriction, allowlist, rate limits, and disabling non-webhook endpoints.
 - `WebhookIngressEvent` store + streaming endpoint (gRPC, SSE fallback) with ack/lease.
 - Internal relay worker (stream client + retry/backoff).
-- New sample host `samples/Croniq.Sample.Dmz` (DMZ API + Webhooks + DB).
+- Devstack host split: `Croniq.WebhooksHost` for StoreOnly ingress + `Croniq.ApiHost` in `WebhookAdminOnly` mode for DMZ admin API.
 
 ## Implementation Slices
 

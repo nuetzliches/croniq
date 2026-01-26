@@ -6,11 +6,11 @@ layout: doc
 
 Croniq can be operated at different maturity levels. These are not different products; they are different compositions of hosts, persistence, and optional features.
 
-## 1) Minimal (samples / local development)
+## 1) Minimal (devstack / local development)
 
 Goal: get started fast with little configuration and few running components.
 
-- Typical: run the `Croniq.Sample` project as a single process.
+- Typical: run the Aspire AppHost with Croniq.ApiHost + Croniq.WorkerHost (and optional WebhooksHost).
 - It avoids requiring DB permissions/schema in scenarios that are intentionally "no database".
 - Features: keep the baseline small; additional surfaces are opt-in (API/UI, gRPC, webhooks, observability, durable SqlServer/Postgres persistence).
 - Trade-off: without durable persistence, jobs and schedules are not a stable, shared "source of truth" across restarts and scaling.
@@ -30,7 +30,7 @@ Typical separation:
 - Webhook host (optional)
 - gRPC clients (from applications or services)
 
-In this repo, the platform-style samples are split across dedicated projects (for example `Croniq.Sample.ApiHost` and `Croniq.Sample.WorkerHost`).
+In this repo, the platform-style hosts are provided by `Croniq.ApiHost`, `Croniq.WorkerHost`, and `Croniq.WebhooksHost`.
 
 Baseline requirements:
 

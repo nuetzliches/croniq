@@ -124,8 +124,8 @@ Configure triggers via `Croniq:Triggers` as a list:
         "CronExpression": "0/5 * * * * ?",
         "StartAtUtc": "2025-01-01T00:00:00Z",
         "Enabled": true,
-        "ManagedBy": "Croniq.Sample",
-        "Metadata": { "seededBy": "Croniq.Sample" }
+        "ManagedBy": "Croniq.WorkerHost",
+        "Metadata": { "seededBy": "Croniq.WorkerHost" }
       }
     ]
   }
@@ -141,7 +141,7 @@ Or via a map keyed by trigger id:
       "samples-smoke-every-5s": {
         "JobKey": "samples:smoke",
         "CronExpression": "0/5 * * * * ?",
-        "ManagedBy": "Croniq.Sample"
+        "ManagedBy": "Croniq.WorkerHost"
       }
     }
   }
@@ -162,7 +162,7 @@ builder.Services
     })
     .AddTrigger("0/5 * * * * ?", trigger =>
     {
-        trigger.ManagedBy = "Croniq.Sample";
+      trigger.ManagedBy = "Croniq.WorkerHost";
     });
 ```
 
@@ -183,7 +183,7 @@ Example:
   "Croniq": {
     "JobRegistrySync": {
       "Mode": "CreateIfMissing",
-      "ManagedBy": "Croniq.Sample"
+      "ManagedBy": "Croniq.WorkerHost"
     }
   }
 }

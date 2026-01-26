@@ -5,26 +5,20 @@ using Croniq.Persistence.Abstractions;
 using Croniq.Webhooks;
 using Croniq.Webhooks.Options;
 using Microsoft.AspNetCore.HttpOverrides;
-using Microsoft.AspNetCore.Server.Kestrel.Core;
 using Microsoft.Extensions.Options;
 using BclIpNetwork = System.Net.IPNetwork;
 
 var builder = WebApplication.CreateBuilder(args);
-
-builder.WebHost.ConfigureKestrel(options =>
-{
-    options.ConfigureEndpointDefaults(endpoint =>
-    {
-        endpoint.Protocols = HttpProtocols.Http1AndHttp2;
-    });
-});
+builder.AddCroniqHostDefaults();
 
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddCroniqApiServices(builder.Configuration);
 builder.Services.AddCroniqApiRateLimiter();
+builder.Services.AddCroniqApiCors(builder.Configuration, builder.Environment);
 builder.Services.AddCroniqApiSchemas();
 
 builder.Services.AddCroniqWebhookServices(builder.Configuration, includePlatformServices: false);
+builder.Services.AddCroniqWebhookRateLimiter();
 
 builder.Services.AddCroniqApiObservability(builder.Configuration, builder.Logging);
 
@@ -91,6 +85,7 @@ if (forwardedHeaders.Enabled)
 }
 
 app.UseCroniqApiSwaggerUi(builder.Configuration);
+app.UseCroniqApiCors();
 app.UseCroniqApi();
 
 app.MapCroniqSchedulerGrpc();

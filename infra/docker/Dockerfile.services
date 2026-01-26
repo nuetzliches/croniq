@@ -9,8 +9,12 @@ WORKDIR /src
 COPY croniq.slnx .
 COPY Directory.Build.props .
 
-# Keep this list in sync with the project graph used by ApiHost/WorkerHost/DbMigrator.
+# Keep this list in sync with the project graph used by ApiHost/WorkerHost/WebhooksHost/DbMigrator.
 # If a build fails with MSB3202 (project not found), add the missing *.csproj COPY here.
+
+COPY src/Croniq.ApiHost/Croniq.ApiHost.csproj src/Croniq.ApiHost/
+COPY src/Croniq.WorkerHost/Croniq.WorkerHost.csproj src/Croniq.WorkerHost/
+COPY src/Croniq.WebhooksHost/Croniq.WebhooksHost.csproj src/Croniq.WebhooksHost/
 
 COPY src/Croniq.Api/Croniq.Api.csproj src/Croniq.Api/
 COPY src/Croniq/Croniq.csproj src/Croniq/
@@ -32,17 +36,14 @@ COPY src/Croniq.Rpc.Client/Croniq.Rpc.Client.csproj src/Croniq.Rpc.Client/
 COPY src/Croniq.Sdk/Croniq.Sdk.csproj src/Croniq.Sdk/
 COPY src/Croniq.Webhooks/Croniq.Webhooks.csproj src/Croniq.Webhooks/
 
-COPY samples/Croniq.Sample.ApiHost/Croniq.Sample.ApiHost.csproj samples/Croniq.Sample.ApiHost/
-COPY samples/Croniq.Sample.Jobs/Croniq.Sample.Jobs.csproj samples/Croniq.Sample.Jobs/
-COPY samples/Croniq.Sample.WorkerHost/Croniq.Sample.WorkerHost.csproj samples/Croniq.Sample.WorkerHost/
-
 COPY tools/Croniq.DbMigrator/Croniq.DbMigrator.csproj tools/Croniq.DbMigrator/
 
 RUN --mount=type=cache,id=nuget-packages,target=/root/.nuget/packages,sharing=locked \
     --mount=type=cache,id=nuget-http-cache,target=/root/.local/share/NuGet/v3-cache,sharing=locked \
     set -eux; \
-    dotnet restore samples/Croniq.Sample.ApiHost/Croniq.Sample.ApiHost.csproj; \
-    dotnet restore samples/Croniq.Sample.WorkerHost/Croniq.Sample.WorkerHost.csproj; \
+    dotnet restore src/Croniq.ApiHost/Croniq.ApiHost.csproj; \
+    dotnet restore src/Croniq.WorkerHost/Croniq.WorkerHost.csproj; \
+    dotnet restore src/Croniq.WebhooksHost/Croniq.WebhooksHost.csproj; \
     dotnet restore tools/Croniq.DbMigrator/Croniq.DbMigrator.csproj
 
 COPY . .
@@ -54,7 +55,7 @@ RUN --mount=type=cache,id=nuget-packages,target=/root/.nuget/packages,sharing=lo
     set -eux; \
     MINVER_ARG=""; \
     if [ "${MINVER_SKIP}" = "true" ]; then MINVER_ARG="/p:MinVerSkip=true"; fi; \
-    dotnet publish samples/Croniq.Sample.ApiHost/Croniq.Sample.ApiHost.csproj -c Release -o /app/publish /p:UseAppHost=false --no-restore $MINVER_ARG
+    dotnet publish src/Croniq.ApiHost/Croniq.ApiHost.csproj -c Release -o /app/publish /p:UseAppHost=false --no-restore $MINVER_ARG
 
 FROM build-base AS publish-worker
 ARG MINVER_SKIP=false
@@ -63,7 +64,16 @@ RUN --mount=type=cache,id=nuget-packages,target=/root/.nuget/packages,sharing=lo
     set -eux; \
     MINVER_ARG=""; \
     if [ "${MINVER_SKIP}" = "true" ]; then MINVER_ARG="/p:MinVerSkip=true"; fi; \
-    dotnet publish samples/Croniq.Sample.WorkerHost/Croniq.Sample.WorkerHost.csproj -c Release -o /app/publish /p:UseAppHost=false --no-restore $MINVER_ARG
+    dotnet publish src/Croniq.WorkerHost/Croniq.WorkerHost.csproj -c Release -o /app/publish /p:UseAppHost=false --no-restore $MINVER_ARG
+
+FROM build-base AS publish-webhooks
+ARG MINVER_SKIP=false
+RUN --mount=type=cache,id=nuget-packages,target=/root/.nuget/packages,sharing=locked \
+    --mount=type=cache,id=nuget-http-cache,target=/root/.local/share/NuGet/v3-cache,sharing=locked \
+    set -eux; \
+    MINVER_ARG=""; \
+    if [ "${MINVER_SKIP}" = "true" ]; then MINVER_ARG="/p:MinVerSkip=true"; fi; \
+    dotnet publish src/Croniq.WebhooksHost/Croniq.WebhooksHost.csproj -c Release -o /app/publish /p:UseAppHost=false --no-restore $MINVER_ARG
 
 FROM build-base AS publish-migrator
 ARG MINVER_SKIP=false
@@ -81,7 +91,7 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=publish-api /app/publish .
 ENV ASPNETCORE_URLS=http://+:8080
-ENTRYPOINT ["dotnet", "Croniq.Sample.ApiHost.dll"]
+ENTRYPOINT ["dotnet", "Croniq.ApiHost.dll"]
 
 FROM mcr.microsoft.com/dotnet/aspnet:${DOTNET_VERSION} AS worker
 WORKDIR /app
@@ -89,7 +99,16 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends gpgv \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=publish-worker /app/publish .
-ENTRYPOINT ["dotnet", "Croniq.Sample.WorkerHost.dll"]
+ENTRYPOINT ["dotnet", "Croniq.WorkerHost.dll"]
+
+FROM mcr.microsoft.com/dotnet/aspnet:${DOTNET_VERSION} AS webhooks
+WORKDIR /app
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends gpgv \
+    && rm -rf /var/lib/apt/lists/*
+COPY --from=publish-webhooks /app/publish .
+ENV ASPNETCORE_URLS=http://+:8080
+ENTRYPOINT ["dotnet", "Croniq.WebhooksHost.dll"]
 
 FROM mcr.microsoft.com/dotnet/aspnet:${DOTNET_VERSION} AS migrator
 WORKDIR /app

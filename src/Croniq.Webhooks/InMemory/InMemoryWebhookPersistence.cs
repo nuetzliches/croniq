@@ -1,7 +1,10 @@
+using System;
 using System.Collections.Concurrent;
+using System.Collections.Generic;
 using System.Linq;
 using System.Text;
 using System.Threading;
+using System.Threading.Tasks;
 using Croniq.Persistence.Abstractions;
 using Microsoft.AspNetCore.Http;
 
@@ -407,5 +410,170 @@ public sealed class InMemoryWebhookDeadLetterStore : IWebhookDeadLetterStore
     {
         return string.Equals(entry.TenantId, scope.TenantId, StringComparison.OrdinalIgnoreCase)
             && string.Equals(entry.EnvironmentTag, scope.EnvironmentTag, StringComparison.OrdinalIgnoreCase);
+    }
+}
+
+/// <summary>
+/// In-memory webhook activity store backed by the dead-letter entries.
+/// </summary>
+public sealed class InMemoryWebhookActivityStore : IWebhookActivityStore
+{
+    private readonly IWebhookDeadLetterStore _deadLetterStore;
+
+    public InMemoryWebhookActivityStore(IWebhookDeadLetterStore deadLetterStore)
+    {
+        _deadLetterStore = deadLetterStore ?? throw new ArgumentNullException(nameof(deadLetterStore));
+    }
+
+    public async Task<IReadOnlyCollection<WebhookActivityEntry>> ListAsync(
+        PartitionScope scope,
+        WebhookActivityQuery query,
+        CancellationToken cancellationToken)
+    {
+        if (query is null) throw new ArgumentNullException(nameof(query));
+
+        var normalized = query.Normalize();
+        var hookKeys = normalized.HookKeys is null || normalized.HookKeys.Count == 0
+            ? null
+            : new HashSet<string>(normalized.HookKeys, StringComparer.OrdinalIgnoreCase);
+        var jobKeys = normalized.JobKeys is null || normalized.JobKeys.Count == 0
+            ? null
+            : new HashSet<string>(normalized.JobKeys, StringComparer.OrdinalIgnoreCase);
+
+        var entries = await _deadLetterStore.ListAsync(scope, cancellationToken).ConfigureAwait(false);
+
+        var filtered = entries
+            .Where(entry => hookKeys is null || hookKeys.Contains(entry.HookKey))
+            .Where(entry => jobKeys is null || jobKeys.Contains(entry.JobKey))
+            .Where(entry => !normalized.FromUtc.HasValue || entry.CreatedAtUtc >= normalized.FromUtc.Value)
+            .Where(entry => !normalized.ToUtc.HasValue || entry.CreatedAtUtc <= normalized.ToUtc.Value)
+            .Where(entry => !normalized.UpdatedSinceUtc.HasValue || entry.CreatedAtUtc >= normalized.UpdatedSinceUtc.Value)
+            .OrderByDescending(entry => entry.CreatedAtUtc)
+            .ThenByDescending(entry => entry.Id)
+            .Take(normalized.Limit)
+            .Select(MapDeadLetter)
+            .ToArray();
+
+        return filtered;
+    }
+
+    public async Task<WebhookActivitySummary> SummarizeAsync(
+        PartitionScope scope,
+        WebhookActivitySummaryQuery query,
+        CancellationToken cancellationToken)
+    {
+        if (query is null) throw new ArgumentNullException(nameof(query));
+
+        var nowUtc = DateTimeOffset.UtcNow;
+        var normalized = query.Normalize(nowUtc);
+        var hookKeys = normalized.HookKeys is null || normalized.HookKeys.Count == 0
+            ? null
+            : new HashSet<string>(normalized.HookKeys, StringComparer.OrdinalIgnoreCase);
+        var jobKeys = normalized.JobKeys is null || normalized.JobKeys.Count == 0
+            ? null
+            : new HashSet<string>(normalized.JobKeys, StringComparer.OrdinalIgnoreCase);
+
+        var windowStartUtc = normalized.FromUtc ?? nowUtc.AddMinutes(-WebhookActivitySummaryQuery.DefaultWindowMinutes);
+        var windowEndUtc = normalized.ToUtc ?? nowUtc;
+        var bucketMinutes = normalized.BucketMinutes ?? WebhookActivitySummaryQuery.DefaultBucketMinutes;
+        if (bucketMinutes <= 0)
+        {
+            bucketMinutes = WebhookActivitySummaryQuery.DefaultBucketMinutes;
+        }
+
+        var entries = await _deadLetterStore.ListAsync(scope, cancellationToken).ConfigureAwait(false);
+        var filtered = entries
+            .Where(entry => hookKeys is null || hookKeys.Contains(entry.HookKey))
+            .Where(entry => jobKeys is null || jobKeys.Contains(entry.JobKey))
+            .Where(entry => entry.CreatedAtUtc >= windowStartUtc && entry.CreatedAtUtc <= windowEndUtc)
+            .ToArray();
+
+        var buckets = BuildBuckets(filtered, windowStartUtc, windowEndUtc, bucketMinutes);
+        return new WebhookActivitySummary(bucketMinutes, windowStartUtc, windowEndUtc, buckets);
+    }
+
+    private static IReadOnlyCollection<WebhookActivityBucket> BuildBuckets(
+        IReadOnlyCollection<WebhookDeadLetterEntry> entries,
+        DateTimeOffset windowStartUtc,
+        DateTimeOffset windowEndUtc,
+        int bucketMinutes)
+    {
+        var windowMinutes = Math.Max(1, (windowEndUtc - windowStartUtc).TotalMinutes);
+        var bucketCount = Math.Max(1, (int)Math.Ceiling(windowMinutes / bucketMinutes));
+        var buckets = new WebhookActivityBucket[bucketCount];
+
+        for (var index = 0; index < bucketCount; index++)
+        {
+            var start = windowStartUtc.AddMinutes(index * bucketMinutes);
+            var end = start.AddMinutes(bucketMinutes);
+            if (end > windowEndUtc)
+            {
+                end = windowEndUtc;
+            }
+
+            buckets[index] = new WebhookActivityBucket(
+                start,
+                end,
+                TotalCount: 0,
+                ErrorCount: 0,
+                WarningCount: 0,
+                PendingCount: 0,
+                LeasedCount: 0,
+                DeadLetterCount: 0,
+                P95LatencyMs: null);
+        }
+
+        foreach (var entry in entries)
+        {
+            var offsetMinutes = (entry.CreatedAtUtc - windowStartUtc).TotalMinutes;
+            var index = (int)Math.Floor(offsetMinutes / bucketMinutes);
+            if (index < 0 || index >= bucketCount)
+            {
+                continue;
+            }
+
+            var bucket = buckets[index];
+            buckets[index] = bucket with
+            {
+                TotalCount = bucket.TotalCount + 1,
+                ErrorCount = bucket.ErrorCount + 1,
+                DeadLetterCount = bucket.DeadLetterCount + 1
+            };
+        }
+
+        return buckets;
+    }
+
+    private static WebhookActivityEntry MapDeadLetter(WebhookDeadLetterEntry entry)
+    {
+        var reason = string.IsNullOrWhiteSpace(entry.ErrorDetails)
+            ? entry.FailureReason
+            : entry.ErrorDetails;
+
+        return new WebhookActivityEntry(
+            entry.Id.ToString(),
+            WebhookActivityKind.DeadLetter,
+            WebhookActivityStatus.Failed,
+            entry.HookKey,
+            entry.JobKey,
+            entry.TenantId,
+            entry.EnvironmentTag,
+            WebhookActivitySources.Ingress,
+            entry.CreatedAtUtc,
+            LatencyMs: null,
+            Attempts: entry.Attempts,
+            reason,
+            ComputePayloadBytes(entry.Payload),
+            entry.Id);
+    }
+
+    private static int? ComputePayloadBytes(string payload)
+    {
+        if (string.IsNullOrEmpty(payload))
+        {
+            return null;
+        }
+
+        return Encoding.UTF8.GetByteCount(payload);
     }
 }

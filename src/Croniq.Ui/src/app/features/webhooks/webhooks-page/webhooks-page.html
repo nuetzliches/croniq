@@ -641,16 +641,25 @@
                       Disable
                     </button>
                   }
+                  <button
+                    type="button"
+                    class="inline-flex items-center justify-center gap-1 rounded-md border border-white/10 bg-white/5 px-2 py-1.5 text-[11px] font-semibold text-primary transition hover:border-accent hover:text-accent disabled:cursor-not-allowed disabled:opacity-50"
+                    (click)="invokeWebhook()"
+                    [disabled]="writePermissionDenied() || invokeLoading()"
+                  >
+                    <cq-icon name="rocket" size="14" aria-hidden="true"></cq-icon>
+                    Invoke
+                  </button>
+                  <button
+                    type="button"
+                    class="inline-flex w-full items-center justify-center gap-1 rounded-md border border-danger/40 bg-danger/10 px-2 py-1.5 text-[11px] font-semibold text-danger transition hover:border-danger hover:bg-danger/20 disabled:cursor-not-allowed disabled:opacity-50"
+                    (click)="deleteEndpoint(endpoint)"
+                    [disabled]="writePermissionDenied()"
+                  >
+                    <cq-icon name="trash-can-outline" size="14" aria-hidden="true"></cq-icon>
+                    Delete endpoint
+                  </button>
                 </div>
-                <button
-                  type="button"
-                  class="mt-2 inline-flex w-full items-center justify-center gap-1 rounded-md border border-danger/40 bg-danger/10 px-2 py-1.5 text-[11px] font-semibold text-danger transition hover:border-danger hover:bg-danger/20 disabled:cursor-not-allowed disabled:opacity-50"
-                  (click)="deleteEndpoint(endpoint)"
-                  [disabled]="writePermissionDenied()"
-                >
-                  <cq-icon name="trash-can-outline" size="14" aria-hidden="true"></cq-icon>
-                  Delete endpoint
-                </button>
               </div>
 
             <div class="space-y-3 rounded-lg border border-white/10 bg-black/10 px-3 py-3">
@@ -683,15 +692,6 @@
                     <div class="flex items-center justify-between">
                       <div class="text-[11px] font-semibold uppercase tracking-wide text-muted">API host ingress</div>
                       <div class="flex items-center gap-2">
-                        <button
-                          type="button"
-                          class="inline-flex items-center gap-1 rounded-lg bg-accent px-2 py-1 text-[11px] font-semibold text-white transition hover:bg-accent-hover disabled:opacity-50"
-                          (click)="invokeWebhook()"
-                          [disabled]="writePermissionDenied() || invokeLoading()"
-                        >
-                          <cq-icon name="rocket" size="14" aria-hidden="true"></cq-icon>
-                          Invoke
-                        </button>
                         <button
                           type="button"
                           class="inline-flex items-center gap-1 rounded-lg border border-white/10 bg-white/5 px-2 py-1 text-[11px] font-semibold text-primary transition hover:border-accent hover:text-accent"
@@ -746,15 +746,6 @@
                       <div class="flex items-center gap-2">
                         <button
                           type="button"
-                          class="inline-flex items-center gap-1 rounded-lg bg-accent px-2 py-1 text-[11px] font-semibold text-white transition hover:bg-accent-hover disabled:opacity-50"
-                          (click)="invokeWebhook()"
-                          [disabled]="writePermissionDenied() || invokeLoading()"
-                        >
-                          <cq-icon name="rocket" size="14" aria-hidden="true"></cq-icon>
-                          Invoke
-                        </button>
-                        <button
-                          type="button"
                           class="inline-flex items-center gap-1 rounded-lg border border-white/10 bg-white/5 px-2 py-1 text-[11px] font-semibold text-primary transition hover:border-accent hover:text-accent"
                           (click)="copyIngressUrl('remote')"
                           [disabled]="!remoteIngressUrl()"
@@ -806,15 +797,6 @@
                   <div class="flex items-center justify-between">
                     <div class="text-xs font-semibold uppercase tracking-wide text-muted">Ingress URL</div>
                     <div class="flex items-center gap-2">
-                      <button
-                        type="button"
-                        class="inline-flex items-center gap-1 rounded-lg bg-accent px-2 py-1 text-xs font-semibold text-white transition hover:bg-accent-hover disabled:opacity-50"
-                        (click)="invokeWebhook()"
-                        [disabled]="writePermissionDenied() || invokeLoading()"
-                      >
-                        <cq-icon name="rocket" size="14" aria-hidden="true"></cq-icon>
-                        Invoke
-                      </button>
                       <button
                         type="button"
                         class="inline-flex items-center gap-1 rounded-lg border border-white/10 bg-white/5 px-2 py-1 text-xs font-semibold text-primary transition hover:border-accent hover:text-accent"

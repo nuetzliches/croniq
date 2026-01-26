@@ -1,6 +1,8 @@
+using System.Collections;
 using System.Diagnostics;
 using System.Globalization;
-using System.Threading;
+using System.Reflection;
+using System.Security.Cryptography;
 using Microsoft.Data.SqlClient;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
@@ -54,7 +56,16 @@ var apiInstanceId = GetEnvValueOrDefault("CRONIQ_API_INSTANCE_ID", "api-dev");
 var workerInstanceId = GetEnvValueOrDefault("CRONIQ_WORKER_INSTANCE_ID", "worker-dev");
 var apiRequestsPerMinute = GetEnvValueOrDefault("CRONIQ_API_REQUESTS_PER_MINUTE", "240");
 var apiKey = GetEnvValueOrDefault("CRONIQ_API_KEY", "smoke-key");
-var authMode = GetEnvValueOrDefault("CRONIQ_AUTH_MODE", "InMemory");
+var authMode = GetEnvValueOrDefault("CRONIQ_AUTH_MODE", "SqlServer");
+var authSigningKey = GetEnvValue("CRONIQ_AUTH_TOKENS_SIGNING_KEY") ?? CreateDevSigningKey();
+var workerDispatchEnableGrpc = GetEnvValue("CRONIQ_WORKER_DISPATCH_ENABLE_GRPC");
+var workerDispatchGrpcEndpoint = GetEnvValue("CRONIQ_WORKER_DISPATCH_GRPC_ENDPOINT");
+var workerDispatchApiKey = GetEnvValue("CRONIQ_WORKER_DISPATCH_API_KEY");
+var workerDispatchRunnerId = GetEnvValue("CRONIQ_WORKER_DISPATCH_RUNNER_ID");
+var workerDispatchReconnectDelay = GetEnvValue("CRONIQ_WORKER_DISPATCH_RECONNECT_DELAY");
+var workerDispatchFallbackIdleDelay = GetEnvValue("CRONIQ_WORKER_DISPATCH_FALLBACK_IDLE_DELAY");
+var workerDispatchFallbackBusyDelay = GetEnvValue("CRONIQ_WORKER_DISPATCH_FALLBACK_BUSY_DELAY");
+var workerDispatchFallbackErrorDelay = GetEnvValue("CRONIQ_WORKER_DISPATCH_FALLBACK_ERROR_DELAY");
 var apiPort = GetInt("CRONIQ_API_HTTP_PORT", GetInt("CRONIQ_API_INTERNAL_PORT", 5080));
 var uiPort = GetInt("CRONIQ_UI_HTTP_PORT", 5081);
 var docsPort = GetInt("CRONIQ_DOCS_HTTP_PORT", 5173);
@@ -63,16 +74,17 @@ var sqlHostPort = GetInt("CRONIQ_SQL_HOST_PORT", 11433);
 var sqlDatabase = GetEnvValueOrDefault("CRONIQ_SQL_DATABASE", "CroniqDev");
 var sqlPassword = GetEnvValueOrDefault("CRONIQ_SQL_PASSWORD", "CroniqSqlP@ssw0rd!");
 var sqlHost = GetEnvValue("CRONIQ_SQL_HOST");
-var dmzHttpPort = GetInt("CRONIQ_SAMPLE_DMZ_HTTP_PORT", 5000);
-var dmzGrpcPort = GetInt("CRONIQ_SAMPLE_DMZ_GRPC_PORT", 5001);
-var dmzSqlDatabase = GetEnvValueOrDefault("CRONIQ_SAMPLE_DMZ_SQL_DATABASE", "CroniqDmz");
-var dmzAuthMode = GetEnvValueOrDefault("CRONIQ_SAMPLE_DMZ_AUTH_MODE", "InMemory");
-var dmzInstanceId = GetEnvValueOrDefault("CRONIQ_SAMPLE_DMZ_INSTANCE_ID", "dmz-dev");
-var dmzBaseUrl = GetEnvValueOrDefault("CRONIQ_SAMPLE_DMZ_BASEURL", $"https://localhost:{dmzGrpcPort}");
-var dmzIngressBaseUrl = GetEnvValue("CRONIQ_SAMPLE_DMZ_INGRESS_BASEURL");
-var dmzApiKey = GetEnvValueOrDefault("CRONIQ_SAMPLE_DMZ_API_KEY", "dmz-sample-key");
-var dmzDataProtectionAppName = GetEnvValue("CRONIQ_SAMPLE_DMZ_DATAPROTECTION_APPLICATIONNAME");
-var dmzDataProtectionKeyRingPath = GetEnvValue("CRONIQ_SAMPLE_DMZ_DATAPROTECTION_KEYRINGPATH");
+var dmzHttpPort = GetInt("CRONIQ_DMZ_HTTP_PORT", 5000);
+var dmzGrpcPort = GetInt("CRONIQ_DMZ_GRPC_PORT", 5001);
+var dmzAdminHttpPort = GetInt("CRONIQ_DMZ_ADMIN_HTTP_PORT", 5002);
+var dmzSqlDatabase = GetEnvValueOrDefault("CRONIQ_DMZ_SQL_DATABASE", "CroniqDmz");
+var dmzAuthMode = GetEnvValueOrDefault("CRONIQ_DMZ_AUTH_MODE", "InMemory");
+var dmzInstanceId = GetEnvValueOrDefault("CRONIQ_DMZ_INSTANCE_ID", "dmz-dev");
+var dmzBaseUrl = GetEnvValueOrDefault("CRONIQ_DMZ_BASEURL", $"https://localhost:{dmzGrpcPort}");
+var dmzIngressBaseUrl = GetEnvValue("CRONIQ_DMZ_INGRESS_BASEURL");
+var dmzApiKey = GetEnvValueOrDefault("CRONIQ_DMZ_API_KEY", "dmz-dev-key");
+var dmzDataProtectionAppName = GetEnvValue("CRONIQ_DMZ_DATAPROTECTION_APPLICATIONNAME");
+var dmzDataProtectionKeyRingPath = GetEnvValue("CRONIQ_DMZ_DATAPROTECTION_KEYRINGPATH");
 var caddyDomain = GetEnvValueOrDefault("CRONIQ_CADDY_DOMAIN", "croniq.local");
 var caddyUpstreamHost = GetEnvValueOrDefault("CRONIQ_CADDY_UPSTREAM_HOST", "host.docker.internal");
 var caddyHttpPort = GetInt("CRONIQ_CADDY_HTTP_PORT", 80);
@@ -98,6 +110,7 @@ var uiActivityGrpcBaseUrl = GetEnvValue("CRONIQ_UI_WEBHOOKS_ACTIVITY_GRPC_BASEUR
 var uiActivitySseBaseUrl = GetEnvValue("CRONIQ_UI_WEBHOOKS_ACTIVITY_SSE_BASEURL");
 var dataProtectionAppName = GetEnvValue("CRONIQ_SECURITY_DATAPROTECTION_APPLICATIONNAME");
 var dataProtectionKeyRingPath = GetEnvValue("CRONIQ_SECURITY_DATAPROTECTION_KEYRINGPATH");
+
 var uiEnabled = !IsFalse(GetEnvValue("CRONIQ_DEVSTACK_UI"));
 var docsEnabled = IsTrue(GetEnvValue("CRONIQ_DEVSTACK_DOCS"));
 var otlpEndpoint = GetEnvValue("CRONIQ_OBS_OTLP_ENDPOINT");
@@ -175,10 +188,13 @@ if (!usePostgres && string.IsNullOrWhiteSpace(sqlConnection))
 
 var logsPath = Path.Combine(repoRoot, "logs");
 var apiUrls = string.Concat("http://0.0.0.0:", apiPort.ToString(CultureInfo.InvariantCulture));
-var dmzUrls = string.Concat(
+var dmzAdminUrls = string.Concat(
     "https://0.0.0.0:",
     dmzGrpcPort.ToString(CultureInfo.InvariantCulture),
     ";http://0.0.0.0:",
+    dmzAdminHttpPort.ToString(CultureInfo.InvariantCulture));
+var webhooksUrls = string.Concat(
+    "http://0.0.0.0:",
     dmzHttpPort.ToString(CultureInfo.InvariantCulture));
 var dmzSqlConnection = $"Server={ResolveSqlHost()},{sqlHostPort};Database={dmzSqlDatabase};User Id=sa;Password={sqlPassword};Encrypt=False;TrustServerCertificate=True;";
 const string sqlReadyHealthCheckName = "croniq-sql-ready";
@@ -248,8 +264,8 @@ if (sqlServer is not null)
     migrator.WaitFor(sqlServer);
 }
 
-var dmzMigrator = builder.AddProject(
-        "croniq-db-migrator-dmz",
+var webhooksMigrator = builder.AddProject(
+    "croniq-db-migrator-webhooks",
         Path.Combine(repoRoot, "tools", "Croniq.DbMigrator", "Croniq.DbMigrator.csproj"))
     .WithEnvironment("DOTNET_ENVIRONMENT", dotnetEnvironment)
     .WithEnvironment("CRONIQ_DB_PROVIDER", "SqlServer")
@@ -267,7 +283,7 @@ var dmzMigrator = builder.AddProject(
 
 if (sqlServer is not null)
 {
-    dmzMigrator.WaitFor(sqlServer);
+    webhooksMigrator.WaitFor(sqlServer);
 }
 
 if (obsEnabled)
@@ -385,8 +401,9 @@ if (caddyEnabled)
         .WithEnvironment("CRONIQ_CADDY_HTTP_PORT", caddyHttpPort.ToString(CultureInfo.InvariantCulture))
         .WithEnvironment("CRONIQ_CADDY_HTTPS_PORT", caddyHttpsPort.ToString(CultureInfo.InvariantCulture))
         .WithEnvironment("CRONIQ_API_HTTP_PORT", apiPort.ToString(CultureInfo.InvariantCulture))
-        .WithEnvironment("CRONIQ_SAMPLE_DMZ_HTTP_PORT", dmzHttpPort.ToString(CultureInfo.InvariantCulture))
-        .WithEnvironment("CRONIQ_SAMPLE_DMZ_GRPC_PORT", dmzGrpcPort.ToString(CultureInfo.InvariantCulture))
+        .WithEnvironment("CRONIQ_DMZ_HTTP_PORT", dmzHttpPort.ToString(CultureInfo.InvariantCulture))
+        .WithEnvironment("CRONIQ_DMZ_GRPC_PORT", dmzGrpcPort.ToString(CultureInfo.InvariantCulture))
+        .WithEnvironment("CRONIQ_DMZ_ADMIN_HTTP_PORT", dmzAdminHttpPort.ToString(CultureInfo.InvariantCulture))
         .WithEnvironment("CRONIQ_UI_HTTP_PORT", uiPort.ToString(CultureInfo.InvariantCulture))
         .WithEndpoint(
             targetPort: caddyHttpPort,
@@ -408,7 +425,7 @@ if (caddyEnabled)
 
 var api = builder.AddProject(
         "croniq-api",
-        Path.Combine(repoRoot, "samples", "Croniq.Sample.ApiHost", "Croniq.Sample.ApiHost.csproj"),
+        Path.Combine(repoRoot, "src", "Croniq.ApiHost", "Croniq.ApiHost.csproj"),
         options =>
         {
             options.ExcludeLaunchProfile = true;
@@ -426,16 +443,26 @@ var api = builder.AddProject(
     .WithEnvironment("Croniq__Api__ForwardedHeaders__Enabled", forwardedHeadersEnabled)
     .WithEnvironment("Croniq__Api__ForwardedHeaders__ForwardLimit", forwardedHeadersForwardLimit)
     .WithEnvironment("Croniq__Auth__Mode", authMode)
+    .WithEnvironment("Croniq__Auth__Tokens__SigningKey", authSigningKey)
+    .WithEnvironment("Croniq__Auth__Password__Enabled", "true")
     .WithEnvironment("Croniq__Auth__InMemory__ApiKey", apiKey)
     .WithEnvironment("Croniq__Auth__InMemory__TenantId", tenantId)
     .WithEnvironment("Croniq__Auth__InMemory__EnvironmentTag", environmentTag)
+    .WithEnvironment("Croniq__Webhooks__Mode", "Remote")
     .WithEnvironment("Croniq__Webhooks__Remote__BaseUrl", dmzBaseUrl)
     .WithEnvironment("Croniq__Webhooks__Remote__ApiKey", dmzApiKey)
     .WithEnvironment("Croniq__Webhooks__Remote__AllowInvalidServerCertificate", "true")
     .WithEnvironment("Croniq__Webhooks__Remote__EnableRelay", "false")
     .WithEnvironment("Croniq__Webhooks__Remote__TimeoutSeconds", remoteTimeoutSeconds.ToString(CultureInfo.InvariantCulture))
     .WithEnvironment("Croniq__Logging__Execution__BasePath", logsPath)
-    .WaitForCompletion(migrator, exitCode: 0);
+    .WaitForCompletion(migrator, exitCode: 0)
+    .WaitFor(migrator)
+    .WithHttpHealthCheck("/health");
+
+if (!string.IsNullOrWhiteSpace(dmzIngressBaseUrl))
+{
+    api.WithEnvironment("Croniq__Webhooks__Remote__IngressBaseUrl", dmzIngressBaseUrl);
+}
 
 if (!string.IsNullOrWhiteSpace(caddyApiUrl))
 {
@@ -448,8 +475,10 @@ if (!string.IsNullOrWhiteSpace(caddyApiUrl))
 
 if (!string.IsNullOrWhiteSpace(caddyUiUrl))
 {
-    api.WithEnvironment("CroniqSample__Api__Cors__AllowedOrigins__2", caddyUiUrl);
+    api.WithEnvironment("Croniq__Api__Cors__AllowedOrigins__0", caddyUiUrl);
 }
+
+
 
 if (usePostgres)
 {
@@ -586,8 +615,8 @@ if (docsEnabled && Directory.Exists(docsPath))
 }
 
 var worker = builder.AddProject(
-        "croniq-worker",
-        Path.Combine(repoRoot, "samples", "Croniq.Sample.WorkerHost", "Croniq.Sample.WorkerHost.csproj"))
+    "croniq-worker",
+    Path.Combine(repoRoot, "src", "Croniq.WorkerHost", "Croniq.WorkerHost.csproj"))
     .WithEnvironment("DOTNET_ENVIRONMENT", dotnetEnvironment)
     .WithEnvironment("Croniq__Core__TenantMode", tenantMode)
     .WithEnvironment("Croniq__Core__TenantId", tenantId)
@@ -602,7 +631,49 @@ var worker = builder.AddProject(
     .WithEnvironment("Croniq__Webhooks__Remote__AllowInvalidServerCertificate", "true")
     .WithEnvironment("Croniq__Webhooks__Remote__TimeoutSeconds", remoteTimeoutSeconds.ToString(CultureInfo.InvariantCulture))
     .WithEnvironment("Croniq__Logging__Execution__BasePath", logsPath)
-    .WaitForCompletion(migrator, exitCode: 0);
+    .WaitForCompletion(migrator, exitCode: 0)
+    .WaitFor(migrator)
+    .WaitFor(api);
+
+if (!string.IsNullOrWhiteSpace(workerDispatchEnableGrpc))
+{
+    worker.WithEnvironment("Croniq__WorkerDispatch__EnableGrpc", workerDispatchEnableGrpc);
+}
+
+if (!string.IsNullOrWhiteSpace(workerDispatchGrpcEndpoint))
+{
+    worker.WithEnvironment("Croniq__WorkerDispatch__GrpcEndpoint", workerDispatchGrpcEndpoint);
+}
+
+if (!string.IsNullOrWhiteSpace(workerDispatchApiKey))
+{
+    worker.WithEnvironment("Croniq__WorkerDispatch__ApiKey", workerDispatchApiKey);
+}
+
+if (!string.IsNullOrWhiteSpace(workerDispatchRunnerId))
+{
+    worker.WithEnvironment("Croniq__WorkerDispatch__RunnerId", workerDispatchRunnerId);
+}
+
+if (!string.IsNullOrWhiteSpace(workerDispatchReconnectDelay))
+{
+    worker.WithEnvironment("Croniq__WorkerDispatch__ReconnectDelay", workerDispatchReconnectDelay);
+}
+
+if (!string.IsNullOrWhiteSpace(workerDispatchFallbackIdleDelay))
+{
+    worker.WithEnvironment("Croniq__WorkerDispatch__FallbackIdleDelay", workerDispatchFallbackIdleDelay);
+}
+
+if (!string.IsNullOrWhiteSpace(workerDispatchFallbackBusyDelay))
+{
+    worker.WithEnvironment("Croniq__WorkerDispatch__FallbackBusyDelay", workerDispatchFallbackBusyDelay);
+}
+
+if (!string.IsNullOrWhiteSpace(workerDispatchFallbackErrorDelay))
+{
+    worker.WithEnvironment("Croniq__WorkerDispatch__FallbackErrorDelay", workerDispatchFallbackErrorDelay);
+}
 
 if (!string.IsNullOrWhiteSpace(dmzIngressBaseUrl))
 {
@@ -633,64 +704,113 @@ if (!string.IsNullOrWhiteSpace(otlpProtocol))
     worker.WithEnvironment("Croniq__Observability__OtlpProtocol", otlpProtocol);
 }
 
-var dmz = builder.AddProject(
-        "croniq-dmz",
-        Path.Combine(repoRoot, "samples", "Croniq.Sample.Dmz", "Croniq.Sample.Dmz.csproj"),
+var webhooksIngress = builder.AddProject(
+        "croniq-webhooks-ingress",
+        Path.Combine(repoRoot, "src", "Croniq.WebhooksHost", "Croniq.WebhooksHost.csproj"),
         options =>
         {
             options.ExcludeLaunchProfile = true;
             options.ExcludeKestrelEndpoints = true;
         })
     .WithHttpEndpoint(targetPort: dmzHttpPort, port: dmzHttpPort, name: "http", env: null, isProxied: false)
+    .WithEnvironment("DOTNET_ENVIRONMENT", dotnetEnvironment)
+    .WithEnvironment("ASPNETCORE_ENVIRONMENT", dotnetEnvironment)
+    .WithEnvironment("ASPNETCORE_URLS", webhooksUrls)
+    .WithEnvironment("Croniq__Webhooks__Mode", "SqlServer")
+    .WithEnvironment("Croniq__Webhooks__Ingress__DispatchMode", "StoreOnly")
+    .WithEnvironment("Croniq__Webhooks__Security__AllowUnsignedHooks", "true")
+    .WithEnvironment("Croniq__Webhooks__Remote__ApiKey", dmzApiKey)
+    .WithEnvironment("Croniq__Webhooks__RequestsPerMinute", "30")
+    .WithEnvironment("Croniq__SqlServer__ConnectionString", dmzSqlConnection)
+    .WaitForCompletion(webhooksMigrator, exitCode: 0)
+    .WaitFor(webhooksMigrator)
+    .WithHttpHealthCheck("/health");
+
+var webhooksAdmin = builder.AddProject(
+    "croniq-webhooks-admin",
+        Path.Combine(repoRoot, "src", "Croniq.ApiHost", "Croniq.ApiHost.csproj"),
+        options =>
+        {
+            options.ExcludeLaunchProfile = true;
+            options.ExcludeKestrelEndpoints = true;
+        })
+    .WithHttpEndpoint(targetPort: dmzAdminHttpPort, port: dmzAdminHttpPort, name: "http", env: null, isProxied: false)
     .WithHttpsEndpoint(targetPort: dmzGrpcPort, port: dmzGrpcPort, name: "https", env: null, isProxied: false)
     .WithEnvironment("DOTNET_ENVIRONMENT", dotnetEnvironment)
     .WithEnvironment("ASPNETCORE_ENVIRONMENT", dotnetEnvironment)
-    .WithEnvironment("ASPNETCORE_URLS", dmzUrls)
+    .WithEnvironment("ASPNETCORE_URLS", dmzAdminUrls)
+    .WithEnvironment("Croniq__Api__Surface", "WebhookAdminOnly")
+    .WithEnvironment("Croniq__Api__RequestsPerMinute", "30")
+    .WithEnvironment("Croniq__Api__AllowedIpCidrs__0", "127.0.0.1/32")
+    .WithEnvironment("Croniq__Api__AllowedIpCidrs__1", "::1/128")
     .WithEnvironment("Croniq__Auth__Mode", dmzAuthMode)
+    .WithEnvironment("Croniq__Auth__Tokens__SigningKey", authSigningKey)
     .WithEnvironment("Croniq__Auth__InMemory__ApiKey", dmzApiKey)
     .WithEnvironment("Croniq__Auth__InMemory__TenantId", tenantId)
     .WithEnvironment("Croniq__Auth__InMemory__EnvironmentTag", environmentTag)
-    .WithEnvironment("Croniq__Persistence__Mode", "SqlServer")
     .WithEnvironment("Croniq__Core__TenantId", tenantId)
     .WithEnvironment("Croniq__Core__TenantMode", tenantMode)
     .WithEnvironment("Croniq__Core__EnvironmentTag", environmentTag)
     .WithEnvironment("Croniq__Core__InstanceId", dmzInstanceId)
+    .WithEnvironment("Croniq__Webhooks__Mode", "SqlServer")
+    .WithEnvironment("Croniq__Webhooks__Ingress__DispatchMode", "StoreOnly")
+    .WithEnvironment("Croniq__Webhooks__Security__AllowUnsignedHooks", "true")
+    .WithEnvironment("Croniq__Webhooks__Remote__InvokeViaIngress", "true")
+    .WithEnvironment("Croniq__Webhooks__Remote__ApiKey", dmzApiKey)
+    .WithEnvironment("Croniq__Webhooks__Remote__AllowInvalidServerCertificate", "true")
     .WithEnvironment("Croniq__SqlServer__ConnectionString", dmzSqlConnection)
-    .WaitForCompletion(dmzMigrator, exitCode: 0);
+    .WaitForCompletion(webhooksMigrator, exitCode: 0)
+    .WaitFor(webhooksMigrator)
+    .WithHttpHealthCheck("/health", endpointName: "http");
+
+if (!string.IsNullOrWhiteSpace(dmzIngressBaseUrl))
+{
+    webhooksAdmin.WithEnvironment("Croniq__Webhooks__Remote__IngressBaseUrl", dmzIngressBaseUrl);
+}
 
 if (!string.IsNullOrWhiteSpace(dmzDataProtectionAppName))
 {
-    dmz.WithEnvironment("Croniq__Security__DataProtection__ApplicationName", dmzDataProtectionAppName);
+    webhooksIngress.WithEnvironment("Croniq__Security__DataProtection__ApplicationName", dmzDataProtectionAppName);
 }
 
 if (!string.IsNullOrWhiteSpace(dmzDataProtectionKeyRingPath))
 {
-    dmz.WithEnvironment("Croniq__Security__DataProtection__KeyRingPath", dmzDataProtectionKeyRingPath);
+    webhooksIngress.WithEnvironment("Croniq__Security__DataProtection__KeyRingPath", dmzDataProtectionKeyRingPath);
+}
+
+if (!string.IsNullOrWhiteSpace(dmzDataProtectionAppName))
+{
+    webhooksAdmin.WithEnvironment("Croniq__Security__DataProtection__ApplicationName", dmzDataProtectionAppName);
+}
+
+if (!string.IsNullOrWhiteSpace(dmzDataProtectionKeyRingPath))
+{
+    webhooksAdmin.WithEnvironment("Croniq__Security__DataProtection__KeyRingPath", dmzDataProtectionKeyRingPath);
 }
 
 if (!string.IsNullOrWhiteSpace(caddyDmzUrl))
 {
-    dmz.WithUrlForEndpoint("http", url =>
+    webhooksIngress.WithUrlForEndpoint("http", url =>
     {
         url.Url = caddyDmzUrl;
         url.DisplayText = caddyDmzUrl;
     });
 
-    // dmz.WithUrlForEndpoint("https", url =>
-    // {
-    //     url.Url = caddyDmzUrl;
-    //     url.DisplayText = "Caddy (gRPC)";
-    // });
+    webhooksAdmin.WithUrlForEndpoint("https", url =>
+    {
+        url.Url = caddyDmzUrl;
+        url.DisplayText = "Caddy (gRPC)";
+    });
 }
 
 if (!string.IsNullOrWhiteSpace(otlpEndpoint))
 {
-    dmz.WithEnvironment("Croniq__Observability__OtlpEndpoint", otlpEndpoint);
+    webhooksAdmin.WithEnvironment("Croniq__Observability__OtlpEndpoint", otlpEndpoint);
 }
 
 if (!string.IsNullOrWhiteSpace(otlpProtocol))
 {
-    dmz.WithEnvironment("Croniq__Observability__OtlpProtocol", otlpProtocol);
+    webhooksAdmin.WithEnvironment("Croniq__Observability__OtlpProtocol", otlpProtocol);
 }
 
 builder.Build().Run();
@@ -725,6 +845,7 @@ void CleanupDevstackProcesses(string repositoryRoot)
     var pidRoot = Path.Combine(repositoryRoot, "artifacts", "devstack");
     if (!Directory.Exists(pidRoot))
     {
+        TryCleanupDotNetHosts(repositoryRoot);
         return;
     }
 
@@ -754,6 +875,148 @@ void CleanupDevstackProcesses(string repositoryRoot)
         {
             TryDeletePid(pidFile);
         }
+    }
+
+    TryCleanupDotNetHosts(repositoryRoot);
+}
+
+void TryCleanupDotNetHosts(string repositoryRoot)
+{
+    if (!OperatingSystem.IsWindows())
+    {
+        return;
+    }
+
+    var markers = new[]
+    {
+        "Croniq.ApiHost.csproj",
+        "Croniq.WorkerHost.csproj",
+        "Croniq.WebhooksHost.csproj",
+        "Croniq.DbMigrator.csproj"
+    };
+
+    foreach (var process in Process.GetProcessesByName("dotnet"))
+    {
+        if (process.Id == Environment.ProcessId)
+        {
+            continue;
+        }
+
+        var commandLine = TryGetProcessCommandLine(process.Id);
+        if (string.IsNullOrWhiteSpace(commandLine))
+        {
+            continue;
+        }
+
+        if (!commandLine.Contains(repositoryRoot, StringComparison.OrdinalIgnoreCase))
+        {
+            continue;
+        }
+
+        if (!markers.Any(marker => commandLine.Contains(marker, StringComparison.OrdinalIgnoreCase)))
+        {
+            continue;
+        }
+
+        TryKillProcess(process.Id);
+    }
+}
+
+string? TryGetProcessCommandLine(int pid)
+{
+    try
+    {
+        var managementAssembly = TryLoadManagementAssembly();
+        if (managementAssembly is null)
+        {
+            return null;
+        }
+
+        var searcherType = managementAssembly.GetType("System.Management.ManagementObjectSearcher");
+        if (searcherType is null)
+        {
+            return null;
+        }
+
+        var query = $"SELECT CommandLine FROM Win32_Process WHERE ProcessId={pid}";
+        using var searcher = Activator.CreateInstance(searcherType, new object?[] { query }) as IDisposable;
+        if (searcher is null)
+        {
+            return null;
+        }
+
+        var getMethod = searcherType.GetMethod("Get", Type.EmptyTypes);
+        if (getMethod is null)
+        {
+            return null;
+        }
+
+        if (getMethod.Invoke(searcher, null) is not IEnumerable results)
+        {
+            return null;
+        }
+
+        foreach (var result in results)
+        {
+            if (result is null)
+            {
+                continue;
+            }
+
+            var resultType = result.GetType();
+            var itemProperty = resultType.GetProperty("Item", new[] { typeof(string) });
+            if (itemProperty is null)
+            {
+                continue;
+            }
+
+            if (itemProperty.GetValue(result, new object?[] { "CommandLine" }) is string commandLine)
+            {
+                return commandLine;
+            }
+        }
+    }
+    catch
+    {
+        return null;
+    }
+
+    return null;
+}
+
+Assembly? TryLoadManagementAssembly()
+{
+    try
+    {
+        return Assembly.Load("System.Management");
+    }
+    catch
+    {
+        return null;
+    }
+}
+
+string CreateDevSigningKey()
+{
+    Span<byte> buffer = stackalloc byte[32];
+    RandomNumberGenerator.Fill(buffer);
+    return Convert.ToBase64String(buffer);
+}
+
+void TryKillProcess(int pid)
+{
+    try
+    {
+        using var process = Process.GetProcessById(pid);
+        if (!process.HasExited)
+        {
+            process.Kill(entireProcessTree: true);
+            process.WaitForExit(TimeSpan.FromSeconds(5));
+        }
+    }
+    catch
+    {
+        // Ignore failures; process may have already exited or be inaccessible.
     }
 }
 

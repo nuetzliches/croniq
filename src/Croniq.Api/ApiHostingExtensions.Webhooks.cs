@@ -788,7 +788,8 @@ public static partial class ApiHostingExtensions
             var payload = await ReadPayloadAsync(request).ConfigureAwait(false);
 
             var webhooksMode = configuration.GetValue<string?>("Croniq:Webhooks:Mode") ?? string.Empty;
-            if (string.Equals(webhooksMode, "Remote", StringComparison.OrdinalIgnoreCase))
+            var invokeViaIngress = configuration.GetValue<bool?>("Croniq:Webhooks:Remote:InvokeViaIngress") ?? false;
+            if (string.Equals(webhooksMode, "Remote", StringComparison.OrdinalIgnoreCase) || invokeViaIngress)
             {
                 var remoteBaseUrl = configuration.GetValue<string?>("Croniq:Webhooks:Remote:BaseUrl") ?? string.Empty;
                 var remoteIngressBaseUrl = configuration.GetValue<string?>("Croniq:Webhooks:Remote:IngressBaseUrl");

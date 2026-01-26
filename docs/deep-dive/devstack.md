@@ -23,7 +23,7 @@ The Aspire dashboard defaults to `http://localhost:18888` (`ASPIRE_DASHBOARD_POR
 
 - AppHost: `tools/Croniq.Devstack.AppHost` (net10.0).
 - SQL Server container (default) with `Croniq.DbMigrator` run-before dependency.
-- Sample hosts: `Croniq.Sample.ApiHost`, `Croniq.Sample.WorkerHost`, `Croniq.Sample.Dmz`.
+- Hosts: `Croniq.ApiHost`, `Croniq.WorkerHost`, `Croniq.WebhooksHost` (ingress), plus `Croniq.ApiHost` in `WebhookAdminOnly` mode for DMZ admin.
 - Optional UI (Node dev server) controlled by `CRONIQ_DEVSTACK_UI`.
 - Optional observability stack (otel-collector, grafana, tempo, prometheus, loki) behind the `obs` profile.
 - Caddy local TLS proxy for `api.croniq.local`, `dmz.croniq.local`, `hooks.croniq.local`, and `ui.croniq.local`.
@@ -32,8 +32,19 @@ The Aspire dashboard defaults to `http://localhost:18888` (`ASPIRE_DASHBOARD_POR
 
 - `.env` in the repo root is loaded automatically by the AppHost when present. Process env vars override file values.
 - `.env.example` is the canonical list of required defaults and ports.
-- Sample hosts still load `appsettings.Development.json`, but core connectivity (auth, persistence, webhook routing) is driven by env variables injected via the AppHost.
+- Hosts load `appsettings.Development.json`, but core connectivity (auth, persistence, webhook routing) is driven by env variables injected via the AppHost.
 - Postgres is supported by setting `CRONIQ_DB_PROVIDER=Postgres` and `CRONIQ_POSTGRES_CONNECTION` (or `Croniq__Postgres__ConnectionString`).
+
+## Local (non-container) run
+
+If you need in-process debugging, run the host projects directly with the same `.env` settings:
+
+1. Ensure `.env` is present in the repo root (the hosts read env variables directly).
+2. Start the API host: `dotnet run --project src/Croniq.ApiHost`.
+3. Start the worker host in a second terminal: `dotnet run --project src/Croniq.WorkerHost`.
+4. Start the ingress host when needed: `dotnet run --project src/Croniq.WebhooksHost`.
+
+Use the same `CRONIQ_*` values you would for the AppHost, especially persistence and auth settings, so behavior matches the devstack.
 
 ## Local TLS (Caddy)
 
@@ -52,7 +63,9 @@ The Aspire dashboard defaults to `http://localhost:18888` (`ASPIRE_DASHBOARD_POR
 
 Caddy proxies to `CRONIQ_CADDY_UPSTREAM_HOST` (default `host.docker.internal`). On Linux, use `host-gateway` or a host IP if `host.docker.internal` is unavailable.
 
-Webhook gRPC relay requires HTTP/2 over TLS. Keep `CRONIQ_SAMPLE_DMZ_BASEURL` (and optional `CRONIQ_SAMPLE_DMZ_INGRESS_BASEURL`) set to `https://...`, and ensure the DMZ upstream stays on the HTTPS port.
+Webhook gRPC relay requires HTTP/2 over TLS. Keep `CRONIQ_DMZ_BASEURL` (and optional `CRONIQ_DMZ_INGRESS_BASEURL`) set to `https://...`, and ensure the DMZ admin upstream stays on the HTTPS port. The ingress host is named `croniq-webhooks-ingress` and runs alongside the devstack; stop it in the Aspire dashboard if you want to disable ingress locally.
+
+Worker dispatch gRPC uses h2c in devstack (HTTP/2 over cleartext) against `CRONIQ_WORKER_DISPATCH_GRPC_ENDPOINT` (defaults to `http://localhost:5080`). When using TLS, switch the endpoint to `https://...` and ensure the host advertises HTTP/2.
 
 ## Observability (obs profile)
 

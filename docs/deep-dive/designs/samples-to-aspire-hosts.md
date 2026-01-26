@@ -14,7 +14,7 @@ Draft.
 - Delete Croniq.Sample.ApiHost, Croniq.Sample.WorkerHost, and Croniq.Sample.Dmz.
 - Replace Croniq.Sample.Dmz with a Croniq.WebhooksHost container configured for StoreOnly ingress and `WebhookAdminOnly` API mode.
 - Keep the Aspire AppHost as the canonical dev/CI entrypoint; do not add new Compose-based devstack flows.
-- Run Croniq.WebhooksHost by default in devstack; allow an opt-out flag/profile for lighter local runs.
+- Run Croniq.WebhooksHost ingress alongside the devstack by default; stop it in the Aspire dashboard if you want a lighter local stack.
 
 ## Recommendation
 
@@ -39,4 +39,3 @@ Draft.
 - `../architecture.md`
 - `../devstack.md`
 - `polyglot-worker-protocol.md`
-- `../../../CHECKLIST-SAMPLES-ASPIRATION.md`

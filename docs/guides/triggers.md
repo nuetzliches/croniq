@@ -32,7 +32,7 @@ Worker hosts can seed schedules on startup:
         "TriggerId": "samples-smoke-every-5s",
         "JobKey": "samples:smoke",
         "CronExpression": "0/5 * * * * ?",
-        "ManagedBy": "Croniq.Sample",
+        "ManagedBy": "Croniq.WorkerHost",
         "Enabled": true
       }
     ]
@@ -80,7 +80,7 @@ builder.Services
     })
     .AddTrigger("0/5 * * * * ?", trigger =>
     {
-        trigger.ManagedBy = "Croniq.Sample";
+      trigger.ManagedBy = "Croniq.WorkerHost";
     });
 ```
 

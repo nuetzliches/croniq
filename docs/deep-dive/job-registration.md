@@ -80,7 +80,7 @@ Example configuration:
   "Croniq": {
     "JobRegistrySync": {
       "Mode": "CreateIfMissing",
-      "ManagedBy": "Croniq.Sample"
+      "ManagedBy": "Croniq.WorkerHost"
     }
   }
 }
@@ -100,12 +100,12 @@ Policies are configured via `Croniq:Policies:*`. Use `Croniq:Policies:Overrides`
 
 ## Failure Modes
 
-| Scenario | Behavior | Recommendation |
-| --- | --- | --- |
-| Duplicate job keys | Startup throws before workers run | Keep namespace/name unique per tenant/environment |
-| Invalid cron expression | Seeding throws and stops startup | Validate cron strings before deploy |
-| ForceUpdate without managedBy | Seeding throws | Set `ManagedBy` on seeded triggers |
-| Persistence unavailable | Seeding fails and startup stops | Ensure the store is reachable before starting workers |
+| Scenario                      | Behavior                          | Recommendation                                        |
+| ----------------------------- | --------------------------------- | ----------------------------------------------------- |
+| Duplicate job keys            | Startup throws before workers run | Keep namespace/name unique per tenant/environment     |
+| Invalid cron expression       | Seeding throws and stops startup  | Validate cron strings before deploy                   |
+| ForceUpdate without managedBy | Seeding throws                    | Set `ManagedBy` on seeded triggers                    |
+| Persistence unavailable       | Seeding fails and startup stops   | Ensure the store is reachable before starting workers |
 
 ## Backlog
 

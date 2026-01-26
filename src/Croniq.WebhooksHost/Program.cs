@@ -2,6 +2,7 @@ using Croniq.Hosting;
 using Croniq.Webhooks;
 
 var builder = WebApplication.CreateBuilder(args);
+builder.AddCroniqHostDefaults();
 
 builder.Services.AddCroniqWebhookServices(builder.Configuration);
 builder.Services.AddCroniqWebhookRateLimiter();

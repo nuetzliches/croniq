@@ -71,6 +71,7 @@ public static class WebhookHostingExtensions
         services.TryAddSingleton<IWebhookPersistenceProvider>(sp => sp.GetRequiredService<InMemoryWebhookPersistenceProvider>());
         services.TryAddSingleton<InMemoryWebhookDeadLetterStore>();
         services.TryAddSingleton<IWebhookDeadLetterStore>(sp => sp.GetRequiredService<InMemoryWebhookDeadLetterStore>());
+        services.TryAddSingleton<IWebhookActivityStore, InMemoryWebhookActivityStore>();
         return services;
     }
 
@@ -96,7 +97,8 @@ public static class WebhookHostingExtensions
 
         services.TryAddSingleton<IWebhookPersistenceProvider, SqlServerWebhookPersistenceProvider>();
         services.TryAddSingleton<IWebhookDeadLetterStore, SqlServerWebhookDeadLetterStore>();
-        services.TryAddSingleton<IWebhookActivityStore, SqlServerWebhookActivityStore>();
+        services.TryAddSingleton<SqlServerWebhookActivityStore>();
+        services.TryAddSingleton<IWebhookActivityStore>(sp => sp.GetRequiredService<SqlServerWebhookActivityStore>());
         services.TryAddSingleton<IWebhookActivityRecorder>(sp => sp.GetRequiredService<SqlServerWebhookActivityStore>());
         services.TryAddSingleton<IWebhookIngressEventStore, SqlServerWebhookIngressEventStore>();
         services.TryAddSingleton<IWebhookEndpointChangefeed, SqlServerWebhookEndpointChangefeed>();
@@ -126,7 +128,8 @@ public static class WebhookHostingExtensions
 
         services.TryAddSingleton<IWebhookPersistenceProvider, PostgresWebhookPersistenceProvider>();
         services.TryAddSingleton<IWebhookDeadLetterStore, PostgresWebhookDeadLetterStore>();
-        services.TryAddSingleton<IWebhookActivityStore, PostgresWebhookActivityStore>();
+        services.TryAddSingleton<PostgresWebhookActivityStore>();
+        services.TryAddSingleton<IWebhookActivityStore>(sp => sp.GetRequiredService<PostgresWebhookActivityStore>());
         services.TryAddSingleton<IWebhookActivityRecorder>(sp => sp.GetRequiredService<PostgresWebhookActivityStore>());
         services.TryAddSingleton<IWebhookIngressEventStore, PostgresWebhookIngressEventStore>();
         services.TryAddSingleton<IWebhookEndpointChangefeed, PostgresWebhookEndpointChangefeed>();

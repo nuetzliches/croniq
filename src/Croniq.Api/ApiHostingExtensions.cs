@@ -38,6 +38,7 @@ namespace Croniq.Api;
 
 public static partial class ApiHostingExtensions
 {
+    public const string CorsPolicyName = "CroniqApiCors";
     private static readonly ActivitySource TriggerActivitySource = new("Croniq.Api.Trigger");
     private const string CorrelationHeaderName = "X-Croniq-CorrelationId";
 

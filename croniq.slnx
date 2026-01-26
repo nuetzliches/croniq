@@ -4,12 +4,6 @@
     <Platform Name="x64" />
     <Platform Name="x86" />
   </Configurations>
-  <Folder Name="/samples/">
-    <Project Path="samples/Croniq.Sample.ApiHost/Croniq.Sample.ApiHost.csproj" />
-    <Project Path="samples/Croniq.Sample.Jobs/Croniq.Sample.Jobs.csproj" />
-    <Project Path="samples/Croniq.Sample/Croniq.Sample.csproj" />
-    <Project Path="samples/Croniq.Sample.WorkerHost/Croniq.Sample.WorkerHost.csproj" />
-  </Folder>
   <Folder Name="/src/">
     <Project Path="src/Croniq.Api/Croniq.Api.csproj" />
     <Project Path="src/Croniq.ApiHost/Croniq.ApiHost.csproj" />
