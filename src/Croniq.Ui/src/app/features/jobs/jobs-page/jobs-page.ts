@@ -238,7 +238,7 @@ export class JobsPage {
     return job.isSeeded;
   }
 
-  clearFilters(): void {
+  resetFilters(): void {
     this.jobSearch.set('');
     this.namespaceFilter.set(null);
     this.selectedJobFilterKeys.set([]);

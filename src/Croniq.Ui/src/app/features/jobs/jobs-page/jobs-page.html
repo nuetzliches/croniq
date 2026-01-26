@@ -83,7 +83,7 @@
 
       <button
         type="button"
-        (click)="clearFilters()"
+        (click)="resetFilters()"
         class="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-xs font-semibold text-primary transition hover:border-accent hover:text-accent"
       >
         Clear filters
@@ -92,17 +92,16 @@
   </ng-template>
 
   <ng-template #jobsFilterCollapsed>
-    <div class="space-y-1 text-xs text-muted">
-      @if (jobSearch()) {
-        <div class="truncate">Search: {{ jobSearch() }}</div>
-      }
-      @if (namespaceFilter()) {
-        <div class="truncate">Namespace: {{ namespaceFilter() }}</div>
-      }
-      @if (selectedJobFilterKeys().length > 0) {
-        <div class="truncate">Jobs: {{ selectedJobFilterKeys().length }}</div>
-      }
-    </div>
+    @if (jobSearch() || namespaceFilter() || selectedJobFilterKeys().length > 0) {
+      <button
+        type="button"
+        class="inline-flex items-center justify-center p-1 text-warning transition hover:text-accent"
+        aria-label="Reset filters"
+        (click)="resetFilters()"
+      >
+        <cq-icon name="filter-remove" size="16" aria-hidden="true"></cq-icon>
+      </button>
+    }
   </ng-template>
 
   <div class="flex flex-1 flex-col gap-4 lg:flex-row">
