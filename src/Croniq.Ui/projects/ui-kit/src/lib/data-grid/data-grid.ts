@@ -1,7 +1,7 @@
 import { CdkContextMenuTrigger } from '@angular/cdk/menu';
 import { CdkFixedSizeVirtualScroll, CdkVirtualForOf, CdkVirtualScrollViewport } from '@angular/cdk/scrolling';
 import { NgTemplateOutlet } from '@angular/common';
-import { ChangeDetectionStrategy, Component, Directive, ElementRef, Input, TemplateRef, computed, contentChild, contentChildren, effect, inject, input, output, signal, viewChild, viewChildren } from '@angular/core';
+import { ChangeDetectionStrategy, Component, Directive, ElementRef, Input, TemplateRef, computed, contentChild, contentChildren, effect, inject, input, model, output, signal, viewChild, viewChildren } from '@angular/core';
 
 export type ColumnAlign = 'start' | 'center' | 'end';
 
@@ -367,9 +367,7 @@ export class DataGrid<T> {
   readonly loading = input(false);
   readonly rowClasses = input<(row: T) => string | readonly string[] | undefined>();
   readonly rowContextMenu = input<TemplateRef<RowContextMenuContext<T>> | null>(null);
-  readonly selectedRowKey = input<string | number | null>(null);
-  readonly selectedId = input<string | number | null>(null);
-  readonly selectedIdChange = output<string | number | null>();
+  readonly selectedId = model<string | number | null>(null);
   readonly selectable = input(true);
   readonly rowSelected = output<RowContextMenuContext<T>>();
 
@@ -422,15 +420,13 @@ export class DataGrid<T> {
   readonly hasRows = computed(() => this.validatedRows().length > 0);
 
   private readonly resolvedSelectedRowKey = computed<string | number | null>(() => {
-    const explicitKey = this.selectedRowKey();
-    if (explicitKey !== null && explicitKey !== undefined) {
-      return explicitKey;
-    }
-
     const idKey = this.idKey();
     const selectedId = this.selectedId();
     if (!idKey || selectedId === null || selectedId === undefined) {
-      return null;
+      if (selectedId === null || selectedId === undefined) {
+        return null;
+      }
+      return selectedId;
     }
 
     const rows = this.validatedRows();
@@ -446,20 +442,18 @@ export class DataGrid<T> {
 
   private readonly resolvedSelectedRowIndex = computed<number | null>(() => {
     const rows = this.validatedRows();
-    const explicitKey = this.selectedRowKey();
-    if (explicitKey !== null && explicitKey !== undefined) {
-      const target = String(explicitKey);
+    const idKey = this.idKey();
+    const selectedId = this.selectedId();
+    if (!idKey || selectedId === null || selectedId === undefined) {
+      if (selectedId === null || selectedId === undefined) {
+        return null;
+      }
+      const target = String(selectedId);
       for (let index = 0; index < rows.length; index += 1) {
         if (String(this.rowKey()(rows[index], index)) === target) {
           return index;
         }
       }
-      return null;
-    }
-
-    const idKey = this.idKey();
-    const selectedId = this.selectedId();
-    if (!idKey || selectedId === null || selectedId === undefined) {
       return null;
     }
 
@@ -578,10 +572,11 @@ export class DataGrid<T> {
     const idKey = this.idKey();
     if (idKey) {
       const idValue = this.resolveValueByKey(row, idKey);
-      this.selectedIdChange.emit(typeof idValue === 'string' || typeof idValue === 'number' ? idValue : null);
+      const nextId = typeof idValue === 'string' || typeof idValue === 'number' ? idValue : null;
+      this.selectedId.set(nextId);
     } else {
       const keyValue = this.rowKey()(row, rowIndex);
-      this.selectedIdChange.emit(keyValue ?? null);
+      this.selectedId.set((keyValue ?? null) as string | number | null);
     }
   }
 

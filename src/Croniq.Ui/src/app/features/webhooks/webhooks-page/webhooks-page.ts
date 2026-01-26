@@ -1,9 +1,8 @@
 import { CdkMenu } from '@angular/cdk/menu';
 import { DatePipe } from '@angular/common';
-import { ChangeDetectionStrategy, Component, DestroyRef, Directive, TemplateRef, computed, effect, inject, linkedSignal, signal, viewChild } from '@angular/core';
-import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
+import { ChangeDetectionStrategy, Component, Directive, TemplateRef, computed, effect, inject, linkedSignal, signal, viewChild } from '@angular/core';
 import { FormField, form } from '@angular/forms/signals';
-import { ActivatedRoute, Router, RouterLink } from '@angular/router';
+import { RouterLink } from '@angular/router';
 import { RuntimeConfigService } from '@core/runtime-config.service';
 import { TenantContextService } from '@core/tenant-context/tenant-context.service';
 import { RotateWebhookSecretRequest, UpsertWebhookEndpointRequest } from '@croniq/api-schema';
@@ -12,6 +11,7 @@ import { WebhookIpRulesDialogComponent } from '@features/webhooks/components/web
 import { WebhookRotateSecretDialogComponent } from '@features/webhooks/components/webhook-rotate-secret-dialog/webhook-rotate-secret-dialog.component';
 import { ActivityBucket, ActivityConnectionState, WEBHOOK_ACTIVITY_MAX_RANGE_MS, WebhookActivityQuery, WebhookCapabilitiesView, WebhookDeadLetterView, WebhookEndpointView, WebhookRemoteHealthView, WebhookTimelineItemView, WebhooksStore } from '@features/webhooks/webhooks.store';
 import { CqEchartsChartComponent } from '@shared/charts/echarts-chart/echarts-chart';
+import { bindQueryParam } from '@shared/routing/selection-sync';
 import { ShellPanelService } from '@shell/panel/shell-panel.service';
 import type { SeriesOption } from 'echarts';
 import type { EChartsCoreOption } from 'echarts/core';
@@ -122,9 +122,6 @@ export class WebhooksPage {
   private readonly tenantContext = inject(TenantContextService);
   private readonly runtimeConfig = inject(RuntimeConfigService);
   private readonly dialog = inject(CqDialogService);
-  private readonly route = inject(ActivatedRoute);
-  private readonly router = inject(Router);
-  private readonly destroyRef = inject(DestroyRef);
   private readonly shellPanel = inject(ShellPanelService);
   private readonly panelTemplate = viewChild<TemplateRef<unknown>>('webhooksFilterPanel');
   private readonly collapsedTemplate = viewChild<TemplateRef<unknown>>('webhooksFilterCollapsed');
@@ -177,7 +174,7 @@ export class WebhooksPage {
   readonly jobSearch = signal('');
   readonly selectedHookKeys = signal<ReadonlyArray<string>>([]);
   readonly selectedJobKeys = signal<ReadonlyArray<string>>([]);
-  readonly selectedHookKeyParam = signal<string | null>(null);
+  readonly selectedHookKey = bindQueryParam({ paramKey: 'hookKey' });
   readonly kpiSuccessRate = computed(() => {
     const endpoints = this.endpoints().length;
     if (endpoints === 0) {
@@ -340,14 +337,13 @@ export class WebhooksPage {
   webhookRowKey = (row: WebhookEndpointView, index: number) =>
     `${row.environment}:${row.hookKey || `webhook-${index}`}`;
 
-  readonly selectedRowKey = signal<string | number | null>(null);
-
   readonly selectedEndpoint = computed(() => {
-    const key = this.selectedRowKey();
-    if (!key) {
+    const raw = this.selectedHookKey();
+    if (raw === null || raw === undefined) {
       return null;
     }
-    return this.endpoints().find((endpoint) => this.webhookRowKey(endpoint, 0) === key) ?? null;
+    const hookKey = typeof raw === 'string' ? raw : String(raw);
+    return this.endpoints().find((endpoint) => endpoint.hookKey === hookKey) ?? null;
   });
 
   readonly internalIngressUrl = computed(() =>
@@ -365,32 +361,6 @@ export class WebhooksPage {
 
   webhookRowClasses = (row: WebhookEndpointView) =>
     row.status === 'active' ? undefined : ['opacity-80'];
-
-  selectRow(event: { row: WebhookEndpointView | null }): void {
-    const row = event.row;
-    if (!row) {
-      this.selectedRowKey.set(null);
-      void this.router.navigate([], {
-        relativeTo: this.route,
-        queryParams: { hookKey: null },
-        queryParamsHandling: 'merge',
-        replaceUrl: true,
-      });
-      return;
-    }
-
-    const nextKey = this.webhookRowKey(row, 0);
-    if (this.selectedRowKey() === nextKey) {
-      return;
-    }
-    this.selectedRowKey.set(nextKey);
-    void this.router.navigate([], {
-      relativeTo: this.route,
-      queryParams: { hookKey: row.hookKey },
-      queryParamsHandling: 'merge',
-      replaceUrl: true,
-    });
-  }
 
   copyIngressUrl(): void {
     const url = this.ingressUrl();
@@ -827,35 +797,11 @@ export class WebhooksPage {
       }
       this.shellPanel.setPanel(
         template,
-        'Filters & settings',
+        'Search & filters',
         'Refine the endpoints list.',
         collapsedTemplate ?? null,
       );
       onCleanup(() => this.shellPanel.clearPanel(template));
-    });
-
-    this.route.queryParamMap
-      .pipe(takeUntilDestroyed(this.destroyRef))
-      .subscribe((params) => {
-        const hookKey = (params.get('hookKey') ?? '').trim();
-        this.selectedHookKeyParam.set(hookKey || null);
-      });
-
-    effect(() => {
-      const hookKey = this.selectedHookKeyParam();
-      if (!hookKey) {
-        if (this.selectedRowKey() !== null) {
-          this.selectedRowKey.set(null);
-        }
-        return;
-      }
-
-      const match = this.endpoints().find((endpoint) => endpoint.hookKey === hookKey);
-      const nextKey = match ? this.webhookRowKey(match, 0) : null;
-      if (this.selectedRowKey() === nextKey) {
-        return;
-      }
-      this.selectedRowKey.set(nextKey);
     });
 
     effect(() => {

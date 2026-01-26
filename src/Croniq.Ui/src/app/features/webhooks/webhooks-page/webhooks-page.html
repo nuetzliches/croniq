@@ -410,13 +410,13 @@
         class="flex-1"
         [rows]="pagedEndpoints()"
         [rowKey]="webhookRowKey"
+        [idKey]="'hookKey'"
         [bufferPx]="256"
         [estimatedRowHeightPx]="56"
         [loading]="loading()"
         [rowClasses]="webhookRowClasses"
         [rowContextMenu]="rowActions"
-        [selectedRowKey]="selectedRowKey()"
-        (rowSelected)="selectRow($event)"
+        [(selectedId)]="selectedHookKey"
       >
         <cq-column header="Endpoint" width="18rem">
           <ng-template cqWebhookCell let-row>

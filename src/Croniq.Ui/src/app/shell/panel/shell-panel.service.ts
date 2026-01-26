@@ -6,7 +6,7 @@ const PANEL_OPEN_STORAGE_KEY = 'croniq.shell.panel.open';
 export class ShellPanelService {
     readonly panelTemplate = signal<TemplateRef<unknown> | null>(null);
     readonly collapsedTemplate = signal<TemplateRef<unknown> | null>(null);
-    readonly title = signal('Filters & settings');
+    readonly title = signal('Search & filters');
     readonly subtitle = signal('');
     readonly isOpen = signal(readPanelOpen());
 

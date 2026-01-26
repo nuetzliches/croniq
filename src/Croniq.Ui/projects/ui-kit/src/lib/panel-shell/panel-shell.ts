@@ -1,5 +1,5 @@
-import { ChangeDetectionStrategy, Component, TemplateRef, computed, input, output } from '@angular/core';
 import { NgTemplateOutlet } from '@angular/common';
+import { ChangeDetectionStrategy, Component, TemplateRef, computed, input, output } from '@angular/core';
 import { CqIconComponent, type MdiIconName } from '@ui-kit/icon/icon';
 
 @Component({
@@ -11,7 +11,7 @@ import { CqIconComponent, type MdiIconName } from '@ui-kit/icon/icon';
 export class CqPanelShellComponent {
     readonly panelTemplate = input<TemplateRef<unknown> | null>(null);
     readonly collapsedTemplate = input<TemplateRef<unknown> | null>(null);
-    readonly title = input<string>('Filters & settings');
+    readonly title = input<string>('Search & filters');
     readonly subtitle = input<string>('');
     readonly open = input<boolean>(true);
     readonly toggleRequested = output<void>();

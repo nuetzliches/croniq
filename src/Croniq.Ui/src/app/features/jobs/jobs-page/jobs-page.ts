@@ -1,11 +1,11 @@
 import { CdkMenu } from '@angular/cdk/menu';
 import { DatePipe } from '@angular/common';
-import { ChangeDetectionStrategy, Component, DestroyRef, Directive, TemplateRef, computed, effect, inject, signal, viewChild } from '@angular/core';
-import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
-import { ActivatedRoute, Router, RouterLink } from '@angular/router';
+import { ChangeDetectionStrategy, Component, Directive, TemplateRef, computed, effect, inject, signal, viewChild } from '@angular/core';
+import { Router, RouterLink } from '@angular/router';
 import { UpsertJobRequest } from '@croniq/api-schema';
 import { JobDialogComponent } from '@features/jobs/components/job-dialog/job-dialog.component';
 import { JobRegistryEntry, JobsStore } from '@features/jobs/jobs.store';
+import { bindQueryParam } from '@shared/routing/selection-sync';
 import { ShellPanelService } from '@shell/panel/shell-panel.service';
 import { filter } from 'rxjs';
 import { CqCellDefDirective, CqColumnComponent, CqContextMenuItemDirective, CqDialogService, CqIconComponent, CqInputDirective, CqSelectDirective, DataGrid } from 'ui-kit';
@@ -36,9 +36,7 @@ export class CqJobCellDirective extends CqCellDefDirective<JobRegistryEntry> {
 export class JobsPage {
   private readonly store = inject(JobsStore);
   private readonly dialog = inject(CqDialogService);
-  private readonly route = inject(ActivatedRoute);
   private readonly router = inject(Router);
-  private readonly destroyRef = inject(DestroyRef);
   private readonly shellPanel = inject(ShellPanelService);
   private readonly panelTemplate = viewChild<TemplateRef<unknown>>('jobsFilterPanel');
   private readonly collapsedTemplate = viewChild<TemplateRef<unknown>>('jobsFilterCollapsed');
@@ -50,7 +48,7 @@ export class JobsPage {
 
   readonly jobSearch = signal('');
   readonly namespaceFilter = signal<string | null>(null);
-  readonly selectedJobKey = signal<string | null>(null);
+  readonly selectedJobKey = bindQueryParam({ paramKey: 'jobKey' });
   readonly selectedJobFilterKeys = signal<ReadonlyArray<string>>([]);
 
   readonly namespaceOptions = computed(() => {
@@ -101,10 +99,11 @@ export class JobsPage {
   });
 
   readonly selectedJob = computed(() => {
-    const key = this.selectedJobKey();
-    if (!key) {
+    const raw = this.selectedJobKey();
+    if (raw === null || raw === undefined) {
       return null;
     }
+    const key = typeof raw === 'string' ? raw : String(raw);
     return this.jobs().find((job) => job.jobKey === key) ?? null;
   });
 
@@ -140,22 +139,12 @@ export class JobsPage {
       onCleanup(() => this.shellPanel.clearPanel(template));
     });
 
-    this.route.queryParamMap
-      .pipe(takeUntilDestroyed(this.destroyRef))
-      .subscribe((params) => {
-        const value = (params.get('jobKey') ?? '').trim();
-        const nextKey = value || null;
-        if (this.selectedJobKey() === nextKey) {
-          return;
-        }
-        this.selectedJobKey.set(nextKey);
-      });
-
     effect(() => {
-      const key = this.selectedJobKey();
-      if (!key) {
+      const raw = this.selectedJobKey();
+      if (raw === null || raw === undefined) {
         return;
       }
+      const key = typeof raw === 'string' ? raw : String(raw);
       this.store.refreshJobDetail(key);
       this.store.refreshExecutions({ jobKey: key });
     });
@@ -171,8 +160,9 @@ export class JobsPage {
 
   refresh(): void {
     void this.store.refreshJobRegistry();
-    const current = this.selectedJobKey();
-    if (current) {
+    const raw = this.selectedJobKey();
+    if (raw !== null && raw !== undefined) {
+      const current = typeof raw === 'string' ? raw : String(raw);
       this.store.refreshJobDetail(current);
       this.store.refreshExecutions({ jobKey: current });
     }
@@ -188,25 +178,6 @@ export class JobsPage {
 
   openWebhooksForJob(jobKey: string): void {
     void this.router.navigate(['/webhooks'], { queryParams: { jobKey } });
-  }
-
-  setSelectedJobKey(value: string | number | null): void {
-    const nextKey = typeof value === 'string'
-      ? value.trim()
-      : typeof value === 'number'
-        ? String(value)
-        : '';
-    const resolved = nextKey || null;
-    if (this.selectedJobKey() === resolved) {
-      return;
-    }
-    this.selectedJobKey.set(resolved);
-    void this.router.navigate([], {
-      relativeTo: this.route,
-      queryParams: { jobKey: resolved },
-      queryParamsHandling: 'merge',
-      replaceUrl: true,
-    });
   }
 
   openJobDialog(job?: JobRegistryEntry): void {

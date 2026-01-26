@@ -156,8 +156,7 @@
         [estimatedRowHeightPx]="56"
         [loading]="loading()"
         [rowClasses]="jobRowClasses"
-        [selectedId]="selectedJobKey()"
-        (selectedIdChange)="setSelectedJobKey($event)"
+        [(selectedId)]="selectedJobKey"
         [rowContextMenu]="rowActions"
       >
         <cq-column header="Job" width="18rem">
