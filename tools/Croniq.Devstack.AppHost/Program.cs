@@ -167,7 +167,7 @@ var dbProvider = GetEnvValue("CRONIQ_DB_PROVIDER");
 var postgresConnection = GetEnvValue("CRONIQ_POSTGRES_CONNECTION");
 var usePostgres = string.Equals(dbProvider, "Postgres", StringComparison.OrdinalIgnoreCase)
     || (string.IsNullOrWhiteSpace(dbProvider) && !string.IsNullOrWhiteSpace(postgresConnection));
-var dmzEnabled = true;
+var dmzEnabled = !IsFalse(GetEnvValue("CRONIQ_DEVSTACK_DMZ"));
 var needsSqlServer = !usePostgres || dmzEnabled;
 
 string ResolveSqlHost()
@@ -281,113 +281,146 @@ var webhooksMigrator = builder.AddProject(
     .WithEnvironment("CRONIQ_SEED_ADMIN_PASSWORD_CHANGE_REQUIRED", GetEnvValueOrDefault("CRONIQ_SEED_ADMIN_PASSWORD_CHANGE_REQUIRED", "true"))
     .WithEnvironment("CRONIQ_SEED_ADMIN_SCOPES", GetEnvValueOrDefault("CRONIQ_SEED_ADMIN_SCOPES", "all"));
 
+if (!dmzEnabled)
+{
+    webhooksMigrator.WithExplicitStart();
+}
+
 if (sqlServer is not null)
 {
     webhooksMigrator.WaitFor(sqlServer);
 }
 
-if (obsEnabled)
+var otelCollectorConfig = Path.Combine(repoRoot, "infra", "docker", "observability", "otel-collector-config.yaml");
+var prometheusConfig = Path.Combine(repoRoot, "infra", "docker", "observability", "prometheus.yaml");
+var prometheusRules = Path.Combine(repoRoot, "infra", "monitoring", "rules");
+var tempoConfig = Path.Combine(repoRoot, "infra", "docker", "observability", "tempo.yaml");
+var lokiConfig = Path.Combine(repoRoot, "infra", "docker", "observability", "loki-config.yaml");
+var grafanaDatasources = Path.Combine(repoRoot, "infra", "docker", "observability", "grafana", "datasources");
+var grafanaProvisioning = Path.Combine(repoRoot, "infra", "docker", "observability", "grafana", "provisioning", "dashboards");
+var grafanaDashboards = Path.Combine(repoRoot, "infra", "docker", "observability", "grafana", "dashboards");
+var obsExplicitStart = !obsEnabled;
+
+var tempo = builder.AddContainer("tempo", "grafana/tempo", "2.4.1")
+    .WithArgs("-config.file=/etc/tempo.yaml")
+    .WithBindMount(tempoConfig, "/etc/tempo.yaml", isReadOnly: true)
+    .WithVolume("tempo-data", "/tmp/tempo", isReadOnly: false)
+    .WithEndpoint(
+        targetPort: 3200,
+        port: tempoHttpPort,
+        scheme: "http",
+        name: "tempo",
+        env: null,
+        isExternal: true,
+        isProxied: false);
+
+if (obsExplicitStart)
 {
-    var otelCollectorConfig = Path.Combine(repoRoot, "infra", "docker", "observability", "otel-collector-config.yaml");
-    var prometheusConfig = Path.Combine(repoRoot, "infra", "docker", "observability", "prometheus.yaml");
-    var prometheusRules = Path.Combine(repoRoot, "infra", "monitoring", "rules");
-    var tempoConfig = Path.Combine(repoRoot, "infra", "docker", "observability", "tempo.yaml");
-    var lokiConfig = Path.Combine(repoRoot, "infra", "docker", "observability", "loki-config.yaml");
-    var grafanaDatasources = Path.Combine(repoRoot, "infra", "docker", "observability", "grafana", "datasources");
-    var grafanaProvisioning = Path.Combine(repoRoot, "infra", "docker", "observability", "grafana", "provisioning", "dashboards");
-    var grafanaDashboards = Path.Combine(repoRoot, "infra", "docker", "observability", "grafana", "dashboards");
-
-    var tempo = builder.AddContainer("tempo", "grafana/tempo", "2.4.1")
-        .WithArgs("-config.file=/etc/tempo.yaml")
-        .WithBindMount(tempoConfig, "/etc/tempo.yaml", isReadOnly: true)
-        .WithVolume("tempo-data", "/tmp/tempo", isReadOnly: false)
-        .WithEndpoint(
-            targetPort: 3200,
-            port: tempoHttpPort,
-            scheme: "http",
-            name: "tempo",
-            env: null,
-            isExternal: true,
-            isProxied: false);
-
-    var loki = builder.AddContainer("loki", "grafana/loki", "3.1.1")
-        .WithArgs("-config.file=/etc/loki/local-config.yaml")
-        .WithBindMount(lokiConfig, "/etc/loki/local-config.yaml", isReadOnly: true)
-        .WithVolume("loki-data", "/loki", isReadOnly: false)
-        .WithEndpoint(
-            targetPort: 3100,
-            port: lokiHttpPort,
-            scheme: "http",
-            name: "loki",
-            env: null,
-            isExternal: true,
-            isProxied: false);
-
-    builder.AddContainer("otel-collector", "otel/opentelemetry-collector-contrib", "0.102.1")
-        .WithArgs("--config=/etc/otel-collector-config.yaml")
-        .WithBindMount(otelCollectorConfig, "/etc/otel-collector-config.yaml", isReadOnly: true)
-        .WithEndpoint(
-            targetPort: 4317,
-            port: otlpGrpcPort,
-            scheme: "http",
-            name: "otlp-grpc",
-            env: null,
-            isExternal: true,
-            isProxied: false)
-        .WithEndpoint(
-            targetPort: 4318,
-            port: otlpHttpPort,
-            scheme: "http",
-            name: "otlp-http",
-            env: null,
-            isExternal: true,
-            isProxied: false)
-        .WithEndpoint(
-            targetPort: 8889,
-            port: otelPromPort,
-            scheme: "http",
-            name: "otel-prom",
-            env: null,
-            isExternal: true,
-            isProxied: false)
-        .WaitFor(tempo)
-        .WaitFor(loki);
-
-    var prometheus = builder.AddContainer("prometheus", "prom/prometheus", "v2.54.1")
-        .WithArgs("--config.file=/etc/prometheus/prometheus.yml")
-        .WithBindMount(prometheusConfig, "/etc/prometheus/prometheus.yml", isReadOnly: true)
-        .WithBindMount(prometheusRules, "/etc/prometheus/rules", isReadOnly: true)
-        .WithVolume("prom-data", "/prometheus", isReadOnly: false)
-        .WithEndpoint(
-            targetPort: 9090,
-            port: prometheusPort,
-            scheme: "http",
-            name: "prometheus",
-            env: null,
-            isExternal: true,
-            isProxied: false);
-
-    builder.AddContainer("grafana", "grafana/grafana", "11.2.0")
-        .WithEnvironment("GF_SECURITY_ADMIN_PASSWORD", grafanaPassword)
-        .WithEnvironment("GF_SECURITY_ADMIN_USER", grafanaUser)
-        .WithEnvironment("GF_SECURITY_ALLOW_EMBEDDING", "true")
-        .WithEnvironment("GF_PATHS_PROVISIONING", "/etc/grafana/provisioning")
-        .WithBindMount(grafanaDatasources, "/etc/grafana/provisioning/datasources", isReadOnly: true)
-        .WithBindMount(grafanaProvisioning, "/etc/grafana/provisioning/dashboards", isReadOnly: true)
-        .WithBindMount(grafanaDashboards, "/var/lib/grafana/dashboards", isReadOnly: true)
-        .WithVolume("grafana-data", "/var/lib/grafana", isReadOnly: false)
-        .WithEndpoint(
-            targetPort: 3000,
-            port: grafanaPort,
-            scheme: "http",
-            name: "grafana",
-            env: null,
-            isExternal: true,
-            isProxied: false)
-        .WaitFor(prometheus)
-        .WaitFor(tempo)
-        .WaitFor(loki);
+    tempo.WithExplicitStart();
 }
+
+var loki = builder.AddContainer("loki", "grafana/loki", "3.1.1")
+    .WithArgs("-config.file=/etc/loki/local-config.yaml")
+    .WithBindMount(lokiConfig, "/etc/loki/local-config.yaml", isReadOnly: true)
+    .WithVolume("loki-data", "/loki", isReadOnly: false)
+    .WithEndpoint(
+        targetPort: 3100,
+        port: lokiHttpPort,
+        scheme: "http",
+        name: "loki",
+        env: null,
+        isExternal: true,
+        isProxied: false);
+
+if (obsExplicitStart)
+{
+    loki.WithExplicitStart();
+}
+
+var otelCollector = builder.AddContainer("otel-collector", "otel/opentelemetry-collector-contrib", "0.102.1")
+    .WithArgs("--config=/etc/otel-collector-config.yaml")
+    .WithBindMount(otelCollectorConfig, "/etc/otel-collector-config.yaml", isReadOnly: true)
+    .WithEndpoint(
+        targetPort: 4317,
+        port: otlpGrpcPort,
+        scheme: "http",
+        name: "otlp-grpc",
+        env: null,
+        isExternal: true,
+        isProxied: false)
+    .WithEndpoint(
+        targetPort: 4318,
+        port: otlpHttpPort,
+        scheme: "http",
+        name: "otlp-http",
+        env: null,
+        isExternal: true,
+        isProxied: false)
+    .WithEndpoint(
+        targetPort: 8889,
+        port: otelPromPort,
+        scheme: "http",
+        name: "otel-prom",
+        env: null,
+        isExternal: true,
+        isProxied: false)
+    .WaitFor(tempo)
+    .WaitFor(loki);
+
+if (obsExplicitStart)
+{
+    otelCollector.WithExplicitStart();
+}
+
+var prometheus = builder.AddContainer("prometheus", "prom/prometheus", "v2.54.1")
+    .WithArgs("--config.file=/etc/prometheus/prometheus.yml")
+    .WithBindMount(prometheusConfig, "/etc/prometheus/prometheus.yml", isReadOnly: true)
+    .WithBindMount(prometheusRules, "/etc/prometheus/rules", isReadOnly: true)
+    .WithVolume("prom-data", "/prometheus", isReadOnly: false)
+    .WithEndpoint(
+        targetPort: 9090,
+        port: prometheusPort,
+        scheme: "http",
+        name: "prometheus",
+        env: null,
+        isExternal: true,
+        isProxied: false);
+
+if (obsExplicitStart)
+{
+    prometheus.WithExplicitStart();
+}
+
+var grafana = builder.AddContainer("grafana", "grafana/grafana", "11.2.0")
+    .WithEnvironment("GF_SECURITY_ADMIN_PASSWORD", grafanaPassword)
+    .WithEnvironment("GF_SECURITY_ADMIN_USER", grafanaUser)
+    .WithEnvironment("GF_SECURITY_ALLOW_EMBEDDING", "true")
+    .WithEnvironment("GF_PATHS_PROVISIONING", "/etc/grafana/provisioning")
+    .WithBindMount(grafanaDatasources, "/etc/grafana/provisioning/datasources", isReadOnly: true)
+    .WithBindMount(grafanaProvisioning, "/etc/grafana/provisioning/dashboards", isReadOnly: true)
+    .WithBindMount(grafanaDashboards, "/var/lib/grafana/dashboards", isReadOnly: true)
+    .WithVolume("grafana-data", "/var/lib/grafana", isReadOnly: false)
+    .WithEndpoint(
+        targetPort: 3000,
+        port: grafanaPort,
+        scheme: "http",
+        name: "grafana",
+        env: null,
+        isExternal: true,
+        isProxied: false)
+    .WaitFor(prometheus)
+    .WaitFor(tempo)
+    .WaitFor(loki);
+
+if (obsExplicitStart)
+{
+    grafana.WithExplicitStart();
+}
+
+tempo.WithParentRelationship(grafana);
+loki.WithParentRelationship(grafana);
+otelCollector.WithParentRelationship(grafana);
+prometheus.WithParentRelationship(grafana);
 
 if (caddyEnabled)
 {
@@ -477,8 +510,6 @@ if (!string.IsNullOrWhiteSpace(caddyUiUrl))
 {
     api.WithEnvironment("Croniq__Api__Cors__AllowedOrigins__0", caddyUiUrl);
 }
-
-
 
 if (usePostgres)
 {
@@ -726,6 +757,11 @@ var webhooksIngress = builder.AddProject(
     .WaitFor(webhooksMigrator)
     .WithHttpHealthCheck("/health");
 
+if (!dmzEnabled)
+{
+    webhooksIngress.WithExplicitStart();
+}
+
 var webhooksAdmin = builder.AddProject(
     "croniq-webhooks-admin",
         Path.Combine(repoRoot, "src", "Croniq.ApiHost", "Croniq.ApiHost.csproj"),
@@ -762,6 +798,11 @@ var webhooksAdmin = builder.AddProject(
     .WaitForCompletion(webhooksMigrator, exitCode: 0)
     .WaitFor(webhooksMigrator)
     .WithHttpHealthCheck("/health", endpointName: "http");
+
+if (!dmzEnabled)
+{
+    webhooksAdmin.WithExplicitStart();
+}
 
 if (!string.IsNullOrWhiteSpace(dmzIngressBaseUrl))
 {

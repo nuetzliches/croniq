@@ -14,6 +14,7 @@ This document describes the Aspire-based dev stack for Croniq. The Aspire AppHos
 2. `dotnet run --project tools/Croniq.Devstack.AppHost`.
 3. Optional:
    - Observability profile: `dotnet run --project tools/Croniq.Devstack.AppHost -- --profile obs`.
+   - Enable/disable DMZ resources: set `CRONIQ_DEVSTACK_DMZ=true|false` in `.env`.
    - Disable the UI: set `CRONIQ_DEVSTACK_UI=false` in `.env`.
    - Disable Caddy: set `CRONIQ_DEVSTACK_CADDY=false` in `.env`.
 
@@ -25,7 +26,8 @@ The Aspire dashboard defaults to `http://localhost:18888` (`ASPIRE_DASHBOARD_POR
 - SQL Server container (default) with `Croniq.DbMigrator` run-before dependency.
 - Hosts: `Croniq.ApiHost`, `Croniq.WorkerHost`, `Croniq.WebhooksHost` (ingress), plus `Croniq.ApiHost` in `WebhookAdminOnly` mode for DMZ admin.
 - Optional UI (Node dev server) controlled by `CRONIQ_DEVSTACK_UI`.
-- Optional observability stack (otel-collector, grafana, tempo, prometheus, loki) behind the `obs` profile.
+- Optional observability stack (otel-collector, grafana, tempo, prometheus, loki) behind the `obs` profile. When not enabled, the resources remain attached but require explicit start in the Aspire dashboard.
+- Optional DMZ resources (ingress + admin + webhook migrator) controlled by `CRONIQ_DEVSTACK_DMZ`. When disabled, the resources remain attached but require explicit start.
 - Caddy local TLS proxy for `api.croniq.local`, `dmz.croniq.local`, `hooks.croniq.local`, and `ui.croniq.local`.
 
 ## Configuration
