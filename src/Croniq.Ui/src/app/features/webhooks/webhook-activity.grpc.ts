@@ -86,7 +86,10 @@ function resolveStreamMethod(): DescMethodServerStreaming {
         throw new Error('WebhookActivity gRPC service descriptor not available.');
     }
 
-    const method = service.methods.find((entry) => entry.localName === 'stream' || entry.name === 'Stream');
+    const method = service.methods.find((entry: DescMethod) => {
+        const localName = (entry as { localName?: string }).localName;
+        return localName === 'stream' || entry.name === 'Stream';
+    });
     if (!method) {
         throw new Error('WebhookActivity/Stream gRPC descriptor not available.');
     }

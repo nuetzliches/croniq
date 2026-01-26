@@ -28,8 +28,8 @@
   @if (remoteModeEnabled()) {
     <div class="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
       <div class="rounded-xl border border-white/10 bg-surface-alt p-4 shadow-card">
-        <div class="flex flex-wrap items-start justify-between gap-3">
-          <div class="space-y-1">
+        <div class="flex items-start justify-between gap-3">
+          <div class="min-w-0 space-y-1">
             <p class="text-xs text-muted">Delivery mode</p>
             <p class="text-sm font-semibold text-primary">Remote</p>
             <p class="text-[11px] text-muted">Webhook admin calls are proxied to the remote host.</p>
@@ -233,15 +233,6 @@
         <div class="text-xs font-semibold uppercase tracking-wide text-muted">Status</div>
         <select id="filter-status" cqSelect [formField]="filterForm.status">
           @for (option of statusOptions; track option.value) {
-            <option [value]="option.value">{{ option.label }}</option>
-          }
-        </select>
-      </div>
-
-      <div class="space-y-2">
-        <div class="text-xs font-semibold uppercase tracking-wide text-muted">Environment</div>
-        <select id="filter-environment" cqSelect [formField]="filterForm.environment">
-          @for (option of environmentOptions(); track option.value) {
             <option [value]="option.value">{{ option.label }}</option>
           }
         </select>
@@ -511,17 +502,17 @@
     </div>
     <aside class="w-full lg:w-80 xl:w-90">
       <div class="rounded-xl border border-white/10 bg-surface-alt p-4 shadow-card">
-        <div class="flex items-start justify-between gap-3">
-          <div class="space-y-1">
-            <div class="flex flex-wrap items-center gap-2">
-              <h2 class="text-sm font-semibold text-primary">
-                @if (selectedEndpoint(); as endpoint) {
-                  {{ endpoint.hookKey }}
-                } @else {
-                  Webhook detail
-                }
-              </h2>
+        <div class="space-y-1">
+          <div class="flex items-center justify-between gap-3">
+            <h2 class="min-w-0 text-sm font-semibold text-primary">
               @if (selectedEndpoint(); as endpoint) {
+                {{ endpoint.hookKey }}
+              } @else {
+                Webhook detail
+              }
+            </h2>
+            @if (selectedEndpoint(); as endpoint) {
+              <div class="flex shrink-0 flex-wrap items-center justify-end gap-2 text-right">
                 <span
                   class="inline-flex items-center rounded-full border border-white/10 px-2 py-0.5 text-[11px] font-semibold"
                   [class.text-success]="endpoint.status === 'active'"
@@ -540,16 +531,16 @@
                 >
                   {{ endpoint.requireSignature ? 'Signature: Required' : 'Signature: Optional' }}
                 </span>
-              }
-            </div>
-            <p class="text-xs text-muted">
-              @if (selectedEndpoint(); as endpoint) {
-                {{ endpointDescription(endpoint) ?? 'No description provided.' }}
-              } @else {
-                Select an endpoint to view details.
-              }
-            </p>
+              </div>
+            }
           </div>
+          <p class="text-xs text-muted">
+            @if (selectedEndpoint(); as endpoint) {
+              {{ endpointDescription(endpoint) ?? 'No description provided.' }}
+            } @else {
+              Select an endpoint to view details.
+            }
+          </p>
         </div>
 
         @if (!selectedEndpoint()) {
@@ -663,188 +654,58 @@
               </div>
 
             <div class="space-y-3 rounded-lg border border-white/10 bg-black/10 px-3 py-3">
-              <div class="text-xs font-semibold uppercase tracking-wide text-muted">Ingress URLs</div>
-              @if (remoteModeEnabled()) {
-                <div class="inline-flex items-center gap-1 rounded-lg border border-white/10 bg-white/5 p-1">
-                  <button
-                    type="button"
-                    class="rounded-md px-2 py-1 text-[11px] font-semibold transition"
-                    [class.bg-accent]="ingressTab() === 'internal'"
-                    [class.text-white]="ingressTab() === 'internal'"
-                    [class.text-muted]="ingressTab() !== 'internal'"
-                    (click)="setIngressTab('internal')"
-                  >
-                    API host
-                  </button>
-                  <button
-                    type="button"
-                    class="rounded-md px-2 py-1 text-[11px] font-semibold transition"
-                    [class.bg-accent]="ingressTab() === 'remote'"
-                    [class.text-white]="ingressTab() === 'remote'"
-                    [class.text-muted]="ingressTab() !== 'remote'"
-                    (click)="setIngressTab('remote')"
-                  >
-                    Remote
-                  </button>
-                </div>
-                @if (ingressTab() === 'internal') {
-                  <div class="space-y-3">
-                    <div class="flex items-center justify-between">
-                      <div class="text-[11px] font-semibold uppercase tracking-wide text-muted">API host ingress</div>
-                      <div class="flex items-center gap-2">
-                        <button
-                          type="button"
-                          class="inline-flex items-center gap-1 rounded-lg border border-white/10 bg-white/5 px-2 py-1 text-[11px] font-semibold text-primary transition hover:border-accent hover:text-accent"
-                          (click)="copyIngressUrl('internal')"
-                          [disabled]="!internalIngressUrl()"
-                        >
-                          <cq-icon name="content-copy" size="14" aria-hidden="true"></cq-icon>
-                          Copy URL
-                        </button>
-                      </div>
-                    </div>
-                    @if (internalIngressUrl()) {
-                      <code class="block break-all rounded-lg border border-white/10 bg-black/20 px-2 py-1 text-xs text-primary">
-                        {{ internalIngressUrl() }}
-                      </code>
-                    } @else {
-                      <p class="text-xs text-muted">API host ingress URL unavailable.</p>
-                    }
-                    <cq-form-field label="Payload (JSON)" forId="ingressPayloadInternal">
-                      <textarea
-                        id="ingressPayloadInternal"
-                        rows="6"
-                        cqTextarea
-                        [value]="invokePayload()"
-                        (input)="setInvokePayload($any($event.target).value)"
-                      ></textarea>
-                    </cq-form-field>
-                    <div class="flex flex-wrap items-center gap-2">
-                      <button
-                        type="button"
-                        class="inline-flex items-center gap-1 rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-xs font-semibold text-primary transition hover:border-accent hover:text-accent"
-                        (click)="copyInvokePayload()"
-                      >
-                        <cq-icon name="content-copy" size="14" aria-hidden="true"></cq-icon>
-                        Copy payload
-                      </button>
-                      <button
-                        type="button"
-                        class="inline-flex items-center gap-1 rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-xs font-semibold text-primary transition hover:border-accent hover:text-accent"
-                        (click)="copyCurlSnippetFor('internal')"
-                        [disabled]="!internalIngressUrl()"
-                      >
-                        <cq-icon name="content-copy" size="14" aria-hidden="true"></cq-icon>
-                        Copy cURL
-                      </button>
-                    </div>
-                  </div>
-                } @else {
-                  <div class="space-y-3">
-                    <div class="flex items-center justify-between">
-                      <div class="text-[11px] font-semibold uppercase tracking-wide text-muted">Remote ingress</div>
-                      <div class="flex items-center gap-2">
-                        <button
-                          type="button"
-                          class="inline-flex items-center gap-1 rounded-lg border border-white/10 bg-white/5 px-2 py-1 text-[11px] font-semibold text-primary transition hover:border-accent hover:text-accent"
-                          (click)="copyIngressUrl('remote')"
-                          [disabled]="!remoteIngressUrl()"
-                        >
-                          <cq-icon name="content-copy" size="14" aria-hidden="true"></cq-icon>
-                          Copy URL
-                        </button>
-                      </div>
-                    </div>
-                    @if (remoteIngressUrl()) {
-                      <code class="block break-all rounded-lg border border-white/10 bg-black/20 px-2 py-1 text-xs text-primary">
-                        {{ remoteIngressUrl() }}
-                      </code>
-                    } @else {
-                      <p class="text-xs text-muted">Remote ingress URL unavailable.</p>
-                    }
-                    <cq-form-field label="Payload (JSON)" forId="ingressPayloadRemote">
-                      <textarea
-                        id="ingressPayloadRemote"
-                        rows="6"
-                        cqTextarea
-                        [value]="invokePayload()"
-                        (input)="setInvokePayload($any($event.target).value)"
-                      ></textarea>
-                    </cq-form-field>
-                    <div class="flex flex-wrap items-center gap-2">
-                      <button
-                        type="button"
-                        class="inline-flex items-center gap-1 rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-xs font-semibold text-primary transition hover:border-accent hover:text-accent"
-                        (click)="copyInvokePayload()"
-                      >
-                        <cq-icon name="content-copy" size="14" aria-hidden="true"></cq-icon>
-                        Copy payload
-                      </button>
-                      <button
-                        type="button"
-                        class="inline-flex items-center gap-1 rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-xs font-semibold text-primary transition hover:border-accent hover:text-accent"
-                        (click)="copyCurlSnippetFor('remote')"
-                        [disabled]="!remoteIngressUrl()"
-                      >
-                        <cq-icon name="content-copy" size="14" aria-hidden="true"></cq-icon>
-                        Copy cURL
-                      </button>
-                    </div>
-                  </div>
-                }
-              } @else {
-                <div class="space-y-3">
-                  <div class="flex items-center justify-between">
-                    <div class="text-xs font-semibold uppercase tracking-wide text-muted">Ingress URL</div>
-                    <div class="flex items-center gap-2">
-                      <button
-                        type="button"
-                        class="inline-flex items-center gap-1 rounded-lg border border-white/10 bg-white/5 px-2 py-1 text-xs font-semibold text-primary transition hover:border-accent hover:text-accent"
-                        (click)="copyIngressUrl()"
-                        [disabled]="!ingressUrl()"
-                      >
-                        <cq-icon name="content-copy" size="14" aria-hidden="true"></cq-icon>
-                        Copy URL
-                      </button>
-                    </div>
-                  </div>
-                  @if (ingressUrl()) {
-                    <code class="block break-all rounded-lg border border-white/10 bg-black/20 px-2 py-1 text-xs text-primary">
+              <div class="text-xs font-semibold uppercase tracking-wide text-muted">Ingress URL</div>
+              <div class="space-y-3">
+                @if (ingressUrl()) {
+                  <div class="relative">
+                    <code class="block break-all rounded-lg border border-white/10 bg-black/20 px-2 py-1 pr-8 text-xs text-primary">
                       {{ ingressUrl() }}
                     </code>
-                  } @else {
-                    <p class="text-xs text-muted">Ingress URL unavailable for the current tenant.</p>
-                  }
-                  <cq-form-field label="Payload (JSON)" forId="ingressPayloadDefault">
+                    <button
+                      type="button"
+                      class="absolute right-1 top-1 inline-flex items-center justify-center rounded-md border border-white/10 bg-white/5 p-1 text-primary transition hover:border-accent hover:text-accent disabled:opacity-50"
+                      (click)="copyIngressUrl()"
+                      [disabled]="!ingressUrl()"
+                      aria-label="Copy ingress URL"
+                    >
+                      <cq-icon name="content-copy" size="14" aria-hidden="true"></cq-icon>
+                    </button>
+                  </div>
+                } @else {
+                  <p class="text-xs text-muted">Ingress URL unavailable for the current tenant.</p>
+                }
+                <cq-form-field label="Payload (JSON)" forId="ingressPayloadDefault">
+                  <div class="relative">
                     <textarea
                       id="ingressPayloadDefault"
                       rows="6"
+                      class="pr-10"
                       cqTextarea
                       [value]="invokePayload()"
                       (input)="setInvokePayload($any($event.target).value)"
                     ></textarea>
-                  </cq-form-field>
-                  <div class="flex flex-wrap items-center gap-2">
                     <button
                       type="button"
-                      class="inline-flex items-center gap-1 rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-xs font-semibold text-primary transition hover:border-accent hover:text-accent"
+                      class="absolute right-2 top-2 inline-flex items-center justify-center rounded-md border border-white/10 bg-white/5 p-1 text-primary transition hover:border-accent hover:text-accent disabled:opacity-50"
                       (click)="copyInvokePayload()"
+                      aria-label="Copy payload"
                     >
                       <cq-icon name="content-copy" size="14" aria-hidden="true"></cq-icon>
-                      Copy payload
-                    </button>
-                    <button
-                      type="button"
-                      class="inline-flex items-center gap-1 rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-xs font-semibold text-primary transition hover:border-accent hover:text-accent"
-                      (click)="copyCurlSnippet()"
-                      [disabled]="!ingressUrl()"
-                    >
-                      <cq-icon name="content-copy" size="14" aria-hidden="true"></cq-icon>
-                      Copy cURL
                     </button>
                   </div>
+                </cq-form-field>
+                <div class="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    class="inline-flex items-center gap-1 rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-xs font-semibold text-primary transition hover:border-accent hover:text-accent"
+                    (click)="copyCurlSnippet()"
+                    [disabled]="!ingressUrl()"
+                  >
+                    <cq-icon name="content-copy" size="14" aria-hidden="true"></cq-icon>
+                    Copy cURL
+                  </button>
                 </div>
-              }
+              </div>
             </div>
 
             <div class="rounded-lg border border-white/10 bg-black/10 px-3 py-3">

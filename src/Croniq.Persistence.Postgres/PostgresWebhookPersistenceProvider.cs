@@ -328,11 +328,23 @@ public sealed class PostgresWebhookPersistenceProvider : IWebhookPersistenceProv
             .ToListAsync(cancellationToken)
             .ConfigureAwait(false);
 
-        return rows.Select(x => new WebhookSecretMaterial(
-            UnprotectSecret(x.Secret),
-            x.SecretHash,
-            DateTime.SpecifyKind(x.ActivatedAtUtc, DateTimeKind.Utc),
-            x.ExpiresAtUtc.HasValue ? DateTime.SpecifyKind(x.ExpiresAtUtc.Value, DateTimeKind.Utc) : null)).ToList();
+        var materials = new List<WebhookSecretMaterial>(rows.Count);
+        foreach (var row in rows)
+        {
+            var secret = TryUnprotectSecret(row.Secret);
+            if (string.IsNullOrWhiteSpace(secret))
+            {
+                continue;
+            }
+
+            materials.Add(new WebhookSecretMaterial(
+                secret,
+                row.SecretHash,
+                DateTime.SpecifyKind(row.ActivatedAtUtc, DateTimeKind.Utc),
+                row.ExpiresAtUtc.HasValue ? DateTime.SpecifyKind(row.ExpiresAtUtc.Value, DateTimeKind.Utc) : null));
+        }
+
+        return materials;
     }
 
     public async Task<IReadOnlyCollection<WebhookIpRuleDefinition>> ListIpRulesAsync(string hookKey, PartitionScope scope, CancellationToken cancellationToken)
@@ -570,7 +582,7 @@ public sealed class PostgresWebhookPersistenceProvider : IWebhookPersistenceProv
         bool includeSecret = true)
     {
         var metadata = DeserializeMetadata(entity.MetadataJson);
-        var secret = includeSecret ? UnprotectSecret(entity.Secret) : string.Empty;
+        var secret = includeSecret ? (TryUnprotectSecret(entity.Secret) ?? string.Empty) : string.Empty;
         return new WebhookEndpointDefinition(
             entity.HookKey,
             entity.JobKey,
@@ -631,6 +643,23 @@ public sealed class PostgresWebhookPersistenceProvider : IWebhookPersistenceProv
     private string ProtectSecret(string secret)
     {
         return _secretProtector.Protect(secret);
+    }
+
+    private string? TryUnprotectSecret(string protectedSecret)
+    {
+        if (string.IsNullOrWhiteSpace(protectedSecret))
+        {
+            return null;
+        }
+
+        try
+        {
+            return _secretProtector.Unprotect(protectedSecret);
+        }
+        catch (CryptographicException)
+        {
+            return null;
+        }
     }
 
     private string UnprotectSecret(string protectedSecret)

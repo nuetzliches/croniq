@@ -1,8 +1,9 @@
 import { CdkMenu } from '@angular/cdk/menu';
 import { DatePipe } from '@angular/common';
-import { ChangeDetectionStrategy, Component, Directive, TemplateRef, computed, effect, inject, linkedSignal, signal, viewChild } from '@angular/core';
-import { RouterLink } from '@angular/router';
+import { ChangeDetectionStrategy, Component, DestroyRef, Directive, TemplateRef, computed, effect, inject, linkedSignal, signal, viewChild } from '@angular/core';
+import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { FormField, form } from '@angular/forms/signals';
+import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 import { RuntimeConfigService } from '@core/runtime-config.service';
 import { TenantContextService } from '@core/tenant-context/tenant-context.service';
 import { RotateWebhookSecretRequest, UpsertWebhookEndpointRequest } from '@croniq/api-schema';
@@ -26,12 +27,6 @@ type WebhookStatusFilter = 'all' | WebhookEndpointView['status'];
 
 type WebhookFilterModel = {
   status: WebhookStatusFilter;
-  environment: string;
-};
-
-type OptionEntry = {
-  value: string;
-  label: string;
 };
 
 type HookFilterEntry = {
@@ -44,8 +39,6 @@ type JobFilterEntry = {
   jobKey: string;
   status: WebhookEndpointView['status'];
 };
-
-const ALL_ENVIRONMENTS = 'all';
 
 const STATUS_OPTIONS: ReadonlyArray<{ value: WebhookStatusFilter; label: string }> = [
   { value: 'all', label: 'All statuses' },
@@ -129,6 +122,9 @@ export class WebhooksPage {
   private readonly tenantContext = inject(TenantContextService);
   private readonly runtimeConfig = inject(RuntimeConfigService);
   private readonly dialog = inject(CqDialogService);
+  private readonly route = inject(ActivatedRoute);
+  private readonly router = inject(Router);
+  private readonly destroyRef = inject(DestroyRef);
   private readonly shellPanel = inject(ShellPanelService);
   private readonly panelTemplate = viewChild<TemplateRef<unknown>>('webhooksFilterPanel');
   private readonly collapsedTemplate = viewChild<TemplateRef<unknown>>('webhooksFilterCollapsed');
@@ -177,11 +173,11 @@ export class WebhooksPage {
   readonly invokePayload = signal('');
   readonly invokePayloadTouched = signal(false);
   readonly invokeNotice = signal<string | null>(null);
-  readonly ingressTab = signal<'internal' | 'remote'>('internal');
   readonly hookSearch = signal('');
   readonly jobSearch = signal('');
   readonly selectedHookKeys = signal<ReadonlyArray<string>>([]);
   readonly selectedJobKeys = signal<ReadonlyArray<string>>([]);
+  readonly selectedHookKeyParam = signal<string | null>(null);
   readonly kpiSuccessRate = computed(() => {
     const endpoints = this.endpoints().length;
     if (endpoints === 0) {
@@ -200,7 +196,7 @@ export class WebhooksPage {
     const model = this.filterModel();
     const hooks = [...this.selectedHookKeys()].sort().join(',');
     const jobs = [...this.selectedJobKeys()].sort().join(',');
-    return `${model.status}|${model.environment}|${hooks}|${jobs}`;
+    return `${model.status}|${hooks}|${jobs}`;
   });
 
   readonly activityQuery = linkedSignal<WebhookActivityQuery>(() =>
@@ -217,31 +213,14 @@ export class WebhooksPage {
     return 0;
   });
 
-  readonly environmentOptions = computed<ReadonlyArray<OptionEntry>>(() => {
-    const entries = new Set<string>();
-    this.endpoints().forEach((endpoint) => {
-      if (endpoint.environment) {
-        entries.add(endpoint.environment);
-      }
-    });
-    const sorted = Array.from(entries).sort();
-    return [{ value: ALL_ENVIRONMENTS, label: 'All environments' }].concat(
-      sorted.map((value) => ({ value, label: value })),
-    );
-  });
-
   readonly filteredEndpoints = computed(() => {
     const filters = this.filterModel();
     const statusFilter = filters.status === 'all' ? '' : filters.status;
-    const environmentFilter = filters.environment === ALL_ENVIRONMENTS ? '' : filters.environment;
     const selectedHooks = new Set(this.selectedHookKeys());
     const selectedJobs = new Set(this.selectedJobKeys());
 
     return this.endpoints().filter((endpoint) => {
       if (statusFilter && endpoint.status !== statusFilter) {
-        return false;
-      }
-      if (environmentFilter && endpoint.environment !== environmentFilter) {
         return false;
       }
       if (selectedHooks.size > 0 && !selectedHooks.has(endpoint.hookKey)) {
@@ -295,7 +274,6 @@ export class WebhooksPage {
       this.selectedHookKeys().length > 0
       || this.selectedJobKeys().length > 0
       || model.status !== 'all'
-      || model.environment !== ALL_ENVIRONMENTS
     );
   });
 
@@ -388,16 +366,34 @@ export class WebhooksPage {
   webhookRowClasses = (row: WebhookEndpointView) =>
     row.status === 'active' ? undefined : ['opacity-80'];
 
-  selectRow(event: { row: WebhookEndpointView }): void {
+  selectRow(event: { row: WebhookEndpointView | null }): void {
     const row = event.row;
     if (!row) {
+      this.selectedRowKey.set(null);
+      void this.router.navigate([], {
+        relativeTo: this.route,
+        queryParams: { hookKey: null },
+        queryParamsHandling: 'merge',
+        replaceUrl: true,
+      });
       return;
     }
-    this.selectedRowKey.set(this.webhookRowKey(row, 0));
+
+    const nextKey = this.webhookRowKey(row, 0);
+    if (this.selectedRowKey() === nextKey) {
+      return;
+    }
+    this.selectedRowKey.set(nextKey);
+    void this.router.navigate([], {
+      relativeTo: this.route,
+      queryParams: { hookKey: row.hookKey },
+      queryParamsHandling: 'merge',
+      replaceUrl: true,
+    });
   }
 
-  copyIngressUrl(target?: 'internal' | 'remote'): void {
-    const url = this.resolveIngressUrl(target);
+  copyIngressUrl(): void {
+    const url = this.ingressUrl();
     if (!url) {
       return;
     }
@@ -708,7 +704,7 @@ export class WebhooksPage {
 
   readonly fallbackTimelineItems = computed<ReadonlyArray<WebhookTimelineItemView>>(() => {
     const filters = this.filterModel();
-    const restrictToEndpointSet = filters.status !== 'all' || filters.environment !== ALL_ENVIRONMENTS;
+    const restrictToEndpointSet = filters.status !== 'all';
     const endpoints = this.filteredEndpoints();
     const deadLetters = this.filteredDeadLetters();
 
@@ -838,6 +834,30 @@ export class WebhooksPage {
       onCleanup(() => this.shellPanel.clearPanel(template));
     });
 
+    this.route.queryParamMap
+      .pipe(takeUntilDestroyed(this.destroyRef))
+      .subscribe((params) => {
+        const hookKey = (params.get('hookKey') ?? '').trim();
+        this.selectedHookKeyParam.set(hookKey || null);
+      });
+
+    effect(() => {
+      const hookKey = this.selectedHookKeyParam();
+      if (!hookKey) {
+        if (this.selectedRowKey() !== null) {
+          this.selectedRowKey.set(null);
+        }
+        return;
+      }
+
+      const match = this.endpoints().find((endpoint) => endpoint.hookKey === hookKey);
+      const nextKey = match ? this.webhookRowKey(match, 0) : null;
+      if (this.selectedRowKey() === nextKey) {
+        return;
+      }
+      this.selectedRowKey.set(nextKey);
+    });
+
     effect(() => {
       const endpoint = this.selectedEndpoint();
       if (!endpoint) {
@@ -873,7 +893,7 @@ export class WebhooksPage {
   }
 
   copyCurlSnippet(): void {
-    const url = this.resolveIngressUrl();
+    const url = this.ingressUrl();
     const payload = this.invokePayload();
     if (!url || !navigator.clipboard?.writeText) {
       return;
@@ -883,33 +903,6 @@ export class WebhooksPage {
     navigator.clipboard.writeText(curl).catch((error: unknown) => {
       console.error('Unable to copy cURL snippet', error);
     });
-  }
-
-  copyCurlSnippetFor(target: 'internal' | 'remote'): void {
-    const url = this.resolveIngressUrl(target);
-    const payload = this.invokePayload();
-    if (!url || !navigator.clipboard?.writeText) {
-      return;
-    }
-    const escapedPayload = escapeSingleQuotes(payload || '{}');
-    const curl = `curl -X POST "${url}" -H "Content-Type: application/json" -d '${escapedPayload}'`;
-    navigator.clipboard.writeText(curl).catch((error: unknown) => {
-      console.error('Unable to copy cURL snippet', error);
-    });
-  }
-
-  setIngressTab(tab: 'internal' | 'remote'): void {
-    this.ingressTab.set(tab);
-  }
-
-  private resolveIngressUrl(target?: 'internal' | 'remote'): string | null {
-    if (target === 'internal') {
-      return this.internalIngressUrl();
-    }
-    if (target === 'remote') {
-      return this.remoteIngressUrl();
-    }
-    return this.ingressUrl();
   }
 
   previousPage(): void {
@@ -1264,7 +1257,6 @@ function filterTimelineItemsByRange(
 function createDefaultFilters(): WebhookFilterModel {
   return {
     status: 'all',
-    environment: ALL_ENVIRONMENTS,
   };
 }
 
@@ -1274,7 +1266,7 @@ function buildActivityQuery(
   jobKeys: ReadonlyArray<string>,
 ): WebhookActivityQuery {
   return {
-    environment: model.environment === ALL_ENVIRONMENTS ? null : model.environment,
+    environment: null,
     hookKeys,
     jobKeys,
   };
