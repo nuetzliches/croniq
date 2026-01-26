@@ -1,0 +1,19 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Devstack AppHost (dotnet run)",
+      "type": "coreclr",
+      "request": "launch",
+      "program": "dotnet",
+      "args": [
+        "run",
+        "--project",
+        "tools\\Croniq.Devstack.AppHost\\Croniq.Devstack.AppHost.csproj"
+      ],
+      "cwd": "${workspaceFolder}",
+      "console": "externalTerminal",
+      "internalConsoleOptions": "neverOpen"
+    }
+  ]
+}

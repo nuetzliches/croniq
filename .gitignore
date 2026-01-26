@@ -11,7 +11,7 @@ TestResults/
 # IDE state
 .vs/
 .idea/
-.vscode/
+# .vscode/
 *.suo
 *.user
 *.userosscache
