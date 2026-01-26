@@ -26,18 +26,18 @@ using Xunit;
 
 namespace Croniq.Api.Tests;
 
-public sealed class GrpcWorkerTests
+public sealed class GrpcRunnerTests
 {
     [Fact]
-    public async Task WorkerGrpc_Connect_ReturnsServerHello()
+    public async Task RunnerGrpc_Connect_ReturnsServerHello()
     {
         var builder = WebApplication.CreateBuilder(new WebApplicationOptions
         {
-            ApplicationName = typeof(GrpcWorkerTests).Assembly.FullName,
+            ApplicationName = typeof(GrpcRunnerTests).Assembly.FullName,
             EnvironmentName = Environments.Development
         });
 
-        var apiKey = "ak_grpc_worker";
+        var apiKey = "ak_grpc_runner";
         var tenantId = "00000000-0000-0000-0000-000000000003";
         var environmentTag = "dev";
 
@@ -74,7 +74,7 @@ public sealed class GrpcWorkerTests
 
         await using var app = builder.Build();
         app.UseCroniqApi();
-        app.MapCroniqWorkerGrpc();
+        app.MapCroniqRunnerGrpc();
 
         await app.StartAsync();
         var address = app.Urls.First();
@@ -89,7 +89,7 @@ public sealed class GrpcWorkerTests
         httpClient.DefaultRequestHeaders.Add("X-Croniq-Key", apiKey);
 
         using var channel = GrpcChannel.ForAddress(address, new GrpcChannelOptions { HttpClient = httpClient });
-        var client = new Worker.WorkerClient(channel);
+        var client = new Runner.RunnerClient(channel);
 
         using var call = client.Connect();
         await call.RequestStream.WriteAsync(new RunnerMessage
@@ -113,15 +113,15 @@ public sealed class GrpcWorkerTests
     }
 
     [Fact]
-    public async Task WorkerGrpc_Assigns_And_Acks_Work()
+    public async Task RunnerGrpc_Assigns_And_Acks_Work()
     {
         var builder = WebApplication.CreateBuilder(new WebApplicationOptions
         {
-            ApplicationName = typeof(GrpcWorkerTests).Assembly.FullName,
+            ApplicationName = typeof(GrpcRunnerTests).Assembly.FullName,
             EnvironmentName = Environments.Development
         });
 
-        var apiKey = "ak_grpc_worker_assign";
+        var apiKey = "ak_grpc_runner_assign";
         var tenantId = "00000000-0000-0000-0000-000000000004";
         var environmentTag = "dev";
 
@@ -159,14 +159,14 @@ public sealed class GrpcWorkerTests
 
         await using var app = builder.Build();
         app.UseCroniqApi();
-        app.MapCroniqWorkerGrpc();
+        app.MapCroniqRunnerGrpc();
 
         await app.StartAsync();
         var address = app.Urls.First();
 
         var scope = new PartitionScope(tenantId, environmentTag);
-        const string jobKey = "ops:grpc-worker";
-        await store.UpsertJobAsync(new JobDefinition(jobKey, "ops", "grpc-worker", Variant: null, Description: null, Metadata: null), scope, CancellationToken.None);
+        const string jobKey = "ops:grpc-runner";
+        await store.UpsertJobAsync(new JobDefinition(jobKey, "ops", "grpc-runner", Variant: null, Description: null, Metadata: null), scope, CancellationToken.None);
 
         var triggerId = $"{jobKey}:once-{Guid.NewGuid():N}";
         var trigger = new TriggerDefinition(
@@ -191,7 +191,7 @@ public sealed class GrpcWorkerTests
         httpClient.DefaultRequestHeaders.Add("X-Croniq-Key", apiKey);
 
         using var channel = GrpcChannel.ForAddress(address, new GrpcChannelOptions { HttpClient = httpClient });
-        var client = new Worker.WorkerClient(channel);
+        var client = new Runner.RunnerClient(channel);
 
         using var call = client.Connect();
         await call.RequestStream.WriteAsync(new RunnerMessage
@@ -225,15 +225,15 @@ public sealed class GrpcWorkerTests
     }
 
     [Fact]
-    public async Task WorkerGrpc_AckFailure_WithNextFireTime_ReschedulesTrigger()
+    public async Task RunnerGrpc_AckFailure_WithNextFireTime_ReschedulesTrigger()
     {
         var builder = WebApplication.CreateBuilder(new WebApplicationOptions
         {
-            ApplicationName = typeof(GrpcWorkerTests).Assembly.FullName,
+            ApplicationName = typeof(GrpcRunnerTests).Assembly.FullName,
             EnvironmentName = Environments.Development
         });
 
-        var apiKey = "ak_grpc_worker_retry";
+        var apiKey = "ak_grpc_runner_retry";
         var tenantId = "00000000-0000-0000-0000-000000000007";
         var environmentTag = "dev";
 
@@ -271,14 +271,14 @@ public sealed class GrpcWorkerTests
 
         await using var app = builder.Build();
         app.UseCroniqApi();
-        app.MapCroniqWorkerGrpc();
+        app.MapCroniqRunnerGrpc();
 
         await app.StartAsync();
         var address = app.Urls.First();
 
         var scope = new PartitionScope(tenantId, environmentTag);
-        const string jobKey = "ops:grpc-worker-retry";
-        await store.UpsertJobAsync(new JobDefinition(jobKey, "ops", "grpc-worker-retry", Variant: null, Description: null, Metadata: null), scope, CancellationToken.None);
+        const string jobKey = "ops:grpc-runner-retry";
+        await store.UpsertJobAsync(new JobDefinition(jobKey, "ops", "grpc-runner-retry", Variant: null, Description: null, Metadata: null), scope, CancellationToken.None);
 
         var triggerId = $"{jobKey}:once-{Guid.NewGuid():N}";
         var trigger = new TriggerDefinition(
@@ -303,7 +303,7 @@ public sealed class GrpcWorkerTests
         httpClient.DefaultRequestHeaders.Add("X-Croniq-Key", apiKey);
 
         using var channel = GrpcChannel.ForAddress(address, new GrpcChannelOptions { HttpClient = httpClient });
-        var client = new Worker.WorkerClient(channel);
+        var client = new Runner.RunnerClient(channel);
 
         using var call = client.Connect();
         await call.RequestStream.WriteAsync(new RunnerMessage
@@ -338,15 +338,15 @@ public sealed class GrpcWorkerTests
     }
 
     [Fact]
-    public async Task WorkerGrpc_Connect_RejectsRunnerMismatch()
+    public async Task RunnerGrpc_Connect_RejectsRunnerMismatch()
     {
         var builder = WebApplication.CreateBuilder(new WebApplicationOptions
         {
-            ApplicationName = typeof(GrpcWorkerTests).Assembly.FullName,
+            ApplicationName = typeof(GrpcRunnerTests).Assembly.FullName,
             EnvironmentName = Environments.Development
         });
 
-        var apiKey = "ak_grpc_worker_mismatch";
+        var apiKey = "ak_grpc_runner_mismatch";
         var tenantId = "00000000-0000-0000-0000-000000000005";
         var environmentTag = "dev";
 
@@ -376,7 +376,7 @@ public sealed class GrpcWorkerTests
 
         await using var app = builder.Build();
         app.UseCroniqApi();
-        app.MapCroniqWorkerGrpc();
+        app.MapCroniqRunnerGrpc();
 
         await app.StartAsync();
         var address = app.Urls.First();
@@ -391,7 +391,7 @@ public sealed class GrpcWorkerTests
         httpClient.DefaultRequestHeaders.Add("X-Croniq-Key", apiKey);
 
         using var channel = GrpcChannel.ForAddress(address, new GrpcChannelOptions { HttpClient = httpClient });
-        var client = new Worker.WorkerClient(channel);
+        var client = new Runner.RunnerClient(channel);
 
         using var call = client.Connect();
         await call.RequestStream.WriteAsync(new RunnerMessage
@@ -412,15 +412,15 @@ public sealed class GrpcWorkerTests
     }
 
     [Fact]
-    public async Task WorkerGrpc_DoesNotAssignSameLeaseToSecondConnection()
+    public async Task RunnerGrpc_DoesNotAssignSameLeaseToSecondConnection()
     {
         var builder = WebApplication.CreateBuilder(new WebApplicationOptions
         {
-            ApplicationName = typeof(GrpcWorkerTests).Assembly.FullName,
+            ApplicationName = typeof(GrpcRunnerTests).Assembly.FullName,
             EnvironmentName = Environments.Development
         });
 
-        var apiKey = "ak_grpc_worker_double";
+        var apiKey = "ak_grpc_runner_double";
         var tenantId = "00000000-0000-0000-0000-000000000006";
         var environmentTag = "dev";
 
@@ -458,14 +458,14 @@ public sealed class GrpcWorkerTests
 
         await using var app = builder.Build();
         app.UseCroniqApi();
-        app.MapCroniqWorkerGrpc();
+        app.MapCroniqRunnerGrpc();
 
         await app.StartAsync();
         var address = app.Urls.First();
 
         var scope = new PartitionScope(tenantId, environmentTag);
-        const string jobKey = "ops:grpc-worker-double";
-        await store.UpsertJobAsync(new JobDefinition(jobKey, "ops", "grpc-worker-double", Variant: null, Description: null, Metadata: null), scope, CancellationToken.None);
+        const string jobKey = "ops:grpc-runner-double";
+        await store.UpsertJobAsync(new JobDefinition(jobKey, "ops", "grpc-runner-double", Variant: null, Description: null, Metadata: null), scope, CancellationToken.None);
 
         var triggerId = $"{jobKey}:once-{Guid.NewGuid():N}";
         var trigger = new TriggerDefinition(
@@ -490,7 +490,7 @@ public sealed class GrpcWorkerTests
         httpClient.DefaultRequestHeaders.Add("X-Croniq-Key", apiKey);
 
         using var channel = GrpcChannel.ForAddress(address, new GrpcChannelOptions { HttpClient = httpClient });
-        var client = new Worker.WorkerClient(channel);
+        var client = new Runner.RunnerClient(channel);
 
         using var callOne = client.Connect();
         using var callTwo = client.Connect();

@@ -1,4 +1,4 @@
-Go HTTP Worker SDK (minimal)
+Go HTTP Runner SDK (minimal)
 
 Requirements:
 - Go 1.21+

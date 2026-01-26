@@ -17,19 +17,19 @@ using Microsoft.Extensions.Options;
 namespace Croniq.Hosting;
 
 /// <summary>
-/// Background service that uses Worker.Connect for gRPC-first dispatch with polling fallback.
+/// Background service that uses Runner.Connect for gRPC-first dispatch with polling fallback.
 /// </summary>
 public sealed class CroniqWorkerGrpcDispatchHostedService : BackgroundService, IWorkerDispatchStatusProvider
 {
     private static readonly Meter Meter = new("Croniq.WorkerHost.Dispatch");
     private static readonly Counter<long> GrpcReconnects = Meter.CreateCounter<long>(
         "croniq.worker_dispatch.grpc.reconnects",
-        description: "Number of gRPC worker dispatch reconnect attempts.");
+        description: "Number of gRPC runner dispatch reconnect attempts.");
     private static readonly Counter<long> FallbackActivations = Meter.CreateCounter<long>(
         "croniq.worker_dispatch.fallback.activations",
         description: "Number of fallback polling activations.");
     private readonly TriggerWorker _worker;
-    private readonly Worker.WorkerClient _client;
+    private readonly Runner.RunnerClient _client;
     private readonly WorkerDispatchOptions _dispatchOptions;
     private readonly WorkerHostOptions _hostOptions;
     private readonly CroniqOptions _coreOptions;
@@ -41,7 +41,7 @@ public sealed class CroniqWorkerGrpcDispatchHostedService : BackgroundService, I
 
     public CroniqWorkerGrpcDispatchHostedService(
         TriggerWorker worker,
-        Worker.WorkerClient client,
+        Runner.RunnerClient client,
         IOptions<WorkerDispatchOptions> dispatchOptions,
         IOptions<WorkerHostOptions> hostOptions,
         IOptions<CroniqOptions> coreOptions,
@@ -59,7 +59,7 @@ public sealed class CroniqWorkerGrpcDispatchHostedService : BackgroundService, I
             "croniq.worker_dispatch.grpc.connected",
             () => _grpcConnected,
             unit: "state",
-            description: "1 when the worker dispatch gRPC stream is connected; otherwise 0.");
+            description: "1 when the runner dispatch gRPC stream is connected; otherwise 0.");
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -67,13 +67,13 @@ public sealed class CroniqWorkerGrpcDispatchHostedService : BackgroundService, I
         var startupMode = ResolveStartupMode(_startupOptions.Mode);
         if (startupMode == CroniqStartupMode.Validate)
         {
-            _logger.LogInformation("Croniq startup mode is Validate; gRPC worker dispatch is disabled.");
+            _logger.LogInformation("Croniq startup mode is Validate; gRPC runner dispatch is disabled.");
             return;
         }
 
         if (!_dispatchOptions.EnableGrpc)
         {
-            _logger.LogInformation("Croniq worker gRPC dispatch is disabled.");
+            _logger.LogInformation("Croniq runner gRPC dispatch is disabled.");
             return;
         }
 
@@ -94,12 +94,12 @@ public sealed class CroniqWorkerGrpcDispatchHostedService : BackgroundService, I
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "Croniq worker gRPC dispatch failed; falling back to polling.");
+                _logger.LogWarning(ex, "Croniq runner gRPC dispatch failed; falling back to polling.");
             }
 
             if (sessionEnded && !stoppingToken.IsCancellationRequested)
             {
-                _logger.LogWarning("Croniq worker gRPC dispatch stream ended; falling back to polling.");
+                _logger.LogWarning("Croniq runner gRPC dispatch stream ended; falling back to polling.");
             }
 
             if (_dispatchOptions.EnablePollingFallback)
@@ -166,7 +166,7 @@ public sealed class CroniqWorkerGrpcDispatchHostedService : BackgroundService, I
                     _grpcConnected = 1;
                     _lastConnectedTicks = DateTimeOffset.UtcNow.UtcTicks;
                     _logger.LogInformation(
-                        "Connected to worker dispatch gRPC (tenant {Tenant}, environment {Environment}).",
+                        "Connected to runner dispatch gRPC (tenant {Tenant}, environment {Environment}).",
                         IdentifierHashing.HashTenantId(message.Hello.TenantId) ?? string.Empty,
                         message.Hello.EnvironmentTag);
                     continue;
@@ -179,7 +179,7 @@ public sealed class CroniqWorkerGrpcDispatchHostedService : BackgroundService, I
 
                 if (string.IsNullOrWhiteSpace(scope.TenantId) || string.IsNullOrWhiteSpace(scope.EnvironmentTag))
                 {
-                    _logger.LogWarning("Worker dispatch received assignment before server hello; ignoring assignment.");
+                    _logger.LogWarning("Runner dispatch received assignment before server hello; ignoring assignment.");
                     continue;
                 }
 

@@ -1,4 +1,4 @@
-Python HTTP Worker SDK (minimal)
+Python HTTP Runner SDK (minimal)
 
 Requirements:
 - Python 3.11+

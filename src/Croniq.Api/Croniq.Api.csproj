@@ -35,8 +35,8 @@
   <ItemGroup>
     <Protobuf Include="..\Croniq.Rpc.Client\Protos\scheduler.proto" GrpcServices="Both"
       Link="Protos\scheduler.proto" />
-    <Protobuf Include="..\Croniq.Rpc.Client\Protos\worker.proto" GrpcServices="Both"
-      Link="Protos\worker.proto" />
+    <Protobuf Include="..\Croniq.Rpc.Client\Protos\runner.proto" GrpcServices="Both"
+      Link="Protos\runner.proto" />
     <Protobuf Include="..\Croniq.Rpc.Client\Protos\webhook_ingress.proto" GrpcServices="Both"
       Link="Protos\webhook_ingress.proto" />
     <Protobuf Include="..\Croniq.Rpc.Client\Protos\webhook_activity.proto" GrpcServices="Both"

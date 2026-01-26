@@ -24,11 +24,11 @@ Draft.
 
 ## Future runner samples (deferred)
 
-- Prerequisites: multi-language SDKs and the polyglot worker protocol.
+- Prerequisites: multi-language SDKs and the polyglot runner protocol.
 - Location: `samples/runners/<language>/<name>`.
 - Scope:
   - Use only public Croniq APIs.
-  - Prefer gRPC-first dispatch with SSE and HTTP polling fallback.
+- Prefer gRPC-first dispatch with HTTP polling fallback.
   - Require explicit tenantId and environment tag; no default tenant fallback.
   - Read configuration from `Croniq__*` environment variables.
 - Devstack integration: runner samples are opt-in and added via AppHost profiles once SDKs exist.
@@ -38,4 +38,4 @@ Draft.
 
 - `../architecture.md`
 - `../devstack.md`
-- `polyglot-worker-protocol.md`
+- `polyglot-runner-protocol.md`

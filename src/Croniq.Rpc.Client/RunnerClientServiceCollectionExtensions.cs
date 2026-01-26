@@ -4,7 +4,7 @@ using Microsoft.Extensions.DependencyInjection;
 
 namespace Croniq.Rpc;
 
-public sealed class CroniqWorkerClientOptions
+public sealed class CroniqRunnerClientOptions
 {
     public string Endpoint { get; set; } = string.Empty;
     public string? ApiKey { get; set; }
@@ -12,29 +12,29 @@ public sealed class CroniqWorkerClientOptions
     public Action<GrpcChannelOptions>? ConfigureChannel { get; set; }
 }
 
-public static class WorkerClientServiceCollectionExtensions
+public static class RunnerClientServiceCollectionExtensions
 {
     private const string ApiKeyHeader = "X-Croniq-Key";
 
-    /// <summary>Registers the Worker gRPC client with sensible defaults (HTTP/2, API key header).</summary>
-    public static IServiceCollection AddCroniqWorkerClient(
+    /// <summary>Registers the Runner gRPC client with sensible defaults (HTTP/2, API key header).</summary>
+    public static IServiceCollection AddCroniqRunnerClient(
         this IServiceCollection services,
-        Action<CroniqWorkerClientOptions> configure)
+        Action<CroniqRunnerClientOptions> configure)
     {
         if (services is null) throw new ArgumentNullException(nameof(services));
         if (configure is null) throw new ArgumentNullException(nameof(configure));
 
         AppContext.SetSwitch("System.Net.Http.SocketsHttpHandler.Http2UnencryptedSupport", true);
 
-        var options = new CroniqWorkerClientOptions();
+        var options = new CroniqRunnerClientOptions();
         configure(options);
 
         if (string.IsNullOrWhiteSpace(options.Endpoint))
         {
-            throw new InvalidOperationException("CroniqWorkerClientOptions.Endpoint must be set.");
+            throw new InvalidOperationException("CroniqRunnerClientOptions.Endpoint must be set.");
         }
 
-        services.AddGrpcClient<Worker.WorkerClient>(o =>
+        services.AddGrpcClient<Runner.RunnerClient>(o =>
         {
             o.Address = new Uri(options.Endpoint);
         })

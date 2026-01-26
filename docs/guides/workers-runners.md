@@ -1,9 +1,9 @@
 # Workers & Runners (HTTP)
 
-Croniq's in-process .NET worker uses a lease-based model to claim and execute due triggers.
-The HTTP work endpoints expose the same lease lifecycle so non-.NET workers can participate.
+Croniq.WorkerHost uses a lease-based model to claim and execute due triggers.
+The HTTP work endpoints expose the same lease lifecycle so non-.NET runners can participate.
 Worker host presence is tracked separately via `/workers`; this guide focuses on runner identities used by the `/work/*` surface.
-For gRPC streaming clients, see [`grpc.md`](./grpc.md).
+For gRPC streaming runners, see [`polyglot-runner-protocol.md`](../deep-dive/designs/polyglot-runner-protocol.md).
 
 ## Worker Presence (Heartbeat)
 
@@ -47,7 +47,7 @@ Scope: `work:poll`
 
 Request body:
 
-- `runnerId` (string, required): stable worker identity (e.g., host + process).
+- `runnerId` (string, required): stable runner identity (e.g., host + process).
 - `batchSize` (int, optional): number of leases to claim. Default `1`.
 - `waitForMs` (int, optional): long-poll timeout in milliseconds. Default `0` (immediate).
 
@@ -111,13 +111,13 @@ Request body:
 
 ## Sample
 
-A minimal worker loop that polls/renews/acks is available at:
+A minimal runner loop that polls/renews/acks is available at (legacy folder names):
 
 - `samples/worker-sdk-go`
 - `samples/worker-sdk-node`
 - `samples/worker-sdk-python`
 
-## SDK/Worker Integration (Recommended)
+## SDK/Runner Integration (Recommended)
 
 Keep the SDK configuration explicit and stable, and document it for operators:
 
@@ -142,18 +142,18 @@ Failover/offline strategy:
 
 Local persistence fallback (outgoing queue):
 
-- Persist outgoing acks/events locally so a worker restart or brief outage does not lose results.
+- Persist outgoing acks/events locally so a runner restart or brief outage does not lose results.
 - Replay the queue in order; drop entries that conflict with server state (lease expired/conflict) and move on.
 - Do not execute new work offline; only process work that was already leased before the outage.
 
-More detail: see `docs/deep-dive/sdk-worker-integration.md`.
+More detail: see `docs/deep-dive/sdk-runner-integration.md`.
 
-## Issue a Worker API Key (SQL auth)
+## Issue a Runner API Key (SQL auth)
 
-For SQL-backed auth, you can use the helper script to create an API client and key with the worker scopes:
+For SQL-backed auth, you can use the helper script to create an API client and key with the runner scopes:
 
 ```powershell
-./scripts/issue-worker-api-key.ps1 -TenantId default -ClientId worker-dev -Environment dev -EmitEnv
+./scripts/issue-worker-api-key.ps1 -TenantId default -ClientId runner-dev -Environment dev -EmitEnv
 ```
 
 Use the emitted `CRONIQ_API_KEY` and set `CRONIQ_RUNNER_ID` to the same client id.
@@ -175,6 +175,6 @@ Heartbeat payloads accept `runnerId`, optional `seenAtUtc`, and optional `metada
 
 ## Protocol Roadmap
 
-The longer-term gRPC streaming protocol, work-item schema, and event/log ingestion plan are tracked in `docs/deep-dive/designs/polyglot-worker-protocol.md`.
+The longer-term gRPC streaming protocol, work-item schema, and event/log ingestion plan are tracked in `docs/deep-dive/designs/polyglot-runner-protocol.md`.
 
-> **Learn more:** See the deep dives on [persistence & leases](../deep-dive/persistence.md) and the [polyglot worker protocol](../deep-dive/designs/polyglot-worker-protocol.md).
+> **Learn more:** See the deep dives on [persistence & leases](../deep-dive/persistence.md) and the [polyglot runner protocol](../deep-dive/designs/polyglot-runner-protocol.md).

@@ -16,12 +16,12 @@ using Microsoft.Extensions.Options;
 namespace Croniq.Hosting;
 
 /// <summary>
-/// Background service that uses Worker.Connect for gRPC-first dispatch with polling fallback.
+/// Background service that uses Runner.Connect for gRPC-first dispatch with polling fallback.
 /// </summary>
 public sealed class CroniqWorkerGrpcDispatchHostedService : BackgroundService
 {
     private readonly TriggerWorker _worker;
-    private readonly Worker.WorkerClient _client;
+    private readonly Runner.RunnerClient _client;
     private readonly WorkerDispatchOptions _dispatchOptions;
     private readonly WorkerHostOptions _hostOptions;
     private readonly CroniqOptions _coreOptions;
@@ -30,7 +30,7 @@ public sealed class CroniqWorkerGrpcDispatchHostedService : BackgroundService
 
     public CroniqWorkerGrpcDispatchHostedService(
         TriggerWorker worker,
-        Worker.WorkerClient client,
+        Runner.RunnerClient client,
         IOptions<WorkerDispatchOptions> dispatchOptions,
         IOptions<WorkerHostOptions> hostOptions,
         IOptions<CroniqOptions> coreOptions,
@@ -51,13 +51,13 @@ public sealed class CroniqWorkerGrpcDispatchHostedService : BackgroundService
         var startupMode = ResolveStartupMode(_startupOptions.Mode);
         if (startupMode == CroniqStartupMode.Validate)
         {
-            _logger.LogInformation("Croniq startup mode is Validate; gRPC worker dispatch is disabled.");
+            _logger.LogInformation("Croniq startup mode is Validate; gRPC runner dispatch is disabled.");
             return;
         }
 
         if (!_dispatchOptions.EnableGrpc)
         {
-            _logger.LogInformation("Croniq worker gRPC dispatch is disabled.");
+            _logger.LogInformation("Croniq runner gRPC dispatch is disabled.");
             return;
         }
 
@@ -76,7 +76,7 @@ public sealed class CroniqWorkerGrpcDispatchHostedService : BackgroundService
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "Croniq worker gRPC dispatch failed; falling back to polling.");
+                _logger.LogWarning(ex, "Croniq runner gRPC dispatch failed; falling back to polling.");
             }
 
             if (_dispatchOptions.EnablePollingFallback)
@@ -139,7 +139,7 @@ public sealed class CroniqWorkerGrpcDispatchHostedService : BackgroundService
                 {
                     scope = new PartitionScope(message.Hello.TenantId, message.Hello.EnvironmentTag);
                     _logger.LogInformation(
-                        "Connected to worker dispatch gRPC (tenant {Tenant}, environment {Environment}).",
+                        "Connected to runner dispatch gRPC (tenant {Tenant}, environment {Environment}).",
                         IdentifierHashing.HashTenantId(message.Hello.TenantId) ?? string.Empty,
                         message.Hello.EnvironmentTag);
                     continue;
@@ -152,7 +152,7 @@ public sealed class CroniqWorkerGrpcDispatchHostedService : BackgroundService
 
                 if (string.IsNullOrWhiteSpace(scope.TenantId) || string.IsNullOrWhiteSpace(scope.EnvironmentTag))
                 {
-                    _logger.LogWarning("Worker dispatch received assignment before server hello; ignoring assignment.");
+                    _logger.LogWarning("Runner dispatch received assignment before server hello; ignoring assignment.");
                     continue;
                 }
 

@@ -474,9 +474,9 @@ public static partial class ApiHostingExtensions
         return app;
     }
 
-    public static WebApplication MapCroniqWorkerGrpc(this WebApplication app)
+    public static WebApplication MapCroniqRunnerGrpc(this WebApplication app)
     {
-        app.MapGrpcService<WorkerGrpcService>();
+        app.MapGrpcService<RunnerGrpcService>();
         return app;
     }
 

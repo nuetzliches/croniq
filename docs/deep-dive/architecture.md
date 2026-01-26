@@ -131,16 +131,16 @@ docs/
 - Worker hosts emit heartbeats on `Croniq:WorkerHost:HeartbeatInterval` (set to `00:00:00` to disable). The heartbeat interval should remain comfortably below the online TTL.
 - Heartbeat `metadataJson` includes basic host identity plus optional dispatch status (`dispatch.grpcConnected`, `dispatch.lastConnectedAtUtc`, `dispatch.lastFallbackAtUtc`) so the UI can surface gRPC vs fallback state.
 
-## Worker Dispatch (gRPC-first)
+## Worker Host Dispatch (gRPC-first)
 
-- Worker hosts can switch to gRPC-first dispatch via `Croniq:WorkerDispatch:EnableGrpc=true` with `Croniq:WorkerDispatch:GrpcEndpoint` set to the API host gRPC base URL.
+- Worker hosts can switch to runner gRPC dispatch via `Croniq:WorkerDispatch:EnableGrpc=true` with `Croniq:WorkerDispatch:GrpcEndpoint` set to the API host gRPC base URL.
 - `Croniq:WorkerDispatch:RunnerId` must match the authenticated caller identity; when omitted the worker uses `Croniq:Core:InstanceId`.
-- The gRPC stream (`Worker.Connect`) is the primary dispatch path; the API host acquires leases and streams assignments, while the worker executes and acknowledges work.
+- The gRPC stream (`Runner.Connect`) is the primary dispatch path; the API host acquires leases and streams assignments, while the worker executes and acknowledges work.
 - Polling fallback remains available via `Croniq:WorkerDispatch:EnablePollingFallback` and uses `Croniq:WorkerDispatch:Fallback*Delay` (defaults target a 5–10s worst-case delay).
 - The persistence layer remains the single source of truth; gRPC dispatch still relies on leases in the store.
 - gRPC dispatch is opt-in; when disabled, workers use polling only.
-- Switch-over to fallback happens on gRPC connection failures, deadline timeouts, or retry backoff exhaustion. Workers retry gRPC after `Croniq:WorkerDispatch:ReconnectDelay`; the first successful `Worker.Connect` resumes streaming dispatch.
-- SSE is not used for worker fallback; it is reserved for UI streaming.
+- Switch-over to fallback happens on gRPC connection failures, deadline timeouts, or retry backoff exhaustion. Worker hosts retry gRPC after `Croniq:WorkerDispatch:ReconnectDelay`; the first successful `Runner.Connect` resumes streaming dispatch.
+- SSE is not used for worker-host fallback; it is reserved for UI streaming.
 - Max inflight assignments default to `WorkerHostOptions.BatchSize`.
 - Observability: worker dispatch emits `croniq.worker_dispatch.grpc.connected`, `croniq.worker_dispatch.grpc.reconnects`, and `croniq.worker_dispatch.fallback.activations` metrics; UI uses heartbeat metadata for status.
 
@@ -150,12 +150,13 @@ docs/
 - `runnerId` is a stable identifier (for example `hostname + process`) and is used as the lease owner. Renew/ack requests must use the same `runnerId` that claimed the lease.
 - Authentication stays on the regular Croniq auth paths (API keys or bearer tokens) with least-privilege work scopes (`work:poll`, `work:renew`, `work:ack`, `work:events`). `runnerId` itself is **not** a secret, but it must match the authenticated caller identity.
 - Runner availability is tracked via heartbeats (`POST /tenants/{tenantId}/runners/heartbeat`) and listed via `GET /tenants/{tenantId}/runners`. The TTL is controlled by `RunnerStoreOptions.OnlineTtl`. Availability is informational and does not affect lease correctness.
+- Naming: use "Runner" for `/work` clients and gRPC streaming; reserve "WorkerHost" for the .NET host.
 
-## Polyglot Worker Protocol
+## Polyglot Runner Protocol
 
-- The current HTTP work surface (`/work/poll`, `/work/renew`, `/work/ack`) exposes the lease lifecycle so non-.NET workers can claim and execute jobs.
-- The gRPC worker handshake (`Worker.Connect`) is implemented as a skeleton for streaming integrations.
-- The longer-term gRPC streaming contract and planned work-item schema are captured in `docs/deep-dive/designs/polyglot-worker-protocol.md`.
+- The current HTTP work surface (`/work/poll`, `/work/renew`, `/work/ack`) exposes the lease lifecycle so non-.NET runners can claim and execute jobs.
+- The gRPC runner handshake (`Runner.Connect`) is implemented as a skeleton for streaming integrations.
+- The longer-term gRPC streaming contract and planned work-item schema are captured in `docs/deep-dive/designs/polyglot-runner-protocol.md`.
 - Protocol design avoids global heartbeats; ownership and liveness are derived from lease deadlines and acknowledgements.
 
 ## Job Store & Provider Model

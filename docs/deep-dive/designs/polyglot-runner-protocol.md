@@ -1,4 +1,4 @@
-# Polyglot Worker Protocol (gRPC + HTTP)
+# Polyglot Runner Protocol (gRPC + HTTP)
 
 ::: info Status
 Draft (HTTP work endpoints shipped; gRPC streaming remains a target). Last verified: 2026-01-18.
@@ -6,7 +6,7 @@ Draft (HTTP work endpoints shipped; gRPC streaming remains a target). Last verif
 
 ## Goals
 
-- Enable non-.NET workers (Go/Node/Python) to execute Croniq jobs directly (not only trigger them).
+- Enable non-.NET runners (Go/Node/Python) to execute Croniq jobs directly (not only trigger them).
 - Offer two transports with identical semantics:
   - **gRPC** for efficient typed streaming.
   - **HTTP** for broad compatibility (proxies, simpler SDKs).
@@ -28,15 +28,15 @@ Draft (HTTP work endpoints shipped; gRPC streaming remains a target). Last verif
 - Worker heartbeat metadata can include dispatch status (`dispatch.grpcConnected`, `dispatch.lastConnectedAtUtc`, `dispatch.lastFallbackAtUtc`) for UI/ops visibility.
 - gRPC exists for scheduler-facing operations (e.g. `Scheduler` service).
 - Long-running execution already uses a lease/extend model internally.
-- The HTTP work endpoints (`/work/poll`, `/work/renew`, `/work/ack`, `/work/{executionId}:events`) expose the lease lifecycle for polyglot workers.
-- A gRPC worker service skeleton (`Worker.Connect`) exists for the streaming handshake.
-- Minimal worker SDK samples exist for Go/Node/Python under `samples/worker-sdk-*`.
+- The HTTP work endpoints (`/work/poll`, `/work/renew`, `/work/ack`, `/work/{executionId}:events`) expose the lease lifecycle for polyglot runners.
+- A gRPC runner service skeleton (`Runner.Connect`) exists for the streaming handshake.
+- Minimal runner SDK samples exist for Go/Node/Python under `samples/worker-sdk-*` (legacy folder names).
 
 ## Core Concepts
 
 ### Runner
 
-A **Runner** is a worker process instance that can claim and execute jobs.
+A **Runner** is a process instance that can claim and execute jobs.
 
 - `runner_id`: stable identifier chosen by the operator (not instance-id based).
 - `capabilities`: optional tags (language, os, queue, custom) used for routing.
@@ -46,6 +46,8 @@ A **Runner** is a worker process instance that can claim and execute jobs.
 A **Work Item** is an assignment representing a single execution attempt.
 
 - `execution_id`: stable identifier for the execution (server-generated) and included in HTTP lease tokens for log/event correlation.
+- `execution_mode`: `normal|test` (intent; orthogonal to source).
+- `invocation_source`: `schedule|manual|api|webhook-ingress|webhook-invoke` (extensible; reserved: `system|replay|backfill`).
 - `job_key`: identifies the job.
 - `attempt`: monotonic attempt number for retry cycles.
 - `lease_token`: opaque token proving current ownership.
@@ -106,6 +108,8 @@ Response:
   - `leaseId`
   - `jobKey`
   - `triggerId`
+  - `executionMode`
+  - `invocationSource`
   - `fireAtUtc`
   - `leaseExpiresAtUtc`
   - `payload` (optional; job input)
@@ -246,9 +250,9 @@ The existing `croniq.Runners` table remains the runner availability view (TTL-ba
 
 1. Add `executionId` to the lease token and propagate it through Acquire/Renew/Ack so events/logs can correlate reliably. (Implemented for HTTP.)
 2. Introduce a work event endpoint (`/work/{executionId}:events`) that writes to the execution log store or a dedicated `WorkEvents` table. (Implemented against the execution log store.)
-3. Add a gRPC `WorkerService` with the same semantics as HTTP (Connect stream + Ack + Events). (Skeleton + hello handshake implemented.)
+3. Add a gRPC `RunnerService` with the same semantics as HTTP (Connect stream + Ack + Events). (Skeleton + hello handshake implemented.)
 4. Add optional runner capability routing (filter by capability tags during poll).
-5. Unify internal worker host and external workers on the same work item model (server creates work items, workers claim/ack them).
+5. Unify internal worker host and external runners on the same work item model (server creates work items, runners claim/ack them).
 
 ## Testing Plan
 

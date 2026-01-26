@@ -4,7 +4,7 @@ package croniq.rpc;
 
 option csharp_namespace = "Croniq.Rpc";
 
-service Worker {
+service Runner {
   rpc Connect (stream RunnerMessage) returns (stream ServerMessage);
 }
 

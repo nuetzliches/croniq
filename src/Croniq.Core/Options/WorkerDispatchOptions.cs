@@ -10,18 +10,18 @@ public sealed class WorkerDispatchOptions
     public bool EnableGrpc { get; set; }
 
     /// <summary>
-    /// gRPC endpoint for Worker.Connect (for example: http://localhost:5001).
+    /// gRPC endpoint for Runner.Connect (for example: http://localhost:5001).
     /// Required when EnableGrpc is true.
     /// </summary>
     public string? GrpcEndpoint { get; set; }
 
     /// <summary>
-    /// API key used for Worker.Connect authentication.
+    /// API key used for Runner.Connect authentication.
     /// </summary>
     public string? ApiKey { get; set; }
 
     /// <summary>
-    /// Runner identity used for Worker.Connect. Defaults to Croniq:Core:InstanceId.
+    /// Runner identity used for Runner.Connect. Defaults to Croniq:Core:InstanceId.
     /// </summary>
     public string? RunnerId { get; set; }
 

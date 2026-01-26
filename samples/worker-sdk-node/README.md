@@ -1,4 +1,4 @@
-Node HTTP Worker SDK (minimal)
+Node HTTP Runner SDK (minimal)
 
 Requirements:
 - Node 18+

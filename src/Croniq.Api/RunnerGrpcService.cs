@@ -14,23 +14,23 @@ using Microsoft.Extensions.Logging;
 
 namespace Croniq.Api;
 
-internal sealed class WorkerGrpcService : Worker.WorkerBase
+internal sealed class RunnerGrpcService : Runner.RunnerBase
 {
-    private static readonly ActivitySource ActivitySource = new("Croniq.Api.Grpc.Worker");
+    private static readonly ActivitySource ActivitySource = new("Croniq.Api.Grpc.Runner");
     private readonly ICallerContextAccessor _callerAccessor;
     private readonly IJobStore _jobStore;
     private readonly IExecutionLogStore _executionLogStore;
     private readonly IWorkItemStore _workItemStore;
     private readonly ILoggerFactory _loggerFactory;
-    private readonly ILogger<WorkerGrpcService> _logger;
+    private readonly ILogger<RunnerGrpcService> _logger;
 
-    public WorkerGrpcService(
+    public RunnerGrpcService(
         ICallerContextAccessor callerAccessor,
         IJobStore jobStore,
         IExecutionLogStore executionLogStore,
         IWorkItemStore workItemStore,
         ILoggerFactory loggerFactory,
-        ILogger<WorkerGrpcService> logger)
+        ILogger<RunnerGrpcService> logger)
     {
         _callerAccessor = callerAccessor ?? throw new ArgumentNullException(nameof(callerAccessor));
         _jobStore = jobStore ?? throw new ArgumentNullException(nameof(jobStore));
@@ -45,7 +45,7 @@ internal sealed class WorkerGrpcService : Worker.WorkerBase
         IServerStreamWriter<ServerMessage> responseStream,
         ServerCallContext context)
     {
-        using var activity = ActivitySource.StartActivity("Croniq.Grpc.Worker.Connect", ActivityKind.Server);
+        using var activity = ActivitySource.StartActivity("Croniq.Grpc.Runner.Connect", ActivityKind.Server);
 
         var caller = _callerAccessor.Current;
         if (caller is null)
@@ -56,7 +56,7 @@ internal sealed class WorkerGrpcService : Worker.WorkerBase
         var environment = caller.EnvironmentTag;
         if (string.IsNullOrWhiteSpace(environment))
         {
-            throw new RpcException(new Status(StatusCode.InvalidArgument, "environment_tag is required for Worker.Connect."));
+            throw new RpcException(new Status(StatusCode.InvalidArgument, "environment_tag is required for Runner.Connect."));
         }
 
         var environmentTag = environment.Trim();
@@ -130,12 +130,12 @@ internal sealed class WorkerGrpcService : Worker.WorkerBase
         }
         catch (Exception ex) when (GrpcDisconnects.IsExpected(ex, context.CancellationToken))
         {
-            _logger.LogDebug("Worker.Connect stream closed.");
+            _logger.LogDebug("Runner.Connect stream closed.");
             activity?.SetStatus(ActivityStatusCode.Ok);
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Worker.Connect stream ended unexpectedly.");
+            _logger.LogWarning(ex, "Runner.Connect stream ended unexpectedly.");
             activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
         }
         finally
@@ -235,7 +235,7 @@ internal sealed class WorkerGrpcService : Worker.WorkerBase
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "Worker.Assign loop failed.");
+                _logger.LogWarning(ex, "Runner.Assign loop failed.");
             }
 
             try
@@ -372,7 +372,7 @@ internal sealed class WorkerGrpcService : Worker.WorkerBase
 
         await TryTrackRenewalAsync(lease, runnerId, cancellationToken).ConfigureAwait(false);
 
-        var logger = _loggerFactory.CreateLogger("Croniq.Api.WorkerEvents");
+        var logger = _loggerFactory.CreateLogger("Croniq.Api.RunnerEvents");
         var baseScope = BuildWorkEventScope(lease, runnerId, scope);
         var executionId = lease.ExecutionId;
         List<ExecutionLogEntry>? entries = null;
@@ -388,14 +388,14 @@ internal sealed class WorkerGrpcService : Worker.WorkerBase
             scopeValues["croniq.execution_log.skip"] = true;
             using var scopeHandle = logger.BeginScope(scopeValues);
             var level = ParseLogLevel(entry.Level);
-            logger.Log(level, "{WorkerEvent}", entry.Message);
+            logger.Log(level, "{RunnerEvent}", entry.Message);
 
             if (!string.IsNullOrWhiteSpace(executionId))
             {
                 entries ??= new List<ExecutionLogEntry>(events.Events.Count);
                 var properties = new Dictionary<string, object?>(scopeValues, StringComparer.OrdinalIgnoreCase);
                 properties.Remove("croniq.execution_log.skip");
-                properties["category"] = "Croniq.Api.WorkerEvents";
+                properties["category"] = "Croniq.Api.RunnerEvents";
                 properties["eventId"] = 0;
 
                 entries.Add(new ExecutionLogEntry(

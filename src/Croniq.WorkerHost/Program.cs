@@ -21,7 +21,7 @@ if (dispatchOptions.EnableGrpc)
         throw new InvalidOperationException("Croniq:WorkerDispatch:GrpcEndpoint is required when EnableGrpc is true.");
     }
 
-    builder.Services.AddCroniqWorkerClient(options =>
+    builder.Services.AddCroniqRunnerClient(options =>
     {
         options.Endpoint = dispatchOptions.GrpcEndpoint!.Trim();
         options.ApiKey = dispatchOptions.ApiKey;

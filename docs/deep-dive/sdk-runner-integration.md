@@ -1,6 +1,6 @@
-# SDK/Worker Integration (HTTP + gRPC)
+# SDK/Runner Integration (HTTP + gRPC)
 
-This guide defines the expected worker SDK behavior so polyglot workers are consistent
+This guide defines the expected runner SDK behavior so polyglot runners are consistent
 across Go/Node/Python and remain safe under retries, restarts, and outages.
 
 ## Configuration contract
@@ -24,6 +24,15 @@ Optional (recommended defaults shown):
 - `CRONIQ_RETRY_MAX_MS` (default: 5000)
 
 Note: not all SDKs implement these env vars yet; this is the target contract.
+
+## Execution intent fields
+
+Lease payloads include execution intent metadata:
+
+- `execution_mode`: `normal|test`
+- `invocation_source`: `schedule|manual|api|webhook-ingress|webhook-invoke` (reserved: `system|replay|backfill`)
+
+SDKs should treat these fields as read-only metadata, surface them in logs/telemetry, and avoid inventing new values.
 
 ## Poll loop
 
@@ -67,6 +76,6 @@ Suggested queue record (JSONL):
 ## Error handling matrix
 
 - `200/204`: success, clear local queue item.
-- `401/403`: fatal, stop worker and fix credentials.
+- `401/403`: fatal, stop runner and fix credentials.
 - `404/409`: lease invalid, drop local queue item.
 - `429/5xx`: retry with backoff.
