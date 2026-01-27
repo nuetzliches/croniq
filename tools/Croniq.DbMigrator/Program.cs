@@ -21,7 +21,14 @@ using System.IO;
 using System.Linq;
 using System.Reflection;
 using System.Runtime.Loader;
+using System.Security.Cryptography;
+using System.Text;
+using System.Text.Json;
 using Npgsql;
+using PostgresApiClientEntity = Croniq.Data.Postgres.Entities.ApiClientEntity;
+using PostgresApiKeyEntity = Croniq.Data.Postgres.Entities.ApiKeyEntity;
+using SqlServerApiClientEntity = Croniq.Data.SqlServer.Entities.ApiClientEntity;
+using SqlServerApiKeyEntity = Croniq.Data.SqlServer.Entities.ApiKeyEntity;
 
 DatabaseProvider databaseProvider;
 string connectionString;
@@ -134,6 +141,25 @@ try
             || string.Equals(required, "1", StringComparison.OrdinalIgnoreCase);
 
         Console.Error.WriteLine($"Admin seeding failed: {ex}");
+        if (isRequired)
+        {
+            throw;
+        }
+    }
+
+    try
+    {
+        await SeedApiKeyAsync(serviceProvider, token).ConfigureAwait(false);
+    }
+    catch (Exception ex)
+    {
+        // Seeding is a dev convenience. It should not block containers/CI by default.
+        // If you want seeding failures to fail the migrator, set CRONIQ_SEED_API_KEY_REQUIRED=true.
+        var required = Environment.GetEnvironmentVariable("CRONIQ_SEED_API_KEY_REQUIRED");
+        var isRequired = string.Equals(required, "true", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(required, "1", StringComparison.OrdinalIgnoreCase);
+
+        Console.Error.WriteLine($"API key seeding failed: {ex}");
         if (isRequired)
         {
             throw;
@@ -809,6 +835,299 @@ static async Task SeedTenantAsync(IServiceProvider provider, CancellationToken t
     logger.LogInformation("Seeded tenant '{TenantId}'.", tenant.TenantId);
 }
 
+static async Task SeedApiKeyAsync(IServiceProvider provider, CancellationToken token)
+{
+    using var scope = provider.CreateScope();
+    var loggerFactory = scope.ServiceProvider.GetRequiredService<ILoggerFactory>();
+    var logger = loggerFactory.CreateLogger("Croniq.DbMigrator.Seed");
+
+    var list = ResolveEnv("CRONIQ_SEED_API_KEYS");
+    if (!string.IsNullOrWhiteSpace(list))
+    {
+        var entries = ParseSeedApiKeyList(list, logger);
+        foreach (var seedEntry in entries)
+        {
+            await SeedApiKeyEntryAsync(scope.ServiceProvider, seedEntry, logger, token).ConfigureAwait(false);
+        }
+        return;
+    }
+
+    var seedKey = ResolveEnv("CRONIQ_SEED_API_KEY");
+    var seedKeyId = ResolveEnv("CRONIQ_SEED_API_KEY_ID");
+    var seedSecret = ResolveEnv("CRONIQ_SEED_API_KEY_SECRET");
+
+    var enabled = !string.IsNullOrWhiteSpace(seedKey)
+        || (!string.IsNullOrWhiteSpace(seedKeyId) && !string.IsNullOrWhiteSpace(seedSecret));
+    if (!enabled)
+    {
+        return;
+    }
+
+    if (string.IsNullOrWhiteSpace(seedKey) && !string.IsNullOrWhiteSpace(seedKeyId) && !string.IsNullOrWhiteSpace(seedSecret))
+    {
+        seedKey = string.Concat(seedKeyId, '.', seedSecret);
+    }
+
+    var (keyId, secret) = SplitSeedKey(seedKey ?? string.Empty);
+    if (string.IsNullOrWhiteSpace(keyId) || string.IsNullOrWhiteSpace(secret))
+    {
+        logger.LogWarning("API key seeding enabled but CRONIQ_SEED_API_KEY is invalid; expected 'keyId.secret'. Skipping.");
+        return;
+    }
+
+    var tenantId = ResolveEnv("CRONIQ_SEED_TENANT_ID")
+        ?? ResolveEnv("CRONIQ_CORE_TENANT_ID")
+        ?? new CroniqOptions().TenantId.Trim();
+    var tenantName = ResolveEnv("CRONIQ_SEED_TENANT_NAME")
+        ?? ResolveEnv("CRONIQ_CORE_TENANT_NAME")
+        ?? tenantId;
+    var tenantReference = ResolveEnv("CRONIQ_SEED_TENANT_REFERENCE")
+        ?? tenantId;
+    var environmentTag = ResolveEnv("CRONIQ_SEED_API_KEY_ENVIRONMENT")
+        ?? ResolveEnv("CRONIQ_ENVIRONMENT")
+        ?? new CroniqOptions().EnvironmentTag.Trim();
+    var clientId = ResolveEnv("CRONIQ_SEED_API_KEY_CLIENT_ID")
+        ?? ResolveEnv("CRONIQ_RUNNER_ID")
+        ?? "default";
+    var clientName = ResolveEnv("CRONIQ_SEED_API_KEY_NAME");
+    var overwrite = string.Equals(Environment.GetEnvironmentVariable("CRONIQ_SEED_API_KEY_OVERWRITE"), "true", StringComparison.OrdinalIgnoreCase)
+        || string.Equals(Environment.GetEnvironmentVariable("CRONIQ_SEED_API_KEY_OVERWRITE"), "1", StringComparison.OrdinalIgnoreCase);
+
+    if (string.IsNullOrWhiteSpace(tenantId) || string.IsNullOrWhiteSpace(clientId))
+    {
+        logger.LogWarning("API key seeding enabled but tenant/client id missing; set CRONIQ_SEED_TENANT_ID and CRONIQ_SEED_API_KEY_CLIENT_ID. Skipping.");
+        return;
+    }
+
+    var singleEntry = (
+        KeyId: keyId,
+        Secret: secret,
+        TenantId: tenantId,
+        TenantName: tenantName,
+        TenantReference: tenantReference,
+        EnvironmentTag: environmentTag,
+        ClientId: clientId,
+        ClientName: clientName,
+        Scopes: ResolveSeedApiKeyScopes(ResolveEnv("CRONIQ_SEED_API_KEY_SCOPES") ?? string.Empty, logger),
+        Overwrite: overwrite);
+
+    await SeedApiKeyEntryAsync(scope.ServiceProvider, singleEntry, logger, token).ConfigureAwait(false);
+}
+
+static async Task SeedApiKeyEntryAsync(
+    IServiceProvider provider,
+    (string KeyId, string Secret, string TenantId, string TenantName, string TenantReference, string EnvironmentTag, string ClientId, string? ClientName, IReadOnlyCollection<string> Scopes, bool Overwrite) entry,
+    ILogger logger,
+    CancellationToken token)
+{
+    if (string.IsNullOrWhiteSpace(entry.KeyId) || string.IsNullOrWhiteSpace(entry.Secret))
+    {
+        logger.LogWarning("API key seeding entry was missing key material; skipping.");
+        return;
+    }
+
+    var tenantStore = provider.GetRequiredService<ITenantStore>();
+    await tenantStore.CreateAsync(new TenantCreateRequest(entry.TenantName, entry.TenantId, entry.TenantReference), token).ConfigureAwait(false);
+
+    if (provider.GetService<SqlServerDbContext>() is SqlServerDbContext sqlContext)
+    {
+        await SeedSqlServerApiKeyEntryAsync(sqlContext, entry, logger, token).ConfigureAwait(false);
+        return;
+    }
+
+    if (provider.GetService<PostgresDbContext>() is PostgresDbContext postgresContext)
+    {
+        await SeedPostgresApiKeyEntryAsync(postgresContext, entry, logger, token).ConfigureAwait(false);
+        return;
+    }
+
+    throw new InvalidOperationException("No database context was registered for API key seeding.");
+}
+
+static async Task SeedSqlServerApiKeyEntryAsync(
+    SqlServerDbContext db,
+    (string KeyId, string Secret, string TenantId, string TenantName, string TenantReference, string EnvironmentTag, string ClientId, string? ClientName, IReadOnlyCollection<string> Scopes, bool Overwrite) entry,
+    ILogger logger,
+    CancellationToken token)
+{
+    var now = DateTime.UtcNow;
+    var tenantId = entry.TenantId.Trim();
+    var clientId = entry.ClientId.Trim();
+    var environmentTag = string.IsNullOrWhiteSpace(entry.EnvironmentTag) ? null : entry.EnvironmentTag.Trim();
+    var scopesJson = SerializeScopes(entry.Scopes);
+
+    var client = await db.ApiClients
+        .FirstOrDefaultAsync(c => c.TenantId == tenantId && c.ClientId == clientId, token)
+        .ConfigureAwait(false);
+
+    if (client is null)
+    {
+        client = new SqlServerApiClientEntity
+        {
+            TenantId = tenantId,
+            ClientId = clientId,
+            Name = entry.ClientName ?? clientId,
+            EnvironmentTag = environmentTag,
+            ScopesJson = scopesJson,
+            IsActive = true,
+            IsDeleted = false,
+            CreatedAtUtc = now,
+            UpdatedAtUtc = now
+        };
+        db.ApiClients.Add(client);
+    }
+    else
+    {
+        client.Name = entry.ClientName ?? client.Name;
+        client.EnvironmentTag = environmentTag ?? client.EnvironmentTag;
+        client.ScopesJson = scopesJson ?? client.ScopesJson;
+        client.IsActive = true;
+        client.IsDeleted = false;
+        client.UpdatedAtUtc = now;
+    }
+
+    var existingKey = await db.ApiKeys
+        .Include(k => k.Client)
+        .FirstOrDefaultAsync(k => k.KeyId == entry.KeyId, token)
+        .ConfigureAwait(false);
+
+    if (existingKey is not null && !entry.Overwrite)
+    {
+        await db.SaveChangesAsync(token).ConfigureAwait(false);
+        logger.LogInformation(
+            "API key '{KeyId}' already exists; skipping (set CRONIQ_SEED_API_KEY_OVERWRITE=true to overwrite).",
+            entry.KeyId);
+        return;
+    }
+
+    var salt = GenerateSalt();
+    var hash = HashSecret(entry.Secret, salt);
+
+    if (existingKey is null)
+    {
+        var entity = new SqlServerApiKeyEntity
+        {
+            Client = client,
+            KeyId = entry.KeyId.Trim(),
+            SecretSalt = salt,
+            SecretHash = hash,
+            EnvironmentTag = environmentTag,
+            ScopesJson = scopesJson,
+            ExpiresAtUtc = null,
+            IsActive = true,
+            CreatedAtUtc = now,
+            UpdatedAtUtc = now
+        };
+        db.ApiKeys.Add(entity);
+    }
+    else
+    {
+        existingKey.Client = client;
+        existingKey.SecretSalt = salt;
+        existingKey.SecretHash = hash;
+        existingKey.EnvironmentTag = environmentTag;
+        existingKey.ScopesJson = scopesJson;
+        existingKey.IsActive = true;
+        existingKey.ExpiresAtUtc = null;
+        existingKey.UpdatedAtUtc = now;
+    }
+
+    await db.SaveChangesAsync(token).ConfigureAwait(false);
+    logger.LogInformation("Seeded API key '{KeyId}' for client '{ClientId}' in tenant '{TenantId}'.", entry.KeyId, clientId, tenantId);
+}
+
+static async Task SeedPostgresApiKeyEntryAsync(
+    PostgresDbContext db,
+    (string KeyId, string Secret, string TenantId, string TenantName, string TenantReference, string EnvironmentTag, string ClientId, string? ClientName, IReadOnlyCollection<string> Scopes, bool Overwrite) entry,
+    ILogger logger,
+    CancellationToken token)
+{
+    var now = DateTime.UtcNow;
+    var tenantId = entry.TenantId.Trim();
+    var clientId = entry.ClientId.Trim();
+    var environmentTag = string.IsNullOrWhiteSpace(entry.EnvironmentTag) ? null : entry.EnvironmentTag.Trim();
+    var scopesJson = SerializeScopes(entry.Scopes);
+
+    var client = await db.ApiClients
+        .FirstOrDefaultAsync(c => c.TenantId == tenantId && c.ClientId == clientId, token)
+        .ConfigureAwait(false);
+
+    if (client is null)
+    {
+        client = new PostgresApiClientEntity
+        {
+            TenantId = tenantId,
+            ClientId = clientId,
+            Name = entry.ClientName ?? clientId,
+            EnvironmentTag = environmentTag,
+            ScopesJson = scopesJson,
+            IsActive = true,
+            IsDeleted = false,
+            CreatedAtUtc = now,
+            UpdatedAtUtc = now
+        };
+        db.ApiClients.Add(client);
+    }
+    else
+    {
+        client.Name = entry.ClientName ?? client.Name;
+        client.EnvironmentTag = environmentTag ?? client.EnvironmentTag;
+        client.ScopesJson = scopesJson ?? client.ScopesJson;
+        client.IsActive = true;
+        client.IsDeleted = false;
+        client.UpdatedAtUtc = now;
+    }
+
+    var existingKey = await db.ApiKeys
+        .Include(k => k.Client)
+        .FirstOrDefaultAsync(k => k.KeyId == entry.KeyId, token)
+        .ConfigureAwait(false);
+
+    if (existingKey is not null && !entry.Overwrite)
+    {
+        await db.SaveChangesAsync(token).ConfigureAwait(false);
+        logger.LogInformation(
+            "API key '{KeyId}' already exists; skipping (set CRONIQ_SEED_API_KEY_OVERWRITE=true to overwrite).",
+            entry.KeyId);
+        return;
+    }
+
+    var salt = GenerateSalt();
+    var hash = HashSecret(entry.Secret, salt);
+
+    if (existingKey is null)
+    {
+        var entity = new PostgresApiKeyEntity
+        {
+            Client = client,
+            KeyId = entry.KeyId.Trim(),
+            SecretSalt = salt,
+            SecretHash = hash,
+            EnvironmentTag = environmentTag,
+            ScopesJson = scopesJson,
+            ExpiresAtUtc = null,
+            IsActive = true,
+            CreatedAtUtc = now,
+            UpdatedAtUtc = now
+        };
+        db.ApiKeys.Add(entity);
+    }
+    else
+    {
+        existingKey.Client = client;
+        existingKey.SecretSalt = salt;
+        existingKey.SecretHash = hash;
+        existingKey.EnvironmentTag = environmentTag;
+        existingKey.ScopesJson = scopesJson;
+        existingKey.IsActive = true;
+        existingKey.ExpiresAtUtc = null;
+        existingKey.UpdatedAtUtc = now;
+    }
+
+    await db.SaveChangesAsync(token).ConfigureAwait(false);
+    logger.LogInformation("Seeded API key '{KeyId}' for client '{ClientId}' in tenant '{TenantId}'.", entry.KeyId, clientId, tenantId);
+}
+
 static IReadOnlyCollection<string> ResolveSeedAdminScopes(string seedScopesRaw, ILogger logger)
 {
     var fallback = new[]
@@ -864,6 +1183,148 @@ static IReadOnlyCollection<string> ResolveSeedAdminScopes(string seedScopesRaw, 
 
     logger.LogInformation("Admin seeding: using custom scope set ({ScopeCount}).", parsed.Length);
     return parsed;
+}
+
+static IReadOnlyCollection<string> ResolveSeedApiKeyScopes(string seedScopesRaw, ILogger logger)
+{
+    var fallback = new[]
+    {
+        CroniqScopes.WorkPoll,
+        CroniqScopes.WorkRenew,
+        CroniqScopes.WorkAck,
+        CroniqScopes.WorkEvents,
+        CroniqScopes.RunnersHeartbeat,
+        CroniqScopes.RunnersRead,
+        CroniqScopes.ExecutionsRead
+    };
+
+    var allKnown = GetAllKnownScopes();
+
+    if (string.IsNullOrWhiteSpace(seedScopesRaw))
+    {
+        return fallback;
+    }
+
+    if (string.Equals(seedScopesRaw, "all", StringComparison.OrdinalIgnoreCase))
+    {
+        logger.LogInformation("API key seeding: CRONIQ_SEED_API_KEY_SCOPES=all -> granting all scopes ({ScopeCount}).", allKnown.Count);
+        return allKnown;
+    }
+
+    var parsed = seedScopesRaw
+        .Split(new[] { ' ', '\t', '\r', '\n', ',' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+        .Distinct(StringComparer.OrdinalIgnoreCase)
+        .OrderBy(scope => scope, StringComparer.OrdinalIgnoreCase)
+        .ToArray();
+
+    if (parsed.Length == 0)
+    {
+        logger.LogWarning("API key seeding: CRONIQ_SEED_API_KEY_SCOPES was set but empty after parsing; falling back to default scope set.");
+        return fallback;
+    }
+
+    logger.LogInformation("API key seeding: using custom scope set ({ScopeCount}).", parsed.Length);
+    return parsed;
+}
+
+static IReadOnlyCollection<(string KeyId, string Secret, string TenantId, string TenantName, string TenantReference, string EnvironmentTag, string ClientId, string? ClientName, IReadOnlyCollection<string> Scopes, bool Overwrite)> ParseSeedApiKeyList(string raw, ILogger logger)
+{
+    var tenantId = ResolveEnv("CRONIQ_SEED_TENANT_ID")
+        ?? ResolveEnv("CRONIQ_CORE_TENANT_ID")
+        ?? new CroniqOptions().TenantId.Trim();
+    var tenantName = ResolveEnv("CRONIQ_SEED_TENANT_NAME")
+        ?? ResolveEnv("CRONIQ_CORE_TENANT_NAME")
+        ?? tenantId;
+    var tenantReference = ResolveEnv("CRONIQ_SEED_TENANT_REFERENCE")
+        ?? tenantId;
+    var defaultEnvironment = ResolveEnv("CRONIQ_SEED_API_KEY_ENVIRONMENT")
+        ?? ResolveEnv("CRONIQ_ENVIRONMENT")
+        ?? new CroniqOptions().EnvironmentTag.Trim();
+    var overwrite = string.Equals(Environment.GetEnvironmentVariable("CRONIQ_SEED_API_KEY_OVERWRITE"), "true", StringComparison.OrdinalIgnoreCase)
+        || string.Equals(Environment.GetEnvironmentVariable("CRONIQ_SEED_API_KEY_OVERWRITE"), "1", StringComparison.OrdinalIgnoreCase);
+
+    var entries = new List<(string KeyId, string Secret, string TenantId, string TenantName, string TenantReference, string EnvironmentTag, string ClientId, string? ClientName, IReadOnlyCollection<string> Scopes, bool Overwrite)>();
+    foreach (var rawEntry in raw.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+    {
+        var parts = rawEntry.Split('|');
+        if (parts.Length < 2)
+        {
+            logger.LogWarning("API key seed entry '{Entry}' is invalid; expected 'keyId.secret|clientId|name|scopes|environment'.", rawEntry);
+            continue;
+        }
+
+        var (keyId, secret) = SplitSeedKey(parts[0].Trim());
+        if (string.IsNullOrWhiteSpace(keyId) || string.IsNullOrWhiteSpace(secret))
+        {
+            logger.LogWarning("API key seed entry '{Entry}' has invalid key; expected 'keyId.secret'.", rawEntry);
+            continue;
+        }
+
+        var clientId = parts[1].Trim();
+        if (string.IsNullOrWhiteSpace(clientId))
+        {
+            logger.LogWarning("API key seed entry '{Entry}' missing clientId.", rawEntry);
+            continue;
+        }
+
+        var name = parts.Length > 2 ? parts[2].Trim() : null;
+        var scopesRaw = parts.Length > 3 ? parts[3].Trim() : string.Empty;
+        var environment = parts.Length > 4 ? parts[4].Trim() : string.Empty;
+        if (string.IsNullOrWhiteSpace(environment))
+        {
+            environment = defaultEnvironment;
+        }
+
+        var scopes = ResolveSeedApiKeyScopes(scopesRaw, logger);
+        entries.Add((
+            KeyId: keyId,
+            Secret: secret,
+            TenantId: tenantId,
+            TenantName: tenantName,
+            TenantReference: tenantReference,
+            EnvironmentTag: environment,
+            ClientId: clientId,
+            ClientName: string.IsNullOrWhiteSpace(name) ? null : name,
+            Scopes: scopes,
+            Overwrite: overwrite));
+    }
+
+    return entries;
+}
+
+static (string? KeyId, string? Secret) SplitSeedKey(string seedKey)
+{
+    var idx = seedKey.IndexOf('.');
+    if (idx <= 0 || idx == seedKey.Length - 1)
+    {
+        return (null, null);
+    }
+
+    return (seedKey[..idx], seedKey[(idx + 1)..]);
+}
+
+static string GenerateSalt()
+{
+    Span<byte> buffer = stackalloc byte[16];
+    RandomNumberGenerator.Fill(buffer);
+    return Convert.ToBase64String(buffer);
+}
+
+static string HashSecret(string secret, string salt)
+{
+    var bytes = Encoding.UTF8.GetBytes(secret + salt);
+    var hash = SHA256.HashData(bytes);
+    return Convert.ToBase64String(hash);
+}
+
+static string? SerializeScopes(IReadOnlyCollection<string> scopes)
+{
+    if (scopes.Count == 0)
+    {
+        return null;
+    }
+
+    return JsonSerializer.Serialize(scopes, new JsonSerializerOptions(JsonSerializerDefaults.Web));
 }
 
 static IReadOnlyCollection<string> GetAllKnownScopes()

@@ -61,8 +61,7 @@ type ApiError struct {
 	Body       string
 }
 
-func (e *ApiError) Error() string
-{
+func (e *ApiError) Error() string {
 	return fmt.Sprintf("croniq api error: status=%d body=%s", e.StatusCode, e.Body)
 }
 
@@ -70,13 +69,11 @@ type RunnerMismatchError struct {
 	Body string
 }
 
-func (e *RunnerMismatchError) Error() string
-{
+func (e *RunnerMismatchError) Error() string {
 	return fmt.Sprintf("runner mismatch: %s", e.Body)
 }
 
-func IsLeaseConflict(err error) bool
-{
+func IsLeaseConflict(err error) bool {
 	var apiErr *ApiError
 	if errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusConflict {
 		return true
@@ -84,8 +81,7 @@ func IsLeaseConflict(err error) bool
 	return false
 }
 
-func IsLeaseNotFound(err error) bool
-{
+func IsLeaseNotFound(err error) bool {
 	var apiErr *ApiError
 	if errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusNotFound {
 		return true
@@ -93,14 +89,12 @@ func IsLeaseNotFound(err error) bool
 	return false
 }
 
-func IsRunnerMismatch(err error) bool
-{
+func IsRunnerMismatch(err error) bool {
 	var mismatch *RunnerMismatchError
 	return errors.As(err, &mismatch)
 }
 
-func NewClient(cfg Config) (*Client, error)
-{
+func NewClient(cfg Config) (*Client, error) {
 	if strings.TrimSpace(cfg.BaseURL) == "" {
 		return nil, errors.New("base url is required")
 	}
@@ -137,8 +131,7 @@ func NewClient(cfg Config) (*Client, error)
 	}, nil
 }
 
-func (c *Client) Poll(ctx context.Context, runnerId string, batchSize int, waitFor time.Duration) ([]Lease, error)
-{
+func (c *Client) Poll(ctx context.Context, runnerId string, batchSize int, waitFor time.Duration) ([]Lease, error) {
 	options := PollOptions{
 		BatchSize: batchSize,
 		WaitFor:   waitFor,
@@ -154,8 +147,7 @@ type PollOptions struct {
 	Capabilities        []string
 }
 
-func (c *Client) PollWithOptions(ctx context.Context, runnerId string, options PollOptions) ([]Lease, error)
-{
+func (c *Client) PollWithOptions(ctx context.Context, runnerId string, options PollOptions) ([]Lease, error) {
 	if strings.TrimSpace(runnerId) == "" {
 		return nil, errors.New("runner id is required")
 	}
@@ -191,8 +183,7 @@ func (c *Client) PollWithOptions(ctx context.Context, runnerId string, options P
 	return response.Leases, nil
 }
 
-func (c *Client) Renew(ctx context.Context, runnerId string, lease Lease) (*Lease, bool, error)
-{
+func (c *Client) Renew(ctx context.Context, runnerId string, lease Lease) (*Lease, bool, error) {
 	if strings.TrimSpace(runnerId) == "" {
 		return nil, false, errors.New("runner id is required")
 	}
@@ -225,8 +216,7 @@ func (c *Client) Ack(
 	succeeded bool,
 	nextFireTimeUtc *time.Time,
 	deadLetterReason string,
-) error
-{
+) error {
 	if strings.TrimSpace(runnerId) == "" {
 		return errors.New("runner id is required")
 	}
@@ -242,8 +232,7 @@ func (c *Client) Ack(
 	return c.post(ctx, "/work/ack", request, nil)
 }
 
-func (c *Client) Events(ctx context.Context, runnerId string, lease Lease, events []WorkEvent) error
-{
+func (c *Client) Events(ctx context.Context, runnerId string, lease Lease, events []WorkEvent) error {
 	if strings.TrimSpace(runnerId) == "" {
 		return errors.New("runner id is required")
 	}
@@ -261,8 +250,7 @@ func (c *Client) Events(ctx context.Context, runnerId string, lease Lease, event
 	return c.post(ctx, path, request, nil)
 }
 
-func (c *Client) Heartbeat(ctx context.Context, runnerId string, environmentTag string, metadataJson string, seenAtUtc *time.Time) error
-{
+func (c *Client) Heartbeat(ctx context.Context, runnerId string, environmentTag string, metadataJson string, seenAtUtc *time.Time) error {
 	if strings.TrimSpace(runnerId) == "" {
 		return errors.New("runner id is required")
 	}
@@ -280,8 +268,7 @@ func (c *Client) Heartbeat(ctx context.Context, runnerId string, environmentTag 
 	return c.post(ctx, "/runners/heartbeat", request, nil)
 }
 
-func (c *Client) post(ctx context.Context, path string, payload interface{}, out interface{}) error
-{
+func (c *Client) post(ctx context.Context, path string, payload interface{}, out interface{}) error {
 	payloadBytes, err := json.Marshal(payload)
 	if err != nil {
 		return err
@@ -327,8 +314,7 @@ func (c *Client) post(ctx context.Context, path string, payload interface{}, out
 	return &ApiError{StatusCode: resp.StatusCode, Body: string(body)}
 }
 
-func isRunnerMismatchBody(body string) bool
-{
+func isRunnerMismatchBody(body string) bool {
 	if strings.Contains(strings.ToLower(body), "runner-mismatch") {
 		return true
 	}
@@ -418,8 +404,7 @@ type RunnerConfig struct {
 	OutboxMaxBytes      int64
 }
 
-func LoadRunnerConfigFromEnv() (RunnerConfig, error)
-{
+func LoadRunnerConfigFromEnv() (RunnerConfig, error) {
 	baseURL, err := requiredEnv("CRONIQ_API_BASEURL")
 	if err != nil {
 		return RunnerConfig{}, err
@@ -487,8 +472,7 @@ func LoadRunnerConfigFromEnv() (RunnerConfig, error)
 	}, nil
 }
 
-func requiredEnv(key string) (string, error)
-{
+func requiredEnv(key string) (string, error) {
 	value := strings.TrimSpace(os.Getenv(key))
 	if value == "" {
 		return "", fmt.Errorf("%s is required", key)
@@ -496,13 +480,11 @@ func requiredEnv(key string) (string, error)
 	return value, nil
 }
 
-func getOptionalEnv(key string) string
-{
+func getOptionalEnv(key string) string {
 	return strings.TrimSpace(os.Getenv(key))
 }
 
-func parseBoolEnv(key string) bool
-{
+func parseBoolEnv(key string) bool {
 	value := strings.TrimSpace(os.Getenv(key))
 	if value == "" {
 		return false
@@ -517,8 +499,7 @@ func parseBoolEnv(key string) bool
 	}
 }
 
-func parseIntEnv(key string, defaultValue int) int
-{
+func parseIntEnv(key string, defaultValue int) int {
 	value := strings.TrimSpace(os.Getenv(key))
 	if value == "" {
 		return defaultValue
@@ -530,8 +511,7 @@ func parseIntEnv(key string, defaultValue int) int
 	return parsed
 }
 
-func parseOptionalIntEnv(key string) int
-{
+func parseOptionalIntEnv(key string) int {
 	value := strings.TrimSpace(os.Getenv(key))
 	if value == "" {
 		return 0
@@ -543,8 +523,7 @@ func parseOptionalIntEnv(key string) int
 	return parsed
 }
 
-func parseListEnv(key string) []string
-{
+func parseListEnv(key string) []string {
 	value := strings.TrimSpace(os.Getenv(key))
 	if value == "" {
 		return nil
@@ -564,15 +543,15 @@ func parseListEnv(key string) []string
 }
 
 type ExecutionContext struct {
-	ExecutionId     string
-	LeaseId         string
-	TriggerId       string
-	JobKey          string
-	FireAtUtc       time.Time
-	LeaseExpiresAt  time.Time
-	ExecutionMode   string
+	ExecutionId      string
+	LeaseId          string
+	TriggerId        string
+	JobKey           string
+	FireAtUtc        time.Time
+	LeaseExpiresAt   time.Time
+	ExecutionMode    string
 	InvocationSource string
-	EmitEvent       func(events []WorkEvent) error
+	EmitEvent        func(events []WorkEvent) error
 }
 
 type RunnerLogger interface {
@@ -583,25 +562,30 @@ type RunnerLogger interface {
 
 type defaultRunnerLogger struct{}
 
-func (l *defaultRunnerLogger) Info(message string, fields map[string]any)  { logWithFields("info", message, fields) }
-func (l *defaultRunnerLogger) Warn(message string, fields map[string]any)  { logWithFields("warn", message, fields) }
-func (l *defaultRunnerLogger) Error(message string, fields map[string]any) { logWithFields("error", message, fields) }
+func (l *defaultRunnerLogger) Info(message string, fields map[string]any) {
+	logWithFields("info", message, fields)
+}
+func (l *defaultRunnerLogger) Warn(message string, fields map[string]any) {
+	logWithFields("warn", message, fields)
+}
+func (l *defaultRunnerLogger) Error(message string, fields map[string]any) {
+	logWithFields("error", message, fields)
+}
 
 type ExecuteHandler func(ctx ExecutionContext, payload *string, logger RunnerLogger) error
 
 type Runner struct {
-	config  RunnerConfig
-	client  *Client
-	logger  RunnerLogger
-	handler ExecuteHandler
+	config   RunnerConfig
+	client   *Client
+	logger   RunnerLogger
+	handler  ExecuteHandler
 	grpcConn *grpcRunnerConnection
-	outbox  *outboxStore
+	outbox   *outboxStore
 	fatalErr chan error
 	cancel   context.CancelFunc
 }
 
-func NewRunner(config RunnerConfig) (*Runner, error)
-{
+func NewRunner(config RunnerConfig) (*Runner, error) {
 	if strings.TrimSpace(config.RunnerId) == "" {
 		return nil, errors.New("runner id is required")
 	}
@@ -652,13 +636,11 @@ func NewRunner(config RunnerConfig) (*Runner, error)
 	}, nil
 }
 
-func (r *Runner) OnExecute(handler ExecuteHandler)
-{
+func (r *Runner) OnExecute(handler ExecuteHandler) {
 	r.handler = handler
 }
 
-func (r *Runner) Run(ctx context.Context) error
-{
+func (r *Runner) Run(ctx context.Context) error {
 	if r.handler == nil {
 		return errors.New("execute handler must be registered")
 	}
@@ -714,8 +696,7 @@ func (r *Runner) Run(ctx context.Context) error
 	}
 }
 
-func (r *Runner) fail(err error)
-{
+func (r *Runner) fail(err error) {
 	if err == nil {
 		return
 	}
@@ -731,8 +712,7 @@ func (r *Runner) fail(err error)
 	}
 }
 
-func (r *Runner) pollLoop(ctx context.Context, queue chan<- Lease)
-{
+func (r *Runner) pollLoop(ctx context.Context, queue chan<- Lease) {
 	attempt := 0
 	for {
 		select {
@@ -777,8 +757,7 @@ func (r *Runner) pollLoop(ctx context.Context, queue chan<- Lease)
 	}
 }
 
-func (r *Runner) heartbeatLoop(ctx context.Context)
-{
+func (r *Runner) heartbeatLoop(ctx context.Context) {
 	interval := r.config.HeartbeatInterval
 	if interval <= 0 {
 		return
@@ -809,8 +788,7 @@ func (r *Runner) heartbeatLoop(ctx context.Context)
 	}
 }
 
-func (r *Runner) runLease(ctx context.Context, lease Lease)
-{
+func (r *Runner) runLease(ctx context.Context, lease Lease) {
 	if !r.config.AllowTestExecutions && strings.EqualFold(lease.ExecutionMode, "test") {
 		if r.grpcConn != nil && r.grpcConn.isConnected() {
 			_ = r.grpcConn.send(buildAckFailureMessage(lease, "test-not-allowed", "test executions are disabled for this runner", "test-not-allowed"))
@@ -830,13 +808,13 @@ func (r *Runner) runLease(ctx context.Context, lease Lease)
 	go r.renewLoop(renewCtx, lease)
 
 	ctxPayload := ExecutionContext{
-		ExecutionId:     lease.ExecutionId,
-		LeaseId:         lease.LeaseId,
-		TriggerId:       lease.TriggerId,
-		JobKey:          lease.JobKey,
-		FireAtUtc:       lease.FireAtUtc,
-		LeaseExpiresAt:  lease.LeaseExpiresAtUtc,
-		ExecutionMode:   lease.ExecutionMode,
+		ExecutionId:      lease.ExecutionId,
+		LeaseId:          lease.LeaseId,
+		TriggerId:        lease.TriggerId,
+		JobKey:           lease.JobKey,
+		FireAtUtc:        lease.FireAtUtc,
+		LeaseExpiresAt:   lease.LeaseExpiresAtUtc,
+		ExecutionMode:    lease.ExecutionMode,
 		InvocationSource: lease.InvocationSource,
 		EmitEvent: func(events []WorkEvent) error {
 			return r.sendEvents(ctx, lease, events, true)
@@ -871,8 +849,7 @@ func (r *Runner) runLease(ctx context.Context, lease Lease)
 	}
 }
 
-func (r *Runner) buildHeartbeatMetadata() string
-{
+func (r *Runner) buildHeartbeatMetadata() string {
 	transportState := "polling"
 	if r.grpcConn != nil && r.grpcConn.isConnected() {
 		transportState = "grpc"
@@ -894,8 +871,7 @@ func (r *Runner) buildHeartbeatMetadata() string
 	return string(payload)
 }
 
-func (r *Runner) renewLoop(ctx context.Context, lease Lease)
-{
+func (r *Runner) renewLoop(ctx context.Context, lease Lease) {
 	for {
 		select {
 		case <-ctx.Done():
@@ -935,8 +911,7 @@ func (r *Runner) renewLoop(ctx context.Context, lease Lease)
 func boolPtr(value bool) *bool { return &value }
 func intPtr(value int) *int    { return &value }
 
-func logWithFields(level string, message string, fields map[string]any)
-{
+func logWithFields(level string, message string, fields map[string]any) {
 	if fields == nil {
 		fields = map[string]any{}
 	}
@@ -950,14 +925,14 @@ type outboxAckSuccessPayload struct {
 }
 
 type outboxAckFailurePayload struct {
-	Lease           Lease  `json:"lease"`
-	ErrorType       string `json:"error_type"`
-	ErrorMessage    string `json:"error_message"`
+	Lease            Lease  `json:"lease"`
+	ErrorType        string `json:"error_type"`
+	ErrorMessage     string `json:"error_message"`
 	DeadLetterReason string `json:"dead_letter_reason"`
 }
 
 type outboxEventsPayload struct {
-	Lease  Lease      `json:"lease"`
+	Lease  Lease       `json:"lease"`
 	Events []WorkEvent `json:"events"`
 }
 
@@ -1069,8 +1044,7 @@ func (r *Runner) replayOutboxLoop(ctx context.Context) {
 	}
 }
 
-func buildAckSuccessMessage(lease Lease) *dynamic.Message
-{
+func buildAckSuccessMessage(lease Lease) *dynamic.Message {
 	_, method, err := loadRunnerService()
 	if err != nil {
 		return nil
@@ -1083,8 +1057,7 @@ func buildAckSuccessMessage(lease Lease) *dynamic.Message
 	return msg
 }
 
-func buildAckFailureMessage(lease Lease, errorType string, message string, reason string) *dynamic.Message
-{
+func buildAckFailureMessage(lease Lease, errorType string, message string, reason string) *dynamic.Message {
 	_, method, err := loadRunnerService()
 	if err != nil {
 		return nil
@@ -1100,8 +1073,7 @@ func buildAckFailureMessage(lease Lease, errorType string, message string, reaso
 	return msg
 }
 
-func buildEventsMessage(lease Lease, events []WorkEvent) *dynamic.Message
-{
+func buildEventsMessage(lease Lease, events []WorkEvent) *dynamic.Message {
 	_, method, err := loadRunnerService()
 	if err != nil {
 		return nil

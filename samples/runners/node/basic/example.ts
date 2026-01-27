@@ -19,6 +19,23 @@ console.log(`- tenant_id:   ${tenantId}`);
 console.log(`- environment: ${environment}`);
 console.log(`- runner_id:   ${runnerId}`);
 
+async function heartbeat() {
+    try {
+        await client.heartbeat({
+            runnerId,
+            environmentTag: environment,
+            seenAtUtc: new Date().toISOString(),
+        });
+    } catch (err) {
+        console.warn('heartbeat failed', err);
+    }
+}
+
+void heartbeat();
+setInterval(() => {
+    void heartbeat();
+}, 15000);
+
 async function loop() {
     while (true) {
         const leases = await client.poll({

@@ -27,14 +27,13 @@ import (
 var runnerProtoFS embed.FS
 
 var (
-	runnerService     *desc.ServiceDescriptor
+	runnerService      *desc.ServiceDescriptor
 	runnerConnect      *desc.MethodDescriptor
 	runnerServiceOnce  sync.Once
 	runnerServiceError error
 )
 
-func loadRunnerService() (*desc.ServiceDescriptor, *desc.MethodDescriptor, error)
-{
+func loadRunnerService() (*desc.ServiceDescriptor, *desc.MethodDescriptor, error) {
 	runnerServiceOnce.Do(func() {
 		parser := protoparse.Parser{
 			Accessor: func(filename string) (io.ReadCloser, error) {
@@ -92,8 +91,7 @@ type grpcRunnerConnection struct {
 	stream    *grpcdynamic.BidiStream
 }
 
-func newGrpcRunnerConnection(config RunnerConfig, onError func(error)) (*grpcRunnerConnection, error)
-{
+func newGrpcRunnerConnection(config RunnerConfig, onError func(error)) (*grpcRunnerConnection, error) {
 	endpoint := config.GrpcBaseURL
 	if endpoint == "" {
 		endpoint = config.BaseURL
@@ -120,20 +118,17 @@ func newGrpcRunnerConnection(config RunnerConfig, onError func(error)) (*grpcRun
 	}, nil
 }
 
-func (c *grpcRunnerConnection) isConnected() bool
-{
+func (c *grpcRunnerConnection) isConnected() bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.connected
 }
 
-func (c *grpcRunnerConnection) start(ctx context.Context, onAssigned func(Lease))
-{
+func (c *grpcRunnerConnection) start(ctx context.Context, onAssigned func(Lease)) {
 	go c.connectLoop(ctx, onAssigned)
 }
 
-func (c *grpcRunnerConnection) send(message *dynamic.Message) error
-{
+func (c *grpcRunnerConnection) send(message *dynamic.Message) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.stream == nil {
@@ -142,8 +137,7 @@ func (c *grpcRunnerConnection) send(message *dynamic.Message) error
 	return c.stream.SendMsg(message)
 }
 
-func (c *grpcRunnerConnection) connectLoop(ctx context.Context, onAssigned func(Lease))
-{
+func (c *grpcRunnerConnection) connectLoop(ctx context.Context, onAssigned func(Lease)) {
 	attempt := 0
 	for {
 		select {
@@ -171,8 +165,7 @@ func (c *grpcRunnerConnection) connectLoop(ctx context.Context, onAssigned func(
 	}
 }
 
-func isGrpcRunnerMismatch(err error) bool
-{
+func isGrpcRunnerMismatch(err error) bool {
 	statusInfo, ok := status.FromError(err)
 	if !ok {
 		return false
@@ -183,8 +176,7 @@ func isGrpcRunnerMismatch(err error) bool
 	return strings.Contains(strings.ToLower(statusInfo.Message()), "runner-mismatch")
 }
 
-func (c *grpcRunnerConnection) connectOnce(ctx context.Context, onAssigned func(Lease)) error
-{
+func (c *grpcRunnerConnection) connectOnce(ctx context.Context, onAssigned func(Lease)) error {
 	_, method, err := loadRunnerService()
 	if err != nil {
 		return err
@@ -261,8 +253,7 @@ func (c *grpcRunnerConnection) connectOnce(ctx context.Context, onAssigned func(
 	}
 }
 
-func leaseFromDynamic(message *dynamic.Message) (Lease, error)
-{
+func leaseFromDynamic(message *dynamic.Message) (Lease, error) {
 	executionId, _ := message.TryGetFieldByName("execution_id")
 	leaseId, _ := message.TryGetFieldByName("lease_id")
 	triggerId, _ := message.TryGetFieldByName("trigger_id")
@@ -314,8 +305,7 @@ func leaseFromDynamic(message *dynamic.Message) (Lease, error)
 	}, nil
 }
 
-func nextDelay(base time.Duration, max time.Duration, attempt int) time.Duration
-{
+func nextDelay(base time.Duration, max time.Duration, attempt int) time.Duration {
 	if attempt < 1 {
 		attempt = 1
 	}
@@ -328,8 +318,7 @@ func nextDelay(base time.Duration, max time.Duration, attempt int) time.Duration
 	return delay + time.Duration(randInt63n(int64(jitter)))
 }
 
-func randInt63n(max int64) int64
-{
+func randInt63n(max int64) int64 {
 	if max <= 0 {
 		return 0
 	}

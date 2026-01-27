@@ -67,6 +67,7 @@ var workerDispatchFallbackIdleDelay = GetEnvValue("CRONIQ_WORKER_DISPATCH_FALLBA
 var workerDispatchFallbackBusyDelay = GetEnvValue("CRONIQ_WORKER_DISPATCH_FALLBACK_BUSY_DELAY");
 var workerDispatchFallbackErrorDelay = GetEnvValue("CRONIQ_WORKER_DISPATCH_FALLBACK_ERROR_DELAY");
 var apiPort = GetInt("CRONIQ_API_HTTP_PORT", GetInt("CRONIQ_API_INTERNAL_PORT", 5080));
+var apiGrpcPort = GetInt("CRONIQ_API_GRPC_PORT", 5082);
 var uiPort = GetInt("CRONIQ_UI_HTTP_PORT", 5081);
 var docsPort = GetInt("CRONIQ_DOCS_HTTP_PORT", 5173);
 var remoteTimeoutSeconds = GetInt("CRONIQ_WEBHOOKS_REMOTE_TIMEOUT_SECONDS", 30);
@@ -189,6 +190,7 @@ if (!usePostgres && string.IsNullOrWhiteSpace(sqlConnection))
 
 var logsPath = Path.Combine(repoRoot, "logs");
 var apiUrls = string.Concat("http://0.0.0.0:", apiPort.ToString(CultureInfo.InvariantCulture));
+var apiGrpcUrls = string.Concat("http://0.0.0.0:", apiGrpcPort.ToString(CultureInfo.InvariantCulture));
 var dmzAdminUrls = string.Concat(
     "https://0.0.0.0:",
     dmzGrpcPort.ToString(CultureInfo.InvariantCulture),
@@ -240,6 +242,15 @@ var migrator = builder.AddProject(
     .WithEnvironment("CRONIQ_SEED_TENANT_REFERENCE", GetEnvValueOrDefault("CRONIQ_SEED_TENANT_REFERENCE", string.Empty))
     .WithEnvironment("CRONIQ_CORE_TENANT_ID", tenantId)
     .WithEnvironment("CRONIQ_CORE_TENANT_NAME", tenantName)
+    .WithEnvironment("CRONIQ_SEED_API_KEYS", GetEnvValueOrDefault("CRONIQ_SEED_API_KEYS", string.Empty))
+    .WithEnvironment("CRONIQ_SEED_API_KEY", GetEnvValueOrDefault("CRONIQ_SEED_API_KEY", string.Empty))
+    .WithEnvironment("CRONIQ_SEED_API_KEY_ID", GetEnvValueOrDefault("CRONIQ_SEED_API_KEY_ID", string.Empty))
+    .WithEnvironment("CRONIQ_SEED_API_KEY_SECRET", GetEnvValueOrDefault("CRONIQ_SEED_API_KEY_SECRET", string.Empty))
+    .WithEnvironment("CRONIQ_SEED_API_KEY_CLIENT_ID", GetEnvValueOrDefault("CRONIQ_SEED_API_KEY_CLIENT_ID", string.Empty))
+    .WithEnvironment("CRONIQ_SEED_API_KEY_NAME", GetEnvValueOrDefault("CRONIQ_SEED_API_KEY_NAME", string.Empty))
+    .WithEnvironment("CRONIQ_SEED_API_KEY_ENVIRONMENT", GetEnvValueOrDefault("CRONIQ_SEED_API_KEY_ENVIRONMENT", string.Empty))
+    .WithEnvironment("CRONIQ_SEED_API_KEY_SCOPES", GetEnvValueOrDefault("CRONIQ_SEED_API_KEY_SCOPES", string.Empty))
+    .WithEnvironment("CRONIQ_SEED_API_KEY_OVERWRITE", GetEnvValueOrDefault("CRONIQ_SEED_API_KEY_OVERWRITE", string.Empty))
     .WithEnvironment("CRONIQ_SEED_ADMIN_USERNAME", GetEnvValueOrDefault("CRONIQ_SEED_ADMIN_USERNAME", "admin"))
     .WithEnvironment("CRONIQ_SEED_ADMIN_PASSWORD", GetEnvValueOrDefault("CRONIQ_SEED_ADMIN_PASSWORD", "admin"))
     .WithEnvironment("CRONIQ_SEED_ADMIN_PASSWORD_CHANGE_REQUIRED", GetEnvValueOrDefault("CRONIQ_SEED_ADMIN_PASSWORD_CHANGE_REQUIRED", "true"))
@@ -466,9 +477,13 @@ var api = builder.AddProject(
             options.ExcludeKestrelEndpoints = true;
         })
     .WithHttpEndpoint(targetPort: apiPort, port: apiPort, name: "http", env: null, isProxied: false)
+    .WithHttpEndpoint(targetPort: apiGrpcPort, port: apiGrpcPort, name: "grpc", env: null, isProxied: false)
     .WithEnvironment("DOTNET_ENVIRONMENT", dotnetEnvironment)
     .WithEnvironment("ASPNETCORE_ENVIRONMENT", dotnetEnvironment)
-    .WithEnvironment("ASPNETCORE_URLS", apiUrls)
+    .WithEnvironment("Kestrel__Endpoints__Http__Url", apiUrls)
+    .WithEnvironment("Kestrel__Endpoints__Http__Protocols", "Http1")
+    .WithEnvironment("Kestrel__Endpoints__Grpc__Url", apiGrpcUrls)
+    .WithEnvironment("Kestrel__Endpoints__Grpc__Protocols", "Http2")
     .WithEnvironment("Croniq__Core__TenantMode", tenantMode)
     .WithEnvironment("Croniq__Core__TenantId", tenantId)
     .WithEnvironment("Croniq__Core__EnvironmentTag", environmentTag)
@@ -736,16 +751,35 @@ if (!string.IsNullOrWhiteSpace(otlpProtocol))
     worker.WithEnvironment("Croniq__Observability__OtlpProtocol", otlpProtocol);
 }
 
-bool IsRunnerSampleEnabled(string profile)
-{
-    return HasProfileTokens(args, profile) || HasProfileRaw(profileArgs, profile);
-}
+var runnerSamplesEnabled = true;
+var runnerGoEnabled = runnerSamplesEnabled;
+var runnerNodeEnabled = runnerSamplesEnabled;
+var runnerPythonEnabled = runnerSamplesEnabled;
+var runnerDotnetEnabled = runnerSamplesEnabled;
+var runnerSamplesApiBaseUrl = string.Concat("http://localhost:", apiPort.ToString(CultureInfo.InvariantCulture));
+var runnerSamplesGrpcBaseUrl = string.Concat("http://localhost:", apiGrpcPort.ToString(CultureInfo.InvariantCulture));
+var runnerGoApiKey = GetEnvValue("CRONIQ_RUNNER_GO_API_KEY") ?? apiKey;
+var runnerNodeApiKey = GetEnvValue("CRONIQ_RUNNER_NODE_API_KEY") ?? apiKey;
+var runnerPythonApiKey = GetEnvValue("CRONIQ_RUNNER_PYTHON_API_KEY") ?? apiKey;
+IResourceBuilder<ExecutableResource>? runnerDotnetResource = null;
 
-var runnerSamplesEnabled = IsRunnerSampleEnabled("runner-samples") || IsRunnerSampleEnabled("runners");
-var runnerGoEnabled = runnerSamplesEnabled || IsRunnerSampleEnabled("runner-go");
-var runnerNodeEnabled = runnerSamplesEnabled || IsRunnerSampleEnabled("runner-node");
-var runnerPythonEnabled = runnerSamplesEnabled || IsRunnerSampleEnabled("runner-python");
-var runnerDotnetEnabled = runnerSamplesEnabled || IsRunnerSampleEnabled("runner-dotnet");
+if (runnerDotnetEnabled)
+{
+    var runnerDotnetPath = Path.Combine(repoRoot, "samples", "runners", "dotnet", "basic");
+    if (Directory.Exists(runnerDotnetPath))
+    {
+        var dotnetCommand = OperatingSystem.IsWindows() ? "dotnet.exe" : "dotnet";
+        var dotnetArgs = new[] { "run" };
+        runnerDotnetResource = builder.AddExecutable("croniq-runner-dotnet", dotnetCommand, runnerDotnetPath, dotnetArgs)
+            .WithEnvironment("CRONIQ_API_BASEURL", runnerSamplesApiBaseUrl)
+                .WithEnvironment("CRONIQ_GRPC_BASEURL", runnerSamplesGrpcBaseUrl)
+            .WithEnvironment("CRONIQ_TENANT_ID", tenantId)
+            .WithEnvironment("CRONIQ_ENVIRONMENT", environmentTag)
+            .WithEnvironment("CRONIQ_API_KEY", apiKey)
+            .WithEnvironment("CRONIQ_RUNNER_ID", "default")
+            .WaitFor(api);
+    }
+}
 
 if (runnerGoEnabled)
 {
@@ -754,13 +788,19 @@ if (runnerGoEnabled)
     {
         var goCommand = OperatingSystem.IsWindows() ? "go.exe" : "go";
         var goArgs = new[] { "run", "." };
-        builder.AddExecutable("croniq-runner-go", goCommand, runnerGoPath, goArgs)
-            .WithEnvironment("CRONIQ_API_BASEURL", $"http://localhost:{apiPort}")
+        var runnerGo = builder.AddExecutable("croniq-runner-go", goCommand, runnerGoPath, goArgs)
+            .WithEnvironment("CRONIQ_API_BASEURL", runnerSamplesApiBaseUrl)
             .WithEnvironment("CRONIQ_TENANT_ID", tenantId)
             .WithEnvironment("CRONIQ_ENVIRONMENT", environmentTag)
-            .WithEnvironment("CRONIQ_API_KEY", apiKey)
-            .WithEnvironment("CRONIQ_RUNNER_ID", "default")
-            .WaitFor(api);
+            .WithEnvironment("CRONIQ_API_KEY", runnerGoApiKey)
+            .WithEnvironment("CRONIQ_RUNNER_ID", "go-default")
+            .WaitFor(api)
+            .WithExplicitStart();
+
+        if (runnerDotnetResource is not null)
+        {
+            runnerGo.WithParentRelationship(runnerDotnetResource);
+        }
     }
 }
 
@@ -771,13 +811,19 @@ if (runnerNodeEnabled)
     {
         var npmCommand = OperatingSystem.IsWindows() ? "npm.cmd" : "npm";
         var nodeArgs = new[] { "run", "start" };
-        builder.AddExecutable("croniq-runner-node", npmCommand, runnerNodePath, nodeArgs)
-            .WithEnvironment("CRONIQ_API_BASEURL", $"http://localhost:{apiPort}")
+        var runnerNode = builder.AddExecutable("croniq-runner-node", npmCommand, runnerNodePath, nodeArgs)
+            .WithEnvironment("CRONIQ_API_BASEURL", runnerSamplesApiBaseUrl)
             .WithEnvironment("CRONIQ_TENANT_ID", tenantId)
             .WithEnvironment("CRONIQ_ENVIRONMENT", environmentTag)
-            .WithEnvironment("CRONIQ_API_KEY", apiKey)
-            .WithEnvironment("CRONIQ_RUNNER_ID", "default")
-            .WaitFor(api);
+            .WithEnvironment("CRONIQ_API_KEY", runnerNodeApiKey)
+            .WithEnvironment("CRONIQ_RUNNER_ID", "node-default")
+            .WaitFor(api)
+            .WithExplicitStart();
+
+        if (runnerDotnetResource is not null)
+        {
+            runnerNode.WithParentRelationship(runnerDotnetResource);
+        }
     }
 }
 
@@ -788,30 +834,19 @@ if (runnerPythonEnabled)
     {
         var pythonCommand = OperatingSystem.IsWindows() ? "python.exe" : "python";
         var pythonArgs = new[] { "example.py" };
-        builder.AddExecutable("croniq-runner-python", pythonCommand, runnerPythonPath, pythonArgs)
-            .WithEnvironment("CRONIQ_API_BASEURL", $"http://localhost:{apiPort}")
+        var runnerPython = builder.AddExecutable("croniq-runner-python", pythonCommand, runnerPythonPath, pythonArgs)
+            .WithEnvironment("CRONIQ_API_BASEURL", runnerSamplesApiBaseUrl)
             .WithEnvironment("CRONIQ_TENANT_ID", tenantId)
             .WithEnvironment("CRONIQ_ENVIRONMENT", environmentTag)
-            .WithEnvironment("CRONIQ_API_KEY", apiKey)
-            .WithEnvironment("CRONIQ_RUNNER_ID", "default")
-            .WaitFor(api);
-    }
-}
+            .WithEnvironment("CRONIQ_API_KEY", runnerPythonApiKey)
+            .WithEnvironment("CRONIQ_RUNNER_ID", "python-default")
+            .WaitFor(api)
+            .WithExplicitStart();
 
-if (runnerDotnetEnabled)
-{
-    var runnerDotnetPath = Path.Combine(repoRoot, "samples", "runners", "dotnet", "basic");
-    if (Directory.Exists(runnerDotnetPath))
-    {
-        var dotnetCommand = OperatingSystem.IsWindows() ? "dotnet.exe" : "dotnet";
-        var dotnetArgs = new[] { "run" };
-        builder.AddExecutable("croniq-runner-dotnet", dotnetCommand, runnerDotnetPath, dotnetArgs)
-            .WithEnvironment("CRONIQ_API_BASEURL", $"http://localhost:{apiPort}")
-            .WithEnvironment("CRONIQ_TENANT_ID", tenantId)
-            .WithEnvironment("CRONIQ_ENVIRONMENT", environmentTag)
-            .WithEnvironment("CRONIQ_API_KEY", apiKey)
-            .WithEnvironment("CRONIQ_RUNNER_ID", "default")
-            .WaitFor(api);
+        if (runnerDotnetResource is not null)
+        {
+            runnerPython.WithParentRelationship(runnerDotnetResource);
+        }
     }
 }
 

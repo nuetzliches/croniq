@@ -404,18 +404,25 @@ export class RunnerClient {
             return { status: 204, json: null };
         }
 
-        let json: T | null = null;
+        let bodyText = '';
         try {
-            json = (await response.json()) as T;
+            bodyText = await response.text();
         } catch {
-            // ignore json errors
+            // ignore body read errors
+        }
+
+        let json: T | null = null;
+        if (bodyText) {
+            try {
+                json = JSON.parse(bodyText) as T;
+            } catch {
+                // ignore json errors
+            }
         }
 
         if (response.status >= 200 && response.status < 300) {
             return { status: response.status, json };
         }
-
-        const bodyText = await response.text();
         if (response.status === 403 && isRunnerMismatchResponse(json, bodyText)) {
             throw new RunnerMismatchError(bodyText);
         }

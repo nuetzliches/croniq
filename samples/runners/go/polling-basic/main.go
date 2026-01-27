@@ -38,6 +38,14 @@ func main() {
 	log.Printf("- runner_id:   %s", runnerID)
 
 	ctx := context.Background()
+	go func() {
+		for {
+			if err := client.Heartbeat(ctx, runnerID, environment, "", nil); err != nil {
+				log.Printf("heartbeat failed: %v", err)
+			}
+			time.Sleep(15 * time.Second)
+		}
+	}()
 	for {
 		leases, err := client.Poll(ctx, runnerID, batchSize, waitFor)
 		if err != nil {

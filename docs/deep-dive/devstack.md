@@ -67,7 +67,7 @@ Caddy proxies to `CRONIQ_CADDY_UPSTREAM_HOST` (default `host.docker.internal`). 
 
 Webhook gRPC relay requires HTTP/2 over TLS. Keep `CRONIQ_DMZ_BASEURL` (and optional `CRONIQ_DMZ_INGRESS_BASEURL`) set to `https://...`, and ensure the DMZ admin upstream stays on the HTTPS port. The ingress host is named `croniq-webhooks-ingress` and runs alongside the devstack; stop it in the Aspire dashboard if you want to disable ingress locally.
 
-Worker dispatch gRPC uses h2c in devstack (HTTP/2 over cleartext) against `CRONIQ_WORKER_DISPATCH_GRPC_ENDPOINT` (defaults to `http://localhost:5080`). When using TLS, switch the endpoint to `https://...` and ensure the host advertises HTTP/2.
+Worker dispatch gRPC uses h2c in devstack (HTTP/2 over cleartext) against `CRONIQ_WORKER_DISPATCH_GRPC_ENDPOINT` (defaults to `http://localhost:5082`). The API exposes a dedicated gRPC port via `CRONIQ_API_GRPC_PORT` (default `5082`) to keep HTTP/1.1 REST traffic on `CRONIQ_API_HTTP_PORT`. When using TLS, switch the endpoint to `https://...` and ensure the host advertises HTTP/2.
 
 ## Observability (obs profile)
 

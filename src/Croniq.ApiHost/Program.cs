@@ -5,11 +5,19 @@ using Croniq.Persistence.Abstractions;
 using Croniq.Webhooks;
 using Croniq.Webhooks.Options;
 using Microsoft.AspNetCore.HttpOverrides;
+using Microsoft.AspNetCore.Server.Kestrel.Core;
 using Microsoft.Extensions.Options;
 using BclIpNetwork = System.Net.IPNetwork;
 
 var builder = WebApplication.CreateBuilder(args);
 builder.AddCroniqHostDefaults();
+builder.WebHost.ConfigureKestrel(options =>
+{
+    options.ConfigureEndpointDefaults(endpointOptions =>
+    {
+        endpointOptions.Protocols = HttpProtocols.Http1AndHttp2;
+    });
+});
 
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddCroniqApiServices(builder.Configuration);
