@@ -22,16 +22,16 @@ Draft.
 - Keep one canonical runner per language with minimal jobs to reduce maintenance.
 - Integrate runner samples into the AppHost via opt-in profiles so the default devstack stays fast.
 
-## Future runner samples (deferred)
+## Runner samples
 
-- Prerequisites: multi-language SDKs and the polyglot runner protocol.
 - Location: `samples/runners/<language>/<name>`.
+- SDK ownership: each sample tracks its SDK language folder.
 - Scope:
   - Use only public Croniq APIs.
 - Prefer gRPC-first dispatch with HTTP polling fallback.
   - Require explicit tenantId and environment tag; no default tenant fallback.
   - Read configuration from `Croniq__*` environment variables.
-- Devstack integration: runner samples are opt-in and added via AppHost profiles once SDKs exist.
+- Devstack integration: runner samples are opt-in and added via AppHost profiles.
 - Documentation: each runner sample ships its own README with setup, expected outputs, and verification steps.
 
 ## References

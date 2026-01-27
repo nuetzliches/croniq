@@ -124,9 +124,10 @@ var tempoHttpPort = GetInt("CRONIQ_TEMPO_HTTP_PORT", 3200);
 var lokiHttpPort = GetInt("CRONIQ_LOKI_HTTP_PORT", 3100);
 var grafanaUser = GetEnvValueOrDefault("CRONIQ_GRAFANA_USER", "admin");
 var grafanaPassword = GetEnvValueOrDefault("CRONIQ_GRAFANA_PASSWORD", "admin");
+var profileArgs = GetEnvValue("CRONIQ_DEVSTACK_PROFILES");
 var obsEnabled = IsObsEnabled(
     args,
-    GetEnvValue("CRONIQ_DEVSTACK_PROFILES"),
+    profileArgs,
     GetEnvValue("CRONIQ_DEVSTACK_OBS"));
 
 if (obsEnabled)
@@ -733,6 +734,67 @@ if (!string.IsNullOrWhiteSpace(otlpEndpoint))
 if (!string.IsNullOrWhiteSpace(otlpProtocol))
 {
     worker.WithEnvironment("Croniq__Observability__OtlpProtocol", otlpProtocol);
+}
+
+bool IsRunnerSampleEnabled(string profile)
+{
+    return HasProfileTokens(args, profile) || HasProfileRaw(profileArgs, profile);
+}
+
+var runnerSamplesEnabled = IsRunnerSampleEnabled("runner-samples") || IsRunnerSampleEnabled("runners");
+var runnerGoEnabled = runnerSamplesEnabled || IsRunnerSampleEnabled("runner-go");
+var runnerNodeEnabled = runnerSamplesEnabled || IsRunnerSampleEnabled("runner-node");
+var runnerPythonEnabled = runnerSamplesEnabled || IsRunnerSampleEnabled("runner-python");
+
+if (runnerGoEnabled)
+{
+    var runnerGoPath = Path.Combine(repoRoot, "samples", "runners", "go", "polling-basic");
+    if (Directory.Exists(runnerGoPath))
+    {
+        var goCommand = OperatingSystem.IsWindows() ? "go.exe" : "go";
+        var goArgs = new[] { "run", "." };
+        builder.AddExecutable("croniq-runner-go", goCommand, runnerGoPath, goArgs)
+            .WithEnvironment("CRONIQ_API_BASEURL", $"http://localhost:{apiPort}")
+            .WithEnvironment("CRONIQ_TENANT_ID", tenantId)
+            .WithEnvironment("CRONIQ_ENVIRONMENT", environmentTag)
+            .WithEnvironment("CRONIQ_API_KEY", apiKey)
+            .WithEnvironment("CRONIQ_RUNNER_ID", "default")
+            .WaitFor(api);
+    }
+}
+
+if (runnerNodeEnabled)
+{
+    var runnerNodePath = Path.Combine(repoRoot, "samples", "runners", "node", "basic");
+    if (Directory.Exists(runnerNodePath))
+    {
+        var npmCommand = OperatingSystem.IsWindows() ? "npm.cmd" : "npm";
+        var nodeArgs = new[] { "run", "start" };
+        builder.AddExecutable("croniq-runner-node", npmCommand, runnerNodePath, nodeArgs)
+            .WithEnvironment("CRONIQ_API_BASEURL", $"http://localhost:{apiPort}")
+            .WithEnvironment("CRONIQ_TENANT_ID", tenantId)
+            .WithEnvironment("CRONIQ_ENVIRONMENT", environmentTag)
+            .WithEnvironment("CRONIQ_API_KEY", apiKey)
+            .WithEnvironment("CRONIQ_RUNNER_ID", "default")
+            .WaitFor(api);
+    }
+}
+
+if (runnerPythonEnabled)
+{
+    var runnerPythonPath = Path.Combine(repoRoot, "samples", "runners", "python", "basic");
+    if (Directory.Exists(runnerPythonPath))
+    {
+        var pythonCommand = OperatingSystem.IsWindows() ? "python.exe" : "python";
+        var pythonArgs = new[] { "example.py" };
+        builder.AddExecutable("croniq-runner-python", pythonCommand, runnerPythonPath, pythonArgs)
+            .WithEnvironment("CRONIQ_API_BASEURL", $"http://localhost:{apiPort}")
+            .WithEnvironment("CRONIQ_TENANT_ID", tenantId)
+            .WithEnvironment("CRONIQ_ENVIRONMENT", environmentTag)
+            .WithEnvironment("CRONIQ_API_KEY", apiKey)
+            .WithEnvironment("CRONIQ_RUNNER_ID", "default")
+            .WaitFor(api);
+    }
 }
 
 var webhooksIngress = builder.AddProject(

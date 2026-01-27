@@ -1,14 +1,7 @@
 {
-  "name": "croniq-worker-sdk-node",
-  "version": "0.0.1",
+  "name": "deprecated-croniq-worker-sdk-node",
+  "version": "0.0.0",
   "private": true,
-  "main": "index.ts",
-  "scripts": {
-    "start": "ts-node example.ts"
-  },
-  "devDependencies": {
-    "@types/node": "^22.10.5",
-    "ts-node": "^10.9.2",
-    "typescript": "^5.7.3"
-  }
+  "description": "Deprecated: moved to sdk/runner-node and samples/runners/node/basic",
+  "main": "index.ts"
 }

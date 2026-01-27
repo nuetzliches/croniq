@@ -12,5 +12,6 @@ Croniq orchestrates distributed workloads for microservice platforms: register j
 - [Feature map](./feature-map.md) - Jump from guides to deep dives and ops runbooks per feature.
 - [Operations](./ops/index.md) - Troubleshoot deployments and keep Croniq healthy.
 - [Deep Dive](./deep-dive/index.md) - Architecture plans, CI/CD workflows, dev stack, and observability internals.
+- [Runner SDK Integration](./deep-dive/sdk-runner-integration.md) - Environment variables, transport fallback, and test execution semantics for polyglot runners.
 
 > Ready to ship? Head straight to the [Quickstart](./introduction/quickstart.md) to run your first job in minutes.

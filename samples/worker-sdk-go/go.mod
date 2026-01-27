@@ -1,3 +1,4 @@
-module croniq/worker-sdk-go
+// Deprecated: moved to sdk/runner-go.
+module deprecated/worker-sdk-go
 
-go 1.21
+go 1.22

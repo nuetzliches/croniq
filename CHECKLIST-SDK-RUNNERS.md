@@ -83,13 +83,13 @@ Goal: deliver runner SDKs that execute Croniq jobs via the `/work` endpoints wit
 
 ## H. Samples & documentation
 
-- [ ] Move runner SDKs out of samples into a dedicated SDK folder (e.g., `sdk/runner-go`, `sdk/runner-node`, `sdk/runner-python`, `sdk/runner-dotnet`).
-- [ ] Place runner samples under `samples/runners/<language>/<name>` and wire them into the AppHost via opt-in profiles (per `docs/deep-dive/designs/samples-to-aspire-hosts.md`).
-- [ ] Register one runner per language in the Aspire Devstack (AppHost profiles) so each SDK has a runnable dev example (P0/blocker).
+- [x] Move runner SDKs out of samples into a dedicated SDK folder (e.g., `sdk/runner-go`, `sdk/runner-node`, `sdk/runner-python`, `sdk/runner-dotnet`).
+- [x] Place runner samples under `samples/runners/<language>/<name>` and wire them into the AppHost via opt-in profiles (per `docs/deep-dive/designs/samples-to-aspire-hosts.md`).
+- [x] Register one runner per language in the Aspire Devstack (AppHost profiles) so each SDK has a runnable dev example (P0/blocker).
 - [x] Expand `docs/guides/workers-runners.md` with transport fallback behavior and test execution semantics.
 - [x] Update `docs/deep-dive/sdk-runner-integration.md` with new env vars and rejection rules.
 - [x] Update `docs/deep-dive/designs/polyglot-runner-protocol.md` to include `executionMode` and the gRPC + polling fallback.
-- [ ] Cross-link changes in `docs/index.md` and `docs/feature-map.md` if needed.
+- [x] Cross-link changes in `docs/index.md` and `docs/feature-map.md` if needed.
 
 ## I. Testing checklist
 
