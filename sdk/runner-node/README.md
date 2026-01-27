@@ -1,6 +1,6 @@
 # Croniq Runner SDK (Node)
 
-Minimal HTTP polling client for Croniq runners. This package is a starting point until the gRPC-first runner implementation lands.
+Runner SDK with gRPC streaming (primary) and HTTP polling fallback. Use `CroniqRunner` for transport chaining, or `RunnerClient` for direct HTTP calls.
 
 ## Requirements
 

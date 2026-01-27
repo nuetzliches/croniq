@@ -1,3 +1,10 @@
+import path from 'path';
+import { promises as fs } from 'fs';
+import { randomUUID } from 'crypto';
+import { EventEmitter } from 'events';
+import * as grpc from '@grpc/grpc-js';
+import * as protoLoader from '@grpc/proto-loader';
+
 export type Lease = {
     executionId: string;
     leaseId: string;
@@ -54,6 +61,58 @@ export type RunnerClientConfig = {
     bearerToken?: string;
     fetchImpl?: typeof fetch;
 };
+
+export type TransportMode = 'auto' | 'grpc' | 'polling';
+
+export type RunnerConfig = {
+    baseUrl: string;
+    grpcBaseUrl?: string;
+    tenantId: string;
+    environment?: string;
+    apiKey?: string;
+    bearerToken?: string;
+    runnerId: string;
+    transportMode?: TransportMode;
+    allowTestExecutions?: boolean;
+    maxInflight?: number;
+    capabilities?: string[];
+    pollBatchSize?: number;
+    pollWaitMs?: number;
+    requestTimeoutMs?: number;
+    renewLeadMs?: number;
+    retryBaseMs?: number;
+    retryMaxMs?: number;
+    retryMaxAttempts?: number;
+    parsePayloadJson?: boolean;
+    outboxPath?: string;
+    outboxMaxEntries?: number;
+    outboxMaxBytes?: number;
+    fetchImpl?: typeof fetch;
+};
+
+export type RunnerExecutionContext = {
+    executionId: string;
+    leaseId: string;
+    triggerId: string;
+    jobKey: string;
+    fireAtUtc: string;
+    leaseExpiresAtUtc: string;
+    executionMode?: string;
+    invocationSource?: string;
+    emitEvent?: (event: WorkEvent) => Promise<void>;
+};
+
+export type RunnerLogger = {
+    info(message: string, data?: Record<string, unknown>): void;
+    warn(message: string, data?: Record<string, unknown>): void;
+    error(message: string, data?: Record<string, unknown>): void;
+};
+
+export type RunnerExecuteHandler = (
+    context: RunnerExecutionContext,
+    payload: unknown,
+    logger: RunnerLogger,
+) => Promise<void>;
 
 export class CroniqError extends Error {
     status: number;
@@ -222,5 +281,755 @@ export class RunnerClient {
             throw new LeaseNotFoundError(bodyText);
         }
         throw new CroniqError('request failed', response.status, bodyText);
+    }
+}
+
+type GrpcWorkAssigned = {
+    execution_id: string;
+    lease_id: string;
+    trigger_id: string;
+    job_key: string;
+    fire_at_utc: string | number;
+    lease_expires_at_utc: string | number;
+    payload: string;
+    execution_mode?: string;
+    invocation_source?: string;
+};
+
+type GrpcRunnerHello = {
+    runner_id: string;
+    max_inflight?: number;
+    capabilities?: Record<string, string>;
+    allow_test_executions?: boolean;
+};
+
+type GrpcRunnerMessage = {
+    hello?: GrpcRunnerHello;
+    ack_success?: { execution_id: string; lease_id: string };
+    ack_failure?: {
+        execution_id: string;
+        lease_id: string;
+        error_type?: string;
+        error_message?: string;
+        dead_letter_reason?: string;
+        next_fire_time_utc?: number;
+    };
+    events?: {
+        execution_id: string;
+        lease_id: string;
+        events: Array<{
+            message: string;
+            level?: string;
+            timestamp_utc?: number;
+            properties?: Record<string, string>;
+            event_type?: string;
+        }>;
+    };
+};
+
+type GrpcServerMessage = {
+    hello?: { server_id: string; tenant_id: string; environment_tag: string; server_time_utc: number };
+    assigned?: GrpcWorkAssigned;
+};
+
+type GrpcRunnerClient = grpc.Client & {
+    connect: (metadata?: grpc.Metadata) => grpc.ClientDuplexStream<GrpcRunnerMessage, GrpcServerMessage>;
+};
+
+type OutboxEntry = {
+    id: string;
+    type: 'ack_success' | 'ack_failure' | 'events';
+    payload: unknown;
+    attempts: number;
+    createdAt: string;
+};
+
+class OutboxStore {
+    private readonly filePath: string;
+    private readonly maxEntries: number;
+    private readonly maxBytes: number;
+    private entries: OutboxEntry[] = [];
+    private writeLock: Promise<void> = Promise.resolve();
+
+    constructor(filePath: string, maxEntries: number, maxBytes: number) {
+        this.filePath = filePath;
+        this.maxEntries = maxEntries;
+        this.maxBytes = maxBytes;
+    }
+
+    async load(): Promise<void> {
+        try {
+            const raw = await fs.readFile(this.filePath, 'utf-8');
+            const lines = raw.split('\n').filter((line) => line.trim().length > 0);
+            this.entries = lines.map((line) => JSON.parse(line) as OutboxEntry);
+        } catch {
+            this.entries = [];
+        }
+    }
+
+    list(): OutboxEntry[] {
+        return [...this.entries];
+    }
+
+    async enqueue(entry: OutboxEntry): Promise<void> {
+        this.entries.push(entry);
+        await this.compact();
+        await this.persist();
+    }
+
+    async markFailed(entryId: string): Promise<void> {
+        const entry = this.entries.find((item) => item.id === entryId);
+        if (entry) {
+            entry.attempts += 1;
+            await this.persist();
+        }
+    }
+
+    async remove(entryId: string): Promise<void> {
+        this.entries = this.entries.filter((item) => item.id !== entryId);
+        await this.persist();
+    }
+
+    private async compact(): Promise<void> {
+        if (this.entries.length > this.maxEntries) {
+            this.entries = this.entries.slice(this.entries.length - this.maxEntries);
+        }
+
+        await this.persist();
+        try {
+            const stat = await fs.stat(this.filePath);
+            if (stat.size > this.maxBytes) {
+                const overshoot = stat.size - this.maxBytes;
+                const dropCount = Math.min(this.entries.length, Math.ceil(overshoot / 200));
+                this.entries = this.entries.slice(dropCount);
+            }
+        } catch {
+            // ignore
+        }
+    }
+
+    private async persist(): Promise<void> {
+        this.writeLock = this.writeLock.then(async () => {
+            const dir = path.dirname(this.filePath);
+            await fs.mkdir(dir, { recursive: true });
+            const payload = this.entries.map((item) => JSON.stringify(item)).join('\n');
+            await fs.writeFile(this.filePath, payload, 'utf-8');
+        });
+        await this.writeLock;
+    }
+}
+
+class GrpcRunnerConnection extends EventEmitter {
+    private readonly endpoint: string;
+    private readonly metadata: grpc.Metadata;
+    private readonly runnerId: string;
+    private readonly allowTestExecutions: boolean;
+    private readonly maxInflight: number;
+    private readonly capabilities: string[] | undefined;
+    private readonly retryBaseMs: number;
+    private readonly retryMaxMs: number;
+    private readonly retryMaxAttempts?: number;
+    private client: GrpcRunnerClient | null = null;
+    private stream: grpc.ClientDuplexStream<GrpcRunnerMessage, GrpcServerMessage> | null = null;
+    private connected = false;
+    private stopped = false;
+
+    constructor(options: {
+        endpoint: string;
+        metadata: grpc.Metadata;
+        runnerId: string;
+        allowTestExecutions: boolean;
+        maxInflight: number;
+        capabilities?: string[];
+        retryBaseMs: number;
+        retryMaxMs: number;
+        retryMaxAttempts?: number;
+    }) {
+        super();
+        this.endpoint = options.endpoint;
+        this.metadata = options.metadata;
+        this.runnerId = options.runnerId;
+        this.allowTestExecutions = options.allowTestExecutions;
+        this.maxInflight = options.maxInflight;
+        this.capabilities = options.capabilities;
+        this.retryBaseMs = options.retryBaseMs;
+        this.retryMaxMs = options.retryMaxMs;
+        this.retryMaxAttempts = options.retryMaxAttempts;
+    }
+
+    async start(): Promise<void> {
+        this.stopped = false;
+        await this.connectLoop();
+    }
+
+    stop(): void {
+        this.stopped = true;
+        this.connected = false;
+        if (this.stream) {
+            this.stream.cancel();
+            this.stream = null;
+        }
+        if (this.client) {
+            this.client.close();
+            this.client = null;
+        }
+    }
+
+    isConnected(): boolean {
+        return this.connected;
+    }
+
+    send(message: GrpcRunnerMessage): void {
+        if (this.stream) {
+            this.stream.write(message);
+        }
+    }
+
+    private async connectLoop(): Promise<void> {
+        let attempt = 0;
+        while (!this.stopped) {
+            try {
+                await this.connectOnce();
+                attempt = 0;
+            } catch (err) {
+                attempt += 1;
+                if (this.retryMaxAttempts && attempt >= this.retryMaxAttempts) {
+                    this.emit('error', err);
+                    return;
+                }
+                const delay = this.nextDelay(attempt);
+                await new Promise((resolve) => setTimeout(resolve, delay));
+            }
+        }
+    }
+
+    private connectOnce(): Promise<void> {
+        const protoPath = path.resolve(__dirname, '../../src/Croniq.Rpc.Client/Protos/runner.proto');
+        const packageDefinition = protoLoader.loadSync(protoPath, {
+            keepCase: true,
+            longs: String,
+            enums: String,
+            defaults: true,
+            oneofs: true,
+        });
+        const proto = grpc.loadPackageDefinition(packageDefinition) as unknown as {
+            croniq: { rpc: { Runner: new (addr: string, creds: grpc.ChannelCredentials) => GrpcRunnerClient } };
+        };
+
+        const credentials = this.endpoint.startsWith('https://')
+            ? grpc.credentials.createSsl()
+            : grpc.credentials.createInsecure();
+        this.client = new proto.croniq.rpc.Runner(this.endpoint, credentials);
+        this.stream = this.client.connect(this.metadata);
+
+        this.stream.on('data', (message) => {
+            if (message?.assigned) {
+                this.emit('assigned', message.assigned);
+            }
+            if (message?.hello && !this.connected) {
+                this.connected = true;
+                this.emit('connected', message.hello);
+            }
+        });
+
+        this.stream.on('error', (err) => {
+            this.connected = false;
+            this.emit('disconnected', err);
+        });
+
+        this.stream.on('end', () => {
+            this.connected = false;
+            this.emit('disconnected');
+        });
+
+        const capabilities: Record<string, string> = {};
+        if (this.capabilities) {
+            for (const entry of this.capabilities) {
+                if (entry.trim()) {
+                    capabilities[entry.trim()] = 'true';
+                }
+            }
+        }
+
+        this.stream.write({
+            hello: {
+                runner_id: this.runnerId,
+                max_inflight: this.maxInflight,
+                allow_test_executions: this.allowTestExecutions,
+                capabilities,
+            },
+        });
+
+        return new Promise((resolve, reject) => {
+            let didConnect = false;
+            const onConnected = () => {
+                didConnect = true;
+            };
+            const onDisconnected = (err?: unknown) => {
+                cleanup();
+                if (didConnect) {
+                    resolve();
+                } else {
+                    reject(err ?? new Error('gRPC connection closed'));
+                }
+            };
+            const cleanup = () => {
+                this.off('connected', onConnected);
+                this.off('disconnected', onDisconnected);
+            };
+
+            this.on('connected', onConnected);
+            this.on('disconnected', onDisconnected);
+        });
+    }
+
+    private nextDelay(attempt: number): number {
+        const base = Math.min(this.retryMaxMs, this.retryBaseMs * 2 ** Math.max(0, attempt - 1));
+        const jitter = base * 0.2 * Math.random();
+        return Math.round(base + jitter);
+    }
+}
+
+export class CroniqRunner {
+    private readonly config: RunnerConfig;
+    private readonly client: RunnerClient;
+    private readonly logger: RunnerLogger;
+    private readonly inflight = new Map<string, { lease: Lease; renewTimer?: NodeJS.Timeout }>();
+    private readonly queue: Lease[] = [];
+    private readonly maxInflight: number;
+    private readonly allowTestExecutions: boolean;
+    private readonly transportMode: TransportMode;
+    private readonly pollWaitMs: number;
+    private readonly pollBatchSize: number;
+    private readonly renewLeadMs: number;
+    private readonly parsePayloadJson: boolean;
+    private readonly retryBaseMs: number;
+    private readonly retryMaxMs: number;
+    private readonly retryMaxAttempts?: number;
+    private readonly outbox: OutboxStore | null;
+    private handler: RunnerExecuteHandler | null = null;
+    private running = false;
+    private grpcConnection: GrpcRunnerConnection | null = null;
+
+    constructor(config: RunnerConfig) {
+        this.config = config;
+        this.transportMode = config.transportMode ?? 'auto';
+        this.allowTestExecutions = !!config.allowTestExecutions;
+        this.maxInflight = Math.max(1, config.maxInflight ?? 1);
+        this.pollWaitMs = config.pollWaitMs ?? 25000;
+        this.pollBatchSize = config.pollBatchSize ?? this.maxInflight;
+        this.renewLeadMs = config.renewLeadMs ?? 10000;
+        this.parsePayloadJson = !!config.parsePayloadJson;
+        this.retryBaseMs = config.retryBaseMs ?? 500;
+        this.retryMaxMs = config.retryMaxMs ?? 10000;
+        this.retryMaxAttempts = config.retryMaxAttempts;
+        const outboxPath = config.outboxPath ?? path.join(process.cwd(), '.croniq', 'runner-outbox.jsonl');
+        this.outbox = new OutboxStore(outboxPath, config.outboxMaxEntries ?? 500, config.outboxMaxBytes ?? 1_000_000);
+
+        this.client = new RunnerClient({
+            baseUrl: config.baseUrl,
+            tenantId: config.tenantId,
+            environment: config.environment,
+            apiKey: config.apiKey,
+            bearerToken: config.bearerToken,
+            fetchImpl: config.fetchImpl,
+        });
+
+        this.logger = {
+            info: (message, data) => console.log(message, data ?? {}),
+            warn: (message, data) => console.warn(message, data ?? {}),
+            error: (message, data) => console.error(message, data ?? {}),
+        };
+    }
+
+    onExecute(handler: RunnerExecuteHandler): void {
+        this.handler = handler;
+    }
+
+    async start(): Promise<void> {
+        if (!this.handler) {
+            throw new Error('onExecute handler must be registered before start');
+        }
+        this.running = true;
+        const tasks: Promise<void>[] = [];
+
+        if (this.outbox) {
+            await this.outbox.load();
+            tasks.push(this.replayOutbox());
+        }
+
+        if (this.transportMode !== 'polling') {
+            tasks.push(this.startGrpc());
+        }
+
+        if (this.transportMode !== 'grpc') {
+            tasks.push(this.startPolling());
+        }
+
+        tasks.push(this.processLoop());
+        await Promise.all(tasks);
+    }
+
+    async stop(): Promise<void> {
+        this.running = false;
+        if (this.grpcConnection) {
+            this.grpcConnection.stop();
+            this.grpcConnection = null;
+        }
+        for (const entry of this.inflight.values()) {
+            if (entry.renewTimer) {
+                clearTimeout(entry.renewTimer);
+            }
+        }
+        this.inflight.clear();
+    }
+
+    private async startGrpc(): Promise<void> {
+        const endpoint = this.config.grpcBaseUrl ?? this.config.baseUrl;
+        const metadata = new grpc.Metadata();
+        if (this.config.bearerToken) {
+            metadata.set('Authorization', `Bearer ${this.config.bearerToken}`);
+        } else if (this.config.apiKey) {
+            metadata.set('X-Croniq-Key', this.config.apiKey);
+        }
+
+        const connection = new GrpcRunnerConnection({
+            endpoint,
+            metadata,
+            runnerId: this.config.runnerId,
+            allowTestExecutions: this.allowTestExecutions,
+            maxInflight: this.maxInflight,
+            capabilities: this.config.capabilities,
+            retryBaseMs: this.retryBaseMs,
+            retryMaxMs: this.retryMaxMs,
+            retryMaxAttempts: this.retryMaxAttempts,
+        });
+        this.grpcConnection = connection;
+
+        connection.on('assigned', (assigned: GrpcWorkAssigned) => {
+            const lease = this.toLeaseFromGrpc(assigned);
+            this.enqueueLease(lease);
+        });
+
+        connection.on('error', (err) => {
+            this.logger.error('gRPC transport failed', { error: String(err) });
+        });
+
+        await connection.start();
+    }
+
+    private async startPolling(): Promise<void> {
+        while (this.running) {
+            if (this.transportMode === 'auto' && this.grpcConnection?.isConnected()) {
+                await this.sleep(250);
+                continue;
+            }
+
+            try {
+                const leases = await this.client.poll({
+                    runnerId: this.config.runnerId,
+                    batchSize: this.pollBatchSize,
+                    waitForMs: this.pollWaitMs,
+                    allowTestExecutions: this.allowTestExecutions,
+                    maxInflight: this.maxInflight,
+                    capabilities: this.config.capabilities,
+                });
+                for (const lease of leases) {
+                    this.enqueueLease(lease);
+                }
+            } catch (err) {
+                this.logger.warn('poll failed', { error: String(err) });
+                await this.sleep(this.nextDelay(1));
+            }
+        }
+    }
+
+    private async processLoop(): Promise<void> {
+        while (this.running) {
+            if (this.queue.length === 0 || this.inflight.size >= this.maxInflight) {
+                await this.sleep(50);
+                continue;
+            }
+
+            const lease = this.queue.shift();
+            if (!lease) {
+                continue;
+            }
+
+            this.inflight.set(lease.leaseId, { lease });
+            this.scheduleRenew(lease);
+            void this.executeLease(lease);
+        }
+    }
+
+    private async executeLease(lease: Lease): Promise<void> {
+        const context: RunnerExecutionContext = {
+            executionId: lease.executionId,
+            leaseId: lease.leaseId,
+            triggerId: lease.triggerId,
+            jobKey: lease.jobKey,
+            fireAtUtc: lease.fireAtUtc,
+            leaseExpiresAtUtc: lease.leaseExpiresAtUtc,
+            executionMode: lease.executionMode,
+            invocationSource: lease.invocationSource,
+            emitEvent: async (event) => {
+                await this.sendEvents(lease, [event], true);
+            },
+        };
+
+        if (!this.allowTestExecutions && lease.executionMode?.toLowerCase() === 'test') {
+            await this.rejectTestLease(lease);
+            this.completeLease(lease.leaseId);
+            return;
+        }
+
+        const payload = this.parsePayloadJson ? this.tryParsePayload(lease.payload) : lease.payload ?? null;
+        try {
+            await this.handler?.(context, payload, this.logger);
+            await this.ackSuccess(lease);
+        } catch (err) {
+            await this.ackFailure(lease, err);
+        } finally {
+            this.completeLease(lease.leaseId);
+        }
+    }
+
+    private async ackSuccess(lease: Lease, allowOutbox = true): Promise<void> {
+        if (this.grpcConnection?.isConnected()) {
+            this.grpcConnection.send({
+                ack_success: {
+                    execution_id: lease.executionId,
+                    lease_id: lease.leaseId,
+                },
+            });
+            return;
+        }
+        try {
+            await this.client.ack({ runnerId: this.config.runnerId, lease, succeeded: true });
+        } catch (err) {
+            if (allowOutbox && this.outbox) {
+                await this.outbox.enqueue({
+                    id: randomUUID(),
+                    type: 'ack_success',
+                    payload: { lease },
+                    attempts: 0,
+                    createdAt: new Date().toISOString(),
+                });
+                return;
+            }
+            throw err;
+        }
+    }
+
+    private async ackFailure(lease: Lease, err: unknown, allowOutbox = true): Promise<void> {
+        const message = err instanceof Error ? err.message : String(err);
+        if (this.grpcConnection?.isConnected()) {
+            this.grpcConnection.send({
+                ack_failure: {
+                    execution_id: lease.executionId,
+                    lease_id: lease.leaseId,
+                    error_type: 'execution-failed',
+                    error_message: message,
+                },
+            });
+            return;
+        }
+        try {
+            await this.client.ack({ runnerId: this.config.runnerId, lease, succeeded: false, deadLetterReason: 'execution-failed' });
+        } catch (err) {
+            if (allowOutbox && this.outbox) {
+                await this.outbox.enqueue({
+                    id: randomUUID(),
+                    type: 'ack_failure',
+                    payload: { lease, errorType: 'execution-failed', errorMessage: message, deadLetterReason: 'execution-failed' },
+                    attempts: 0,
+                    createdAt: new Date().toISOString(),
+                });
+                return;
+            }
+            throw err;
+        }
+    }
+
+    private async rejectTestLease(lease: Lease, allowOutbox = true): Promise<void> {
+        if (this.grpcConnection?.isConnected()) {
+            this.grpcConnection.send({
+                ack_failure: {
+                    execution_id: lease.executionId,
+                    lease_id: lease.leaseId,
+                    error_type: 'test-not-allowed',
+                    error_message: 'test executions are disabled for this runner',
+                    dead_letter_reason: 'test-not-allowed',
+                },
+            });
+            return;
+        }
+        try {
+            await this.client.ack({
+                runnerId: this.config.runnerId,
+                lease,
+                succeeded: false,
+                deadLetterReason: 'test-not-allowed',
+            });
+        } catch (err) {
+            if (allowOutbox && this.outbox) {
+                await this.outbox.enqueue({
+                    id: randomUUID(),
+                    type: 'ack_failure',
+                    payload: { lease, errorType: 'test-not-allowed', errorMessage: 'test executions are disabled for this runner', deadLetterReason: 'test-not-allowed' },
+                    attempts: 0,
+                    createdAt: new Date().toISOString(),
+                });
+                return;
+            }
+            throw err;
+        }
+    }
+
+    private async sendEvents(lease: Lease, events: WorkEvent[], allowOutbox = true): Promise<void> {
+        if (this.grpcConnection?.isConnected()) {
+            this.grpcConnection.send({
+                events: {
+                    execution_id: lease.executionId,
+                    lease_id: lease.leaseId,
+                    events: events.map((event) => ({
+                        message: event.message,
+                        level: event.level,
+                        timestamp_utc: event.timestampUtc ? Date.parse(event.timestampUtc) : undefined,
+                        properties: event.properties,
+                        event_type: event.eventType,
+                    })),
+                },
+            });
+            return;
+        }
+        try {
+            await this.client.events({ runnerId: this.config.runnerId, lease, events });
+        } catch (err) {
+            if (allowOutbox && this.outbox) {
+                await this.outbox.enqueue({
+                    id: randomUUID(),
+                    type: 'events',
+                    payload: { lease, events },
+                    attempts: 0,
+                    createdAt: new Date().toISOString(),
+                });
+                return;
+            }
+            throw err;
+        }
+    }
+
+    private async replayOutbox(): Promise<void> {
+        while (this.running && this.outbox) {
+            const entries = this.outbox.list();
+            if (entries.length === 0) {
+                await this.sleep(1000);
+                continue;
+            }
+            for (const entry of entries) {
+                try {
+                    if (entry.type === 'ack_success') {
+                        const lease = (entry.payload as { lease: Lease }).lease;
+                        await this.ackSuccess(lease, false);
+                    } else if (entry.type === 'ack_failure') {
+                        const payload = entry.payload as { lease: Lease; errorType: string; errorMessage: string; deadLetterReason: string };
+                        await this.ackFailure(payload.lease, payload.errorMessage, false);
+                    } else if (entry.type === 'events') {
+                        const payload = entry.payload as { lease: Lease; events: WorkEvent[] };
+                        await this.sendEvents(payload.lease, payload.events, false);
+                    }
+                    await this.outbox.remove(entry.id);
+                } catch {
+                    await this.outbox.markFailed(entry.id);
+                    await this.sleep(this.nextDelay(entry.attempts + 1));
+                }
+            }
+        }
+    }
+
+    private enqueueLease(lease: Lease): void {
+        this.queue.push(lease);
+    }
+
+    private scheduleRenew(lease: Lease): void {
+        const entry = this.inflight.get(lease.leaseId);
+        if (!entry) {
+            return;
+        }
+
+        if (entry.renewTimer) {
+            clearTimeout(entry.renewTimer);
+        }
+
+        const expiresAt = Date.parse(lease.leaseExpiresAtUtc);
+        const delay = Math.max(1000, expiresAt - Date.now() - this.renewLeadMs);
+        entry.renewTimer = setTimeout(async () => {
+            if (!this.inflight.has(lease.leaseId)) {
+                return;
+            }
+            try {
+                const { renewed, lease: updated } = await this.client.renew({
+                    runnerId: this.config.runnerId,
+                    lease,
+                });
+                if (renewed && updated) {
+                    entry.lease = updated;
+                    this.scheduleRenew(updated);
+                }
+            } catch (err) {
+                this.logger.warn('renew failed', { error: String(err), leaseId: lease.leaseId });
+            }
+        }, delay);
+    }
+
+    private completeLease(leaseId: string): void {
+        const entry = this.inflight.get(leaseId);
+        if (entry?.renewTimer) {
+            clearTimeout(entry.renewTimer);
+        }
+        this.inflight.delete(leaseId);
+    }
+
+    private toLeaseFromGrpc(assigned: GrpcWorkAssigned): Lease {
+        const fireAt = this.toIsoString(assigned.fire_at_utc);
+        const expiresAt = this.toIsoString(assigned.lease_expires_at_utc);
+        return {
+            executionId: assigned.execution_id,
+            leaseId: assigned.lease_id,
+            triggerId: assigned.trigger_id,
+            jobKey: assigned.job_key,
+            fireAtUtc: fireAt,
+            leaseExpiresAtUtc: expiresAt,
+            payload: assigned.payload || null,
+            executionMode: assigned.execution_mode,
+            invocationSource: assigned.invocation_source,
+        };
+    }
+
+    private toIsoString(value: string | number): string {
+        const parsed = typeof value === 'string' ? Number.parseInt(value, 10) : value;
+        return new Date(parsed).toISOString();
+    }
+
+    private tryParsePayload(payload?: string | null): unknown {
+        if (!payload) {
+            return null;
+        }
+        try {
+            return JSON.parse(payload);
+        } catch {
+            return payload;
+        }
+    }
+
+    private async sleep(ms: number): Promise<void> {
+        await new Promise((resolve) => setTimeout(resolve, ms));
+    }
+
+    private nextDelay(attempt: number): number {
+        const base = Math.min(this.retryMaxMs, this.retryBaseMs * 2 ** Math.max(0, attempt - 1));
+        const jitter = base * 0.2 * Math.random();
+        return Math.round(base + jitter);
     }
 }

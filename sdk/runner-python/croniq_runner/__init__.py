@@ -4,6 +4,10 @@ from .client import (
     LeaseConflictError,
     LeaseNotFoundError,
     RunnerClient,
+    RunnerConfig,
+    RunnerExecutionContext,
+    RunnerLogger,
+    CroniqRunner,
     WorkEvent,
 )
 
@@ -13,5 +17,9 @@ __all__ = [
     "LeaseConflictError",
     "LeaseNotFoundError",
     "RunnerClient",
+    "RunnerConfig",
+    "RunnerExecutionContext",
+    "RunnerLogger",
+    "CroniqRunner",
     "WorkEvent",
 ]

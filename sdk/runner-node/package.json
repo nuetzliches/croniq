@@ -4,6 +4,10 @@
     "private": true,
     "main": "index.ts",
     "types": "index.ts",
+    "dependencies": {
+        "@grpc/grpc-js": "^1.10.10",
+        "@grpc/proto-loader": "^0.7.14"
+    },
     "scripts": {
         "start:example": "ts-node samples/runners/node/basic/example.ts"
     },

@@ -43,10 +43,20 @@ Goal: deliver runner SDKs that execute Croniq jobs via the `/work` endpoints wit
 ## D. SDK behavior (shared requirements)
 
 - [ ] Implement transport chain: gRPC streaming -> HTTP polling; allow explicit `transportMode` override (`auto|grpc|polling`).
+  - [x] Node SDK: `CroniqRunner` supports gRPC + polling fallback with `transportMode`.
+  - [x] Python SDK: async `CroniqRunner` with gRPC + polling fallback.
+  - [x] Go SDK: transport chain (gRPC + polling fallback).
 - [ ] Standardize reconnect/backoff with jitter for all transports; keep gRPC reconnect attempts running while polling.
+  - [x] Node SDK: gRPC reconnect loop + polling fallback delay.
+  - [x] Python SDK: gRPC reconnect loop + polling fallback delay.
 - [ ] Ensure lease renewals keep running regardless of transport (in-flight work must not depend on an active stream).
+  - [x] Node SDK: HTTP renew loop per lease.
+  - [x] Go SDK: HTTP renew loop per lease (polling runner).
 - [ ] Honor `executionMode` and runner policy (reject tests when disallowed, before running payload).
 - [ ] Support outbox persistence for ack/events (per `sdk-runner-integration.md`); bound disk usage and replay on startup.
+  - [x] Node SDK: file-backed outbox for ack/events with replay + size bounds.
+  - [x] Python SDK: file-backed outbox for ack/events with replay + size bounds.
+  - [x] Go SDK: file-backed outbox for ack/events with replay + size bounds.
 - [ ] Optional: runner heartbeat support for ops (`/runners/heartbeat`) with metadata (capabilities, transport state).
 - [ ] Provide a uniform configuration contract across SDKs:
   - Required: `CRONIQ_API_BASEURL`, `CRONIQ_TENANT_ID`, `CRONIQ_ENVIRONMENT`, `CRONIQ_API_KEY|CRONIQ_BEARER_TOKEN`, `CRONIQ_RUNNER_ID`
@@ -96,8 +106,11 @@ Goal: deliver runner SDKs that execute Croniq jobs via the `/work` endpoints wit
 
 - [ ] Contract tests for gRPC/polling parity (claim/ack/events) including runner mismatch and lease conflicts.
 - [ ] Test rejection path: test invoke rejected -> warning logged on initiator + UI warning surfaced.
+  - [x] gRPC: test rejection writes warning log entry.
 - [ ] Idempotency and lease-conflict scenarios across transports.
+  - [x] gRPC ack idempotency (second ack ignored).
 - [ ] Fallback chain e2e test: gRPC down -> polling.
+  - [x] API fallback: gRPC unavailable -> HTTP polling succeeds.
 - [ ] Outbox durability: restart with pending ack/events -> replay without duplicates.
 - [x] HTTP poll coverage: `AllowTestExecutions` gating, `executionMode`/`invocationSource` propagation, and `MaxInflight` fallback.
 - [x] Add gRPC parity for execution intent + test gating.
