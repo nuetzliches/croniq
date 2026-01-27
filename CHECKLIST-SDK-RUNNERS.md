@@ -58,12 +58,14 @@ Goal: deliver runner SDKs that execute Croniq jobs via the `/work` endpoints wit
   - [x] Python SDK: file-backed outbox for ack/events with replay + size bounds.
   - [x] Go SDK: file-backed outbox for ack/events with replay + size bounds.
 - [x] Optional: runner heartbeat support for ops (`/runners/heartbeat`) with metadata (capabilities, transport state).
+- [ ] Fail fast on `runnerId` collisions (`runner-id-in-use`); include `runnerInstanceId` in gRPC hello/poll/heartbeat metadata.
+- [ ] Provide a graceful shutdown/drain flow (stop claiming new work, finish in-flight leases, then cancel/stop renewals on timeout).
 - [ ] SDK exposes per-job handler registration (e.g., `runner.onExecute(jobKey, handler)`) and dispatches leases by `jobKey`.
 - [x] Provide a uniform configuration contract across SDKs:
   - Required: `CRONIQ_API_BASEURL`, `CRONIQ_TENANT_ID`, `CRONIQ_ENVIRONMENT`, `CRONIQ_API_KEY|CRONIQ_BEARER_TOKEN`, `CRONIQ_RUNNER_ID`
   - Optional (transport): `CRONIQ_GRPC_BASEURL`, `CRONIQ_TRANSPORT_MODE` (`auto|grpc|polling`), `CRONIQ_ALLOW_TEST_EXECUTIONS`
-  - Optional (standard knobs): `CRONIQ_POLL_BATCH_SIZE`, `CRONIQ_POLL_WAIT_MS`, `CRONIQ_REQUEST_TIMEOUT_MS`, `CRONIQ_RENEW_LEAD_MS`, `CRONIQ_RETRY_MAX_ATTEMPTS`, `CRONIQ_RETRY_BASE_MS`, `CRONIQ_RETRY_MAX_MS`, `CRONIQ_MAX_INFLIGHT`, `CRONIQ_CAPABILITIES`
-  - Validation: fail fast if neither/both API key and bearer token are set; treat `403 runner-mismatch` as fatal.
+  - Optional (standard knobs): `CRONIQ_POLL_BATCH_SIZE`, `CRONIQ_POLL_WAIT_MS`, `CRONIQ_REQUEST_TIMEOUT_MS`, `CRONIQ_RENEW_LEAD_MS`, `CRONIQ_RETRY_MAX_ATTEMPTS`, `CRONIQ_RETRY_BASE_MS`, `CRONIQ_RETRY_MAX_MS`, `CRONIQ_MAX_INFLIGHT`, `CRONIQ_CAPABILITIES`, `CRONIQ_RUNNER_INSTANCE_ID`
+  - Validation: fail fast if neither/both API key and bearer token are set; treat `403 runner-mismatch` or `409 runner-id-in-use` as fatal.
 
 ## E. SDK decisions (recommended defaults)
 
@@ -120,7 +122,8 @@ Goal: deliver runner SDKs that execute Croniq jobs via the `/work` endpoints wit
 ## Open questions
 
 - Decision: Keep the current SDK priority as-is (no change).
-- Decision: Clarify current execution model: API host registers jobs from assemblies and syncs to persistence; runners only execute leases. Document whether/when we move to runner self-registration over gRPC.
+- Decision: Jobs can be registered via API/UI and optionally by runners. Default policy is `RequireApproval` for runner self-registration; jobs remain `pending` until explicitly activated.
+- Decision: Runner self-registration policy options are `RequireApproval` (default), `AutoActivate`, or `Deny` per tenant/environment.
 - Decision: Emit transport selection/fallback metrics in the API host. Suggested names:
   - `croniq.runner.transport.selection_total`
   - `croniq.runner.transport.fallback_total`
@@ -129,7 +132,16 @@ Goal: deliver runner SDKs that execute Croniq jobs via the `/work` endpoints wit
   - `croniq.runner.test.reject_total`
 - Decision: Show test rejection warnings in schedules logs and webhook timelines/trigger details.
 - Decision: SDKs are ready; wire runner samples into AppHost profiles.
+- Decision: Shared runnerId pools are not supported. `runnerId` must be unique per live process; SDKs must fail fast on `runner-id-in-use`. Horizontal scaling is achieved via multiple distinct runnerIds.
+- Decision: Runner shutdown should use a drain flow (stop claiming new work, finish in-flight leases, then cancel/stop renewals on timeout).
 - Decision: There are no external consumers (including Python). We can rename freely to achieve consistent Runner naming without compatibility shims.
+
+## Optimization ideas (backlog)
+
+- Improve runner UI visibility: transport state, last seen, max inflight, allow-test flag, and drain status per runner instance.
+- Add adaptive polling guidance (server hints for next poll delay; jittered backoff in SDKs).
+- Add optional job-key allowlists/capability routing to reduce unneeded work assignments.
+- Emit queue health metrics (lease age, pending work count per job/environment) for scale tuning.
 
 ## J. Node consumer example (script)
 

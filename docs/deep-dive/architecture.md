@@ -147,9 +147,11 @@ docs/
 ## Runner Identity & Availability
 
 - A runner represents a **worker process instance** that claims work via the `/work/*` endpoints. One runner can execute many jobs over time.
-- `runnerId` is a stable identifier (for example `hostname + process`) and is used as the lease owner. Renew/ack requests must use the same `runnerId` that claimed the lease.
+- `runnerId` is a stable identifier (for example `hostname + process`) and is used as the lease owner. Renew/ack requests must use the same `runnerId` that claimed the lease. It must be unique per live runner process; sharing a `runnerId` across processes is not supported.
+- SDKs generate a `runnerInstanceId` (ephemeral per process) and include it in gRPC hello/poll/heartbeat metadata. If the API host sees the same `runnerId` already active with a different `runnerInstanceId`, it rejects the session with `409 runner-id-in-use` and the SDK must fail fast.
 - Authentication stays on the regular Croniq auth paths (API keys or bearer tokens) with least-privilege work scopes (`work:poll`, `work:renew`, `work:ack`, `work:events`). `runnerId` itself is **not** a secret, but it must match the authenticated caller identity.
 - Runner availability is tracked via heartbeats (`POST /tenants/{tenantId}/runners/heartbeat`) and listed via `GET /tenants/{tenantId}/runners`. The TTL is controlled by `RunnerStoreOptions.OnlineTtl`. Availability is informational and does not affect lease correctness.
+- Horizontal scaling is achieved by running multiple runners with distinct `runnerId` values. Lease ownership guarantees one execution per lease, while per-job concurrency limits still apply.
 - Naming: use "Runner" for `/work` clients and gRPC streaming; reserve "WorkerHost" for the .NET host.
 
 ## Polyglot Runner Protocol
@@ -159,6 +161,14 @@ docs/
 - Runners advertise capabilities (`allowTestExecutions`, `maxInflight`, optional capability tags) on gRPC hello or poll requests; the API host suppresses test dispatches when `allowTestExecutions` is false.
 - Work payloads include execution intent (`executionMode`, `invocationSource`) so runners can enforce policy and the UI can label executions.
 - Protocol design avoids global heartbeats; ownership and liveness are derived from lease deadlines and acknowledgements.
+
+## Runner Shutdown (Drain)
+
+Runner SDKs should expose a drain/shutdown mode:
+
+- Stop claiming new work (close the gRPC stream and pause polling).
+- Continue to renew and ack in-flight leases until they complete.
+- If the shutdown timeout elapses, cancel local execution and stop renewals; do not ack success after lease loss. Prefer a non-retryable failure reason (for example `runner-shutdown`) when the execution was intentionally cancelled.
 
 ## Job Store & Provider Model
 
@@ -229,6 +239,16 @@ docs/
 - `Croniq.Sdk` defines `[CroniqJob]` attribute, `IJob`, DI helpers (`AddCroniqJob<T>` / `AddCroniqJob("namespace", "name", handler)`).
 - Jobs live in dedicated class libraries per domain. Packaging guidelines recommend NuGet distribution to enforce versioning.
 - Inline handlers use delegates; complex workflows should implement `IJob` directly.
+
+## Job Registration & Approval
+
+- Jobs can be registered via the API/UI and optionally by runners (self-registration).
+- Self-registered jobs carry metadata (`registrationSource`, `createdBy`, timestamps) and start in `pending` state.
+- The API host applies a per-tenant/environment policy for runner self-registration:
+  - `RequireApproval` (default): jobs remain pending until approved in the UI/API.
+  - `AutoActivate`: jobs become active immediately.
+  - `Deny`: reject runner self-registration attempts.
+- Only `active` jobs are dispatched; optional runner subscriptions/allowlists further restrict assignments.
 
 ## Policies & Error Handling
 

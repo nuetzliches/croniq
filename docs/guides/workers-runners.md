@@ -35,6 +35,10 @@ Authentication supports both:
 
 `runnerId` is treated as the lease owner and must match the authenticated caller identity (API client id for API keys or subject for bearer tokens). A runner represents a worker process instance and can execute many jobs over time. Use a stable value (for example `hostname + process`) and reuse the same `runnerId` for polling, renewing, and acknowledging work. If the `runnerId` does not match the authenticated caller identity, the server rejects the request with `403 runner-mismatch`.
 
+Runner ids must be unique per live process. SDKs generate a `runnerInstanceId` and include it in the hello/poll/heartbeat metadata; if the API host sees the same `runnerId` already active with a different instance id, it rejects the new session with `409 runner-id-in-use` and the runner should fail fast.
+
+Horizontal scale-out is achieved by running multiple runners with distinct `runnerId` values; lease ownership guarantees one execution per lease while job-level concurrency policies still apply.
+
 ## Endpoints
 
 ### Poll
@@ -141,6 +145,8 @@ Keep the SDK configuration explicit and stable, and document it for operators:
   - max inflight (for gRPC stream)
   - lease-renew lead time or renewal interval
   - request timeout + retry backoff/jitter
+  - runner instance id (`CRONIQ_RUNNER_INSTANCE_ID`, auto-generated if omitted)
+- Keep client code minimal; the SDK owns transport selection, lease renewals, ack/outbox behavior, and dispatches to per-job handlers.
 
 Failover/offline strategy:
 
@@ -156,6 +162,24 @@ Local persistence fallback (outgoing queue):
 - Do not execute new work offline; only process work that was already leased before the outage.
 
 More detail: see `docs/deep-dive/sdk-runner-integration.md`.
+
+## Graceful Shutdown (Drain)
+
+Use a drain flow when stopping a runner:
+
+- Stop claiming new work (close the gRPC stream and pause polling).
+- Keep renewing/acking in-flight leases until completion.
+- If the shutdown timeout elapses, cancel local execution and stop renewing; do not ack success after lease loss.
+
+## Job Registration & Approval
+
+Jobs can be registered via the API/UI and optionally by runners (self-registration). The API host applies a per-tenant policy:
+
+- `RequireApproval` (default): runner-registered jobs are `pending` until approved in the UI/API.
+- `AutoActivate`: runner-registered jobs become active immediately.
+- `Deny`: runner self-registration is rejected.
+
+Only `active` jobs are dispatched to runners; pending jobs are never assigned.
 
 ## Issue a Runner API Key (SQL auth)
 
@@ -181,6 +205,8 @@ Scopes:
 - `runners:read` for listing runners
 
 Heartbeat payloads accept `runnerId`, optional `seenAtUtc`, and optional `metadataJson` for tags or capabilities. Presence is derived from the configured TTL; it does not affect lease correctness.
+
+Recommended metadata fields include `runnerInstanceId`, capability tags, and transport state so UIs can detect collisions and display gRPC/polling status.
 
 ## Protocol Roadmap
 

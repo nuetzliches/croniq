@@ -39,8 +39,13 @@ Active (HTTP work endpoints shipped; gRPC streaming available for runners). Last
 A **Runner** is a process instance that can claim and execute jobs.
 
 - `runner_id`: stable identifier chosen by the operator (not instance-id based).
+- `runner_instance_id`: ephemeral per-process identifier used to detect runner id collisions.
 - `capabilities`: optional tags (language, os, queue, custom) used for routing.
 - `allow_test_executions`: flag indicating if the runner accepts test-mode work.
+
+Runners must not share the same `runner_id`. If the API host observes a different
+`runner_instance_id` already active for the same `runner_id` (within the online TTL),
+it rejects the new session with `409 runner-id-in-use` and the SDK must fail fast.
 
 ### Work Item
 
@@ -63,6 +68,18 @@ A **Work Item** is an assignment representing a single execution attempt.
   - For streaming: the **open stream** plus transport keepalive.
 
 Croniq still supports optional runner presence via `POST /tenants/{tenantId}/runners/heartbeat` and `GET /tenants/{tenantId}/runners`, but correctness does not depend on those heartbeats.
+
+## Job Registration & Activation Policy
+
+Jobs can be registered through the API/UI and optionally by runners (self-registration).
+When a runner requests self-registration for a new `job_key`, the API host applies a
+tenant/environment policy:
+
+- `RequireApproval` (default): job starts in `pending` state and must be activated in the UI/API.
+- `AutoActivate`: job becomes `active` immediately.
+- `Deny`: reject runner self-registration attempts.
+
+Pending jobs are never dispatched to runners.
 
 ## Semantics
 
@@ -98,6 +115,7 @@ Rules:
 Request:
 
 - `runnerId` (string, required)
+- `runnerInstanceId` (string, optional)
 - `batchSize` (int, default 1; max 250)
 - `waitForMs` (int, default 0; max 30000)
 - `allowTestExecutions` (bool, default false)
@@ -122,6 +140,7 @@ Notes:
 
 - If no work is available, the server may return an empty list after `waitForMs`.
 - This is compatible with simple SDK loops and avoids WebSocket requirements.
+- If the API host detects an active session for the same `runnerId` with a different `runnerInstanceId`, it returns `409 runner-id-in-use`.
 
 ### Renew
 
@@ -173,10 +192,11 @@ Request:
 `rpc Connect (stream RunnerMessage) returns (stream ServerMessage);`
 
 - Runner opens a single stream.
-- First message is `Hello` (runner id, capabilities, max inflight, allow_test_executions).
+- First message is `Hello` (runner id, runner instance id, capabilities, max inflight, allow_test_executions).
 - Server sends `WorkAssigned` messages.
 - Runner sends `AckSuccess`/`AckFailure` and optionally `Events`.
 - `AckFailure` may include `next_fire_time_utc` to reschedule without dead-lettering.
+  - If the API host detects a `runner_id` collision, it should terminate the stream with an `AlreadyExists`-style error and details `runner-id-in-use`.
 
 Disconnect handling:
 
@@ -220,6 +240,8 @@ The API must enforce that:
   - HTTP long-poll provides "recently active" signals but is not strict presence.
 - Correctness does not depend on presence; leases + idempotent acks are the source of truth.
   - Croniq also tracks worker host presence separately via `/workers` for dashboard/ops use.
+- Graceful shutdown should use a drain flow: stop claiming new work (close the stream/stop polling), keep renewing in-flight leases, and wait for completion. If the shutdown timeout elapses, cancel local execution and stop renewing.
+- Horizontal scale-out is achieved by running multiple runners with distinct `runner_id` values; lease ownership guarantees one execution per lease while job-level concurrency policies still apply.
 
 ## Persistence & Schema
 
@@ -251,6 +273,8 @@ Current tables (SqlServer/Postgres):
   - `OccurredAtUtc`
 
 The existing `croniq.Runners` table remains the runner availability view (TTL-based) and does not gate leasing. Worker host presence is stored in `croniq.WorkerInstances` and is also informational.
+
+For collision detection, runner availability metadata should include the current `runner_instance_id` (or a dedicated column if added later).
 
 ## Integration Plan
 
