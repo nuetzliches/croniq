@@ -68,7 +68,7 @@ public sealed class WorkEndpointsTests : IClassFixture<WebhookApiTestHost>
     }
 
     [Fact]
-    public async Task Ack_DuplicateLease_ReturnsConflict()
+    public async Task Ack_DuplicateLease_IsIdempotent()
     {
         _host.Reset();
         const string jobKey = "ops:work-ack-conflict";
@@ -98,7 +98,7 @@ public sealed class WorkEndpointsTests : IClassFixture<WebhookApiTestHost>
         firstAck.StatusCode.ShouldBe(HttpStatusCode.NoContent);
 
         var secondAck = await _host.Client.PostAsJsonAsync($"/tenants/{WebhookApiTestHost.TenantId}/work/ack", ack);
-        secondAck.StatusCode.ShouldBe(HttpStatusCode.Conflict);
+        secondAck.StatusCode.ShouldBe(HttpStatusCode.NoContent);
     }
 
     [Fact]

@@ -8,6 +8,7 @@ using System.Threading.Tasks;
 using Croniq.Api.Models;
 using Croniq.Api.Tests.Infrastructure;
 using Croniq.Auth.Core;
+using Croniq.Core.Execution;
 using Croniq.Core.Jobs;
 using Croniq.Core.Policies;
 using Croniq.Core.Scheduling;
@@ -116,6 +117,10 @@ public sealed class RunnerFallbackTests
             await call.ResponseStream.MoveNext(CancellationToken.None);
         }
         catch (RpcException)
+        {
+            grpcFailed = true;
+        }
+        catch (HttpProtocolException)
         {
             grpcFailed = true;
         }

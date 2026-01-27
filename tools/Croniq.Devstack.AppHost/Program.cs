@@ -745,6 +745,7 @@ var runnerSamplesEnabled = IsRunnerSampleEnabled("runner-samples") || IsRunnerSa
 var runnerGoEnabled = runnerSamplesEnabled || IsRunnerSampleEnabled("runner-go");
 var runnerNodeEnabled = runnerSamplesEnabled || IsRunnerSampleEnabled("runner-node");
 var runnerPythonEnabled = runnerSamplesEnabled || IsRunnerSampleEnabled("runner-python");
+var runnerDotnetEnabled = runnerSamplesEnabled || IsRunnerSampleEnabled("runner-dotnet");
 
 if (runnerGoEnabled)
 {
@@ -788,6 +789,23 @@ if (runnerPythonEnabled)
         var pythonCommand = OperatingSystem.IsWindows() ? "python.exe" : "python";
         var pythonArgs = new[] { "example.py" };
         builder.AddExecutable("croniq-runner-python", pythonCommand, runnerPythonPath, pythonArgs)
+            .WithEnvironment("CRONIQ_API_BASEURL", $"http://localhost:{apiPort}")
+            .WithEnvironment("CRONIQ_TENANT_ID", tenantId)
+            .WithEnvironment("CRONIQ_ENVIRONMENT", environmentTag)
+            .WithEnvironment("CRONIQ_API_KEY", apiKey)
+            .WithEnvironment("CRONIQ_RUNNER_ID", "default")
+            .WaitFor(api);
+    }
+}
+
+if (runnerDotnetEnabled)
+{
+    var runnerDotnetPath = Path.Combine(repoRoot, "samples", "runners", "dotnet", "basic");
+    if (Directory.Exists(runnerDotnetPath))
+    {
+        var dotnetCommand = OperatingSystem.IsWindows() ? "dotnet.exe" : "dotnet";
+        var dotnetArgs = new[] { "run" };
+        builder.AddExecutable("croniq-runner-dotnet", dotnetCommand, runnerDotnetPath, dotnetArgs)
             .WithEnvironment("CRONIQ_API_BASEURL", $"http://localhost:{apiPort}")
             .WithEnvironment("CRONIQ_TENANT_ID", tenantId)
             .WithEnvironment("CRONIQ_ENVIRONMENT", environmentTag)

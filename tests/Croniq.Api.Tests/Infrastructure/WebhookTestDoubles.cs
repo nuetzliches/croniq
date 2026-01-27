@@ -472,7 +472,9 @@ public sealed class NoopJobPersistenceProvider : IJobPersistenceProvider, ICalen
             source.Enabled,
             metadata,
             source.TimeZoneId,
-            source.CalendarId);
+            source.CalendarId,
+            source.ExecutionMode,
+            source.InvocationSource);
     }
 
     private static JobDefinition CloneJob(JobDefinition job)

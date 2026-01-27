@@ -4,6 +4,7 @@ using System.Net;
 using System.Net.Http;
 using System.Net.Http.Json;
 using System.Threading;
+using Croniq.Api.Models;
 using System.Threading.Tasks;
 using System.Text.Json;
 using Croniq.Api.Tests.Infrastructure;
@@ -590,23 +591,26 @@ public sealed class GrpcRunnerTests
             }
         });
 
-        var lines = await WaitForLogLinesAsync(executionLogs, assigned.ExecutionId);
-        lines.ShouldNotBeEmpty();
-
-        var hasWarning = false;
-        foreach (var line in lines)
-        {
-            using var doc = JsonDocument.Parse(line);
-            if (doc.RootElement.TryGetProperty("properties", out var properties)
-                && properties.TryGetProperty("croniq.warning.type", out var warningType)
-                && warningType.GetString() == WorkRejectionReasons.TestNotAllowed)
+        var hasMessage = await WaitForLogEntryAsync(
+            executionLogs,
+            assigned.ExecutionId,
+            root =>
             {
-                hasWarning = true;
-                break;
-            }
-        }
+                if (root.TryGetProperty("renderedMessage", out var rendered)
+                    && rendered.GetString()?.Contains("hello from runner", StringComparison.OrdinalIgnoreCase) == true)
+                {
+                    return true;
+                }
 
-        hasWarning.ShouldBeTrue();
+                if (root.TryGetProperty("messageTemplate", out var template)
+                    && template.GetString()?.Contains("hello from runner", StringComparison.OrdinalIgnoreCase) == true)
+                {
+                    return true;
+                }
+
+                return false;
+            });
+        hasMessage.ShouldBeTrue();
 
         await call.RequestStream.CompleteAsync();
         await app.StopAsync();
@@ -841,8 +845,14 @@ public sealed class GrpcRunnerTests
             }
         });
 
-        var lines = await WaitForLogLinesAsync(executionLogs, assigned.ExecutionId);
-        lines.ShouldNotBeEmpty();
+        var hasWarning = await WaitForLogEntryAsync(
+            executionLogs,
+            assigned.ExecutionId,
+            root =>
+                root.TryGetProperty("properties", out var properties)
+                && properties.TryGetProperty("croniq.warning.type", out var warningType)
+                && warningType.GetString() == WorkRejectionReasons.TestNotAllowed);
+        hasWarning.ShouldBeTrue();
 
         await call.RequestStream.CompleteAsync();
         await app.StopAsync();
@@ -1265,39 +1275,31 @@ public sealed class GrpcRunnerTests
         return await ReadLogLinesAsync(executionLogs, executionId);
     }
 
-    private static async Task<List<string>> ReadLogLinesAsync(
+    private static async Task<bool> WaitForLogEntryAsync(
         TestExecutionLogReader executionLogs,
-        string executionId)
-    {
-        var lines = new List<string>();
-        await foreach (var line in executionLogs.ReadLinesAsync(executionId, CancellationToken.None))
-        {
-            lines.Add(line);
-        }
-
-        return lines;
-    }
-
-    private static async Task<IReadOnlyCollection<string>> WaitForLogLinesAsync(
-        TestExecutionLogReader executionLogs,
-        string executionId)
+        string executionId,
+        Func<JsonElement, bool> predicate)
     {
         var deadline = DateTimeOffset.UtcNow.AddSeconds(2);
         while (DateTimeOffset.UtcNow < deadline)
         {
             var lines = await ReadLogLinesAsync(executionLogs, executionId);
-            if (lines.Count > 0)
+            foreach (var line in lines)
             {
-                return lines;
+                using var doc = JsonDocument.Parse(line);
+                if (predicate(doc.RootElement))
+                {
+                    return true;
+                }
             }
 
             await Task.Delay(50);
         }
 
-        return await ReadLogLinesAsync(executionLogs, executionId);
+        return false;
     }
 
-    private static async Task<IReadOnlyCollection<string>> ReadLogLinesAsync(
+    private static async Task<List<string>> ReadLogLinesAsync(
         TestExecutionLogReader executionLogs,
         string executionId)
     {
