@@ -58,6 +58,7 @@ Goal: deliver runner SDKs that execute Croniq jobs via the `/work` endpoints wit
   - [x] Python SDK: file-backed outbox for ack/events with replay + size bounds.
   - [x] Go SDK: file-backed outbox for ack/events with replay + size bounds.
 - [x] Optional: runner heartbeat support for ops (`/runners/heartbeat`) with metadata (capabilities, transport state).
+- [ ] SDK exposes per-job handler registration (e.g., `runner.onExecute(jobKey, handler)`) and dispatches leases by `jobKey`.
 - [x] Provide a uniform configuration contract across SDKs:
   - Required: `CRONIQ_API_BASEURL`, `CRONIQ_TENANT_ID`, `CRONIQ_ENVIRONMENT`, `CRONIQ_API_KEY|CRONIQ_BEARER_TOKEN`, `CRONIQ_RUNNER_ID`
   - Optional (transport): `CRONIQ_GRPC_BASEURL`, `CRONIQ_TRANSPORT_MODE` (`auto|grpc|polling`), `CRONIQ_ALLOW_TEST_EXECUTIONS`
@@ -119,6 +120,7 @@ Goal: deliver runner SDKs that execute Croniq jobs via the `/work` endpoints wit
 ## Open questions
 
 - Decision: Keep the current SDK priority as-is (no change).
+- Decision: Clarify current execution model: API host registers jobs from assemblies and syncs to persistence; runners only execute leases. Document whether/when we move to runner self-registration over gRPC.
 - Decision: Emit transport selection/fallback metrics in the API host. Suggested names:
   - `croniq.runner.transport.selection_total`
   - `croniq.runner.transport.fallback_total`
