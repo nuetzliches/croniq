@@ -1,9 +1,9 @@
-import path from 'path';
-import { promises as fs } from 'fs';
-import { randomUUID } from 'crypto';
-import { EventEmitter } from 'events';
 import * as grpc from '@grpc/grpc-js';
 import * as protoLoader from '@grpc/proto-loader';
+import { randomUUID } from 'crypto';
+import { EventEmitter } from 'events';
+import { promises as fs } from 'fs';
+import path from 'path';
 
 export type Lease = {
     executionId: string;
@@ -53,6 +53,13 @@ export type EventsRequest = {
     events: WorkEvent[];
 };
 
+export type HeartbeatRequest = {
+    runnerId: string;
+    environmentTag?: string;
+    seenAtUtc?: string;
+    metadataJson?: string;
+};
+
 export type RunnerClientConfig = {
     baseUrl: string;
     tenantId: string;
@@ -83,6 +90,8 @@ export type RunnerConfig = {
     retryBaseMs?: number;
     retryMaxMs?: number;
     retryMaxAttempts?: number;
+    heartbeatIntervalMs?: number;
+    heartbeatMetadata?: Record<string, unknown>;
     parsePayloadJson?: boolean;
     outboxPath?: string;
     outboxMaxEntries?: number;
@@ -107,6 +116,116 @@ export type RunnerLogger = {
     warn(message: string, data?: Record<string, unknown>): void;
     error(message: string, data?: Record<string, unknown>): void;
 };
+
+export function loadRunnerConfigFromEnv(env: Record<string, string | undefined> = process.env): RunnerConfig {
+    const baseUrl = env.CRONIQ_API_BASEURL?.trim();
+    const grpcBaseUrl = env.CRONIQ_GRPC_BASEURL?.trim();
+    const tenantId = env.CRONIQ_TENANT_ID?.trim();
+    const environment = env.CRONIQ_ENVIRONMENT?.trim();
+    const apiKey = env.CRONIQ_API_KEY?.trim();
+    const bearerToken = env.CRONIQ_BEARER_TOKEN?.trim();
+    const runnerId = env.CRONIQ_RUNNER_ID?.trim();
+    const transportMode = (env.CRONIQ_TRANSPORT_MODE?.trim().toLowerCase() || 'auto') as TransportMode;
+
+    if (!baseUrl) {
+        throw new Error('CRONIQ_API_BASEURL is required');
+    }
+    if (!tenantId) {
+        throw new Error('CRONIQ_TENANT_ID is required');
+    }
+    if (!environment) {
+        throw new Error('CRONIQ_ENVIRONMENT is required');
+    }
+    if (!runnerId) {
+        throw new Error('CRONIQ_RUNNER_ID is required');
+    }
+    if ((!!apiKey && !!bearerToken) || (!apiKey && !bearerToken)) {
+        throw new Error('Set exactly one of CRONIQ_API_KEY or CRONIQ_BEARER_TOKEN');
+    }
+    if (!['auto', 'grpc', 'polling'].includes(transportMode)) {
+        throw new Error('CRONIQ_TRANSPORT_MODE must be auto, grpc, or polling');
+    }
+
+    return {
+        baseUrl,
+        grpcBaseUrl,
+        tenantId,
+        environment,
+        apiKey,
+        bearerToken,
+        runnerId,
+        transportMode,
+        allowTestExecutions: parseBool(env.CRONIQ_ALLOW_TEST_EXECUTIONS),
+        maxInflight: parseNumber(env.CRONIQ_MAX_INFLIGHT),
+        pollBatchSize: parseNumber(env.CRONIQ_POLL_BATCH_SIZE),
+        pollWaitMs: parseNumber(env.CRONIQ_POLL_WAIT_MS),
+        requestTimeoutMs: parseNumber(env.CRONIQ_REQUEST_TIMEOUT_MS),
+        renewLeadMs: parseNumber(env.CRONIQ_RENEW_LEAD_MS),
+        retryBaseMs: parseNumber(env.CRONIQ_RETRY_BASE_MS),
+        retryMaxMs: parseNumber(env.CRONIQ_RETRY_MAX_MS),
+        retryMaxAttempts: parseNumber(env.CRONIQ_RETRY_MAX_ATTEMPTS),
+        capabilities: parseList(env.CRONIQ_CAPABILITIES),
+    };
+}
+
+function parseBool(value?: string): boolean | undefined {
+    if (value === undefined) {
+        return undefined;
+    }
+    const normalized = value.trim().toLowerCase();
+    if (normalized === 'true' || normalized === '1') {
+        return true;
+    }
+    if (normalized === 'false' || normalized === '0') {
+        return false;
+    }
+    throw new Error(`Invalid boolean value: ${value}`);
+}
+
+function parseNumber(value?: string): number | undefined {
+    if (value === undefined) {
+        return undefined;
+    }
+    const parsed = Number(value);
+    if (Number.isNaN(parsed)) {
+        throw new Error(`Invalid numeric value: ${value}`);
+    }
+    return parsed;
+}
+
+function parseList(value?: string): string[] | undefined {
+    if (!value) {
+        return undefined;
+    }
+    const items = value
+        .split(',')
+        .map((entry) => entry.trim())
+        .filter(Boolean);
+    return items.length > 0 ? items : undefined;
+}
+
+function isRunnerMismatchResponse(json: unknown, bodyText: string): boolean {
+    const payload = json && typeof json === 'object' ? (json as Record<string, unknown>) : undefined;
+    const title = payload?.title ?? payload?.error;
+    if (typeof title === 'string' && title.toLowerCase() === 'runner-mismatch') {
+        return true;
+    }
+    return bodyText.toLowerCase().includes('runner-mismatch');
+}
+
+function isGrpcRunnerMismatch(err: unknown): boolean {
+    if (err instanceof RunnerMismatchError) {
+        return true;
+    }
+    const candidate = err as { code?: number; details?: string } | null;
+    if (!candidate) {
+        return false;
+    }
+    if (candidate.code !== grpc.status.PERMISSION_DENIED) {
+        return false;
+    }
+    return (candidate.details ?? '').toLowerCase().includes('runner-mismatch');
+}
 
 export type RunnerExecuteHandler = (
     context: RunnerExecutionContext,
@@ -140,6 +259,13 @@ export class LeaseNotFoundError extends CroniqError {
     }
 }
 
+export class RunnerMismatchError extends CroniqError {
+    constructor(body: string) {
+        super('runner mismatch', 403, body);
+        this.name = 'RunnerMismatchError';
+    }
+}
+
 type PostResult<T> = {
     status: number;
     json: T | null;
@@ -167,8 +293,10 @@ export class RunnerClient {
         if (!tenantId) {
             throw new Error('tenantId is required');
         }
-        if (!apiKey && !bearerToken) {
-            throw new Error('apiKey or bearerToken is required');
+        const hasApiKey = !!apiKey;
+        const hasBearerToken = !!bearerToken;
+        if (hasApiKey === hasBearerToken) {
+            throw new Error('apiKey or bearerToken is required (but not both)');
         }
 
         const resolvedFetch = fetchImpl ?? globalThis.fetch;
@@ -231,6 +359,20 @@ export class RunnerClient {
         await this.postJson(path, body);
     }
 
+    async heartbeat({ runnerId, environmentTag, seenAtUtc, metadataJson }: HeartbeatRequest): Promise<void> {
+        const body: HeartbeatRequest = { runnerId };
+        if (environmentTag) {
+            body.environmentTag = environmentTag;
+        }
+        if (seenAtUtc) {
+            body.seenAtUtc = seenAtUtc;
+        }
+        if (metadataJson) {
+            body.metadataJson = metadataJson;
+        }
+        await this.postJson(`/runners/heartbeat`, body);
+    }
+
     private buildUrl(path: string): string {
         const url = new URL(
             `${this.baseUrl}/tenants/${encodeURIComponent(this.tenantId)}${path}`
@@ -274,6 +416,9 @@ export class RunnerClient {
         }
 
         const bodyText = await response.text();
+        if (response.status === 403 && isRunnerMismatchResponse(json, bodyText)) {
+            throw new RunnerMismatchError(bodyText);
+        }
         if (response.status === 409) {
             throw new LeaseConflictError(bodyText);
         }
@@ -492,6 +637,10 @@ class GrpcRunnerConnection extends EventEmitter {
                 await this.connectOnce();
                 attempt = 0;
             } catch (err) {
+                if (isGrpcRunnerMismatch(err)) {
+                    this.emit('error', err);
+                    throw err;
+                }
                 attempt += 1;
                 if (this.retryMaxAttempts && attempt >= this.retryMaxAttempts) {
                     this.emit('error', err);
@@ -606,12 +755,24 @@ export class CroniqRunner {
     private readonly retryBaseMs: number;
     private readonly retryMaxMs: number;
     private readonly retryMaxAttempts?: number;
+    private readonly heartbeatIntervalMs: number;
+    private readonly heartbeatMetadata?: Record<string, unknown>;
     private readonly outbox: OutboxStore | null;
     private handler: RunnerExecuteHandler | null = null;
     private running = false;
     private grpcConnection: GrpcRunnerConnection | null = null;
+    private fatalError: Error | null = null;
+    private fatalReject: ((err: Error) => void) | null = null;
 
     constructor(config: RunnerConfig) {
+        const hasApiKey = !!config.apiKey;
+        const hasBearerToken = !!config.bearerToken;
+        if (hasApiKey === hasBearerToken) {
+            throw new Error('apiKey or bearerToken is required (but not both)');
+        }
+        if (config.transportMode && !['auto', 'grpc', 'polling'].includes(config.transportMode)) {
+            throw new Error('transportMode must be auto, grpc, or polling');
+        }
         this.config = config;
         this.transportMode = config.transportMode ?? 'auto';
         this.allowTestExecutions = !!config.allowTestExecutions;
@@ -623,6 +784,8 @@ export class CroniqRunner {
         this.retryBaseMs = config.retryBaseMs ?? 500;
         this.retryMaxMs = config.retryMaxMs ?? 10000;
         this.retryMaxAttempts = config.retryMaxAttempts;
+        this.heartbeatIntervalMs = Math.max(0, config.heartbeatIntervalMs ?? 0);
+        this.heartbeatMetadata = config.heartbeatMetadata;
         const outboxPath = config.outboxPath ?? path.join(process.cwd(), '.croniq', 'runner-outbox.jsonl');
         this.outbox = new OutboxStore(outboxPath, config.outboxMaxEntries ?? 500, config.outboxMaxBytes ?? 1_000_000);
 
@@ -640,6 +803,8 @@ export class CroniqRunner {
             warn: (message, data) => console.warn(message, data ?? {}),
             error: (message, data) => console.error(message, data ?? {}),
         };
+        this.fatalError = null;
+        this.fatalReject = null;
     }
 
     onExecute(handler: RunnerExecuteHandler): void {
@@ -651,7 +816,12 @@ export class CroniqRunner {
             throw new Error('onExecute handler must be registered before start');
         }
         this.running = true;
+        this.fatalError = null;
         const tasks: Promise<void>[] = [];
+
+        const fatalPromise = new Promise<void>((_, reject) => {
+            this.fatalReject = reject;
+        });
 
         if (this.outbox) {
             await this.outbox.load();
@@ -666,8 +836,16 @@ export class CroniqRunner {
             tasks.push(this.startPolling());
         }
 
+        if (this.heartbeatIntervalMs > 0) {
+            tasks.push(this.startHeartbeat());
+        }
+
         tasks.push(this.processLoop());
-        await Promise.all(tasks);
+        try {
+            await Promise.race([Promise.all(tasks), fatalPromise]);
+        } finally {
+            this.fatalReject = null;
+        }
     }
 
     async stop(): Promise<void> {
@@ -712,6 +890,9 @@ export class CroniqRunner {
         });
 
         connection.on('error', (err) => {
+            if (this.handleRunnerMismatch(err)) {
+                return;
+            }
             this.logger.error('gRPC transport failed', { error: String(err) });
         });
 
@@ -738,9 +919,38 @@ export class CroniqRunner {
                     this.enqueueLease(lease);
                 }
             } catch (err) {
+                if (this.handleRunnerMismatch(err)) {
+                    return;
+                }
                 this.logger.warn('poll failed', { error: String(err) });
                 await this.sleep(this.nextDelay(1));
             }
+        }
+    }
+
+    private async startHeartbeat(): Promise<void> {
+        while (this.running) {
+            try {
+                if (!this.config.environment) {
+                    this.logger.warn('heartbeat skipped; environment is required');
+                    await this.sleep(this.heartbeatIntervalMs);
+                    continue;
+                }
+
+                const metadataJson = JSON.stringify(this.buildHeartbeatMetadata());
+                await this.client.heartbeat({
+                    runnerId: this.config.runnerId,
+                    environmentTag: this.config.environment,
+                    metadataJson,
+                });
+            } catch (err) {
+                if (this.handleRunnerMismatch(err)) {
+                    return;
+                }
+                this.logger.warn('heartbeat failed', { error: String(err) });
+            }
+
+            await this.sleep(this.heartbeatIntervalMs);
         }
     }
 
@@ -807,6 +1017,9 @@ export class CroniqRunner {
         try {
             await this.client.ack({ runnerId: this.config.runnerId, lease, succeeded: true });
         } catch (err) {
+            if (this.handleRunnerMismatch(err)) {
+                return;
+            }
             if (allowOutbox && this.outbox) {
                 await this.outbox.enqueue({
                     id: randomUUID(),
@@ -872,6 +1085,9 @@ export class CroniqRunner {
                 deadLetterReason: 'test-not-allowed',
             });
         } catch (err) {
+            if (this.handleRunnerMismatch(err)) {
+                return;
+            }
             if (allowOutbox && this.outbox) {
                 await this.outbox.enqueue({
                     id: randomUUID(),
@@ -906,6 +1122,9 @@ export class CroniqRunner {
         try {
             await this.client.events({ runnerId: this.config.runnerId, lease, events });
         } catch (err) {
+            if (this.handleRunnerMismatch(err)) {
+                return;
+            }
             if (allowOutbox && this.outbox) {
                 await this.outbox.enqueue({
                     id: randomUUID(),
@@ -940,7 +1159,10 @@ export class CroniqRunner {
                         await this.sendEvents(payload.lease, payload.events, false);
                     }
                     await this.outbox.remove(entry.id);
-                } catch {
+                } catch (err) {
+                    if (this.handleRunnerMismatch(err)) {
+                        return;
+                    }
                     await this.outbox.markFailed(entry.id);
                     await this.sleep(this.nextDelay(entry.attempts + 1));
                 }
@@ -978,6 +1200,9 @@ export class CroniqRunner {
                     this.scheduleRenew(updated);
                 }
             } catch (err) {
+                if (this.handleRunnerMismatch(err)) {
+                    return;
+                }
                 this.logger.warn('renew failed', { error: String(err), leaseId: lease.leaseId });
             }
         }, delay);
@@ -1020,6 +1245,42 @@ export class CroniqRunner {
             return JSON.parse(payload);
         } catch {
             return payload;
+        }
+    }
+
+    private buildHeartbeatMetadata(): Record<string, unknown> {
+        const transportState = this.grpcConnection?.isConnected() ? 'grpc' : 'polling';
+        return {
+            transportMode: this.transportMode,
+            transportState,
+            allowTestExecutions: this.allowTestExecutions,
+            maxInflight: this.maxInflight,
+            capabilities: this.config.capabilities ?? [],
+            ...this.heartbeatMetadata,
+        };
+    }
+
+    private handleRunnerMismatch(err: unknown): boolean {
+        if (err instanceof RunnerMismatchError) {
+            this.logger.error('runner mismatch', { error: err.body });
+            this.failFatal(err);
+            return true;
+        }
+        return false;
+    }
+
+    private failFatal(err: Error): void {
+        if (this.fatalError) {
+            return;
+        }
+        this.fatalError = err;
+        this.running = false;
+        if (this.grpcConnection) {
+            this.grpcConnection.stop();
+            this.grpcConnection = null;
+        }
+        if (this.fatalReject) {
+            this.fatalReject(err);
         }
     }
 

@@ -16,9 +16,11 @@ import (
 	"github.com/jhump/protoreflect/dynamic"
 	"github.com/jhump/protoreflect/dynamic/grpcdynamic"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/status"
 )
 
 //go:embed protos/runner.proto
@@ -83,13 +85,14 @@ type grpcRunnerConnection struct {
 	retryBase           time.Duration
 	retryMax            time.Duration
 	retryMaxAttempts    int
+	onError             func(error)
 
 	mu        sync.Mutex
 	connected bool
 	stream    *grpcdynamic.BidiStream
 }
 
-func newGrpcRunnerConnection(config RunnerConfig) (*grpcRunnerConnection, error)
+func newGrpcRunnerConnection(config RunnerConfig, onError func(error)) (*grpcRunnerConnection, error)
 {
 	endpoint := config.GrpcBaseURL
 	if endpoint == "" {
@@ -113,6 +116,7 @@ func newGrpcRunnerConnection(config RunnerConfig) (*grpcRunnerConnection, error)
 		retryBase:           config.RetryBase,
 		retryMax:            config.RetryMax,
 		retryMaxAttempts:    config.RetryMaxAttempts,
+		onError:             onError,
 	}, nil
 }
 
@@ -149,6 +153,12 @@ func (c *grpcRunnerConnection) connectLoop(ctx context.Context, onAssigned func(
 		}
 
 		if err := c.connectOnce(ctx, onAssigned); err != nil {
+			if isGrpcRunnerMismatch(err) {
+				if c.onError != nil {
+					c.onError(&RunnerMismatchError{Body: err.Error()})
+				}
+				return
+			}
 			attempt++
 			if c.retryMaxAttempts > 0 && attempt >= c.retryMaxAttempts {
 				return
@@ -159,6 +169,18 @@ func (c *grpcRunnerConnection) connectLoop(ctx context.Context, onAssigned func(
 		}
 		attempt = 0
 	}
+}
+
+func isGrpcRunnerMismatch(err error) bool
+{
+	statusInfo, ok := status.FromError(err)
+	if !ok {
+		return false
+	}
+	if statusInfo.Code() != codes.PermissionDenied {
+		return false
+	}
+	return strings.Contains(strings.ToLower(statusInfo.Message()), "runner-mismatch")
 }
 
 func (c *grpcRunnerConnection) connectOnce(ctx context.Context, onAssigned func(Lease)) error

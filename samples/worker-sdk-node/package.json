@@ -1,7 +1,0 @@
-{
-  "name": "deprecated-croniq-worker-sdk-node",
-  "version": "0.0.0",
-  "private": true,
-  "description": "Deprecated: moved to sdk/runner-node and samples/runners/node/basic",
-  "main": "index.ts"
-}

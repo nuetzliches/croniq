@@ -9,6 +9,8 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -64,6 +66,15 @@ func (e *ApiError) Error() string
 	return fmt.Sprintf("croniq api error: status=%d body=%s", e.StatusCode, e.Body)
 }
 
+type RunnerMismatchError struct {
+	Body string
+}
+
+func (e *RunnerMismatchError) Error() string
+{
+	return fmt.Sprintf("runner mismatch: %s", e.Body)
+}
+
 func IsLeaseConflict(err error) bool
 {
 	var apiErr *ApiError
@@ -82,6 +93,12 @@ func IsLeaseNotFound(err error) bool
 	return false
 }
 
+func IsRunnerMismatch(err error) bool
+{
+	var mismatch *RunnerMismatchError
+	return errors.As(err, &mismatch)
+}
+
 func NewClient(cfg Config) (*Client, error)
 {
 	if strings.TrimSpace(cfg.BaseURL) == "" {
@@ -90,8 +107,10 @@ func NewClient(cfg Config) (*Client, error)
 	if strings.TrimSpace(cfg.TenantID) == "" {
 		return nil, errors.New("tenant id is required")
 	}
-	if strings.TrimSpace(cfg.ApiKey) == "" && strings.TrimSpace(cfg.BearerToken) == "" {
-		return nil, errors.New("api key or bearer token is required")
+	apiKey := strings.TrimSpace(cfg.ApiKey)
+	bearer := strings.TrimSpace(cfg.BearerToken)
+	if (apiKey == "" && bearer == "") || (apiKey != "" && bearer != "") {
+		return nil, errors.New("api key or bearer token is required (but not both)")
 	}
 
 	parsed, err := url.Parse(cfg.BaseURL)
@@ -242,6 +261,25 @@ func (c *Client) Events(ctx context.Context, runnerId string, lease Lease, event
 	return c.post(ctx, path, request, nil)
 }
 
+func (c *Client) Heartbeat(ctx context.Context, runnerId string, environmentTag string, metadataJson string, seenAtUtc *time.Time) error
+{
+	if strings.TrimSpace(runnerId) == "" {
+		return errors.New("runner id is required")
+	}
+	if strings.TrimSpace(environmentTag) == "" {
+		return errors.New("environment tag is required")
+	}
+
+	request := heartbeatRequest{
+		EnvironmentTag: strings.TrimSpace(environmentTag),
+		RunnerId:       strings.TrimSpace(runnerId),
+		SeenAtUtc:      seenAtUtc,
+		MetadataJson:   metadataJson,
+	}
+
+	return c.post(ctx, "/runners/heartbeat", request, nil)
+}
+
 func (c *Client) post(ctx context.Context, path string, payload interface{}, out interface{}) error
 {
 	payloadBytes, err := json.Marshal(payload)
@@ -283,7 +321,28 @@ func (c *Client) post(ctx context.Context, path string, payload interface{}, out
 	}
 
 	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode == http.StatusForbidden && isRunnerMismatchBody(string(body)) {
+		return &RunnerMismatchError{Body: string(body)}
+	}
 	return &ApiError{StatusCode: resp.StatusCode, Body: string(body)}
+}
+
+func isRunnerMismatchBody(body string) bool
+{
+	if strings.Contains(strings.ToLower(body), "runner-mismatch") {
+		return true
+	}
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(body), &payload); err != nil {
+		return false
+	}
+	if title, ok := payload["title"].(string); ok && strings.EqualFold(title, "runner-mismatch") {
+		return true
+	}
+	if errValue, ok := payload["error"].(string); ok && strings.EqualFold(errValue, "runner-mismatch") {
+		return true
+	}
+	return false
 }
 
 type pollRequest struct {
@@ -323,6 +382,13 @@ type eventsRequest struct {
 	Events   []WorkEvent `json:"events"`
 }
 
+type heartbeatRequest struct {
+	EnvironmentTag string     `json:"environmentTag"`
+	RunnerId       string     `json:"runnerId"`
+	SeenAtUtc      *time.Time `json:"seenAtUtc,omitempty"`
+	MetadataJson   string     `json:"metadataJson,omitempty"`
+}
+
 type TransportMode string
 
 const (
@@ -345,9 +411,156 @@ type RunnerConfig struct {
 	RetryBase           time.Duration
 	RetryMax            time.Duration
 	RetryMaxAttempts    int
+	HeartbeatInterval   time.Duration
+	HeartbeatMetadata   map[string]any
 	OutboxPath          string
 	OutboxMaxEntries    int
 	OutboxMaxBytes      int64
+}
+
+func LoadRunnerConfigFromEnv() (RunnerConfig, error)
+{
+	baseURL, err := requiredEnv("CRONIQ_API_BASEURL")
+	if err != nil {
+		return RunnerConfig{}, err
+	}
+	tenantID, err := requiredEnv("CRONIQ_TENANT_ID")
+	if err != nil {
+		return RunnerConfig{}, err
+	}
+	environmentTag, err := requiredEnv("CRONIQ_ENVIRONMENT")
+	if err != nil {
+		return RunnerConfig{}, err
+	}
+	runnerID, err := requiredEnv("CRONIQ_RUNNER_ID")
+	if err != nil {
+		return RunnerConfig{}, err
+	}
+
+	apiKey := strings.TrimSpace(os.Getenv("CRONIQ_API_KEY"))
+	bearerToken := strings.TrimSpace(os.Getenv("CRONIQ_BEARER_TOKEN"))
+	if (apiKey == "" && bearerToken == "") || (apiKey != "" && bearerToken != "") {
+		return RunnerConfig{}, errors.New("set exactly one of CRONIQ_API_KEY or CRONIQ_BEARER_TOKEN")
+	}
+
+	transportMode := TransportMode(strings.ToLower(strings.TrimSpace(getOptionalEnv("CRONIQ_TRANSPORT_MODE"))))
+	if transportMode == "" {
+		transportMode = TransportAuto
+	}
+	if transportMode != TransportAuto && transportMode != TransportGrpc && transportMode != TransportPolling {
+		return RunnerConfig{}, errors.New("CRONIQ_TRANSPORT_MODE must be auto, grpc, or polling")
+	}
+
+	allowTests := parseBoolEnv("CRONIQ_ALLOW_TEST_EXECUTIONS")
+	maxInflight := parseIntEnv("CRONIQ_MAX_INFLIGHT", 1)
+	capabilities := parseListEnv("CRONIQ_CAPABILITIES")
+	batchSize := parseIntEnv("CRONIQ_POLL_BATCH_SIZE", 1)
+	pollWait := time.Duration(parseIntEnv("CRONIQ_POLL_WAIT_MS", 25000)) * time.Millisecond
+	requestTimeout := time.Duration(parseIntEnv("CRONIQ_REQUEST_TIMEOUT_MS", 60000)) * time.Millisecond
+	renewLead := time.Duration(parseIntEnv("CRONIQ_RENEW_LEAD_MS", 10000)) * time.Millisecond
+	retryBase := time.Duration(parseIntEnv("CRONIQ_RETRY_BASE_MS", 500)) * time.Millisecond
+	retryMax := time.Duration(parseIntEnv("CRONIQ_RETRY_MAX_MS", 10000)) * time.Millisecond
+	retryMaxAttempts := parseOptionalIntEnv("CRONIQ_RETRY_MAX_ATTEMPTS")
+	grpcBaseURL := getOptionalEnv("CRONIQ_GRPC_BASEURL")
+
+	return RunnerConfig{
+		Config: Config{
+			BaseURL:        baseURL,
+			TenantID:       tenantID,
+			EnvironmentTag: environmentTag,
+			ApiKey:         apiKey,
+			BearerToken:    bearerToken,
+			Timeout:        requestTimeout,
+		},
+		RunnerId:            runnerID,
+		TransportMode:       transportMode,
+		GrpcBaseURL:         grpcBaseURL,
+		AllowTestExecutions: allowTests,
+		MaxInflight:         maxInflight,
+		Capabilities:        capabilities,
+		PollBatchSize:       batchSize,
+		PollWait:            pollWait,
+		RenewLead:           renewLead,
+		RetryBase:           retryBase,
+		RetryMax:            retryMax,
+		RetryMaxAttempts:    retryMaxAttempts,
+	}, nil
+}
+
+func requiredEnv(key string) (string, error)
+{
+	value := strings.TrimSpace(os.Getenv(key))
+	if value == "" {
+		return "", fmt.Errorf("%s is required", key)
+	}
+	return value, nil
+}
+
+func getOptionalEnv(key string) string
+{
+	return strings.TrimSpace(os.Getenv(key))
+}
+
+func parseBoolEnv(key string) bool
+{
+	value := strings.TrimSpace(os.Getenv(key))
+	if value == "" {
+		return false
+	}
+	switch strings.ToLower(value) {
+	case "1", "true", "yes":
+		return true
+	case "0", "false", "no":
+		return false
+	default:
+		return false
+	}
+}
+
+func parseIntEnv(key string, defaultValue int) int
+{
+	value := strings.TrimSpace(os.Getenv(key))
+	if value == "" {
+		return defaultValue
+	}
+	parsed, err := strconv.Atoi(value)
+	if err != nil {
+		return defaultValue
+	}
+	return parsed
+}
+
+func parseOptionalIntEnv(key string) int
+{
+	value := strings.TrimSpace(os.Getenv(key))
+	if value == "" {
+		return 0
+	}
+	parsed, err := strconv.Atoi(value)
+	if err != nil {
+		return 0
+	}
+	return parsed
+}
+
+func parseListEnv(key string) []string
+{
+	value := strings.TrimSpace(os.Getenv(key))
+	if value == "" {
+		return nil
+	}
+	parts := strings.Split(value, ",")
+	result := make([]string, 0, len(parts))
+	for _, entry := range parts {
+		trimmed := strings.TrimSpace(entry)
+		if trimmed != "" {
+			result = append(result, trimmed)
+		}
+	}
+	if len(result) == 0 {
+		return nil
+	}
+	return result
 }
 
 type ExecutionContext struct {
@@ -383,6 +596,8 @@ type Runner struct {
 	handler ExecuteHandler
 	grpcConn *grpcRunnerConnection
 	outbox  *outboxStore
+	fatalErr chan error
+	cancel   context.CancelFunc
 }
 
 func NewRunner(config RunnerConfig) (*Runner, error)
@@ -410,6 +625,9 @@ func NewRunner(config RunnerConfig) (*Runner, error)
 	}
 	if config.RetryMax <= 0 {
 		config.RetryMax = 10 * time.Second
+	}
+	if config.HeartbeatInterval < 0 {
+		config.HeartbeatInterval = 0
 	}
 	if config.OutboxMaxEntries <= 0 {
 		config.OutboxMaxEntries = 500
@@ -444,42 +662,72 @@ func (r *Runner) Run(ctx context.Context) error
 	if r.handler == nil {
 		return errors.New("execute handler must be registered")
 	}
+	runCtx, cancel := context.WithCancel(ctx)
+	r.cancel = cancel
+	r.fatalErr = make(chan error, 1)
+
+	queue := make(chan Lease, r.config.MaxInflight*2)
+	semaphore := make(chan struct{}, r.config.MaxInflight)
+
 	if r.config.TransportMode != TransportPolling {
-		grpcConn, err := newGrpcRunnerConnection(r.config)
+		grpcConn, err := newGrpcRunnerConnection(r.config, r.fail)
 		if err != nil {
 			return err
 		}
 		r.grpcConn = grpcConn
-		grpcConn.start(ctx, func(lease Lease) {
+		grpcConn.start(runCtx, func(lease Lease) {
 			select {
-			case <-ctx.Done():
+			case <-runCtx.Done():
 				return
 			case queue <- lease:
 			}
 		})
 	}
 
-	queue := make(chan Lease, r.config.MaxInflight*2)
-	semaphore := make(chan struct{}, r.config.MaxInflight)
-
 	if r.outbox != nil {
 		r.outbox.Load()
-		go r.replayOutboxLoop(ctx)
+		go r.replayOutboxLoop(runCtx)
 	}
 
-	go r.pollLoop(ctx, queue)
+	go r.pollLoop(runCtx, queue)
+	if r.config.HeartbeatInterval > 0 {
+		go r.heartbeatLoop(runCtx)
+	}
 
 	for {
 		select {
-		case <-ctx.Done():
-			return ctx.Err()
+		case err := <-r.fatalErr:
+			cancel()
+			return err
+		case <-runCtx.Done():
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			return runCtx.Err()
 		case lease := <-queue:
 			semaphore <- struct{}{}
 			go func(lease Lease) {
 				defer func() { <-semaphore }()
-				r.runLease(ctx, lease)
+				r.runLease(runCtx, lease)
 			}(lease)
 		}
+	}
+}
+
+func (r *Runner) fail(err error)
+{
+	if err == nil {
+		return
+	}
+	if r.logger != nil {
+		r.logger.Error("runner mismatch", map[string]any{"error": err.Error()})
+	}
+	select {
+	case r.fatalErr <- err:
+	default:
+	}
+	if r.cancel != nil {
+		r.cancel()
 	}
 }
 
@@ -508,6 +756,10 @@ func (r *Runner) pollLoop(ctx context.Context, queue chan<- Lease)
 
 		leases, err := r.client.PollWithOptions(ctx, r.config.RunnerId, options)
 		if err != nil {
+			if IsRunnerMismatch(err) {
+				r.fail(err)
+				return
+			}
 			attempt++
 			delay := nextDelay(r.config.RetryBase, r.config.RetryMax, attempt)
 			r.logger.Warn("poll failed", map[string]any{
@@ -525,13 +777,50 @@ func (r *Runner) pollLoop(ctx context.Context, queue chan<- Lease)
 	}
 }
 
+func (r *Runner) heartbeatLoop(ctx context.Context)
+{
+	interval := r.config.HeartbeatInterval
+	if interval <= 0 {
+		return
+	}
+	if strings.TrimSpace(r.config.EnvironmentTag) == "" {
+		r.logger.Warn("heartbeat skipped; environment is required", map[string]any{})
+		return
+	}
+
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			metadataJson := r.buildHeartbeatMetadata()
+			err := r.client.Heartbeat(ctx, r.config.RunnerId, r.config.EnvironmentTag, metadataJson, nil)
+			if err != nil {
+				if IsRunnerMismatch(err) {
+					r.fail(err)
+					return
+				}
+				r.logger.Warn("heartbeat failed", map[string]any{"error": err.Error()})
+			}
+		}
+	}
+}
+
 func (r *Runner) runLease(ctx context.Context, lease Lease)
 {
 	if !r.config.AllowTestExecutions && strings.EqualFold(lease.ExecutionMode, "test") {
 		if r.grpcConn != nil && r.grpcConn.isConnected() {
 			_ = r.grpcConn.send(buildAckFailureMessage(lease, "test-not-allowed", "test executions are disabled for this runner", "test-not-allowed"))
 		} else {
-			_ = r.client.Ack(ctx, r.config.RunnerId, lease, false, nil, "test-not-allowed")
+			if err := r.client.Ack(ctx, r.config.RunnerId, lease, false, nil, "test-not-allowed"); err != nil {
+				if IsRunnerMismatch(err) {
+					r.fail(err)
+					return
+				}
+			}
 		}
 		return
 	}
@@ -560,6 +849,10 @@ func (r *Runner) runLease(ctx context.Context, lease Lease)
 			return
 		}
 		if err := r.client.Ack(ctx, r.config.RunnerId, lease, false, nil, "execution-failed"); err != nil {
+			if IsRunnerMismatch(err) {
+				r.fail(err)
+				return
+			}
 			r.enqueueOutboxAckFailure(lease, "execution-failed", err.Error(), "execution-failed")
 		}
 		return
@@ -570,8 +863,35 @@ func (r *Runner) runLease(ctx context.Context, lease Lease)
 		return
 	}
 	if err := r.client.Ack(ctx, r.config.RunnerId, lease, true, nil, ""); err != nil {
+		if IsRunnerMismatch(err) {
+			r.fail(err)
+			return
+		}
 		r.enqueueOutboxAckSuccess(lease)
 	}
+}
+
+func (r *Runner) buildHeartbeatMetadata() string
+{
+	transportState := "polling"
+	if r.grpcConn != nil && r.grpcConn.isConnected() {
+		transportState = "grpc"
+	}
+	metadata := map[string]any{
+		"transportMode":       r.config.TransportMode,
+		"transportState":      transportState,
+		"allowTestExecutions": r.config.AllowTestExecutions,
+		"maxInflight":         r.config.MaxInflight,
+		"capabilities":        r.config.Capabilities,
+	}
+	for key, value := range r.config.HeartbeatMetadata {
+		metadata[key] = value
+	}
+	payload, err := json.Marshal(metadata)
+	if err != nil {
+		return ""
+	}
+	return string(payload)
 }
 
 func (r *Runner) renewLoop(ctx context.Context, lease Lease)
@@ -598,6 +918,10 @@ func (r *Runner) renewLoop(ctx context.Context, lease Lease)
 
 		updated, renewed, err := r.client.Renew(ctx, r.config.RunnerId, lease)
 		if err != nil {
+			if IsRunnerMismatch(err) {
+				r.fail(err)
+				return
+			}
 			r.logger.Warn("renew failed", map[string]any{"error": err.Error(), "leaseId": lease.LeaseId})
 			continue
 		}
@@ -669,6 +993,10 @@ func (r *Runner) sendEvents(ctx context.Context, lease Lease, events []WorkEvent
 		}
 	}
 	if err := r.client.Events(ctx, r.config.RunnerId, lease, events); err != nil {
+		if IsRunnerMismatch(err) {
+			r.fail(err)
+			return err
+		}
 		if allowOutbox {
 			r.enqueueOutboxEvents(lease, events)
 		}
@@ -701,6 +1029,10 @@ func (r *Runner) replayOutboxLoop(ctx context.Context) {
 					if err := r.client.Ack(ctx, r.config.RunnerId, payload.Lease, true, nil, ""); err == nil {
 						r.outbox.Remove(entry.ID)
 					} else {
+						if IsRunnerMismatch(err) {
+							r.fail(err)
+							return
+						}
 						r.outbox.MarkFailed(entry.ID)
 					}
 				}
@@ -710,6 +1042,10 @@ func (r *Runner) replayOutboxLoop(ctx context.Context) {
 					if err := r.client.Ack(ctx, r.config.RunnerId, payload.Lease, false, nil, payload.DeadLetterReason); err == nil {
 						r.outbox.Remove(entry.ID)
 					} else {
+						if IsRunnerMismatch(err) {
+							r.fail(err)
+							return
+						}
 						r.outbox.MarkFailed(entry.ID)
 					}
 				}
@@ -719,6 +1055,10 @@ func (r *Runner) replayOutboxLoop(ctx context.Context) {
 					if err := r.client.Events(ctx, r.config.RunnerId, payload.Lease, payload.Events); err == nil {
 						r.outbox.Remove(entry.ID)
 					} else {
+						if IsRunnerMismatch(err) {
+							r.fail(err)
+							return
+						}
 						r.outbox.MarkFailed(entry.ID)
 					}
 				}

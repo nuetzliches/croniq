@@ -1,7 +1,10 @@
 using System;
+using System.Collections.Generic;
 using System.Net;
 using System.Net.Http.Json;
+using System.Text.Json;
 using System.Threading;
+using System.Threading.Tasks;
 using Croniq.Api.Models;
 using Croniq.Api.Tests.Infrastructure;
 using Croniq.Auth.Abstractions;
@@ -65,6 +68,40 @@ public sealed class WorkEndpointsTests : IClassFixture<WebhookApiTestHost>
     }
 
     [Fact]
+    public async Task Ack_DuplicateLease_ReturnsConflict()
+    {
+        _host.Reset();
+        const string jobKey = "ops:work-ack-conflict";
+        _host.EnsureJob(jobKey);
+
+        await SeedDueTriggerAsync(jobKey, startAtUtc: DateTimeOffset.UtcNow.AddMinutes(-1));
+
+        var poll = new WorkPollRequest(
+            EnvironmentTag: WebhookApiTestHost.Environment,
+            RunnerId: "itest-client",
+            BatchSize: 1);
+
+        var pollResponse = await _host.Client.PostAsJsonAsync($"/tenants/{WebhookApiTestHost.TenantId}/work/poll", poll);
+        pollResponse.StatusCode.ShouldBe(HttpStatusCode.OK);
+
+        var pollPayload = await pollResponse.Content.ReadFromJsonAsync<WorkPollResponse>();
+        pollPayload.ShouldNotBeNull();
+        pollPayload.Leases.Length.ShouldBe(1);
+
+        var ack = new WorkAckRequest(
+            EnvironmentTag: WebhookApiTestHost.Environment,
+            RunnerId: "itest-client",
+            Lease: pollPayload.Leases[0],
+            Succeeded: true);
+
+        var firstAck = await _host.Client.PostAsJsonAsync($"/tenants/{WebhookApiTestHost.TenantId}/work/ack", ack);
+        firstAck.StatusCode.ShouldBe(HttpStatusCode.NoContent);
+
+        var secondAck = await _host.Client.PostAsJsonAsync($"/tenants/{WebhookApiTestHost.TenantId}/work/ack", ack);
+        secondAck.StatusCode.ShouldBe(HttpStatusCode.Conflict);
+    }
+
+    [Fact]
     public async Task Poll_RespectsAllowTestExecutions_AndReturnsIntent()
     {
         _host.Reset();
@@ -104,6 +141,61 @@ public sealed class WorkEndpointsTests : IClassFixture<WebhookApiTestHost>
         acceptedPayload.Leases.Length.ShouldBe(1);
         acceptedPayload.Leases[0].ExecutionMode.ShouldBe(ExecutionIntent.ExecutionModes.Test);
         acceptedPayload.Leases[0].InvocationSource.ShouldBe(ExecutionIntent.InvocationSources.Manual);
+    }
+
+    [Fact]
+    public async Task Ack_TestRejection_StoresWarningLog()
+    {
+        _host.Reset();
+        const string jobKey = "ops:work-reject-test";
+        _host.EnsureJob(jobKey);
+
+        await SeedDueTriggerAsync(
+            jobKey,
+            startAtUtc: DateTimeOffset.UtcNow.AddMinutes(-1),
+            executionMode: ExecutionIntent.ExecutionModes.Test,
+            invocationSource: ExecutionIntent.InvocationSources.Manual);
+
+        var poll = new WorkPollRequest(
+            EnvironmentTag: WebhookApiTestHost.Environment,
+            RunnerId: "itest-client",
+            BatchSize: 1,
+            AllowTestExecutions: true);
+
+        var pollResponse = await _host.Client.PostAsJsonAsync($"/tenants/{WebhookApiTestHost.TenantId}/work/poll", poll);
+        pollResponse.StatusCode.ShouldBe(HttpStatusCode.OK);
+
+        var pollPayload = await pollResponse.Content.ReadFromJsonAsync<WorkPollResponse>();
+        pollPayload.ShouldNotBeNull();
+        pollPayload.Leases.Length.ShouldBe(1);
+
+        var ack = new WorkAckRequest(
+            EnvironmentTag: WebhookApiTestHost.Environment,
+            RunnerId: "itest-client",
+            Lease: pollPayload.Leases[0],
+            Succeeded: false,
+            DeadLetterReason: WorkRejectionReasons.TestNotAllowed);
+
+        var ackResponse = await _host.Client.PostAsJsonAsync($"/tenants/{WebhookApiTestHost.TenantId}/work/ack", ack);
+        ackResponse.StatusCode.ShouldBe(HttpStatusCode.NoContent);
+
+        var lines = await WaitForLogLinesAsync(pollPayload.Leases[0].ExecutionId);
+        lines.ShouldNotBeEmpty();
+
+        var hasWarning = false;
+        foreach (var line in lines)
+        {
+            using var doc = JsonDocument.Parse(line);
+            if (doc.RootElement.TryGetProperty("properties", out var properties)
+                && properties.TryGetProperty("croniq.warning.type", out var warningType)
+                && warningType.GetString() == WorkRejectionReasons.TestNotAllowed)
+            {
+                hasWarning = true;
+                break;
+            }
+        }
+
+        hasWarning.ShouldBeTrue();
     }
 
     [Fact]
@@ -472,5 +564,33 @@ public sealed class WorkEndpointsTests : IClassFixture<WebhookApiTestHost>
     {
         _host.Client.DefaultRequestHeaders.Remove("X-Croniq-Key");
         _host.Client.DefaultRequestHeaders.Add("X-Croniq-Key", apiKey);
+    }
+
+    private async Task<IReadOnlyCollection<string>> WaitForLogLinesAsync(string executionId)
+    {
+        var deadline = DateTimeOffset.UtcNow.AddSeconds(2);
+        while (DateTimeOffset.UtcNow < deadline)
+        {
+            var lines = await ReadLogLinesAsync(executionId);
+            if (lines.Count > 0)
+            {
+                return lines;
+            }
+
+            await Task.Delay(50);
+        }
+
+        return await ReadLogLinesAsync(executionId);
+    }
+
+    private async Task<List<string>> ReadLogLinesAsync(string executionId)
+    {
+        var lines = new List<string>();
+        await foreach (var line in _host.ExecutionLogs.ReadLinesAsync(executionId, CancellationToken.None))
+        {
+            lines.Add(line);
+        }
+
+        return lines;
     }
 }

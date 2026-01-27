@@ -150,6 +150,10 @@ internal sealed class RunnerGrpcService : Runner.RunnerBase
         }
         catch (Exception ex) when (GrpcDisconnects.IsExpected(ex, context.CancellationToken))
         {
+            if (IsGrpcUnavailable(ex))
+            {
+                ApiMetrics.RecordRunnerGrpcUnavailable(caller.TenantId, environmentTag);
+            }
             _logger.LogDebug("Runner.Connect stream closed.");
             activity?.SetStatus(ActivityStatusCode.Ok);
         }
@@ -200,6 +204,21 @@ internal sealed class RunnerGrpcService : Runner.RunnerBase
         {
             throw new RpcException(new Status(StatusCode.PermissionDenied, "runner-mismatch"));
         }
+    }
+
+    private static bool IsGrpcUnavailable(Exception exception)
+    {
+        if (exception is RpcException rpcException && rpcException.StatusCode == StatusCode.Unavailable)
+        {
+            return true;
+        }
+
+        if (exception is AggregateException aggregateException && aggregateException.InnerExceptions.Count == 1)
+        {
+            return IsGrpcUnavailable(aggregateException.InnerExceptions[0]);
+        }
+
+        return false;
     }
 
     private async Task AssignWorkLoopAsync(

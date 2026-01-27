@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Diagnostics.Metrics;
+using System.Linq;
 using Croniq.Core.Jobs;
 using Croniq.Core.Observability;
 using Croniq.Persistence.Abstractions;
@@ -17,14 +18,21 @@ internal static class ApiMetrics
         "cronigateway_manual_triggers_total",
         description: "Number of manual job trigger requests executed through the Croniq API.");
     private static readonly Counter<long> RunnerTransportSelections = Meter.CreateCounter<long>(
-        "croniq.api.runner.transport.selections_total",
+        "croniq.runner.transport.selection_total",
         description: "Number of runner transport selections observed by the API.");
     private static readonly Counter<long> RunnerTransportTransitions = Meter.CreateCounter<long>(
-        "croniq.api.runner.transport.transitions_total",
-        description: "Number of runner transport transitions observed by the API.");
-    private static readonly Counter<long> RunnerTestDecisions = Meter.CreateCounter<long>(
-        "croniq.api.runner.test.decisions_total",
-        description: "Number of test execution decisions (accepted/rejected) observed by the API.");
+        "croniq.runner.transport.fallback_total",
+        description: "Number of runner transport fallback transitions observed by the API.");
+    private static readonly Counter<long> RunnerGrpcUnavailable = Meter.CreateCounter<long>(
+        "croniq.runner.transport.grpc_unavailable_total",
+        description: "Number of runner gRPC streams that ended due to transport unavailability.");
+    private static readonly Counter<long> RunnerTestRejections = Meter.CreateCounter<long>(
+        "croniq.runner.test.reject_total",
+        description: "Number of test execution rejections observed by the API.");
+    private static readonly ObservableGauge<long> RunnerPollingActive = Meter.CreateObservableGauge<long>(
+        "croniq.runner.transport.polling_active",
+        ObservePollingActive,
+        description: "Number of runners currently observed as polling.");
     private static readonly ConcurrentDictionary<string, string> RunnerTransportState = new(StringComparer.OrdinalIgnoreCase);
 
     public static void RecordScheduleUpsert(string tenantId, string environmentTag, string jobKey)
@@ -98,6 +106,24 @@ internal static class ApiMetrics
         RunnerTransportTransitions.Add(1, tags);
     }
 
+    public static void RecordRunnerGrpcUnavailable(string tenantId, string environmentTag)
+    {
+        if (string.IsNullOrWhiteSpace(tenantId)
+            || string.IsNullOrWhiteSpace(environmentTag))
+        {
+            return;
+        }
+
+        var tags = new TagList
+        {
+            { "tenant", IdentifierHashing.HashTenantId(tenantId) ?? string.Empty },
+            { "env", environmentTag },
+            { "transport", "grpc" }
+        };
+
+        RunnerGrpcUnavailable.Add(1, tags);
+    }
+
     public static void RecordRunnerTestDecision(
         string tenantId,
         string environmentTag,
@@ -132,7 +158,17 @@ internal static class ApiMetrics
             tags.Add("invocation_source", invocationSource!);
         }
 
-        RunnerTestDecisions.Add(1, tags);
+        if (string.Equals(decision, "rejected", StringComparison.OrdinalIgnoreCase))
+        {
+            RunnerTestRejections.Add(1, tags);
+        }
+    }
+
+    private static Measurement<long> ObservePollingActive()
+    {
+        var pollingCount = RunnerTransportState.Values.Count(value =>
+            string.Equals(value, "polling", StringComparison.OrdinalIgnoreCase));
+        return new Measurement<long>(pollingCount);
     }
 
     private static string BuildRunnerKey(string tenantId, string environmentTag, string runnerId)

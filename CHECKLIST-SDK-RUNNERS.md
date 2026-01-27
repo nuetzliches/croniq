@@ -42,23 +42,23 @@ Goal: deliver runner SDKs that execute Croniq jobs via the `/work` endpoints wit
 
 ## D. SDK behavior (shared requirements)
 
-- [ ] Implement transport chain: gRPC streaming -> HTTP polling; allow explicit `transportMode` override (`auto|grpc|polling`).
+- [x] Implement transport chain: gRPC streaming -> HTTP polling; allow explicit `transportMode` override (`auto|grpc|polling`).
   - [x] Node SDK: `CroniqRunner` supports gRPC + polling fallback with `transportMode`.
   - [x] Python SDK: async `CroniqRunner` with gRPC + polling fallback.
   - [x] Go SDK: transport chain (gRPC + polling fallback).
-- [ ] Standardize reconnect/backoff with jitter for all transports; keep gRPC reconnect attempts running while polling.
+- [x] Standardize reconnect/backoff with jitter for all transports; keep gRPC reconnect attempts running while polling.
   - [x] Node SDK: gRPC reconnect loop + polling fallback delay.
   - [x] Python SDK: gRPC reconnect loop + polling fallback delay.
-- [ ] Ensure lease renewals keep running regardless of transport (in-flight work must not depend on an active stream).
+- [x] Ensure lease renewals keep running regardless of transport (in-flight work must not depend on an active stream).
   - [x] Node SDK: HTTP renew loop per lease.
   - [x] Go SDK: HTTP renew loop per lease (polling runner).
-- [ ] Honor `executionMode` and runner policy (reject tests when disallowed, before running payload).
-- [ ] Support outbox persistence for ack/events (per `sdk-runner-integration.md`); bound disk usage and replay on startup.
+- [x] Honor `executionMode` and runner policy (reject tests when disallowed, before running payload).
+- [x] Support outbox persistence for ack/events (per `sdk-runner-integration.md`); bound disk usage and replay on startup.
   - [x] Node SDK: file-backed outbox for ack/events with replay + size bounds.
   - [x] Python SDK: file-backed outbox for ack/events with replay + size bounds.
   - [x] Go SDK: file-backed outbox for ack/events with replay + size bounds.
-- [ ] Optional: runner heartbeat support for ops (`/runners/heartbeat`) with metadata (capabilities, transport state).
-- [ ] Provide a uniform configuration contract across SDKs:
+- [x] Optional: runner heartbeat support for ops (`/runners/heartbeat`) with metadata (capabilities, transport state).
+- [x] Provide a uniform configuration contract across SDKs:
   - Required: `CRONIQ_API_BASEURL`, `CRONIQ_TENANT_ID`, `CRONIQ_ENVIRONMENT`, `CRONIQ_API_KEY|CRONIQ_BEARER_TOKEN`, `CRONIQ_RUNNER_ID`
   - Optional (transport): `CRONIQ_GRPC_BASEURL`, `CRONIQ_TRANSPORT_MODE` (`auto|grpc|polling`), `CRONIQ_ALLOW_TEST_EXECUTIONS`
   - Optional (standard knobs): `CRONIQ_POLL_BATCH_SIZE`, `CRONIQ_POLL_WAIT_MS`, `CRONIQ_REQUEST_TIMEOUT_MS`, `CRONIQ_RENEW_LEAD_MS`, `CRONIQ_RETRY_MAX_ATTEMPTS`, `CRONIQ_RETRY_BASE_MS`, `CRONIQ_RETRY_MAX_MS`, `CRONIQ_MAX_INFLIGHT`, `CRONIQ_CAPABILITIES`
@@ -104,24 +104,29 @@ Goal: deliver runner SDKs that execute Croniq jobs via the `/work` endpoints wit
 
 ## I. Testing checklist
 
-- [ ] Contract tests for gRPC/polling parity (claim/ack/events) including runner mismatch and lease conflicts.
-- [ ] Test rejection path: test invoke rejected -> warning logged on initiator + UI warning surfaced.
+- [x] Contract tests for gRPC/polling parity (claim/ack/events) including runner mismatch and lease conflicts.
+- [x] Test rejection path: test invoke rejected -> warning logged on initiator + UI warning surfaced.
   - [x] gRPC: test rejection writes warning log entry.
-- [ ] Idempotency and lease-conflict scenarios across transports.
+- [x] Idempotency and lease-conflict scenarios across transports.
   - [x] gRPC ack idempotency (second ack ignored).
-- [ ] Fallback chain e2e test: gRPC down -> polling.
+- [x] Fallback chain e2e test: gRPC down -> polling.
   - [x] API fallback: gRPC unavailable -> HTTP polling succeeds.
-- [ ] Outbox durability: restart with pending ack/events -> replay without duplicates.
+- [x] Outbox durability: restart with pending ack/events -> replay without duplicates.
 - [x] HTTP poll coverage: `AllowTestExecutions` gating, `executionMode`/`invocationSource` propagation, and `MaxInflight` fallback.
 - [x] Add gRPC parity for execution intent + test gating.
 - [x] gRPC events append execution logs.
 
 ## Open questions
 
-- Which SDK language should be implemented first for the full gRPC-first + polling fallback runner (Go, Node, Python, .NET)?
-- Do we want transport selection/fallback metrics emitted in the SDKs or in the API host (and which metric names)?
-- Should UI warning surfacing for test rejection be implemented in the schedules logs view only, or also in webhook timelines and trigger details?
-- Should runner samples be wired into AppHost profiles immediately, or after SDKs are finalized?
+- Decision: Keep the current SDK priority as-is (no change).
+- Decision: Emit transport selection/fallback metrics in the API host. Suggested names:
+  - `croniq.runner.transport.selection_total`
+  - `croniq.runner.transport.fallback_total`
+  - `croniq.runner.transport.grpc_unavailable_total`
+  - `croniq.runner.transport.polling_active`
+  - `croniq.runner.test.reject_total`
+- Decision: Show test rejection warnings in schedules logs and webhook timelines/trigger details.
+- Decision: SDKs are ready; wire runner samples into AppHost profiles.
 - Decision: There are no external consumers (including Python). We can rename freely to achieve consistent Runner naming without compatibility shims.
 
 ## J. Node consumer example (script)

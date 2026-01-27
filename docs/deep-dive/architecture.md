@@ -240,6 +240,8 @@ docs/
 
 - Logging: uses `ILoggerFactory` by default; `AddCroniqObservability` can enable Serilog with optional OpenTelemetry log export. Structured fields include tenant/environment/job context.
 - Metrics/Traces: OpenTelemetry SDK emitting OTLP by default. Dev stack ships with collector + Grafana + Tempo + Prometheus + Loki (optional).
+- Runner transport metrics in the API host: `croniq.runner.transport.selection_total`, `croniq.runner.transport.fallback_total`, `croniq.runner.transport.grpc_unavailable_total`, `croniq.runner.transport.polling_active`, and `croniq.runner.test.reject_total`.
+- UI highlights test rejection warnings in schedule/job execution history and webhook activity timelines using the warning/reason fields.
 - Docker strategy: multi-stage .NET 10 images for API/worker/UI/webhooks/migrator; the Aspire AppHost runs local containers using the configs in `infra/docker`. Postgres is supported when you supply an external instance.
 - Devstack direction: local dev and CI smoke checks run via the Aspire AppHost (`tools/Croniq.Devstack.AppHost`). See `docs/deep-dive/devstack.md`.
 - GitHub Actions build/test/publish NuGet packages and OCI images, uploading docs previews as artifacts.

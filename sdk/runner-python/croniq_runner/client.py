@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple
+from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple, Mapping
 from urllib.parse import quote
 
 import requests
@@ -28,6 +28,10 @@ class LeaseConflictError(CroniqError):
 
 
 class LeaseNotFoundError(CroniqError):
+    pass
+
+
+class RunnerMismatchError(CroniqError):
     pass
 
 
@@ -106,8 +110,10 @@ class RunnerClient:
             raise ValueError("base_url is required")
         if not tenant_id:
             raise ValueError("tenant_id is required")
-        if not api_key and not bearer_token:
-            raise ValueError("api_key or bearer_token is required")
+        has_api_key = bool(api_key)
+        has_bearer = bool(bearer_token)
+        if has_api_key == has_bearer:
+            raise ValueError("api_key or bearer_token is required (but not both)")
 
         self._base_url = base_url.rstrip("/")
         self._tenant_id = tenant_id
@@ -181,6 +187,23 @@ class RunnerClient:
         }
         self._post(f"/work/{lease.execution_id}:events", payload)
 
+    def heartbeat(
+        self,
+        runner_id: str,
+        environment_tag: str,
+        metadata_json: Optional[str] = None,
+        seen_at_utc: Optional[str] = None,
+    ) -> None:
+        payload: Dict[str, Any] = {
+            "runnerId": runner_id,
+            "environmentTag": environment_tag,
+        }
+        if metadata_json:
+            payload["metadataJson"] = metadata_json
+        if seen_at_utc:
+            payload["seenAtUtc"] = seen_at_utc
+        self._post("/runners/heartbeat", payload)
+
     def _post(self, suffix: str, payload: Dict[str, Any]) -> requests.Response:
         url = self._build_url(suffix)
         headers = {"Content-Type": "application/json"}
@@ -190,6 +213,8 @@ class RunnerClient:
             headers["X-Croniq-Key"] = self._api_key or ""
 
         response = requests.post(url, json=payload, headers=headers, timeout=self._timeout_seconds)
+        if response.status_code == 403 and _is_runner_mismatch_response(response):
+            raise RunnerMismatchError(response.status_code, response.text)
         if response.status_code == 404:
             raise LeaseNotFoundError(response.status_code, response.text)
         if response.status_code == 409:
@@ -203,6 +228,53 @@ class RunnerClient:
         if self._environment:
             url = f"{url}?environment={quote(self._environment)}"
         return url
+
+
+def _is_runner_mismatch_response(response: requests.Response) -> bool:
+    try:
+        payload = response.json()
+    except Exception:  # noqa: BLE001
+        payload = None
+    if isinstance(payload, dict):
+        title = payload.get("title") or payload.get("error")
+        if isinstance(title, str) and title.lower() == "runner-mismatch":
+            return True
+    return "runner-mismatch" in response.text.lower()
+
+
+def _get_optional(environment: Mapping[str, str], key: str) -> Optional[str]:
+    value = environment.get(key)
+    if value is None:
+        return None
+    value = value.strip()
+    return value or None
+
+
+def _parse_int(value: Optional[str]) -> Optional[int]:
+    if value is None or not value.strip():
+        return None
+    try:
+        return int(value)
+    except ValueError as exc:
+        raise ValueError(f"Invalid integer value: {value}") from exc
+
+
+def _parse_bool(value: Optional[str]) -> bool:
+    if value is None or not value.strip():
+        return False
+    normalized = value.strip().lower()
+    if normalized in {"true", "1", "yes"}:
+        return True
+    if normalized in {"false", "0", "no"}:
+        return False
+    raise ValueError(f"Invalid boolean value: {value}")
+
+
+def _parse_list(value: Optional[str]) -> Optional[List[str]]:
+    if value is None or not value.strip():
+        return None
+    items = [entry.strip() for entry in value.split(",") if entry.strip()]
+    return items or None
 
 
 @dataclass(frozen=True)
@@ -238,10 +310,59 @@ class RunnerConfig:
     retry_base_ms: int = 500
     retry_max_ms: int = 10000
     retry_max_attempts: Optional[int] = None
+    heartbeat_interval_ms: int = 0
+    heartbeat_metadata: Optional[Dict[str, Any]] = None
     parse_payload_json: bool = False
     outbox_path: Optional[str] = None
     outbox_max_entries: int = 500
     outbox_max_bytes: int = 1_000_000
+
+    @staticmethod
+    def from_env(env: Optional[Mapping[str, str]] = None) -> "RunnerConfig":
+        environment = env or os.environ
+
+        def required(key: str) -> str:
+            value = environment.get(key, "").strip()
+            if not value:
+                raise ValueError(f"{key} is required")
+            return value
+
+        base_url = required("CRONIQ_API_BASEURL")
+        tenant_id = required("CRONIQ_TENANT_ID")
+        environment_tag = required("CRONIQ_ENVIRONMENT")
+        runner_id = required("CRONIQ_RUNNER_ID")
+
+        api_key = environment.get("CRONIQ_API_KEY")
+        bearer_token = environment.get("CRONIQ_BEARER_TOKEN")
+        has_api_key = bool(api_key and api_key.strip())
+        has_bearer = bool(bearer_token and bearer_token.strip())
+        if has_api_key == has_bearer:
+            raise ValueError("Set exactly one of CRONIQ_API_KEY or CRONIQ_BEARER_TOKEN")
+
+        transport_mode = (environment.get("CRONIQ_TRANSPORT_MODE") or "auto").strip().lower()
+        if transport_mode not in {"auto", "grpc", "polling"}:
+            raise ValueError("CRONIQ_TRANSPORT_MODE must be auto, grpc, or polling")
+
+        return RunnerConfig(
+            base_url=base_url,
+            tenant_id=tenant_id,
+            environment=environment_tag,
+            runner_id=runner_id,
+            api_key=api_key.strip() if has_api_key else None,
+            bearer_token=bearer_token.strip() if has_bearer else None,
+            grpc_base_url=_get_optional(environment, "CRONIQ_GRPC_BASEURL"),
+            transport_mode=transport_mode,
+            allow_test_executions=_parse_bool(environment.get("CRONIQ_ALLOW_TEST_EXECUTIONS")),
+            max_inflight=_parse_int(environment.get("CRONIQ_MAX_INFLIGHT")) or 1,
+            capabilities=_parse_list(environment.get("CRONIQ_CAPABILITIES")),
+            poll_batch_size=_parse_int(environment.get("CRONIQ_POLL_BATCH_SIZE")) or 1,
+            poll_wait_ms=_parse_int(environment.get("CRONIQ_POLL_WAIT_MS")) or 25000,
+            request_timeout_seconds=(_parse_int(environment.get("CRONIQ_REQUEST_TIMEOUT_MS")) or 60000) // 1000,
+            renew_lead_ms=_parse_int(environment.get("CRONIQ_RENEW_LEAD_MS")) or 10000,
+            retry_base_ms=_parse_int(environment.get("CRONIQ_RETRY_BASE_MS")) or 500,
+            retry_max_ms=_parse_int(environment.get("CRONIQ_RETRY_MAX_MS")) or 10000,
+            retry_max_attempts=_parse_int(environment.get("CRONIQ_RETRY_MAX_ATTEMPTS")),
+        )
 
 
 class RunnerLogger:
@@ -265,6 +386,10 @@ class CroniqRunner:
             raise ValueError("runner_id is required")
         if config.transport_mode not in {"auto", "grpc", "polling"}:
             raise ValueError("transport_mode must be auto, grpc, or polling")
+        has_api_key = bool(config.api_key)
+        has_bearer = bool(config.bearer_token)
+        if has_api_key == has_bearer:
+            raise ValueError("api_key or bearer_token is required (but not both)")
 
         self._config = config
         self._client = RunnerClient(
@@ -288,6 +413,7 @@ class CroniqRunner:
         self._outbox: List[Dict[str, Any]] = []
         self._outbox_lock = asyncio.Lock()
         self._outbox_path = config.outbox_path or os.path.join(os.getcwd(), ".croniq", "runner-outbox.jsonl")
+        self._fatal_future: Optional[asyncio.Future[None]] = None
 
     def on_execute(self, handler: Callable[[RunnerExecutionContext, Any, RunnerLogger], Awaitable[None]]) -> None:
         self._handler = handler
@@ -299,15 +425,23 @@ class CroniqRunner:
 
         await self._load_outbox()
 
+        self._fatal_future = asyncio.get_running_loop().create_future()
+
         tasks: List[asyncio.Task[None]] = []
         if self._config.transport_mode != "polling":
             tasks.append(asyncio.create_task(self._run_grpc()))
         if self._config.transport_mode != "grpc":
             tasks.append(asyncio.create_task(self._run_polling()))
+        if self._config.heartbeat_interval_ms > 0:
+            tasks.append(asyncio.create_task(self._heartbeat_loop()))
         tasks.append(asyncio.create_task(self._run_dispatch_loop()))
         tasks.append(asyncio.create_task(self._replay_outbox_loop()))
 
-        await asyncio.gather(*tasks)
+        tasks.append(self._fatal_future)
+        try:
+            await asyncio.gather(*tasks)
+        finally:
+            self._fatal_future = None
 
     async def stop(self) -> None:
         self._running = False
@@ -320,6 +454,26 @@ class CroniqRunner:
         self._inflight.clear()
         self._grpc_connected.clear()
 
+    def _fail_fatal(self, exc: Exception) -> None:
+        self._running = False
+        if self._grpc_stream is not None:
+            self._grpc_stream.cancel()
+            self._grpc_stream = None
+        for task in self._renew_tasks.values():
+            task.cancel()
+        self._renew_tasks.clear()
+        self._inflight.clear()
+        self._grpc_connected.clear()
+        if self._fatal_future and not self._fatal_future.done():
+            self._fatal_future.set_exception(exc)
+
+    def _handle_runner_mismatch(self, exc: Exception) -> bool:
+        if isinstance(exc, RunnerMismatchError) or _is_grpc_runner_mismatch(exc):
+            self._logger.error("runner mismatch", {"error": str(exc)})
+            self._fail_fatal(exc)
+            return True
+        return False
+
     async def _run_grpc(self) -> None:
         attempt = 0
         while self._running:
@@ -327,6 +481,8 @@ class CroniqRunner:
                 await self._connect_grpc()
                 attempt = 0
             except Exception as exc:  # noqa: BLE001
+                if self._handle_runner_mismatch(exc):
+                    return
                 attempt += 1
                 if self._config.retry_max_attempts and attempt >= self._config.retry_max_attempts:
                     self._logger.error("gRPC reconnect exhausted", {"error": str(exc)})
@@ -395,8 +551,30 @@ class CroniqRunner:
                 for lease in leases:
                     await self._queue.put(lease)
             except Exception as exc:  # noqa: BLE001
+                if self._handle_runner_mismatch(exc):
+                    return
                 self._logger.warn("poll failed", {"error": str(exc)})
                 await asyncio.sleep(self._next_delay(1) / 1000)
+
+    async def _heartbeat_loop(self) -> None:
+        while self._running:
+            try:
+                if not self._config.environment:
+                    self._logger.warn("heartbeat skipped; environment is required", {})
+                else:
+                    metadata_json = json.dumps(self._build_heartbeat_metadata())
+                    await asyncio.to_thread(
+                        self._client.heartbeat,
+                        runner_id=self._config.runner_id,
+                        environment_tag=self._config.environment,
+                        metadata_json=metadata_json,
+                    )
+            except Exception as exc:  # noqa: BLE001
+                if self._handle_runner_mismatch(exc):
+                    return
+                self._logger.warn("heartbeat failed", {"error": str(exc)})
+
+            await asyncio.sleep(self._config.heartbeat_interval_ms / 1000)
 
     async def _run_dispatch_loop(self) -> None:
         while self._running:
@@ -458,7 +636,9 @@ class CroniqRunner:
                 lease=lease,
                 succeeded=True,
             )
-        except Exception:  # noqa: BLE001
+        except Exception as exc:  # noqa: BLE001
+            if self._handle_runner_mismatch(exc):
+                return
             if allow_outbox:
                 await self._enqueue_outbox({
                     "id": str(uuid.uuid4()),
@@ -490,7 +670,9 @@ class CroniqRunner:
                 succeeded=False,
                 dead_letter_reason="execution-failed",
             )
-        except Exception:  # noqa: BLE001
+        except Exception as exc:  # noqa: BLE001
+            if self._handle_runner_mismatch(exc):
+                return
             if allow_outbox:
                 await self._enqueue_outbox({
                     "id": str(uuid.uuid4()),
@@ -528,7 +710,9 @@ class CroniqRunner:
                 succeeded=False,
                 dead_letter_reason="test-not-allowed",
             )
-        except Exception:  # noqa: BLE001
+        except Exception as exc:  # noqa: BLE001
+            if self._handle_runner_mismatch(exc):
+                return
             if allow_outbox:
                 await self._enqueue_outbox({
                     "id": str(uuid.uuid4()),
@@ -557,6 +741,8 @@ class CroniqRunner:
                     self._inflight[lease.lease_id] = updated
                     lease = updated
             except Exception as exc:  # noqa: BLE001
+                if self._handle_runner_mismatch(exc):
+                    return
                 self._logger.warn("renew failed", {"error": str(exc), "leaseId": lease.lease_id})
 
     async def _grpc_send(self, message: Any) -> None:
@@ -595,7 +781,9 @@ class CroniqRunner:
                 lease=lease,
                 events=events,
             )
-        except Exception:  # noqa: BLE001
+        except Exception as exc:  # noqa: BLE001
+            if self._handle_runner_mismatch(exc):
+                return
             if allow_outbox:
                 await self._enqueue_outbox({
                     "id": str(uuid.uuid4()),
@@ -613,6 +801,19 @@ class CroniqRunner:
         if task:
             task.cancel()
         self._inflight.pop(lease.lease_id, None)
+
+    def _build_heartbeat_metadata(self) -> Dict[str, Any]:
+        transport_state = "grpc" if self._grpc_connected.is_set() else "polling"
+        metadata: Dict[str, Any] = {
+            "transportMode": self._config.transport_mode,
+            "transportState": transport_state,
+            "allowTestExecutions": self._config.allow_test_executions,
+            "maxInflight": self._config.max_inflight,
+            "capabilities": self._config.capabilities or [],
+        }
+        if self._config.heartbeat_metadata:
+            metadata.update(self._config.heartbeat_metadata)
+        return metadata
 
     async def _load_outbox(self) -> None:
         try:
@@ -688,7 +889,9 @@ class CroniqRunner:
                         await self._send_events(lease, events, allow_outbox=False)
 
                     await self._remove_outbox(entry["id"])
-                except Exception:
+                except Exception as exc:
+                    if self._handle_runner_mismatch(exc):
+                        return
                     await self._mark_outbox_failed(entry["id"])
                     await asyncio.sleep(self._next_delay(entry.get("attempts", 1)) / 1000)
 
@@ -709,6 +912,12 @@ def _parse_payload(payload: Optional[str], parse_json: bool) -> Any:
         return json.loads(payload)
     except Exception:  # noqa: BLE001
         return payload
+
+
+def _is_grpc_runner_mismatch(exc: Exception) -> bool:
+    if isinstance(exc, grpc.aio.AioRpcError):
+        return exc.code() == grpc.StatusCode.PERMISSION_DENIED and "runner-mismatch" in (exc.details() or "").lower()
+    return False
 
 
 def _renew_delay_ms(expires_at_utc: str, lead_ms: int) -> int:

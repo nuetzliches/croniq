@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Net;
 using System.Net.Http;
+using System.Net.Http.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Text.Json;
@@ -220,6 +221,120 @@ public sealed class GrpcRunnerTests
 
         var remaining = await WaitForTriggersClearedAsync(store, scope);
         remaining.ShouldBeEmpty();
+
+        await call.RequestStream.CompleteAsync();
+        await app.StopAsync();
+    }
+
+    [Fact]
+    public async Task RunnerGrpc_AckedWork_IsNotAvailableForPolling()
+    {
+        var builder = WebApplication.CreateBuilder(new WebApplicationOptions
+        {
+            ApplicationName = typeof(GrpcRunnerTests).Assembly.FullName,
+            EnvironmentName = Environments.Development
+        });
+
+        var apiKey = "ak_grpc_runner_parity";
+        var tenantId = "00000000-0000-0000-0000-000000000009";
+        var environmentTag = "dev";
+
+        builder.Configuration.AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["Croniq:Api:RequestsPerMinute"] = "0",
+            ["Croniq:Auth:Mode"] = "InMemory",
+            ["Croniq:Auth:InMemory:ApiKey"] = apiKey,
+            ["Croniq:Auth:InMemory:TenantId"] = tenantId,
+            ["Croniq:Auth:InMemory:EnvironmentTag"] = environmentTag
+        });
+
+        builder.Services.AddCroniqApiServices(builder.Configuration);
+        builder.Services.AddCroniqApiRateLimiter();
+        builder.Services.AddLogging();
+        builder.Services.AddGrpc();
+
+        var pipeline = new RecordingJobExecutionPipeline();
+        var registry = new FakeJobRegistry();
+        var policies = new FakePolicyResolver();
+        var store = new NoopJobPersistenceProvider();
+
+        builder.Services.AddSingleton<IJobExecutionPipeline>(pipeline);
+        builder.Services.AddSingleton<IJobRegistry>(registry);
+        builder.Services.AddSingleton<IPolicyResolver>(policies);
+        builder.Services.AddSingleton<IJobPersistenceProvider>(store);
+        builder.Services.AddSingleton<ICalendarStore>(store);
+        builder.Services.AddSingleton<IJobStore>(store);
+        builder.Services.AddSingleton<IPersistenceHealth>(store);
+
+        builder.WebHost.ConfigureKestrel(options =>
+        {
+            options.Listen(IPAddress.Loopback, 0, listenOptions => listenOptions.Protocols = HttpProtocols.Http2);
+        });
+
+        await using var app = builder.Build();
+        app.UseCroniqApi();
+        app.MapCroniqRunnerGrpc();
+
+        await app.StartAsync();
+        var address = app.Urls.First();
+
+        var scope = new PartitionScope(tenantId, environmentTag);
+        const string jobKey = "ops:grpc-runner-parity";
+        await store.UpsertJobAsync(new JobDefinition(jobKey, "ops", "grpc-runner-parity", Variant: null, Description: null, Metadata: null), scope, CancellationToken.None);
+
+        var triggerId = $"{jobKey}:once-{Guid.NewGuid():N}";
+        var trigger = new TriggerDefinition(
+            triggerId,
+            jobKey,
+            TriggerSchedule.OnceExpression,
+            scope,
+            StartAtUtc: DateTimeOffset.UtcNow.AddMinutes(-1),
+            EndAtUtc: null,
+            Enabled: true,
+            Metadata: null,
+            TimeZoneId: TimeZoneInfo.Utc.Id);
+        await store.UpsertTriggerAsync(trigger, CancellationToken.None);
+
+        AppContext.SetSwitch("System.Net.Http.SocketsHttpHandler.Http2UnencryptedSupport", true);
+        var httpClient = new HttpClient
+        {
+            BaseAddress = new Uri(address),
+            DefaultRequestVersion = new Version(2, 0),
+            DefaultVersionPolicy = HttpVersionPolicy.RequestVersionOrHigher
+        };
+        httpClient.DefaultRequestHeaders.Add("X-Croniq-Key", apiKey);
+
+        using var channel = GrpcChannel.ForAddress(address, new GrpcChannelOptions { HttpClient = httpClient });
+        var client = new Runner.RunnerClient(channel);
+
+        using var call = client.Connect();
+        await call.RequestStream.WriteAsync(new RunnerMessage
+        {
+            Hello = new RunnerHello
+            {
+                RunnerId = "default",
+                MaxInflight = 1
+            }
+        });
+
+        var assigned = await WaitForAssignmentAsync(call.ResponseStream);
+        assigned.ShouldNotBeNull();
+
+        await call.RequestStream.WriteAsync(new RunnerMessage
+        {
+            AckSuccess = new WorkAckSuccess
+            {
+                ExecutionId = assigned.ExecutionId,
+                LeaseId = assigned.LeaseId
+            }
+        });
+
+        var pollRequest = new WorkPollRequest(environmentTag, "default", BatchSize: 1);
+        var pollResponse = await httpClient.PostAsJsonAsync($"/tenants/{tenantId}/work/poll", pollRequest);
+        pollResponse.StatusCode.ShouldBe(HttpStatusCode.OK);
+        var pollPayload = await pollResponse.Content.ReadFromJsonAsync<WorkPollResponse>();
+        pollPayload.ShouldNotBeNull();
+        pollPayload.Leases.ShouldBeEmpty();
 
         await call.RequestStream.CompleteAsync();
         await app.StopAsync();
