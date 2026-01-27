@@ -183,6 +183,19 @@ export class SchedulesPage {
     this.restoreDialogFocus();
   }
 
+  formatExecutionMode(mode?: string): string {
+    const normalized = (mode ?? '').trim().toLowerCase();
+    return normalized || 'normal';
+  }
+
+  formatInvocationSource(source?: string, executionMode?: string): string {
+    const normalized = (source ?? '').trim().toLowerCase() || 'schedule';
+    const label = normalized
+      .replace('webhook-ingress', 'webhook ingress')
+      .replace('webhook-invoke', 'webhook invoke');
+    return this.formatExecutionMode(executionMode) === 'test' ? `${label}:test` : label;
+  }
+
   private captureDialogFocus() {
     const active = document.activeElement;
     this.lastDialogFocus = active instanceof HTMLElement ? active : null;

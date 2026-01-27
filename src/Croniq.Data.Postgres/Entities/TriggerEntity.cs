@@ -46,6 +46,12 @@ public sealed class TriggerEntity
 
     public string? MetadataJson { get; set; }
 
+    [MaxLength(32)]
+    public string ExecutionMode { get; set; } = "normal";
+
+    [MaxLength(64)]
+    public string InvocationSource { get; set; } = "schedule";
+
     [MaxLength(64)]
     public string? LeaseId { get; set; }
 

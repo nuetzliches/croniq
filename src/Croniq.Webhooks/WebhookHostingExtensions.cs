@@ -550,7 +550,9 @@ public static class WebhookHostingExtensions
                     coreOptions.Value.InstanceId,
                     activity?.TraceId.ToString(),
                     activity?.SpanId.ToString(),
-                    TryGetCorrelationId(activity, metadata)),
+                    TryGetCorrelationId(activity, metadata),
+                    ExecutionIntent.ExecutionModes.Normal,
+                    ExecutionIntent.InvocationSources.WebhookIngress),
                 cancellationToken).ConfigureAwait(false);
 
             var stopwatch = Stopwatch.StartNew();

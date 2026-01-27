@@ -28,6 +28,7 @@ message RunnerHello {
   string runner_id = 1;
   int32 max_inflight = 2;
   map<string, string> capabilities = 3;
+  bool allow_test_executions = 4;
 }
 
 message ServerHello {
@@ -45,6 +46,8 @@ message WorkAssigned {
   int64 fire_at_utc = 5;
   int64 lease_expires_at_utc = 6;
   string payload = 7;
+  string execution_mode = 8;
+  string invocation_source = 9;
 }
 
 message WorkAckSuccess {

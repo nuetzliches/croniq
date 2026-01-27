@@ -1,9 +1,9 @@
-# Workers & Runners (HTTP)
+# Workers & Runners (gRPC + HTTP)
 
 Croniq.WorkerHost uses a lease-based model to claim and execute due triggers.
-The HTTP work endpoints expose the same lease lifecycle so non-.NET runners can participate.
+Runners use gRPC streaming as the primary transport with HTTP polling as a fallback; both share the same lease lifecycle so non-.NET runners can participate.
 Worker host presence is tracked separately via `/workers`; this guide focuses on runner identities used by the `/work/*` surface.
-For gRPC streaming runners, see [`polyglot-runner-protocol.md`](../deep-dive/designs/polyglot-runner-protocol.md).
+For protocol details, see [`polyglot-runner-protocol.md`](../deep-dive/designs/polyglot-runner-protocol.md).
 
 ## Worker Presence (Heartbeat)
 
@@ -50,11 +50,16 @@ Request body:
 - `runnerId` (string, required): stable runner identity (e.g., host + process).
 - `batchSize` (int, optional): number of leases to claim. Default `1`.
 - `waitForMs` (int, optional): long-poll timeout in milliseconds. Default `0` (immediate).
+- `allowTestExecutions` (bool, optional): if `true`, the runner accepts test executions.
+- `maxInflight` (int, optional): max in-flight hints for the server.
+- `capabilities` (string[], optional): capability tags to associate with the runner.
 
 Response:
 
 - `leases`: array of lease tokens.
   - `executionId`: execution identifier for logs/events.
+  - `executionMode`: `normal|test`.
+  - `invocationSource`: `schedule|manual|api|webhook-ingress|webhook-invoke` (extensible).
 
 ### Renew
 
@@ -90,6 +95,10 @@ Request body:
 - `nextFireTimeUtc` (optional): when set, the trigger is rescheduled.
 - `deadLetterReason` (optional): set for failed work when no reschedule is requested.
 
+Test execution rejection:
+
+- If a runner does not allow tests, it should reject by sending `deadLetterReason: "test-not-allowed"` (non-retryable).
+
 ### Events / Logs
 
 `POST /tenants/{tenantId}/work/{executionId}:events?environment=dev`
@@ -111,11 +120,11 @@ Request body:
 
 ## Sample
 
-A minimal runner loop that polls/renews/acks is available at (legacy folder names):
+A minimal runner loop that polls/renews/acks is available at:
 
-- `samples/worker-sdk-go`
-- `samples/worker-sdk-node`
-- `samples/worker-sdk-python`
+- `sdk/runner-go`
+- `sdk/runner-node`
+- `sdk/runner-python`
 
 ## SDK/Runner Integration (Recommended)
 

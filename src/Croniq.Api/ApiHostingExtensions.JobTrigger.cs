@@ -49,6 +49,15 @@ public static partial class ApiHostingExtensions
                 return Results.BadRequest(new { error = "invalid-delay", message = "DelaySeconds must be zero or greater." });
             }
 
+            var executionMode = string.IsNullOrWhiteSpace(request.ExecutionMode)
+                ? ExecutionIntent.ExecutionModes.Normal
+                : request.ExecutionMode.Trim().ToLowerInvariant();
+            if (!string.Equals(executionMode, ExecutionIntent.ExecutionModes.Normal, StringComparison.OrdinalIgnoreCase)
+                && !string.Equals(executionMode, ExecutionIntent.ExecutionModes.Test, StringComparison.OrdinalIgnoreCase))
+            {
+                return Results.BadRequest(new { error = "invalid-execution-mode", message = "ExecutionMode must be 'normal' or 'test'." });
+            }
+
             var delay = request.DelaySeconds.HasValue
                 ? TimeSpan.FromSeconds(request.DelaySeconds.Value)
                 : (TimeSpan?)null;
@@ -74,7 +83,13 @@ public static partial class ApiHostingExtensions
 
             try
             {
-                await jobTrigger.TriggerOnceAsync(jobKey.Value, metadata, delay, cancellationToken).ConfigureAwait(false);
+                await jobTrigger.TriggerOnceAsync(
+                    jobKey.Value,
+                    metadata,
+                    delay,
+                    executionMode,
+                    ExecutionIntent.InvocationSources.Manual,
+                    cancellationToken).ConfigureAwait(false);
                 ApiMetrics.RecordManualTrigger(jobKey, scope);
                 triggerActivity?.SetStatus(ActivityStatusCode.Ok);
                 var status = delay.HasValue && delay.Value > TimeSpan.Zero ? "scheduled" : "triggered";

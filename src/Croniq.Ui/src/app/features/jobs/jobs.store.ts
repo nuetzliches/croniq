@@ -42,6 +42,9 @@ export type ExecutionSummary = {
     jobKey?: string;
     status?: string;
     startedAt?: string;
+    executionMode?: string;
+    invocationSource?: string;
+    warningType?: string;
 };
 
 export type JobDetail = {
@@ -718,7 +721,21 @@ function normalizeExecutions(value: unknown): ReadonlyArray<ExecutionSummary> {
                     : undefined;
         const startedAt = startedAtRaw?.trim() || undefined;
 
-        entries.push({ executionId, jobKey: jobKey || undefined, status, startedAt });
+        const executionMode =
+            typeof record['executionMode'] === 'string' ? record['executionMode'].trim() : undefined;
+        const invocationSource =
+            typeof record['invocationSource'] === 'string' ? record['invocationSource'].trim() : undefined;
+        const warningType = typeof record['errorType'] === 'string' ? record['errorType'].trim() : undefined;
+
+        entries.push({
+            executionId,
+            jobKey: jobKey || undefined,
+            status,
+            startedAt,
+            executionMode: executionMode || undefined,
+            invocationSource: invocationSource || undefined,
+            warningType: warningType || undefined,
+        });
     }
 
     return entries;

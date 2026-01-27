@@ -9,4 +9,5 @@ public sealed record TriggerAcquireRequest(
     PartitionScope Scope,
     string InstanceId,
     DateTimeOffset NowUtc,
-    int BatchSize);
+    int BatchSize,
+    bool AllowTestExecutions = false);

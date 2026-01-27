@@ -33,4 +33,9 @@ public sealed class WorkerHostOptions
     /// Lead time before lease expiry to renew it (set to zero to disable renewals).
     /// </summary>
     public TimeSpan LeaseRenewalLeadTime { get; set; } = TimeSpan.FromSeconds(10);
+
+    /// <summary>
+    /// Whether this worker host accepts test executions.
+    /// </summary>
+    public bool AllowTestExecutions { get; set; }
 }

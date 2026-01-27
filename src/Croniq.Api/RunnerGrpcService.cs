@@ -2,6 +2,7 @@ using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics;
+using Croniq.Api.Telemetry;
 using Croniq.Auth.Abstractions;
 using Croniq.Core.Observability;
 using Croniq.Core.Execution;
@@ -81,6 +82,23 @@ internal sealed class RunnerGrpcService : Runner.RunnerBase
         var runnerId = hello.RunnerId.Trim();
         EnsureRunnerIdentityOrThrow(caller, runnerId);
 
+        var previousTransport = ApiMetrics.RecordRunnerTransportSelection(
+            caller.TenantId,
+            environmentTag,
+            runnerId,
+            "grpc");
+        if (!string.IsNullOrWhiteSpace(previousTransport)
+            && !string.Equals(previousTransport, "grpc", StringComparison.OrdinalIgnoreCase))
+        {
+            ApiMetrics.RecordRunnerTransportTransition(caller.TenantId, environmentTag, previousTransport, "grpc");
+            _logger.LogInformation(
+                "Runner transport switched from {PreviousTransport} to grpc (tenant {Tenant}, environment {Environment}, runner {RunnerId}).",
+                previousTransport,
+                IdentifierHashing.HashTenantId(caller.TenantId) ?? string.Empty,
+                environmentTag,
+                runnerId);
+        }
+
         activity?.SetTag("croniq.tenant_id", IdentifierHashing.HashTenantId(caller.TenantId));
         activity?.SetTag("croniq.environment", environmentTag);
         activity?.SetTag("croniq.runner_id", runnerId);
@@ -97,6 +115,7 @@ internal sealed class RunnerGrpcService : Runner.RunnerBase
         }).ConfigureAwait(false);
 
         var maxInflight = NormalizeMaxInflight(hello.MaxInflight);
+        var allowTestExecutions = hello.AllowTestExecutions;
         var scope = new PartitionScope(caller.TenantId, environmentTag);
         var inflight = new ConcurrentDictionary<string, TriggerLease>(StringComparer.OrdinalIgnoreCase);
         using var cts = CancellationTokenSource.CreateLinkedTokenSource(context.CancellationToken);
@@ -106,6 +125,7 @@ internal sealed class RunnerGrpcService : Runner.RunnerBase
             runnerId,
             scope,
             maxInflight,
+            allowTestExecutions,
             cts.Token), cts.Token);
 
         try
@@ -188,6 +208,7 @@ internal sealed class RunnerGrpcService : Runner.RunnerBase
         string runnerId,
         PartitionScope scope,
         int maxInflight,
+        bool allowTestExecutions,
         CancellationToken cancellationToken)
     {
         var pollInterval = TimeSpan.FromMilliseconds(250);
@@ -199,7 +220,12 @@ internal sealed class RunnerGrpcService : Runner.RunnerBase
                 var available = maxInflight - inflight.Count;
                 if (available > 0)
                 {
-                    var request = new TriggerAcquireRequest(scope, runnerId, DateTimeOffset.UtcNow, Math.Min(available, 250));
+                    var request = new TriggerAcquireRequest(
+                        scope,
+                        runnerId,
+                        DateTimeOffset.UtcNow,
+                        Math.Min(available, 250),
+                        allowTestExecutions);
                     var leases = await _jobStore.AcquireAsync(request, cancellationToken).ConfigureAwait(false);
 
                     foreach (var lease in leases)
@@ -213,6 +239,17 @@ internal sealed class RunnerGrpcService : Runner.RunnerBase
                         await TryStoreExecutionStartedAsync(normalized, runnerId, cancellationToken).ConfigureAwait(false);
                         await TryTrackAssignmentAsync(normalized, runnerId, scope, cancellationToken).ConfigureAwait(false);
 
+                        if (string.Equals(normalized.ExecutionMode, ExecutionIntent.ExecutionModes.Test, StringComparison.OrdinalIgnoreCase))
+                        {
+                            ApiMetrics.RecordRunnerTestDecision(
+                                scope.TenantId,
+                                scope.EnvironmentTag,
+                                "grpc",
+                                "accepted",
+                                normalized.ExecutionMode,
+                                normalized.InvocationSource);
+                        }
+
                         await responseStream.WriteAsync(new ServerMessage
                         {
                             Assigned = new WorkAssigned
@@ -223,7 +260,9 @@ internal sealed class RunnerGrpcService : Runner.RunnerBase
                                 JobKey = normalized.JobKey,
                                 FireAtUtc = normalized.FireAtUtc.ToUnixTimeMilliseconds(),
                                 LeaseExpiresAtUtc = normalized.LeaseExpiresAtUtc.ToUnixTimeMilliseconds(),
-                                Payload = normalized.Payload ?? string.Empty
+                                Payload = normalized.Payload ?? string.Empty,
+                                ExecutionMode = normalized.ExecutionMode,
+                                InvocationSource = normalized.InvocationSource
                             }
                         }).ConfigureAwait(false);
                     }
@@ -338,10 +377,69 @@ internal sealed class RunnerGrpcService : Runner.RunnerBase
             await _jobStore.ReleaseAsync(release, cancellationToken).ConfigureAwait(false);
             await TryStoreExecutionCompletedAsync(lease.ExecutionId, succeeded, deadLetterReason, cancellationToken).ConfigureAwait(false);
             await TryTrackCompletionAsync(lease, runnerId, succeeded, deadLetterReason, cancellationToken).ConfigureAwait(false);
+            if (!succeeded && string.Equals(deadLetterReason, WorkRejectionReasons.TestNotAllowed, StringComparison.OrdinalIgnoreCase))
+            {
+                ApiMetrics.RecordRunnerTestDecision(
+                    lease.Scope.TenantId,
+                    lease.Scope.EnvironmentTag,
+                    "grpc",
+                    "rejected",
+                    lease.ExecutionMode,
+                    lease.InvocationSource);
+                await TryStoreTestRejectionAsync(lease, runnerId, cancellationToken).ConfigureAwait(false);
+            }
         }
         catch (InvalidOperationException ex)
         {
             _logger.LogWarning(ex, "Failed to release lease {LeaseId}.", leaseId);
+        }
+    }
+
+    private async Task TryStoreTestRejectionAsync(TriggerLease lease, string runnerId, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(lease.ExecutionId))
+        {
+            return;
+        }
+
+        _logger.LogWarning(
+            "Runner rejected test execution {ExecutionId} (runner {RunnerId}, job {JobKey}, trigger {TriggerId}).",
+            lease.ExecutionId,
+            runnerId,
+            lease.JobKey,
+            lease.TriggerId);
+
+        var properties = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["croniq.execution_id"] = lease.ExecutionId,
+            ["croniq.runner_id"] = runnerId,
+            ["croniq.job.key"] = lease.JobKey,
+            ["croniq.trigger.id"] = lease.TriggerId,
+            ["croniq.execution_mode"] = lease.ExecutionMode,
+            ["croniq.invocation_source"] = lease.InvocationSource,
+            ["croniq.warning.type"] = WorkRejectionReasons.TestNotAllowed
+        };
+
+        var entry = new ExecutionLogEntry(
+            lease.ExecutionId,
+            DateTimeOffset.UtcNow,
+            LogLevel.Warning,
+            "Runner rejected test execution",
+            "Runner rejected test execution",
+            Exception: null,
+            properties,
+            Activity.Current?.TraceId.ToString(),
+            Activity.Current?.SpanId.ToString(),
+            CorrelationId: null,
+            DateTimeOffset.UtcNow.UtcTicks);
+
+        try
+        {
+            await _executionLogStore.AppendAsync(lease.ExecutionId, new[] { entry }, cancellationToken).ConfigureAwait(false);
+        }
+        catch
+        {
+            // best-effort warning log
         }
     }
 
@@ -448,7 +546,9 @@ internal sealed class RunnerGrpcService : Runner.RunnerBase
             runnerId,
             activity?.TraceId.ToString(),
             activity?.SpanId.ToString(),
-            null);
+            null,
+            lease.ExecutionMode,
+            lease.InvocationSource);
 
         try
         {
@@ -581,7 +681,9 @@ internal sealed class RunnerGrpcService : Runner.RunnerBase
             LeaseId: lease.LeaseId,
             LeaseExpiresAtUtc: lease.LeaseExpiresAtUtc,
             Payload: lease.Payload,
-            AssignedAtUtc: DateTimeOffset.UtcNow);
+            AssignedAtUtc: DateTimeOffset.UtcNow,
+            ExecutionMode: lease.ExecutionMode,
+            InvocationSource: lease.InvocationSource);
 
         try
         {

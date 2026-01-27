@@ -671,7 +671,9 @@ internal sealed class WebhookIngressRelayService : BackgroundService
                 _coreOptions.InstanceId,
                 activity?.TraceId.ToString(),
                 activity?.SpanId.ToString(),
-                TryGetCorrelationId(activity, mutableMetadata)), cancellationToken).ConfigureAwait(false);
+                TryGetCorrelationId(activity, mutableMetadata),
+                ExecutionIntent.ExecutionModes.Normal,
+                ExecutionIntent.InvocationSources.WebhookIngress), cancellationToken).ConfigureAwait(false);
 
             var stopwatch = Stopwatch.StartNew();
             try

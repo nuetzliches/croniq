@@ -31,6 +31,16 @@ public sealed class WorkerDispatchOptions
     public int MaxInflight { get; set; }
 
     /// <summary>
+    /// Whether this runner accepts test executions.
+    /// </summary>
+    public bool AllowTestExecutions { get; set; }
+
+    /// <summary>
+    /// Optional capability tags for the runner.
+    /// </summary>
+    public string[]? Capabilities { get; set; }
+
+    /// <summary>
     /// If true, fall back to polling when gRPC is unavailable.
     /// </summary>
     public bool EnablePollingFallback { get; set; } = true;

@@ -48,6 +48,9 @@ export type ExecutionSummary = {
     startAtUtc: string;
     durationMs: number;
     trigger: string;
+    executionMode: string;
+    invocationSource: string;
+    warningType?: string;
 };
 
 @Injectable()
@@ -608,14 +611,34 @@ function normalizeExecutionsResponse(value: unknown): ReadonlyArray<ExecutionSum
             continue;
         }
         const record = item as Record<string, unknown>;
-        const id = typeof record['id'] === 'string' ? record['id'] : `exec-${index}`;
+        const id =
+            typeof record['executionId'] === 'string'
+                ? record['executionId']
+                : typeof record['id'] === 'string'
+                    ? record['id']
+                    : `exec-${index}`;
         const jobKey = typeof record['jobKey'] === 'string' ? record['jobKey'] : 'Unknown Job';
         const status = typeof record['status'] === 'string' ? record['status'] : 'Unknown';
-        const startAtUtc = typeof record['startAtUtc'] === 'string' ? record['startAtUtc'] : '';
+        const startAtUtc =
+            typeof record['startedAtUtc'] === 'string'
+                ? record['startedAtUtc']
+                : typeof record['startAtUtc'] === 'string'
+                    ? record['startAtUtc']
+                    : '';
         const durationMs = typeof record['durationMs'] === 'number' ? record['durationMs'] : 0;
-        const trigger = typeof record['trigger'] === 'string' ? record['trigger'] : 'Schedule';
+        const trigger =
+            typeof record['triggerId'] === 'string'
+                ? record['triggerId']
+                : typeof record['trigger'] === 'string'
+                    ? record['trigger']
+                    : 'Schedule';
+        const executionMode =
+            typeof record['executionMode'] === 'string' ? record['executionMode'] : 'normal';
+        const invocationSource =
+            typeof record['invocationSource'] === 'string' ? record['invocationSource'] : 'schedule';
+        const warningType = typeof record['errorType'] === 'string' ? record['errorType'] : undefined;
 
-        entries.push({ id, jobKey, status, startAtUtc, durationMs, trigger });
+        entries.push({ id, jobKey, status, startAtUtc, durationMs, trigger, executionMode, invocationSource, warningType });
     }
     return entries;
 }

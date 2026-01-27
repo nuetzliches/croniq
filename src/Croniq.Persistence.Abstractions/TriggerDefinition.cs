@@ -16,4 +16,6 @@ public sealed record TriggerDefinition(
     bool Enabled = true,
     IReadOnlyDictionary<string, string>? Metadata = null,
     string? TimeZoneId = null,
-    string? CalendarId = null);
+    string? CalendarId = null,
+    string ExecutionMode = ExecutionIntent.ExecutionModes.Normal,
+    string InvocationSource = ExecutionIntent.InvocationSources.Schedule);

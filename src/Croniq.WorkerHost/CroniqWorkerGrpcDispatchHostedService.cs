@@ -131,13 +131,29 @@ public sealed class CroniqWorkerGrpcDispatchHostedService : BackgroundService, I
 
         using var call = _client.Connect(cancellationToken: stoppingToken);
 
+        var hello = new RunnerHello
+        {
+            RunnerId = runnerId,
+            MaxInflight = maxInflight,
+            AllowTestExecutions = _dispatchOptions.AllowTestExecutions
+        };
+
+        if (_dispatchOptions.Capabilities is { Length: > 0 })
+        {
+            foreach (var capability in _dispatchOptions.Capabilities)
+            {
+                if (string.IsNullOrWhiteSpace(capability))
+                {
+                    continue;
+                }
+
+                hello.Capabilities[capability.Trim()] = "true";
+            }
+        }
+
         await call.RequestStream.WriteAsync(new RunnerMessage
         {
-            Hello = new RunnerHello
-            {
-                RunnerId = runnerId,
-                MaxInflight = maxInflight
-            }
+            Hello = hello
         }).ConfigureAwait(false);
 
         var outbound = Channel.CreateBounded<RunnerMessage>(new BoundedChannelOptions(Math.Max(16, maxInflight * 4))
@@ -313,7 +329,13 @@ public sealed class CroniqWorkerGrpcDispatchHostedService : BackgroundService, I
             fireAt,
             leaseExpiresAt,
             string.IsNullOrWhiteSpace(assigned.Payload) ? null : assigned.Payload,
-            string.IsNullOrWhiteSpace(assigned.ExecutionId) ? null : assigned.ExecutionId);
+            string.IsNullOrWhiteSpace(assigned.ExecutionId) ? null : assigned.ExecutionId,
+            string.IsNullOrWhiteSpace(assigned.ExecutionMode)
+                ? ExecutionIntent.ExecutionModes.Normal
+                : assigned.ExecutionMode,
+            string.IsNullOrWhiteSpace(assigned.InvocationSource)
+                ? ExecutionIntent.InvocationSources.Schedule
+                : assigned.InvocationSource);
     }
 
     private static TimeSpan NormalizeDelay(TimeSpan value, TimeSpan fallback)

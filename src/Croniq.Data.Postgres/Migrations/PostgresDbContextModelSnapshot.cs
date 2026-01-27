@@ -109,6 +109,16 @@ namespace Croniq.Data.Postgres.Migrations
                     b.Property<string>("MetadataJson")
                         .HasColumnType("text");
 
+                    b.Property<string>("ExecutionMode")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)");
+
+                    b.Property<string>("InvocationSource")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
                     b.Property<string>("ScopesJson")
                         .HasColumnType("text");
 
@@ -276,6 +286,16 @@ namespace Croniq.Data.Postgres.Migrations
                         .IsRequired()
                         .HasMaxLength(256)
                         .HasColumnType("character varying(256)");
+
+                    b.Property<string>("ExecutionMode")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)");
+
+                    b.Property<string>("InvocationSource")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
 
                     b.Property<string>("MetadataJson")
                         .HasColumnType("text");

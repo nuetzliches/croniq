@@ -83,6 +83,26 @@ public sealed class PostgresJobPersistenceProvider : IJobPersistenceProvider, IC
         }
     }
 
+    private static string NormalizeExecutionMode(string? mode)
+    {
+        if (string.IsNullOrWhiteSpace(mode))
+        {
+            return ExecutionIntent.ExecutionModes.Normal;
+        }
+
+        return mode.Trim().ToLowerInvariant();
+    }
+
+    private static string NormalizeInvocationSource(string? source)
+    {
+        if (string.IsNullOrWhiteSpace(source))
+        {
+            return ExecutionIntent.InvocationSources.Schedule;
+        }
+
+        return source.Trim().ToLowerInvariant();
+    }
+
     public async Task<IReadOnlyCollection<JobDefinition>> ListJobsAsync(PartitionScope scope, CancellationToken cancellationToken)
     {
 
@@ -261,6 +281,8 @@ public sealed class PostgresJobPersistenceProvider : IJobPersistenceProvider, IC
         entity.NextFireAtUtc = nextFire?.UtcDateTime;
         entity.Enabled = trigger.Enabled;
         entity.MetadataJson = SerializeMetadata(trigger.Metadata);
+        entity.ExecutionMode = NormalizeExecutionMode(trigger.ExecutionMode);
+        entity.InvocationSource = NormalizeInvocationSource(trigger.InvocationSource);
         entity.IsDeleted = false;
         entity.UpdatedAtUtc = now;
         entity.LastResult = null;
@@ -292,7 +314,9 @@ public sealed class PostgresJobPersistenceProvider : IJobPersistenceProvider, IC
                 row.Enabled,
                 DeserializeMetadata(row.MetadataJson),
                 row.TimeZoneId,
-                row.CalendarId));
+                row.CalendarId,
+                row.ExecutionMode,
+                row.InvocationSource));
         }
 
         return result;
@@ -346,6 +370,7 @@ public sealed class PostgresJobPersistenceProvider : IJobPersistenceProvider, IC
                 .Include(t => t.Job)
                 .Where(t => !t.IsDeleted && t.Enabled)
                 .Where(t => t.Job.TenantId == request.Scope.TenantId && t.Job.EnvironmentTag == request.Scope.EnvironmentTag)
+                .Where(t => request.AllowTestExecutions || t.ExecutionMode == null || t.ExecutionMode != ExecutionIntent.ExecutionModes.Test)
                 .Where(t => t.NextFireAtUtc != null && t.NextFireAtUtc <= nowUtc)
                 .Where(t => t.LeaseExpiresAtUtc == null || t.LeaseExpiresAtUtc <= nowUtc)
                 .OrderBy(t => t.NextFireAtUtc)
@@ -375,7 +400,9 @@ public sealed class PostgresJobPersistenceProvider : IJobPersistenceProvider, IC
                     new DateTimeOffset(DateTime.SpecifyKind(fireAt, DateTimeKind.Utc)),
                     new DateTimeOffset(DateTime.SpecifyKind(trigger.LeaseExpiresAtUtc!.Value, DateTimeKind.Utc)),
                     trigger.MetadataJson,
-                    executionId));
+                    executionId,
+                    trigger.ExecutionMode,
+                    trigger.InvocationSource));
             }
 
             await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
@@ -730,7 +757,9 @@ public sealed class PostgresJobPersistenceProvider : IJobPersistenceProvider, IC
             trigger.Enabled,
             null,
             trigger.TimeZoneId,
-            trigger.CalendarId);
+            trigger.CalendarId,
+            trigger.ExecutionMode,
+            trigger.InvocationSource);
     }
 
     private DateTimeOffset? ComputeNextFire(TriggerDefinition trigger, CalendarDefinition? calendar, DateTimeOffset referenceUtc)

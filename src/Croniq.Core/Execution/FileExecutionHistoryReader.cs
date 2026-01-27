@@ -242,6 +242,8 @@ public sealed class FileExecutionHistoryReader : IExecutionHistoryReader
             var correlationId = GetString(root, "correlationId");
             var errorType = GetString(root, "errorType");
             var errorMessage = GetString(root, "errorMessage");
+            var executionMode = GetString(root, "executionMode") ?? ExecutionIntent.ExecutionModes.Normal;
+            var invocationSource = GetString(root, "invocationSource") ?? ExecutionIntent.InvocationSources.Schedule;
 
             var logPath = GetString(root, "logPath");
 
@@ -262,7 +264,9 @@ public sealed class FileExecutionHistoryReader : IExecutionHistoryReader
                 traceId,
                 correlationId,
                 errorType,
-                errorMessage);
+                errorMessage,
+                executionMode,
+                invocationSource);
 
             entry = new IndexedEntry(summary, logPath);
             return true;
@@ -526,7 +530,9 @@ public sealed class FileExecutionHistoryReader : IExecutionHistoryReader
             start.TraceId,
             start.CorrelationId,
             completion?.ErrorType,
-            completion?.ErrorMessage);
+            completion?.ErrorMessage,
+            start.ExecutionMode ?? ExecutionIntent.ExecutionModes.Normal,
+            start.InvocationSource ?? ExecutionIntent.InvocationSources.Schedule);
     }
 
     private static async Task<CompletionSnapshot?> TryParseCompletionFromTailAsync(FileStream stream, CancellationToken cancellationToken)
@@ -607,7 +613,9 @@ public sealed class FileExecutionHistoryReader : IExecutionHistoryReader
                 StartedAtUtc = GetDateTime(root, "startedAtUtc"),
                 InstanceId = GetString(root, "instanceId"),
                 TraceId = GetString(root, "traceId"),
-                CorrelationId = GetString(root, "correlationId")
+                CorrelationId = GetString(root, "correlationId"),
+                ExecutionMode = GetString(root, "executionMode"),
+                InvocationSource = GetString(root, "invocationSource")
             };
 
             return true;
@@ -801,6 +809,8 @@ public sealed class FileExecutionHistoryReader : IExecutionHistoryReader
         public string? InstanceId { get; init; }
         public string? TraceId { get; init; }
         public string? CorrelationId { get; init; }
+        public string? ExecutionMode { get; init; }
+        public string? InvocationSource { get; init; }
     }
 
     private readonly record struct CompletionSnapshot

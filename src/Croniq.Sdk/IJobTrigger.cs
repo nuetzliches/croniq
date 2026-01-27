@@ -11,5 +11,7 @@ public interface IJobTrigger
         string jobKey,
         IReadOnlyDictionary<string, string>? metadata = null,
         TimeSpan? delay = null,
+        string? executionMode = null,
+        string? invocationSource = null,
         CancellationToken cancellationToken = default);
 }

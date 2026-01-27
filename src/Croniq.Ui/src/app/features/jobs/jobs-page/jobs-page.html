@@ -365,9 +365,37 @@
                 } @else {
                   <div class="mt-3 space-y-2">
                     @for (execution of executions().slice(0, 5); track execution.executionId) {
-                      <div class="flex items-center justify-between text-xs">
-                        <div class="truncate text-primary">{{ execution.executionId }}</div>
-                        <div class="text-muted">{{ execution.startedAt | date : 'short' }}</div>
+                      <div class="space-y-1">
+                        <div class="flex items-center justify-between text-xs">
+                          <div class="truncate text-primary">{{ execution.executionId }}</div>
+                          <div class="text-muted">{{ execution.startedAt | date : 'short' }}</div>
+                        </div>
+                        <div class="flex flex-wrap items-center gap-2 text-[10px]">
+                          <span
+                            class="inline-flex items-center rounded-full px-2 py-1 font-semibold"
+                            [class.bg-success/10]="execution.status === 'Success'"
+                            [class.text-success]="execution.status === 'Success'"
+                            [class.bg-danger/10]="execution.status === 'Failure'"
+                            [class.text-danger]="execution.status === 'Failure'"
+                            [class.bg-warning/10]="execution.status === 'Canceled'"
+                            [class.text-warning]="execution.status === 'Canceled'"
+                            [class.bg-white/10]="!execution.status || execution.status === 'Unknown'"
+                            [class.text-muted]="!execution.status || execution.status === 'Unknown'"
+                          >
+                            {{ execution.status || 'Unknown' }}
+                          </span>
+                          <span class="inline-flex items-center rounded-full bg-white/10 px-2 py-1 font-semibold text-muted">
+                            {{ formatExecutionMode(execution.executionMode) }}
+                          </span>
+                          <span class="inline-flex items-center rounded-full bg-white/10 px-2 py-1 font-semibold text-muted">
+                            {{ formatInvocationSource(execution.invocationSource, execution.executionMode) }}
+                          </span>
+                          @if (execution.warningType === 'test-not-allowed') {
+                            <span class="inline-flex items-center rounded-full bg-warning/10 px-2 py-1 font-semibold text-warning">
+                              Test rejected
+                            </span>
+                          }
+                        </div>
                       </div>
                     }
                   </div>

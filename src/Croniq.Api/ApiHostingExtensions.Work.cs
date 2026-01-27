@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.Linq;
 using System.Threading.Tasks;
 using Croniq.Api.Models;
+using Croniq.Api.Telemetry;
 using Croniq.Auth.Abstractions;
 using Croniq.Core.Observability;
 using Croniq.Core.Execution;
@@ -56,10 +57,34 @@ public static partial class ApiHostingExtensions
                 return runnerFailure;
             }
 
-            var batchSize = request.BatchSize.GetValueOrDefault(1);
+            var previousTransport = ApiMetrics.RecordRunnerTransportSelection(
+                tenantId.Trim(),
+                resolvedEnvironment,
+                runnerId,
+                "polling");
+            if (!string.IsNullOrWhiteSpace(previousTransport)
+                && !string.Equals(previousTransport, "polling", StringComparison.OrdinalIgnoreCase))
+            {
+                ApiMetrics.RecordRunnerTransportTransition(tenantId.Trim(), resolvedEnvironment, previousTransport, "polling");
+                var transportLogger = loggerFactory.CreateLogger("Croniq.Api.WorkTransport");
+                transportLogger.LogInformation(
+                    "Runner transport switched from {PreviousTransport} to polling (tenant {Tenant}, environment {Environment}, runner {RunnerId}).",
+                    previousTransport,
+                    IdentifierHashing.HashTenantId(tenantId) ?? string.Empty,
+                    resolvedEnvironment,
+                    runnerId);
+            }
+
+            var batchSize = request.BatchSize
+                ?? (request.MaxInflight > 0 ? request.MaxInflight.Value : 1);
             if (batchSize <= 0 || batchSize > 250)
             {
                 return Results.BadRequest(new { error = "invalid-batch-size", message = "BatchSize must be between 1 and 250." });
+            }
+
+            if (request.MaxInflight.HasValue && (request.MaxInflight.Value <= 0 || request.MaxInflight.Value > 250))
+            {
+                return Results.BadRequest(new { error = "invalid-max-inflight", message = "MaxInflight must be between 1 and 250." });
             }
 
             var waitForMs = request.WaitForMs.GetValueOrDefault(0);
@@ -76,7 +101,12 @@ public static partial class ApiHostingExtensions
             IReadOnlyCollection<TriggerLease> leases = Array.Empty<TriggerLease>();
             while (true)
             {
-                var acquire = new TriggerAcquireRequest(scope, runnerId, DateTimeOffset.UtcNow, batchSize);
+                var acquire = new TriggerAcquireRequest(
+                    scope,
+                    runnerId,
+                    DateTimeOffset.UtcNow,
+                    batchSize,
+                    request.AllowTestExecutions.GetValueOrDefault(false));
                 leases = await jobStore.AcquireAsync(acquire, cancellationToken).ConfigureAwait(false);
 
                 if (leases.Count > 0 || waitForMs <= 0)
@@ -95,6 +125,20 @@ public static partial class ApiHostingExtensions
                     : TimeSpan.FromMilliseconds(250);
 
                 await Task.Delay(delay, cancellationToken).ConfigureAwait(false);
+            }
+
+            foreach (var lease in leases)
+            {
+                if (string.Equals(lease.ExecutionMode, ExecutionIntent.ExecutionModes.Test, StringComparison.OrdinalIgnoreCase))
+                {
+                    ApiMetrics.RecordRunnerTestDecision(
+                        scope.TenantId,
+                        scope.EnvironmentTag,
+                        "polling",
+                        "accepted",
+                        lease.ExecutionMode,
+                        lease.InvocationSource);
+                }
             }
 
             var payload = leases
@@ -234,6 +278,18 @@ public static partial class ApiHostingExtensions
                     deadLetterReason,
                     lease.ExecutionId);
                 await TryTrackCompletionAsync(completion, workItemStore, trackingLogger, cancellationToken).ConfigureAwait(false);
+                if (!request.Succeeded && string.Equals(deadLetterReason, WorkRejectionReasons.TestNotAllowed, StringComparison.OrdinalIgnoreCase))
+                {
+                    ApiMetrics.RecordRunnerTestDecision(
+                        scope.TenantId,
+                        scope.EnvironmentTag,
+                        "polling",
+                        "rejected",
+                        lease.ExecutionMode,
+                        lease.InvocationSource);
+                    var warningLogger = loggerFactory.CreateLogger("Croniq.Api.WorkTestRejection");
+                    await TryStoreTestRejectionAsync(lease, runnerId, executionLogStore, warningLogger, cancellationToken).ConfigureAwait(false);
+                }
                 return Results.NoContent();
             }
             catch (InvalidOperationException ex)
@@ -395,7 +451,9 @@ public static partial class ApiHostingExtensions
             normalized.JobKey,
             normalized.FireAtUtc,
             normalized.LeaseExpiresAtUtc,
-            normalized.Payload);
+            normalized.Payload,
+            normalized.ExecutionMode,
+            normalized.InvocationSource);
     }
 
     private static TriggerLease FromToken(PartitionScope scope, WorkLeaseToken token)
@@ -413,7 +471,9 @@ public static partial class ApiHostingExtensions
             token.FireAtUtc,
             token.LeaseExpiresAtUtc,
             token.Payload,
-            token.ExecutionId);
+            token.ExecutionId,
+            token.ExecutionMode,
+            token.InvocationSource);
     }
 
     private static TriggerLease EnsureExecutionId(TriggerLease lease)
@@ -463,7 +523,9 @@ public static partial class ApiHostingExtensions
                 runnerId,
                 activity?.TraceId.ToString(),
                 activity?.SpanId.ToString(),
-                correlationId);
+                correlationId,
+                lease.ExecutionMode,
+                lease.InvocationSource);
 
             try
             {
@@ -537,7 +599,9 @@ public static partial class ApiHostingExtensions
                 LeaseId: lease.LeaseId,
                 LeaseExpiresAtUtc: lease.LeaseExpiresAtUtc,
                 Payload: lease.Payload,
-                AssignedAtUtc: assignedAtUtc);
+                AssignedAtUtc: assignedAtUtc,
+                ExecutionMode: lease.ExecutionMode,
+                InvocationSource: lease.InvocationSource);
 
             try
             {
@@ -579,6 +643,59 @@ public static partial class ApiHostingExtensions
         catch (Exception ex)
         {
             logger.LogWarning(ex, "Failed to track work completion {LeaseId}", completion.LeaseId);
+        }
+    }
+
+    private static async Task TryStoreTestRejectionAsync(
+        TriggerLease lease,
+        string runnerId,
+        IExecutionLogStore executionLogStore,
+        ILogger logger,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(lease.ExecutionId))
+        {
+            return;
+        }
+
+        logger.LogWarning(
+            "Runner rejected test execution {ExecutionId} (runner {RunnerId}, job {JobKey}, trigger {TriggerId}).",
+            lease.ExecutionId,
+            runnerId,
+            lease.JobKey,
+            lease.TriggerId);
+
+        var properties = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["croniq.execution_id"] = lease.ExecutionId,
+            ["croniq.runner_id"] = runnerId,
+            ["croniq.job.key"] = lease.JobKey,
+            ["croniq.trigger.id"] = lease.TriggerId,
+            ["croniq.execution_mode"] = lease.ExecutionMode,
+            ["croniq.invocation_source"] = lease.InvocationSource,
+            ["croniq.warning.type"] = WorkRejectionReasons.TestNotAllowed
+        };
+
+        var entry = new ExecutionLogEntry(
+            lease.ExecutionId,
+            DateTimeOffset.UtcNow,
+            LogLevel.Warning,
+            "Runner rejected test execution",
+            "Runner rejected test execution",
+            Exception: null,
+            properties,
+            Activity.Current?.TraceId.ToString(),
+            Activity.Current?.SpanId.ToString(),
+            CorrelationId: null,
+            DateTimeOffset.UtcNow.UtcTicks);
+
+        try
+        {
+            await executionLogStore.AppendAsync(lease.ExecutionId, new[] { entry }, cancellationToken).ConfigureAwait(false);
+        }
+        catch
+        {
+            // best-effort warning log
         }
     }
 

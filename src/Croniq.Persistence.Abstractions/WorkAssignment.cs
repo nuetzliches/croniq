@@ -12,4 +12,6 @@ public sealed record WorkAssignment(
     string LeaseId,
     DateTimeOffset LeaseExpiresAtUtc,
     string? Payload,
-    DateTimeOffset AssignedAtUtc);
+    DateTimeOffset AssignedAtUtc,
+    string ExecutionMode = ExecutionIntent.ExecutionModes.Normal,
+    string InvocationSource = ExecutionIntent.InvocationSources.Schedule);

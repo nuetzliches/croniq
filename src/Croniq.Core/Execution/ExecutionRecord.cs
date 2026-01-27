@@ -18,4 +18,6 @@ public sealed record ExecutionRecord(
     string? InstanceId,
     string? TraceId,
     string? SpanId,
-    string? CorrelationId);
+    string? CorrelationId,
+    string ExecutionMode = Persistence.Abstractions.ExecutionIntent.ExecutionModes.Normal,
+    string InvocationSource = Persistence.Abstractions.ExecutionIntent.InvocationSources.Schedule);

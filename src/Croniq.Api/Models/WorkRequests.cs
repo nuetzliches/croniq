@@ -8,7 +8,10 @@ public sealed record WorkPollRequest(
     string? EnvironmentTag,
     [property: Required] string RunnerId,
     int? BatchSize = null,
-    int? WaitForMs = null);
+    int? WaitForMs = null,
+    bool? AllowTestExecutions = null,
+    int? MaxInflight = null,
+    string[]? Capabilities = null);
 
 public sealed record WorkLeaseToken(
     [property: Required] string ExecutionId,
@@ -17,7 +20,9 @@ public sealed record WorkLeaseToken(
     [property: Required] string JobKey,
     DateTimeOffset FireAtUtc,
     DateTimeOffset LeaseExpiresAtUtc,
-    string? Payload);
+    string? Payload,
+    string ExecutionMode = Persistence.Abstractions.ExecutionIntent.ExecutionModes.Normal,
+    string InvocationSource = Persistence.Abstractions.ExecutionIntent.InvocationSources.Schedule);
 
 public sealed record WorkPollResponse(
     WorkLeaseToken[] Leases);

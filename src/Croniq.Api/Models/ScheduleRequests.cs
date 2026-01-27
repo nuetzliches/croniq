@@ -6,7 +6,8 @@ namespace Croniq.Api.Models;
 public sealed record TriggerJobRequest(
     [property: Required] string JobKey,
     IDictionary<string, string>? Metadata = null,
-    int? DelaySeconds = null);
+    int? DelaySeconds = null,
+    string? ExecutionMode = null);
 
 public sealed record TriggerJobResponse(
     string Status,

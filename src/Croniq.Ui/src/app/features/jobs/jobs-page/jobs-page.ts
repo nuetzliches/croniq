@@ -172,6 +172,23 @@ export class JobsPage {
     this.store.triggerJob(jobKey, {});
   }
 
+  formatExecutionMode(mode?: string): string {
+    const normalized = (mode ?? '').trim().toLowerCase();
+    if (!normalized) {
+      return 'normal';
+    }
+    return normalized;
+  }
+
+  formatInvocationSource(source?: string, executionMode?: string): string {
+    const normalized = (source ?? '').trim().toLowerCase() || 'schedule';
+    const label = normalized
+      .replace('webhook-ingress', 'webhook ingress')
+      .replace('webhook-invoke', 'webhook invoke');
+    const mode = this.formatExecutionMode(executionMode);
+    return mode === 'test' ? `${label}:test` : label;
+  }
+
   openSchedulesForJob(jobKey: string): void {
     void this.router.navigate(['/schedules'], { queryParams: { jobKey } });
   }

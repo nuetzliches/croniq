@@ -45,6 +45,8 @@ public sealed class PostgresWorkItemStore : IWorkItemStore
                 TriggerId = assignment.TriggerId,
                 Attempt = attempt,
                 Status = WorkItemStatus.Leased,
+                ExecutionMode = assignment.ExecutionMode,
+                InvocationSource = assignment.InvocationSource,
                 PayloadJson = assignment.Payload,
                 CreatedAtUtc = nowUtc,
                 UpdatedAtUtc = nowUtc,
@@ -69,6 +71,8 @@ public sealed class PostgresWorkItemStore : IWorkItemStore
             workItem.TriggerId = assignment.TriggerId;
             workItem.Attempt = Math.Max(workItem.Attempt, attempt);
             workItem.Status = WorkItemStatus.Leased;
+            workItem.ExecutionMode = assignment.ExecutionMode;
+            workItem.InvocationSource = assignment.InvocationSource;
             workItem.PayloadJson = assignment.Payload;
             workItem.UpdatedAtUtc = nowUtc;
 
@@ -198,6 +202,8 @@ public sealed class PostgresWorkItemStore : IWorkItemStore
         workItem.TriggerId = assignment.TriggerId;
         workItem.Attempt = Math.Max(workItem.Attempt, attempt);
         workItem.Status = WorkItemStatus.Leased;
+        workItem.ExecutionMode = assignment.ExecutionMode;
+        workItem.InvocationSource = assignment.InvocationSource;
         workItem.PayloadJson = assignment.Payload;
         workItem.UpdatedAtUtc = nowUtc;
 

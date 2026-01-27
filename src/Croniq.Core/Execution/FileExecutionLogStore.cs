@@ -55,7 +55,9 @@ public sealed class FileExecutionLogStore : IExecutionLogStore, IDisposable
             record.StartedAtUtc,
             record.InstanceId,
             record.TraceId,
-            record.CorrelationId);
+            record.CorrelationId,
+            record.ExecutionMode,
+            record.InvocationSource);
         _locks.TryAdd(record.ExecutionId, new SemaphoreSlim(1, 1));
 
         return WriteLineAsync(path, new
@@ -73,7 +75,9 @@ public sealed class FileExecutionLogStore : IExecutionLogStore, IDisposable
             record.InstanceId,
             record.TraceId,
             record.SpanId,
-            record.CorrelationId
+            record.CorrelationId,
+            record.ExecutionMode,
+            record.InvocationSource
         }, record.ExecutionId, cancellationToken);
     }
 
@@ -155,6 +159,8 @@ public sealed class FileExecutionLogStore : IExecutionLogStore, IDisposable
                 start.InstanceId,
                 start.TraceId,
                 start.CorrelationId,
+                start.ExecutionMode,
+                start.InvocationSource,
                 completion.ErrorType,
                 completion.ErrorMessage
             }, _jsonOptions) + Environment.NewLine;
@@ -311,7 +317,9 @@ public sealed class FileExecutionLogStore : IExecutionLogStore, IDisposable
         DateTimeOffset StartedAtUtc,
         string? InstanceId,
         string? TraceId,
-        string? CorrelationId);
+        string? CorrelationId,
+        string ExecutionMode,
+        string InvocationSource);
 
     public void Dispose()
     {

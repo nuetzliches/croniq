@@ -1,15 +1,15 @@
 # Polyglot Runner Protocol (gRPC + HTTP)
 
 ::: info Status
-Draft (HTTP work endpoints shipped; gRPC streaming remains a target). Last verified: 2026-01-18.
+Active (HTTP work endpoints shipped; gRPC streaming available for runners). Last verified: 2026-01-26.
 :::
 
 ## Goals
 
 - Enable non-.NET runners (Go/Node/Python) to execute Croniq jobs directly (not only trigger them).
 - Offer two transports with identical semantics:
-  - **gRPC** for efficient typed streaming.
-  - **HTTP** for broad compatibility (proxies, simpler SDKs).
+  - **gRPC** for efficient typed streaming (primary).
+  - **HTTP** for broad compatibility (polling fallback).
 - Avoid a "global heartbeat API" as a first-class requirement.
   - Prefer **work-scoped leases with deadlines** and/or **connection presence** (for streaming).
 - Preserve tenant isolation and environment scoping.
@@ -29,8 +29,8 @@ Draft (HTTP work endpoints shipped; gRPC streaming remains a target). Last verif
 - gRPC exists for scheduler-facing operations (e.g. `Scheduler` service).
 - Long-running execution already uses a lease/extend model internally.
 - The HTTP work endpoints (`/work/poll`, `/work/renew`, `/work/ack`, `/work/{executionId}:events`) expose the lease lifecycle for polyglot runners.
-- A gRPC runner service skeleton (`Runner.Connect`) exists for the streaming handshake.
-- Minimal runner SDK samples exist for Go/Node/Python under `samples/worker-sdk-*` (legacy folder names).
+- The gRPC runner service (`Runner.Connect`) streams assignments and acks with parity to HTTP.
+- Runner SDKs live under `sdk/runner-*` (samples moved to `samples/runners/*`).
 
 ## Core Concepts
 
@@ -40,6 +40,7 @@ A **Runner** is a process instance that can claim and execute jobs.
 
 - `runner_id`: stable identifier chosen by the operator (not instance-id based).
 - `capabilities`: optional tags (language, os, queue, custom) used for routing.
+- `allow_test_executions`: flag indicating if the runner accepts test-mode work.
 
 ### Work Item
 
@@ -99,6 +100,9 @@ Request:
 - `runnerId` (string, required)
 - `batchSize` (int, default 1; max 250)
 - `waitForMs` (int, default 0; max 30000)
+- `allowTestExecutions` (bool, default false)
+- `maxInflight` (int, optional)
+- `capabilities` (string[], optional)
 - `environmentTag` (string, optional, overrides query)
 
 Response:
@@ -150,6 +154,7 @@ Notes:
 - If `runnerId` does not match the lease owner, the server returns a conflict.
 - When `nextFireTimeUtc` is set, the server reschedules the trigger and ignores `deadLetterReason`.
 - Ack is idempotent; clients may retry on transient failures.
+- To reject a test execution, send `deadLetterReason: "test-not-allowed"` (non-retryable).
 
 ### Push events/logs (optional)
 
@@ -168,7 +173,7 @@ Request:
 `rpc Connect (stream RunnerMessage) returns (stream ServerMessage);`
 
 - Runner opens a single stream.
-- First message is `Hello` (runner id, capabilities, max inflight).
+- First message is `Hello` (runner id, capabilities, max inflight, allow_test_executions).
 - Server sends `WorkAssigned` messages.
 - Runner sends `AckSuccess`/`AckFailure` and optionally `Events`.
 - `AckFailure` may include `next_fire_time_utc` to reschedule without dead-lettering.
@@ -227,6 +232,7 @@ Current tables (SqlServer/Postgres):
   - `ExecutionId` (unique)
   - `TenantId`, `EnvironmentTag`
   - `JobKey`, `TriggerId`
+  - `ExecutionMode`, `InvocationSource`
   - `Attempt`, `PayloadJson`
   - `Status` (queued, leased, succeeded, failed, deadletter)
   - `CreatedAtUtc`, `UpdatedAtUtc`

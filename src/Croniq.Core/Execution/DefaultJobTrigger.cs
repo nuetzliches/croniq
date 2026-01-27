@@ -49,6 +49,8 @@ public sealed class DefaultJobTrigger : IJobTrigger
         string jobKey,
         IReadOnlyDictionary<string, string>? metadata = null,
         TimeSpan? delay = null,
+        string? executionMode = null,
+        string? invocationSource = null,
         CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrWhiteSpace(jobKey))
@@ -73,19 +75,24 @@ public sealed class DefaultJobTrigger : IJobTrigger
 
         var normalizedMetadata = NormalizeMetadata(metadata);
 
+        var normalizedExecutionMode = NormalizeExecutionMode(executionMode);
+        var normalizedInvocationSource = NormalizeInvocationSource(invocationSource, ExecutionIntent.InvocationSources.Manual);
+
         if (delay.HasValue && delay.Value > TimeSpan.Zero)
         {
-            await ScheduleOnceAsync(parsed, descriptor, normalizedMetadata, delay.Value, cancellationToken).ConfigureAwait(false);
+            await ScheduleOnceAsync(parsed, descriptor, normalizedMetadata, delay.Value, normalizedExecutionMode, normalizedInvocationSource, cancellationToken).ConfigureAwait(false);
             return;
         }
 
-        await ExecuteImmediateAsync(parsed, descriptor, normalizedMetadata, cancellationToken).ConfigureAwait(false);
+        await ExecuteImmediateAsync(parsed, descriptor, normalizedMetadata, normalizedExecutionMode, normalizedInvocationSource, cancellationToken).ConfigureAwait(false);
     }
 
     private async Task ExecuteImmediateAsync(
         JobKey jobKey,
         JobDescriptor descriptor,
         IReadOnlyDictionary<string, string>? metadata,
+        string executionMode,
+        string invocationSource,
         CancellationToken cancellationToken)
     {
         var scope = GetScope();
@@ -109,7 +116,9 @@ public sealed class DefaultJobTrigger : IJobTrigger
                 _options.Value.InstanceId,
                 Activity.Current?.TraceId.ToString(),
                 Activity.Current?.SpanId.ToString(),
-                correlationId),
+                correlationId,
+                executionMode,
+                invocationSource),
             cancellationToken).ConfigureAwait(false);
 
         var stopwatch = Stopwatch.StartNew();
@@ -143,6 +152,8 @@ public sealed class DefaultJobTrigger : IJobTrigger
         JobDescriptor descriptor,
         IReadOnlyDictionary<string, string>? metadata,
         TimeSpan delay,
+        string executionMode,
+        string invocationSource,
         CancellationToken cancellationToken)
     {
         var scope = GetScope();
@@ -172,7 +183,10 @@ public sealed class DefaultJobTrigger : IJobTrigger
             EndAtUtc: null,
             Enabled: true,
             Metadata: metadata,
-            TimeZoneId: TimeZoneInfo.Utc.Id);
+            TimeZoneId: TimeZoneInfo.Utc.Id,
+            CalendarId: null,
+            ExecutionMode: executionMode,
+            InvocationSource: invocationSource);
 
         await _store.UpsertTriggerAsync(trigger, cancellationToken).ConfigureAwait(false);
     }
@@ -261,5 +275,25 @@ public sealed class DefaultJobTrigger : IJobTrigger
         }
 
         return new Dictionary<string, string>(metadata, StringComparer.OrdinalIgnoreCase);
+    }
+
+    private static string NormalizeExecutionMode(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return ExecutionIntent.ExecutionModes.Normal;
+        }
+
+        return value.Trim().ToLowerInvariant();
+    }
+
+    private static string NormalizeInvocationSource(string? value, string fallback)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return fallback;
+        }
+
+        return value.Trim().ToLowerInvariant();
     }
 }

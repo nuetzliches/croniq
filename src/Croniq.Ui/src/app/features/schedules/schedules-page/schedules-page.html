@@ -320,6 +320,8 @@
               <th class="px-6 py-3 font-medium">ID</th>
               <th class="px-6 py-3 font-medium">Job Key</th>
               <th class="px-6 py-3 font-medium">Status</th>
+              <th class="px-6 py-3 font-medium">Mode</th>
+              <th class="px-6 py-3 font-medium">Source</th>
               <th class="px-6 py-3 font-medium">Start Time</th>
               <th class="px-6 py-3 font-medium">Duration (ms)</th>
               <th class="px-6 py-3 font-medium">Trigger</th>
@@ -328,15 +330,15 @@
           <tbody class="divide-y divide-white/10">
             @if (executionsError()) {
               <tr>
-                <td colspan="6" class="px-6 py-8 text-center text-danger">{{ executionsError() }}</td>
+                <td colspan="8" class="px-6 py-8 text-center text-danger">{{ executionsError() }}</td>
               </tr>
             } @else if (executionsLoading()) {
               <tr>
-                <td colspan="6" class="px-6 py-8 text-center text-muted">Loading logs...</td>
+                <td colspan="8" class="px-6 py-8 text-center text-muted">Loading logs...</td>
               </tr>
             } @else if (executions().length === 0) {
               <tr>
-                <td colspan="6" class="px-6 py-8 text-center text-muted">No logs found.</td>
+                <td colspan="8" class="px-6 py-8 text-center text-muted">No logs found.</td>
               </tr>
             } @else {
               @for (exec of executions(); track exec.id) {
@@ -354,6 +356,21 @@
                       [class.text-muted]="exec.status !== 'Success' && exec.status !== 'Failed'"
                     >
                       {{ exec.status }}
+                    </span>
+                    @if (exec.warningType === 'test-not-allowed') {
+                      <span class="ml-2 inline-flex items-center rounded-full bg-warning/10 px-2 py-1 text-[10px] font-semibold text-warning">
+                        Test rejected
+                      </span>
+                    }
+                  </td>
+                  <td class="px-6 py-4 text-muted">
+                    <span class="rounded-full bg-white/10 px-2 py-1 text-xs font-medium">
+                      {{ formatExecutionMode(exec.executionMode) }}
+                    </span>
+                  </td>
+                  <td class="px-6 py-4 text-muted">
+                    <span class="rounded-full bg-white/10 px-2 py-1 text-xs font-medium">
+                      {{ formatInvocationSource(exec.invocationSource, exec.executionMode) }}
                     </span>
                   </td>
                   <td class="px-6 py-4 text-muted">{{ exec.startAtUtc | date:'short' }}</td>

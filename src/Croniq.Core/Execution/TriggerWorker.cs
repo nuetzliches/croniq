@@ -77,7 +77,8 @@ public sealed class TriggerWorker
             new PartitionScope(_options.TenantId.Trim(), _options.EnvironmentTag),
             _options.InstanceId,
             nowUtc,
-            batchSize);
+            batchSize,
+            _hostOptions.AllowTestExecutions);
 
         using var acquireActivity = _activitySource.StartActivity("Croniq.Trigger.Acquire", ActivityKind.Internal);
         acquireActivity?.SetTag("croniq.tenant_id", IdentifierHashing.HashTenantId(_options.TenantId.Trim()));
@@ -571,7 +572,9 @@ public sealed class TriggerWorker
                 _options.InstanceId,
                 activity?.TraceId.ToString(),
                 activity?.SpanId.ToString(),
-                TryGetCorrelationId(activity));
+                TryGetCorrelationId(activity),
+                lease.ExecutionMode,
+                lease.InvocationSource);
 
             await _executionLogStore.OnExecutionStartedAsync(record, cancellationToken).ConfigureAwait(false);
         }
@@ -628,7 +631,9 @@ public sealed class TriggerWorker
             LeaseId: lease.LeaseId,
             LeaseExpiresAtUtc: lease.LeaseExpiresAtUtc,
             Payload: lease.Payload,
-            AssignedAtUtc: DateTimeOffset.UtcNow);
+            AssignedAtUtc: DateTimeOffset.UtcNow,
+            ExecutionMode: lease.ExecutionMode,
+            InvocationSource: lease.InvocationSource);
 
         try
         {

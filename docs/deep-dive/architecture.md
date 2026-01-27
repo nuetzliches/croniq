@@ -154,9 +154,10 @@ docs/
 
 ## Polyglot Runner Protocol
 
-- The current HTTP work surface (`/work/poll`, `/work/renew`, `/work/ack`) exposes the lease lifecycle so non-.NET runners can claim and execute jobs.
-- The gRPC runner handshake (`Runner.Connect`) is implemented as a skeleton for streaming integrations.
-- The longer-term gRPC streaming contract and planned work-item schema are captured in `docs/deep-dive/designs/polyglot-runner-protocol.md`.
+- The primary transport for runners is gRPC streaming (`Runner.Connect`) with HTTP polling as the fallback; both transports share identical lease semantics.
+- The HTTP work surface (`/work/poll`, `/work/renew`, `/work/ack`, `/work/{executionId}:events`) exposes the lease lifecycle so non-.NET runners can claim and execute jobs.
+- Runners advertise capabilities (`allowTestExecutions`, `maxInflight`, optional capability tags) on gRPC hello or poll requests; the API host suppresses test dispatches when `allowTestExecutions` is false.
+- Work payloads include execution intent (`executionMode`, `invocationSource`) so runners can enforce policy and the UI can label executions.
 - Protocol design avoids global heartbeats; ownership and liveness are derived from lease deadlines and acknowledgements.
 
 ## Job Store & Provider Model

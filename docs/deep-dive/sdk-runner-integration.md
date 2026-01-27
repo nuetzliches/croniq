@@ -15,6 +15,11 @@ Required (consistent names across SDKs):
 
 Optional (recommended defaults shown):
 
+- `CRONIQ_GRPC_BASEURL` (gRPC base URL; default: derived from API base)
+- `CRONIQ_TRANSPORT_MODE` (`auto|grpc|polling`, default: `auto`)
+- `CRONIQ_ALLOW_TEST_EXECUTIONS` (default: `false`)
+- `CRONIQ_MAX_INFLIGHT` (default: 10)
+- `CRONIQ_CAPABILITIES` (comma-separated tags)
 - `CRONIQ_POLL_BATCH_SIZE` (default: 1)
 - `CRONIQ_POLL_WAIT_MS` (default: 25000)
 - `CRONIQ_REQUEST_TIMEOUT_MS` (default: 60000)
@@ -52,6 +57,7 @@ SDKs should treat these fields as read-only metadata, surface them in logs/telem
 - Retry on transient network or 5xx errors.
 - Stop retrying and drop the entry on `409 lease-conflict` or `404 not found`.
 - Treat `401/403` as fatal configuration errors.
+- For test executions rejected by policy, send `deadLetterReason: "test-not-allowed"` (non-retryable).
 
 ## Failover and backoff
 

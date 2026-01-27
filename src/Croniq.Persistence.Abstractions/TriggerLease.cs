@@ -13,4 +13,6 @@ public sealed record TriggerLease(
     DateTimeOffset FireAtUtc,
     DateTimeOffset LeaseExpiresAtUtc,
     string? Payload,
-    string? ExecutionId = null);
+    string? ExecutionId = null,
+    string ExecutionMode = ExecutionIntent.ExecutionModes.Normal,
+    string InvocationSource = ExecutionIntent.InvocationSources.Schedule);

@@ -36,6 +36,12 @@ public sealed class WorkItemEntity
     [MaxLength(32)]
     public string Status { get; set; } = "queued";
 
+    [MaxLength(32)]
+    public string ExecutionMode { get; set; } = "normal";
+
+    [MaxLength(64)]
+    public string InvocationSource { get; set; } = "schedule";
+
     public string? PayloadJson { get; set; }
 
     public DateTime CreatedAtUtc { get; set; }

@@ -19,4 +19,6 @@ public sealed record ExecutionResponse(
     string? TraceId,
     string? CorrelationId,
     string? ErrorType,
-    string? ErrorMessage);
+    string? ErrorMessage,
+    string ExecutionMode = Persistence.Abstractions.ExecutionIntent.ExecutionModes.Normal,
+    string InvocationSource = Persistence.Abstractions.ExecutionIntent.InvocationSources.Schedule);

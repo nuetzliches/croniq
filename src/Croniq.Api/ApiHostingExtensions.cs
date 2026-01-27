@@ -659,7 +659,9 @@ public static partial class ApiHostingExtensions
             summary.TraceId,
             summary.CorrelationId,
             summary.ErrorType,
-            summary.ErrorMessage);
+            summary.ErrorMessage,
+            summary.ExecutionMode,
+            summary.InvocationSource);
     }
 
     private static JobResponse ToJobResponse(JobDefinition job)
