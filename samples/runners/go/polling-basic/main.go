@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	croniqworker "github.com/croniq/croniq/sdk/runner-go"
+	croniqrunner "github.com/croniq/croniq/sdk/runner-go"
 )
 
 func main() {
@@ -17,7 +17,7 @@ func main() {
 	environment := env("CRONIQ_ENVIRONMENT", "dev")
 	apiKey := env("CRONIQ_API_KEY", "")
 
-	client, err := croniqworker.NewClient(croniqworker.Config{
+	client, err := croniqrunner.NewClient(croniqrunner.Config{
 		BaseURL:        baseURL,
 		TenantID:       tenantID,
 		EnvironmentTag: environment,
@@ -62,7 +62,7 @@ func main() {
 				log.Printf("- intent: mode=%s source=%s", mode, source)
 			}
 
-			events := []croniqworker.WorkEvent{
+			events := []croniqrunner.WorkEvent{
 				{
 					Message:   fmt.Sprintf("processing execution %s", lease.ExecutionId),
 					Level:     "Information",

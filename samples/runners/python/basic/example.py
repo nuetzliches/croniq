@@ -1,5 +1,5 @@
 import os
-from croniq_worker import WorkEvent, WorkerClient
+from croniq_runner import WorkEvent, RunnerClient
 
 
 def env(key: str, default: str) -> str:
@@ -16,7 +16,7 @@ def main() -> None:
     api_key = env("CRONIQ_API_KEY", "")
     runner_id = env("CRONIQ_RUNNER_ID", "default")
 
-    client = WorkerClient(
+    client = RunnerClient(
         base_url=base_url,
         tenant_id=tenant_id,
         environment=environment,

@@ -1,4 +1,4 @@
-package croniqworker
+package croniqrunner
 
 import (
 	"bytes"

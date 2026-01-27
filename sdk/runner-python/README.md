@@ -8,4 +8,4 @@ Minimal HTTP polling client for Croniq runners. This package is a starting point
 
 ## Usage
 
-See the sample in [samples/runners/python/basic](../../samples/runners/python/basic).
+Import from `croniq_runner`. See the sample in [samples/runners/python/basic](../../samples/runners/python/basic).

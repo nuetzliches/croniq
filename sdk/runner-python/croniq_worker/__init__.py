@@ -1,17 +1,4 @@
-from .client import (
-    CroniqError,
-    Lease,
-    LeaseConflictError,
-    LeaseNotFoundError,
-    WorkEvent,
-    WorkerClient,
+raise ImportError(
+    "croniq_worker has been renamed to croniq_runner. "
+    "Update imports to use croniq_runner and RunnerClient."
 )
-
-__all__ = [
-    "CroniqError",
-    "Lease",
-    "LeaseConflictError",
-    "LeaseNotFoundError",
-    "WorkEvent",
-    "WorkerClient",
-]

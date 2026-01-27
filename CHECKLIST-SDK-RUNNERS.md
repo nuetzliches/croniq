@@ -18,7 +18,7 @@ Goal: deliver runner SDKs that execute Croniq jobs via the `/work` endpoints wit
 - [x] Transport chain is gRPC streaming -> HTTP polling with identical semantics and explicit fallback triggers.
 - [x] Active leases must keep renewing/acking regardless of transport state.
 - [x] Naming: use "Runner" for polyglot SDKs and `/work` clients; reserve "WorkerHost" for the .NET host.
-- [ ] Cleanup: align Python SDK naming (`WorkerClient`, `WorkEvent`) with Runner terminology (rename/export aliases + docs).
+- [x] Cleanup: align runner SDK naming (Python `croniq_runner` + `RunnerClient`, Go package `croniqrunner`).
 
 ## B. Design gaps to resolve (docs vs goal)
 
@@ -100,7 +100,8 @@ Goal: deliver runner SDKs that execute Croniq jobs via the `/work` endpoints wit
 - [ ] Fallback chain e2e test: gRPC down -> polling.
 - [ ] Outbox durability: restart with pending ack/events -> replay without duplicates.
 - [x] HTTP poll coverage: `AllowTestExecutions` gating, `executionMode`/`invocationSource` propagation, and `MaxInflight` fallback.
-- [ ] Add gRPC parity for execution intent + test gating once gRPC client test harness is ready.
+- [x] Add gRPC parity for execution intent + test gating.
+- [x] gRPC events append execution logs.
 
 ## Open questions
 
@@ -108,7 +109,6 @@ Goal: deliver runner SDKs that execute Croniq jobs via the `/work` endpoints wit
 - Do we want transport selection/fallback metrics emitted in the SDKs or in the API host (and which metric names)?
 - Should UI warning surfacing for test rejection be implemented in the schedules logs view only, or also in webhook timelines and trigger details?
 - Should runner samples be wired into AppHost profiles immediately, or after SDKs are finalized?
-- Should we publish a temporary compatibility layer (re-export `WorkerClient`/`WorkEvent`) to avoid breaking existing Python sample consumers?
 - Decision: There are no external consumers (including Python). We can rename freely to achieve consistent Runner naming without compatibility shims.
 
 ## J. Node consumer example (script)

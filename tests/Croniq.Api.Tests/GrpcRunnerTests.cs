@@ -225,6 +225,263 @@ public sealed class GrpcRunnerTests
     }
 
     [Fact]
+    public async Task RunnerGrpc_RespectsAllowTestExecutions_AndReturnsIntent()
+    {
+        var builder = WebApplication.CreateBuilder(new WebApplicationOptions
+        {
+            ApplicationName = typeof(GrpcRunnerTests).Assembly.FullName,
+            EnvironmentName = Environments.Development
+        });
+
+        var apiKey = "ak_grpc_runner_test_gate";
+        var tenantId = "00000000-0000-0000-0000-000000000008";
+        var environmentTag = "dev";
+
+        builder.Configuration.AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["Croniq:Api:RequestsPerMinute"] = "0",
+            ["Croniq:Auth:Mode"] = "InMemory",
+            ["Croniq:Auth:InMemory:ApiKey"] = apiKey,
+            ["Croniq:Auth:InMemory:TenantId"] = tenantId,
+            ["Croniq:Auth:InMemory:EnvironmentTag"] = environmentTag
+        });
+
+        builder.Services.AddCroniqApiServices(builder.Configuration);
+        builder.Services.AddCroniqApiRateLimiter();
+        builder.Services.AddLogging();
+        builder.Services.AddGrpc();
+
+        var pipeline = new RecordingJobExecutionPipeline();
+        var registry = new FakeJobRegistry();
+        var policies = new FakePolicyResolver();
+        var store = new NoopJobPersistenceProvider();
+
+        builder.Services.AddSingleton<IJobExecutionPipeline>(pipeline);
+        builder.Services.AddSingleton<IJobRegistry>(registry);
+        builder.Services.AddSingleton<IPolicyResolver>(policies);
+        builder.Services.AddSingleton<IJobPersistenceProvider>(store);
+        builder.Services.AddSingleton<ICalendarStore>(store);
+        builder.Services.AddSingleton<IJobStore>(store);
+        builder.Services.AddSingleton<IPersistenceHealth>(store);
+
+        builder.WebHost.ConfigureKestrel(options =>
+        {
+            options.Listen(IPAddress.Loopback, 0, listenOptions => listenOptions.Protocols = HttpProtocols.Http2);
+        });
+
+        await using var app = builder.Build();
+        app.UseCroniqApi();
+        app.MapCroniqRunnerGrpc();
+
+        await app.StartAsync();
+        var address = app.Urls.First();
+
+        var scope = new PartitionScope(tenantId, environmentTag);
+        const string jobKey = "ops:grpc-runner-test-gate";
+        await store.UpsertJobAsync(
+            new JobDefinition(jobKey, "ops", "grpc-runner-test-gate", Variant: null, Description: null, Metadata: null),
+            scope,
+            CancellationToken.None);
+
+        var triggerId = $"{jobKey}:once-{Guid.NewGuid():N}";
+        var trigger = new TriggerDefinition(
+            triggerId,
+            jobKey,
+            TriggerSchedule.OnceExpression,
+            scope,
+            StartAtUtc: DateTimeOffset.UtcNow.AddMinutes(-1),
+            EndAtUtc: null,
+            Enabled: true,
+            Metadata: null,
+            TimeZoneId: TimeZoneInfo.Utc.Id,
+            ExecutionMode: ExecutionIntent.ExecutionModes.Test,
+            InvocationSource: ExecutionIntent.InvocationSources.Manual);
+        await store.UpsertTriggerAsync(trigger, CancellationToken.None);
+
+        AppContext.SetSwitch("System.Net.Http.SocketsHttpHandler.Http2UnencryptedSupport", true);
+        var httpClient = new HttpClient
+        {
+            BaseAddress = new Uri(address),
+            DefaultRequestVersion = new Version(2, 0),
+            DefaultVersionPolicy = HttpVersionPolicy.RequestVersionOrHigher
+        };
+        httpClient.DefaultRequestHeaders.Add("X-Croniq-Key", apiKey);
+
+        using var channel = GrpcChannel.ForAddress(address, new GrpcChannelOptions { HttpClient = httpClient });
+        var client = new Runner.RunnerClient(channel);
+
+        using (var deniedCall = client.Connect())
+        {
+            await deniedCall.RequestStream.WriteAsync(new RunnerMessage
+            {
+                Hello = new RunnerHello
+                {
+                    RunnerId = "default",
+                    MaxInflight = 1,
+                    AllowTestExecutions = false
+                }
+            });
+
+            var deniedAssignment = await TryWaitForAssignmentAsync(deniedCall.ResponseStream, TimeSpan.FromSeconds(1));
+            deniedAssignment.ShouldBeNull();
+        }
+
+        using (var allowedCall = client.Connect())
+        {
+            await allowedCall.RequestStream.WriteAsync(new RunnerMessage
+            {
+                Hello = new RunnerHello
+                {
+                    RunnerId = "default",
+                    MaxInflight = 1,
+                    AllowTestExecutions = true
+                }
+            });
+
+            var assigned = await WaitForAssignmentAsync(allowedCall.ResponseStream);
+            assigned.ExecutionMode.ShouldBe(ExecutionIntent.ExecutionModes.Test);
+            assigned.InvocationSource.ShouldBe(ExecutionIntent.InvocationSources.Manual);
+
+            await allowedCall.RequestStream.WriteAsync(new RunnerMessage
+            {
+                AckSuccess = new WorkAckSuccess
+                {
+                    ExecutionId = assigned.ExecutionId,
+                    LeaseId = assigned.LeaseId
+                }
+            });
+        }
+
+        await app.StopAsync();
+    }
+
+    [Fact]
+    public async Task RunnerGrpc_Events_AppendsExecutionLogs()
+    {
+        var builder = WebApplication.CreateBuilder(new WebApplicationOptions
+        {
+            ApplicationName = typeof(GrpcRunnerTests).Assembly.FullName,
+            EnvironmentName = Environments.Development
+        });
+
+        var apiKey = "ak_grpc_runner_events";
+        var tenantId = "00000000-0000-0000-0000-000000000009";
+        var environmentTag = "dev";
+
+        builder.Configuration.AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["Croniq:Api:RequestsPerMinute"] = "0",
+            ["Croniq:Auth:Mode"] = "InMemory",
+            ["Croniq:Auth:InMemory:ApiKey"] = apiKey,
+            ["Croniq:Auth:InMemory:TenantId"] = tenantId,
+            ["Croniq:Auth:InMemory:EnvironmentTag"] = environmentTag
+        });
+
+        builder.Services.AddCroniqApiServices(builder.Configuration);
+        builder.Services.AddCroniqApiRateLimiter();
+        builder.Services.AddLogging();
+        builder.Services.AddGrpc();
+
+        var pipeline = new RecordingJobExecutionPipeline();
+        var registry = new FakeJobRegistry();
+        var policies = new FakePolicyResolver();
+        var store = new NoopJobPersistenceProvider();
+        var executionLogs = new TestExecutionLogReader();
+
+        builder.Services.AddSingleton<IJobExecutionPipeline>(pipeline);
+        builder.Services.AddSingleton<IJobRegistry>(registry);
+        builder.Services.AddSingleton<IPolicyResolver>(policies);
+        builder.Services.AddSingleton<IJobPersistenceProvider>(store);
+        builder.Services.AddSingleton<ICalendarStore>(store);
+        builder.Services.AddSingleton<IJobStore>(store);
+        builder.Services.AddSingleton<IPersistenceHealth>(store);
+        builder.Services.AddSingleton(executionLogs);
+        builder.Services.AddSingleton<IExecutionLogReader>(sp => sp.GetRequiredService<TestExecutionLogReader>());
+        builder.Services.AddSingleton<IExecutionLogStore>(sp => sp.GetRequiredService<TestExecutionLogReader>());
+
+        builder.WebHost.ConfigureKestrel(options =>
+        {
+            options.Listen(IPAddress.Loopback, 0, listenOptions => listenOptions.Protocols = HttpProtocols.Http2);
+        });
+
+        await using var app = builder.Build();
+        app.UseCroniqApi();
+        app.MapCroniqRunnerGrpc();
+
+        await app.StartAsync();
+        var address = app.Urls.First();
+
+        var scope = new PartitionScope(tenantId, environmentTag);
+        const string jobKey = "ops:grpc-runner-events";
+        await store.UpsertJobAsync(
+            new JobDefinition(jobKey, "ops", "grpc-runner-events", Variant: null, Description: null, Metadata: null),
+            scope,
+            CancellationToken.None);
+
+        var triggerId = $"{jobKey}:once-{Guid.NewGuid():N}";
+        var trigger = new TriggerDefinition(
+            triggerId,
+            jobKey,
+            TriggerSchedule.OnceExpression,
+            scope,
+            StartAtUtc: DateTimeOffset.UtcNow.AddMinutes(-1),
+            EndAtUtc: null,
+            Enabled: true,
+            Metadata: null,
+            TimeZoneId: TimeZoneInfo.Utc.Id);
+        await store.UpsertTriggerAsync(trigger, CancellationToken.None);
+
+        AppContext.SetSwitch("System.Net.Http.SocketsHttpHandler.Http2UnencryptedSupport", true);
+        var httpClient = new HttpClient
+        {
+            BaseAddress = new Uri(address),
+            DefaultRequestVersion = new Version(2, 0),
+            DefaultVersionPolicy = HttpVersionPolicy.RequestVersionOrHigher
+        };
+        httpClient.DefaultRequestHeaders.Add("X-Croniq-Key", apiKey);
+
+        using var channel = GrpcChannel.ForAddress(address, new GrpcChannelOptions { HttpClient = httpClient });
+        var client = new Runner.RunnerClient(channel);
+
+        using var call = client.Connect();
+        await call.RequestStream.WriteAsync(new RunnerMessage
+        {
+            Hello = new RunnerHello
+            {
+                RunnerId = "default",
+                MaxInflight = 1
+            }
+        });
+
+        var assigned = await WaitForAssignmentAsync(call.ResponseStream);
+        assigned.ShouldNotBeNull();
+
+        await call.RequestStream.WriteAsync(new RunnerMessage
+        {
+            Events = new WorkEvents
+            {
+                ExecutionId = assigned.ExecutionId,
+                LeaseId = assigned.LeaseId,
+                Events =
+                {
+                    new WorkEvent
+                    {
+                        Message = "hello from runner",
+                        Level = "Information",
+                        EventType = "runner"
+                    }
+                }
+            }
+        });
+
+        var lines = await WaitForLogLinesAsync(executionLogs, assigned.ExecutionId);
+        lines.ShouldNotBeEmpty();
+
+        await call.RequestStream.CompleteAsync();
+        await app.StopAsync();
+    }
+
+    [Fact]
     public async Task RunnerGrpc_AckFailure_WithNextFireTime_ReschedulesTrigger()
     {
         var builder = WebApplication.CreateBuilder(new WebApplicationOptions
@@ -620,5 +877,37 @@ public sealed class GrpcRunnerTests
 
         var final = await store.ListTriggersAsync(scope, CancellationToken.None);
         return final.First();
+    }
+
+    private static async Task<IReadOnlyCollection<string>> WaitForLogLinesAsync(
+        TestExecutionLogReader executionLogs,
+        string executionId)
+    {
+        var deadline = DateTimeOffset.UtcNow.AddSeconds(2);
+        while (DateTimeOffset.UtcNow < deadline)
+        {
+            var lines = await ReadLogLinesAsync(executionLogs, executionId);
+            if (lines.Count > 0)
+            {
+                return lines;
+            }
+
+            await Task.Delay(50);
+        }
+
+        return await ReadLogLinesAsync(executionLogs, executionId);
+    }
+
+    private static async Task<IReadOnlyCollection<string>> ReadLogLinesAsync(
+        TestExecutionLogReader executionLogs,
+        string executionId)
+    {
+        var lines = new List<string>();
+        await foreach (var line in executionLogs.ReadLinesAsync(executionId, CancellationToken.None))
+        {
+            lines.Add(line);
+        }
+
+        return lines;
     }
 }
