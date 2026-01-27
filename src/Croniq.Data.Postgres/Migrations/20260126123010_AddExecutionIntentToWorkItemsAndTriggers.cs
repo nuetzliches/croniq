@@ -1,3 +1,4 @@
+using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Migrations;
 
 #nullable disable
@@ -5,6 +6,8 @@ using Microsoft.EntityFrameworkCore.Migrations;
 namespace Croniq.Data.Postgres.Migrations
 {
     /// <inheritdoc />
+    [DbContextAttribute(typeof(PostgresDbContext))]
+    [Migration("20260126123010_AddExecutionIntentToWorkItemsAndTriggers")]
     public partial class AddExecutionIntentToWorkItemsAndTriggers : Migration
     {
         /// <inheritdoc />

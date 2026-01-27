@@ -12,6 +12,7 @@ using Grpc.Core;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Http.HttpResults;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 
 namespace Croniq.Api;
 
@@ -22,6 +23,8 @@ internal sealed class RunnerGrpcService : Runner.RunnerBase
     private readonly IJobStore _jobStore;
     private readonly IExecutionLogStore _executionLogStore;
     private readonly IWorkItemStore _workItemStore;
+    private readonly IRunnerStore _runnerStore;
+    private readonly RunnerStoreOptions _runnerStoreOptions;
     private readonly ILoggerFactory _loggerFactory;
     private readonly ILogger<RunnerGrpcService> _logger;
 
@@ -30,6 +33,8 @@ internal sealed class RunnerGrpcService : Runner.RunnerBase
         IJobStore jobStore,
         IExecutionLogStore executionLogStore,
         IWorkItemStore workItemStore,
+        IRunnerStore runnerStore,
+        IOptions<RunnerStoreOptions> runnerStoreOptions,
         ILoggerFactory loggerFactory,
         ILogger<RunnerGrpcService> logger)
     {
@@ -37,6 +42,9 @@ internal sealed class RunnerGrpcService : Runner.RunnerBase
         _jobStore = jobStore ?? throw new ArgumentNullException(nameof(jobStore));
         _executionLogStore = executionLogStore ?? throw new ArgumentNullException(nameof(executionLogStore));
         _workItemStore = workItemStore ?? throw new ArgumentNullException(nameof(workItemStore));
+        _runnerStore = runnerStore ?? throw new ArgumentNullException(nameof(runnerStore));
+        _runnerStoreOptions = runnerStoreOptions?.Value ?? new RunnerStoreOptions();
+        _runnerStoreOptions.Normalize();
         _loggerFactory = loggerFactory ?? throw new ArgumentNullException(nameof(loggerFactory));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
     }
@@ -81,6 +89,7 @@ internal sealed class RunnerGrpcService : Runner.RunnerBase
 
         var runnerId = hello.RunnerId.Trim();
         EnsureRunnerIdentityOrThrow(caller, runnerId);
+        var runnerInstanceId = RunnerInstanceGuard.ResolveRunnerInstanceId(hello.RunnerInstanceId, metadataJson: null);
 
         var previousTransport = ApiMetrics.RecordRunnerTransportSelection(
             caller.TenantId,
@@ -102,6 +111,31 @@ internal sealed class RunnerGrpcService : Runner.RunnerBase
         activity?.SetTag("croniq.tenant_id", IdentifierHashing.HashTenantId(caller.TenantId));
         activity?.SetTag("croniq.environment", environmentTag);
         activity?.SetTag("croniq.runner_id", runnerId);
+        if (!string.IsNullOrWhiteSpace(runnerInstanceId))
+        {
+            activity?.SetTag("croniq.runner_instance_id", runnerInstanceId);
+        }
+
+        var maxInflight = NormalizeMaxInflight(hello.MaxInflight);
+        var allowTestExecutions = hello.AllowTestExecutions;
+        var scope = new PartitionScope(caller.TenantId, environmentTag);
+        var metadataUpdates = RunnerInstanceGuard.BuildMetadataUpdates(
+            runnerInstanceId,
+            transportState: "grpc",
+            allowTestExecutions: allowTestExecutions,
+            maxInflight: maxInflight,
+            capabilities: hello.Capabilities?.Keys?.ToArray());
+        var nowUtc = DateTimeOffset.UtcNow;
+        var runnerMetadataJson = await RunnerInstanceGuard.EnsureRunnerInstanceAvailableOrThrowAsync(
+            _runnerStore,
+            scope,
+            runnerId,
+            runnerInstanceId,
+            metadataJson: null,
+            metadataUpdates,
+            nowUtc,
+            nowUtc,
+            context.CancellationToken).ConfigureAwait(false);
 
         await responseStream.WriteAsync(new ServerMessage
         {
@@ -110,15 +144,13 @@ internal sealed class RunnerGrpcService : Runner.RunnerBase
                 ServerId = Environment.MachineName,
                 TenantId = caller.TenantId,
                 EnvironmentTag = environmentTag,
-                ServerTimeUtc = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
+                ServerTimeUtc = nowUtc.ToUnixTimeMilliseconds()
             }
         }).ConfigureAwait(false);
 
-        var maxInflight = NormalizeMaxInflight(hello.MaxInflight);
-        var allowTestExecutions = hello.AllowTestExecutions;
-        var scope = new PartitionScope(caller.TenantId, environmentTag);
         var inflight = new ConcurrentDictionary<string, TriggerLease>(StringComparer.OrdinalIgnoreCase);
         using var cts = CancellationTokenSource.CreateLinkedTokenSource(context.CancellationToken);
+        var heartbeatTask = StartRunnerHeartbeatLoopAsync(scope, runnerId, runnerMetadataJson, cts.Token);
         var assignmentLoop = Task.Run(() => AssignWorkLoopAsync(
             responseStream,
             inflight,
@@ -173,6 +205,14 @@ internal sealed class RunnerGrpcService : Runner.RunnerBase
             {
                 // ignore background assignment errors on shutdown
             }
+            try
+            {
+                await heartbeatTask.ConfigureAwait(false);
+            }
+            catch
+            {
+                // ignore heartbeat loop failures on shutdown
+            }
         }
     }
 
@@ -219,6 +259,71 @@ internal sealed class RunnerGrpcService : Runner.RunnerBase
         }
 
         return false;
+    }
+
+    private Task StartRunnerHeartbeatLoopAsync(
+        PartitionScope scope,
+        string runnerId,
+        string? metadataJson,
+        CancellationToken cancellationToken)
+    {
+        var interval = ResolveHeartbeatInterval();
+        if (interval <= TimeSpan.Zero)
+        {
+            return Task.CompletedTask;
+        }
+
+        return Task.Run(async () =>
+        {
+            while (!cancellationToken.IsCancellationRequested)
+            {
+                try
+                {
+                    await _runnerStore.UpsertHeartbeatAsync(
+                        new RunnerHeartbeat(scope, runnerId, DateTimeOffset.UtcNow, metadataJson),
+                        cancellationToken).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                {
+                    break;
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogDebug(ex, "Runner heartbeat update failed.");
+                }
+
+                try
+                {
+                    await Task.Delay(interval, cancellationToken).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException)
+                {
+                    break;
+                }
+            }
+        }, cancellationToken);
+    }
+
+    private TimeSpan ResolveHeartbeatInterval()
+    {
+        var ttl = _runnerStoreOptions.OnlineTtl;
+        if (ttl <= TimeSpan.Zero)
+        {
+            ttl = TimeSpan.FromSeconds(60);
+        }
+
+        var interval = TimeSpan.FromTicks(ttl.Ticks / 2);
+        if (interval < TimeSpan.FromSeconds(1))
+        {
+            interval = TimeSpan.FromSeconds(1);
+        }
+
+        if (interval > ttl)
+        {
+            interval = ttl;
+        }
+
+        return interval;
     }
 
     private async Task AssignWorkLoopAsync(

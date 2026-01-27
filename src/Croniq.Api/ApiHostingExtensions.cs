@@ -676,7 +676,8 @@ public static partial class ApiHostingExtensions
             job.Name,
             job.Variant,
             job.Description,
-            metadata);
+            metadata,
+            job.IsActive);
     }
 
     private static WebhookEndpointResponse ToWebhookResponse(WebhookEndpointDefinition definition, string? secretOverride = null)

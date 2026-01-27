@@ -53,6 +53,7 @@ public sealed class JobEndpointsTests : IClassFixture<WebhookApiTestHost>
         payload.JobKey.ShouldBe(jobKey);
         payload.Metadata.ShouldNotBeNull();
         payload.Metadata!["owner"].ShouldBe("ops");
+        payload.IsActive.ShouldBeTrue();
     }
 
     [Fact]
@@ -77,7 +78,25 @@ public sealed class JobEndpointsTests : IClassFixture<WebhookApiTestHost>
         schedulePayload.ShouldBeEmpty();
     }
 
-    private async Task UpsertJobAsync(string jobKey, string? description = null, IDictionary<string, string>? metadata = null)
+    [Fact]
+    public async Task ActivateJobUpdatesStatus()
+    {
+        _host.Reset();
+        var jobKey = "ops:pending";
+        await UpsertJobAsync(jobKey, description: "pending job", isActive: false);
+
+        var activateResponse = await _host.Client.PostAsync(
+            $"/tenants/{WebhookApiTestHost.TenantId}/jobs/{Uri.EscapeDataString(jobKey)}/activate?environment={WebhookApiTestHost.Environment}",
+            content: null);
+        activateResponse.StatusCode.ShouldBe(HttpStatusCode.OK);
+
+        var payload = await activateResponse.Content.ReadFromJsonAsync<JobResponse>();
+        payload.ShouldNotBeNull();
+        payload.JobKey.ShouldBe(jobKey);
+        payload.IsActive.ShouldBeTrue();
+    }
+
+    private async Task UpsertJobAsync(string jobKey, string? description = null, IDictionary<string, string>? metadata = null, bool? isActive = null)
     {
         if (!JobKey.TryParse(jobKey, out var parsed))
         {
@@ -90,7 +109,8 @@ public sealed class JobEndpointsTests : IClassFixture<WebhookApiTestHost>
             Name: parsed.JobName,
             Variant: parsed.Variant,
             Description: description,
-            Metadata: metadata);
+            Metadata: metadata,
+            IsActive: isActive);
 
         var response = await _host.Client.PostAsJsonAsync($"/tenants/{WebhookApiTestHost.TenantId}/jobs?environment={WebhookApiTestHost.Environment}", request);
         response.StatusCode.ShouldBe(HttpStatusCode.Created);

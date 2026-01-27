@@ -154,6 +154,20 @@ docs/
 - Horizontal scaling is achieved by running multiple runners with distinct `runnerId` values. Lease ownership guarantees one execution per lease, while per-job concurrency limits still apply.
 - Naming: use "Runner" for `/work` clients and gRPC streaming; reserve "WorkerHost" for the .NET host.
 
+## WorkerHost vs Runner (Direction)
+
+- **WorkerHost** is the .NET-first execution host with DI integration, job registry/assembly scanning, and the full server policy pipeline.
+- **Runner** is the polyglot lease client over `/work` (gRPC + polling fallback) with a minimal execution contract.
+- Keep them separate for now; the Runner stays small and portable, while WorkerHost provides the richer .NET hosting experience.
+
+### Migration Sketch (if we converge later)
+
+1. **Extract a shared runner core**: Move lease/renew/ack, transport fallback, outbox, and drain logic into a shared package usable by both WorkerHost and polyglot SDKs.
+2. **Wrap WorkerHost around the runner core**: WorkerHost becomes a thin hosting layer that wires DI, job registry, and policy pipeline into the runner execution callbacks.
+3. **Unify configuration**: Align environment variables and config keys so WorkerHost and SDK runners share the same transport/heartbeat/lease knobs.
+4. **Preserve .NET developer ergonomics**: Keep WorkerHost-specific conveniences (DI scopes, typed logging, job discovery) as opt-in adapters on top of the shared runner core.
+5. **Phase-out decision point**: Only remove a standalone WorkerHost when feature parity exists in the runner core and migration paths are validated.
+
 ## Polyglot Runner Protocol
 
 - The primary transport for runners is gRPC streaming (`Runner.Connect`) with HTTP polling as the fallback; both transports share identical lease semantics.

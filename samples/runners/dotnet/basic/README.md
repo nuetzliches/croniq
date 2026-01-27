@@ -1,6 +1,6 @@
-# .NET Runner Sample (gRPC)
+# .NET Runner Sample
 
-Minimal gRPC runner using the Croniq .NET client.
+Minimal runner using the Croniq .NET runner SDK (gRPC-first with polling fallback).
 
 ## Requirements
 
@@ -15,10 +15,11 @@ CRONIQ_TENANT_ID=default \
 CRONIQ_ENVIRONMENT=dev \
 CRONIQ_API_KEY=smoke-key \
 CRONIQ_RUNNER_ID=default \
+CRONIQ_JOB_KEY=demo-job \
 dotnet run
 ```
 
 ## Notes
 
-- The example connects to `Runner.Connect`, sends a work event, and acks each lease.
-- For long-running jobs, renew leases and stream events while work is running.
+- The SDK handles gRPC streaming, polling fallback, heartbeats, renewals, and acks.
+- Use `CRONIQ_JOB_KEY` to select which job handler to register in the sample.

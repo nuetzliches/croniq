@@ -1,6 +1,6 @@
-# Node Runner Sample (Polling)
+# Node Runner Sample
 
-Minimal HTTP polling runner using the Node SDK.
+Minimal runner using the Node SDK (gRPC-first with polling fallback).
 
 ## Requirements
 
@@ -13,6 +13,8 @@ cd samples/runners/node/basic
 npm install
 ```
 
+`npm install` also installs the local SDK dependencies under `sdk/runner-node` so the gRPC transport can load.
+
 ## Run
 
 ```bash
@@ -21,5 +23,6 @@ CRONIQ_TENANT_ID=default \
 CRONIQ_ENVIRONMENT=dev \
 CRONIQ_API_KEY=smoke-key \
 CRONIQ_RUNNER_ID=default \
+CRONIQ_JOB_KEY=demo-job \
 npm run start
 ```

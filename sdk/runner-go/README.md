@@ -10,6 +10,14 @@ Runner SDK with gRPC streaming (primary) and HTTP polling fallback. Use `Runner`
 
 See the sample in [samples/runners/go/polling-basic](../../samples/runners/go/polling-basic).
 
+Register handlers per job key:
+
+```go
+runner.OnExecute("demo-job", func(ctx croniqrunner.ExecutionContext, payload *string, logger croniqrunner.RunnerLogger) error {
+    return nil
+})
+```
+
 ## Configuration
 
 Use `LoadRunnerConfigFromEnv()` to build a `RunnerConfig` from environment variables:

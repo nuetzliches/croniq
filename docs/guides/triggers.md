@@ -100,6 +100,15 @@ curl -X POST https://localhost:5001/tenants/dev-sandbox/schedules \
 
 `managedBy` is reserved for config/fluent seeding and is rejected by the schedule API.
 
+## Job activation status
+
+Jobs can be **inactive** (pending approval) when they were created by runner self-registration or when the caller explicitly sets `isActive=false` on a job upsert. Inactive jobs are **never dispatched**, and the UI disables manual triggers until the job is activated.
+
+- Activate a job via the UI or call `POST /tenants/{tenantId}/jobs/{jobId}/activate`.
+- Use `GET /tenants/{tenantId}/jobs` to resolve the `jobId` for a given `jobKey`.
+
+> **Learn more:** The approval policy and runner self-registration flow are documented in [`/deep-dive/designs/polyglot-runner-protocol.md`](../deep-dive/designs/polyglot-runner-protocol.md).
+
 ## One-off triggers
 
 Use `@once` in schedules or trigger a single run directly:

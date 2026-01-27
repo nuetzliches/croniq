@@ -11,4 +11,5 @@ public sealed record JobDefinition(
     string Name,
     string? Variant,
     string? Description,
-    IReadOnlyDictionary<string, string>? Metadata);
+    IReadOnlyDictionary<string, string>? Metadata,
+    bool IsActive = true);

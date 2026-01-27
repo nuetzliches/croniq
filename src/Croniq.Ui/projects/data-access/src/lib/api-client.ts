@@ -107,6 +107,7 @@ const TENANT_ENDPOINTS = {
     listJobs: requireEndpoint(TenantsApi, 'get', '/tenants/:tenantId/jobs'),
     upsertJob: requireEndpoint(TenantsApi, 'post', '/tenants/:tenantId/jobs'),
     getJob: requireEndpoint(TenantsApi, 'get', '/tenants/:tenantId/jobs/:jobId'),
+    activateJob: requireEndpoint(TenantsApi, 'post', '/tenants/:tenantId/jobs/:jobId/activate'),
     deleteJob: requireEndpoint(TenantsApi, 'delete', '/tenants/:tenantId/jobs/:jobId'),
     listCalendars: requireEndpoint(TenantsApi, 'get', '/tenants/:tenantId/calendars'),
     upsertCalendar: requireEndpoint(TenantsApi, 'post', '/tenants/:tenantId/calendars'),
@@ -324,6 +325,7 @@ export interface CroniqApiClient {
     listJobs(params: TenantEnvironmentParams, options?: CroniqRequestOptions): Observable<unknown>;
     upsertJob(params: TenantEnvironmentParams, payload: UpsertJobRequest, options?: CroniqRequestOptions): Observable<void>;
     getJob(params: TenantEnvironmentParams & { jobId: string }, options?: CroniqRequestOptions): Observable<unknown>;
+    activateJob(params: TenantEnvironmentParams & { jobId: string }, options?: CroniqRequestOptions): Observable<unknown>;
     deleteJob(params: TenantEnvironmentParams & { jobId: string }, options?: CroniqRequestOptions): Observable<void>;
     getSchedule(params: TenantScheduleParams, options?: CroniqRequestOptions): Observable<unknown>;
     deleteSchedule(params: TenantScheduleParams, options?: CroniqRequestOptions): Observable<void>;
@@ -788,6 +790,20 @@ class HttpCroniqApiClient implements CroniqApiClient {
     getJob(params: TenantEnvironmentParams & { jobId: string }, options?: CroniqRequestOptions): Observable<unknown> {
         return this.execute$(
             TENANT_ENDPOINTS.getJob,
+            {
+                path: {
+                    tenantId: params.tenantId,
+                    jobId: params.jobId,
+                },
+                query: { environment: params.environment },
+            },
+            options,
+        );
+    }
+
+    activateJob(params: TenantEnvironmentParams & { jobId: string }, options?: CroniqRequestOptions): Observable<unknown> {
+        return this.execute$(
+            TENANT_ENDPOINTS.activateJob,
             {
                 path: {
                     tenantId: params.tenantId,

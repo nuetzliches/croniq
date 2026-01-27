@@ -7,6 +7,7 @@ namespace Croniq.Api.Models;
 public sealed record WorkPollRequest(
     string? EnvironmentTag,
     [property: Required] string RunnerId,
+    string? RunnerInstanceId = null,
     int? BatchSize = null,
     int? WaitForMs = null,
     bool? AllowTestExecutions = null,

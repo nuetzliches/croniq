@@ -1,1 +1,1 @@
--e ../../../../sdk/runner-python
+-r ../../../../sdk/runner-python/requirements.txt

@@ -483,7 +483,7 @@ public sealed class NoopJobPersistenceProvider : IJobPersistenceProvider, ICalen
             ? null
             : new Dictionary<string, string>(job.Metadata, StringComparer.OrdinalIgnoreCase);
 
-        return new JobDefinition(job.JobKey, job.Namespace, job.Name, job.Variant, job.Description, metadata);
+        return new JobDefinition(job.JobKey, job.Namespace, job.Name, job.Variant, job.Description, metadata, job.IsActive);
     }
 
     private static string BuildScopedJobKey(PartitionScope scope, string jobKey)

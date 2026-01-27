@@ -99,6 +99,15 @@ parameter and keeps it in sync with the UI.
 - Read query params from `ActivatedRoute.queryParamMap` and update them via `Router.navigate`.
 - Keep selection in a signal and derive detail views from the selected id.
 
+## Jobs UX (Activation)
+
+Jobs can exist in an **inactive** state (for example, self-registered jobs that require approval). The Jobs page must surface that state clearly and prevent accidental execution.
+
+- Inactive jobs show a **"Pending approval"** badge in the list and detail views.
+- Manual trigger actions are disabled for inactive jobs.
+- Provide an **Activate** action that calls `POST /tenants/{tenantId}/jobs/{jobId}/activate` and refreshes the registry/detail.
+- Assume `isActive=true` when the API omits the field (back-compat with older payloads).
+
 ## Icons
 
 Croniq.Ui bundles a curated Material Design Icons (MDI) subset locally (no runtime icon fetch).

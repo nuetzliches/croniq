@@ -26,6 +26,7 @@ export type JobRegistryEntry = {
     variant?: string;
     description?: string;
     metadata?: Record<string, string>;
+    isActive: boolean;
     scheduleCount: number;
     activeScheduleCount: number;
     hasDisabledSchedules: boolean;
@@ -267,6 +268,9 @@ export class JobsStore {
     private readonly upsertJobLoadingSignal = signal(false);
     private readonly upsertJobErrorSignal = signal<string | null>(null);
 
+    private readonly activateJobLoadingSignal = signal(false);
+    private readonly activateJobErrorSignal = signal<string | null>(null);
+
     private readonly lastErrorSignal = signal<string | null>(null);
 
     readonly manualTriggers = this.triggerLog.asReadonly();
@@ -290,6 +294,8 @@ export class JobsStore {
     readonly toggleSchedulesError = this.toggleSchedulesErrorSignal.asReadonly();
     readonly upsertJobLoading = this.upsertJobLoadingSignal.asReadonly();
     readonly upsertJobError = this.upsertJobErrorSignal.asReadonly();
+    readonly activateJobLoading = this.activateJobLoadingSignal.asReadonly();
+    readonly activateJobError = this.activateJobErrorSignal.asReadonly();
 
     constructor() {
         queueMicrotask(() => {
@@ -418,6 +424,61 @@ export class JobsStore {
                 }),
                 finalize(() => {
                     this.deleteJobLoadingSignal.set(false);
+                }),
+            )
+            .subscribe();
+    }
+
+    activateJob(jobKey: string): void {
+        const trimmedKey = jobKey.trim();
+        if (!trimmedKey) {
+            this.activateJobErrorSignal.set('Job key is required to activate a job.');
+            return;
+        }
+
+        const { tenantId, environment } = this.tenantContext.snapshot();
+        if (!tenantId.trim()) {
+            this.activateJobErrorSignal.set('Required context is missing — unable to activate job.');
+            return;
+        }
+
+        this.activateJobLoadingSignal.set(true);
+        this.activateJobErrorSignal.set(null);
+
+        this.api
+            .activateJob(
+                { tenantId, environment, jobId: trimmedKey },
+                this.tenantContext.createRequestOptions('jobs.activate', {
+                    tenantId,
+                    environment,
+                }),
+            )
+            .pipe(
+                tap(() => {
+                    this.refreshJobRegistry();
+                    const current = this.jobDetailSignal();
+                    if (current?.jobId === trimmedKey || current?.jobKey === trimmedKey) {
+                        this.refreshJobDetail(trimmedKey);
+                    }
+                }),
+                catchError((error: unknown) => {
+                    console.error('Failed to activate job', error);
+                    const authFailure = authFailureFromError(error, {
+                        forbidden: 'Forbidden (403) — your token is missing jobs permissions.',
+                    });
+                    if (authFailure) {
+                        this.activateJobErrorSignal.set(authFailure.message);
+                        return EMPTY;
+                    }
+                    if (error instanceof HttpErrorResponse && error.status === 404) {
+                        this.activateJobErrorSignal.set('Job not found (404) — it may have been removed.');
+                        return EMPTY;
+                    }
+                    this.activateJobErrorSignal.set('Unable to activate job via API.');
+                    return EMPTY;
+                }),
+                finalize(() => {
+                    this.activateJobLoadingSignal.set(false);
                 }),
             )
             .subscribe();
@@ -654,6 +715,7 @@ function normalizeJobRegistry(
         const scheduleStats = scheduleStatsByJob.get(job.jobKey.trim().toLowerCase()) ?? { total: 0, active: 0 };
         const totalSchedules = scheduleStats.total;
         const activeSchedules = scheduleStats.active;
+        const isActive = typeof job.isActive === 'boolean' ? job.isActive : true;
 
         entries.push({
             jobKey: job.jobKey,
@@ -662,6 +724,7 @@ function normalizeJobRegistry(
             variant: job.variant || undefined,
             description: job.description || undefined,
             metadata: job.metadata || undefined,
+            isActive,
             scheduleCount: totalSchedules,
             activeScheduleCount: activeSchedules,
             hasDisabledSchedules: activeSchedules < totalSchedules,

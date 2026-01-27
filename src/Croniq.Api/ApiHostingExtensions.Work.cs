@@ -27,6 +27,7 @@ public static partial class ApiHostingExtensions
             string? environment,
             WorkPollRequest request,
             [FromServices] ICallerContextAccessor callerContextAccessor,
+            [FromServices] IRunnerStore runnerStore,
             [FromServices] IJobStore jobStore,
             [FromServices] IExecutionLogStore executionLogStore,
             [FromServices] IWorkItemStore workItemStore,
@@ -55,6 +56,30 @@ public static partial class ApiHostingExtensions
             if (runnerFailure is not null)
             {
                 return runnerFailure;
+            }
+
+            var scope = new PartitionScope(tenantId.Trim(), resolvedEnvironment);
+            var runnerInstanceId = RunnerInstanceGuard.ResolveRunnerInstanceId(request.RunnerInstanceId, metadataJson: null);
+            var metadataUpdates = RunnerInstanceGuard.BuildMetadataUpdates(
+                runnerInstanceId,
+                transportState: "polling",
+                allowTestExecutions: request.AllowTestExecutions,
+                maxInflight: request.MaxInflight,
+                capabilities: request.Capabilities);
+            var nowUtc = DateTimeOffset.UtcNow;
+            var (runnerConflict, _) = await RunnerInstanceGuard.EnsureRunnerInstanceAvailableAsync(
+                runnerStore,
+                scope,
+                runnerId,
+                runnerInstanceId,
+                metadataJson: null,
+                metadataUpdates,
+                nowUtc,
+                nowUtc,
+                cancellationToken).ConfigureAwait(false);
+            if (runnerConflict is not null)
+            {
+                return runnerConflict;
             }
 
             var previousTransport = ApiMetrics.RecordRunnerTransportSelection(
@@ -93,7 +118,6 @@ public static partial class ApiHostingExtensions
                 return Results.BadRequest(new { error = "invalid-wait", message = "WaitForMs must be between 0 and 30000." });
             }
 
-            var scope = new PartitionScope(tenantId.Trim(), resolvedEnvironment);
             var deadlineUtc = waitForMs > 0
                 ? DateTimeOffset.UtcNow.AddMilliseconds(waitForMs)
                 : DateTimeOffset.UtcNow;

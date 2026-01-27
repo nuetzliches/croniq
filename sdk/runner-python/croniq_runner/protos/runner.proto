@@ -27,6 +27,7 @@ message RunnerHello {
   int32 max_inflight = 2;
   map<string, string> capabilities = 3;
   bool allow_test_executions = 4;
+  string runner_instance_id = 5;
 }
 
 message ServerHello {

@@ -76,6 +76,7 @@ type grpcRunnerConnection struct {
 	endpoint            string
 	useTLS              bool
 	runnerId            string
+	runnerInstanceId    string
 	apiKey              string
 	bearerToken         string
 	allowTestExecutions bool
@@ -106,6 +107,7 @@ func newGrpcRunnerConnection(config RunnerConfig, onError func(error)) (*grpcRun
 		endpoint:            parsed.Host,
 		useTLS:              strings.EqualFold(parsed.Scheme, "https"),
 		runnerId:            config.RunnerId,
+		runnerInstanceId:    config.RunnerInstanceId,
 		apiKey:              config.ApiKey,
 		bearerToken:         config.BearerToken,
 		allowTestExecutions: config.AllowTestExecutions,
@@ -153,6 +155,12 @@ func (c *grpcRunnerConnection) connectLoop(ctx context.Context, onAssigned func(
 				}
 				return
 			}
+			if isGrpcRunnerIdInUse(err) {
+				if c.onError != nil {
+					c.onError(&RunnerIdInUseError{Body: err.Error()})
+				}
+				return
+			}
 			attempt++
 			if c.retryMaxAttempts > 0 && attempt >= c.retryMaxAttempts {
 				return
@@ -174,6 +182,17 @@ func isGrpcRunnerMismatch(err error) bool {
 		return false
 	}
 	return strings.Contains(strings.ToLower(statusInfo.Message()), "runner-mismatch")
+}
+
+func isGrpcRunnerIdInUse(err error) bool {
+	statusInfo, ok := status.FromError(err)
+	if !ok {
+		return false
+	}
+	if statusInfo.Code() != codes.AlreadyExists {
+		return false
+	}
+	return strings.Contains(strings.ToLower(statusInfo.Message()), "runner-id-in-use")
 }
 
 func (c *grpcRunnerConnection) connectOnce(ctx context.Context, onAssigned func(Lease)) error {
@@ -210,6 +229,9 @@ func (c *grpcRunnerConnection) connectOnce(ctx context.Context, onAssigned func(
 	hello := dynamic.NewMessage(method.GetInputType())
 	helloPayload := dynamic.NewMessage(method.GetInputType().FindFieldByName("hello").GetMessageType())
 	helloPayload.SetFieldByName("runner_id", c.runnerId)
+	if strings.TrimSpace(c.runnerInstanceId) != "" {
+		helloPayload.SetFieldByName("runner_instance_id", strings.TrimSpace(c.runnerInstanceId))
+	}
 	helloPayload.SetFieldByName("max_inflight", int32(c.maxInflight))
 	helloPayload.SetFieldByName("allow_test_executions", c.allowTestExecutions)
 	capabilities := map[string]string{}

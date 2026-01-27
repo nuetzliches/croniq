@@ -110,10 +110,28 @@
         class="min-w-45 rounded-lg border border-white/10 bg-surface p-1 text-sm shadow-xl"
         cdkMenu
       >
-        <button type="button" cqContextMenuItem class="inline-flex items-center gap-2" (click)="triggerJob(row.jobKey)">
+        <button
+          type="button"
+          cqContextMenuItem
+          class="inline-flex items-center gap-2"
+          (click)="triggerJob(row.jobKey)"
+          [disabled]="!row.isActive"
+        >
             <cq-icon name="rocket" size="14" aria-hidden="true"></cq-icon>
           Trigger
         </button>
+        @if (!row.isActive) {
+          <button
+            type="button"
+            cqContextMenuItem
+            class="inline-flex items-center gap-2"
+            (click)="activateJob(row)"
+            [disabled]="activateJobLoading()"
+          >
+              <cq-icon name="check" size="14" aria-hidden="true"></cq-icon>
+            Activate
+          </button>
+        }
         <button type="button" cqContextMenuItem class="inline-flex items-center gap-2" (click)="openJobDialog(row)">
             <cq-icon name="pencil" size="14" aria-hidden="true"></cq-icon>
           Edit
@@ -162,7 +180,14 @@
           <ng-template cqJobCell let-row>
             <div class="min-w-0">
               <div class="truncate text-sm font-semibold text-primary">{{ row.jobKey }}</div>
-              <div class="truncate text-xs text-muted">{{ row.name || row.jobKey }}</div>
+              <div class="flex flex-wrap items-center gap-2 text-xs text-muted">
+                <span class="truncate">{{ row.name || row.jobKey }}</span>
+                @if (!row.isActive) {
+                  <span class="inline-flex items-center rounded-full bg-warning/10 px-2 py-0.5 text-[10px] font-semibold text-warning">
+                    Pending approval
+                  </span>
+                }
+              </div>
             </div>
           </ng-template>
         </cq-column>
@@ -271,6 +296,11 @@
                     Seeded by {{ job.managedBy || 'system' }}
                   </div>
                 }
+                @if (!job.isActive) {
+                  <div class="mt-2 inline-flex items-center gap-2 rounded-full bg-warning/10 px-2 py-1 text-[11px] font-semibold text-warning">
+                    Pending approval
+                  </div>
+                }
                 <div class="mt-3 flex items-center justify-between text-xs text-muted">
                   <span>Total schedules</span>
                   <span class="text-primary">{{ job.scheduleCount }}</span>
@@ -296,10 +326,22 @@
                     type="button"
                     class="inline-flex items-center justify-center gap-1 rounded-md border border-white/10 bg-white/5 px-2 py-1.5 text-[11px] font-semibold text-primary transition hover:border-accent hover:text-accent"
                     (click)="triggerJob(job.jobKey)"
+                    [disabled]="!job.isActive"
                   >
                     <cq-icon name="rocket" size="14" aria-hidden="true"></cq-icon>
                     Trigger now
                   </button>
+                  @if (!job.isActive) {
+                    <button
+                      type="button"
+                      class="inline-flex items-center justify-center gap-1 rounded-md border border-warning/30 bg-warning/10 px-2 py-1.5 text-[11px] font-semibold text-warning transition hover:border-warning hover:text-warning"
+                      (click)="activateJob(job)"
+                      [disabled]="activateJobLoading()"
+                    >
+                      <cq-icon name="check" size="14" aria-hidden="true"></cq-icon>
+                      Activate job
+                    </button>
+                  }
                   <button
                     type="button"
                     class="inline-flex items-center justify-center gap-1 rounded-md border border-white/10 bg-white/5 px-2 py-1.5 text-[11px] font-semibold text-primary transition hover:border-accent hover:text-accent"
@@ -342,6 +384,11 @@
                 @if (toggleSchedulesError()) {
                   <div class="mt-3 rounded-lg border border-danger/30 bg-danger/10 px-2 py-2 text-[11px] text-danger">
                     {{ toggleSchedulesError() }}
+                  </div>
+                }
+                @if (activateJobError()) {
+                  <div class="mt-3 rounded-lg border border-danger/30 bg-danger/10 px-2 py-2 text-[11px] text-danger">
+                    {{ activateJobError() }}
                   </div>
                 }
                 @if (deleteJobError()) {

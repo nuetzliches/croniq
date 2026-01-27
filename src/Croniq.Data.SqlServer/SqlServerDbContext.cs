@@ -73,6 +73,7 @@ public sealed class SqlServerDbContext(DbContextOptions<SqlServerDbContext> opti
             .WithMany()
             .HasForeignKey(x => x.TenantId)
             .OnDelete(DeleteBehavior.Restrict);
+        builder.Property(x => x.IsActive).HasDefaultValue(true);
         builder.Property(x => x.CreatedAtUtc).HasDefaultValueSql("sysutcdatetime()");
         builder.Property(x => x.UpdatedAtUtc).HasDefaultValueSql("sysutcdatetime()");
     }

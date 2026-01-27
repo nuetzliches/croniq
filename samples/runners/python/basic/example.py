@@ -1,83 +1,83 @@
 import os
 import sys
-import threading
-import time
-from datetime import datetime, timezone
+import asyncio
+import signal
 from pathlib import Path
 
 sdk_root = Path(__file__).resolve().parents[4] / "sdk" / "runner-python"
 sys.path.insert(0, str(sdk_root))
 
-from croniq_runner import WorkEvent, RunnerClient
+from croniq_runner import CroniqRunner, RunnerConfig, RunnerIdInUseError, RunnerLogger
 
 
-def env(key: str, default: str) -> str:
-    value = os.getenv(key)
-    if value is None or value.strip() == "":
-        return default
-    return value
+async def main() -> None:
+    try:
+        config = RunnerConfig.from_env()
+    except ValueError as exc:
+        print(f"invalid runner config: {exc}")
+        raise
 
+    runner = CroniqRunner(config)
+    job_key = os.getenv("CRONIQ_JOB_KEY", "demo-job").strip()
 
-def main() -> None:
-    base_url = env("CRONIQ_API_BASEURL", "http://localhost:5080")
-    tenant_id = env("CRONIQ_TENANT_ID", "default")
-    environment = env("CRONIQ_ENVIRONMENT", "dev")
-    api_key = env("CRONIQ_API_KEY", "")
-    runner_id = env("CRONIQ_RUNNER_ID", "default")
+    print("Croniq runner (python)")
+    print(f"- base_url:    {config.base_url}")
+    print(f"- grpc_url:    {config.grpc_base_url or config.base_url}")
+    print(f"- tenant_id:   {config.tenant_id}")
+    print(f"- environment: {config.environment}")
+    print(f"- runner_id:   {config.runner_id}")
+    if config.runner_instance_id:
+        print(f"- runner_instance: {config.runner_instance_id}")
+    if job_key:
+        print(f"- job_key:     {job_key}")
 
-    client = RunnerClient(
-        base_url=base_url,
-        tenant_id=tenant_id,
-        environment=environment,
-        api_key=api_key,
-    )
+    async def handle_execution(context, payload, logger: RunnerLogger) -> None:
+        if job_key and context.job_key != job_key:
+            raise RuntimeError(f"unsupported jobKey: {context.job_key}")
 
-    print("Croniq HTTP runner (python)")
-    print(f"- base_url:    {base_url}")
-    print(f"- tenant_id:   {tenant_id}")
-    print(f"- environment: {environment}")
-    print(f"- runner_id:   {runner_id}")
+        logger.info(
+            "execution started",
+            {
+                "executionId": context.execution_id,
+                "jobKey": context.job_key,
+                "triggerId": context.trigger_id,
+                "mode": context.execution_mode,
+            },
+        )
 
-    stop_event = threading.Event()
+        if payload is not None:
+            print("payload received", payload)
 
-    def heartbeat_loop() -> None:
-        while not stop_event.is_set():
+        logger.info("execution completed", {"executionId": context.execution_id})
+
+    runner.on_execute(job_key, handle_execution)
+
+    stop_event = asyncio.Event()
+    loop = asyncio.get_running_loop()
+
+    def on_signal() -> None:
+        stop_event.set()
+
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        try:
+            loop.add_signal_handler(sig, on_signal)
+        except (NotImplementedError, RuntimeError):
             try:
-                client.heartbeat(
-                    runner_id=runner_id,
-                    environment_tag=environment,
-                    seen_at_utc=datetime.now(timezone.utc).isoformat(),
-                )
-            except Exception:
-                pass
-            stop_event.wait(15)
+                signal.signal(sig, lambda *_: on_signal())
+            except (ValueError, OSError):
+                continue
 
-    threading.Thread(target=heartbeat_loop, daemon=True).start()
+    async def drain_on_signal() -> None:
+        await stop_event.wait()
+        print("runner draining due to signal")
+        await runner.drain(30000)
 
-    while True:
-        leases = client.poll(runner_id=runner_id, batch_size=1, wait_for_ms=25000)
-        for lease in leases:
-            print(
-                f"claimed lease: jobKey={lease.job_key} triggerId={lease.trigger_id} leaseId={lease.lease_id}"
-            )
-            if lease.execution_mode or lease.invocation_source:
-                mode = lease.execution_mode or "normal"
-                source = lease.invocation_source or "schedule"
-                print(f"- intent: mode={mode} source={source}")
-            client.events(
-                runner_id=runner_id,
-                lease=lease,
-                events=[
-                    WorkEvent(
-                        message=f"processing execution {lease.execution_id}",
-                        level="Information",
-                        event_type="runner",
-                    )
-                ],
-            )
-            client.ack(runner_id=runner_id, lease=lease, succeeded=True)
-            print(f"acked lease: leaseId={lease.lease_id}")
+    try:
+        await asyncio.gather(runner.start(), drain_on_signal())
+    except RunnerIdInUseError as exc:
+        print(f"runnerId already in use: {exc}")
+        raise
 
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())

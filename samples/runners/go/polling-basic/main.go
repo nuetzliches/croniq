@@ -2,10 +2,12 @@ package main
 
 import (
 	"context"
-	"fmt"
+	"errors"
 	"log"
 	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 	"time"
 
 	croniqrunner "github.com/croniq/croniq/sdk/runner-go"
@@ -15,78 +17,84 @@ func main() {
 	baseURL := env("CRONIQ_API_BASEURL", "http://localhost:5080")
 	tenantID := env("CRONIQ_TENANT_ID", "default")
 	environment := env("CRONIQ_ENVIRONMENT", "dev")
-	apiKey := env("CRONIQ_API_KEY", "")
+	apiKey := strings.TrimSpace(os.Getenv("CRONIQ_API_KEY"))
+	bearerToken := strings.TrimSpace(os.Getenv("CRONIQ_BEARER_TOKEN"))
+	runnerID := env("CRONIQ_RUNNER_ID", "default")
+	runnerInstanceID := strings.TrimSpace(os.Getenv("CRONIQ_RUNNER_INSTANCE_ID"))
+	jobKey := env("CRONIQ_JOB_KEY", "demo-job")
 
-	client, err := croniqrunner.NewClient(croniqrunner.Config{
-		BaseURL:        baseURL,
-		TenantID:       tenantID,
-		EnvironmentTag: environment,
-		ApiKey:         apiKey,
+	if (apiKey == "" && bearerToken == "") || (apiKey != "" && bearerToken != "") {
+		log.Fatal("Set exactly one of CRONIQ_API_KEY or CRONIQ_BEARER_TOKEN")
+	}
+
+	runner, err := croniqrunner.NewRunner(croniqrunner.RunnerConfig{
+		Config: croniqrunner.Config{
+			BaseURL:        baseURL,
+			TenantID:       tenantID,
+			EnvironmentTag: environment,
+			ApiKey:         apiKey,
+			BearerToken:    bearerToken,
+			Timeout:        60 * time.Second,
+		},
+		RunnerId:          runnerID,
+		RunnerInstanceId:  runnerInstanceID,
+		GrpcBaseURL:       env("CRONIQ_GRPC_BASEURL", baseURL),
+		TransportMode:     croniqrunner.TransportAuto,
+		HeartbeatInterval: 15 * time.Second,
+		MaxInflight:       1,
 	})
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	runnerID := env("CRONIQ_RUNNER_ID", "default")
-	batchSize := 1
-	waitFor := 25 * time.Second
-
-	log.Printf("Croniq HTTP runner (go)")
+	log.Printf("Croniq runner (go)")
 	log.Printf("- base_url:    %s", baseURL)
 	log.Printf("- tenant_id:   %s", tenantID)
 	log.Printf("- environment: %s", environment)
 	log.Printf("- runner_id:   %s", runnerID)
+	if runnerInstanceID != "" {
+		log.Printf("- runner_instance: %s", runnerInstanceID)
+	}
+	log.Printf("- job_key: %s", jobKey)
 
-	ctx := context.Background()
+	runner.OnExecute(jobKey, func(ctx croniqrunner.ExecutionContext, payload *string, logger croniqrunner.RunnerLogger) error {
+
+		logger.Info("execution started", map[string]any{
+			"executionId": ctx.ExecutionId,
+			"jobKey":      ctx.JobKey,
+			"triggerId":   ctx.TriggerId,
+			"mode":        ctx.ExecutionMode,
+		})
+
+		if payload != nil && *payload != "" {
+			log.Printf("payload received: %s", *payload)
+		}
+
+		logger.Info("execution completed", map[string]any{
+			"executionId": ctx.ExecutionId,
+		})
+		return nil
+	})
+
+	runCtx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	signals := make(chan os.Signal, 1)
+	signal.Notify(signals, os.Interrupt, syscall.SIGTERM)
 	go func() {
-		for {
-			if err := client.Heartbeat(ctx, runnerID, environment, "", nil); err != nil {
-				log.Printf("heartbeat failed: %v", err)
-			}
-			time.Sleep(15 * time.Second)
+		sig := <-signals
+		log.Printf("runner draining due to %s", sig.String())
+		if err := runner.Drain(30 * time.Second); err != nil {
+			log.Printf("drain timeout: %v", err)
 		}
+		cancel()
 	}()
-	for {
-		leases, err := client.Poll(ctx, runnerID, batchSize, waitFor)
-		if err != nil {
-			log.Fatalf("poll failed: %v", err)
+
+	if err := runner.Run(runCtx); err != nil && !errors.Is(err, context.Canceled) {
+		if croniqrunner.IsRunnerIdInUse(err) {
+			log.Fatalf("runnerId already in use: %v", err)
 		}
-
-		if len(leases) == 0 {
-			continue
-		}
-
-		for _, lease := range leases {
-			log.Printf("claimed lease: jobKey=%s triggerId=%s leaseId=%s", lease.JobKey, lease.TriggerId, lease.LeaseId)
-			if lease.ExecutionMode != "" || lease.InvocationSource != "" {
-				mode := lease.ExecutionMode
-				if mode == "" {
-					mode = "normal"
-				}
-				source := lease.InvocationSource
-				if source == "" {
-					source = "schedule"
-				}
-				log.Printf("- intent: mode=%s source=%s", mode, source)
-			}
-
-			events := []croniqrunner.WorkEvent{
-				{
-					Message:   fmt.Sprintf("processing execution %s", lease.ExecutionId),
-					Level:     "Information",
-					EventType: "runner",
-				},
-			}
-			if err := client.Events(ctx, runnerID, lease, events); err != nil {
-				log.Fatalf("events failed: %v", err)
-			}
-
-			if err := client.Ack(ctx, runnerID, lease, true, nil, ""); err != nil {
-				log.Fatalf("ack failed: %v", err)
-			}
-
-			log.Printf("acked lease: leaseId=%s", lease.LeaseId)
-		}
+		log.Fatalf("runner failed: %v", err)
 	}
 }
 

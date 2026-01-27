@@ -68,6 +68,34 @@ public sealed class WorkEndpointsTests : IClassFixture<WebhookApiTestHost>
     }
 
     [Fact]
+    public async Task Poll_WithRunnerInstanceCollision_ReturnsConflict()
+    {
+        _host.Reset();
+
+        var first = new WorkPollRequest(
+            EnvironmentTag: WebhookApiTestHost.Environment,
+            RunnerId: "itest-client",
+            RunnerInstanceId: "instance-1",
+            BatchSize: 1);
+
+        var firstResponse = await _host.Client.PostAsJsonAsync($"/tenants/{WebhookApiTestHost.TenantId}/work/poll", first);
+        firstResponse.StatusCode.ShouldBe(HttpStatusCode.OK);
+
+        var second = new WorkPollRequest(
+            EnvironmentTag: WebhookApiTestHost.Environment,
+            RunnerId: "itest-client",
+            RunnerInstanceId: "instance-2",
+            BatchSize: 1);
+
+        var secondResponse = await _host.Client.PostAsJsonAsync($"/tenants/{WebhookApiTestHost.TenantId}/work/poll", second);
+        secondResponse.StatusCode.ShouldBe(HttpStatusCode.Conflict);
+
+        var payload = await secondResponse.Content.ReadFromJsonAsync<JsonDocument>();
+        payload.ShouldNotBeNull();
+        payload.RootElement.GetProperty("title").GetString().ShouldBe("runner-id-in-use");
+    }
+
+    [Fact]
     public async Task Ack_DuplicateLease_IsIdempotent()
     {
         _host.Reset();

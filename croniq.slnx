@@ -20,6 +20,7 @@
     <Project Path="src/Croniq.Persistence.SqlServer/Croniq.Persistence.SqlServer.csproj" />
     <Project Path="src/Croniq.Providers.Abstractions/Croniq.Providers.Abstractions.csproj" />
     <Project Path="src/Croniq.Providers.Default/Croniq.Providers.Default.csproj" />
+    <Project Path="src/Croniq.Runner.Sdk/Croniq.Runner.Sdk.csproj" />
     <Project Path="src/Croniq.Rpc.Client/Croniq.Rpc.Client.csproj" />
     <Project Path="src/Croniq.Sdk/Croniq.Sdk.csproj" />
     <Project Path="src/Croniq.Usings/Croniq.Usings.csproj" />
@@ -38,6 +39,7 @@
     <Project Path="tests/Croniq.Persistence.Postgres.Tests/Croniq.Persistence.Postgres.Tests.csproj" />
     <Project Path="tests/Croniq.Persistence.SqlServer.Tests/Croniq.Persistence.SqlServer.Tests.csproj" />
     <Project Path="tests/Croniq.Providers.Default.Tests/Croniq.Providers.Default.Tests.csproj" />
+    <Project Path="tests/Croniq.Runner.Sdk.Tests/Croniq.Runner.Sdk.Tests.csproj" />
     <Project Path="tests/Croniq.Sdk.Tests/Croniq.Sdk.Tests.csproj" />
     <Project Path="tests/Croniq.TestKit/Croniq.TestKit.csproj" />
     <Project Path="tests/Croniq.Webhooks.Tests/Croniq.Webhooks.Tests.csproj" />

@@ -4,6 +4,7 @@
     "private": true,
     "main": "example.ts",
     "scripts": {
+        "postinstall": "npm --prefix ../../../../sdk/runner-node install",
         "start": "ts-node example.ts"
     },
     "dependencies": {

@@ -12,10 +12,27 @@ class JobsStoreStub {
   readonly jobRegistry = signal([]);
   readonly jobRegistryLoading = signal(false);
   readonly jobRegistryError = signal<string | null>(null);
+  readonly jobDetail = signal(null);
+  readonly jobDetailLoading = signal(false);
+  readonly jobDetailError = signal<string | null>(null);
+  readonly deleteJobLoading = signal(false);
+  readonly deleteJobError = signal<string | null>(null);
+  readonly toggleSchedulesLoading = signal(false);
+  readonly toggleSchedulesError = signal<string | null>(null);
+  readonly executions = signal([]);
+  readonly executionsLoading = signal(false);
+  readonly executionsError = signal<string | null>(null);
+  readonly activateJobLoading = signal(false);
+  readonly activateJobError = signal<string | null>(null);
 
   triggerJob = vi.fn();
   refreshJobRegistry = vi.fn();
+  refreshJobDetail = vi.fn();
+  refreshExecutions = vi.fn();
   upsertJob = vi.fn();
+  deleteJob = vi.fn();
+  setJobSchedulesEnabled = vi.fn();
+  activateJob = vi.fn();
 }
 
 const dialogStub = {

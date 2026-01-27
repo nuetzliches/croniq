@@ -8,7 +8,14 @@ Runner SDK with gRPC streaming (primary) and HTTP polling fallback. Use `CroniqR
 
 ## Usage
 
-See the sample in [samples/runners/node/basic](../../samples/runners/node/basic).
+See the sample in [samples/runners/node/basic](../../samples/runners/node/basic). Register handlers per job key:
+
+```ts
+runner.onExecute("demo-job", async (context, payload, logger) => {
+  logger.info("execution started", { executionId: context.executionId });
+  // ...
+});
+```
 
 ## Configuration
 

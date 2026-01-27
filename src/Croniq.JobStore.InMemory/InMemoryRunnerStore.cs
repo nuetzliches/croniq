@@ -70,6 +70,33 @@ public sealed class InMemoryRunnerStore : IRunnerStore
         }
     }
 
+    public Task<RunnerStatus?> TryGetAsync(RunnerLookup lookup, CancellationToken cancellationToken)
+    {
+        if (lookup is null) throw new ArgumentNullException(nameof(lookup));
+
+        cancellationToken.ThrowIfCancellationRequested();
+
+        var scope = lookup.Scope;
+        var now = lookup.NowUtc;
+        var runnerId = lookup.RunnerId?.Trim();
+        if (string.IsNullOrWhiteSpace(runnerId))
+        {
+            return Task.FromResult<RunnerStatus?>(null);
+        }
+
+        lock (_lock)
+        {
+            PruneExpiredUnsafe(scope, now);
+
+            if (_entries.TryGetValue((scope.TenantId, scope.EnvironmentTag, runnerId), out var entry))
+            {
+                return Task.FromResult<RunnerStatus?>(ToStatus(entry, now));
+            }
+        }
+
+        return Task.FromResult<RunnerStatus?>(null);
+    }
+
     private static bool MatchesScope((string TenantId, string EnvironmentTag, string RunnerId) key, PartitionScope scope)
     {
         return string.Equals(key.TenantId, scope.TenantId, StringComparison.OrdinalIgnoreCase)

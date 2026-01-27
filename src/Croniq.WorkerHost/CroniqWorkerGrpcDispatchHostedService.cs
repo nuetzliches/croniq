@@ -35,6 +35,7 @@ public sealed class CroniqWorkerGrpcDispatchHostedService : BackgroundService, I
     private readonly CroniqOptions _coreOptions;
     private readonly CroniqStartupOptions _startupOptions;
     private readonly ILogger<CroniqWorkerGrpcDispatchHostedService> _logger;
+    private readonly string _runnerInstanceId = Guid.NewGuid().ToString("N");
     private int _grpcConnected;
     private long _lastConnectedTicks;
     private long _lastFallbackTicks;
@@ -135,7 +136,8 @@ public sealed class CroniqWorkerGrpcDispatchHostedService : BackgroundService, I
         {
             RunnerId = runnerId,
             MaxInflight = maxInflight,
-            AllowTestExecutions = _dispatchOptions.AllowTestExecutions
+            AllowTestExecutions = _dispatchOptions.AllowTestExecutions,
+            RunnerInstanceId = _runnerInstanceId
         };
 
         if (_dispatchOptions.Capabilities is { Length: > 0 })

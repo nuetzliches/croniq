@@ -96,6 +96,15 @@ public static partial class ApiHostingExtensions
             }
 
             var scope = new PartitionScope(tenantId, resolvedEnvironment);
+            var isActive = request.IsActive ?? true;
+            if (!request.IsActive.HasValue)
+            {
+                var existing = await store.GetJobAsync(jobKey.Value, scope, cancellationToken).ConfigureAwait(false);
+                if (existing is not null)
+                {
+                    isActive = existing.IsActive;
+                }
+            }
 
             if (!string.Equals(jobKey.NamespaceSegment, request.Namespace, StringComparison.OrdinalIgnoreCase))
             {
@@ -120,7 +129,8 @@ public static partial class ApiHostingExtensions
                 request.Name,
                 request.Variant,
                 request.Description,
-                ToReadOnly(request.Metadata));
+                ToReadOnly(request.Metadata),
+                isActive);
 
             await store.UpsertJobAsync(job, scope, cancellationToken).ConfigureAwait(false);
             return Results.Created($"/tenants/{tenantId}/jobs/{Uri.EscapeDataString(job.JobKey)}", ToJobResponse(job));
@@ -156,6 +166,47 @@ public static partial class ApiHostingExtensions
         .WithDocs("Jobs_Delete", "Delete job", "Deletes the job definition and associated triggers within the tenant/environment scope.")
         .Produces(StatusCodes.Status204NoContent)
         .Produces(StatusCodes.Status400BadRequest)
+        .RequireCroniqTenantScope(CroniqScopes.JobsWrite);
+
+        app.MapPost("/tenants/{tenantId}/jobs/{jobId}/activate", async (
+            string tenantId,
+            string jobId,
+            string? environment,
+            [FromServices] ICallerContextAccessor callerContextAccessor,
+            [FromServices] IJobPersistenceProvider store,
+            CancellationToken cancellationToken) =>
+        {
+            var resolvedEnvironment = ResolveEnvironmentTag(environment, callerContextAccessor);
+            if (string.IsNullOrWhiteSpace(resolvedEnvironment))
+            {
+                return MissingEnvironment();
+            }
+
+            if (!JobKey.TryParse(jobId, out var jobKey))
+            {
+                return Results.BadRequest(new { error = "invalid-job-key", message = "JobKey must follow the Croniq format." });
+            }
+
+            var scope = new PartitionScope(tenantId, resolvedEnvironment);
+            var job = await store.GetJobAsync(jobKey.Value, scope, cancellationToken).ConfigureAwait(false);
+            if (job is null)
+            {
+                return Results.NotFound(new { error = "job-not-found", jobId });
+            }
+
+            if (job.IsActive)
+            {
+                return Results.Ok(ToJobResponse(job));
+            }
+
+            var updated = job with { IsActive = true };
+            await store.UpsertJobAsync(updated, scope, cancellationToken).ConfigureAwait(false);
+            return Results.Ok(ToJobResponse(updated));
+        })
+        .WithDocs("Jobs_Activate", "Activate job", "Activates a pending job so it can be dispatched.")
+        .Produces<JobResponse>(StatusCodes.Status200OK)
+        .Produces(StatusCodes.Status400BadRequest)
+        .Produces(StatusCodes.Status404NotFound)
         .RequireCroniqTenantScope(CroniqScopes.JobsWrite);
     }
 

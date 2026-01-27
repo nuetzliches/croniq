@@ -536,6 +536,26 @@ export const TenantsApi: EndpointDefinition[] = [
         ],
     },
     {
+        method: 'post',
+        path: '/tenants/:tenantId/jobs/:jobId/activate',
+        description: `Activates a pending job so it can be dispatched.`,
+        requestFormat: 'json',
+        parameters: [
+            { name: 'tenantId', type: 'Path', schema: z.string() },
+            { name: 'jobId', type: 'Path', schema: z.string() },
+            {
+                name: 'environment',
+                type: 'Query',
+                schema: z.string().optional(),
+            },
+        ],
+        response: JobResponse,
+        errors: [
+            { status: 400, description: `Bad Request`, schema: z.void() },
+            { status: 404, description: `Not Found`, schema: z.void() },
+        ],
+    },
+    {
         method: 'delete',
         path: '/tenants/:tenantId/jobs/:jobId',
         description: `Deletes the job definition and associated triggers within the tenant/environment scope.`,

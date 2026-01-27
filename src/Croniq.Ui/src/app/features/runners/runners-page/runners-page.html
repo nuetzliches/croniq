@@ -1,115 +1,343 @@
 <div class="flex h-full flex-col space-y-6">
-  <!-- Header -->
-  <header class="flex items-center justify-between">
-    <h1 class="text-lg font-semibold text-primary">Runners</h1>
-    <button
-      (click)="refresh()"
-      class="rounded-lg bg-white/5 px-4 py-2 text-sm font-semibold text-primary hover:bg-white/10"
-      [disabled]="loading()"
-    >
-      {{ loading() ? 'Refreshing...' : 'Refresh' }}
-    </button>
+  <!-- Header / Controls -->
+  <header class="flex flex-wrap items-center justify-between gap-4">
+    <div class="space-y-1">
+      <h1 class="text-lg font-semibold text-primary">Runners</h1>
+      <p class="text-xs text-muted">Inspect runner health, capacity, and tags.</p>
+    </div>
+    <div class="flex flex-wrap items-center gap-2">
+      <button
+        type="button"
+        (click)="refresh()"
+        class="rounded-lg border border-white/10 bg-white/5 px-4 py-2 text-sm font-semibold text-primary transition hover:border-accent hover:text-accent"
+        [disabled]="loading()"
+      >
+        {{ loading() ? 'Refreshing...' : 'Refresh' }}
+      </button>
+    </div>
   </header>
 
-  <!-- Metrics Grid -->
-  <div class="grid grid-cols-1 gap-4 sm:grid-cols-3">
-    <div class="rounded-xl border border-white/10 bg-surface-alt p-4">
-      <p class="text-xs font-medium uppercase text-muted">Active Runners</p>
-      <p class="mt-2 text-2xl font-semibold text-primary">{{ activeRunnersCount() }}</p>
-    </div>
-    <div class="rounded-xl border border-white/10 bg-surface-alt p-4">
-      <p class="text-xs font-medium uppercase text-muted">Total Capacity</p>
-      <p class="mt-2 text-2xl font-semibold text-primary">{{ totalCapacity() }}</p>
-    </div>
-    <div class="rounded-xl border border-white/10 bg-surface-alt p-4">
-      <p class="text-xs font-medium uppercase text-muted">Busy Threads</p>
-      <p class="mt-2 text-2xl font-semibold text-primary">{{ busyThreads() }}</p>
-    </div>
-  </div>
+  <ng-template #runnersFilterPanel>
+    <div class="space-y-4">
+      <div class="space-y-2">
+        <div class="text-xs font-semibold uppercase tracking-wide text-muted">Runner search</div>
+        <input
+          type="search"
+          cqInput
+          placeholder="Search by ID, host, or tag"
+          [value]="runnerSearch()"
+          (input)="setRunnerSearch($any($event.target).value)"
+        />
+      </div>
 
-  <!-- Content -->
-  <div class="flex-1 overflow-hidden rounded-xl border border-white/10 bg-surface-alt shadow-card">
-    <div class="overflow-x-auto">
-      <table class="w-full text-left text-sm">
-        <thead class="bg-white/5 text-xs uppercase text-muted">
-          <tr>
-            <th class="px-6 py-3 font-medium">Runner ID</th>
-            <th class="px-6 py-3 font-medium">Hostname</th>
-            <th class="px-6 py-3 font-medium">Status</th>
-            <th class="px-6 py-3 font-medium">Last Heartbeat</th>
-            <th class="px-6 py-3 font-medium">Load</th>
-            <th class="px-6 py-3 font-medium">Tags</th>
-            <th class="px-6 py-3 font-medium text-right">Actions</th>
-          </tr>
-        </thead>
-        <tbody class="divide-y divide-white/10">
-          @for (runner of runners(); track runner.id) {
-          <tr class="hover:bg-white/5">
-            <td class="px-6 py-4 font-mono text-xs text-muted">{{ runner.id }}</td>
-            <td class="px-6 py-4 font-medium text-primary">{{ runner.hostname }}</td>
-            <td class="px-6 py-4">
+      <div class="space-y-2">
+        <div class="text-xs font-semibold uppercase tracking-wide text-muted">Status</div>
+        <select
+          cqSelect
+          [value]="statusFilter()"
+          (change)="setStatusFilter($any($event.target).value)"
+        >
+          @for (option of statusOptions; track option.value) {
+          <option [value]="option.value">{{ option.label }}</option>
+          }
+        </select>
+      </div>
+
+      <div class="space-y-2">
+        <div class="text-xs font-semibold uppercase tracking-wide text-muted">Tags</div>
+        <div
+          class="max-h-56 space-y-1 overflow-auto rounded-lg border border-white/10 bg-black/10 p-2"
+        >
+          @if (tagOptions().length === 0) {
+          <div class="text-xs text-muted">No tags reported.</div>
+          } @else { @for (tag of tagOptions(); track tag) {
+          <label class="flex items-center gap-2 text-xs text-primary">
+            <input
+              type="checkbox"
+              #tagToggle
+              [checked]="isTagSelected(tag)"
+              (change)="toggleTagSelection(tag, tagToggle.checked)"
+              class="h-4 w-4 rounded border-white/10 bg-surface-alt text-accent focus:ring-accent"
+            />
+            <span class="truncate">{{ tag }}</span>
+          </label>
+          } }
+        </div>
+      </div>
+
+      <button
+        type="button"
+        (click)="resetFilters()"
+        class="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-xs font-semibold text-primary transition hover:border-accent hover:text-accent"
+      >
+        Clear filters
+      </button>
+    </div>
+  </ng-template>
+
+  <ng-template #runnersFilterCollapsed>
+    @if (runnerSearch() || statusFilter() !== 'all' || selectedTags().length > 0) {
+    <button
+      type="button"
+      class="inline-flex items-center justify-center p-1 text-warning transition hover:text-accent"
+      aria-label="Reset filters"
+      (click)="resetFilters()"
+    >
+      <cq-icon name="filter-remove" size="16" aria-hidden="true"></cq-icon>
+    </button>
+    }
+  </ng-template>
+
+  <div class="flex flex-1 flex-col gap-4 lg:flex-row">
+    <ng-template #rowActions let-row="row">
+      <div
+        class="min-w-45 rounded-lg border border-white/10 bg-surface p-1 text-sm shadow-xl"
+        cdkMenu
+      >
+        <button
+          type="button"
+          cqContextMenuItem
+          class="inline-flex items-center gap-2"
+          (click)="drainRunner(row.id)"
+          [disabled]="row.status === 'Draining'"
+        >
+          <cq-icon name="pause-circle-outline" size="14" aria-hidden="true"></cq-icon>
+          Drain runner
+        </button>
+        <button
+          type="button"
+          cqContextMenuItem
+          class="inline-flex items-center gap-2"
+          (click)="deregisterRunner(row.id)"
+        >
+          <cq-icon name="trash-can-outline" size="14" aria-hidden="true"></cq-icon>
+          Deregister
+        </button>
+      </div>
+    </ng-template>
+
+    <!-- Data Grid -->
+    <div
+      class="flex-1 overflow-hidden rounded-xl border border-white/10 bg-surface-alt shadow-card"
+    >
+      @if (error()) {
+      <div class="border-b border-white/10 bg-danger/10 px-4 py-3 text-sm text-danger">
+        {{ error() }}
+      </div>
+      }
+      <cq-data-grid
+        class="h-full"
+        [rows]="filteredRunners()"
+        [rowKey]="runnerRowKey"
+        [idKey]="'id'"
+        [bufferPx]="256"
+        [estimatedRowHeightPx]="56"
+        [loading]="loading()"
+        [rowClasses]="runnerRowClasses"
+        [(selectedId)]="selectedRunnerId"
+        [rowContextMenu]="rowActions"
+      >
+        <cq-column header="Runner" width="18rem">
+          <ng-template cqRunnerCell let-row>
+            <div class="min-w-0">
+              <div class="truncate text-sm font-semibold text-primary">{{ row.id }}</div>
+              <div class="truncate text-xs text-muted">{{ row.hostname }}</div>
+            </div>
+          </ng-template>
+        </cq-column>
+
+        <cq-column header="Status" width="10rem" align="center">
+          <ng-template cqRunnerCell let-row>
+            @switch (row.status) { @case ('Online') {
+            <span
+              class="inline-flex items-center rounded-full bg-success/10 px-2 py-0.5 text-xs font-medium text-success"
+              >Online</span
+            >
+            } @case ('Offline') {
+            <span
+              class="inline-flex items-center rounded-full bg-error/10 px-2 py-0.5 text-xs font-medium text-error"
+              >Offline</span
+            >
+            } @case ('Draining') {
+            <span
+              class="inline-flex items-center rounded-full bg-warning/10 px-2 py-0.5 text-xs font-medium text-warning"
+              >Draining</span
+            >
+            } }
+          </ng-template>
+        </cq-column>
+
+        <cq-column header="Last heartbeat" width="14rem">
+          <ng-template cqRunnerCell let-row>
+            @if (row.lastHeartbeatAt) {
+            <span class="text-xs text-muted">{{ row.lastHeartbeatAt | date : 'medium' }}</span>
+            } @else {
+            <span class="text-xs text-muted">—</span>
+            }
+          </ng-template>
+        </cq-column>
+
+        <cq-column header="Load" width="12rem">
+          <ng-template cqRunnerCell let-row>
+            <div class="flex items-center gap-2">
+              <div class="h-1.5 w-16 rounded-full bg-white/10">
+                <div class="h-full rounded-full bg-accent" [style.width.%]="row.loadPercent"></div>
+              </div>
+              <span class="text-xs text-muted">{{ row.loadLabel }}</span>
+            </div>
+          </ng-template>
+        </cq-column>
+
+        <cq-column header="Tags" width="16rem">
+          <ng-template cqRunnerCell let-row>
+            <div class="flex flex-wrap gap-1">
+              @for (tag of row.tags; track tag) {
+              <span class="rounded bg-white/5 px-1.5 py-0.5 text-xs text-muted">{{ tag }}</span>
+              } @if (row.tags.length === 0) {
+              <span class="text-xs text-muted">—</span>
+              }
+            </div>
+          </ng-template>
+        </cq-column>
+      </cq-data-grid>
+    </div>
+
+    <!-- Detail Panel -->
+    <aside class="w-full lg:w-80">
+      <div class="rounded-xl border border-white/10 bg-surface-alt p-4 shadow-card">
+        <div class="flex items-start justify-between gap-3">
+          <div>
+            <h2 class="text-sm font-semibold text-primary">Runner detail</h2>
+            <p class="text-xs text-muted">Status, capacity, and tags.</p>
+          </div>
+          @if (selectedRunner()) {
+          <span class="rounded-full bg-white/10 px-2 py-1 text-[11px] font-semibold text-muted">
+            Selected
+          </span>
+          }
+        </div>
+
+        @if (!selectedRunner()) {
+        <div
+          class="mt-4 rounded-lg border border-dashed border-white/10 bg-black/10 px-3 py-4 text-xs text-muted"
+        >
+          Select a runner to inspect capacity and heartbeat details.
+        </div>
+        } @else { @if (selectedRunner(); as runner) {
+        <div class="mt-4 space-y-4">
+          <div class="rounded-lg border border-white/10 bg-black/10 px-3 py-3">
+            <div class="flex items-start justify-between gap-2">
+              <div>
+                <div class="text-[11px] font-semibold uppercase tracking-wide text-muted">
+                  Runner ID
+                </div>
+                <div class="mt-1 text-sm font-semibold text-primary">{{ runner.id }}</div>
+                <div class="mt-1 text-xs text-muted">{{ runner.hostname }}</div>
+              </div>
               @switch (runner.status) { @case ('Online') {
               <span
-                class="inline-flex items-center rounded-full bg-success/10 px-2 py-0.5 text-xs font-medium text-success"
-                >Online</span
+                class="inline-flex items-center rounded-full bg-success/10 px-2 py-1 text-[11px] font-semibold text-success"
               >
+                Online
+              </span>
               } @case ('Offline') {
               <span
-                class="inline-flex items-center rounded-full bg-error/10 px-2 py-0.5 text-xs font-medium text-error"
-                >Offline</span
+                class="inline-flex items-center rounded-full bg-error/10 px-2 py-1 text-[11px] font-semibold text-error"
               >
+                Offline
+              </span>
               } @case ('Draining') {
               <span
-                class="inline-flex items-center rounded-full bg-warning/10 px-2 py-0.5 text-xs font-medium text-warning"
-                >Draining</span
+                class="inline-flex items-center rounded-full bg-warning/10 px-2 py-1 text-[11px] font-semibold text-warning"
               >
+                Draining
+              </span>
               } }
-            </td>
-            <td class="px-6 py-4 text-muted">{{ runner.lastHeartbeatAt | date : 'medium' }}</td>
-            <td class="px-6 py-4 text-muted">
-              <div class="flex items-center gap-2">
-                <div class="h-1.5 w-16 rounded-full bg-white/10">
-                  <div
-                    class="h-full rounded-full bg-accent"
-                    [style.width.%]="runner.loadPercent"
-                  ></div>
-                </div>
-                <span class="text-xs">{{ runner.loadLabel }}</span>
+            </div>
+            <div class="mt-3 text-xs text-muted">
+              Last heartbeat @if (runner.lastHeartbeatAt) {
+              <span class="text-primary">{{ runner.lastHeartbeatAt | date : 'short' }}</span>
+              } @else {
+              <span>—</span>
+              }
+            </div>
+          </div>
+
+          <div class="rounded-lg border border-white/10 bg-black/10 px-3 py-3">
+            <div class="text-[11px] font-semibold uppercase tracking-wide text-muted">Capacity</div>
+            <div class="mt-2 flex items-center gap-2">
+              <div class="h-1.5 flex-1 rounded-full bg-white/10">
+                <div
+                  class="h-full rounded-full bg-accent"
+                  [style.width.%]="runner.loadPercent"
+                ></div>
               </div>
-            </td>
-            <td class="px-6 py-4">
-              <div class="flex flex-wrap gap-1">
-                @for (tag of runner.tags; track tag) {
-                <span class="rounded bg-white/5 px-1.5 py-0.5 text-xs text-muted">{{ tag }}</span>
-                }
-              </div>
-            </td>
-            <td class="px-6 py-4 text-right">
-              <div class="flex justify-end gap-2">
-                @if (runner.status !== 'Draining') {
-                <button
-                  (click)="drainRunner(runner.id)"
-                  class="text-xs font-medium text-warning hover:text-warning-hover"
-                >
-                  Drain
-                </button>
-                }
-                <button
-                  (click)="deregisterRunner(runner.id)"
-                  class="text-xs font-medium text-error hover:text-error-hover"
-                >
-                  Deregister
-                </button>
-              </div>
-            </td>
-          </tr>
-          } @empty {
-          <tr>
-            <td class="px-6 py-6 text-sm text-muted" colspan="7">No runners reported yet.</td>
-          </tr>
-          }
-        </tbody>
-      </table>
-    </div>
+              <span class="text-xs text-muted">{{ runner.loadLabel }}</span>
+            </div>
+            <div class="mt-3 flex items-center justify-between text-xs text-muted">
+              <span>Active threads</span>
+              <span class="text-primary">{{ runner.activeJobs }}</span>
+            </div>
+            <div class="mt-2 flex items-center justify-between text-xs text-muted">
+              <span>Total capacity</span>
+              <span class="text-primary">{{ runner.capacity }}</span>
+            </div>
+          </div>
+
+          <div class="rounded-lg border border-white/10 bg-black/10 px-3 py-3">
+            <div class="text-[11px] font-semibold uppercase tracking-wide text-muted">Tags</div>
+            @if (runner.tags.length === 0) {
+            <div class="mt-2 text-xs text-muted">No tags reported.</div>
+            } @else {
+            <div class="mt-2 flex flex-wrap gap-1">
+              @for (tag of runner.tags; track tag) {
+              <span class="rounded bg-white/5 px-1.5 py-0.5 text-xs text-muted">{{ tag }}</span>
+              }
+            </div>
+            }
+          </div>
+
+          <div class="rounded-lg border border-white/10 bg-black/10 px-3 py-3">
+            <div class="text-[11px] font-semibold uppercase tracking-wide text-muted">
+              Quick actions
+            </div>
+            <div class="mt-3 grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                class="inline-flex items-center justify-center rounded-md border border-white/10 bg-white/5 px-2 py-1.5 text-[11px] font-semibold text-primary transition hover:border-accent hover:text-accent"
+                (click)="drainRunner(runner.id)"
+                [disabled]="runner.status === 'Draining'"
+              >
+                Drain runner
+              </button>
+              <button
+                type="button"
+                class="inline-flex items-center justify-center rounded-md border border-danger/30 bg-danger/10 px-2 py-1.5 text-[11px] font-semibold text-danger transition hover:border-danger hover:text-danger"
+                (click)="deregisterRunner(runner.id)"
+              >
+                Deregister
+              </button>
+            </div>
+          </div>
+
+          <div class="rounded-lg border border-white/10 bg-black/10 px-3 py-3">
+            <div class="text-[11px] font-semibold uppercase tracking-wide text-muted">Totals</div>
+            <div class="mt-3 flex items-center justify-between text-xs text-muted">
+              <span>Active runners</span>
+              <span class="text-primary">{{ activeRunnersCount() }}</span>
+            </div>
+            <div class="mt-2 flex items-center justify-between text-xs text-muted">
+              <span>Cluster capacity</span>
+              <span class="text-primary">{{ totalCapacity() }}</span>
+            </div>
+            <div class="mt-2 flex items-center justify-between text-xs text-muted">
+              <span>Busy threads</span>
+              <span class="text-primary">{{ busyThreads() }}</span>
+            </div>
+          </div>
+        </div>
+        } }
+      </div>
+    </aside>
   </div>
 </div>

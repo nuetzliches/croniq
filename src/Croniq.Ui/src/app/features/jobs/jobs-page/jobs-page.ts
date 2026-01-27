@@ -114,6 +114,8 @@ export class JobsPage {
   readonly deleteJobError = this.store.deleteJobError;
   readonly toggleSchedulesLoading = this.store.toggleSchedulesLoading;
   readonly toggleSchedulesError = this.store.toggleSchedulesError;
+  readonly activateJobLoading = this.store.activateJobLoading;
+  readonly activateJobError = this.store.activateJobError;
   readonly executions = this.store.executions;
   readonly executionsLoading = this.store.executionsLoading;
   readonly executionsError = this.store.executionsError;
@@ -227,6 +229,10 @@ export class JobsPage {
     if (confirm(`Delete ${job.jobKey}? This removes the job and all schedules.`)) {
       this.store.deleteJob(job.jobKey);
     }
+  }
+
+  activateJob(job: JobRegistryEntry): void {
+    this.store.activateJob(job.jobKey);
   }
 
   disableSchedules(job: JobRegistryEntry): void {

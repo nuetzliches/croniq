@@ -38,6 +38,8 @@ public sealed class JobEntity
     [MaxLength(1024)]
     public string? Description { get; set; }
 
+    public bool IsActive { get; set; } = true;
+
     public string? MetadataJson { get; set; }
 
     public DateTime CreatedAtUtc { get; set; }

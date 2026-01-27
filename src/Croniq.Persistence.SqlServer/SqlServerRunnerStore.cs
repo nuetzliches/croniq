@@ -32,53 +32,26 @@ public sealed class SqlServerRunnerStore : IRunnerStore
         var runnerId = heartbeat.RunnerId.Trim();
         var lastSeenAtUtc = heartbeat.SeenAtUtc.UtcDateTime;
         var expiresAtUtc = heartbeat.SeenAtUtc.Add(_options.OnlineTtl).UtcDateTime;
+        var nowUtc = DateTime.UtcNow;
 
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
 
         await PruneExpiredAsync(db, scope, heartbeat.SeenAtUtc, cancellationToken).ConfigureAwait(false);
 
-        var updated = await db.Runners
-            .Where(x => x.TenantId == scope.TenantId && x.EnvironmentTag == scope.EnvironmentTag && x.RunnerId == runnerId)
-            .ExecuteUpdateAsync(setters => setters
-                .SetProperty(x => x.LastSeenAtUtc, lastSeenAtUtc)
-                .SetProperty(x => x.ExpiresAtUtc, expiresAtUtc)
-                .SetProperty(x => x.MetadataJson, heartbeat.MetadataJson)
-                .SetProperty(x => x.UpdatedAtUtc, DateTime.UtcNow), cancellationToken)
-            .ConfigureAwait(false);
-
-        if (updated > 0)
-        {
-            return;
-        }
-
-        db.Runners.Add(new RunnerEntity
-        {
-            TenantId = scope.TenantId,
-            EnvironmentTag = scope.EnvironmentTag,
-            RunnerId = runnerId,
-            LastSeenAtUtc = lastSeenAtUtc,
-            ExpiresAtUtc = expiresAtUtc,
-            MetadataJson = heartbeat.MetadataJson,
-            CreatedAtUtc = DateTime.UtcNow,
-            UpdatedAtUtc = DateTime.UtcNow
-        });
-
-        try
-        {
-            await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
-        }
-        catch (DbUpdateException)
-        {
-            // Race with another runner heartbeat insert. Retry as update.
-            await db.Runners
-                .Where(x => x.TenantId == scope.TenantId && x.EnvironmentTag == scope.EnvironmentTag && x.RunnerId == runnerId)
-                .ExecuteUpdateAsync(setters => setters
-                    .SetProperty(x => x.LastSeenAtUtc, lastSeenAtUtc)
-                    .SetProperty(x => x.ExpiresAtUtc, expiresAtUtc)
-                    .SetProperty(x => x.MetadataJson, heartbeat.MetadataJson)
-                    .SetProperty(x => x.UpdatedAtUtc, DateTime.UtcNow), cancellationToken)
-                .ConfigureAwait(false);
-        }
+        await db.Database.ExecuteSqlInterpolatedAsync($@"
+MERGE [croniq].[Runners] AS target
+USING (SELECT {scope.TenantId} AS TenantId, {scope.EnvironmentTag} AS EnvironmentTag, {runnerId} AS RunnerId) AS source
+ON target.TenantId = source.TenantId AND target.EnvironmentTag = source.EnvironmentTag AND target.RunnerId = source.RunnerId
+WHEN MATCHED THEN
+    UPDATE SET
+        LastSeenAtUtc = {lastSeenAtUtc},
+        ExpiresAtUtc = {expiresAtUtc},
+        MetadataJson = {heartbeat.MetadataJson},
+        UpdatedAtUtc = {nowUtc}
+WHEN NOT MATCHED THEN
+    INSERT (TenantId, EnvironmentTag, RunnerId, LastSeenAtUtc, ExpiresAtUtc, MetadataJson, CreatedAtUtc, UpdatedAtUtc)
+    VALUES ({scope.TenantId}, {scope.EnvironmentTag}, {runnerId}, {lastSeenAtUtc}, {expiresAtUtc}, {heartbeat.MetadataJson}, {nowUtc}, {nowUtc});
+", cancellationToken).ConfigureAwait(false);
     }
 
     public async Task<IReadOnlyCollection<RunnerStatus>> ListAsync(RunnerQuery query, CancellationToken cancellationToken)
@@ -110,6 +83,50 @@ public sealed class SqlServerRunnerStore : IRunnerStore
                 expiresAt > now,
                 x.MetadataJson);
         }).ToList();
+    }
+
+    public async Task<RunnerStatus?> TryGetAsync(RunnerLookup lookup, CancellationToken cancellationToken)
+    {
+        if (lookup is null) throw new ArgumentNullException(nameof(lookup));
+
+        var scope = lookup.Scope;
+        var now = lookup.NowUtc;
+        var runnerId = lookup.RunnerId?.Trim();
+        if (string.IsNullOrWhiteSpace(runnerId))
+        {
+            return null;
+        }
+
+        await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
+
+        await PruneExpiredAsync(db, scope, now, cancellationToken).ConfigureAwait(false);
+
+        var row = await db.Runners
+            .AsNoTracking()
+            .FirstOrDefaultAsync(x =>
+                x.TenantId == scope.TenantId
+                && x.EnvironmentTag == scope.EnvironmentTag
+                && x.RunnerId == runnerId, cancellationToken)
+            .ConfigureAwait(false);
+
+        if (row is null)
+        {
+            return null;
+        }
+
+        var lastSeen = new DateTimeOffset(DateTime.SpecifyKind(row.LastSeenAtUtc, DateTimeKind.Utc));
+        var expiresAt = new DateTimeOffset(DateTime.SpecifyKind(row.ExpiresAtUtc, DateTimeKind.Utc));
+        if (expiresAt <= now)
+        {
+            return null;
+        }
+
+        return new RunnerStatus(
+            row.RunnerId,
+            lastSeen,
+            expiresAt,
+            IsOnline: true,
+            row.MetadataJson);
     }
 
     private static Task<int> PruneExpiredAsync(SqlServerDbContext db, PartitionScope scope, DateTimeOffset nowUtc, CancellationToken cancellationToken)

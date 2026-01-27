@@ -624,6 +624,7 @@ public sealed class PostgresJobPersistenceProvider : IJobPersistenceProvider, IC
         entity.Name = job.Name;
         entity.Variant = job.Variant;
         entity.Description = job.Description;
+        entity.IsActive = job.IsActive;
         entity.MetadataJson = SerializeMetadata(job.Metadata);
         entity.UpdatedAtUtc = now;
     }
@@ -802,7 +803,8 @@ public sealed class PostgresJobPersistenceProvider : IJobPersistenceProvider, IC
             entity.Name,
             entity.Variant,
             entity.Description,
-            DeserializeMetadata(entity.MetadataJson));
+            DeserializeMetadata(entity.MetadataJson),
+            entity.IsActive);
     }
 
     private sealed record DeadLetterEnvelope(

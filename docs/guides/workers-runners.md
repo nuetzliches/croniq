@@ -129,6 +129,34 @@ A minimal runner loop that polls/renews/acks is available at:
 - `sdk/runner-go`
 - `sdk/runner-node`
 - `sdk/runner-python`
+- `src/Croniq.Runner.Sdk` (package) + `samples/runners/dotnet/basic`
+
+## .NET Hosted Service (SDK)
+
+Use the .NET runner SDK with a hosted service to keep the sample code minimal:
+
+```csharp
+using Croniq.Runner;
+
+builder.Services.AddCroniqRunnerHostedService(options =>
+{
+    options.Config = RunnerConfig.FromEnvironment() with
+    {
+        HeartbeatInterval = TimeSpan.FromSeconds(15)
+    };
+
+    options.OnExecute("demo-job", async (context, payload, logger, cancellationToken) =>
+    {
+        logger.Info("execution started", new Dictionary<string, object?>
+        {
+            ["executionId"] = context.ExecutionId,
+            ["jobKey"] = context.JobKey
+        });
+
+        await Task.Delay(250, cancellationToken);
+    });
+});
+```
 
 ## SDK/Runner Integration (Recommended)
 

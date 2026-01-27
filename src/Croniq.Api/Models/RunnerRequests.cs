@@ -6,6 +6,7 @@ namespace Croniq.Api.Models;
 public sealed record RunnerHeartbeatRequest(
     string? EnvironmentTag,
     [property: Required] string RunnerId,
+    string? RunnerInstanceId = null,
     DateTimeOffset? SeenAtUtc = null,
     string? MetadataJson = null);
 

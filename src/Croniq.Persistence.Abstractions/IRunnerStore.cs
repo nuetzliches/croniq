@@ -12,4 +12,6 @@ public interface IRunnerStore
     Task UpsertHeartbeatAsync(RunnerHeartbeat heartbeat, CancellationToken cancellationToken);
 
     Task<IReadOnlyCollection<RunnerStatus>> ListAsync(RunnerQuery query, CancellationToken cancellationToken);
+
+    Task<RunnerStatus?> TryGetAsync(RunnerLookup lookup, CancellationToken cancellationToken);
 }

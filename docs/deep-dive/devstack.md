@@ -58,7 +58,7 @@ Use the same `CRONIQ_*` values you would for the AppHost, especially persistence
 2. Start the AppHost so the Caddy container creates its local CA.
 3. Trust the Caddy root CA on the host (Windows example).
    - `New-Item -ItemType Directory -Path artifacts -Force`
-   - `docker ps --filter "name=caddy" --format "{{.Names}}"`
+   - `docker ps --filter "name=caddy" --format "\{\{.Names\}\}"`
    - `docker cp <caddy-container>:/data/caddy/pki/authorities/local/root.crt .\artifacts\caddy-root.crt`
    - `certutil -addstore -f Root .\artifacts\caddy-root.crt`
    - Shortcut: `scripts\devstack-import-caddy-cert.ps1` (elevated PowerShell required).

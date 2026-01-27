@@ -538,7 +538,7 @@ public sealed class InMemoryJobStore : IJobPersistenceProvider, IJobDeadLetterSt
             ? null
             : new Dictionary<string, string>(job.Metadata, StringComparer.OrdinalIgnoreCase);
 
-        return new JobDefinition(job.JobKey, job.Namespace, job.Name, job.Variant, job.Description, metadata);
+        return new JobDefinition(job.JobKey, job.Namespace, job.Name, job.Variant, job.Description, metadata, job.IsActive);
     }
 
     private DateTimeOffset? ComputeNextFire(

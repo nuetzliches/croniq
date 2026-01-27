@@ -1,6 +1,6 @@
-# Python Runner Sample (Polling)
+# Python Runner Sample
 
-Minimal HTTP polling runner using the Python SDK.
+Minimal runner using the Python SDK (gRPC-first with polling fallback).
 
 ## Requirements
 
@@ -23,5 +23,6 @@ CRONIQ_TENANT_ID=default \
 CRONIQ_ENVIRONMENT=dev \
 CRONIQ_API_KEY=smoke-key \
 CRONIQ_RUNNER_ID=default \
+CRONIQ_JOB_KEY=demo-job \
 python example.py
 ```

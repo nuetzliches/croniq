@@ -7,6 +7,6 @@
     </PropertyGroup>
 
     <ItemGroup>
-        <ProjectReference Include="..\..\..\..\src\Croniq.Rpc.Client\Croniq.Rpc.Client.csproj" />
+        <ProjectReference Include="..\..\..\..\src\Croniq.Runner.Sdk\Croniq.Runner.Sdk.csproj" />
     </ItemGroup>
 </Project>

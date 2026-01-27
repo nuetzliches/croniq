@@ -49,9 +49,29 @@ public static partial class ApiHostingExtensions
             }
 
             var scope = new PartitionScope(tenantId.Trim(), resolvedEnvironment);
-            var seenAtUtc = request.SeenAtUtc ?? DateTimeOffset.UtcNow;
-            var heartbeat = new RunnerHeartbeat(scope, runnerId, seenAtUtc, request.MetadataJson);
-            await runnerStore.UpsertHeartbeatAsync(heartbeat, cancellationToken).ConfigureAwait(false);
+            var nowUtc = DateTimeOffset.UtcNow;
+            var seenAtUtc = request.SeenAtUtc ?? nowUtc;
+            var runnerInstanceId = RunnerInstanceGuard.ResolveRunnerInstanceId(request.RunnerInstanceId, request.MetadataJson);
+            var metadataUpdates = RunnerInstanceGuard.BuildMetadataUpdates(
+                runnerInstanceId,
+                transportState: null,
+                allowTestExecutions: null,
+                maxInflight: null,
+                capabilities: null);
+            var (runnerConflict, _) = await RunnerInstanceGuard.EnsureRunnerInstanceAvailableAsync(
+                runnerStore,
+                scope,
+                runnerId,
+                runnerInstanceId,
+                request.MetadataJson,
+                metadataUpdates,
+                nowUtc,
+                seenAtUtc,
+                cancellationToken).ConfigureAwait(false);
+            if (runnerConflict is not null)
+            {
+                return runnerConflict;
+            }
 
             return Results.NoContent();
         })

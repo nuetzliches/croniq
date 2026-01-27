@@ -73,6 +73,7 @@ public sealed class PostgresDbContext(DbContextOptions<PostgresDbContext> option
             .WithMany()
             .HasForeignKey(x => x.TenantId)
             .OnDelete(DeleteBehavior.Restrict);
+        builder.Property(x => x.IsActive).HasDefaultValue(true);
         builder.Property(x => x.CreatedAtUtc).HasDefaultValueSql("timezone('utc', now())");
         builder.Property(x => x.UpdatedAtUtc).HasDefaultValueSql("timezone('utc', now())");
     }

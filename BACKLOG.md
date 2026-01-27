@@ -23,10 +23,18 @@
 - [ ] (deferred – waits on explicit stakeholder request) Prepare Kubernetes chart placeholder (charts/croniq) per [docs/deep-dive/kubernetes.md](docs/deep-dive/kubernetes.md).
 - [ ] (deferred – vNext) Publish non-.NET gRPC client packages (Python/PyPI, Go module, Node/NPM) and update samples to reference the packages.
 
+## Runners
+
+- [ ] Improve runner UI visibility: transport state, last seen, max inflight, allow-test flag, and drain status per runner instance.
+- [ ] Add adaptive polling guidance (server hints for next poll delay; keep SDK jittered backoff).
+- [ ] Add optional job-key allowlists or capability routing to reduce unneeded work assignments.
+- [ ] Emit queue health metrics (lease age, pending work count per job/environment) for scale tuning.
+
 ## Tooling
 
 - [ ] Add dotnet templates: `dotnet new croniq-worker` / `dotnet new croniq-platform` with minimal `appsettings.json`.
 - [ ] Optional CLI/Dev tool: trigger list, next runs, config validation, export/import (e.g., `dotnet tool`).
+- [ ] CI check: fail if EF Core migrations are missing designer files or `dotnet ef migrations list` does not include the latest migration for SqlServer/Postgres.
 
 ## Infrastructure
 

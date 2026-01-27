@@ -26,6 +26,7 @@ All AI-generated contributions must align with the architectural ground rules do
    - Keep secrets/config values outside source control; rely on the `ISecretProvider` abstractions instead of inline secrets.
    - Use the Aspire AppHost (`tools/Croniq.Devstack.AppHost`) as the canonical dev stack and CI smoke entrypoint; do not add new Compose-based devstack scripts unless explicitly requested.
    - Database schema changes must flow through EF Core migrations. Do **not** hand-edit databases or backfill schema manually; fix migrations or reset local dev databases only with explicit user approval.
+   - EF Core migrations must include the generated designer file (`*.Designer.cs`) so they are discoverable by the migrator and `dotnet ef migrations list`.
 
 5. **Auth Direction (V1)**
    - The initial target is **self-hosted, private-network, single-tenant** deployments.

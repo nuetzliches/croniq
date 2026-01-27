@@ -1,6 +1,6 @@
-# Go Runner Sample (Polling)
+# Go Runner Sample
 
-Minimal HTTP polling runner using the Go SDK.
+Minimal runner using the Go SDK (gRPC-first with polling fallback).
 
 ## Requirements
 
@@ -15,11 +15,11 @@ CRONIQ_TENANT_ID=default \
 CRONIQ_ENVIRONMENT=dev \
 CRONIQ_API_KEY=smoke-key \
 CRONIQ_RUNNER_ID=default \
+CRONIQ_JOB_KEY=demo-job \
 go run .
 ```
 
 ## Notes
 
-- The example polls `/work/poll`, sends a work event, and then acks each lease.
-- For long-running jobs, call `Renew` while work is in progress.
+- The SDK handles gRPC streaming, polling fallback, heartbeats, renewals, and acks.
 - `CRONIQ_RUNNER_ID` must match the API client id associated with the API key.

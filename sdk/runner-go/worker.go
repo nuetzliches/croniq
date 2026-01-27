@@ -3,6 +3,8 @@ package croniqrunner
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -12,6 +14,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/jhump/protoreflect/dynamic"
@@ -73,6 +76,14 @@ func (e *RunnerMismatchError) Error() string {
 	return fmt.Sprintf("runner mismatch: %s", e.Body)
 }
 
+type RunnerIdInUseError struct {
+	Body string
+}
+
+func (e *RunnerIdInUseError) Error() string {
+	return fmt.Sprintf("runner id in use: %s", e.Body)
+}
+
 func IsLeaseConflict(err error) bool {
 	var apiErr *ApiError
 	if errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusConflict {
@@ -92,6 +103,11 @@ func IsLeaseNotFound(err error) bool {
 func IsRunnerMismatch(err error) bool {
 	var mismatch *RunnerMismatchError
 	return errors.As(err, &mismatch)
+}
+
+func IsRunnerIdInUse(err error) bool {
+	var inUse *RunnerIdInUseError
+	return errors.As(err, &inUse)
 }
 
 func NewClient(cfg Config) (*Client, error) {
@@ -145,6 +161,7 @@ type PollOptions struct {
 	AllowTestExecutions *bool
 	MaxInflight         *int
 	Capabilities        []string
+	RunnerInstanceId    string
 }
 
 func (c *Client) PollWithOptions(ctx context.Context, runnerId string, options PollOptions) ([]Lease, error) {
@@ -159,6 +176,9 @@ func (c *Client) PollWithOptions(ctx context.Context, runnerId string, options P
 	request := pollRequest{
 		RunnerId:  strings.TrimSpace(runnerId),
 		BatchSize: &batchSize,
+	}
+	if strings.TrimSpace(options.RunnerInstanceId) != "" {
+		request.RunnerInstanceId = strings.TrimSpace(options.RunnerInstanceId)
 	}
 	if options.AllowTestExecutions != nil {
 		request.AllowTestExecutions = options.AllowTestExecutions
@@ -251,6 +271,10 @@ func (c *Client) Events(ctx context.Context, runnerId string, lease Lease, event
 }
 
 func (c *Client) Heartbeat(ctx context.Context, runnerId string, environmentTag string, metadataJson string, seenAtUtc *time.Time) error {
+	return c.HeartbeatWithInstance(ctx, runnerId, "", environmentTag, metadataJson, seenAtUtc)
+}
+
+func (c *Client) HeartbeatWithInstance(ctx context.Context, runnerId string, runnerInstanceId string, environmentTag string, metadataJson string, seenAtUtc *time.Time) error {
 	if strings.TrimSpace(runnerId) == "" {
 		return errors.New("runner id is required")
 	}
@@ -263,6 +287,9 @@ func (c *Client) Heartbeat(ctx context.Context, runnerId string, environmentTag 
 		RunnerId:       strings.TrimSpace(runnerId),
 		SeenAtUtc:      seenAtUtc,
 		MetadataJson:   metadataJson,
+	}
+	if strings.TrimSpace(runnerInstanceId) != "" {
+		request.RunnerInstanceId = strings.TrimSpace(runnerInstanceId)
 	}
 
 	return c.post(ctx, "/runners/heartbeat", request, nil)
@@ -311,6 +338,9 @@ func (c *Client) post(ctx context.Context, path string, payload interface{}, out
 	if resp.StatusCode == http.StatusForbidden && isRunnerMismatchBody(string(body)) {
 		return &RunnerMismatchError{Body: string(body)}
 	}
+	if resp.StatusCode == http.StatusConflict && isRunnerIdInUseBody(string(body)) {
+		return &RunnerIdInUseError{Body: string(body)}
+	}
 	return &ApiError{StatusCode: resp.StatusCode, Body: string(body)}
 }
 
@@ -331,8 +361,26 @@ func isRunnerMismatchBody(body string) bool {
 	return false
 }
 
+func isRunnerIdInUseBody(body string) bool {
+	if strings.Contains(strings.ToLower(body), "runner-id-in-use") {
+		return true
+	}
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(body), &payload); err != nil {
+		return false
+	}
+	if title, ok := payload["title"].(string); ok && strings.EqualFold(title, "runner-id-in-use") {
+		return true
+	}
+	if errValue, ok := payload["error"].(string); ok && strings.EqualFold(errValue, "runner-id-in-use") {
+		return true
+	}
+	return false
+}
+
 type pollRequest struct {
 	RunnerId            string   `json:"runnerId"`
+	RunnerInstanceId    string   `json:"runnerInstanceId,omitempty"`
 	BatchSize           *int     `json:"batchSize,omitempty"`
 	WaitForMs           *int     `json:"waitForMs,omitempty"`
 	AllowTestExecutions *bool    `json:"allowTestExecutions,omitempty"`
@@ -371,6 +419,7 @@ type eventsRequest struct {
 type heartbeatRequest struct {
 	EnvironmentTag string     `json:"environmentTag"`
 	RunnerId       string     `json:"runnerId"`
+	RunnerInstanceId string   `json:"runnerInstanceId,omitempty"`
 	SeenAtUtc      *time.Time `json:"seenAtUtc,omitempty"`
 	MetadataJson   string     `json:"metadataJson,omitempty"`
 }
@@ -386,6 +435,7 @@ const (
 type RunnerConfig struct {
 	Config
 	RunnerId            string
+	RunnerInstanceId    string
 	TransportMode       TransportMode
 	GrpcBaseURL         string
 	AllowTestExecutions bool
@@ -420,6 +470,10 @@ func LoadRunnerConfigFromEnv() (RunnerConfig, error) {
 	runnerID, err := requiredEnv("CRONIQ_RUNNER_ID")
 	if err != nil {
 		return RunnerConfig{}, err
+	}
+	runnerInstanceID := getOptionalEnv("CRONIQ_RUNNER_INSTANCE_ID")
+	if runnerInstanceID == "" {
+		runnerInstanceID = generateRunnerInstanceId()
 	}
 
 	apiKey := strings.TrimSpace(os.Getenv("CRONIQ_API_KEY"))
@@ -458,6 +512,7 @@ func LoadRunnerConfigFromEnv() (RunnerConfig, error) {
 			Timeout:        requestTimeout,
 		},
 		RunnerId:            runnerID,
+		RunnerInstanceId:    runnerInstanceID,
 		TransportMode:       transportMode,
 		GrpcBaseURL:         grpcBaseURL,
 		AllowTestExecutions: allowTests,
@@ -542,6 +597,14 @@ func parseListEnv(key string) []string {
 	return result
 }
 
+func generateRunnerInstanceId() string {
+	seed := make([]byte, 16)
+	if _, err := rand.Read(seed); err == nil {
+		return hex.EncodeToString(seed)
+	}
+	return fmt.Sprintf("runner-%d", time.Now().UnixNano())
+}
+
 type ExecutionContext struct {
 	ExecutionId      string
 	LeaseId          string
@@ -578,16 +641,28 @@ type Runner struct {
 	config   RunnerConfig
 	client   *Client
 	logger   RunnerLogger
-	handler  ExecuteHandler
+	handlers map[string]ExecuteHandler
+	handlersMu sync.RWMutex
 	grpcConn *grpcRunnerConnection
 	outbox   *outboxStore
 	fatalErr chan error
 	cancel   context.CancelFunc
+	transportCancel context.CancelFunc
+	inflight sync.WaitGroup
+	activeMu sync.Mutex
+	activeLeases map[string]Lease
+	renewMu sync.Mutex
+	renewCancels map[string]context.CancelFunc
+	abandonedMu sync.RWMutex
+	abandoned map[string]struct{}
 }
 
 func NewRunner(config RunnerConfig) (*Runner, error) {
 	if strings.TrimSpace(config.RunnerId) == "" {
 		return nil, errors.New("runner id is required")
+	}
+	if strings.TrimSpace(config.RunnerInstanceId) == "" {
+		config.RunnerInstanceId = generateRunnerInstanceId()
 	}
 	if config.TransportMode == "" {
 		config.TransportMode = TransportAuto
@@ -632,21 +707,45 @@ func NewRunner(config RunnerConfig) (*Runner, error) {
 		config: config,
 		client: client,
 		logger: &defaultRunnerLogger{},
+		handlers: map[string]ExecuteHandler{},
 		outbox: newOutboxStore(config.OutboxPath, config.OutboxMaxEntries, config.OutboxMaxBytes),
+		activeLeases: map[string]Lease{},
+		renewCancels: map[string]context.CancelFunc{},
+		abandoned: map[string]struct{}{},
 	}, nil
 }
 
-func (r *Runner) OnExecute(handler ExecuteHandler) {
-	r.handler = handler
+func (r *Runner) OnExecute(jobKey string, handler ExecuteHandler) {
+	if strings.TrimSpace(jobKey) == "" {
+		panic("jobKey is required")
+	}
+	if handler == nil {
+		panic("handler is required")
+	}
+	r.handlersMu.Lock()
+	r.handlers[strings.TrimSpace(jobKey)] = handler
+	r.handlersMu.Unlock()
+}
+
+func (r *Runner) getHandler(jobKey string) (ExecuteHandler, bool) {
+	r.handlersMu.RLock()
+	handler, ok := r.handlers[jobKey]
+	r.handlersMu.RUnlock()
+	return handler, ok
 }
 
 func (r *Runner) Run(ctx context.Context) error {
-	if r.handler == nil {
-		return errors.New("execute handler must be registered")
+	r.handlersMu.RLock()
+	hasHandlers := len(r.handlers) > 0
+	r.handlersMu.RUnlock()
+	if !hasHandlers {
+		return errors.New("execute handler must be registered for at least one jobKey")
 	}
 	runCtx, cancel := context.WithCancel(ctx)
 	r.cancel = cancel
 	r.fatalErr = make(chan error, 1)
+	transportCtx, transportCancel := context.WithCancel(runCtx)
+	r.transportCancel = transportCancel
 
 	queue := make(chan Lease, r.config.MaxInflight*2)
 	semaphore := make(chan struct{}, r.config.MaxInflight)
@@ -657,9 +756,9 @@ func (r *Runner) Run(ctx context.Context) error {
 			return err
 		}
 		r.grpcConn = grpcConn
-		grpcConn.start(runCtx, func(lease Lease) {
+		grpcConn.start(transportCtx, func(lease Lease) {
 			select {
-			case <-runCtx.Done():
+			case <-transportCtx.Done():
 				return
 			case queue <- lease:
 			}
@@ -671,9 +770,9 @@ func (r *Runner) Run(ctx context.Context) error {
 		go r.replayOutboxLoop(runCtx)
 	}
 
-	go r.pollLoop(runCtx, queue)
+	go r.pollLoop(transportCtx, queue)
 	if r.config.HeartbeatInterval > 0 {
-		go r.heartbeatLoop(runCtx)
+		go r.heartbeatLoop(transportCtx)
 	}
 
 	for {
@@ -688,11 +787,43 @@ func (r *Runner) Run(ctx context.Context) error {
 			return runCtx.Err()
 		case lease := <-queue:
 			semaphore <- struct{}{}
+			r.inflight.Add(1)
 			go func(lease Lease) {
+				defer r.inflight.Done()
 				defer func() { <-semaphore }()
 				r.runLease(runCtx, lease)
 			}(lease)
 		}
+	}
+}
+
+func (r *Runner) Drain(timeout time.Duration) error {
+	if r.transportCancel != nil {
+		r.transportCancel()
+	}
+
+	if timeout <= 0 {
+		timeout = 30 * time.Second
+	}
+
+	done := make(chan struct{})
+	go func() {
+		r.inflight.Wait()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		if r.cancel != nil {
+			r.cancel()
+		}
+		return nil
+	case <-time.After(timeout):
+		r.abandonInflight()
+		if r.cancel != nil {
+			r.cancel()
+		}
+		return context.DeadlineExceeded
 	}
 }
 
@@ -701,7 +832,11 @@ func (r *Runner) fail(err error) {
 		return
 	}
 	if r.logger != nil {
-		r.logger.Error("runner mismatch", map[string]any{"error": err.Error()})
+		label := "runner mismatch"
+		if IsRunnerIdInUse(err) {
+			label = "runner id in use"
+		}
+		r.logger.Error(label, map[string]any{"error": err.Error()})
 	}
 	select {
 	case r.fatalErr <- err:
@@ -709,6 +844,66 @@ func (r *Runner) fail(err error) {
 	}
 	if r.cancel != nil {
 		r.cancel()
+	}
+}
+
+func (r *Runner) trackLease(lease Lease, cancel context.CancelFunc) {
+	r.activeMu.Lock()
+	r.activeLeases[lease.LeaseId] = lease
+	r.activeMu.Unlock()
+
+	r.renewMu.Lock()
+	r.renewCancels[lease.LeaseId] = cancel
+	r.renewMu.Unlock()
+}
+
+func (r *Runner) untrackLease(leaseId string) {
+	r.activeMu.Lock()
+	delete(r.activeLeases, leaseId)
+	r.activeMu.Unlock()
+
+	r.renewMu.Lock()
+	delete(r.renewCancels, leaseId)
+	r.renewMu.Unlock()
+
+	r.abandonedMu.Lock()
+	delete(r.abandoned, leaseId)
+	r.abandonedMu.Unlock()
+}
+
+func (r *Runner) markAbandoned(leaseId string) {
+	r.abandonedMu.Lock()
+	r.abandoned[leaseId] = struct{}{}
+	r.abandonedMu.Unlock()
+}
+
+func (r *Runner) isAbandoned(leaseId string) bool {
+	r.abandonedMu.RLock()
+	_, ok := r.abandoned[leaseId]
+	r.abandonedMu.RUnlock()
+	return ok
+}
+
+func (r *Runner) abandonInflight() {
+	r.activeMu.Lock()
+	leases := make([]Lease, 0, len(r.activeLeases))
+	for _, lease := range r.activeLeases {
+		r.markAbandoned(lease.LeaseId)
+		leases = append(leases, lease)
+	}
+	r.activeMu.Unlock()
+
+	r.renewMu.Lock()
+	for leaseId, cancel := range r.renewCancels {
+		cancel()
+		delete(r.renewCancels, leaseId)
+	}
+	r.renewMu.Unlock()
+
+	for _, lease := range leases {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		_ = r.client.Ack(ctx, r.config.RunnerId, lease, false, nil, "runner-shutdown")
+		cancel()
 	}
 }
 
@@ -732,11 +927,12 @@ func (r *Runner) pollLoop(ctx context.Context, queue chan<- Lease) {
 			AllowTestExecutions: boolPtr(r.config.AllowTestExecutions),
 			MaxInflight:         intPtr(r.config.MaxInflight),
 			Capabilities:        r.config.Capabilities,
+			RunnerInstanceId:    r.config.RunnerInstanceId,
 		}
 
 		leases, err := r.client.PollWithOptions(ctx, r.config.RunnerId, options)
 		if err != nil {
-			if IsRunnerMismatch(err) {
+			if IsRunnerMismatch(err) || IsRunnerIdInUse(err) {
 				r.fail(err)
 				return
 			}
@@ -776,9 +972,9 @@ func (r *Runner) heartbeatLoop(ctx context.Context) {
 			return
 		case <-ticker.C:
 			metadataJson := r.buildHeartbeatMetadata()
-			err := r.client.Heartbeat(ctx, r.config.RunnerId, r.config.EnvironmentTag, metadataJson, nil)
+			err := r.client.HeartbeatWithInstance(ctx, r.config.RunnerId, r.config.RunnerInstanceId, r.config.EnvironmentTag, metadataJson, nil)
 			if err != nil {
-				if IsRunnerMismatch(err) {
+				if IsRunnerMismatch(err) || IsRunnerIdInUse(err) {
 					r.fail(err)
 					return
 				}
@@ -789,12 +985,29 @@ func (r *Runner) heartbeatLoop(ctx context.Context) {
 }
 
 func (r *Runner) runLease(ctx context.Context, lease Lease) {
+	handler, ok := r.getHandler(lease.JobKey)
+	if !ok {
+		r.logger.Warn("no handler registered for jobKey", map[string]any{"jobKey": lease.JobKey})
+		if r.grpcConn != nil && r.grpcConn.isConnected() {
+			_ = r.grpcConn.send(buildAckFailureMessage(lease, "handler-not-found", "handler not registered", "handler-not-found"))
+		} else {
+			if err := r.client.Ack(ctx, r.config.RunnerId, lease, false, nil, "handler-not-found"); err != nil {
+				if IsRunnerMismatch(err) || IsRunnerIdInUse(err) {
+					r.fail(err)
+					return
+				}
+				r.enqueueOutboxAckFailure(lease, "handler-not-found", "handler not registered", "handler-not-found")
+			}
+		}
+		return
+	}
+
 	if !r.config.AllowTestExecutions && strings.EqualFold(lease.ExecutionMode, "test") {
 		if r.grpcConn != nil && r.grpcConn.isConnected() {
 			_ = r.grpcConn.send(buildAckFailureMessage(lease, "test-not-allowed", "test executions are disabled for this runner", "test-not-allowed"))
 		} else {
 			if err := r.client.Ack(ctx, r.config.RunnerId, lease, false, nil, "test-not-allowed"); err != nil {
-				if IsRunnerMismatch(err) {
+				if IsRunnerMismatch(err) || IsRunnerIdInUse(err) {
 					r.fail(err)
 					return
 				}
@@ -805,6 +1018,8 @@ func (r *Runner) runLease(ctx context.Context, lease Lease) {
 
 	renewCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
+	r.trackLease(lease, cancel)
+	defer r.untrackLease(lease.LeaseId)
 	go r.renewLoop(renewCtx, lease)
 
 	ctxPayload := ExecutionContext{
@@ -821,13 +1036,17 @@ func (r *Runner) runLease(ctx context.Context, lease Lease) {
 		},
 	}
 
-	if err := r.handler(ctxPayload, lease.Payload, r.logger); err != nil {
+	if err := handler(ctxPayload, lease.Payload, r.logger); err != nil {
+		if r.isAbandoned(lease.LeaseId) {
+			r.logger.Warn("lease abandoned during shutdown", map[string]any{"leaseId": lease.LeaseId})
+			return
+		}
 		if r.grpcConn != nil && r.grpcConn.isConnected() {
 			_ = r.grpcConn.send(buildAckFailureMessage(lease, "execution-failed", err.Error(), "execution-failed"))
 			return
 		}
 		if err := r.client.Ack(ctx, r.config.RunnerId, lease, false, nil, "execution-failed"); err != nil {
-			if IsRunnerMismatch(err) {
+			if IsRunnerMismatch(err) || IsRunnerIdInUse(err) {
 				r.fail(err)
 				return
 			}
@@ -836,12 +1055,16 @@ func (r *Runner) runLease(ctx context.Context, lease Lease) {
 		return
 	}
 
+	if r.isAbandoned(lease.LeaseId) {
+		r.logger.Warn("lease abandoned during shutdown", map[string]any{"leaseId": lease.LeaseId})
+		return
+	}
 	if r.grpcConn != nil && r.grpcConn.isConnected() {
 		_ = r.grpcConn.send(buildAckSuccessMessage(lease))
 		return
 	}
 	if err := r.client.Ack(ctx, r.config.RunnerId, lease, true, nil, ""); err != nil {
-		if IsRunnerMismatch(err) {
+		if IsRunnerMismatch(err) || IsRunnerIdInUse(err) {
 			r.fail(err)
 			return
 		}
@@ -855,6 +1078,7 @@ func (r *Runner) buildHeartbeatMetadata() string {
 		transportState = "grpc"
 	}
 	metadata := map[string]any{
+		"runnerInstanceId":   r.config.RunnerInstanceId,
 		"transportMode":       r.config.TransportMode,
 		"transportState":      transportState,
 		"allowTestExecutions": r.config.AllowTestExecutions,
@@ -879,6 +1103,10 @@ func (r *Runner) renewLoop(ctx context.Context, lease Lease) {
 		default:
 		}
 
+		if r.isAbandoned(lease.LeaseId) {
+			return
+		}
+
 		refreshAt := lease.LeaseExpiresAtUtc.Add(-r.config.RenewLead)
 		delay := time.Until(refreshAt)
 		if delay < time.Second {
@@ -894,7 +1122,7 @@ func (r *Runner) renewLoop(ctx context.Context, lease Lease) {
 
 		updated, renewed, err := r.client.Renew(ctx, r.config.RunnerId, lease)
 		if err != nil {
-			if IsRunnerMismatch(err) {
+			if IsRunnerMismatch(err) || IsRunnerIdInUse(err) {
 				r.fail(err)
 				return
 			}
@@ -968,7 +1196,7 @@ func (r *Runner) sendEvents(ctx context.Context, lease Lease, events []WorkEvent
 		}
 	}
 	if err := r.client.Events(ctx, r.config.RunnerId, lease, events); err != nil {
-		if IsRunnerMismatch(err) {
+		if IsRunnerMismatch(err) || IsRunnerIdInUse(err) {
 			r.fail(err)
 			return err
 		}
@@ -1004,7 +1232,7 @@ func (r *Runner) replayOutboxLoop(ctx context.Context) {
 					if err := r.client.Ack(ctx, r.config.RunnerId, payload.Lease, true, nil, ""); err == nil {
 						r.outbox.Remove(entry.ID)
 					} else {
-						if IsRunnerMismatch(err) {
+						if IsRunnerMismatch(err) || IsRunnerIdInUse(err) {
 							r.fail(err)
 							return
 						}
@@ -1017,7 +1245,7 @@ func (r *Runner) replayOutboxLoop(ctx context.Context) {
 					if err := r.client.Ack(ctx, r.config.RunnerId, payload.Lease, false, nil, payload.DeadLetterReason); err == nil {
 						r.outbox.Remove(entry.ID)
 					} else {
-						if IsRunnerMismatch(err) {
+						if IsRunnerMismatch(err) || IsRunnerIdInUse(err) {
 							r.fail(err)
 							return
 						}
@@ -1030,7 +1258,7 @@ func (r *Runner) replayOutboxLoop(ctx context.Context) {
 					if err := r.client.Events(ctx, r.config.RunnerId, payload.Lease, payload.Events); err == nil {
 						r.outbox.Remove(entry.ID)
 					} else {
-						if IsRunnerMismatch(err) {
+						if IsRunnerMismatch(err) || IsRunnerIdInUse(err) {
 							r.fail(err)
 							return
 						}

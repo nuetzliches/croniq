@@ -19,7 +19,8 @@ public sealed record JobResponse(
     string Name,
     string? Variant,
     string? Description,
-    IReadOnlyDictionary<string, string>? Metadata);
+    IReadOnlyDictionary<string, string>? Metadata,
+    bool IsActive);
 
 public sealed record UpsertJobRequest(
     [property: Required] string JobKey,
@@ -27,7 +28,8 @@ public sealed record UpsertJobRequest(
     [property: Required] string Name,
     string? Variant,
     string? Description,
-    IDictionary<string, string>? Metadata = null);
+    IDictionary<string, string>? Metadata = null,
+    bool? IsActive = null);
 
 public sealed record ScheduleResponse(
     string TriggerId,

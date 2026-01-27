@@ -1,6 +1,7 @@
 using System;
 using System.Net;
 using System.Net.Http.Json;
+using System.Text.Json;
 using Croniq.Api.Models;
 using Croniq.Api.Tests.Infrastructure;
 using Croniq.Auth.Abstractions;
@@ -42,6 +43,40 @@ public sealed class RunnersEndpointsTests : IClassFixture<WebhookApiTestHost>
         payload.Runners[0].RunnerId.ShouldBe("itest-client");
         payload.Runners[0].IsOnline.ShouldBeTrue();
         payload.Runners[0].MetadataJson.ShouldBe("{\"kind\":\"http\"}");
+    }
+
+    [Fact]
+    public async Task Heartbeat_WithRunnerInstanceCollision_ReturnsConflict()
+    {
+        _host.Reset();
+
+        var first = new RunnerHeartbeatRequest(
+            EnvironmentTag: WebhookApiTestHost.Environment,
+            RunnerId: "itest-client",
+            RunnerInstanceId: "instance-1",
+            SeenAtUtc: DateTimeOffset.UtcNow,
+            MetadataJson: "{\"kind\":\"http\"}");
+
+        var firstResponse = await _host.Client.PostAsJsonAsync(
+            $"/tenants/{WebhookApiTestHost.TenantId}/runners/heartbeat",
+            first);
+        firstResponse.StatusCode.ShouldBe(HttpStatusCode.NoContent);
+
+        var second = new RunnerHeartbeatRequest(
+            EnvironmentTag: WebhookApiTestHost.Environment,
+            RunnerId: "itest-client",
+            RunnerInstanceId: "instance-2",
+            SeenAtUtc: DateTimeOffset.UtcNow,
+            MetadataJson: "{\"kind\":\"http\"}");
+
+        var secondResponse = await _host.Client.PostAsJsonAsync(
+            $"/tenants/{WebhookApiTestHost.TenantId}/runners/heartbeat",
+            second);
+        secondResponse.StatusCode.ShouldBe(HttpStatusCode.Conflict);
+
+        var payload = await secondResponse.Content.ReadFromJsonAsync<JsonDocument>();
+        payload.ShouldNotBeNull();
+        payload.RootElement.GetProperty("title").GetString().ShouldBe("runner-id-in-use");
     }
 
     [Fact]

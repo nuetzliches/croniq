@@ -49,6 +49,7 @@ export const JobResponse = z
         variant: z.string().nullable(),
         description: z.string().nullable(),
         metadata: z.record(z.string(), z.string()).nullable(),
+        isActive: z.boolean(),
     })
     .partial();
 export type JobResponse = z.infer<typeof JobResponse>;
@@ -59,6 +60,7 @@ export const UpsertJobRequest = z.object({
     variant: z.string().nullish(),
     description: z.string().nullish(),
     metadata: z.record(z.string(), z.string()).nullish(),
+    isActive: z.boolean().nullish(),
 });
 export type UpsertJobRequest = z.infer<typeof UpsertJobRequest>;
 export const ExecutionKind = z.union([z.literal(0), z.literal(1)]);
@@ -87,6 +89,8 @@ export const ExecutionResponse = z
         correlationId: z.string().nullable(),
         errorType: z.string().nullable(),
         errorMessage: z.string().nullable(),
+        executionMode: z.string().nullable(),
+        invocationSource: z.string().nullable(),
     })
     .partial();
 export type ExecutionResponse = z.infer<typeof ExecutionResponse>;
@@ -586,6 +590,7 @@ export const TriggerJobRequest = z.object({
     jobKey: z.string().min(1),
     metadata: z.record(z.string(), z.string()).nullish(),
     delaySeconds: z.number().int().nullish(),
+    executionMode: z.string().nullish(),
 });
 export type TriggerJobRequest = z.infer<typeof TriggerJobRequest>;
 export const TriggerJobResponse = z
@@ -595,8 +600,12 @@ export type TriggerJobResponse = z.infer<typeof TriggerJobResponse>;
 export const WorkPollRequest = z.object({
     environmentTag: z.string().nullish(),
     runnerId: z.string().min(1),
+    runnerInstanceId: z.string().nullish(),
     batchSize: z.number().int().nullish(),
     waitForMs: z.number().int().nullish(),
+    allowTestExecutions: z.boolean().nullish(),
+    maxInflight: z.number().int().nullish(),
+    capabilities: z.array(z.string()).nullish(),
 });
 export type WorkPollRequest = z.infer<typeof WorkPollRequest>;
 export const WorkLeaseToken = z.object({
@@ -607,6 +616,8 @@ export const WorkLeaseToken = z.object({
     fireAtUtc: z.iso.datetime({ offset: true }).optional(),
     leaseExpiresAtUtc: z.iso.datetime({ offset: true }).optional(),
     payload: z.string().nullish(),
+    executionMode: z.string().nullish(),
+    invocationSource: z.string().nullish(),
 });
 export type WorkLeaseToken = z.infer<typeof WorkLeaseToken>;
 export const WorkPollResponse = z
@@ -650,6 +661,7 @@ export type WorkEventsRequest = z.infer<typeof WorkEventsRequest>;
 export const RunnerHeartbeatRequest = z.object({
     environmentTag: z.string().nullish(),
     runnerId: z.string().min(1),
+    runnerInstanceId: z.string().nullish(),
     seenAtUtc: z.iso.datetime({ offset: true }).nullish(),
     metadataJson: z.string().nullish(),
 });

@@ -8,7 +8,7 @@
     "/health": {
       "get": {
         "tags": [
-          "Croniq.Sample.ApiHost"
+          "Croniq.ApiHost"
         ],
         "summary": "Health probe",
         "description": "Returns 200 when the Croniq API process is alive.",
@@ -31,7 +31,7 @@
     "/health/persistence": {
       "get": {
         "tags": [
-          "Croniq.Sample.ApiHost"
+          "Croniq.ApiHost"
         ],
         "summary": "Persistence health",
         "description": "Checks the configured job persistence provider for reachability.",
@@ -57,7 +57,7 @@
     "/me": {
       "get": {
         "tags": [
-          "Croniq.Sample.ApiHost"
+          "Croniq.ApiHost"
         ],
         "summary": "Inspect caller",
         "description": "Returns the current caller context (tenant, environment, scopes) after authentication.",
@@ -79,7 +79,7 @@
     "/tenants": {
       "post": {
         "tags": [
-          "Croniq.Sample.ApiHost"
+          "Croniq.ApiHost"
         ],
         "summary": "Create tenant",
         "description": "Creates or updates a tenant record for the provided tenantId.",
@@ -112,7 +112,7 @@
       },
       "get": {
         "tags": [
-          "Croniq.Sample.ApiHost"
+          "Croniq.ApiHost"
         ],
         "summary": "List tenants",
         "description": "Returns tenant metadata. Use state=all to include inactive tenants.",
@@ -149,7 +149,7 @@
     "/tenants/{tenantId}": {
       "get": {
         "tags": [
-          "Croniq.Sample.ApiHost"
+          "Croniq.ApiHost"
         ],
         "summary": "Get tenant",
         "description": "Returns tenant metadata for the provided tenant identifier.",
@@ -185,7 +185,7 @@
       },
       "delete": {
         "tags": [
-          "Croniq.Sample.ApiHost"
+          "Croniq.ApiHost"
         ],
         "summary": "Deactivate tenant",
         "description": "Marks the tenant as inactive without deleting historical data.",
@@ -216,7 +216,7 @@
     "/tenants/{tenantId}/jobs": {
       "get": {
         "tags": [
-          "Croniq.Sample.ApiHost"
+          "Croniq.ApiHost"
         ],
         "summary": "List jobs",
         "description": "Returns all job definitions for the tenant/environment scope.",
@@ -256,7 +256,7 @@
       },
       "post": {
         "tags": [
-          "Croniq.Sample.ApiHost"
+          "Croniq.ApiHost"
         ],
         "summary": "Create or update job",
         "description": "Creates or updates the job definition for the specified job key.",
@@ -308,7 +308,7 @@
     "/tenants/{tenantId}/jobs/{jobId}": {
       "get": {
         "tags": [
-          "Croniq.Sample.ApiHost"
+          "Croniq.ApiHost"
         ],
         "summary": "Get job",
         "description": "Returns the job definition for the specified job key.",
@@ -359,7 +359,7 @@
       },
       "delete": {
         "tags": [
-          "Croniq.Sample.ApiHost"
+          "Croniq.ApiHost"
         ],
         "summary": "Delete job",
         "description": "Deletes the job definition and associated triggers within the tenant/environment scope.",
@@ -399,10 +399,63 @@
         }
       }
     },
+    "/tenants/{tenantId}/jobs/{jobId}/activate": {
+      "post": {
+        "tags": [
+          "Croniq.ApiHost"
+        ],
+        "summary": "Activate job",
+        "description": "Activates a pending job so it can be dispatched.",
+        "operationId": "Jobs_Activate",
+        "parameters": [
+          {
+            "name": "tenantId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "jobId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "environment",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request"
+          },
+          "404": {
+            "description": "Not Found"
+          }
+        }
+      }
+    },
     "/tenants/{tenantId}/executions": {
       "get": {
         "tags": [
-          "Croniq.Sample.ApiHost"
+          "Croniq.ApiHost"
         ],
         "summary": "List executions",
         "description": "Returns execution summaries for the tenant/environment scope with optional filters.",
@@ -485,7 +538,7 @@
     "/tenants/{tenantId}/executions/{executionId}": {
       "get": {
         "tags": [
-          "Croniq.Sample.ApiHost"
+          "Croniq.ApiHost"
         ],
         "summary": "Get execution",
         "description": "Returns metadata for a single execution in the tenant/environment scope.",
@@ -535,7 +588,7 @@
     "/tenants/{tenantId}/schedules": {
       "post": {
         "tags": [
-          "Croniq.Sample.ApiHost"
+          "Croniq.ApiHost"
         ],
         "summary": "Create or update a schedule",
         "description": "Registers a Cron-based trigger for the specified tenant-scoped job key.",
@@ -585,7 +638,7 @@
       },
       "get": {
         "tags": [
-          "Croniq.Sample.ApiHost"
+          "Croniq.ApiHost"
         ],
         "summary": "List schedules",
         "description": "Returns all persisted schedules for the tenant/environment scope, optionally filtered by job key.",
@@ -634,7 +687,7 @@
     "/tenants/{tenantId}/schedules/{triggerId}": {
       "get": {
         "tags": [
-          "Croniq.Sample.ApiHost"
+          "Croniq.ApiHost"
         ],
         "summary": "Get schedule",
         "description": "Returns the persisted schedule metadata for the requested trigger identifier.",
@@ -682,7 +735,7 @@
       },
       "delete": {
         "tags": [
-          "Croniq.Sample.ApiHost"
+          "Croniq.ApiHost"
         ],
         "summary": "Delete schedule",
         "description": "Deletes the persisted trigger for the tenant/environment scope.",
@@ -722,7 +775,7 @@
     "/tenants/{tenantId}/calendars": {
       "get": {
         "tags": [
-          "Croniq.Sample.ApiHost"
+          "Croniq.ApiHost"
         ],
         "summary": "List calendars",
         "description": "Returns all calendar definitions for the tenant/environment scope.",
@@ -762,7 +815,7 @@
       },
       "post": {
         "tags": [
-          "Croniq.Sample.ApiHost"
+          "Croniq.ApiHost"
         ],
         "summary": "Create or update a calendar",
         "description": "Creates or updates a calendar definition for the tenant/environment scope.",
@@ -814,7 +867,7 @@
     "/tenants/{tenantId}/calendars/{calendarId}": {
       "get": {
         "tags": [
-          "Croniq.Sample.ApiHost"
+          "Croniq.ApiHost"
         ],
         "summary": "Get calendar",
         "description": "Returns the calendar definition for the requested calendar id.",
@@ -862,7 +915,7 @@
       },
       "delete": {
         "tags": [
-          "Croniq.Sample.ApiHost"
+          "Croniq.ApiHost"
         ],
         "summary": "Delete a calendar",
         "description": "Deletes the calendar definition for the tenant/environment scope.",
@@ -902,7 +955,7 @@
     "/tenants/{tenantId}/schedules/deadletters": {
       "get": {
         "tags": [
-          "Croniq.Sample.ApiHost"
+          "Croniq.ApiHost"
         ],
         "summary": "List schedule dead letters",
         "description": "Enumerates failed trigger executions for investigation or replay.",
@@ -944,7 +997,7 @@
     "/tenants/{tenantId}/schedules/deadletters/{deadLetterId}/replay": {
       "post": {
         "tags": [
-          "Croniq.Sample.ApiHost"
+          "Croniq.ApiHost"
         ],
         "summary": "Replay schedule dead letter",
         "description": "Re-dispatches a failed trigger execution via the job execution pipeline.",
@@ -998,7 +1051,7 @@
     "/tenants/{tenantId}/dashboard/forecast": {
       "get": {
         "tags": [
-          "Croniq.Sample.ApiHost"
+          "Croniq.ApiHost"
         ],
         "summary": "Get schedule forecast",
         "description": "Returns an aggregated forecast for schedule executions within the requested window.",
@@ -1063,7 +1116,7 @@
     "/tenants/{tenantId}/environments/{environmentTag}/webhooks/{hookKey}": {
       "post": {
         "tags": [
-          "Croniq.Sample.ApiHost"
+          "Croniq.ApiHost"
         ],
         "summary": "Relay webhook ingress",
         "description": "Relays webhook ingress to the DMZ host when Mode=Remote.",
@@ -1107,7 +1160,7 @@
     "/tenants/{tenantId}/webhooks": {
       "get": {
         "tags": [
-          "Croniq.Sample.ApiHost"
+          "Croniq.ApiHost"
         ],
         "summary": "List webhook endpoints",
         "description": "Returns all webhook endpoints for the specified tenant/environment scope.",
@@ -1150,7 +1203,7 @@
       },
       "post": {
         "tags": [
-          "Croniq.Sample.ApiHost"
+          "Croniq.ApiHost"
         ],
         "summary": "Create or update a webhook",
         "description": "Registers a webhook endpoint for a tenant/environment, optionally overriding rate limits and signatures.",
@@ -1208,7 +1261,7 @@
     "/tenants/{tenantId}/webhooks/capabilities": {
       "get": {
         "tags": [
-          "Croniq.Sample.ApiHost"
+          "Croniq.ApiHost"
         ],
         "summary": "Get webhook capabilities",
         "description": "Returns the webhook defaults/capabilities for the tenant/environment scope.",
@@ -1247,7 +1300,7 @@
     "/tenants/{tenantId}/webhooks/remote/health": {
       "get": {
         "tags": [
-          "Croniq.Sample.ApiHost"
+          "Croniq.ApiHost"
         ],
         "summary": "Check remote webhook health",
         "description": "Proxies /health against the remote webhook host when Croniq:Webhooks:Mode=Remote.",
@@ -1286,7 +1339,7 @@
     "/tenants/{tenantId}/webhooks/{hookKey}": {
       "delete": {
         "tags": [
-          "Croniq.Sample.ApiHost"
+          "Croniq.ApiHost"
         ],
         "summary": "Delete a webhook",
         "description": "Removes a webhook endpoint and its metadata for the tenant/environment scope.",
@@ -1337,7 +1390,7 @@
     "/tenants/{tenantId}/webhooks/{hookKey}/rotate-secret": {
       "post": {
         "tags": [
-          "Croniq.Sample.ApiHost"
+          "Croniq.ApiHost"
         ],
         "summary": "Rotate webhook secret",
         "description": "Schedules or immediately rotates a webhook secret and returns the new plaintext.",
@@ -1400,7 +1453,7 @@
     "/tenants/{tenantId}/webhooks/{hookKey}/ip-rules": {
       "get": {
         "tags": [
-          "Croniq.Sample.ApiHost"
+          "Croniq.ApiHost"
         ],
         "summary": "List webhook IP rules",
         "description": "Returns the CIDR allow-list associated with a webhook endpoint.",
@@ -1451,7 +1504,7 @@
       },
       "post": {
         "tags": [
-          "Croniq.Sample.ApiHost"
+          "Croniq.ApiHost"
         ],
         "summary": "Add webhook IP rule",
         "description": "Adds a CIDR block to the allow-list for the webhook endpoint.",
@@ -1517,7 +1570,7 @@
     "/tenants/{tenantId}/webhooks/{hookKey}/ip-rules/{ruleId}": {
       "delete": {
         "tags": [
-          "Croniq.Sample.ApiHost"
+          "Croniq.ApiHost"
         ],
         "summary": "Delete webhook IP rule",
         "description": "Removes a CIDR allow-list entry from the webhook endpoint.",
@@ -1569,7 +1622,7 @@
     "/tenants/{tenantId}/webhooks/{hookKey}/events": {
       "get": {
         "tags": [
-          "Croniq.Sample.ApiHost"
+          "Croniq.ApiHost"
         ],
         "summary": "List webhook endpoint events",
         "description": "Returns endpoint changefeed events for a webhook in the tenant/environment scope.",
@@ -1638,7 +1691,7 @@
     "/tenants/{tenantId}/environments/{environmentTag}/webhooks/{hookKey}/invoke": {
       "post": {
         "tags": [
-          "Croniq.Sample.ApiHost"
+          "Croniq.ApiHost"
         ],
         "summary": "Invoke webhook endpoint",
         "description": "Triggers a webhook endpoint through the job execution pipeline.",
@@ -1701,7 +1754,7 @@
     "/tenants/{tenantId}/webhooks/deadletters": {
       "get": {
         "tags": [
-          "Croniq.Sample.ApiHost"
+          "Croniq.ApiHost"
         ],
         "summary": "List webhook dead letters",
         "description": "Enumerates failed webhook deliveries for investigation or replay.",
@@ -1746,7 +1799,7 @@
     "/tenants/{tenantId}/webhooks/activity": {
       "get": {
         "tags": [
-          "Croniq.Sample.ApiHost"
+          "Croniq.ApiHost"
         ],
         "summary": "List webhook activity",
         "description": "Returns webhook activity entries for the tenant/environment scope.",
@@ -1840,7 +1893,7 @@
     "/tenants/{tenantId}/webhooks/activity/stream": {
       "get": {
         "tags": [
-          "Croniq.Sample.ApiHost"
+          "Croniq.ApiHost"
         ],
         "summary": "Stream webhook activity",
         "description": "Server-sent events stream for webhook activity updates.",
@@ -1924,7 +1977,7 @@
     "/tenants/{tenantId}/webhooks/activity/summary": {
       "get": {
         "tags": [
-          "Croniq.Sample.ApiHost"
+          "Croniq.ApiHost"
         ],
         "summary": "Summarize webhook activity",
         "description": "Returns aggregated webhook activity counts for the tenant/environment scope.",
@@ -2007,7 +2060,7 @@
     "/tenants/{tenantId}/webhooks/deadletters/{deadLetterId}/replay": {
       "post": {
         "tags": [
-          "Croniq.Sample.ApiHost"
+          "Croniq.ApiHost"
         ],
         "summary": "Replay webhook dead letter",
         "description": "Re-dispatches a failed webhook payload via the job execution pipeline.",
@@ -2064,7 +2117,7 @@
     "/tenants/{tenantId}/webhooks/deadletters/{deadLetterId}:resolve": {
       "post": {
         "tags": [
-          "Croniq.Sample.ApiHost"
+          "Croniq.ApiHost"
         ],
         "summary": "Resolve webhook dead letter",
         "description": "Marks a webhook dead letter as resolved without replaying it.",
@@ -2108,7 +2161,7 @@
     "/tenants/{tenantId}/webhooks/deadletters/{deadLetterId}:fail": {
       "post": {
         "tags": [
-          "Croniq.Sample.ApiHost"
+          "Croniq.ApiHost"
         ],
         "summary": "Record webhook dead letter failure",
         "description": "Stores a failure update for a webhook dead letter without replaying it.",
@@ -2165,7 +2218,7 @@
     "/tenants/{tenantId}/api-clients": {
       "get": {
         "tags": [
-          "Croniq.Sample.ApiHost"
+          "Croniq.ApiHost"
         ],
         "summary": "List API clients",
         "description": "Returns all registered API clients for the tenant, optionally filtered by environment.",
@@ -2205,7 +2258,7 @@
       },
       "post": {
         "tags": [
-          "Croniq.Sample.ApiHost"
+          "Croniq.ApiHost"
         ],
         "summary": "Create or update API client",
         "description": "Creates a tenant-scoped API client or updates metadata/scopes when the client already exists.",
@@ -2257,7 +2310,7 @@
     "/tenants/{tenantId}/api-clients/{clientId}": {
       "delete": {
         "tags": [
-          "Croniq.Sample.ApiHost"
+          "Croniq.ApiHost"
         ],
         "summary": "Delete API client",
         "description": "Deletes the API client metadata and revokes any associated API keys.",
@@ -2298,7 +2351,7 @@
       },
       "get": {
         "tags": [
-          "Croniq.Sample.ApiHost"
+          "Croniq.ApiHost"
         ],
         "summary": "Get API client",
         "description": "Returns metadata about a tenant-scoped API client, including scopes and activity flags.",
@@ -2348,7 +2401,7 @@
     "/tenants/{tenantId}/api-keys": {
       "post": {
         "tags": [
-          "Croniq.Sample.ApiHost"
+          "Croniq.ApiHost"
         ],
         "summary": "Issue API key",
         "description": "Creates a new API key for the specified tenant client and returns the plaintext once.",
@@ -2396,7 +2449,7 @@
     "/tenants/{tenantId}/api-keys/{keyId}/rotate": {
       "post": {
         "tags": [
-          "Croniq.Sample.ApiHost"
+          "Croniq.ApiHost"
         ],
         "summary": "Rotate API key",
         "description": "Revokes an existing API key and returns a fresh secret for the same client.",
@@ -2449,7 +2502,7 @@
     "/tenants/{tenantId}/api-keys/{keyId}": {
       "delete": {
         "tags": [
-          "Croniq.Sample.ApiHost"
+          "Croniq.ApiHost"
         ],
         "summary": "Revoke API key",
         "description": "Immediately revokes an API key for the tenant.",
@@ -2492,7 +2545,7 @@
     "/tenants/{tenantId}/tokens": {
       "post": {
         "tags": [
-          "Croniq.Sample.ApiHost"
+          "Croniq.ApiHost"
         ],
         "summary": "Issue tenant token",
         "description": "Mints a Croniq-signed bearer token for the specified client (tenant-level variant).",
@@ -2550,7 +2603,7 @@
     "/tenants/{tenantId}/api-clients/{clientId}/tokens": {
       "post": {
         "tags": [
-          "Croniq.Sample.ApiHost"
+          "Croniq.ApiHost"
         ],
         "summary": "Issue client token",
         "description": "Same payload as the tenant route but infers the clientId from the path.",
@@ -2616,7 +2669,7 @@
     "/auth/oidc/start": {
       "get": {
         "tags": [
-          "Croniq.Sample.ApiHost"
+          "Croniq.ApiHost"
         ],
         "summary": "OIDC login start",
         "description": "Redirects to the configured OIDC provider for login.",
@@ -2647,7 +2700,7 @@
     "/auth/oidc/callback": {
       "get": {
         "tags": [
-          "Croniq.Sample.ApiHost"
+          "Croniq.ApiHost"
         ],
         "summary": "OIDC login callback",
         "description": "Handles the OIDC code exchange and sets the refresh cookie.",
@@ -2705,7 +2758,7 @@
     "/auth/login": {
       "post": {
         "tags": [
-          "Croniq.Sample.ApiHost"
+          "Croniq.ApiHost"
         ],
         "summary": "Password login",
         "description": "Authenticates a username/password and issues access + refresh tokens. Tenant must be provided via tenantId.",
@@ -2753,7 +2806,7 @@
     "/auth/refresh": {
       "post": {
         "tags": [
-          "Croniq.Sample.ApiHost"
+          "Croniq.ApiHost"
         ],
         "summary": "Refresh access token",
         "description": "Rotates the refresh token and returns a new access token (password or OIDC cookie flow).",
@@ -2797,7 +2850,7 @@
     "/auth/logout": {
       "post": {
         "tags": [
-          "Croniq.Sample.ApiHost"
+          "Croniq.ApiHost"
         ],
         "summary": "Logout",
         "description": "Revokes the provided refresh token or clears the OIDC refresh cookie.",
@@ -2831,7 +2884,7 @@
     "/auth/change-password": {
       "post": {
         "tags": [
-          "Croniq.Sample.ApiHost"
+          "Croniq.ApiHost"
         ],
         "summary": "Change password",
         "description": "Changes the password for the currently authenticated password user. Requires a valid access token.",
@@ -2870,7 +2923,7 @@
     "/tenants/{tenantId}/executions/{executionId}/logs": {
       "get": {
         "tags": [
-          "Croniq.Sample.ApiHost"
+          "Croniq.ApiHost"
         ],
         "summary": "Stream execution logs",
         "description": "Streams NDJSON execution logs for a tenant-scoped execution after authorizing tenant scope.",
@@ -2903,7 +2956,7 @@
     "/jobs/trigger": {
       "post": {
         "tags": [
-          "Croniq.Sample.ApiHost"
+          "Croniq.ApiHost"
         ],
         "summary": "Trigger a job manually",
         "description": "Executes a job immediately or schedules a one-off run when DelaySeconds is provided.",
@@ -2935,7 +2988,7 @@
     "/tenants/{tenantId}/work/poll": {
       "post": {
         "tags": [
-          "Croniq.Sample.ApiHost"
+          "Croniq.ApiHost"
         ],
         "summary": "Poll work",
         "description": "Claims due trigger leases for execution (HTTP long-poll style).",
@@ -2987,7 +3040,7 @@
     "/tenants/{tenantId}/work/renew": {
       "post": {
         "tags": [
-          "Croniq.Sample.ApiHost"
+          "Croniq.ApiHost"
         ],
         "summary": "Renew work lease",
         "description": "Renews an existing trigger lease for a running work item.",
@@ -3049,7 +3102,7 @@
     "/tenants/{tenantId}/work/ack": {
       "post": {
         "tags": [
-          "Croniq.Sample.ApiHost"
+          "Croniq.ApiHost"
         ],
         "summary": "Acknowledge work result",
         "description": "Acknowledges work completion and releases the trigger lease.",
@@ -3097,7 +3150,7 @@
     "/tenants/{tenantId}/work/{executionId}:events": {
       "post": {
         "tags": [
-          "Croniq.Sample.ApiHost"
+          "Croniq.ApiHost"
         ],
         "summary": "Push work events",
         "description": "Pushes execution-scoped log/events for a running work item.",
@@ -3153,7 +3206,7 @@
     "/tenants/{tenantId}/runners/heartbeat": {
       "post": {
         "tags": [
-          "Croniq.Sample.ApiHost"
+          "Croniq.ApiHost"
         ],
         "summary": "Runner heartbeat",
         "description": "Records a runner heartbeat to track availability.",
@@ -3198,7 +3251,7 @@
     "/tenants/{tenantId}/runners": {
       "get": {
         "tags": [
-          "Croniq.Sample.ApiHost"
+          "Croniq.ApiHost"
         ],
         "summary": "List runners",
         "description": "Lists active runners for the tenant/environment.",
@@ -3237,7 +3290,7 @@
     "/tenants/{tenantId}/workers/heartbeat": {
       "post": {
         "tags": [
-          "Croniq.Sample.ApiHost"
+          "Croniq.ApiHost"
         ],
         "summary": "Worker heartbeat",
         "description": "Records a worker host heartbeat to track availability.",
@@ -3282,7 +3335,7 @@
     "/tenants/{tenantId}/workers": {
       "get": {
         "tags": [
-          "Croniq.Sample.ApiHost"
+          "Croniq.ApiHost"
         ],
         "summary": "List workers",
         "description": "Lists active worker hosts for the tenant/environment.",
@@ -3766,6 +3819,14 @@
           "errorMessage": {
             "type": "string",
             "nullable": true
+          },
+          "executionMode": {
+            "type": "string",
+            "nullable": true
+          },
+          "invocationSource": {
+            "type": "string",
+            "nullable": true
           }
         },
         "additionalProperties": false
@@ -3922,6 +3983,9 @@
               "type": "string"
             },
             "nullable": true
+          },
+          "isActive": {
+            "type": "boolean"
           }
         },
         "additionalProperties": false
@@ -4151,6 +4215,10 @@
           "runnerId": {
             "minLength": 1,
             "type": "string"
+          },
+          "runnerInstanceId": {
+            "type": "string",
+            "nullable": true
           },
           "seenAtUtc": {
             "type": "string",
@@ -4475,6 +4543,10 @@
             "type": "integer",
             "format": "int32",
             "nullable": true
+          },
+          "executionMode": {
+            "type": "string",
+            "nullable": true
           }
         },
         "additionalProperties": false
@@ -4558,6 +4630,10 @@
             "additionalProperties": {
               "type": "string"
             },
+            "nullable": true
+          },
+          "isActive": {
+            "type": "boolean",
             "nullable": true
           }
         },
@@ -5212,6 +5288,14 @@
           "payload": {
             "type": "string",
             "nullable": true
+          },
+          "executionMode": {
+            "type": "string",
+            "nullable": true
+          },
+          "invocationSource": {
+            "type": "string",
+            "nullable": true
           }
         },
         "additionalProperties": false
@@ -5230,6 +5314,10 @@
             "minLength": 1,
             "type": "string"
           },
+          "runnerInstanceId": {
+            "type": "string",
+            "nullable": true
+          },
           "batchSize": {
             "type": "integer",
             "format": "int32",
@@ -5238,6 +5326,22 @@
           "waitForMs": {
             "type": "integer",
             "format": "int32",
+            "nullable": true
+          },
+          "allowTestExecutions": {
+            "type": "boolean",
+            "nullable": true
+          },
+          "maxInflight": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "capabilities": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
             "nullable": true
           }
         },
@@ -5382,7 +5486,7 @@
   ],
   "tags": [
     {
-      "name": "Croniq.Sample.ApiHost"
+      "name": "Croniq.ApiHost"
     }
   ]
 }

@@ -19,6 +19,7 @@ export type Lease = {
 
 export type PollRequest = {
     runnerId: string;
+    runnerInstanceId?: string;
     batchSize?: number;
     waitForMs?: number;
     allowTestExecutions?: boolean;
@@ -55,6 +56,7 @@ export type EventsRequest = {
 
 export type HeartbeatRequest = {
     runnerId: string;
+    runnerInstanceId?: string;
     environmentTag?: string;
     seenAtUtc?: string;
     metadataJson?: string;
@@ -79,6 +81,7 @@ export type RunnerConfig = {
     apiKey?: string;
     bearerToken?: string;
     runnerId: string;
+    runnerInstanceId?: string;
     transportMode?: TransportMode;
     allowTestExecutions?: boolean;
     maxInflight?: number;
@@ -108,6 +111,7 @@ export type RunnerExecutionContext = {
     leaseExpiresAtUtc: string;
     executionMode?: string;
     invocationSource?: string;
+    abortSignal?: AbortSignal;
     emitEvent?: (event: WorkEvent) => Promise<void>;
 };
 
@@ -125,6 +129,7 @@ export function loadRunnerConfigFromEnv(env: Record<string, string | undefined> 
     const apiKey = env.CRONIQ_API_KEY?.trim();
     const bearerToken = env.CRONIQ_BEARER_TOKEN?.trim();
     const runnerId = env.CRONIQ_RUNNER_ID?.trim();
+    const runnerInstanceId = env.CRONIQ_RUNNER_INSTANCE_ID?.trim();
     const transportMode = (env.CRONIQ_TRANSPORT_MODE?.trim().toLowerCase() || 'auto') as TransportMode;
 
     if (!baseUrl) {
@@ -154,6 +159,7 @@ export function loadRunnerConfigFromEnv(env: Record<string, string | undefined> 
         apiKey,
         bearerToken,
         runnerId,
+        runnerInstanceId,
         transportMode,
         allowTestExecutions: parseBool(env.CRONIQ_ALLOW_TEST_EXECUTIONS),
         maxInflight: parseNumber(env.CRONIQ_MAX_INFLIGHT),
@@ -213,6 +219,15 @@ function isRunnerMismatchResponse(json: unknown, bodyText: string): boolean {
     return bodyText.toLowerCase().includes('runner-mismatch');
 }
 
+function isRunnerIdInUseResponse(json: unknown, bodyText: string): boolean {
+    const payload = json && typeof json === 'object' ? (json as Record<string, unknown>) : undefined;
+    const title = payload?.title ?? payload?.error;
+    if (typeof title === 'string' && title.toLowerCase() === 'runner-id-in-use') {
+        return true;
+    }
+    return bodyText.toLowerCase().includes('runner-id-in-use');
+}
+
 function isGrpcRunnerMismatch(err: unknown): boolean {
     if (err instanceof RunnerMismatchError) {
         return true;
@@ -225,6 +240,20 @@ function isGrpcRunnerMismatch(err: unknown): boolean {
         return false;
     }
     return (candidate.details ?? '').toLowerCase().includes('runner-mismatch');
+}
+
+function isGrpcRunnerIdInUse(err: unknown): boolean {
+    if (err instanceof RunnerIdInUseError) {
+        return true;
+    }
+    const candidate = err as { code?: number; details?: string } | null;
+    if (!candidate) {
+        return false;
+    }
+    if (candidate.code !== grpc.status.ALREADY_EXISTS) {
+        return false;
+    }
+    return (candidate.details ?? '').toLowerCase().includes('runner-id-in-use');
 }
 
 export type RunnerExecuteHandler = (
@@ -263,6 +292,13 @@ export class RunnerMismatchError extends CroniqError {
     constructor(body: string) {
         super('runner mismatch', 403, body);
         this.name = 'RunnerMismatchError';
+    }
+}
+
+export class RunnerIdInUseError extends CroniqError {
+    constructor(body: string) {
+        super('runner id in use', 409, body);
+        this.name = 'RunnerIdInUseError';
     }
 }
 
@@ -312,8 +348,8 @@ export class RunnerClient {
         this.fetchImpl = resolvedFetch.bind(globalThis);
     }
 
-    async poll({ runnerId, batchSize = 1, waitForMs = 0, allowTestExecutions, maxInflight, capabilities }: PollRequest): Promise<Lease[]> {
-        const body = { runnerId, batchSize, waitForMs, allowTestExecutions, maxInflight, capabilities };
+    async poll({ runnerId, runnerInstanceId, batchSize = 1, waitForMs = 0, allowTestExecutions, maxInflight, capabilities }: PollRequest): Promise<Lease[]> {
+        const body = { runnerId, runnerInstanceId, batchSize, waitForMs, allowTestExecutions, maxInflight, capabilities };
         const result = await this.postJson<{ leases?: Lease[] }>(`/work/poll`, body);
         return (result.json && result.json.leases) || [];
     }
@@ -359,8 +395,8 @@ export class RunnerClient {
         await this.postJson(path, body);
     }
 
-    async heartbeat({ runnerId, environmentTag, seenAtUtc, metadataJson }: HeartbeatRequest): Promise<void> {
-        const body: HeartbeatRequest = { runnerId };
+    async heartbeat({ runnerId, runnerInstanceId, environmentTag, seenAtUtc, metadataJson }: HeartbeatRequest): Promise<void> {
+        const body: HeartbeatRequest = { runnerId, runnerInstanceId };
         if (environmentTag) {
             body.environmentTag = environmentTag;
         }
@@ -427,6 +463,9 @@ export class RunnerClient {
             throw new RunnerMismatchError(bodyText);
         }
         if (response.status === 409) {
+            if (isRunnerIdInUseResponse(json, bodyText)) {
+                throw new RunnerIdInUseError(bodyText);
+            }
             throw new LeaseConflictError(bodyText);
         }
         if (response.status === 404) {
@@ -450,6 +489,7 @@ type GrpcWorkAssigned = {
 
 type GrpcRunnerHello = {
     runner_id: string;
+    runner_instance_id?: string;
     max_inflight?: number;
     capabilities?: Record<string, string>;
     allow_test_executions?: boolean;
@@ -575,6 +615,7 @@ class GrpcRunnerConnection extends EventEmitter {
     private readonly endpoint: string;
     private readonly metadata: grpc.Metadata;
     private readonly runnerId: string;
+    private readonly runnerInstanceId?: string;
     private readonly allowTestExecutions: boolean;
     private readonly maxInflight: number;
     private readonly capabilities: string[] | undefined;
@@ -590,6 +631,7 @@ class GrpcRunnerConnection extends EventEmitter {
         endpoint: string;
         metadata: grpc.Metadata;
         runnerId: string;
+        runnerInstanceId?: string;
         allowTestExecutions: boolean;
         maxInflight: number;
         capabilities?: string[];
@@ -601,6 +643,7 @@ class GrpcRunnerConnection extends EventEmitter {
         this.endpoint = options.endpoint;
         this.metadata = options.metadata;
         this.runnerId = options.runnerId;
+        this.runnerInstanceId = options.runnerInstanceId;
         this.allowTestExecutions = options.allowTestExecutions;
         this.maxInflight = options.maxInflight;
         this.capabilities = options.capabilities;
@@ -707,14 +750,17 @@ class GrpcRunnerConnection extends EventEmitter {
             }
         }
 
-        this.stream.write({
-            hello: {
-                runner_id: this.runnerId,
-                max_inflight: this.maxInflight,
-                allow_test_executions: this.allowTestExecutions,
-                capabilities,
-            },
-        });
+        const hello: GrpcRunnerHello = {
+            runner_id: this.runnerId,
+            max_inflight: this.maxInflight,
+            allow_test_executions: this.allowTestExecutions,
+            capabilities,
+        };
+        if (this.runnerInstanceId) {
+            hello.runner_instance_id = this.runnerInstanceId;
+        }
+
+        this.stream.write({ hello });
 
         return new Promise((resolve, reject) => {
             let didConnect = false;
@@ -750,7 +796,7 @@ export class CroniqRunner {
     private readonly config: RunnerConfig;
     private readonly client: RunnerClient;
     private readonly logger: RunnerLogger;
-    private readonly inflight = new Map<string, { lease: Lease; renewTimer?: NodeJS.Timeout }>();
+    private readonly inflight = new Map<string, { lease: Lease; renewTimer?: NodeJS.Timeout; abortController: AbortController; abandoned?: boolean }>();
     private readonly queue: Lease[] = [];
     private readonly maxInflight: number;
     private readonly allowTestExecutions: boolean;
@@ -765,8 +811,11 @@ export class CroniqRunner {
     private readonly heartbeatIntervalMs: number;
     private readonly heartbeatMetadata?: Record<string, unknown>;
     private readonly outbox: OutboxStore | null;
-    private handler: RunnerExecuteHandler | null = null;
+    private readonly runnerInstanceId: string;
+    private handlers = new Map<string, RunnerExecuteHandler>();
     private running = false;
+    private acceptingWork = false;
+    private draining = false;
     private grpcConnection: GrpcRunnerConnection | null = null;
     private fatalError: Error | null = null;
     private fatalReject: ((err: Error) => void) | null = null;
@@ -780,7 +829,8 @@ export class CroniqRunner {
         if (config.transportMode && !['auto', 'grpc', 'polling'].includes(config.transportMode)) {
             throw new Error('transportMode must be auto, grpc, or polling');
         }
-        this.config = config;
+        this.runnerInstanceId = config.runnerInstanceId?.trim() || randomUUID();
+        this.config = { ...config, runnerInstanceId: this.runnerInstanceId };
         this.transportMode = config.transportMode ?? 'auto';
         this.allowTestExecutions = !!config.allowTestExecutions;
         this.maxInflight = Math.max(1, config.maxInflight ?? 1);
@@ -814,15 +864,20 @@ export class CroniqRunner {
         this.fatalReject = null;
     }
 
-    onExecute(handler: RunnerExecuteHandler): void {
-        this.handler = handler;
+    onExecute(jobKey: string, handler: RunnerExecuteHandler): void {
+        if (!jobKey || !jobKey.trim()) {
+            throw new Error('jobKey is required');
+        }
+        this.handlers.set(jobKey.trim(), handler);
     }
 
     async start(): Promise<void> {
-        if (!this.handler) {
-            throw new Error('onExecute handler must be registered before start');
+        if (this.handlers.size === 0) {
+            throw new Error('onExecute handler must be registered for at least one jobKey before start');
         }
         this.running = true;
+        this.acceptingWork = true;
+        this.draining = false;
         this.fatalError = null;
         const tasks: Promise<void>[] = [];
 
@@ -856,17 +911,47 @@ export class CroniqRunner {
     }
 
     async stop(): Promise<void> {
+        this.acceptingWork = false;
         this.running = false;
+        this.draining = false;
         if (this.grpcConnection) {
             this.grpcConnection.stop();
             this.grpcConnection = null;
         }
         for (const entry of this.inflight.values()) {
+            entry.abandoned = true;
             if (entry.renewTimer) {
                 clearTimeout(entry.renewTimer);
             }
+            entry.abortController.abort();
         }
         this.inflight.clear();
+        this.queue.length = 0;
+    }
+
+    async drain(timeoutMs = 30000): Promise<void> {
+        if (!this.running) {
+            return;
+        }
+
+        this.acceptingWork = false;
+        this.draining = true;
+
+        if (this.grpcConnection) {
+            this.grpcConnection.stop();
+            this.grpcConnection = null;
+        }
+
+        const deadline = Date.now() + Math.max(0, timeoutMs);
+        while ((this.queue.length > 0 || this.inflight.size > 0) && Date.now() < deadline) {
+            await this.sleep(100);
+        }
+
+        if (this.queue.length > 0 || this.inflight.size > 0) {
+            await this.abandonPendingLeases();
+        }
+
+        this.running = false;
     }
 
     private async startGrpc(): Promise<void> {
@@ -882,6 +967,7 @@ export class CroniqRunner {
             endpoint,
             metadata,
             runnerId: this.config.runnerId,
+            runnerInstanceId: this.runnerInstanceId,
             allowTestExecutions: this.allowTestExecutions,
             maxInflight: this.maxInflight,
             capabilities: this.config.capabilities,
@@ -897,7 +983,7 @@ export class CroniqRunner {
         });
 
         connection.on('error', (err) => {
-            if (this.handleRunnerMismatch(err)) {
+            if (this.handleRunnerFatal(err)) {
                 return;
             }
             this.logger.error('gRPC transport failed', { error: String(err) });
@@ -908,6 +994,10 @@ export class CroniqRunner {
 
     private async startPolling(): Promise<void> {
         while (this.running) {
+            if (!this.acceptingWork) {
+                return;
+            }
+
             if (this.transportMode === 'auto' && this.grpcConnection?.isConnected()) {
                 await this.sleep(250);
                 continue;
@@ -916,6 +1006,7 @@ export class CroniqRunner {
             try {
                 const leases = await this.client.poll({
                     runnerId: this.config.runnerId,
+                    runnerInstanceId: this.runnerInstanceId,
                     batchSize: this.pollBatchSize,
                     waitForMs: this.pollWaitMs,
                     allowTestExecutions: this.allowTestExecutions,
@@ -926,7 +1017,7 @@ export class CroniqRunner {
                     this.enqueueLease(lease);
                 }
             } catch (err) {
-                if (this.handleRunnerMismatch(err)) {
+                if (this.handleRunnerFatal(err)) {
                     return;
                 }
                 this.logger.warn('poll failed', { error: String(err) });
@@ -947,11 +1038,12 @@ export class CroniqRunner {
                 const metadataJson = JSON.stringify(this.buildHeartbeatMetadata());
                 await this.client.heartbeat({
                     runnerId: this.config.runnerId,
+                    runnerInstanceId: this.runnerInstanceId,
                     environmentTag: this.config.environment,
                     metadataJson,
                 });
             } catch (err) {
-                if (this.handleRunnerMismatch(err)) {
+                if (this.handleRunnerFatal(err)) {
                     return;
                 }
                 this.logger.warn('heartbeat failed', { error: String(err) });
@@ -973,13 +1065,18 @@ export class CroniqRunner {
                 continue;
             }
 
-            this.inflight.set(lease.leaseId, { lease });
+            this.inflight.set(lease.leaseId, { lease, abortController: new AbortController() });
             this.scheduleRenew(lease);
             void this.executeLease(lease);
         }
     }
 
     private async executeLease(lease: Lease): Promise<void> {
+        const entry = this.inflight.get(lease.leaseId);
+        if (!entry) {
+            return;
+        }
+
         const context: RunnerExecutionContext = {
             executionId: lease.executionId,
             leaseId: lease.leaseId,
@@ -989,6 +1086,7 @@ export class CroniqRunner {
             leaseExpiresAtUtc: lease.leaseExpiresAtUtc,
             executionMode: lease.executionMode,
             invocationSource: lease.invocationSource,
+            abortSignal: entry.abortController.signal,
             emitEvent: async (event) => {
                 await this.sendEvents(lease, [event], true);
             },
@@ -1000,11 +1098,33 @@ export class CroniqRunner {
             return;
         }
 
+        const handler = this.handlers.get(lease.jobKey);
+        if (!handler) {
+            this.logger.warn('no handler registered for jobKey', { jobKey: lease.jobKey });
+            await this.ackFailureInternal(
+                lease,
+                'handler-not-found',
+                'handler not registered',
+                'handler-not-found',
+                true,
+            );
+            this.completeLease(lease.leaseId);
+            return;
+        }
+
         const payload = this.parsePayloadJson ? this.tryParsePayload(lease.payload) : lease.payload ?? null;
         try {
-            await this.handler?.(context, payload, this.logger);
+            await handler(context, payload, this.logger);
+            if (entry.abandoned) {
+                this.logger.warn('lease abandoned during shutdown', { leaseId: lease.leaseId });
+                return;
+            }
             await this.ackSuccess(lease);
         } catch (err) {
+            if (entry.abandoned) {
+                this.logger.warn('lease abandoned during shutdown', { leaseId: lease.leaseId, error: String(err) });
+                return;
+            }
             await this.ackFailure(lease, err);
         } finally {
             this.completeLease(lease.leaseId);
@@ -1024,7 +1144,7 @@ export class CroniqRunner {
         try {
             await this.client.ack({ runnerId: this.config.runnerId, lease, succeeded: true });
         } catch (err) {
-            if (this.handleRunnerMismatch(err)) {
+            if (this.handleRunnerFatal(err)) {
                 return;
             }
             if (allowOutbox && this.outbox) {
@@ -1043,25 +1163,39 @@ export class CroniqRunner {
 
     private async ackFailure(lease: Lease, err: unknown, allowOutbox = true): Promise<void> {
         const message = err instanceof Error ? err.message : String(err);
+        await this.ackFailureInternal(lease, 'execution-failed', message, 'execution-failed', allowOutbox);
+    }
+
+    private async ackFailureInternal(
+        lease: Lease,
+        errorType: string,
+        errorMessage: string,
+        deadLetterReason: string,
+        allowOutbox = true,
+    ): Promise<void> {
         if (this.grpcConnection?.isConnected()) {
             this.grpcConnection.send({
                 ack_failure: {
                     execution_id: lease.executionId,
                     lease_id: lease.leaseId,
-                    error_type: 'execution-failed',
-                    error_message: message,
+                    error_type: errorType,
+                    error_message: errorMessage,
+                    dead_letter_reason: deadLetterReason,
                 },
             });
             return;
         }
         try {
-            await this.client.ack({ runnerId: this.config.runnerId, lease, succeeded: false, deadLetterReason: 'execution-failed' });
+            await this.client.ack({ runnerId: this.config.runnerId, lease, succeeded: false, deadLetterReason });
         } catch (err) {
+            if (this.handleRunnerFatal(err)) {
+                return;
+            }
             if (allowOutbox && this.outbox) {
                 await this.outbox.enqueue({
                     id: randomUUID(),
                     type: 'ack_failure',
-                    payload: { lease, errorType: 'execution-failed', errorMessage: message, deadLetterReason: 'execution-failed' },
+                    payload: { lease, errorType, errorMessage, deadLetterReason },
                     attempts: 0,
                     createdAt: new Date().toISOString(),
                 });
@@ -1072,41 +1206,13 @@ export class CroniqRunner {
     }
 
     private async rejectTestLease(lease: Lease, allowOutbox = true): Promise<void> {
-        if (this.grpcConnection?.isConnected()) {
-            this.grpcConnection.send({
-                ack_failure: {
-                    execution_id: lease.executionId,
-                    lease_id: lease.leaseId,
-                    error_type: 'test-not-allowed',
-                    error_message: 'test executions are disabled for this runner',
-                    dead_letter_reason: 'test-not-allowed',
-                },
-            });
-            return;
-        }
-        try {
-            await this.client.ack({
-                runnerId: this.config.runnerId,
-                lease,
-                succeeded: false,
-                deadLetterReason: 'test-not-allowed',
-            });
-        } catch (err) {
-            if (this.handleRunnerMismatch(err)) {
-                return;
-            }
-            if (allowOutbox && this.outbox) {
-                await this.outbox.enqueue({
-                    id: randomUUID(),
-                    type: 'ack_failure',
-                    payload: { lease, errorType: 'test-not-allowed', errorMessage: 'test executions are disabled for this runner', deadLetterReason: 'test-not-allowed' },
-                    attempts: 0,
-                    createdAt: new Date().toISOString(),
-                });
-                return;
-            }
-            throw err;
-        }
+        await this.ackFailureInternal(
+            lease,
+            'test-not-allowed',
+            'test executions are disabled for this runner',
+            'test-not-allowed',
+            allowOutbox,
+        );
     }
 
     private async sendEvents(lease: Lease, events: WorkEvent[], allowOutbox = true): Promise<void> {
@@ -1129,7 +1235,7 @@ export class CroniqRunner {
         try {
             await this.client.events({ runnerId: this.config.runnerId, lease, events });
         } catch (err) {
-            if (this.handleRunnerMismatch(err)) {
+            if (this.handleRunnerFatal(err)) {
                 return;
             }
             if (allowOutbox && this.outbox) {
@@ -1160,14 +1266,14 @@ export class CroniqRunner {
                         await this.ackSuccess(lease, false);
                     } else if (entry.type === 'ack_failure') {
                         const payload = entry.payload as { lease: Lease; errorType: string; errorMessage: string; deadLetterReason: string };
-                        await this.ackFailure(payload.lease, payload.errorMessage, false);
+                        await this.ackFailureInternal(payload.lease, payload.errorType, payload.errorMessage, payload.deadLetterReason, false);
                     } else if (entry.type === 'events') {
                         const payload = entry.payload as { lease: Lease; events: WorkEvent[] };
                         await this.sendEvents(payload.lease, payload.events, false);
                     }
                     await this.outbox.remove(entry.id);
                 } catch (err) {
-                    if (this.handleRunnerMismatch(err)) {
+                    if (this.handleRunnerFatal(err)) {
                         return;
                     }
                     await this.outbox.markFailed(entry.id);
@@ -1194,7 +1300,8 @@ export class CroniqRunner {
         const expiresAt = Date.parse(lease.leaseExpiresAtUtc);
         const delay = Math.max(1000, expiresAt - Date.now() - this.renewLeadMs);
         entry.renewTimer = setTimeout(async () => {
-            if (!this.inflight.has(lease.leaseId)) {
+            const current = this.inflight.get(lease.leaseId);
+            if (!current || current.abandoned) {
                 return;
             }
             try {
@@ -1207,7 +1314,7 @@ export class CroniqRunner {
                     this.scheduleRenew(updated);
                 }
             } catch (err) {
-                if (this.handleRunnerMismatch(err)) {
+                if (this.handleRunnerFatal(err)) {
                     return;
                 }
                 this.logger.warn('renew failed', { error: String(err), leaseId: lease.leaseId });
@@ -1221,6 +1328,40 @@ export class CroniqRunner {
             clearTimeout(entry.renewTimer);
         }
         this.inflight.delete(leaseId);
+    }
+
+    private async abandonPendingLeases(): Promise<void> {
+        const pending: Lease[] = [];
+
+        for (const entry of this.inflight.values()) {
+            entry.abandoned = true;
+            if (entry.renewTimer) {
+                clearTimeout(entry.renewTimer);
+            }
+            entry.abortController.abort();
+            pending.push(entry.lease);
+        }
+
+        if (this.queue.length > 0) {
+            pending.push(...this.queue.splice(0, this.queue.length));
+        }
+
+        for (const lease of pending) {
+            try {
+                await this.ackFailureInternal(
+                    lease,
+                    'runner-shutdown',
+                    'runner shutdown',
+                    'runner-shutdown',
+                    false,
+                );
+            } catch (err) {
+                if (this.handleRunnerFatal(err)) {
+                    return;
+                }
+                this.logger.warn('shutdown ack failed', { error: String(err), leaseId: lease.leaseId });
+            }
+        }
     }
 
     private toLeaseFromGrpc(assigned: GrpcWorkAssigned): Lease {
@@ -1258,6 +1399,7 @@ export class CroniqRunner {
     private buildHeartbeatMetadata(): Record<string, unknown> {
         const transportState = this.grpcConnection?.isConnected() ? 'grpc' : 'polling';
         return {
+            runnerInstanceId: this.runnerInstanceId,
             transportMode: this.transportMode,
             transportState,
             allowTestExecutions: this.allowTestExecutions,
@@ -1267,13 +1409,18 @@ export class CroniqRunner {
         };
     }
 
-    private handleRunnerMismatch(err: unknown): boolean {
-        if (err instanceof RunnerMismatchError) {
-            this.logger.error('runner mismatch', { error: err.body });
-            this.failFatal(err);
-            return true;
+    private handleRunnerFatal(err: unknown): boolean {
+        const isMismatch = err instanceof RunnerMismatchError || isGrpcRunnerMismatch(err);
+        const isInUse = err instanceof RunnerIdInUseError || isGrpcRunnerIdInUse(err);
+        if (!isMismatch && !isInUse) {
+            return false;
         }
-        return false;
+
+        const label = isInUse ? 'runner id in use' : 'runner mismatch';
+        const detail = err instanceof CroniqError ? err.body : String(err);
+        this.logger.error(label, { error: detail });
+        this.failFatal(err as Error);
+        return true;
     }
 
     private failFatal(err: Error): void {
@@ -1281,11 +1428,22 @@ export class CroniqRunner {
             return;
         }
         this.fatalError = err;
+        this.acceptingWork = false;
         this.running = false;
+        this.draining = false;
         if (this.grpcConnection) {
             this.grpcConnection.stop();
             this.grpcConnection = null;
         }
+        for (const entry of this.inflight.values()) {
+            entry.abandoned = true;
+            if (entry.renewTimer) {
+                clearTimeout(entry.renewTimer);
+            }
+            entry.abortController.abort();
+        }
+        this.inflight.clear();
+        this.queue.length = 0;
         if (this.fatalReject) {
             this.fatalReject(err);
         }

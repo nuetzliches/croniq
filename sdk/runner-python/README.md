@@ -10,6 +10,12 @@ Runner SDK with gRPC streaming (primary) and HTTP polling fallback. Use `CroniqR
 
 Import from `croniq_runner`. See the sample in [samples/runners/python/basic](../../samples/runners/python/basic).
 
+Register handlers per job key:
+
+```python
+runner.on_execute("demo-job", handle_execution)
+```
+
 ## Configuration
 
 Build a `RunnerConfig` from environment variables with `RunnerConfig.from_env()`:

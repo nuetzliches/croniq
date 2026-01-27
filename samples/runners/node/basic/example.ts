@@ -1,76 +1,89 @@
-import { RunnerClient } from '@croniq/runner-sdk';
+import { CroniqRunner, RunnerIdInUseError } from '@croniq/runner-sdk';
 
-const baseUrl = process.env.CRONIQ_API_BASEURL || 'http://localhost:5080';
-const tenantId = process.env.CRONIQ_TENANT_ID || 'default';
-const environment = process.env.CRONIQ_ENVIRONMENT || 'dev';
-const apiKey = process.env.CRONIQ_API_KEY || '';
-const runnerId = process.env.CRONIQ_RUNNER_ID || 'default';
+const env = (key: string, fallback: string) => (process.env[key]?.trim() ? process.env[key]!.trim() : fallback);
 
-const client = new RunnerClient({
+const baseUrl = env('CRONIQ_API_BASEURL', 'http://localhost:5080');
+const grpcBaseUrl = env('CRONIQ_GRPC_BASEURL', baseUrl);
+const tenantId = env('CRONIQ_TENANT_ID', 'default');
+const environment = env('CRONIQ_ENVIRONMENT', 'dev');
+const apiKey = env('CRONIQ_API_KEY', '');
+const bearerToken = env('CRONIQ_BEARER_TOKEN', '');
+const runnerId = env('CRONIQ_RUNNER_ID', 'default');
+const runnerInstanceId = process.env.CRONIQ_RUNNER_INSTANCE_ID?.trim();
+const jobKey = env('CRONIQ_JOB_KEY', 'demo-job');
+
+if ((!!apiKey && !!bearerToken) || (!apiKey && !bearerToken)) {
+    throw new Error('Set exactly one of CRONIQ_API_KEY or CRONIQ_BEARER_TOKEN');
+}
+
+const runner = new CroniqRunner({
     baseUrl,
+    grpcBaseUrl,
     tenantId,
     environment,
-    apiKey,
+    apiKey: apiKey || undefined,
+    bearerToken: bearerToken || undefined,
+    runnerId,
+    runnerInstanceId,
+    transportMode: (process.env.CRONIQ_TRANSPORT_MODE?.trim().toLowerCase() as 'auto' | 'grpc' | 'polling') || 'auto',
+    allowTestExecutions: process.env.CRONIQ_ALLOW_TEST_EXECUTIONS === 'true',
+    maxInflight: process.env.CRONIQ_MAX_INFLIGHT ? Number(process.env.CRONIQ_MAX_INFLIGHT) : undefined,
+    capabilities: process.env.CRONIQ_CAPABILITIES
+        ? process.env.CRONIQ_CAPABILITIES.split(',')
+              .map((value) => value.trim())
+              .filter(Boolean)
+        : undefined,
+    heartbeatIntervalMs: 15000,
 });
 
-console.log('Croniq HTTP runner (node)');
-console.log(`- base_url:    ${baseUrl}`);
-console.log(`- tenant_id:   ${tenantId}`);
-console.log(`- environment: ${environment}`);
-console.log(`- runner_id:   ${runnerId}`);
-
-async function heartbeat() {
-    try {
-        await client.heartbeat({
-            runnerId,
-            environmentTag: environment,
-            seenAtUtc: new Date().toISOString(),
-        });
-    } catch (err) {
-        console.warn('heartbeat failed', err);
-    }
+console.log('Croniq runner (node)');
+console.log(`- base_url:        ${baseUrl}`);
+console.log(`- grpc_url:        ${grpcBaseUrl}`);
+console.log(`- tenant_id:       ${tenantId}`);
+console.log(`- environment:     ${environment}`);
+console.log(`- runner_id:       ${runnerId}`);
+console.log(`- runner_instance:${runnerInstanceId ?? '(auto)'}`);
+if (jobKey) {
+    console.log(`- job_key:         ${jobKey}`);
 }
 
-void heartbeat();
-setInterval(() => {
-    void heartbeat();
-}, 15000);
+runner.onExecute(jobKey, async (context, payload, logger) => {
+    const startedAt = Date.now();
+    logger.info('execution started', {
+        executionId: context.executionId,
+        jobKey: context.jobKey,
+        triggerId: context.triggerId,
+        executionMode: context.executionMode,
+    });
 
-async function loop() {
-    while (true) {
-        const leases = await client.poll({
-            runnerId,
-            batchSize: 1,
-            waitForMs: 25000,
-        });
+    await doWork(payload);
 
-        for (const lease of leases) {
-            console.log(
-                `claimed lease: jobKey=${lease.jobKey} triggerId=${lease.triggerId} leaseId=${lease.leaseId}`,
-            );
-            if (lease.executionMode || lease.invocationSource) {
-                console.log(
-                    `- intent: mode=${lease.executionMode ?? 'normal'} source=${lease.invocationSource ?? 'schedule'}`,
-                );
-            }
-            await client.events({
-                runnerId,
-                lease,
-                events: [
-                    {
-                        message: `processing execution ${lease.executionId}`,
-                        level: 'Information',
-                        eventType: 'runner',
-                    },
-                ],
-            });
-            await client.ack({ runnerId, lease, succeeded: true });
-            console.log(`acked lease: leaseId=${lease.leaseId}`);
-        }
+    logger.info('execution completed', {
+        executionId: context.executionId,
+        durationMs: Date.now() - startedAt,
+    });
+});
+
+const shutdown = async (signal: string) => {
+    console.log(`runner draining due to ${signal}`);
+    await runner.drain(30000);
+    process.exit(0);
+};
+
+process.on('SIGTERM', () => void shutdown('SIGTERM'));
+process.on('SIGINT', () => void shutdown('SIGINT'));
+
+runner.start().catch((err) => {
+    if (err instanceof RunnerIdInUseError) {
+        console.error('runnerId already in use; exiting', err);
+    } else {
+        console.error('runner failed to start', err);
     }
-}
-
-loop().catch((err) => {
-    console.error(err);
     process.exit(1);
 });
+
+async function doWork(payload: unknown) {
+    if (payload) {
+        console.log('payload received', payload);
+    }
+}
