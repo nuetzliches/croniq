@@ -50,6 +50,17 @@ func main() {
 
 		for _, lease := range leases {
 			log.Printf("claimed lease: jobKey=%s triggerId=%s leaseId=%s", lease.JobKey, lease.TriggerId, lease.LeaseId)
+			if lease.ExecutionMode != "" || lease.InvocationSource != "" {
+				mode := lease.ExecutionMode
+				if mode == "" {
+					mode = "normal"
+				}
+				source := lease.InvocationSource
+				if source == "" {
+					source = "schedule"
+				}
+				log.Printf("- intent: mode=%s source=%s", mode, source)
+			}
 
 			events := []croniqworker.WorkEvent{
 				{

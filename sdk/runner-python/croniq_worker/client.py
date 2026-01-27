@@ -30,6 +30,8 @@ class Lease:
     fire_at_utc: str
     lease_expires_at_utc: str
     payload: Optional[str]
+    execution_mode: Optional[str] = None
+    invocation_source: Optional[str] = None
 
     @staticmethod
     def from_dict(data: Dict[str, Any]) -> "Lease":
@@ -41,6 +43,8 @@ class Lease:
             fire_at_utc=data["fireAtUtc"],
             lease_expires_at_utc=data["leaseExpiresAtUtc"],
             payload=data.get("payload"),
+            execution_mode=data.get("executionMode"),
+            invocation_source=data.get("invocationSource"),
         )
 
     def to_dict(self) -> Dict[str, Any]:
@@ -52,6 +56,8 @@ class Lease:
             "fireAtUtc": self.fire_at_utc,
             "leaseExpiresAtUtc": self.lease_expires_at_utc,
             "payload": self.payload,
+            "executionMode": self.execution_mode,
+            "invocationSource": self.invocation_source,
         }
 
 
@@ -100,8 +106,26 @@ class WorkerClient:
         self._bearer_token = bearer_token
         self._timeout_seconds = timeout_seconds
 
-    def poll(self, runner_id: str, batch_size: int = 1, wait_for_ms: int = 0) -> List[Lease]:
-        payload = {"runnerId": runner_id, "batchSize": batch_size, "waitForMs": wait_for_ms}
+    def poll(
+        self,
+        runner_id: str,
+        batch_size: int = 1,
+        wait_for_ms: int = 0,
+        allow_test_executions: Optional[bool] = None,
+        max_inflight: Optional[int] = None,
+        capabilities: Optional[List[str]] = None,
+    ) -> List[Lease]:
+        payload: Dict[str, Any] = {
+            "runnerId": runner_id,
+            "batchSize": batch_size,
+            "waitForMs": wait_for_ms,
+        }
+        if allow_test_executions is not None:
+            payload["allowTestExecutions"] = allow_test_executions
+        if max_inflight is not None:
+            payload["maxInflight"] = max_inflight
+        if capabilities:
+            payload["capabilities"] = capabilities
         response = self._post("/work/poll", payload)
         data = response.json()
         return [Lease.from_dict(item) for item in data.get("leases") or []]

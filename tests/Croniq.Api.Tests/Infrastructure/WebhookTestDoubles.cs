@@ -116,7 +116,9 @@ public sealed class NoopJobPersistenceProvider : IJobPersistenceProvider, ICalen
                 .Where(t => string.Equals(t.Scope.TenantId, scope.TenantId, StringComparison.OrdinalIgnoreCase)
                             && string.Equals(t.Scope.EnvironmentTag, scope.EnvironmentTag, StringComparison.OrdinalIgnoreCase)
                             && t.Enabled
-                            && (t.StartAtUtc is null || t.StartAtUtc <= now))
+                            && (t.StartAtUtc is null || t.StartAtUtc <= now)
+                            && (request.AllowTestExecutions
+                                || !string.Equals(t.ExecutionMode, ExecutionIntent.ExecutionModes.Test, StringComparison.OrdinalIgnoreCase)))
                 .OrderBy(t => t.StartAtUtc ?? DateTimeOffset.MinValue)
                 .ThenBy(t => t.TriggerId, StringComparer.OrdinalIgnoreCase)
                 .ToList();
@@ -149,7 +151,9 @@ public sealed class NoopJobPersistenceProvider : IJobPersistenceProvider, ICalen
                     FireAtUtc: trigger.StartAtUtc ?? now,
                     LeaseExpiresAtUtc: expiresAt,
                     Payload: null,
-                    ExecutionId: executionId));
+                    ExecutionId: executionId,
+                    ExecutionMode: trigger.ExecutionMode,
+                    InvocationSource: trigger.InvocationSource));
             }
 
             return Task.FromResult<IReadOnlyCollection<TriggerLease>>(leases);

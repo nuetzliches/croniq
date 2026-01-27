@@ -31,6 +31,11 @@ async function loop() {
             console.log(
                 `claimed lease: jobKey=${lease.jobKey} triggerId=${lease.triggerId} leaseId=${lease.leaseId}`,
             );
+            if (lease.executionMode || lease.invocationSource) {
+                console.log(
+                    `- intent: mode=${lease.executionMode ?? 'normal'} source=${lease.invocationSource ?? 'schedule'}`,
+                );
+            }
             await client.events({
                 runnerId,
                 lease,

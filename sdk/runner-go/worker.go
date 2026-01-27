@@ -40,6 +40,8 @@ type Lease struct {
 	FireAtUtc         time.Time `json:"fireAtUtc"`
 	LeaseExpiresAtUtc time.Time `json:"leaseExpiresAtUtc"`
 	Payload           *string   `json:"payload,omitempty"`
+	ExecutionMode     string    `json:"executionMode,omitempty"`
+	InvocationSource  string    `json:"invocationSource,omitempty"`
 }
 
 type WorkEvent struct {
@@ -256,9 +258,12 @@ func (c *Client) post(ctx context.Context, path string, payload interface{}, out
 }
 
 type pollRequest struct {
-	RunnerId  string `json:"runnerId"`
-	BatchSize *int   `json:"batchSize,omitempty"`
-	WaitForMs *int   `json:"waitForMs,omitempty"`
+	RunnerId            string   `json:"runnerId"`
+	BatchSize           *int     `json:"batchSize,omitempty"`
+	WaitForMs           *int     `json:"waitForMs,omitempty"`
+	AllowTestExecutions *bool    `json:"allowTestExecutions,omitempty"`
+	MaxInflight         *int     `json:"maxInflight,omitempty"`
+	Capabilities        []string `json:"capabilities,omitempty"`
 }
 
 type pollResponse struct {

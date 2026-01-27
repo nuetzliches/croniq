@@ -35,6 +35,10 @@ def main() -> None:
             print(
                 f"claimed lease: jobKey={lease.job_key} triggerId={lease.trigger_id} leaseId={lease.lease_id}"
             )
+            if lease.execution_mode or lease.invocation_source:
+                mode = lease.execution_mode or "normal"
+                source = lease.invocation_source or "schedule"
+                print(f"- intent: mode={mode} source={source}")
             client.events(
                 runner_id=runner_id,
                 lease=lease,

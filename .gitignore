@@ -72,3 +72,12 @@ docs/.vitepress/cache/
 
 node_modules/
 logs/
+
+# Python samples
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.venv/
+venv/

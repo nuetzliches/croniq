@@ -6,12 +6,17 @@ export type Lease = {
     fireAtUtc: string;
     leaseExpiresAtUtc: string;
     payload?: string | null;
+    executionMode?: string;
+    invocationSource?: string;
 };
 
 export type PollRequest = {
     runnerId: string;
     batchSize?: number;
     waitForMs?: number;
+    allowTestExecutions?: boolean;
+    maxInflight?: number;
+    capabilities?: string[];
 };
 
 export type RenewRequest = {
@@ -120,8 +125,8 @@ export class RunnerClient {
         this.fetchImpl = resolvedFetch.bind(globalThis);
     }
 
-    async poll({ runnerId, batchSize = 1, waitForMs = 0 }: PollRequest): Promise<Lease[]> {
-        const body = { runnerId, batchSize, waitForMs };
+    async poll({ runnerId, batchSize = 1, waitForMs = 0, allowTestExecutions, maxInflight, capabilities }: PollRequest): Promise<Lease[]> {
+        const body = { runnerId, batchSize, waitForMs, allowTestExecutions, maxInflight, capabilities };
         const result = await this.postJson<{ leases?: Lease[] }>(`/work/poll`, body);
         return (result.json && result.json.leases) || [];
     }

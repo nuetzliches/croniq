@@ -65,6 +65,72 @@ public sealed class WorkEndpointsTests : IClassFixture<WebhookApiTestHost>
     }
 
     [Fact]
+    public async Task Poll_RespectsAllowTestExecutions_AndReturnsIntent()
+    {
+        _host.Reset();
+        const string jobKey = "ops:work-intent";
+        _host.EnsureJob(jobKey);
+
+        await SeedDueTriggerAsync(
+            jobKey,
+            startAtUtc: DateTimeOffset.UtcNow.AddMinutes(-1),
+            executionMode: ExecutionIntent.ExecutionModes.Test,
+            invocationSource: ExecutionIntent.InvocationSources.Manual);
+
+        var rejectedPoll = new WorkPollRequest(
+            EnvironmentTag: WebhookApiTestHost.Environment,
+            RunnerId: "itest-client",
+            BatchSize: 1,
+            AllowTestExecutions: false);
+
+        var rejectedResponse = await _host.Client.PostAsJsonAsync($"/tenants/{WebhookApiTestHost.TenantId}/work/poll", rejectedPoll);
+        rejectedResponse.StatusCode.ShouldBe(HttpStatusCode.OK);
+
+        var rejectedPayload = await rejectedResponse.Content.ReadFromJsonAsync<WorkPollResponse>();
+        rejectedPayload.ShouldNotBeNull();
+        rejectedPayload.Leases.ShouldBeEmpty();
+
+        var acceptedPoll = new WorkPollRequest(
+            EnvironmentTag: WebhookApiTestHost.Environment,
+            RunnerId: "itest-client",
+            BatchSize: 1,
+            AllowTestExecutions: true);
+
+        var acceptedResponse = await _host.Client.PostAsJsonAsync($"/tenants/{WebhookApiTestHost.TenantId}/work/poll", acceptedPoll);
+        acceptedResponse.StatusCode.ShouldBe(HttpStatusCode.OK);
+
+        var acceptedPayload = await acceptedResponse.Content.ReadFromJsonAsync<WorkPollResponse>();
+        acceptedPayload.ShouldNotBeNull();
+        acceptedPayload.Leases.Length.ShouldBe(1);
+        acceptedPayload.Leases[0].ExecutionMode.ShouldBe(ExecutionIntent.ExecutionModes.Test);
+        acceptedPayload.Leases[0].InvocationSource.ShouldBe(ExecutionIntent.InvocationSources.Manual);
+    }
+
+    [Fact]
+    public async Task Poll_UsesMaxInflight_WhenBatchSizeMissing()
+    {
+        _host.Reset();
+        const string jobKey = "ops:work-max-inflight";
+        _host.EnsureJob(jobKey);
+
+        await SeedDueTriggerAsync(jobKey, startAtUtc: DateTimeOffset.UtcNow.AddMinutes(-1));
+        await SeedDueTriggerAsync(jobKey, startAtUtc: DateTimeOffset.UtcNow.AddMinutes(-1));
+
+        var poll = new WorkPollRequest(
+            EnvironmentTag: WebhookApiTestHost.Environment,
+            RunnerId: "itest-client",
+            BatchSize: null,
+            MaxInflight: 2);
+
+        var response = await _host.Client.PostAsJsonAsync($"/tenants/{WebhookApiTestHost.TenantId}/work/poll", poll);
+        response.StatusCode.ShouldBe(HttpStatusCode.OK);
+
+        var payload = await response.Content.ReadFromJsonAsync<WorkPollResponse>();
+        payload.ShouldNotBeNull();
+        payload.Leases.Length.ShouldBe(2);
+    }
+
+    [Fact]
     public async Task Renew_Succeeds_ForActiveLease()
     {
         _host.Reset();
@@ -373,7 +439,11 @@ public sealed class WorkEndpointsTests : IClassFixture<WebhookApiTestHost>
         response.StatusCode.ShouldBe(HttpStatusCode.Forbidden);
     }
 
-    private async Task SeedDueTriggerAsync(string jobKey, DateTimeOffset startAtUtc)
+    private async Task SeedDueTriggerAsync(
+        string jobKey,
+        DateTimeOffset startAtUtc,
+        string? executionMode = null,
+        string? invocationSource = null)
     {
         var scope = _host.DefaultScope;
         await _host.JobStore.UpsertJobAsync(
@@ -391,7 +461,9 @@ public sealed class WorkEndpointsTests : IClassFixture<WebhookApiTestHost>
             EndAtUtc: null,
             Enabled: true,
             Metadata: null,
-            TimeZoneId: TimeZoneInfo.Utc.Id);
+            TimeZoneId: TimeZoneInfo.Utc.Id,
+            ExecutionMode: executionMode ?? ExecutionIntent.ExecutionModes.Normal,
+            InvocationSource: invocationSource ?? ExecutionIntent.InvocationSources.Schedule);
 
         await _host.JobStore.UpsertTriggerAsync(trigger, CancellationToken.None);
     }
