@@ -2,11 +2,11 @@ import { Injectable, inject } from '@angular/core';
 import { tryIsoFromUnknown } from '@core/time/clock';
 import type { PasswordChangePasswordRequest, PasswordLoginRequest, PasswordLogoutRequest } from '@croniq/api-schema';
 import { CRONIQ_API_CLIENT, type CroniqApiClient } from 'data-access';
-import { catchError, map, of, throwError } from 'rxjs';
 import type { Observable } from 'rxjs';
+import { catchError, map, of, throwError } from 'rxjs';
 import { z } from 'zod';
-import { AuthSessionService } from './auth-session.service';
 import { AuthLogoutCleanupService } from './auth-logout-cleanup.service';
+import { AuthSessionService } from './auth-session.service';
 
 const passwordLoginResponseSchema = z
     .preprocess((input) => {
@@ -120,8 +120,6 @@ export class PasswordAuthService {
                 });
                 if (parsed.refreshToken) {
                     this.authSession.storeRefreshToken(parsed.refreshToken);
-                } else {
-                    this.authSession.clearRefreshToken();
                 }
 
                 let tenantId = parsed.tenantId;
@@ -135,11 +133,13 @@ export class PasswordAuthService {
 
                 this.authSession.storeTenantId(tenantId);
 
+                const refreshTokenPresent = Boolean(parsed.refreshToken ?? this.authSession.refreshToken());
+
                 return {
                     storedInSession: true,
                     token: parsed.accessToken,
                     expiresAt: parsed.expiresAt ?? null,
-                    refreshTokenPresent: Boolean(parsed.refreshToken),
+                    refreshTokenPresent,
                     passwordChangeRequired: parsed.passwordChangeRequired,
                     tenantId,
                     raw: parsed.raw,
@@ -211,15 +211,15 @@ export class PasswordAuthService {
 
                     if (parsed.refreshToken) {
                         this.authSession.storeRefreshToken(parsed.refreshToken);
-                    } else {
-                        this.authSession.clearRefreshToken();
                     }
+
+                    const refreshTokenPresent = Boolean(parsed.refreshToken ?? this.authSession.refreshToken());
 
                     return {
                         storedInSession: true,
                         token: parsed.accessToken,
                         expiresAt: parsed.expiresAt ?? null,
-                        refreshTokenPresent: Boolean(parsed.refreshToken),
+                        refreshTokenPresent,
                         passwordChangeRequired: parsed.passwordChangeRequired,
                         raw: parsed.raw,
                     };

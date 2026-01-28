@@ -299,6 +299,24 @@
 
           <div class="rounded-lg border border-white/10 bg-black/10 px-3 py-3">
             <div class="text-[11px] font-semibold uppercase tracking-wide text-muted">
+              Recent jobs
+            </div>
+            @if (runner.recentJobs.length === 0) {
+            <div class="mt-2 text-xs text-muted">No recent executions for this runner.</div>
+            } @else {
+            <div class="mt-2 flex flex-wrap gap-1">
+              @for (job of runner.recentJobs; track job) {
+              <span class="rounded bg-white/5 px-1.5 py-0.5 text-xs text-muted">{{ job }}</span>
+              }
+            </div>
+            }
+            <div class="mt-2 text-[10px] text-muted">
+              Based on recent executions (last 200).
+            </div>
+          </div>
+
+          <div class="rounded-lg border border-white/10 bg-black/10 px-3 py-3">
+            <div class="text-[11px] font-semibold uppercase tracking-wide text-muted">
               Quick actions
             </div>
             <div class="mt-3 grid grid-cols-2 gap-2">

@@ -1,7 +1,7 @@
 import { Injectable, computed, inject } from '@angular/core';
 import { tenantRxResource } from '@core/resource/tenant-rx-resource';
 import { TenantContextService } from '@core/tenant-context/tenant-context.service';
-import type { RunnerListResponse, RunnerStatusModel } from '@croniq/api-schema';
+import type { ExecutionResponse, RunnerListResponse, RunnerStatusModel } from '@croniq/api-schema';
 import { CRONIQ_API_CLIENT, CroniqApiClient } from 'data-access';
 import { catchError, map, of } from 'rxjs';
 
@@ -15,6 +15,7 @@ export interface Runner {
     tags: string[];
     loadPercent: number;
     loadLabel: string;
+    recentJobs: ReadonlyArray<string>;
 }
 
 interface RunnerMetadata {
@@ -25,6 +26,7 @@ interface RunnerMetadata {
 }
 
 const DEFAULT_LOAD_LABEL = 'n/a';
+const MAX_RECENT_JOBS = 4;
 
 const parseRunnerMetadata = (metadataJson?: string | null): RunnerMetadata => {
     if (!metadataJson) {
@@ -78,8 +80,47 @@ const mapRunnerStatus = (runner: RunnerStatusModel): Runner => {
         tags: metadata.tags ?? [],
         loadPercent,
         loadLabel,
+        recentJobs: [],
     };
 }
+
+const toEpochMs = (value?: string | null): number => {
+    if (!value) {
+        return 0;
+    }
+
+    const parsed = Date.parse(value);
+    return Number.isFinite(parsed) ? parsed : 0;
+};
+
+const buildRecentJobsByRunner = (executions: ExecutionResponse[]): Map<string, string[]> => {
+    const sorted = [...executions].sort((a, b) => toEpochMs(b.startedAtUtc) - toEpochMs(a.startedAtUtc));
+    const results = new Map<string, string[]>();
+
+    for (const exec of sorted) {
+        const runnerId = typeof exec.instanceId === 'string' ? exec.instanceId.trim() : '';
+        const jobKey = typeof exec.jobKey === 'string' ? exec.jobKey.trim() : '';
+        if (!runnerId || !jobKey) {
+            continue;
+        }
+
+        const current = results.get(runnerId) ?? [];
+        if (current.includes(jobKey)) {
+            continue;
+        }
+
+        current.push(jobKey);
+        results.set(runnerId, current);
+    }
+
+    for (const [runnerId, jobs] of results.entries()) {
+        if (jobs.length > MAX_RECENT_JOBS) {
+            results.set(runnerId, jobs.slice(0, MAX_RECENT_JOBS));
+        }
+    }
+
+    return results;
+};
 
 @Injectable()
 export class RunnersStore {
@@ -107,7 +148,39 @@ export class RunnersStore {
         }
     });
 
-    readonly runners = computed(() => this.runnersResource.value());
+    readonly executionsResource = tenantRxResource<ExecutionResponse[], { tenantId: string; environment: string }>({
+        command: 'executions.list',
+        defaultValue: [],
+        params: () => {
+            const { tenantId, environment } = this.tenantContext.snapshot();
+            return { tenantId, environment };
+        },
+        stream: ({ params, requestOptions }) => {
+            const { tenantId, environment } = params;
+            if (!tenantId) {
+                return of([] as ExecutionResponse[]);
+            }
+
+            return this.api.listExecutions({ tenantId, environment, limit: 200 }, requestOptions).pipe(
+                map((response) => (Array.isArray(response) ? response as ExecutionResponse[] : [])),
+                catchError((err) => {
+                    console.error('Failed to load executions for runner jobs', err);
+                    return of([] as ExecutionResponse[]);
+                }),
+            );
+        },
+    });
+
+    readonly runners = computed(() => {
+        const runners = this.runnersResource.value() ?? [];
+        const executions = this.executionsResource.value() ?? [];
+        const jobsByRunner = buildRecentJobsByRunner(executions);
+
+        return runners.map((runner) => ({
+            ...runner,
+            recentJobs: jobsByRunner.get(runner.id) ?? [],
+        }));
+    });
     readonly loading = computed(() => this.runnersResource.isLoading());
     readonly error = computed(() => this.runnersResource.error());
 

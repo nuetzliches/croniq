@@ -585,6 +585,12 @@ export class JobsStore {
         this.triggerLog.set([entry, ...this.triggerLog()]);
         this.lastErrorSignal.set(null);
 
+        const registryEntry = findJobEntry(this.jobRegistrySignal(), trimmedKey);
+        if (registryEntry && isRunnerRegisteredJob(registryEntry)) {
+            this.triggerJobViaSchedule(entry, trimmedKey, metadata);
+            return;
+        }
+
         this.api
             .triggerJob(
                 { jobKey: trimmedKey, metadata },
@@ -602,8 +608,62 @@ export class JobsStore {
                 }),
                 catchError((error: unknown) => {
                     console.error('Failed to trigger job', error);
-                    const resolvedMessage = resolveTriggerErrorMessage(error);
+                    const resolvedMessage = resolveTriggerErrorMessage(error, trimmedKey, this.jobRegistrySignal());
                     this.lastErrorSignal.set(resolvedMessage);
+                    this.updateEntry(entry.id, {
+                        status: 'error',
+                        completedAt: nowIso(),
+                        error: error instanceof Error ? error.message : 'Unknown error',
+                    });
+                    return EMPTY;
+                }),
+            )
+            .subscribe();
+    }
+
+    private triggerJobViaSchedule(entry: ManualTriggerEntry, jobKey: string, metadata: Record<string, string>): void {
+        const { tenantId, environment } = this.tenantContext.snapshot();
+        if (!tenantId.trim()) {
+            this.lastErrorSignal.set('Required context is missing — unable to trigger job.');
+            this.updateEntry(entry.id, {
+                status: 'error',
+                completedAt: nowIso(),
+                error: 'Missing tenant context',
+            });
+            return;
+        }
+
+        const payload: UpsertScheduleRequest = {
+            jobKey,
+            cronExpression: '@once',
+            enabled: true,
+            startAtUtc: nowIso(),
+            metadata: Object.keys(metadata).length > 0 ? metadata : undefined,
+        };
+
+        this.api
+            .upsertSchedule(
+                { tenantId, environment },
+                payload,
+                this.tenantContext.createRequestOptions('schedules.upsert', {
+                    tenantId,
+                    environment,
+                }),
+            )
+            .pipe(
+                tap(() => {
+                    this.updateEntry(entry.id, {
+                        status: 'success',
+                        completedAt: nowIso(),
+                    });
+                    this.refreshJobRegistry();
+                }),
+                catchError((error: unknown) => {
+                    console.error('Failed to trigger job via schedule', error);
+                    const authFailure = authFailureFromError(error, {
+                        forbidden: 'Forbidden (403) — your token is missing schedules permissions.',
+                    });
+                    this.lastErrorSignal.set(authFailure?.message ?? 'Unable to trigger job via schedule.');
                     this.updateEntry(entry.id, {
                         status: 'error',
                         completedAt: nowIso(),
@@ -844,14 +904,68 @@ function resolveManagedBy(metadata?: Record<string, string>): string | null {
     return null;
 }
 
-function resolveTriggerErrorMessage(error: unknown): string {
+function resolveTriggerErrorMessage(
+    error: unknown,
+    jobKey?: string,
+    jobRegistry: ReadonlyArray<JobRegistryEntry> = [],
+): string {
     if (error instanceof HttpErrorResponse) {
         const payload = error.error as { error?: string; jobKey?: string } | null;
         if (payload?.error === 'job-not-registered') {
-            const key = payload.jobKey ?? 'this job';
+            const key = payload.jobKey ?? jobKey ?? 'this job';
+            const normalizedKey = key.trim().toLowerCase();
+            const match = jobRegistry.find((entry) => entry.jobKey.trim().toLowerCase() === normalizedKey);
+            if (match && match.scheduleCount === 0 && isRunnerRegisteredJob(match)) {
+                return `Unable to trigger ${key}: this job was registered by a runner and has no schedules. Create an @once schedule (or add a schedule) to run it, or load the job assembly on the API host.`;
+            }
             return `Unable to trigger ${key}: the API host has not registered the job. Ensure the job assembly is loaded or JobRegistrySync is enabled.`;
         }
     }
 
-    return 'Unable to trigger job via API — entry retained locally.';
+    return 'Unable to trigger job via API - entry retained locally.';
+}
+
+function hasMetadataValue(
+    metadata: Record<string, string> | undefined,
+    key: string,
+    expected: string,
+): boolean {
+    if (!metadata) {
+        return false;
+    }
+
+    const targetKey = key.trim().toLowerCase();
+    const targetValue = expected.trim().toLowerCase();
+    for (const [rawKey, rawValue] of Object.entries(metadata)) {
+        if (rawKey.trim().toLowerCase() !== targetKey) {
+            continue;
+        }
+
+        if ((rawValue ?? '').trim().toLowerCase() === targetValue) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+function findJobEntry(
+    jobRegistry: ReadonlyArray<JobRegistryEntry>,
+    jobKey: string,
+): JobRegistryEntry | null {
+    const normalizedKey = jobKey.trim().toLowerCase();
+    if (!normalizedKey) {
+        return null;
+    }
+
+    return jobRegistry.find((entry) => entry.jobKey.trim().toLowerCase() === normalizedKey) ?? null;
+}
+
+function isRunnerRegisteredJob(job: JobRegistryEntry): boolean {
+    if (!job.metadata) {
+        return false;
+    }
+
+    return hasMetadataValue(job.metadata, 'registrationSource', 'runner')
+        || hasMetadataValue(job.metadata, 'createdBy', 'runner');
 }

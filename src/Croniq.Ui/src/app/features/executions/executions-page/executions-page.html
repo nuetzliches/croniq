@@ -1,102 +1,323 @@
 <div class="flex h-full flex-col space-y-6">
   <!-- Header / Controls -->
   <header class="flex flex-wrap items-center justify-between gap-4">
-    <h1 class="text-lg font-semibold text-primary">Executions</h1>
-
-    <div class="flex flex-wrap items-center gap-3">
-      <!-- Search -->
-      <div class="relative">
-        <input
-          #searchInput
-          type="text"
-          placeholder="Search executions..."
-          class="h-9 w-64 rounded-lg border border-white/10 bg-surface-alt px-3 text-sm text-primary placeholder-muted focus:border-accent focus:outline-none"
-          [value]="searchQuery()"
-          (input)="searchQuery.set(searchInput.value)"
-        />
-      </div>
-
-      <!-- Status Filter -->
-      <select
-        #statusSelect
-        class="h-9 rounded-lg border border-white/10 bg-surface-alt px-3 text-sm text-primary focus:border-accent focus:outline-none"
-        [value]="statusFilter()"
-        (change)="statusFilter.set(statusSelect.value)"
+    <div class="space-y-1">
+      <h1 class="text-lg font-semibold text-primary">Executions</h1>
+      <p class="text-xs text-muted">Review recent executions, status, and logs.</p>
+    </div>
+    <div class="flex flex-wrap items-center gap-2">
+      <button
+        type="button"
+        (click)="refresh()"
+        class="rounded-lg border border-white/10 bg-white/5 px-4 py-2 text-sm font-semibold text-primary transition hover:border-accent hover:text-accent"
+        [disabled]="loading()"
       >
-        <option value="All">All Statuses</option>
-        <option value="Success">Success</option>
-        <option value="Failed">Failed</option>
-        <option value="Running">Running</option>
-        <option value="Pending">Pending</option>
-      </select>
-
-      <!-- Date Range Filter -->
-      <select
-        #dateSelect
-        class="h-9 rounded-lg border border-white/10 bg-surface-alt px-3 text-sm text-primary focus:border-accent focus:outline-none"
-        [value]="dateRangeFilter()"
-        (change)="dateRangeFilter.set(dateSelect.value)"
-      >
-        <option value="24h">Last 24h</option>
-        <option value="7d">Last 7 Days</option>
-        <option value="30d">Last 30 Days</option>
-      </select>
+        {{ loading() ? 'Refreshing...' : 'Refresh' }}
+      </button>
     </div>
   </header>
 
-  <!-- Content -->
-  <div class="flex-1 overflow-hidden rounded-xl border border-white/10 bg-surface-alt shadow-card">
-    <div class="overflow-x-auto">
-      <table class="w-full text-left text-sm">
-        <thead class="bg-white/5 text-xs uppercase text-muted">
-          <tr>
-            <th class="px-6 py-3 font-medium">ID</th>
-            <th class="px-6 py-3 font-medium">Job Name</th>
-            <th class="px-6 py-3 font-medium">Status</th>
-            <th class="px-6 py-3 font-medium">Start Time</th>
-            <th class="px-6 py-3 font-medium">Duration</th>
-            <th class="px-6 py-3 font-medium">Trigger</th>
-            <th class="px-6 py-3 font-medium text-right">Actions</th>
-          </tr>
-        </thead>
-        <tbody class="divide-y divide-white/10">
-          @if (isLoading()) {
-          <tr>
-            <td colspan="7" class="px-6 py-8 text-center text-muted">Loading executions...</td>
-          </tr>
-          } @else { @for (exec of executions(); track exec.executionId) {
-          <tr class="hover:bg-white/5">
-            <td class="px-6 py-4 font-mono text-xs text-muted">{{ exec.executionId }}</td>
-            <td class="px-6 py-4 font-medium text-primary">{{ exec.jobKey }}</td>
-            <td class="px-6 py-4">
-              <!-- Status mapping: 0=Pending, 1=Running, 2=Completed/Success? Need to check Enum -->
-              <!-- Actually Response has `status: ExecutionStatus` which is union 0|1|2 -->
-              <!-- Let's map it roughly or show raw for now -->
-              <span
-                class="inline-flex items-center rounded-full bg-white/5 px-2 py-0.5 text-xs font-medium text-zinc-300"
-              >
-                {{ exec.status }}
-              </span>
-            </td>
-            <td class="px-6 py-4 text-muted">{{ exec.startedAtUtc | date : 'short' }}</td>
-            <td class="px-6 py-4 text-muted">
-              {{ exec.durationMs ? exec.durationMs + 'ms' : '-' }}
-            </td>
-            <td class="px-6 py-4 text-muted">{{ exec.triggerId || 'Manual' }}</td>
-            <td class="px-6 py-4 text-right">
-              <div class="flex justify-end gap-2">
-                <button
-                  (click)="viewLogs(exec.executionId!)"
-                  class="text-xs font-medium text-muted hover:text-primary"
-                >
-                  Logs
-                </button>
-              </div>
-            </td>
-          </tr>
-          } }
-        </tbody>
-      </table>
+  <ng-template #executionsFilterPanel>
+    <div class="space-y-4">
+      <div class="space-y-2">
+        <div class="text-xs font-semibold uppercase tracking-wide text-muted">Execution search</div>
+        <input
+          #executionSearchInput
+          type="search"
+          cqInput
+          placeholder="Search execution, job, trigger, runner"
+          [value]="executionSearch()"
+          (input)="setExecutionSearch(executionSearchInput.value)"
+        />
+      </div>
+
+      <div class="space-y-2">
+        <div class="text-xs font-semibold uppercase tracking-wide text-muted">Status</div>
+        <select
+          #statusSelect
+          cqSelect
+          [value]="statusFilter()"
+          (change)="setStatusFilter(statusSelect.value)"
+        >
+          @for (option of statusOptions; track option.value) {
+            <option [value]="option.value">{{ option.label }}</option>
+          }
+        </select>
+      </div>
+
+      <div class="space-y-2">
+        <div class="text-xs font-semibold uppercase tracking-wide text-muted">Date range</div>
+        <select
+          #dateRangeSelect
+          cqSelect
+          [value]="dateRangeFilter()"
+          (change)="setDateRangeFilter(dateRangeSelect.value)"
+        >
+          @for (option of dateRangeOptions; track option.value) {
+            <option [value]="option.value">{{ option.label }}</option>
+          }
+        </select>
+      </div>
+
+      <div class="space-y-2">
+        <div class="text-xs font-semibold uppercase tracking-wide text-muted">Job keys</div>
+        <input
+          #jobSearchInput
+          type="search"
+          cqInput
+          placeholder="Search job"
+          [value]="jobSearch()"
+          (input)="setJobSearch(jobSearchInput.value)"
+        />
+        <div class="max-h-56 space-y-1 overflow-auto rounded-lg border border-white/10 bg-black/10 p-2">
+          @if (visibleJobOptions().length === 0) {
+            <div class="text-xs text-muted">No job keys found.</div>
+          } @else {
+            @for (entry of visibleJobOptions(); track entry.jobKey) {
+              <label class="flex items-center gap-2 text-xs text-primary">
+                <input
+                  type="checkbox"
+                  #jobToggle
+                  [checked]="isJobSelected(entry.jobKey)"
+                  (change)="toggleJobSelection(entry.jobKey, jobToggle.checked)"
+                  class="h-4 w-4 rounded border-white/10 bg-surface-alt text-accent focus:ring-accent"
+                />
+                <span class="truncate">{{ entry.jobKey }}</span>
+                <span class="ml-auto inline-flex items-center gap-1 text-[10px] text-muted">{{ entry.count }}</span>
+              </label>
+            }
+          }
+        </div>
+      </div>
+
+      <button
+        type="button"
+        (click)="resetFilters()"
+        class="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-xs font-semibold text-primary transition hover:border-accent hover:text-accent"
+      >
+        Clear filters
+      </button>
     </div>
+  </ng-template>
+
+  <ng-template #executionsFilterCollapsed>
+    @if (filtersActive()) {
+      <button
+        type="button"
+        class="inline-flex items-center justify-center p-1 text-warning transition hover:text-accent"
+        aria-label="Reset filters"
+        (click)="resetFilters()"
+      >
+        <cq-icon name="filter-remove" size="16" aria-hidden="true"></cq-icon>
+      </button>
+    }
+  </ng-template>
+
+
+  <div class="flex flex-1 flex-col gap-4 lg:flex-row">
+    <ng-template #rowActions let-row="row">
+      <div class="min-w-45 rounded-lg border border-white/10 bg-surface p-1 text-sm shadow-xl" cdkMenu>
+        <button
+          type="button"
+          cqContextMenuItem
+          class="inline-flex items-center gap-2"
+          (click)="viewLogs(row.executionId)"
+        >
+          <cq-icon name="information-outline" size="14" aria-hidden="true"></cq-icon>
+          View logs
+        </button>
+      </div>
+    </ng-template>
+
+    <!-- Data Grid -->
+    <div class="flex-1 overflow-hidden rounded-xl border border-white/10 bg-surface-alt shadow-card">
+      @if (error()) {
+        <div class="border-b border-white/10 bg-danger/10 px-4 py-3 text-sm text-danger">
+          {{ error() }}
+        </div>
+      }
+      <cq-data-grid
+        class="h-full"
+        [rows]="filteredExecutions()"
+        [rowKey]="executionRowKey"
+        [idKey]="'executionId'"
+        [bufferPx]="256"
+        [estimatedRowHeightPx]="56"
+        [loading]="loading()"
+        [rowClasses]="executionRowClasses"
+        [(selectedId)]="selectedExecutionId"
+        [rowContextMenu]="rowActions"
+      >
+        <cq-column header="Execution" width="18rem">
+          <ng-template cqExecutionCell let-row>
+            <div class="min-w-0">
+              <div class="truncate text-xs font-semibold text-primary font-mono">{{ row.executionId }}</div>
+              <div class="truncate text-xs text-muted">
+                {{ formatInvocationSource(row.invocationSource, row.executionMode) }}
+              </div>
+            </div>
+          </ng-template>
+        </cq-column>
+
+        <cq-column header="Job" width="16rem">
+          <ng-template cqExecutionCell let-row>
+            <span class="truncate text-xs text-muted">{{ row.jobKey }}</span>
+          </ng-template>
+        </cq-column>
+
+        <cq-column header="Status" width="10rem" align="center">
+          <ng-template cqExecutionCell let-row>
+            <span
+              class="inline-flex items-center rounded-full px-2 py-1 text-xs font-medium"
+              [class.bg-success/10]="row.statusKey === 'success'"
+              [class.text-success]="row.statusKey === 'success'"
+              [class.bg-danger/10]="row.statusKey === 'failure'"
+              [class.text-danger]="row.statusKey === 'failure'"
+              [class.bg-warning/10]="row.statusKey === 'canceled'"
+              [class.text-warning]="row.statusKey === 'canceled'"
+              [class.bg-accent/10]="row.statusKey === 'running'"
+              [class.text-accent]="row.statusKey === 'running'"
+              [class.bg-white/10]="row.statusKey === 'pending' || row.statusKey === 'unknown'"
+              [class.text-muted]="row.statusKey === 'pending' || row.statusKey === 'unknown'"
+            >
+              {{ row.statusLabel }}
+            </span>
+          </ng-template>
+        </cq-column>
+
+        <cq-column header="Started" width="14rem">
+          <ng-template cqExecutionCell let-row>
+            @if (row.startedAtUtc) {
+              <span class="text-xs text-muted">{{ row.startedAtUtc | date : 'short' }}</span>
+            } @else {
+              <span class="text-xs text-muted">—</span>
+            }
+          </ng-template>
+        </cq-column>
+
+        <cq-column header="Duration" width="10rem">
+          <ng-template cqExecutionCell let-row>
+            <span class="text-xs text-muted">{{ formatDuration(row.durationMs) }}</span>
+          </ng-template>
+        </cq-column>
+
+        <cq-column header="Runner" width="14rem">
+          <ng-template cqExecutionCell let-row>
+            <span class="truncate text-xs text-muted">{{ row.instanceId || '—' }}</span>
+          </ng-template>
+        </cq-column>
+
+        <cq-column header="Trigger" width="14rem">
+          <ng-template cqExecutionCell let-row>
+            <span class="truncate text-xs text-muted">{{ row.triggerId || 'Manual' }}</span>
+          </ng-template>
+        </cq-column>
+      </cq-data-grid>
+    </div>
+
+    <!-- Detail Panel -->
+    <aside class="w-full lg:w-80">
+      <div class="rounded-xl border border-white/10 bg-surface-alt p-4 shadow-card">
+        <div class="flex items-start justify-between gap-3">
+          <div>
+            <h2 class="text-sm font-semibold text-primary">Execution detail</h2>
+            <p class="text-xs text-muted">Status, timing, and log access.</p>
+          </div>
+          @if (selectedExecution()) {
+            <span class="rounded-full bg-white/10 px-2 py-1 text-[11px] font-semibold text-muted">
+              Selected
+            </span>
+          }
+        </div>
+
+        @if (!selectedExecution()) {
+          <div class="mt-4 rounded-lg border border-dashed border-white/10 bg-black/10 px-3 py-4 text-xs text-muted">
+            Select an execution to inspect status, timing, and logs.
+          </div>
+        } @else {
+          @if (selectedExecution(); as execution) {
+            <div class="mt-4 space-y-4">
+              <div class="rounded-lg border border-white/10 bg-black/10 px-3 py-3">
+                <div class="flex items-start justify-between gap-2">
+                  <div>
+                    <div class="text-[11px] font-semibold uppercase tracking-wide text-muted">Execution ID</div>
+                    <div class="mt-1 text-xs font-semibold text-primary font-mono">{{ execution.executionId }}</div>
+                    <div class="mt-1 text-xs text-muted">{{ execution.jobKey }}</div>
+                  </div>
+                  <span
+                    class="inline-flex items-center rounded-full px-2 py-1 text-[11px] font-semibold"
+                    [class.bg-success/10]="execution.statusKey === 'success'"
+                    [class.text-success]="execution.statusKey === 'success'"
+                    [class.bg-danger/10]="execution.statusKey === 'failure'"
+                    [class.text-danger]="execution.statusKey === 'failure'"
+                    [class.bg-warning/10]="execution.statusKey === 'canceled'"
+                    [class.text-warning]="execution.statusKey === 'canceled'"
+                    [class.bg-accent/10]="execution.statusKey === 'running'"
+                    [class.text-accent]="execution.statusKey === 'running'"
+                    [class.bg-white/10]="execution.statusKey === 'pending' || execution.statusKey === 'unknown'"
+                    [class.text-muted]="execution.statusKey === 'pending' || execution.statusKey === 'unknown'"
+                  >
+                    {{ execution.statusLabel }}
+                  </span>
+                </div>
+                <div class="mt-2 text-xs text-muted">
+                  Started @if (execution.startedAtUtc) {
+                    <span class="text-primary">{{ execution.startedAtUtc | date : 'short' }}</span>
+                  } @else {
+                    <span>—</span>
+                  }
+                </div>
+                <div class="mt-2 text-xs text-muted">Duration: {{ formatDuration(execution.durationMs) }}</div>
+              </div>
+
+              <div class="rounded-lg border border-white/10 bg-black/10 px-3 py-3">
+                <div class="text-[11px] font-semibold uppercase tracking-wide text-muted">Source</div>
+                <div class="mt-2 text-xs text-muted">
+                  Trigger: {{ execution.triggerId || 'Manual' }}
+                </div>
+                <div class="mt-1 text-xs text-muted">
+                  Runner: {{ execution.instanceId || '—' }}
+                </div>
+                <div class="mt-1 text-xs text-muted">
+                  Mode: {{ formatExecutionMode(execution.executionMode) }}
+                </div>
+                <div class="mt-1 text-xs text-muted">
+                  Invocation: {{ formatInvocationSource(execution.invocationSource, execution.executionMode) }}
+                </div>
+              </div>
+
+              @if (execution.errorType) {
+                <div class="rounded-lg border border-warning/30 bg-warning/10 px-3 py-3">
+                  <div class="text-[11px] font-semibold uppercase tracking-wide text-warning">Warning</div>
+                  <div class="mt-2 text-xs text-warning">{{ execution.errorType }}</div>
+                </div>
+              }
+
+              <div class="rounded-lg border border-white/10 bg-black/10 px-3 py-3">
+                <div class="text-[11px] font-semibold uppercase tracking-wide text-muted">Quick actions</div>
+                <div class="mt-3 grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    class="inline-flex items-center justify-center gap-1 rounded-md border border-white/10 bg-white/5 px-2 py-1.5 text-[11px] font-semibold text-primary transition hover:border-accent hover:text-accent"
+                    (click)="viewLogs(execution.executionId)"
+                  >
+                    <cq-icon name="information-outline" size="14" aria-hidden="true"></cq-icon>
+                    View logs
+                  </button>
+                  <a
+                    routerLink="/jobs"
+                    [queryParams]="{ jobKey: execution.jobKey }"
+                    class="inline-flex items-center justify-center gap-1 rounded-md border border-white/10 bg-white/5 px-2 py-1.5 text-center text-[11px] font-semibold text-primary transition hover:border-accent hover:text-accent"
+                  >
+                    <cq-icon name="chevron-right" size="14" aria-hidden="true"></cq-icon>
+                    View job
+                  </a>
+                </div>
+              </div>
+            </div>
+          }
+        }
+      </div>
+    </aside>
   </div>
 </div>

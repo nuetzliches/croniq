@@ -35,6 +35,12 @@ export class ExecutionsStore {
 
     readonly executions = computed(() => this.executionsResource.value() ?? []);
     readonly isLoading = this.executionsResource.isLoading;
+    readonly loading = computed(() => this.executionsResource.isLoading());
+    readonly error = computed(() => this.executionsResource.error());
+
+    refresh() {
+        this.executionsResource.reload();
+    }
 
     fetchLogs(executionId: string) {
         const tenant = this.tenantContext.tenantId();
