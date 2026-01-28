@@ -285,7 +285,11 @@ public sealed class CroniqTriggerSeedingHostedService : IHostedService
                 descriptor.Attribute.JobName,
                 descriptor.Attribute.Variant,
                 descriptor.JobType.Name,
-                Metadata: null);
+                Metadata: null,
+                AssignedRunnerId: _coreOptions.InstanceId,
+                AssignedBy: _coreOptions.InstanceId,
+                AssignedAtUtc: DateTimeOffset.UtcNow,
+                AssignmentSource: "system");
 
             plans.Add(new SeedPlan(validation.JobKey, triggerDefinition, jobDefinition, validation.Summary, managedBy));
         }

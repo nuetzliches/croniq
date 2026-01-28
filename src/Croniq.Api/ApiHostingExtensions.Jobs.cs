@@ -118,6 +118,28 @@ public static partial class ApiHostingExtensions
             var existing = await store.GetJobAsync(jobKey.Value, scope, cancellationToken).ConfigureAwait(false);
             if (existing is not null)
             {
+                if (existing.IsActive
+                    && !string.Equals(existing.AssignedRunnerId, runnerId, StringComparison.OrdinalIgnoreCase))
+                {
+                    return Results.Problem(
+                        statusCode: StatusCodes.Status409Conflict,
+                        title: "job-assignment-conflict",
+                        detail: "Job is already active and assigned to another runner.");
+                }
+
+                if (!string.Equals(existing.AssignedRunnerId, runnerId, StringComparison.OrdinalIgnoreCase))
+                {
+                    var updated = existing with
+                    {
+                        AssignedRunnerId = runnerId,
+                        AssignedBy = runnerId,
+                        AssignedAtUtc = DateTimeOffset.UtcNow,
+                        AssignmentSource = "runner"
+                    };
+                    await store.UpsertJobAsync(updated, scope, cancellationToken).ConfigureAwait(false);
+                    return Results.Ok(ToJobResponse(updated));
+                }
+
                 return Results.Ok(ToJobResponse(existing));
             }
 
@@ -144,7 +166,11 @@ public static partial class ApiHostingExtensions
                 jobKey.Variant,
                 request.Description,
                 metadata,
-                IsActive: policy == RunnerJobRegistrationPolicy.AutoActivate);
+                IsActive: policy == RunnerJobRegistrationPolicy.AutoActivate,
+                AssignedRunnerId: runnerId,
+                AssignedBy: runnerId,
+                AssignedAtUtc: DateTimeOffset.UtcNow,
+                AssignmentSource: "runner");
 
             await store.UpsertJobAsync(job, scope, cancellationToken).ConfigureAwait(false);
             return Results.Created($"/tenants/{tenantId}/jobs/{Uri.EscapeDataString(job.JobKey)}", ToJobResponse(job));
@@ -176,15 +202,8 @@ public static partial class ApiHostingExtensions
             }
 
             var scope = new PartitionScope(tenantId, resolvedEnvironment);
-            var isActive = request.IsActive ?? true;
-            if (!request.IsActive.HasValue)
-            {
-                var existing = await store.GetJobAsync(jobKey.Value, scope, cancellationToken).ConfigureAwait(false);
-                if (existing is not null)
-                {
-                    isActive = existing.IsActive;
-                }
-            }
+            var existing = await store.GetJobAsync(jobKey.Value, scope, cancellationToken).ConfigureAwait(false);
+            var isActive = request.IsActive ?? existing?.IsActive ?? true;
 
             if (!string.Equals(jobKey.NamespaceSegment, request.Namespace, StringComparison.OrdinalIgnoreCase))
             {
@@ -203,6 +222,46 @@ public static partial class ApiHostingExtensions
                 return Results.BadRequest(new { error = "variant-mismatch", message = "Variant must match the job key variant." });
             }
 
+            var normalizedAssignedRunnerId = NormalizeNullableString(request.AssignedRunnerId);
+            var assignedRunnerId = normalizedAssignedRunnerId ?? existing?.AssignedRunnerId;
+            var assignmentNotes = request.AssignmentNotes is null
+                ? existing?.AssignmentNotes
+                : NormalizeNullableString(request.AssignmentNotes);
+            var assignmentChanged = normalizedAssignedRunnerId is not null
+                && !string.Equals(normalizedAssignedRunnerId, existing?.AssignedRunnerId, StringComparison.OrdinalIgnoreCase);
+
+            if (existing is not null && assignmentChanged && existing.IsActive && isActive)
+            {
+                return Results.Problem(
+                    statusCode: StatusCodes.Status409Conflict,
+                    title: "job-assignment-conflict",
+                    detail: "Reassignment is only allowed when the job is inactive.");
+            }
+
+            if (isActive && string.IsNullOrWhiteSpace(assignedRunnerId))
+            {
+                return Results.BadRequest(new { error = "assignment-required", message = "AssignedRunnerId is required for active jobs." });
+            }
+
+            var assignedBy = existing?.AssignedBy;
+            var assignedAtUtc = existing?.AssignedAtUtc;
+            var assignmentSource = existing?.AssignmentSource;
+            if (assignmentChanged)
+            {
+                if (string.IsNullOrWhiteSpace(assignedRunnerId))
+                {
+                    assignedBy = null;
+                    assignedAtUtc = null;
+                    assignmentSource = null;
+                }
+                else
+                {
+                    assignedBy = ResolveCallerIdentity(callerContextAccessor);
+                    assignedAtUtc = DateTimeOffset.UtcNow;
+                    assignmentSource = "api";
+                }
+            }
+
             var job = new JobDefinition(
                 jobKey.Value,
                 request.Namespace,
@@ -210,7 +269,12 @@ public static partial class ApiHostingExtensions
                 request.Variant,
                 request.Description,
                 ToReadOnly(request.Metadata),
-                isActive);
+                isActive,
+                assignedRunnerId,
+                assignedBy,
+                assignedAtUtc,
+                assignmentSource,
+                assignmentNotes);
 
             await store.UpsertJobAsync(job, scope, cancellationToken).ConfigureAwait(false);
             return Results.Created($"/tenants/{tenantId}/jobs/{Uri.EscapeDataString(job.JobKey)}", ToJobResponse(job));
@@ -279,6 +343,11 @@ public static partial class ApiHostingExtensions
                 return Results.Ok(ToJobResponse(job));
             }
 
+            if (string.IsNullOrWhiteSpace(job.AssignedRunnerId))
+            {
+                return Results.BadRequest(new { error = "assignment-required", message = "AssignedRunnerId is required to activate a job." });
+            }
+
             var updated = job with { IsActive = true };
             await store.UpsertJobAsync(updated, scope, cancellationToken).ConfigureAwait(false);
             return Results.Ok(ToJobResponse(updated));
@@ -341,13 +410,21 @@ public static partial class ApiHostingExtensions
             }
 
             var metadata = ToReadOnly(request.Metadata);
-            var job = new JobDefinition(
-                jobKey.Value,
-                jobKey.NamespaceSegment,
-                jobKey.JobName,
-                jobKey.Variant,
-                request.Description,
-                metadata);
+            var existing = await store.GetJobAsync(jobKey.Value, scope, cancellationToken).ConfigureAwait(false);
+            var job = existing is null
+                ? new JobDefinition(
+                    jobKey.Value,
+                    jobKey.NamespaceSegment,
+                    jobKey.JobName,
+                    jobKey.Variant,
+                    request.Description,
+                    metadata,
+                    IsActive: false)
+                : existing with
+                {
+                    Description = request.Description,
+                    Metadata = metadata
+                };
 
             var trigger = new TriggerDefinition(
                 validation.TriggerId,
@@ -494,6 +571,16 @@ public static partial class ApiHostingExtensions
         }
 
         return false;
+    }
+
+    private static string? NormalizeNullableString(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return null;
+        }
+
+        return value.Trim();
     }
 
     private static IReadOnlyDictionary<string, string>? BuildRunnerRegistrationMetadata(

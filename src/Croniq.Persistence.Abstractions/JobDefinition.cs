@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 
 namespace Croniq.Persistence.Abstractions;
@@ -12,4 +13,9 @@ public sealed record JobDefinition(
     string? Variant,
     string? Description,
     IReadOnlyDictionary<string, string>? Metadata,
-    bool IsActive = true);
+    bool IsActive = true,
+    string? AssignedRunnerId = null,
+    string? AssignedBy = null,
+    DateTimeOffset? AssignedAtUtc = null,
+    string? AssignmentSource = null,
+    string? AssignmentNotes = null);

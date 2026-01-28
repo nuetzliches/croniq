@@ -83,7 +83,7 @@ public sealed class WorkAckPolicyTests
     private static async Task SeedDueTriggerAsync(IJobPersistenceProvider store, PartitionScope scope, string jobKey)
     {
         await store.UpsertJobAsync(
-            new JobDefinition(jobKey, "ops", "work", Variant: null, Description: null, Metadata: null),
+            new JobDefinition(jobKey, "ops", "work", Variant: null, Description: null, Metadata: null, AssignedRunnerId: RunnerId),
             scope,
             CancellationToken.None);
 

@@ -69,6 +69,7 @@ public sealed class PostgresDbContext(DbContextOptions<PostgresDbContext> option
         builder.ToTable("Jobs", "croniq");
         builder.HasIndex(x => new { x.TenantId, x.EnvironmentTag, x.JobKey }).IsUnique();
         builder.HasIndex(x => new { x.TenantId, x.EnvironmentTag });
+        builder.HasIndex(x => new { x.TenantId, x.EnvironmentTag, x.AssignedRunnerId });
         builder.HasOne<TenantEntity>()
             .WithMany()
             .HasForeignKey(x => x.TenantId)

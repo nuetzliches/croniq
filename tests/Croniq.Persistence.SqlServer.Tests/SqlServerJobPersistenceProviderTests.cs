@@ -73,7 +73,7 @@ public sealed class SqlServerJobPersistenceProviderTests : IAsyncLifetime
         };
 
         await _persistence!.UpsertJobAsync(
-            new JobDefinition(jobKey.Value, jobKey.NamespaceSegment, "DemoJob", jobKey.Variant, "original", metadata),
+            new JobDefinition(jobKey.Value, jobKey.NamespaceSegment, "DemoJob", jobKey.Variant, "original", metadata, AssignedRunnerId: "instance-1"),
             scope,
             CancellationToken.None);
 
@@ -88,7 +88,7 @@ public sealed class SqlServerJobPersistenceProviderTests : IAsyncLifetime
 
         var updatedMetadata = new Dictionary<string, string> { ["owner"] = "sre" };
         await _persistence.UpsertJobAsync(
-            new JobDefinition(jobKey.Value, jobKey.NamespaceSegment, "DemoJob", jobKey.Variant, "updated", updatedMetadata),
+            new JobDefinition(jobKey.Value, jobKey.NamespaceSegment, "DemoJob", jobKey.Variant, "updated", updatedMetadata, AssignedRunnerId: "instance-1"),
             scope,
             CancellationToken.None);
 
@@ -105,7 +105,7 @@ public sealed class SqlServerJobPersistenceProviderTests : IAsyncLifetime
     {
         var scope = new PartitionScope("tenant-a", "dev");
         var jobKey = JobKey.Create("samples", "logging-job");
-        var job = new JobDefinition(jobKey.Value, jobKey.NamespaceSegment, jobKey.JobName, jobKey.Variant, "seed", null);
+        var job = new JobDefinition(jobKey.Value, jobKey.NamespaceSegment, jobKey.JobName, jobKey.Variant, "seed", null, AssignedRunnerId: "instance-1");
 
         var barrier = new Barrier(2);
         var tasks = new[]
@@ -141,11 +141,11 @@ public sealed class SqlServerJobPersistenceProviderTests : IAsyncLifetime
         var otherScope = new PartitionScope("tenant-c", "qa");
 
         await _persistence!.UpsertJobAsync(
-            new JobDefinition(jobKey.Value, jobKey.NamespaceSegment, jobKey.JobName, jobKey.Variant, "dev job", null),
+            new JobDefinition(jobKey.Value, jobKey.NamespaceSegment, jobKey.JobName, jobKey.Variant, "dev job", null, AssignedRunnerId: "instance-1"),
             scope,
             CancellationToken.None);
         await _persistence.UpsertJobAsync(
-            new JobDefinition(jobKey.Value, jobKey.NamespaceSegment, jobKey.JobName, jobKey.Variant, "qa job", null),
+            new JobDefinition(jobKey.Value, jobKey.NamespaceSegment, jobKey.JobName, jobKey.Variant, "qa job", null, AssignedRunnerId: "instance-1"),
             otherScope,
             CancellationToken.None);
         var jobs = await _persistence.ListJobsAsync(scope, CancellationToken.None);
@@ -163,7 +163,7 @@ public sealed class SqlServerJobPersistenceProviderTests : IAsyncLifetime
         var jobKey = JobKey.Create("billing", "cleanup");
 
         await _persistence!.UpsertJobAsync(
-            new JobDefinition(jobKey.Value, jobKey.NamespaceSegment, jobKey.JobName, jobKey.Variant, null, null),
+            new JobDefinition(jobKey.Value, jobKey.NamespaceSegment, jobKey.JobName, jobKey.Variant, null, null, AssignedRunnerId: "instance-1"),
             scope,
             CancellationToken.None);
         var trigger = new TriggerDefinition($"{jobKey.Value}:nightly", jobKey.Value, "0 0 * * * ?", scope);
@@ -186,7 +186,7 @@ public sealed class SqlServerJobPersistenceProviderTests : IAsyncLifetime
         var jobKey = JobKey.Create("ops", "clock");
 
         await _persistence!.UpsertJobAsync(
-            new JobDefinition(jobKey.Value, jobKey.NamespaceSegment, jobKey.JobName, jobKey.Variant, "demo", null),
+            new JobDefinition(jobKey.Value, jobKey.NamespaceSegment, jobKey.JobName, jobKey.Variant, "demo", null, AssignedRunnerId: "instance-1"),
             scope,
             CancellationToken.None);
 
@@ -209,7 +209,7 @@ public sealed class SqlServerJobPersistenceProviderTests : IAsyncLifetime
         var jobKey = JobKey.Create("billing", "invoice");
 
         await _persistence!.UpsertJobAsync(
-            new JobDefinition(jobKey.Value, jobKey.NamespaceSegment, "Invoicing", jobKey.Variant, null, null),
+            new JobDefinition(jobKey.Value, jobKey.NamespaceSegment, "Invoicing", jobKey.Variant, null, null, AssignedRunnerId: "instance-1"),
             scope,
             CancellationToken.None);
 
@@ -257,7 +257,7 @@ public sealed class SqlServerJobPersistenceProviderTests : IAsyncLifetime
         var jobKey = JobKey.Create("billing", "renew");
 
         await _persistence!.UpsertJobAsync(
-            new JobDefinition(jobKey.Value, jobKey.NamespaceSegment, "RenewJob", jobKey.Variant, null, null),
+            new JobDefinition(jobKey.Value, jobKey.NamespaceSegment, "RenewJob", jobKey.Variant, null, null, AssignedRunnerId: "instance-1"),
             scope,
             CancellationToken.None);
 
@@ -302,7 +302,7 @@ public sealed class SqlServerJobPersistenceProviderTests : IAsyncLifetime
         var jobKey = JobKey.Create("billing", "release-guard");
 
         await _persistence!.UpsertJobAsync(
-            new JobDefinition(jobKey.Value, jobKey.NamespaceSegment, jobKey.JobName, jobKey.Variant, null, null),
+            new JobDefinition(jobKey.Value, jobKey.NamespaceSegment, jobKey.JobName, jobKey.Variant, null, null, AssignedRunnerId: "instance-1"),
             scope,
             CancellationToken.None);
 
@@ -339,7 +339,7 @@ public sealed class SqlServerJobPersistenceProviderTests : IAsyncLifetime
         var jobKey = JobKey.Create("ops", "once");
 
         await _persistence!.UpsertJobAsync(
-            new JobDefinition(jobKey.Value, jobKey.NamespaceSegment, jobKey.JobName, jobKey.Variant, null, null),
+            new JobDefinition(jobKey.Value, jobKey.NamespaceSegment, jobKey.JobName, jobKey.Variant, null, null, AssignedRunnerId: "instance-1"),
             scope,
             CancellationToken.None);
 

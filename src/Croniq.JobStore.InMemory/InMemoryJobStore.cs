@@ -280,10 +280,15 @@ public sealed class InMemoryJobStore : IJobPersistenceProvider, IJobDeadLetterSt
                 var identity = BuildJobIdentity(definition.Scope, definition.JobKey);
                 if (!_jobs.TryGetValue(identity, out var job))
                 {
-                    return true;
+                    return false;
                 }
 
-                return job.IsActive;
+                if (!job.IsActive)
+                {
+                    return false;
+                }
+
+                return string.Equals(job.AssignedRunnerId, request.InstanceId, StringComparison.OrdinalIgnoreCase);
             }
 
             var candidates = _triggers.Values
@@ -550,7 +555,19 @@ public sealed class InMemoryJobStore : IJobPersistenceProvider, IJobDeadLetterSt
             ? null
             : new Dictionary<string, string>(job.Metadata, StringComparer.OrdinalIgnoreCase);
 
-        return new JobDefinition(job.JobKey, job.Namespace, job.Name, job.Variant, job.Description, metadata, job.IsActive);
+        return new JobDefinition(
+            job.JobKey,
+            job.Namespace,
+            job.Name,
+            job.Variant,
+            job.Description,
+            metadata,
+            job.IsActive,
+            job.AssignedRunnerId,
+            job.AssignedBy,
+            job.AssignedAtUtc,
+            job.AssignmentSource,
+            job.AssignmentNotes);
     }
 
     private DateTimeOffset? ComputeNextFire(

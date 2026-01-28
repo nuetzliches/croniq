@@ -146,11 +146,11 @@ public sealed class WorkEventsTests : IClassFixture<WebhookApiTestHost>
         eventsResponse.StatusCode.ShouldBe(HttpStatusCode.Forbidden);
     }
 
-    private async Task SeedDueTriggerAsync(string jobKey, DateTimeOffset startAtUtc)
+    private async Task SeedDueTriggerAsync(string jobKey, DateTimeOffset startAtUtc, string runnerId = "itest-client")
     {
         var scope = _host.DefaultScope;
         await _host.JobStore.UpsertJobAsync(
-            new JobDefinition(jobKey, "ops", "work", Variant: null, Description: null, Metadata: null),
+            new JobDefinition(jobKey, "ops", "work", Variant: null, Description: null, Metadata: null, AssignedRunnerId: runnerId),
             scope,
             CancellationToken.None);
 

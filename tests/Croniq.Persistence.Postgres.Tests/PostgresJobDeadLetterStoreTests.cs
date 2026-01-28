@@ -108,7 +108,7 @@ public sealed class PostgresJobDeadLetterStoreTests : IAsyncLifetime
         var triggerId = $"{jobKey.Value}:t1";
 
         await _persistence!.UpsertJobAsync(
-            new JobDefinition(jobKey.Value, jobKey.NamespaceSegment, jobKey.JobName, jobKey.Variant, "demo", null),
+            new JobDefinition(jobKey.Value, jobKey.NamespaceSegment, jobKey.JobName, jobKey.Variant, "demo", null, AssignedRunnerId: "deadletter-test"),
             scope,
             CancellationToken.None);
 

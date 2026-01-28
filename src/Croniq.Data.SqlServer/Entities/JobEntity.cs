@@ -40,6 +40,20 @@ public sealed class JobEntity
 
     public bool IsActive { get; set; } = true;
 
+    [MaxLength(256)]
+    public string? AssignedRunnerId { get; set; }
+
+    [MaxLength(256)]
+    public string? AssignedBy { get; set; }
+
+    public DateTime? AssignedAtUtc { get; set; }
+
+    [MaxLength(64)]
+    public string? AssignmentSource { get; set; }
+
+    [MaxLength(1024)]
+    public string? AssignmentNotes { get; set; }
+
     public string? MetadataJson { get; set; }
 
     public DateTime CreatedAtUtc { get; set; }

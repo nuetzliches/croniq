@@ -188,13 +188,21 @@ internal sealed class SchedulerGrpcService : Scheduler.SchedulerBase
                 }
             }
 
-            var job = new JobDefinition(
-                jobKey.Value,
-                jobKey.NamespaceSegment,
-                jobKey.JobName,
-                jobKey.Variant,
-                request.Description,
-                metadata);
+            var existing = await _store.GetJobAsync(jobKey.Value, scope, context.CancellationToken).ConfigureAwait(false);
+            var job = existing is null
+                ? new JobDefinition(
+                    jobKey.Value,
+                    jobKey.NamespaceSegment,
+                    jobKey.JobName,
+                    jobKey.Variant,
+                    request.Description,
+                    metadata,
+                    IsActive: false)
+                : existing with
+                {
+                    Description = request.Description,
+                    Metadata = metadata
+                };
 
             var trigger = new TriggerDefinition(
                 validation.TriggerId,

@@ -268,7 +268,7 @@ public sealed class GrpcRunnerTests
 
         var scope = new PartitionScope(tenantId, environmentTag);
         const string jobKey = "ops:grpc-runner";
-        await store.UpsertJobAsync(new JobDefinition(jobKey, "ops", "grpc-runner", Variant: null, Description: null, Metadata: null), scope, CancellationToken.None);
+        await store.UpsertJobAsync(new JobDefinition(jobKey, "ops", "grpc-runner", Variant: null, Description: null, Metadata: null, AssignedRunnerId: "default"), scope, CancellationToken.None);
 
         var triggerId = $"{jobKey}:once-{Guid.NewGuid():N}";
         var trigger = new TriggerDefinition(
@@ -380,7 +380,7 @@ public sealed class GrpcRunnerTests
 
         var scope = new PartitionScope(tenantId, environmentTag);
         const string jobKey = "ops:grpc-runner-parity";
-        await store.UpsertJobAsync(new JobDefinition(jobKey, "ops", "grpc-runner-parity", Variant: null, Description: null, Metadata: null), scope, CancellationToken.None);
+        await store.UpsertJobAsync(new JobDefinition(jobKey, "ops", "grpc-runner-parity", Variant: null, Description: null, Metadata: null, AssignedRunnerId: "default"), scope, CancellationToken.None);
 
         var triggerId = $"{jobKey}:once-{Guid.NewGuid():N}";
         var trigger = new TriggerDefinition(
@@ -495,7 +495,7 @@ public sealed class GrpcRunnerTests
         var scope = new PartitionScope(tenantId, environmentTag);
         const string jobKey = "ops:grpc-runner-test-gate";
         await store.UpsertJobAsync(
-            new JobDefinition(jobKey, "ops", "grpc-runner-test-gate", Variant: null, Description: null, Metadata: null),
+            new JobDefinition(jobKey, "ops", "grpc-runner-test-gate", Variant: null, Description: null, Metadata: null, AssignedRunnerId: "default"),
             scope,
             CancellationToken.None);
 
@@ -630,7 +630,7 @@ public sealed class GrpcRunnerTests
         var scope = new PartitionScope(tenantId, environmentTag);
         const string jobKey = "ops:grpc-runner-events";
         await store.UpsertJobAsync(
-            new JobDefinition(jobKey, "ops", "grpc-runner-events", Variant: null, Description: null, Metadata: null),
+            new JobDefinition(jobKey, "ops", "grpc-runner-events", Variant: null, Description: null, Metadata: null, AssignedRunnerId: "default"),
             scope,
             CancellationToken.None);
 
@@ -770,7 +770,7 @@ public sealed class GrpcRunnerTests
         var scope = new PartitionScope(tenantId, environmentTag);
         const string jobKey = "ops:grpc-runner-ack-twice";
         await store.UpsertJobAsync(
-            new JobDefinition(jobKey, "ops", "grpc-runner-ack-twice", Variant: null, Description: null, Metadata: null),
+            new JobDefinition(jobKey, "ops", "grpc-runner-ack-twice", Variant: null, Description: null, Metadata: null, AssignedRunnerId: "default"),
             scope,
             CancellationToken.None);
 
@@ -889,7 +889,7 @@ public sealed class GrpcRunnerTests
         var scope = new PartitionScope(tenantId, environmentTag);
         const string jobKey = "ops:grpc-runner-reject-test";
         await store.UpsertJobAsync(
-            new JobDefinition(jobKey, "ops", "grpc-runner-reject-test", Variant: null, Description: null, Metadata: null),
+            new JobDefinition(jobKey, "ops", "grpc-runner-reject-test", Variant: null, Description: null, Metadata: null, AssignedRunnerId: "default"),
             scope,
             CancellationToken.None);
 
@@ -1011,7 +1011,7 @@ public sealed class GrpcRunnerTests
 
         var scope = new PartitionScope(tenantId, environmentTag);
         const string jobKey = "ops:grpc-runner-retry";
-        await store.UpsertJobAsync(new JobDefinition(jobKey, "ops", "grpc-runner-retry", Variant: null, Description: null, Metadata: null), scope, CancellationToken.None);
+        await store.UpsertJobAsync(new JobDefinition(jobKey, "ops", "grpc-runner-retry", Variant: null, Description: null, Metadata: null, AssignedRunnerId: "default"), scope, CancellationToken.None);
 
         var triggerId = $"{jobKey}:once-{Guid.NewGuid():N}";
         var trigger = new TriggerDefinition(
@@ -1198,7 +1198,7 @@ public sealed class GrpcRunnerTests
 
         var scope = new PartitionScope(tenantId, environmentTag);
         const string jobKey = "ops:grpc-runner-double";
-        await store.UpsertJobAsync(new JobDefinition(jobKey, "ops", "grpc-runner-double", Variant: null, Description: null, Metadata: null), scope, CancellationToken.None);
+        await store.UpsertJobAsync(new JobDefinition(jobKey, "ops", "grpc-runner-double", Variant: null, Description: null, Metadata: null, AssignedRunnerId: "default"), scope, CancellationToken.None);
 
         var triggerId = $"{jobKey}:once-{Guid.NewGuid():N}";
         var trigger = new TriggerDefinition(

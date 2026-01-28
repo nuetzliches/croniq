@@ -337,7 +337,7 @@ public sealed class WorkEndpointsTests : IClassFixture<WebhookApiTestHost>
         const string jobKey = "ops:work-concurrent";
         _host.EnsureJob(jobKey);
 
-        await SeedDueTriggerAsync(jobKey, startAtUtc: DateTimeOffset.UtcNow.AddMinutes(-1));
+        await SeedDueTriggerAsync(jobKey, startAtUtc: DateTimeOffset.UtcNow.AddMinutes(-1), runnerId: "runner-1");
 
         const string runnerOneKey = "ak_runner_one_claim";
         const string runnerTwoKey = "ak_runner_two_claim";
@@ -390,7 +390,7 @@ public sealed class WorkEndpointsTests : IClassFixture<WebhookApiTestHost>
         const string jobKey = "ops:work";
         _host.EnsureJob(jobKey);
 
-        await SeedDueTriggerAsync(jobKey, startAtUtc: DateTimeOffset.UtcNow.AddMinutes(-1));
+        await SeedDueTriggerAsync(jobKey, startAtUtc: DateTimeOffset.UtcNow.AddMinutes(-1), runnerId: "runner-2");
 
         const string runnerOneKey = "ak_runner_one";
         const string runnerTwoKey = "ak_runner_two";
@@ -465,7 +465,7 @@ public sealed class WorkEndpointsTests : IClassFixture<WebhookApiTestHost>
         const string jobKey = "ops:work-renew-scope";
         _host.EnsureJob(jobKey);
 
-        await SeedDueTriggerAsync(jobKey, startAtUtc: DateTimeOffset.UtcNow.AddMinutes(-1));
+        await SeedDueTriggerAsync(jobKey, startAtUtc: DateTimeOffset.UtcNow.AddMinutes(-1), runnerId: "runner-1");
 
         const string pollKey = "ak_runner_poll";
         const string renewKey = "ak_runner_no_renew";
@@ -563,11 +563,12 @@ public sealed class WorkEndpointsTests : IClassFixture<WebhookApiTestHost>
         string jobKey,
         DateTimeOffset startAtUtc,
         string? executionMode = null,
-        string? invocationSource = null)
+        string? invocationSource = null,
+        string runnerId = "itest-client")
     {
         var scope = _host.DefaultScope;
         await _host.JobStore.UpsertJobAsync(
-            new JobDefinition(jobKey, "ops", "work", Variant: null, Description: null, Metadata: null),
+            new JobDefinition(jobKey, "ops", "work", Variant: null, Description: null, Metadata: null, AssignedRunnerId: runnerId),
             scope,
             CancellationToken.None);
 

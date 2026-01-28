@@ -677,7 +677,12 @@ public static partial class ApiHostingExtensions
             job.Variant,
             job.Description,
             metadata,
-            job.IsActive);
+            job.IsActive,
+            job.AssignedRunnerId,
+            job.AssignedBy,
+            job.AssignedAtUtc,
+            job.AssignmentSource,
+            job.AssignmentNotes);
     }
 
     private static WebhookEndpointResponse ToWebhookResponse(WebhookEndpointDefinition definition, string? secretOverride = null)

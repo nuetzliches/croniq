@@ -108,7 +108,7 @@ public sealed class CroniqJobRegistrySyncHostedService : IHostedService
                 }
 
                 await _store.UpsertJobAsync(
-                        BuildSyncedJob(descriptor, description: null, metadata: BuildSyncMetadata(null, managedBy)),
+                        BuildSyncedJob(descriptor, description: null, metadata: BuildSyncMetadata(null, managedBy), _coreOptions.InstanceId),
                         scope,
                         cancellationToken)
                     .ConfigureAwait(false);
@@ -136,7 +136,7 @@ public sealed class CroniqJobRegistrySyncHostedService : IHostedService
                 var mergedMetadata = BuildSyncMetadata(known.Metadata, managedBy);
 
                 await _store.UpsertJobAsync(
-                        BuildSyncedJob(descriptor, known.Description, mergedMetadata),
+                        BuildSyncedJob(descriptor, known.Description, mergedMetadata, _coreOptions.InstanceId),
                         scope,
                         cancellationToken)
                     .ConfigureAwait(false);
@@ -146,7 +146,7 @@ public sealed class CroniqJobRegistrySyncHostedService : IHostedService
             }
 
             await _store.UpsertJobAsync(
-                    BuildSyncedJob(descriptor, description: null, metadata: BuildSyncMetadata(null, managedBy)),
+                    BuildSyncedJob(descriptor, description: null, metadata: BuildSyncMetadata(null, managedBy), _coreOptions.InstanceId),
                     scope,
                     cancellationToken)
                 .ConfigureAwait(false);
@@ -166,7 +166,8 @@ public sealed class CroniqJobRegistrySyncHostedService : IHostedService
     private static JobDefinition BuildSyncedJob(
         JobDescriptor descriptor,
         string? description,
-        IReadOnlyDictionary<string, string>? metadata)
+        IReadOnlyDictionary<string, string>? metadata,
+        string assignedRunnerId)
     {
         return new JobDefinition(
             descriptor.JobKey.Value,
@@ -174,7 +175,11 @@ public sealed class CroniqJobRegistrySyncHostedService : IHostedService
             descriptor.Attribute.JobName,
             descriptor.Attribute.Variant,
             description,
-            metadata);
+            metadata,
+            AssignedRunnerId: assignedRunnerId,
+            AssignedBy: assignedRunnerId,
+            AssignedAtUtc: DateTimeOffset.UtcNow,
+            AssignmentSource: "system");
     }
 
     private static IReadOnlyDictionary<string, string>? BuildSyncMetadata(

@@ -119,7 +119,7 @@ public sealed class NoopJobPersistenceProvider : IJobPersistenceProvider, ICalen
                             && (t.StartAtUtc is null || t.StartAtUtc <= now)
                             && (request.AllowTestExecutions
                                 || !string.Equals(t.ExecutionMode, ExecutionIntent.ExecutionModes.Test, StringComparison.OrdinalIgnoreCase)))
-                .Where(t => IsJobActive(scope, t.JobKey))
+                .Where(t => IsJobActive(scope, t.JobKey, request.InstanceId))
                 .OrderBy(t => t.StartAtUtc ?? DateTimeOffset.MinValue)
                 .ThenBy(t => t.TriggerId, StringComparer.OrdinalIgnoreCase)
                 .ToList();
@@ -161,14 +161,19 @@ public sealed class NoopJobPersistenceProvider : IJobPersistenceProvider, ICalen
         }
     }
 
-    private bool IsJobActive(PartitionScope scope, string jobKey)
+    private bool IsJobActive(PartitionScope scope, string jobKey, string instanceId)
     {
         if (!_jobs.TryGetValue(BuildScopedJobKey(scope, jobKey), out var job))
         {
-            return true;
+            return false;
         }
 
-        return job.IsActive;
+        if (!job.IsActive)
+        {
+            return false;
+        }
+
+        return string.Equals(job.AssignedRunnerId, instanceId, StringComparison.OrdinalIgnoreCase);
     }
 
     public Task<TriggerLease?> TryRenewLeaseAsync(TriggerLeaseRenewRequest request, CancellationToken cancellationToken)
@@ -494,7 +499,19 @@ public sealed class NoopJobPersistenceProvider : IJobPersistenceProvider, ICalen
             ? null
             : new Dictionary<string, string>(job.Metadata, StringComparer.OrdinalIgnoreCase);
 
-        return new JobDefinition(job.JobKey, job.Namespace, job.Name, job.Variant, job.Description, metadata, job.IsActive);
+        return new JobDefinition(
+            job.JobKey,
+            job.Namespace,
+            job.Name,
+            job.Variant,
+            job.Description,
+            metadata,
+            job.IsActive,
+            job.AssignedRunnerId,
+            job.AssignedBy,
+            job.AssignedAtUtc,
+            job.AssignmentSource,
+            job.AssignmentNotes);
     }
 
     private static string BuildScopedJobKey(PartitionScope scope, string jobKey)

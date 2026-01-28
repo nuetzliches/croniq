@@ -75,7 +75,7 @@ public sealed class RunnerFallbackTests
 
         var scope = new PartitionScope(tenantId, environmentTag);
         const string jobKey = "ops:runner-fallback";
-        await store.UpsertJobAsync(new JobDefinition(jobKey, "ops", "fallback", Variant: null, Description: null, Metadata: null), scope, CancellationToken.None);
+        await store.UpsertJobAsync(new JobDefinition(jobKey, "ops", "fallback", Variant: null, Description: null, Metadata: null, AssignedRunnerId: "default"), scope, CancellationToken.None);
 
         var triggerId = $"{jobKey}:once-{Guid.NewGuid():N}";
         var trigger = new TriggerDefinition(

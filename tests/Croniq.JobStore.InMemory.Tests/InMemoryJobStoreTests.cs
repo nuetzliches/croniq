@@ -22,7 +22,7 @@ public class InMemoryJobStoreTests
         var store = CreateStore(now, 45);
 
         var jobKey = "samples:job";
-        await store.UpsertJobAsync(new JobDefinition(jobKey, "samples", "job", null, "sample", null), DefaultScope, CancellationToken.None);
+        await store.UpsertJobAsync(new JobDefinition(jobKey, "samples", "job", null, "sample", null, AssignedRunnerId: "instance-1"), DefaultScope, CancellationToken.None);
         await store.UpsertTriggerAsync(new TriggerDefinition(jobKey, jobKey, "0 * * * * ?", DefaultScope), CancellationToken.None);
 
         var acquire = new TriggerAcquireRequest(DefaultScope, "instance-1", now.AddMinutes(1), 5);
@@ -47,7 +47,7 @@ public class InMemoryJobStoreTests
         var store = CreateStore(now, 30);
 
         var jobKey = "samples:owner";
-        await store.UpsertJobAsync(new JobDefinition(jobKey, "samples", "owner", null, "sample", null), DefaultScope, CancellationToken.None);
+        await store.UpsertJobAsync(new JobDefinition(jobKey, "samples", "owner", null, "sample", null, AssignedRunnerId: "instance-1"), DefaultScope, CancellationToken.None);
         await store.UpsertTriggerAsync(new TriggerDefinition(jobKey, jobKey, "0 * * * * ?", DefaultScope), CancellationToken.None);
 
         var lease = (await store.AcquireAsync(new TriggerAcquireRequest(DefaultScope, "instance-1", now.AddMinutes(1), 1), CancellationToken.None))
@@ -66,7 +66,7 @@ public class InMemoryJobStoreTests
         var jobKey = "samples:renew";
         var triggerId = $"{jobKey}:t1";
 
-        await store.UpsertJobAsync(new JobDefinition(jobKey, "samples", "renew", null, "sample", null), DefaultScope, CancellationToken.None);
+        await store.UpsertJobAsync(new JobDefinition(jobKey, "samples", "renew", null, "sample", null, AssignedRunnerId: "instance-1"), DefaultScope, CancellationToken.None);
         await store.UpsertTriggerAsync(new TriggerDefinition(triggerId, jobKey, "0 * * * * ?", DefaultScope), CancellationToken.None);
 
         var acquireAt = now.AddMinutes(1);
@@ -92,7 +92,7 @@ public class InMemoryJobStoreTests
         var jobKey = "samples:job2";
         var triggerKey = $"{jobKey}:t";
 
-        await store.UpsertJobAsync(new JobDefinition(jobKey, "samples", "job2", null, "sample", null), DefaultScope, CancellationToken.None);
+        await store.UpsertJobAsync(new JobDefinition(jobKey, "samples", "job2", null, "sample", null, AssignedRunnerId: "instance-1"), DefaultScope, CancellationToken.None);
         await store.UpsertTriggerAsync(new TriggerDefinition(triggerKey, jobKey, "0/30 * * * * ?", DefaultScope), CancellationToken.None);
 
         var lease = (await store.AcquireAsync(new TriggerAcquireRequest(DefaultScope, "instance-1", now.AddSeconds(30), 5), CancellationToken.None)).First();
@@ -115,7 +115,7 @@ public class InMemoryJobStoreTests
         var jobKey = "samples:once";
         var triggerId = $"{jobKey}:once";
 
-        await store.UpsertJobAsync(new JobDefinition(jobKey, "samples", "once", null, "sample", null), DefaultScope, CancellationToken.None);
+        await store.UpsertJobAsync(new JobDefinition(jobKey, "samples", "once", null, "sample", null, AssignedRunnerId: "instance-1"), DefaultScope, CancellationToken.None);
         await store.UpsertTriggerAsync(
             new TriggerDefinition(triggerId, jobKey, TriggerSchedule.OnceExpression, DefaultScope, StartAtUtc: now),
             CancellationToken.None);
@@ -138,8 +138,8 @@ public class InMemoryJobStoreTests
         var jobA = "samples:a";
         var jobB = "samples:b";
 
-        await store.UpsertJobAsync(new JobDefinition(jobA, "samples", "a", null, null, null), DefaultScope, CancellationToken.None);
-        await store.UpsertJobAsync(new JobDefinition(jobB, "samples", "b", null, null, null), new PartitionScope("2", "dev"), CancellationToken.None);
+        await store.UpsertJobAsync(new JobDefinition(jobA, "samples", "a", null, null, null, AssignedRunnerId: "i1"), DefaultScope, CancellationToken.None);
+        await store.UpsertJobAsync(new JobDefinition(jobB, "samples", "b", null, null, null, AssignedRunnerId: "i2"), new PartitionScope("2", "dev"), CancellationToken.None);
 
         await store.UpsertTriggerAsync(new TriggerDefinition(jobA, jobA, "0 * * * * ?", DefaultScope), CancellationToken.None);
         await store.UpsertTriggerAsync(new TriggerDefinition(jobB, jobB, "0 * * * * ?", new PartitionScope("2", "dev")), CancellationToken.None);
@@ -151,7 +151,7 @@ public class InMemoryJobStoreTests
         leaseB.TriggerId.ShouldBe(jobB);
 
         // Wait out the lease; the trigger should be available again even without an explicit release.
-        var reacquire = await store.AcquireAsync(new TriggerAcquireRequest(DefaultScope, "i3", leaseA.FireAtUtc.AddSeconds(11), 5), CancellationToken.None);
+        var reacquire = await store.AcquireAsync(new TriggerAcquireRequest(DefaultScope, "i1", leaseA.FireAtUtc.AddSeconds(11), 5), CancellationToken.None);
         var leaseAfterExpiry = reacquire.ShouldHaveSingleItem();
         leaseAfterExpiry.TriggerId.ShouldBe(leaseA.TriggerId);
     }

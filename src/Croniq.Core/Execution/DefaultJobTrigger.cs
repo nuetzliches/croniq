@@ -158,18 +158,22 @@ public sealed class DefaultJobTrigger : IJobTrigger
     {
         var scope = GetScope();
         var existing = await _store.GetJobAsync(jobKey.Value, scope, cancellationToken).ConfigureAwait(false);
-        if (existing is null)
-        {
-            var jobDefinition = new JobDefinition(
-                jobKey.Value,
-                descriptor.Attribute.NamespaceSegment,
-                descriptor.Attribute.JobName,
-                descriptor.Attribute.Variant,
-                Description: null,
-                Metadata: null);
+            if (existing is null)
+            {
+                var jobDefinition = new JobDefinition(
+                    jobKey.Value,
+                    descriptor.Attribute.NamespaceSegment,
+                    descriptor.Attribute.JobName,
+                    descriptor.Attribute.Variant,
+                    Description: null,
+                    Metadata: null,
+                    AssignedRunnerId: _options.Value.InstanceId,
+                    AssignedBy: _options.Value.InstanceId,
+                    AssignedAtUtc: DateTimeOffset.UtcNow,
+                    AssignmentSource: "system");
 
-            await _store.UpsertJobAsync(jobDefinition, scope, cancellationToken).ConfigureAwait(false);
-        }
+                await _store.UpsertJobAsync(jobDefinition, scope, cancellationToken).ConfigureAwait(false);
+            }
 
         var triggerId = $"{jobKey.Value}:once-{Guid.NewGuid():N}";
         var startAtUtc = DateTimeOffset.UtcNow.Add(delay);

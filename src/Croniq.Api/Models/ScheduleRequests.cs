@@ -20,7 +20,12 @@ public sealed record JobResponse(
     string? Variant,
     string? Description,
     IReadOnlyDictionary<string, string>? Metadata,
-    bool IsActive);
+    bool IsActive,
+    string? AssignedRunnerId,
+    string? AssignedBy,
+    DateTimeOffset? AssignedAtUtc,
+    string? AssignmentSource,
+    string? AssignmentNotes);
 
 public sealed record UpsertJobRequest(
     [property: Required] string JobKey,
@@ -29,7 +34,9 @@ public sealed record UpsertJobRequest(
     string? Variant,
     string? Description,
     IDictionary<string, string>? Metadata = null,
-    bool? IsActive = null);
+    bool? IsActive = null,
+    string? AssignedRunnerId = null,
+    string? AssignmentNotes = null);
 
 public sealed record ScheduleResponse(
     string TriggerId,

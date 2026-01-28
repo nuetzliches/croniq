@@ -258,6 +258,25 @@ namespace Croniq.Data.Postgres.Migrations
 
                     NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<long>("Id"));
 
+                    b.Property<DateTime?>("AssignedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("AssignedBy")
+                        .HasMaxLength(256)
+                        .HasColumnType("character varying(256)");
+
+                    b.Property<string>("AssignedRunnerId")
+                        .HasMaxLength(256)
+                        .HasColumnType("character varying(256)");
+
+                    b.Property<string>("AssignmentNotes")
+                        .HasMaxLength(1024)
+                        .HasColumnType("character varying(1024)");
+
+                    b.Property<string>("AssignmentSource")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
                     b.Property<DateTime>("CreatedAtUtc")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("timestamp with time zone")
@@ -312,6 +331,8 @@ namespace Croniq.Data.Postgres.Migrations
                     b.HasKey("Id");
 
                     b.HasIndex("TenantId", "EnvironmentTag");
+
+                    b.HasIndex("TenantId", "EnvironmentTag", "AssignedRunnerId");
 
                     b.HasIndex("TenantId", "EnvironmentTag", "JobKey")
                         .IsUnique();
