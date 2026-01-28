@@ -36,13 +36,14 @@ public sealed class CroniqRunner : IAsyncDisposable
     private readonly ConcurrentQueue<Lease> _queue = new();
     private readonly SemaphoreSlim _queueSignal = new(0);
     private readonly SemaphoreSlim _inflightLimiter;
-    private readonly ConcurrentDictionary<string, RunnerExecuteHandler> _handlers = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, HandlerRegistration> _handlers = new(StringComparer.OrdinalIgnoreCase);
     private readonly OutboxStore _outbox;
     private readonly string _pollPath;
     private readonly string _renewPath;
     private readonly string _ackPath;
     private readonly string _eventsPath;
     private readonly string _heartbeatPath;
+    private readonly string _jobRegisterPath;
     private Channel<RunnerMessage>? _grpcOutbound;
     private volatile bool _grpcConnected;
     private volatile bool _running;
@@ -91,9 +92,13 @@ public sealed class CroniqRunner : IAsyncDisposable
         _ackPath = $"/tenants/{Uri.EscapeDataString(_config.TenantId)}/work/ack";
         _eventsPath = $"/tenants/{Uri.EscapeDataString(_config.TenantId)}/work";
         _heartbeatPath = $"/tenants/{Uri.EscapeDataString(_config.TenantId)}/runners/heartbeat";
+        _jobRegisterPath = $"/tenants/{Uri.EscapeDataString(_config.TenantId)}/jobs:register";
     }
 
     public void OnExecute(string jobKey, RunnerExecuteHandler handler)
+        => OnExecute(jobKey, handler, registration: null);
+
+    public void OnExecute(string jobKey, RunnerExecuteHandler handler, RunnerJobRegistration? registration)
     {
         if (string.IsNullOrWhiteSpace(jobKey))
         {
@@ -104,7 +109,7 @@ public sealed class CroniqRunner : IAsyncDisposable
             throw new ArgumentNullException(nameof(handler));
         }
 
-        if (!_handlers.TryAdd(jobKey.Trim(), handler))
+        if (!_handlers.TryAdd(jobKey.Trim(), new HandlerRegistration(handler, registration)))
         {
             throw new InvalidOperationException($"Handler already registered for jobKey '{jobKey}'.");
         }
@@ -129,6 +134,7 @@ public sealed class CroniqRunner : IAsyncDisposable
         var token = _runCts.Token;
 
         await _outbox.LoadAsync(token).ConfigureAwait(false);
+        await RegisterJobsAsync(token).ConfigureAwait(false);
 
         var tasks = new List<Task>
         {
@@ -273,7 +279,7 @@ public sealed class CroniqRunner : IAsyncDisposable
 
         try
         {
-            if (!_handlers.TryGetValue(lease.JobKey, out var handler))
+            if (!_handlers.TryGetValue(lease.JobKey, out var registration))
             {
                 _logger.Warn("No handler for jobKey", new Dictionary<string, object?> { ["jobKey"] = lease.JobKey });
                 await AckFailureInternalAsync(lease, "handler-not-found", "handler not registered", "handler-not-found", allowOutbox: true, runnerToken).ConfigureAwait(false);
@@ -299,7 +305,7 @@ public sealed class CroniqRunner : IAsyncDisposable
                 evt => SendEventsAsync(lease, new[] { evt }, allowOutbox: true, runnerToken));
 
             var payload = _config.ParsePayloadJson ? TryParsePayload(lease.Payload) : lease.Payload;
-            await handler(context, payload, _logger, leaseCts.Token).ConfigureAwait(false);
+            await registration.Handler(context, payload, _logger, leaseCts.Token).ConfigureAwait(false);
 
             if (!state.IsAbandoned)
             {
@@ -881,6 +887,49 @@ public sealed class CroniqRunner : IAsyncDisposable
         }
     }
 
+    private async Task RegisterJobsAsync(CancellationToken token)
+    {
+        if (!_config.RegisterJobs)
+        {
+            return;
+        }
+
+        foreach (var entry in _handlers)
+        {
+            var jobKey = entry.Key;
+            var registration = entry.Value.Registration;
+            var request = new RunnerJobRegistrationRequest
+            {
+                EnvironmentTag = _config.Environment,
+                RunnerId = _config.RunnerId,
+                RunnerInstanceId = _runnerInstanceId,
+                JobKey = jobKey,
+                Description = registration?.Description,
+                Metadata = registration?.Metadata
+            };
+
+            var response = await SendJsonAsync(_jobRegisterPath, request, token).ConfigureAwait(false);
+            if (!response.IsSuccessStatusCode)
+            {
+                await ThrowForStatusAsync(response).ConfigureAwait(false);
+            }
+
+            var body = await response.Content.ReadAsStringAsync(token).ConfigureAwait(false);
+            var job = string.IsNullOrWhiteSpace(body)
+                ? null
+                : JsonSerializer.Deserialize<JobResponse>(body, SerializerOptions);
+
+            if (job?.IsActive == false)
+            {
+                _logger.Warn("job registration pending approval", new Dictionary<string, object?> { ["jobKey"] = jobKey });
+            }
+            else
+            {
+                _logger.Info("job registration completed", new Dictionary<string, object?> { ["jobKey"] = jobKey });
+            }
+        }
+    }
+
     private string BuildHeartbeatMetadata()
     {
         var data = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
@@ -996,6 +1045,10 @@ public sealed class CroniqRunner : IAsyncDisposable
         if (response.StatusCode == HttpStatusCode.Forbidden && ContainsProblemTitle(body, "runner-mismatch"))
         {
             throw new RunnerMismatchException("RunnerId must match the authenticated caller identity.");
+        }
+        if (response.StatusCode == HttpStatusCode.Forbidden && ContainsProblemTitle(body, "runner-registration-denied"))
+        {
+            throw new RunnerJobRegistrationDeniedException("Runner self-registration is denied by policy.");
         }
         if (response.StatusCode == HttpStatusCode.Conflict && ContainsProblemTitle(body, "runner-id-in-use"))
         {
@@ -1216,7 +1269,21 @@ public sealed class CroniqRunner : IAsyncDisposable
         public string? MetadataJson { get; init; }
     }
 
+    private sealed record RunnerJobRegistrationRequest
+    {
+        public string? EnvironmentTag { get; init; }
+        public string RunnerId { get; init; } = string.Empty;
+        public string? RunnerInstanceId { get; init; }
+        public string JobKey { get; init; } = string.Empty;
+        public string? Description { get; init; }
+        public IReadOnlyDictionary<string, string>? Metadata { get; init; }
+    }
+
+    private sealed record JobResponse(string JobKey, bool IsActive);
+
     private sealed record OutboxAckSuccessPayload(Lease Lease);
     private sealed record OutboxAckFailurePayload(Lease Lease, string ErrorType, string ErrorMessage, string DeadLetterReason);
     private sealed record OutboxEventsPayload(Lease Lease, WorkEvent[] Events);
+
+    private sealed record HandlerRegistration(RunnerExecuteHandler Handler, RunnerJobRegistration? Registration);
 }

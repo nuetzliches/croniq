@@ -28,6 +28,7 @@ Optional (recommended defaults shown):
 - `CRONIQ_RETRY_BASE_MS` (default: 250)
 - `CRONIQ_RETRY_MAX_MS` (default: 5000)
 - `CRONIQ_RUNNER_INSTANCE_ID` (optional; default: generated per process)
+- `CRONIQ_RUNNER_REGISTER_JOBS` (default: `true`)
 
 Note: not all SDKs implement these env vars yet; this is the target contract.
 
@@ -51,6 +52,15 @@ SDKs should treat these fields as read-only metadata, surface them in logs/telem
 - SDKs should expose per-job handlers (`runner.onExecute(jobKey, handler)`), with an optional default handler.
 - The SDK owns lease, renew, ack, outbox, and transport behavior so client code stays minimal.
 - If a lease arrives for an unknown `job_key`, reject it with a non-retryable failure reason and a clear log entry.
+
+## Job self-registration
+
+- SDKs should register jobs on startup via `POST /tenants/{tenantId}/jobs:register`.
+- The request requires the `jobs:register` scope.
+- The request should include `environmentTag`, `runnerId`, `runnerInstanceId`, `jobKey`, and optional `description`/`metadata`.
+- If the API responds with `runner-registration-denied` (403), treat it as a fatal configuration error and stop the runner.
+- Pending jobs (`isActive=false`) must never be dispatched; SDKs should log that approval is required.
+- Allow users to disable auto-registration via `CRONIQ_RUNNER_REGISTER_JOBS=false`.
 
 ## Poll loop
 

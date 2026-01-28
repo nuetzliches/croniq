@@ -13,6 +13,7 @@ using Croniq.Sdk;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Options;
 
 namespace Croniq.Api;
 
@@ -75,6 +76,85 @@ public static partial class ApiHostingExtensions
         .Produces(StatusCodes.Status400BadRequest)
         .Produces(StatusCodes.Status404NotFound)
         .RequireCroniqTenantScope(CroniqScopes.JobsRead);
+
+        app.MapPost("/tenants/{tenantId}/jobs:register", async (
+            string tenantId,
+            string? environment,
+            RunnerJobRegistrationRequest request,
+            [FromServices] ICallerContextAccessor callerContextAccessor,
+            [FromServices] IOptions<CroniqApiOptions> apiOptions,
+            [FromServices] IJobPersistenceProvider store,
+            CancellationToken cancellationToken) =>
+        {
+            if (request is null)
+            {
+                return Results.BadRequest(new { error = "invalid-request" });
+            }
+
+            var resolvedEnvironment = ResolveEnvironmentTag(request.EnvironmentTag ?? environment, callerContextAccessor);
+            if (string.IsNullOrWhiteSpace(resolvedEnvironment))
+            {
+                return MissingEnvironment();
+            }
+
+            if (string.IsNullOrWhiteSpace(request.RunnerId))
+            {
+                return Results.BadRequest(new { error = "runner-required", message = "RunnerId is required." });
+            }
+
+            var runnerId = request.RunnerId.Trim();
+            var runnerFailure = EnsureRunnerIdentity(callerContextAccessor, runnerId);
+            if (runnerFailure is not null)
+            {
+                return runnerFailure;
+            }
+
+            if (!JobKey.TryParse(request.JobKey, out var jobKey))
+            {
+                return Results.BadRequest(new { error = "invalid-job-key", message = "JobKey must follow the Croniq format." });
+            }
+
+            var scope = new PartitionScope(tenantId.Trim(), resolvedEnvironment);
+            var existing = await store.GetJobAsync(jobKey.Value, scope, cancellationToken).ConfigureAwait(false);
+            if (existing is not null)
+            {
+                return Results.Ok(ToJobResponse(existing));
+            }
+
+            var registrationOptions = apiOptions.Value?.RunnerJobRegistration ?? new RunnerJobRegistrationOptions();
+            var policy = registrationOptions.Resolve(scope);
+            if (policy == RunnerJobRegistrationPolicy.Deny)
+            {
+                return Results.Problem(
+                    statusCode: StatusCodes.Status403Forbidden,
+                    title: "runner-registration-denied",
+                    detail: "Runner self-registration is not allowed for this tenant/environment.");
+            }
+
+            var metadata = BuildRunnerRegistrationMetadata(
+                request.Metadata,
+                runnerId,
+                request.RunnerInstanceId,
+                ResolveCallerIdentity(callerContextAccessor));
+
+            var job = new JobDefinition(
+                jobKey.Value,
+                jobKey.NamespaceSegment,
+                jobKey.JobName,
+                jobKey.Variant,
+                request.Description,
+                metadata,
+                IsActive: policy == RunnerJobRegistrationPolicy.AutoActivate);
+
+            await store.UpsertJobAsync(job, scope, cancellationToken).ConfigureAwait(false);
+            return Results.Created($"/tenants/{tenantId}/jobs/{Uri.EscapeDataString(job.JobKey)}", ToJobResponse(job));
+        })
+        .WithDocs("Jobs_Register", "Register job (runner)", "Registers a job definition via runner self-registration, honoring the registration policy.")
+        .Produces<JobResponse>(StatusCodes.Status200OK)
+        .Produces<JobResponse>(StatusCodes.Status201Created)
+        .Produces(StatusCodes.Status400BadRequest)
+        .Produces(StatusCodes.Status403Forbidden)
+        .RequireCroniqTenantScopeFromBodyOrQuery<RunnerJobRegistrationRequest>(r => r.EnvironmentTag, requireEnvironment: true, CroniqScopes.JobsRegister);
 
         app.MapPost("/tenants/{tenantId}/jobs", async (
             string tenantId,
@@ -414,5 +494,28 @@ public static partial class ApiHostingExtensions
         }
 
         return false;
+    }
+
+    private static IReadOnlyDictionary<string, string>? BuildRunnerRegistrationMetadata(
+        IDictionary<string, string>? metadata,
+        string runnerId,
+        string? runnerInstanceId,
+        string createdBy)
+    {
+        var result = metadata is null || metadata.Count == 0
+            ? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            : new Dictionary<string, string>(metadata, StringComparer.OrdinalIgnoreCase);
+
+        result["registrationSource"] = "runner";
+        result["createdBy"] = createdBy;
+        result["createdAtUtc"] = DateTimeOffset.UtcNow.ToString("O");
+        result["runnerId"] = runnerId;
+
+        if (!string.IsNullOrWhiteSpace(runnerInstanceId))
+        {
+            result["runnerInstanceId"] = runnerInstanceId.Trim();
+        }
+
+        return result.Count == 0 ? null : result;
     }
 }

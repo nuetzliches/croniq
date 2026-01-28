@@ -20,6 +20,12 @@ public sealed class RunnerIdInUseException : RunnerException
     public RunnerIdInUseException(string message, Exception innerException) : base(message, innerException) { }
 }
 
+public sealed class RunnerJobRegistrationDeniedException : RunnerException
+{
+    public RunnerJobRegistrationDeniedException(string message) : base(message) { }
+    public RunnerJobRegistrationDeniedException(string message, Exception innerException) : base(message, innerException) { }
+}
+
 public sealed class LeaseConflictException : RunnerException
 {
     public LeaseConflictException(string message) : base(message) { }

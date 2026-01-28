@@ -119,6 +119,7 @@ public sealed class NoopJobPersistenceProvider : IJobPersistenceProvider, ICalen
                             && (t.StartAtUtc is null || t.StartAtUtc <= now)
                             && (request.AllowTestExecutions
                                 || !string.Equals(t.ExecutionMode, ExecutionIntent.ExecutionModes.Test, StringComparison.OrdinalIgnoreCase)))
+                .Where(t => IsJobActive(scope, t.JobKey))
                 .OrderBy(t => t.StartAtUtc ?? DateTimeOffset.MinValue)
                 .ThenBy(t => t.TriggerId, StringComparer.OrdinalIgnoreCase)
                 .ToList();
@@ -158,6 +159,16 @@ public sealed class NoopJobPersistenceProvider : IJobPersistenceProvider, ICalen
 
             return Task.FromResult<IReadOnlyCollection<TriggerLease>>(leases);
         }
+    }
+
+    private bool IsJobActive(PartitionScope scope, string jobKey)
+    {
+        if (!_jobs.TryGetValue(BuildScopedJobKey(scope, jobKey), out var job))
+        {
+            return true;
+        }
+
+        return job.IsActive;
     }
 
     public Task<TriggerLease?> TryRenewLeaseAsync(TriggerLeaseRenewRequest request, CancellationToken cancellationToken)

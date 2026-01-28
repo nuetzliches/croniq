@@ -366,12 +366,13 @@ public sealed class PostgresJobPersistenceProvider : IJobPersistenceProvider, IC
             var nowUtc = request.NowUtc.UtcDateTime;
             var expiresAt = nowUtc.AddSeconds(_options.LeaseDurationSeconds);
 
-            var due = await db.Triggers
-                .Include(t => t.Job)
-                .Where(t => !t.IsDeleted && t.Enabled)
-                .Where(t => t.Job.TenantId == request.Scope.TenantId && t.Job.EnvironmentTag == request.Scope.EnvironmentTag)
-                .Where(t => request.AllowTestExecutions || t.ExecutionMode == null || t.ExecutionMode != ExecutionIntent.ExecutionModes.Test)
-                .Where(t => t.NextFireAtUtc != null && t.NextFireAtUtc <= nowUtc)
+                var due = await db.Triggers
+                    .Include(t => t.Job)
+                    .Where(t => !t.IsDeleted && t.Enabled)
+                    .Where(t => t.Job.TenantId == request.Scope.TenantId && t.Job.EnvironmentTag == request.Scope.EnvironmentTag)
+                    .Where(t => t.Job.IsActive)
+                    .Where(t => request.AllowTestExecutions || t.ExecutionMode == null || t.ExecutionMode != ExecutionIntent.ExecutionModes.Test)
+                    .Where(t => t.NextFireAtUtc != null && t.NextFireAtUtc <= nowUtc)
                 .Where(t => t.LeaseExpiresAtUtc == null || t.LeaseExpiresAtUtc <= nowUtc)
                 .OrderBy(t => t.NextFireAtUtc)
                 .ThenBy(t => t.Id)

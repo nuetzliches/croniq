@@ -8,9 +8,12 @@ public sealed class CroniqRunnerOptions
     public RunnerConfig? Config { get; set; }
     public TimeSpan DrainTimeout { get; set; } = TimeSpan.FromSeconds(30);
 
-    internal Dictionary<string, RunnerExecuteHandler> Handlers { get; } = new(StringComparer.OrdinalIgnoreCase);
+    internal Dictionary<string, HandlerRegistration> Handlers { get; } = new(StringComparer.OrdinalIgnoreCase);
 
     public void OnExecute(string jobKey, RunnerExecuteHandler handler)
+        => OnExecute(jobKey, handler, registration: null);
+
+    public void OnExecute(string jobKey, RunnerExecuteHandler handler, RunnerJobRegistration? registration)
     {
         if (string.IsNullOrWhiteSpace(jobKey))
         {
@@ -21,6 +24,8 @@ public sealed class CroniqRunnerOptions
             throw new ArgumentNullException(nameof(handler));
         }
 
-        Handlers[jobKey.Trim()] = handler;
+        Handlers[jobKey.Trim()] = new HandlerRegistration(handler, registration);
     }
 }
+
+internal sealed record HandlerRegistration(RunnerExecuteHandler Handler, RunnerJobRegistration? Registration);

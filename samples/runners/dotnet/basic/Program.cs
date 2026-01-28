@@ -10,26 +10,35 @@ var config = RunnerConfig.FromEnvironment() with
 {
     HeartbeatInterval = TimeSpan.FromSeconds(15)
 };
-var jobKey = Env("CRONIQ_JOB_KEY", "demo-job");
+var jobKey = Env("CRONIQ_JOB_KEY", "samples:dotnet-job");
 
 var runner = new CroniqRunner(config);
-runner.OnExecute(jobKey, async (context, payload, logger, cancellationToken) =>
-{
-    logger.Info("execution started", new Dictionary<string, object?>
+runner.OnExecute(
+    jobKey,
+    async (context, payload, logger, cancellationToken) =>
     {
-        ["executionId"] = context.ExecutionId,
-        ["jobKey"] = context.JobKey,
-        ["triggerId"] = context.TriggerId,
-        ["executionMode"] = context.ExecutionMode
-    });
+        logger.Info("execution started", new Dictionary<string, object?>
+        {
+            ["executionId"] = context.ExecutionId,
+            ["jobKey"] = context.JobKey,
+            ["triggerId"] = context.TriggerId,
+            ["executionMode"] = context.ExecutionMode
+        });
 
-    await Task.Delay(100, cancellationToken);
+        await Task.Delay(100, cancellationToken);
 
-    logger.Info("execution completed", new Dictionary<string, object?>
-    {
-        ["executionId"] = context.ExecutionId
-    });
-});
+        logger.Info("execution completed", new Dictionary<string, object?>
+        {
+            ["executionId"] = context.ExecutionId
+        });
+    },
+    new RunnerJobRegistration(
+        "Demo job registered by the .NET runner sample.",
+        new Dictionary<string, string>
+        {
+            ["sample"] = "dotnet",
+            ["sdk"] = "croniq-runner"
+        }));
 
 Console.WriteLine("Croniq runner (.NET)");
 Console.WriteLine($"- base_url:    {config.BaseUrl}");
@@ -61,4 +70,8 @@ try
 catch (RunnerIdInUseException ex)
 {
     Console.Error.WriteLine($"runnerId already in use: {ex.Message}");
+}
+catch (RunnerJobRegistrationDeniedException ex)
+{
+    Console.Error.WriteLine($"job registration denied: {ex.Message}");
 }

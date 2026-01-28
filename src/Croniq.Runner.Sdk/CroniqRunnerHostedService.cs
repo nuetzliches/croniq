@@ -38,6 +38,11 @@ public sealed class CroniqRunnerHostedService : BackgroundService
             _logger.LogError(ex, "RunnerId mismatch; shutting down.");
             throw;
         }
+        catch (RunnerJobRegistrationDeniedException ex)
+        {
+            _logger.LogError(ex, "Runner self-registration denied; shutting down.");
+            throw;
+        }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Runner host terminated unexpectedly.");

@@ -1,9 +1,12 @@
 import { DatePipe } from '@angular/common';
-import { ChangeDetectionStrategy, Component, Directive, computed, effect, inject, signal } from '@angular/core';
+import { CdkMenu } from '@angular/cdk/menu';
+import { ChangeDetectionStrategy, Component, Directive, TemplateRef, computed, effect, inject, signal, viewChild } from '@angular/core';
 import { epochMsFromIso, nowMs } from '@core/time/clock';
 import { UpsertScheduleRequest } from '@croniq/api-schema';
 import { ScheduleDialogComponent } from '@features/schedules/components/schedule-dialog/schedule-dialog.component';
-import { CqCellDefDirective, CqColumnComponent, DataGrid } from 'ui-kit';
+import { bindQueryParam } from '@shared/routing/selection-sync';
+import { ShellPanelService } from '@shell/panel/shell-panel.service';
+import { CqCellDefDirective, CqColumnComponent, CqContextMenuItemDirective, CqIconComponent, CqInputDirective, CqSelectDirective, DataGrid } from 'ui-kit';
 import { SchedulesStore, type ScheduleRow } from './schedules.store';
 
 type ScheduleCalendarEntry = {
@@ -49,13 +52,27 @@ export class CqScheduleCellDirective extends CqCellDefDirective<ScheduleRow> {
 
 @Component({
   selector: 'cq-schedules-page',
-  imports: [DatePipe, ScheduleDialogComponent, DataGrid, CqColumnComponent, CqScheduleCellDirective],
+  imports: [
+    CdkMenu,
+    DatePipe,
+    ScheduleDialogComponent,
+    DataGrid,
+    CqColumnComponent,
+    CqScheduleCellDirective,
+    CqContextMenuItemDirective,
+    CqIconComponent,
+    CqInputDirective,
+    CqSelectDirective,
+  ],
   templateUrl: './schedules-page.html',
   changeDetection: ChangeDetectionStrategy.OnPush,
   providers: [SchedulesStore],
 })
 export class SchedulesPage {
   private readonly store = inject(SchedulesStore);
+  private readonly shellPanel = inject(ShellPanelService);
+  private readonly panelTemplate = viewChild<TemplateRef<unknown>>('schedulesFilterPanel');
+  private readonly collapsedTemplate = viewChild<TemplateRef<unknown>>('schedulesFilterCollapsed');
   private readonly calendarAnchorMs = signal(startOfLocalDayMs(nowMs()));
   private readonly calendarOffsetWeeks = signal(0);
 
@@ -66,6 +83,9 @@ export class SchedulesPage {
   loading = this.store.loading;
   schedules = this.store.schedules;
   error = this.store.error;
+  scheduleDetail = this.store.scheduleDetail;
+  scheduleDetailLoading = this.store.scheduleDetailLoading;
+  scheduleDetailError = this.store.scheduleDetailError;
   calendarOptions = this.store.calendarOptions;
   calendarOptionsLoading = this.store.calendarOptionsLoading;
   calendarOptionsError = this.store.calendarOptionsError;
@@ -78,6 +98,98 @@ export class SchedulesPage {
   executions = this.store.executions;
   executionsLoading = this.store.executionsLoading;
   executionsError = this.store.executionsError;
+
+  readonly scheduleSearch = signal('');
+  readonly statusFilter = signal('all');
+  readonly jobSearch = signal('');
+  readonly selectedJobKeys = signal<ReadonlyArray<string>>([]);
+  readonly selectedScheduleId = bindQueryParam({ paramKey: 'triggerId' });
+
+  readonly statusOptions = computed(() => {
+    const options = new Set<string>();
+    this.schedules().forEach((schedule) => {
+      const state = (schedule.state ?? '').trim();
+      if (state) {
+        options.add(state);
+      }
+    });
+    return ['all', ...Array.from(options).sort((a, b) => a.localeCompare(b))].map((value) => ({
+      value,
+      label: value === 'all' ? 'All statuses' : value,
+    }));
+  });
+
+  readonly jobOptions = computed(() => {
+    const entries = new Map<string, number>();
+    this.schedules().forEach((schedule) => {
+      const jobKey = schedule.name ?? '';
+      if (!jobKey) {
+        return;
+      }
+      entries.set(jobKey, (entries.get(jobKey) ?? 0) + 1);
+    });
+    return Array.from(entries.entries())
+      .map(([jobKey, count]) => ({ jobKey, count }))
+      .sort((a, b) => a.jobKey.localeCompare(b.jobKey));
+  });
+
+  readonly visibleJobOptions = computed(() => {
+    const query = this.jobSearch().trim().toLowerCase();
+    if (!query) {
+      return this.jobOptions();
+    }
+    return this.jobOptions().filter((entry) => entry.jobKey.toLowerCase().includes(query));
+  });
+
+  readonly filteredSchedules = computed(() => {
+    const query = this.scheduleSearch().trim().toLowerCase();
+    const statusFilter = this.statusFilter();
+    const selectedJobs = new Set(this.selectedJobKeys());
+
+    return this.schedules().filter((schedule) => {
+      if (statusFilter !== 'all' && schedule.state !== statusFilter) {
+        return false;
+      }
+
+      const jobKey = schedule.name ?? '';
+      if (selectedJobs.size > 0 && !selectedJobs.has(jobKey)) {
+        return false;
+      }
+
+      if (!query) {
+        return true;
+      }
+
+      return (
+        schedule.id.toLowerCase().includes(query) ||
+        jobKey.toLowerCase().includes(query) ||
+        (schedule.cron ?? '').toLowerCase().includes(query) ||
+        (schedule.calendarLabel ?? '').toLowerCase().includes(query)
+      );
+    });
+  });
+
+  readonly selectedSchedule = computed(() => {
+    const raw = this.selectedScheduleId();
+    if (raw === null || raw === undefined) {
+      return null;
+    }
+    const id = typeof raw === 'string' ? raw : String(raw);
+    return this.schedules().find((schedule) => schedule.id === id) ?? null;
+  });
+
+  readonly selectedScheduleDetail = computed(() => {
+    const raw = this.selectedScheduleId();
+    if (raw === null || raw === undefined) {
+      return null;
+    }
+    const id = typeof raw === 'string' ? raw : String(raw);
+    const detail = this.scheduleDetail();
+    if (!detail || detail.triggerId !== id) {
+      return null;
+    }
+    return detail;
+  });
 
   private readonly calendarStartMs = computed(() =>
     addLocalDaysMs(this.calendarAnchorMs(), this.calendarOffsetWeeks() * CALENDAR_DAY_COUNT),
@@ -126,6 +238,35 @@ export class SchedulesPage {
         this.loadingDetailId.set(null);
       }
     });
+
+    effect((onCleanup) => {
+      const template = this.panelTemplate();
+      const collapsedTemplate = this.collapsedTemplate();
+      if (!template) {
+        return;
+      }
+      this.shellPanel.setPanel(
+        template,
+        'Filters & settings',
+        'Refine the schedules list.',
+        collapsedTemplate ?? null,
+      );
+      onCleanup(() => this.shellPanel.clearPanel(template));
+    });
+
+    effect(() => {
+      const selectedId = this.selectedScheduleId();
+      if (this.viewMode() !== 'list') {
+        return;
+      }
+      if (!selectedId) {
+        return;
+      }
+      const id = typeof selectedId === 'string' ? selectedId : String(selectedId);
+      if (id) {
+        this.store.refreshScheduleDetail(id);
+      }
+    });
   }
 
   // Actions
@@ -150,6 +291,35 @@ export class SchedulesPage {
 
   scheduleRowClasses = (row: ScheduleRow) =>
     row.state === 'active' ? undefined : ['opacity-80'];
+
+  setScheduleSearch(query: string): void {
+    this.scheduleSearch.set(query);
+  }
+
+  setStatusFilter(status: string): void {
+    this.statusFilter.set(status);
+  }
+
+  setJobSearch(query: string): void {
+    this.jobSearch.set(query);
+  }
+
+  resetFilters(): void {
+    this.scheduleSearch.set('');
+    this.statusFilter.set('all');
+    this.jobSearch.set('');
+    this.selectedJobKeys.set([]);
+  }
+
+  isJobSelected(jobKey: string): boolean {
+    return this.selectedJobKeys().includes(jobKey);
+  }
+
+  toggleJobSelection(jobKey: string, checked: boolean): void {
+    this.selectedJobKeys.update((current) =>
+      checked ? Array.from(new Set([...current, jobKey])) : current.filter((entry) => entry !== jobKey),
+    );
+  }
 
   createSchedule() {
     this.editingSchedule.set(null);

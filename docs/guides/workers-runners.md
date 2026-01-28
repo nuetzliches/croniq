@@ -209,6 +209,14 @@ Jobs can be registered via the API/UI and optionally by runners (self-registrati
 
 Only `active` jobs are dispatched to runners; pending jobs are never assigned.
 
+Runner SDKs call the self-registration endpoint by default before starting work:
+
+- `POST /tenants/{tenantId}/jobs:register?environment=dev`
+- Scope: `jobs:register`
+- Body: `environmentTag`, `runnerId`, `runnerInstanceId` (optional), `jobKey`, `description` (optional), `metadata` (optional)
+
+Disable auto-registration in SDKs by setting `CRONIQ_RUNNER_REGISTER_JOBS=false`.
+
 ## Issue a Runner API Key (SQL auth)
 
 For SQL-backed auth, you can use the helper script to create an API client and key with the runner scopes:
@@ -218,7 +226,7 @@ For SQL-backed auth, you can use the helper script to create an API client and k
 ```
 
 Use the emitted `CRONIQ_API_KEY` and set `CRONIQ_RUNNER_ID` to the same client id.
-The helper defaults to the work scopes plus `workers:heartbeat`, `workers:read`, `runners:heartbeat`, and `runners:read`; use `-Scopes` to trim if you only need runner access.
+The helper defaults to the work scopes plus `jobs:register`, `workers:heartbeat`, `workers:read`, `runners:heartbeat`, and `runners:read`; use `-Scopes` to trim if you only need runner access.
 
 ## Runner Presence (Optional)
 

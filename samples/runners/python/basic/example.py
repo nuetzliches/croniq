@@ -7,7 +7,14 @@ from pathlib import Path
 sdk_root = Path(__file__).resolve().parents[4] / "sdk" / "runner-python"
 sys.path.insert(0, str(sdk_root))
 
-from croniq_runner import CroniqRunner, RunnerConfig, RunnerIdInUseError, RunnerLogger
+from croniq_runner import (
+    CroniqRunner,
+    RunnerConfig,
+    RunnerIdInUseError,
+    RunnerJobRegistrationDeniedError,
+    RunnerLogger,
+    RunnerJobRegistration,
+)
 
 
 async def main() -> None:
@@ -18,7 +25,7 @@ async def main() -> None:
         raise
 
     runner = CroniqRunner(config)
-    job_key = os.getenv("CRONIQ_JOB_KEY", "demo-job").strip()
+    job_key = os.getenv("CRONIQ_JOB_KEY", "samples:python-job").strip()
 
     print("Croniq runner (python)")
     print(f"- base_url:    {config.base_url}")
@@ -32,9 +39,6 @@ async def main() -> None:
         print(f"- job_key:     {job_key}")
 
     async def handle_execution(context, payload, logger: RunnerLogger) -> None:
-        if job_key and context.job_key != job_key:
-            raise RuntimeError(f"unsupported jobKey: {context.job_key}")
-
         logger.info(
             "execution started",
             {
@@ -50,7 +54,14 @@ async def main() -> None:
 
         logger.info("execution completed", {"executionId": context.execution_id})
 
-    runner.on_execute(job_key, handle_execution)
+    runner.on_execute(
+        job_key,
+        handle_execution,
+        RunnerJobRegistration(
+            description="Demo job registered by the Python runner sample.",
+            metadata={"sample": "python", "sdk": "croniq-runner"},
+        ),
+    )
 
     stop_event = asyncio.Event()
     loop = asyncio.get_running_loop()
@@ -76,6 +87,9 @@ async def main() -> None:
         await asyncio.gather(runner.start(), drain_on_signal())
     except RunnerIdInUseError as exc:
         print(f"runnerId already in use: {exc}")
+        raise
+    except RunnerJobRegistrationDeniedError as exc:
+        print(f"job registration denied: {exc}")
         raise
 
 

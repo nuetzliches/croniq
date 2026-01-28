@@ -14,21 +14,27 @@ builder.Services.AddCroniqRunnerHostedService(options =>
         HeartbeatInterval = TimeSpan.FromSeconds(15)
     };
 
-    options.OnExecute("demo-job", async (context, payload, logger, cancellationToken) =>
-    {
-        logger.Info("execution started", new Dictionary<string, object?>
+    options.OnExecute(
+        "demo-job",
+        async (context, payload, logger, cancellationToken) =>
         {
-            ["executionId"] = context.ExecutionId,
-            ["jobKey"] = context.JobKey
-        });
+            logger.Info("execution started", new Dictionary<string, object?>
+            {
+                ["executionId"] = context.ExecutionId,
+                ["jobKey"] = context.JobKey
+            });
 
-        await Task.Delay(250, cancellationToken);
+            await Task.Delay(250, cancellationToken);
 
-        logger.Info("execution completed", new Dictionary<string, object?>
+            logger.Info("execution completed", new Dictionary<string, object?>
+            {
+                ["executionId"] = context.ExecutionId
+            });
+        },
+        new RunnerJobRegistration("Demo job registered by the runner.", new Dictionary<string, string>
         {
-            ["executionId"] = context.ExecutionId
-        });
-    });
+            ["sample"] = "dotnet"
+        }));
 });
 ```
 
@@ -54,4 +60,4 @@ Use `RunnerConfig.FromEnvironment()` to load:
 - Optional transport: `CRONIQ_GRPC_BASEURL`, `CRONIQ_TRANSPORT_MODE` (`auto|grpc|polling`), `CRONIQ_ALLOW_TEST_EXECUTIONS`.
 - Optional tuning: `CRONIQ_POLL_BATCH_SIZE`, `CRONIQ_POLL_WAIT_MS`, `CRONIQ_REQUEST_TIMEOUT_MS`, `CRONIQ_RENEW_LEAD_MS`,
   `CRONIQ_RETRY_BASE_MS`, `CRONIQ_RETRY_MAX_MS`, `CRONIQ_RETRY_MAX_ATTEMPTS`, `CRONIQ_MAX_INFLIGHT`, `CRONIQ_CAPABILITIES`,
-  `CRONIQ_RUNNER_INSTANCE_ID`.
+  `CRONIQ_RUNNER_INSTANCE_ID`, `CRONIQ_RUNNER_REGISTER_JOBS`.

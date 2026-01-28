@@ -44,6 +44,10 @@ class RunnerIdInUseError(CroniqError):
     pass
 
 
+class RunnerJobRegistrationDeniedError(CroniqError):
+    pass
+
+
 @dataclass(frozen=True)
 class Lease:
     execution_id: str
@@ -219,6 +223,29 @@ class RunnerClient:
             payload["seenAtUtc"] = seen_at_utc
         self._post("/runners/heartbeat", payload)
 
+    def register_job(
+        self,
+        runner_id: str,
+        runner_instance_id: Optional[str],
+        environment_tag: str,
+        job_key: str,
+        description: Optional[str] = None,
+        metadata: Optional[Dict[str, str]] = None,
+    ) -> Dict[str, Any]:
+        payload: Dict[str, Any] = {
+            "runnerId": runner_id,
+            "environmentTag": environment_tag,
+            "jobKey": job_key,
+        }
+        if runner_instance_id:
+            payload["runnerInstanceId"] = runner_instance_id
+        if description:
+            payload["description"] = description
+        if metadata:
+            payload["metadata"] = metadata
+        response = self._post("/jobs:register", payload)
+        return response.json() if response.content else {}
+
     def _post(self, suffix: str, payload: Dict[str, Any]) -> requests.Response:
         url = self._build_url(suffix)
         headers = {"Content-Type": "application/json"}
@@ -230,6 +257,8 @@ class RunnerClient:
         response = requests.post(url, json=payload, headers=headers, timeout=self._timeout_seconds)
         if response.status_code == 403 and _is_runner_mismatch_response(response):
             raise RunnerMismatchError(response.status_code, response.text)
+        if response.status_code == 403 and _is_runner_registration_denied_response(response):
+            raise RunnerJobRegistrationDeniedError(response.status_code, response.text)
         if response.status_code == 404:
             raise LeaseNotFoundError(response.status_code, response.text)
         if response.status_code == 409:
@@ -271,6 +300,18 @@ def _is_runner_id_in_use_response(response: requests.Response) -> bool:
     return "runner-id-in-use" in response.text.lower()
 
 
+def _is_runner_registration_denied_response(response: requests.Response) -> bool:
+    try:
+        payload = response.json()
+    except Exception:  # noqa: BLE001
+        payload = None
+    if isinstance(payload, dict):
+        title = payload.get("title") or payload.get("error")
+        if isinstance(title, str) and title.lower() == "runner-registration-denied":
+            return True
+    return "runner-registration-denied" in response.text.lower()
+
+
 def _get_optional(environment: Mapping[str, str], key: str) -> Optional[str]:
     value = environment.get(key)
     if value is None:
@@ -291,6 +332,17 @@ def _parse_int(value: Optional[str]) -> Optional[int]:
 def _parse_bool(value: Optional[str]) -> bool:
     if value is None or not value.strip():
         return False
+    normalized = value.strip().lower()
+    if normalized in {"true", "1", "yes"}:
+        return True
+    if normalized in {"false", "0", "no"}:
+        return False
+    raise ValueError(f"Invalid boolean value: {value}")
+
+
+def _parse_optional_bool(value: Optional[str]) -> Optional[bool]:
+    if value is None or not value.strip():
+        return None
     normalized = value.strip().lower()
     if normalized in {"true", "1", "yes"}:
         return True
@@ -320,6 +372,12 @@ class RunnerExecutionContext:
 
 
 @dataclass(frozen=True)
+class RunnerJobRegistration:
+    description: Optional[str] = None
+    metadata: Optional[Dict[str, str]] = None
+
+
+@dataclass(frozen=True)
 class RunnerConfig:
     base_url: str
     tenant_id: str
@@ -343,6 +401,7 @@ class RunnerConfig:
     heartbeat_interval_ms: int = 0
     heartbeat_metadata: Optional[Dict[str, Any]] = None
     parse_payload_json: bool = False
+    register_jobs: bool = True
     outbox_path: Optional[str] = None
     outbox_max_entries: int = 500
     outbox_max_bytes: int = 1_000_000
@@ -374,6 +433,10 @@ class RunnerConfig:
         if transport_mode not in {"auto", "grpc", "polling"}:
             raise ValueError("CRONIQ_TRANSPORT_MODE must be auto, grpc, or polling")
 
+        register_jobs = _parse_optional_bool(environment.get("CRONIQ_RUNNER_REGISTER_JOBS"))
+        if register_jobs is None:
+            register_jobs = True
+
         return RunnerConfig(
             base_url=base_url,
             tenant_id=tenant_id,
@@ -394,6 +457,7 @@ class RunnerConfig:
             retry_base_ms=_parse_int(environment.get("CRONIQ_RETRY_BASE_MS")) or 500,
             retry_max_ms=_parse_int(environment.get("CRONIQ_RETRY_MAX_MS")) or 10000,
             retry_max_attempts=_parse_int(environment.get("CRONIQ_RETRY_MAX_ATTEMPTS")),
+            register_jobs=register_jobs,
         )
 
 
@@ -440,7 +504,7 @@ class CroniqRunner:
             timeout_seconds=config.request_timeout_seconds,
         )
         self._logger = RunnerLogger()
-        self._handlers: Dict[str, Callable[[RunnerExecutionContext, Any, RunnerLogger], Awaitable[None]]] = {}
+        self._handlers: Dict[str, Tuple[Callable[[RunnerExecutionContext, Any, RunnerLogger], Awaitable[None]], Optional[RunnerJobRegistration]]] = {}
         self._inflight: Dict[str, Lease] = {}
         self._renew_tasks: Dict[str, asyncio.Task[None]] = {}
         self._execution_tasks: Dict[str, asyncio.Task[None]] = {}
@@ -458,12 +522,17 @@ class CroniqRunner:
         self._outbox_path = config.outbox_path or os.path.join(os.getcwd(), ".croniq", "runner-outbox.jsonl")
         self._fatal_future: Optional[asyncio.Future[None]] = None
 
-    def on_execute(self, job_key: str, handler: Callable[[RunnerExecutionContext, Any, RunnerLogger], Awaitable[None]]) -> None:
+    def on_execute(
+        self,
+        job_key: str,
+        handler: Callable[[RunnerExecutionContext, Any, RunnerLogger], Awaitable[None]],
+        registration: Optional[RunnerJobRegistration] = None,
+    ) -> None:
         if not job_key or not job_key.strip():
             raise ValueError("job_key is required")
         if handler is None:
             raise ValueError("handler is required")
-        self._handlers[job_key.strip()] = handler
+        self._handlers[job_key.strip()] = (handler, registration)
 
     async def start(self) -> None:
         if not self._handlers:
@@ -473,6 +542,8 @@ class CroniqRunner:
         self._draining = False
 
         await self._load_outbox()
+        if self._config.register_jobs:
+            await self._register_jobs()
 
         self._fatal_future = asyncio.get_running_loop().create_future()
 
@@ -705,8 +776,8 @@ class CroniqRunner:
             self._execution_tasks[lease.lease_id] = task
 
     async def _execute_lease(self, lease: Lease) -> None:
-        handler = self._handlers.get(lease.job_key)
-        if handler is None:
+        entry = self._handlers.get(lease.job_key)
+        if entry is None:
             self._logger.warn("no handler registered for jobKey", {"jobKey": lease.job_key})
             await self._ack_failure_internal(
                 lease,
@@ -717,6 +788,7 @@ class CroniqRunner:
             )
             await self._complete_lease(lease)
             return
+        handler, _ = entry
 
         context = RunnerExecutionContext(
             execution_id=lease.execution_id,
@@ -985,6 +1057,27 @@ class CroniqRunner:
         if self._config.heartbeat_metadata:
             metadata.update(self._config.heartbeat_metadata)
         return metadata
+
+    async def _register_jobs(self) -> None:
+        if not self._config.environment:
+            raise RuntimeError("environment is required for job registration")
+
+        for job_key, entry in self._handlers.items():
+            _, registration = entry
+            response = await asyncio.to_thread(
+                self._client.register_job,
+                runner_id=self._config.runner_id,
+                runner_instance_id=self._runner_instance_id,
+                environment_tag=self._config.environment,
+                job_key=job_key,
+                description=registration.description if registration else None,
+                metadata=registration.metadata if registration else None,
+            )
+
+            if response and response.get("isActive") is False:
+                self._logger.warn("job registration pending approval", {"jobKey": job_key})
+            else:
+                self._logger.info("job registration completed", {"jobKey": job_key})
 
     async def _load_outbox(self) -> None:
         try:

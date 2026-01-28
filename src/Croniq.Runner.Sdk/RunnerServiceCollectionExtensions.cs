@@ -38,7 +38,7 @@ public static class RunnerServiceCollectionExtensions
             var runner = new CroniqRunner(config);
             foreach (var handler in options.Handlers)
             {
-                runner.OnExecute(handler.Key, handler.Value);
+                runner.OnExecute(handler.Key, handler.Value.Handler, handler.Value.Registration);
             }
             return runner;
         });

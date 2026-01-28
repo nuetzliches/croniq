@@ -1,148 +1,350 @@
 <div class="flex h-full flex-col space-y-6">
-  <!-- Header -->
-  <header class="flex items-center justify-between">
-    <h1 class="text-lg font-semibold text-primary">Workers</h1>
-    <button
-      (click)="refresh()"
-      class="rounded-lg bg-white/5 px-4 py-2 text-sm font-semibold text-primary hover:bg-white/10"
-      [disabled]="loading()"
-    >
-      {{ loading() ? 'Refreshing...' : 'Refresh' }}
-    </button>
+  <!-- Header / Controls -->
+  <header class="flex flex-wrap items-center justify-between gap-4">
+    <div class="space-y-1">
+      <h1 class="text-lg font-semibold text-primary">Workers</h1>
+      <p class="text-xs text-muted">Review worker health, dispatch state, and capacity.</p>
+    </div>
+    <div class="flex flex-wrap items-center gap-2">
+      <button
+        type="button"
+        (click)="refresh()"
+        class="rounded-lg border border-white/10 bg-white/5 px-4 py-2 text-sm font-semibold text-primary transition hover:border-accent hover:text-accent"
+        [disabled]="loading()"
+      >
+        {{ loading() ? 'Refreshing...' : 'Refresh' }}
+      </button>
+    </div>
   </header>
 
-  <!-- Metrics Grid -->
-  <div class="grid grid-cols-1 gap-4 sm:grid-cols-3">
-    <div class="rounded-xl border border-white/10 bg-surface-alt p-4">
-      <p class="text-xs font-medium uppercase text-muted">Active Workers</p>
-      <p class="mt-2 text-2xl font-semibold text-primary">{{ activeWorkersCount() }}</p>
-    </div>
-    <div class="rounded-xl border border-white/10 bg-surface-alt p-4">
-      <p class="text-xs font-medium uppercase text-muted">Total Capacity</p>
-      <p class="mt-2 text-2xl font-semibold text-primary">{{ totalCapacity() }}</p>
-    </div>
-    <div class="rounded-xl border border-white/10 bg-surface-alt p-4">
-      <p class="text-xs font-medium uppercase text-muted">Busy Threads</p>
-      <p class="mt-2 text-2xl font-semibold text-primary">{{ busyThreads() }}</p>
-    </div>
-  </div>
+  <ng-template #workersFilterPanel>
+    <div class="space-y-4">
+      <div class="space-y-2">
+        <div class="text-xs font-semibold uppercase tracking-wide text-muted">Worker search</div>
+        <input
+          type="search"
+          cqInput
+          placeholder="Search by ID, host, or tag"
+          [value]="workerSearch()"
+          (input)="setWorkerSearch($any($event.target).value)"
+        />
+      </div>
 
-  <!-- Content -->
-  <div class="flex-1 overflow-hidden rounded-xl border border-white/10 bg-surface-alt shadow-card">
-    <div class="overflow-x-auto">
-      <table class="w-full text-left text-sm">
-        <thead class="bg-white/5 text-xs uppercase text-muted">
-          <tr>
-            <th class="px-6 py-3 font-medium">Worker ID</th>
-            <th class="px-6 py-3 font-medium">Hostname</th>
-            <th class="px-6 py-3 font-medium">Status</th>
-            <th class="px-6 py-3 font-medium">Dispatch</th>
-            <th class="px-6 py-3 font-medium">Last Heartbeat</th>
-            <th class="px-6 py-3 font-medium">Load</th>
-            <th class="px-6 py-3 font-medium">Tags</th>
-            <th class="px-6 py-3 font-medium text-right">Actions</th>
-          </tr>
-        </thead>
-        <tbody class="divide-y divide-white/10">
-          @for (worker of workers(); track worker.id) {
-          <tr class="hover:bg-white/5">
-            <td class="px-6 py-4 font-mono text-xs text-muted">{{ worker.id }}</td>
-            <td class="px-6 py-4 font-medium text-primary">{{ worker.hostname }}</td>
-            <td class="px-6 py-4">
-              @switch (worker.status) { @case ('Online') {
+      <div class="space-y-2">
+        <div class="text-xs font-semibold uppercase tracking-wide text-muted">Status</div>
+        <select
+          cqSelect
+          [value]="statusFilter()"
+          (change)="setStatusFilter($any($event.target).value)"
+        >
+          @for (option of statusOptions; track option.value) {
+          <option [value]="option.value">{{ option.label }}</option>
+          }
+        </select>
+      </div>
+
+      <div class="space-y-2">
+        <div class="text-xs font-semibold uppercase tracking-wide text-muted">Dispatch</div>
+        <select
+          cqSelect
+          [value]="dispatchFilter()"
+          (change)="setDispatchFilter($any($event.target).value)"
+        >
+          @for (option of dispatchOptions; track option.value) {
+          <option [value]="option.value">{{ option.label }}</option>
+          }
+        </select>
+      </div>
+
+      <div class="space-y-2">
+        <div class="text-xs font-semibold uppercase tracking-wide text-muted">Tags</div>
+        <div
+          class="max-h-56 space-y-1 overflow-auto rounded-lg border border-white/10 bg-black/10 p-2"
+        >
+          @if (tagOptions().length === 0) {
+          <div class="text-xs text-muted">No tags reported.</div>
+          } @else { @for (tag of tagOptions(); track tag) {
+          <label class="flex items-center gap-2 text-xs text-primary">
+            <input
+              type="checkbox"
+              #tagToggle
+              [checked]="isTagSelected(tag)"
+              (change)="toggleTagSelection(tag, tagToggle.checked)"
+              class="h-4 w-4 rounded border-white/10 bg-surface-alt text-accent focus:ring-accent"
+            />
+            <span class="truncate">{{ tag }}</span>
+          </label>
+          } }
+        </div>
+      </div>
+
+      <button
+        type="button"
+        (click)="resetFilters()"
+        class="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-xs font-semibold text-primary transition hover:border-accent hover:text-accent"
+      >
+        Clear filters
+      </button>
+    </div>
+  </ng-template>
+
+  <ng-template #workersFilterCollapsed>
+    @if (workerSearch() || statusFilter() !== 'all' || dispatchFilter() !== 'all' ||
+    selectedTags().length > 0) {
+    <button
+      type="button"
+      class="inline-flex items-center justify-center p-1 text-warning transition hover:text-accent"
+      aria-label="Reset filters"
+      (click)="resetFilters()"
+    >
+      <cq-icon name="filter-remove" size="16" aria-hidden="true"></cq-icon>
+    </button>
+    }
+  </ng-template>
+
+  <div class="flex flex-1 flex-col gap-4 lg:flex-row">
+    <ng-template #rowActions let-row="row">
+      <div
+        class="min-w-45 rounded-lg border border-white/10 bg-surface p-1 text-sm shadow-xl"
+        cdkMenu
+      >
+        <button
+          type="button"
+          cqContextMenuItem
+          class="inline-flex items-center gap-2"
+          (click)="drainWorker(row.id)"
+          [disabled]="row.status === 'Draining'"
+        >
+          <cq-icon name="pause-circle-outline" size="14" aria-hidden="true"></cq-icon>
+          Drain worker
+        </button>
+        <button
+          type="button"
+          cqContextMenuItem
+          class="inline-flex items-center gap-2"
+          (click)="deregisterWorker(row.id)"
+        >
+          <cq-icon name="trash-can-outline" size="14" aria-hidden="true"></cq-icon>
+          Deregister
+        </button>
+      </div>
+    </ng-template>
+
+    <!-- Data Grid -->
+    <div
+      class="flex-1 overflow-hidden rounded-xl border border-white/10 bg-surface-alt shadow-card"
+    >
+      @if (error()) {
+      <div class="border-b border-white/10 bg-danger/10 px-4 py-3 text-sm text-danger">
+        {{ error() }}
+      </div>
+      }
+      <cq-data-grid
+        class="h-full"
+        [rows]="filteredWorkers()"
+        [rowKey]="workerRowKey"
+        [idKey]="'id'"
+        [bufferPx]="256"
+        [estimatedRowHeightPx]="56"
+        [loading]="loading()"
+        [rowClasses]="workerRowClasses"
+        [(selectedId)]="selectedWorkerId"
+        [rowContextMenu]="rowActions"
+      >
+        <cq-column header="Worker" width="18rem">
+          <ng-template cqWorkerCell let-row>
+            <div class="min-w-0">
+              <div class="truncate text-sm font-semibold text-primary">{{ row.id }}</div>
+              <div class="truncate text-xs text-muted">{{ row.hostname }}</div>
+            </div>
+          </ng-template>
+        </cq-column>
+
+        <cq-column header="Status" width="10rem" align="center">
+          <ng-template cqWorkerCell let-row>
+            @switch (row.status) { @case ('Online') {
+            <span
+              class="inline-flex items-center rounded-full bg-success/10 px-2 py-0.5 text-xs font-medium text-success"
+              >Online</span
+            >
+            } @case ('Offline') {
+            <span
+              class="inline-flex items-center rounded-full bg-error/10 px-2 py-0.5 text-xs font-medium text-error"
+              >Offline</span
+            >
+            } @case ('Draining') {
+            <span
+              class="inline-flex items-center rounded-full bg-warning/10 px-2 py-0.5 text-xs font-medium text-warning"
+              >Draining</span
+            >
+            } }
+          </ng-template>
+        </cq-column>
+
+        <cq-column header="Dispatch" width="14rem">
+          <ng-template cqWorkerCell let-row>
+            @switch (row.dispatchState) { @case ('Connected') {
+            <div class="flex flex-col gap-1">
               <span
                 class="inline-flex items-center rounded-full bg-success/10 px-2 py-0.5 text-xs font-medium text-success"
+                >Connected</span
+              >
+              @if (row.dispatchLastConnectedAt) {
+              <span class="text-xs text-muted"
+                >Last connect {{ row.dispatchLastConnectedAt | date : 'short' }}</span
+              >
+              }
+            </div>
+            } @case ('Fallback') {
+            <div class="flex flex-col gap-1">
+              <span
+                class="inline-flex items-center rounded-full bg-warning/10 px-2 py-0.5 text-xs font-medium text-warning"
+                >Fallback</span
+              >
+              @if (row.dispatchLastFallbackAt) {
+              <span class="text-xs text-muted"
+                >Last fallback {{ row.dispatchLastFallbackAt | date : 'short' }}</span
+              >
+              }
+            </div>
+            } @case ('Unknown') {
+            <span
+              class="inline-flex items-center rounded-full bg-white/5 px-2 py-0.5 text-xs font-medium text-muted"
+              >Unknown</span
+            >
+            } }
+          </ng-template>
+        </cq-column>
+
+        <cq-column header="Last heartbeat" width="14rem">
+          <ng-template cqWorkerCell let-row>
+            @if (row.lastHeartbeatAt) {
+            <span class="text-xs text-muted">{{ row.lastHeartbeatAt | date : 'medium' }}</span>
+            } @else {
+            <span class="text-xs text-muted">—</span>
+            }
+          </ng-template>
+        </cq-column>
+
+        <cq-column header="Load" width="12rem">
+          <ng-template cqWorkerCell let-row>
+            <div class="flex items-center gap-2">
+              <div class="h-1.5 w-16 rounded-full bg-white/10">
+                <div class="h-full rounded-full bg-accent" [style.width.%]="row.loadPercent"></div>
+              </div>
+              <span class="text-xs text-muted">{{ row.loadLabel }}</span>
+            </div>
+          </ng-template>
+        </cq-column>
+
+        <cq-column header="Tags" width="16rem">
+          <ng-template cqWorkerCell let-row>
+            <div class="flex flex-wrap gap-1">
+              @for (tag of row.tags; track tag) {
+              <span class="rounded bg-white/5 px-1.5 py-0.5 text-xs text-muted">{{ tag }}</span>
+              } @if (row.tags.length === 0) {
+              <span class="text-xs text-muted">—</span>
+              }
+            </div>
+          </ng-template>
+        </cq-column>
+      </cq-data-grid>
+    </div>
+
+    <!-- Detail Panel -->
+    <aside class="w-full lg:w-80">
+      <div class="rounded-xl border border-white/10 bg-surface-alt p-4 shadow-card">
+        <div class="flex items-start justify-between gap-3">
+          <div>
+            <h2 class="text-sm font-semibold text-primary">Worker detail</h2>
+            <p class="text-xs text-muted">Dispatch, capacity, and tags.</p>
+          </div>
+          @if (selectedWorker()) {
+          <span class="rounded-full bg-white/10 px-2 py-1 text-[11px] font-semibold text-muted"
+            >Selected</span
+          >
+          }
+        </div>
+
+        @if (!selectedWorker()) {
+        <div
+          class="mt-4 rounded-lg border border-dashed border-white/10 bg-black/10 px-3 py-4 text-xs text-muted"
+        >
+          Select a worker to inspect dispatch and capacity details.
+        </div>
+        } @else { @if (selectedWorker(); as worker) {
+        <div class="mt-4 space-y-4">
+          <div class="rounded-lg border border-white/10 bg-black/10 px-3 py-3">
+            <div class="flex items-start justify-between gap-2">
+              <div>
+                <div class="text-[11px] font-semibold uppercase tracking-wide text-muted">
+                  Worker ID
+                </div>
+                <div class="mt-1 text-sm font-semibold text-primary">{{ worker.id }}</div>
+                <div class="mt-1 text-xs text-muted">{{ worker.hostname }}</div>
+              </div>
+              @switch (worker.status) { @case ('Online') {
+              <span
+                class="inline-flex items-center rounded-full bg-success/10 px-2 py-1 text-[11px] font-semibold text-success"
                 >Online</span
               >
               } @case ('Offline') {
               <span
-                class="inline-flex items-center rounded-full bg-error/10 px-2 py-0.5 text-xs font-medium text-error"
+                class="inline-flex items-center rounded-full bg-error/10 px-2 py-1 text-[11px] font-semibold text-error"
                 >Offline</span
               >
               } @case ('Draining') {
               <span
-                class="inline-flex items-center rounded-full bg-warning/10 px-2 py-0.5 text-xs font-medium text-warning"
+                class="inline-flex items-center rounded-full bg-warning/10 px-2 py-1 text-[11px] font-semibold text-warning"
                 >Draining</span
               >
               } }
-            </td>
-            <td class="px-6 py-4">
-              @switch (worker.dispatchState) { @case ('Connected') {
-              <div class="flex flex-col gap-1">
-                <span
-                  class="inline-flex items-center rounded-full bg-success/10 px-2 py-0.5 text-xs font-medium text-success"
-                  >Connected</span
-                >
-                @if (worker.dispatchLastConnectedAt) {
-                <span class="text-xs text-muted"
-                  >Last connect {{ worker.dispatchLastConnectedAt | date : 'short' }}</span
-                >
-                }
+            </div>
+          </div>
+
+          <div class="rounded-lg border border-white/10 bg-black/10 px-3 py-3">
+            <div class="text-[11px] font-semibold uppercase tracking-wide text-muted">Dispatch</div>
+            <div class="mt-2 flex flex-col gap-1 text-xs text-muted">
+              <div>
+                State: <span class="font-semibold text-primary">{{ worker.dispatchState }}</span>
               </div>
-              } @case ('Fallback') {
-              <div class="flex flex-col gap-1">
-                <span
-                  class="inline-flex items-center rounded-full bg-warning/10 px-2 py-0.5 text-xs font-medium text-warning"
-                  >Fallback</span
-                >
-                @if (worker.dispatchLastFallbackAt) {
-                <span class="text-xs text-muted"
-                  >Last fallback {{ worker.dispatchLastFallbackAt | date : 'short' }}</span
-                >
-                }
+              @if (worker.dispatchLastConnectedAt) {
+              <div>Last connect: {{ worker.dispatchLastConnectedAt | date : 'short' }}</div>
+              } @if (worker.dispatchLastFallbackAt) {
+              <div>Last fallback: {{ worker.dispatchLastFallbackAt | date : 'short' }}</div>
+              }
+            </div>
+          </div>
+
+          <div class="rounded-lg border border-white/10 bg-black/10 px-3 py-3">
+            <div class="text-[11px] font-semibold uppercase tracking-wide text-muted">Capacity</div>
+            <div class="mt-2 flex items-center gap-3 text-xs text-muted">
+              <div class="h-1.5 w-20 rounded-full bg-white/10">
+                <div
+                  class="h-full rounded-full bg-accent"
+                  [style.width.%]="worker.loadPercent"
+                ></div>
               </div>
-              } @case ('Unknown') {
-              <span
-                class="inline-flex items-center rounded-full bg-white/5 px-2 py-0.5 text-xs font-medium text-muted"
-                >Unknown</span
-              >
-              } }
-            </td>
-            <td class="px-6 py-4 text-muted">{{ worker.lastHeartbeatAt | date : 'medium' }}</td>
-            <td class="px-6 py-4 text-muted">
-              <div class="flex items-center gap-2">
-                <div class="h-1.5 w-16 rounded-full bg-white/10">
-                  <div
-                    class="h-full rounded-full bg-accent"
-                    [style.width.%]="worker.loadPercent"
-                  ></div>
-                </div>
-                <span class="text-xs">{{ worker.loadLabel }}</span>
-              </div>
-            </td>
-            <td class="px-6 py-4">
-              <div class="flex flex-wrap gap-1">
-                @for (tag of worker.tags; track tag) {
-                <span class="rounded bg-white/5 px-1.5 py-0.5 text-xs text-muted">{{ tag }}</span>
-                }
-              </div>
-            </td>
-            <td class="px-6 py-4 text-right">
-              <div class="flex justify-end gap-2">
-                @if (worker.status !== 'Draining') {
-                <button
-                  (click)="drainWorker(worker.id)"
-                  class="text-xs font-medium text-warning hover:text-warning-hover"
-                >
-                  Drain
-                </button>
-                }
-                <button
-                  (click)="deregisterWorker(worker.id)"
-                  class="text-xs font-medium text-error hover:text-error-hover"
-                >
-                  Deregister
-                </button>
-              </div>
-            </td>
-          </tr>
-          } @empty {
-          <tr>
-            <td class="px-6 py-6 text-sm text-muted" colspan="8">No workers reported yet.</td>
-          </tr>
-          }
-        </tbody>
-      </table>
-    </div>
+              <span>{{ worker.loadLabel }} active</span>
+            </div>
+            <div class="mt-2 text-xs text-muted">
+              Last heartbeat: {{ worker.lastHeartbeatAt | date : 'short' }}
+            </div>
+          </div>
+
+          <div class="rounded-lg border border-white/10 bg-black/10 px-3 py-3">
+            <div class="text-[11px] font-semibold uppercase tracking-wide text-muted">Tags</div>
+            <div class="mt-2 flex flex-wrap gap-1">
+              @for (tag of worker.tags; track tag) {
+              <span class="rounded bg-white/5 px-1.5 py-0.5 text-xs text-muted">{{ tag }}</span>
+              } @if (worker.tags.length === 0) {
+              <span class="text-xs text-muted">No tags reported.</span>
+              }
+            </div>
+          </div>
+        </div>
+        } }
+      </div>
+    </aside>
   </div>
 </div>

@@ -275,9 +275,21 @@ public sealed class InMemoryJobStore : IJobPersistenceProvider, IJobDeadLetterSt
             var now = request.NowUtc;
             var leaseDuration = TimeSpan.FromSeconds(_options.LeaseDurationSeconds);
 
+            bool IsJobActive(TriggerDefinition definition)
+            {
+                var identity = BuildJobIdentity(definition.Scope, definition.JobKey);
+                if (!_jobs.TryGetValue(identity, out var job))
+                {
+                    return true;
+                }
+
+                return job.IsActive;
+            }
+
             var candidates = _triggers.Values
                 .Where(t => MatchesScope(t.Definition.Scope, request.Scope) && t.Definition.Enabled)
                 .Where(t => request.AllowTestExecutions || !string.Equals(t.Definition.ExecutionMode, ExecutionIntent.ExecutionModes.Test, StringComparison.OrdinalIgnoreCase))
+                .Where(t => IsJobActive(t.Definition))
                 .OrderBy(t => t.NextFireAtUtc ?? DateTimeOffset.MaxValue);
 
             foreach (var entry in candidates)

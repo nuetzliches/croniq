@@ -248,6 +248,7 @@ export class CqColumnComponent<T> {
     .cq-data-grid__content {
       display: flex;
       flex-direction: column;
+      flex: 1 1 auto;
       min-width: 100%;
       width: max-content;
     }

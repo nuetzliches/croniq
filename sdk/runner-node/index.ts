@@ -48,6 +48,11 @@ export type WorkEvent = {
     eventType?: string;
 };
 
+export type RunnerJobRegistration = {
+    description?: string;
+    metadata?: Record<string, string>;
+};
+
 export type EventsRequest = {
     runnerId: string;
     lease: Lease;
@@ -60,6 +65,20 @@ export type HeartbeatRequest = {
     environmentTag?: string;
     seenAtUtc?: string;
     metadataJson?: string;
+};
+
+type RunnerJobRegistrationRequest = {
+    environmentTag: string;
+    runnerId: string;
+    runnerInstanceId?: string;
+    jobKey: string;
+    description?: string;
+    metadata?: Record<string, string>;
+};
+
+type JobResponse = {
+    jobKey: string;
+    isActive: boolean;
 };
 
 export type RunnerClientConfig = {
@@ -95,6 +114,7 @@ export type RunnerConfig = {
     retryMaxAttempts?: number;
     heartbeatIntervalMs?: number;
     heartbeatMetadata?: Record<string, unknown>;
+    registerJobs?: boolean;
     parsePayloadJson?: boolean;
     outboxPath?: string;
     outboxMaxEntries?: number;
@@ -131,6 +151,7 @@ export function loadRunnerConfigFromEnv(env: Record<string, string | undefined> 
     const runnerId = env.CRONIQ_RUNNER_ID?.trim();
     const runnerInstanceId = env.CRONIQ_RUNNER_INSTANCE_ID?.trim();
     const transportMode = (env.CRONIQ_TRANSPORT_MODE?.trim().toLowerCase() || 'auto') as TransportMode;
+    const registerJobs = parseBool(env.CRONIQ_RUNNER_REGISTER_JOBS);
 
     if (!baseUrl) {
         throw new Error('CRONIQ_API_BASEURL is required');
@@ -171,6 +192,7 @@ export function loadRunnerConfigFromEnv(env: Record<string, string | undefined> 
         retryMaxMs: parseNumber(env.CRONIQ_RETRY_MAX_MS),
         retryMaxAttempts: parseNumber(env.CRONIQ_RETRY_MAX_ATTEMPTS),
         capabilities: parseList(env.CRONIQ_CAPABILITIES),
+        registerJobs: registerJobs === undefined ? true : registerJobs,
     };
 }
 
@@ -226,6 +248,15 @@ function isRunnerIdInUseResponse(json: unknown, bodyText: string): boolean {
         return true;
     }
     return bodyText.toLowerCase().includes('runner-id-in-use');
+}
+
+function isRunnerRegistrationDeniedResponse(json: unknown, bodyText: string): boolean {
+    const payload = json && typeof json === 'object' ? (json as Record<string, unknown>) : undefined;
+    const title = payload?.title ?? payload?.error;
+    if (typeof title === 'string' && title.toLowerCase() === 'runner-registration-denied') {
+        return true;
+    }
+    return bodyText.toLowerCase().includes('runner-registration-denied');
 }
 
 function isGrpcRunnerMismatch(err: unknown): boolean {
@@ -299,6 +330,13 @@ export class RunnerIdInUseError extends CroniqError {
     constructor(body: string) {
         super('runner id in use', 409, body);
         this.name = 'RunnerIdInUseError';
+    }
+}
+
+export class RunnerJobRegistrationDeniedError extends CroniqError {
+    constructor(body: string) {
+        super('runner registration denied', 403, body);
+        this.name = 'RunnerJobRegistrationDeniedError';
     }
 }
 
@@ -409,6 +447,14 @@ export class RunnerClient {
         await this.postJson(`/runners/heartbeat`, body);
     }
 
+    async registerJob(request: RunnerJobRegistrationRequest): Promise<JobResponse> {
+        const result = await this.postJson<JobResponse>(`/jobs:register`, request);
+        if (!result.json) {
+            throw new CroniqError('job registration failed', result.status, '');
+        }
+        return result.json;
+    }
+
     private buildUrl(path: string): string {
         const url = new URL(
             `${this.baseUrl}/tenants/${encodeURIComponent(this.tenantId)}${path}`
@@ -461,6 +507,9 @@ export class RunnerClient {
         }
         if (response.status === 403 && isRunnerMismatchResponse(json, bodyText)) {
             throw new RunnerMismatchError(bodyText);
+        }
+        if (response.status === 403 && isRunnerRegistrationDeniedResponse(json, bodyText)) {
+            throw new RunnerJobRegistrationDeniedError(bodyText);
         }
         if (response.status === 409) {
             if (isRunnerIdInUseResponse(json, bodyText)) {
@@ -534,6 +583,11 @@ type OutboxEntry = {
     payload: unknown;
     attempts: number;
     createdAt: string;
+};
+
+type HandlerRegistration = {
+    handler: RunnerExecuteHandler;
+    registration?: RunnerJobRegistration;
 };
 
 class OutboxStore {
@@ -810,9 +864,10 @@ export class CroniqRunner {
     private readonly retryMaxAttempts?: number;
     private readonly heartbeatIntervalMs: number;
     private readonly heartbeatMetadata?: Record<string, unknown>;
+    private readonly registerJobs: boolean;
     private readonly outbox: OutboxStore | null;
     private readonly runnerInstanceId: string;
-    private handlers = new Map<string, RunnerExecuteHandler>();
+    private handlers = new Map<string, HandlerRegistration>();
     private running = false;
     private acceptingWork = false;
     private draining = false;
@@ -843,6 +898,7 @@ export class CroniqRunner {
         this.retryMaxAttempts = config.retryMaxAttempts;
         this.heartbeatIntervalMs = Math.max(0, config.heartbeatIntervalMs ?? 0);
         this.heartbeatMetadata = config.heartbeatMetadata;
+        this.registerJobs = config.registerJobs ?? true;
         const outboxPath = config.outboxPath ?? path.join(process.cwd(), '.croniq', 'runner-outbox.jsonl');
         this.outbox = new OutboxStore(outboxPath, config.outboxMaxEntries ?? 500, config.outboxMaxBytes ?? 1_000_000);
 
@@ -864,11 +920,11 @@ export class CroniqRunner {
         this.fatalReject = null;
     }
 
-    onExecute(jobKey: string, handler: RunnerExecuteHandler): void {
+    onExecute(jobKey: string, handler: RunnerExecuteHandler, registration?: RunnerJobRegistration): void {
         if (!jobKey || !jobKey.trim()) {
             throw new Error('jobKey is required');
         }
-        this.handlers.set(jobKey.trim(), handler);
+        this.handlers.set(jobKey.trim(), { handler, registration });
     }
 
     async start(): Promise<void> {
@@ -888,6 +944,10 @@ export class CroniqRunner {
         if (this.outbox) {
             await this.outbox.load();
             tasks.push(this.replayOutbox());
+        }
+
+        if (this.registerJobs) {
+            await this.registerJobsAsync();
         }
 
         if (this.transportMode !== 'polling') {
@@ -952,6 +1012,30 @@ export class CroniqRunner {
         }
 
         this.running = false;
+    }
+
+    private async registerJobsAsync(): Promise<void> {
+        const environmentTag = this.config.environment;
+        if (!environmentTag) {
+            throw new Error('environment is required for job registration');
+        }
+
+        for (const [jobKey, entry] of this.handlers) {
+            const response = await this.client.registerJob({
+                environmentTag,
+                runnerId: this.config.runnerId,
+                runnerInstanceId: this.runnerInstanceId,
+                jobKey,
+                description: entry.registration?.description,
+                metadata: entry.registration?.metadata,
+            });
+
+            if (!response.isActive) {
+                this.logger.warn('job registration pending approval', { jobKey });
+            } else {
+                this.logger.info('job registration completed', { jobKey });
+            }
+        }
     }
 
     private async startGrpc(): Promise<void> {
@@ -1098,8 +1182,8 @@ export class CroniqRunner {
             return;
         }
 
-        const handler = this.handlers.get(lease.jobKey);
-        if (!handler) {
+        const registration = this.handlers.get(lease.jobKey);
+        if (!registration) {
             this.logger.warn('no handler registered for jobKey', { jobKey: lease.jobKey });
             await this.ackFailureInternal(
                 lease,
@@ -1114,7 +1198,7 @@ export class CroniqRunner {
 
         const payload = this.parsePayloadJson ? this.tryParsePayload(lease.payload) : lease.payload ?? null;
         try {
-            await handler(context, payload, this.logger);
+            await registration.handler(context, payload, this.logger);
             if (entry.abandoned) {
                 this.logger.warn('lease abandoned during shutdown', { leaseId: lease.leaseId });
                 return;

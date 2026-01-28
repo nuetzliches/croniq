@@ -59,6 +59,11 @@ type WorkEvent struct {
 	EventType    string            `json:"eventType,omitempty"`
 }
 
+type RunnerJobRegistration struct {
+	Description string            `json:"description,omitempty"`
+	Metadata    map[string]string `json:"metadata,omitempty"`
+}
+
 type ApiError struct {
 	StatusCode int
 	Body       string
@@ -82,6 +87,14 @@ type RunnerIdInUseError struct {
 
 func (e *RunnerIdInUseError) Error() string {
 	return fmt.Sprintf("runner id in use: %s", e.Body)
+}
+
+type RunnerJobRegistrationDeniedError struct {
+	Body string
+}
+
+func (e *RunnerJobRegistrationDeniedError) Error() string {
+	return fmt.Sprintf("runner registration denied: %s", e.Body)
 }
 
 func IsLeaseConflict(err error) bool {
@@ -108,6 +121,11 @@ func IsRunnerMismatch(err error) bool {
 func IsRunnerIdInUse(err error) bool {
 	var inUse *RunnerIdInUseError
 	return errors.As(err, &inUse)
+}
+
+func IsRunnerJobRegistrationDenied(err error) bool {
+	var denied *RunnerJobRegistrationDeniedError
+	return errors.As(err, &denied)
 }
 
 func NewClient(cfg Config) (*Client, error) {
@@ -295,6 +313,24 @@ func (c *Client) HeartbeatWithInstance(ctx context.Context, runnerId string, run
 	return c.post(ctx, "/runners/heartbeat", request, nil)
 }
 
+func (c *Client) RegisterJob(ctx context.Context, request runnerJobRegistrationRequest) (*jobRegistrationResponse, error) {
+	if strings.TrimSpace(request.RunnerId) == "" {
+		return nil, errors.New("runner id is required")
+	}
+	if strings.TrimSpace(request.EnvironmentTag) == "" {
+		return nil, errors.New("environment tag is required")
+	}
+	if strings.TrimSpace(request.JobKey) == "" {
+		return nil, errors.New("job key is required")
+	}
+
+	var response jobRegistrationResponse
+	if err := c.post(ctx, "/jobs:register", request, &response); err != nil {
+		return nil, err
+	}
+	return &response, nil
+}
+
 func (c *Client) post(ctx context.Context, path string, payload interface{}, out interface{}) error {
 	payloadBytes, err := json.Marshal(payload)
 	if err != nil {
@@ -338,6 +374,9 @@ func (c *Client) post(ctx context.Context, path string, payload interface{}, out
 	if resp.StatusCode == http.StatusForbidden && isRunnerMismatchBody(string(body)) {
 		return &RunnerMismatchError{Body: string(body)}
 	}
+	if resp.StatusCode == http.StatusForbidden && isRunnerRegistrationDeniedBody(string(body)) {
+		return &RunnerJobRegistrationDeniedError{Body: string(body)}
+	}
 	if resp.StatusCode == http.StatusConflict && isRunnerIdInUseBody(string(body)) {
 		return &RunnerIdInUseError{Body: string(body)}
 	}
@@ -373,6 +412,23 @@ func isRunnerIdInUseBody(body string) bool {
 		return true
 	}
 	if errValue, ok := payload["error"].(string); ok && strings.EqualFold(errValue, "runner-id-in-use") {
+		return true
+	}
+	return false
+}
+
+func isRunnerRegistrationDeniedBody(body string) bool {
+	if strings.Contains(strings.ToLower(body), "runner-registration-denied") {
+		return true
+	}
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(body), &payload); err != nil {
+		return false
+	}
+	if title, ok := payload["title"].(string); ok && strings.EqualFold(title, "runner-registration-denied") {
+		return true
+	}
+	if errValue, ok := payload["error"].(string); ok && strings.EqualFold(errValue, "runner-registration-denied") {
 		return true
 	}
 	return false
@@ -424,6 +480,20 @@ type heartbeatRequest struct {
 	MetadataJson   string     `json:"metadataJson,omitempty"`
 }
 
+type runnerJobRegistrationRequest struct {
+	EnvironmentTag  string            `json:"environmentTag"`
+	RunnerId        string            `json:"runnerId"`
+	RunnerInstanceId string           `json:"runnerInstanceId,omitempty"`
+	JobKey          string            `json:"jobKey"`
+	Description     string            `json:"description,omitempty"`
+	Metadata        map[string]string `json:"metadata,omitempty"`
+}
+
+type jobRegistrationResponse struct {
+	JobKey   string `json:"jobKey"`
+	IsActive bool   `json:"isActive"`
+}
+
 type TransportMode string
 
 const (
@@ -449,6 +519,7 @@ type RunnerConfig struct {
 	RetryMaxAttempts    int
 	HeartbeatInterval   time.Duration
 	HeartbeatMetadata   map[string]any
+	RegisterJobs        *bool
 	OutboxPath          string
 	OutboxMaxEntries    int
 	OutboxMaxBytes      int64
@@ -490,6 +561,11 @@ func LoadRunnerConfigFromEnv() (RunnerConfig, error) {
 		return RunnerConfig{}, errors.New("CRONIQ_TRANSPORT_MODE must be auto, grpc, or polling")
 	}
 
+	registerJobs := true
+	if strings.TrimSpace(os.Getenv("CRONIQ_RUNNER_REGISTER_JOBS")) != "" {
+		registerJobs = parseBoolEnv("CRONIQ_RUNNER_REGISTER_JOBS")
+	}
+
 	allowTests := parseBoolEnv("CRONIQ_ALLOW_TEST_EXECUTIONS")
 	maxInflight := parseIntEnv("CRONIQ_MAX_INFLIGHT", 1)
 	capabilities := parseListEnv("CRONIQ_CAPABILITIES")
@@ -524,6 +600,7 @@ func LoadRunnerConfigFromEnv() (RunnerConfig, error) {
 		RetryBase:           retryBase,
 		RetryMax:            retryMax,
 		RetryMaxAttempts:    retryMaxAttempts,
+		RegisterJobs:        boolPtr(registerJobs),
 	}, nil
 }
 
@@ -637,11 +714,16 @@ func (l *defaultRunnerLogger) Error(message string, fields map[string]any) {
 
 type ExecuteHandler func(ctx ExecutionContext, payload *string, logger RunnerLogger) error
 
+type handlerRegistration struct {
+	handler      ExecuteHandler
+	registration *RunnerJobRegistration
+}
+
 type Runner struct {
 	config   RunnerConfig
 	client   *Client
 	logger   RunnerLogger
-	handlers map[string]ExecuteHandler
+	handlers map[string]handlerRegistration
 	handlersMu sync.RWMutex
 	grpcConn *grpcRunnerConnection
 	outbox   *outboxStore
@@ -655,6 +737,7 @@ type Runner struct {
 	renewCancels map[string]context.CancelFunc
 	abandonedMu sync.RWMutex
 	abandoned map[string]struct{}
+	registerJobs bool
 }
 
 func NewRunner(config RunnerConfig) (*Runner, error) {
@@ -698,6 +781,12 @@ func NewRunner(config RunnerConfig) (*Runner, error) {
 		config.OutboxPath = ".croniq/runner-outbox.jsonl"
 	}
 
+	registerJobs := true
+	if config.RegisterJobs != nil {
+		registerJobs = *config.RegisterJobs
+	}
+	config.RegisterJobs = boolPtr(registerJobs)
+
 	client, err := NewClient(config.Config)
 	if err != nil {
 		return nil, err
@@ -707,15 +796,20 @@ func NewRunner(config RunnerConfig) (*Runner, error) {
 		config: config,
 		client: client,
 		logger: &defaultRunnerLogger{},
-		handlers: map[string]ExecuteHandler{},
+		handlers: map[string]handlerRegistration{},
 		outbox: newOutboxStore(config.OutboxPath, config.OutboxMaxEntries, config.OutboxMaxBytes),
 		activeLeases: map[string]Lease{},
 		renewCancels: map[string]context.CancelFunc{},
 		abandoned: map[string]struct{}{},
+		registerJobs: registerJobs,
 	}, nil
 }
 
 func (r *Runner) OnExecute(jobKey string, handler ExecuteHandler) {
+	r.OnExecuteWithRegistration(jobKey, handler, nil)
+}
+
+func (r *Runner) OnExecuteWithRegistration(jobKey string, handler ExecuteHandler, registration *RunnerJobRegistration) {
 	if strings.TrimSpace(jobKey) == "" {
 		panic("jobKey is required")
 	}
@@ -723,11 +817,11 @@ func (r *Runner) OnExecute(jobKey string, handler ExecuteHandler) {
 		panic("handler is required")
 	}
 	r.handlersMu.Lock()
-	r.handlers[strings.TrimSpace(jobKey)] = handler
+	r.handlers[strings.TrimSpace(jobKey)] = handlerRegistration{handler: handler, registration: registration}
 	r.handlersMu.Unlock()
 }
 
-func (r *Runner) getHandler(jobKey string) (ExecuteHandler, bool) {
+func (r *Runner) getHandler(jobKey string) (handlerRegistration, bool) {
 	r.handlersMu.RLock()
 	handler, ok := r.handlers[jobKey]
 	r.handlersMu.RUnlock()
@@ -770,6 +864,13 @@ func (r *Runner) Run(ctx context.Context) error {
 		go r.replayOutboxLoop(runCtx)
 	}
 
+	if r.registerJobs {
+		if err := r.registerJobDefinitions(runCtx); err != nil {
+			cancel()
+			return err
+		}
+	}
+
 	go r.pollLoop(transportCtx, queue)
 	if r.config.HeartbeatInterval > 0 {
 		go r.heartbeatLoop(transportCtx)
@@ -795,6 +896,51 @@ func (r *Runner) Run(ctx context.Context) error {
 			}(lease)
 		}
 	}
+}
+
+func (r *Runner) registerJobDefinitions(ctx context.Context) error {
+	if strings.TrimSpace(r.config.EnvironmentTag) == "" {
+		return errors.New("environment tag is required for job registration")
+	}
+
+	r.handlersMu.RLock()
+	entries := make([]struct {
+		jobKey       string
+		registration *RunnerJobRegistration
+	}, 0, len(r.handlers))
+	for jobKey, registration := range r.handlers {
+		entries = append(entries, struct {
+			jobKey       string
+			registration *RunnerJobRegistration
+		}{jobKey: jobKey, registration: registration.registration})
+	}
+	r.handlersMu.RUnlock()
+
+	for _, entry := range entries {
+		request := runnerJobRegistrationRequest{
+			EnvironmentTag:  r.config.EnvironmentTag,
+			RunnerId:        r.config.RunnerId,
+			RunnerInstanceId: r.config.RunnerInstanceId,
+			JobKey:          entry.jobKey,
+		}
+		if entry.registration != nil {
+			request.Description = entry.registration.Description
+			request.Metadata = entry.registration.Metadata
+		}
+
+		response, err := r.client.RegisterJob(ctx, request)
+		if err != nil {
+			return err
+		}
+
+		if response != nil && !response.IsActive {
+			r.logger.Warn("job registration pending approval", map[string]any{"jobKey": entry.jobKey})
+		} else {
+			r.logger.Info("job registration completed", map[string]any{"jobKey": entry.jobKey})
+		}
+	}
+
+	return nil
 }
 
 func (r *Runner) Drain(timeout time.Duration) error {
@@ -985,7 +1131,7 @@ func (r *Runner) heartbeatLoop(ctx context.Context) {
 }
 
 func (r *Runner) runLease(ctx context.Context, lease Lease) {
-	handler, ok := r.getHandler(lease.JobKey)
+	registration, ok := r.getHandler(lease.JobKey)
 	if !ok {
 		r.logger.Warn("no handler registered for jobKey", map[string]any{"jobKey": lease.JobKey})
 		if r.grpcConn != nil && r.grpcConn.isConnected() {
@@ -1036,7 +1182,7 @@ func (r *Runner) runLease(ctx context.Context, lease Lease) {
 		},
 	}
 
-	if err := handler(ctxPayload, lease.Payload, r.logger); err != nil {
+	if err := registration.handler(ctxPayload, lease.Payload, r.logger); err != nil {
 		if r.isAbandoned(lease.LeaseId) {
 			r.logger.Warn("lease abandoned during shutdown", map[string]any{"leaseId": lease.LeaseId})
 			return

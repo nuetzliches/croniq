@@ -53,6 +53,10 @@ export class ApiAccessStore {
     readonly isLoading = computed(() => this.clientsResource.isLoading());
     readonly error = this.clientsErrorSignal.asReadonly();
 
+    refresh(): void {
+        this.clientsResource.reload();
+    }
+
     upsertClient(request: UpsertApiClientRequest): Observable<UpsertApiClientRequest | null> {
         const tenant = this.tenantContext.tenantId();
         if (!tenant) return of(null);

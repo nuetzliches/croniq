@@ -1,4 +1,4 @@
-import { CroniqRunner, RunnerIdInUseError } from '@croniq/runner-sdk';
+import { CroniqRunner, RunnerIdInUseError, RunnerJobRegistrationDeniedError } from '@croniq/runner-sdk';
 
 const env = (key: string, fallback: string) => (process.env[key]?.trim() ? process.env[key]!.trim() : fallback);
 
@@ -10,7 +10,7 @@ const apiKey = env('CRONIQ_API_KEY', '');
 const bearerToken = env('CRONIQ_BEARER_TOKEN', '');
 const runnerId = env('CRONIQ_RUNNER_ID', 'default');
 const runnerInstanceId = process.env.CRONIQ_RUNNER_INSTANCE_ID?.trim();
-const jobKey = env('CRONIQ_JOB_KEY', 'demo-job');
+const jobKey = env('CRONIQ_JOB_KEY', 'samples:node-job');
 
 if ((!!apiKey && !!bearerToken) || (!apiKey && !bearerToken)) {
     throw new Error('Set exactly one of CRONIQ_API_KEY or CRONIQ_BEARER_TOKEN');
@@ -30,8 +30,8 @@ const runner = new CroniqRunner({
     maxInflight: process.env.CRONIQ_MAX_INFLIGHT ? Number(process.env.CRONIQ_MAX_INFLIGHT) : undefined,
     capabilities: process.env.CRONIQ_CAPABILITIES
         ? process.env.CRONIQ_CAPABILITIES.split(',')
-              .map((value) => value.trim())
-              .filter(Boolean)
+            .map((value) => value.trim())
+            .filter(Boolean)
         : undefined,
     heartbeatIntervalMs: 15000,
 });
@@ -47,22 +47,32 @@ if (jobKey) {
     console.log(`- job_key:         ${jobKey}`);
 }
 
-runner.onExecute(jobKey, async (context, payload, logger) => {
-    const startedAt = Date.now();
-    logger.info('execution started', {
-        executionId: context.executionId,
-        jobKey: context.jobKey,
-        triggerId: context.triggerId,
-        executionMode: context.executionMode,
-    });
+runner.onExecute(
+    jobKey,
+    async (context, payload, logger) => {
+        const startedAt = Date.now();
+        logger.info('execution started', {
+            executionId: context.executionId,
+            jobKey: context.jobKey,
+            triggerId: context.triggerId,
+            executionMode: context.executionMode,
+        });
 
-    await doWork(payload);
+        await doWork(payload);
 
-    logger.info('execution completed', {
-        executionId: context.executionId,
-        durationMs: Date.now() - startedAt,
-    });
-});
+        logger.info('execution completed', {
+            executionId: context.executionId,
+            durationMs: Date.now() - startedAt,
+        });
+    },
+    {
+        description: 'Demo job registered by the Node runner sample.',
+        metadata: {
+            sample: 'node',
+            sdk: 'croniq-runner',
+        },
+    },
+);
 
 const shutdown = async (signal: string) => {
     console.log(`runner draining due to ${signal}`);
@@ -76,6 +86,8 @@ process.on('SIGINT', () => void shutdown('SIGINT'));
 runner.start().catch((err) => {
     if (err instanceof RunnerIdInUseError) {
         console.error('runnerId already in use; exiting', err);
+    } else if (err instanceof RunnerJobRegistrationDeniedError) {
+        console.error('job registration denied; exiting', err);
     } else {
         console.error('runner failed to start', err);
     }

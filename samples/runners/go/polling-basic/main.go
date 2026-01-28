@@ -21,7 +21,7 @@ func main() {
 	bearerToken := strings.TrimSpace(os.Getenv("CRONIQ_BEARER_TOKEN"))
 	runnerID := env("CRONIQ_RUNNER_ID", "default")
 	runnerInstanceID := strings.TrimSpace(os.Getenv("CRONIQ_RUNNER_INSTANCE_ID"))
-	jobKey := env("CRONIQ_JOB_KEY", "demo-job")
+	jobKey := env("CRONIQ_JOB_KEY", "samples:go-job")
 
 	if (apiKey == "" && bearerToken == "") || (apiKey != "" && bearerToken != "") {
 		log.Fatal("Set exactly one of CRONIQ_API_KEY or CRONIQ_BEARER_TOKEN")
@@ -57,7 +57,7 @@ func main() {
 	}
 	log.Printf("- job_key: %s", jobKey)
 
-	runner.OnExecute(jobKey, func(ctx croniqrunner.ExecutionContext, payload *string, logger croniqrunner.RunnerLogger) error {
+	runner.OnExecuteWithRegistration(jobKey, func(ctx croniqrunner.ExecutionContext, payload *string, logger croniqrunner.RunnerLogger) error {
 
 		logger.Info("execution started", map[string]any{
 			"executionId": ctx.ExecutionId,
@@ -74,6 +74,12 @@ func main() {
 			"executionId": ctx.ExecutionId,
 		})
 		return nil
+	}, &croniqrunner.RunnerJobRegistration{
+		Description: "Demo job registered by the Go runner sample.",
+		Metadata: map[string]string{
+			"sample": "go",
+			"sdk":    "croniq-runner",
+		},
 	})
 
 	runCtx, cancel := context.WithCancel(context.Background())
@@ -93,6 +99,9 @@ func main() {
 	if err := runner.Run(runCtx); err != nil && !errors.Is(err, context.Canceled) {
 		if croniqrunner.IsRunnerIdInUse(err) {
 			log.Fatalf("runnerId already in use: %v", err)
+		}
+		if croniqrunner.IsRunnerJobRegistrationDenied(err) {
+			log.Fatalf("job registration denied: %v", err)
 		}
 		log.Fatalf("runner failed: %v", err)
 	}

@@ -30,6 +30,7 @@ public sealed record RunnerConfig
     public TimeSpan HeartbeatInterval { get; init; } = TimeSpan.Zero;
     public IReadOnlyDictionary<string, object?>? HeartbeatMetadata { get; init; }
     public bool ParsePayloadJson { get; init; }
+    public bool RegisterJobs { get; init; } = true;
     public string? OutboxPath { get; init; }
     public int OutboxMaxEntries { get; init; } = 500;
     public long OutboxMaxBytes { get; init; } = 1_000_000;
@@ -79,6 +80,8 @@ public sealed record RunnerConfig
             _ => throw new InvalidOperationException("CRONIQ_TRANSPORT_MODE must be auto, grpc, or polling")
         };
 
+        var registerJobs = ParseOptionalBool(env, "CRONIQ_RUNNER_REGISTER_JOBS") ?? true;
+
         return new RunnerConfig
         {
             BaseUrl = baseUrl,
@@ -100,7 +103,8 @@ public sealed record RunnerConfig
             RetryBase = TimeSpan.FromMilliseconds(ParseInt(env, "CRONIQ_RETRY_BASE_MS") ?? 500),
             RetryMax = TimeSpan.FromMilliseconds(ParseInt(env, "CRONIQ_RETRY_MAX_MS") ?? 10000),
             RetryMaxAttempts = ParseInt(env, "CRONIQ_RETRY_MAX_ATTEMPTS"),
-            OutboxPath = GetOptional(env, "CRONIQ_OUTBOX_PATH")
+            OutboxPath = GetOptional(env, "CRONIQ_OUTBOX_PATH"),
+            RegisterJobs = registerJobs
         };
     }
 
@@ -113,6 +117,22 @@ public sealed record RunnerConfig
         if (string.IsNullOrWhiteSpace(raw))
         {
             return false;
+        }
+
+        return raw.Trim().ToLowerInvariant() switch
+        {
+            "true" or "1" => true,
+            "false" or "0" => false,
+            _ => throw new InvalidOperationException($"Invalid boolean value for {key}: {raw}")
+        };
+    }
+
+    private static bool? ParseOptionalBool(IDictionary<string, string?> env, string key)
+    {
+        var raw = GetOptional(env, key);
+        if (string.IsNullOrWhiteSpace(raw))
+        {
+            return null;
         }
 
         return raw.Trim().ToLowerInvariant() switch

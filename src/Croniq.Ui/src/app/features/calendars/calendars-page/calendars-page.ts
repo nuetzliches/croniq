@@ -1,10 +1,28 @@
 import { DatePipe } from '@angular/common';
-import { ChangeDetectionStrategy, Component, Directive, inject } from '@angular/core';
+import { CdkMenu } from '@angular/cdk/menu';
+import { ChangeDetectionStrategy, Component, Directive, TemplateRef, computed, effect, inject, signal, viewChild } from '@angular/core';
 import type { CalendarMode, CalendarResponse, CroniqCalendarSeedDefinition } from '@croniq/api-schema';
 import { CalendarDialogComponent } from '@features/calendars/components/calendar-dialog/calendar-dialog.component';
 import { CalendarSummaryView, CalendarsStore } from '@features/calendars/calendars.store';
-import { CqCellDefDirective, CqColumnComponent, CqDialogService, DataGrid } from 'ui-kit';
+import { bindQueryParam } from '@shared/routing/selection-sync';
+import { ShellPanelService } from '@shell/panel/shell-panel.service';
+import { CqCellDefDirective, CqColumnComponent, CqContextMenuItemDirective, CqDialogService, CqIconComponent, CqInputDirective, CqSelectDirective, DataGrid } from 'ui-kit';
 import { filter } from 'rxjs';
+
+type CalendarStatusFilter = 'all' | 'enabled' | 'paused';
+type CalendarModeFilter = 'all' | 'include' | 'exclude';
+
+const STATUS_OPTIONS: ReadonlyArray<{ value: CalendarStatusFilter; label: string }> = [
+    { value: 'all', label: 'All statuses' },
+    { value: 'enabled', label: 'Enabled' },
+    { value: 'paused', label: 'Paused' },
+];
+
+const MODE_OPTIONS: ReadonlyArray<{ value: CalendarModeFilter; label: string }> = [
+    { value: 'all', label: 'All modes' },
+    { value: 'include', label: 'Include' },
+    { value: 'exclude', label: 'Exclude' },
+];
 
 @Directive({
     selector: '[cqCalendarCell]',
@@ -16,7 +34,17 @@ export class CqCalendarCellDirective extends CqCellDefDirective<CalendarSummaryV
 
 @Component({
     selector: 'cq-calendars-page',
-    imports: [DatePipe, DataGrid, CqColumnComponent, CqCalendarCellDirective],
+    imports: [
+        CdkMenu,
+        DatePipe,
+        DataGrid,
+        CqColumnComponent,
+        CqCalendarCellDirective,
+        CqContextMenuItemDirective,
+        CqIconComponent,
+        CqInputDirective,
+        CqSelectDirective,
+    ],
     templateUrl: './calendars-page.html',
     changeDetection: ChangeDetectionStrategy.OnPush,
     providers: [CalendarsStore],
@@ -24,11 +52,68 @@ export class CqCalendarCellDirective extends CqCellDefDirective<CalendarSummaryV
 export class CalendarsPage {
     private readonly store = inject(CalendarsStore);
     private readonly dialog = inject(CqDialogService);
+    private readonly shellPanel = inject(ShellPanelService);
+    private readonly panelTemplate = viewChild<TemplateRef<unknown>>('calendarsFilterPanel');
+    private readonly collapsedTemplate = viewChild<TemplateRef<unknown>>('calendarsFilterCollapsed');
 
     readonly calendars = this.store.calendars;
     readonly calendarDefinitions = this.store.calendarDefinitions;
     readonly loading = this.store.loading;
     readonly error = this.store.error;
+
+    readonly calendarSearch = signal('');
+    readonly statusFilter = signal<CalendarStatusFilter>('all');
+    readonly modeFilter = signal<CalendarModeFilter>('all');
+    readonly selectedCalendarId = bindQueryParam({ paramKey: 'calendarId' });
+    readonly statusOptions = STATUS_OPTIONS;
+    readonly modeOptions = MODE_OPTIONS;
+
+    readonly filteredCalendars = computed(() => {
+        const query = this.calendarSearch().trim().toLowerCase();
+        const status = this.statusFilter();
+        const mode = this.modeFilter();
+
+        return this.calendars().filter((calendar) => {
+            if (status !== 'all') {
+                if (status === 'enabled' && !calendar.enabled) {
+                    return false;
+                }
+                if (status === 'paused' && calendar.enabled) {
+                    return false;
+                }
+            }
+
+            if (mode !== 'all') {
+                const isInclude = calendar.mode === 0;
+                if (mode === 'include' && !isInclude) {
+                    return false;
+                }
+                if (mode === 'exclude' && isInclude) {
+                    return false;
+                }
+            }
+
+            if (!query) {
+                return true;
+            }
+
+            return (
+                calendar.calendarId.toLowerCase().includes(query) ||
+                calendar.name.toLowerCase().includes(query) ||
+                (calendar.description ?? '').toLowerCase().includes(query) ||
+                calendar.timeZoneId.toLowerCase().includes(query)
+            );
+        });
+    });
+
+    readonly selectedCalendar = computed(() => {
+        const raw = this.selectedCalendarId();
+        if (raw === null || raw === undefined) {
+            return null;
+        }
+        const id = typeof raw === 'string' ? raw : String(raw);
+        return this.calendars().find((calendar) => calendar.calendarId === id) ?? null;
+    });
 
     calendarRowKey = (row: CalendarSummaryView, index: number) =>
         row.calendarId || `calendar-${index}`;
@@ -36,8 +121,43 @@ export class CalendarsPage {
     calendarRowClasses = (row: CalendarSummaryView) =>
         row.enabled ? undefined : ['opacity-80'];
 
+    constructor() {
+        effect((onCleanup) => {
+            const template = this.panelTemplate();
+            const collapsedTemplate = this.collapsedTemplate();
+            if (!template) {
+                return;
+            }
+            this.shellPanel.setPanel(
+                template,
+                'Filters & settings',
+                'Refine the calendars list.',
+                collapsedTemplate ?? null,
+            );
+            onCleanup(() => this.shellPanel.clearPanel(template));
+        });
+    }
+
     refresh(): void {
         this.store.refresh();
+    }
+
+    setCalendarSearch(query: string): void {
+        this.calendarSearch.set(query);
+    }
+
+    setStatusFilter(status: CalendarStatusFilter): void {
+        this.statusFilter.set(status);
+    }
+
+    setModeFilter(mode: CalendarModeFilter): void {
+        this.modeFilter.set(mode);
+    }
+
+    resetFilters(): void {
+        this.calendarSearch.set('');
+        this.statusFilter.set('all');
+        this.modeFilter.set('all');
     }
 
     createCalendar(): void {
