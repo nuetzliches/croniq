@@ -35,6 +35,7 @@ All AI-generated contributions must align with the architectural ground rules do
 
 6. **Breaking Changes Before GA**
    - There are currently no external consumers. Treat breaking API or contract changes as acceptable until we ship `v1.0.0` (non-RC).
+   - Backward-compatibility shims and upgrade-safe behavior are not required before `v1.0.0` (non-RC).
    - When making such changes, still document the rationale in `docs/deep-dive/*` so we keep a trace for future stabilization.
 
 7. **Documentation Cross-Links**

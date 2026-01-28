@@ -83,6 +83,7 @@ public static partial class ApiHostingExtensions
         app.MapGet("/tenants/{tenantId}/runners", async (
             string tenantId,
             string? environment,
+            bool? includeOffline,
             [FromServices] ICallerContextAccessor callerContextAccessor,
             [FromServices] IRunnerStore runnerStore,
             CancellationToken cancellationToken) =>
@@ -94,7 +95,7 @@ public static partial class ApiHostingExtensions
             }
 
             var scope = new PartitionScope(tenantId.Trim(), resolvedEnvironment);
-            var query = new RunnerQuery(scope, DateTimeOffset.UtcNow);
+            var query = new RunnerQuery(scope, DateTimeOffset.UtcNow, includeOffline.GetValueOrDefault());
             var runners = await runnerStore.ListAsync(query, cancellationToken).ConfigureAwait(false);
 
             var payload = runners
@@ -103,7 +104,7 @@ public static partial class ApiHostingExtensions
 
             return Results.Ok(new RunnerListResponse(payload));
         })
-        .WithDocs("Runners_List", "List runners", "Lists active runners for the tenant/environment.")
+        .WithDocs("Runners_List", "List runners", "Lists runners for the tenant/environment (use includeOffline=true to return offline runners within retention).")
         .Produces<RunnerListResponse>(StatusCodes.Status200OK)
         .RequireCroniqTenantScope(requireEnvironment: true, CroniqScopes.RunnersRead);
     }

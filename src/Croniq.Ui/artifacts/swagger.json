@@ -3254,7 +3254,7 @@
           "Croniq.ApiHost"
         ],
         "summary": "List runners",
-        "description": "Lists active runners for the tenant/environment.",
+          "description": "Lists runners for the tenant/environment (use includeOffline=true to return offline runners within retention).",
         "operationId": "Runners_List",
         "parameters": [
           {
@@ -3265,14 +3265,21 @@
               "type": "string"
             }
           },
-          {
-            "name": "environment",
-            "in": "query",
-            "schema": {
-              "type": "string"
+            {
+              "name": "environment",
+              "in": "query",
+              "schema": {
+                "type": "string"
+              }
+            },
+            {
+              "name": "includeOffline",
+              "in": "query",
+              "schema": {
+                "type": "boolean"
+              }
             }
-          }
-        ],
+          ],
         "responses": {
           "200": {
             "description": "OK",

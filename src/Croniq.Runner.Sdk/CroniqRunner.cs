@@ -48,6 +48,7 @@ public sealed class CroniqRunner : IAsyncDisposable
     private volatile bool _grpcConnected;
     private volatile bool _running;
     private volatile bool _acceptingWork;
+    private volatile bool _draining;
     private CancellationTokenSource? _runCts;
     private Exception? _fatal;
 
@@ -128,6 +129,7 @@ public sealed class CroniqRunner : IAsyncDisposable
 
         _running = true;
         _acceptingWork = true;
+        _draining = false;
         _fatal = null;
 
         _runCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
@@ -171,6 +173,8 @@ public sealed class CroniqRunner : IAsyncDisposable
             return;
         }
 
+        _draining = true;
+        await TrySendDrainHeartbeatAsync().ConfigureAwait(false);
         _acceptingWork = false;
         StopGrpc();
 
@@ -937,7 +941,8 @@ public sealed class CroniqRunner : IAsyncDisposable
             ["runnerInstanceId"] = _runnerInstanceId,
             ["transportState"] = ResolveTransportState(),
             ["allowTestExecutions"] = _config.AllowTestExecutions,
-            ["maxInflight"] = _config.MaxInflight
+            ["maxInflight"] = _config.MaxInflight,
+            ["draining"] = _draining
         };
 
         if (_config.Capabilities is { Length: > 0 })
@@ -954,6 +959,18 @@ public sealed class CroniqRunner : IAsyncDisposable
         }
 
         return JsonSerializer.Serialize(data, SerializerOptions);
+    }
+
+    private async Task TrySendDrainHeartbeatAsync()
+    {
+        try
+        {
+            await HeartbeatAsync(CancellationToken.None).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            _logger.Warn("drain heartbeat failed", new Dictionary<string, object?> { ["error"] = ex.Message });
+        }
     }
 
     private string ResolveTransportState()

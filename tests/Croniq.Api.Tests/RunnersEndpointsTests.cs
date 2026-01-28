@@ -152,6 +152,30 @@ public sealed class RunnersEndpointsTests : IClassFixture<WebhookApiTestHost>
         payload.Runners.ShouldBeEmpty();
     }
 
+    [Fact]
+    public async Task List_WithIncludeOffline_ReturnsOfflineRunner()
+    {
+        _host.Reset();
+
+        var heartbeat = new RunnerHeartbeatRequest(
+            EnvironmentTag: WebhookApiTestHost.Environment,
+            RunnerId: "itest-offline",
+            SeenAtUtc: DateTimeOffset.UtcNow.AddMinutes(-5));
+
+        var hbResponse = await _host.Client.PostAsJsonAsync($"/tenants/{WebhookApiTestHost.TenantId}/runners/heartbeat", heartbeat);
+        hbResponse.StatusCode.ShouldBe(HttpStatusCode.NoContent);
+
+        var listResponse = await _host.Client.GetAsync(
+            $"/tenants/{WebhookApiTestHost.TenantId}/runners?environment={WebhookApiTestHost.Environment}&includeOffline=true");
+        listResponse.StatusCode.ShouldBe(HttpStatusCode.OK);
+
+        var payload = await listResponse.Content.ReadFromJsonAsync<RunnerListResponse>();
+        payload.ShouldNotBeNull();
+        payload.Runners.Length.ShouldBe(1);
+        payload.Runners[0].RunnerId.ShouldBe("itest-offline");
+        payload.Runners[0].IsOnline.ShouldBeFalse();
+    }
+
     private void SetCallerApiKey(string apiKey)
     {
         _host.Client.DefaultRequestHeaders.Remove("X-Croniq-Key");

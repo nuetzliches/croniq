@@ -536,6 +536,23 @@ export const TenantsApi: EndpointDefinition[] = [
         ],
     },
     {
+        method: 'delete',
+        path: '/tenants/:tenantId/jobs/:jobId',
+        description: `Deletes the job definition and associated triggers within the tenant/environment scope.`,
+        requestFormat: 'json',
+        parameters: [
+            { name: 'tenantId', type: 'Path', schema: z.string() },
+            { name: 'jobId', type: 'Path', schema: z.string() },
+            {
+                name: 'environment',
+                type: 'Query',
+                schema: z.string().optional(),
+            },
+        ],
+        response: z.void(),
+        errors: [{ status: 400, description: `Bad Request`, schema: z.void() }],
+    },
+    {
         method: 'post',
         path: '/tenants/:tenantId/jobs/:jobId/activate',
         description: `Activates a pending job so it can be dispatched.`,
@@ -556,33 +573,21 @@ export const TenantsApi: EndpointDefinition[] = [
         ],
     },
     {
-        method: 'delete',
-        path: '/tenants/:tenantId/jobs/:jobId',
-        description: `Deletes the job definition and associated triggers within the tenant/environment scope.`,
+        method: 'get',
+        path: '/tenants/:tenantId/runners',
+        description: `Lists runners for the tenant/environment (use includeOffline&#x3D;true to return offline runners within retention).`,
         requestFormat: 'json',
         parameters: [
             { name: 'tenantId', type: 'Path', schema: z.string() },
-            { name: 'jobId', type: 'Path', schema: z.string() },
             {
                 name: 'environment',
                 type: 'Query',
                 schema: z.string().optional(),
             },
-        ],
-        response: z.void(),
-        errors: [{ status: 400, description: `Bad Request`, schema: z.void() }],
-    },
-    {
-        method: 'get',
-        path: '/tenants/:tenantId/runners',
-        description: `Lists active runners for the tenant/environment.`,
-        requestFormat: 'json',
-        parameters: [
-            { name: 'tenantId', type: 'Path', schema: z.string() },
             {
-                name: 'environment',
+                name: 'includeOffline',
                 type: 'Query',
-                schema: z.string().optional(),
+                schema: z.boolean().optional(),
             },
         ],
         response: RunnerListResponse,

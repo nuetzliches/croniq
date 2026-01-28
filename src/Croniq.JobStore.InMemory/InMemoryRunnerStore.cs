@@ -55,6 +55,7 @@ public sealed class InMemoryRunnerStore : IRunnerStore
 
         var scope = query.Scope;
         var now = query.NowUtc;
+        var includeOffline = query.IncludeOffline;
 
         lock (_lock)
         {
@@ -63,6 +64,7 @@ public sealed class InMemoryRunnerStore : IRunnerStore
             var result = _entries
                 .Where(kvp => MatchesScope(kvp.Key, scope))
                 .Select(kvp => ToStatus(kvp.Value, now))
+                .Where(status => includeOffline || status.IsOnline)
                 .OrderBy(r => r.RunnerId, StringComparer.OrdinalIgnoreCase)
                 .ToArray();
 
@@ -90,6 +92,11 @@ public sealed class InMemoryRunnerStore : IRunnerStore
 
             if (_entries.TryGetValue((scope.TenantId, scope.EnvironmentTag, runnerId), out var entry))
             {
+                if (entry.ExpiresAtUtc <= now)
+                {
+                    return Task.FromResult<RunnerStatus?>(null);
+                }
+
                 return Task.FromResult<RunnerStatus?>(ToStatus(entry, now));
             }
         }
@@ -111,8 +118,9 @@ public sealed class InMemoryRunnerStore : IRunnerStore
 
     private void PruneExpiredUnsafe(PartitionScope scope, DateTimeOffset now)
     {
+        var retentionCutoff = now.Add(-_options.OfflineRetentionTtl);
         var expiredKeys = _entries
-            .Where(kvp => MatchesScope(kvp.Key, scope) && kvp.Value.ExpiresAtUtc <= now)
+            .Where(kvp => MatchesScope(kvp.Key, scope) && kvp.Value.LastSeenAtUtc <= retentionCutoff)
             .Select(kvp => kvp.Key)
             .ToList();
 

@@ -76,16 +76,40 @@ public sealed class SqlServerRunnerStoreTests : IAsyncLifetime
             new RunnerHeartbeat(scope, "runner-old", seenAt, null),
             CancellationToken.None);
 
-        var results = await _runnerStore.ListAsync(new RunnerQuery(scope, seenAt.AddMinutes(2)), CancellationToken.None);
+        var results = await _runnerStore.ListAsync(new RunnerQuery(scope, seenAt.AddMinutes(20)), CancellationToken.None);
 
         results.ShouldBeEmpty();
+    }
+
+    [Fact]
+    [Trait(TestCategories.Category, TestCategories.Contract)]
+    public async Task ListAsync_includeOffline_returns_offline_runner()
+    {
+        var scope = new PartitionScope("tenant-runners", "dev");
+        var seenAt = new DateTimeOffset(2025, 1, 1, 0, 0, 0, TimeSpan.Zero);
+
+        await _runnerStore!.UpsertHeartbeatAsync(
+            new RunnerHeartbeat(scope, "runner-offline", seenAt, null),
+            CancellationToken.None);
+
+        var results = await _runnerStore.ListAsync(
+            new RunnerQuery(scope, seenAt.AddMinutes(2), IncludeOffline: true),
+            CancellationToken.None);
+
+        var runner = results.ShouldHaveSingleItem();
+        runner.RunnerId.ShouldBe("runner-offline");
+        runner.IsOnline.ShouldBeFalse();
     }
 
     private static ServiceProvider BuildServiceProvider(string connectionString)
     {
         var services = new ServiceCollection();
         services.AddLogging(TestLogging.Configure);
-        services.Configure<RunnerStoreOptions>(options => options.OnlineTtl = TimeSpan.FromMinutes(1));
+        services.Configure<RunnerStoreOptions>(options =>
+        {
+            options.OnlineTtl = TimeSpan.FromMinutes(1);
+            options.OfflineRetentionTtl = TimeSpan.FromMinutes(10);
+        });
         services.AddCroniqSqlServerPersistence(
             sql =>
             {

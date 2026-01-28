@@ -151,6 +151,7 @@ docs/
 - SDKs generate a `runnerInstanceId` (ephemeral per process) and include it in gRPC hello/poll/heartbeat metadata. If the API host sees the same `runnerId` already active with a different `runnerInstanceId`, it rejects the session with `409 runner-id-in-use` and the SDK must fail fast.
 - Authentication stays on the regular Croniq auth paths (API keys or bearer tokens) with least-privilege work scopes (`work:poll`, `work:renew`, `work:ack`, `work:events`). `runnerId` itself is **not** a secret, but it must match the authenticated caller identity.
 - Runner availability is tracked via heartbeats (`POST /tenants/{tenantId}/runners/heartbeat`) and listed via `GET /tenants/{tenantId}/runners`. The TTL is controlled by `RunnerStoreOptions.OnlineTtl`. Availability is informational and does not affect lease correctness.
+- Offline runners are retained for `RunnerStoreOptions.OfflineRetentionTtl`; pass `includeOffline=true` to list recently offline runners alongside online ones.
 - Horizontal scaling is achieved by running multiple runners with distinct `runnerId` values. Lease ownership guarantees one execution per lease, while per-job concurrency limits still apply.
 - Naming: use "Runner" for `/work` clients and gRPC streaming; reserve "WorkerHost" for the .NET host.
 
@@ -262,7 +263,11 @@ Runner SDKs should expose a drain/shutdown mode:
   - `RequireApproval` (default): jobs remain pending until approved in the UI/API.
   - `AutoActivate`: jobs become active immediately.
   - `Deny`: reject runner self-registration attempts.
-- Only `active` jobs are dispatched; optional runner subscriptions/allowlists further restrict assignments.
+- Only `active` jobs are dispatched.
+- Jobs carry an `AssignedRunnerId` (1:1 per tenant/environment). Active jobs require an assignment; dispatch only targets the assigned runner.
+- When a runner self-registers a job, the assignment is recorded as pending with the job. Approving the job confirms the assignment.
+- If an active job is already assigned to a different runner, runner self-registration is rejected; reassignment requires the job to be inactive.
+- Horizontal scale-out for a job requires a future `RunnerPool` concept.
 
 ## Policies & Error Handling
 

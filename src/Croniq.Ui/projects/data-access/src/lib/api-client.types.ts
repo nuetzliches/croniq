@@ -6,6 +6,10 @@ export interface TenantEnvironmentOptionalParams extends TenantScopedParams {
     environment?: string | null;
 }
 
+export interface TenantRunnerListParams extends TenantEnvironmentOptionalParams {
+    includeOffline?: boolean | null;
+}
+
 export interface TenantEnvironmentParams extends TenantScopedParams {
     environment: string;
 }

@@ -1,5 +1,6 @@
 using System.Net;
 using Croniq.Api;
+using Croniq.Core;
 using Croniq.Hosting;
 using Croniq.Persistence.Abstractions;
 using Croniq.Webhooks;
@@ -29,6 +30,11 @@ builder.Services.AddCroniqWebhookServices(builder.Configuration, includePlatform
 builder.Services.AddCroniqWebhookRateLimiter();
 
 builder.Services.AddCroniqApiObservability(builder.Configuration, builder.Logging);
+
+builder.Services.AddCroniqFileExecutionLogStore(options =>
+    builder.Configuration.GetSection("Croniq:Logging:Execution").Bind(options));
+builder.Logging.AddCroniqExecutionLogSink(options =>
+    builder.Configuration.GetSection("Croniq:Logging:Execution:Sink").Bind(options));
 
 builder.Services.AddCroniqJobsFromConfiguration(builder.Configuration);
 

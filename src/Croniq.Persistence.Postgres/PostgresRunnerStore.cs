@@ -55,14 +55,23 @@ ON CONFLICT (""TenantId"", ""EnvironmentTag"", ""RunnerId"") DO UPDATE SET
 
         var scope = query.Scope;
         var now = query.NowUtc;
+        var includeOffline = query.IncludeOffline;
+        var nowUtc = now.UtcDateTime;
 
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
 
         await PruneExpiredAsync(db, scope, now, cancellationToken).ConfigureAwait(false);
 
-        var rows = await db.Runners
+        var rowsQuery = db.Runners
             .AsNoTracking()
-            .Where(x => x.TenantId == scope.TenantId && x.EnvironmentTag == scope.EnvironmentTag)
+            .Where(x => x.TenantId == scope.TenantId && x.EnvironmentTag == scope.EnvironmentTag);
+
+        if (!includeOffline)
+        {
+            rowsQuery = rowsQuery.Where(x => x.ExpiresAtUtc > nowUtc);
+        }
+
+        var rows = await rowsQuery
             .OrderBy(x => x.RunnerId)
             .ToListAsync(cancellationToken)
             .ConfigureAwait(false);
@@ -124,10 +133,13 @@ ON CONFLICT (""TenantId"", ""EnvironmentTag"", ""RunnerId"") DO UPDATE SET
             row.MetadataJson);
     }
 
-    private static Task<int> PruneExpiredAsync(PostgresDbContext db, PartitionScope scope, DateTimeOffset nowUtc, CancellationToken cancellationToken)
+    private Task<int> PruneExpiredAsync(PostgresDbContext db, PartitionScope scope, DateTimeOffset nowUtc, CancellationToken cancellationToken)
     {
+        var retentionCutoffUtc = nowUtc.Add(-_options.OfflineRetentionTtl).UtcDateTime;
         return db.Runners
-            .Where(x => x.TenantId == scope.TenantId && x.EnvironmentTag == scope.EnvironmentTag && x.ExpiresAtUtc <= nowUtc.UtcDateTime)
+            .Where(x => x.TenantId == scope.TenantId
+                && x.EnvironmentTag == scope.EnvironmentTag
+                && x.LastSeenAtUtc <= retentionCutoffUtc)
             .ExecuteDeleteAsync(cancellationToken);
     }
 }

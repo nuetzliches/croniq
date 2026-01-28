@@ -4,4 +4,5 @@ namespace Croniq.Persistence.Abstractions;
 
 public sealed record RunnerQuery(
     PartitionScope Scope,
-    DateTimeOffset NowUtc);
+    DateTimeOffset NowUtc,
+    bool IncludeOffline = false);

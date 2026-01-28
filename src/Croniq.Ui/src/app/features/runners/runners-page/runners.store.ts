@@ -13,6 +13,17 @@ export interface Runner {
     activeJobs: number;
     capacity: number;
     tags: string[];
+    capabilities: string[];
+    runnerInstanceId?: string;
+    runnerInstanceLabel: string;
+    transportState?: string;
+    transportLabel: string;
+    allowTestExecutions?: boolean;
+    allowTestLabel: string;
+    maxInflight?: number;
+    maxInflightLabel: string;
+    draining: boolean;
+    drainLabel: string;
     loadPercent: number;
     loadLabel: string;
     recentJobs: ReadonlyArray<string>;
@@ -23,9 +34,16 @@ interface RunnerMetadata {
     tags?: string[];
     capacity?: number;
     activeJobs?: number;
+    runnerInstanceId?: string;
+    transportState?: string;
+    allowTestExecutions?: boolean;
+    maxInflight?: number;
+    draining?: boolean;
+    capabilities?: string[];
 }
 
 const DEFAULT_LOAD_LABEL = 'n/a';
+const DEFAULT_VALUE_LABEL = '--';
 const MAX_RECENT_JOBS = 4;
 
 const parseRunnerMetadata = (metadataJson?: string | null): RunnerMetadata => {
@@ -44,6 +62,13 @@ const parseRunnerMetadata = (metadataJson?: string | null): RunnerMetadata => {
         const tagsValue = record['tags'];
         const capacityValue = record['capacity'];
         const activeJobsValue = record['activeJobs'];
+        const runnerInstanceValue = record['runnerInstanceId'];
+        const transportStateValue = record['transportState'];
+        const allowTestValue = record['allowTestExecutions'];
+        const maxInflightValue = record['maxInflight'];
+        const drainingValue = record['draining'];
+        const drainStatusValue = record['drainStatus'];
+        const capabilitiesValue = record['capabilities'];
 
         const hostname = typeof hostnameValue === 'string' ? hostnameValue : undefined;
         const tags = Array.isArray(tagsValue)
@@ -51,16 +76,73 @@ const parseRunnerMetadata = (metadataJson?: string | null): RunnerMetadata => {
             : undefined;
         const capacity = typeof capacityValue === 'number' ? capacityValue : undefined;
         const activeJobs = typeof activeJobsValue === 'number' ? activeJobsValue : undefined;
+        const runnerInstanceId = typeof runnerInstanceValue === 'string' ? runnerInstanceValue : undefined;
+        const transportState = typeof transportStateValue === 'string' ? transportStateValue : undefined;
+        const allowTestExecutions = typeof allowTestValue === 'boolean' ? allowTestValue : undefined;
+        const maxInflight = typeof maxInflightValue === 'number' ? maxInflightValue : undefined;
+        const capabilities = Array.isArray(capabilitiesValue)
+            ? capabilitiesValue.filter((tag): tag is string => typeof tag === 'string')
+            : undefined;
+        const draining = typeof drainingValue === 'boolean'
+            ? drainingValue
+            : typeof drainStatusValue === 'string'
+                ? drainStatusValue.toLowerCase() === 'draining'
+                : typeof drainStatusValue === 'boolean'
+                    ? drainStatusValue
+                    : undefined;
 
         return {
             hostname,
             tags,
             capacity,
             activeJobs,
+            runnerInstanceId,
+            transportState,
+            allowTestExecutions,
+            maxInflight,
+            draining,
+            capabilities,
         };
     } catch {
         return {};
     }
+};
+
+const buildRunnerTags = (metadata: RunnerMetadata): string[] => {
+    const tags = metadata.tags ?? [];
+    const capabilities = metadata.capabilities ?? [];
+    if (tags.length === 0 && capabilities.length === 0) {
+        return [];
+    }
+    return Array.from(new Set([...tags, ...capabilities])).sort((a, b) => a.localeCompare(b));
+};
+
+const toTransportLabel = (transport?: string): string => {
+    if (!transport) {
+        return DEFAULT_VALUE_LABEL;
+    }
+    const normalized = transport.trim().toLowerCase();
+    if (normalized === 'grpc') {
+        return 'gRPC';
+    }
+    if (normalized === 'polling') {
+        return 'Polling';
+    }
+    return transport;
+};
+
+const toAllowTestLabel = (allowTest?: boolean): string => {
+    if (allowTest === undefined) {
+        return DEFAULT_VALUE_LABEL;
+    }
+    return allowTest ? 'Allowed' : 'Blocked';
+};
+
+const toMaxInflightLabel = (maxInflight?: number): string => {
+    if (!maxInflight || maxInflight <= 0) {
+        return DEFAULT_VALUE_LABEL;
+    }
+    return maxInflight.toString();
 };
 
 const mapRunnerStatus = (runner: RunnerStatusModel): Runner => {
@@ -69,15 +151,32 @@ const mapRunnerStatus = (runner: RunnerStatusModel): Runner => {
     const activeJobs = metadata.activeJobs ?? 0;
     const loadPercent = capacity > 0 ? Math.min(100, (activeJobs / capacity) * 100) : 0;
     const loadLabel = capacity > 0 ? `${activeJobs}/${capacity}` : DEFAULT_LOAD_LABEL;
+    const tags = buildRunnerTags(metadata);
+    const draining = metadata.draining === true;
+    const status = runner.isOnline ? (draining ? 'Draining' : 'Online') : 'Offline';
+    const drainLabel = runner.isOnline
+        ? (draining ? 'Draining' : 'Accepting work')
+        : 'Offline';
 
     return {
         id: runner.runnerId,
         hostname: metadata.hostname ?? runner.runnerId,
-        status: runner.isOnline ? 'Online' : 'Offline',
+        status,
         lastHeartbeatAt: runner.lastSeenAtUtc ?? '',
         activeJobs,
         capacity,
-        tags: metadata.tags ?? [],
+        tags,
+        capabilities: metadata.capabilities ?? [],
+        runnerInstanceId: metadata.runnerInstanceId,
+        runnerInstanceLabel: metadata.runnerInstanceId ?? DEFAULT_VALUE_LABEL,
+        transportState: metadata.transportState,
+        transportLabel: toTransportLabel(metadata.transportState),
+        allowTestExecutions: metadata.allowTestExecutions,
+        allowTestLabel: toAllowTestLabel(metadata.allowTestExecutions),
+        maxInflight: metadata.maxInflight,
+        maxInflightLabel: toMaxInflightLabel(metadata.maxInflight),
+        draining,
+        drainLabel,
         loadPercent,
         loadLabel,
         recentJobs: [],
@@ -138,7 +237,7 @@ export class RunnersStore {
             const { tenantId, environment } = params;
             if (!tenantId) return of([]);
 
-            return this.api.listRunners({ tenantId, environment }, requestOptions).pipe(
+            return this.api.listRunners({ tenantId, environment, includeOffline: true }, requestOptions).pipe(
                 map((response: RunnerListResponse) => (response.runners ?? []).map(mapRunnerStatus)),
                 catchError(err => {
                     console.error('Failed to load runners', err);

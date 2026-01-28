@@ -188,7 +188,7 @@ if (!usePostgres && string.IsNullOrWhiteSpace(sqlConnection))
     sqlConnection = $"Server={ResolveSqlHost()},{sqlHostPort};Database={sqlDatabase};User Id=sa;Password={sqlPassword};Encrypt=False;TrustServerCertificate=True;";
 }
 
-var logsPath = Path.Combine(repoRoot, "logs");
+var logsPath = GetEnvValueOrDefault("CRONIQ_LOGGING_EXECUTION_BASEPATH", Path.Combine(repoRoot, "logs"));
 var apiUrls = string.Concat("http://0.0.0.0:", apiPort.ToString(CultureInfo.InvariantCulture));
 var apiGrpcUrls = string.Concat("http://0.0.0.0:", apiGrpcPort.ToString(CultureInfo.InvariantCulture));
 var dmzAdminUrls = string.Concat(

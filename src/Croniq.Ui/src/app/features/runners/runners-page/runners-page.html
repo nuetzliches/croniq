@@ -3,7 +3,7 @@
   <header class="flex flex-wrap items-center justify-between gap-4">
     <div class="space-y-1">
       <h1 class="text-lg font-semibold text-primary">Runners</h1>
-      <p class="text-xs text-muted">Inspect runner health, capacity, and tags.</p>
+      <p class="text-xs text-muted">Inspect runner health, transport, capacity, and tags.</p>
     </div>
     <div class="flex flex-wrap items-center gap-2">
       <button
@@ -208,7 +208,7 @@
         <div class="flex items-start justify-between gap-3">
           <div>
             <h2 class="text-sm font-semibold text-primary">Runner detail</h2>
-            <p class="text-xs text-muted">Status, capacity, and tags.</p>
+            <p class="text-xs text-muted">Status, transport, capacity, and tags.</p>
           </div>
           @if (selectedRunner()) {
           <span class="rounded-full bg-white/10 px-2 py-1 text-[11px] font-semibold text-muted">
@@ -260,6 +260,24 @@
               } @else {
               <span>—</span>
               }
+            </div>
+          </div>
+
+          <div class="rounded-lg border border-white/10 bg-black/10 px-3 py-3">
+            <div class="text-[11px] font-semibold uppercase tracking-wide text-muted">
+              Transport & policy
+            </div>
+            <div class="mt-3 grid grid-cols-2 gap-2 text-xs text-muted">
+              <span>Transport</span>
+              <span class="text-right text-primary">{{ runner.transportLabel }}</span>
+              <span>Allow test runs</span>
+              <span class="text-right text-primary">{{ runner.allowTestLabel }}</span>
+              <span>Max inflight</span>
+              <span class="text-right text-primary">{{ runner.maxInflightLabel }}</span>
+              <span>Instance</span>
+              <span class="text-right text-primary">{{ runner.runnerInstanceLabel }}</span>
+              <span>Drain status</span>
+              <span class="text-right text-primary">{{ runner.drainLabel }}</span>
             </div>
           </div>
 

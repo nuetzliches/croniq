@@ -234,15 +234,24 @@ If you need runner availability for dashboards or ops tooling, use the runner he
 
 - `POST /tenants/{tenantId}/runners/heartbeat?environment=dev`
 - `GET /tenants/{tenantId}/runners?environment=dev`
+- `GET /tenants/{tenantId}/runners?environment=dev&includeOffline=true`
 
 Scopes:
 
 - `runners:heartbeat` for posting heartbeats
 - `runners:read` for listing runners
 
-Heartbeat payloads accept `runnerId`, optional `seenAtUtc`, and optional `metadataJson` for tags or capabilities. Presence is derived from the configured TTL; it does not affect lease correctness.
+Heartbeat payloads accept `runnerId`, optional `seenAtUtc`, and optional `metadataJson` for tags or capabilities.
+Presence is derived from the configured TTL; offline runners are retained for `RunnerStoreOptions.OfflineRetentionTtl` so UIs can show recently offline runners when `includeOffline=true` is supplied. Presence is informational and does not affect lease correctness.
 
-Recommended metadata fields include `runnerInstanceId`, capability tags, and transport state so UIs can detect collisions and display gRPC/polling status.
+Recommended metadata fields include:
+
+- `runnerInstanceId`
+- `transportState` (`grpc`/`polling`)
+- `allowTestExecutions` (boolean)
+- `maxInflight` (number)
+- `draining` (boolean)
+- `capabilities` (string array)
 
 ## Protocol Roadmap
 

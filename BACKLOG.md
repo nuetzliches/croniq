@@ -25,8 +25,8 @@
 
 ## Runners
 
-- [ ] Improve runner UI visibility: transport state, last seen, max inflight, allow-test flag, and drain status per runner instance.
-- [ ] Persist runner presence beyond OnlineTtl and expose includeOffline (retention-based) to allow UI to show offline runners.
+- [x] Improve runner UI visibility: transport state, last seen, max inflight, allow-test flag, and drain status per runner instance.
+- [x] Persist runner presence beyond OnlineTtl and expose includeOffline (retention-based) to allow UI to show offline runners.
 - [ ] Allow runner SDKs to upsert schedules (opt-in; requires schedules:write scope).
 - [ ] Support once-per-deployment/cluster @once scheduling from runners (define deployment/cluster identity and deterministic triggerId to avoid re-arming races).
 - [ ] Add adaptive polling guidance (server hints for next poll delay; keep SDK jittered backoff).
