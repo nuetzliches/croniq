@@ -266,16 +266,21 @@ func (c *grpcRunnerConnection) connectOnce(ctx context.Context, onAssigned func(
 			continue
 		}
 		assigned := current.GetFieldByName("assigned")
-		if assignedMsg, ok := assigned.(*dynamic.Message); ok {
-			lease, err := leaseFromDynamic(assignedMsg)
-			if err == nil {
-				onAssigned(lease)
-			}
+		assignedMsg, ok := assigned.(*dynamic.Message)
+		if !ok || assignedMsg == nil {
+			continue
+		}
+		lease, err := leaseFromDynamic(assignedMsg)
+		if err == nil {
+			onAssigned(lease)
 		}
 	}
 }
 
 func leaseFromDynamic(message *dynamic.Message) (Lease, error) {
+	if message == nil {
+		return Lease{}, errors.New("lease message is nil")
+	}
 	executionId, _ := message.TryGetFieldByName("execution_id")
 	leaseId, _ := message.TryGetFieldByName("lease_id")
 	triggerId, _ := message.TryGetFieldByName("trigger_id")

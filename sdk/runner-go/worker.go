@@ -960,12 +960,14 @@ func (r *Runner) Drain(timeout time.Duration) error {
 
 	select {
 	case <-done:
+		r.sendDisconnectHeartbeat()
 		if r.cancel != nil {
 			r.cancel()
 		}
 		return nil
 	case <-time.After(timeout):
 		r.abandonInflight()
+		r.sendDisconnectHeartbeat()
 		if r.cancel != nil {
 			r.cancel()
 		}
@@ -1239,6 +1241,44 @@ func (r *Runner) buildHeartbeatMetadata() string {
 		return ""
 	}
 	return string(payload)
+}
+
+func (r *Runner) buildDisconnectMetadata() string {
+	metadata := map[string]any{
+		"runnerInstanceId":   r.config.RunnerInstanceId,
+		"transportMode":       r.config.TransportMode,
+		"transportState":      "disconnected",
+		"allowTestExecutions": r.config.AllowTestExecutions,
+		"maxInflight":         r.config.MaxInflight,
+		"capabilities":        r.config.Capabilities,
+		"disconnectedAtUtc":   time.Now().UTC().Format(time.RFC3339Nano),
+	}
+	for key, value := range r.config.HeartbeatMetadata {
+		metadata[key] = value
+	}
+	payload, err := json.Marshal(metadata)
+	if err != nil {
+		return ""
+	}
+	return string(payload)
+}
+
+func (r *Runner) sendDisconnectHeartbeat() {
+	if strings.TrimSpace(r.config.EnvironmentTag) == "" {
+		return
+	}
+	metadataJson := r.buildDisconnectMetadata()
+	seenAt := time.Now().UTC().Add(-48 * time.Hour)
+	if err := r.client.HeartbeatWithInstance(
+		context.Background(),
+		r.config.RunnerId,
+		r.config.RunnerInstanceId,
+		r.config.EnvironmentTag,
+		metadataJson,
+		&seenAt,
+	); err != nil {
+		r.logger.Warn("disconnect heartbeat failed", map[string]any{"error": err.Error()})
+	}
 }
 
 func (r *Runner) renewLoop(ctx context.Context, lease Lease) {

@@ -14,6 +14,8 @@ import (
 )
 
 func main() {
+	log.SetOutput(os.Stdout)
+
 	baseURL := env("CRONIQ_API_BASEURL", "http://localhost:5080")
 	tenantID := env("CRONIQ_TENANT_ID", "default")
 	environment := env("CRONIQ_ENVIRONMENT", "dev")

@@ -20,6 +20,7 @@ namespace Croniq.Runner;
 
 public sealed class CroniqRunner : IAsyncDisposable
 {
+    private static readonly TimeSpan DisconnectSeenAtSkew = TimeSpan.FromDays(2);
     private static readonly JsonSerializerOptions SerializerOptions = new()
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
@@ -159,7 +160,14 @@ public sealed class CroniqRunner : IAsyncDisposable
             tasks.Add(Task.Run(() => HeartbeatLoopAsync(token), token));
         }
 
-        await Task.WhenAll(tasks).ConfigureAwait(false);
+        try
+        {
+            await Task.WhenAll(tasks).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (token.IsCancellationRequested)
+        {
+            // ignore cancellation during shutdown
+        }
         if (_fatal is not null)
         {
             throw _fatal;
@@ -189,17 +197,18 @@ public sealed class CroniqRunner : IAsyncDisposable
             await AbandonPendingLeasesAsync().ConfigureAwait(false);
         }
 
+        await TrySendDisconnectHeartbeatAsync().ConfigureAwait(false);
         _running = false;
         _runCts?.Cancel();
     }
 
-    public Task StopAsync()
+    public async Task StopAsync()
     {
         _acceptingWork = false;
         _running = false;
         StopGrpc();
+        await TrySendDisconnectHeartbeatAsync().ConfigureAwait(false);
         _runCts?.Cancel();
-        return Task.CompletedTask;
     }
 
     private static RunnerConfig Normalize(RunnerConfig config)
@@ -417,6 +426,10 @@ public sealed class CroniqRunner : IAsyncDisposable
                     Enqueue(lease);
                 }
             }
+            catch (OperationCanceledException) when (token.IsCancellationRequested)
+            {
+                return;
+            }
             catch (Exception ex)
             {
                 if (HandleFatal(ex))
@@ -426,7 +439,14 @@ public sealed class CroniqRunner : IAsyncDisposable
                 attempt++;
                 var delay = NextDelay(attempt);
                 _logger.Warn("poll failed", new Dictionary<string, object?> { ["error"] = ex.Message, ["delayMs"] = (int)delay.TotalMilliseconds });
-                await Task.Delay(delay, token).ConfigureAwait(false);
+                try
+                {
+                    await Task.Delay(delay, token).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException)
+                {
+                    return;
+                }
             }
         }
     }
@@ -441,6 +461,10 @@ public sealed class CroniqRunner : IAsyncDisposable
                 await RunGrpcSessionAsync(token).ConfigureAwait(false);
                 attempt = 0;
             }
+            catch (OperationCanceledException) when (token.IsCancellationRequested)
+            {
+                return;
+            }
             catch (Exception ex)
             {
                 _grpcConnected = false;
@@ -451,7 +475,14 @@ public sealed class CroniqRunner : IAsyncDisposable
                 attempt++;
                 var delay = NextDelay(attempt);
                 _logger.Warn("grpc connection failed", new Dictionary<string, object?> { ["error"] = ex.Message, ["delayMs"] = (int)delay.TotalMilliseconds });
-                await Task.Delay(delay, token).ConfigureAwait(false);
+                try
+                {
+                    await Task.Delay(delay, token).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException)
+                {
+                    return;
+                }
             }
         }
     }
@@ -972,6 +1003,34 @@ public sealed class CroniqRunner : IAsyncDisposable
         return JsonSerializer.Serialize(data, SerializerOptions);
     }
 
+    private string BuildDisconnectMetadata()
+    {
+        var data = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["runnerInstanceId"] = _runnerInstanceId,
+            ["transportState"] = "disconnected",
+            ["allowTestExecutions"] = _config.AllowTestExecutions,
+            ["maxInflight"] = _config.MaxInflight,
+            ["draining"] = _draining,
+            ["disconnectedAtUtc"] = DateTimeOffset.UtcNow
+        };
+
+        if (_config.Capabilities is { Length: > 0 })
+        {
+            data["capabilities"] = _config.Capabilities;
+        }
+
+        if (_config.HeartbeatMetadata is not null)
+        {
+            foreach (var pair in _config.HeartbeatMetadata)
+            {
+                data[pair.Key] = pair.Value;
+            }
+        }
+
+        return JsonSerializer.Serialize(data, SerializerOptions);
+    }
+
     private async Task TrySendDrainHeartbeatAsync()
     {
         try
@@ -981,6 +1040,36 @@ public sealed class CroniqRunner : IAsyncDisposable
         catch (Exception ex)
         {
             _logger.Warn("drain heartbeat failed", new Dictionary<string, object?> { ["error"] = ex.Message });
+        }
+    }
+
+    private async Task TrySendDisconnectHeartbeatAsync()
+    {
+        if (string.IsNullOrWhiteSpace(_config.Environment))
+        {
+            return;
+        }
+
+        var request = new RunnerHeartbeatRequest
+        {
+            EnvironmentTag = _config.Environment,
+            RunnerId = _config.RunnerId,
+            RunnerInstanceId = _runnerInstanceId,
+            SeenAtUtc = DateTimeOffset.UtcNow - DisconnectSeenAtSkew,
+            MetadataJson = BuildDisconnectMetadata()
+        };
+
+        try
+        {
+            var response = await SendJsonAsync(_heartbeatPath, request, CancellationToken.None).ConfigureAwait(false);
+            if (!response.IsSuccessStatusCode)
+            {
+                await ThrowForStatusAsync(response).ConfigureAwait(false);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.Warn("disconnect heartbeat failed", new Dictionary<string, object?> { ["error"] = ex.Message });
         }
     }
 

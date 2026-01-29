@@ -261,6 +261,8 @@ Scopes:
 
 Heartbeat payloads accept `runnerId`, optional `seenAtUtc`, and optional `metadataJson` for tags or capabilities.
 Presence is derived from the configured TTL; offline runners are retained for `RunnerStoreOptions.OfflineRetentionTtl` so UIs can show recently offline runners when `includeOffline=true` is supplied. Presence is informational and does not affect lease correctness.
+For gRPC runners, a graceful stream shutdown marks the runner offline immediately (presence remains in offline retention); unexpected disconnects still rely on TTL.
+SDKs also emit an explicit disconnect heartbeat during drain/stop to mark the runner offline immediately across transports (metadata sets `transportState=disconnected` and `disconnectedAtUtc`).
 
 Recommended metadata fields include:
 
@@ -269,6 +271,7 @@ Recommended metadata fields include:
 - `allowTestExecutions` (boolean)
 - `maxInflight` (number)
 - `draining` (boolean)
+- `disconnectedAtUtc` (string/ISO)
 - `capabilities` (string array)
 
 ## Protocol Roadmap

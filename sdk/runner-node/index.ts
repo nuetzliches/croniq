@@ -141,6 +141,24 @@ export type RunnerLogger = {
     error(message: string, data?: Record<string, unknown>): void;
 };
 
+function normalizeGrpcEndpoint(raw: string): { address: string; useTls: boolean } {
+    if (!raw) {
+        return { address: raw, useTls: false };
+    }
+
+    if (raw.startsWith('http://') || raw.startsWith('https://')) {
+        try {
+            const parsed = new URL(raw);
+            const address = parsed.host || raw;
+            return { address, useTls: parsed.protocol === 'https:' };
+        } catch {
+            return { address: raw, useTls: raw.startsWith('https://') };
+        }
+    }
+
+    return { address: raw, useTls: false };
+}
+
 export function loadRunnerConfigFromEnv(env: Record<string, string | undefined> = process.env): RunnerConfig {
     const baseUrl = env.CRONIQ_API_BASEURL?.trim();
     const grpcBaseUrl = env.CRONIQ_GRPC_BASEURL?.trim();
@@ -667,6 +685,7 @@ class OutboxStore {
 
 class GrpcRunnerConnection extends EventEmitter {
     private readonly endpoint: string;
+    private readonly useTls: boolean;
     private readonly metadata: grpc.Metadata;
     private readonly runnerId: string;
     private readonly runnerInstanceId?: string;
@@ -683,6 +702,7 @@ class GrpcRunnerConnection extends EventEmitter {
 
     constructor(options: {
         endpoint: string;
+        useTls: boolean;
         metadata: grpc.Metadata;
         runnerId: string;
         runnerInstanceId?: string;
@@ -695,6 +715,7 @@ class GrpcRunnerConnection extends EventEmitter {
     }) {
         super();
         this.endpoint = options.endpoint;
+        this.useTls = options.useTls;
         this.metadata = options.metadata;
         this.runnerId = options.runnerId;
         this.runnerInstanceId = options.runnerInstanceId;
@@ -769,7 +790,7 @@ class GrpcRunnerConnection extends EventEmitter {
             croniq: { rpc: { Runner: new (addr: string, creds: grpc.ChannelCredentials) => GrpcRunnerClient } };
         };
 
-        const credentials = this.endpoint.startsWith('https://')
+        const credentials = this.useTls
             ? grpc.credentials.createSsl()
             : grpc.credentials.createInsecure();
         this.client = new proto.croniq.rpc.Runner(this.endpoint, credentials);
@@ -987,6 +1008,7 @@ export class CroniqRunner {
         }
         this.inflight.clear();
         this.queue.length = 0;
+        await this.trySendDisconnectHeartbeat();
     }
 
     async drain(timeoutMs = 30000): Promise<void> {
@@ -1011,6 +1033,7 @@ export class CroniqRunner {
             await this.abandonPendingLeases();
         }
 
+        await this.trySendDisconnectHeartbeat();
         this.running = false;
     }
 
@@ -1039,16 +1062,18 @@ export class CroniqRunner {
     }
 
     private async startGrpc(): Promise<void> {
-        const endpoint = this.config.grpcBaseUrl ?? this.config.baseUrl;
+        const rawEndpoint = this.config.grpcBaseUrl ?? this.config.baseUrl;
+        const { address: endpoint, useTls } = normalizeGrpcEndpoint(rawEndpoint);
         const metadata = new grpc.Metadata();
         if (this.config.bearerToken) {
-            metadata.set('Authorization', `Bearer ${this.config.bearerToken}`);
+            metadata.set('authorization', `Bearer ${this.config.bearerToken}`);
         } else if (this.config.apiKey) {
-            metadata.set('X-Croniq-Key', this.config.apiKey);
+            metadata.set('x-croniq-key', this.config.apiKey);
         }
 
         const connection = new GrpcRunnerConnection({
             endpoint,
+            useTls,
             metadata,
             runnerId: this.config.runnerId,
             runnerInstanceId: this.runnerInstanceId,
@@ -1491,6 +1516,31 @@ export class CroniqRunner {
             capabilities: this.config.capabilities ?? [],
             ...this.heartbeatMetadata,
         };
+    }
+
+    private async trySendDisconnectHeartbeat(): Promise<void> {
+        if (!this.config.environment) {
+            return;
+        }
+
+        const now = new Date();
+        const metadata = {
+            ...this.buildHeartbeatMetadata(),
+            transportState: 'disconnected',
+            disconnectedAtUtc: now.toISOString(),
+        };
+
+        try {
+            await this.client.heartbeat({
+                runnerId: this.config.runnerId,
+                runnerInstanceId: this.runnerInstanceId,
+                environmentTag: this.config.environment,
+                seenAtUtc: new Date(now.getTime() - 2 * 24 * 60 * 60 * 1000).toISOString(),
+                metadataJson: JSON.stringify(metadata),
+            });
+        } catch (err) {
+            this.logger.warn('disconnect heartbeat failed', { error: String(err) });
+        }
     }
 
     private handleRunnerFatal(err: unknown): boolean {

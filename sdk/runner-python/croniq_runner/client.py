@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple, Mapping
-from urllib.parse import quote
+from urllib.parse import quote, urlparse
 
 import requests
 import asyncio
@@ -562,9 +563,26 @@ class CroniqRunner:
         tasks.append(asyncio.create_task(self._run_dispatch_loop()))
         tasks.append(asyncio.create_task(self._replay_outbox_loop()))
 
-        tasks.append(self._fatal_future)
+        aggregate = asyncio.gather(*tasks)
         try:
-            await asyncio.gather(*tasks)
+            done, _ = await asyncio.wait(
+                [aggregate, self._fatal_future],
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+
+            if self._fatal_future in done:
+                exc = self._fatal_future.exception()
+                if not aggregate.done():
+                    aggregate.cancel()
+                    try:
+                        await aggregate
+                    except asyncio.CancelledError:
+                        pass
+                if exc:
+                    raise exc
+                return
+
+            await aggregate
         finally:
             self._fatal_future = None
 
@@ -575,6 +593,7 @@ class CroniqRunner:
         if self._grpc_stream is not None:
             self._grpc_stream.cancel()
             self._grpc_stream = None
+        await self._send_disconnect_heartbeat()
         for task in self._renew_tasks.values():
             task.cancel()
         self._renew_tasks.clear()
@@ -608,6 +627,7 @@ class CroniqRunner:
         if self._inflight or not self._queue.empty():
             await self._abandon_pending_leases()
 
+        await self._send_disconnect_heartbeat()
         self._running = False
 
     def _fail_fatal(self, exc: Exception) -> None:
@@ -672,8 +692,9 @@ class CroniqRunner:
         self._grpc_modules = self._grpc_modules or _load_grpc_modules()
         runner_pb2, runner_pb2_grpc = self._grpc_modules
 
-        endpoint = self._config.grpc_base_url or self._config.base_url
-        if endpoint.startswith("https://"):
+        endpoint_raw = self._config.grpc_base_url or self._config.base_url
+        endpoint, use_tls = _normalize_grpc_endpoint(endpoint_raw)
+        if use_tls:
             channel = aio.secure_channel(endpoint, grpc.ssl_channel_credentials())
         else:
             channel = aio.insecure_channel(endpoint)
@@ -766,7 +787,10 @@ class CroniqRunner:
                 await asyncio.sleep(0.05)
                 continue
 
-            lease = await self._queue.get()
+            try:
+                lease = await asyncio.wait_for(self._queue.get(), timeout=0.5)
+            except asyncio.TimeoutError:
+                continue
             if lease.lease_id in self._inflight:
                 continue
 
@@ -1058,6 +1082,30 @@ class CroniqRunner:
             metadata.update(self._config.heartbeat_metadata)
         return metadata
 
+    def _build_disconnect_metadata(self) -> Dict[str, Any]:
+        metadata = self._build_heartbeat_metadata()
+        metadata["transportState"] = "disconnected"
+        metadata["disconnectedAtUtc"] = datetime.now(timezone.utc).isoformat()
+        return metadata
+
+    async def _send_disconnect_heartbeat(self) -> None:
+        if not self._config.environment:
+            return
+
+        seen_at = datetime.now(timezone.utc) - timedelta(days=2)
+        metadata_json = json.dumps(self._build_disconnect_metadata())
+        try:
+            await asyncio.to_thread(
+                self._client.heartbeat,
+                runner_id=self._config.runner_id,
+                runner_instance_id=self._runner_instance_id,
+                environment_tag=self._config.environment,
+                metadata_json=metadata_json,
+                seen_at_utc=seen_at.isoformat(),
+            )
+        except Exception as exc:  # noqa: BLE001
+            self._logger.warn("disconnect heartbeat failed", {"error": str(exc)})
+
     async def _register_jobs(self) -> None:
         if not self._config.environment:
             raise RuntimeError("environment is required for job registration")
@@ -1266,6 +1314,23 @@ def _load_grpc_modules() -> Tuple[Any, Any]:
     runner_pb2 = _import_module("runner_pb2", pb2_path)
     runner_pb2_grpc = _import_module("runner_pb2_grpc", pb2_grpc_path)
     return runner_pb2, runner_pb2_grpc
+
+
+def _normalize_grpc_endpoint(raw: str) -> tuple[str, bool]:
+    if not raw:
+        return raw, False
+
+    if raw.startswith("http://") or raw.startswith("https://"):
+        try:
+            parsed = urlparse(raw)
+            host = parsed.hostname or raw
+            if parsed.port:
+                host = f"{host}:{parsed.port}"
+            return host, parsed.scheme == "https"
+        except Exception:  # noqa: BLE001
+            return raw, raw.startswith("https://")
+
+    return raw, False
 
 
 def _grpc_available() -> bool:

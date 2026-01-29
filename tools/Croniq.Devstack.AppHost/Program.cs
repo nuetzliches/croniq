@@ -813,9 +813,10 @@ if (runnerNodeEnabled)
     var runnerNodePath = Path.Combine(repoRoot, "samples", "runners", "node", "basic");
     if (Directory.Exists(runnerNodePath))
     {
-        var npmCommand = OperatingSystem.IsWindows() ? "npm.cmd" : "npm";
-        var nodeArgs = new[] { "run", "start" };
-        var runnerNode = builder.AddExecutable("croniq-runner-node", npmCommand, runnerNodePath, nodeArgs)
+        var nodeCommand = OperatingSystem.IsWindows() ? "node.exe" : "node";
+        var nodeScript = Path.Combine("node_modules", "ts-node", "dist", "bin.js");
+        var nodeArgs = new[] { nodeScript, "example.ts" };
+        var runnerNode = builder.AddExecutable("croniq-runner-node", nodeCommand, runnerNodePath, nodeArgs)
             .WithEnvironment("CRONIQ_API_BASEURL", runnerSamplesApiBaseUrl)
             .WithEnvironment("CRONIQ_GRPC_BASEURL", runnerSamplesGrpcBaseUrl)
             .WithEnvironment("CRONIQ_TENANT_ID", tenantId)

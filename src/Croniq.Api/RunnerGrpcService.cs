@@ -159,11 +159,18 @@ internal sealed class RunnerGrpcService : Runner.RunnerBase
             maxInflight,
             allowTestExecutions,
             cts.Token), cts.Token);
+        var gracefulDisconnect = false;
 
         try
         {
-            while (await requestStream.MoveNext().ConfigureAwait(false))
+            while (true)
             {
+                if (!await requestStream.MoveNext().ConfigureAwait(false))
+                {
+                    gracefulDisconnect = true;
+                    break;
+                }
+
                 var message = requestStream.Current;
                 if (message is null)
                 {
@@ -212,6 +219,11 @@ internal sealed class RunnerGrpcService : Runner.RunnerBase
             catch
             {
                 // ignore heartbeat loop failures on shutdown
+            }
+
+            if (gracefulDisconnect)
+            {
+                await TryMarkRunnerOfflineAsync(scope, runnerId, runnerMetadataJson).ConfigureAwait(false);
             }
         }
     }
@@ -324,6 +336,34 @@ internal sealed class RunnerGrpcService : Runner.RunnerBase
         }
 
         return interval;
+    }
+
+    private async Task TryMarkRunnerOfflineAsync(PartitionScope scope, string runnerId, string? metadataJson)
+    {
+        try
+        {
+            var ttl = _runnerStoreOptions.OnlineTtl;
+            if (ttl <= TimeSpan.Zero)
+            {
+                ttl = TimeSpan.FromSeconds(60);
+            }
+
+            var nowUtc = DateTimeOffset.UtcNow;
+            var offlineSeenAtUtc = nowUtc - ttl - TimeSpan.FromSeconds(1);
+            var updatedMetadata = RunnerInstanceGuard.MergeMetadataJson(metadataJson, new Dictionary<string, object?>
+            {
+                ["transportState"] = "disconnected",
+                ["disconnectedAtUtc"] = nowUtc.ToString("O")
+            });
+
+            await _runnerStore.UpsertHeartbeatAsync(
+                new RunnerHeartbeat(scope, runnerId, offlineSeenAtUtc, updatedMetadata),
+                CancellationToken.None).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Failed to mark runner offline after gRPC disconnect.");
+        }
     }
 
     private async Task AssignWorkLoopAsync(

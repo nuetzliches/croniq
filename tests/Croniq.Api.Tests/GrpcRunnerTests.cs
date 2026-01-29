@@ -14,6 +14,7 @@ using Croniq.Core.Execution;
 using Croniq.Core.Jobs;
 using Croniq.Core.Policies;
 using Croniq.Core.Scheduling;
+using Croniq.JobStore.InMemory;
 using Croniq.Persistence.Abstractions;
 using Croniq.Rpc;
 using Grpc.Core;
@@ -24,6 +25,7 @@ using Microsoft.AspNetCore.Server.Kestrel.Core;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Options;
 using Shouldly;
 using Xunit;
 
@@ -112,6 +114,104 @@ public sealed class GrpcRunnerTests
         response.Hello.EnvironmentTag.ShouldBe(environmentTag);
 
         await call.RequestStream.CompleteAsync();
+        await app.StopAsync();
+    }
+
+    [Fact]
+    public async Task RunnerGrpc_GracefulDisconnect_MarksRunnerOffline()
+    {
+        var builder = WebApplication.CreateBuilder(new WebApplicationOptions
+        {
+            ApplicationName = typeof(GrpcRunnerTests).Assembly.FullName,
+            EnvironmentName = Environments.Development
+        });
+
+        var apiKey = "ak_grpc_runner_disconnect";
+        var tenantId = "00000000-0000-0000-0000-000000000077";
+        var environmentTag = "dev";
+
+        builder.Configuration.AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["Croniq:Api:RequestsPerMinute"] = "0",
+            ["Croniq:Auth:Mode"] = "InMemory",
+            ["Croniq:Auth:InMemory:ApiKey"] = apiKey,
+            ["Croniq:Auth:InMemory:TenantId"] = tenantId,
+            ["Croniq:Auth:InMemory:EnvironmentTag"] = environmentTag
+        });
+
+        builder.Services.AddCroniqApiServices(builder.Configuration);
+        builder.Services.AddCroniqApiRateLimiter();
+        builder.Services.AddLogging();
+        builder.Services.AddGrpc();
+
+        var pipeline = new RecordingJobExecutionPipeline();
+        var registry = new FakeJobRegistry();
+        var policies = new FakePolicyResolver();
+        var store = new NoopJobPersistenceProvider();
+        var runnerOptions = new RunnerStoreOptions
+        {
+            OnlineTtl = TimeSpan.FromSeconds(60),
+            OfflineRetentionTtl = TimeSpan.FromMinutes(30)
+        };
+        runnerOptions.Normalize();
+        var runnerStore = new InMemoryRunnerStore(Options.Create(runnerOptions));
+
+        builder.Services.AddSingleton<IJobExecutionPipeline>(pipeline);
+        builder.Services.AddSingleton<IJobRegistry>(registry);
+        builder.Services.AddSingleton<IPolicyResolver>(policies);
+        builder.Services.AddSingleton<IJobPersistenceProvider>(store);
+        builder.Services.AddSingleton<ICalendarStore>(store);
+        builder.Services.AddSingleton<IJobStore>(store);
+        builder.Services.AddSingleton<IPersistenceHealth>(store);
+        builder.Services.AddSingleton<IRunnerStore>(runnerStore);
+        builder.Services.AddSingleton<IOptions<RunnerStoreOptions>>(Options.Create(runnerOptions));
+
+        builder.WebHost.ConfigureKestrel(options =>
+        {
+            options.Listen(IPAddress.Loopback, 0, listenOptions => listenOptions.Protocols = HttpProtocols.Http2);
+        });
+
+        await using var app = builder.Build();
+        app.UseCroniqApi();
+        app.MapCroniqRunnerGrpc();
+
+        await app.StartAsync();
+        var address = app.Urls.First();
+
+        AppContext.SetSwitch("System.Net.Http.SocketsHttpHandler.Http2UnencryptedSupport", true);
+        var httpClient = new HttpClient
+        {
+            BaseAddress = new Uri(address),
+            DefaultRequestVersion = new Version(2, 0),
+            DefaultVersionPolicy = HttpVersionPolicy.RequestVersionOrHigher
+        };
+        httpClient.DefaultRequestHeaders.Add("X-Croniq-Key", apiKey);
+
+        using var channel = GrpcChannel.ForAddress(address, new GrpcChannelOptions { HttpClient = httpClient });
+        var client = new Runner.RunnerClient(channel);
+
+        using var call = client.Connect();
+        await call.RequestStream.WriteAsync(new RunnerMessage
+        {
+            Hello = new RunnerHello
+            {
+                RunnerId = "default",
+                MaxInflight = 1
+            }
+        });
+
+        (await call.ResponseStream.MoveNext(CancellationToken.None)).ShouldBeTrue();
+
+        var scope = new PartitionScope(tenantId, environmentTag);
+        var online = await runnerStore.TryGetAsync(new RunnerLookup(scope, "default", DateTimeOffset.UtcNow), CancellationToken.None);
+        online.ShouldNotBeNull();
+
+        await call.RequestStream.CompleteAsync();
+        (await call.ResponseStream.MoveNext(CancellationToken.None)).ShouldBeFalse();
+
+        var offline = await runnerStore.TryGetAsync(new RunnerLookup(scope, "default", DateTimeOffset.UtcNow), CancellationToken.None);
+        offline.ShouldBeNull();
+
         await app.StopAsync();
     }
 
