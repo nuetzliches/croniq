@@ -3991,6 +3991,27 @@
             },
             "nullable": true
           },
+          "assignedRunnerId": {
+            "type": "string",
+            "nullable": true
+          },
+          "assignedBy": {
+            "type": "string",
+            "nullable": true
+          },
+          "assignedAtUtc": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "assignmentSource": {
+            "type": "string",
+            "nullable": true
+          },
+          "assignmentNotes": {
+            "type": "string",
+            "nullable": true
+          },
           "isActive": {
             "type": "boolean"
           }
@@ -4641,6 +4662,14 @@
           },
           "isActive": {
             "type": "boolean",
+            "nullable": true
+          },
+          "assignedRunnerId": {
+            "type": "string",
+            "nullable": true
+          },
+          "assignmentNotes": {
+            "type": "string",
             "nullable": true
           }
         },

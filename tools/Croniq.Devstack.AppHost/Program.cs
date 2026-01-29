@@ -758,6 +758,9 @@ var runnerPythonEnabled = runnerSamplesEnabled;
 var runnerDotnetEnabled = runnerSamplesEnabled;
 var runnerSamplesApiBaseUrl = string.Concat("http://localhost:", apiPort.ToString(CultureInfo.InvariantCulture));
 var runnerSamplesGrpcBaseUrl = string.Concat("http://localhost:", apiGrpcPort.ToString(CultureInfo.InvariantCulture));
+var runnerDotnetApiKey = GetEnvValue("CRONIQ_RUNNER_DOTNET_API_KEY");
+var runnerDotnetApiKeyEffective = string.IsNullOrWhiteSpace(runnerDotnetApiKey) ? apiKey : runnerDotnetApiKey;
+var runnerDotnetId = string.IsNullOrWhiteSpace(runnerDotnetApiKey) ? "default" : "dotnet-default";
 var runnerGoApiKey = GetEnvValue("CRONIQ_RUNNER_GO_API_KEY") ?? apiKey;
 var runnerNodeApiKey = GetEnvValue("CRONIQ_RUNNER_NODE_API_KEY") ?? apiKey;
 var runnerPythonApiKey = GetEnvValue("CRONIQ_RUNNER_PYTHON_API_KEY") ?? apiKey;
@@ -775,8 +778,8 @@ if (runnerDotnetEnabled)
                 .WithEnvironment("CRONIQ_GRPC_BASEURL", runnerSamplesGrpcBaseUrl)
             .WithEnvironment("CRONIQ_TENANT_ID", tenantId)
             .WithEnvironment("CRONIQ_ENVIRONMENT", environmentTag)
-            .WithEnvironment("CRONIQ_API_KEY", apiKey)
-            .WithEnvironment("CRONIQ_RUNNER_ID", "default")
+            .WithEnvironment("CRONIQ_API_KEY", runnerDotnetApiKeyEffective)
+            .WithEnvironment("CRONIQ_RUNNER_ID", runnerDotnetId)
             .WaitFor(api);
     }
 }

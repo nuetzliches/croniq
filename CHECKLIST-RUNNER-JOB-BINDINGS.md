@@ -24,18 +24,18 @@
 
 ## UI/UX
 
-- [ ] Job detail: show assigned runner, assignment/approval status, and actions.
-- [ ] Runner detail: list assigned jobs.
-- [ ] Job approval flow binds the runner automatically.
-- [ ] No bulk approval page (explicitly out of scope).
+- [x] Job detail: show assigned runner, assignment/approval status, and actions.
+- [x] Runner detail: list assigned jobs.
+- [x] Job approval flow binds the runner automatically.
+- [x] No bulk approval page (explicitly out of scope).
 
 ## Tests
 
-- [ ] Unit tests for acquisition filtering by `AssignedRunnerId`.
-- [ ] Integration tests for job approval -> assignment confirmation.
+- [x] Unit tests for acquisition filtering by `AssignedRunnerId`.
+- [x] Integration tests for job approval -> assignment confirmation.
 - [ ] UI tests for assignment visibility and reassignment.
 
 ## Documentation
 
 - [x] Update `docs/deep-dive/architecture.md` (done).
-- [ ] Update user docs for job assignment and note that RunnerPool is required for scale-out.
+- [x] Update user docs for job assignment and note that RunnerPool is required for scale-out.

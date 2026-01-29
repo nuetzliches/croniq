@@ -1,7 +1,7 @@
 import { Injectable, computed, inject } from '@angular/core';
 import { tenantRxResource } from '@core/resource/tenant-rx-resource';
 import { TenantContextService } from '@core/tenant-context/tenant-context.service';
-import type { ExecutionResponse, RunnerListResponse, RunnerStatusModel } from '@croniq/api-schema';
+import type { ExecutionResponse, JobResponse, RunnerListResponse, RunnerStatusModel } from '@croniq/api-schema';
 import { CRONIQ_API_CLIENT, CroniqApiClient } from 'data-access';
 import { catchError, map, of } from 'rxjs';
 
@@ -27,6 +27,7 @@ export interface Runner {
     loadPercent: number;
     loadLabel: string;
     recentJobs: ReadonlyArray<string>;
+    assignedJobs: ReadonlyArray<string>;
 }
 
 interface RunnerMetadata {
@@ -180,6 +181,7 @@ const mapRunnerStatus = (runner: RunnerStatusModel): Runner => {
         loadPercent,
         loadLabel,
         recentJobs: [],
+        assignedJobs: [],
     };
 }
 
@@ -216,6 +218,30 @@ const buildRecentJobsByRunner = (executions: ExecutionResponse[]): Map<string, s
         if (jobs.length > MAX_RECENT_JOBS) {
             results.set(runnerId, jobs.slice(0, MAX_RECENT_JOBS));
         }
+    }
+
+    return results;
+};
+
+const buildAssignedJobsByRunner = (jobs: JobResponse[]): Map<string, string[]> => {
+    const results = new Map<string, string[]>();
+
+    for (const job of jobs) {
+        const runnerId = typeof job.assignedRunnerId === 'string' ? job.assignedRunnerId.trim() : '';
+        const jobKey = typeof job.jobKey === 'string' ? job.jobKey.trim() : '';
+        if (!runnerId || !jobKey) {
+            continue;
+        }
+
+        const list = results.get(runnerId) ?? [];
+        if (!list.includes(jobKey)) {
+            list.push(jobKey);
+        }
+        results.set(runnerId, list);
+    }
+
+    for (const [runnerId, list] of results.entries()) {
+        results.set(runnerId, list.sort((a, b) => a.localeCompare(b)));
     }
 
     return results;
@@ -270,14 +296,40 @@ export class RunnersStore {
         },
     });
 
+    readonly jobsResource = tenantRxResource<JobResponse[], { tenantId: string; environment: string }>({
+        command: 'jobs.list',
+        defaultValue: [],
+        params: () => {
+            const { tenantId, environment } = this.tenantContext.snapshot();
+            return { tenantId, environment };
+        },
+        stream: ({ params, requestOptions }) => {
+            const { tenantId, environment } = params;
+            if (!tenantId) {
+                return of([] as JobResponse[]);
+            }
+
+            return this.api.listJobs({ tenantId, environment }, requestOptions).pipe(
+                map((response) => (Array.isArray(response) ? response as JobResponse[] : [])),
+                catchError((err) => {
+                    console.error('Failed to load assigned jobs', err);
+                    return of([] as JobResponse[]);
+                }),
+            );
+        },
+    });
+
     readonly runners = computed(() => {
         const runners = this.runnersResource.value() ?? [];
         const executions = this.executionsResource.value() ?? [];
+        const jobs = this.jobsResource.value() ?? [];
         const jobsByRunner = buildRecentJobsByRunner(executions);
+        const assignedJobsByRunner = buildAssignedJobsByRunner(jobs);
 
         return runners.map((runner) => ({
             ...runner,
             recentJobs: jobsByRunner.get(runner.id) ?? [],
+            assignedJobs: assignedJobsByRunner.get(runner.id) ?? [],
         }));
     });
     readonly loading = computed(() => this.runnersResource.isLoading());
@@ -290,5 +342,6 @@ export class RunnersStore {
 
     refresh() {
         this.runnersResource.reload();
+        this.jobsResource.reload();
     }
 }

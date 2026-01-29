@@ -1,7 +1,9 @@
 import { provideZonelessChangeDetection, signal } from '@angular/core';
 import { ComponentFixture, TestBed } from '@angular/core/testing';
+import { ActivatedRoute, Router, convertToParamMap } from '@angular/router';
 import { JobsStore } from '@features/jobs/jobs.store';
 import { CqDialogService } from 'ui-kit';
+import { of } from 'rxjs';
 import { JobsPage } from './jobs-page';
 
 class JobsStoreStub {
@@ -33,10 +35,17 @@ class JobsStoreStub {
   deleteJob = vi.fn();
   setJobSchedulesEnabled = vi.fn();
   activateJob = vi.fn();
+  deactivateJob = vi.fn();
 }
 
 const dialogStub = {
   open: vi.fn()
+};
+const routerStub = {
+  navigate: vi.fn(() => Promise.resolve(true)),
+};
+const activatedRouteStub = {
+  queryParamMap: of(convertToParamMap({})),
 };
 
 describe('JobsPage', () => {
@@ -48,7 +57,9 @@ describe('JobsPage', () => {
       imports: [JobsPage],
       providers: [
         provideZonelessChangeDetection(),
-        { provide: CqDialogService, useValue: dialogStub }
+        { provide: CqDialogService, useValue: dialogStub },
+        { provide: Router, useValue: routerStub },
+        { provide: ActivatedRoute, useValue: activatedRouteStub },
       ],
     })
       .overrideComponent(JobsPage, {

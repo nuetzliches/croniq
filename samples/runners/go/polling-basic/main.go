@@ -17,9 +17,19 @@ func main() {
 	baseURL := env("CRONIQ_API_BASEURL", "http://localhost:5080")
 	tenantID := env("CRONIQ_TENANT_ID", "default")
 	environment := env("CRONIQ_ENVIRONMENT", "dev")
+	runnerApiKey := strings.TrimSpace(os.Getenv("CRONIQ_RUNNER_GO_API_KEY"))
 	apiKey := strings.TrimSpace(os.Getenv("CRONIQ_API_KEY"))
+	if apiKey == "" {
+		apiKey = runnerApiKey
+	}
 	bearerToken := strings.TrimSpace(os.Getenv("CRONIQ_BEARER_TOKEN"))
-	runnerID := env("CRONIQ_RUNNER_ID", "default")
+	runnerID := strings.TrimSpace(os.Getenv("CRONIQ_RUNNER_ID"))
+	if runnerID == "" {
+		runnerID = "default"
+	}
+	if runnerApiKey != "" && strings.EqualFold(runnerID, "default") {
+		runnerID = "go-default"
+	}
 	runnerInstanceID := strings.TrimSpace(os.Getenv("CRONIQ_RUNNER_INSTANCE_ID"))
 	jobKey := env("CRONIQ_JOB_KEY", "samples:go-job")
 

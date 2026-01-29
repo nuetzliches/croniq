@@ -543,6 +543,11 @@
                         Test rejected
                       </span>
                     }
+                    @if (exec.errorMessage) {
+                      <div class="mt-1 truncate text-[10px] text-danger" title="{{ exec.errorMessage }}">
+                        {{ exec.errorMessage }}
+                      </div>
+                    }
                   </td>
                   <td class="px-6 py-4 text-muted">
                     <span class="rounded-full bg-white/10 px-2 py-1 text-xs font-medium">

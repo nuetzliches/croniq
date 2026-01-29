@@ -27,6 +27,7 @@ type ExecutionRow = {
   executionMode?: string;
   invocationSource?: string;
   errorType?: string;
+  errorMessage?: string;
 };
 
 const STATUS_OPTIONS: ReadonlyArray<{ value: ExecutionStatusFilter; label: string }> = [
@@ -301,6 +302,7 @@ function normalizeExecution(execution: ExecutionResponse, index: number): Execut
   const executionMode = typeof record['executionMode'] === 'string' ? record['executionMode'].trim() : undefined;
   const invocationSource = typeof record['invocationSource'] === 'string' ? record['invocationSource'].trim() : undefined;
   const errorType = typeof record['errorType'] === 'string' ? record['errorType'].trim() : undefined;
+  const errorMessage = typeof record['errorMessage'] === 'string' ? record['errorMessage'].trim() : undefined;
 
   return {
     executionId,
@@ -315,6 +317,7 @@ function normalizeExecution(execution: ExecutionResponse, index: number): Execut
     executionMode: executionMode || undefined,
     invocationSource: invocationSource || undefined,
     errorType: errorType || undefined,
+    errorMessage: errorMessage || undefined,
   };
 }
 

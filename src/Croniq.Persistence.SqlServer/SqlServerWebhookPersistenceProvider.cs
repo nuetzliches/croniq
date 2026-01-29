@@ -225,6 +225,7 @@ public sealed class SqlServerWebhookPersistenceProvider : IWebhookPersistencePro
         else
         {
             entity.IsDeleted = true;
+            entity.Enabled = false;
             entity.UpdatedAtUtc = now;
         }
 

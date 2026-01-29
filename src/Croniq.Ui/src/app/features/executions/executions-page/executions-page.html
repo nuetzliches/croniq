@@ -292,6 +292,12 @@
                   <div class="mt-2 text-xs text-warning">{{ execution.errorType }}</div>
                 </div>
               }
+              @if (execution.errorMessage) {
+                <div class="rounded-lg border border-danger/30 bg-danger/10 px-3 py-3">
+                  <div class="text-[11px] font-semibold uppercase tracking-wide text-danger">Error</div>
+                  <div class="mt-2 text-xs text-danger">{{ execution.errorMessage }}</div>
+                </div>
+              }
 
               <div class="rounded-lg border border-white/10 bg-black/10 px-3 py-3">
                 <div class="text-[11px] font-semibold uppercase tracking-wide text-muted">Quick actions</div>

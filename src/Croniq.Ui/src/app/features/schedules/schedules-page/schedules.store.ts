@@ -51,6 +51,7 @@ export type ExecutionSummary = {
     executionMode: string;
     invocationSource: string;
     warningType?: string;
+    errorMessage?: string;
 };
 
 @Injectable()
@@ -637,8 +638,20 @@ function normalizeExecutionsResponse(value: unknown): ReadonlyArray<ExecutionSum
         const invocationSource =
             typeof record['invocationSource'] === 'string' ? record['invocationSource'] : 'schedule';
         const warningType = typeof record['errorType'] === 'string' ? record['errorType'] : undefined;
+        const errorMessage = typeof record['errorMessage'] === 'string' ? record['errorMessage'] : undefined;
 
-        entries.push({ id, jobKey, status, startAtUtc, durationMs, trigger, executionMode, invocationSource, warningType });
+        entries.push({
+            id,
+            jobKey,
+            status,
+            startAtUtc,
+            durationMs,
+            trigger,
+            executionMode,
+            invocationSource,
+            warningType,
+            errorMessage,
+        });
     }
     return entries;
 }

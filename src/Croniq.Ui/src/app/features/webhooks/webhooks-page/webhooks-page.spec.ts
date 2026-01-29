@@ -1,6 +1,8 @@
 import { provideZonelessChangeDetection, signal } from '@angular/core';
 import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { ActivityConnectionState, WebhookDeadLetterView, WebhookEndpointView, WebhooksStore } from '@features/webhooks/webhooks.store';
+import { ActivatedRoute, Router, convertToParamMap } from '@angular/router';
+import { of } from 'rxjs';
 import { WebhooksPage } from './webhooks-page';
 
 class WebhooksStoreStub {
@@ -44,11 +46,21 @@ class WebhooksStoreStub {
 describe('WebhooksPage', () => {
   let component: WebhooksPage;
   let fixture: ComponentFixture<WebhooksPage>;
+  const routerStub = {
+    navigate: vi.fn(() => Promise.resolve(true)),
+  };
+  const activatedRouteStub = {
+    queryParamMap: of(convertToParamMap({})),
+  };
 
   beforeEach(async () => {
     await TestBed.configureTestingModule({
       imports: [WebhooksPage],
-      providers: [provideZonelessChangeDetection()],
+      providers: [
+        provideZonelessChangeDetection(),
+        { provide: Router, useValue: routerStub },
+        { provide: ActivatedRoute, useValue: activatedRouteStub },
+      ],
     })
       .overrideComponent(WebhooksPage, {
         set: {
@@ -126,7 +138,9 @@ describe('WebhooksPage', () => {
     const totals = series.reduce((acc, entry) => {
       const name = (entry as { name?: string }).name;
       const data = (entry as { data?: unknown[] }).data ?? [];
-      const numericData = data.filter((value): value is number => typeof value === 'number');
+      const numericData = data
+        .map((value) => (Array.isArray(value) ? value[1] : value))
+        .filter((value): value is number => typeof value === 'number');
       const sum = numericData.reduce((total, value) => total + value, 0);
       if (name === 'Pending') {
         acc.pending += sum;

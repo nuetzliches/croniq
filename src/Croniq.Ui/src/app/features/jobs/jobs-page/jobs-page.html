@@ -126,10 +126,10 @@
             cqContextMenuItem
             class="inline-flex items-center gap-2"
             (click)="activateJob(row)"
-            [disabled]="activateJobLoading()"
+            [disabled]="activateJobLoading() || !canActivate(row)"
           >
               <cq-icon name="check" size="14" aria-hidden="true"></cq-icon>
-            Activate
+            Approve
           </button>
         }
         <button type="button" cqContextMenuItem class="inline-flex items-center gap-2" (click)="openJobDialog(row)">
@@ -301,6 +301,11 @@
                     Pending approval
                   </div>
                 }
+                @if (!hasAssignedRunner(job)) {
+                  <div class="mt-2 inline-flex items-center gap-2 rounded-full bg-danger/10 px-2 py-1 text-[11px] font-semibold text-danger">
+                    Runner unassigned
+                  </div>
+                }
                 <div class="mt-3 flex items-center justify-between text-xs text-muted">
                   <span>Total schedules</span>
                   <span class="text-primary">{{ job.scheduleCount }}</span>
@@ -317,6 +322,40 @@
                     <span>—</span>
                   }
                 </div>
+                <div class="mt-2 flex items-center justify-between text-xs text-muted">
+                  <span>Assigned runner</span>
+                  @if (hasAssignedRunner(job)) {
+                    <a
+                      routerLink="/runners"
+                      [queryParams]="{ runnerId: job.assignedRunnerId }"
+                      class="text-primary hover:text-accent"
+                    >
+                      {{ job.assignedRunnerId }}
+                    </a>
+                  } @else {
+                    <span>—</span>
+                  }
+                </div>
+                @if (hasAssignedRunner(job)) {
+                  <div class="mt-2 grid grid-cols-2 gap-2 text-xs text-muted">
+                    <span>Assigned by</span>
+                    <span class="text-right text-primary">{{ job.assignedBy || 'system' }}</span>
+                    <span>Assigned at</span>
+                    @if (job.assignedAtUtc) {
+                      <span class="text-right text-primary">{{ job.assignedAtUtc | date : 'short' }}</span>
+                    } @else {
+                      <span class="text-right">—</span>
+                    }
+                    <span>Source</span>
+                    <span class="text-right text-primary">{{ formatAssignmentSource(job.assignmentSource) }}</span>
+                  </div>
+                }
+                @if (job.assignmentNotes) {
+                  <div class="mt-2 text-xs text-muted">
+                    <span class="font-semibold uppercase tracking-wide text-[10px]">Notes</span>
+                    <div class="mt-1 text-primary">{{ job.assignmentNotes }}</div>
+                  </div>
+                }
               </div>
 
               <div class="rounded-lg border border-white/10 bg-black/10 px-3 py-3">
@@ -331,17 +370,15 @@
                     <cq-icon name="rocket" size="14" aria-hidden="true"></cq-icon>
                     Trigger now
                   </button>
-                  @if (!job.isActive) {
-                    <button
-                      type="button"
-                      class="inline-flex items-center justify-center gap-1 rounded-md border border-warning/30 bg-warning/10 px-2 py-1.5 text-[11px] font-semibold text-warning transition hover:border-warning hover:text-warning"
-                      (click)="activateJob(job)"
-                      [disabled]="activateJobLoading()"
-                    >
-                      <cq-icon name="check" size="14" aria-hidden="true"></cq-icon>
-                      Activate job
-                    </button>
-                  }
+                  <button
+                    type="button"
+                    class="inline-flex items-center justify-center gap-1 rounded-md border border-warning/30 bg-warning/10 px-2 py-1.5 text-[11px] font-semibold text-warning transition hover:border-warning hover:text-warning"
+                    (click)="toggleJobActivation(job)"
+                    [disabled]="activateJobLoading() || (!job.isActive && !canActivate(job))"
+                  >
+                    <cq-icon [name]="job.isActive ? 'pause-circle-outline' : 'check'" size="14" aria-hidden="true"></cq-icon>
+                    {{ job.isActive ? 'Deactivate' : activationLabel(job) }}
+                  </button>
                   <button
                     type="button"
                     class="inline-flex items-center justify-center gap-1 rounded-md border border-white/10 bg-white/5 px-2 py-1.5 text-[11px] font-semibold text-primary transition hover:border-accent hover:text-accent"
@@ -350,6 +387,16 @@
                     <cq-icon name="pencil" size="14" aria-hidden="true"></cq-icon>
                     Edit job
                   </button>
+                  @if (!hasAssignedRunner(job)) {
+                    <button
+                      type="button"
+                      class="inline-flex items-center justify-center gap-1 rounded-md border border-accent/40 bg-accent/10 px-2 py-1.5 text-[11px] font-semibold text-accent transition hover:border-accent hover:text-accent"
+                      (click)="openJobDialog(job)"
+                    >
+                      <cq-icon name="pencil" size="14" aria-hidden="true"></cq-icon>
+                      Assign runner
+                    </button>
+                  }
                   <a
                     routerLink="/schedules"
                     [queryParams]="{ jobKey: job.jobKey }"
@@ -443,6 +490,11 @@
                             </span>
                           }
                         </div>
+                        @if (execution.errorMessage) {
+                          <div class="mt-1 truncate text-[10px] text-danger" title="{{ execution.errorMessage }}">
+                            {{ execution.errorMessage }}
+                          </div>
+                        }
                       </div>
                     }
                   </div>

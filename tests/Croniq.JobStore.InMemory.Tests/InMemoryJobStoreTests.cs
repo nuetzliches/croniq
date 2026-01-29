@@ -41,6 +41,23 @@ public class InMemoryJobStoreTests
     }
 
     [Fact]
+    public async Task Acquire_skips_jobs_assigned_to_other_runner()
+    {
+        var now = new DateTimeOffset(2025, 1, 1, 0, 0, 0, TimeSpan.Zero);
+        var store = CreateStore(now, 30);
+
+        var jobKey = "samples:assigned";
+        await store.UpsertJobAsync(new JobDefinition(jobKey, "samples", "assigned", null, "sample", null, AssignedRunnerId: "runner-1"), DefaultScope, CancellationToken.None);
+        await store.UpsertTriggerAsync(new TriggerDefinition(jobKey, jobKey, "0 * * * * ?", DefaultScope), CancellationToken.None);
+
+        var wrongRunner = await store.AcquireAsync(new TriggerAcquireRequest(DefaultScope, "runner-2", now.AddMinutes(1), 5), CancellationToken.None);
+        wrongRunner.ShouldBeEmpty();
+
+        var correctRunner = await store.AcquireAsync(new TriggerAcquireRequest(DefaultScope, "runner-1", now.AddMinutes(1), 5), CancellationToken.None);
+        correctRunner.ShouldHaveSingleItem();
+    }
+
+    [Fact]
     public async Task Release_throws_when_instance_id_mismatch()
     {
         var now = new DateTimeOffset(2025, 1, 1, 0, 0, 0, TimeSpan.Zero);

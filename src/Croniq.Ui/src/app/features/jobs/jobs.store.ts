@@ -27,6 +27,11 @@ export type JobRegistryEntry = {
     description?: string;
     metadata?: Record<string, string>;
     isActive: boolean;
+    assignedRunnerId?: string;
+    assignedBy?: string;
+    assignedAtUtc?: string;
+    assignmentSource?: string;
+    assignmentNotes?: string;
     scheduleCount: number;
     activeScheduleCount: number;
     hasDisabledSchedules: boolean;
@@ -46,12 +51,18 @@ export type ExecutionSummary = {
     executionMode?: string;
     invocationSource?: string;
     warningType?: string;
+    errorMessage?: string;
 };
 
 export type JobDetail = {
     jobId: string;
     jobKey?: string;
     description?: string;
+    assignedRunnerId?: string;
+    assignedBy?: string;
+    assignedAtUtc?: string;
+    assignmentSource?: string;
+    assignmentNotes?: string;
 };
 
 @Injectable()
@@ -484,6 +495,80 @@ export class JobsStore {
             .subscribe();
     }
 
+    deactivateJob(job: JobRegistryEntry): void {
+        const jobKey = job.jobKey?.trim() ?? '';
+        if (!jobKey) {
+            this.activateJobErrorSignal.set('Job key is required to deactivate a job.');
+            return;
+        }
+
+        const identity = resolveJobIdentity(job);
+        if (!identity) {
+            this.activateJobErrorSignal.set('Job namespace/name is required to deactivate a job.');
+            return;
+        }
+
+        const { tenantId, environment } = this.tenantContext.snapshot();
+        if (!tenantId.trim()) {
+            this.activateJobErrorSignal.set('Required context is missing — unable to deactivate job.');
+            return;
+        }
+
+        const payload: UpsertJobRequest = {
+            jobKey,
+            namespace: identity.namespace,
+            name: identity.name,
+            variant: identity.variant,
+            description: job.description || undefined,
+            metadata: job.metadata || undefined,
+            isActive: false,
+            assignedRunnerId: job.assignedRunnerId || undefined,
+            assignmentNotes: job.assignmentNotes || undefined,
+        };
+
+        this.activateJobLoadingSignal.set(true);
+        this.activateJobErrorSignal.set(null);
+
+        this.api
+            .upsertJob(
+                { tenantId, environment },
+                payload,
+                this.tenantContext.createRequestOptions('jobs.deactivate', {
+                    tenantId,
+                    environment,
+                }),
+            )
+            .pipe(
+                tap(() => {
+                    this.refreshJobRegistry();
+                    const current = this.jobDetailSignal();
+                    if (current?.jobId === jobKey || current?.jobKey === jobKey) {
+                        this.refreshJobDetail(jobKey);
+                    }
+                }),
+                catchError((error: unknown) => {
+                    console.error('Failed to deactivate job', error);
+                    const authFailure = authFailureFromError(error, {
+                        forbidden: 'Forbidden (403) — your token is missing jobs permissions.',
+                    });
+                    if (authFailure) {
+                        this.activateJobErrorSignal.set(authFailure.message);
+                        return EMPTY;
+                    }
+                    if (error instanceof HttpErrorResponse && error.status === 404) {
+                        this.activateJobErrorSignal.set('Job not found (404) — it may have been removed.');
+                        return EMPTY;
+                    }
+                    this.activateJobErrorSignal.set('Unable to deactivate job via API.');
+                    return EMPTY;
+                }),
+                finalize(() => {
+                    this.activateJobLoadingSignal.set(false);
+                }),
+            )
+            .subscribe();
+    }
+
     setJobSchedulesEnabled(jobKey: string, enabled: boolean): void {
         const trimmedKey = jobKey.trim();
         if (!trimmedKey) {
@@ -785,6 +870,11 @@ function normalizeJobRegistry(
             description: job.description || undefined,
             metadata: job.metadata || undefined,
             isActive,
+            assignedRunnerId: job.assignedRunnerId ?? undefined,
+            assignedBy: job.assignedBy ?? undefined,
+            assignedAtUtc: job.assignedAtUtc ?? undefined,
+            assignmentSource: job.assignmentSource ?? undefined,
+            assignmentNotes: job.assignmentNotes ?? undefined,
             scheduleCount: totalSchedules,
             activeScheduleCount: activeSchedules,
             hasDisabledSchedules: activeSchedules < totalSchedules,
@@ -849,6 +939,8 @@ function normalizeExecutions(value: unknown): ReadonlyArray<ExecutionSummary> {
         const invocationSource =
             typeof record['invocationSource'] === 'string' ? record['invocationSource'].trim() : undefined;
         const warningType = typeof record['errorType'] === 'string' ? record['errorType'].trim() : undefined;
+        const errorMessage =
+            typeof record['errorMessage'] === 'string' ? record['errorMessage'].trim() : undefined;
 
         entries.push({
             executionId,
@@ -858,6 +950,7 @@ function normalizeExecutions(value: unknown): ReadonlyArray<ExecutionSummary> {
             executionMode: executionMode || undefined,
             invocationSource: invocationSource || undefined,
             warningType: warningType || undefined,
+            errorMessage: errorMessage || undefined,
         });
     }
 
@@ -882,10 +975,47 @@ function normalizeJobDetail(value: unknown, fallbackId: string): JobDetail | nul
 
     const jobKey = typeof record['jobKey'] === 'string' ? record['jobKey'].trim() : undefined;
     const description = typeof record['description'] === 'string' ? record['description'].trim() : undefined;
+    const assignedRunnerId =
+        typeof record['assignedRunnerId'] === 'string' ? record['assignedRunnerId'].trim() : undefined;
+    const assignedBy = typeof record['assignedBy'] === 'string' ? record['assignedBy'].trim() : undefined;
+    const assignedAtUtc =
+        typeof record['assignedAtUtc'] === 'string' ? record['assignedAtUtc'].trim() : undefined;
+    const assignmentSource =
+        typeof record['assignmentSource'] === 'string' ? record['assignmentSource'].trim() : undefined;
+    const assignmentNotes =
+        typeof record['assignmentNotes'] === 'string' ? record['assignmentNotes'].trim() : undefined;
     return {
         jobId,
         jobKey: jobKey || undefined,
         description: description || undefined,
+        assignedRunnerId: assignedRunnerId || undefined,
+        assignedBy: assignedBy || undefined,
+        assignedAtUtc: assignedAtUtc || undefined,
+        assignmentSource: assignmentSource || undefined,
+        assignmentNotes: assignmentNotes || undefined,
+    };
+}
+
+function resolveJobIdentity(job: JobRegistryEntry): { namespace: string; name: string; variant?: string } | null {
+    const namespace = job.namespace?.trim() ?? '';
+    const name = job.name?.trim() ?? '';
+    if (namespace && name) {
+        return {
+            namespace,
+            name,
+            variant: job.variant?.trim() || undefined,
+        };
+    }
+
+    const segments = job.jobKey.split(':').map((segment) => segment.trim()).filter(Boolean);
+    if (segments.length < 2 || segments.length > 3) {
+        return null;
+    }
+
+    return {
+        namespace: segments[0],
+        name: segments[1],
+        variant: segments[2] || undefined,
     };
 }
 

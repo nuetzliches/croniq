@@ -18,6 +18,14 @@ from croniq_runner import (
 
 
 async def main() -> None:
+    runner_api_key = os.getenv("CRONIQ_RUNNER_PYTHON_API_KEY", "").strip()
+    api_key = os.getenv("CRONIQ_API_KEY", "").strip()
+    if not api_key and runner_api_key:
+        os.environ["CRONIQ_API_KEY"] = runner_api_key
+    runner_id = os.getenv("CRONIQ_RUNNER_ID", "").strip()
+    if not runner_id or (runner_id.lower() == "default" and runner_api_key):
+        os.environ["CRONIQ_RUNNER_ID"] = "python-default" if runner_api_key else "default"
+
     try:
         config = RunnerConfig.from_env()
     except ValueError as exc:

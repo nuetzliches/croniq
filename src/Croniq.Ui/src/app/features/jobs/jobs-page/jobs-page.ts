@@ -208,6 +208,9 @@ export class JobsPage {
         variant: job.variant || undefined,
         description: job.description || undefined,
         metadata: job.metadata || undefined,
+        isActive: job.isActive,
+        assignedRunnerId: job.assignedRunnerId || undefined,
+        assignmentNotes: job.assignmentNotes || undefined,
       }
       : undefined;
 
@@ -235,6 +238,15 @@ export class JobsPage {
     this.store.activateJob(job.jobKey);
   }
 
+  toggleJobActivation(job: JobRegistryEntry): void {
+    if (job.isActive) {
+      this.store.deactivateJob(job);
+      return;
+    }
+
+    this.store.activateJob(job.jobKey);
+  }
+
   disableSchedules(job: JobRegistryEntry): void {
     if (job.isSeeded) {
       return;
@@ -259,6 +271,29 @@ export class JobsPage {
 
   isSeedLocked(job: JobRegistryEntry): boolean {
     return job.isSeeded;
+  }
+
+  hasAssignedRunner(job: JobRegistryEntry): boolean {
+    return !!job.assignedRunnerId?.trim();
+  }
+
+  canActivate(job: JobRegistryEntry): boolean {
+    return !job.isActive && this.hasAssignedRunner(job);
+  }
+
+  formatAssignmentSource(source?: string): string {
+    const normalized = (source ?? '').trim();
+    if (!normalized) {
+      return 'manual';
+    }
+    return normalized;
+  }
+
+  activationLabel(job: JobRegistryEntry): string {
+    if (this.canActivate(job)) {
+      return 'Approve & activate';
+    }
+    return 'Assign runner to activate';
   }
 
   resetFilters(): void {

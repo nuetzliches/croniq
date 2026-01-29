@@ -6,9 +6,13 @@ const baseUrl = env('CRONIQ_API_BASEURL', 'http://localhost:5080');
 const grpcBaseUrl = env('CRONIQ_GRPC_BASEURL', baseUrl);
 const tenantId = env('CRONIQ_TENANT_ID', 'default');
 const environment = env('CRONIQ_ENVIRONMENT', 'dev');
-const apiKey = env('CRONIQ_API_KEY', '');
+const runnerApiKey = env('CRONIQ_RUNNER_NODE_API_KEY', '');
+const apiKey = runnerApiKey || env('CRONIQ_API_KEY', '');
 const bearerToken = env('CRONIQ_BEARER_TOKEN', '');
-const runnerId = env('CRONIQ_RUNNER_ID', 'default');
+const runnerIdEnv = process.env.CRONIQ_RUNNER_ID?.trim() ?? '';
+const runnerId = runnerIdEnv && !(runnerApiKey && runnerIdEnv.toLowerCase() === 'default')
+    ? runnerIdEnv
+    : (runnerApiKey ? 'node-default' : 'default');
 const runnerInstanceId = process.env.CRONIQ_RUNNER_INSTANCE_ID?.trim();
 const jobKey = env('CRONIQ_JOB_KEY', 'samples:node-job');
 

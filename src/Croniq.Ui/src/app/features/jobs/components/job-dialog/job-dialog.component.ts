@@ -13,6 +13,8 @@ interface JobFormModel {
     name: string;
     variant: string;
     description: string;
+    assignedRunnerId: string;
+    assignmentNotes: string;
 }
 
 function mapToFormModel(data: UpsertJobRequest | null): JobFormModel {
@@ -22,6 +24,8 @@ function mapToFormModel(data: UpsertJobRequest | null): JobFormModel {
         name: data?.name ?? '',
         variant: data?.variant ?? '',
         description: data?.description ?? '',
+        assignedRunnerId: data?.assignedRunnerId ?? '',
+        assignmentNotes: data?.assignmentNotes ?? '',
     };
 }
 
@@ -41,6 +45,7 @@ export class JobDialogComponent {
     readonly submitAttempted = signal(false);
     readonly submitError = signal<string | null>(null);
     readonly submitting = signal(false);
+    readonly isActive = signal<boolean | null>(this.data?.isActive ?? null);
 
     readonly jobModel = signal(mapToFormModel(this.data));
 
@@ -53,6 +58,9 @@ export class JobDialogComponent {
             disabled(f.namespace);
             disabled(f.name);
             disabled(f.variant);
+        }
+        if (this.isEdit && this.isActive()) {
+            disabled(f.assignedRunnerId);
         }
     });
 
@@ -110,6 +118,8 @@ export class JobDialogComponent {
                 variant: model.variant || undefined,
                 description: model.description || undefined,
                 metadata: this.data?.metadata,
+                assignedRunnerId: model.assignedRunnerId.trim() || undefined,
+                assignmentNotes: model.assignmentNotes.trim() || undefined,
             };
 
             this.submitting.set(true);

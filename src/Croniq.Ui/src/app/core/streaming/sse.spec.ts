@@ -10,6 +10,7 @@ describe('splitSseEvents', () => {
       'data: second',
       'id: 7',
       '',
+      '',
     ].join('\n');
 
     const result = splitSseEvents(payload);

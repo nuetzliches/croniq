@@ -104,6 +104,8 @@ curl -X POST https://localhost:5001/tenants/dev-sandbox/schedules \
 
 Jobs can be **inactive** (pending approval) when they were created by runner self-registration or when the caller explicitly sets `isActive=false` on a job upsert. Inactive jobs are **never dispatched**, and the UI disables manual triggers until the job is activated.
 
+Active jobs must have an `AssignedRunnerId`. Dispatch only leases work to the assigned runner; activation fails if no assignment exists. Reassignments require the job to be inactive, and scale-out for a single job will use a future `RunnerPool` concept.
+
 - Activate a job via the UI or call `POST /tenants/{tenantId}/jobs/{jobId}/activate`.
 - Use `GET /tenants/{tenantId}/jobs` to resolve the `jobId` for a given `jobKey`.
 

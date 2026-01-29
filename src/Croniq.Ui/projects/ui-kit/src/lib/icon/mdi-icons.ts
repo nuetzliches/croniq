@@ -58,6 +58,10 @@ export const MDI_ICONS = {
     viewBox: DEFAULT_VIEW_BOX,
     body: '<path fill="currentColor" d="M12 2L1 21h22M12 6l7.53 13H4.47M11 10v4h2v-4m-2 6v2h2v-2"/>',
   },
+  lock: {
+    viewBox: DEFAULT_VIEW_BOX,
+    body: '<path fill="currentColor" d="M12 17a2 2 0 1 0 0-4a2 2 0 0 0 0 4m6-7h-1V7a5 5 0 0 0-10 0v3H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8a2 2 0 0 0-2-2m-6-6a3 3 0 0 1 3 3v3H9V7a3 3 0 0 1 3-3"/>',
+  },
   'pause-circle-outline': {
     viewBox: DEFAULT_VIEW_BOX,
     body: '<path fill="currentColor" d="M12 20a8 8 0 0 1-8-8a8 8 0 0 1 8-8a8 8 0 0 1 8 8a8 8 0 0 1-8 8m0-18a10 10 0 0 0-10 10a10 10 0 0 0 10 10a10 10 0 0 0 10-10a10 10 0 0 0-10-10M9 9h2v6H9m4-6h2v6h-2"/>',

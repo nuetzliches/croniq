@@ -21,8 +21,8 @@ pip install -r requirements.txt
 CRONIQ_API_BASEURL=http://localhost:5080 \
 CRONIQ_TENANT_ID=default \
 CRONIQ_ENVIRONMENT=dev \
-CRONIQ_API_KEY=smoke-key \
-CRONIQ_RUNNER_ID=default \
+CRONIQ_RUNNER_PYTHON_API_KEY=ak_python.dev-secret \
+CRONIQ_RUNNER_ID=python-default \
 CRONIQ_JOB_KEY=demo-job \
 python example.py
 ```

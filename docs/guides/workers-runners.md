@@ -37,7 +37,9 @@ Authentication supports both:
 
 Runner ids must be unique per live process. SDKs generate a `runnerInstanceId` and include it in the hello/poll/heartbeat metadata; if the API host sees the same `runnerId` already active with a different instance id, it rejects the new session with `409 runner-id-in-use` and the runner should fail fast.
 
-Horizontal scale-out is achieved by running multiple runners with distinct `runnerId` values; lease ownership guarantees one execution per lease while job-level concurrency policies still apply.
+Jobs are assigned 1:1 to a `runnerId` within a tenant/environment. Active jobs must have an assignment, and dispatch only leases work to the assigned runner. Reassignments require the job to be inactive.
+
+Horizontal scale-out is achieved by running multiple runners with distinct `runnerId` values; lease ownership guarantees one execution per lease while job-level concurrency policies still apply. Scale-out for a single job requires a future `RunnerPool` concept.
 
 ## Endpoints
 
@@ -208,6 +210,8 @@ Jobs can be registered via the API/UI and optionally by runners (self-registrati
 - `Deny`: runner self-registration is rejected.
 
 Only `active` jobs are dispatched to runners; pending jobs are never assigned.
+
+When a runner self-registers a job, the assignment is captured alongside the job. Approving the job confirms the assignment and allows dispatch.
 
 Runner SDKs call the self-registration endpoint by default before starting work:
 

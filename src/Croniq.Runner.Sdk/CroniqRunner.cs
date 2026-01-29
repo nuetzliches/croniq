@@ -600,6 +600,10 @@ public sealed class CroniqRunner : IAsyncDisposable
                     await ReplayEntryAsync(entry, token).ConfigureAwait(false);
                     await _outbox.RemoveAsync(entry.Id, token).ConfigureAwait(false);
                 }
+                catch (OperationCanceledException)
+                {
+                    return;
+                }
                 catch (Exception ex)
                 {
                     if (HandleFatal(ex))
@@ -610,7 +614,14 @@ public sealed class CroniqRunner : IAsyncDisposable
                 }
             }
 
-            await Task.Delay(TimeSpan.FromSeconds(2), token).ConfigureAwait(false);
+            try
+            {
+                await Task.Delay(TimeSpan.FromSeconds(2), token).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                return;
+            }
         }
     }
 

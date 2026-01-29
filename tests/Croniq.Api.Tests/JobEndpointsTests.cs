@@ -83,7 +83,7 @@ public sealed class JobEndpointsTests : IClassFixture<WebhookApiTestHost>
     {
         _host.Reset();
         var jobKey = "ops:pending";
-        await UpsertJobAsync(jobKey, description: "pending job", isActive: false);
+        await UpsertJobAsync(jobKey, description: "pending job", isActive: false, assignedRunnerId: "runner-1");
 
         var activateResponse = await _host.Client.PostAsync(
             $"/tenants/{WebhookApiTestHost.TenantId}/jobs/{Uri.EscapeDataString(jobKey)}/activate?environment={WebhookApiTestHost.Environment}",
@@ -94,9 +94,28 @@ public sealed class JobEndpointsTests : IClassFixture<WebhookApiTestHost>
         payload.ShouldNotBeNull();
         payload.JobKey.ShouldBe(jobKey);
         payload.IsActive.ShouldBeTrue();
+        payload.AssignedRunnerId.ShouldBe("runner-1");
     }
 
-    private async Task UpsertJobAsync(string jobKey, string? description = null, IDictionary<string, string>? metadata = null, bool? isActive = null)
+    [Fact]
+    public async Task ActivateJobRequiresAssignment()
+    {
+        _host.Reset();
+        var jobKey = "ops:pending-unassigned";
+        await UpsertJobAsync(jobKey, description: "pending job", isActive: false, assignedRunnerId: null);
+
+        var activateResponse = await _host.Client.PostAsync(
+            $"/tenants/{WebhookApiTestHost.TenantId}/jobs/{Uri.EscapeDataString(jobKey)}/activate?environment={WebhookApiTestHost.Environment}",
+            content: null);
+        activateResponse.StatusCode.ShouldBe(HttpStatusCode.BadRequest);
+    }
+
+    private async Task UpsertJobAsync(
+        string jobKey,
+        string? description = null,
+        IDictionary<string, string>? metadata = null,
+        bool? isActive = null,
+        string? assignedRunnerId = "itest-client")
     {
         if (!JobKey.TryParse(jobKey, out var parsed))
         {
@@ -110,7 +129,8 @@ public sealed class JobEndpointsTests : IClassFixture<WebhookApiTestHost>
             Variant: parsed.Variant,
             Description: description,
             Metadata: metadata,
-            IsActive: isActive);
+            IsActive: isActive,
+            AssignedRunnerId: assignedRunnerId);
 
         var response = await _host.Client.PostAsJsonAsync($"/tenants/{WebhookApiTestHost.TenantId}/jobs?environment={WebhookApiTestHost.Environment}", request);
         response.StatusCode.ShouldBe(HttpStatusCode.Created);

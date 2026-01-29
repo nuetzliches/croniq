@@ -21,8 +21,8 @@ npm install
 CRONIQ_API_BASEURL=http://localhost:5080 \
 CRONIQ_TENANT_ID=default \
 CRONIQ_ENVIRONMENT=dev \
-CRONIQ_API_KEY=smoke-key \
-CRONIQ_RUNNER_ID=default \
+CRONIQ_RUNNER_NODE_API_KEY=ak_node.dev-secret \
+CRONIQ_RUNNER_ID=node-default \
 CRONIQ_JOB_KEY=demo-job \
 npm run start
 ```

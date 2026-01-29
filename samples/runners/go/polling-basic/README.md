@@ -13,8 +13,8 @@ cd samples/runners/go/polling-basic
 CRONIQ_API_BASEURL=http://localhost:5080 \
 CRONIQ_TENANT_ID=default \
 CRONIQ_ENVIRONMENT=dev \
-CRONIQ_API_KEY=smoke-key \
-CRONIQ_RUNNER_ID=default \
+CRONIQ_RUNNER_GO_API_KEY=ak_go.dev-secret \
+CRONIQ_RUNNER_ID=go-default \
 CRONIQ_JOB_KEY=demo-job \
 go run .
 ```
@@ -23,3 +23,4 @@ go run .
 
 - The SDK handles gRPC streaming, polling fallback, heartbeats, renewals, and acks.
 - `CRONIQ_RUNNER_ID` must match the API client id associated with the API key.
+- When using `CRONIQ_RUNNER_GO_API_KEY`, the default runner id is `go-default`.

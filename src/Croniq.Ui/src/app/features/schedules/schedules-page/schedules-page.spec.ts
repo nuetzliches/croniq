@@ -1,6 +1,8 @@
 import { provideZonelessChangeDetection, signal } from '@angular/core';
 import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { nowIso } from '@core/time/clock';
+import { ActivatedRoute, Router, convertToParamMap } from '@angular/router';
+import { of } from 'rxjs';
 import { SchedulesPage } from './schedules-page';
 import { ScheduleRow, SchedulesStore } from './schedules.store';
 
@@ -45,11 +47,21 @@ class SchedulesStoreStub {
 describe('SchedulesPage', () => {
   let component: SchedulesPage;
   let fixture: ComponentFixture<SchedulesPage>;
+  const routerStub = {
+    navigate: vi.fn(() => Promise.resolve(true)),
+  };
+  const activatedRouteStub = {
+    queryParamMap: of(convertToParamMap({})),
+  };
 
   beforeEach(async () => {
     await TestBed.configureTestingModule({
       imports: [SchedulesPage],
-      providers: [provideZonelessChangeDetection()],
+      providers: [
+        provideZonelessChangeDetection(),
+        { provide: Router, useValue: routerStub },
+        { provide: ActivatedRoute, useValue: activatedRouteStub },
+      ],
     })
       .overrideComponent(SchedulesPage, {
         set: {

@@ -49,6 +49,11 @@ export const JobResponse = z
         variant: z.string().nullable(),
         description: z.string().nullable(),
         metadata: z.record(z.string(), z.string()).nullable(),
+        assignedRunnerId: z.string().nullable(),
+        assignedBy: z.string().nullable(),
+        assignedAtUtc: z.iso.datetime({ offset: true }).nullable(),
+        assignmentSource: z.string().nullable(),
+        assignmentNotes: z.string().nullable(),
         isActive: z.boolean(),
     })
     .partial();
@@ -61,6 +66,8 @@ export const UpsertJobRequest = z.object({
     description: z.string().nullish(),
     metadata: z.record(z.string(), z.string()).nullish(),
     isActive: z.boolean().nullish(),
+    assignedRunnerId: z.string().nullish(),
+    assignmentNotes: z.string().nullish(),
 });
 export type UpsertJobRequest = z.infer<typeof UpsertJobRequest>;
 export const ExecutionKind = z.union([z.literal(0), z.literal(1)]);

@@ -1,10 +1,13 @@
 import { DatePipe } from '@angular/common';
 import { CdkMenu } from '@angular/cdk/menu';
-import { ChangeDetectionStrategy, Component, Directive, TemplateRef, computed, effect, inject, signal, viewChild } from '@angular/core';
+import { ChangeDetectionStrategy, Component, DestroyRef, Directive, TemplateRef, computed, effect, inject, signal, viewChild } from '@angular/core';
+import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
+import { RouterLink } from '@angular/router';
 import { bindQueryParam } from '@shared/routing/selection-sync';
 import { ShellPanelService } from '@shell/panel/shell-panel.service';
 import { CqCellDefDirective, CqColumnComponent, CqContextMenuItemDirective, CqIconComponent, CqInputDirective, CqSelectDirective, DataGrid } from 'ui-kit';
 import { Runner, RunnersStore } from './runners.store';
+import { timer } from 'rxjs';
 
 type RunnerStatusFilter = 'all' | Runner['status'];
 
@@ -14,6 +17,8 @@ const STATUS_OPTIONS: ReadonlyArray<{ value: RunnerStatusFilter; label: string }
   { value: 'Offline', label: 'Offline' },
   { value: 'Draining', label: 'Draining' },
 ];
+
+const RUNNER_REFRESH_INTERVAL_MS = 10_000;
 
 @Directive({
   selector: '[cqRunnerCell]',
@@ -25,7 +30,7 @@ export class CqRunnerCellDirective extends CqCellDefDirective<Runner> {
 
 @Component({
   selector: 'cq-runners-page',
-  imports: [CdkMenu, DatePipe, DataGrid, CqColumnComponent, CqRunnerCellDirective, CqInputDirective, CqSelectDirective, CqContextMenuItemDirective, CqIconComponent],
+  imports: [CdkMenu, DatePipe, RouterLink, DataGrid, CqColumnComponent, CqRunnerCellDirective, CqInputDirective, CqSelectDirective, CqContextMenuItemDirective, CqIconComponent],
   templateUrl: './runners-page.html',
   changeDetection: ChangeDetectionStrategy.OnPush,
   providers: [RunnersStore],
@@ -33,6 +38,7 @@ export class CqRunnerCellDirective extends CqCellDefDirective<Runner> {
 export class RunnersPage {
   private readonly store = inject(RunnersStore);
   private readonly shellPanel = inject(ShellPanelService);
+  private readonly destroyRef = inject(DestroyRef);
   private readonly panelTemplate = viewChild<TemplateRef<unknown>>('runnersFilterPanel');
   private readonly collapsedTemplate = viewChild<TemplateRef<unknown>>('runnersFilterCollapsed');
 
@@ -113,6 +119,10 @@ export class RunnersPage {
       );
       onCleanup(() => this.shellPanel.clearPanel(template));
     });
+
+    timer(0, RUNNER_REFRESH_INTERVAL_MS)
+      .pipe(takeUntilDestroyed(this.destroyRef))
+      .subscribe(() => this.store.refresh());
   }
 
   refresh() {

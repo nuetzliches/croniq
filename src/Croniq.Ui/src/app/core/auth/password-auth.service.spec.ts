@@ -1,4 +1,4 @@
-import { provideZonelessChangeDetection } from '@angular/core';
+import { provideZonelessChangeDetection, signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { CRONIQ_API_CLIENT, type CroniqApiClient } from 'data-access';
 import { firstValueFrom, of } from 'rxjs';
@@ -10,7 +10,7 @@ describe('PasswordAuthService', () => {
     let apiClient: Pick<CroniqApiClient, 'passwordLogin'>;
     let authSession: Pick<
         AuthSessionService,
-        'storeSessionToken' | 'storeRefreshToken' | 'clearRefreshToken' | 'storeTenantId'
+        'storeSessionToken' | 'storeRefreshToken' | 'clearRefreshToken' | 'storeTenantId' | 'refreshToken'
     >;
 
     beforeEach(() => {
@@ -18,11 +18,13 @@ describe('PasswordAuthService', () => {
             passwordLogin: vi.fn(),
         };
 
+        const refreshTokenSignal = signal<string | null>(null);
         authSession = {
             storeSessionToken: vi.fn(),
             storeRefreshToken: vi.fn(),
             clearRefreshToken: vi.fn(),
             storeTenantId: vi.fn(),
+            refreshToken: refreshTokenSignal,
         };
 
         TestBed.configureTestingModule({
@@ -94,7 +96,7 @@ describe('PasswordAuthService', () => {
             expiresAt: null,
             passwordChangeRequired: false,
         });
-        expect(authSession.clearRefreshToken).toHaveBeenCalled();
+        expect(authSession.storeRefreshToken).not.toHaveBeenCalled();
         expect(result.refreshTokenPresent).toBe(false);
         expect(result.passwordChangeRequired).toBe(false);
         expect(result.tenantId).toBe('default');

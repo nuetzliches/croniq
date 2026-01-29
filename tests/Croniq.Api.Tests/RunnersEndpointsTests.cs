@@ -157,6 +157,16 @@ public sealed class RunnersEndpointsTests : IClassFixture<WebhookApiTestHost>
     {
         _host.Reset();
 
+        const string offlineKey = "ak_runner_offline";
+        var offlineContext = new CallerContext(
+            WebhookApiTestHost.TenantId,
+            WebhookApiTestHost.Environment,
+            CallerType.ApiKey,
+            CallerId: "itest-offline",
+            Scopes: new[] { CroniqScopes.RunnersHeartbeat, CroniqScopes.RunnersRead });
+        _host.CallerFactory.AddContext(offlineKey, offlineContext);
+        SetCallerApiKey(offlineKey);
+
         var heartbeat = new RunnerHeartbeatRequest(
             EnvironmentTag: WebhookApiTestHost.Environment,
             RunnerId: "itest-offline",
@@ -171,9 +181,7 @@ public sealed class RunnersEndpointsTests : IClassFixture<WebhookApiTestHost>
 
         var payload = await listResponse.Content.ReadFromJsonAsync<RunnerListResponse>();
         payload.ShouldNotBeNull();
-        payload.Runners.Length.ShouldBe(1);
-        payload.Runners[0].RunnerId.ShouldBe("itest-offline");
-        payload.Runners[0].IsOnline.ShouldBeFalse();
+        payload.Runners.ShouldContain(runner => runner.RunnerId == "itest-offline" && runner.IsOnline == false);
     }
 
     private void SetCallerApiKey(string apiKey)
