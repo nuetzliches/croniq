@@ -32,3 +32,13 @@ public sealed record RunnerJobRegistrationRequest(
     [property: Required] string JobKey,
     string? Description,
     IDictionary<string, string>? Metadata = null);
+
+public sealed record RunnerPresenceStreamEvent(
+    string Type,
+    DateTimeOffset EmittedAtUtc,
+    DateTimeOffset? LatestSeenAtUtc = null,
+    int? OnlineCount = null,
+    int? TotalCount = null,
+    IReadOnlyCollection<RunnerStatusModel>? Snapshot = null,
+    IReadOnlyCollection<RunnerStatusModel>? Updated = null,
+    IReadOnlyCollection<string>? RemovedRunnerIds = null);

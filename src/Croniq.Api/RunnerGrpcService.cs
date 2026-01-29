@@ -2,6 +2,7 @@ using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Threading;
 using Croniq.Api.Telemetry;
 using Croniq.Auth.Abstractions;
 using Croniq.Core.Observability;
@@ -149,11 +150,14 @@ internal sealed class RunnerGrpcService : Runner.RunnerBase
         }).ConfigureAwait(false);
 
         var inflight = new ConcurrentDictionary<string, TriggerLease>(StringComparer.OrdinalIgnoreCase);
+        var metadataState = new RunnerMetadataState(runnerMetadataJson);
+        await UpdateRunnerActiveJobsAsync(metadataState, 0, scope, runnerId, context.CancellationToken).ConfigureAwait(false);
         using var cts = CancellationTokenSource.CreateLinkedTokenSource(context.CancellationToken);
-        var heartbeatTask = StartRunnerHeartbeatLoopAsync(scope, runnerId, runnerMetadataJson, cts.Token);
+        var heartbeatTask = StartRunnerHeartbeatLoopAsync(scope, runnerId, metadataState, cts.Token);
         var assignmentLoop = Task.Run(() => AssignWorkLoopAsync(
             responseStream,
             inflight,
+            metadataState,
             runnerId,
             scope,
             maxInflight,
@@ -180,6 +184,7 @@ internal sealed class RunnerGrpcService : Runner.RunnerBase
                 await HandleRunnerMessageAsync(
                     message,
                     inflight,
+                    metadataState,
                     runnerId,
                     scope,
                     cts.Token).ConfigureAwait(false);
@@ -227,7 +232,7 @@ internal sealed class RunnerGrpcService : Runner.RunnerBase
 
             if (gracefulDisconnect)
             {
-                await TryMarkRunnerOfflineAsync(scope, runnerId, runnerMetadataJson).ConfigureAwait(false);
+                await TryMarkRunnerOfflineAsync(scope, runnerId, metadataState.Value).ConfigureAwait(false);
             }
         }
     }
@@ -291,7 +296,7 @@ internal sealed class RunnerGrpcService : Runner.RunnerBase
     private Task StartRunnerHeartbeatLoopAsync(
         PartitionScope scope,
         string runnerId,
-        string? metadataJson,
+        RunnerMetadataState metadataState,
         CancellationToken cancellationToken)
     {
         var interval = ResolveHeartbeatInterval();
@@ -307,7 +312,7 @@ internal sealed class RunnerGrpcService : Runner.RunnerBase
                 try
                 {
                     await _runnerStore.UpsertHeartbeatAsync(
-                        new RunnerHeartbeat(scope, runnerId, DateTimeOffset.UtcNow, metadataJson),
+                        new RunnerHeartbeat(scope, runnerId, DateTimeOffset.UtcNow, metadataState.Value),
                         cancellationToken).ConfigureAwait(false);
                 }
                 catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -381,9 +386,38 @@ internal sealed class RunnerGrpcService : Runner.RunnerBase
         }
     }
 
+    private async Task UpdateRunnerActiveJobsAsync(
+        RunnerMetadataState metadataState,
+        int activeJobs,
+        PartitionScope scope,
+        string runnerId,
+        CancellationToken cancellationToken)
+    {
+        if (!metadataState.TryUpdateActiveJobs(activeJobs, out var updatedMetadata))
+        {
+            return;
+        }
+
+        try
+        {
+            await _runnerStore.UpsertHeartbeatAsync(
+                new RunnerHeartbeat(scope, runnerId, DateTimeOffset.UtcNow, updatedMetadata),
+                cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            // ignore cancellation
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Failed to update runner active job count.");
+        }
+    }
+
     private async Task AssignWorkLoopAsync(
         IServerStreamWriter<ServerMessage> responseStream,
         ConcurrentDictionary<string, TriggerLease> inflight,
+        RunnerMetadataState metadataState,
         string runnerId,
         PartitionScope scope,
         int maxInflight,
@@ -414,6 +448,13 @@ internal sealed class RunnerGrpcService : Runner.RunnerBase
                         {
                             continue;
                         }
+
+                        await UpdateRunnerActiveJobsAsync(
+                            metadataState,
+                            inflight.Count,
+                            scope,
+                            runnerId,
+                            cancellationToken).ConfigureAwait(false);
 
                         await TryStoreExecutionStartedAsync(normalized, runnerId, cancellationToken).ConfigureAwait(false);
                         await TryTrackAssignmentAsync(normalized, runnerId, scope, cancellationToken).ConfigureAwait(false);
@@ -470,6 +511,7 @@ internal sealed class RunnerGrpcService : Runner.RunnerBase
     private async Task HandleRunnerMessageAsync(
         RunnerMessage message,
         ConcurrentDictionary<string, TriggerLease> inflight,
+        RunnerMetadataState metadataState,
         string runnerId,
         PartitionScope scope,
         CancellationToken cancellationToken)
@@ -488,6 +530,7 @@ internal sealed class RunnerGrpcService : Runner.RunnerBase
                 deadLetterReason: null,
                 nextFireTimeUtc: null,
                 inflight,
+                metadataState,
                 runnerId,
                 cancellationToken).ConfigureAwait(false);
             return;
@@ -510,6 +553,7 @@ internal sealed class RunnerGrpcService : Runner.RunnerBase
                 deadLetterReason: reason,
                 nextFireTimeUtc: nextFireTimeUtc,
                 inflight,
+                metadataState,
                 runnerId,
                 cancellationToken).ConfigureAwait(false);
             return;
@@ -529,6 +573,7 @@ internal sealed class RunnerGrpcService : Runner.RunnerBase
         string? deadLetterReason,
         DateTimeOffset? nextFireTimeUtc,
         ConcurrentDictionary<string, TriggerLease> inflight,
+        RunnerMetadataState metadataState,
         string runnerId,
         CancellationToken cancellationToken)
     {
@@ -542,6 +587,13 @@ internal sealed class RunnerGrpcService : Runner.RunnerBase
             _logger.LogWarning("Ack received for unknown lease {LeaseId}.", leaseId);
             return;
         }
+
+        await UpdateRunnerActiveJobsAsync(
+            metadataState,
+            inflight.Count,
+            lease.Scope,
+            runnerId,
+            cancellationToken).ConfigureAwait(false);
 
         if (!string.IsNullOrWhiteSpace(executionId)
             && !string.Equals(executionId, lease.ExecutionId, StringComparison.OrdinalIgnoreCase))
@@ -786,6 +838,43 @@ internal sealed class RunnerGrpcService : Runner.RunnerBase
         }
 
         return Math.Min(maxInflight, 250);
+    }
+
+    private sealed class RunnerMetadataState
+    {
+        private readonly object _sync = new();
+        private string? _value;
+        private int? _activeJobs;
+
+        public RunnerMetadataState(string? initialValue)
+        {
+            _value = initialValue;
+        }
+
+        public string? Value => Volatile.Read(ref _value);
+
+        public bool TryUpdateActiveJobs(int activeJobs, out string? updatedMetadata)
+        {
+            var normalized = Math.Max(0, activeJobs);
+            lock (_sync)
+            {
+                if (_activeJobs.HasValue && _activeJobs.Value == normalized)
+                {
+                    updatedMetadata = null;
+                    return false;
+                }
+
+                _activeJobs = normalized;
+                updatedMetadata = RunnerInstanceGuard.MergeMetadataJson(
+                    _value,
+                    new Dictionary<string, object?>
+                    {
+                        ["activeJobs"] = normalized
+                    });
+                Volatile.Write(ref _value, updatedMetadata);
+                return true;
+            }
+        }
     }
 
     private static Dictionary<string, object?> BuildWorkEventScope(TriggerLease lease, string runnerId, PartitionScope scope)

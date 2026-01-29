@@ -14,6 +14,7 @@
   <ItemGroup>
     <Protobuf Include="Protos\scheduler.proto" GrpcServices="Client" />
     <Protobuf Include="Protos\runner.proto" GrpcServices="Client" />
+    <Protobuf Include="Protos\runner_presence.proto" GrpcServices="Client" />
     <Protobuf Include="Protos\webhook_ingress.proto" GrpcServices="Client" />
     <Protobuf Include="Protos\webhook_activity.proto" GrpcServices="Client" />
   </ItemGroup>

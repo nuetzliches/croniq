@@ -14,6 +14,13 @@ type RuntimeConfig = {
             sseBaseUrl?: string;
         };
     };
+    runners?: {
+        presenceStream?: {
+            mode?: string;
+            grpcBaseUrl?: string;
+            sseBaseUrl?: string;
+        };
+    };
 };
 
 const CONFIG_RELATIVE_PATH = join('public', 'assets', 'croniq-config.json');
@@ -43,6 +50,13 @@ async function main(): Promise<void> {
             },
         };
     }
+    if (existing.config.runners?.presenceStream) {
+        next.runners = {
+            presenceStream: {
+                ...existing.config.runners.presenceStream,
+            },
+        };
+    }
 
     const apiBaseUrl = resolveApiBaseUrl(env);
     if (apiBaseUrl) {
@@ -69,6 +83,19 @@ async function main(): Promise<void> {
             ...(streamMode ? { mode: streamMode } : {}),
             ...(grpcBaseUrl ? { grpcBaseUrl } : {}),
             ...(sseBaseUrl ? { sseBaseUrl } : {}),
+        };
+    }
+
+    const presenceMode = resolveRunnersPresenceStreamMode(env);
+    const presenceGrpcBaseUrl = resolveRunnersPresenceGrpcBaseUrl(env);
+    const presenceSseBaseUrl = resolveRunnersPresenceSseBaseUrl(env);
+    if (presenceMode || presenceGrpcBaseUrl || presenceSseBaseUrl) {
+        next.runners ??= {};
+        next.runners.presenceStream = {
+            ...(next.runners.presenceStream ?? {}),
+            ...(presenceMode ? { mode: presenceMode } : {}),
+            ...(presenceGrpcBaseUrl ? { grpcBaseUrl: presenceGrpcBaseUrl } : {}),
+            ...(presenceSseBaseUrl ? { sseBaseUrl: presenceSseBaseUrl } : {}),
         };
     }
 
@@ -215,6 +242,17 @@ function resolveWebhooksActivitySseBaseUrl(env: Record<string, string>): string 
     return pick(env, ['CRONIQ_UI_WEBHOOKS_ACTIVITY_SSE_BASEURL']);
 }
 
+function resolveRunnersPresenceStreamMode(env: Record<string, string>): string | undefined {
+    return pick(env, ['CRONIQ_UI_RUNNERS_PRESENCE_STREAM_MODE']);
+}
+
+function resolveRunnersPresenceGrpcBaseUrl(env: Record<string, string>): string | undefined {
+    return pick(env, ['CRONIQ_UI_RUNNERS_PRESENCE_GRPC_BASEURL']);
+}
+
+function resolveRunnersPresenceSseBaseUrl(env: Record<string, string>): string | undefined {
+    return pick(env, ['CRONIQ_UI_RUNNERS_PRESENCE_SSE_BASEURL']);
+}
 
 function pick(env: Record<string, string>, keys: string[]): string | undefined {
     for (const key of keys) {

@@ -104,6 +104,7 @@ app.UseCroniqApi();
 
 app.MapCroniqSchedulerGrpc();
 app.MapCroniqRunnerGrpc();
+app.MapCroniqRunnerPresenceGrpc();
 app.MapCroniqWebhookActivityGrpc();
 
 var webhookOptions = app.Services.GetRequiredService<IOptions<CroniqWebhookOptions>>().Value;

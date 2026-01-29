@@ -63,14 +63,19 @@ static RuntimeConfig LoadRuntimeConfig(IWebHostEnvironment env, ILogger logger)
     var streamMode = ResolveWebhooksActivityStreamMode();
     var grpcBaseUrl = ResolveWebhooksActivityGrpcBaseUrl();
     var sseBaseUrl = ResolveWebhooksActivitySseBaseUrl();
+    var runnerStreamMode = ResolveRunnersPresenceStreamMode();
+    var runnerGrpcBaseUrl = ResolveRunnersPresenceGrpcBaseUrl();
+    var runnerSseBaseUrl = ResolveRunnersPresenceSseBaseUrl();
     var webhooks = MergeWebhooksConfig(fromFile.Webhooks, streamMode, grpcBaseUrl, sseBaseUrl);
+    var runners = MergeRunnersConfig(fromFile.Runners, runnerStreamMode, runnerGrpcBaseUrl, runnerSseBaseUrl);
 
     return fromFile with
     {
         ApiBaseUrl = apiBaseUrl ?? fromFile.ApiBaseUrl,
         SwaggerUiUrl = swaggerUiUrl ?? fromFile.SwaggerUiUrl,
         DefaultTenantId = defaultTenantId ?? fromFile.DefaultTenantId,
-        Webhooks = webhooks
+        Webhooks = webhooks,
+        Runners = runners
     };
 }
 
@@ -144,6 +149,21 @@ static string? ResolveWebhooksActivityGrpcBaseUrl()
 static string? ResolveWebhooksActivitySseBaseUrl()
 {
     return GetEnv("CRONIQ_UI_WEBHOOKS_ACTIVITY_SSE_BASEURL");
+}
+
+static string? ResolveRunnersPresenceStreamMode()
+{
+    return GetEnv("CRONIQ_UI_RUNNERS_PRESENCE_STREAM_MODE");
+}
+
+static string? ResolveRunnersPresenceGrpcBaseUrl()
+{
+    return GetEnv("CRONIQ_UI_RUNNERS_PRESENCE_GRPC_BASEURL");
+}
+
+static string? ResolveRunnersPresenceSseBaseUrl()
+{
+    return GetEnv("CRONIQ_UI_RUNNERS_PRESENCE_SSE_BASEURL");
 }
 
 static string? GetEnv(params string[] keys)
@@ -244,6 +264,29 @@ static WebhooksRuntimeConfig? MergeWebhooksConfig(
     };
 }
 
+static RunnersRuntimeConfig? MergeRunnersConfig(
+    RunnersRuntimeConfig? current,
+    string? mode,
+    string? grpcBaseUrl,
+    string? sseBaseUrl)
+{
+    if (mode is null && grpcBaseUrl is null && sseBaseUrl is null)
+    {
+        return current;
+    }
+
+    var currentPresence = current?.PresenceStream;
+    return new RunnersRuntimeConfig
+    {
+        PresenceStream = new RunnerPresenceStreamRuntimeConfig
+        {
+            Mode = mode ?? currentPresence?.Mode,
+            GrpcBaseUrl = grpcBaseUrl ?? currentPresence?.GrpcBaseUrl,
+            SseBaseUrl = sseBaseUrl ?? currentPresence?.SseBaseUrl
+        }
+    };
+}
+
 static class JsonOptions
 {
     internal static readonly JsonSerializerOptions File = new()
@@ -263,7 +306,25 @@ internal sealed record WebhooksRuntimeConfig
     public WebhookActivityStreamRuntimeConfig? ActivityStream { get; init; }
 }
 
+internal sealed record RunnersRuntimeConfig
+{
+    [JsonPropertyName("presenceStream")]
+    public RunnerPresenceStreamRuntimeConfig? PresenceStream { get; init; }
+}
+
 internal sealed record WebhookActivityStreamRuntimeConfig
+{
+    [JsonPropertyName("mode")]
+    public string? Mode { get; init; }
+
+    [JsonPropertyName("grpcBaseUrl")]
+    public string? GrpcBaseUrl { get; init; }
+
+    [JsonPropertyName("sseBaseUrl")]
+    public string? SseBaseUrl { get; init; }
+}
+
+internal sealed record RunnerPresenceStreamRuntimeConfig
 {
     [JsonPropertyName("mode")]
     public string? Mode { get; init; }
@@ -291,4 +352,7 @@ internal sealed record RuntimeConfig
 
     [JsonPropertyName("webhooks")]
     public WebhooksRuntimeConfig? Webhooks { get; init; }
+
+    [JsonPropertyName("runners")]
+    public RunnersRuntimeConfig? Runners { get; init; }
 }

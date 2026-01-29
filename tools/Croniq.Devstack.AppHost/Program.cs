@@ -109,6 +109,9 @@ var uiDefaultTenantId = GetEnvValue("CRONIQ_UI_DEFAULT_TENANT_ID");
 var uiActivityStreamMode = GetEnvValue("CRONIQ_UI_WEBHOOKS_ACTIVITY_STREAM_MODE");
 var uiActivityGrpcBaseUrl = GetEnvValue("CRONIQ_UI_WEBHOOKS_ACTIVITY_GRPC_BASEURL");
 var uiActivitySseBaseUrl = GetEnvValue("CRONIQ_UI_WEBHOOKS_ACTIVITY_SSE_BASEURL");
+var uiRunnerPresenceStreamMode = GetEnvValue("CRONIQ_UI_RUNNERS_PRESENCE_STREAM_MODE");
+var uiRunnerPresenceGrpcBaseUrl = GetEnvValue("CRONIQ_UI_RUNNERS_PRESENCE_GRPC_BASEURL");
+var uiRunnerPresenceSseBaseUrl = GetEnvValue("CRONIQ_UI_RUNNERS_PRESENCE_SSE_BASEURL");
 var dataProtectionAppName = GetEnvValue("CRONIQ_SECURITY_DATAPROTECTION_APPLICATIONNAME");
 var dataProtectionKeyRingPath = GetEnvValue("CRONIQ_SECURITY_DATAPROTECTION_KEYRINGPATH");
 
@@ -630,6 +633,21 @@ if (uiEnabled)
         ui.WithEnvironment("CRONIQ_UI_WEBHOOKS_ACTIVITY_SSE_BASEURL", uiActivitySseBaseUrl);
     }
 
+    if (!string.IsNullOrWhiteSpace(uiRunnerPresenceStreamMode))
+    {
+        ui.WithEnvironment("CRONIQ_UI_RUNNERS_PRESENCE_STREAM_MODE", uiRunnerPresenceStreamMode);
+    }
+
+    if (!string.IsNullOrWhiteSpace(uiRunnerPresenceGrpcBaseUrl))
+    {
+        ui.WithEnvironment("CRONIQ_UI_RUNNERS_PRESENCE_GRPC_BASEURL", uiRunnerPresenceGrpcBaseUrl);
+    }
+
+    if (!string.IsNullOrWhiteSpace(uiRunnerPresenceSseBaseUrl))
+    {
+        ui.WithEnvironment("CRONIQ_UI_RUNNERS_PRESENCE_SSE_BASEURL", uiRunnerPresenceSseBaseUrl);
+    }
+
     var uiSnapshotArgs = new[]
     {
         "run",
@@ -684,7 +702,8 @@ var worker = builder.AddExecutable(
     .WithEnvironment("Croniq__Logging__Execution__BasePath", logsPath)
     .WaitForCompletion(migrator, exitCode: 0)
     .WaitFor(migrator)
-    .WaitFor(api);
+    .WaitFor(api)
+    .WithExplicitStart();
 
 if (!string.IsNullOrWhiteSpace(workerDispatchEnableGrpc))
 {

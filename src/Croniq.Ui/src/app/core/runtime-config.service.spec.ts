@@ -102,4 +102,45 @@ describe('RuntimeConfigService', () => {
     expect(service.webhooksActivityGrpcBaseUrl).toBe('http://localhost:5090');
     expect(service.webhooksActivitySseBaseUrl).toBe('http://localhost:5090');
   });
+
+  it('exposes runners presence stream settings', async () => {
+    const loadPromise = firstValueFrom(service.load());
+
+    const req = http.expectOne('assets/croniq-config.json');
+    req.flush({
+      apiBaseUrl: 'http://localhost:5080/',
+      runners: {
+        presenceStream: {
+          mode: 'polling',
+          grpcBaseUrl: 'http://localhost:5092/',
+          sseBaseUrl: '/presence/',
+        },
+      },
+    });
+
+    await loadPromise;
+
+    expect(service.runnersPresenceStreamMode).toBe('polling');
+    expect(service.runnersPresenceGrpcBaseUrl).toBe('http://localhost:5092');
+    expect(service.runnersPresenceSseBaseUrl).toBe('/presence');
+  });
+
+  it('falls back to apiBaseUrl for runner presence base urls', async () => {
+    const loadPromise = firstValueFrom(service.load());
+
+    const req = http.expectOne('assets/croniq-config.json');
+    req.flush({
+      apiBaseUrl: 'http://localhost:5099/',
+      runners: {
+        presenceStream: {
+          mode: 'grpc',
+        },
+      },
+    });
+
+    await loadPromise;
+
+    expect(service.runnersPresenceGrpcBaseUrl).toBe('http://localhost:5099');
+    expect(service.runnersPresenceSseBaseUrl).toBe('http://localhost:5099');
+  });
 });

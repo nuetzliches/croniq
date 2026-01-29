@@ -21,11 +21,15 @@ Runtime config is loaded from `public/assets/croniq-config.json` (optional). Sup
 - `webhooks.activityStream.mode`: `grpc`, `sse`, or `polling`
 - `webhooks.activityStream.grpcBaseUrl`: optional override for the gRPC-Web proxy (absolute URL or absolute path; defaults to `apiBaseUrl`)
 - `webhooks.activityStream.sseBaseUrl`: optional override for the SSE endpoint (absolute URL or absolute path; defaults to `apiBaseUrl`)
+- `runners.presenceStream.mode`: `grpc`, `sse`, or `polling`
+- `runners.presenceStream.grpcBaseUrl`: optional override for the gRPC-Web proxy (absolute URL or absolute path; defaults to `apiBaseUrl`)
+- `runners.presenceStream.sseBaseUrl`: optional override for the SSE endpoint (absolute URL or absolute path; defaults to `apiBaseUrl`)
 
 Generate the file via `npm run generate:runtime-config` (runs automatically for `npm start`, `npm run build`, and `npm run watch`).
 Environment variables: `CRONIQ_UI_API_BASEURL`, `CRONIQ_UI_SWAGGER_UI_URL`,
 `CRONIQ_UI_WEBHOOKS_ACTIVITY_STREAM_MODE`, `CRONIQ_UI_WEBHOOKS_ACTIVITY_GRPC_BASEURL`,
-`CRONIQ_UI_WEBHOOKS_ACTIVITY_SSE_BASEURL`.
+`CRONIQ_UI_WEBHOOKS_ACTIVITY_SSE_BASEURL`, `CRONIQ_UI_RUNNERS_PRESENCE_STREAM_MODE`,
+`CRONIQ_UI_RUNNERS_PRESENCE_GRPC_BASEURL`, `CRONIQ_UI_RUNNERS_PRESENCE_SSE_BASEURL`.
 If `CRONIQ_UI_API_BASEURL` is not set, `CRONIQ_UI_API_PORT` plus optional `CRONIQ_UI_API_HOST` / `CRONIQ_UI_API_SCHEME` are used.
 
 Webhook capability flags (e.g., unsigned webhook support) are loaded from the API capabilities endpoint instead of the runtime config file.

@@ -54,8 +54,13 @@ Supported keys:
 - `webhooks.activityStream.mode` (`grpc`, `sse`, or `polling`)
 - `webhooks.activityStream.grpcBaseUrl` (optional absolute URL or path for gRPC-Web proxy; defaults to `apiBaseUrl`)
 - `webhooks.activityStream.sseBaseUrl` (optional absolute URL or path for SSE endpoint; defaults to `apiBaseUrl`)
+- `runners.presenceStream.mode` (`grpc`, `sse`, or `polling`)
+- `runners.presenceStream.grpcBaseUrl` (optional absolute URL or path for gRPC-Web proxy; defaults to `apiBaseUrl`)
+- `runners.presenceStream.sseBaseUrl` (optional absolute URL or path for SSE endpoint; defaults to `apiBaseUrl`)
 
 When `webhooks.activityStream.mode` is `grpc`, the UI connects via gRPC-Web to `croniq.rpc.WebhookActivity/Stream` and automatically falls back to SSE or polling if the stream is unavailable.
+When `runners.presenceStream.mode` is `grpc`, the UI connects via gRPC-Web to `croniq.rpc.RunnerPresence/Stream` and automatically falls back to SSE or polling if the stream is unavailable.
+Runner presence streaming emits an initial snapshot plus delta updates; the runners page applies those deltas without re-fetching the list unless it falls back to polling.
 
 Generate `public/assets/croniq-config.json` via `npm run generate:runtime-config` (runs automatically for `npm start`, `npm run build`, and `npm run watch`).
 If `CRONIQ_UI_API_BASEURL` is not set, `CRONIQ_UI_API_PORT` plus optional `CRONIQ_UI_API_HOST` / `CRONIQ_UI_API_SCHEME` are used.
@@ -68,7 +73,7 @@ Webhook capability flags (for example, unsigned webhook support) are resolved fr
 Croniq.Ui ships as static assets hosted by `Croniq.UiHost`, the ASP.NET Core wrapper used for the `croniq-ui` container image. The host exposes `/health` and serves the Angular bundle plus a dynamic `assets/croniq-config.json` response.
 
 - The response starts from the on-disk `wwwroot/assets/croniq-config.json` (use this for `grafanaUrl` defaults) and applies environment overrides.
-- Supported overrides: `CRONIQ_UI_API_BASEURL` (preferred) or `CRONIQ_UI_API_PORT` plus optional `CRONIQ_UI_API_HOST`/`CRONIQ_UI_API_SCHEME`, `CRONIQ_UI_SWAGGER_UI_URL` (or `CRONIQ_UI_SWAGGER_URL`), `CRONIQ_UI_DEFAULT_TENANT_ID`, `CRONIQ_UI_WEBHOOKS_ACTIVITY_STREAM_MODE`, `CRONIQ_UI_WEBHOOKS_ACTIVITY_GRPC_BASEURL`, `CRONIQ_UI_WEBHOOKS_ACTIVITY_SSE_BASEURL`.
+- Supported overrides: `CRONIQ_UI_API_BASEURL` (preferred) or `CRONIQ_UI_API_PORT` plus optional `CRONIQ_UI_API_HOST`/`CRONIQ_UI_API_SCHEME`, `CRONIQ_UI_SWAGGER_UI_URL` (or `CRONIQ_UI_SWAGGER_URL`), `CRONIQ_UI_DEFAULT_TENANT_ID`, `CRONIQ_UI_WEBHOOKS_ACTIVITY_STREAM_MODE`, `CRONIQ_UI_WEBHOOKS_ACTIVITY_GRPC_BASEURL`, `CRONIQ_UI_WEBHOOKS_ACTIVITY_SSE_BASEURL`, `CRONIQ_UI_RUNNERS_PRESENCE_STREAM_MODE`, `CRONIQ_UI_RUNNERS_PRESENCE_GRPC_BASEURL`, `CRONIQ_UI_RUNNERS_PRESENCE_SSE_BASEURL`.
 - The API base URL must be reachable from the browser (avoid internal container hostnames).
 
 Small deployments can still serve the static assets behind `Croniq.Api`, but the default production path is the `croniq-ui` container so health checks and observability align with other services.

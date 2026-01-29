@@ -6,6 +6,9 @@
       <p class="text-xs text-muted">Inspect runner health, transport, capacity, and tags.</p>
     </div>
     <div class="flex flex-wrap items-center gap-2">
+      <span class="rounded-full bg-white/10 px-2 py-1 text-[11px] font-semibold text-muted">
+        Updates: {{ presenceTransportLabel() }}
+      </span>
       <button
         type="button"
         (click)="refresh()"
@@ -179,6 +182,12 @@
             } @else {
             <span class="text-xs text-muted">—</span>
             }
+          </ng-template>
+        </cq-column>
+
+        <cq-column header="Transport" width="10rem" align="center">
+          <ng-template cqRunnerCell let-row>
+            <span class="text-xs text-muted">{{ row.transportLabel }}</span>
           </ng-template>
         </cq-column>
 

@@ -17,9 +17,21 @@ const webhooksActivityStreamSchema = z
         sseBaseUrl: urlLikeSchema.optional(),
     })
     .strict();
+const runnerPresenceStreamSchema = z
+    .object({
+        mode: activityStreamModeSchema.optional(),
+        grpcBaseUrl: urlLikeSchema.optional(),
+        sseBaseUrl: urlLikeSchema.optional(),
+    })
+    .strict();
 const webhooksSchema = z
     .object({
         activityStream: webhooksActivityStreamSchema.optional(),
+    })
+    .strict();
+const runnersSchema = z
+    .object({
+        presenceStream: runnerPresenceStreamSchema.optional(),
     })
     .strict();
 
@@ -36,12 +48,15 @@ export const croniqUiRuntimeConfigSchema = z
             .strict()
             .optional(),
         webhooks: webhooksSchema.optional(),
+        runners: runnersSchema.optional(),
     })
     .strict();
 
 export type CroniqUiRuntimeConfig = z.infer<typeof croniqUiRuntimeConfigSchema>;
 export type WebhookActivityStreamMode = z.infer<typeof activityStreamModeSchema>;
 export type WebhookActivityStreamConfig = z.infer<typeof webhooksActivityStreamSchema>;
+export type RunnerPresenceStreamMode = z.infer<typeof activityStreamModeSchema>;
+export type RunnerPresenceStreamConfig = z.infer<typeof runnerPresenceStreamSchema>;
 
 export function resolveSwaggerUiUrl(apiBaseUrl: string, explicitSwaggerUiUrl?: string | null): string {
     const trimmed = explicitSwaggerUiUrl?.trim();

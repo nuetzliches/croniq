@@ -480,6 +480,13 @@ public static partial class ApiHostingExtensions
         return app;
     }
 
+    public static WebApplication MapCroniqRunnerPresenceGrpc(this WebApplication app)
+    {
+        app.MapGrpcService<RunnerPresenceGrpcService>()
+            .EnableGrpcWeb();
+        return app;
+    }
+
     public static WebApplication MapCroniqWebhookIngressGrpc(this WebApplication app)
     {
         app.MapGrpcService<WebhookIngressGrpcService>();
@@ -759,6 +766,10 @@ public static partial class ApiHostingExtensions
     }
 
     private sealed class WebhookEndpointApiMarker
+    {
+    }
+
+    private sealed class RunnerPresenceApiMarker
     {
     }
 

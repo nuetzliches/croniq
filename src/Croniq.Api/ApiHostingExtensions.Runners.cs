@@ -10,11 +10,15 @@ using Croniq.Persistence.Abstractions;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Logging;
 
 namespace Croniq.Api;
 
 public static partial class ApiHostingExtensions
 {
+    private static readonly JsonSerializerOptions RunnerPresenceStreamJsonOptions = new(JsonSerializerDefaults.Web);
+    private static readonly TimeSpan RunnerPresenceStreamPollInterval = TimeSpan.FromSeconds(10);
+
     private static void MapRunnerEndpoints(WebApplication app)
     {
         _ = app ?? throw new ArgumentNullException(nameof(app));
@@ -121,6 +125,122 @@ public static partial class ApiHostingExtensions
         })
         .WithDocs("Runners_List", "List runners", "Lists runners for the tenant/environment (use includeOffline=true to return offline runners within retention).")
         .Produces<RunnerListResponse>(StatusCodes.Status200OK)
+        .RequireCroniqTenantScope(requireEnvironment: true, CroniqScopes.RunnersRead);
+
+        app.MapGet("/tenants/{tenantId}/runners/stream", async (
+            string tenantId,
+            string? environment,
+            bool? includeOffline,
+            [FromServices] ICallerContextAccessor callerContextAccessor,
+            [FromServices] IRunnerStore runnerStore,
+            [FromServices] ILogger<RunnerPresenceApiMarker> logger,
+            HttpContext httpContext,
+            CancellationToken cancellationToken) =>
+        {
+            var resolvedEnvironment = ResolveEnvironmentTag(environment, callerContextAccessor);
+            if (string.IsNullOrWhiteSpace(resolvedEnvironment))
+            {
+                await MissingEnvironment().ExecuteAsync(httpContext);
+                return;
+            }
+
+            var scope = new PartitionScope(tenantId.Trim(), resolvedEnvironment);
+            var include = includeOffline.GetValueOrDefault();
+            var previous = new Dictionary<string, RunnerPresenceSnapshot>(StringComparer.OrdinalIgnoreCase);
+            var isFirst = true;
+
+            httpContext.Response.StatusCode = StatusCodes.Status200OK;
+            httpContext.Response.ContentType = "text/event-stream";
+            httpContext.Response.Headers["Cache-Control"] = "no-cache";
+            httpContext.Response.Headers.Append("X-Accel-Buffering", "no");
+
+            try
+            {
+                while (!cancellationToken.IsCancellationRequested)
+                {
+                    var pollStartedAt = DateTimeOffset.UtcNow;
+                    IReadOnlyCollection<RunnerStatus> runners;
+                    try
+                    {
+                        runners = await runnerStore
+                            .ListAsync(new RunnerQuery(scope, pollStartedAt, include), cancellationToken)
+                            .ConfigureAwait(false);
+                    }
+                    catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                    {
+                        break;
+                    }
+                    catch (Exception ex)
+                    {
+                        logger.LogWarning(
+                            ex,
+                            "Runner presence stream poll failed for {TenantId}/{EnvironmentTag}",
+                            scope.TenantId,
+                            scope.EnvironmentTag);
+                        await WriteSseCommentAsync(httpContext.Response, "upstream-error", cancellationToken).ConfigureAwait(false);
+                        await Task.Delay(RunnerPresenceStreamPollInterval, cancellationToken).ConfigureAwait(false);
+                        continue;
+                    }
+
+                    var current = runners
+                        .Select(RunnerPresenceSnapshot.FromStatus)
+                        .ToDictionary(snapshot => snapshot.RunnerId, StringComparer.OrdinalIgnoreCase);
+
+                    var totalCount = current.Count;
+                    var onlineCount = totalCount == 0 ? 0 : current.Values.Count(runner => runner.IsOnline);
+                    var latestSeenAtUtc = totalCount == 0
+                        ? (DateTimeOffset?)null
+                        : current.Values.Max(runner => runner.LastSeenAtUtc);
+
+                    RunnerPresenceStreamEvent payload;
+                    if (isFirst)
+                    {
+                        var snapshot = current.Values.Select(ToRunnerStatusModel).ToArray();
+                        payload = new RunnerPresenceStreamEvent(
+                            "presence.snapshot",
+                            pollStartedAt,
+                            latestSeenAtUtc,
+                            onlineCount,
+                            totalCount,
+                            Snapshot: snapshot);
+                    }
+                    else
+                    {
+                        var updated = current.Values
+                            .Where(entry => !previous.TryGetValue(entry.RunnerId, out var prior) || !entry.Equals(prior))
+                            .Select(ToRunnerStatusModel)
+                            .ToArray();
+                        var removed = previous.Keys
+                            .Where(key => !current.ContainsKey(key))
+                            .ToArray();
+
+                        payload = new RunnerPresenceStreamEvent(
+                            "presence.delta",
+                            pollStartedAt,
+                            latestSeenAtUtc,
+                            onlineCount,
+                            totalCount,
+                            Updated: updated.Length > 0 ? updated : null,
+                            RemovedRunnerIds: removed.Length > 0 ? removed : null);
+                    }
+
+                    var json = JsonSerializer.Serialize(payload, RunnerPresenceStreamJsonOptions);
+                    await WriteSseDataAsync(httpContext.Response, json, cancellationToken).ConfigureAwait(false);
+
+                    previous = current;
+                    isFirst = false;
+
+                    await Task.Delay(RunnerPresenceStreamPollInterval, cancellationToken).ConfigureAwait(false);
+                }
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                // ignore cancellation
+            }
+        })
+        .WithDocs("Runners_Stream", "Stream runners", "Server-sent events stream for runner presence updates.")
+        .Produces(StatusCodes.Status200OK)
+        .Produces(StatusCodes.Status400BadRequest)
         .RequireCroniqTenantScope(requireEnvironment: true, CroniqScopes.RunnersRead);
 
         app.MapPost("/tenants/{tenantId}/runners/{runnerId}:drain", async (
@@ -257,5 +377,26 @@ public static partial class ApiHostingExtensions
         }
 
         return false;
+    }
+
+    private sealed record RunnerPresenceSnapshot(
+        string RunnerId,
+        DateTimeOffset LastSeenAtUtc,
+        DateTimeOffset ExpiresAtUtc,
+        bool IsOnline,
+        string? MetadataJson)
+    {
+        public static RunnerPresenceSnapshot FromStatus(RunnerStatus status) =>
+            new(status.RunnerId, status.LastSeenAtUtc, status.ExpiresAtUtc, status.IsOnline, status.MetadataJson);
+    }
+
+    private static RunnerStatusModel ToRunnerStatusModel(RunnerPresenceSnapshot snapshot)
+    {
+        return new RunnerStatusModel(
+            snapshot.RunnerId,
+            snapshot.LastSeenAtUtc,
+            snapshot.ExpiresAtUtc,
+            snapshot.IsOnline,
+            snapshot.MetadataJson);
     }
 }

@@ -45,4 +45,7 @@ All AI-generated contributions must align with the architectural ground rules do
 8. **Angular UI (Croniq.Ui) Workflow**
    - See `src/Croniq.Ui/.github/ng.instructions.md` (and `src/Croniq.Ui/.github/copilot.instructions.md`) for the authoritative Angular UI instructions.
 
+9. **External Resources**
+   - Do not introduce or rely on external network resources (CDNs, remote fonts, third-party assets). Keep all assets local to the repo or provided by the runtime environment.
+
 By following these instructions, AI contributions remain compliant with the project's technical vision and developer experience goals.

@@ -1,7 +1,13 @@
 import { HttpBackend, HttpClient } from '@angular/common/http';
 import { Injectable, inject, isDevMode } from '@angular/core';
 import { catchError, map, of, tap, type Observable } from 'rxjs';
-import { croniqUiRuntimeConfigSchema, resolveSwaggerUiUrl, type CroniqUiRuntimeConfig, type WebhookActivityStreamMode } from './api-config';
+import {
+    croniqUiRuntimeConfigSchema,
+    resolveSwaggerUiUrl,
+    type CroniqUiRuntimeConfig,
+    type RunnerPresenceStreamMode,
+    type WebhookActivityStreamMode,
+} from './api-config';
 
 const DEFAULT_DEV_API_BASE_URL = 'http://localhost:5080';
 
@@ -78,6 +84,30 @@ export class RuntimeConfigService {
 
     get webhooksActivitySseBaseUrl(): string {
         const raw = this.config.webhooks?.activityStream?.sseBaseUrl;
+        if (raw) {
+            return this.normalizeUrlLike(raw);
+        }
+        return this.apiBaseUrl;
+    }
+
+    get runnersPresenceStreamMode(): RunnerPresenceStreamMode {
+        const mode = this.config.runners?.presenceStream?.mode?.trim().toLowerCase();
+        if (mode === 'sse' || mode === 'polling' || mode === 'grpc') {
+            return mode;
+        }
+        return 'grpc';
+    }
+
+    get runnersPresenceGrpcBaseUrl(): string {
+        const raw = this.config.runners?.presenceStream?.grpcBaseUrl;
+        if (raw) {
+            return this.normalizeUrlLike(raw);
+        }
+        return this.apiBaseUrl;
+    }
+
+    get runnersPresenceSseBaseUrl(): string {
+        const raw = this.config.runners?.presenceStream?.sseBaseUrl;
         if (raw) {
             return this.normalizeUrlLike(raw);
         }
