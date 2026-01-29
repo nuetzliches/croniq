@@ -133,6 +133,29 @@ ON CONFLICT (""TenantId"", ""EnvironmentTag"", ""RunnerId"") DO UPDATE SET
             row.MetadataJson);
     }
 
+    public async Task<bool> DeleteAsync(RunnerLookup lookup, CancellationToken cancellationToken)
+    {
+        if (lookup is null) throw new ArgumentNullException(nameof(lookup));
+
+        var scope = lookup.Scope;
+        var runnerId = lookup.RunnerId?.Trim();
+        if (string.IsNullOrWhiteSpace(runnerId))
+        {
+            return false;
+        }
+
+        await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
+
+        var removed = await db.Runners
+            .Where(x => x.TenantId == scope.TenantId
+                && x.EnvironmentTag == scope.EnvironmentTag
+                && x.RunnerId == runnerId)
+            .ExecuteDeleteAsync(cancellationToken)
+            .ConfigureAwait(false);
+
+        return removed > 0;
+    }
+
     private Task<int> PruneExpiredAsync(PostgresDbContext db, PartitionScope scope, DateTimeOffset nowUtc, CancellationToken cancellationToken)
     {
         var retentionCutoffUtc = nowUtc.Add(-_options.OfflineRetentionTtl).UtcDateTime;

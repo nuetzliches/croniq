@@ -21,6 +21,10 @@ public sealed record RunnerStatusModel(
 public sealed record RunnerListResponse(
     RunnerStatusModel[] Runners);
 
+public sealed record RunnerDrainRequest(
+    string? EnvironmentTag,
+    bool? Draining = null);
+
 public sealed record RunnerJobRegistrationRequest(
     string? EnvironmentTag,
     [property: Required] string RunnerId,

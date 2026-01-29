@@ -649,6 +649,7 @@ public sealed class TestCallerContextFactory : ICallerContextFactory
                 CroniqScopes.WorkersRead,
                 CroniqScopes.RunnersHeartbeat,
                 CroniqScopes.RunnersRead,
+                CroniqScopes.RunnersWrite,
                 CroniqScopes.WebhooksRead,
                 CroniqScopes.WebhooksWrite,
                 CroniqScopes.WebhooksRotate,

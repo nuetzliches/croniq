@@ -5,6 +5,7 @@ using System.Threading;
 using Croniq.Auth.Abstractions;
 using Croniq.Api.Models;
 using Croniq.Api.Telemetry;
+using Croniq.Core;
 using Croniq.Core.Jobs;
 using Croniq.Core.Scheduling;
 using Croniq.Options;
@@ -84,6 +85,7 @@ public static partial class ApiHostingExtensions
             [FromServices] ICallerContextAccessor callerContextAccessor,
             [FromServices] IOptions<CroniqApiOptions> apiOptions,
             [FromServices] IJobPersistenceProvider store,
+            [FromServices] IRunnerStore runnerStore,
             CancellationToken cancellationToken) =>
         {
             if (request is null)
@@ -118,16 +120,39 @@ public static partial class ApiHostingExtensions
             var existing = await store.GetJobAsync(jobKey.Value, scope, cancellationToken).ConfigureAwait(false);
             if (existing is not null)
             {
-                if (existing.IsActive
-                    && !string.Equals(existing.AssignedRunnerId, runnerId, StringComparison.OrdinalIgnoreCase))
+                var assignedRunnerMatches = string.Equals(existing.AssignedRunnerId, runnerId, StringComparison.OrdinalIgnoreCase);
+                if (existing.IsActive && !assignedRunnerMatches)
                 {
-                    return Results.Problem(
-                        statusCode: StatusCodes.Status409Conflict,
-                        title: "job-assignment-conflict",
-                        detail: "Job is already active and assigned to another runner.");
+                    var canReassign = false;
+                    if (!string.IsNullOrWhiteSpace(existing.AssignedRunnerId)
+                        && string.Equals(existing.AssignmentSource, "runner", StringComparison.OrdinalIgnoreCase)
+                        && runnerStore is not NoOpRunnerStore)
+                    {
+                        var lookup = new RunnerLookup(scope, existing.AssignedRunnerId, DateTimeOffset.UtcNow);
+                        var assignedRunner = await runnerStore.TryGetAsync(lookup, cancellationToken).ConfigureAwait(false);
+                        canReassign = assignedRunner is null;
+                    }
+
+                    if (!canReassign)
+                    {
+                        return Results.Problem(
+                            statusCode: StatusCodes.Status409Conflict,
+                            title: "job-assignment-conflict",
+                            detail: "Job is already active and assigned to another runner.");
+                    }
+
+                    var reassigned = existing with
+                    {
+                        AssignedRunnerId = runnerId,
+                        AssignedBy = runnerId,
+                        AssignedAtUtc = DateTimeOffset.UtcNow,
+                        AssignmentSource = "runner"
+                    };
+                    await store.UpsertJobAsync(reassigned, scope, cancellationToken).ConfigureAwait(false);
+                    return Results.Ok(ToJobResponse(reassigned));
                 }
 
-                if (!string.Equals(existing.AssignedRunnerId, runnerId, StringComparison.OrdinalIgnoreCase))
+                if (!assignedRunnerMatches)
                 {
                     var updated = existing with
                     {

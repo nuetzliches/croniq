@@ -46,6 +46,7 @@ export class RunnersPage {
   readonly runners = this.store.runners;
   readonly loading = this.store.loading;
   readonly error = this.store.error;
+  readonly actionError = this.store.actionError;
 
   readonly runnerSearch = signal('');
   readonly statusFilter = signal<RunnerStatusFilter>('all');
@@ -157,10 +158,10 @@ export class RunnersPage {
 
   // Actions
   drainRunner(id: string) {
-    console.log('Drain runner', id);
+    this.store.drainRunner(id);
   }
 
   deregisterRunner(id: string) {
-    console.log('Deregister runner', id);
+    this.store.deregisterRunner(id);
   }
 }

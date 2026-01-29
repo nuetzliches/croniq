@@ -184,6 +184,69 @@ public sealed class RunnersEndpointsTests : IClassFixture<WebhookApiTestHost>
         payload.Runners.ShouldContain(runner => runner.RunnerId == "itest-offline" && runner.IsOnline == false);
     }
 
+    [Fact]
+    public async Task DrainRunner_UpdatesMetadata()
+    {
+        _host.Reset();
+
+        var heartbeat = new RunnerHeartbeatRequest(
+            EnvironmentTag: WebhookApiTestHost.Environment,
+            RunnerId: "itest-client",
+            SeenAtUtc: DateTimeOffset.UtcNow,
+            MetadataJson: "{\"kind\":\"http\"}");
+
+        var hbResponse = await _host.Client.PostAsJsonAsync($"/tenants/{WebhookApiTestHost.TenantId}/runners/heartbeat", heartbeat);
+        hbResponse.StatusCode.ShouldBe(HttpStatusCode.NoContent);
+
+        var drain = new RunnerDrainRequest(
+            EnvironmentTag: WebhookApiTestHost.Environment,
+            Draining: true);
+
+        var drainResponse = await _host.Client.PostAsJsonAsync(
+            $"/tenants/{WebhookApiTestHost.TenantId}/runners/itest-client:drain",
+            drain);
+        drainResponse.StatusCode.ShouldBe(HttpStatusCode.NoContent);
+
+        var listResponse = await _host.Client.GetAsync($"/tenants/{WebhookApiTestHost.TenantId}/runners?environment={WebhookApiTestHost.Environment}");
+        listResponse.StatusCode.ShouldBe(HttpStatusCode.OK);
+
+        var payload = await listResponse.Content.ReadFromJsonAsync<RunnerListResponse>();
+        payload.ShouldNotBeNull();
+        var runner = payload.Runners.ShouldHaveSingleItem();
+        runner.MetadataJson.ShouldNotBeNull();
+
+        using var doc = JsonDocument.Parse(runner.MetadataJson!);
+        doc.RootElement.GetProperty("kind").GetString().ShouldBe("http");
+        doc.RootElement.GetProperty("draining").GetBoolean().ShouldBeTrue();
+    }
+
+    [Fact]
+    public async Task DeregisterRunner_RemovesRunner()
+    {
+        _host.Reset();
+
+        var heartbeat = new RunnerHeartbeatRequest(
+            EnvironmentTag: WebhookApiTestHost.Environment,
+            RunnerId: "itest-client",
+            SeenAtUtc: DateTimeOffset.UtcNow,
+            MetadataJson: "{\"kind\":\"http\"}");
+
+        var hbResponse = await _host.Client.PostAsJsonAsync($"/tenants/{WebhookApiTestHost.TenantId}/runners/heartbeat", heartbeat);
+        hbResponse.StatusCode.ShouldBe(HttpStatusCode.NoContent);
+
+        var deleteResponse = await _host.Client.DeleteAsync(
+            $"/tenants/{WebhookApiTestHost.TenantId}/runners/itest-client?environment={WebhookApiTestHost.Environment}");
+        deleteResponse.StatusCode.ShouldBe(HttpStatusCode.NoContent);
+
+        var listResponse = await _host.Client.GetAsync(
+            $"/tenants/{WebhookApiTestHost.TenantId}/runners?environment={WebhookApiTestHost.Environment}&includeOffline=true");
+        listResponse.StatusCode.ShouldBe(HttpStatusCode.OK);
+
+        var payload = await listResponse.Content.ReadFromJsonAsync<RunnerListResponse>();
+        payload.ShouldNotBeNull();
+        payload.Runners.ShouldBeEmpty();
+    }
+
     private void SetCallerApiKey(string apiKey)
     {
         _host.Client.DefaultRequestHeaders.Remove("X-Croniq-Key");

@@ -20,6 +20,7 @@ public static class CroniqScopes
     public const string WorkersRead = "workers:read";
     public const string RunnersHeartbeat = "runners:heartbeat";
     public const string RunnersRead = "runners:read";
+    public const string RunnersWrite = "runners:write";
     public const string ExecutionsRead = "executions:read";
     public const string WebhooksRead = "webhooks:read";
     public const string WebhooksWrite = "webhooks:write";

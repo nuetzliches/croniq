@@ -10,6 +10,15 @@ export interface TenantRunnerListParams extends TenantEnvironmentOptionalParams 
     includeOffline?: boolean | null;
 }
 
+export interface TenantRunnerParams extends TenantEnvironmentOptionalParams {
+    runnerId: string;
+}
+
+export interface RunnerDrainRequest {
+    environmentTag?: string | null;
+    draining?: boolean | null;
+}
+
 export interface TenantEnvironmentParams extends TenantScopedParams {
     environment: string;
 }

@@ -185,4 +185,38 @@ describe('authRefreshInterceptor', () => {
 
         expect(router.navigate).toHaveBeenCalledWith(['/auth', 'login'], { queryParams: { returnUrl: '/jobs' } });
     });
+
+    describe('when apiBaseUrl is empty', () => {
+        beforeEach(() => {
+            TestBed.resetTestingModule();
+            coordinator = {
+                ensureFreshAccessToken: vi.fn(),
+                forceRefresh: vi.fn(),
+            };
+
+            TestBed.configureTestingModule({
+                providers: [
+                    provideZonelessChangeDetection(),
+                    provideHttpClient(withInterceptors([authRefreshInterceptor])),
+                    { provide: CRONIQ_API_BASE_URL, useValue: '' },
+                    { provide: AuthRefreshCoordinator, useValue: coordinator },
+                    { provide: Router, useClass: RouterStub },
+                ],
+            });
+        });
+
+        it('treats same-origin relative URLs as API calls', async () => {
+            coordinator.ensureFreshAccessToken.mockReturnValue(of('access-1'));
+
+            const req = new HttpRequest('GET', '/jobs');
+            const next = vi.fn((r: HttpRequest<unknown>) => of(new HttpResponse({ status: 200, url: r.url })));
+
+            await firstValueFrom(TestBed.runInInjectionContext(() => authRefreshInterceptor(req, next)));
+
+            expect(coordinator.ensureFreshAccessToken).toHaveBeenCalledTimes(1);
+            expect(next).toHaveBeenCalledTimes(1);
+            const forwarded = next.mock.calls[0]![0];
+            expect(forwarded.headers.get('Authorization')).toBe('Bearer access-1');
+        });
+    });
 });

@@ -104,6 +104,26 @@ public sealed class InMemoryRunnerStore : IRunnerStore
         return Task.FromResult<RunnerStatus?>(null);
     }
 
+    public Task<bool> DeleteAsync(RunnerLookup lookup, CancellationToken cancellationToken)
+    {
+        if (lookup is null) throw new ArgumentNullException(nameof(lookup));
+
+        cancellationToken.ThrowIfCancellationRequested();
+
+        var scope = lookup.Scope;
+        var runnerId = lookup.RunnerId?.Trim();
+        if (string.IsNullOrWhiteSpace(runnerId))
+        {
+            return Task.FromResult(false);
+        }
+
+        lock (_lock)
+        {
+            PruneExpiredUnsafe(scope, lookup.NowUtc);
+            return Task.FromResult(_entries.Remove((scope.TenantId, scope.EnvironmentTag, runnerId)));
+        }
+    }
+
     private static bool MatchesScope((string TenantId, string EnvironmentTag, string RunnerId) key, PartitionScope scope)
     {
         return string.Equals(key.TenantId, scope.TenantId, StringComparison.OrdinalIgnoreCase)

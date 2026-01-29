@@ -120,6 +120,11 @@
     <div
       class="flex-1 overflow-hidden rounded-xl border border-white/10 bg-surface-alt shadow-card"
     >
+      @if (actionError()) {
+      <div class="border-b border-white/10 bg-danger/10 px-4 py-3 text-sm text-danger">
+        {{ actionError() }}
+      </div>
+      }
       @if (error()) {
       <div class="border-b border-white/10 bg-danger/10 px-4 py-3 text-sm text-danger">
         {{ error() }}

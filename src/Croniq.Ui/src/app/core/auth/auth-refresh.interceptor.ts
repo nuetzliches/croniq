@@ -17,6 +17,11 @@ function resolveBaseUrl(value: string | (() => string)): string {
     return resolved?.trim() ?? '';
 }
 
+function stripQuery(value: string): string {
+    const queryIndex = value.indexOf('?');
+    return queryIndex >= 0 ? value.slice(0, queryIndex) : value;
+}
+
 function extractApiPath(url: string, baseUrl: string): string | null {
     const normalizedBase = normalizeBaseUrl(baseUrl);
     if (!url.startsWith(normalizedBase)) {
@@ -26,15 +31,39 @@ function extractApiPath(url: string, baseUrl: string): string | null {
     if (!pathWithQuery) {
         return '/';
     }
-    const queryIndex = pathWithQuery.indexOf('?');
-    return queryIndex >= 0 ? pathWithQuery.slice(0, queryIndex) : pathWithQuery;
+    return stripQuery(pathWithQuery);
 }
 
-function shouldBypassAuthRefresh(url: string, baseUrl: string): boolean {
-    const path = extractApiPath(url, baseUrl);
-    if (!path) {
-        return false;
+function extractSameOriginPath(url: string): string | null {
+    if (url.startsWith('/')) {
+        return stripQuery(url);
     }
+
+    const origin = globalThis.location?.origin;
+    if (!origin) {
+        return null;
+    }
+
+    try {
+        const parsed = new URL(url, origin);
+        if (parsed.origin !== origin) {
+            return null;
+        }
+        return parsed.pathname;
+    } catch {
+        return null;
+    }
+}
+
+function resolveApiPath(url: string, baseUrl: string): string | null {
+    const normalizedBase = baseUrl.trim();
+    if (normalizedBase) {
+        return extractApiPath(url, normalizedBase);
+    }
+    return extractSameOriginPath(url);
+}
+
+function shouldBypassAuthRefresh(path: string): boolean {
     if (path.startsWith('/auth/oidc')) {
         return true;
     }
@@ -46,8 +75,8 @@ export const authRefreshInterceptor: HttpInterceptorFn = (req, next) => {
     const refreshCoordinator = inject(AuthRefreshCoordinator);
     const router = inject(Router);
 
-    const isApiCall = typeof baseUrl === 'string' && baseUrl.length > 0 && req.url.startsWith(baseUrl);
-    if (!isApiCall || shouldBypassAuthRefresh(req.url, baseUrl)) {
+    const apiPath = resolveApiPath(req.url, baseUrl);
+    if (!apiPath || shouldBypassAuthRefresh(apiPath)) {
         return next(req);
     }
 

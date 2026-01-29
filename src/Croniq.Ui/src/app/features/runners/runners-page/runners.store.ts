@@ -1,9 +1,11 @@
-import { Injectable, computed, inject } from '@angular/core';
+import { HttpErrorResponse } from '@angular/common/http';
+import { Injectable, computed, inject, signal } from '@angular/core';
+import { authFailureFromError } from '@core/auth/auth-failure';
 import { tenantRxResource } from '@core/resource/tenant-rx-resource';
 import { TenantContextService } from '@core/tenant-context/tenant-context.service';
 import type { ExecutionResponse, JobResponse, RunnerListResponse, RunnerStatusModel } from '@croniq/api-schema';
 import { CRONIQ_API_CLIENT, CroniqApiClient } from 'data-access';
-import { catchError, map, of } from 'rxjs';
+import { EMPTY, catchError, finalize, map, of, tap } from 'rxjs';
 
 export interface Runner {
     id: string;
@@ -252,6 +254,12 @@ export class RunnersStore {
     private readonly api = inject<CroniqApiClient>(CRONIQ_API_CLIENT);
     private readonly tenantContext = inject(TenantContextService);
 
+    private readonly actionErrorSignal = signal<string | null>(null);
+    private readonly actionLoadingSignal = signal(false);
+
+    readonly actionError = this.actionErrorSignal.asReadonly();
+    readonly actionLoading = this.actionLoadingSignal.asReadonly();
+
     readonly runnersResource = tenantRxResource<Runner[], { tenantId: string; environment: string }>({
         command: 'runners.list',
         defaultValue: [],
@@ -343,5 +351,94 @@ export class RunnersStore {
     refresh() {
         this.runnersResource.reload();
         this.jobsResource.reload();
+    }
+
+    drainRunner(runnerId: string, draining = true): void {
+        const trimmedId = runnerId.trim();
+        if (!trimmedId) {
+            this.actionErrorSignal.set('Runner id is required before draining.');
+            return;
+        }
+
+        const { tenantId, environment } = this.tenantContext.snapshot();
+        if (!tenantId.trim()) {
+            this.actionErrorSignal.set('Required context is missing - unable to drain runner.');
+            return;
+        }
+
+        this.actionLoadingSignal.set(true);
+        this.actionErrorSignal.set(null);
+
+        this.api
+            .drainRunner(
+                { tenantId, environment, runnerId: trimmedId },
+                { environmentTag: environment, draining },
+                this.tenantContext.createRequestOptions('runners.drain', { tenantId, environment }),
+            )
+            .pipe(
+                tap(() => this.refresh()),
+                catchError((error: unknown) => {
+                    console.error('Failed to drain runner', error);
+                    const authFailure = authFailureFromError(error, {
+                        forbidden: 'Forbidden (403) - your token is missing runners permissions.',
+                    });
+                    if (authFailure) {
+                        this.actionErrorSignal.set(authFailure.message);
+                        return EMPTY;
+                    }
+                    if (error instanceof HttpErrorResponse && error.status === 404) {
+                        this.actionErrorSignal.set('Runner not found (404) - it may have already gone offline.');
+                        return EMPTY;
+                    }
+                    this.actionErrorSignal.set('Unable to drain runner via API.');
+                    return EMPTY;
+                }),
+                finalize(() => this.actionLoadingSignal.set(false)),
+            )
+            .subscribe();
+    }
+
+    deregisterRunner(runnerId: string): void {
+        const trimmedId = runnerId.trim();
+        if (!trimmedId) {
+            this.actionErrorSignal.set('Runner id is required before deregistering.');
+            return;
+        }
+
+        const { tenantId, environment } = this.tenantContext.snapshot();
+        if (!tenantId.trim()) {
+            this.actionErrorSignal.set('Required context is missing - unable to deregister runner.');
+            return;
+        }
+
+        this.actionLoadingSignal.set(true);
+        this.actionErrorSignal.set(null);
+
+        this.api
+            .deregisterRunner(
+                { tenantId, environment, runnerId: trimmedId },
+                this.tenantContext.createRequestOptions('runners.deregister', { tenantId, environment }),
+            )
+            .pipe(
+                tap(() => this.refresh()),
+                catchError((error: unknown) => {
+                    console.error('Failed to deregister runner', error);
+                    const authFailure = authFailureFromError(error, {
+                        forbidden: 'Forbidden (403) - your token is missing runners permissions.',
+                    });
+                    if (authFailure) {
+                        this.actionErrorSignal.set(authFailure.message);
+                        return EMPTY;
+                    }
+                    if (error instanceof HttpErrorResponse && error.status === 404) {
+                        this.actionErrorSignal.set('Runner not found (404) - it may have already been removed.');
+                        return EMPTY;
+                    }
+                    this.actionErrorSignal.set('Unable to deregister runner via API.');
+                    return EMPTY;
+                }),
+                finalize(() => this.actionLoadingSignal.set(false)),
+            )
+            .subscribe();
     }
 }

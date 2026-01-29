@@ -15,4 +15,7 @@ public sealed class NoOpRunnerStore : IRunnerStore
 
     public Task<RunnerStatus?> TryGetAsync(RunnerLookup lookup, CancellationToken cancellationToken)
         => Task.FromResult<RunnerStatus?>(null);
+
+    public Task<bool> DeleteAsync(RunnerLookup lookup, CancellationToken cancellationToken)
+        => Task.FromResult(false);
 }

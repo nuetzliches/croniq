@@ -185,6 +185,8 @@ Runner SDKs should expose a drain/shutdown mode:
 - Continue to renew and ack in-flight leases until they complete.
 - If the shutdown timeout elapses, cancel local execution and stop renewals; do not ack success after lease loss. Prefer a non-retryable failure reason (for example `runner-shutdown`) when the execution was intentionally cancelled.
 
+Admin tooling can request a drain by calling `POST /tenants/{tenantId}/runners/{runnerId}:drain` (scope `runners:write`), which sets `draining=true` in the runner heartbeat metadata. This flag is advisory: the runner must still stop polling/streaming to avoid taking new work. Operators can remove stale presence entries via `DELETE /tenants/{tenantId}/runners/{runnerId}`; a running runner will reappear on its next heartbeat.
+
 ## Job Store & Provider Model
 
 - In-memory JobStore (`Croniq.JobStore.InMemory`) stays the default for dev/test while all operations flow through `IJobPersistenceProvider` contracts.
@@ -266,7 +268,7 @@ Runner SDKs should expose a drain/shutdown mode:
 - Only `active` jobs are dispatched.
 - Jobs carry an `AssignedRunnerId` (1:1 per tenant/environment). Active jobs require an assignment; dispatch only targets the assigned runner.
 - When a runner self-registers a job, the assignment is recorded as pending with the job. Approving the job confirms the assignment.
-- If an active job is already assigned to a different runner, runner self-registration is rejected; reassignment requires the job to be inactive.
+- If an active job is already assigned to a different runner, runner self-registration is rejected unless the existing assignment came from a runner that is now offline (runner presence TTL). Admin/API reassignment still requires the job to be inactive.
 - Horizontal scale-out for a job requires a future `RunnerPool` concept.
 
 ## Policies & Error Handling

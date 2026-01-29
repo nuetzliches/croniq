@@ -101,6 +101,30 @@ public sealed class SqlServerRunnerStoreTests : IAsyncLifetime
         runner.IsOnline.ShouldBeFalse();
     }
 
+    [Fact]
+    [Trait(TestCategories.Category, TestCategories.Contract)]
+    public async Task DeleteAsync_removes_runner()
+    {
+        var scope = new PartitionScope("tenant-runners", "dev");
+        var seenAt = new DateTimeOffset(2025, 1, 1, 0, 0, 0, TimeSpan.Zero);
+
+        await _runnerStore!.UpsertHeartbeatAsync(
+            new RunnerHeartbeat(scope, "runner-remove", seenAt, null),
+            CancellationToken.None);
+
+        var removed = await _runnerStore.DeleteAsync(
+            new RunnerLookup(scope, "runner-remove", seenAt.AddSeconds(10)),
+            CancellationToken.None);
+
+        removed.ShouldBeTrue();
+
+        var results = await _runnerStore.ListAsync(
+            new RunnerQuery(scope, seenAt.AddSeconds(10), IncludeOffline: true),
+            CancellationToken.None);
+
+        results.ShouldBeEmpty();
+    }
+
     private static ServiceProvider BuildServiceProvider(string connectionString)
     {
         var services = new ServiceCollection();

@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -107,5 +108,98 @@ public static partial class ApiHostingExtensions
         .WithDocs("Runners_List", "List runners", "Lists runners for the tenant/environment (use includeOffline=true to return offline runners within retention).")
         .Produces<RunnerListResponse>(StatusCodes.Status200OK)
         .RequireCroniqTenantScope(requireEnvironment: true, CroniqScopes.RunnersRead);
+
+        app.MapPost("/tenants/{tenantId}/runners/{runnerId}:drain", async (
+            string tenantId,
+            string runnerId,
+            string? environment,
+            RunnerDrainRequest request,
+            [FromServices] ICallerContextAccessor callerContextAccessor,
+            [FromServices] IRunnerStore runnerStore,
+            CancellationToken cancellationToken) =>
+        {
+            if (request is null)
+            {
+                return Results.BadRequest(new { error = "invalid-request" });
+            }
+
+            var resolvedEnvironment = ResolveEnvironmentTag(request.EnvironmentTag ?? environment, callerContextAccessor);
+            if (string.IsNullOrWhiteSpace(resolvedEnvironment))
+            {
+                return MissingEnvironment();
+            }
+
+            if (string.IsNullOrWhiteSpace(runnerId))
+            {
+                return Results.BadRequest(new { error = "runner-required", message = "RunnerId is required." });
+            }
+
+            var normalizedRunnerId = runnerId.Trim();
+            var scope = new PartitionScope(tenantId.Trim(), resolvedEnvironment);
+            var nowUtc = DateTimeOffset.UtcNow;
+            var existing = await runnerStore.TryGetAsync(
+                    new RunnerLookup(scope, normalizedRunnerId, nowUtc),
+                    cancellationToken)
+                .ConfigureAwait(false);
+            if (existing is null)
+            {
+                return Results.NotFound();
+            }
+
+            var draining = request.Draining ?? true;
+            var metadata = RunnerInstanceGuard.MergeMetadataJson(existing.MetadataJson, new Dictionary<string, object?>
+            {
+                ["draining"] = draining
+            });
+
+            await runnerStore.UpsertHeartbeatAsync(
+                    new RunnerHeartbeat(scope, normalizedRunnerId, existing.LastSeenAtUtc, metadata),
+                    cancellationToken)
+                .ConfigureAwait(false);
+
+            return Results.NoContent();
+        })
+        .WithDocs("Runners_Drain", "Drain runner", "Marks a runner as draining by updating its heartbeat metadata.")
+        .Produces(StatusCodes.Status204NoContent)
+        .Produces(StatusCodes.Status400BadRequest)
+        .Produces(StatusCodes.Status404NotFound)
+        .RequireCroniqTenantScopeFromBodyOrQuery<RunnerDrainRequest>(
+            r => r.EnvironmentTag,
+            requireEnvironment: true,
+            CroniqScopes.RunnersWrite);
+
+        app.MapDelete("/tenants/{tenantId}/runners/{runnerId}", async (
+            string tenantId,
+            string runnerId,
+            string? environment,
+            [FromServices] ICallerContextAccessor callerContextAccessor,
+            [FromServices] IRunnerStore runnerStore,
+            CancellationToken cancellationToken) =>
+        {
+            var resolvedEnvironment = ResolveEnvironmentTag(environment, callerContextAccessor);
+            if (string.IsNullOrWhiteSpace(resolvedEnvironment))
+            {
+                return MissingEnvironment();
+            }
+
+            if (string.IsNullOrWhiteSpace(runnerId))
+            {
+                return Results.BadRequest(new { error = "runner-required", message = "RunnerId is required." });
+            }
+
+            var scope = new PartitionScope(tenantId.Trim(), resolvedEnvironment);
+            var nowUtc = DateTimeOffset.UtcNow;
+            var removed = await runnerStore.DeleteAsync(
+                    new RunnerLookup(scope, runnerId.Trim(), nowUtc),
+                    cancellationToken)
+                .ConfigureAwait(false);
+
+            return removed ? Results.NoContent() : Results.NotFound();
+        })
+        .WithDocs("Runners_Deregister", "Deregister runner", "Removes the runner presence record for the tenant/environment.")
+        .Produces(StatusCodes.Status204NoContent)
+        .Produces(StatusCodes.Status400BadRequest)
+        .Produces(StatusCodes.Status404NotFound)
+        .RequireCroniqTenantScope(requireEnvironment: true, CroniqScopes.RunnersWrite);
     }
 }

@@ -37,7 +37,7 @@ Authentication supports both:
 
 Runner ids must be unique per live process. SDKs generate a `runnerInstanceId` and include it in the hello/poll/heartbeat metadata; if the API host sees the same `runnerId` already active with a different instance id, it rejects the new session with `409 runner-id-in-use` and the runner should fail fast.
 
-Jobs are assigned 1:1 to a `runnerId` within a tenant/environment. Active jobs must have an assignment, and dispatch only leases work to the assigned runner. Reassignments require the job to be inactive.
+Jobs are assigned 1:1 to a `runnerId` within a tenant/environment. Active jobs must have an assignment, and dispatch only leases work to the assigned runner. Admin/API reassignments require the job to be inactive; runner self-registration can reclaim a runner-assigned job when the previously assigned runner is offline (based on runner presence TTL).
 
 Horizontal scale-out is achieved by running multiple runners with distinct `runnerId` values; lease ownership guarantees one execution per lease while job-level concurrency policies still apply. Scale-out for a single job requires a future `RunnerPool` concept.
 
@@ -200,6 +200,20 @@ Use a drain flow when stopping a runner:
 - Stop claiming new work (close the gRPC stream and pause polling).
 - Keep renewing/acking in-flight leases until completion.
 - If the shutdown timeout elapses, cancel local execution and stop renewing; do not ack success after lease loss.
+
+### Admin drain + deregister (UI/ops)
+
+The API now exposes lightweight admin actions for runner presence:
+
+- `POST /tenants/{tenantId}/runners/{runnerId}:drain?environment=dev`
+  - Body: `{ "environmentTag": "dev", "draining": true }`
+  - Scope: `runners:write`
+  - Effect: updates the runner heartbeat metadata with `draining=true`. The runner must still honor the drain locally (stop polling/streaming); otherwise it may continue to take work and overwrite the flag on its next heartbeat.
+- `DELETE /tenants/{tenantId}/runners/{runnerId}?environment=dev`
+  - Scope: `runners:write`
+  - Effect: removes the presence record. A still-running runner will reappear after its next heartbeat.
+
+> **Learn more:** The authoritative drain semantics live in [`docs/deep-dive/architecture.md`](../deep-dive/architecture.md).
 
 ## Job Registration & Approval
 
