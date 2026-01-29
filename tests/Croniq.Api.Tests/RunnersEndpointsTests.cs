@@ -185,6 +185,31 @@ public sealed class RunnersEndpointsTests : IClassFixture<WebhookApiTestHost>
     }
 
     [Fact]
+    public async Task Heartbeat_WithDisconnectMetadata_MarksRunnerOffline()
+    {
+        _host.Reset();
+
+        var heartbeat = new RunnerHeartbeatRequest(
+            EnvironmentTag: WebhookApiTestHost.Environment,
+            RunnerId: "itest-disconnect",
+            SeenAtUtc: DateTimeOffset.UtcNow,
+            MetadataJson: "{\"transportState\":\"disconnected\",\"disconnectedAtUtc\":\"2026-01-29T12:00:00Z\"}");
+
+        var hbResponse = await _host.Client.PostAsJsonAsync(
+            $"/tenants/{WebhookApiTestHost.TenantId}/runners/heartbeat",
+            heartbeat);
+        hbResponse.StatusCode.ShouldBe(HttpStatusCode.NoContent);
+
+        var listResponse = await _host.Client.GetAsync(
+            $"/tenants/{WebhookApiTestHost.TenantId}/runners?environment={WebhookApiTestHost.Environment}&includeOffline=true");
+        listResponse.StatusCode.ShouldBe(HttpStatusCode.OK);
+
+        var payload = await listResponse.Content.ReadFromJsonAsync<RunnerListResponse>();
+        payload.ShouldNotBeNull();
+        payload.Runners.ShouldContain(runner => runner.RunnerId == "itest-disconnect" && runner.IsOnline == false);
+    }
+
+    [Fact]
     public async Task DrainRunner_UpdatesMetadata()
     {
         _host.Reset();

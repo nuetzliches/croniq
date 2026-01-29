@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple, Mapping
 from urllib.parse import quote, urlparse
 
@@ -1092,7 +1092,7 @@ class CroniqRunner:
         if not self._config.environment:
             return
 
-        seen_at = datetime.now(timezone.utc) - timedelta(days=2)
+        seen_at = datetime.now(timezone.utc)
         metadata_json = json.dumps(self._build_disconnect_metadata())
         try:
             await asyncio.to_thread(

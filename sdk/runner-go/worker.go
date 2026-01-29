@@ -1268,7 +1268,7 @@ func (r *Runner) sendDisconnectHeartbeat() {
 		return
 	}
 	metadataJson := r.buildDisconnectMetadata()
-	seenAt := time.Now().UTC().Add(-48 * time.Hour)
+	seenAt := time.Now().UTC()
 	if err := r.client.HeartbeatWithInstance(
 		context.Background(),
 		r.config.RunnerId,

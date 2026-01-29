@@ -20,7 +20,6 @@ namespace Croniq.Runner;
 
 public sealed class CroniqRunner : IAsyncDisposable
 {
-    private static readonly TimeSpan DisconnectSeenAtSkew = TimeSpan.FromDays(2);
     private static readonly JsonSerializerOptions SerializerOptions = new()
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
@@ -1055,7 +1054,7 @@ public sealed class CroniqRunner : IAsyncDisposable
             EnvironmentTag = _config.Environment,
             RunnerId = _config.RunnerId,
             RunnerInstanceId = _runnerInstanceId,
-            SeenAtUtc = DateTimeOffset.UtcNow - DisconnectSeenAtSkew,
+            SeenAtUtc = DateTimeOffset.UtcNow,
             MetadataJson = BuildDisconnectMetadata()
         };
 

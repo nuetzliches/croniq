@@ -78,14 +78,27 @@ runner.onExecute(
     },
 );
 
+let shuttingDown = false;
 const shutdown = async (signal: string) => {
+    if (shuttingDown) {
+        return;
+    }
+    shuttingDown = true;
     console.log(`runner draining due to ${signal}`);
-    await runner.drain(30000);
-    process.exit(0);
+    try {
+        await runner.drain(30000);
+    } catch (err) {
+        console.error('runner drain failed', err);
+    } finally {
+        process.exit(0);
+    }
 };
 
 process.on('SIGTERM', () => void shutdown('SIGTERM'));
 process.on('SIGINT', () => void shutdown('SIGINT'));
+if (process.platform === 'win32') {
+    process.on('SIGBREAK', () => void shutdown('SIGBREAK'));
+}
 
 runner.start().catch((err) => {
     if (err instanceof RunnerIdInUseError) {

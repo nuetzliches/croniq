@@ -28,6 +28,7 @@ public sealed class CroniqWorkerHeartbeatHostedService : BackgroundService
     private readonly IWorkerDispatchStatusProvider? _dispatchStatusProvider;
     private readonly ILogger<CroniqWorkerHeartbeatHostedService> _logger;
     private readonly TimeSpan _heartbeatInterval;
+    private readonly TimeSpan _onlineTtl;
     private readonly string? _metadataJson;
 
     public CroniqWorkerHeartbeatHostedService(
@@ -44,6 +45,7 @@ public sealed class CroniqWorkerHeartbeatHostedService : BackgroundService
         _hostOptions = hostOptions?.Value ?? throw new ArgumentNullException(nameof(hostOptions));
         _workerOptions = workerOptions?.Value ?? new WorkerStoreOptions();
         _workerOptions.Normalize();
+        _onlineTtl = _workerOptions.OnlineTtl;
         _startupOptions = startupOptions?.Value ?? new CroniqStartupOptions();
         _dispatchStatusProvider = dispatchStatusProvider;
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
@@ -85,30 +87,37 @@ public sealed class CroniqWorkerHeartbeatHostedService : BackgroundService
                 _heartbeatInterval);
         }
 
-        while (!stoppingToken.IsCancellationRequested)
+        try
         {
-            try
+            while (!stoppingToken.IsCancellationRequested)
             {
-                var heartbeat = new WorkerHeartbeat(scope, instanceId, DateTimeOffset.UtcNow, _metadataJson);
-                await _workerStore.UpsertHeartbeatAsync(heartbeat, stoppingToken).ConfigureAwait(false);
-            }
-            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
-            {
-                break;
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex, "Failed to persist worker heartbeat.");
-            }
+                try
+                {
+                    var heartbeat = new WorkerHeartbeat(scope, instanceId, DateTimeOffset.UtcNow, _metadataJson);
+                    await _workerStore.UpsertHeartbeatAsync(heartbeat, stoppingToken).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+                {
+                    break;
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Failed to persist worker heartbeat.");
+                }
 
-            try
-            {
-                await Task.Delay(_heartbeatInterval, stoppingToken).ConfigureAwait(false);
+                try
+                {
+                    await Task.Delay(_heartbeatInterval, stoppingToken).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+                {
+                    break;
+                }
             }
-            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
-            {
-                break;
-            }
+        }
+        finally
+        {
+            await TrySendDisconnectHeartbeatAsync(scope, instanceId).ConfigureAwait(false);
         }
     }
 
@@ -142,4 +151,25 @@ public sealed class CroniqWorkerHeartbeatHostedService : BackgroundService
     }
 
     private sealed record WorkerMetadata(string Kind, string Hostname, WorkerDispatchStatus? Dispatch);
+
+    private async Task TrySendDisconnectHeartbeatAsync(PartitionScope scope, string instanceId)
+    {
+        if (_onlineTtl <= TimeSpan.Zero)
+        {
+            return;
+        }
+
+        var nowUtc = DateTimeOffset.UtcNow;
+        var disconnectSeenAtUtc = nowUtc - _onlineTtl - MinHeartbeatSkew;
+
+        try
+        {
+            var heartbeat = new WorkerHeartbeat(scope, instanceId, disconnectSeenAtUtc, _metadataJson);
+            await _workerStore.UpsertHeartbeatAsync(heartbeat, CancellationToken.None).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Failed to mark worker offline on shutdown.");
+        }
+    }
 }

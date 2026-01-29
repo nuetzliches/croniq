@@ -38,4 +38,12 @@ builder.Services.AddCroniqObservability(
 
 builder.Services.AddCroniqJobsFromConfiguration(builder.Configuration);
 
-await builder.Build().RunAsync();
+var app = builder.Build();
+var lifetime = app.Services.GetRequiredService<IHostApplicationLifetime>();
+Console.CancelKeyPress += (_, args) =>
+{
+    args.Cancel = true;
+    lifetime.StopApplication();
+};
+
+await app.RunAsync();

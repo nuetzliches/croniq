@@ -661,9 +661,13 @@ if (docsEnabled && Directory.Exists(docsPath))
         .WithExplicitStart();
 }
 
-var worker = builder.AddProject(
+var workerProjectPath = Path.Combine(repoRoot, "src", "Croniq.WorkerHost", "Croniq.WorkerHost.csproj");
+var workerExecutable = ResolveDotnetProjectExecutable(workerProjectPath);
+var worker = builder.AddExecutable(
     "croniq-worker",
-    Path.Combine(repoRoot, "src", "Croniq.WorkerHost", "Croniq.WorkerHost.csproj"))
+    workerExecutable.Command,
+    Path.GetDirectoryName(workerProjectPath)!,
+    workerExecutable.Args)
     .WithEnvironment("DOTNET_ENVIRONMENT", dotnetEnvironment)
     .WithEnvironment("Croniq__Core__TenantMode", tenantMode)
     .WithEnvironment("Croniq__Core__TenantId", tenantId)
@@ -790,8 +794,11 @@ if (runnerGoEnabled)
     if (Directory.Exists(runnerGoPath))
     {
         var goCommand = OperatingSystem.IsWindows() ? "go.exe" : "go";
-        var goArgs = new[] { "run", "." };
-        var runnerGo = builder.AddExecutable("croniq-runner-go", goCommand, runnerGoPath, goArgs)
+        var goExecutable = ResolveGoRunnerExecutable(repoRoot, runnerGoPath, goCommand);
+        var goArgs = string.Equals(goExecutable, goCommand, StringComparison.OrdinalIgnoreCase)
+            ? new[] { "run", "." }
+            : Array.Empty<string>();
+        var runnerGo = builder.AddExecutable("croniq-runner-go", goExecutable, runnerGoPath, goArgs)
             .WithEnvironment("CRONIQ_API_BASEURL", runnerSamplesApiBaseUrl)
             .WithEnvironment("CRONIQ_GRPC_BASEURL", runnerSamplesGrpcBaseUrl)
             .WithEnvironment("CRONIQ_TENANT_ID", tenantId)
@@ -1387,6 +1394,127 @@ static string? FindRepoRoot(string startDirectory)
     }
 
     return null;
+}
+
+static string ResolveGoRunnerExecutable(string repoRoot, string runnerPath, string goCommand)
+{
+    try
+    {
+        var artifactsPath = Path.Combine(repoRoot, "artifacts", "devstack");
+        Directory.CreateDirectory(artifactsPath);
+        var exeName = OperatingSystem.IsWindows() ? "croniq-runner-go.exe" : "croniq-runner-go";
+        var exePath = Path.Combine(artifactsPath, exeName);
+
+        var startInfo = new ProcessStartInfo
+        {
+            FileName = goCommand,
+            WorkingDirectory = runnerPath,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true
+        };
+        startInfo.ArgumentList.Add("build");
+        startInfo.ArgumentList.Add("-o");
+        startInfo.ArgumentList.Add(exePath);
+        startInfo.ArgumentList.Add(".");
+
+        using var process = Process.Start(startInfo);
+        if (process is null)
+        {
+            return goCommand;
+        }
+
+        if (!process.WaitForExit((int)TimeSpan.FromSeconds(30).TotalMilliseconds))
+        {
+            try
+            {
+                process.Kill(entireProcessTree: true);
+            }
+            catch
+            {
+                // ignore
+            }
+            return goCommand;
+        }
+
+        if (process.ExitCode != 0 || !File.Exists(exePath))
+        {
+            return goCommand;
+        }
+
+        return exePath;
+    }
+    catch
+    {
+        return goCommand;
+    }
+}
+
+static (string Command, string[] Args) ResolveDotnetProjectExecutable(string projectPath)
+{
+    var dotnetCommand = OperatingSystem.IsWindows() ? "dotnet.exe" : "dotnet";
+    var fallbackArgs = new[]
+    {
+        "run",
+        "--project",
+        projectPath,
+        "--configuration",
+        "Debug",
+        "--no-launch-profile"
+    };
+
+    try
+    {
+        var projectDir = Path.GetDirectoryName(projectPath);
+        if (string.IsNullOrWhiteSpace(projectDir))
+        {
+            return (dotnetCommand, fallbackArgs);
+        }
+
+        var outputPath = Path.Combine(projectDir, "bin", "Debug", "net10.0", $"{Path.GetFileNameWithoutExtension(projectPath)}.dll");
+
+        var startInfo = new ProcessStartInfo
+        {
+            FileName = dotnetCommand,
+            WorkingDirectory = projectDir,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true
+        };
+        startInfo.ArgumentList.Add("build");
+        startInfo.ArgumentList.Add(projectPath);
+        startInfo.ArgumentList.Add("--configuration");
+        startInfo.ArgumentList.Add("Debug");
+
+        using var process = Process.Start(startInfo);
+        if (process is null)
+        {
+            return (dotnetCommand, fallbackArgs);
+        }
+
+        if (!process.WaitForExit((int)TimeSpan.FromMinutes(2).TotalMilliseconds))
+        {
+            try
+            {
+                process.Kill(entireProcessTree: true);
+            }
+            catch
+            {
+                // ignore
+            }
+
+            return (dotnetCommand, fallbackArgs);
+        }
+
+        if (process.ExitCode != 0 || !File.Exists(outputPath))
+        {
+            return (dotnetCommand, fallbackArgs);
+        }
+
+        return (dotnetCommand, new[] { outputPath });
+    }
+    catch
+    {
+        return (dotnetCommand, fallbackArgs);
+    }
 }
 
 sealed class SqlServerReadyHealthCheck : IHealthCheck

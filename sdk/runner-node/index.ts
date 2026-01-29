@@ -1535,7 +1535,7 @@ export class CroniqRunner {
                 runnerId: this.config.runnerId,
                 runnerInstanceId: this.runnerInstanceId,
                 environmentTag: this.config.environment,
-                seenAtUtc: new Date(now.getTime() - 2 * 24 * 60 * 60 * 1000).toISOString(),
+                seenAtUtc: now.toISOString(),
                 metadataJson: JSON.stringify(metadata),
             });
         } catch (err) {

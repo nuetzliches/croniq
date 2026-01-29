@@ -193,6 +193,10 @@ internal sealed class RunnerGrpcService : Runner.RunnerBase
             {
                 ApiMetrics.RecordRunnerGrpcUnavailable(caller.TenantId, environmentTag);
             }
+            if (IsClientCancelled(ex, context.CancellationToken))
+            {
+                gracefulDisconnect = true;
+            }
             _logger.LogDebug("Runner.Connect stream closed.");
             activity?.SetStatus(ActivityStatusCode.Ok);
         }
@@ -256,6 +260,17 @@ internal sealed class RunnerGrpcService : Runner.RunnerBase
         {
             throw new RpcException(new Status(StatusCode.PermissionDenied, "runner-mismatch"));
         }
+    }
+
+    private static bool IsClientCancelled(Exception exception, CancellationToken cancellationToken)
+    {
+        if (!cancellationToken.IsCancellationRequested)
+        {
+            return false;
+        }
+
+        return exception is OperationCanceledException
+            || (exception is RpcException rpcException && rpcException.StatusCode == StatusCode.Cancelled);
     }
 
     private static bool IsGrpcUnavailable(Exception exception)

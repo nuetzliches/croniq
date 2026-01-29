@@ -136,7 +136,7 @@ docs/
 - Worker hosts can switch to runner gRPC dispatch via `Croniq:WorkerDispatch:EnableGrpc=true` with `Croniq:WorkerDispatch:GrpcEndpoint` set to the API host gRPC base URL.
 - `Croniq:WorkerDispatch:RunnerId` must match the authenticated caller identity; when omitted the worker uses `Croniq:Core:InstanceId`.
 - The gRPC stream (`Runner.Connect`) is the primary dispatch path; the API host acquires leases and streams assignments, while the worker executes and acknowledges work.
-- A graceful `Runner.Connect` shutdown marks the runner offline immediately (presence remains for offline retention); SDKs also emit a disconnect heartbeat on drain/stop to mark offline across transports. Unexpected disconnects still rely on TTL.
+- A graceful `Runner.Connect` shutdown marks the runner offline immediately (presence remains for offline retention); SDKs also emit a disconnect heartbeat on drain/stop and the API treats `transportState=disconnected` as an immediate offline signal across transports. Unexpected disconnects still rely on TTL.
 - Polling fallback remains available via `Croniq:WorkerDispatch:EnablePollingFallback` and uses `Croniq:WorkerDispatch:Fallback*Delay` (defaults target a 5–10s worst-case delay).
 - The persistence layer remains the single source of truth; gRPC dispatch still relies on leases in the store.
 - gRPC dispatch is opt-in; when disabled, workers use polling only.

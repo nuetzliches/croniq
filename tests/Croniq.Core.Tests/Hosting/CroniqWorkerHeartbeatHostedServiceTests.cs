@@ -50,11 +50,15 @@ public sealed class CroniqWorkerHeartbeatHostedServiceTests
 
         await service.StopAsync(CancellationToken.None);
 
+        var lastHeartbeat = store.Heartbeats[^1];
+
         heartbeat.Scope.TenantId.ShouldBe("tenant-a");
         heartbeat.Scope.EnvironmentTag.ShouldBe("dev");
         heartbeat.InstanceId.ShouldBe("worker-1");
         heartbeat.SeenAtUtc.ShouldBeGreaterThan(DateTimeOffset.UtcNow.AddMinutes(-1));
         heartbeat.MetadataJson.ShouldNotBeNull();
+        lastHeartbeat.InstanceId.ShouldBe("worker-1");
+        lastHeartbeat.SeenAtUtc.ShouldBeLessThan(DateTimeOffset.UtcNow);
 
         var metadata = JsonSerializer.Deserialize<WorkerMetadataPayload>(
             heartbeat.MetadataJson!,
@@ -100,6 +104,47 @@ public sealed class CroniqWorkerHeartbeatHostedServiceTests
         store.Heartbeats.ShouldBeEmpty();
 
         await service.StopAsync(CancellationToken.None);
+    }
+
+    [Fact]
+    public async Task StopAsync_marks_worker_offline()
+    {
+        var store = new TrackingWorkerStore();
+        var options = Microsoft.Extensions.Options.Options.Create(new CroniqOptions
+        {
+            TenantId = "tenant-a",
+            EnvironmentTag = "dev",
+            InstanceId = "worker-1"
+        });
+        var hostOptions = Microsoft.Extensions.Options.Options.Create(new WorkerHostOptions
+        {
+            HeartbeatInterval = TimeSpan.FromMilliseconds(10)
+        });
+        var workerOptions = Microsoft.Extensions.Options.Options.Create(new WorkerStoreOptions
+        {
+            OnlineTtl = TimeSpan.FromSeconds(2)
+        });
+        var startupOptions = Microsoft.Extensions.Options.Options.Create(new CroniqStartupOptions { Mode = "Run" });
+
+        var service = new CroniqWorkerHeartbeatHostedService(
+            store,
+            options,
+            hostOptions,
+            workerOptions,
+            startupOptions,
+            dispatchStatusProvider: null,
+            NullLogger<CroniqWorkerHeartbeatHostedService>.Instance);
+
+        await service.StartAsync(CancellationToken.None);
+
+        await store.WaitForHeartbeatAsync(TimeSpan.FromSeconds(1));
+
+        await service.StopAsync(CancellationToken.None);
+
+        store.Heartbeats.Count.ShouldBeGreaterThanOrEqualTo(2);
+        var offlineHeartbeat = store.Heartbeats[^1];
+        offlineHeartbeat.InstanceId.ShouldBe("worker-1");
+        offlineHeartbeat.SeenAtUtc.ShouldBeLessThan(DateTimeOffset.UtcNow.AddSeconds(-1));
     }
 
     private sealed class TrackingWorkerStore : IWorkerStore

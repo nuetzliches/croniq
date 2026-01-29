@@ -77,7 +77,10 @@ async def main() -> None:
     def on_signal() -> None:
         stop_event.set()
 
-    for sig in (signal.SIGTERM, signal.SIGINT):
+    signals = [signal.SIGTERM, signal.SIGINT]
+    if hasattr(signal, "SIGBREAK"):
+        signals.append(signal.SIGBREAK)
+    for sig in signals:
         try:
             loop.add_signal_handler(sig, on_signal)
         except (NotImplementedError, RuntimeError):
@@ -91,15 +94,49 @@ async def main() -> None:
         print("runner draining due to signal")
         await runner.drain(30000)
 
+    runner_task = asyncio.create_task(runner.start())
+    drain_task = asyncio.create_task(drain_on_signal())
+    pending: set[asyncio.Task] | None = None
     try:
-        await asyncio.gather(runner.start(), drain_on_signal())
+        done, pending = await asyncio.wait(
+            {runner_task, drain_task},
+            return_when=asyncio.FIRST_EXCEPTION,
+        )
+
+        if drain_task in done:
+            if not runner_task.done():
+                try:
+                    await asyncio.wait_for(runner_task, timeout=5)
+                except asyncio.TimeoutError:
+                    await runner.stop()
+                    runner_task.cancel()
+                    try:
+                        await runner_task
+                    except asyncio.CancelledError:
+                        pass
+            return
+
+        if runner_task in done:
+            exc = runner_task.exception()
+            if exc:
+                if stop_event.is_set():
+                    print(f"runner stopped with error after shutdown: {exc}")
+                    return
+                raise exc
     except RunnerIdInUseError as exc:
         print(f"runnerId already in use: {exc}")
         raise
     except RunnerJobRegistrationDeniedError as exc:
         print(f"job registration denied: {exc}")
         raise
+    finally:
+        if pending:
+            for task in pending:
+                task.cancel()
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        pass

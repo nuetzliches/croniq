@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Croniq.Api.Models;
@@ -24,6 +25,7 @@ public static partial class ApiHostingExtensions
             RunnerHeartbeatRequest request,
             [FromServices] ICallerContextAccessor callerContextAccessor,
             [FromServices] IRunnerStore runnerStore,
+            [FromServices] Microsoft.Extensions.Options.IOptions<RunnerStoreOptions> runnerStoreOptions,
             CancellationToken cancellationToken) =>
         {
             if (request is null)
@@ -52,6 +54,18 @@ public static partial class ApiHostingExtensions
             var scope = new PartitionScope(tenantId.Trim(), resolvedEnvironment);
             var nowUtc = DateTimeOffset.UtcNow;
             var seenAtUtc = request.SeenAtUtc ?? nowUtc;
+            if (IsDisconnectMetadata(request.MetadataJson))
+            {
+                var options = runnerStoreOptions?.Value ?? new RunnerStoreOptions();
+                options.Normalize();
+                var ttl = options.OnlineTtl;
+                if (ttl <= TimeSpan.Zero)
+                {
+                    ttl = TimeSpan.FromSeconds(60);
+                }
+
+                seenAtUtc = nowUtc - ttl - TimeSpan.FromSeconds(1);
+            }
             var runnerInstanceId = RunnerInstanceGuard.ResolveRunnerInstanceId(request.RunnerInstanceId, request.MetadataJson);
             var metadataUpdates = RunnerInstanceGuard.BuildMetadataUpdates(
                 runnerInstanceId,
@@ -201,5 +215,47 @@ public static partial class ApiHostingExtensions
         .Produces(StatusCodes.Status400BadRequest)
         .Produces(StatusCodes.Status404NotFound)
         .RequireCroniqTenantScope(requireEnvironment: true, CroniqScopes.RunnersWrite);
+    }
+
+    private static bool IsDisconnectMetadata(string? metadataJson)
+    {
+        if (string.IsNullOrWhiteSpace(metadataJson))
+        {
+            return false;
+        }
+
+        try
+        {
+            using var doc = JsonDocument.Parse(metadataJson);
+            if (doc.RootElement.ValueKind != JsonValueKind.Object)
+            {
+                return false;
+            }
+
+            foreach (var property in doc.RootElement.EnumerateObject())
+            {
+                if (string.Equals(property.Name, "disconnectedAtUtc", StringComparison.OrdinalIgnoreCase))
+                {
+                    return true;
+                }
+
+                if (!string.Equals(property.Name, "transportState", StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                if (property.Value.ValueKind == JsonValueKind.String
+                    && string.Equals(property.Value.GetString(), "disconnected", StringComparison.OrdinalIgnoreCase))
+                {
+                    return true;
+                }
+            }
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
+
+        return false;
     }
 }
