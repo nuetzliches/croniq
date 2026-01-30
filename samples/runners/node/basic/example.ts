@@ -57,6 +57,22 @@ runner.onExecute(
 );
 
 let shuttingDown = false;
+let fatalError: unknown = null;
+
+const recordFatal = (source: string, err: unknown) => {
+    if (shuttingDown) {
+        return;
+    }
+    if (!fatalError) {
+        fatalError = err;
+    }
+    console.error(`runner failed (${source})`, err);
+    process.exitCode = 1;
+};
+
+process.on('unhandledRejection', (err) => recordFatal('unhandledRejection', err));
+process.on('uncaughtException', (err) => recordFatal('uncaughtException', err));
+
 const runTask = runner.start().catch((err) => {
     if (shuttingDown) {
         console.warn('runner stopped during shutdown', err);
@@ -69,6 +85,7 @@ const runTask = runner.start().catch((err) => {
     } else {
         console.error('runner failed to start', err);
     }
+    fatalError = err;
     process.exitCode = 1;
 });
 
@@ -85,9 +102,7 @@ const shutdown = async (signal: string) => {
         await runner.stop();
     } finally {
         await runTask;
-        if (!process.exitCode) {
-            process.exitCode = 0;
-        }
+        process.exitCode = fatalError ? 1 : 0;
     }
 };
 
