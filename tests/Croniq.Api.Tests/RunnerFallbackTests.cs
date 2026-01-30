@@ -124,6 +124,10 @@ public sealed class RunnerFallbackTests
         {
             grpcFailed = true;
         }
+        catch (HttpIOException)
+        {
+            grpcFailed = true;
+        }
         catch (HttpRequestException)
         {
             grpcFailed = true;

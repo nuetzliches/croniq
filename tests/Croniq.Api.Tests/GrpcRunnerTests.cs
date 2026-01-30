@@ -154,7 +154,7 @@ public sealed class GrpcRunnerTests
             OfflineRetentionTtl = TimeSpan.FromMinutes(30)
         };
         runnerOptions.Normalize();
-        var runnerStore = new InMemoryRunnerStore(Options.Create(runnerOptions));
+        var runnerStore = new InMemoryRunnerStore(Microsoft.Extensions.Options.Options.Create(runnerOptions));
 
         builder.Services.AddSingleton<IJobExecutionPipeline>(pipeline);
         builder.Services.AddSingleton<IJobRegistry>(registry);
@@ -164,7 +164,7 @@ public sealed class GrpcRunnerTests
         builder.Services.AddSingleton<IJobStore>(store);
         builder.Services.AddSingleton<IPersistenceHealth>(store);
         builder.Services.AddSingleton<IRunnerStore>(runnerStore);
-        builder.Services.AddSingleton<IOptions<RunnerStoreOptions>>(Options.Create(runnerOptions));
+        builder.Services.AddSingleton<IOptions<RunnerStoreOptions>>(Microsoft.Extensions.Options.Options.Create(runnerOptions));
 
         builder.WebHost.ConfigureKestrel(options =>
         {

@@ -41,7 +41,7 @@ This section targets maintainers, platform engineers, and contributors working o
   - `POST /tenants/{tenantId}/schedules` (job + trigger upsert via `IJobPersistenceProvider`)
   - `GET/DELETE /tenants/{tenantId}/schedules/{id}`
   - `GET/POST/DELETE /tenants/{tenantId}/calendars`
-  - `POST /jobs/trigger` (direct invocation via `IJobExecutionPipeline`)
+  - `POST /jobs/trigger` (direct invocation via `IJobExecutionPipeline` when the job is registered locally; otherwise enqueues a one-off trigger)
   - Fixed-window rate limiting and simple API-key guard (`X-Croniq-Key`, see `CroniqApiOptions`).
 - `Croniq.Rpc.Client` packages generated gRPC clients (`Protos/scheduler.proto`, `runner.proto`, `webhook_ingress.proto`) plus helpers for Scheduler/Runner/Webhook ingress operations.
 

@@ -189,6 +189,16 @@ public sealed class RunnersEndpointsTests : IClassFixture<WebhookApiTestHost>
     {
         _host.Reset();
 
+        const string disconnectKey = "ak_runner_disconnect";
+        var disconnectContext = new CallerContext(
+            WebhookApiTestHost.TenantId,
+            WebhookApiTestHost.Environment,
+            CallerType.ApiKey,
+            CallerId: "itest-disconnect",
+            Scopes: new[] { CroniqScopes.RunnersHeartbeat, CroniqScopes.RunnersRead });
+        _host.CallerFactory.AddContext(disconnectKey, disconnectContext);
+        SetCallerApiKey(disconnectKey);
+
         var heartbeat = new RunnerHeartbeatRequest(
             EnvironmentTag: WebhookApiTestHost.Environment,
             RunnerId: "itest-disconnect",

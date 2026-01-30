@@ -5,8 +5,10 @@ using Croniq.Auth.Core;
 using Croniq.Core.Execution;
 using Croniq.Core.Jobs;
 using Croniq.Core.Policies;
+using Croniq.Core.Scheduling;
 using Croniq.Persistence.Abstractions;
 using Croniq.Rpc;
+using Croniq.Sdk;
 using Grpc.Core;
 using Microsoft.Extensions.Logging.Abstractions;
 using Shouldly;
@@ -73,6 +75,42 @@ public sealed class SchedulerGrpcTests
         _pipeline.Executions.Count.ShouldBe(1);
         _pipeline.Executions[0].Scope.TenantId.ShouldBe("other");
         _pipeline.Executions[0].Scope.EnvironmentTag.ShouldBe(TestCallerContextFactory.DefaultEnvironment);
+    }
+
+    [Fact]
+    public async Task TriggerJob_Schedules_WhenPersistedJobNotInRegistry()
+    {
+        _store.Reset();
+        var jobKey = "ops:runner";
+        JobKey.TryParse(jobKey, out var parsed).ShouldBeTrue();
+
+        var scope = new PartitionScope(TestCallerContextFactory.DefaultTenantId, TestCallerContextFactory.DefaultEnvironment);
+        var job = new JobDefinition(
+            jobKey,
+            parsed.NamespaceSegment,
+            parsed.JobName,
+            parsed.Variant,
+            Description: "runner job",
+            Metadata: new Dictionary<string, string> { ["registrationSource"] = "runner" },
+            IsActive: true,
+            AssignedRunnerId: "runner-1",
+            AssignedBy: "runner-1",
+            AssignedAtUtc: DateTimeOffset.UtcNow,
+            AssignmentSource: "runner");
+
+        await _store.UpsertJobAsync(job, scope, CancellationToken.None);
+
+        var response = await _service.TriggerJob(new TriggerJobRequest { JobKey = jobKey }, CreateContext());
+
+        response.Status.ShouldBe("triggered");
+        _pipeline.Executions.ShouldBeEmpty();
+
+        var triggers = await _store.ListTriggersAsync(scope, CancellationToken.None);
+        var trigger = triggers.ShouldHaveSingleItem();
+        trigger.JobKey.ShouldBe(jobKey);
+        trigger.ScheduleExpression.ShouldBe(TriggerSchedule.OnceExpression);
+        trigger.ExecutionMode.ShouldBe(ExecutionIntent.ExecutionModes.Normal);
+        trigger.InvocationSource.ShouldBe(ExecutionIntent.InvocationSources.Manual);
     }
 
     [Fact]

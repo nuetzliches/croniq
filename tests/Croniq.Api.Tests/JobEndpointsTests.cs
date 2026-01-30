@@ -164,7 +164,7 @@ public sealed class JobEndpointsTests : IClassFixture<WebhookApiTestHost>
         var heartbeatResponse = await _host.Client.PostAsJsonAsync(
             $"/tenants/{WebhookApiTestHost.TenantId}/runners/heartbeat",
             heartbeat);
-        heartbeatResponse.StatusCode.ShouldBe(HttpStatusCode.OK);
+        heartbeatResponse.StatusCode.ShouldBe(HttpStatusCode.NoContent);
 
         var runnerBKey = "ak_runner_b";
         _host.CallerFactory.AddContext(

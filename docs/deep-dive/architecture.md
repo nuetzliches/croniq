@@ -197,7 +197,7 @@ Admin tooling can request a drain by calling `POST /tenants/{tenantId}/runners/{
 
 ## API & RPC Surface
 
-- Minimal API endpoints: `POST /jobs/trigger`, `POST /tenants/{tenantId}/schedules`, `GET/DELETE /tenants/{tenantId}/schedules/{id}`, `GET /health` (anonymous).
+- Minimal API endpoints: `POST /jobs/trigger` (direct invocation when the job is registered locally; otherwise enqueues a one-off trigger for the assigned runner), `POST /tenants/{tenantId}/schedules`, `GET/DELETE /tenants/{tenantId}/schedules/{id}`, `GET /health` (anonymous).
 - gRPC service (`SchedulerService`) offers strongly typed access (`TriggerJob`, `RegisterSchedule`, `GetSchedules`). JSON-RPC may appear later but is not core.
 - Hosting packages expose opinionated extensions so consumers can bootstrap Croniq quickly. Auth, persistence mode, and rate limits are all configuration-driven.
 - Rate limiting uses ASP.NET Core RateLimiter with per-tenant partitions; gRPC interceptors reuse the same policy.

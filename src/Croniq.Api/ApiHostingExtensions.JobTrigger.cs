@@ -6,6 +6,7 @@ using Croniq.Auth.Abstractions;
 using Croniq.Auth.Core;
 using Croniq.Core.Observability;
 using Croniq.Core.Jobs;
+using Croniq.Core.Scheduling;
 using Croniq.Options;
 using Croniq.Persistence.Abstractions;
 using Croniq.Sdk;
@@ -26,6 +27,7 @@ public static partial class ApiHostingExtensions
             HttpContext httpContext,
             [FromServices] IJobRegistry registry,
             [FromServices] IJobTrigger jobTrigger,
+            [FromServices] IJobPersistenceProvider store,
             [FromServices] ICallerContextAccessor callerContextAccessor,
             [FromServices] IOptions<CroniqOptions> options,
             CancellationToken cancellationToken) =>
@@ -37,11 +39,6 @@ public static partial class ApiHostingExtensions
                 {
                     return Results.BadRequest(new { error = "invalid-job-key", message = "JobKey must follow the Croniq format." });
                 }
-            }
-
-            if (!registry.TryGet(jobKey, out _))
-            {
-                return Results.NotFound(new { error = "job-not-registered", request.JobKey });
             }
 
             if (request.DelaySeconds.HasValue && request.DelaySeconds.Value < 0)
@@ -81,6 +78,52 @@ public static partial class ApiHostingExtensions
                 triggerActivity?.SetTag("croniq.job.variant", jobKey.Variant);
             }
 
+            if (!registry.TryGet(jobKey, out _))
+            {
+                var existing = await store.GetJobAsync(jobKey.Value, scope, cancellationToken).ConfigureAwait(false);
+                if (existing is null)
+                {
+                    return Results.NotFound(new { error = "job-not-registered", request.JobKey });
+                }
+
+                if (!existing.IsActive)
+                {
+                    return Results.Problem(
+                        statusCode: StatusCodes.Status409Conflict,
+                        title: "job-inactive",
+                        detail: "Job is inactive and cannot be triggered.");
+                }
+
+                if (string.IsNullOrWhiteSpace(existing.AssignedRunnerId))
+                {
+                    return Results.BadRequest(new { error = "assignment-required", message = "AssignedRunnerId is required for active jobs." });
+                }
+
+                var fireAtUtc = delay.HasValue && delay.Value > TimeSpan.Zero
+                    ? DateTimeOffset.UtcNow.Add(delay.Value)
+                    : DateTimeOffset.UtcNow;
+                var triggerId = $"{jobKey.Value}:once-{Guid.NewGuid():N}";
+                var trigger = new TriggerDefinition(
+                    triggerId,
+                    jobKey.Value,
+                    TriggerSchedule.OnceExpression,
+                    scope,
+                    fireAtUtc,
+                    EndAtUtc: null,
+                    Enabled: true,
+                    metadata,
+                    TimeZoneInfo.Utc.Id,
+                    CalendarId: null,
+                    executionMode,
+                    ExecutionIntent.InvocationSources.Manual);
+
+                await store.UpsertTriggerAsync(trigger, cancellationToken).ConfigureAwait(false);
+                ApiMetrics.RecordManualTrigger(jobKey, scope);
+                triggerActivity?.SetStatus(ActivityStatusCode.Ok);
+                var scheduledStatus = delay.HasValue && delay.Value > TimeSpan.Zero ? "scheduled" : "triggered";
+                return Results.Accepted(value: new TriggerJobResponse(scheduledStatus, request.JobKey));
+            }
+
             try
             {
                 await jobTrigger.TriggerOnceAsync(
@@ -101,7 +144,7 @@ public static partial class ApiHostingExtensions
                 throw;
             }
         })
-        .WithDocs("Jobs_Trigger", "Trigger a job manually", "Executes a job immediately or schedules a one-off run when DelaySeconds is provided.")
+        .WithDocs("Jobs_Trigger", "Trigger a job manually", "Executes a job immediately when registered locally; otherwise enqueues a one-off trigger (DelaySeconds supported).")
         .Produces<TriggerJobResponse>(StatusCodes.Status202Accepted)
         .RequireCroniqJobScopeFromBody<TriggerJobRequest>(request => request.JobKey, CroniqScopes.JobsTrigger);
     }

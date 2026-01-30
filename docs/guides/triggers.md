@@ -133,6 +133,10 @@ curl -X POST https://localhost:5001/jobs/trigger \
       }"
 ```
 
+Note: If the API host does not have the job registered locally (for example, jobs registered by external runners),
+`/jobs/trigger` enqueues an `@once` trigger in the persistence store. The job must be active and assigned to a runner.
+See the dispatch notes in [`docs/deep-dive/architecture.md`](../deep-dive/architecture.md).
+
 ## Webhook Triggers
 
 Webhook ingress is documented separately in [`webhooks.md`](./webhooks.md). The guide covers the ingress endpoints, lifecycle management, and security guidance for signing and rate limiting.

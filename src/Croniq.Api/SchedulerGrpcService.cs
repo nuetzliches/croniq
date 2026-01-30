@@ -95,14 +95,47 @@ internal sealed class SchedulerGrpcService : Scheduler.SchedulerBase
             EnrichActivityForJob(activity, jobKey, scope);
             EnsureTenantOrThrow(TenantGuard.EnsureJobScope(_callerAccessor, scope, CroniqScopes.JobsTrigger));
 
-            if (!_registry.TryGet(jobKey, out var descriptor))
-            {
-                throw new RpcException(new Status(StatusCode.NotFound, "job_not_registered"));
-            }
-
             var metadata = request.Metadata.Count == 0
                 ? new Dictionary<string, string>()
                 : new Dictionary<string, string>(request.Metadata, StringComparer.OrdinalIgnoreCase);
+
+            if (!_registry.TryGet(jobKey, out var descriptor))
+            {
+                var existing = await _store.GetJobAsync(jobKey.Value, scope, context.CancellationToken).ConfigureAwait(false);
+                if (existing is null)
+                {
+                    throw new RpcException(new Status(StatusCode.NotFound, "job_not_registered"));
+                }
+
+                if (!existing.IsActive)
+                {
+                    throw new RpcException(new Status(StatusCode.FailedPrecondition, "job_inactive"));
+                }
+
+                if (string.IsNullOrWhiteSpace(existing.AssignedRunnerId))
+                {
+                    throw new RpcException(new Status(StatusCode.FailedPrecondition, "job_assignment_required"));
+                }
+
+                var triggerId = $"{jobKey.Value}:once-{Guid.NewGuid():N}";
+                var trigger = new TriggerDefinition(
+                    triggerId,
+                    jobKey.Value,
+                    TriggerSchedule.OnceExpression,
+                    scope,
+                    DateTimeOffset.UtcNow,
+                    EndAtUtc: null,
+                    Enabled: true,
+                    metadata.Count == 0 ? null : metadata,
+                    TimeZoneInfo.Utc.Id,
+                    CalendarId: null,
+                    ExecutionIntent.ExecutionModes.Normal,
+                    ExecutionIntent.InvocationSources.Manual);
+
+                await _store.UpsertTriggerAsync(trigger, context.CancellationToken).ConfigureAwait(false);
+                activity?.SetStatus(ActivityStatusCode.Ok);
+                return new TriggerJobResponse { Status = "triggered" };
+            }
 
             var executionOptions = _policyResolver.ResolveExecution(jobKey, scope);
             var executionId = Guid.NewGuid().ToString("N");
