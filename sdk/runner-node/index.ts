@@ -122,6 +122,12 @@ export type RunnerConfig = {
     fetchImpl?: typeof fetch;
 };
 
+export type RunnerEnvDefaults = {
+    runnerApiKeyEnv?: string;
+    defaultRunnerId?: string;
+    runnerApiKeyDefaultRunnerId?: string;
+};
+
 export type RunnerExecutionContext = {
     executionId: string;
     leaseId: string;
@@ -159,14 +165,19 @@ function normalizeGrpcEndpoint(raw: string): { address: string; useTls: boolean 
     return { address: raw, useTls: false };
 }
 
-export function loadRunnerConfigFromEnv(env: Record<string, string | undefined> = process.env): RunnerConfig {
+export function loadRunnerConfigFromEnv(
+    env: Record<string, string | undefined> = process.env,
+    defaults: RunnerEnvDefaults = {},
+): RunnerConfig {
     const baseUrl = env.CRONIQ_API_BASEURL?.trim();
     const grpcBaseUrl = env.CRONIQ_GRPC_BASEURL?.trim();
     const tenantId = env.CRONIQ_TENANT_ID?.trim();
     const environment = env.CRONIQ_ENVIRONMENT?.trim();
-    const apiKey = env.CRONIQ_API_KEY?.trim();
+    const runnerApiKey = defaults.runnerApiKeyEnv ? env[defaults.runnerApiKeyEnv]?.trim() : undefined;
+    const apiKey = env.CRONIQ_API_KEY?.trim() || runnerApiKey;
     const bearerToken = env.CRONIQ_BEARER_TOKEN?.trim();
-    const runnerId = env.CRONIQ_RUNNER_ID?.trim();
+    const runnerIdRaw = env.CRONIQ_RUNNER_ID?.trim();
+    const runnerId = resolveRunnerId(runnerIdRaw, runnerApiKey, defaults);
     const runnerInstanceId = env.CRONIQ_RUNNER_INSTANCE_ID?.trim();
     const transportMode = (env.CRONIQ_TRANSPORT_MODE?.trim().toLowerCase() || 'auto') as TransportMode;
     const registerJobs = parseBool(env.CRONIQ_RUNNER_REGISTER_JOBS);
@@ -212,6 +223,27 @@ export function loadRunnerConfigFromEnv(env: Record<string, string | undefined> 
         capabilities: parseList(env.CRONIQ_CAPABILITIES),
         registerJobs: registerJobs === undefined ? true : registerJobs,
     };
+}
+
+function resolveRunnerId(
+    runnerId: string | undefined,
+    runnerApiKey: string | undefined,
+    defaults: RunnerEnvDefaults,
+): string | undefined {
+    if (!runnerId || runnerId.length === 0) {
+        if (runnerApiKey && defaults.runnerApiKeyDefaultRunnerId) {
+            return defaults.runnerApiKeyDefaultRunnerId;
+        }
+        return defaults.defaultRunnerId;
+    }
+    if (
+        runnerApiKey
+        && runnerId.toLowerCase() === 'default'
+        && defaults.runnerApiKeyDefaultRunnerId
+    ) {
+        return defaults.runnerApiKeyDefaultRunnerId;
+    }
+    return runnerId;
 }
 
 function parseBool(value?: string): boolean | undefined {

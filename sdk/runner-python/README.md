@@ -29,3 +29,13 @@ Build a `RunnerConfig` from environment variables with `RunnerConfig.from_env()`
 - Optional tuning: `CRONIQ_POLL_BATCH_SIZE`, `CRONIQ_POLL_WAIT_MS`, `CRONIQ_REQUEST_TIMEOUT_MS`, `CRONIQ_RENEW_LEAD_MS`,
   `CRONIQ_RETRY_BASE_MS`, `CRONIQ_RETRY_MAX_MS`, `CRONIQ_RETRY_MAX_ATTEMPTS`, `CRONIQ_MAX_INFLIGHT`, `CRONIQ_CAPABILITIES`,
   `CRONIQ_RUNNER_REGISTER_JOBS`.
+
+You can optionally pass runner defaults for runner-specific API keys and runner ids:
+
+```python
+config = RunnerConfig.from_env(
+    runner_api_key_env="CRONIQ_RUNNER_PYTHON_API_KEY",
+    default_runner_id="default",
+    runner_api_key_default_runner_id="python-default",
+)
+```

@@ -408,7 +408,13 @@ class RunnerConfig:
     outbox_max_bytes: int = 1_000_000
 
     @staticmethod
-    def from_env(env: Optional[Mapping[str, str]] = None) -> "RunnerConfig":
+    def from_env(
+        env: Optional[Mapping[str, str]] = None,
+        *,
+        runner_api_key_env: Optional[str] = None,
+        default_runner_id: Optional[str] = None,
+        runner_api_key_default_runner_id: Optional[str] = None,
+    ) -> "RunnerConfig":
         environment = env or os.environ
 
         def required(key: str) -> str:
@@ -420,11 +426,27 @@ class RunnerConfig:
         base_url = required("CRONIQ_API_BASEURL")
         tenant_id = required("CRONIQ_TENANT_ID")
         environment_tag = required("CRONIQ_ENVIRONMENT")
-        runner_id = required("CRONIQ_RUNNER_ID")
+        runner_api_key = None
+        if runner_api_key_env:
+            runner_api_key = environment.get(runner_api_key_env, "").strip() or None
+
+        runner_id = environment.get("CRONIQ_RUNNER_ID", "").strip()
+        if not runner_id:
+            if runner_api_key and runner_api_key_default_runner_id:
+                runner_id = runner_api_key_default_runner_id
+            else:
+                runner_id = (default_runner_id or "").strip()
+        elif runner_api_key and runner_id.lower() == "default" and runner_api_key_default_runner_id:
+            runner_id = runner_api_key_default_runner_id
+
+        if not runner_id:
+            raise ValueError("CRONIQ_RUNNER_ID is required")
         runner_instance_id = _get_optional(environment, "CRONIQ_RUNNER_INSTANCE_ID") or uuid.uuid4().hex
 
         api_key = environment.get("CRONIQ_API_KEY")
         bearer_token = environment.get("CRONIQ_BEARER_TOKEN")
+        if (not api_key or not api_key.strip()) and runner_api_key:
+            api_key = runner_api_key
         has_api_key = bool(api_key and api_key.strip())
         has_bearer = bool(bearer_token and bearer_token.strip())
         if has_api_key == has_bearer:

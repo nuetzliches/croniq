@@ -1,39 +1,20 @@
 using Croniq.Runner;
 
-static string Env(string key, string fallback)
-{
-    var value = Environment.GetEnvironmentVariable(key);
-    return string.IsNullOrWhiteSpace(value) ? fallback : value.Trim();
-}
-
-static string? GetOptional(string key)
-{
-    var value = Environment.GetEnvironmentVariable(key);
-    return string.IsNullOrWhiteSpace(value) ? null : value.Trim();
-}
-
-var runnerApiKey = Env("CRONIQ_RUNNER_DOTNET_API_KEY", string.Empty);
-var apiKey = GetOptional("CRONIQ_API_KEY");
-if (string.IsNullOrWhiteSpace(apiKey) && !string.IsNullOrWhiteSpace(runnerApiKey))
-{
-    Environment.SetEnvironmentVariable("CRONIQ_API_KEY", runnerApiKey);
-}
-
-var runnerId = GetOptional("CRONIQ_RUNNER_ID");
-if (string.IsNullOrWhiteSpace(runnerId)
-    || (string.Equals(runnerId, "default", StringComparison.OrdinalIgnoreCase)
-        && !string.IsNullOrWhiteSpace(runnerApiKey)))
-{
-    Environment.SetEnvironmentVariable(
-        "CRONIQ_RUNNER_ID",
-        !string.IsNullOrWhiteSpace(runnerApiKey) ? "dotnet-default" : "default");
-}
-
-var config = RunnerConfig.FromEnvironment() with
+var config = RunnerConfig.FromEnvironment(
+    defaults: new RunnerEnvironmentDefaults
+    {
+        RunnerApiKeyEnv = "CRONIQ_RUNNER_DOTNET_API_KEY",
+        DefaultRunnerId = "default",
+        RunnerApiKeyDefaultRunnerId = "dotnet-default"
+    }) with
 {
     HeartbeatInterval = TimeSpan.FromSeconds(15)
 };
-var jobKey = Env("CRONIQ_JOB_KEY", "samples:dotnet-job");
+var jobKey = Environment.GetEnvironmentVariable("CRONIQ_JOB_KEY");
+if (string.IsNullOrWhiteSpace(jobKey))
+{
+    jobKey = "samples:dotnet-job";
+}
 
 var runner = new CroniqRunner(config);
 runner.OnExecute(

@@ -865,8 +865,9 @@ if (runnerPythonEnabled)
     if (Directory.Exists(runnerPythonPath))
     {
         var pythonCommand = OperatingSystem.IsWindows() ? "python.exe" : "python";
+        var pythonExecutable = ResolvePythonRunnerExecutable(runnerPythonPath, pythonCommand);
         var pythonArgs = new[] { "example.py" };
-        var runnerPython = builder.AddExecutable("croniq-runner-python", pythonCommand, runnerPythonPath, pythonArgs)
+        var runnerPython = builder.AddExecutable("croniq-runner-python", pythonExecutable, runnerPythonPath, pythonArgs)
             .WithEnvironment("CRONIQ_API_BASEURL", runnerSamplesApiBaseUrl)
             .WithEnvironment("CRONIQ_GRPC_BASEURL", runnerSamplesGrpcBaseUrl)
             .WithEnvironment("CRONIQ_TENANT_ID", tenantId)
@@ -1466,6 +1467,16 @@ static string ResolveGoRunnerExecutable(string repoRoot, string runnerPath, stri
     {
         return goCommand;
     }
+}
+
+static string ResolvePythonRunnerExecutable(string runnerPath, string pythonCommand)
+{
+    var venvRoot = Path.Combine(runnerPath, ".venv");
+    var venvPython = OperatingSystem.IsWindows()
+        ? Path.Combine(venvRoot, "Scripts", "python.exe")
+        : Path.Combine(venvRoot, "bin", "python");
+
+    return File.Exists(venvPython) ? venvPython : pythonCommand;
 }
 
 static (string Command, string[] Args) ResolveDotnetProjectExecutable(string projectPath)

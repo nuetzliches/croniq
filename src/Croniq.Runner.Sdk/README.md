@@ -61,3 +61,15 @@ Use `RunnerConfig.FromEnvironment()` to load:
 - Optional tuning: `CRONIQ_POLL_BATCH_SIZE`, `CRONIQ_POLL_WAIT_MS`, `CRONIQ_REQUEST_TIMEOUT_MS`, `CRONIQ_RENEW_LEAD_MS`,
   `CRONIQ_RETRY_BASE_MS`, `CRONIQ_RETRY_MAX_MS`, `CRONIQ_RETRY_MAX_ATTEMPTS`, `CRONIQ_MAX_INFLIGHT`, `CRONIQ_CAPABILITIES`,
   `CRONIQ_RUNNER_INSTANCE_ID`, `CRONIQ_RUNNER_REGISTER_JOBS`.
+
+You can optionally provide runner defaults for runner-specific API keys and runner ids:
+
+```csharp
+var config = RunnerConfig.FromEnvironment(
+    defaults: new RunnerEnvironmentDefaults
+    {
+        RunnerApiKeyEnv = "CRONIQ_RUNNER_DOTNET_API_KEY",
+        DefaultRunnerId = "default",
+        RunnerApiKeyDefaultRunnerId = "dotnet-default"
+    });
+```

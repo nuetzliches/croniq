@@ -28,6 +28,17 @@ Use `LoadRunnerConfigFromEnv()` to build a `RunnerConfig` from environment varia
   `CRONIQ_RETRY_BASE_MS`, `CRONIQ_RETRY_MAX_MS`, `CRONIQ_RETRY_MAX_ATTEMPTS`, `CRONIQ_MAX_INFLIGHT`, `CRONIQ_CAPABILITIES`,
   `CRONIQ_RUNNER_REGISTER_JOBS`.
 
+If you want the SDK to fall back to a runner-specific API key and default runner ids, use
+`LoadRunnerConfigFromEnvWithDefaults`:
+
+```go
+config, err := croniqrunner.LoadRunnerConfigFromEnvWithDefaults(croniqrunner.RunnerEnvDefaults{
+    RunnerApiKeyEnv:            "CRONIQ_RUNNER_GO_API_KEY",
+    DefaultRunnerId:            "default",
+    RunnerApiKeyDefaultRunnerId: "go-default",
+})
+```
+
 ## Notes
 
 - This client currently polls `/work/poll`, sends events, and acks leases.

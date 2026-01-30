@@ -1,52 +1,30 @@
-import { CroniqRunner, RunnerIdInUseError, RunnerJobRegistrationDeniedError } from '@croniq/runner-sdk';
+import {
+    CroniqRunner,
+    RunnerIdInUseError,
+    RunnerJobRegistrationDeniedError,
+    loadRunnerConfigFromEnv,
+} from '@croniq/runner-sdk';
 
-const env = (key: string, fallback: string) => (process.env[key]?.trim() ? process.env[key]!.trim() : fallback);
+const jobKey = process.env.CRONIQ_JOB_KEY?.trim() || 'samples:node-job';
 
-const baseUrl = env('CRONIQ_API_BASEURL', 'http://localhost:5080');
-const grpcBaseUrl = env('CRONIQ_GRPC_BASEURL', baseUrl);
-const tenantId = env('CRONIQ_TENANT_ID', 'default');
-const environment = env('CRONIQ_ENVIRONMENT', 'dev');
-const runnerApiKey = env('CRONIQ_RUNNER_NODE_API_KEY', '');
-const apiKey = runnerApiKey || env('CRONIQ_API_KEY', '');
-const bearerToken = env('CRONIQ_BEARER_TOKEN', '');
-const runnerIdEnv = process.env.CRONIQ_RUNNER_ID?.trim() ?? '';
-const runnerId = runnerIdEnv && !(runnerApiKey && runnerIdEnv.toLowerCase() === 'default')
-    ? runnerIdEnv
-    : (runnerApiKey ? 'node-default' : 'default');
-const runnerInstanceId = process.env.CRONIQ_RUNNER_INSTANCE_ID?.trim();
-const jobKey = env('CRONIQ_JOB_KEY', 'samples:node-job');
-
-if ((!!apiKey && !!bearerToken) || (!apiKey && !bearerToken)) {
-    throw new Error('Set exactly one of CRONIQ_API_KEY or CRONIQ_BEARER_TOKEN');
-}
+const config = loadRunnerConfigFromEnv(process.env, {
+    runnerApiKeyEnv: 'CRONIQ_RUNNER_NODE_API_KEY',
+    defaultRunnerId: 'default',
+    runnerApiKeyDefaultRunnerId: 'node-default',
+});
 
 const runner = new CroniqRunner({
-    baseUrl,
-    grpcBaseUrl,
-    tenantId,
-    environment,
-    apiKey: apiKey || undefined,
-    bearerToken: bearerToken || undefined,
-    runnerId,
-    runnerInstanceId,
-    transportMode: (process.env.CRONIQ_TRANSPORT_MODE?.trim().toLowerCase() as 'auto' | 'grpc' | 'polling') || 'auto',
-    allowTestExecutions: process.env.CRONIQ_ALLOW_TEST_EXECUTIONS === 'true',
-    maxInflight: process.env.CRONIQ_MAX_INFLIGHT ? Number(process.env.CRONIQ_MAX_INFLIGHT) : undefined,
-    capabilities: process.env.CRONIQ_CAPABILITIES
-        ? process.env.CRONIQ_CAPABILITIES.split(',')
-            .map((value) => value.trim())
-            .filter(Boolean)
-        : undefined,
+    ...config,
     heartbeatIntervalMs: 15000,
 });
 
 console.log('Croniq runner (node)');
-console.log(`- base_url:        ${baseUrl}`);
-console.log(`- grpc_url:        ${grpcBaseUrl}`);
-console.log(`- tenant_id:       ${tenantId}`);
-console.log(`- environment:     ${environment}`);
-console.log(`- runner_id:       ${runnerId}`);
-console.log(`- runner_instance:${runnerInstanceId ?? '(auto)'}`);
+console.log(`- base_url:        ${config.baseUrl}`);
+console.log(`- grpc_url:        ${config.grpcBaseUrl ?? config.baseUrl}`);
+console.log(`- tenant_id:       ${config.tenantId}`);
+console.log(`- environment:     ${config.environment}`);
+console.log(`- runner_id:       ${config.runnerId}`);
+console.log(`- runner_instance:${config.runnerInstanceId ?? '(auto)'}`);
 if (jobKey) {
     console.log(`- job_key:         ${jobKey}`);
 }
@@ -79,6 +57,21 @@ runner.onExecute(
 );
 
 let shuttingDown = false;
+const runTask = runner.start().catch((err) => {
+    if (shuttingDown) {
+        console.warn('runner stopped during shutdown', err);
+        return;
+    }
+    if (err instanceof RunnerIdInUseError) {
+        console.error('runnerId already in use; exiting', err);
+    } else if (err instanceof RunnerJobRegistrationDeniedError) {
+        console.error('job registration denied; exiting', err);
+    } else {
+        console.error('runner failed to start', err);
+    }
+    process.exitCode = 1;
+});
+
 const shutdown = async (signal: string) => {
     if (shuttingDown) {
         return;
@@ -89,8 +82,12 @@ const shutdown = async (signal: string) => {
         await runner.drain(30000);
     } catch (err) {
         console.error('runner drain failed', err);
+        await runner.stop();
     } finally {
-        process.exit(0);
+        await runTask;
+        if (!process.exitCode) {
+            process.exitCode = 0;
+        }
     }
 };
 
@@ -100,16 +97,7 @@ if (process.platform === 'win32') {
     process.on('SIGBREAK', () => void shutdown('SIGBREAK'));
 }
 
-runner.start().catch((err) => {
-    if (err instanceof RunnerIdInUseError) {
-        console.error('runnerId already in use; exiting', err);
-    } else if (err instanceof RunnerJobRegistrationDeniedError) {
-        console.error('job registration denied; exiting', err);
-    } else {
-        console.error('runner failed to start', err);
-    }
-    process.exit(1);
-});
+void runTask;
 
 async function doWork(payload: unknown) {
     if (payload) {

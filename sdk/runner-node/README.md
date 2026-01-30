@@ -31,4 +31,13 @@ You can build a `RunnerConfig` from environment variables:
   `CRONIQ_RETRY_BASE_MS`, `CRONIQ_RETRY_MAX_MS`, `CRONIQ_RETRY_MAX_ATTEMPTS`, `CRONIQ_MAX_INFLIGHT`, `CRONIQ_CAPABILITIES`,
   `CRONIQ_RUNNER_REGISTER_JOBS`.
 
-Use `loadRunnerConfigFromEnv()` to validate and parse these values.
+Use `loadRunnerConfigFromEnv()` to validate and parse these values. You can optionally pass
+defaults for runner-specific API keys and runner ids:
+
+```ts
+const config = loadRunnerConfigFromEnv(process.env, {
+  runnerApiKeyEnv: "CRONIQ_RUNNER_NODE_API_KEY",
+  defaultRunnerId: "default",
+  runnerApiKeyDefaultRunnerId: "node-default",
+});
+```

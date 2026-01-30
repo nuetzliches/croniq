@@ -36,7 +36,9 @@ public sealed record RunnerConfig
     public long OutboxMaxBytes { get; init; } = 1_000_000;
     public ILogger? Logger { get; init; }
 
-    public static RunnerConfig FromEnvironment(IDictionary<string, string?>? env = null)
+    public static RunnerConfig FromEnvironment(
+        IDictionary<string, string?>? env = null,
+        RunnerEnvironmentDefaults? defaults = null)
     {
         env ??= System.Environment.GetEnvironmentVariables()
             .Cast<System.Collections.DictionaryEntry>()
@@ -55,7 +57,30 @@ public sealed record RunnerConfig
         var baseUrl = Require("CRONIQ_API_BASEURL");
         var tenantId = Require("CRONIQ_TENANT_ID");
         var environment = Require("CRONIQ_ENVIRONMENT");
-        var runnerId = Require("CRONIQ_RUNNER_ID");
+
+        var runnerApiKey = !string.IsNullOrWhiteSpace(defaults?.RunnerApiKeyEnv)
+            ? GetOptional(env, defaults.RunnerApiKeyEnv!)
+            : null;
+
+        var runnerId = GetOptional(env, "CRONIQ_RUNNER_ID");
+        if (string.IsNullOrWhiteSpace(runnerId))
+        {
+            runnerId = !string.IsNullOrWhiteSpace(runnerApiKey)
+                && !string.IsNullOrWhiteSpace(defaults?.RunnerApiKeyDefaultRunnerId)
+                ? defaults.RunnerApiKeyDefaultRunnerId
+                : defaults?.DefaultRunnerId;
+        }
+        else if (string.Equals(runnerId, "default", StringComparison.OrdinalIgnoreCase)
+            && !string.IsNullOrWhiteSpace(runnerApiKey)
+            && !string.IsNullOrWhiteSpace(defaults?.RunnerApiKeyDefaultRunnerId))
+        {
+            runnerId = defaults.RunnerApiKeyDefaultRunnerId;
+        }
+
+        if (string.IsNullOrWhiteSpace(runnerId))
+        {
+            throw new InvalidOperationException("CRONIQ_RUNNER_ID is required");
+        }
         var runnerInstanceId = GetOptional(env, "CRONIQ_RUNNER_INSTANCE_ID");
         if (string.IsNullOrWhiteSpace(runnerInstanceId))
         {
@@ -63,6 +88,10 @@ public sealed record RunnerConfig
         }
 
         var apiKey = GetOptional(env, "CRONIQ_API_KEY");
+        if (string.IsNullOrWhiteSpace(apiKey) && !string.IsNullOrWhiteSpace(runnerApiKey))
+        {
+            apiKey = runnerApiKey;
+        }
         var bearerToken = GetOptional(env, "CRONIQ_BEARER_TOKEN");
         var hasApiKey = !string.IsNullOrWhiteSpace(apiKey);
         var hasBearer = !string.IsNullOrWhiteSpace(bearerToken);

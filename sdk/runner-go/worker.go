@@ -473,20 +473,20 @@ type eventsRequest struct {
 }
 
 type heartbeatRequest struct {
-	EnvironmentTag string     `json:"environmentTag"`
-	RunnerId       string     `json:"runnerId"`
-	RunnerInstanceId string   `json:"runnerInstanceId,omitempty"`
-	SeenAtUtc      *time.Time `json:"seenAtUtc,omitempty"`
-	MetadataJson   string     `json:"metadataJson,omitempty"`
+	EnvironmentTag   string     `json:"environmentTag"`
+	RunnerId         string     `json:"runnerId"`
+	RunnerInstanceId string     `json:"runnerInstanceId,omitempty"`
+	SeenAtUtc        *time.Time `json:"seenAtUtc,omitempty"`
+	MetadataJson     string     `json:"metadataJson,omitempty"`
 }
 
 type runnerJobRegistrationRequest struct {
-	EnvironmentTag  string            `json:"environmentTag"`
-	RunnerId        string            `json:"runnerId"`
-	RunnerInstanceId string           `json:"runnerInstanceId,omitempty"`
-	JobKey          string            `json:"jobKey"`
-	Description     string            `json:"description,omitempty"`
-	Metadata        map[string]string `json:"metadata,omitempty"`
+	EnvironmentTag   string            `json:"environmentTag"`
+	RunnerId         string            `json:"runnerId"`
+	RunnerInstanceId string            `json:"runnerInstanceId,omitempty"`
+	JobKey           string            `json:"jobKey"`
+	Description      string            `json:"description,omitempty"`
+	Metadata         map[string]string `json:"metadata,omitempty"`
 }
 
 type jobRegistrationResponse struct {
@@ -525,7 +525,17 @@ type RunnerConfig struct {
 	OutboxMaxBytes      int64
 }
 
+type RunnerEnvDefaults struct {
+	RunnerApiKeyEnv             string
+	DefaultRunnerId             string
+	RunnerApiKeyDefaultRunnerId string
+}
+
 func LoadRunnerConfigFromEnv() (RunnerConfig, error) {
+	return LoadRunnerConfigFromEnvWithDefaults(RunnerEnvDefaults{})
+}
+
+func LoadRunnerConfigFromEnvWithDefaults(defaults RunnerEnvDefaults) (RunnerConfig, error) {
 	baseURL, err := requiredEnv("CRONIQ_API_BASEURL")
 	if err != nil {
 		return RunnerConfig{}, err
@@ -538,9 +548,24 @@ func LoadRunnerConfigFromEnv() (RunnerConfig, error) {
 	if err != nil {
 		return RunnerConfig{}, err
 	}
-	runnerID, err := requiredEnv("CRONIQ_RUNNER_ID")
-	if err != nil {
-		return RunnerConfig{}, err
+
+	runnerApiKey := ""
+	if strings.TrimSpace(defaults.RunnerApiKeyEnv) != "" {
+		runnerApiKey = strings.TrimSpace(os.Getenv(defaults.RunnerApiKeyEnv))
+	}
+
+	runnerID := strings.TrimSpace(os.Getenv("CRONIQ_RUNNER_ID"))
+	if runnerID == "" {
+		if runnerApiKey != "" && strings.TrimSpace(defaults.RunnerApiKeyDefaultRunnerId) != "" {
+			runnerID = strings.TrimSpace(defaults.RunnerApiKeyDefaultRunnerId)
+		} else {
+			runnerID = strings.TrimSpace(defaults.DefaultRunnerId)
+		}
+	} else if runnerApiKey != "" && strings.EqualFold(runnerID, "default") && strings.TrimSpace(defaults.RunnerApiKeyDefaultRunnerId) != "" {
+		runnerID = strings.TrimSpace(defaults.RunnerApiKeyDefaultRunnerId)
+	}
+	if runnerID == "" {
+		return RunnerConfig{}, errors.New("CRONIQ_RUNNER_ID is required")
 	}
 	runnerInstanceID := getOptionalEnv("CRONIQ_RUNNER_INSTANCE_ID")
 	if runnerInstanceID == "" {
@@ -548,6 +573,9 @@ func LoadRunnerConfigFromEnv() (RunnerConfig, error) {
 	}
 
 	apiKey := strings.TrimSpace(os.Getenv("CRONIQ_API_KEY"))
+	if apiKey == "" && runnerApiKey != "" {
+		apiKey = runnerApiKey
+	}
 	bearerToken := strings.TrimSpace(os.Getenv("CRONIQ_BEARER_TOKEN"))
 	if (apiKey == "" && bearerToken == "") || (apiKey != "" && bearerToken != "") {
 		return RunnerConfig{}, errors.New("set exactly one of CRONIQ_API_KEY or CRONIQ_BEARER_TOKEN")
@@ -720,24 +748,24 @@ type handlerRegistration struct {
 }
 
 type Runner struct {
-	config   RunnerConfig
-	client   *Client
-	logger   RunnerLogger
-	handlers map[string]handlerRegistration
-	handlersMu sync.RWMutex
-	grpcConn *grpcRunnerConnection
-	outbox   *outboxStore
-	fatalErr chan error
-	cancel   context.CancelFunc
+	config          RunnerConfig
+	client          *Client
+	logger          RunnerLogger
+	handlers        map[string]handlerRegistration
+	handlersMu      sync.RWMutex
+	grpcConn        *grpcRunnerConnection
+	outbox          *outboxStore
+	fatalErr        chan error
+	cancel          context.CancelFunc
 	transportCancel context.CancelFunc
-	inflight sync.WaitGroup
-	activeMu sync.Mutex
-	activeLeases map[string]Lease
-	renewMu sync.Mutex
-	renewCancels map[string]context.CancelFunc
-	abandonedMu sync.RWMutex
-	abandoned map[string]struct{}
-	registerJobs bool
+	inflight        sync.WaitGroup
+	activeMu        sync.Mutex
+	activeLeases    map[string]Lease
+	renewMu         sync.Mutex
+	renewCancels    map[string]context.CancelFunc
+	abandonedMu     sync.RWMutex
+	abandoned       map[string]struct{}
+	registerJobs    bool
 }
 
 func NewRunner(config RunnerConfig) (*Runner, error) {
@@ -793,14 +821,14 @@ func NewRunner(config RunnerConfig) (*Runner, error) {
 	}
 
 	return &Runner{
-		config: config,
-		client: client,
-		logger: &defaultRunnerLogger{},
-		handlers: map[string]handlerRegistration{},
-		outbox: newOutboxStore(config.OutboxPath, config.OutboxMaxEntries, config.OutboxMaxBytes),
+		config:       config,
+		client:       client,
+		logger:       &defaultRunnerLogger{},
+		handlers:     map[string]handlerRegistration{},
+		outbox:       newOutboxStore(config.OutboxPath, config.OutboxMaxEntries, config.OutboxMaxBytes),
 		activeLeases: map[string]Lease{},
 		renewCancels: map[string]context.CancelFunc{},
-		abandoned: map[string]struct{}{},
+		abandoned:    map[string]struct{}{},
 		registerJobs: registerJobs,
 	}, nil
 }
@@ -918,10 +946,10 @@ func (r *Runner) registerJobDefinitions(ctx context.Context) error {
 
 	for _, entry := range entries {
 		request := runnerJobRegistrationRequest{
-			EnvironmentTag:  r.config.EnvironmentTag,
-			RunnerId:        r.config.RunnerId,
+			EnvironmentTag:   r.config.EnvironmentTag,
+			RunnerId:         r.config.RunnerId,
 			RunnerInstanceId: r.config.RunnerInstanceId,
-			JobKey:          entry.jobKey,
+			JobKey:           entry.jobKey,
 		}
 		if entry.registration != nil {
 			request.Description = entry.registration.Description
@@ -1226,7 +1254,7 @@ func (r *Runner) buildHeartbeatMetadata() string {
 		transportState = "grpc"
 	}
 	metadata := map[string]any{
-		"runnerInstanceId":   r.config.RunnerInstanceId,
+		"runnerInstanceId":    r.config.RunnerInstanceId,
 		"transportMode":       r.config.TransportMode,
 		"transportState":      transportState,
 		"allowTestExecutions": r.config.AllowTestExecutions,
@@ -1245,7 +1273,7 @@ func (r *Runner) buildHeartbeatMetadata() string {
 
 func (r *Runner) buildDisconnectMetadata() string {
 	metadata := map[string]any{
-		"runnerInstanceId":   r.config.RunnerInstanceId,
+		"runnerInstanceId":    r.config.RunnerInstanceId,
 		"transportMode":       r.config.TransportMode,
 		"transportState":      "disconnected",
 		"allowTestExecutions": r.config.AllowTestExecutions,

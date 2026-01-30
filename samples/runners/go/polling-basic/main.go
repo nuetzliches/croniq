@@ -16,56 +16,33 @@ import (
 func main() {
 	log.SetOutput(os.Stdout)
 
-	baseURL := env("CRONIQ_API_BASEURL", "http://localhost:5080")
-	tenantID := env("CRONIQ_TENANT_ID", "default")
-	environment := env("CRONIQ_ENVIRONMENT", "dev")
-	runnerApiKey := strings.TrimSpace(os.Getenv("CRONIQ_RUNNER_GO_API_KEY"))
-	apiKey := strings.TrimSpace(os.Getenv("CRONIQ_API_KEY"))
-	if apiKey == "" {
-		apiKey = runnerApiKey
-	}
-	bearerToken := strings.TrimSpace(os.Getenv("CRONIQ_BEARER_TOKEN"))
-	runnerID := strings.TrimSpace(os.Getenv("CRONIQ_RUNNER_ID"))
-	if runnerID == "" {
-		runnerID = "default"
-	}
-	if runnerApiKey != "" && strings.EqualFold(runnerID, "default") {
-		runnerID = "go-default"
-	}
-	runnerInstanceID := strings.TrimSpace(os.Getenv("CRONIQ_RUNNER_INSTANCE_ID"))
-	jobKey := env("CRONIQ_JOB_KEY", "samples:go-job")
-
-	if (apiKey == "" && bearerToken == "") || (apiKey != "" && bearerToken != "") {
-		log.Fatal("Set exactly one of CRONIQ_API_KEY or CRONIQ_BEARER_TOKEN")
+	jobKey := strings.TrimSpace(os.Getenv("CRONIQ_JOB_KEY"))
+	if jobKey == "" {
+		jobKey = "samples:go-job"
 	}
 
-	runner, err := croniqrunner.NewRunner(croniqrunner.RunnerConfig{
-		Config: croniqrunner.Config{
-			BaseURL:        baseURL,
-			TenantID:       tenantID,
-			EnvironmentTag: environment,
-			ApiKey:         apiKey,
-			BearerToken:    bearerToken,
-			Timeout:        60 * time.Second,
-		},
-		RunnerId:          runnerID,
-		RunnerInstanceId:  runnerInstanceID,
-		GrpcBaseURL:       env("CRONIQ_GRPC_BASEURL", baseURL),
-		TransportMode:     croniqrunner.TransportAuto,
-		HeartbeatInterval: 15 * time.Second,
-		MaxInflight:       1,
+	config, err := croniqrunner.LoadRunnerConfigFromEnvWithDefaults(croniqrunner.RunnerEnvDefaults{
+		RunnerApiKeyEnv:             "CRONIQ_RUNNER_GO_API_KEY",
+		DefaultRunnerId:             "default",
+		RunnerApiKeyDefaultRunnerId: "go-default",
 	})
+	if err != nil {
+		log.Fatal(err)
+	}
+	config.HeartbeatInterval = 15 * time.Second
+
+	runner, err := croniqrunner.NewRunner(config)
 	if err != nil {
 		log.Fatal(err)
 	}
 
 	log.Printf("Croniq runner (go)")
-	log.Printf("- base_url:    %s", baseURL)
-	log.Printf("- tenant_id:   %s", tenantID)
-	log.Printf("- environment: %s", environment)
-	log.Printf("- runner_id:   %s", runnerID)
-	if runnerInstanceID != "" {
-		log.Printf("- runner_instance: %s", runnerInstanceID)
+	log.Printf("- base_url:    %s", config.BaseURL)
+	log.Printf("- tenant_id:   %s", config.TenantID)
+	log.Printf("- environment: %s", config.EnvironmentTag)
+	log.Printf("- runner_id:   %s", config.RunnerId)
+	if config.RunnerInstanceId != "" {
+		log.Printf("- runner_instance: %s", config.RunnerInstanceId)
 	}
 	log.Printf("- job_key: %s", jobKey)
 
@@ -117,12 +94,4 @@ func main() {
 		}
 		log.Fatalf("runner failed: %v", err)
 	}
-}
-
-func env(key, fallback string) string {
-	value := strings.TrimSpace(os.Getenv(key))
-	if value == "" {
-		return fallback
-	}
-	return value
 }

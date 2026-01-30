@@ -4,33 +4,61 @@ import asyncio
 import signal
 from pathlib import Path
 
-sdk_root = Path(__file__).resolve().parents[4] / "sdk" / "runner-python"
-sys.path.insert(0, str(sdk_root))
 
-from croniq_runner import (
-    CroniqRunner,
-    RunnerConfig,
-    RunnerIdInUseError,
-    RunnerJobRegistrationDeniedError,
-    RunnerLogger,
-    RunnerJobRegistration,
-)
+def load_runner():
+    sdk_root = Path(__file__).resolve().parents[4] / "sdk" / "runner-python"
+    if sdk_root.exists():
+        sdk_path = str(sdk_root)
+        if sdk_path not in sys.path:
+            sys.path.insert(0, sdk_path)
+
+    try:
+        from croniq_runner import (
+            CroniqRunner,
+            RunnerConfig,
+            RunnerIdInUseError,
+            RunnerJobRegistrationDeniedError,
+            RunnerLogger,
+            RunnerJobRegistration,
+        )
+    except ModuleNotFoundError as exc:
+        missing = exc.name or "unknown"
+        if missing == "croniq_runner":
+            print("Croniq Python SDK not found. Run from the repo or install the SDK first.")
+        else:
+            print(f"Missing Python dependency '{missing}'. Run: pip install -r requirements.txt")
+        raise SystemExit(1)
+
+    return (
+        CroniqRunner,
+        RunnerConfig,
+        RunnerIdInUseError,
+        RunnerJobRegistrationDeniedError,
+        RunnerLogger,
+        RunnerJobRegistration,
+    )
 
 
 async def main() -> None:
-    runner_api_key = os.getenv("CRONIQ_RUNNER_PYTHON_API_KEY", "").strip()
-    api_key = os.getenv("CRONIQ_API_KEY", "").strip()
-    if not api_key and runner_api_key:
-        os.environ["CRONIQ_API_KEY"] = runner_api_key
-    runner_id = os.getenv("CRONIQ_RUNNER_ID", "").strip()
-    if not runner_id or (runner_id.lower() == "default" and runner_api_key):
-        os.environ["CRONIQ_RUNNER_ID"] = "python-default" if runner_api_key else "default"
+    (
+        CroniqRunner,
+        RunnerConfig,
+        RunnerIdInUseError,
+        RunnerJobRegistrationDeniedError,
+        RunnerLogger,
+        RunnerJobRegistration,
+    ) = load_runner()
 
     try:
-        config = RunnerConfig.from_env()
+        config = RunnerConfig.from_env(
+            runner_api_key_env="CRONIQ_RUNNER_PYTHON_API_KEY",
+            default_runner_id="default",
+            runner_api_key_default_runner_id="python-default",
+        )
     except ValueError as exc:
         print(f"invalid runner config: {exc}")
-        raise
+        print("Set CRONIQ_API_BASEURL, CRONIQ_TENANT_ID, CRONIQ_ENVIRONMENT, and CRONIQ_RUNNER_ID.")
+        raise SystemExit(1)
 
     runner = CroniqRunner(config)
     job_key = os.getenv("CRONIQ_JOB_KEY", "samples:python-job").strip()
