@@ -49,12 +49,12 @@ export const JobResponse = z
         variant: z.string().nullable(),
         description: z.string().nullable(),
         metadata: z.record(z.string(), z.string()).nullable(),
+        isActive: z.boolean(),
         assignedRunnerId: z.string().nullable(),
         assignedBy: z.string().nullable(),
         assignedAtUtc: z.iso.datetime({ offset: true }).nullable(),
         assignmentSource: z.string().nullable(),
         assignmentNotes: z.string().nullable(),
-        isActive: z.boolean(),
     })
     .partial();
 export type JobResponse = z.infer<typeof JobResponse>;
@@ -70,6 +70,17 @@ export const UpsertJobRequest = z.object({
     assignmentNotes: z.string().nullish(),
 });
 export type UpsertJobRequest = z.infer<typeof UpsertJobRequest>;
+export const RunnerJobRegistrationRequest = z.object({
+    environmentTag: z.string().nullish(),
+    runnerId: z.string().min(1),
+    runnerInstanceId: z.string().nullish(),
+    jobKey: z.string().min(1),
+    description: z.string().nullish(),
+    metadata: z.record(z.string(), z.string()).nullish(),
+});
+export type RunnerJobRegistrationRequest = z.infer<
+    typeof RunnerJobRegistrationRequest
+>;
 export const ExecutionKind = z.union([z.literal(0), z.literal(1)]);
 export type ExecutionKind = z.infer<typeof ExecutionKind>;
 export const ExecutionStatus = z.union([
@@ -685,6 +696,13 @@ export const RunnerListResponse = z
     .object({ runners: z.array(RunnerStatusModel).nullable() })
     .partial();
 export type RunnerListResponse = z.infer<typeof RunnerListResponse>;
+export const RunnerDrainRequest = z
+    .object({
+        environmentTag: z.string().nullable(),
+        draining: z.boolean().nullable(),
+    })
+    .partial();
+export type RunnerDrainRequest = z.infer<typeof RunnerDrainRequest>;
 export const WorkerHeartbeatRequest = z.object({
     environmentTag: z.string().nullish(),
     instanceId: z.string().min(1),
@@ -713,6 +731,7 @@ export const schemas = {
     TenantResponse,
     JobResponse,
     UpsertJobRequest,
+    RunnerJobRegistrationRequest,
     ExecutionKind,
     ExecutionStatus,
     ExecutionResponse,
@@ -776,6 +795,7 @@ export const schemas = {
     RunnerHeartbeatRequest,
     RunnerStatusModel,
     RunnerListResponse,
+    RunnerDrainRequest,
     WorkerHeartbeatRequest,
     WorkerStatusModel,
     WorkerListResponse,

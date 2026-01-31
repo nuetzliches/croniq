@@ -5,6 +5,7 @@ import {
     UpsertTenantRequest,
     JobResponse,
     UpsertJobRequest,
+    RunnerJobRegistrationRequest,
     ExecutionKind,
     ExecutionStatus,
     ExecutionResponse,
@@ -60,6 +61,7 @@ import {
     RunnerHeartbeatRequest,
     RunnerStatusModel,
     RunnerListResponse,
+    RunnerDrainRequest,
     WorkerHeartbeatRequest,
     WorkerStatusModel,
     WorkerListResponse,
@@ -516,6 +518,30 @@ export const TenantsApi: EndpointDefinition[] = [
         errors: [{ status: 400, description: `Bad Request`, schema: z.void() }],
     },
     {
+        method: 'post',
+        path: '/tenants/:tenantId/jobs:register',
+        description: `Registers a job definition via runner self-registration, honoring the registration policy.`,
+        requestFormat: 'json',
+        parameters: [
+            {
+                name: 'body',
+                type: 'Body',
+                schema: RunnerJobRegistrationRequest,
+            },
+            { name: 'tenantId', type: 'Path', schema: z.string() },
+            {
+                name: 'environment',
+                type: 'Query',
+                schema: z.string().optional(),
+            },
+        ],
+        response: JobResponse,
+        errors: [
+            { status: 400, description: `Bad Request`, schema: z.void() },
+            { status: 403, description: `Forbidden`, schema: z.void() },
+        ],
+    },
+    {
         method: 'get',
         path: '/tenants/:tenantId/jobs/:jobId',
         description: `Returns the job definition for the specified job key.`,
@@ -593,6 +619,47 @@ export const TenantsApi: EndpointDefinition[] = [
         response: RunnerListResponse,
     },
     {
+        method: 'delete',
+        path: '/tenants/:tenantId/runners/:runnerId',
+        description: `Removes the runner presence record for the tenant/environment.`,
+        requestFormat: 'json',
+        parameters: [
+            { name: 'tenantId', type: 'Path', schema: z.string() },
+            { name: 'runnerId', type: 'Path', schema: z.string() },
+            {
+                name: 'environment',
+                type: 'Query',
+                schema: z.string().optional(),
+            },
+        ],
+        response: z.void(),
+        errors: [
+            { status: 400, description: `Bad Request`, schema: z.void() },
+            { status: 404, description: `Not Found`, schema: z.void() },
+        ],
+    },
+    {
+        method: 'post',
+        path: '/tenants/:tenantId/runners/:runnerId:drain',
+        description: `Marks a runner as draining by updating its heartbeat metadata.`,
+        requestFormat: 'json',
+        parameters: [
+            { name: 'body', type: 'Body', schema: RunnerDrainRequest },
+            { name: 'tenantId', type: 'Path', schema: z.string() },
+            { name: 'runnerId', type: 'Path', schema: z.string() },
+            {
+                name: 'environment',
+                type: 'Query',
+                schema: z.string().optional(),
+            },
+        ],
+        response: z.void(),
+        errors: [
+            { status: 400, description: `Bad Request`, schema: z.void() },
+            { status: 404, description: `Not Found`, schema: z.void() },
+        ],
+    },
+    {
         method: 'post',
         path: '/tenants/:tenantId/runners/heartbeat',
         description: `Records a runner heartbeat to track availability.`,
@@ -604,6 +671,27 @@ export const TenantsApi: EndpointDefinition[] = [
                 name: 'environment',
                 type: 'Query',
                 schema: z.string().optional(),
+            },
+        ],
+        response: z.void(),
+        errors: [{ status: 400, description: `Bad Request`, schema: z.void() }],
+    },
+    {
+        method: 'get',
+        path: '/tenants/:tenantId/runners/stream',
+        description: `Server-sent events stream for runner presence updates.`,
+        requestFormat: 'json',
+        parameters: [
+            { name: 'tenantId', type: 'Path', schema: z.string() },
+            {
+                name: 'environment',
+                type: 'Query',
+                schema: z.string().optional(),
+            },
+            {
+                name: 'includeOffline',
+                type: 'Query',
+                schema: z.boolean().optional(),
             },
         ],
         response: z.void(),

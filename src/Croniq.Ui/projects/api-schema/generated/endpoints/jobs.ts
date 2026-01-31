@@ -37,7 +37,9 @@ import {
     PersistenceHealthResponse,
     RotateWebhookSecretRequest,
     RotateWebhookSecretResponse,
+    RunnerDrainRequest,
     RunnerHeartbeatRequest,
+    RunnerJobRegistrationRequest,
     RunnerStatusModel,
     RunnerListResponse,
     ScheduleDeadLetterResponse,
@@ -81,7 +83,7 @@ export const JobsApi: EndpointDefinition[] = [
     {
         method: 'post',
         path: '/jobs/trigger',
-        description: `Executes a job immediately or schedules a one-off run when DelaySeconds is provided.`,
+        description: `Executes a job immediately when registered locally; otherwise enqueues a one-off trigger (DelaySeconds supported).`,
         requestFormat: 'json',
         parameters: [{ name: 'body', type: 'Body', schema: TriggerJobRequest }],
         response: TriggerJobResponse,

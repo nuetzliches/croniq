@@ -399,6 +399,71 @@
         }
       }
     },
+    "/tenants/{tenantId}/jobs:register": {
+      "post": {
+        "tags": [
+          "Croniq.ApiHost"
+        ],
+        "summary": "Register job (runner)",
+        "description": "Registers a job definition via runner self-registration, honoring the registration policy.",
+        "operationId": "Jobs_Register",
+        "parameters": [
+          {
+            "name": "tenantId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "environment",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RunnerJobRegistrationRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobResponse"
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request"
+          },
+          "403": {
+            "description": "Forbidden"
+          }
+        }
+      }
+    },
     "/tenants/{tenantId}/jobs/{jobId}/activate": {
       "post": {
         "tags": [
@@ -2959,7 +3024,7 @@
           "Croniq.ApiHost"
         ],
         "summary": "Trigger a job manually",
-        "description": "Executes a job immediately or schedules a one-off run when DelaySeconds is provided.",
+        "description": "Executes a job immediately when registered locally; otherwise enqueues a one-off trigger (DelaySeconds supported).",
         "operationId": "Jobs_Trigger",
         "requestBody": {
           "content": {
@@ -3254,7 +3319,7 @@
           "Croniq.ApiHost"
         ],
         "summary": "List runners",
-          "description": "Lists runners for the tenant/environment (use includeOffline=true to return offline runners within retention).",
+        "description": "Lists runners for the tenant/environment (use includeOffline=true to return offline runners within retention).",
         "operationId": "Runners_List",
         "parameters": [
           {
@@ -3265,21 +3330,21 @@
               "type": "string"
             }
           },
-            {
-              "name": "environment",
-              "in": "query",
-              "schema": {
-                "type": "string"
-              }
-            },
-            {
-              "name": "includeOffline",
-              "in": "query",
-              "schema": {
-                "type": "boolean"
-              }
+          {
+            "name": "environment",
+            "in": "query",
+            "schema": {
+              "type": "string"
             }
-          ],
+          },
+          {
+            "name": "includeOffline",
+            "in": "query",
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": "OK",
@@ -3290,6 +3355,150 @@
                 }
               }
             }
+          }
+        }
+      }
+    },
+    "/tenants/{tenantId}/runners/stream": {
+      "get": {
+        "tags": [
+          "Croniq.ApiHost"
+        ],
+        "summary": "Stream runners",
+        "description": "Server-sent events stream for runner presence updates.",
+        "operationId": "Runners_Stream",
+        "parameters": [
+          {
+            "name": "tenantId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "environment",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "includeOffline",
+            "in": "query",
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "400": {
+            "description": "Bad Request"
+          }
+        }
+      }
+    },
+    "/tenants/{tenantId}/runners/{runnerId}:drain": {
+      "post": {
+        "tags": [
+          "Croniq.ApiHost"
+        ],
+        "summary": "Drain runner",
+        "description": "Marks a runner as draining by updating its heartbeat metadata.",
+        "operationId": "Runners_Drain",
+        "parameters": [
+          {
+            "name": "tenantId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "runnerId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "environment",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RunnerDrainRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "No Content"
+          },
+          "400": {
+            "description": "Bad Request"
+          },
+          "404": {
+            "description": "Not Found"
+          }
+        }
+      }
+    },
+    "/tenants/{tenantId}/runners/{runnerId}": {
+      "delete": {
+        "tags": [
+          "Croniq.ApiHost"
+        ],
+        "summary": "Deregister runner",
+        "description": "Removes the runner presence record for the tenant/environment.",
+        "operationId": "Runners_Deregister",
+        "parameters": [
+          {
+            "name": "tenantId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "runnerId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "environment",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
+          },
+          "400": {
+            "description": "Bad Request"
+          },
+          "404": {
+            "description": "Not Found"
           }
         }
       }
@@ -3991,6 +4200,9 @@
             },
             "nullable": true
           },
+          "isActive": {
+            "type": "boolean"
+          },
           "assignedRunnerId": {
             "type": "string",
             "nullable": true
@@ -4011,9 +4223,6 @@
           "assignmentNotes": {
             "type": "string",
             "nullable": true
-          },
-          "isActive": {
-            "type": "boolean"
           }
         },
         "additionalProperties": false
@@ -4230,6 +4439,20 @@
         },
         "additionalProperties": false
       },
+      "RunnerDrainRequest": {
+        "type": "object",
+        "properties": {
+          "environmentTag": {
+            "type": "string",
+            "nullable": true
+          },
+          "draining": {
+            "type": "boolean",
+            "nullable": true
+          }
+        },
+        "additionalProperties": false
+      },
       "RunnerHeartbeatRequest": {
         "required": [
           "runnerId"
@@ -4255,6 +4478,43 @@
           },
           "metadataJson": {
             "type": "string",
+            "nullable": true
+          }
+        },
+        "additionalProperties": false
+      },
+      "RunnerJobRegistrationRequest": {
+        "required": [
+          "jobKey",
+          "runnerId"
+        ],
+        "type": "object",
+        "properties": {
+          "environmentTag": {
+            "type": "string",
+            "nullable": true
+          },
+          "runnerId": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "runnerInstanceId": {
+            "type": "string",
+            "nullable": true
+          },
+          "jobKey": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "description": {
+            "type": "string",
+            "nullable": true
+          },
+          "metadata": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            },
             "nullable": true
           }
         },
