@@ -54,6 +54,7 @@ Set:
 | Symptom                                              | Likely Cause                  | Fix                                                                                                                   |
 | ---------------------------------------------------- | ----------------------------- | --------------------------------------------------------------------------------------------------------------------- |
 | `scripts\\devstack-hosts.ps1` fails with permissions | Not running as Administrator  | Run PowerShell as Administrator and re-run the script.                                                                |
+| `scripts/devstack-hosts.sh` fails with permissions   | Missing sudo/root privileges  | Re-run the script with `sudo` (or as root) so it can update `/etc/hosts`.                                              |
 | `scripts\\devstack-import-caddy-cert.ps1` fails      | Caddy disabled or not running | Ensure `CRONIQ_DEVSTACK_CADDY` is `true` and the AppHost is running, then rerun the script from an elevated terminal. |
 
 ## Still Stuck?

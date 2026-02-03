@@ -50,7 +50,9 @@ Use the same `CRONIQ_*` values you would for the AppHost, especially persistence
 
 ## Local TLS (Caddy)
 
-1. Add host entries (Windows: `C:\Windows\System32\drivers\etc\hosts`) or run `scripts\devstack-hosts.ps1` from an elevated PowerShell:
+1. Add host entries (Windows: `C:\Windows\System32\drivers\etc\hosts`, Linux/macOS: `/etc/hosts`) or run the helper script:
+   - Windows (elevated PowerShell): `scripts\devstack-hosts.ps1`
+   - Linux/macOS (sudo): `sudo bash scripts/devstack-hosts.sh`
    - `127.0.0.1 api.croniq.local`
    - `127.0.0.1 dmz.croniq.local`
    - `127.0.0.1 hooks.croniq.local`

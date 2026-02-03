@@ -3,7 +3,7 @@
   "configurations": [
     {
       "name": "Devstack AppHost (dotnet run)",
-      "type": "coreclr",
+      "type": "node",
       "request": "launch",
       "program": "dotnet",
       "args": [

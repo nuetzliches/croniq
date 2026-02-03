@@ -578,6 +578,7 @@ if (uiEnabled)
 {
     var uiPath = Path.Combine(repoRoot, "src", "Croniq.Ui");
     var npmCommand = OperatingSystem.IsWindows() ? "npm.cmd" : "npm";
+    EnsureNpmDependencies(npmCommand, uiPath, "tsx");
     var uiArgs = new[]
     {
         "run",
@@ -663,6 +664,7 @@ var docsPath = Path.Combine(repoRoot, "docs");
 if (docsEnabled && Directory.Exists(docsPath))
 {
     var npmCommand = OperatingSystem.IsWindows() ? "npm.cmd" : "npm";
+    EnsureNpmDependencies(npmCommand, docsPath);
     var docsArgs = new[]
     {
         "run",
@@ -1414,6 +1416,73 @@ static string? FindRepoRoot(string startDirectory)
     }
 
     return null;
+}
+
+static void EnsureNpmDependencies(string npmCommand, string workingDirectory, string? requiredBinary = null)
+{
+    if (!Directory.Exists(workingDirectory))
+    {
+        return;
+    }
+
+    var packageJsonPath = Path.Combine(workingDirectory, "package.json");
+    if (!File.Exists(packageJsonPath))
+    {
+        return;
+    }
+
+    var nodeModulesPath = Path.Combine(workingDirectory, "node_modules");
+    if (Directory.Exists(nodeModulesPath))
+    {
+        if (string.IsNullOrWhiteSpace(requiredBinary))
+        {
+            return;
+        }
+
+        var binName = OperatingSystem.IsWindows() ? string.Concat(requiredBinary, ".cmd") : requiredBinary;
+        var binPath = Path.Combine(nodeModulesPath, ".bin", binName);
+        if (File.Exists(binPath))
+        {
+            return;
+        }
+    }
+
+    var useCi = File.Exists(Path.Combine(workingDirectory, "package-lock.json"));
+    var startInfo = new ProcessStartInfo
+    {
+        FileName = npmCommand,
+        WorkingDirectory = workingDirectory,
+        RedirectStandardOutput = true,
+        RedirectStandardError = true
+    };
+
+    startInfo.ArgumentList.Add(useCi ? "ci" : "install");
+
+    using var process = Process.Start(startInfo);
+    if (process is null)
+    {
+        return;
+    }
+
+    if (!process.WaitForExit((int)TimeSpan.FromMinutes(10).TotalMilliseconds))
+    {
+        try
+        {
+            process.Kill(entireProcessTree: true);
+        }
+        catch
+        {
+            // ignore
+        }
+
+        return;
+    }
+
+    if (process.ExitCode != 0)
+    {
+        Console.WriteLine(
+            $"npm {(useCi ? "ci" : "install")} failed in '{workingDirectory}' with exit code {process.ExitCode}.");
+    }
 }
 
 static string ResolveGoRunnerExecutable(string repoRoot, string runnerPath, string goCommand)
