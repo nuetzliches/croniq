@@ -1,0 +1,24 @@
+[package]
+name = "croniq-runner"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Runner protocol: HTTP Pull-API, Registry, Work Queue, Capability-Routing"
+
+[dependencies]
+axum = { version = "0.8", features = ["json", "macros"] }
+tokio = { version = "1", features = ["full"] }
+chrono = { version = "0.4", features = ["serde"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+uuid = { version = "1", features = ["v4", "serde"] }
+tracing = "0.1"
+
+[dev-dependencies]
+axum = { version = "0.8", features = ["json", "macros"] }
+tower = { version = "0.5", features = ["util"] }
+http-body-util = "0.1"
+tokio = { version = "1", features = ["full", "test-util"] }
+pretty_assertions = "1"
+serde_json = "1"

@@ -1,0 +1,15 @@
+[package]
+name = "croniq-execution"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Execution policies: retry strategies, timeout, and dead-letter handling"
+
+[dependencies]
+chrono = { version = "0.4", features = ["serde"] }
+serde = { version = "1", features = ["derive"] }
+thiserror = "2"
+rand = "0.9"
+
+[dev-dependencies]
+pretty_assertions = "1"

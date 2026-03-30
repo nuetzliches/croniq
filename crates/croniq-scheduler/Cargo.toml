@@ -1,0 +1,16 @@
+[package]
+name = "croniq-scheduler"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Schedule evaluation, calendar logic, trigger state machine, and misfire policy"
+
+[dependencies]
+croniq-config = { path = "../croniq-config" }
+chrono = { version = "0.4", features = ["serde"] }
+chrono-tz = "0.10"
+serde = { version = "1", features = ["derive"] }
+thiserror = "2"
+
+[dev-dependencies]
+pretty_assertions = "1"

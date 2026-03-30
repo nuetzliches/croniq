@@ -1,0 +1,358 @@
+//! Croniqfile loader: parses, validates, and compiles the operator's configuration.
+//!
+//! Produces:
+//! - A `RuntimeConfig` with fully resolved job definitions
+//! - A map of job key → `Trigger` (ready-to-tick scheduler state machines)
+
+use std::collections::HashMap;
+use std::path::Path;
+
+use chrono::{DateTime, Utc};
+use croniq_config::compile::{self, RuntimeConfig};
+use croniq_config::parser::Parser;
+use croniq_scheduler::{
+    misfire::MisfirePolicy,
+    schedule::Schedule,
+    trigger::{Trigger, TriggerState},
+};
+use croniq_store::{
+    models::JobStatus,
+    traits::JobStore,
+};
+use thiserror::Error;
+
+#[derive(Debug, Error)]
+pub enum LoadError {
+    #[error("I/O error: {0}")]
+    Io(#[from] std::io::Error),
+
+    #[error("parse error: {0}")]
+    Parse(String),
+
+    #[error("schedule error in job '{job}': {reason}")]
+    Schedule { job: String, reason: String },
+}
+
+/// The fully loaded configuration: compiled config + live triggers.
+pub struct LoadedConfig {
+    pub runtime: RuntimeConfig,
+    /// One trigger per job that has an active schedule.
+    pub triggers: HashMap<String, Trigger>,
+}
+
+/// Load a Croniqfile from a file path.
+pub fn load_file(path: &Path) -> Result<LoadedConfig, LoadError> {
+    let src = std::fs::read_to_string(path)?;
+    load_str(&src)
+}
+
+/// Load a Croniqfile from a source string.
+pub fn load_str(src: &str) -> Result<LoadedConfig, LoadError> {
+    let ast = Parser::parse(src).map_err(|e| LoadError::Parse(format!("{e}")))?;
+    let runtime = compile::compile(&ast);
+    let now = Utc::now();
+
+    let mut triggers = HashMap::new();
+
+    // Match AST jobs to compiled jobs to extract the ScheduleKind
+    let ast_jobs: Vec<&croniq_config::ast::JobBlock> = ast
+        .items
+        .iter()
+        .filter_map(|item| {
+            if let croniq_config::ast::Item::Job(j) = item {
+                Some(j)
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    for job_cfg in &runtime.jobs {
+        // Find the matching AST job
+        let ast_job = ast_jobs
+            .iter()
+            .find(|j| j.key.raw == job_cfg.key)
+            .expect("compiled job must have matching AST job");
+
+        // Build the runtime Schedule from the AST ScheduleKind
+        let schedule = match &ast_job.schedule {
+            None => Schedule::Disabled,
+            Some(s) => Schedule::from_ast(&s.kind).map_err(|e| LoadError::Schedule {
+                job: job_cfg.key.clone(),
+                reason: e.to_string(),
+            })?,
+        };
+
+        // Resolve timezone (default UTC)
+        let tz: chrono_tz::Tz = job_cfg
+            .timezone
+            .as_deref()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(chrono_tz::UTC);
+
+        // Misfire policy: default FireNow (never skip a billing run)
+        let misfire = MisfirePolicy::FireNow;
+
+        let trigger = Trigger::new(
+            job_cfg.key.clone(),
+            schedule,
+            tz,
+            None, // calendar integration wired later
+            None, // time window
+            misfire,
+            now,
+        );
+
+        triggers.insert(job_cfg.key.clone(), trigger);
+    }
+
+    Ok(LoadedConfig { runtime, triggers })
+}
+
+/// Restore persisted trigger state after a restart (or hot-reload).
+///
+/// Must be called **after** both `load_str`/`load_file` and the SQLite store
+/// are available. Mutates the trigger map in-place.
+///
+/// Rules applied per job:
+/// - `Exhausted` in DB  → trigger set to `TriggerState::Exhausted` and
+///   `next_fire_at` cleared. This prevents `once`-jobs (and any scheduler-
+///   exhausted trigger) from re-firing on restart.
+/// - `Active` in DB     → `next_fire_at` restored from the stored value so
+///   the next tick fires at the correct time instead of re-computing from now.
+/// - `Paused`/`Disabled`/unknown → no change (trigger stays as loaded).
+pub fn restore_trigger_states(
+    triggers: &mut HashMap<String, Trigger>,
+    store: &dyn JobStore,
+    _now: DateTime<Utc>,
+) {
+    let states = match store.list_job_states() {
+        Ok(s) => s,
+        Err(e) => {
+            tracing::warn!(error = %e, "could not load job states for trigger restore");
+            return;
+        }
+    };
+
+    for job_state in states {
+        let Some(trigger) = triggers.get_mut(&job_state.job_key) else {
+            continue; // job removed from config since last run — ignore
+        };
+
+        match job_state.status {
+            JobStatus::Exhausted => {
+                // once-job already fired — never re-arm
+                trigger.state = TriggerState::Exhausted;
+                trigger.next_fire_at = None;
+                tracing::debug!(
+                    job_key = %job_state.job_key,
+                    "trigger restore: exhausted (once-job already ran)"
+                );
+            }
+            JobStatus::Active => {
+                // Restore the stored next_fire_at so the trigger doesn't skip
+                // or double-fire due to restart timing differences.
+                if job_state.next_fire_at.is_some() {
+                    trigger.next_fire_at = job_state.next_fire_at;
+                    trigger.fire_count = job_state.fire_count;
+                    tracing::debug!(
+                        job_key = %job_state.job_key,
+                        next_fire_at = ?job_state.next_fire_at,
+                        "trigger restore: next_fire_at restored"
+                    );
+                }
+            }
+            JobStatus::Paused | JobStatus::Disabled => {
+                // DSL intent already reflected in the trigger — nothing to do
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use croniq_scheduler::trigger::TriggerState;
+    use croniq_store::sqlite::SqliteStore;
+    use pretty_assertions::assert_eq;
+
+    #[test]
+    fn load_minimal_croniqfile() {
+        let src = r#"
+            job etl:sync {
+                every 15 minutes
+                timeout 10m
+            }
+        "#;
+        let cfg = load_str(src).unwrap();
+        assert_eq!(cfg.runtime.jobs.len(), 1);
+        assert_eq!(cfg.runtime.jobs[0].key, "etl:sync");
+        assert!(cfg.triggers.contains_key("etl:sync"));
+    }
+
+    #[test]
+    fn disabled_job_creates_paused_trigger() {
+        let src = r#"
+            job reports:monthly {
+                disabled
+            }
+        "#;
+        let cfg = load_str(src).unwrap();
+        let trigger = &cfg.triggers["reports:monthly"];
+        assert_eq!(trigger.state, TriggerState::Paused);
+    }
+
+    #[test]
+    fn multiple_jobs_all_have_triggers() {
+        let src = r#"
+            job billing:invoice { every day at 02:00 }
+            job etl:sync { every 1 hours }
+            job reports:weekly { every monday at 06:00 }
+        "#;
+        let cfg = load_str(src).unwrap();
+        assert_eq!(cfg.runtime.jobs.len(), 3);
+        assert_eq!(cfg.triggers.len(), 3);
+    }
+
+    #[test]
+    fn timezone_defaults_to_utc() {
+        let src = r#"
+            job billing:invoice {
+                every day at 02:00
+            }
+        "#;
+        let cfg = load_str(src).unwrap();
+        // No timezone specified → trigger uses UTC
+        let trigger = &cfg.triggers["billing:invoice"];
+        assert_eq!(trigger.timezone, chrono_tz::UTC);
+    }
+
+    #[test]
+    fn timezone_from_defaults_block() {
+        let src = r#"
+            defaults { timezone Europe/Vienna }
+            job billing:invoice { every day at 02:00 }
+        "#;
+        let cfg = load_str(src).unwrap();
+        // Defaults timezone is compiled into the job config
+        assert_eq!(cfg.runtime.jobs[0].timezone.as_deref(), Some("Europe/Vienna"));
+        // And the trigger uses it
+        let trigger = &cfg.triggers["billing:invoice"];
+        assert_eq!(trigger.timezone, chrono_tz::Europe::Vienna);
+    }
+
+    #[test]
+    fn invalid_croniqfile_returns_parse_error() {
+        let src = r#"this is not valid DSL @@###"#;
+        assert!(matches!(load_str(src), Err(LoadError::Parse(_))));
+    }
+
+    #[test]
+    fn job_metadata_compiled() {
+        let src = r#"
+            job billing:invoice {
+                every day at 02:00
+                metadata { env prod; region eu }
+            }
+        "#;
+        let cfg = load_str(src).unwrap();
+        let job = &cfg.runtime.jobs[0];
+        assert_eq!(job.metadata.get("env").map(|s| s.as_str()), Some("prod"));
+        assert_eq!(job.metadata.get("region").map(|s| s.as_str()), Some("eu"));
+    }
+
+    // ─── restore_trigger_states ───────────────────────────────────────────────
+
+    fn make_store() -> std::sync::Arc<SqliteStore> {
+        std::sync::Arc::new(SqliteStore::in_memory().unwrap())
+    }
+
+    fn seed_job_state(
+        store: &SqliteStore,
+        key: &str,
+        status: croniq_store::models::JobStatus,
+        next_fire_at: Option<chrono::DateTime<Utc>>,
+        fire_count: u64,
+    ) {
+        store
+            .upsert_job_state(&croniq_store::models::JobState {
+                job_key: key.into(),
+                next_fire_at,
+                last_fired_at: None,
+                fire_count,
+                status,
+                updated_at: Utc::now(),
+            })
+            .unwrap();
+    }
+
+    #[test]
+    fn restore_exhausted_disarms_once_trigger() {
+        // Load a once-job (disabled schedule is fine for this test — we
+        // care about the restore step, not the DSL parsing of 'once')
+        let src = r#"job migration:v2 { disabled }"#;
+        let mut cfg = load_str(src).unwrap();
+        let store = make_store();
+
+        // Simulate: this once-job already fired in a previous run
+        seed_job_state(&store, "migration:v2", croniq_store::models::JobStatus::Exhausted, None, 1);
+
+        restore_trigger_states(&mut cfg.triggers, &*store, Utc::now());
+
+        let trigger = &cfg.triggers["migration:v2"];
+        assert_eq!(trigger.state, TriggerState::Exhausted);
+        assert!(trigger.next_fire_at.is_none());
+    }
+
+    #[test]
+    fn restore_active_restores_next_fire_at() {
+        let src = r#"job etl:sync { every 1 hours }"#;
+        let mut cfg = load_str(src).unwrap();
+        let store = make_store();
+
+        let stored_next = Utc::now() + chrono::Duration::minutes(42);
+        seed_job_state(
+            &store,
+            "etl:sync",
+            croniq_store::models::JobStatus::Active,
+            Some(stored_next),
+            7,
+        );
+
+        restore_trigger_states(&mut cfg.triggers, &*store, Utc::now());
+
+        let trigger = &cfg.triggers["etl:sync"];
+        // next_fire_at must be restored from DB (not re-computed from now)
+        assert_eq!(trigger.next_fire_at.unwrap().timestamp(), stored_next.timestamp());
+        assert_eq!(trigger.fire_count, 7);
+    }
+
+    #[test]
+    fn restore_unknown_job_is_ignored() {
+        let src = r#"job etl:sync { every 1 hours }"#;
+        let mut cfg = load_str(src).unwrap();
+        let store = make_store();
+
+        // Store has a stale job_state for a job that no longer exists in config
+        seed_job_state(&store, "removed:job", croniq_store::models::JobStatus::Exhausted, None, 1);
+
+        // Should not panic; the etl:sync trigger is unaffected
+        restore_trigger_states(&mut cfg.triggers, &*store, Utc::now());
+        assert!(cfg.triggers.contains_key("etl:sync"));
+    }
+
+    #[test]
+    fn restore_paused_does_not_change_trigger() {
+        let src = r#"job reports:monthly { disabled }"#;
+        let mut cfg = load_str(src).unwrap();
+        let store = make_store();
+
+        seed_job_state(&store, "reports:monthly", croniq_store::models::JobStatus::Paused, None, 0);
+
+        restore_trigger_states(&mut cfg.triggers, &*store, Utc::now());
+
+        // Disabled DSL → Paused trigger; Paused status in DB → no override
+        let trigger = &cfg.triggers["reports:monthly"];
+        assert_eq!(trigger.state, TriggerState::Paused);
+    }
+}
