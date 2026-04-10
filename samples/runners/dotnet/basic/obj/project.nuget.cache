@@ -1,0 +1,26 @@
+{
+  "version": 2,
+  "dgSpecHash": "BgzHXwIeOYs=",
+  "success": true,
+  "projectFilePath": "/home/sebastian/dev/croniq/samples/runners/dotnet/basic/Croniq.Runner.DotnetSample.csproj",
+  "expectedPackageFiles": [
+    "/home/sebastian/.nuget/packages/google.protobuf/3.27.1/google.protobuf.3.27.1.nupkg.sha512",
+    "/home/sebastian/.nuget/packages/grpc.core.api/2.71.0/grpc.core.api.2.71.0.nupkg.sha512",
+    "/home/sebastian/.nuget/packages/grpc.net.client/2.71.0/grpc.net.client.2.71.0.nupkg.sha512",
+    "/home/sebastian/.nuget/packages/grpc.net.clientfactory/2.71.0/grpc.net.clientfactory.2.71.0.nupkg.sha512",
+    "/home/sebastian/.nuget/packages/grpc.net.common/2.71.0/grpc.net.common.2.71.0.nupkg.sha512",
+    "/home/sebastian/.nuget/packages/microsoft.extensions.configuration.abstractions/10.0.1/microsoft.extensions.configuration.abstractions.10.0.1.nupkg.sha512",
+    "/home/sebastian/.nuget/packages/microsoft.extensions.dependencyinjection/6.0.0/microsoft.extensions.dependencyinjection.6.0.0.nupkg.sha512",
+    "/home/sebastian/.nuget/packages/microsoft.extensions.dependencyinjection.abstractions/10.0.1/microsoft.extensions.dependencyinjection.abstractions.10.0.1.nupkg.sha512",
+    "/home/sebastian/.nuget/packages/microsoft.extensions.diagnostics.abstractions/10.0.1/microsoft.extensions.diagnostics.abstractions.10.0.1.nupkg.sha512",
+    "/home/sebastian/.nuget/packages/microsoft.extensions.fileproviders.abstractions/10.0.1/microsoft.extensions.fileproviders.abstractions.10.0.1.nupkg.sha512",
+    "/home/sebastian/.nuget/packages/microsoft.extensions.hosting.abstractions/10.0.1/microsoft.extensions.hosting.abstractions.10.0.1.nupkg.sha512",
+    "/home/sebastian/.nuget/packages/microsoft.extensions.http/6.0.0/microsoft.extensions.http.6.0.0.nupkg.sha512",
+    "/home/sebastian/.nuget/packages/microsoft.extensions.logging/6.0.0/microsoft.extensions.logging.6.0.0.nupkg.sha512",
+    "/home/sebastian/.nuget/packages/microsoft.extensions.logging.abstractions/10.0.1/microsoft.extensions.logging.abstractions.10.0.1.nupkg.sha512",
+    "/home/sebastian/.nuget/packages/microsoft.extensions.options/10.0.1/microsoft.extensions.options.10.0.1.nupkg.sha512",
+    "/home/sebastian/.nuget/packages/microsoft.extensions.primitives/10.0.1/microsoft.extensions.primitives.10.0.1.nupkg.sha512",
+    "/home/sebastian/.nuget/packages/minver/6.0.0/minver.6.0.0.nupkg.sha512"
+  ],
+  "logs": []
+}

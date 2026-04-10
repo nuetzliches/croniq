@@ -123,6 +123,21 @@ enum Commands {
         limit: u32,
     },
 
+    /// Initialize the database: create admin user and default API client
+    Init {
+        /// Path to the croniq data directory (will be created if needed)
+        #[arg(long, default_value = "./.data")]
+        data_dir: PathBuf,
+
+        /// Admin username
+        #[arg(long, default_value = "admin")]
+        username: String,
+
+        /// Admin password (prompted if not given)
+        #[arg(long)]
+        password: Option<String>,
+    },
+
     /// Inspect a specific dead letter by ID
     #[command(name = "dead-letters-inspect")]
     DeadLettersInspect {
@@ -161,6 +176,9 @@ fn main() -> Result<()> {
         }
         Commands::DeadLettersInspect { id, data_dir } => {
             commands::store::dead_letters_inspect(&data_dir, &id)
+        }
+        Commands::Init { data_dir, username, password } => {
+            commands::init::init(&data_dir, &username, password.as_deref())
         }
     }
 }

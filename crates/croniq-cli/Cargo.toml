@@ -13,6 +13,7 @@ path = "src/main.rs"
 croniq-config = { path = "../croniq-config" }
 croniq-store = { path = "../croniq-store" }
 croniq-runner = { path = "../croniq-runner" }
+croniq-auth = { path = "../croniq-auth" }
 clap = { version = "4", features = ["derive"] }
 miette = { version = "7", features = ["fancy"] }
 serde = { version = "1", features = ["derive"] }
