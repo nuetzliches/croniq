@@ -9,6 +9,7 @@ members = [
     "crates/croniq-runner",
     "crates/croniq-mcp",
     "crates/croniq-bridge",
+    "crates/croniq-auth",
     "crates/croniq-server",
 ]
 

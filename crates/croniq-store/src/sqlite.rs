@@ -530,6 +530,176 @@ impl DeadLetterStore for SqliteStore {
     }
 }
 
+// ─── AuthStore ───
+
+impl AuthStore for SqliteStore {
+    fn create_client(&self, client: &ApiClient) -> Result<(), StoreError> {
+        let conn = self.conn.lock().unwrap();
+        let scopes = serde_json::to_string(&client.scopes).unwrap_or_default();
+        conn.execute(
+            "INSERT INTO api_clients (client_id, name, scopes, is_active, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5)
+             ON CONFLICT(client_id) DO UPDATE SET name = excluded.name, scopes = excluded.scopes, is_active = excluded.is_active",
+            params![client.client_id, client.name, scopes, client.is_active, dt_to_sql(&client.created_at)],
+        ).map_err(map_err)?;
+        Ok(())
+    }
+
+    fn get_client(&self, client_id: &str) -> Result<Option<ApiClient>, StoreError> {
+        let conn = self.conn.lock().unwrap();
+        conn.prepare("SELECT client_id, name, scopes, is_active, created_at FROM api_clients WHERE client_id = ?1")
+            .map_err(map_err)?
+            .query_row(params![client_id], |row| {
+                let scopes_str: String = row.get(2)?;
+                Ok(ApiClient {
+                    client_id: row.get(0)?,
+                    name: row.get(1)?,
+                    scopes: serde_json::from_str(&scopes_str).unwrap_or_default(),
+                    is_active: row.get::<_, bool>(3)?,
+                    created_at: sql_to_dt(&row.get::<_, String>(4)?),
+                })
+            })
+            .optional()
+            .map_err(map_err)
+    }
+
+    fn list_clients(&self) -> Result<Vec<ApiClient>, StoreError> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare("SELECT client_id, name, scopes, is_active, created_at FROM api_clients ORDER BY name").map_err(map_err)?;
+        let rows = stmt.query_map([], |row| {
+            let scopes_str: String = row.get(2)?;
+            Ok(ApiClient {
+                client_id: row.get(0)?,
+                name: row.get(1)?,
+                scopes: serde_json::from_str(&scopes_str).unwrap_or_default(),
+                is_active: row.get::<_, bool>(3)?,
+                created_at: sql_to_dt(&row.get::<_, String>(4)?),
+            })
+        }).map_err(map_err)?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(map_err)
+    }
+
+    fn delete_client(&self, client_id: &str) -> Result<(), StoreError> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute("DELETE FROM api_keys WHERE client_id = ?1", params![client_id]).map_err(map_err)?;
+        conn.execute("DELETE FROM api_clients WHERE client_id = ?1", params![client_id]).map_err(map_err)?;
+        Ok(())
+    }
+
+    fn create_api_key(&self, key: &ApiKey) -> Result<(), StoreError> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO api_keys (key_id, client_id, key_hash, key_prefix, expires_at, revoked_at, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![key.key_id, key.client_id, key.key_hash, key.key_prefix, opt_dt_to_sql(&key.expires_at), opt_dt_to_sql(&key.revoked_at), dt_to_sql(&key.created_at)],
+        ).map_err(map_err)?;
+        Ok(())
+    }
+
+    fn find_api_key_by_hash(&self, key_hash: &str) -> Result<Option<ApiKey>, StoreError> {
+        let conn = self.conn.lock().unwrap();
+        conn.prepare("SELECT key_id, client_id, key_hash, key_prefix, expires_at, revoked_at, created_at FROM api_keys WHERE key_hash = ?1")
+            .map_err(map_err)?
+            .query_row(params![key_hash], |row| {
+                Ok(ApiKey {
+                    key_id: row.get(0)?,
+                    client_id: row.get(1)?,
+                    key_hash: row.get(2)?,
+                    key_prefix: row.get(3)?,
+                    expires_at: sql_to_opt_dt(row.get(4)?),
+                    revoked_at: sql_to_opt_dt(row.get(5)?),
+                    created_at: sql_to_dt(&row.get::<_, String>(6)?),
+                })
+            })
+            .optional()
+            .map_err(map_err)
+    }
+
+    fn revoke_api_key(&self, key_id: &str, now: DateTime<Utc>) -> Result<(), StoreError> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute("UPDATE api_keys SET revoked_at = ?1 WHERE key_id = ?2", params![dt_to_sql(&now), key_id]).map_err(map_err)?;
+        Ok(())
+    }
+
+    fn list_api_keys(&self, client_id: &str) -> Result<Vec<ApiKey>, StoreError> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare("SELECT key_id, client_id, key_hash, key_prefix, expires_at, revoked_at, created_at FROM api_keys WHERE client_id = ?1 ORDER BY created_at DESC").map_err(map_err)?;
+        let rows = stmt.query_map(params![client_id], |row| {
+            Ok(ApiKey {
+                key_id: row.get(0)?,
+                client_id: row.get(1)?,
+                key_hash: row.get(2)?,
+                key_prefix: row.get(3)?,
+                expires_at: sql_to_opt_dt(row.get(4)?),
+                revoked_at: sql_to_opt_dt(row.get(5)?),
+                created_at: sql_to_dt(&row.get::<_, String>(6)?),
+            })
+        }).map_err(map_err)?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(map_err)
+    }
+
+    fn get_credentials(&self, username: &str) -> Result<Option<PasswordCredential>, StoreError> {
+        let conn = self.conn.lock().unwrap();
+        conn.prepare("SELECT user_id, username, password_hash, failed_attempts, locked_until, created_at FROM password_credentials WHERE username = ?1")
+            .map_err(map_err)?
+            .query_row(params![username], |row| {
+                Ok(PasswordCredential {
+                    user_id: row.get(0)?,
+                    username: row.get(1)?,
+                    password_hash: row.get(2)?,
+                    failed_attempts: row.get::<_, u32>(3)?,
+                    locked_until: sql_to_opt_dt(row.get(4)?),
+                    created_at: sql_to_dt(&row.get::<_, String>(5)?),
+                })
+            })
+            .optional()
+            .map_err(map_err)
+    }
+
+    fn upsert_credentials(&self, cred: &PasswordCredential) -> Result<(), StoreError> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO password_credentials (user_id, username, password_hash, failed_attempts, locked_until, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+             ON CONFLICT(user_id) DO UPDATE SET username = excluded.username, password_hash = excluded.password_hash, failed_attempts = excluded.failed_attempts, locked_until = excluded.locked_until",
+            params![cred.user_id, cred.username, cred.password_hash, cred.failed_attempts, opt_dt_to_sql(&cred.locked_until), dt_to_sql(&cred.created_at)],
+        ).map_err(map_err)?;
+        Ok(())
+    }
+
+    fn create_refresh_token(&self, token: &RefreshToken) -> Result<(), StoreError> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO refresh_tokens (token_hash, client_id, user_id, expires_at, revoked_at, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![token.token_hash, token.client_id, token.user_id, dt_to_sql(&token.expires_at), opt_dt_to_sql(&token.revoked_at), dt_to_sql(&token.created_at)],
+        ).map_err(map_err)?;
+        Ok(())
+    }
+
+    fn validate_refresh_token(&self, token_hash: &str) -> Result<Option<RefreshToken>, StoreError> {
+        let conn = self.conn.lock().unwrap();
+        conn.prepare("SELECT token_hash, client_id, user_id, expires_at, revoked_at, created_at FROM refresh_tokens WHERE token_hash = ?1 AND revoked_at IS NULL")
+            .map_err(map_err)?
+            .query_row(params![token_hash], |row| {
+                Ok(RefreshToken {
+                    token_hash: row.get(0)?,
+                    client_id: row.get(1)?,
+                    user_id: row.get(2)?,
+                    expires_at: sql_to_dt(&row.get::<_, String>(3)?),
+                    revoked_at: sql_to_opt_dt(row.get(4)?),
+                    created_at: sql_to_dt(&row.get::<_, String>(5)?),
+                })
+            })
+            .optional()
+            .map_err(map_err)
+    }
+
+    fn revoke_refresh_token(&self, token_hash: &str, now: DateTime<Utc>) -> Result<(), StoreError> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute("UPDATE refresh_tokens SET revoked_at = ?1 WHERE token_hash = ?2", params![dt_to_sql(&now), token_hash]).map_err(map_err)?;
+        Ok(())
+    }
+}
+
 impl Store for SqliteStore {}
 
 // ─── Row mappers ───

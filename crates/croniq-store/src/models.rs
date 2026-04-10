@@ -140,3 +140,53 @@ pub struct DeadLetterFilter {
     pub job_key: Option<String>,
     pub limit: Option<u32>,
 }
+
+// ─── Auth ───
+
+/// An API client that can obtain tokens and API keys.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ApiClient {
+    pub client_id: String,
+    pub name: String,
+    pub scopes: Vec<String>,
+    pub is_active: bool,
+    pub created_at: DateTime<Utc>,
+}
+
+/// A hashed API key bound to an API client.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ApiKey {
+    pub key_id: String,
+    pub client_id: String,
+    /// SHA-256 hash of the raw key (hex-encoded).
+    pub key_hash: String,
+    /// Key prefix for display (first 8 chars of raw key).
+    pub key_prefix: String,
+    pub expires_at: Option<DateTime<Utc>>,
+    pub revoked_at: Option<DateTime<Utc>>,
+    pub created_at: DateTime<Utc>,
+}
+
+/// A refresh token for session management.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RefreshToken {
+    /// SHA-256 hash of the raw token.
+    pub token_hash: String,
+    pub client_id: String,
+    pub user_id: Option<String>,
+    pub expires_at: DateTime<Utc>,
+    pub revoked_at: Option<DateTime<Utc>>,
+    pub created_at: DateTime<Utc>,
+}
+
+/// Password credentials for user authentication.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PasswordCredential {
+    pub user_id: String,
+    pub username: String,
+    /// bcrypt hash.
+    pub password_hash: String,
+    pub failed_attempts: u32,
+    pub locked_until: Option<DateTime<Utc>>,
+    pub created_at: DateTime<Utc>,
+}

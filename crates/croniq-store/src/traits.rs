@@ -127,5 +127,29 @@ pub trait DeadLetterStore {
     fn purge_expired(&self, now: DateTime<Utc>) -> Result<u64, StoreError>;
 }
 
+/// Auth persistence.
+pub trait AuthStore {
+    // API Clients
+    fn create_client(&self, client: &ApiClient) -> Result<(), StoreError>;
+    fn get_client(&self, client_id: &str) -> Result<Option<ApiClient>, StoreError>;
+    fn list_clients(&self) -> Result<Vec<ApiClient>, StoreError>;
+    fn delete_client(&self, client_id: &str) -> Result<(), StoreError>;
+
+    // API Keys
+    fn create_api_key(&self, key: &ApiKey) -> Result<(), StoreError>;
+    fn find_api_key_by_hash(&self, key_hash: &str) -> Result<Option<ApiKey>, StoreError>;
+    fn revoke_api_key(&self, key_id: &str, now: DateTime<Utc>) -> Result<(), StoreError>;
+    fn list_api_keys(&self, client_id: &str) -> Result<Vec<ApiKey>, StoreError>;
+
+    // Password credentials
+    fn get_credentials(&self, username: &str) -> Result<Option<PasswordCredential>, StoreError>;
+    fn upsert_credentials(&self, cred: &PasswordCredential) -> Result<(), StoreError>;
+
+    // Refresh tokens
+    fn create_refresh_token(&self, token: &RefreshToken) -> Result<(), StoreError>;
+    fn validate_refresh_token(&self, token_hash: &str) -> Result<Option<RefreshToken>, StoreError>;
+    fn revoke_refresh_token(&self, token_hash: &str, now: DateTime<Utc>) -> Result<(), StoreError>;
+}
+
 /// Combined store trait for convenience.
-pub trait Store: JobStore + ExecutionStore + RunnerStore + DeadLetterStore {}
+pub trait Store: JobStore + ExecutionStore + RunnerStore + DeadLetterStore + AuthStore {}
