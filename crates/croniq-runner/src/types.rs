@@ -44,16 +44,26 @@ impl Runner {
     }
 
     /// Derive the current liveness status relative to `now`.
+    /// Uses default thresholds: online < 30s, stale < 120s, dead >= 120s.
     pub fn status_at(&self, now: DateTime<Utc>) -> RunnerStatus {
+        self.status_at_with_ttl(now, 120)
+    }
+
+    /// Derive liveness status with a configurable dead threshold in seconds.
+    /// Stale threshold is always half of `dead_threshold_secs`.
+    pub fn status_at_with_ttl(&self, now: DateTime<Utc>, dead_threshold_secs: u64) -> RunnerStatus {
         let age = now
             .signed_duration_since(self.last_poll_at)
             .num_seconds()
             .max(0) as u64;
 
-        match age {
-            0..30 => RunnerStatus::Online,
-            30..120 => RunnerStatus::Stale,
-            _ => RunnerStatus::Dead,
+        let stale_threshold = dead_threshold_secs / 2;
+        if age < stale_threshold {
+            RunnerStatus::Online
+        } else if age < dead_threshold_secs {
+            RunnerStatus::Stale
+        } else {
+            RunnerStatus::Dead
         }
     }
 

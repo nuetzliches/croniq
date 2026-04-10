@@ -5,6 +5,7 @@
 //! - `POST /v1/complete` → releases inflight + forwards to completion processor
 //! - `GET  /health`      → liveness + queue depth
 
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -24,6 +25,9 @@ use croniq_runner::{
 use tokio::sync::mpsc;
 
 use crate::completion::CompletionEvent;
+use crate::store::DynStore;
+use croniq_store::models::ExecutionFilter;
+use croniq_store::traits::{ExecutionStore, JobStore};
 
 /// Default maximum time a poll request will block waiting for work.
 const DEFAULT_LONG_POLL_TIMEOUT: Duration = Duration::from_secs(30);
@@ -31,7 +35,6 @@ const DEFAULT_LONG_POLL_TIMEOUT: Duration = Duration::from_secs(30);
 // ─── Server state ─────────────────────────────────────────────────────────────
 
 /// Full server state: runner sub-state + completion channel.
-#[derive(Debug)]
 pub struct ServerState {
     /// Shared runner state (registry + queue).
     pub runner: Arc<AppState>,
@@ -42,6 +45,8 @@ pub struct ServerState {
     pub long_poll_timeout: Duration,
     /// Optional bearer token for Pull-API authentication.
     pub auth_token: Option<String>,
+    /// Persistent store for querying jobs and executions.
+    pub store: Option<DynStore>,
 }
 
 impl ServerState {
@@ -54,20 +59,23 @@ impl ServerState {
             completion_tx,
             long_poll_timeout: DEFAULT_LONG_POLL_TIMEOUT,
             auth_token: None,
+            store: None,
         })
     }
 
-    /// Construct with a bearer auth token for the Pull-API.
+    /// Construct with a bearer auth token and optional store.
     pub fn with_auth(
         runner: Arc<AppState>,
         completion_tx: mpsc::UnboundedSender<CompletionEvent>,
         auth_token: Option<String>,
+        store: Option<DynStore>,
     ) -> Arc<Self> {
         Arc::new(Self {
             runner,
             completion_tx,
             long_poll_timeout: DEFAULT_LONG_POLL_TIMEOUT,
             auth_token,
+            store,
         })
     }
 
@@ -77,19 +85,21 @@ impl ServerState {
         completion_tx: mpsc::UnboundedSender<CompletionEvent>,
         long_poll_timeout: Duration,
     ) -> Arc<Self> {
-        Arc::new(Self { runner, completion_tx, long_poll_timeout, auth_token: None })
+        Arc::new(Self { runner, completion_tx, long_poll_timeout, auth_token: None, store: None })
     }
 }
 
 // ─── Router ───────────────────────────────────────────────────────────────────
 
 pub fn server_router(state: Arc<ServerState>) -> Router {
-    // Authenticated routes (poll, complete, trigger, runners)
+    // Authenticated routes (poll, complete, trigger, runners, jobs, executions)
     let authenticated = Router::new()
         .route("/v1/poll", post(handle_poll))
         .route("/v1/complete", post(handle_complete))
         .route("/v1/runners", get(handle_list_runners))
         .route("/v1/trigger", post(handle_trigger))
+        .route("/v1/jobs", get(handle_list_jobs))
+        .route("/v1/executions", get(handle_list_executions))
         .route_layer(middleware::from_fn_with_state(
             Arc::clone(&state),
             auth_middleware,
@@ -280,6 +290,39 @@ async fn handle_trigger(
         StatusCode::OK,
         Json(TriggerResponse { execution_id, queued }),
     )
+}
+
+/// `GET /v1/jobs` — list all job states from the store.
+async fn handle_list_jobs(
+    State(state): State<Arc<ServerState>>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let store = state.store.as_ref().ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
+    let states = store.list_job_states().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(Json(serde_json::to_value(&states).unwrap_or_default()))
+}
+
+/// `GET /v1/executions` — list recent executions from the store.
+async fn handle_list_executions(
+    State(state): State<Arc<ServerState>>,
+    axum::extract::Query(params): axum::extract::Query<HashMap<String, String>>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let store = state.store.as_ref().ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
+    let filter = ExecutionFilter {
+        job_key: params.get("job_key").cloned(),
+        state: params.get("state").and_then(|s| match s.as_str() {
+            "queued" => Some(croniq_store::models::ExecutionState::Queued),
+            "claimed" => Some(croniq_store::models::ExecutionState::Claimed),
+            "completed" => Some(croniq_store::models::ExecutionState::Completed),
+            "failed" => Some(croniq_store::models::ExecutionState::Failed),
+            "dead" => Some(croniq_store::models::ExecutionState::Dead),
+            "cancelled" => Some(croniq_store::models::ExecutionState::Cancelled),
+            _ => None,
+        }),
+        limit: params.get("limit").and_then(|l| l.parse().ok()),
+        ..Default::default()
+    };
+    let executions = store.list_executions(&filter).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(Json(serde_json::to_value(&executions).unwrap_or_default()))
 }
 
 /// `GET /health`
@@ -485,6 +528,7 @@ mod tests {
             completion_tx: tx,
             long_poll_timeout: Duration::from_millis(50),
             auth_token: Some(token.to_string()),
+            store: None,
         });
         (state, rx)
     }

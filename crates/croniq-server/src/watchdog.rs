@@ -51,10 +51,10 @@ impl WatchdogLoop {
     pub async fn sweep(&self, now: DateTime<Utc>) -> WatchdogResult {
         let mut result = WatchdogResult::default();
 
-        // 1. Find dead runners from the in-memory registry
+        // 1. Find dead runners from the in-memory registry (using configured lease TTL)
         let dead_ids: Vec<String> = {
             let reg = self.runner.registry.read().await;
-            reg.by_status(RunnerStatus::Dead, now)
+            reg.by_status_with_ttl(RunnerStatus::Dead, now, self.runner.lease_ttl_secs)
                 .into_iter()
                 .map(|r| r.runner_id.clone())
                 .collect()

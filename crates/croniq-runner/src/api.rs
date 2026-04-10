@@ -30,6 +30,9 @@ pub struct AppState {
     /// Notified whenever a new WorkItem is enqueued.
     /// Poll handlers wait on this to implement low-latency long-polling.
     pub work_notify: Notify,
+    /// Lease TTL in seconds: after this duration without a poll, a runner is
+    /// considered dead and its executions are requeued. Default: 120s.
+    pub lease_ttl_secs: u64,
 }
 
 impl AppState {
@@ -38,6 +41,16 @@ impl AppState {
             registry: RwLock::new(RunnerRegistry::new()),
             queue: RwLock::new(WorkQueue::new()),
             work_notify: Notify::new(),
+            lease_ttl_secs: 120,
+        })
+    }
+
+    pub fn with_lease_ttl(lease_ttl_secs: u64) -> Arc<Self> {
+        Arc::new(Self {
+            registry: RwLock::new(RunnerRegistry::new()),
+            queue: RwLock::new(WorkQueue::new()),
+            work_notify: Notify::new(),
+            lease_ttl_secs,
         })
     }
 }
@@ -48,6 +61,7 @@ impl Default for AppState {
             registry: RwLock::new(RunnerRegistry::new()),
             queue: RwLock::new(WorkQueue::new()),
             work_notify: Notify::new(),
+            lease_ttl_secs: 120,
         }
     }
 }

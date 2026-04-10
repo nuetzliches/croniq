@@ -76,8 +76,11 @@ async fn main() -> Result<()> {
     restore_trigger_states(&mut loaded.triggers, &*store, chrono::Utc::now());
     tracing::info!("trigger states restored from database");
 
-    // Shared runner state (registry + queue)
-    let runner_state = AppState::new();
+    // Shared runner state (registry + queue) with lease TTL from config
+    let lease_ttl_secs = loaded.runtime.pull_api.as_ref()
+        .map(|p| parse_duration_secs(&p.lease_ttl))
+        .unwrap_or(120);
+    let runner_state = AppState::with_lease_ttl(lease_ttl_secs);
 
     // Restore queued executions from DB into the in-memory work queue.
     // This ensures executions survive server restarts.
@@ -89,7 +92,7 @@ async fn main() -> Result<()> {
 
     // Server state wrapping runner + completion channel + auth
     let auth_token = loaded.runtime.pull_api.as_ref().and_then(|p| p.auth.clone());
-    let server_state = ServerState::with_auth(Arc::clone(&runner_state), completion_tx, auth_token);
+    let server_state = ServerState::with_auth(Arc::clone(&runner_state), completion_tx, auth_token, Some(Arc::clone(&store)));
 
     // ── File watcher (optional) ─────────────────────────────────────────────
     let (reload_tx, mut reload_rx) = mpsc::unbounded_channel::<std::path::PathBuf>();
@@ -182,8 +185,13 @@ async fn main() -> Result<()> {
         }
     });
 
-    // ── Metrics server (optional) ────────────────────────────────────────────
-    if let Some(ref metrics_listen) = cli.metrics {
+    // ── Metrics server (from CLI --metrics or observability.metrics in Croniqfile)
+    let metrics_listen = cli.metrics.clone().or_else(|| {
+        loaded.runtime.observability.as_ref()
+            .and_then(|o| o.metrics.as_ref())
+            .map(|m| m.listen.clone())
+    });
+    if let Some(ref metrics_listen) = metrics_listen {
         let metrics_addr: std::net::SocketAddr = metrics_listen
             .trim_start_matches(':')
             .parse::<u16>()
@@ -214,4 +222,18 @@ async fn main() -> Result<()> {
     axum::serve(listener, app).await?;
 
     Ok(())
+}
+
+/// Parse a duration string like "60s", "2m", "1h" to seconds. Falls back to 120.
+fn parse_duration_secs(s: &str) -> u64 {
+    let s = s.trim();
+    if let Some(n) = s.strip_suffix('s') {
+        n.parse().unwrap_or(120)
+    } else if let Some(n) = s.strip_suffix('m') {
+        n.parse::<u64>().map(|v| v * 60).unwrap_or(120)
+    } else if let Some(n) = s.strip_suffix('h') {
+        n.parse::<u64>().map(|v| v * 3600).unwrap_or(120)
+    } else {
+        s.parse().unwrap_or(120)
+    }
 }

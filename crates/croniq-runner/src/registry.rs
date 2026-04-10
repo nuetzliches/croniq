@@ -77,6 +77,14 @@ impl RunnerRegistry {
             .collect()
     }
 
+    /// Like `by_status` but with a custom dead threshold in seconds.
+    pub fn by_status_with_ttl(&self, status: RunnerStatus, now: DateTime<Utc>, dead_threshold_secs: u64) -> Vec<&Runner> {
+        self.runners
+            .values()
+            .filter(|r| r.status_at_with_ttl(now, dead_threshold_secs) == status)
+            .collect()
+    }
+
     /// Runner IDs that are considered dead. Their inflight work should be
     /// reassigned by the scheduler.
     pub fn dead_ids(&self, now: DateTime<Utc>) -> Vec<String> {

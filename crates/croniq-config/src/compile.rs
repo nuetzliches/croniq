@@ -10,8 +10,28 @@ use std::collections::HashMap;
 pub struct RuntimeConfig {
     pub server: ServerConfig,
     pub pull_api: Option<PullApiConfig>,
+    pub observability: Option<ObservabilityConfig>,
     pub jobs: Vec<JobConfig>,
     pub calendars: Vec<CalendarConfig>,
+}
+
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct ObservabilityConfig {
+    pub log: Option<LogConfig>,
+    pub metrics: Option<MetricsConfig>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct LogConfig {
+    pub level: String,
+    pub format: String,
+    pub output: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct MetricsConfig {
+    pub listen: String,
+    pub path: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -121,6 +141,7 @@ pub fn compile(ast: &Croniqfile) -> RuntimeConfig {
         db: "sqlite".into(),
     };
     let mut pull_api = None;
+    let mut observability = None;
     let mut default_timezone: Option<String> = None;
     let mut default_timeout: Option<String> = None;
     let mut default_retry = RetryConfig::default();
@@ -226,6 +247,49 @@ pub fn compile(ast: &Croniqfile) -> RuntimeConfig {
                     &default_dead_letter,
                 ));
             }
+            Item::Observability(obs) => {
+                let mut obs_cfg = ObservabilityConfig::default();
+                for block in &obs.sub_blocks {
+                    match block.name.value.as_str() {
+                        "log" => {
+                            let mut log = LogConfig {
+                                level: "info".into(),
+                                format: "text".into(),
+                                output: "stderr".into(),
+                            };
+                            for d in &block.directives {
+                                if let DirectiveOrBlock::Directive(dir) = d {
+                                    match dir.key.value.as_str() {
+                                        "level" => { if let Some(a) = dir.args.first() { log.level = a.value.clone(); } }
+                                        "format" => { if let Some(a) = dir.args.first() { log.format = a.value.clone(); } }
+                                        "output" => { if let Some(a) = dir.args.first() { log.output = a.value.clone(); } }
+                                        _ => {}
+                                    }
+                                }
+                            }
+                            obs_cfg.log = Some(log);
+                        }
+                        "metrics" => {
+                            let mut metrics = MetricsConfig {
+                                listen: ":9900".into(),
+                                path: "/metrics".into(),
+                            };
+                            for d in &block.directives {
+                                if let DirectiveOrBlock::Directive(dir) = d {
+                                    match dir.key.value.as_str() {
+                                        "listen" => { if let Some(a) = dir.args.first() { metrics.listen = a.value.clone(); } }
+                                        "path" => { if let Some(a) = dir.args.first() { metrics.path = a.value.clone(); } }
+                                        _ => {}
+                                    }
+                                }
+                            }
+                            obs_cfg.metrics = Some(metrics);
+                        }
+                        _ => {}
+                    }
+                }
+                observability = Some(obs_cfg);
+            }
             _ => {}
         }
     }
@@ -233,6 +297,7 @@ pub fn compile(ast: &Croniqfile) -> RuntimeConfig {
     RuntimeConfig {
         server,
         pull_api,
+        observability,
         jobs,
         calendars,
     }

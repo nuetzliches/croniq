@@ -136,6 +136,25 @@ pub struct JobTriggerParams {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+pub struct ListExecutionsParams {
+    /// Filter by job key.
+    #[serde(default)]
+    pub job_key: Option<String>,
+
+    /// Filter by execution state (queued, claimed, completed, failed, dead, cancelled).
+    #[serde(default)]
+    pub state: Option<String>,
+
+    /// Maximum number of results (1–100). Default: 20.
+    #[serde(default = "default_list_limit")]
+    pub limit: u32,
+}
+
+fn default_list_limit() -> u32 {
+    20
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
 pub struct DlqRetryParams {
     /// The dead-letter ID to retry (UUID string).
     pub dead_letter_id: String,
@@ -336,6 +355,60 @@ impl CroniqMcp {
         };
 
         serde_json::to_string_pretty(&report)
+            .map_err(|e| McpError::internal_error(e.to_string(), None))
+    }
+
+    /// List all job states from the persistent store.
+    #[tool(description = "List all job states (active, paused, exhausted) from the store. Requires a persistent store (--data-dir).")]
+    async fn list_jobs(&self) -> Result<String, McpError> {
+        let store = self
+            .store
+            .as_ref()
+            .ok_or_else(|| McpError::internal_error("No persistent store available. Start with --data-dir.", None))?;
+
+        let states = store
+            .list_job_states()
+            .map_err(|e| McpError::internal_error(e.to_string(), None))?;
+
+        serde_json::to_string_pretty(&states)
+            .map_err(|e| McpError::internal_error(e.to_string(), None))
+    }
+
+    /// List recent executions with optional filters.
+    #[tool(description = "List recent executions from the store. Filter by job_key and/or state. Requires --data-dir.")]
+    async fn list_executions(
+        &self,
+        Parameters(p): Parameters<ListExecutionsParams>,
+    ) -> Result<String, McpError> {
+        use croniq_store::models::{ExecutionFilter, ExecutionState};
+
+        let store = self
+            .store
+            .as_ref()
+            .ok_or_else(|| McpError::internal_error("No persistent store available. Start with --data-dir.", None))?;
+
+        let state = p.state.as_deref().and_then(|s| match s {
+            "queued" => Some(ExecutionState::Queued),
+            "claimed" => Some(ExecutionState::Claimed),
+            "completed" => Some(ExecutionState::Completed),
+            "failed" => Some(ExecutionState::Failed),
+            "dead" => Some(ExecutionState::Dead),
+            "cancelled" => Some(ExecutionState::Cancelled),
+            _ => None,
+        });
+
+        let filter = ExecutionFilter {
+            job_key: p.job_key,
+            state,
+            limit: Some(p.limit.min(100)),
+            ..Default::default()
+        };
+
+        let executions = store
+            .list_executions(&filter)
+            .map_err(|e| McpError::internal_error(e.to_string(), None))?;
+
+        serde_json::to_string_pretty(&executions)
             .map_err(|e| McpError::internal_error(e.to_string(), None))
     }
 
