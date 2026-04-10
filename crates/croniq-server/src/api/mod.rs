@@ -144,7 +144,9 @@ pub fn server_router(state: Arc<ServerState>) -> Router {
         .route("/v1/auth/refresh", post(auth_endpoints::handle_refresh))
         .route("/v1/auth/logout", post(auth_endpoints::handle_logout));
 
-    authenticated.merge(public).with_state(state)
+    let cors = tower_http::cors::CorsLayer::permissive();
+
+    authenticated.merge(public).with_state(state).layer(cors)
 }
 
 // ─── Handlers ─────────────────────────────────────────────────────────────────

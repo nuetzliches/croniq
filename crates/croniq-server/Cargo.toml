@@ -19,6 +19,7 @@ croniq-bridge    = { path = "../croniq-bridge" }
 croniq-auth      = { path = "../croniq-auth" }
 
 axum = { version = "0.8", features = ["json", "macros"] }
+tower-http = { version = "0.6", features = ["cors"] }
 tokio = { version = "1", features = ["full"] }
 chrono = { version = "0.4", features = ["serde"] }
 chrono-tz = "0.10"
