@@ -552,6 +552,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "croniq-runner-sdk"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "uuid",
+]
+
+[[package]]
 name = "croniq-scheduler"
 version = "0.1.0"
 dependencies = [
