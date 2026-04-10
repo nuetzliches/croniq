@@ -700,6 +700,213 @@ impl AuthStore for SqliteStore {
     }
 }
 
+// ─── JobDefinitionStore ───
+
+impl JobDefinitionStore for SqliteStore {
+    fn create_job_definition(&self, job: &JobDefinition) -> Result<(), StoreError> {
+        let conn = self.conn.lock().unwrap();
+        let metadata = serde_json::to_string(&job.metadata).unwrap_or_default();
+        conn.execute(
+            "INSERT INTO job_definitions (job_key, description, assigned_runner_id, is_active, metadata, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+             ON CONFLICT(job_key) DO UPDATE SET description=excluded.description, assigned_runner_id=excluded.assigned_runner_id, is_active=excluded.is_active, metadata=excluded.metadata, updated_at=excluded.updated_at",
+            params![job.job_key, job.description, job.assigned_runner_id, job.is_active, metadata, dt_to_sql(&job.created_at), dt_to_sql(&job.updated_at)],
+        ).map_err(map_err)?;
+        Ok(())
+    }
+
+    fn get_job_definition(&self, job_key: &str) -> Result<Option<JobDefinition>, StoreError> {
+        let conn = self.conn.lock().unwrap();
+        conn.prepare("SELECT job_key, description, assigned_runner_id, is_active, metadata, created_at, updated_at FROM job_definitions WHERE job_key = ?1")
+            .map_err(map_err)?
+            .query_row(params![job_key], |row| {
+                let meta_str: String = row.get(4)?;
+                Ok(JobDefinition {
+                    job_key: row.get(0)?,
+                    description: row.get(1)?,
+                    assigned_runner_id: row.get(2)?,
+                    is_active: row.get::<_, bool>(3)?,
+                    metadata: serde_json::from_str(&meta_str).unwrap_or_default(),
+                    created_at: sql_to_dt(&row.get::<_, String>(5)?),
+                    updated_at: sql_to_dt(&row.get::<_, String>(6)?),
+                })
+            })
+            .optional()
+            .map_err(map_err)
+    }
+
+    fn list_job_definitions(&self) -> Result<Vec<JobDefinition>, StoreError> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare("SELECT job_key, description, assigned_runner_id, is_active, metadata, created_at, updated_at FROM job_definitions ORDER BY job_key").map_err(map_err)?;
+        let rows = stmt.query_map([], |row| {
+            let meta_str: String = row.get(4)?;
+            Ok(JobDefinition {
+                job_key: row.get(0)?,
+                description: row.get(1)?,
+                assigned_runner_id: row.get(2)?,
+                is_active: row.get::<_, bool>(3)?,
+                metadata: serde_json::from_str(&meta_str).unwrap_or_default(),
+                created_at: sql_to_dt(&row.get::<_, String>(5)?),
+                updated_at: sql_to_dt(&row.get::<_, String>(6)?),
+            })
+        }).map_err(map_err)?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(map_err)
+    }
+
+    fn delete_job_definition(&self, job_key: &str) -> Result<(), StoreError> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute("DELETE FROM trigger_definitions WHERE job_key = ?1", params![job_key]).map_err(map_err)?;
+        conn.execute("DELETE FROM job_definitions WHERE job_key = ?1", params![job_key]).map_err(map_err)?;
+        Ok(())
+    }
+}
+
+// ─── TriggerDefinitionStore ───
+
+impl TriggerDefinitionStore for SqliteStore {
+    fn create_trigger(&self, t: &TriggerDefinition) -> Result<(), StoreError> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO trigger_definitions (trigger_id, job_key, cron_expression, timezone, calendar, window, not_before, not_after, enabled, managed_by, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
+             ON CONFLICT(trigger_id) DO UPDATE SET job_key=excluded.job_key, cron_expression=excluded.cron_expression, timezone=excluded.timezone, calendar=excluded.calendar, window=excluded.window, not_before=excluded.not_before, not_after=excluded.not_after, enabled=excluded.enabled, managed_by=excluded.managed_by, updated_at=excluded.updated_at",
+            params![t.trigger_id, t.job_key, t.cron_expression, t.timezone, t.calendar, t.window, opt_dt_to_sql(&t.not_before), opt_dt_to_sql(&t.not_after), t.enabled, t.managed_by, dt_to_sql(&t.created_at), dt_to_sql(&t.updated_at)],
+        ).map_err(map_err)?;
+        Ok(())
+    }
+
+    fn get_trigger(&self, trigger_id: &str) -> Result<Option<TriggerDefinition>, StoreError> {
+        let conn = self.conn.lock().unwrap();
+        conn.prepare("SELECT trigger_id, job_key, cron_expression, timezone, calendar, window, not_before, not_after, enabled, managed_by, created_at, updated_at FROM trigger_definitions WHERE trigger_id = ?1")
+            .map_err(map_err)?
+            .query_row(params![trigger_id], |row| {
+                Ok(TriggerDefinition {
+                    trigger_id: row.get(0)?,
+                    job_key: row.get(1)?,
+                    cron_expression: row.get(2)?,
+                    timezone: row.get(3)?,
+                    calendar: row.get(4)?,
+                    window: row.get(5)?,
+                    not_before: sql_to_opt_dt(row.get(6)?),
+                    not_after: sql_to_opt_dt(row.get(7)?),
+                    enabled: row.get::<_, bool>(8)?,
+                    managed_by: row.get(9)?,
+                    created_at: sql_to_dt(&row.get::<_, String>(10)?),
+                    updated_at: sql_to_dt(&row.get::<_, String>(11)?),
+                })
+            })
+            .optional()
+            .map_err(map_err)
+    }
+
+    fn list_triggers(&self, job_key: Option<&str>) -> Result<Vec<TriggerDefinition>, StoreError> {
+        let conn = self.conn.lock().unwrap();
+        if let Some(jk) = job_key {
+            let mut stmt = conn.prepare("SELECT trigger_id, job_key, cron_expression, timezone, calendar, window, not_before, not_after, enabled, managed_by, created_at, updated_at FROM trigger_definitions WHERE job_key = ?1 ORDER BY created_at").map_err(map_err)?;
+            let rows = stmt.query_map(params![jk], |row| row_to_trigger_def(row)).map_err(map_err)?;
+            rows.collect::<Result<Vec<_>, _>>().map_err(map_err)
+        } else {
+            let mut stmt = conn.prepare("SELECT trigger_id, job_key, cron_expression, timezone, calendar, window, not_before, not_after, enabled, managed_by, created_at, updated_at FROM trigger_definitions ORDER BY created_at").map_err(map_err)?;
+            let rows = stmt.query_map([], |row| row_to_trigger_def(row)).map_err(map_err)?;
+            rows.collect::<Result<Vec<_>, _>>().map_err(map_err)
+        }
+    }
+
+    fn delete_trigger(&self, trigger_id: &str) -> Result<(), StoreError> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute("DELETE FROM trigger_definitions WHERE trigger_id = ?1", params![trigger_id]).map_err(map_err)?;
+        Ok(())
+    }
+}
+
+// ─── CalendarDefinitionStore ───
+
+impl CalendarDefinitionStore for SqliteStore {
+    fn create_calendar(&self, cal: &CalendarDefinition) -> Result<(), StoreError> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO calendar_definitions (calendar_id, name, timezone, rules, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+             ON CONFLICT(calendar_id) DO UPDATE SET name=excluded.name, timezone=excluded.timezone, rules=excluded.rules, updated_at=excluded.updated_at",
+            params![cal.calendar_id, cal.name, cal.timezone, cal.rules, dt_to_sql(&cal.created_at), dt_to_sql(&cal.updated_at)],
+        ).map_err(map_err)?;
+        Ok(())
+    }
+
+    fn get_calendar(&self, calendar_id: &str) -> Result<Option<CalendarDefinition>, StoreError> {
+        let conn = self.conn.lock().unwrap();
+        conn.prepare("SELECT calendar_id, name, timezone, rules, created_at, updated_at FROM calendar_definitions WHERE calendar_id = ?1")
+            .map_err(map_err)?
+            .query_row(params![calendar_id], |row| {
+                Ok(CalendarDefinition {
+                    calendar_id: row.get(0)?,
+                    name: row.get(1)?,
+                    timezone: row.get(2)?,
+                    rules: row.get(3)?,
+                    created_at: sql_to_dt(&row.get::<_, String>(4)?),
+                    updated_at: sql_to_dt(&row.get::<_, String>(5)?),
+                })
+            })
+            .optional()
+            .map_err(map_err)
+    }
+
+    fn list_calendars(&self) -> Result<Vec<CalendarDefinition>, StoreError> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare("SELECT calendar_id, name, timezone, rules, created_at, updated_at FROM calendar_definitions ORDER BY name").map_err(map_err)?;
+        let rows = stmt.query_map([], |row| {
+            Ok(CalendarDefinition {
+                calendar_id: row.get(0)?,
+                name: row.get(1)?,
+                timezone: row.get(2)?,
+                rules: row.get(3)?,
+                created_at: sql_to_dt(&row.get::<_, String>(4)?),
+                updated_at: sql_to_dt(&row.get::<_, String>(5)?),
+            })
+        }).map_err(map_err)?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(map_err)
+    }
+
+    fn delete_calendar(&self, calendar_id: &str) -> Result<(), StoreError> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute("DELETE FROM calendar_definitions WHERE calendar_id = ?1", params![calendar_id]).map_err(map_err)?;
+        Ok(())
+    }
+}
+
+// ─── ExecutionLogStore ───
+
+impl ExecutionLogStore for SqliteStore {
+    fn append_log(&self, entry: &ExecutionLogEntry) -> Result<(), StoreError> {
+        let conn = self.conn.lock().unwrap();
+        let fields = serde_json::to_string(&entry.fields).unwrap_or_default();
+        conn.execute(
+            "INSERT INTO execution_logs (id, execution_id, timestamp, level, message, fields) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![entry.id.to_string(), entry.execution_id.to_string(), dt_to_sql(&entry.timestamp), entry.level, entry.message, fields],
+        ).map_err(map_err)?;
+        Ok(())
+    }
+
+    fn read_logs(&self, execution_id: Uuid, limit: u32) -> Result<Vec<ExecutionLogEntry>, StoreError> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare("SELECT id, execution_id, timestamp, level, message, fields FROM execution_logs WHERE execution_id = ?1 ORDER BY timestamp ASC LIMIT ?2").map_err(map_err)?;
+        let rows = stmt.query_map(params![execution_id.to_string(), limit], |row| {
+            let id_str: String = row.get(0)?;
+            let exec_id_str: String = row.get(1)?;
+            let fields_str: String = row.get(5)?;
+            Ok(ExecutionLogEntry {
+                id: Uuid::parse_str(&id_str).unwrap(),
+                execution_id: Uuid::parse_str(&exec_id_str).unwrap(),
+                timestamp: sql_to_dt(&row.get::<_, String>(2)?),
+                level: row.get(3)?,
+                message: row.get(4)?,
+                fields: serde_json::from_str(&fields_str).unwrap_or_default(),
+            })
+        }).map_err(map_err)?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(map_err)
+    }
+}
+
 impl Store for SqliteStore {}
 
 // ─── Row mappers ───
@@ -754,6 +961,23 @@ fn row_to_dead_letter(row: &rusqlite::Row<'_>) -> Result<DeadLetter, rusqlite::E
         metadata: serde_json::from_str(&metadata_str).unwrap_or_default(),
         created_at: sql_to_dt(&row.get::<_, String>(8)?),
         expires_at: sql_to_opt_dt(row.get(9)?),
+    })
+}
+
+fn row_to_trigger_def(row: &rusqlite::Row<'_>) -> Result<TriggerDefinition, rusqlite::Error> {
+    Ok(TriggerDefinition {
+        trigger_id: row.get(0)?,
+        job_key: row.get(1)?,
+        cron_expression: row.get(2)?,
+        timezone: row.get(3)?,
+        calendar: row.get(4)?,
+        window: row.get(5)?,
+        not_before: sql_to_opt_dt(row.get(6)?),
+        not_after: sql_to_opt_dt(row.get(7)?),
+        enabled: row.get::<_, bool>(8)?,
+        managed_by: row.get(9)?,
+        created_at: sql_to_dt(&row.get::<_, String>(10)?),
+        updated_at: sql_to_dt(&row.get::<_, String>(11)?),
     })
 }
 

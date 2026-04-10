@@ -151,5 +151,36 @@ pub trait AuthStore {
     fn revoke_refresh_token(&self, token_hash: &str, now: DateTime<Utc>) -> Result<(), StoreError>;
 }
 
+/// Job definition persistence (CRUD for job definitions, distinct from runtime JobState).
+pub trait JobDefinitionStore {
+    fn create_job_definition(&self, job: &JobDefinition) -> Result<(), StoreError>;
+    fn get_job_definition(&self, job_key: &str) -> Result<Option<JobDefinition>, StoreError>;
+    fn list_job_definitions(&self) -> Result<Vec<JobDefinition>, StoreError>;
+    fn delete_job_definition(&self, job_key: &str) -> Result<(), StoreError>;
+}
+
+/// Trigger definition persistence.
+pub trait TriggerDefinitionStore {
+    fn create_trigger(&self, trigger: &TriggerDefinition) -> Result<(), StoreError>;
+    fn get_trigger(&self, trigger_id: &str) -> Result<Option<TriggerDefinition>, StoreError>;
+    fn list_triggers(&self, job_key: Option<&str>) -> Result<Vec<TriggerDefinition>, StoreError>;
+    fn delete_trigger(&self, trigger_id: &str) -> Result<(), StoreError>;
+}
+
+/// Calendar definition persistence.
+pub trait CalendarDefinitionStore {
+    fn create_calendar(&self, cal: &CalendarDefinition) -> Result<(), StoreError>;
+    fn get_calendar(&self, calendar_id: &str) -> Result<Option<CalendarDefinition>, StoreError>;
+    fn list_calendars(&self) -> Result<Vec<CalendarDefinition>, StoreError>;
+    fn delete_calendar(&self, calendar_id: &str) -> Result<(), StoreError>;
+}
+
+/// Execution log persistence.
+pub trait ExecutionLogStore {
+    fn append_log(&self, entry: &ExecutionLogEntry) -> Result<(), StoreError>;
+    fn read_logs(&self, execution_id: Uuid, limit: u32) -> Result<Vec<ExecutionLogEntry>, StoreError>;
+}
+
 /// Combined store trait for convenience.
-pub trait Store: JobStore + ExecutionStore + RunnerStore + DeadLetterStore + AuthStore {}
+pub trait Store: JobStore + ExecutionStore + RunnerStore + DeadLetterStore + AuthStore
+    + JobDefinitionStore + TriggerDefinitionStore + CalendarDefinitionStore + ExecutionLogStore {}

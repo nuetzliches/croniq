@@ -190,3 +190,65 @@ pub struct PasswordCredential {
     pub locked_until: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
 }
+
+// ─── Job Definition ───
+
+/// A persisted job definition (distinct from the runtime JobState).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct JobDefinition {
+    pub job_key: String,
+    pub description: Option<String>,
+    /// Runner assigned to execute this job.
+    pub assigned_runner_id: Option<String>,
+    pub is_active: bool,
+    pub metadata: HashMap<String, String>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+// ─── Trigger Definition ───
+
+/// A persisted trigger/schedule definition.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TriggerDefinition {
+    pub trigger_id: String,
+    pub job_key: String,
+    pub cron_expression: Option<String>,
+    pub timezone: Option<String>,
+    pub calendar: Option<String>,
+    pub window: Option<String>,
+    pub not_before: Option<DateTime<Utc>>,
+    pub not_after: Option<DateTime<Utc>>,
+    pub enabled: bool,
+    /// Who manages this trigger: "dsl" (Croniqfile), "api" (REST), "runner" (self-registered).
+    pub managed_by: String,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+// ─── Calendar Definition ───
+
+/// A persisted calendar definition.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CalendarDefinition {
+    pub calendar_id: String,
+    pub name: String,
+    pub timezone: Option<String>,
+    /// JSON-encoded rules array.
+    pub rules: String,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+// ─── Work Item Tracking ───
+
+/// A log entry pushed by a runner during execution.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExecutionLogEntry {
+    pub id: Uuid,
+    pub execution_id: Uuid,
+    pub timestamp: DateTime<Utc>,
+    pub level: String,
+    pub message: String,
+    pub fields: HashMap<String, String>,
+}

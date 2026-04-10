@@ -2,6 +2,12 @@
 
 pub mod auth_endpoints;
 pub mod auth_middleware;
+pub mod calendars;
+pub mod dead_letters;
+pub mod execution_logs;
+pub mod jobs;
+pub mod schedules;
+pub mod work;
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -91,21 +97,41 @@ impl ServerState {
 // ─── Router ───────────────────────────────────────────────────────────────────
 
 pub fn server_router(state: Arc<ServerState>) -> Router {
-    use auth_endpoints::*;
-
     // Authenticated routes
     let authenticated = Router::new()
-        .route("/v1/poll", post(handle_poll))
-        .route("/v1/complete", post(handle_complete))
+        // Work protocol
+        .route("/v1/poll", post(handle_poll))             // legacy compat
+        .route("/v1/complete", post(handle_complete))       // legacy compat
+        .route("/v1/work/poll", post(handle_poll))
+        .route("/v1/work/ack", post(handle_complete))
+        .route("/v1/work/renew", post(work::handle_renew))
+        .route("/v1/work/{execution_id}/events", post(work::handle_events))
+        // Runners
         .route("/v1/runners", get(handle_list_runners))
+        .route("/v1/runners/{id}", delete(handle_delete_runner))
         .route("/v1/trigger", post(handle_trigger))
-        .route("/v1/jobs", get(handle_list_jobs))
+        // Jobs CRUD
+        .route("/v1/jobs", get(jobs::handle_list).post(jobs::handle_create))
+        .route("/v1/jobs/{job_key}", get(jobs::handle_get).delete(jobs::handle_delete))
+        .route("/v1/jobs/{job_key}/activate", post(jobs::handle_activate))
+        // Schedules CRUD
+        .route("/v1/schedules", get(schedules::handle_list).post(schedules::handle_create))
+        .route("/v1/schedules/{trigger_id}", get(schedules::handle_get).delete(schedules::handle_delete))
+        // Calendars CRUD
+        .route("/v1/calendars", get(calendars::handle_list).post(calendars::handle_create))
+        .route("/v1/calendars/{id}", get(calendars::handle_get).delete(calendars::handle_delete))
+        // Dead letters
+        .route("/v1/dead-letters", get(dead_letters::handle_list))
+        .route("/v1/dead-letters/{id}", get(dead_letters::handle_get).delete(dead_letters::handle_delete))
+        // Executions + logs
         .route("/v1/executions", get(handle_list_executions))
-        .route("/v1/api-clients", get(handle_list_clients).post(handle_create_client))
-        .route("/v1/api-clients/{id}", delete(handle_delete_client))
-        .route("/v1/api-clients/{id}/tokens", post(handle_issue_client_token))
-        .route("/v1/api-keys", post(handle_create_api_key))
-        .route("/v1/api-keys/{id}", delete(handle_revoke_api_key))
+        .route("/v1/executions/{id}/logs", get(execution_logs::handle_get_logs))
+        // Auth management
+        .route("/v1/api-clients", get(auth_endpoints::handle_list_clients).post(auth_endpoints::handle_create_client))
+        .route("/v1/api-clients/{id}", delete(auth_endpoints::handle_delete_client))
+        .route("/v1/api-clients/{id}/tokens", post(auth_endpoints::handle_issue_client_token))
+        .route("/v1/api-keys", post(auth_endpoints::handle_create_api_key))
+        .route("/v1/api-keys/{id}", delete(auth_endpoints::handle_revoke_api_key))
         .route_layer(middleware::from_fn_with_state(
             Arc::clone(&state),
             auth_middleware::require_auth,
@@ -114,9 +140,9 @@ pub fn server_router(state: Arc<ServerState>) -> Router {
     // Public routes (health + auth login/refresh/logout)
     let public = Router::new()
         .route("/health", get(handle_health))
-        .route("/v1/auth/login", post(handle_login))
-        .route("/v1/auth/refresh", post(handle_refresh))
-        .route("/v1/auth/logout", post(handle_logout));
+        .route("/v1/auth/login", post(auth_endpoints::handle_login))
+        .route("/v1/auth/refresh", post(auth_endpoints::handle_refresh))
+        .route("/v1/auth/logout", post(auth_endpoints::handle_logout));
 
     authenticated.merge(public).with_state(state)
 }
@@ -247,6 +273,16 @@ async fn handle_list_runners(
     Json(summaries)
 }
 
+/// `DELETE /v1/runners/{id}` — deregister a runner.
+async fn handle_delete_runner(
+    State(state): State<Arc<ServerState>>,
+    axum::extract::Path(runner_id): axum::extract::Path<String>,
+) -> StatusCode {
+    let mut reg = state.runner.registry.write().await;
+    reg.remove(&runner_id);
+    StatusCode::NO_CONTENT
+}
+
 /// `POST /v1/trigger` — immediately enqueue a job execution.
 async fn handle_trigger(
     State(state): State<Arc<ServerState>>,
@@ -276,15 +312,6 @@ async fn handle_trigger(
         StatusCode::OK,
         Json(TriggerResponse { execution_id, queued }),
     )
-}
-
-/// `GET /v1/jobs` — list all job states from the store.
-async fn handle_list_jobs(
-    State(state): State<Arc<ServerState>>,
-) -> Result<Json<serde_json::Value>, StatusCode> {
-    let store = state.store.as_ref().ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
-    let states = store.list_job_states().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    Ok(Json(serde_json::to_value(&states).unwrap_or_default()))
 }
 
 /// `GET /v1/executions` — list recent executions from the store.
