@@ -90,9 +90,14 @@ async fn main() -> Result<()> {
     // Completion channel: HTTP complete → processor task
     let (completion_tx, mut completion_rx) = mpsc::unbounded_channel();
 
-    // Server state wrapping runner + completion channel + auth
-    let auth_token = loaded.runtime.pull_api.as_ref().and_then(|p| p.auth.clone());
-    let server_state = ServerState::with_auth(Arc::clone(&runner_state), completion_tx, auth_token, Some(Arc::clone(&store)));
+    // Server state wrapping runner + completion channel + JWT auth
+    let jwt_config = loaded.runtime.pull_api.as_ref().and_then(|p| p.auth.as_ref()).map(|secret| {
+        croniq_auth::jwt::JwtConfig {
+            secret: secret.clone(),
+            ..Default::default()
+        }
+    });
+    let server_state = ServerState::with_auth(Arc::clone(&runner_state), completion_tx, jwt_config, Some(Arc::clone(&store)));
 
     // ── File watcher (optional) ─────────────────────────────────────────────
     let (reload_tx, mut reload_rx) = mpsc::unbounded_channel::<std::path::PathBuf>();

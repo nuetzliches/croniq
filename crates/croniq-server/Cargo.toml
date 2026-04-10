@@ -16,6 +16,7 @@ croniq-store     = { path = "../croniq-store" }
 croniq-execution = { path = "../croniq-execution" }
 croniq-runner    = { path = "../croniq-runner" }
 croniq-bridge    = { path = "../croniq-bridge" }
+croniq-auth      = { path = "../croniq-auth" }
 
 axum = { version = "0.8", features = ["json", "macros"] }
 tokio = { version = "1", features = ["full"] }

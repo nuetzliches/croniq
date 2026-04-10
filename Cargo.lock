@@ -572,6 +572,7 @@ dependencies = [
  "chrono",
  "chrono-tz",
  "clap",
+ "croniq-auth",
  "croniq-bridge",
  "croniq-config",
  "croniq-execution",

@@ -1,9 +1,7 @@
-//! Extended HTTP API: runner Pull-API plus the server-side completion handler.
-//!
-//! Routes:
-//! - `POST /v1/poll`     → dispatches work from the queue to polling runners
-//! - `POST /v1/complete` → releases inflight + forwards to completion processor
-//! - `GET  /health`      → liveness + queue depth
+//! Extended HTTP API: runner Pull-API, auth, and management endpoints.
+
+pub mod auth_endpoints;
+pub mod auth_middleware;
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -14,9 +12,10 @@ use axum::{
     extract::State,
     http::StatusCode,
     middleware,
-    routing::{get, post},
+    routing::{get, post, delete},
 };
 use chrono::Utc;
+use croniq_auth::jwt::JwtConfig;
 use croniq_runner::{
     AppState, CompleteResponse, RunnerStatus, RunnerSummary, TriggerRequest, TriggerResponse,
     WorkAssignment, WorkItem,
@@ -43,8 +42,8 @@ pub struct ServerState {
     /// How long a poll request may block waiting for work.
     /// Defaults to 30 s; can be reduced in tests.
     pub long_poll_timeout: Duration,
-    /// Optional bearer token for Pull-API authentication.
-    pub auth_token: Option<String>,
+    /// JWT configuration for token-based auth. None = auth disabled.
+    pub jwt_config: Option<JwtConfig>,
     /// Persistent store for querying jobs and executions.
     pub store: Option<DynStore>,
 }
@@ -58,23 +57,23 @@ impl ServerState {
             runner,
             completion_tx,
             long_poll_timeout: DEFAULT_LONG_POLL_TIMEOUT,
-            auth_token: None,
+            jwt_config: None,
             store: None,
         })
     }
 
-    /// Construct with a bearer auth token and optional store.
+    /// Construct with JWT auth and optional store.
     pub fn with_auth(
         runner: Arc<AppState>,
         completion_tx: mpsc::UnboundedSender<CompletionEvent>,
-        auth_token: Option<String>,
+        jwt_config: Option<JwtConfig>,
         store: Option<DynStore>,
     ) -> Arc<Self> {
         Arc::new(Self {
             runner,
             completion_tx,
             long_poll_timeout: DEFAULT_LONG_POLL_TIMEOUT,
-            auth_token,
+            jwt_config,
             store,
         })
     }
@@ -85,14 +84,16 @@ impl ServerState {
         completion_tx: mpsc::UnboundedSender<CompletionEvent>,
         long_poll_timeout: Duration,
     ) -> Arc<Self> {
-        Arc::new(Self { runner, completion_tx, long_poll_timeout, auth_token: None, store: None })
+        Arc::new(Self { runner, completion_tx, long_poll_timeout, jwt_config: None, store: None })
     }
 }
 
 // ─── Router ───────────────────────────────────────────────────────────────────
 
 pub fn server_router(state: Arc<ServerState>) -> Router {
-    // Authenticated routes (poll, complete, trigger, runners, jobs, executions)
+    use auth_endpoints::*;
+
+    // Authenticated routes
     let authenticated = Router::new()
         .route("/v1/poll", post(handle_poll))
         .route("/v1/complete", post(handle_complete))
@@ -100,39 +101,24 @@ pub fn server_router(state: Arc<ServerState>) -> Router {
         .route("/v1/trigger", post(handle_trigger))
         .route("/v1/jobs", get(handle_list_jobs))
         .route("/v1/executions", get(handle_list_executions))
+        .route("/v1/api-clients", get(handle_list_clients).post(handle_create_client))
+        .route("/v1/api-clients/{id}", delete(handle_delete_client))
+        .route("/v1/api-clients/{id}/tokens", post(handle_issue_client_token))
+        .route("/v1/api-keys", post(handle_create_api_key))
+        .route("/v1/api-keys/{id}", delete(handle_revoke_api_key))
         .route_layer(middleware::from_fn_with_state(
             Arc::clone(&state),
-            auth_middleware,
+            auth_middleware::require_auth,
         ));
 
-    // Public routes (health only)
+    // Public routes (health + auth login/refresh/logout)
     let public = Router::new()
-        .route("/health", get(handle_health));
+        .route("/health", get(handle_health))
+        .route("/v1/auth/login", post(handle_login))
+        .route("/v1/auth/refresh", post(handle_refresh))
+        .route("/v1/auth/logout", post(handle_logout));
 
     authenticated.merge(public).with_state(state)
-}
-
-/// Bearer token auth middleware. Skipped when no auth_token is configured.
-async fn auth_middleware(
-    State(state): State<Arc<ServerState>>,
-    req: axum::extract::Request,
-    next: middleware::Next,
-) -> Result<axum::response::Response, StatusCode> {
-    let Some(ref expected) = state.auth_token else {
-        return Ok(next.run(req).await);
-    };
-
-    let auth_header = req
-        .headers()
-        .get("authorization")
-        .and_then(|v| v.to_str().ok());
-
-    match auth_header {
-        Some(header) if header.strip_prefix("Bearer ").map_or(false, |t| t == expected) => {
-            Ok(next.run(req).await)
-        }
-        _ => Err(StatusCode::UNAUTHORIZED),
-    }
 }
 
 // ─── Handlers ─────────────────────────────────────────────────────────────────
@@ -520,14 +506,18 @@ mod tests {
 
     // ─── Auth middleware tests ────────────────────────────────────────────────
 
-    fn make_auth_state(token: &str) -> (Arc<ServerState>, mpsc::UnboundedReceiver<CompletionEvent>) {
+    fn make_auth_state(secret: &str) -> (Arc<ServerState>, mpsc::UnboundedReceiver<CompletionEvent>) {
         let runner = AppState::new();
         let (tx, rx) = mpsc::unbounded_channel();
+        let jwt_config = JwtConfig {
+            secret: secret.to_string(),
+            ..Default::default()
+        };
         let state = Arc::new(ServerState {
             runner,
             completion_tx: tx,
             long_poll_timeout: Duration::from_millis(50),
-            auth_token: Some(token.to_string()),
+            jwt_config: Some(jwt_config),
             store: None,
         });
         (state, rx)
@@ -548,7 +538,7 @@ mod tests {
 
     #[tokio::test]
     async fn auth_rejects_without_token() {
-        let (state, _rx) = make_auth_state("secret-token");
+        let (state, _rx) = make_auth_state("test-secret");
         let app = server_router(Arc::clone(&state));
 
         let status = status_of(app, "POST", "/v1/poll", Some(serde_json::json!({
@@ -559,35 +549,54 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn auth_rejects_wrong_token() {
-        let (state, _rx) = make_auth_state("secret-token");
+    async fn auth_rejects_invalid_jwt() {
+        let (state, _rx) = make_auth_state("test-secret");
         let app = server_router(Arc::clone(&state));
 
         let status = status_of(app, "POST", "/v1/poll", Some(serde_json::json!({
             "runner_id": "r1", "capabilities": [], "max_inflight": 1, "inflight": []
-        })), Some("wrong-token")).await;
+        })), Some("invalid.jwt.token")).await;
 
         assert_eq!(status, 401);
     }
 
     #[tokio::test]
-    async fn auth_accepts_correct_token() {
-        let (state, _rx) = make_auth_state("secret-token");
-        let app = server_router(Arc::clone(&state));
+    async fn auth_accepts_valid_jwt() {
+        let (state, _rx) = make_auth_state("test-secret");
+        let jwt_config = state.jwt_config.as_ref().unwrap();
+        let pair = croniq_auth::jwt::issue_token_pair(
+            jwt_config, "test-user", "test-client",
+            croniq_auth::CallerType::User, &["admin".into()],
+        ).unwrap();
 
+        let app = server_router(Arc::clone(&state));
         let status = status_of(app, "POST", "/v1/poll", Some(serde_json::json!({
             "runner_id": "r1", "capabilities": [], "max_inflight": 1, "inflight": []
-        })), Some("secret-token")).await;
+        })), Some(&pair.access_token)).await;
 
         assert_eq!(status, 200);
     }
 
     #[tokio::test]
     async fn auth_health_is_public() {
-        let (state, _rx) = make_auth_state("secret-token");
+        let (state, _rx) = make_auth_state("test-secret");
         let app = server_router(Arc::clone(&state));
 
         let status = status_of(app, "GET", "/health", None, None).await;
         assert_eq!(status, 200);
+    }
+
+    #[tokio::test]
+    async fn auth_login_is_public() {
+        let (state, _rx) = make_auth_state("test-secret");
+        let app = server_router(Arc::clone(&state));
+
+        // Login endpoint should be reachable (will fail with 503 since no store)
+        let status = status_of(app, "POST", "/v1/auth/login", Some(serde_json::json!({
+            "username": "admin", "password": "pass"
+        })), None).await;
+
+        // 503 because no store configured, but NOT 401/404
+        assert_eq!(status, 503);
     }
 }
