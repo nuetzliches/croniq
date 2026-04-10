@@ -13,7 +13,6 @@ use croniq_auth::jwt::issue_token_pair;
 use croniq_auth::password::verify_password;
 use croniq_auth::{CallerType};
 use croniq_store::models::{ApiClient, ApiKey, RefreshToken};
-use croniq_store::traits::AuthStore;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -83,11 +82,10 @@ pub async fn handle_login(
         .ok_or(StatusCode::UNAUTHORIZED)?;
 
     // Check lockout
-    if let Some(locked_until) = cred.locked_until {
-        if Utc::now() < locked_until {
+    if let Some(locked_until) = cred.locked_until
+        && Utc::now() < locked_until {
             return Err(StatusCode::FORBIDDEN);
         }
-    }
 
     // Verify password
     let valid = verify_password(&req.password, &cred.password_hash)

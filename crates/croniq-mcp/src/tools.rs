@@ -496,12 +496,11 @@ impl CroniqMcp {
         };
 
         // Also cancel in the persistent store (best-effort).
-        if let Some(store) = &self.store {
-            if let Ok(id) = Uuid::parse_str(&p.execution_id) {
+        if let Some(store) = &self.store
+            && let Ok(id) = Uuid::parse_str(&p.execution_id) {
                 let now = Utc::now();
                 let _ = store.cancel_execution(id, now);
             }
-        }
 
         Ok(if removed {
             format!("Execution '{}' removed from queue.", p.execution_id)

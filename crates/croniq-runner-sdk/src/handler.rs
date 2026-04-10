@@ -51,6 +51,12 @@ pub struct HandlerRegistry {
     default_handler: Option<HandlerFn>,
 }
 
+impl Default for HandlerRegistry {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl HandlerRegistry {
     pub fn new() -> Self {
         Self {

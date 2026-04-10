@@ -5,7 +5,6 @@ use std::sync::Arc;
 use axum::{Json, extract::{Query, State}, http::StatusCode};
 use chrono::Utc;
 use croniq_store::models::TriggerDefinition;
-use croniq_store::traits::TriggerDefinitionStore;
 use serde::Deserialize;
 use uuid::Uuid;
 

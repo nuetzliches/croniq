@@ -167,7 +167,7 @@ impl CroniqRunner {
                                 let result = handler(ctx).await;
                                 renew_handle.abort();
 
-                                let duration_ms = start.elapsed().as_millis() as i64;
+                                let _duration_ms = start.elapsed().as_millis() as i64;
                                 match result {
                                     Ok(()) => ("success".to_string(), None),
                                     Err(e) => ("failure".to_string(), Some(e.to_string())),

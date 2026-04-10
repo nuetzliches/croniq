@@ -10,7 +10,7 @@ use axum::{
 };
 use croniq_auth::{CallerContext, CallerType};
 use croniq_auth::api_key::hash_api_key;
-use croniq_auth::jwt::{JwtConfig, validate_token};
+use croniq_auth::jwt::validate_token;
 
 use super::ServerState;
 
@@ -60,11 +60,10 @@ pub async fn require_auth(
         }
 
         // Check not expired
-        if let Some(expires) = api_key.expires_at {
-            if chrono::Utc::now() > expires {
+        if let Some(expires) = api_key.expires_at
+            && chrono::Utc::now() > expires {
                 return Err(StatusCode::UNAUTHORIZED);
             }
-        }
 
         // Load client for scopes
         let client = store

@@ -1,14 +1,11 @@
 //! Dashboard forecast: projects scheduled fire times into time buckets.
 
 use std::collections::HashMap;
-use std::sync::Arc;
 
-use axum::{Json, extract::{Query, State}, http::StatusCode};
 use chrono::{DateTime, Duration, Utc};
 use croniq_scheduler::trigger::Trigger;
 use serde::{Deserialize, Serialize};
 
-use crate::api::ServerState;
 
 #[derive(Deserialize)]
 pub struct ForecastQuery {

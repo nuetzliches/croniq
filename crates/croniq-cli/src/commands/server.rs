@@ -39,8 +39,8 @@ pub fn list_runners(server_url: &str) -> Result<()> {
 
     // Column header
     println!(
-        "{:<24} {:<8} {:<10} {:<12} {}",
-        "RUNNER ID", "STATUS", "INFLIGHT", "CAPACITY", "CAPABILITIES"
+        "{:<24} {:<8} {:<10} {:<12} CAPABILITIES",
+        "RUNNER ID", "STATUS", "INFLIGHT", "CAPACITY"
     );
     println!("{}", "-".repeat(72));
 

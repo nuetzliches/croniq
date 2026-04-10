@@ -135,18 +135,16 @@ impl Trigger {
         }
 
         // Respect not_before: suppress firing until the boundary
-        if let Some(nb) = self.not_before {
-            if now < nb {
+        if let Some(nb) = self.not_before
+            && now < nb {
                 return None;
             }
-        }
 
         // Respect not_after: suppress firing past the boundary
-        if let Some(na) = self.not_after {
-            if now > na {
+        if let Some(na) = self.not_after
+            && now > na {
                 return None;
             }
-        }
 
         let fire_at = self.next_fire_at?;
 
@@ -167,12 +165,11 @@ impl Trigger {
         self.next_fire_at = self.compute_next_fire(now);
 
         // If next fire is past not_after, exhaust the trigger
-        if let (Some(next), Some(na)) = (self.next_fire_at, self.not_after) {
-            if next > na {
+        if let (Some(next), Some(na)) = (self.next_fire_at, self.not_after)
+            && next > na {
                 self.next_fire_at = None;
                 self.state = TriggerState::Exhausted;
             }
-        }
     }
 
     /// Mark the execution as completed, transition back to Armed.

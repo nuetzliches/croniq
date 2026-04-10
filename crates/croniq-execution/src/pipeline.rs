@@ -12,21 +12,13 @@ use crate::timeout::TimeoutPolicy;
 
 /// Complete execution policy set for a job.
 #[derive(Debug, Clone)]
+#[derive(Default)]
 pub struct ExecutionPolicy {
     pub retry: RetryPolicy,
     pub timeout: TimeoutPolicy,
     pub dead_letter: DeadLetterPolicy,
 }
 
-impl Default for ExecutionPolicy {
-    fn default() -> Self {
-        Self {
-            retry: RetryPolicy::default(),
-            timeout: TimeoutPolicy::default(),
-            dead_letter: DeadLetterPolicy::default(),
-        }
-    }
-}
 
 /// The outcome of a completed execution.
 #[derive(Debug, Clone, PartialEq)]

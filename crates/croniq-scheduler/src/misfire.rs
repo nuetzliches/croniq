@@ -7,9 +7,11 @@ use chrono::{DateTime, Duration, Utc};
 
 /// What to do when a fire time is missed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[derive(Default)]
 pub enum MisfirePolicy {
     /// Fire immediately, regardless of how late.
     /// Good for: jobs that must always run (billing, data sync).
+    #[default]
     FireNow,
 
     /// Skip the missed fire and wait for the next one.
@@ -24,11 +26,6 @@ pub enum MisfirePolicy {
     },
 }
 
-impl Default for MisfirePolicy {
-    fn default() -> Self {
-        MisfirePolicy::FireNow
-    }
-}
 
 /// Result of evaluating a misfire.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

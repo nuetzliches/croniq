@@ -3,6 +3,7 @@
 pub mod auth_endpoints;
 pub mod auth_middleware;
 pub mod calendars;
+pub mod dashboard;
 pub mod dead_letters;
 pub mod execution_logs;
 pub mod jobs;
@@ -22,6 +23,7 @@ use axum::{
 };
 use chrono::Utc;
 use croniq_auth::jwt::JwtConfig;
+use croniq_scheduler::trigger::Trigger;
 use croniq_runner::{
     AppState, CompleteResponse, RunnerStatus, RunnerSummary, TriggerRequest, TriggerResponse,
     WorkAssignment, WorkItem,
@@ -32,7 +34,6 @@ use tokio::sync::mpsc;
 use crate::completion::CompletionEvent;
 use crate::store::DynStore;
 use croniq_store::models::ExecutionFilter;
-use croniq_store::traits::{ExecutionStore, JobStore};
 
 /// Default maximum time a poll request will block waiting for work.
 const DEFAULT_LONG_POLL_TIMEOUT: Duration = Duration::from_secs(30);
@@ -52,6 +53,8 @@ pub struct ServerState {
     pub jwt_config: Option<JwtConfig>,
     /// Persistent store for querying jobs and executions.
     pub store: Option<DynStore>,
+    /// Shared trigger map for dashboard forecast (read-only snapshot).
+    pub triggers: Option<Arc<tokio::sync::RwLock<HashMap<String, Trigger>>>>,
 }
 
 impl ServerState {
@@ -65,6 +68,7 @@ impl ServerState {
             long_poll_timeout: DEFAULT_LONG_POLL_TIMEOUT,
             jwt_config: None,
             store: None,
+            triggers: None,
         })
     }
 
@@ -81,6 +85,7 @@ impl ServerState {
             long_poll_timeout: DEFAULT_LONG_POLL_TIMEOUT,
             jwt_config,
             store,
+            triggers: None,
         })
     }
 
@@ -90,7 +95,7 @@ impl ServerState {
         completion_tx: mpsc::UnboundedSender<CompletionEvent>,
         long_poll_timeout: Duration,
     ) -> Arc<Self> {
-        Arc::new(Self { runner, completion_tx, long_poll_timeout, jwt_config: None, store: None })
+        Arc::new(Self { runner, completion_tx, long_poll_timeout, jwt_config: None, store: None, triggers: None })
     }
 }
 
@@ -123,6 +128,9 @@ pub fn server_router(state: Arc<ServerState>) -> Router {
         // Dead letters
         .route("/v1/dead-letters", get(dead_letters::handle_list))
         .route("/v1/dead-letters/{id}", get(dead_letters::handle_get).delete(dead_letters::handle_delete))
+        .route("/v1/dead-letters/{id}/replay", post(dead_letters::handle_replay))
+        // Dashboard
+        .route("/v1/dashboard/forecast", get(dashboard::handle_forecast))
         // Executions + logs
         .route("/v1/executions", get(handle_list_executions))
         .route("/v1/executions/{id}/logs", get(execution_logs::handle_get_logs))
@@ -548,6 +556,7 @@ mod tests {
             long_poll_timeout: Duration::from_millis(50),
             jwt_config: Some(jwt_config),
             store: None,
+            triggers: None,
         });
         (state, rx)
     }

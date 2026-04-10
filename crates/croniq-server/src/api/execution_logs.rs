@@ -4,7 +4,6 @@ use std::sync::Arc;
 
 use axum::{Json, extract::State, http::StatusCode};
 use croniq_store::models::ExecutionLogEntry;
-use croniq_store::traits::ExecutionLogStore;
 use uuid::Uuid;
 
 use super::ServerState;

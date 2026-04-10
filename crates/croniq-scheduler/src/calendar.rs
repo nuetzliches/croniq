@@ -3,7 +3,7 @@
 //! A calendar determines whether a given datetime is "allowed" for job execution.
 //! Rules: `(all includes match) AND (no exclude matches)`. No includes = everything allowed.
 
-use chrono::{Datelike, NaiveDate, NaiveTime, Timelike};
+use chrono::{Datelike, NaiveDate, NaiveTime};
 
 /// A compiled calendar with evaluated rules.
 #[derive(Debug, Clone)]

@@ -31,6 +31,12 @@ pub struct QuotaGuard {
     quotas: HashMap<String, JobQuota>,
 }
 
+impl Default for QuotaGuard {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl QuotaGuard {
     pub fn new() -> Self {
         Self {

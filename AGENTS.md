@@ -1,51 +1,26 @@
-# Guidance for Copilot, Codex & Other AI Assistants
-
-All AI-generated contributions must align with the architectural ground rules documented in `docs/deep-dive/architecture.md`. When in doubt, start there.
+# Guidance for AI Assistants
 
 ## Core Expectations
 
-1. **Target Stack**
-   - Use .NET `net10.0` for all new projects/libraries; upgrade existing TFMs to `net10.0` unless explicitly exempted.
-   - Prefer modern C# design patterns (records, required members, dependency injection, source generators where appropriate).
+1. **Target Stack** — Rust (latest stable edition), React + TypeScript for UI
+2. **Language** — Documentation, commits, and code comments in English
+3. **Dependencies** — MIT-compatible licenses only. Use latest stable versions.
+4. **Code Style** — `cargo clippy` clean, `cargo fmt` formatted
+5. **Testing** — Add tests for new functionality. `cargo test --workspace` must pass.
 
-2. **Documentation & Comments**
-   - Write documentation, commit messages, and code comments in **English**.
-   - Prioritize concise summaries plus context for complex logic.
+## Architecture
 
-3. **Dependencies & Packages**
-   - Add only dependencies with MIT-compatible licenses (MIT, Apache 2.0, BSD); flag any package that introduces stronger restrictions before it lands.
-   - Add NuGet packages in their latest stable version unless the concept mandates a specific range.
-   - Follow each package's official documentation for configuration and usage patterns.
+- Workspace with 11 crates under `crates/`
+- `croniq-server` is the main binary (HTTP server, scheduler, watchdog)
+- `croniq-cli` is the CLI tool
+- `croniq-runner-sdk` is the client library for runners
+- `croniq-store` holds persistence traits + SQLite/Postgres implementations
+- UI is a React SPA under `ui/`
 
-4. **General Best Practices**
-   - Keep public APIs minimal but well-documented; avoid leaking implementation details.
-   - Favor async APIs (`Task`/`ValueTask`) and cancellation tokens for long-running or I/O-bound operations.
-   - Ensure telemetry hooks (logging, tracing, metrics) align with the OpenTelemetry-first approach captured in `docs/deep-dive/architecture.md`.
-   - Validate input aggressively; prefer `ArgumentException`/`Guard` helpers over silent failures.
-   - Write unit tests (xUnit + Shouldly) for new logic; update integration tests when touching provider or persistence layers.
-   - Keep secrets/config values outside source control; rely on the `ISecretProvider` abstractions instead of inline secrets.
-   - Use the Aspire AppHost (`tools/Croniq.Devstack.AppHost`) as the canonical dev stack and CI smoke entrypoint; do not add new Compose-based devstack scripts unless explicitly requested.
-   - Database schema changes must flow through EF Core migrations. Do **not** hand-edit databases or backfill schema manually; fix migrations or reset local dev databases only with explicit user approval.
-   - EF Core migrations must include the generated designer file (`*.Designer.cs`) so they are discoverable by the migrator and `dotnet ef migrations list`.
+## Key Patterns
 
-5. **Auth Direction (V1)**
-   - The initial target is **self-hosted, private-network, single-tenant** deployments.
-   - For password auth, require explicit `tenantId` (no `DefaultTenant`/tenant reference fallback).
-   - Do not introduce new external identity provider flows or user/tenant membership models unless explicitly requested; federated login is deferred to later versions.
-
-6. **Breaking Changes Before GA**
-   - There are currently no external consumers. Treat breaking API or contract changes as acceptable until we ship `v1.0.0` (non-RC).
-   - Backward-compatibility shims and upgrade-safe behavior are not required before `v1.0.0` (non-RC).
-   - When making such changes, still document the rationale in `docs/deep-dive/*` so we keep a trace for future stabilization.
-
-7. **Documentation Cross-Links**
-   - When new features impact consumers, update `docs/*` and refer to deeper explanations in `docs/deep-dive/*`.
-   - Record noteworthy architectural decisions in the technical docs (especially `docs/deep-dive/architecture.md`).
-
-8. **Angular UI (Croniq.Ui) Workflow**
-   - See `src/Croniq.Ui/.github/ng.instructions.md` (and `src/Croniq.Ui/.github/copilot.instructions.md`) for the authoritative Angular UI instructions.
-
-9. **External Resources**
-   - Do not introduce or rely on external network resources (CDNs, remote fonts, third-party assets). Keep all assets local to the repo or provided by the runtime environment.
-
-By following these instructions, AI contributions remain compliant with the project's technical vision and developer experience goals.
+- Store traits are in `croniq-store/src/traits.rs` — implement for new backends
+- API handlers are in `croniq-server/src/api/` — one module per domain
+- Auth middleware in `croniq-server/src/api/auth_middleware.rs`
+- DSL parser in `croniq-config` — lexer → parser → AST → compiler
+- Scheduler loop ticks every second in `croniq-server/src/scheduler.rs`

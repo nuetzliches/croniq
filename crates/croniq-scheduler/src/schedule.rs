@@ -1,6 +1,6 @@
 //! Schedule evaluation: computes next fire times from compiled schedule definitions.
 
-use chrono::{Datelike, Duration, NaiveDate, NaiveTime, TimeZone, Timelike};
+use chrono::{Datelike, Duration, NaiveDate, NaiveTime, TimeZone};
 use chrono_tz::Tz;
 use croniq_config::ast::{IntervalUnit, MonthOrdinal, ScheduleKind, Weekday as AstWeekday};
 
@@ -67,7 +67,7 @@ impl Schedule {
             }
             ScheduleKind::Weekdays { days, time } => {
                 let chrono_days: Vec<chrono::Weekday> =
-                    days.iter().map(|d| ast_weekday_to_chrono(d)).collect();
+                    days.iter().map(ast_weekday_to_chrono).collect();
                 let t = NaiveTime::from_hms_opt(time.hour as u32, time.minute as u32, 0)
                     .ok_or_else(|| {
                         ScheduleError::InvalidTime(format!("{}:{}", time.hour, time.minute))
@@ -126,11 +126,9 @@ impl Schedule {
                 if let Some(candidate) = tz
                     .from_local_datetime(&today.and_time(*time))
                     .earliest()
-                {
-                    if candidate > local {
+                    && candidate > local {
                         return Some(candidate.with_timezone(&chrono::Utc));
                     }
-                }
 
                 // Tomorrow
                 let tomorrow = today + Duration::days(1);
@@ -148,15 +146,12 @@ impl Schedule {
                     let date = today + Duration::days(offset);
                     let weekday = date.weekday();
 
-                    if days.contains(&weekday) {
-                        if let Some(candidate) =
+                    if days.contains(&weekday)
+                        && let Some(candidate) =
                             tz.from_local_datetime(&date.and_time(*time)).earliest()
-                        {
-                            if candidate > local {
+                            && candidate > local {
                                 return Some(candidate.with_timezone(&chrono::Utc));
                             }
-                        }
-                    }
                 }
                 None
             }
@@ -175,15 +170,12 @@ impl Schedule {
                             MonthDay::Last => last_day_of_month(year, month),
                         };
 
-                        if let Some(date) = NaiveDate::from_ymd_opt(year, month, day) {
-                            if let Some(candidate) =
+                        if let Some(date) = NaiveDate::from_ymd_opt(year, month, day)
+                            && let Some(candidate) =
                                 tz.from_local_datetime(&date.and_time(*time)).earliest()
-                            {
-                                if candidate > local {
+                                && candidate > local {
                                     return Some(candidate.with_timezone(&chrono::Utc));
                                 }
-                            }
-                        }
                     }
                 }
                 None

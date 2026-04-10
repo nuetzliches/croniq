@@ -359,11 +359,10 @@ fn compile_job(
                 "dead_letter" => dead_letter = compile_dead_letter_block(block),
                 "metadata" => {
                     for inner in &block.directives {
-                        if let DirectiveOrBlock::Directive(d) = inner {
-                            if let Some(v) = d.args.first() {
+                        if let DirectiveOrBlock::Directive(d) = inner
+                            && let Some(v) = d.args.first() {
                                 metadata.insert(d.key.value.clone(), v.value.clone());
                             }
-                        }
                     }
                 }
                 _ => {}

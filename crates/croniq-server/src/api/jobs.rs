@@ -5,7 +5,6 @@ use std::sync::Arc;
 use axum::{Json, extract::State, http::StatusCode};
 use chrono::Utc;
 use croniq_store::models::JobDefinition;
-use croniq_store::traits::JobDefinitionStore;
 use serde::Deserialize;
 
 use super::ServerState;

@@ -76,8 +76,8 @@ fn format_job(out: &mut String, job: &JobBlock, indent: usize) {
 
     // Description first if present
     for dob in &job.directives {
-        if let DirectiveOrBlock::Directive(d) = dob {
-            if d.key.value == "description" {
+        if let DirectiveOrBlock::Directive(d) = dob
+            && d.key.value == "description" {
                 write_indent(out, indent + 1);
                 out.push_str("description ");
                 out.push_str(&format_string_value(&d.args[0]));
@@ -85,7 +85,6 @@ fn format_job(out: &mut String, job: &JobBlock, indent: usize) {
                 out.push('\n');
                 break;
             }
-        }
     }
 
     // Schedule

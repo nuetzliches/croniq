@@ -39,8 +39,8 @@ pub fn dead_letters(
     }
 
     println!(
-        "{:<38} {:<32} {:>7} {}",
-        "DEAD LETTER ID", "JOB KEY", "ATTEMPT", "ERROR"
+        "{:<38} {:<32} {:>7} ERROR",
+        "DEAD LETTER ID", "JOB KEY", "ATTEMPT"
     );
     println!("{}", "-".repeat(100));
 

@@ -44,6 +44,11 @@ struct Cli {
     /// Watch the Croniqfile for changes and hot-reload on modification.
     #[arg(long)]
     watch: bool,
+
+    /// Directory containing the UI static files to serve.
+    /// If set, serves files at / and falls back to index.html for SPA routing.
+    #[arg(long)]
+    ui_dir: Option<PathBuf>,
 }
 
 #[tokio::main]
@@ -220,13 +225,43 @@ async fn main() -> Result<()> {
         .or_else(|_| cli.listen.parse())
         .with_context(|| format!("invalid listen address: {}", cli.listen))?;
 
-    let app = server_router(server_state);
+    let mut app = server_router(server_state);
+
+    // Serve UI static files if --ui-dir is set
+    if let Some(ref ui_dir) = cli.ui_dir {
+        use tower_http::services::{ServeDir, ServeFile};
+        let index = ui_dir.join("index.html");
+        let serve = ServeDir::new(ui_dir).fallback(ServeFile::new(&index));
+        app = app.fallback_service(serve);
+        tracing::info!(path = %ui_dir.display(), "serving UI static files");
+    }
 
     tracing::info!(address = %addr, "croniq-server listening");
     let listener = tokio::net::TcpListener::bind(addr).await?;
-    axum::serve(listener, app).await?;
+    axum::serve(listener, app)
+        .with_graceful_shutdown(shutdown_signal())
+        .await?;
+    tracing::info!("croniq-server stopped gracefully");
 
     Ok(())
+}
+
+async fn shutdown_signal() {
+    let ctrl_c = tokio::signal::ctrl_c();
+    #[cfg(unix)]
+    {
+        let mut sigterm = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+            .expect("failed to register SIGTERM handler");
+        tokio::select! {
+            _ = ctrl_c => tracing::info!("received SIGINT"),
+            _ = sigterm.recv() => tracing::info!("received SIGTERM"),
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        ctrl_c.await.ok();
+        tracing::info!("received SIGINT");
+    }
 }
 
 /// Parse a duration string like "60s", "2m", "1h" to seconds. Falls back to 120.

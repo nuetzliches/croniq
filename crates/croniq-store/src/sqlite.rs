@@ -178,7 +178,7 @@ impl ExecutionStore for SqliteStore {
             .prepare("SELECT id, job_key, fire_at, attempt, state, runner_id, claimed_at, started_at, completed_at, duration_ms, error, dead_reason, metadata, created_at FROM executions WHERE id = ?1")
             .map_err(map_err)?;
 
-        stmt.query_row(params![id.to_string()], |row| row_to_execution(row))
+        stmt.query_row(params![id.to_string()], row_to_execution)
             .optional()
             .map_err(map_err)
     }
@@ -247,7 +247,7 @@ impl ExecutionStore for SqliteStore {
             .map_err(map_err)?;
 
         let rows = stmt
-            .query_map(params![fetch_limit], |row| row_to_execution(row))
+            .query_map(params![fetch_limit], row_to_execution)
             .map_err(map_err)?;
 
         let all: Vec<Execution> = rows.collect::<Result<Vec<_>, _>>().map_err(map_err)?;
@@ -307,7 +307,7 @@ impl ExecutionStore for SqliteStore {
         let params_ref: Vec<&dyn rusqlite::types::ToSql> = param_values.iter().map(|p| p.as_ref()).collect();
 
         let rows = stmt
-            .query_map(params_ref.as_slice(), |row| row_to_execution(row))
+            .query_map(params_ref.as_slice(), row_to_execution)
             .map_err(map_err)?;
 
         rows.collect::<Result<Vec<_>, _>>().map_err(map_err)
@@ -412,7 +412,7 @@ impl RunnerStore for SqliteStore {
             .prepare("SELECT runner_id, capabilities, max_inflight, last_poll_at, inflight, status, registered_at FROM runners WHERE runner_id = ?1")
             .map_err(map_err)?;
 
-        stmt.query_row(params![runner_id], |row| row_to_runner(row))
+        stmt.query_row(params![runner_id], row_to_runner)
             .optional()
             .map_err(map_err)
     }
@@ -424,7 +424,7 @@ impl RunnerStore for SqliteStore {
             .map_err(map_err)?;
 
         let rows = stmt
-            .query_map([], |row| row_to_runner(row))
+            .query_map([], row_to_runner)
             .map_err(map_err)?;
 
         rows.collect::<Result<Vec<_>, _>>().map_err(map_err)
@@ -486,7 +486,7 @@ impl DeadLetterStore for SqliteStore {
             .prepare("SELECT id, execution_id, job_key, fire_at, attempt, error, dead_reason, metadata, created_at, expires_at FROM dead_letters WHERE id = ?1")
             .map_err(map_err)?;
 
-        stmt.query_row(params![id.to_string()], |row| row_to_dead_letter(row))
+        stmt.query_row(params![id.to_string()], row_to_dead_letter)
             .optional()
             .map_err(map_err)
     }
@@ -505,7 +505,7 @@ impl DeadLetterStore for SqliteStore {
 
         let mut stmt = conn.prepare(&sql).map_err(map_err)?;
         let rows = stmt
-            .query_map([], |row| row_to_dead_letter(row))
+            .query_map([], row_to_dead_letter)
             .map_err(map_err)?;
 
         rows.collect::<Result<Vec<_>, _>>().map_err(map_err)
@@ -803,11 +803,11 @@ impl TriggerDefinitionStore for SqliteStore {
         let conn = self.conn.lock().unwrap();
         if let Some(jk) = job_key {
             let mut stmt = conn.prepare("SELECT trigger_id, job_key, cron_expression, timezone, calendar, window, not_before, not_after, enabled, managed_by, created_at, updated_at FROM trigger_definitions WHERE job_key = ?1 ORDER BY created_at").map_err(map_err)?;
-            let rows = stmt.query_map(params![jk], |row| row_to_trigger_def(row)).map_err(map_err)?;
+            let rows = stmt.query_map(params![jk], row_to_trigger_def).map_err(map_err)?;
             rows.collect::<Result<Vec<_>, _>>().map_err(map_err)
         } else {
             let mut stmt = conn.prepare("SELECT trigger_id, job_key, cron_expression, timezone, calendar, window, not_before, not_after, enabled, managed_by, created_at, updated_at FROM trigger_definitions ORDER BY created_at").map_err(map_err)?;
-            let rows = stmt.query_map([], |row| row_to_trigger_def(row)).map_err(map_err)?;
+            let rows = stmt.query_map([], row_to_trigger_def).map_err(map_err)?;
             rows.collect::<Result<Vec<_>, _>>().map_err(map_err)
         }
     }

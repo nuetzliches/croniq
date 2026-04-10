@@ -21,14 +21,13 @@ pub fn watch_config(
     let watched = canonical.clone();
 
     let mut watcher = notify::recommended_watcher(move |res: Result<Event, _>| {
-        if let Ok(event) = res {
-            if matches!(
+        if let Ok(event) = res
+            && matches!(
                 event.kind,
                 EventKind::Modify(_) | EventKind::Create(_)
             ) {
                 let _ = tx.send(watched.clone());
             }
-        }
     })?;
 
     // Watch the parent directory to handle editor save-and-rename patterns

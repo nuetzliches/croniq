@@ -5,7 +5,6 @@ use std::sync::Arc;
 use axum::{Json, extract::State, http::StatusCode};
 use chrono::Utc;
 use croniq_store::models::CalendarDefinition;
-use croniq_store::traits::CalendarDefinitionStore;
 use serde::Deserialize;
 use uuid::Uuid;
 

@@ -27,15 +27,14 @@ pub fn validate(ast: &Croniqfile) -> Vec<Diagnostic> {
 
     // First pass: collect calendar names
     for item in &ast.items {
-        if let Item::Calendar(cal) = item {
-            if !calendar_names.insert(cal.name.value.clone()) {
+        if let Item::Calendar(cal) = item
+            && !calendar_names.insert(cal.name.value.clone()) {
                 diags.push(Diagnostic {
                     severity: Severity::Error,
                     message: format!("duplicate calendar name '{}'", cal.name.value),
                     span: cal.name.span.into(),
                 });
             }
-        }
     }
 
     // Second pass: validate everything
@@ -200,8 +199,8 @@ fn validate_runner_constraints(job: &JobBlock, diags: &mut Vec<Diagnostic>) {
     let mut excludes = HashSet::new();
 
     for dob in &job.directives {
-        if let DirectiveOrBlock::Block(block) = dob {
-            if block.name.value == "runner" {
+        if let DirectiveOrBlock::Block(block) = dob
+            && block.name.value == "runner" {
                 for inner in &block.directives {
                     if let DirectiveOrBlock::Directive(d) = inner {
                         let cap = d.args.first().map(|a| a.value.as_str()).unwrap_or("");
@@ -230,7 +229,6 @@ fn validate_runner_constraints(job: &JobBlock, diags: &mut Vec<Diagnostic>) {
                     }
                 }
             }
-        }
     }
 
     // Check for overlaps
