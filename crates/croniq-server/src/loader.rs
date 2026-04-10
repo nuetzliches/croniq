@@ -15,9 +15,10 @@ use croniq_scheduler::{
     schedule::Schedule,
     trigger::{Trigger, TriggerState},
 };
+use croniq_config::compile::JobConfig;
 use croniq_store::{
     models::JobStatus,
-    traits::JobStore,
+    traits::{ExecutionStore, JobStore},
 };
 use thiserror::Error;
 
@@ -167,6 +168,50 @@ pub fn restore_trigger_states(
             }
         }
     }
+}
+
+/// Restore queued executions from the database into the in-memory work queue.
+///
+/// On server restart, executions in `queued` state need to be re-enqueued so
+/// runners can pick them up. Uses `job_to_work_item` to reconstruct the work
+/// item from the execution record + job config.
+pub async fn restore_queued_executions(
+    store: &dyn ExecutionStore,
+    jobs: &[JobConfig],
+    runner_state: &croniq_runner::AppState,
+) -> usize {
+    use croniq_bridge::job_to_work_item;
+
+    let executions = match store.find_queued_executions(&[], 1000) {
+        Ok(execs) => execs,
+        Err(e) => {
+            tracing::warn!(error = %e, "could not load queued executions for restore");
+            return 0;
+        }
+    };
+
+    let job_map: HashMap<&str, &JobConfig> = jobs.iter().map(|j| (j.key.as_str(), j)).collect();
+    let mut restored = 0;
+
+    for exec in &executions {
+        if let Some(job) = job_map.get(exec.job_key.as_str()) {
+            let item = job_to_work_item(job, exec.id.to_string(), exec.fire_at, exec.attempt);
+            runner_state.queue.write().await.enqueue(item);
+            restored += 1;
+        } else {
+            tracing::warn!(
+                job_key = %exec.job_key,
+                execution_id = %exec.id,
+                "queued execution for unknown job — skipping restore"
+            );
+        }
+    }
+
+    if restored > 0 {
+        runner_state.work_notify.notify_waiters();
+    }
+
+    restored
 }
 
 #[cfg(test)]

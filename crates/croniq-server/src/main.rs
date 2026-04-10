@@ -14,7 +14,7 @@ use croniq_runner::AppState;
 use croniq_server::{
     CompletionProcessor, SchedulerLoop, WatchdogLoop,
     api::{ServerState, server_router},
-    loader::{load_file, restore_trigger_states},
+    loader::{load_file, restore_trigger_states, restore_queued_executions},
     store::{DynStore, sqlite_store},
 };
 use croniq_store::sqlite::SqliteStore;
@@ -35,6 +35,15 @@ struct Cli {
     /// Directory for persistent data (SQLite database).
     #[arg(short, long, default_value = "./.data")]
     data_dir: PathBuf,
+
+    /// Address and port for the Prometheus metrics endpoint (e.g. ":9900").
+    /// If not set, metrics are not exposed.
+    #[arg(long)]
+    metrics: Option<String>,
+
+    /// Watch the Croniqfile for changes and hot-reload on modification.
+    #[arg(long)]
+    watch: bool,
 }
 
 #[tokio::main]
@@ -70,11 +79,38 @@ async fn main() -> Result<()> {
     // Shared runner state (registry + queue)
     let runner_state = AppState::new();
 
+    // Restore queued executions from DB into the in-memory work queue.
+    // This ensures executions survive server restarts.
+    let restored = restore_queued_executions(&*store, &loaded.runtime.jobs, &runner_state).await;
+    tracing::info!(restored, "queued executions restored from database");
+
     // Completion channel: HTTP complete → processor task
     let (completion_tx, mut completion_rx) = mpsc::unbounded_channel();
 
-    // Server state wrapping runner + completion channel
-    let server_state = ServerState::new(Arc::clone(&runner_state), completion_tx);
+    // Server state wrapping runner + completion channel + auth
+    let auth_token = loaded.runtime.pull_api.as_ref().and_then(|p| p.auth.clone());
+    let server_state = ServerState::with_auth(Arc::clone(&runner_state), completion_tx, auth_token);
+
+    // ── File watcher (optional) ─────────────────────────────────────────────
+    let (reload_tx, mut reload_rx) = mpsc::unbounded_channel::<std::path::PathBuf>();
+
+    if cli.watch {
+        let config_path = cli.config.canonicalize().unwrap_or_else(|_| cli.config.clone());
+        match croniq_server::watcher::watch_config(&config_path) {
+            Ok(raw_rx) => {
+                let debounce_tx = reload_tx.clone();
+                tokio::spawn(croniq_server::watcher::debounced_reload_loop(
+                    raw_rx,
+                    std::time::Duration::from_millis(500),
+                    debounce_tx,
+                ));
+                tracing::info!(path = %config_path.display(), "watching Croniqfile for changes");
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "could not start file watcher — hot-reload disabled");
+            }
+        }
+    }
 
     // ── Scheduler task ────────────────────────────────────────────────────────
     let scheduler_store = Arc::clone(&store);
@@ -88,10 +124,24 @@ async fn main() -> Result<()> {
         let mut interval = tokio::time::interval(std::time::Duration::from_secs(1));
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         loop {
-            interval.tick().await;
-            let result = scheduler_loop.tick(chrono::Utc::now()).await;
-            if !result.fired.is_empty() {
-                tracing::debug!(count = result.fired.len(), "scheduler tick: jobs fired");
+            tokio::select! {
+                _ = interval.tick() => {
+                    let result = scheduler_loop.tick(chrono::Utc::now()).await;
+                    if !result.fired.is_empty() {
+                        tracing::debug!(count = result.fired.len(), "scheduler tick: jobs fired");
+                    }
+                }
+                Some(path) = reload_rx.recv() => {
+                    tracing::info!(path = %path.display(), "Croniqfile changed — reloading");
+                    match load_file(&path) {
+                        Ok(new_config) => {
+                            scheduler_loop.reload(new_config.triggers, new_config.runtime.jobs);
+                        }
+                        Err(e) => {
+                            tracing::error!(error = %e, "failed to reload Croniqfile — keeping previous config");
+                        }
+                    }
+                }
             }
         }
     });
@@ -131,6 +181,23 @@ async fn main() -> Result<()> {
             }
         }
     });
+
+    // ── Metrics server (optional) ────────────────────────────────────────────
+    if let Some(ref metrics_listen) = cli.metrics {
+        let metrics_addr: std::net::SocketAddr = metrics_listen
+            .trim_start_matches(':')
+            .parse::<u16>()
+            .map(|p| ([0, 0, 0, 0], p).into())
+            .or_else(|_| metrics_listen.parse())
+            .with_context(|| format!("invalid metrics address: {metrics_listen}"))?;
+
+        let metrics_app = croniq_server::metrics::metrics_router(Arc::clone(&server_state));
+        let metrics_listener = tokio::net::TcpListener::bind(metrics_addr).await?;
+        tracing::info!(address = %metrics_addr, "metrics endpoint listening");
+        tokio::spawn(async move {
+            axum::serve(metrics_listener, metrics_app).await.ok();
+        });
+    }
 
     // ── HTTP server ───────────────────────────────────────────────────────────
     let addr: std::net::SocketAddr = cli.listen

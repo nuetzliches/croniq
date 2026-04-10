@@ -226,6 +226,43 @@ fn find_queued_executions() {
 }
 
 #[test]
+fn find_queued_executions_filters_by_capabilities() {
+    let store = create_memory_store().unwrap();
+
+    // Execution requiring "billing" capability
+    let mut exec1 = make_execution("billing:invoice", utc(2026, 3, 29, 12, 0));
+    exec1.metadata.insert("__require".into(), serde_json::to_string(&vec!["billing"]).unwrap());
+    store.create_execution(&exec1).unwrap();
+
+    // Execution requiring "etl" capability
+    let mut exec2 = make_execution("etl:sync", utc(2026, 3, 29, 12, 1));
+    exec2.id = Uuid::new_v4();
+    exec2.metadata.insert("__require".into(), serde_json::to_string(&vec!["etl"]).unwrap());
+    store.create_execution(&exec2).unwrap();
+
+    // Execution with no requirements
+    let mut exec3 = make_execution("reports:daily", utc(2026, 3, 29, 12, 2));
+    exec3.id = Uuid::new_v4();
+    store.create_execution(&exec3).unwrap();
+
+    // Runner with "billing" capability should see exec1 + exec3
+    let billing = store.find_queued_executions(&["billing".into()], 10).unwrap();
+    assert_eq!(billing.len(), 2);
+    assert!(billing.iter().any(|e| e.job_key == "billing:invoice"));
+    assert!(billing.iter().any(|e| e.job_key == "reports:daily"));
+
+    // Runner with "etl" capability should see exec2 + exec3
+    let etl = store.find_queued_executions(&["etl".into()], 10).unwrap();
+    assert_eq!(etl.len(), 2);
+    assert!(etl.iter().any(|e| e.job_key == "etl:sync"));
+    assert!(etl.iter().any(|e| e.job_key == "reports:daily"));
+
+    // Empty capabilities = all executions (no filtering)
+    let all = store.find_queued_executions(&[], 10).unwrap();
+    assert_eq!(all.len(), 3);
+}
+
+#[test]
 fn requeue_abandoned() {
     let store = create_memory_store().unwrap();
     let exec = make_execution("billing:invoice", utc(2026, 3, 29, 2, 0));

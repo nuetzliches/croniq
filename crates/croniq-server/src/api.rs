@@ -12,6 +12,7 @@ use axum::{
     Json, Router,
     extract::State,
     http::StatusCode,
+    middleware,
     routing::{get, post},
 };
 use chrono::Utc;
@@ -39,6 +40,8 @@ pub struct ServerState {
     /// How long a poll request may block waiting for work.
     /// Defaults to 30 s; can be reduced in tests.
     pub long_poll_timeout: Duration,
+    /// Optional bearer token for Pull-API authentication.
+    pub auth_token: Option<String>,
 }
 
 impl ServerState {
@@ -50,6 +53,21 @@ impl ServerState {
             runner,
             completion_tx,
             long_poll_timeout: DEFAULT_LONG_POLL_TIMEOUT,
+            auth_token: None,
+        })
+    }
+
+    /// Construct with a bearer auth token for the Pull-API.
+    pub fn with_auth(
+        runner: Arc<AppState>,
+        completion_tx: mpsc::UnboundedSender<CompletionEvent>,
+        auth_token: Option<String>,
+    ) -> Arc<Self> {
+        Arc::new(Self {
+            runner,
+            completion_tx,
+            long_poll_timeout: DEFAULT_LONG_POLL_TIMEOUT,
+            auth_token,
         })
     }
 
@@ -59,20 +77,52 @@ impl ServerState {
         completion_tx: mpsc::UnboundedSender<CompletionEvent>,
         long_poll_timeout: Duration,
     ) -> Arc<Self> {
-        Arc::new(Self { runner, completion_tx, long_poll_timeout })
+        Arc::new(Self { runner, completion_tx, long_poll_timeout, auth_token: None })
     }
 }
 
 // ─── Router ───────────────────────────────────────────────────────────────────
 
 pub fn server_router(state: Arc<ServerState>) -> Router {
-    Router::new()
+    // Authenticated routes (poll, complete, trigger, runners)
+    let authenticated = Router::new()
         .route("/v1/poll", post(handle_poll))
         .route("/v1/complete", post(handle_complete))
         .route("/v1/runners", get(handle_list_runners))
         .route("/v1/trigger", post(handle_trigger))
-        .route("/health", get(handle_health))
-        .with_state(state)
+        .route_layer(middleware::from_fn_with_state(
+            Arc::clone(&state),
+            auth_middleware,
+        ));
+
+    // Public routes (health only)
+    let public = Router::new()
+        .route("/health", get(handle_health));
+
+    authenticated.merge(public).with_state(state)
+}
+
+/// Bearer token auth middleware. Skipped when no auth_token is configured.
+async fn auth_middleware(
+    State(state): State<Arc<ServerState>>,
+    req: axum::extract::Request,
+    next: middleware::Next,
+) -> Result<axum::response::Response, StatusCode> {
+    let Some(ref expected) = state.auth_token else {
+        return Ok(next.run(req).await);
+    };
+
+    let auth_header = req
+        .headers()
+        .get("authorization")
+        .and_then(|v| v.to_str().ok());
+
+    match auth_header {
+        Some(header) if header.strip_prefix("Bearer ").map_or(false, |t| t == expected) => {
+            Ok(next.run(req).await)
+        }
+        _ => Err(StatusCode::UNAUTHORIZED),
+    }
 }
 
 // ─── Handlers ─────────────────────────────────────────────────────────────────
@@ -423,5 +473,77 @@ mod tests {
         let resp = get_json(app, "/health").await;
         assert_eq!(resp["status"], "ok");
         assert_eq!(resp["queued"], 0);
+    }
+
+    // ─── Auth middleware tests ────────────────────────────────────────────────
+
+    fn make_auth_state(token: &str) -> (Arc<ServerState>, mpsc::UnboundedReceiver<CompletionEvent>) {
+        let runner = AppState::new();
+        let (tx, rx) = mpsc::unbounded_channel();
+        let state = Arc::new(ServerState {
+            runner,
+            completion_tx: tx,
+            long_poll_timeout: Duration::from_millis(50),
+            auth_token: Some(token.to_string()),
+        });
+        (state, rx)
+    }
+
+    async fn status_of(app: Router, method: &str, uri: &str, body: Option<serde_json::Value>, bearer: Option<&str>) -> u16 {
+        let mut builder = Request::builder().method(method).uri(uri);
+        if let Some(token) = bearer {
+            builder = builder.header("authorization", format!("Bearer {token}"));
+        }
+        if body.is_some() {
+            builder = builder.header("content-type", "application/json");
+        }
+        let body = body.map(|b| Body::from(b.to_string())).unwrap_or(Body::empty());
+        let resp = app.oneshot(builder.body(body).unwrap()).await.unwrap();
+        resp.status().as_u16()
+    }
+
+    #[tokio::test]
+    async fn auth_rejects_without_token() {
+        let (state, _rx) = make_auth_state("secret-token");
+        let app = server_router(Arc::clone(&state));
+
+        let status = status_of(app, "POST", "/v1/poll", Some(serde_json::json!({
+            "runner_id": "r1", "capabilities": [], "max_inflight": 1, "inflight": []
+        })), None).await;
+
+        assert_eq!(status, 401);
+    }
+
+    #[tokio::test]
+    async fn auth_rejects_wrong_token() {
+        let (state, _rx) = make_auth_state("secret-token");
+        let app = server_router(Arc::clone(&state));
+
+        let status = status_of(app, "POST", "/v1/poll", Some(serde_json::json!({
+            "runner_id": "r1", "capabilities": [], "max_inflight": 1, "inflight": []
+        })), Some("wrong-token")).await;
+
+        assert_eq!(status, 401);
+    }
+
+    #[tokio::test]
+    async fn auth_accepts_correct_token() {
+        let (state, _rx) = make_auth_state("secret-token");
+        let app = server_router(Arc::clone(&state));
+
+        let status = status_of(app, "POST", "/v1/poll", Some(serde_json::json!({
+            "runner_id": "r1", "capabilities": [], "max_inflight": 1, "inflight": []
+        })), Some("secret-token")).await;
+
+        assert_eq!(status, 200);
+    }
+
+    #[tokio::test]
+    async fn auth_health_is_public() {
+        let (state, _rx) = make_auth_state("secret-token");
+        let app = server_router(Arc::clone(&state));
+
+        let status = status_of(app, "GET", "/health", None, None).await;
+        assert_eq!(status, 200);
     }
 }

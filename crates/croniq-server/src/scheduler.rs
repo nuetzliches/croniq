@@ -59,6 +59,48 @@ impl SchedulerLoop {
         Self { triggers, jobs, store, runner }
     }
 
+    /// Hot-reload: update jobs and triggers from a newly loaded config.
+    ///
+    /// Preserves trigger state (fire_count, next_fire_at) for jobs that
+    /// still exist. New jobs get fresh triggers; removed jobs are dropped.
+    pub fn reload(
+        &mut self,
+        new_triggers: HashMap<String, Trigger>,
+        new_jobs: Vec<JobConfig>,
+    ) {
+        let new_jobs_map: HashMap<String, JobConfig> =
+            new_jobs.into_iter().map(|j| (j.key.clone(), j)).collect();
+
+        let mut merged = HashMap::new();
+        for (key, mut new_trigger) in new_triggers {
+            if let Some(old_trigger) = self.triggers.get(&key) {
+                // Preserve runtime state from the old trigger
+                new_trigger.fire_count = old_trigger.fire_count;
+                new_trigger.last_fired_at = old_trigger.last_fired_at;
+                if old_trigger.state == TriggerState::Exhausted {
+                    new_trigger.state = TriggerState::Exhausted;
+                    new_trigger.next_fire_at = None;
+                } else if old_trigger.next_fire_at.is_some() {
+                    new_trigger.next_fire_at = old_trigger.next_fire_at;
+                }
+            }
+            merged.insert(key, new_trigger);
+        }
+
+        let added = merged.keys().filter(|k| !self.triggers.contains_key(*k)).count();
+        let removed = self.triggers.keys().filter(|k| !merged.contains_key(*k)).count();
+
+        self.triggers = merged;
+        self.jobs = new_jobs_map;
+
+        tracing::info!(
+            total = self.triggers.len(),
+            added,
+            removed,
+            "configuration reloaded"
+        );
+    }
+
     /// Evaluate all triggers at `now`, fire due ones, return results.
     pub async fn tick(&mut self, now: DateTime<Utc>) -> TickResult {
         let mut fired = Vec::new();
@@ -93,7 +135,16 @@ impl SchedulerLoop {
                 duration_ms: None,
                 error: None,
                 dead_reason: None,
-                metadata: job.metadata.clone(),
+                metadata: {
+                    let mut m = job.metadata.clone();
+                    if !job.runner.require.is_empty() {
+                        m.insert("__require".into(), serde_json::to_string(&job.runner.require).unwrap_or_default());
+                    }
+                    if !job.runner.prefer.is_empty() {
+                        m.insert("__prefer".into(), serde_json::to_string(&job.runner.prefer).unwrap_or_default());
+                    }
+                    m
+                },
                 created_at: now,
             };
 
