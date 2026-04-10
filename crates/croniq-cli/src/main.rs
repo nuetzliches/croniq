@@ -122,6 +122,17 @@ enum Commands {
         #[arg(long, default_value_t = 20)]
         limit: u32,
     },
+
+    /// Inspect a specific dead letter by ID
+    #[command(name = "dead-letters-inspect")]
+    DeadLettersInspect {
+        /// The dead letter UUID to inspect
+        id: String,
+
+        /// Path to the croniq data directory (must contain `croniq.db`)
+        #[arg(long)]
+        data_dir: PathBuf,
+    },
 }
 
 // ─── Entry point ─────────────────────────────────────────────────────────────
@@ -147,6 +158,9 @@ fn main() -> Result<()> {
         // Store
         Commands::DeadLetters { data_dir, job, limit } => {
             commands::store::dead_letters(&data_dir, job.as_deref(), limit)
+        }
+        Commands::DeadLettersInspect { id, data_dir } => {
+            commands::store::dead_letters_inspect(&data_dir, &id)
         }
     }
 }

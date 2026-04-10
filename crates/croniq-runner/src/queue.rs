@@ -50,9 +50,14 @@ impl WorkQueue {
         result
     }
 
-    /// Peek at the queue without removing items.
+    /// Peek at the first item without removing it.
     pub fn peek(&self) -> Option<&WorkItem> {
         self.items.front()
+    }
+
+    /// Peek at the first `n` items without removing them.
+    pub fn peek_n(&self, n: usize) -> Vec<&WorkItem> {
+        self.items.iter().take(n).collect()
     }
 
     pub fn len(&self) -> usize {

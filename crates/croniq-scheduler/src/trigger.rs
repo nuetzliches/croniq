@@ -35,6 +35,11 @@ pub struct Trigger {
     pub window: Option<TimeWindow>,
     pub misfire_policy: MisfirePolicy,
 
+    /// Job must not fire before this time.
+    pub not_before: Option<DateTime<Utc>>,
+    /// Job must not fire after this time (trigger becomes Exhausted).
+    pub not_after: Option<DateTime<Utc>>,
+
     // State
     pub state: TriggerState,
     pub next_fire_at: Option<DateTime<Utc>>,
@@ -79,6 +84,20 @@ impl Trigger {
         misfire_policy: MisfirePolicy,
         now: DateTime<Utc>,
     ) -> Self {
+        Self::with_bounds(job_key, schedule, timezone, calendar, window, misfire_policy, None, None, now)
+    }
+
+    pub fn with_bounds(
+        job_key: String,
+        schedule: Schedule,
+        timezone: Tz,
+        calendar: Option<Calendar>,
+        window: Option<TimeWindow>,
+        misfire_policy: MisfirePolicy,
+        not_before: Option<DateTime<Utc>>,
+        not_after: Option<DateTime<Utc>>,
+        now: DateTime<Utc>,
+    ) -> Self {
         let mut trigger = Trigger {
             job_key,
             schedule,
@@ -86,6 +105,8 @@ impl Trigger {
             calendar,
             window,
             misfire_policy,
+            not_before,
+            not_after,
             state: TriggerState::Armed,
             next_fire_at: None,
             last_fired_at: None,
@@ -113,6 +134,20 @@ impl Trigger {
             return None;
         }
 
+        // Respect not_before: suppress firing until the boundary
+        if let Some(nb) = self.not_before {
+            if now < nb {
+                return None;
+            }
+        }
+
+        // Respect not_after: suppress firing past the boundary
+        if let Some(na) = self.not_after {
+            if now > na {
+                return None;
+            }
+        }
+
         let fire_at = self.next_fire_at?;
 
         if now >= fire_at {
@@ -130,6 +165,14 @@ impl Trigger {
 
         // Compute next fire time
         self.next_fire_at = self.compute_next_fire(now);
+
+        // If next fire is past not_after, exhaust the trigger
+        if let (Some(next), Some(na)) = (self.next_fire_at, self.not_after) {
+            if next > na {
+                self.next_fire_at = None;
+                self.state = TriggerState::Exhausted;
+            }
+        }
     }
 
     /// Mark the execution as completed, transition back to Armed.

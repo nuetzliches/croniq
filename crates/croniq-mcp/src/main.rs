@@ -92,7 +92,7 @@ async fn main() -> Result<()> {
                 .with_context(|| format!("failed to open store at {}", db_path.display()))?;
             let store: croniq_mcp::DynStore = Arc::new(sqlite);
 
-            CroniqMcp::new_with_store(Arc::clone(&state), store, args.mutations)
+            CroniqMcp::new_with_store(Arc::clone(&state), store, vec![], args.mutations)
         }
         None if args.mutations => {
             tracing::warn!(

@@ -4,16 +4,19 @@
 //! - A `RuntimeConfig` with fully resolved job definitions
 //! - A map of job key → `Trigger` (ready-to-tick scheduler state machines)
 
-use std::collections::HashMap;
-use std::path::Path;
+use std::collections::{HashMap, HashSet};
+use std::path::{Path, PathBuf};
 
 use chrono::{DateTime, Utc};
+use croniq_config::ast::{Croniqfile, Item};
 use croniq_config::compile::{self, RuntimeConfig};
+use croniq_config::import::resolve_imports_with_visited;
 use croniq_config::parser::Parser;
 use croniq_scheduler::{
+    calendar::Calendar,
     misfire::MisfirePolicy,
     schedule::Schedule,
-    trigger::{Trigger, TriggerState},
+    trigger::{TimeWindow, Trigger, TriggerState},
 };
 use croniq_config::compile::JobConfig;
 use croniq_store::{
@@ -41,17 +44,91 @@ pub struct LoadedConfig {
     pub triggers: HashMap<String, Trigger>,
 }
 
-/// Load a Croniqfile from a file path.
+/// Load a Croniqfile from a file path, resolving `import` directives recursively.
 pub fn load_file(path: &Path) -> Result<LoadedConfig, LoadError> {
-    let src = std::fs::read_to_string(path)?;
-    load_str(&src)
+    let canonical = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+    let mut visited = HashSet::new();
+    visited.insert(canonical.clone());
+
+    let ast = load_and_resolve(&canonical, &mut visited)?;
+    let runtime = compile::compile(&ast);
+    load_from_compiled(runtime, &ast)
 }
 
-/// Load a Croniqfile from a source string.
+/// Load and parse a single file, then recursively resolve its imports.
+fn load_and_resolve(
+    path: &Path,
+    visited: &mut HashSet<PathBuf>,
+) -> Result<Croniqfile, LoadError> {
+    let src = std::fs::read_to_string(path)?;
+    let mut ast = Parser::parse(&src).map_err(|e| LoadError::Parse(format!("{e}")))?;
+
+    let base_dir = path.parent().unwrap_or(Path::new("."));
+
+    // Collect imports, replace them with the imported items
+    let mut resolved_items = Vec::new();
+    for item in std::mem::take(&mut ast.items) {
+        if let Item::Import(ref imp) = item {
+            let import_path = &imp.path.value;
+            match resolve_imports_with_visited(base_dir, import_path, visited) {
+                Ok(paths) => {
+                    for import_file in paths {
+                        match load_and_resolve(&import_file, visited) {
+                            Ok(imported_ast) => {
+                                resolved_items.extend(imported_ast.items);
+                            }
+                            Err(e) => {
+                                tracing::warn!(
+                                    file = %import_file.display(),
+                                    error = %e,
+                                    "failed to load imported file — skipping"
+                                );
+                            }
+                        }
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        import = %import_path,
+                        error = %e,
+                        "failed to resolve import — skipping"
+                    );
+                }
+            }
+        } else {
+            resolved_items.push(item);
+        }
+    }
+    ast.items = resolved_items;
+
+    Ok(ast)
+}
+
+/// Load a Croniqfile from a source string (no import resolution).
 pub fn load_str(src: &str) -> Result<LoadedConfig, LoadError> {
     let ast = Parser::parse(src).map_err(|e| LoadError::Parse(format!("{e}")))?;
     let runtime = compile::compile(&ast);
+    load_from_compiled(runtime, &ast)
+}
+
+/// Build a LoadedConfig from a compiled RuntimeConfig and its AST.
+fn load_from_compiled(runtime: RuntimeConfig, ast: &Croniqfile) -> Result<LoadedConfig, LoadError> {
     let now = Utc::now();
+
+    // Build calendars from compiled config
+    let calendars: HashMap<String, Calendar> = runtime
+        .calendars
+        .iter()
+        .filter_map(|cfg| {
+            match Calendar::from_config(cfg) {
+                Ok(cal) => Some((cfg.name.clone(), cal)),
+                Err(e) => {
+                    tracing::warn!(calendar = %cfg.name, error = %e, "failed to compile calendar — skipping");
+                    None
+                }
+            }
+        })
+        .collect();
 
     let mut triggers = HashMap::new();
 
@@ -94,13 +171,34 @@ pub fn load_str(src: &str) -> Result<LoadedConfig, LoadError> {
         // Misfire policy: default FireNow (never skip a billing run)
         let misfire = MisfirePolicy::FireNow;
 
-        let trigger = Trigger::new(
+        // Resolve calendar reference
+        let calendar = job_cfg
+            .calendar
+            .as_deref()
+            .and_then(|name| calendars.get(name).cloned());
+
+        // Parse time window constraint (e.g. "08:00..18:00")
+        let window = job_cfg.window.as_deref().and_then(TimeWindow::parse);
+
+        // Parse not_before / not_after bounds
+        let not_before = job_cfg
+            .not_before
+            .as_deref()
+            .and_then(|s| DateTime::parse_from_rfc3339(s).ok().map(|dt| dt.with_timezone(&Utc)));
+        let not_after = job_cfg
+            .not_after
+            .as_deref()
+            .and_then(|s| DateTime::parse_from_rfc3339(s).ok().map(|dt| dt.with_timezone(&Utc)));
+
+        let trigger = Trigger::with_bounds(
             job_cfg.key.clone(),
             schedule,
             tz,
-            None, // calendar integration wired later
-            None, // time window
+            calendar,
+            window,
             misfire,
+            not_before,
+            not_after,
             now,
         );
 

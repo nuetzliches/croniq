@@ -23,6 +23,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use chrono::Utc;
+use croniq_config::compile::JobConfig;
 use croniq_runner::{AppState, RunnerStatus, WorkItem};
 use croniq_store::models::{Execution, ExecutionState};
 use croniq_store::traits::Store;
@@ -50,6 +51,8 @@ pub struct CroniqMcp {
     /// Persistent store for job/execution/DLQ operations. `None` when running
     /// without `--data-dir`.
     pub store: Option<DynStore>,
+    /// Job configs for capability/timeout lookups (e.g. dlq_retry).
+    pub jobs: HashMap<String, JobConfig>,
     /// Whether mutation tools are enabled (`--mutations` flag).
     pub mutations_enabled: bool,
     tool_router: ToolRouter<CroniqMcp>,
@@ -147,6 +150,7 @@ impl CroniqMcp {
         Self {
             state,
             store: None,
+            jobs: HashMap::new(),
             mutations_enabled: false,
             tool_router: Self::tool_router(),
         }
@@ -156,11 +160,14 @@ impl CroniqMcp {
     pub fn new_with_store(
         state: Arc<AppState>,
         store: DynStore,
+        jobs: Vec<JobConfig>,
         mutations_enabled: bool,
     ) -> Self {
+        let jobs = jobs.into_iter().map(|j| (j.key.clone(), j)).collect();
         Self {
             state,
             store: Some(store),
+            jobs,
             mutations_enabled,
             tool_router: Self::tool_router(),
         }
@@ -173,6 +180,7 @@ impl CroniqMcp {
         Self {
             state,
             store: None,
+            jobs: HashMap::new(),
             mutations_enabled: true,
             tool_router: Self::tool_router(),
         }
@@ -286,11 +294,18 @@ impl CroniqMcp {
     #[tool(description = "Get work queue status: total depth and runner counts by liveness status.")]
     async fn queue_status(
         &self,
-        Parameters(_p): Parameters<QueueStatusParams>,
+        Parameters(p): Parameters<QueueStatusParams>,
     ) -> Result<String, McpError> {
         let now = Utc::now();
         let reg = self.state.registry.read().await;
         let queue = self.state.queue.read().await;
+
+        #[derive(Serialize)]
+        struct PeekItem {
+            execution_id: String,
+            job_key: String,
+            attempt: u32,
+        }
 
         #[derive(Serialize)]
         struct StatusReport {
@@ -298,13 +313,26 @@ impl CroniqMcp {
             runners_online: usize,
             runners_stale: usize,
             runners_dead: usize,
+            items: Vec<PeekItem>,
         }
+
+        let peek_limit = p.peek_limit.min(50);
+        let items: Vec<PeekItem> = queue
+            .peek_n(peek_limit)
+            .into_iter()
+            .map(|item| PeekItem {
+                execution_id: item.execution_id.clone(),
+                job_key: item.job_key.clone(),
+                attempt: item.attempt,
+            })
+            .collect();
 
         let report = StatusReport {
             queued: queue.len(),
             runners_online: reg.by_status(RunnerStatus::Online, now).len(),
             runners_stale: reg.by_status(RunnerStatus::Stale, now).len(),
             runners_dead: reg.by_status(RunnerStatus::Dead, now).len(),
+            items,
         };
 
         serde_json::to_string_pretty(&report)
@@ -525,21 +553,26 @@ impl CroniqMcp {
             .remove_dead_letter(dl_id)
             .map_err(|e| McpError::internal_error(e.to_string(), None))?;
 
+        // Look up job config for require/prefer/timeout
+        let job = self.jobs.get(&dl.job_key);
+
         // Enqueue to the in-memory dispatch queue.
         let item = WorkItem {
             execution_id: new_id.to_string(),
             job_key: dl.job_key.clone(),
             fire_at: now,
             attempt: next_attempt,
-            require: vec![],
-            prefer: vec![],
+            require: job.map(|j| j.runner.require.clone()).unwrap_or_default(),
+            prefer: job.map(|j| j.runner.prefer.clone()).unwrap_or_default(),
             metadata: serde_json::Value::Object(
                 dl.metadata
                     .iter()
                     .map(|(k, v)| (k.clone(), serde_json::Value::String(v.clone())))
                     .collect(),
             ),
-            timeout: "5m".into(),
+            timeout: job
+                .and_then(|j| j.timeout.clone())
+                .unwrap_or_else(|| "5m".into()),
         };
 
         let depth = {
@@ -596,7 +629,7 @@ mod tests {
     fn make_server_with_mutations() -> CroniqMcp {
         use croniq_store::sqlite::SqliteStore;
         let store: DynStore = Arc::new(SqliteStore::in_memory().unwrap());
-        CroniqMcp::new_with_store(AppState::new(), store, true)
+        CroniqMcp::new_with_store(AppState::new(), store, vec![], true)
     }
 
     #[tokio::test]
@@ -894,6 +927,7 @@ mod tests {
         let server = CroniqMcp {
             state: AppState::new(),
             store: None,
+            jobs: HashMap::new(),
             mutations_enabled: true,
             tool_router: CroniqMcp::tool_router(),
         };

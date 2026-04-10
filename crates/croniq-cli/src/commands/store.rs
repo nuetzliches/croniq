@@ -7,6 +7,7 @@ use croniq_store::{
     sqlite::SqliteStore,
     traits::DeadLetterStore,
 };
+use uuid::Uuid;
 use miette::{IntoDiagnostic, Result, miette};
 
 // ─── dead-letters ─────────────────────────────────────────────────────────────
@@ -61,9 +62,50 @@ pub fn dead_letters(
 
     if let Some(first) = letters.first() {
         println!(
-            "\nRun `croniq dead-letters inspect {}` for full details.",
+            "\nRun `croniq dead-letters-inspect {} --data-dir <path>` for full details.",
             first.id
         );
+    }
+
+    Ok(())
+}
+
+/// `croniq dead-letters-inspect <id>` — show full details of a dead letter.
+pub fn dead_letters_inspect(data_dir: &Path, id: &str) -> Result<()> {
+    let db_path = data_dir.join("croniq.db");
+    let store = SqliteStore::open(&db_path)
+        .map_err(|e| miette!("Could not open store at {}: {e}", db_path.display()))?;
+
+    let uuid = Uuid::parse_str(id)
+        .map_err(|e| miette!("Invalid UUID '{id}': {e}"))?;
+
+    let dl = store
+        .get_dead_letter(uuid)
+        .into_diagnostic()?
+        .ok_or_else(|| miette!("Dead letter '{id}' not found."))?;
+
+    println!("Dead Letter Details");
+    println!("{}", "=".repeat(60));
+    println!("ID:            {}", dl.id);
+    println!("Execution ID:  {}", dl.execution_id);
+    println!("Job Key:       {}", dl.job_key);
+    println!("Fire At:       {}", dl.fire_at);
+    println!("Attempt:       {}", dl.attempt);
+    println!("Dead Reason:   {}", dl.dead_reason);
+    println!("Created At:    {}", dl.created_at);
+    if let Some(expires) = dl.expires_at {
+        println!("Expires At:    {}", expires);
+    }
+    println!();
+    println!("Error:");
+    println!("{}", dl.error);
+
+    if !dl.metadata.is_empty() {
+        println!();
+        println!("Metadata:");
+        for (k, v) in &dl.metadata {
+            println!("  {k}: {v}");
+        }
     }
 
     Ok(())
