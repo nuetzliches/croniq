@@ -127,7 +127,7 @@ use croniq_runner_sdk::{CroniqRunner, ExecutionContext};
 
 #[tokio::main]
 async fn main() {
-    let runner = CroniqRunner::builder("http://localhost:8080", "my-runner")
+    let runner = CroniqRunner::builder("http://localhost:4000", "my-runner")
         .api_key("croniq_abc123")
         .capabilities(vec!["billing".into()])
         .max_inflight(5)

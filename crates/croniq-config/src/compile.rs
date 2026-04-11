@@ -136,7 +136,7 @@ pub struct CalendarRuleConfig {
 /// Compile a Croniqfile AST into a RuntimeConfig.
 pub fn compile(ast: &Croniqfile) -> RuntimeConfig {
     let mut server = ServerConfig {
-        listen: ":8080".into(),
+        listen: ":4000".into(),
         data_dir: "./.data".into(),
         db: "sqlite".into(),
     };
@@ -489,13 +489,13 @@ mod tests {
     fn compile_basic() {
         let ast = Parser::parse(
             r#"
-            server { listen :8080; db sqlite }
+            server { listen :4000; db sqlite }
             job etl:sync { every 15 minutes; timeout 10m }
         "#,
         )
         .unwrap();
         let cfg = compile(&ast);
-        assert_eq!(cfg.server.listen, ":8080");
+        assert_eq!(cfg.server.listen, ":4000");
         assert_eq!(cfg.jobs.len(), 1);
         assert_eq!(cfg.jobs[0].key, "etl:sync");
         assert_eq!(cfg.jobs[0].schedule_summary, "every 15 minutes");
