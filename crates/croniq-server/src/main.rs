@@ -109,7 +109,12 @@ async fn main() -> Result<()> {
         secret: jwt_secret,
         ..Default::default()
     });
-    let server_state = ServerState::with_auth(Arc::clone(&runner_state), completion_tx, jwt_config, Some(Arc::clone(&store)));
+    // Scheduler command channel for live job registration via API
+    let (scheduler_cmd_tx, mut scheduler_cmd_rx) = mpsc::unbounded_channel::<croniq_server::scheduler::SchedulerCommand>();
+
+    let mut server_state = ServerState::with_auth(Arc::clone(&runner_state), completion_tx, jwt_config, Some(Arc::clone(&store)));
+    // Inject scheduler_tx into the shared state
+    Arc::get_mut(&mut server_state).unwrap().scheduler_tx = Some(scheduler_cmd_tx);
 
     // ── File watcher (optional) ─────────────────────────────────────────────
     let (reload_tx, mut reload_rx) = mpsc::unbounded_channel::<std::path::PathBuf>();
@@ -134,8 +139,32 @@ async fn main() -> Result<()> {
 
     // ── Scheduler task ────────────────────────────────────────────────────────
     let scheduler_store = Arc::clone(&store);
-    let jobs = loaded.runtime.jobs.clone();
-    let triggers = loaded.triggers;
+    let mut jobs = loaded.runtime.jobs.clone();
+    let mut triggers = loaded.triggers;
+
+    // Reconcile API/runner-registered jobs from DB (not in Croniqfile)
+    {
+        use croniq_store::traits::TriggerDefinitionStore;
+        use croniq_server::loader::{trigger_from_definition, job_config_from_definition};
+
+        let now = chrono::Utc::now();
+        if let Ok(api_triggers) = store.list_triggers(None) {
+            let mut api_count = 0;
+            for def in &api_triggers {
+                if def.managed_by == "dsl" || !def.enabled { continue; }
+                if triggers.contains_key(&def.job_key) { continue; } // Croniqfile takes precedence
+                if let Some(trigger) = trigger_from_definition(def, now) {
+                    let job_config = job_config_from_definition(def, None);
+                    jobs.push(job_config);
+                    triggers.insert(def.job_key.clone(), trigger);
+                    api_count += 1;
+                }
+            }
+            if api_count > 0 {
+                tracing::info!(api_count, "API-registered jobs restored from database");
+            }
+        }
+    }
 
     let mut scheduler_loop =
         SchedulerLoop::new(triggers, jobs.clone(), scheduler_store, Arc::clone(&runner_state));
@@ -161,6 +190,9 @@ async fn main() -> Result<()> {
                             tracing::error!(error = %e, "failed to reload Croniqfile — keeping previous config");
                         }
                     }
+                }
+                Some(cmd) = scheduler_cmd_rx.recv() => {
+                    scheduler_loop.apply_command(cmd);
                 }
             }
         }

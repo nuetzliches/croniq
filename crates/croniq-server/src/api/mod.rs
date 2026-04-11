@@ -33,6 +33,7 @@ use croniq_runner::{
 use tokio::sync::mpsc;
 
 use crate::completion::CompletionEvent;
+use crate::scheduler::SchedulerCommand;
 use crate::store::DynStore;
 use croniq_store::models::ExecutionFilter;
 
@@ -54,6 +55,8 @@ pub struct ServerState {
     pub jwt_config: Option<JwtConfig>,
     /// Persistent store for querying jobs and executions.
     pub store: Option<DynStore>,
+    /// Channel to send commands to the live scheduler (add/remove jobs).
+    pub scheduler_tx: Option<mpsc::UnboundedSender<SchedulerCommand>>,
     /// Shared trigger map for dashboard forecast (read-only snapshot).
     pub triggers: Option<Arc<tokio::sync::RwLock<HashMap<String, Trigger>>>>,
 }
@@ -69,6 +72,7 @@ impl ServerState {
             long_poll_timeout: DEFAULT_LONG_POLL_TIMEOUT,
             jwt_config: None,
             store: None,
+            scheduler_tx: None,
             triggers: None,
         })
     }
@@ -86,6 +90,7 @@ impl ServerState {
             long_poll_timeout: DEFAULT_LONG_POLL_TIMEOUT,
             jwt_config,
             store,
+            scheduler_tx: None,
             triggers: None,
         })
     }
@@ -96,7 +101,7 @@ impl ServerState {
         completion_tx: mpsc::UnboundedSender<CompletionEvent>,
         long_poll_timeout: Duration,
     ) -> Arc<Self> {
-        Arc::new(Self { runner, completion_tx, long_poll_timeout, jwt_config: None, store: None, triggers: None })
+        Arc::new(Self { runner, completion_tx, long_poll_timeout, jwt_config: None, store: None, scheduler_tx: None, triggers: None })
     }
 }
 
@@ -121,6 +126,7 @@ pub fn server_router(state: Arc<ServerState>) -> Router {
         .route("/v1/jobs", get(jobs::handle_list).post(jobs::handle_create))
         .route("/v1/jobs/{job_key}", get(jobs::handle_get).delete(jobs::handle_delete))
         .route("/v1/jobs/{job_key}/activate", post(jobs::handle_activate))
+        .route("/v1/jobs/register", post(jobs::handle_register))
         // Schedules CRUD
         .route("/v1/schedules", get(schedules::handle_list).post(schedules::handle_create))
         .route("/v1/schedules/{trigger_id}", get(schedules::handle_get).delete(schedules::handle_delete))
@@ -567,6 +573,7 @@ mod tests {
             long_poll_timeout: Duration::from_millis(50),
             jwt_config: Some(jwt_config),
             store: None,
+            scheduler_tx: None,
             triggers: None,
         });
         (state, rx)

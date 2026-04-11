@@ -138,6 +138,31 @@ enum Commands {
         password: Option<String>,
     },
 
+    /// Zero-to-running in one command: creates Croniqfile, inits DB, prints next steps
+    Quickstart {
+        /// Data directory
+        #[arg(long, default_value = "./.data")]
+        data_dir: PathBuf,
+
+        /// Croniqfile output path
+        #[arg(long, default_value = "Croniqfile")]
+        config: PathBuf,
+
+        /// Admin password
+        #[arg(long, default_value = "changeme")]
+        password: String,
+    },
+
+    /// Migrate a crontab file to a Croniqfile
+    Migrate {
+        /// Path to the crontab file to convert
+        crontab: PathBuf,
+
+        /// Output Croniqfile path (prints to stdout if omitted)
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+    },
+
     /// Inspect a specific dead letter by ID
     #[command(name = "dead-letters-inspect")]
     DeadLettersInspect {
@@ -179,6 +204,12 @@ fn main() -> Result<()> {
         }
         Commands::Init { data_dir, username, password } => {
             commands::init::init(&data_dir, &username, password.as_deref())
+        }
+        Commands::Quickstart { data_dir, config, password } => {
+            commands::quickstart::quickstart(&data_dir, &config, &password)
+        }
+        Commands::Migrate { crontab, output } => {
+            commands::migrate::migrate(&crontab, output.as_deref())
         }
     }
 }

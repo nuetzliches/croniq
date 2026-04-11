@@ -46,3 +46,4 @@ venv/
 docs/node_modules/
 docs/.vitepress/dist/
 docs/.vitepress/cache/
+VALIDATION.md

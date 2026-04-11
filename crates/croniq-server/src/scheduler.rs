@@ -22,6 +22,15 @@ use uuid::Uuid;
 use crate::quota::QuotaGuard;
 use crate::store::DynStore;
 
+/// Commands that can be sent to the scheduler to modify its state at runtime.
+#[derive(Debug)]
+pub enum SchedulerCommand {
+    /// Add or replace a job + trigger in the scheduler.
+    AddJob { job: JobConfig, trigger: Trigger },
+    /// Remove a job from the scheduler.
+    RemoveJob { job_key: String },
+}
+
 /// The result of a single scheduler tick.
 #[derive(Debug, Clone)]
 pub struct TickResult {
@@ -101,6 +110,23 @@ impl SchedulerLoop {
             removed,
             "configuration reloaded"
         );
+    }
+
+    /// Process a runtime command (add/remove job).
+    pub fn apply_command(&mut self, cmd: SchedulerCommand) {
+        match cmd {
+            SchedulerCommand::AddJob { job, trigger } => {
+                let key = job.key.clone();
+                tracing::info!(job_key = %key, "scheduler: job added via API");
+                self.jobs.insert(key.clone(), job);
+                self.triggers.insert(key, trigger);
+            }
+            SchedulerCommand::RemoveJob { job_key } => {
+                tracing::info!(job_key = %job_key, "scheduler: job removed via API");
+                self.jobs.remove(&job_key);
+                self.triggers.remove(&job_key);
+            }
+        }
     }
 
     /// Evaluate all triggers at `now`, fire due ones, return results.

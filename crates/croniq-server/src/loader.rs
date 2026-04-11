@@ -312,6 +312,97 @@ pub async fn restore_queued_executions(
     restored
 }
 
+/// Build a runtime Trigger from a persisted TriggerDefinition.
+///
+/// Used for API/runner-registered jobs that don't come from the Croniqfile.
+/// Returns None if the schedule can't be parsed.
+pub fn trigger_from_definition(
+    def: &croniq_store::models::TriggerDefinition,
+    now: DateTime<Utc>,
+) -> Option<Trigger> {
+    let cron_expr = def.cron_expression.as_deref()?;
+
+    // Parse schedule expression: interval shorthand ("5m", "300", "*/5 * * * *")
+    let secs = parse_interval_seconds(cron_expr)?;
+    let schedule = croniq_scheduler::schedule::Schedule::Interval { seconds: secs };
+
+    let tz: chrono_tz::Tz = def.timezone.as_deref()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(chrono_tz::UTC);
+
+    let window = def.window.as_deref().and_then(TimeWindow::parse);
+
+    let not_before = def.not_before;
+    let not_after = def.not_after;
+
+    Some(Trigger::with_bounds(
+        def.job_key.clone(),
+        schedule,
+        tz,
+        None, // calendar resolved separately
+        window,
+        MisfirePolicy::FireNow,
+        not_before,
+        not_after,
+        now,
+    ))
+}
+
+/// Build a minimal JobConfig from a persisted trigger definition.
+pub fn job_config_from_definition(
+    def: &croniq_store::models::TriggerDefinition,
+    job_def: Option<&croniq_store::models::JobDefinition>,
+) -> croniq_config::compile::JobConfig {
+    use croniq_config::compile::*;
+    use croniq_config::schedule::CompiledSchedule;
+
+    let (ns, name) = def.job_key.split_once(':').unwrap_or(("default", &def.job_key));
+
+    JobConfig {
+        key: def.job_key.clone(),
+        namespace: ns.to_string(),
+        name: name.to_string(),
+        variant: None,
+        description: job_def.and_then(|j| j.description.clone()),
+        schedule: CompiledSchedule::Disabled,
+        schedule_summary: def.cron_expression.clone().unwrap_or_default(),
+        timezone: def.timezone.clone(),
+        calendar: def.calendar.clone(),
+        window: def.window.clone(),
+        not_before: def.not_before.map(|d| d.to_rfc3339()),
+        not_after: def.not_after.map(|d| d.to_rfc3339()),
+        runner: RunnerConfig::default(),
+        retry: RetryConfig::default(),
+        timeout: Some("5m".into()),
+        dead_letter: DeadLetterConfig::default(),
+        metadata: job_def.map(|j| j.metadata.clone()).unwrap_or_default(),
+    }
+}
+
+fn parse_interval_seconds(s: &str) -> Option<u64> {
+    let s = s.trim();
+    if let Ok(n) = s.parse::<u64>() {
+        return Some(n);
+    }
+    if let Some(n) = s.strip_suffix('s') {
+        return n.parse().ok();
+    }
+    if let Some(n) = s.strip_suffix('m') {
+        return n.parse::<u64>().ok().map(|v| v * 60);
+    }
+    if let Some(n) = s.strip_suffix('h') {
+        return n.parse::<u64>().ok().map(|v| v * 3600);
+    }
+    // Try parsing as cron-like interval: */N * * * * → every N minutes
+    if s.starts_with("*/") {
+        let rest = &s[2..];
+        if let Some(n) = rest.split_whitespace().next().and_then(|n| n.parse::<u64>().ok()) {
+            return Some(n * 60);
+        }
+    }
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
