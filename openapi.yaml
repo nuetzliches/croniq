@@ -619,6 +619,42 @@ paths:
       responses:
         "204": { description: Revoked }
 
+  /v1/jobs/register:
+    post:
+      summary: Register a job from a runner or API client
+      description: |
+        Creates or updates a job + trigger. Collision policy:
+        - If a Croniqfile (DSL) job with the same key exists: skip (DSL precedence)
+        - If a runner/API job exists: update
+        - Otherwise: create new
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [job_key, schedule]
+              properties:
+                job_key: { type: string, description: "e.g. billing:invoice" }
+                schedule: { type: string, description: "Interval: 5m, 1h, 300, or */5 * * * *" }
+                timezone: { type: string }
+                timeout: { type: string }
+                runner_id: { type: string }
+                capabilities: { type: array, items: { type: string } }
+                description: { type: string }
+      responses:
+        "201":
+          description: Job created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  job_key: { type: string }
+                  trigger_id: { type: string }
+                  status: { type: string, enum: [registered, skipped_dsl_precedence] }
+        "200":
+          description: Job updated (already existed)
+
   /v1/trigger:
     post:
       summary: Trigger a job immediately

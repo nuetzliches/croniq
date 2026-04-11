@@ -126,6 +126,7 @@ Options:
 | `CRONIQ_JWT_SECRET` | JWT signing secret (fallback if not in Croniqfile) | random per-start |
 | `CRONIQ_ADMIN_USER` | Admin username for Docker auto-init | `admin` |
 | `CRONIQ_ADMIN_PASSWORD` | Admin password for Docker auto-init | `changeme` |
+| `CRONIQ_ON_FAILURE_CMD` | Shell command to run on execution failure (dead-letter/drop) | none |
 
 ## REST API
 
@@ -134,7 +135,7 @@ All endpoints under `/v1/` require authentication (`Authorization: Bearer <jwt>`
 | Group | Endpoints |
 |---|---|
 | Auth | `POST /v1/auth/login`, `/refresh`, `/logout` |
-| Jobs | `GET/POST /v1/jobs`, `GET/DELETE /v1/jobs/{key}`, `POST .../activate` |
+| Jobs | `GET/POST /v1/jobs`, `GET/DELETE /v1/jobs/{key}`, `POST .../activate`, `POST /v1/jobs/register` |
 | Schedules | `GET/POST /v1/schedules`, `GET/DELETE /v1/schedules/{id}` |
 | Runners | `GET /v1/runners`, `DELETE /v1/runners/{id}` |
 | Work | `POST /v1/work/poll`, `/ack`, `/renew`, `/{id}/events` |
@@ -160,7 +161,8 @@ async fn main() {
         .max_inflight(5)
         .build();
 
-    runner.register("billing:invoice", |ctx: ExecutionContext| async move {
+    // Register handler + schedule — server creates the job automatically
+    runner.register_with_schedule("billing:invoice", "5m", |ctx: ExecutionContext| async move {
         println!("Processing invoice: {}", ctx.execution_id);
         Ok(())
     }).await;
@@ -172,11 +174,13 @@ async fn main() {
 ## CLI
 
 ```sh
+croniq quickstart                  # Zero-to-running: init + sample Croniqfile
+croniq init --data-dir .data       # Seed admin user + API key
 croniq validate Croniqfile         # Check for errors
 croniq fmt Croniqfile --write      # Format in place
 croniq compile Croniqfile          # Print compiled JSON
 croniq convert '*/15 * * * *'     # Cron expression to DSL
-croniq init --data-dir .data       # Seed admin user + API key
+croniq migrate crontab.txt -o Croniqfile  # Convert crontab to Croniqfile
 croniq status                      # Live scheduler status
 croniq list-runners                # Connected runners
 croniq trigger billing:invoice     # Fire job immediately

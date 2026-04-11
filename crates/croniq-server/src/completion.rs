@@ -242,6 +242,10 @@ impl CompletionProcessor {
                 let _ = self.store.add_dead_letter(&dl);
 
                 tracing::warn!(id = %exec_uuid, reason = %reason, "execution dead-lettered");
+                crate::notify::notify_failure(
+                    &execution.job_key, &event.execution_id,
+                    event.error.as_deref().unwrap_or("unknown"), event.attempt, &reason,
+                );
                 ProcessedOutcome::DeadLettered { reason }
             }
 
@@ -255,6 +259,10 @@ impl CompletionProcessor {
                     now,
                 );
                 tracing::warn!(id = %exec_uuid, "execution dropped (dead-letter disabled)");
+                crate::notify::notify_failure(
+                    &execution.job_key, &event.execution_id,
+                    event.error.as_deref().unwrap_or("unknown"), event.attempt, &reason,
+                );
                 ProcessedOutcome::Dropped { reason }
             }
 

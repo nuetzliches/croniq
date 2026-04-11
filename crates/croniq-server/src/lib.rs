@@ -33,6 +33,7 @@ pub mod completion;
 pub mod dashboard;
 pub mod loader;
 pub mod metrics;
+pub mod notify;
 pub mod quota;
 pub mod scheduler;
 pub mod store;
