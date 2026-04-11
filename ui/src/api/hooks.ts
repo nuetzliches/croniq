@@ -1,6 +1,8 @@
+import { useState, useEffect, useRef } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { apiFetch, apiPost, apiDelete } from './client'
 import type * as T from './types'
+import { useAuthStore } from '@/auth/store'
 
 // Health
 export function useHealth() {
@@ -53,6 +55,65 @@ export function useDeleteRunner() {
   const qc = useQueryClient()
   return useMutation({ mutationFn: (id: string) => apiDelete(`/v1/runners/${id}`), onSuccess: () => qc.invalidateQueries({ queryKey: ['runners'] }) })
 }
+export function useRunnersSSE() {
+  const qc = useQueryClient()
+  const [data, setData] = useState<T.RunnerSummary[] | undefined>()
+  const [isConnected, setIsConnected] = useState(false)
+  const retryRef = useRef(0)
+  const timerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+
+  useEffect(() => {
+    let stopped = false
+    let ctrl = new AbortController()
+    const BASE = import.meta.env.VITE_API_URL || 'http://localhost:4000'
+
+    async function connect() {
+      const token = useAuthStore.getState().token
+      try {
+        const res = await fetch(`${BASE}/v1/runners/stream`, {
+          signal: ctrl.signal,
+          headers: { Accept: 'text/event-stream', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+        })
+        if (res.status === 401) { useAuthStore.getState().logout(); return }
+        if (!res.ok || !res.body) throw new Error(`SSE ${res.status}`)
+
+        setIsConnected(true)
+        retryRef.current = 0
+        const reader = res.body.getReader()
+        const dec = new TextDecoder()
+        let buf = ''
+        while (true) {
+          const { done, value } = await reader.read()
+          if (done) break
+          buf += dec.decode(value, { stream: true })
+          const parts = buf.split('\n\n')
+          buf = parts.pop() ?? ''
+          for (const msg of parts) {
+            const line = msg.split('\n').find(l => l.startsWith('data:'))
+            if (!line) continue
+            try {
+              const runners: T.RunnerSummary[] = JSON.parse(line.slice(5).trim())
+              setData(runners)
+              qc.setQueryData(['runners'], runners)
+            } catch { /* ignore parse errors */ }
+          }
+        }
+      } catch { /* will reconnect below */ }
+      finally { setIsConnected(false) }
+
+      if (!stopped) {
+        const delay = Math.min(1000 * 2 ** retryRef.current, 30_000)
+        retryRef.current++
+        timerRef.current = setTimeout(() => { ctrl = new AbortController(); connect() }, delay)
+      }
+    }
+
+    connect()
+    return () => { stopped = true; ctrl.abort(); clearTimeout(timerRef.current) }
+  }, [qc])
+
+  return { data, isConnected }
+}
 
 // Executions
 export function useExecutions(params?: { job_key?: string; state?: string; limit?: number }) {
@@ -65,6 +126,15 @@ export function useExecutions(params?: { job_key?: string; state?: string; limit
 }
 export function useExecutionLogs(executionId: string) {
   return useQuery({ queryKey: ['execution-logs', executionId], queryFn: () => apiFetch<T.ExecutionLogEntry[]>(`/v1/executions/${executionId}/logs`) })
+}
+
+// Forecast
+export function useForecast(windowMinutes = 120) {
+  return useQuery({
+    queryKey: ['forecast', windowMinutes],
+    queryFn: () => apiFetch<T.ForecastResponse>(`/v1/dashboard/forecast?window_minutes=${windowMinutes}&bucket_minutes=5`),
+    refetchInterval: 30_000,
+  })
 }
 
 // Dead Letters

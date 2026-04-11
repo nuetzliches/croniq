@@ -27,9 +27,9 @@ export function SchedulesPage() {
 
       {showCreate && (
         <form onSubmit={handleCreate} className="bg-card border border-border rounded-lg p-4 space-y-3">
-          <input placeholder="Job key" value={jobKey} onChange={(e) => setJobKey(e.target.value)} required className="w-full px-3 py-2 border border-border rounded-md text-sm" />
-          <input placeholder="Cron expression (e.g. */15 * * * *)" value={cron} onChange={(e) => setCron(e.target.value)} required className="w-full px-3 py-2 border border-border rounded-md text-sm" />
-          <input placeholder="Timezone (optional, e.g. Europe/Vienna)" value={tz} onChange={(e) => setTz(e.target.value)} className="w-full px-3 py-2 border border-border rounded-md text-sm" />
+          <input placeholder="Job key" value={jobKey} onChange={(e) => setJobKey(e.target.value)} required className="w-full px-3 py-2 border border-border rounded-md text-sm bg-background text-foreground" />
+          <input placeholder="Cron expression (e.g. */15 * * * *)" value={cron} onChange={(e) => setCron(e.target.value)} required className="w-full px-3 py-2 border border-border rounded-md text-sm bg-background text-foreground" />
+          <input placeholder="Timezone (optional, e.g. Europe/Vienna)" value={tz} onChange={(e) => setTz(e.target.value)} className="w-full px-3 py-2 border border-border rounded-md text-sm bg-background text-foreground" />
           <button type="submit" className="px-4 py-2 bg-primary text-primary-foreground rounded-md text-sm">Create</button>
         </form>
       )}
@@ -52,7 +52,7 @@ export function SchedulesPage() {
                 <td className="px-3 py-2 font-mono text-xs">{s.job_key}</td>
                 <td className="px-3 py-2 font-mono text-xs">{s.cron_expression || '-'}</td>
                 <td className="px-3 py-2">{s.timezone || 'UTC'}</td>
-                <td className="px-3 py-2">{s.enabled ? <span className="text-green-600">Yes</span> : <span className="text-red-600">No</span>}</td>
+                <td className="px-3 py-2">{s.enabled ? <span className="text-status-ok-fg">Yes</span> : <span className="text-status-err-fg">No</span>}</td>
                 <td className="px-3 py-2 text-muted-foreground">{s.managed_by}</td>
                 <td className="px-3 py-2 text-right">
                   <button onClick={() => deleteSchedule.mutate(s.trigger_id)} className="text-xs text-destructive hover:underline">Delete</button>
