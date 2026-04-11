@@ -7,6 +7,7 @@ pub mod dashboard;
 pub mod dead_letters;
 pub mod execution_logs;
 pub mod jobs;
+pub mod runners_sse;
 pub mod schedules;
 pub mod work;
 
@@ -114,6 +115,7 @@ pub fn server_router(state: Arc<ServerState>) -> Router {
         // Runners
         .route("/v1/runners", get(handle_list_runners))
         .route("/v1/runners/{id}", delete(handle_delete_runner))
+        .route("/v1/runners/stream", get(runners_sse::handle_runner_stream))
         .route("/v1/trigger", post(handle_trigger))
         // Jobs CRUD
         .route("/v1/jobs", get(jobs::handle_list).post(jobs::handle_create))

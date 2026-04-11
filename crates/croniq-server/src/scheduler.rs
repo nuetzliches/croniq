@@ -19,6 +19,7 @@ use croniq_scheduler::trigger::{Trigger, TriggerState};
 use croniq_store::models::{Execution, ExecutionState, JobState, JobStatus};
 use uuid::Uuid;
 
+use crate::quota::QuotaGuard;
 use crate::store::DynStore;
 
 /// The result of a single scheduler tick.
@@ -46,6 +47,7 @@ pub struct SchedulerLoop {
     jobs: HashMap<String, JobConfig>,
     store: DynStore,
     runner: Arc<AppState>,
+    quota: QuotaGuard,
 }
 
 impl SchedulerLoop {
@@ -56,7 +58,7 @@ impl SchedulerLoop {
         runner: Arc<AppState>,
     ) -> Self {
         let jobs = jobs.into_iter().map(|j| (j.key.clone(), j)).collect();
-        Self { triggers, jobs, store, runner }
+        Self { triggers, jobs, store, runner, quota: QuotaGuard::new() }
     }
 
     /// Hot-reload: update jobs and triggers from a newly loaded config.
@@ -133,6 +135,13 @@ impl SchedulerLoop {
                     max = MAX_QUEUED_PER_JOB,
                     "skipping execution — queue overflow"
                 );
+                trigger.mark_fired(fire_at, now);
+                continue;
+            }
+
+            // Quota check: per-job rate limiting
+            if !self.quota.allow(&trigger.job_key) {
+                tracing::debug!(job_key = %trigger.job_key, "skipping execution — quota exceeded");
                 trigger.mark_fired(fire_at, now);
                 continue;
             }
