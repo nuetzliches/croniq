@@ -7,7 +7,7 @@
 //!
 //! #[tokio::main]
 //! async fn main() {
-//!     let mut runner = CroniqRunner::builder("http://localhost:9090", "my-runner")
+//!     let mut runner = CroniqRunner::builder("http://localhost:8080", "my-runner")
 //!         .api_key("croniq_abc123")
 //!         .max_inflight(5)
 //!         .build();

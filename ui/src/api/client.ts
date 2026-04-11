@@ -1,6 +1,6 @@
 import { useAuthStore } from '@/auth/store'
 
-const BASE = import.meta.env.VITE_API_URL || 'http://localhost:9090'
+const BASE = import.meta.env.VITE_API_URL || 'http://localhost:8080'
 
 export async function apiFetch<T>(path: string, options?: RequestInit): Promise<T> {
   const token = useAuthStore.getState().token

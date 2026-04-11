@@ -22,16 +22,16 @@ Better Cron — a distributed job scheduling platform built in Rust.
 croniq init --data-dir ./.data --username admin --password changeme
 
 # Start the server
-croniq-server --config Croniqfile --data-dir ./.data --listen :9090
+croniq-server --config Croniqfile --data-dir ./.data --listen :8080
 
 # Or with Docker
-docker run -p 9090:9090 -e CRONIQ_ADMIN_PASSWORD=changeme croniq:latest
+docker run -p 8080:8080 -e CRONIQ_ADMIN_PASSWORD=changeme croniq:latest
 ```
 
 ## Croniqfile Example
 
 ```
-server { listen :9090; data_dir /var/lib/croniq }
+server { listen :8080; data_dir /var/lib/croniq }
 
 pull_api {
   auth token my-secret
@@ -127,7 +127,7 @@ use croniq_runner_sdk::{CroniqRunner, ExecutionContext};
 
 #[tokio::main]
 async fn main() {
-    let runner = CroniqRunner::builder("http://localhost:9090", "my-runner")
+    let runner = CroniqRunner::builder("http://localhost:8080", "my-runner")
         .api_key("croniq_abc123")
         .capabilities(vec!["billing".into()])
         .max_inflight(5)
@@ -149,8 +149,8 @@ croniq validate Croniqfile       # Check for errors
 croniq fmt Croniqfile --write    # Format in place
 croniq compile Croniqfile        # Print compiled JSON
 croniq init --data-dir .data     # Seed admin user + API key
-croniq status --url :9090        # Live scheduler status
-croniq list-runners --url :9090  # Connected runners
+croniq status --url :8080        # Live scheduler status
+croniq list-runners --url :8080  # Connected runners
 croniq trigger billing:invoice   # Fire job immediately
 croniq dead-letters --data-dir . # List dead letters
 ```

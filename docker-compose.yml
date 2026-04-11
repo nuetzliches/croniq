@@ -2,7 +2,7 @@ services:
   croniq:
     build: .
     ports:
-      - "9090:9090"
+      - "8080:8080"
       - "9900:9900"
     environment:
       - RUST_LOG=info

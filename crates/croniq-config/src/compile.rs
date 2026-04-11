@@ -136,7 +136,7 @@ pub struct CalendarRuleConfig {
 /// Compile a Croniqfile AST into a RuntimeConfig.
 pub fn compile(ast: &Croniqfile) -> RuntimeConfig {
     let mut server = ServerConfig {
-        listen: ":9090".into(),
+        listen: ":8080".into(),
         data_dir: "./.data".into(),
         db: "sqlite".into(),
     };

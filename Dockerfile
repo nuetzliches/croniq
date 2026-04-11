@@ -44,7 +44,7 @@ COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 
 ENV RUST_LOG=info
 ENV CRONIQ_DATA_DIR=/var/lib/croniq
-EXPOSE 9090 9900
+EXPOSE 8080 9900
 
 ENTRYPOINT ["docker-entrypoint.sh"]
-CMD ["croniq-server", "--config", "/etc/croniq/Croniqfile", "--data-dir", "/var/lib/croniq", "--listen", ":9090", "--ui-dir", "/usr/share/croniq/ui"]
+CMD ["croniq-server", "--config", "/etc/croniq/Croniqfile", "--data-dir", "/var/lib/croniq", "--listen", ":8080", "--ui-dir", "/usr/share/croniq/ui"]

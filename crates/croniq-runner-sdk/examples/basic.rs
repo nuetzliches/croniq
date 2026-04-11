@@ -11,7 +11,7 @@ use croniq_runner_sdk::handler::HandlerError;
 async fn main() {
     tracing_subscriber::fmt::init();
 
-    let runner = CroniqRunner::builder("http://localhost:9090", "example-runner")
+    let runner = CroniqRunner::builder("http://localhost:8080", "example-runner")
         .capabilities(vec!["billing".into()])
         .max_inflight(3)
         .build();

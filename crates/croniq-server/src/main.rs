@@ -2,7 +2,7 @@
 //!
 //! Usage:
 //! ```sh
-//! croniq-server --config Croniqfile --listen :9090 --data-dir ./.data
+//! croniq-server --config Croniqfile --listen :8080 --data-dir ./.data
 //! ```
 
 use std::path::PathBuf;
@@ -29,7 +29,7 @@ struct Cli {
     config: PathBuf,
 
     /// Address and port to listen on.
-    #[arg(short, long, default_value = ":9090")]
+    #[arg(short, long, default_value = ":8080")]
     listen: String,
 
     /// Directory for persistent data (SQLite database).

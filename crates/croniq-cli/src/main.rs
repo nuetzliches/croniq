@@ -6,7 +6,7 @@ mod commands;
 
 // ─── Default server URL ───────────────────────────────────────────────────────
 
-const DEFAULT_SERVER_URL: &str = "http://localhost:9090";
+const DEFAULT_SERVER_URL: &str = "http://localhost:8080";
 
 // ─── CLI definition ───────────────────────────────────────────────────────────
 

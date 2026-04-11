@@ -1,7 +1,7 @@
 # Croniqfile — Billing Platform
 
 server {
-  listen :9090
+  listen :8080
   data_dir /var/lib/croniq
   db sqlite
 }
