@@ -1,0 +1,83 @@
+# Croniqfile — Billing Platform
+
+server {
+  listen :4000
+  data_dir /var/lib/croniq
+  db sqlite
+}
+
+pull_api {
+  auth token {env.CRONIQ_JWT_SECRET}
+  lease_ttl 60s
+}
+
+observability {
+  log { level info; format json; output stderr }
+  metrics { listen :9900; path /metrics }
+}
+
+vars {
+  default_tz Europe/Vienna
+}
+
+defaults {
+  timezone {vars.default_tz}
+  retry exponential { max_attempts 3; base 2s; cap 30s; jitter 0.25 }
+  timeout 5m
+  dead_letter { retention 30d }
+}
+
+# --- Kalender ---
+
+calendar business-days {
+  timezone {vars.default_tz}
+  include weekly monday tuesday wednesday thursday friday
+  exclude annual 01-01 01-06 05-01 08-15 10-26 11-01 12-08 12-25 12-26
+  exclude annual 2026-04-06 2026-04-07
+}
+
+# --- Jobs ---
+
+job billing:invoice-generate {
+  description "Monatliche Rechnungsgenerierung"
+
+  every weekday at 02:00 {
+    calendar business-days
+  }
+  window 02:00..06:00
+
+  runner { require billing; prefer eu-central }
+  retry exponential { max_attempts 5; base 5s; cap 2m; jitter 0.3 }
+  timeout 15m
+  dead_letter { retention 60d; operator_hint "Billing-DB pruefen" }
+  metadata { team billing; priority high }
+}
+
+job etl:data-sync {
+  every 15 minutes
+  retry fixed { max_attempts 2; delay 10s }
+  timeout 10m
+}
+
+job ops:health-check:eu-west {
+  every 5 minutes
+  runner { require health-check; require eu-west }
+  timeout 30s
+}
+
+job reports:monthly-summary {
+  every 1st of month at 06:00 {
+    calendar business-days
+  }
+  timeout 1h
+}
+
+job migration:schema-v2 {
+  once at 2026-04-01T03:00:00Z
+  timeout 30m
+}
+
+job legacy:old-report {
+  disabled
+  timeout 5m
+}

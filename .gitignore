@@ -1,83 +1,48 @@
-# Build outputs
-bin/
-obj/
-out/
-artifacts/
-!src/Croniq.Ui/artifacts/
-TestResults/
-[Rr]elease/
-[Dd]ebug/
+# Rust
+target/
+*.rs.bk
 
-# IDE state
+# Node / UI
+node_modules/
+ui/dist/
+
+# IDE
 .vs/
 .idea/
-# .vscode/
 *.suo
 *.user
-*.userosscache
-*.sln.docstates
-*.userprefs
-
-# Rider / ReSharper / NCrunch
-_ReSharper*/
-*.DotSettings.user
-*.ncrunch*
-*.nunit*
-
-# Logs & caches
-*.log
-*.tlog
-*.svclog
-*.cache
-*.opendb
-StyleCop.Cache
-
-# Packages & tooling artefacts
-packages/
-*.nupkg
-*.snupkg
-*.localhistory/
-tools/.store/
-
-# Coverage / analysis
-*.coverage
-*.coveragexml
-coverage*/
-TestResult.xml
-
-# Generated files
-*.g.*
-*.g.cs
-*.Designer.cs
-!src/**/Migrations/*.Designer.cs
-*.generated.cs
-*.AssemblyAttributes.cs
-*_i.c
-*_p.c
-*.dbmdl
-*.jfm
+.vscode/settings.json
 
 # Environment & secrets
 .env
 *.pfx
 *.snk
 
-# Local SQL Server container data
-infra/docker/mssql-data/
+# Data
+*.db
+*.db-journal
+*.db-wal
+.data/
 
-# docs / vitepress
+# Logs
+*.log
+logs/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Coverage
+coverage/
+*.coverage
+
+# Python (examples)
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Docs
 docs/node_modules/
 docs/.vitepress/dist/
 docs/.vitepress/cache/
-
-node_modules/
-logs/
-
-# Python samples
-__pycache__/
-*.pyc
-*.pyo
-*.pyd
-.pytest_cache/
-.venv/
-venv/

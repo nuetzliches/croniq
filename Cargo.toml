@@ -1,0 +1,20 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/croniq-cli",
+    "crates/croniq-config",
+    "crates/croniq-scheduler",
+    "crates/croniq-store",
+    "crates/croniq-execution",
+    "crates/croniq-runner",
+    "crates/croniq-mcp",
+    "crates/croniq-bridge",
+    "crates/croniq-auth",
+    "crates/croniq-runner-sdk",
+    "crates/croniq-server",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT"

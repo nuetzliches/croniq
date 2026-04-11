@@ -1,0 +1,16 @@
+services:
+  croniq:
+    build: .
+    ports:
+      - "4000:4000"
+      - "9900:9900"
+    environment:
+      - RUST_LOG=info
+      - CRONIQ_ADMIN_USER=admin
+      - CRONIQ_ADMIN_PASSWORD=changeme
+    volumes:
+      - croniq-data:/var/lib/croniq
+    restart: unless-stopped
+
+volumes:
+  croniq-data:

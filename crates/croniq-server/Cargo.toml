@@ -1,0 +1,42 @@
+[package]
+name = "croniq-server"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Croniq server: orchestrates scheduler loop, runner Pull-API, and execution lifecycle"
+
+[[bin]]
+name = "croniq-server"
+path = "src/main.rs"
+
+[dependencies]
+croniq-config    = { path = "../croniq-config" }
+croniq-scheduler = { path = "../croniq-scheduler" }
+croniq-store     = { path = "../croniq-store" }
+croniq-execution = { path = "../croniq-execution" }
+croniq-runner    = { path = "../croniq-runner" }
+croniq-bridge    = { path = "../croniq-bridge" }
+croniq-auth      = { path = "../croniq-auth" }
+
+axum = { version = "0.8", features = ["json", "macros"] }
+tower-http = { version = "0.6", features = ["cors", "fs"] }
+tokio-stream = "0.1"
+futures-core = "0.3"
+tokio = { version = "1", features = ["full"] }
+chrono = { version = "0.4", features = ["serde"] }
+chrono-tz = "0.10"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+anyhow = "1"
+uuid = { version = "1", features = ["v4"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+clap = { version = "4", features = ["derive"] }
+notify = "8"
+
+[dev-dependencies]
+pretty_assertions = "1"
+tokio = { version = "1", features = ["full", "test-util"] }
+tower = { version = "0.5", features = ["util"] }
+http-body-util = "0.1"

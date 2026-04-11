@@ -1,13 +1,5 @@
 .git
-**/bin/
-**/obj/
-**/.vs/
-**/.idea/
-**/*.user
-**/*.suo
-artifacts/
-coverage/
-TestResults/
-docs/node_modules/
-**/*.trx
-tmp_patch.txt
+.claude
+target/
+ui/node_modules/
+ui/dist/
