@@ -14,6 +14,8 @@ pub struct Runner {
     pub last_poll_at: DateTime<Utc>,
     /// Execution IDs currently claimed by this runner.
     pub inflight: Vec<String>,
+    /// Unique instance ID — detects when a different process registers with the same runner_id.
+    pub instance_id: Option<String>,
 }
 
 /// Liveness status derived from how recently a runner polled.
@@ -40,6 +42,7 @@ impl Runner {
             max_inflight,
             last_poll_at: Utc::now(),
             inflight: Vec::new(),
+            instance_id: None,
         }
     }
 
@@ -105,6 +108,10 @@ pub struct PollRequest {
     /// IDs currently being processed by this runner (heartbeat + inflight list).
     #[serde(default)]
     pub inflight: Vec<String>,
+    /// Unique instance ID for this runner process. Used to detect duplicate
+    /// runner IDs from different processes (instance guard).
+    #[serde(default)]
+    pub instance_id: Option<String>,
 }
 
 fn default_max_inflight() -> u32 {

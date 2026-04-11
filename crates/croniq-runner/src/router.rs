@@ -62,6 +62,7 @@ mod tests {
             max_inflight: max,
             last_poll_at: Utc::now(),
             inflight: (0..inflight).map(|i| format!("exec-{i}")).collect(),
+            instance_id: None,
         }
     }
 

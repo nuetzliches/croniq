@@ -173,12 +173,21 @@ async fn handle_poll(
     // Update registry heartbeat
     {
         let mut reg = state.runner.registry.write().await;
-        reg.register_or_update(
+        let result = reg.register_or_update(
             &req.runner_id,
             req.capabilities.clone(),
             req.max_inflight,
             req.inflight.clone(),
+            req.instance_id.clone(),
         );
+        if let Err(conflict) = result {
+            tracing::warn!(
+                runner_id = %req.runner_id,
+                conflicting_instance = %conflict,
+                "runner instance conflict — another instance already registered"
+            );
+            return (StatusCode::CONFLICT, Json(PollResponse { work: vec![], cancel: vec![] }));
+        }
     }
 
     let capacity = (req.max_inflight as usize).saturating_sub(req.inflight.len());
@@ -481,7 +490,7 @@ mod tests {
 
         {
             let mut reg = state.runner.registry.write().await;
-            reg.register_or_update("r1", vec![], 3, vec!["exec-42".into()]);
+            reg.register_or_update("r1", vec![], 3, vec!["exec-42".into()], None);
         }
 
         let app = server_router(Arc::clone(&state));
@@ -510,7 +519,7 @@ mod tests {
 
         {
             let mut reg = state.runner.registry.write().await;
-            reg.register_or_update("r1", vec![], 3, vec!["exec-99".into()]);
+            reg.register_or_update("r1", vec![], 3, vec!["exec-99".into()], None);
         }
 
         let app = server_router(Arc::clone(&state));

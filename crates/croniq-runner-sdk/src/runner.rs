@@ -44,6 +44,7 @@ impl RunnerBuilder {
             runner_id: self.runner_id,
             capabilities: self.capabilities,
             max_inflight: self.max_inflight,
+            instance_id: uuid::Uuid::new_v4().to_string(),
             handlers: Arc::new(RwLock::new(HandlerRegistry::new())),
             inflight: Arc::new(RwLock::new(Vec::new())),
             draining: Arc::new(std::sync::atomic::AtomicBool::new(false)),
@@ -57,6 +58,7 @@ pub struct CroniqRunner {
     runner_id: String,
     capabilities: Vec<String>,
     max_inflight: u32,
+    instance_id: String,
     handlers: Arc<RwLock<HandlerRegistry>>,
     inflight: Arc<RwLock<Vec<String>>>,
     draining: Arc<std::sync::atomic::AtomicBool>,
@@ -122,6 +124,7 @@ impl CroniqRunner {
                 capabilities: self.capabilities.clone(),
                 max_inflight: self.max_inflight,
                 inflight,
+                instance_id: Some(self.instance_id.clone()),
             };
 
             match self.client.poll(&poll_req).await {

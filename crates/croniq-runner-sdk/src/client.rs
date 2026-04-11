@@ -26,6 +26,8 @@ pub struct PollRequest {
     pub capabilities: Vec<String>,
     pub max_inflight: u32,
     pub inflight: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub instance_id: Option<String>,
 }
 
 #[derive(Deserialize)]

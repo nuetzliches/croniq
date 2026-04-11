@@ -23,15 +23,33 @@ impl RunnerRegistry {
     /// Register a new runner or update an existing one's heartbeat and state.
     ///
     /// Returns `true` if this was a new registration, `false` for an update.
+    /// Register or update a runner. Returns:
+    /// - `Ok(true)` if this is a new registration
+    /// - `Ok(false)` if this is an update to an existing runner
+    /// - `Err(conflict_instance_id)` if another instance already owns this runner_id
     pub fn register_or_update(
         &mut self,
         runner_id: impl Into<String>,
         capabilities: Vec<String>,
         max_inflight: u32,
         inflight: Vec<String>,
-    ) -> bool {
+        instance_id: Option<String>,
+    ) -> Result<bool, String> {
         let id = runner_id.into();
         let now = Utc::now();
+
+        // Instance guard: check for conflicting instance_id
+        if let Some(ref new_iid) = instance_id {
+            if let Some(existing) = self.runners.get(&id) {
+                if let Some(ref old_iid) = existing.instance_id {
+                    if old_iid != new_iid {
+                        // Different instance trying to use the same runner_id
+                        return Err(old_iid.clone());
+                    }
+                }
+            }
+        }
+
         let is_new = !self.runners.contains_key(&id);
 
         let runner = self.runners.entry(id.clone()).or_insert_with(|| Runner {
@@ -40,6 +58,7 @@ impl RunnerRegistry {
             max_inflight,
             last_poll_at: now,
             inflight: inflight.clone(),
+            instance_id: instance_id.clone(),
         });
 
         // Always update heartbeat + inflight; capabilities may change too.
@@ -47,8 +66,11 @@ impl RunnerRegistry {
         runner.max_inflight = max_inflight;
         runner.last_poll_at = now;
         runner.inflight = inflight;
+        if instance_id.is_some() {
+            runner.instance_id = instance_id;
+        }
 
-        is_new
+        Ok(is_new)
     }
 
     /// Remove a runner from the registry.
@@ -143,22 +165,22 @@ mod tests {
     #[test]
     fn register_new_runner() {
         let mut reg = RunnerRegistry::new();
-        let is_new = reg.register_or_update("r1", vec!["billing".into()], 3, vec![]);
-        assert!(is_new);
+        let is_new = reg.register_or_update("r1", vec!["billing".into()], 3, vec![], None);
+        assert!(is_new.unwrap());
         assert_eq!(reg.len(), 1);
     }
 
     #[test]
     fn re_register_updates_heartbeat() {
         let mut reg = RunnerRegistry::new();
-        reg.register_or_update("r1", vec!["billing".into()], 3, vec![]);
+        reg.register_or_update("r1", vec!["billing".into()], 3, vec![], None);
         let first_poll = reg.get("r1").unwrap().last_poll_at;
 
         // Simulate time passing by sleeping 1ms (not ideal but cheap)
         std::thread::sleep(std::time::Duration::from_millis(5));
 
-        let is_new = reg.register_or_update("r1", vec!["billing".into()], 3, vec![]);
-        assert!(!is_new);
+        let is_new = reg.register_or_update("r1", vec!["billing".into()], 3, vec![], None);
+        assert!(!is_new.unwrap());
         let second_poll = reg.get("r1").unwrap().last_poll_at;
         assert!(second_poll > first_poll);
     }
@@ -166,8 +188,8 @@ mod tests {
     #[test]
     fn capabilities_updated_on_re_register() {
         let mut reg = RunnerRegistry::new();
-        reg.register_or_update("r1", vec!["billing".into()], 3, vec![]);
-        reg.register_or_update("r1", vec!["billing".into(), "eu-central".into()], 3, vec![]);
+        reg.register_or_update("r1", vec!["billing".into()], 3, vec![], None);
+        reg.register_or_update("r1", vec!["billing".into(), "eu-central".into()], 3, vec![], None);
 
         let r = reg.get("r1").unwrap();
         assert_eq!(r.capabilities.len(), 2);
@@ -176,7 +198,7 @@ mod tests {
     #[test]
     fn inflight_reflected_in_registry() {
         let mut reg = RunnerRegistry::new();
-        reg.register_or_update("r1", vec![], 3, vec!["exec-1".into(), "exec-2".into()]);
+        reg.register_or_update("r1", vec![], 3, vec!["exec-1".into(), "exec-2".into()], None);
 
         let r = reg.get("r1").unwrap();
         assert_eq!(r.inflight, vec!["exec-1", "exec-2"]);
@@ -185,7 +207,7 @@ mod tests {
     #[test]
     fn claim_and_release() {
         let mut reg = RunnerRegistry::new();
-        reg.register_or_update("r1", vec![], 3, vec![]);
+        reg.register_or_update("r1", vec![], 3, vec![], None);
 
         assert!(reg.claim("r1", "exec-42"));
         assert_eq!(reg.get("r1").unwrap().inflight, vec!["exec-42"]);
@@ -203,14 +225,14 @@ mod tests {
     #[test]
     fn release_unknown_execution_returns_false() {
         let mut reg = RunnerRegistry::new();
-        reg.register_or_update("r1", vec![], 3, vec![]);
+        reg.register_or_update("r1", vec![], 3, vec![], None);
         assert!(!reg.release("r1", "exec-does-not-exist"));
     }
 
     #[test]
     fn remove_runner() {
         let mut reg = RunnerRegistry::new();
-        reg.register_or_update("r1", vec![], 3, vec![]);
+        reg.register_or_update("r1", vec![], 3, vec![], None);
         let removed = reg.remove("r1");
         assert!(removed.is_some());
         assert!(reg.is_empty());
@@ -219,7 +241,7 @@ mod tests {
     #[test]
     fn by_status_filters_correctly() {
         let mut reg = RunnerRegistry::new();
-        reg.register_or_update("online", vec![], 1, vec![]);
+        reg.register_or_update("online", vec![], 1, vec![], None);
 
         // Manually set a stale/dead runner by inserting with old timestamp
         reg.runners.insert(
@@ -230,6 +252,7 @@ mod tests {
                 max_inflight: 1,
                 last_poll_at: now() - Duration::seconds(200),
                 inflight: vec![],
+                instance_id: None,
             },
         );
 
@@ -253,6 +276,7 @@ mod tests {
                 max_inflight: 1,
                 last_poll_at: now() - Duration::seconds(300),
                 inflight: vec!["exec-1".into()],
+                instance_id: None,
             },
         );
 

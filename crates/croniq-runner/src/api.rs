@@ -94,6 +94,7 @@ pub async fn handle_poll(
         req.capabilities.clone(),
         req.max_inflight,
         req.inflight.clone(),
+        req.instance_id.clone(),
     );
 
     let capacity = (req.max_inflight as usize).saturating_sub(req.inflight.len());
@@ -354,7 +355,7 @@ mod tests {
         // Register runner with an inflight execution
         {
             let mut reg = state.registry.write().await;
-            reg.register_or_update("r1", vec![], 3, vec!["exec-42".into()]);
+            reg.register_or_update("r1", vec![], 3, vec!["exec-42".into()], None);
         }
 
         let app = router(Arc::clone(&state));
@@ -386,7 +387,7 @@ mod tests {
         // Register one runner
         {
             let mut reg = state.registry.write().await;
-            reg.register_or_update("r1", vec![], 3, vec![]);
+            reg.register_or_update("r1", vec![], 3, vec![], None);
         }
 
         // Enqueue two items
@@ -420,7 +421,7 @@ mod tests {
 
         {
             let mut reg = state.registry.write().await;
-            reg.register_or_update("r1", vec![], 3, vec!["exec-99".into()]);
+            reg.register_or_update("r1", vec![], 3, vec!["exec-99".into()], None);
         }
 
         let app = router(Arc::clone(&state));
