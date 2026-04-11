@@ -353,10 +353,12 @@ mod tests {
         let mut scheduler =
             SchedulerLoop::new(triggers, vec![make_job("test:job")], store, runner);
 
-        scheduler.tick(Utc::now()).await;
+        let result = scheduler.tick(Utc::now()).await;
 
+        // Trigger fires and goes back to Armed (async execution model)
+        assert_eq!(result.fired.len(), 1);
         let trigger = &scheduler.triggers["test:job"];
-        assert_ne!(trigger.state, TriggerState::Armed);
+        assert_eq!(trigger.fire_count, 1);
     }
 
     #[tokio::test]

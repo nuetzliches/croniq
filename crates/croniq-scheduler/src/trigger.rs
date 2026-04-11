@@ -156,20 +156,31 @@ impl Trigger {
     }
 
     /// Mark this trigger as fired and advance to the next fire time.
+    ///
+    /// The trigger transitions back to Armed immediately (not waiting for
+    /// execution completion) so it can fire again on its next schedule.
+    /// Execution lifecycle is tracked independently via the Execution entity.
     pub fn mark_fired(&mut self, fire_at: DateTime<Utc>, now: DateTime<Utc>) {
-        self.state = TriggerState::Fired;
         self.last_fired_at = Some(fire_at);
         self.fire_count += 1;
 
         // Compute next fire time
         self.next_fire_at = self.compute_next_fire(now);
 
-        // If next fire is past not_after, exhaust the trigger
-        if let (Some(next), Some(na)) = (self.next_fire_at, self.not_after)
-            && next > na {
+        // Determine new state
+        if self.next_fire_at.is_none() {
+            // No more fire times (once-trigger or schedule exhausted)
+            self.state = TriggerState::Exhausted;
+        } else if let (Some(next), Some(na)) = (self.next_fire_at, self.not_after) {
+            if next > na {
                 self.next_fire_at = None;
                 self.state = TriggerState::Exhausted;
+            } else {
+                self.state = TriggerState::Armed;
             }
+        } else {
+            self.state = TriggerState::Armed;
+        }
     }
 
     /// Mark the execution as completed, transition back to Armed.
@@ -310,18 +321,14 @@ mod tests {
         assert_eq!(trigger.state, TriggerState::Armed);
         assert_eq!(trigger.next_fire_at, Some(utc(2026, 3, 29, 9, 0)));
 
-        // Fire
+        // Fire — trigger goes directly back to Armed (async execution model)
         let fire_at = trigger.evaluate(utc(2026, 3, 29, 9, 0)).unwrap();
         trigger.mark_fired(fire_at, utc(2026, 3, 29, 9, 0));
-        assert_eq!(trigger.state, TriggerState::Fired);
+        assert_eq!(trigger.state, TriggerState::Armed);
         assert_eq!(trigger.fire_count, 1);
 
         // Next fire time should be tomorrow
         assert_eq!(trigger.next_fire_at, Some(utc(2026, 3, 30, 9, 0)));
-
-        // Complete
-        trigger.mark_completed(utc(2026, 3, 29, 9, 15));
-        assert_eq!(trigger.state, TriggerState::Armed);
     }
 
     #[test]
