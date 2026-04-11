@@ -1,73 +1,42 @@
-# React + TypeScript + Vite
+# Croniq UI
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+React dashboard for Croniq — the distributed job scheduling platform.
 
-Currently, two official plugins are available:
+## Stack
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+- React 19 + TypeScript
+- Vite (build + HMR)
+- Tailwind CSS 4
+- TanStack Query (data fetching)
+- Zustand (auth state)
+- React Router v7
 
-## React Compiler
+## Development
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
-
-## Expanding the ESLint configuration
-
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
-
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
-
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+```sh
+npm install
+npm run dev       # http://localhost:5173
 ```
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+Set `VITE_API_URL` to point to the Croniq server (default: `http://localhost:4000`).
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
+## Build
 
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+```sh
+npm run build     # Output in dist/
 ```
+
+Serve the built files via `croniq-server --ui-dir ui/dist`.
+
+## Views
+
+| View | Route | Description |
+|---|---|---|
+| Login | `/login` | Username + password authentication |
+| Dashboard | `/` | Health stats, queue depth, recent executions |
+| Jobs | `/jobs` | Job definitions CRUD |
+| Job Detail | `/jobs/:key` | Schedules + executions for a job |
+| Schedules | `/schedules` | Trigger definitions CRUD |
+| Runners | `/runners` | Connected runners with status |
+| Executions | `/executions` | Execution history with log viewer |
+| Dead Letters | `/dead-letters` | Failed executions with detail panel |

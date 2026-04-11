@@ -14,6 +14,7 @@ Better Cron — a distributed job scheduling platform built in Rust.
 - **MCP Server** — AI assistant integration via Model Context Protocol
 - **Metrics** — Prometheus-compatible `/metrics` endpoint
 - **Hot-reload** — watch Croniqfile for changes, apply without restart
+- **Queue overflow protection** — max 10 queued executions per job
 
 ## Quick Start
 
@@ -22,20 +23,23 @@ Better Cron — a distributed job scheduling platform built in Rust.
 croniq init --data-dir ./.data --username admin --password changeme
 
 # Start the server
-croniq-server --config Croniqfile --data-dir ./.data --listen :8080
+croniq-server --config Croniqfile --data-dir ./.data
 
-# Or with Docker
-docker run -p 8080:8080 -e CRONIQ_ADMIN_PASSWORD=changeme croniq:latest
+# With UI serving
+croniq-server --config Croniqfile --data-dir ./.data --ui-dir ui/dist
+
+# Or with Docker (auto-initializes on first run)
+docker run -p 4000:4000 -e CRONIQ_ADMIN_PASSWORD=changeme croniq:latest
 ```
+
+Open **http://localhost:4000** — login with `admin` / `changeme`.
 
 ## Croniqfile Example
 
 ```
-server { listen :8080; data_dir /var/lib/croniq }
-
-pull_api {
-  auth token my-secret
-  lease_ttl 60s
+server {
+  listen :4000
+  data_dir /var/lib/croniq
 }
 
 observability {
@@ -100,25 +104,48 @@ job etl:sync {
 | `croniq-cli` | CLI tool (validate, fmt, compile, init, status, ...) |
 | `croniq-runner-sdk` | Client library for building runners |
 
+## Server Flags
+
+```
+croniq-server [OPTIONS]
+
+Options:
+  -c, --config <PATH>     Croniqfile path [default: Croniqfile]
+  -l, --listen <ADDR>     Listen address [default: :4000]
+  -d, --data-dir <PATH>   SQLite data directory [default: ./.data]
+      --metrics <ADDR>    Prometheus metrics endpoint (e.g. :9900)
+      --watch             Hot-reload Croniqfile on changes
+      --ui-dir <PATH>     Serve React UI static files from this directory
+```
+
+## Environment Variables
+
+| Variable | Description | Default |
+|---|---|---|
+| `RUST_LOG` | Log level filter | `info` |
+| `CRONIQ_JWT_SECRET` | JWT signing secret (fallback if not in Croniqfile) | random per-start |
+| `CRONIQ_ADMIN_USER` | Admin username for Docker auto-init | `admin` |
+| `CRONIQ_ADMIN_PASSWORD` | Admin password for Docker auto-init | `changeme` |
+
 ## REST API
 
-All endpoints under `/v1/` require authentication (Bearer JWT or ApiKey header).
+All endpoints under `/v1/` require authentication (`Authorization: Bearer <jwt>` or `Authorization: ApiKey <key>`).
 
 | Group | Endpoints |
 |---|---|
 | Auth | `POST /v1/auth/login`, `/refresh`, `/logout` |
-| Jobs | `GET/POST /v1/jobs`, `GET/DELETE /v1/jobs/{key}` |
+| Jobs | `GET/POST /v1/jobs`, `GET/DELETE /v1/jobs/{key}`, `POST .../activate` |
 | Schedules | `GET/POST /v1/schedules`, `GET/DELETE /v1/schedules/{id}` |
 | Runners | `GET /v1/runners`, `DELETE /v1/runners/{id}` |
 | Work | `POST /v1/work/poll`, `/ack`, `/renew`, `/{id}/events` |
 | Executions | `GET /v1/executions`, `GET /v1/executions/{id}/logs` |
-| Dead Letters | `GET /v1/dead-letters`, `POST /v1/dead-letters/{id}/replay` |
+| Dead Letters | `GET /v1/dead-letters`, `GET/DELETE .../dead-letters/{id}`, `POST .../replay` |
 | Calendars | `GET/POST /v1/calendars`, `GET/DELETE /v1/calendars/{id}` |
-| Dashboard | `GET /v1/dashboard/forecast` |
-| API Clients | `GET/POST /v1/api-clients`, `DELETE /v1/api-clients/{id}` |
+| Dashboard | `GET /v1/dashboard/forecast?window_minutes=60&bucket_minutes=5` |
+| API Clients | `GET/POST /v1/api-clients`, `DELETE .../api-clients/{id}`, `POST .../tokens` |
 | API Keys | `POST /v1/api-keys`, `DELETE /v1/api-keys/{id}` |
-| Health | `GET /health` (public) |
-| Metrics | `GET /metrics` (separate port) |
+| Health | `GET /health` (public, no auth) |
+| Metrics | `GET /metrics` (separate port via `--metrics` or observability config) |
 
 ## Runner SDK
 
@@ -145,14 +172,47 @@ async fn main() {
 ## CLI
 
 ```sh
-croniq validate Croniqfile       # Check for errors
-croniq fmt Croniqfile --write    # Format in place
-croniq compile Croniqfile        # Print compiled JSON
-croniq init --data-dir .data     # Seed admin user + API key
-croniq status --url :8080        # Live scheduler status
-croniq list-runners --url :8080  # Connected runners
-croniq trigger billing:invoice   # Fire job immediately
-croniq dead-letters --data-dir . # List dead letters
+croniq validate Croniqfile         # Check for errors
+croniq fmt Croniqfile --write      # Format in place
+croniq compile Croniqfile          # Print compiled JSON
+croniq convert '*/15 * * * *'     # Cron expression to DSL
+croniq init --data-dir .data       # Seed admin user + API key
+croniq status                      # Live scheduler status
+croniq list-runners                # Connected runners
+croniq trigger billing:invoice     # Fire job immediately
+croniq dead-letters --data-dir .   # List dead letters
+croniq dead-letters-inspect <id>   # Full dead letter details
+```
+
+## Docker
+
+```sh
+# Run with auto-init
+docker run -p 4000:4000 -e CRONIQ_ADMIN_PASSWORD=mysecret croniq:latest
+
+# docker-compose
+docker compose up
+
+# Build locally
+docker build -t croniq:latest .
+```
+
+## Development
+
+```sh
+# Build
+cargo build --workspace
+
+# Test
+cargo test --workspace
+
+# Dev mode (separate processes)
+cd ui && npm run dev                                        # Vite on :5173
+croniq-server --config Croniqfile.example --data-dir .data  # API on :4000
+
+# Production mode (single process)
+cd ui && npm run build
+croniq-server --config Croniqfile.example --data-dir .data --ui-dir ui/dist
 ```
 
 ## License

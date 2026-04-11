@@ -7,8 +7,7 @@ server {
 }
 
 pull_api {
-  listen :9443
-  auth token {env.CRONIQ_PULL_TOKEN}
+  auth token {env.CRONIQ_JWT_SECRET}
   lease_ttl 60s
 }
 
