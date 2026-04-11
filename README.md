@@ -161,7 +161,7 @@ graph LR
     Q --> R1[Runner 1]
     Q --> R2[Runner 2]
     Q --> R3[Runner N]
-    S --> M[/metrics]
+    S --> M["Metrics (:9900)"]
     S --> UI[React Dashboard]
     S --> MCP[MCP Server]
 ```
