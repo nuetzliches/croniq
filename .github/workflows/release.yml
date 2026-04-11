@@ -1,449 +1,91 @@
-name: Croniq Release
+name: Release
 
 on:
   push:
-    tags:
-      - "v*"
-  workflow_dispatch:
-    inputs:
-      version:
-        description: "Override artifact version (defaults to git tag)"
-        required: false
-        type: string
+    tags: ["v*"]
 
 permissions:
   contents: write
   packages: write
-  security-events: write
-  id-token: write
-  actions: read
 
 env:
-  DOTNET_NOLOGO: true
-  DOTNET_ROLL_FORWARD: LatestMajor
-  REGISTRY: ghcr.io
+  CARGO_TERM_COLOR: always
 
 jobs:
-  tests:
-    name: Build & Test
+  build:
+    name: Build (${{ matrix.target }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+          - target: x86_64-apple-darwin
+            os: macos-latest
+          - target: aarch64-apple-darwin
+            os: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build release binaries
+        run: |
+          cargo build --release --target ${{ matrix.target }} \
+            --bin croniq-server --bin croniq --bin croniq-mcp
+
+      - name: Package
+        run: |
+          mkdir -p dist
+          cp target/${{ matrix.target }}/release/croniq-server dist/
+          cp target/${{ matrix.target }}/release/croniq dist/
+          cp target/${{ matrix.target }}/release/croniq-mcp dist/
+          cp README.md LICENSE-MIT LICENSE-APACHE dist/
+          cd dist && tar czf ../croniq-${{ matrix.target }}.tar.gz *
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: croniq-${{ matrix.target }}
+          path: croniq-${{ matrix.target }}.tar.gz
+
+  docker:
+    name: Docker release
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Setup .NET
-        uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: 10.0.x
-
-      - name: Restore
-        run: dotnet restore croniq.slnx
-
-      - name: Build (Release)
-        run: dotnet build croniq.slnx --configuration Release --no-restore
-
-      - name: Run full test suite
-        run: dotnet test croniq.slnx --configuration Release --no-restore --logger "trx;LogFileName=release-tests.trx"
-
-      - name: Upload test results
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: release-test-results
-          path: "**/TestResults/*.trx"
-
-  packages:
-    name: Pack, Scan & Sign NuGet Artifacts
-    needs: tests
-    runs-on: ubuntu-latest
-    env:
-      NUGET_SIGNING_CERT_BASE64: ${{ secrets.NUGET_SIGNING_CERT_BASE64 }}
-      NUGET_SIGNING_CERT_PASSWORD: ${{ secrets.NUGET_SIGNING_CERT_PASSWORD }}
-      NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Setup .NET
-        uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: 10.0.x
-
-      - name: Prepare artifact folders
-        run: |
-          mkdir -p artifacts/nuget
-          mkdir -p artifacts/sbom
-          mkdir -p artifacts/trivy
-          mkdir -p artifacts/licenses
-          mkdir -p bin
-
-      - name: Install Syft & Trivy (pinned)
-        shell: pwsh
-        run: |
-          ./scripts/ci/install-supplychain-tool.ps1 -Tool syft -InstallDir "$PWD/bin"
-          ./scripts/ci/install-supplychain-tool.ps1 -Tool trivy -InstallDir "$PWD/bin"
-          "$PWD/bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
-
-      - name: Pack libraries
-        run: dotnet pack croniq.slnx --configuration Release --output artifacts/nuget
-
-      - name: Dependency vulnerability check
-        run: dotnet list package --vulnerable --include-transitive
-
-      - name: License compatibility scan (Syft + allowlist)
-        run: |
-          syft dir:. -o spdx-json=artifacts/licenses/sbom.json
-          python scripts/ci/check-licenses.py artifacts/licenses/sbom.json eng/licenses/allowed-licenses.json
-
-      - name: Generate NuGet SBOM (Syft)
-        run: syft dir:artifacts/nuget -o spdx-json=artifacts/sbom/nuget.spdx.json
-
-      - name: Trivy filesystem scan (table for log)
-        continue-on-error: true
-        run: |
-          trivy fs . \
-            --skip-dirs artifacts,bin,.git,docs/node_modules \
-            --severity HIGH,CRITICAL \
-            --ignore-unfixed \
-            --format table \
-            --exit-code 1 \
-            --no-progress
-
-      - name: Generate Trivy SARIF
-        continue-on-error: true
-        run: |
-          trivy fs . \
-            --skip-dirs artifacts,bin,.git,docs/node_modules \
-            --severity HIGH,CRITICAL \
-            --ignore-unfixed \
-            --format sarif \
-            --output artifacts/trivy/source.sarif \
-            --exit-code 0 \
-            --no-progress
-
-      - name: Upload Trivy SARIF to GitHub Security
-        if: ${{ always() && env.GHAS_ENABLED == 'true' }}
-        uses: github/codeql-action/upload-sarif@v4
-        with:
-          sarif_file: artifacts/trivy/source.sarif
-
-      - name: Decode signing certificate (disabled)
-        if: ${{ false }} # Temporarily disable signing until public CA cert is available
-        run: |
-          echo "$NUGET_SIGNING_CERT_BASE64" | base64 -d > signingCert.pfx
-        shell: bash
-
-      - name: Sign NuGet packages (disabled)
-        if: ${{ false }} # Temporarily disable signing until public CA cert is available
-        run: dotnet nuget sign artifacts/nuget/*.nupkg --certificate-path signingCert.pfx --certificate-password "$NUGET_SIGNING_CERT_PASSWORD" --timestamper http://timestamp.digicert.com
-        shell: bash
-
-      - name: Publish NuGet packages
-        if: env.NUGET_API_KEY != ''
-        run: |
-          for pkg in artifacts/nuget/*.nupkg; do
-            dotnet nuget push "$pkg" --api-key "$NUGET_API_KEY" --source https://api.nuget.org/v3/index.json --skip-duplicate
-          done
-        shell: bash
-
-      - name: Upload package artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: release-packages
-          path: artifacts
-
-  images:
-    name: Build, Scan & Sign Container Images
-    needs: tests
-    runs-on: ubuntu-latest
-    env:
-      COSIGN_KEY: ${{ secrets.COSIGN_KEY }}
-      COSIGN_KEY_B64: ${{ secrets.COSIGN_KEY_B64 }}
-      COSIGN_PASSWORD: ${{ secrets.COSIGN_PASSWORD }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Log in to GHCR
-        uses: docker/login-action@v3
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Resolve version
+      - name: Extract version
         id: version
-        run: |
-          VERSION="${{ github.event.inputs.version }}"
-          if [ -z "$VERSION" ]; then
-            VERSION="${GITHUB_REF_NAME}"
-          fi
-          if [ -z "$VERSION" ]; then
-            VERSION="manual-${GITHUB_RUN_ID}"
-          fi
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
-          echo "api_image=${{ env.REGISTRY }}/${{ github.repository_owner }}/croniq-api:$VERSION" >> $GITHUB_OUTPUT
-          echo "api_latest=${{ env.REGISTRY }}/${{ github.repository_owner }}/croniq-api:latest" >> $GITHUB_OUTPUT
-          echo "worker_image=${{ env.REGISTRY }}/${{ github.repository_owner }}/croniq-worker:$VERSION" >> $GITHUB_OUTPUT
-          echo "worker_latest=${{ env.REGISTRY }}/${{ github.repository_owner }}/croniq-worker:latest" >> $GITHUB_OUTPUT
-          echo "ui_image=${{ env.REGISTRY }}/${{ github.repository_owner }}/croniq-ui:$VERSION" >> $GITHUB_OUTPUT
-          echo "ui_latest=${{ env.REGISTRY }}/${{ github.repository_owner }}/croniq-ui:latest" >> $GITHUB_OUTPUT
-          echo "webhooks_image=${{ env.REGISTRY }}/${{ github.repository_owner }}/croniq-webhooks:$VERSION" >> $GITHUB_OUTPUT
-          echo "webhooks_latest=${{ env.REGISTRY }}/${{ github.repository_owner }}/croniq-webhooks:latest" >> $GITHUB_OUTPUT
-          echo "migrator_image=${{ env.REGISTRY }}/${{ github.repository_owner }}/croniq-db-migrator:$VERSION" >> $GITHUB_OUTPUT
-          echo "migrator_latest=${{ env.REGISTRY }}/${{ github.repository_owner }}/croniq-db-migrator:latest" >> $GITHUB_OUTPUT
-
-      - name: Prepare tooling directories
-        run: |
-          mkdir -p bin
-          echo "${{ github.workspace }}/bin" >> $GITHUB_PATH
-
-      - name: Install Syft & Trivy (pinned)
-        shell: pwsh
-        run: |
-          ./scripts/ci/install-supplychain-tool.ps1 -Tool syft -InstallDir "$PWD/bin"
-          ./scripts/ci/install-supplychain-tool.ps1 -Tool trivy -InstallDir "$PWD/bin"
-
-      - name: Install Cosign
-        run: |
-          curl -sSfL https://github.com/sigstore/cosign/releases/latest/download/cosign-linux-amd64 > cosign
-          chmod +x cosign
-          mv cosign ./bin/cosign
-      - name: Decode base64 cosign key (optional)
-        if: env.COSIGN_KEY_B64 != ''
-        run: echo "$COSIGN_KEY_B64" | base64 -d > cosign.key
-        shell: bash
-
-      - name: Build Croniq API image
-        run: |
-          docker build -f infra/docker/Dockerfile.production --target api -t ${{ steps.version.outputs.api_image }} -t ${{ steps.version.outputs.api_latest }} .
-          docker push ${{ steps.version.outputs.api_image }}
-          docker push ${{ steps.version.outputs.api_latest }}
-
-      - name: Build Croniq Worker image
-        run: |
-          docker build -f infra/docker/Dockerfile.production --target worker -t ${{ steps.version.outputs.worker_image }} -t ${{ steps.version.outputs.worker_latest }} .
-          docker push ${{ steps.version.outputs.worker_image }}
-          docker push ${{ steps.version.outputs.worker_latest }}
-
-      - name: Build Croniq UI image
-        run: |
-          docker build -f infra/docker/Dockerfile.production --target ui -t ${{ steps.version.outputs.ui_image }} -t ${{ steps.version.outputs.ui_latest }} .
-          docker push ${{ steps.version.outputs.ui_image }}
-          docker push ${{ steps.version.outputs.ui_latest }}
-
-      - name: Build Croniq Webhooks image
-        run: |
-          docker build -f infra/docker/Dockerfile.production --target webhooks -t ${{ steps.version.outputs.webhooks_image }} -t ${{ steps.version.outputs.webhooks_latest }} .
-          docker push ${{ steps.version.outputs.webhooks_image }}
-          docker push ${{ steps.version.outputs.webhooks_latest }}
-
-      - name: Build Croniq DB migrator image
-        run: |
-          docker build -f infra/docker/Dockerfile.production --target migrator -t ${{ steps.version.outputs.migrator_image }} -t ${{ steps.version.outputs.migrator_latest }} .
-          docker push ${{ steps.version.outputs.migrator_image }}
-          docker push ${{ steps.version.outputs.migrator_latest }}
-
-      - name: Prepare artifact folders
-        run: |
-          mkdir -p artifacts/images/sbom
-          mkdir -p artifacts/images/trivy
-
-      - name: Generate container SBOMs
-        run: |
-          syft ${{ steps.version.outputs.api_image }} -o spdx-json=artifacts/images/sbom/api-${{ steps.version.outputs.version }}.spdx.json
-          syft ${{ steps.version.outputs.worker_image }} -o spdx-json=artifacts/images/sbom/worker-${{ steps.version.outputs.version }}.spdx.json
-          syft ${{ steps.version.outputs.ui_image }} -o spdx-json=artifacts/images/sbom/ui-${{ steps.version.outputs.version }}.spdx.json
-          syft ${{ steps.version.outputs.webhooks_image }} -o spdx-json=artifacts/images/sbom/webhooks-${{ steps.version.outputs.version }}.spdx.json
-          syft ${{ steps.version.outputs.migrator_image }} -o spdx-json=artifacts/images/sbom/db-migrator-${{ steps.version.outputs.version }}.spdx.json
-
-      - name: Trivy scan (images)
-        run: |
-          trivy image ${{ steps.version.outputs.api_image }} \
-            --severity HIGH,CRITICAL \
-            --ignore-unfixed \
-            --format sarif \
-            --output artifacts/images/trivy/api.sarif \
-            --exit-code 1 \
-            --no-progress
-          trivy image ${{ steps.version.outputs.worker_image }} \
-            --severity HIGH,CRITICAL \
-            --ignore-unfixed \
-            --format sarif \
-            --output artifacts/images/trivy/worker.sarif \
-            --exit-code 1 \
-            --no-progress
-          trivy image ${{ steps.version.outputs.ui_image }} \
-            --severity HIGH,CRITICAL \
-            --ignore-unfixed \
-            --format sarif \
-            --output artifacts/images/trivy/ui.sarif \
-            --exit-code 1 \
-            --no-progress
-          trivy image ${{ steps.version.outputs.webhooks_image }} \
-            --severity HIGH,CRITICAL \
-            --ignore-unfixed \
-            --format sarif \
-            --output artifacts/images/trivy/webhooks.sarif \
-            --exit-code 1 \
-            --no-progress
-          trivy image ${{ steps.version.outputs.migrator_image }} \
-            --severity HIGH,CRITICAL \
-            --ignore-unfixed \
-            --format sarif \
-            --output artifacts/images/trivy/db-migrator.sarif \
-            --exit-code 1 \
-            --no-progress
-
-      - name: Sign container images (cosign)
-        if: env.COSIGN_KEY != '' || env.COSIGN_KEY_B64 != ''
-        env:
-          COSIGN_EXPERIMENTAL: "true"
-        run: |
-          KEYFLAG="--key env://COSIGN_KEY"
-          if [ -n "$COSIGN_KEY_B64" ]; then
-            KEYFLAG="--key cosign.key"
-          fi
-          ./bin/cosign sign --yes $KEYFLAG ${{ steps.version.outputs.api_image }}
-          ./bin/cosign sign --yes $KEYFLAG ${{ steps.version.outputs.worker_image }}
-          ./bin/cosign sign --yes $KEYFLAG ${{ steps.version.outputs.ui_image }}
-          ./bin/cosign sign --yes $KEYFLAG ${{ steps.version.outputs.webhooks_image }}
-          ./bin/cosign sign --yes $KEYFLAG ${{ steps.version.outputs.migrator_image }}
-        shell: bash
-
-      - name: Upload container artifacts
-        uses: actions/upload-artifact@v4
+        run: echo "version=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+      - uses: docker/build-push-action@v6
         with:
-          name: release-images
-          path: artifacts/images
+          context: .
+          push: true
+          tags: |
+            ghcr.io/nuetzliches/croniq:latest
+            ghcr.io/nuetzliches/croniq:${{ steps.version.outputs.version }}
+            ghcr.io/nuetzliches/croniq:${{ github.ref_name }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
-  smoke:
-    name: Aspire Smoke Verification
-    needs: tests
+  release:
+    name: GitHub Release
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    needs: [build, docker]
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
         with:
-          fetch-depth: 0
-
-      - name: Setup .NET
-        uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: 10.0.x
-
-      - name: Copy environment defaults
-        shell: bash
-        run: cp .env.example .env
-
-      - name: Ensure HTTPS development certificate
-        run: dotnet dev-certs https
-
-      - name: Start Aspire dev stack
-        shell: pwsh
-        run: |
-          New-Item -ItemType Directory -Force -Path artifacts/release-devstack | Out-Null
-          $env:CRONIQ_DEVSTACK_CADDY = "false"
-          $env:CRONIQ_DEVSTACK_UI = "false"
-          $process = Start-Process -FilePath dotnet -ArgumentList @(
-            "run",
-            "--project", "tools/Croniq.Devstack.AppHost/Croniq.Devstack.AppHost.csproj",
-            "--configuration", "Release",
-            "--",
-            "--profile", "obs"
-          ) -RedirectStandardOutput "artifacts/release-devstack/aspire-devstack.log" -RedirectStandardError "artifacts/release-devstack/aspire-devstack.err.log" -PassThru
-          $process.Id | Out-File -FilePath artifacts/release-devstack/aspire-devstack.pid -Encoding ascii
-
-      - name: Wait for API health
-        shell: pwsh
-        run: |
-          try {
-            ./scripts/ci/wait-for-http.ps1 -Uri "http://localhost:5080/health" -Attempts 120 -DelaySeconds 2 -TimeoutSeconds 10
-          } catch {
-            if (Test-Path "artifacts/release-devstack/aspire-devstack.err.log") {
-              Get-Content "artifacts/release-devstack/aspire-devstack.err.log" -Tail 200
-            }
-            throw
-          }
-
-      - name: Run Croniq.Api.Smoke tests
-        run: dotnet test tests/Croniq.Api.Smoke/Croniq.Api.Smoke.csproj --configuration Release
-        env:
-          CRONIQ_WEBHOOK_BASEURL: http://localhost:5000
-
-      - name: Shut down Aspire dev stack
-        if: always()
-        shell: pwsh
-        run: |
-          if (Test-Path "artifacts/release-devstack/aspire-devstack.pid") {
-            $processId = Get-Content "artifacts/release-devstack/aspire-devstack.pid" | Select-Object -First 1
-            if ($processId) {
-              Stop-Process -Id $processId -Force -ErrorAction SilentlyContinue
-            }
-          }
-
-      - name: Upload smoke logs
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: release-devstack-logs
-          path: artifacts/release-devstack
-
-  publish:
-    name: Publish Release Artifacts
-    needs:
-      - packages
-      - images
-      - smoke
-    runs-on: ubuntu-latest
-    steps:
-      - name: Download package artifacts
-        uses: actions/download-artifact@v4
-        with:
-          name: release-packages
-          path: release/packages
-
-      - name: Download container artifacts
-        uses: actions/download-artifact@v4
-        with:
-          name: release-images
-          path: release/images
-
-      - name: Assemble release payload
-        run: |
-          ls -R release
-
-      - name: Publish GitHub Release
+          path: artifacts
+      - name: Create release
         uses: softprops/action-gh-release@v2
         with:
-          draft: false
-          files: |
-            release/packages/**/*.nupkg
-            release/packages/sbom/*.json
-            release/packages/trivy/*.sarif
-            release/images/sbom/*.json
-            release/images/trivy/*.sarif
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-  deploy-staging:
-    name: Deploy to Staging
-    if: ${{ false }} # Temporarily disabled staging deploy
-    needs:
-      - images
-      - smoke
-    uses: ./.github/workflows/deploy-staging.yml
-    with:
-      image-tag: ${{ github.ref_name }}
-    secrets:
-      STAGING_KUBECONFIG: ${{ secrets.STAGING_KUBECONFIG }}
+          generate_release_notes: true
+          files: artifacts/**/*.tar.gz
