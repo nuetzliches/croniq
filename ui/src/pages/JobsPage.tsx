@@ -38,11 +38,11 @@ export function JobsPage() {
       {showCreate && (
         <form onSubmit={handleCreate} className="bg-card border border-border rounded-lg p-4 space-y-3">
           <div className="grid grid-cols-2 gap-3">
-            <input placeholder="Job key (e.g. billing:invoice)" value={newKey} onChange={(e) => setNewKey(e.target.value)} required className="col-span-2 px-3 py-2 border border-border rounded-md text-sm" />
-            <input placeholder="Schedule (e.g. 5m, 1h, */15 * * * *)" value={newSchedule} onChange={(e) => setNewSchedule(e.target.value)} required className="px-3 py-2 border border-border rounded-md text-sm" />
-            <input placeholder="Timeout (default: 5m)" value={newTimeout} onChange={(e) => setNewTimeout(e.target.value)} className="px-3 py-2 border border-border rounded-md text-sm" />
-            <input placeholder="Timezone (e.g. Europe/Vienna)" value={newTz} onChange={(e) => setNewTz(e.target.value)} className="px-3 py-2 border border-border rounded-md text-sm" />
-            <input placeholder="Description (optional)" value={newDesc} onChange={(e) => setNewDesc(e.target.value)} className="px-3 py-2 border border-border rounded-md text-sm" />
+            <input placeholder="Job key (e.g. billing:invoice)" value={newKey} onChange={(e) => setNewKey(e.target.value)} required className="col-span-2 px-3 py-2 border border-border rounded-md text-sm bg-background text-foreground" />
+            <input placeholder="Schedule (e.g. 5m, 1h, */15 * * * *)" value={newSchedule} onChange={(e) => setNewSchedule(e.target.value)} required className="px-3 py-2 border border-border rounded-md text-sm bg-background text-foreground" />
+            <input placeholder="Timeout (default: 5m)" value={newTimeout} onChange={(e) => setNewTimeout(e.target.value)} className="px-3 py-2 border border-border rounded-md text-sm bg-background text-foreground" />
+            <input placeholder="Timezone (e.g. Europe/Vienna)" value={newTz} onChange={(e) => setNewTz(e.target.value)} className="px-3 py-2 border border-border rounded-md text-sm bg-background text-foreground" />
+            <input placeholder="Description (optional)" value={newDesc} onChange={(e) => setNewDesc(e.target.value)} className="px-3 py-2 border border-border rounded-md text-sm bg-background text-foreground" />
           </div>
           <button type="submit" disabled={registerJob.isPending} className="px-4 py-2 bg-primary text-primary-foreground rounded-md text-sm disabled:opacity-50">
             {registerJob.isPending ? 'Creating...' : 'Create & Schedule'}
@@ -67,7 +67,7 @@ export function JobsPage() {
                 <td className="px-3 py-2"><Link to={`/jobs/${j.job_key}`} className="text-primary hover:underline font-mono text-xs">{j.job_key}</Link></td>
                 <td className="px-3 py-2 text-muted-foreground">{j.description || '-'}</td>
                 <td className="px-3 py-2 text-muted-foreground font-mono text-xs">{j.assigned_runner_id || '-'}</td>
-                <td className="px-3 py-2">{j.is_active ? <span className="text-green-600">Yes</span> : <span className="text-red-600">No</span>}</td>
+                <td className="px-3 py-2">{j.is_active ? <span className="text-status-ok-fg">Yes</span> : <span className="text-status-err-fg">No</span>}</td>
                 <td className="px-3 py-2 text-right">
                   <button onClick={() => deleteJob.mutate(j.job_key)} className="text-xs text-destructive hover:underline">Delete</button>
                 </td>

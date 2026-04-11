@@ -53,7 +53,7 @@ export function JobDetailPage() {
               {executions.data?.map((e) => (
                 <tr key={e.id} className="border-t border-border">
                   <td className="px-3 py-2 font-mono text-xs">{e.id.slice(0, 8)}</td>
-                  <td className="px-3 py-2"><span className={`px-2 py-0.5 rounded text-xs font-medium ${e.state === 'completed' ? 'bg-green-100 text-green-700' : e.state === 'failed' ? 'bg-red-100 text-red-700' : 'bg-gray-100 text-gray-700'}`}>{e.state}</span></td>
+                  <td className="px-3 py-2"><span className={`px-2 py-0.5 rounded text-xs font-medium ${e.state === 'completed' ? 'bg-status-ok-bg text-status-ok-fg' : e.state === 'failed' ? 'bg-status-err-bg text-status-err-fg' : 'bg-status-neutral-bg text-status-neutral-fg'}`}>{e.state}</span></td>
                   <td className="px-3 py-2 text-muted-foreground">{new Date(e.fire_at).toLocaleString()}</td>
                 </tr>
               ))}

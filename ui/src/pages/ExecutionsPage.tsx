@@ -21,7 +21,7 @@ export function ExecutionsPage() {
           <option value="failed">Failed</option>
           <option value="dead">Dead</option>
         </select>
-        <input placeholder="Filter by job key" value={jobFilter} onChange={(e) => setJobFilter(e.target.value)} className="px-3 py-1.5 border border-border rounded-md text-sm" />
+        <input placeholder="Filter by job key" value={jobFilter} onChange={(e) => setJobFilter(e.target.value)} className="px-3 py-1.5 border border-border rounded-md text-sm bg-background text-foreground" />
       </div>
 
       <div className="flex gap-4">
@@ -43,10 +43,10 @@ export function ExecutionsPage() {
                   <td className="px-3 py-2 font-mono text-xs">{e.job_key}</td>
                   <td className="px-3 py-2">
                     <span className={`px-2 py-0.5 rounded text-xs font-medium ${
-                      e.state === 'completed' ? 'bg-green-100 text-green-700' :
-                      e.state === 'failed' ? 'bg-red-100 text-red-700' :
-                      e.state === 'queued' ? 'bg-blue-100 text-blue-700' :
-                      'bg-gray-100 text-gray-700'
+                      e.state === 'completed' ? 'bg-status-ok-bg text-status-ok-fg' :
+                      e.state === 'failed' ? 'bg-status-err-bg text-status-err-fg' :
+                      e.state === 'queued' ? 'bg-status-info-bg text-status-info-fg' :
+                      'bg-status-neutral-bg text-status-neutral-fg'
                     }`}>{e.state}</span>
                   </td>
                   <td className="px-3 py-2 text-muted-foreground">{e.runner_id || '-'}</td>
@@ -64,7 +64,7 @@ export function ExecutionsPage() {
             <div className="space-y-1 max-h-96 overflow-auto">
               {logs.data.map((log) => (
                 <div key={log.id} className="text-xs font-mono">
-                  <span className={`${log.level === 'error' ? 'text-red-600' : log.level === 'warn' ? 'text-yellow-600' : 'text-muted-foreground'}`}>
+                  <span className={`${log.level === 'error' ? 'text-status-err-fg' : log.level === 'warn' ? 'text-status-warn-fg' : 'text-muted-foreground'}`}>
                     [{log.level}]
                   </span>{' '}
                   {log.message}

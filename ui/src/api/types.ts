@@ -81,6 +81,19 @@ export interface TokenResponse {
   expires_in: number
 }
 
+export interface ForecastBucket {
+  start: string
+  end: string
+  count: number
+  jobs: string[]
+}
+
+export interface ForecastResponse {
+  window_minutes: number
+  bucket_minutes: number
+  buckets: ForecastBucket[]
+}
+
 export interface CalendarDefinition {
   calendar_id: string
   name: string
