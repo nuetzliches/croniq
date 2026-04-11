@@ -26,7 +26,7 @@ use crate::store::DynStore;
 #[derive(Debug)]
 pub enum SchedulerCommand {
     /// Add or replace a job + trigger in the scheduler.
-    AddJob { job: JobConfig, trigger: Trigger },
+    AddJob { job: Box<JobConfig>, trigger: Box<Trigger> },
     /// Remove a job from the scheduler.
     RemoveJob { job_key: String },
 }
@@ -118,8 +118,8 @@ impl SchedulerLoop {
             SchedulerCommand::AddJob { job, trigger } => {
                 let key = job.key.clone();
                 tracing::info!(job_key = %key, "scheduler: job added via API");
-                self.jobs.insert(key.clone(), job);
-                self.triggers.insert(key, trigger);
+                self.jobs.insert(key.clone(), *job);
+                self.triggers.insert(key, *trigger);
             }
             SchedulerCommand::RemoveJob { job_key } => {
                 tracing::info!(job_key = %job_key, "scheduler: job removed via API");

@@ -74,15 +74,14 @@ pub async fn handle_create(
     store.create_trigger(&trigger).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     // Push to live scheduler if possible
-    if let Some(ref tx) = state.scheduler_tx {
-        if let Some(rt_trigger) = crate::loader::trigger_from_definition(&trigger, now) {
+    if let Some(ref tx) = state.scheduler_tx
+        && let Some(rt_trigger) = crate::loader::trigger_from_definition(&trigger, now) {
             let job_config = crate::loader::job_config_from_definition(&trigger, None);
             let _ = tx.send(crate::scheduler::SchedulerCommand::AddJob {
-                job: job_config,
-                trigger: rt_trigger,
+                job: Box::new(job_config),
+                trigger: Box::new(rt_trigger),
             });
         }
-    }
 
     Ok((StatusCode::CREATED, Json(trigger)))
 }

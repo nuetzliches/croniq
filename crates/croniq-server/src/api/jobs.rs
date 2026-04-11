@@ -125,7 +125,6 @@ pub async fn handle_register(
     let now = Utc::now();
 
     // Check collision: if managed_by "dsl" exists, skip
-    use croniq_store::traits::{TriggerDefinitionStore, JobDefinitionStore};
     let existing_triggers = store.list_triggers(Some(&req.job_key))
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
@@ -174,7 +173,7 @@ pub async fn handle_register(
     let status = if let Some(ref tx) = state.scheduler_tx {
         if let Some(trigger) = trigger_from_definition(&trigger_def, now) {
             let job_config = job_config_from_definition(&trigger_def, Some(&job_def));
-            let _ = tx.send(SchedulerCommand::AddJob { job: job_config, trigger });
+            let _ = tx.send(SchedulerCommand::AddJob { job: Box::new(job_config), trigger: Box::new(trigger) });
             "registered"
         } else {
             "registered_no_schedule"

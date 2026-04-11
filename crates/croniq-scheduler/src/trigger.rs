@@ -87,6 +87,7 @@ impl Trigger {
         Self::with_bounds(job_key, schedule, timezone, calendar, window, misfire_policy, None, None, now)
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn with_bounds(
         job_key: String,
         schedule: Schedule,

@@ -8,7 +8,6 @@ use axum::{
     response::sse::{Event, KeepAlive, Sse},
 };
 use chrono::Utc;
-use croniq_runner::RunnerStatus;
 use futures_core::Stream;
 use tokio_stream::wrappers::IntervalStream;
 use tokio_stream::StreamExt;

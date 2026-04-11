@@ -55,6 +55,7 @@ pub struct CroniqMcp {
     pub jobs: HashMap<String, JobConfig>,
     /// Whether mutation tools are enabled (`--mutations` flag).
     pub mutations_enabled: bool,
+    #[allow(dead_code)]
     tool_router: ToolRouter<CroniqMcp>,
 }
 

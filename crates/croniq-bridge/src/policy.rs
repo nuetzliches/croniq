@@ -89,7 +89,7 @@ pub fn retry_config_to_policy(cfg: &RetryConfig) -> RetryPolicy {
 /// Falls back to the 5-minute default if `None` or unparseable.
 pub fn timeout_to_policy(timeout_str: Option<&str>) -> TimeoutPolicy {
     timeout_str
-        .and_then(TimeoutPolicy::from_str)
+        .and_then(TimeoutPolicy::parse)
         .unwrap_or_default()
 }
 

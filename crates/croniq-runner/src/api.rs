@@ -89,7 +89,7 @@ pub async fn handle_poll(
 ) -> (StatusCode, Json<PollResponse>) {
     // Update registry
     let mut reg = state.registry.write().await;
-    reg.register_or_update(
+    let _ = reg.register_or_update(
         &req.runner_id,
         req.capabilities.clone(),
         req.max_inflight,

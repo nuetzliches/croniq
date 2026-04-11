@@ -144,7 +144,6 @@ async fn main() -> Result<()> {
 
     // Reconcile API/runner-registered jobs from DB (not in Croniqfile)
     {
-        use croniq_store::traits::TriggerDefinitionStore;
         use croniq_server::loader::{trigger_from_definition, job_config_from_definition};
 
         let now = chrono::Utc::now();

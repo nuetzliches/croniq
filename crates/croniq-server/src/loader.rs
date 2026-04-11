@@ -394,12 +394,10 @@ fn parse_interval_seconds(s: &str) -> Option<u64> {
         return n.parse::<u64>().ok().map(|v| v * 3600);
     }
     // Try parsing as cron-like interval: */N * * * * → every N minutes
-    if s.starts_with("*/") {
-        let rest = &s[2..];
-        if let Some(n) = rest.split_whitespace().next().and_then(|n| n.parse::<u64>().ok()) {
+    if let Some(rest) = s.strip_prefix("*/")
+        && let Some(n) = rest.split_whitespace().next().and_then(|n| n.parse::<u64>().ok()) {
             return Some(n * 60);
         }
-    }
     None
 }
 

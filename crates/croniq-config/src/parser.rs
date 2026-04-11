@@ -624,7 +624,7 @@ impl Parser {
                     days.extend([Weekday::Saturday, Weekday::Sunday]);
                 }
                 _ => {
-                    if let Some(day) = Weekday::from_str(text) {
+                    if let Some(day) = Weekday::parse(text) {
                         days.push(day);
                     }
                 }

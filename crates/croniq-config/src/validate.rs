@@ -154,7 +154,7 @@ fn validate_calendar(cal: &CalendarBlock, diags: &mut Vec<Diagnostic>) {
         match rule.rule_type.value.as_str() {
             "weekly" => {
                 for arg in &rule.args {
-                    if Weekday::from_str(&arg.value).is_none()
+                    if Weekday::parse(&arg.value).is_none()
                         && arg.value != "weekday"
                         && arg.value != "weekend"
                     {

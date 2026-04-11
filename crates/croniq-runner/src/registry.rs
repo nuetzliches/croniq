@@ -39,16 +39,13 @@ impl RunnerRegistry {
         let now = Utc::now();
 
         // Instance guard: check for conflicting instance_id
-        if let Some(ref new_iid) = instance_id {
-            if let Some(existing) = self.runners.get(&id) {
-                if let Some(ref old_iid) = existing.instance_id {
-                    if old_iid != new_iid {
+        if let Some(ref new_iid) = instance_id
+            && let Some(existing) = self.runners.get(&id)
+                && let Some(ref old_iid) = existing.instance_id
+                    && old_iid != new_iid {
                         // Different instance trying to use the same runner_id
                         return Err(old_iid.clone());
                     }
-                }
-            }
-        }
 
         let is_new = !self.runners.contains_key(&id);
 

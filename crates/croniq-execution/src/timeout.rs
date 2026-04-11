@@ -25,7 +25,7 @@ impl TimeoutPolicy {
     }
 
     /// Parse from a duration string like "5m", "30s", "1h".
-    pub fn from_str(s: &str) -> Option<Self> {
+    pub fn parse(s: &str) -> Option<Self> {
         parse_duration(s).map(|d| Self { duration: d })
     }
 
@@ -73,7 +73,7 @@ mod tests {
 
     #[test]
     fn from_string() {
-        let policy = TimeoutPolicy::from_str("15m").unwrap();
+        let policy = TimeoutPolicy::parse("15m").unwrap();
         assert_eq!(policy.duration, Duration::from_secs(900));
     }
 }

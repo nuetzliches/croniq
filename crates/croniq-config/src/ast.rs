@@ -179,7 +179,7 @@ pub enum Weekday {
 }
 
 impl Weekday {
-    pub fn from_str(s: &str) -> Option<Self> {
+    pub fn parse(s: &str) -> Option<Self> {
         match s {
             "monday" => Some(Self::Monday),
             "tuesday" => Some(Self::Tuesday),

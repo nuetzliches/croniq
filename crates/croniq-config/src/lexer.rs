@@ -177,15 +177,6 @@ impl<'src> Lexer<'src> {
         Some(b)
     }
 
-    fn skip_whitespace_on_line(&mut self) {
-        while let Some(b) = self.peek() {
-            if b == b' ' || b == b'\t' || b == b'\r' {
-                self.pos += 1;
-            } else {
-                break;
-            }
-        }
-    }
 
     fn skip_spaces(&mut self) {
         while let Some(b) = self.peek() {
