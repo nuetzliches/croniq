@@ -1,5 +1,5 @@
 # ── Stage 1: Build Rust binaries ──────────────────────────────────────────────
-FROM rust:1.87-bookworm AS rust-builder
+FROM rust:1.88-bookworm AS rust-builder
 
 WORKDIR /build
 COPY Cargo.toml Cargo.lock ./
@@ -13,7 +13,7 @@ FROM node:24-bookworm-slim AS ui-builder
 
 WORKDIR /build/ui
 COPY ui/package.json ui/package-lock.json ./
-RUN npm ci --ignore-scripts
+RUN npm install --frozen-lockfile || npm install
 COPY ui/ .
 RUN npm run build
 
