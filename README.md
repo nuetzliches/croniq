@@ -7,7 +7,7 @@
 
 **Distributed cron that just works.** Single binary. SQLite default. Production-ready retries.
 
-Croniq sits between bare-bones cron and heavyweight platforms like Airflow or Temporal. It gives you reliable distributed job scheduling with built-in retries, calendar-aware scheduling, a React dashboard, and an AI-native MCP server — without the operational cost of running a cluster.
+Reliable distributed job scheduling with built-in retries, calendar-aware scheduling, a React dashboard, and an AI-native MCP server. Deploy as a single binary or Docker container — no cluster required.
 
 Full API documentation: [`openapi.yaml`](openapi.yaml)
 
@@ -20,7 +20,7 @@ Full API documentation: [`openapi.yaml`](openapi.yaml)
 | Cron jobs fail silently — nobody notices for days | Dead letter queue, execution logs, Prometheus metrics, failure notification hooks |
 | Single server = single point of failure | Pull-based runner protocol — scale runners independently |
 | No retries, no backoff, no timeout | Exponential, linear, fixed retry with jitter. Per-job timeout enforcement |
-| Airflow / Temporal is overkill for 50 scheduled tasks | Single binary, SQLite by default, Docker one-liner |
+| Most schedulers need a cluster just to get started | Single binary, SQLite by default, Docker one-liner |
 | Timezone and DST edge cases break everything | Per-job timezone, calendar system with business day rules |
 | Teams can't self-service their own schedules | Hybrid model: Croniqfile DSL for ops, REST API + Runner SDK for developers |
 
@@ -34,7 +34,7 @@ Full API documentation: [`openapi.yaml`](openapi.yaml)
 
 ## Key Features
 
-**Croniqfile DSL** — human-readable scheduling configuration, like Terraform for cron. Includes parser, compiler, formatter, validator, and crontab migration tool.
+**Croniqfile DSL** — human-readable scheduling configuration. Includes parser, compiler, formatter, validator, and crontab migration tool.
 
 **Hybrid job registration** — define jobs in the Croniqfile (infrastructure-as-code) *or* register them dynamically via REST API and Runner SDK. Both coexist; Croniqfile takes precedence on conflicts.
 
