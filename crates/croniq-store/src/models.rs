@@ -57,8 +57,22 @@ pub struct Execution {
     pub error: Option<String>,
     pub dead_reason: Option<String>,
 
+    #[serde(serialize_with = "serialize_public_metadata")]
     pub metadata: HashMap<String, String>,
     pub created_at: DateTime<Utc>,
+}
+
+fn serialize_public_metadata<S: serde::Serializer>(
+    metadata: &HashMap<String, String>,
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
+    use serde::ser::SerializeMap;
+    let public: Vec<_> = metadata.iter().filter(|(k, _)| !k.starts_with("__")).collect();
+    let mut map = serializer.serialize_map(Some(public.len()))?;
+    for (k, v) in public {
+        map.serialize_entry(k, v)?;
+    }
+    map.end()
 }
 
 /// Execution lifecycle states.

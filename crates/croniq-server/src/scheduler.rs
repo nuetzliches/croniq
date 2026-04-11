@@ -114,9 +114,28 @@ impl SchedulerLoop {
                 Some(j) => j,
                 None => {
                     tracing::warn!(job_key = %trigger.job_key, "trigger fired for unknown job");
+                    trigger.mark_fired(fire_at, now);
                     continue;
                 }
             };
+
+            // Queue overflow protection: skip if too many queued executions for this job
+            const MAX_QUEUED_PER_JOB: usize = 10;
+            let queued_count = self.runner.queue.read().await
+                .peek_n(1000)
+                .iter()
+                .filter(|item| item.job_key == trigger.job_key)
+                .count();
+            if queued_count >= MAX_QUEUED_PER_JOB {
+                tracing::warn!(
+                    job_key = %trigger.job_key,
+                    queued = queued_count,
+                    max = MAX_QUEUED_PER_JOB,
+                    "skipping execution — queue overflow"
+                );
+                trigger.mark_fired(fire_at, now);
+                continue;
+            }
 
             let execution_id = Uuid::new_v4();
             let exec_id_str = execution_id.to_string();
