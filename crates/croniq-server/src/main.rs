@@ -96,11 +96,18 @@ async fn main() -> Result<()> {
     let (completion_tx, mut completion_rx) = mpsc::unbounded_channel();
 
     // Server state wrapping runner + completion channel + JWT auth
-    let jwt_config = loaded.runtime.pull_api.as_ref().and_then(|p| p.auth.as_ref()).map(|secret| {
-        croniq_auth::jwt::JwtConfig {
-            secret: secret.clone(),
-            ..Default::default()
-        }
+    // JWT secret comes from: Croniqfile pull_api.auth > CRONIQ_JWT_SECRET env > generated random
+    let jwt_secret = loaded.runtime.pull_api.as_ref()
+        .and_then(|p| p.auth.clone())
+        .or_else(|| std::env::var("CRONIQ_JWT_SECRET").ok())
+        .unwrap_or_else(|| {
+            let secret = uuid::Uuid::new_v4().to_string();
+            tracing::warn!("no JWT secret configured — generated ephemeral secret (set CRONIQ_JWT_SECRET or pull_api.auth in Croniqfile for persistence)");
+            secret
+        });
+    let jwt_config = Some(croniq_auth::jwt::JwtConfig {
+        secret: jwt_secret,
+        ..Default::default()
     });
     let server_state = ServerState::with_auth(Arc::clone(&runner_state), completion_tx, jwt_config, Some(Arc::clone(&store)));
 
