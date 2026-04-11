@@ -1,1 +1,0 @@
-> **Learn more:** Replace `<topic>` with the relevant deep-dive file (for example `/deep-dive/devstack.md`) so readers can drill into architecture notes, failure modes, and migration steps once they finish the quick instructions above.
