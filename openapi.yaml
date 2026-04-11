@@ -1,0 +1,645 @@
+openapi: 3.1.0
+info:
+  title: Croniq API
+  description: Distributed job scheduling platform
+  version: 0.1.0
+  license:
+    name: MIT
+
+servers:
+  - url: http://localhost:4000
+    description: Local development
+
+security:
+  - BearerAuth: []
+  - ApiKeyAuth: []
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: Authorization
+      description: "ApiKey <raw_key>"
+
+  schemas:
+    HealthResponse:
+      type: object
+      properties:
+        status: { type: string }
+        runners_online: { type: integer }
+        runners_stale: { type: integer }
+        runners_dead: { type: integer }
+        queued: { type: integer }
+
+    TokenResponse:
+      type: object
+      properties:
+        access_token: { type: string }
+        refresh_token: { type: string }
+        token_type: { type: string }
+        expires_in: { type: integer }
+
+    JobDefinition:
+      type: object
+      properties:
+        job_key: { type: string }
+        description: { type: string, nullable: true }
+        assigned_runner_id: { type: string, nullable: true }
+        is_active: { type: boolean }
+        metadata: { type: object, additionalProperties: { type: string } }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    TriggerDefinition:
+      type: object
+      properties:
+        trigger_id: { type: string }
+        job_key: { type: string }
+        cron_expression: { type: string, nullable: true }
+        timezone: { type: string, nullable: true }
+        calendar: { type: string, nullable: true }
+        window: { type: string, nullable: true }
+        enabled: { type: boolean }
+        managed_by: { type: string }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    RunnerSummary:
+      type: object
+      properties:
+        runner_id: { type: string }
+        status: { type: string, enum: [Online, Stale, Dead] }
+        capabilities: { type: array, items: { type: string } }
+        max_inflight: { type: integer }
+        inflight: { type: integer }
+        last_poll_at: { type: string, format: date-time }
+
+    Execution:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        job_key: { type: string }
+        fire_at: { type: string, format: date-time }
+        attempt: { type: integer }
+        state: { type: string, enum: [queued, claimed, completed, failed, dead, cancelled] }
+        runner_id: { type: string, nullable: true }
+        duration_ms: { type: integer, nullable: true }
+        error: { type: string, nullable: true }
+        created_at: { type: string, format: date-time }
+
+    DeadLetter:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        execution_id: { type: string, format: uuid }
+        job_key: { type: string }
+        attempt: { type: integer }
+        error: { type: string }
+        dead_reason: { type: string }
+        metadata: { type: object }
+        created_at: { type: string, format: date-time }
+
+    CalendarDefinition:
+      type: object
+      properties:
+        calendar_id: { type: string }
+        name: { type: string }
+        timezone: { type: string, nullable: true }
+        rules: { type: string }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    ApiClient:
+      type: object
+      properties:
+        client_id: { type: string }
+        name: { type: string }
+        scopes: { type: array, items: { type: string } }
+        is_active: { type: boolean }
+        created_at: { type: string, format: date-time }
+
+paths:
+  /health:
+    get:
+      summary: Health check
+      security: []
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/HealthResponse" }
+
+  /v1/auth/login:
+    post:
+      summary: Login with username and password
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [username, password]
+              properties:
+                username: { type: string }
+                password: { type: string }
+      responses:
+        "200":
+          description: JWT tokens
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TokenResponse" }
+        "401": { description: Invalid credentials }
+
+  /v1/auth/refresh:
+    post:
+      summary: Refresh access token
+      security: []
+      requestBody:
+        content:
+          application/json:
+            schema:
+              properties:
+                refresh_token: { type: string }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TokenResponse" }
+
+  /v1/auth/logout:
+    post:
+      summary: Revoke refresh token
+      security: []
+      requestBody:
+        content:
+          application/json:
+            schema:
+              properties:
+                refresh_token: { type: string }
+      responses:
+        "204": { description: Logged out }
+
+  /v1/jobs:
+    get:
+      summary: List job definitions
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/JobDefinition" }
+    post:
+      summary: Create or update a job definition
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [job_key]
+              properties:
+                job_key: { type: string }
+                description: { type: string }
+                assigned_runner_id: { type: string }
+                metadata: { type: object }
+      responses:
+        "201":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/JobDefinition" }
+
+  /v1/jobs/{job_key}:
+    get:
+      summary: Get a job definition
+      parameters:
+        - name: job_key
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/JobDefinition" }
+    delete:
+      summary: Delete a job and its triggers
+      parameters:
+        - name: job_key
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "204": { description: Deleted }
+
+  /v1/schedules:
+    get:
+      summary: List trigger definitions
+      parameters:
+        - name: job_key
+          in: query
+          schema: { type: string }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/TriggerDefinition" }
+    post:
+      summary: Create a trigger
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [job_key]
+              properties:
+                job_key: { type: string }
+                cron_expression: { type: string }
+                timezone: { type: string }
+                calendar: { type: string }
+                window: { type: string }
+                enabled: { type: boolean, default: true }
+      responses:
+        "201":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TriggerDefinition" }
+
+  /v1/schedules/{trigger_id}:
+    get:
+      summary: Get a trigger
+      parameters:
+        - name: trigger_id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TriggerDefinition" }
+    delete:
+      summary: Delete a trigger
+      responses:
+        "204": { description: Deleted }
+
+  /v1/runners:
+    get:
+      summary: List connected runners
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/RunnerSummary" }
+
+  /v1/runners/stream:
+    get:
+      summary: SSE stream of runner presence (snapshot every 5s)
+      responses:
+        "200":
+          description: Server-Sent Events stream
+          content:
+            text/event-stream: {}
+
+  /v1/runners/{id}:
+    delete:
+      summary: Deregister a runner
+      responses:
+        "204": { description: Removed }
+
+  /v1/executions:
+    get:
+      summary: List executions
+      parameters:
+        - name: job_key
+          in: query
+          schema: { type: string }
+        - name: state
+          in: query
+          schema: { type: string, enum: [queued, claimed, completed, failed, dead, cancelled] }
+        - name: limit
+          in: query
+          schema: { type: integer, default: 100 }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Execution" }
+
+  /v1/executions/{id}/logs:
+    get:
+      summary: Get execution logs
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    id: { type: string }
+                    execution_id: { type: string }
+                    timestamp: { type: string, format: date-time }
+                    level: { type: string }
+                    message: { type: string }
+                    fields: { type: object }
+
+  /v1/dead-letters:
+    get:
+      summary: List dead letters
+      parameters:
+        - name: job_key
+          in: query
+          schema: { type: string }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/DeadLetter" }
+
+  /v1/dead-letters/{id}:
+    get:
+      summary: Get dead letter details
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DeadLetter" }
+    delete:
+      summary: Delete a dead letter
+      responses:
+        "204": { description: Deleted }
+
+  /v1/dead-letters/{id}/replay:
+    post:
+      summary: Replay a dead letter as a new execution
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  execution_id: { type: string }
+                  attempt: { type: integer }
+
+  /v1/calendars:
+    get:
+      summary: List calendars
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/CalendarDefinition" }
+    post:
+      summary: Create a calendar
+      responses:
+        "201":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CalendarDefinition" }
+
+  /v1/calendars/{id}:
+    get:
+      summary: Get a calendar
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CalendarDefinition" }
+    delete:
+      summary: Delete a calendar
+      responses:
+        "204": { description: Deleted }
+
+  /v1/dashboard/forecast:
+    get:
+      summary: Schedule forecast with time buckets
+      parameters:
+        - name: window_minutes
+          in: query
+          schema: { type: integer, default: 60, maximum: 240 }
+        - name: bucket_minutes
+          in: query
+          schema: { type: integer, default: 5 }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  window_minutes: { type: integer }
+                  bucket_minutes: { type: integer }
+                  buckets:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        start: { type: string, format: date-time }
+                        end: { type: string, format: date-time }
+                        count: { type: integer }
+                        jobs: { type: array, items: { type: string } }
+
+  /v1/work/poll:
+    post:
+      summary: Poll for work (long-poll supported)
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [runner_id]
+              properties:
+                runner_id: { type: string }
+                capabilities: { type: array, items: { type: string } }
+                max_inflight: { type: integer, default: 1 }
+                inflight: { type: array, items: { type: string } }
+                instance_id: { type: string }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  work: { type: array }
+                  cancel: { type: array }
+        "409": { description: Runner instance conflict }
+
+  /v1/work/ack:
+    post:
+      summary: Acknowledge execution completion
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [runner_id, execution_id, status]
+              properties:
+                runner_id: { type: string }
+                execution_id: { type: string }
+                status: { type: string, enum: [success, failure] }
+                error: { type: string }
+                duration_ms: { type: integer }
+                attempt: { type: integer }
+      responses:
+        "200": { description: Acknowledged }
+
+  /v1/work/renew:
+    post:
+      summary: Renew a work item lease
+      requestBody:
+        content:
+          application/json:
+            schema:
+              properties:
+                runner_id: { type: string }
+                execution_id: { type: string }
+      responses:
+        "200": { description: Renewed }
+
+  /v1/work/{execution_id}/events:
+    post:
+      summary: Push structured log events
+      parameters:
+        - name: execution_id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: array
+              items:
+                type: object
+                properties:
+                  level: { type: string }
+                  message: { type: string }
+                  fields: { type: object }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                properties:
+                  accepted: { type: integer }
+
+  /v1/api-clients:
+    get:
+      summary: List API clients
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/ApiClient" }
+    post:
+      summary: Create an API client
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, scopes]
+              properties:
+                name: { type: string }
+                scopes: { type: array, items: { type: string } }
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  client_id: { type: string }
+                  name: { type: string }
+                  scopes: { type: array, items: { type: string } }
+
+  /v1/api-clients/{id}:
+    delete:
+      summary: Delete an API client and its keys
+      responses:
+        "204": { description: Deleted }
+
+  /v1/api-clients/{id}/tokens:
+    post:
+      summary: Issue a token for an API client
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TokenResponse" }
+
+  /v1/api-keys:
+    post:
+      summary: Generate a new API key
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [client_id]
+              properties:
+                client_id: { type: string }
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  raw_key: { type: string, description: "Shown once only" }
+                  key_id: { type: string }
+                  key_prefix: { type: string }
+                  client_id: { type: string }
+
+  /v1/api-keys/{id}:
+    delete:
+      summary: Revoke an API key
+      responses:
+        "204": { description: Revoked }
+
+  /v1/trigger:
+    post:
+      summary: Trigger a job immediately
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [job_key]
+              properties:
+                job_key: { type: string }
+                require: { type: array, items: { type: string } }
+                prefer: { type: array, items: { type: string } }
+                metadata: { type: object }
+                timeout: { type: string, default: "5m" }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  execution_id: { type: string }
+                  queued: { type: integer }
