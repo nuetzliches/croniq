@@ -177,4 +177,33 @@ impl CroniqClient {
 
         Ok(())
     }
+
+    /// Register a job on the server (runner self-registration).
+    pub async fn register_job(&self, req: &RegisterJobRequest) -> Result<(), ClientError> {
+        let resp = self
+            .add_auth(self.http.post(format!("{}/v1/jobs/register", self.base_url)))
+            .json(req)
+            .send()
+            .await?;
+
+        if !resp.status().is_success() {
+            let status = resp.status().as_u16();
+            let body = resp.text().await.unwrap_or_default();
+            return Err(ClientError::Server { status, body });
+        }
+
+        Ok(())
+    }
+}
+
+#[derive(Serialize)]
+pub struct RegisterJobRequest {
+    pub job_key: String,
+    pub schedule: String,
+    pub timezone: Option<String>,
+    pub timeout: Option<String>,
+    pub runner_id: Option<String>,
+    #[serde(default)]
+    pub capabilities: Vec<String>,
+    pub description: Option<String>,
 }

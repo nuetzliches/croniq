@@ -5,8 +5,14 @@ use std::time::Duration;
 
 use tokio::sync::RwLock;
 
-use crate::client::{AckRequest, CroniqClient, PollRequest, RenewRequest};
+use crate::client::{AckRequest, CroniqClient, PollRequest, RegisterJobRequest, RenewRequest};
 use crate::handler::{ExecutionContext, HandlerError, HandlerRegistry};
+
+/// A job schedule to register on the server at startup.
+struct JobSchedule {
+    job_key: String,
+    schedule: String,
+}
 
 /// Builder for constructing a CroniqRunner.
 pub struct RunnerBuilder {
@@ -46,6 +52,7 @@ impl RunnerBuilder {
             max_inflight: self.max_inflight,
             instance_id: uuid::Uuid::new_v4().to_string(),
             handlers: Arc::new(RwLock::new(HandlerRegistry::new())),
+            schedules: Arc::new(RwLock::new(Vec::new())),
             inflight: Arc::new(RwLock::new(Vec::new())),
             draining: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         }
@@ -60,6 +67,7 @@ pub struct CroniqRunner {
     max_inflight: u32,
     instance_id: String,
     handlers: Arc<RwLock<HandlerRegistry>>,
+    schedules: Arc<RwLock<Vec<JobSchedule>>>,
     inflight: Arc<RwLock<Vec<String>>>,
     draining: Arc<std::sync::atomic::AtomicBool>,
 }
@@ -75,7 +83,7 @@ impl CroniqRunner {
         }
     }
 
-    /// Register a handler for a specific job key.
+    /// Register a handler for a specific job key (job must already exist on server).
     pub async fn register<F, Fut>(&self, job_key: &str, handler: F)
     where
         F: Fn(ExecutionContext) -> Fut + Send + Sync + 'static,
@@ -84,13 +92,34 @@ impl CroniqRunner {
         self.handlers.write().await.register(job_key, handler);
     }
 
+    /// Register a handler AND its schedule on the server.
+    ///
+    /// The server will create the job + trigger if they don't exist.
+    /// If the job is already managed by the Croniqfile, the schedule is skipped
+    /// (DSL has precedence).
+    pub async fn register_with_schedule<F, Fut>(
+        &self,
+        job_key: &str,
+        schedule: &str,
+        handler: F,
+    ) where
+        F: Fn(ExecutionContext) -> Fut + Send + Sync + 'static,
+        Fut: std::future::Future<Output = Result<(), HandlerError>> + Send + 'static,
+    {
+        self.handlers.write().await.register(job_key, handler);
+        self.schedules.write().await.push(JobSchedule {
+            job_key: job_key.to_string(),
+            schedule: schedule.to_string(),
+        });
+    }
+
     /// Signal graceful shutdown: stop accepting new work, wait for inflight.
     pub fn drain(&self) {
         self.draining.store(true, std::sync::atomic::Ordering::Relaxed);
         tracing::info!(runner_id = %self.runner_id, "draining — no new work will be accepted");
     }
 
-    /// Start the runner: poll loop + lease renewal. Runs until drain completes.
+    /// Start the runner: auto-register jobs, then poll loop + lease renewal.
     pub async fn start(&self) -> Result<(), crate::client::ClientError> {
         tracing::info!(
             runner_id = %self.runner_id,
@@ -98,6 +127,25 @@ impl CroniqRunner {
             max_inflight = self.max_inflight,
             "runner starting"
         );
+
+        // Auto-register jobs with schedules on the server
+        let schedules = self.schedules.read().await;
+        for sched in schedules.iter() {
+            tracing::info!(job_key = %sched.job_key, schedule = %sched.schedule, "registering job on server");
+            match self.client.register_job(&RegisterJobRequest {
+                job_key: sched.job_key.clone(),
+                schedule: sched.schedule.clone(),
+                timezone: None,
+                timeout: None,
+                runner_id: Some(self.runner_id.clone()),
+                capabilities: self.capabilities.clone(),
+                description: None,
+            }).await {
+                Ok(()) => tracing::info!(job_key = %sched.job_key, "job registered"),
+                Err(e) => tracing::warn!(job_key = %sched.job_key, error = %e, "failed to register job — will still poll"),
+            }
+        }
+        drop(schedules);
 
         loop {
             if self.draining.load(std::sync::atomic::Ordering::Relaxed) {

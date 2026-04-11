@@ -1,20 +1,28 @@
 import { useState } from 'react'
 import { Link } from 'react-router'
-import { useJobs, useCreateJob, useDeleteJob } from '@/api/hooks'
+import { useJobs, useRegisterJob, useDeleteJob } from '@/api/hooks'
 
 export function JobsPage() {
   const jobs = useJobs()
-  const createJob = useCreateJob()
+  const registerJob = useRegisterJob()
   const deleteJob = useDeleteJob()
   const [showCreate, setShowCreate] = useState(false)
   const [newKey, setNewKey] = useState('')
   const [newDesc, setNewDesc] = useState('')
+  const [newSchedule, setNewSchedule] = useState('')
+  const [newTz, setNewTz] = useState('')
+  const [newTimeout, setNewTimeout] = useState('5m')
 
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault()
-    await createJob.mutateAsync({ job_key: newKey, description: newDesc || undefined })
-    setNewKey('')
-    setNewDesc('')
+    await registerJob.mutateAsync({
+      job_key: newKey,
+      schedule: newSchedule,
+      timezone: newTz || undefined,
+      timeout: newTimeout || undefined,
+      description: newDesc || undefined,
+    })
+    setNewKey(''); setNewDesc(''); setNewSchedule(''); setNewTz(''); setNewTimeout('5m')
     setShowCreate(false)
   }
 
@@ -29,9 +37,16 @@ export function JobsPage() {
 
       {showCreate && (
         <form onSubmit={handleCreate} className="bg-card border border-border rounded-lg p-4 space-y-3">
-          <input placeholder="Job key (e.g. billing:invoice)" value={newKey} onChange={(e) => setNewKey(e.target.value)} required className="w-full px-3 py-2 border border-border rounded-md text-sm" />
-          <input placeholder="Description (optional)" value={newDesc} onChange={(e) => setNewDesc(e.target.value)} className="w-full px-3 py-2 border border-border rounded-md text-sm" />
-          <button type="submit" className="px-4 py-2 bg-primary text-primary-foreground rounded-md text-sm">Create</button>
+          <div className="grid grid-cols-2 gap-3">
+            <input placeholder="Job key (e.g. billing:invoice)" value={newKey} onChange={(e) => setNewKey(e.target.value)} required className="col-span-2 px-3 py-2 border border-border rounded-md text-sm" />
+            <input placeholder="Schedule (e.g. 5m, 1h, */15 * * * *)" value={newSchedule} onChange={(e) => setNewSchedule(e.target.value)} required className="px-3 py-2 border border-border rounded-md text-sm" />
+            <input placeholder="Timeout (default: 5m)" value={newTimeout} onChange={(e) => setNewTimeout(e.target.value)} className="px-3 py-2 border border-border rounded-md text-sm" />
+            <input placeholder="Timezone (e.g. Europe/Vienna)" value={newTz} onChange={(e) => setNewTz(e.target.value)} className="px-3 py-2 border border-border rounded-md text-sm" />
+            <input placeholder="Description (optional)" value={newDesc} onChange={(e) => setNewDesc(e.target.value)} className="px-3 py-2 border border-border rounded-md text-sm" />
+          </div>
+          <button type="submit" disabled={registerJob.isPending} className="px-4 py-2 bg-primary text-primary-foreground rounded-md text-sm disabled:opacity-50">
+            {registerJob.isPending ? 'Creating...' : 'Create & Schedule'}
+          </button>
         </form>
       )}
 
@@ -58,6 +73,9 @@ export function JobsPage() {
                 </td>
               </tr>
             ))}
+            {!jobs.data?.length && (
+              <tr><td colSpan={5} className="px-3 py-4 text-center text-muted-foreground">No jobs yet — create one above or register via Runner SDK</td></tr>
+            )}
           </tbody>
         </table>
       </div>

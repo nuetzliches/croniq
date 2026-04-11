@@ -22,6 +22,14 @@ export function useDeleteJob() {
   const qc = useQueryClient()
   return useMutation({ mutationFn: (jobKey: string) => apiDelete(`/v1/jobs/${jobKey}`), onSuccess: () => qc.invalidateQueries({ queryKey: ['jobs'] }) })
 }
+export function useRegisterJob() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (data: { job_key: string; schedule: string; timezone?: string; timeout?: string; description?: string }) =>
+      apiPost('/v1/jobs/register', data),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['jobs'] }); qc.invalidateQueries({ queryKey: ['schedules'] }) },
+  })
+}
 
 // Schedules
 export function useSchedules(jobKey?: string) {
