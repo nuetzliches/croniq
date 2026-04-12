@@ -44,6 +44,8 @@ Full API documentation: [`openapi.yaml`](openapi.yaml)
 
 **Retry + dead letter** — exponential, linear, or fixed backoff with jitter. Failed executions go to a dead letter queue for inspection and one-click replay.
 
+**Execution modes** — `queued` (default) persists every execution with full retry and restart recovery. `ephemeral` skips persistence for high-frequency fire-and-forget jobs. Configurable per-job or globally in `defaults {}`. Catch-up policies (`all` / `latest` / `none`) control missed-fire behaviour on restart. Queue TTL and per-job depth limits prevent runaway backlogs.
+
 **Auth** — JWT tokens, API keys, and password authentication. Per-scope authorization (jobs:read, runners:write, admin, etc.).
 
 **React dashboard** — login, jobs CRUD with live scheduling, runners with status badges, executions with log viewer, dead letter detail panel.
@@ -97,6 +99,21 @@ defaults {
   timezone Europe/Vienna
   retry exponential { max_attempts 3; base 2s; cap 30s }
   timeout 5m
+
+  # Execution mode: "queued" (default) persists every execution to DB,
+  # enabling retries, dead-letter, and restart recovery.
+  # "ephemeral" skips persistence — ideal for high-frequency heartbeat jobs.
+  execution_mode queued
+
+  # What to do with missed fires on server restart:
+  # "all" (default) — replay everything, "latest" — run once, "none" — skip
+  catch_up all
+
+  # Cancel queued executions that have been waiting too long (optional)
+  # queue_ttl 1h
+
+  # Max queued executions per job before new fires are skipped (default: 10)
+  # max_queue_depth 10
 }
 
 calendar business-days {
@@ -112,6 +129,11 @@ job billing:invoice {
 
 job etl:sync {
   every 15 minutes
+}
+
+# High-frequency monitoring job — fire-and-forget, no DB overhead
+job infra:heartbeat {
+  ephemeral every 5 seconds
 }
 ```
 
