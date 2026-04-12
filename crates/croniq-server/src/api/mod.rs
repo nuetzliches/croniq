@@ -35,7 +35,7 @@ use tokio::sync::mpsc;
 use crate::completion::CompletionEvent;
 use crate::scheduler::SchedulerCommand;
 use crate::store::DynStore;
-use croniq_store::models::ExecutionFilter;
+use croniq_store::models::{Execution, ExecutionFilter, ExecutionState};
 
 /// Default maximum time a poll request will block waiting for work.
 const DEFAULT_LONG_POLL_TIMEOUT: Duration = Duration::from_secs(30);
@@ -213,6 +213,15 @@ async fn handle_poll(
         let work = try_dequeue_for(&state.runner, &req.runner_id, &req.capabilities, capacity).await;
 
         if !work.is_empty() {
+            // Mark claimed executions in the persistent store so we track runner_id
+            if let Some(ref store) = state.store {
+                let now = Utc::now();
+                for w in &work {
+                    if let Ok(id) = uuid::Uuid::parse_str(&w.execution_id) {
+                        let _ = store.claim_execution(id, &req.runner_id, now);
+                    }
+                }
+            }
             return (StatusCode::OK, Json(PollResponse { work, cancel: vec![] }));
         }
 
@@ -311,16 +320,59 @@ async fn handle_delete_runner(
 }
 
 /// `POST /v1/trigger` — immediately enqueue a job execution.
+///
+/// Persists the execution to the store first (just like the scheduler does)
+/// so that the CompletionProcessor can find it for retries and dead-lettering.
 async fn handle_trigger(
     State(state): State<Arc<ServerState>>,
     Json(req): Json<TriggerRequest>,
 ) -> (StatusCode, Json<TriggerResponse>) {
-    let execution_id = uuid::Uuid::new_v4().to_string();
+    let now = Utc::now();
+    let exec_uuid = uuid::Uuid::new_v4();
+    let execution_id = exec_uuid.to_string();
+
+    // Build metadata from the request, encoding require/prefer for capability routing
+    let mut metadata = HashMap::<String, String>::new();
+    if let serde_json::Value::Object(ref map) = req.metadata {
+        for (k, v) in map {
+            metadata.insert(k.clone(), v.as_str().unwrap_or(&v.to_string()).to_string());
+        }
+    }
+    if !req.require.is_empty() {
+        metadata.insert("__require".into(), serde_json::to_string(&req.require).unwrap_or_default());
+    }
+    if !req.prefer.is_empty() {
+        metadata.insert("__prefer".into(), serde_json::to_string(&req.prefer).unwrap_or_default());
+    }
+
+    // Persist the execution record to the store so that the CompletionProcessor
+    // can find it when the runner reports success/failure.
+    if let Some(ref store) = state.store {
+        let execution = Execution {
+            id: exec_uuid,
+            job_key: req.job_key.clone(),
+            fire_at: now,
+            attempt: 1,
+            state: ExecutionState::Queued,
+            runner_id: None,
+            claimed_at: None,
+            started_at: None,
+            completed_at: None,
+            duration_ms: None,
+            error: None,
+            dead_reason: None,
+            metadata: metadata.clone(),
+            created_at: now,
+        };
+        if let Err(e) = store.create_execution(&execution) {
+            tracing::error!(job_key = %req.job_key, error = %e, "failed to persist triggered execution");
+        }
+    }
 
     let item = WorkItem {
         execution_id: execution_id.clone(),
         job_key: req.job_key,
-        fire_at: Utc::now(),
+        fire_at: now,
         attempt: 1,
         require: req.require,
         prefer: req.prefer,
