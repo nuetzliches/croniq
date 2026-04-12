@@ -20,10 +20,14 @@ jobs:
         include:
           - target: x86_64-unknown-linux-gnu
             os: ubuntu-latest
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-latest
           - target: x86_64-apple-darwin
             os: macos-latest
           - target: aarch64-apple-darwin
             os: macos-latest
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -31,12 +35,20 @@ jobs:
           targets: ${{ matrix.target }}
       - uses: Swatinem/rust-cache@v2
 
+      - name: Install cross-compilation tools (Linux ARM64)
+        if: matrix.target == 'aarch64-unknown-linux-gnu'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu
+          echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
+
       - name: Build release binaries
         run: |
           cargo build --release --target ${{ matrix.target }} \
             --bin croniq-server --bin croniq --bin croniq-mcp
 
-      - name: Package
+      - name: Package (unix)
+        if: runner.os != 'Windows'
         run: |
           mkdir -p dist
           cp target/${{ matrix.target }}/release/croniq-server dist/
@@ -45,10 +57,23 @@ jobs:
           cp README.md LICENSE-MIT LICENSE-APACHE dist/
           cd dist && tar czf ../croniq-${{ matrix.target }}.tar.gz *
 
+      - name: Package (windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist
+          Copy-Item "target/${{ matrix.target }}/release/croniq-server.exe" dist/
+          Copy-Item "target/${{ matrix.target }}/release/croniq.exe" dist/
+          Copy-Item "target/${{ matrix.target }}/release/croniq-mcp.exe" dist/
+          Copy-Item README.md, LICENSE-MIT, LICENSE-APACHE dist/
+          Compress-Archive -Path dist/* -DestinationPath "croniq-${{ matrix.target }}.zip"
+
       - uses: actions/upload-artifact@v4
         with:
           name: croniq-${{ matrix.target }}
-          path: croniq-${{ matrix.target }}.tar.gz
+          path: |
+            croniq-${{ matrix.target }}.tar.gz
+            croniq-${{ matrix.target }}.zip
 
   docker:
     name: Docker release
@@ -89,4 +114,6 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true
-          files: artifacts/**/*.tar.gz
+          files: |
+            artifacts/**/*.tar.gz
+            artifacts/**/*.zip
