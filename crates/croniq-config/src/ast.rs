@@ -122,9 +122,24 @@ pub struct JobKey {
 
 // ─── Schedule ───
 
+/// Optional execution-mode prefix on a schedule line.
+///
+/// ```text
+/// ephemeral every 1 seconds     # fire-and-forget, no persistence
+/// queued    every day at 02:00   # guaranteed delivery (default)
+///           every 15 minutes     # no prefix → queued
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub enum ScheduleMode {
+    Queued,
+    Ephemeral,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct ScheduleNode {
     pub kind: ScheduleKind,
+    /// Explicit execution-mode prefix (`ephemeral` / `queued`), if present.
+    pub mode: Option<ScheduleMode>,
     pub options: Vec<Directive>,
     pub span: Span,
 }

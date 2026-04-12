@@ -1,8 +1,8 @@
 //! Compiles a Croniqfile AST into a RuntimeConfig with resolved defaults and placeholders.
 
-use crate::ast::*;
+use crate::ast::{self, *};
 use crate::schedule::CompiledSchedule;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 /// Fully resolved runtime configuration.
@@ -48,6 +48,42 @@ pub struct PullApiConfig {
     pub lease_ttl: String,
 }
 
+/// How a job's executions are tracked and persisted.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ExecutionMode {
+    /// Full persistence: execution record written to DB before dispatch,
+    /// survives restarts, supports retry and dead-letter.
+    Queued,
+    /// Lightweight: no execution record at fire time, no catch-up after
+    /// restart. Ideal for high-frequency monitoring/heartbeat jobs.
+    Ephemeral,
+}
+
+impl Default for ExecutionMode {
+    fn default() -> Self {
+        Self::Queued
+    }
+}
+
+/// What happens to missed fires after a server restart or prolonged downtime.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum CatchUpPolicy {
+    /// Replay all missed fires (bounded by max_queue_depth).
+    All,
+    /// Coalesce missed fires into a single execution (the latest one).
+    Latest,
+    /// Discard missed fires; compute the next future fire time.
+    None,
+}
+
+impl Default for CatchUpPolicy {
+    fn default() -> Self {
+        Self::All
+    }
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct JobConfig {
     pub key: String,
@@ -67,6 +103,16 @@ pub struct JobConfig {
     pub timeout: Option<String>,
     pub dead_letter: DeadLetterConfig,
     pub metadata: HashMap<String, String>,
+    /// How executions are tracked: `queued` (persistent) or `ephemeral` (fire-and-forget).
+    pub execution_mode: ExecutionMode,
+    /// Restart behaviour for missed fires: `all`, `latest`, or `none`.
+    pub catch_up: CatchUpPolicy,
+    /// Max time an execution may sit in the queue before being cancelled.
+    /// Duration string (e.g. "30m", "1h", "24h"). `None` means no limit.
+    pub queue_ttl: Option<String>,
+    /// Max queued executions per job before new fires are skipped.
+    /// `None` falls back to the global default of 10.
+    pub max_queue_depth: Option<u32>,
 }
 
 #[derive(Debug, Clone, Default, Serialize)]
@@ -146,6 +192,10 @@ pub fn compile(ast: &Croniqfile) -> RuntimeConfig {
     let mut default_timeout: Option<String> = None;
     let mut default_retry = RetryConfig::default();
     let mut default_dead_letter = DeadLetterConfig::default();
+    let mut default_execution_mode = ExecutionMode::default();
+    let mut default_catch_up = CatchUpPolicy::default();
+    let mut default_queue_ttl: Option<String> = None;
+    let mut default_max_queue_depth: Option<u32> = None;
     let mut jobs = Vec::new();
     let mut calendars = Vec::new();
     let mut vars = HashMap::new();
@@ -220,6 +270,32 @@ pub fn compile(ast: &Croniqfile) -> RuntimeConfig {
                             "timeout" => {
                                 default_timeout = dir.args.first().map(|a| a.value.clone());
                             }
+                            "execution_mode" => {
+                                if let Some(v) = dir.args.first() {
+                                    default_execution_mode = match v.value.as_str() {
+                                        "ephemeral" => ExecutionMode::Ephemeral,
+                                        _ => ExecutionMode::Queued,
+                                    };
+                                }
+                            }
+                            "catch_up" => {
+                                if let Some(v) = dir.args.first() {
+                                    default_catch_up = match v.value.as_str() {
+                                        "latest" => CatchUpPolicy::Latest,
+                                        "none" => CatchUpPolicy::None,
+                                        _ => CatchUpPolicy::All,
+                                    };
+                                }
+                            }
+                            "queue_ttl" => {
+                                default_queue_ttl = dir.args.first()
+                                    .map(|a| a.value.clone())
+                                    .filter(|v| v != "none");
+                            }
+                            "max_queue_depth" => {
+                                default_max_queue_depth = dir.args.first()
+                                    .and_then(|a| a.value.parse().ok());
+                            }
                             _ => {}
                         },
                         DirectiveOrBlock::Block(block) => match block.name.value.as_str() {
@@ -245,6 +321,10 @@ pub fn compile(ast: &Croniqfile) -> RuntimeConfig {
                     &default_timeout,
                     &default_retry,
                     &default_dead_letter,
+                    default_execution_mode,
+                    default_catch_up,
+                    &default_queue_ttl,
+                    default_max_queue_depth,
                 ));
             }
             Item::Observability(obs) => {
@@ -309,6 +389,10 @@ fn compile_job(
     default_timeout: &Option<String>,
     default_retry: &RetryConfig,
     default_dl: &DeadLetterConfig,
+    default_execution_mode: ExecutionMode,
+    default_catch_up: CatchUpPolicy,
+    default_queue_ttl: &Option<String>,
+    default_max_queue_depth: Option<u32>,
 ) -> JobConfig {
     let schedule = job
         .schedule
@@ -344,6 +428,15 @@ fn compile_job(
     let mut timeout = default_timeout.clone();
     let mut dead_letter = default_dl.clone();
     let mut metadata = HashMap::new();
+    // Schedule-prefix mode takes precedence over directive and defaults.
+    let mut execution_mode = match job.schedule.as_ref().and_then(|s| s.mode) {
+        Some(ast::ScheduleMode::Ephemeral) => ExecutionMode::Ephemeral,
+        Some(ast::ScheduleMode::Queued) => ExecutionMode::Queued,
+        None => default_execution_mode,
+    };
+    let mut catch_up = default_catch_up;
+    let mut queue_ttl = default_queue_ttl.clone();
+    let mut max_queue_depth = default_max_queue_depth;
 
     for dob in &job.directives {
         match dob {
@@ -351,6 +444,31 @@ fn compile_job(
                 "description" => description = d.args.first().map(|a| a.value.clone()),
                 "timeout" => timeout = d.args.first().map(|a| a.value.clone()),
                 "window" => window = d.args.first().map(|a| a.value.clone()),
+                "execution_mode" => {
+                    if let Some(v) = d.args.first() {
+                        execution_mode = match v.value.as_str() {
+                            "ephemeral" => ExecutionMode::Ephemeral,
+                            _ => ExecutionMode::Queued,
+                        };
+                    }
+                }
+                "catch_up" => {
+                    if let Some(v) = d.args.first() {
+                        catch_up = match v.value.as_str() {
+                            "latest" => CatchUpPolicy::Latest,
+                            "none" => CatchUpPolicy::None,
+                            _ => CatchUpPolicy::All,
+                        };
+                    }
+                }
+                "queue_ttl" => {
+                    queue_ttl = d.args.first()
+                        .map(|a| a.value.clone())
+                        .filter(|v| v != "none");
+                }
+                "max_queue_depth" => {
+                    max_queue_depth = d.args.first().and_then(|a| a.value.parse().ok());
+                }
                 _ => {}
             },
             DirectiveOrBlock::Block(block) => match block.name.value.as_str() {
@@ -371,6 +489,14 @@ fn compile_job(
         }
     }
 
+    // Ephemeral mode implies: no queue persistence, no catch-up, no retry, no dead-letter.
+    // Silently override queue-only settings to avoid confusing behaviour.
+    if execution_mode == ExecutionMode::Ephemeral {
+        catch_up = CatchUpPolicy::None;
+        queue_ttl = None;
+        max_queue_depth = Some(1);
+    }
+
     JobConfig {
         key: job.key.raw.clone(),
         namespace: job.key.namespace.clone(),
@@ -389,6 +515,10 @@ fn compile_job(
         timeout,
         dead_letter,
         metadata,
+        execution_mode,
+        catch_up,
+        queue_ttl,
+        max_queue_depth,
     }
 }
 

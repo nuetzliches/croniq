@@ -321,6 +321,10 @@ mod tests {
             timeout: Some("5m".into()),
             dead_letter: DeadLetterConfig::default(),
             metadata: HashMap::new(),
+            execution_mode: croniq_config::compile::ExecutionMode::default(),
+            catch_up: croniq_config::compile::CatchUpPolicy::default(),
+            queue_ttl: None,
+            max_queue_depth: None,
         }
     }
 

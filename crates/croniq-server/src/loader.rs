@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 
 use chrono::{DateTime, Utc};
 use croniq_config::ast::{Croniqfile, Item};
-use croniq_config::compile::{self, RuntimeConfig};
+use croniq_config::compile::{self, CatchUpPolicy, RuntimeConfig};
 use croniq_config::import::resolve_imports_with_visited;
 use croniq_config::parser::Parser;
 use croniq_scheduler::{
@@ -271,14 +271,21 @@ pub fn restore_trigger_states(
 /// Restore queued executions from the database into the in-memory work queue.
 ///
 /// On server restart, executions in `queued` state need to be re-enqueued so
-/// runners can pick them up. Uses `job_to_work_item` to reconstruct the work
-/// item from the execution record + job config.
+/// runners can pick them up. Respects each job's `catch_up` and `execution_mode`
+/// policies:
+///
+/// - `execution_mode: ephemeral` → cancel all queued executions (no catch-up)
+/// - `catch_up: none`            → cancel all queued executions for this job
+/// - `catch_up: latest`          → keep only the most recent queued execution,
+///                                  cancel the rest
+/// - `catch_up: all`             → restore all queued executions (default)
 pub async fn restore_queued_executions(
     store: &dyn ExecutionStore,
     jobs: &[JobConfig],
     runner_state: &croniq_runner::AppState,
 ) -> usize {
     use croniq_bridge::job_to_work_item;
+    use croniq_config::compile::ExecutionMode;
 
     let executions = match store.find_queued_executions(&[], 1000) {
         Ok(execs) => execs,
@@ -291,17 +298,84 @@ pub async fn restore_queued_executions(
     let job_map: HashMap<&str, &JobConfig> = jobs.iter().map(|j| (j.key.as_str(), j)).collect();
     let mut restored = 0;
 
+    // Group executions by job_key to apply catch_up policy per job.
+    let mut by_job: HashMap<String, Vec<&croniq_store::models::Execution>> = HashMap::new();
     for exec in &executions {
-        if let Some(job) = job_map.get(exec.job_key.as_str()) {
-            let item = job_to_work_item(job, exec.id.to_string(), exec.fire_at, exec.attempt);
-            runner_state.queue.write().await.enqueue(item);
-            restored += 1;
-        } else {
-            tracing::warn!(
-                job_key = %exec.job_key,
-                execution_id = %exec.id,
-                "queued execution for unknown job — skipping restore"
+        by_job.entry(exec.job_key.clone()).or_default().push(exec);
+    }
+
+    for (job_key, mut execs) in by_job {
+        let job = match job_map.get(job_key.as_str()) {
+            Some(j) => j,
+            None => {
+                tracing::warn!(
+                    job_key = %job_key,
+                    count = execs.len(),
+                    "queued executions for unknown job — skipping restore"
+                );
+                continue;
+            }
+        };
+
+        // Ephemeral jobs never restore queued executions.
+        if job.execution_mode == ExecutionMode::Ephemeral {
+            let now = chrono::Utc::now();
+            for exec in &execs {
+                let _ = store.cancel_execution(exec.id, now);
+            }
+            tracing::debug!(
+                job_key = %job_key,
+                cancelled = execs.len(),
+                "ephemeral job — cancelled queued executions on restore"
             );
+            continue;
+        }
+
+        match job.catch_up {
+            CatchUpPolicy::None => {
+                // Cancel all queued executions — just move to next fire.
+                let now = chrono::Utc::now();
+                for exec in &execs {
+                    let _ = store.cancel_execution(exec.id, now);
+                }
+                tracing::info!(
+                    job_key = %job_key,
+                    cancelled = execs.len(),
+                    "catch_up=none — cancelled queued executions"
+                );
+            }
+            CatchUpPolicy::Latest => {
+                // Sort by fire_at desc, keep only the most recent one.
+                execs.sort_by(|a, b| b.fire_at.cmp(&a.fire_at));
+                let now = chrono::Utc::now();
+                for (i, exec) in execs.iter().enumerate() {
+                    if i == 0 {
+                        // Restore the latest
+                        let item = job_to_work_item(job, exec.id.to_string(), exec.fire_at, exec.attempt);
+                        runner_state.queue.write().await.enqueue(item);
+                        restored += 1;
+                    } else {
+                        // Cancel the rest
+                        let _ = store.cancel_execution(exec.id, now);
+                    }
+                }
+                if execs.len() > 1 {
+                    tracing::info!(
+                        job_key = %job_key,
+                        restored = 1,
+                        cancelled = execs.len() - 1,
+                        "catch_up=latest — coalesced queued executions"
+                    );
+                }
+            }
+            CatchUpPolicy::All => {
+                // Restore all (current behaviour).
+                for exec in &execs {
+                    let item = job_to_work_item(job, exec.id.to_string(), exec.fire_at, exec.attempt);
+                    runner_state.queue.write().await.enqueue(item);
+                    restored += 1;
+                }
+            }
         }
     }
 
@@ -376,6 +450,10 @@ pub fn job_config_from_definition(
         timeout: Some("5m".into()),
         dead_letter: DeadLetterConfig::default(),
         metadata: job_def.map(|j| j.metadata.clone()).unwrap_or_default(),
+        execution_mode: ExecutionMode::default(),
+        catch_up: CatchUpPolicy::default(),
+        queue_ttl: None,
+        max_queue_depth: None,
     }
 }
 
