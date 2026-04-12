@@ -20,3 +20,7 @@ edition = "2024"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/nuetzliches/croniq"
 homepage = "https://github.com/nuetzliches/croniq"
+
+[profile.bench]
+debug = true
+lto = "thin"
