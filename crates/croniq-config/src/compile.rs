@@ -49,39 +49,29 @@ pub struct PullApiConfig {
 }
 
 /// How a job's executions are tracked and persisted.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ExecutionMode {
     /// Full persistence: execution record written to DB before dispatch,
     /// survives restarts, supports retry and dead-letter.
+    #[default]
     Queued,
     /// Lightweight: no execution record at fire time, no catch-up after
     /// restart. Ideal for high-frequency monitoring/heartbeat jobs.
     Ephemeral,
 }
 
-impl Default for ExecutionMode {
-    fn default() -> Self {
-        Self::Queued
-    }
-}
-
 /// What happens to missed fires after a server restart or prolonged downtime.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum CatchUpPolicy {
     /// Replay all missed fires (bounded by max_queue_depth).
+    #[default]
     All,
     /// Coalesce missed fires into a single execution (the latest one).
     Latest,
     /// Discard missed fires; compute the next future fire time.
     None,
-}
-
-impl Default for CatchUpPolicy {
-    fn default() -> Self {
-        Self::All
-    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -317,14 +307,16 @@ pub fn compile(ast: &Croniqfile) -> RuntimeConfig {
             Item::Job(job) => {
                 jobs.push(compile_job(
                     job,
-                    &default_timezone,
-                    &default_timeout,
-                    &default_retry,
-                    &default_dead_letter,
-                    default_execution_mode,
-                    default_catch_up,
-                    &default_queue_ttl,
-                    default_max_queue_depth,
+                    &JobDefaults {
+                        timezone: default_timezone.clone(),
+                        timeout: default_timeout.clone(),
+                        retry: default_retry.clone(),
+                        dead_letter: default_dead_letter.clone(),
+                        execution_mode: default_execution_mode,
+                        catch_up: default_catch_up,
+                        queue_ttl: default_queue_ttl.clone(),
+                        max_queue_depth: default_max_queue_depth,
+                    },
                 ));
             }
             Item::Observability(obs) => {
@@ -383,17 +375,19 @@ pub fn compile(ast: &Croniqfile) -> RuntimeConfig {
     }
 }
 
-fn compile_job(
-    job: &JobBlock,
-    default_tz: &Option<String>,
-    default_timeout: &Option<String>,
-    default_retry: &RetryConfig,
-    default_dl: &DeadLetterConfig,
-    default_execution_mode: ExecutionMode,
-    default_catch_up: CatchUpPolicy,
-    default_queue_ttl: &Option<String>,
-    default_max_queue_depth: Option<u32>,
-) -> JobConfig {
+/// Bundled defaults passed to `compile_job` to avoid too many parameters.
+struct JobDefaults {
+    timezone: Option<String>,
+    timeout: Option<String>,
+    retry: RetryConfig,
+    dead_letter: DeadLetterConfig,
+    execution_mode: ExecutionMode,
+    catch_up: CatchUpPolicy,
+    queue_ttl: Option<String>,
+    max_queue_depth: Option<u32>,
+}
+
+fn compile_job(job: &JobBlock, defaults: &JobDefaults) -> JobConfig {
     let schedule = job
         .schedule
         .as_ref()
@@ -403,7 +397,7 @@ fn compile_job(
     let schedule_summary = schedule.summary();
 
     // Extract schedule options
-    let mut timezone = default_tz.clone();
+    let mut timezone = defaults.timezone.clone();
     let mut calendar = None;
     let mut not_before = None;
     let mut not_after = None;
@@ -424,19 +418,19 @@ fn compile_job(
     let mut description = None;
     let mut window = None;
     let mut runner = RunnerConfig::default();
-    let mut retry = default_retry.clone();
-    let mut timeout = default_timeout.clone();
-    let mut dead_letter = default_dl.clone();
+    let mut retry = defaults.retry.clone();
+    let mut timeout = defaults.timeout.clone();
+    let mut dead_letter = defaults.dead_letter.clone();
     let mut metadata = HashMap::new();
     // Schedule-prefix mode takes precedence over directive and defaults.
     let mut execution_mode = match job.schedule.as_ref().and_then(|s| s.mode) {
         Some(ast::ScheduleMode::Ephemeral) => ExecutionMode::Ephemeral,
         Some(ast::ScheduleMode::Queued) => ExecutionMode::Queued,
-        None => default_execution_mode,
+        None => defaults.execution_mode,
     };
-    let mut catch_up = default_catch_up;
-    let mut queue_ttl = default_queue_ttl.clone();
-    let mut max_queue_depth = default_max_queue_depth;
+    let mut catch_up = defaults.catch_up;
+    let mut queue_ttl = defaults.queue_ttl.clone();
+    let mut max_queue_depth = defaults.max_queue_depth;
 
     for dob in &job.directives {
         match dob {

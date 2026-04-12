@@ -277,7 +277,7 @@ pub fn restore_trigger_states(
 /// - `execution_mode: ephemeral` → cancel all queued executions (no catch-up)
 /// - `catch_up: none`            → cancel all queued executions for this job
 /// - `catch_up: latest`          → keep only the most recent queued execution,
-///                                  cancel the rest
+///   cancel the rest
 /// - `catch_up: all`             → restore all queued executions (default)
 pub async fn restore_queued_executions(
     store: &dyn ExecutionStore,
