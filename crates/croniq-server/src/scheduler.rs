@@ -10,7 +10,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
-use croniq_config::compile::JobConfig;
+use croniq_config::compile::{ExecutionMode, JobConfig};
 #[allow(unused_imports)]
 use chrono_tz;
 use croniq_bridge::job_to_work_item;
@@ -68,6 +68,16 @@ impl SchedulerLoop {
     ) -> Self {
         let jobs = jobs.into_iter().map(|j| (j.key.clone(), j)).collect();
         Self { triggers, jobs, store, runner, quota: QuotaGuard::new() }
+    }
+
+    /// Override per-job quota limits (useful for benchmarking large trigger counts).
+    pub fn set_quota_defaults(&mut self, max_parallel: u32, max_per_minute: u32) {
+        for key in self.jobs.keys() {
+            self.quota.set_quota(key, crate::quota::JobQuota {
+                max_parallel,
+                max_per_minute,
+            });
+        }
     }
 
     /// Hot-reload: update jobs and triggers from a newly loaded config.
@@ -147,18 +157,19 @@ impl SchedulerLoop {
                 }
             };
 
-            // Queue overflow protection: skip if too many queued executions for this job
-            const MAX_QUEUED_PER_JOB: usize = 10;
+            // Queue overflow protection: skip if too many queued executions for this job.
+            // Per-job max_queue_depth overrides the default of 10.
+            let max_depth = job.max_queue_depth.unwrap_or(10) as usize;
             let queued_count = self.runner.queue.read().await
                 .peek_n(1000)
                 .iter()
                 .filter(|item| item.job_key == trigger.job_key)
                 .count();
-            if queued_count >= MAX_QUEUED_PER_JOB {
+            if queued_count >= max_depth {
                 tracing::warn!(
                     job_key = %trigger.job_key,
                     queued = queued_count,
-                    max = MAX_QUEUED_PER_JOB,
+                    max = max_depth,
                     "skipping execution — queue overflow"
                 );
                 trigger.mark_fired(fire_at, now);
@@ -174,37 +185,40 @@ impl SchedulerLoop {
 
             let execution_id = Uuid::new_v4();
             let exec_id_str = execution_id.to_string();
+            let is_ephemeral = job.execution_mode == ExecutionMode::Ephemeral;
 
-            // 1. Persist the execution record
-            let execution = Execution {
-                id: execution_id,
-                job_key: job.key.clone(),
-                fire_at,
-                attempt: 1,
-                state: ExecutionState::Queued,
-                runner_id: None,
-                claimed_at: None,
-                started_at: None,
-                completed_at: None,
-                duration_ms: None,
-                error: None,
-                dead_reason: None,
-                metadata: {
-                    let mut m = job.metadata.clone();
-                    if !job.runner.require.is_empty() {
-                        m.insert("__require".into(), serde_json::to_string(&job.runner.require).unwrap_or_default());
-                    }
-                    if !job.runner.prefer.is_empty() {
-                        m.insert("__prefer".into(), serde_json::to_string(&job.runner.prefer).unwrap_or_default());
-                    }
-                    m
-                },
-                created_at: now,
-            };
+            // 1. Persist the execution record (skip for ephemeral jobs)
+            if !is_ephemeral {
+                let execution = Execution {
+                    id: execution_id,
+                    job_key: job.key.clone(),
+                    fire_at,
+                    attempt: 1,
+                    state: ExecutionState::Queued,
+                    runner_id: None,
+                    claimed_at: None,
+                    started_at: None,
+                    completed_at: None,
+                    duration_ms: None,
+                    error: None,
+                    dead_reason: None,
+                    metadata: {
+                        let mut m = job.metadata.clone();
+                        if !job.runner.require.is_empty() {
+                            m.insert("__require".into(), serde_json::to_string(&job.runner.require).unwrap_or_default());
+                        }
+                        if !job.runner.prefer.is_empty() {
+                            m.insert("__prefer".into(), serde_json::to_string(&job.runner.prefer).unwrap_or_default());
+                        }
+                        m
+                    },
+                    created_at: now,
+                };
 
-            if let Err(e) = self.store.create_execution(&execution) {
-                tracing::error!(job_key = %job.key, error = %e, "failed to persist execution");
-                continue;
+                if let Err(e) = self.store.create_execution(&execution) {
+                    tracing::error!(job_key = %job.key, error = %e, "failed to persist execution");
+                    continue;
+                }
             }
 
             // 2. Enqueue work item for the runner (always attempt 1 for scheduler-fired jobs)
@@ -215,8 +229,7 @@ impl SchedulerLoop {
             // 3. Advance the trigger first so we know its new state
             trigger.mark_fired(fire_at, now);
 
-            // 4. Persist job state — use Exhausted for once-triggers so a restart
-            //    does not re-arm them and cause double-firing.
+            // 4. Persist job state (always — needed for trigger restore on restart)
             let status = if trigger.state == TriggerState::Exhausted {
                 JobStatus::Exhausted
             } else {
@@ -239,11 +252,19 @@ impl SchedulerLoop {
                 attempt: 1,
             });
 
-            tracing::info!(
-                job_key = %job.key,
-                execution_id = %execution_id,
-                "execution queued"
-            );
+            if is_ephemeral {
+                tracing::debug!(
+                    job_key = %job.key,
+                    execution_id = %execution_id,
+                    "ephemeral execution dispatched"
+                );
+            } else {
+                tracing::info!(
+                    job_key = %job.key,
+                    execution_id = %execution_id,
+                    "execution queued"
+                );
+            }
         }
 
         TickResult { fired }
@@ -285,6 +306,10 @@ mod tests {
             timeout: Some("5m".into()),
             dead_letter: DeadLetterConfig::default(),
             metadata: Default::default(),
+            execution_mode: croniq_config::compile::ExecutionMode::default(),
+            catch_up: croniq_config::compile::CatchUpPolicy::default(),
+            queue_ttl: None,
+            max_queue_depth: None,
         }
     }
 

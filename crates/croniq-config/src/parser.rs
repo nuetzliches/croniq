@@ -496,27 +496,42 @@ impl Parser {
     fn is_schedule_start(&self) -> bool {
         let tok = self.peek();
         tok.is_ident("every") || tok.is_ident("once") || tok.is_ident("disabled")
+            || tok.is_ident("ephemeral") || tok.is_ident("queued")
     }
 
     fn parse_schedule(&mut self) -> Result<ScheduleNode, ParseError> {
         let tok = self.peek().clone();
 
-        match tok.text() {
+        // Optional execution-mode prefix: `ephemeral every …` / `queued every …`
+        let mode = match tok.text() {
+            "ephemeral" => { self.advance(); Some(ScheduleMode::Ephemeral) }
+            "queued" => { self.advance(); Some(ScheduleMode::Queued) }
+            _ => None,
+        };
+
+        let tok = self.peek().clone();
+        let mut node = match tok.text() {
             "disabled" => {
                 self.advance();
-                Ok(ScheduleNode {
+                ScheduleNode {
                     kind: ScheduleKind::Disabled,
+                    mode: None,
                     options: vec![],
                     span: tok.span,
-                })
+                }
             }
-            "once" => self.parse_schedule_once(),
-            "every" => self.parse_schedule_every(),
-            _ => Err(ParseError::General {
-                message: "expected 'every', 'once', or 'disabled'".into(),
-                span: tok.span.into(),
-            }),
-        }
+            "once" => self.parse_schedule_once()?,
+            "every" => self.parse_schedule_every()?,
+            _ => {
+                return Err(ParseError::General {
+                    message: "expected 'every', 'once', or 'disabled'".into(),
+                    span: tok.span.into(),
+                });
+            }
+        };
+
+        node.mode = mode;
+        Ok(node)
     }
 
     fn parse_schedule_once(&mut self) -> Result<ScheduleNode, ParseError> {
@@ -527,6 +542,7 @@ impl Parser {
 
         Ok(ScheduleNode {
             kind: ScheduleKind::Once { at: datetime },
+            mode: None,
             options: vec![],
             span,
         })
@@ -585,6 +601,7 @@ impl Parser {
         let (options, end) = self.parse_optional_schedule_block(unit_tok.span)?;
         Ok(ScheduleNode {
             kind: ScheduleKind::Interval { count, unit },
+            mode: None,
             options,
             span: start.merge(end),
         })
@@ -598,6 +615,7 @@ impl Parser {
         let (options, end) = self.parse_optional_schedule_block(time.span)?;
         Ok(ScheduleNode {
             kind: ScheduleKind::Daily { time },
+            mode: None,
             options,
             span: start.merge(end),
         })
@@ -638,6 +656,7 @@ impl Parser {
         let (options, end) = self.parse_optional_schedule_block(time.span)?;
         Ok(ScheduleNode {
             kind: ScheduleKind::Weekdays { days, time },
+            mode: None,
             options,
             span: start.merge(end),
         })
@@ -658,6 +677,7 @@ impl Parser {
         let (options, end) = self.parse_optional_schedule_block(time.span)?;
         Ok(ScheduleNode {
             kind: ScheduleKind::Monthly { ordinals, time },
+            mode: None,
             options,
             span: start.merge(end),
         })

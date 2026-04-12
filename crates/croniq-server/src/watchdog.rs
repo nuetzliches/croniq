@@ -28,6 +28,8 @@ pub struct WatchdogResult {
     pub dead_runners: Vec<String>,
     /// Execution IDs that were requeued.
     pub requeued: Vec<uuid::Uuid>,
+    /// Execution IDs cancelled due to queue_ttl expiry.
+    pub expired: Vec<uuid::Uuid>,
 }
 
 /// Periodically scans for dead runners and requeues their abandoned executions.
@@ -146,7 +148,73 @@ impl WatchdogLoop {
             }
         }
 
+        // 4. Expire queued executions that have exceeded their queue_ttl
+        self.expire_queued_by_ttl(now, &mut result).await;
+
         result
+    }
+
+    /// Cancel queued executions whose age exceeds the job's `queue_ttl`.
+    ///
+    /// Scans all items currently in the in-memory queue. For each item whose
+    /// job has a `queue_ttl` configured, check whether the item has been
+    /// waiting longer than allowed. If so, remove it from the queue and cancel
+    /// the execution in the store.
+    async fn expire_queued_by_ttl(
+        &self,
+        now: DateTime<Utc>,
+        result: &mut WatchdogResult,
+    ) {
+        // Collect job keys that have a queue_ttl configured.
+        let ttls: HashMap<&str, chrono::Duration> = self.jobs.iter()
+            .filter_map(|(key, job)| {
+                let ttl_str = job.queue_ttl.as_deref()?;
+                let std_dur = croniq_execution::retry::parse_duration(ttl_str)?;
+                let dur = chrono::Duration::from_std(std_dur).ok()?;
+                Some((key.as_str(), dur))
+            })
+            .collect();
+
+        if ttls.is_empty() {
+            return;
+        }
+
+        // Peek at queued items and find expired ones.
+        let expired_ids: Vec<String> = {
+            let q = self.runner.queue.read().await;
+            q.peek_n(10_000)
+                .iter()
+                .filter(|item| {
+                    if let Some(ttl) = ttls.get(item.job_key.as_str()) {
+                        // fire_at is when the item was created/enqueued
+                        now.signed_duration_since(item.fire_at) > *ttl
+                    } else {
+                        false
+                    }
+                })
+                .map(|item| item.execution_id.clone())
+                .collect()
+        };
+
+        if expired_ids.is_empty() {
+            return;
+        }
+
+        // Remove expired items from the queue and cancel in store.
+        let mut q = self.runner.queue.write().await;
+        for exec_id in &expired_ids {
+            q.remove(exec_id);
+            if let Ok(uuid) = uuid::Uuid::parse_str(exec_id) {
+                let _ = self.store.cancel_execution(uuid, now);
+                result.expired.push(uuid);
+            }
+        }
+        drop(q);
+
+        tracing::info!(
+            count = expired_ids.len(),
+            "watchdog: cancelled queued executions due to queue_ttl expiry"
+        );
     }
 }
 
@@ -195,6 +263,10 @@ mod tests {
             timeout: Some("10m".into()),
             dead_letter: DeadLetterConfig::default(),
             metadata: HashMap::new(),
+            execution_mode: croniq_config::compile::ExecutionMode::default(),
+            catch_up: croniq_config::compile::CatchUpPolicy::default(),
+            queue_ttl: None,
+            max_queue_depth: None,
         }
     }
 
