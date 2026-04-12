@@ -43,6 +43,7 @@ jobs:
           echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
 
       - name: Build release binaries
+        shell: bash
         run: |
           cargo build --release --target ${{ matrix.target }} \
             --bin croniq-server --bin croniq --bin croniq-mcp
