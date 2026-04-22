@@ -113,6 +113,15 @@ impl CroniqRunner {
         });
     }
 
+    /// Register a catch-all handler invoked when no specific handler matches the job key.
+    pub async fn set_default_handler<F, Fut>(&self, handler: F)
+    where
+        F: Fn(ExecutionContext) -> Fut + Send + Sync + 'static,
+        Fut: std::future::Future<Output = Result<(), HandlerError>> + Send + 'static,
+    {
+        self.handlers.write().await.set_default(handler);
+    }
+
     /// Signal graceful shutdown: stop accepting new work, wait for inflight.
     pub fn drain(&self) {
         self.draining.store(true, std::sync::atomic::Ordering::Relaxed);
@@ -197,7 +206,7 @@ impl CroniqRunner {
                                 reg.get(&job_key).cloned()
                             };
 
-                            let (status, error) = if let Some(handler) = handler {
+                            let (status, error, duration_ms) = if let Some(handler) = handler {
                                 // Spawn lease renewal
                                 let renew_client = Arc::clone(&client);
                                 let renew_runner_id = runner_id.clone();
@@ -218,13 +227,13 @@ impl CroniqRunner {
                                 let result = handler(ctx).await;
                                 renew_handle.abort();
 
-                                let _duration_ms = start.elapsed().as_millis() as i64;
+                                let duration_ms = start.elapsed().as_millis() as i64;
                                 match result {
-                                    Ok(()) => ("success".to_string(), None),
-                                    Err(e) => ("failure".to_string(), Some(e.to_string())),
+                                    Ok(()) => ("success".to_string(), None, duration_ms),
+                                    Err(e) => ("failure".to_string(), Some(e.to_string()), duration_ms),
                                 }
                             } else {
-                                ("failure".to_string(), Some(format!("no handler registered for {job_key}")))
+                                ("failure".to_string(), Some(format!("no handler registered for {job_key}")), 0)
                             };
 
                             // Ack
@@ -233,7 +242,7 @@ impl CroniqRunner {
                                 execution_id: exec_id.clone(),
                                 status,
                                 error,
-                                duration_ms: None,
+                                duration_ms: Some(duration_ms),
                                 attempt,
                             };
                             if let Err(e) = client.ack(&ack).await {
