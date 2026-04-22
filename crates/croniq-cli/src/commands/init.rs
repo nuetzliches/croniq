@@ -3,7 +3,7 @@
 use std::path::Path;
 
 use chrono::Utc;
-use croniq_auth::api_key::generate_api_key;
+use croniq_auth::api_key::{generate_api_key, hash_api_key};
 use croniq_auth::password::hash_password;
 use croniq_store::models::{ApiClient, ApiKey, PasswordCredential};
 use croniq_store::sqlite::SqliteStore;
@@ -11,7 +11,12 @@ use croniq_store::traits::AuthStore;
 use miette::{IntoDiagnostic, Result, miette};
 use uuid::Uuid;
 
-pub fn init(data_dir: &Path, username: &str, password: Option<&str>) -> Result<()> {
+pub fn init(
+    data_dir: &Path,
+    username: &str,
+    password: Option<&str>,
+    api_key_override: Option<&str>,
+) -> Result<()> {
     // Prompt for password if not given
     let password = match password {
         Some(p) => p.to_string(),
@@ -69,8 +74,18 @@ pub fn init(data_dir: &Path, username: &str, password: Option<&str>) -> Result<(
 
     println!("API client 'default' created (id: {}).", client_id);
 
-    // 3. Generate an API key for the default client
-    let (raw_key, key_hash, prefix) = generate_api_key();
+    // 3. Generate an API key for the default client (or use the override)
+    let (raw_key, key_hash, prefix) = match api_key_override {
+        Some(key) => {
+            if !key.starts_with("croniq_") {
+                return Err(miette!("--api-key must start with 'croniq_'"));
+            }
+            let hash = hash_api_key(key);
+            let prefix = key.chars().take(12).collect();
+            (key.to_string(), hash, prefix)
+        }
+        None => generate_api_key(),
+    };
     let key_id = Uuid::new_v4().to_string();
 
     store

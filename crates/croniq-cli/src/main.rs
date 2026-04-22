@@ -136,6 +136,11 @@ enum Commands {
         /// Admin password (prompted if not given)
         #[arg(long)]
         password: Option<String>,
+
+        /// Use a specific API key instead of generating a random one.
+        /// Must start with "croniq_". Intended for reproducible demo/test setups.
+        #[arg(long)]
+        api_key: Option<String>,
     },
 
     /// Zero-to-running in one command: creates Croniqfile, inits DB, prints next steps
@@ -202,8 +207,8 @@ fn main() -> Result<()> {
         Commands::DeadLettersInspect { id, data_dir } => {
             commands::store::dead_letters_inspect(&data_dir, &id)
         }
-        Commands::Init { data_dir, username, password } => {
-            commands::init::init(&data_dir, &username, password.as_deref())
+        Commands::Init { data_dir, username, password, api_key } => {
+            commands::init::init(&data_dir, &username, password.as_deref(), api_key.as_deref())
         }
         Commands::Quickstart { data_dir, config, password } => {
             commands::quickstart::quickstart(&data_dir, &config, password.as_deref())

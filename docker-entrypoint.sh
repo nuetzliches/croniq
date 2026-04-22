@@ -17,7 +17,12 @@ if [ ! -f "$DB_FILE" ]; then
     PASS_GENERATED=1
   fi
 
-  croniq init --data-dir "$DATA_DIR" --username "$ADMIN_USER" --password "$ADMIN_PASS"
+  INIT_ARGS="--data-dir $DATA_DIR --username $ADMIN_USER --password $ADMIN_PASS"
+  if [ -n "$CRONIQ_INIT_API_KEY" ]; then
+    INIT_ARGS="$INIT_ARGS --api-key $CRONIQ_INIT_API_KEY"
+  fi
+  # shellcheck disable=SC2086
+  croniq init $INIT_ARGS
 
   if [ "$PASS_GENERATED" = "1" ]; then
     echo ""

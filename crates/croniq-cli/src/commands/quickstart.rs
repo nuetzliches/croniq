@@ -50,7 +50,7 @@ pub fn quickstart(data_dir: &Path, croniqfile: &Path, password: Option<&str>) ->
         .unwrap_or_else(|| Uuid::new_v4().simple().to_string());
 
     // 2. Init database
-    super::init::init(data_dir, "admin", Some(&password))?;
+    super::init::init(data_dir, "admin", Some(&password), None)?;
 
     // 3. Print next steps
     println!();
