@@ -1,0 +1,62 @@
+# Croniqfile.demo — Quickstart / Demo Profile
+#
+# Start the full stack with:
+#   docker compose up
+#
+# The demo runner connects automatically and handles all jobs below.
+
+server {
+  listen :4000
+  data_dir /var/lib/croniq
+  db sqlite
+}
+
+pull_api {
+  auth none
+  lease_ttl 60s
+}
+
+observability {
+  log { level info; format text; output stderr }
+}
+
+defaults {
+  retry fixed { max_attempts 3; delay 5s }
+  timeout 2m
+  dead_letter { retention 7d }
+}
+
+# ── Demo jobs ────────────────────────────────────────────────────────────────
+
+job demo:heartbeat {
+  description "Liveness ping — runs every minute"
+  every 1 minute
+  timeout 30s
+}
+
+job demo:data-sync {
+  description "Incremental data sync — runs every 5 minutes"
+  every 5 minutes
+  timeout 1m
+  retry fixed { max_attempts 2; delay 10s }
+}
+
+job demo:report {
+  description "Generates a summary report — runs every 15 minutes"
+  every 15 minutes
+  timeout 90s
+}
+
+job demo:cleanup {
+  description "Removes stale temp files — runs every hour"
+  every 1 hour
+  timeout 5m
+  dead_letter { retention 3d }
+}
+
+job demo:slow-job {
+  description "Simulates a long-running task (catches timeouts)"
+  every 30 minutes
+  timeout 45s
+  retry fixed { max_attempts 1; delay 0s }
+}

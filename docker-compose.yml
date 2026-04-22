@@ -1,16 +1,60 @@
+# Croniq quickstart — https://github.com/nuetzliches/croniq
+#
+# Usage:
+#   docker compose up
+#
+# Open http://localhost:4000 in your browser.
+# The two demo runners connect automatically and execute the pre-loaded jobs.
+#
+# Tunable env vars (set in shell or .env file):
+#   CRONIQ_IMAGE      — image tag  (default: ghcr.io/nuetzliches/croniq:latest)
+#   RUNNER_REPLICAS   — demo runner count (default: 2)
+#   RUNNER_FAIL_RATE  — fraction 0.0–1.0 of jobs that fail (default: 0.05)
+#
+# The demo stack uses a fixed admin password (admin/admin) and a fixed API key
+# so the runners can authenticate without manual setup. Do NOT reuse either
+# outside the local demo.
+
 services:
-  croniq:
+  server:
+    image: ${CRONIQ_IMAGE:-croniq:local}
     build: .
+    restart: unless-stopped
     ports:
-      - "4000:4000"
-      - "9900:9900"
-    environment:
-      - RUST_LOG=info
-      - CRONIQ_ADMIN_USER=admin
-      # CRONIQ_ADMIN_PASSWORD unset → random password generated & logged on first start
+      - "4000:4000"   # UI + API
+      - "9900:9900"   # Prometheus metrics
     volumes:
       - croniq-data:/var/lib/croniq
+      - ./Croniqfile.demo:/etc/croniq/Croniqfile:ro
+    environment:
+      RUST_LOG: info
+      CRONIQ_DATA_DIR: /var/lib/croniq
+      CRONIQ_ADMIN_USER: admin
+      CRONIQ_ADMIN_PASSWORD: admin
+      CRONIQ_INIT_API_KEY: croniq_demo_local_stack_key_not_for_production_use
+    healthcheck:
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/localhost/4000"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+
+  runner:
+    image: ${CRONIQ_IMAGE:-croniq:local}
+    build: .
+    entrypoint: ["croniq-demo-runner"]
     restart: unless-stopped
+    deploy:
+      replicas: ${RUNNER_REPLICAS:-2}
+    environment:
+      CRONIQ_SERVER_URL: http://server:4000
+      CRONIQ_API_KEY: croniq_demo_local_stack_key_not_for_production_use
+      RUNNER_FAIL_RATE: ${RUNNER_FAIL_RATE:-0.05}
+      RUNNER_MAX_INFLIGHT: "4"
+      RUST_LOG: info
+    depends_on:
+      server:
+        condition: service_healthy
 
 volumes:
   croniq-data:
