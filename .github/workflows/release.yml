@@ -46,7 +46,7 @@ jobs:
         shell: bash
         run: |
           cargo build --release --target ${{ matrix.target }} \
-            --bin croniq-server --bin croniq --bin croniq-mcp
+            --bin croniq-server --bin croniq --bin croniq-mcp --bin croniq-demo-runner
 
       - name: Package (unix)
         if: runner.os != 'Windows'
@@ -55,6 +55,7 @@ jobs:
           cp target/${{ matrix.target }}/release/croniq-server dist/
           cp target/${{ matrix.target }}/release/croniq dist/
           cp target/${{ matrix.target }}/release/croniq-mcp dist/
+          cp target/${{ matrix.target }}/release/croniq-demo-runner dist/
           cp README.md LICENSE-MIT LICENSE-APACHE dist/
           cd dist && tar czf ../croniq-${{ matrix.target }}.tar.gz *
 
@@ -66,6 +67,7 @@ jobs:
           Copy-Item "target/${{ matrix.target }}/release/croniq-server.exe" dist/
           Copy-Item "target/${{ matrix.target }}/release/croniq.exe" dist/
           Copy-Item "target/${{ matrix.target }}/release/croniq-mcp.exe" dist/
+          Copy-Item "target/${{ matrix.target }}/release/croniq-demo-runner.exe" dist/
           Copy-Item README.md, LICENSE-MIT, LICENSE-APACHE dist/
           Compress-Archive -Path dist/* -DestinationPath "croniq-${{ matrix.target }}.zip"
 
@@ -118,3 +120,65 @@ jobs:
           files: |
             artifacts/**/*.tar.gz
             artifacts/**/*.zip
+
+  homebrew:
+    name: Update Homebrew tap
+    runs-on: ubuntu-latest
+    needs: release
+    # Requires a PAT with write access to nuetzliches/homebrew-croniq stored
+    # as the secret HOMEBREW_TAP_TOKEN.
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: croniq-*
+          path: artifacts
+      - name: Compute SHA256s and update formula
+        run: |
+          VERSION="${GITHUB_REF#refs/tags/v}"
+
+          sha_aarch64_darwin=$(sha256sum artifacts/croniq-aarch64-apple-darwin/croniq-aarch64-apple-darwin.tar.gz | awk '{print $1}')
+          sha_x86_64_darwin=$(sha256sum artifacts/croniq-x86_64-apple-darwin/croniq-x86_64-apple-darwin.tar.gz | awk '{print $1}')
+          sha_aarch64_linux=$(sha256sum artifacts/croniq-aarch64-unknown-linux-gnu/croniq-aarch64-unknown-linux-gnu.tar.gz | awk '{print $1}')
+          sha_x86_64_linux=$(sha256sum artifacts/croniq-x86_64-unknown-linux-gnu/croniq-x86_64-unknown-linux-gnu.tar.gz | awk '{print $1}')
+
+          sed -i \
+            -e "s/version \".*\"/version \"${VERSION}\"/" \
+            Formula/croniq.rb
+
+          # Replace each sha256 placeholder in order: aarch64-darwin, x86_64-darwin, aarch64-linux, x86_64-linux
+          python3 - <<'PY'
+          import re, sys
+
+          with open("Formula/croniq.rb") as f:
+              text = f.read()
+
+          shas = [
+              "$sha_aarch64_darwin",
+              "$sha_x86_64_darwin",
+              "$sha_aarch64_linux",
+              "$sha_x86_64_linux",
+          ]
+
+          def replacer(shas):
+              it = iter(shas)
+              def _replace(m):
+                  return f'sha256 "{next(it)}"'
+              return _replace
+
+          text = re.sub(r'sha256 "[0-9a-f]{64}"', replacer(shas), text)
+
+          with open("Formula/croniq.rb", "w") as f:
+              f.write(text)
+          PY
+      - name: Push updated formula to tap
+        if: ${{ secrets.HOMEBREW_TAP_TOKEN != '' }}
+        run: |
+          git clone https://x-access-token:${{ secrets.HOMEBREW_TAP_TOKEN }}@github.com/nuetzliches/homebrew-tap.git tap
+          cp Formula/croniq.rb tap/Formula/croniq.rb
+          cd tap
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Formula/croniq.rb
+          git diff --cached --quiet || git commit -m "croniq ${GITHUB_REF#refs/tags/}"
+          git push
