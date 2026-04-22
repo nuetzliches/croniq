@@ -125,7 +125,7 @@ jobs:
     name: Update Homebrew tap
     runs-on: ubuntu-latest
     needs: release
-    # Requires a PAT with write access to nuetzliches/homebrew-croniq stored
+    # Requires a PAT with write access to nuetzliches/homebrew-tap stored
     # as the secret HOMEBREW_TAP_TOKEN.
     steps:
       - uses: actions/checkout@v4
@@ -134,39 +134,50 @@ jobs:
           pattern: croniq-*
           path: artifacts
       - name: Compute SHA256s and update formula
+        env:
+          # Python reads these via os.environ so the single-quoted heredoc
+          # below stays literal (no shell interpolation surprises).
+          SHA_AARCH64_DARWIN_FILE: artifacts/croniq-aarch64-apple-darwin/croniq-aarch64-apple-darwin.tar.gz
+          SHA_X86_64_DARWIN_FILE: artifacts/croniq-x86_64-apple-darwin/croniq-x86_64-apple-darwin.tar.gz
+          SHA_AARCH64_LINUX_FILE: artifacts/croniq-aarch64-unknown-linux-gnu/croniq-aarch64-unknown-linux-gnu.tar.gz
+          SHA_X86_64_LINUX_FILE: artifacts/croniq-x86_64-unknown-linux-gnu/croniq-x86_64-unknown-linux-gnu.tar.gz
         run: |
           VERSION="${GITHUB_REF#refs/tags/v}"
 
-          sha_aarch64_darwin=$(sha256sum artifacts/croniq-aarch64-apple-darwin/croniq-aarch64-apple-darwin.tar.gz | awk '{print $1}')
-          sha_x86_64_darwin=$(sha256sum artifacts/croniq-x86_64-apple-darwin/croniq-x86_64-apple-darwin.tar.gz | awk '{print $1}')
-          sha_aarch64_linux=$(sha256sum artifacts/croniq-aarch64-unknown-linux-gnu/croniq-aarch64-unknown-linux-gnu.tar.gz | awk '{print $1}')
-          sha_x86_64_linux=$(sha256sum artifacts/croniq-x86_64-unknown-linux-gnu/croniq-x86_64-unknown-linux-gnu.tar.gz | awk '{print $1}')
+          SHA_AARCH64_DARWIN=$(sha256sum "$SHA_AARCH64_DARWIN_FILE" | awk '{print $1}')
+          SHA_X86_64_DARWIN=$(sha256sum "$SHA_X86_64_DARWIN_FILE"  | awk '{print $1}')
+          SHA_AARCH64_LINUX=$(sha256sum "$SHA_AARCH64_LINUX_FILE"  | awk '{print $1}')
+          SHA_X86_64_LINUX=$(sha256sum "$SHA_X86_64_LINUX_FILE"    | awk '{print $1}')
+          export SHA_AARCH64_DARWIN SHA_X86_64_DARWIN SHA_AARCH64_LINUX SHA_X86_64_LINUX
 
           sed -i \
             -e "s/version \".*\"/version \"${VERSION}\"/" \
             Formula/croniq.rb
 
-          # Replace each sha256 placeholder in order: aarch64-darwin, x86_64-darwin, aarch64-linux, x86_64-linux
+          # Replace each sha256 placeholder in order:
+          # aarch64-darwin, x86_64-darwin, aarch64-linux, x86_64-linux.
           python3 - <<'PY'
-          import re, sys
+          import os, re
 
           with open("Formula/croniq.rb") as f:
               text = f.read()
 
           shas = [
-              "$sha_aarch64_darwin",
-              "$sha_x86_64_darwin",
-              "$sha_aarch64_linux",
-              "$sha_x86_64_linux",
+              os.environ["SHA_AARCH64_DARWIN"],
+              os.environ["SHA_X86_64_DARWIN"],
+              os.environ["SHA_AARCH64_LINUX"],
+              os.environ["SHA_X86_64_LINUX"],
           ]
+          for s in shas:
+              if not re.fullmatch(r"[0-9a-f]{64}", s):
+                  raise SystemExit(f"refusing to write invalid sha256: {s!r}")
 
-          def replacer(shas):
-              it = iter(shas)
-              def _replace(m):
-                  return f'sha256 "{next(it)}"'
-              return _replace
-
-          text = re.sub(r'sha256 "[0-9a-f]{64}"', replacer(shas), text)
+          it = iter(shas)
+          text = re.sub(
+              r'sha256 "[0-9a-f]{64}"',
+              lambda _m: f'sha256 "{next(it)}"',
+              text,
+          )
 
           with open("Formula/croniq.rb", "w") as f:
               f.write(text)
