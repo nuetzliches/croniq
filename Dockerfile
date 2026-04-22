@@ -6,7 +6,7 @@ COPY Cargo.toml Cargo.lock ./
 COPY crates/ crates/
 
 # Build release binaries
-RUN cargo build --release --bin croniq-server --bin croniq --bin croniq-mcp
+RUN cargo build --release --bin croniq-server --bin croniq --bin croniq-mcp --bin croniq-demo-runner
 
 # ── Stage 2: Build React UI ──────────────────────────────────────────────────
 FROM node:24-bookworm-slim AS ui-builder
@@ -28,6 +28,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY --from=rust-builder /build/target/release/croniq-server /usr/local/bin/croniq-server
 COPY --from=rust-builder /build/target/release/croniq /usr/local/bin/croniq
 COPY --from=rust-builder /build/target/release/croniq-mcp /usr/local/bin/croniq-mcp
+COPY --from=rust-builder /build/target/release/croniq-demo-runner /usr/local/bin/croniq-demo-runner
 
 # Copy UI static files
 COPY --from=ui-builder /build/ui/dist /usr/share/croniq/ui
