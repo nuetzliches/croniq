@@ -346,7 +346,7 @@ pub async fn restore_queued_executions(
             }
             CatchUpPolicy::Latest => {
                 // Sort by fire_at desc, keep only the most recent one.
-                execs.sort_by(|a, b| b.fire_at.cmp(&a.fire_at));
+                execs.sort_by_key(|b| std::cmp::Reverse(b.fire_at));
                 let now = chrono::Utc::now();
                 for (i, exec) in execs.iter().enumerate() {
                     if i == 0 {
