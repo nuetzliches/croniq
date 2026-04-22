@@ -117,7 +117,9 @@ export function ExecutionsPage() {
                   <td className="px-3 py-2.5 font-mono text-xs text-muted-foreground">{e.id.slice(0, 8)}</td>
                   <td className="px-3 py-2.5 font-mono text-xs">{e.job_key}</td>
                   <td className="px-3 py-2.5"><Badge variant={stateVariant(e.state)}>{e.state}</Badge></td>
-                  <td className="px-3 py-2.5 text-muted-foreground text-xs">{e.runner_id?.slice(0, 12) || '—'}</td>
+                  <td className="px-3 py-2.5 text-muted-foreground font-mono text-xs">
+                    <div className="max-w-[14rem] truncate" title={e.runner_id || undefined}>{e.runner_id || '—'}</div>
+                  </td>
                   <td className="px-3 py-2.5 text-muted-foreground">{e.duration_ms ? `${e.duration_ms}ms` : '—'}</td>
                   <td className="px-3 py-2.5 text-muted-foreground">{new Date(e.fire_at).toLocaleString()}</td>
                 </tr>
