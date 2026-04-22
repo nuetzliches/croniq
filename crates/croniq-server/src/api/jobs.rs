@@ -19,6 +19,9 @@ pub struct CreateJobRequest {
     pub assigned_runner_id: Option<String>,
     #[serde(default)]
     pub metadata: std::collections::HashMap<String, String>,
+    pub timeout: Option<String>,
+    pub max_retries: Option<u32>,
+    pub dead_letter_enabled: Option<bool>,
 }
 
 /// `GET /v1/jobs`
@@ -57,6 +60,9 @@ pub async fn handle_create(
         metadata: req.metadata,
         created_at: now,
         updated_at: now,
+        timeout: req.timeout,
+        max_retries: req.max_retries,
+        dead_letter_enabled: req.dead_letter_enabled,
     };
     store.create_job_definition(&job).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok((StatusCode::CREATED, Json(job)))
@@ -117,6 +123,8 @@ pub struct RegisterJobRequest {
     #[serde(default)]
     pub capabilities: Vec<String>,
     pub description: Option<String>,
+    pub max_retries: Option<u32>,
+    pub dead_letter_enabled: Option<bool>,
 }
 
 #[derive(Serialize)]
@@ -160,6 +168,9 @@ pub async fn handle_register(
         metadata: std::collections::HashMap::new(),
         created_at: now,
         updated_at: now,
+        timeout: req.timeout.clone(),
+        max_retries: req.max_retries,
+        dead_letter_enabled: req.dead_letter_enabled,
     };
     store.create_job_definition(&job_def).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 

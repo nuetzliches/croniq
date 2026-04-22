@@ -14,6 +14,9 @@ export interface JobDefinition {
   metadata: Record<string, string>
   created_at: string
   updated_at: string
+  timeout: string | null
+  max_retries: number | null
+  dead_letter_enabled: boolean | null
 }
 
 export interface TriggerDefinition {

@@ -19,6 +19,7 @@ use std::sync::Arc;
 use chrono::{DateTime, Utc};
 use croniq_config::compile::JobConfig;
 use croniq_runner::{AppState, RunnerStatus, WorkItem};
+use crate::loader::job_config_from_job_def;
 use crate::store::DynStore;
 
 /// Result of a single watchdog sweep.
@@ -47,6 +48,24 @@ impl WatchdogLoop {
     ) -> Self {
         let jobs = jobs.into_iter().map(|j| (j.key.clone(), j)).collect();
         Self { jobs, store, runner }
+    }
+
+    /// Resolve `JobConfig` for a key: DSL map first, then store fallback.
+    fn resolve_job_config(&self, job_key: &str) -> Option<JobConfig> {
+        if let Some(c) = self.jobs.get(job_key) {
+            return Some(c.clone());
+        }
+        match self.store.get_job_definition(job_key) {
+            Ok(Some(def)) => {
+                tracing::debug!(job_key = %job_key, "watchdog: synthesising config from store for API job");
+                Some(job_config_from_job_def(&def))
+            }
+            Ok(None) => None,
+            Err(e) => {
+                tracing::error!(job_key = %job_key, error = %e, "watchdog: store error resolving job config");
+                None
+            }
+        }
     }
 
     /// Run one sweep at `now`.
@@ -104,12 +123,12 @@ impl WatchdogLoop {
                     }
                 };
 
-                let job = match self.jobs.get(&execution.job_key) {
-                    Some(j) => j,
+                let job = match self.resolve_job_config(&execution.job_key) {
+                    Some(c) => c,
                     None => {
                         tracing::warn!(
                             job_key = %execution.job_key,
-                            "watchdog: no job config for abandoned execution — cannot requeue"
+                            "watchdog: job not in DSL or store — cannot requeue abandoned execution"
                         );
                         continue;
                     }
@@ -123,7 +142,7 @@ impl WatchdogLoop {
                     require: job.runner.require.clone(),
                     prefer: job.runner.prefer.clone(),
                     metadata: serde_json::json!(execution.metadata),
-                    timeout: job.timeout.clone().unwrap_or_else(|| "5m".into()),
+                    timeout: job.timeout.unwrap_or_else(|| "5m".into()),
                 };
 
                 self.runner.queue.write().await.enqueue(item);

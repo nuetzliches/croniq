@@ -446,10 +446,62 @@ pub fn job_config_from_definition(
         not_before: def.not_before.map(|d| d.to_rfc3339()),
         not_after: def.not_after.map(|d| d.to_rfc3339()),
         runner: RunnerConfig::default(),
-        retry: RetryConfig::default(),
-        timeout: Some("5m".into()),
-        dead_letter: DeadLetterConfig::default(),
+        retry: job_def
+            .and_then(|j| j.max_retries)
+            .map(|n| RetryConfig { max_attempts: n, ..RetryConfig::default() })
+            .unwrap_or_default(),
+        timeout: job_def
+            .and_then(|j| j.timeout.clone())
+            .or_else(|| Some("5m".into())),
+        dead_letter: DeadLetterConfig {
+            enabled: job_def
+                .and_then(|j| j.dead_letter_enabled)
+                .unwrap_or(true),
+            ..DeadLetterConfig::default()
+        },
         metadata: job_def.map(|j| j.metadata.clone()).unwrap_or_default(),
+        execution_mode: ExecutionMode::default(),
+        catch_up: CatchUpPolicy::default(),
+        queue_ttl: None,
+        max_queue_depth: None,
+    }
+}
+
+/// Build a minimal `JobConfig` from a store-persisted `JobDefinition` alone —
+/// used as a fallback when an API-registered job has no Croniqfile entry.
+/// Policy fields (`timeout`, `max_retries`, `dead_letter_enabled`) are read
+/// from the `JobDefinition`; everything else uses safe defaults.
+pub fn job_config_from_job_def(
+    job_def: &croniq_store::models::JobDefinition,
+) -> croniq_config::compile::JobConfig {
+    use croniq_config::compile::*;
+    use croniq_config::schedule::CompiledSchedule;
+
+    let (ns, name) = job_def.job_key.split_once(':').unwrap_or(("default", &job_def.job_key));
+
+    JobConfig {
+        key: job_def.job_key.clone(),
+        namespace: ns.to_string(),
+        name: name.to_string(),
+        variant: None,
+        description: job_def.description.clone(),
+        schedule: CompiledSchedule::Disabled,
+        schedule_summary: "api".into(),
+        timezone: None,
+        calendar: None,
+        window: None,
+        not_before: None,
+        not_after: None,
+        runner: RunnerConfig::default(),
+        retry: job_def.max_retries
+            .map(|n| RetryConfig { max_attempts: n, ..RetryConfig::default() })
+            .unwrap_or_default(),
+        timeout: job_def.timeout.clone().or_else(|| Some("5m".into())),
+        dead_letter: DeadLetterConfig {
+            enabled: job_def.dead_letter_enabled.unwrap_or(true),
+            ..DeadLetterConfig::default()
+        },
+        metadata: job_def.metadata.clone(),
         execution_mode: ExecutionMode::default(),
         catch_up: CatchUpPolicy::default(),
         queue_ttl: None,

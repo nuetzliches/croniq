@@ -29,6 +29,7 @@ use croniq_runner::{AppState, CompletionStatus};
 use croniq_store::models::{DeadLetter, Execution, ExecutionState};
 use uuid::Uuid;
 
+use crate::loader::job_config_from_job_def;
 use crate::store::DynStore;
 
 /// Completion event forwarded from the HTTP handler.
@@ -74,6 +75,28 @@ impl CompletionProcessor {
         Self { jobs, store, runner }
     }
 
+    /// Resolve the `JobConfig` for a job key.
+    ///
+    /// Fast path: DSL jobs loaded at startup. Slow path: store lookup for jobs
+    /// registered via the API at runtime. Returns `None` only if the job truly
+    /// does not exist anywhere.
+    fn resolve_job_config(&self, job_key: &str) -> Option<JobConfig> {
+        if let Some(c) = self.jobs.get(job_key) {
+            return Some(c.clone());
+        }
+        match self.store.get_job_definition(job_key) {
+            Ok(Some(def)) => {
+                tracing::debug!(job_key = %job_key, "completion: synthesising config from store for API job");
+                Some(job_config_from_job_def(&def))
+            }
+            Ok(None) => None,
+            Err(e) => {
+                tracing::error!(job_key = %job_key, error = %e, "completion: store error resolving job config");
+                None
+            }
+        }
+    }
+
     /// Process a single completion event.
     pub async fn process(&self, event: CompletionEvent) -> ProcessedOutcome {
         let now = Utc::now();
@@ -100,11 +123,12 @@ impl CompletionProcessor {
             }
         };
 
-        // Find the job config to look up the execution policy
-        let job = match self.jobs.get(&execution.job_key) {
-            Some(j) => j,
+        // Find the job config to look up the execution policy.
+        // DSL jobs are found in the in-memory map; API jobs fall back to the store.
+        let job = match self.resolve_job_config(&execution.job_key) {
+            Some(c) => c,
             None => {
-                tracing::warn!(job_key = %execution.job_key, "no job config for completion");
+                tracing::warn!(job_key = %execution.job_key, "no job config for completion — job not in DSL or store");
                 return ProcessedOutcome::NotFound;
             }
         };
@@ -122,7 +146,7 @@ impl CompletionProcessor {
             return ProcessedOutcome::Completed;
         }
 
-        let policy = job_to_execution_policy(job);
+        let policy = job_to_execution_policy(&job);
 
         // Build an ExecutionResult for the policy evaluator
         let exec_result = ExecutionResult {
@@ -194,7 +218,7 @@ impl CompletionProcessor {
                     require: job.runner.require.clone(),
                     prefer: job.runner.prefer.clone(),
                     metadata: serde_json::json!(execution.metadata),
-                    timeout: job.timeout.clone().unwrap_or_else(|| "5m".into()),
+                    timeout: job.timeout.unwrap_or_else(|| "5m".into()),
                 };
                 self.runner.queue.write().await.enqueue(item);
                 self.runner.work_notify.notify_waiters();
@@ -458,6 +482,61 @@ mod tests {
             .await;
 
         assert!(matches!(outcome, ProcessedOutcome::Dropped { .. }));
+    }
+
+    #[tokio::test]
+    async fn api_job_without_dsl_entry_uses_store_fallback() {
+        let store = make_store();
+        let runner = make_runner();
+
+        // Seed a JobDefinition in the store only — no DSL entry
+        let job_key = "api:noop";
+        store
+            .create_job_definition(&croniq_store::models::JobDefinition {
+                job_key: job_key.into(),
+                description: None,
+                assigned_runner_id: None,
+                is_active: true,
+                metadata: HashMap::new(),
+                created_at: Utc::now(),
+                updated_at: Utc::now(),
+                timeout: Some("1m".into()),
+                max_retries: Some(1), // one attempt → dead-letter on first failure
+                dead_letter_enabled: Some(true),
+            })
+            .unwrap();
+
+        let exec_id = seed_execution(&store, job_key);
+
+        // Processor has an empty DSL jobs list — must fall back to store
+        let processor = CompletionProcessor::new(vec![], Arc::clone(&store), runner);
+
+        let outcome = processor
+            .process(event(exec_id, CompletionStatus::Failure, 1))
+            .await;
+
+        assert!(
+            matches!(outcome, ProcessedOutcome::DeadLettered { .. }),
+            "expected DeadLettered, got {outcome:?}"
+        );
+        let exec = store.get_execution(exec_id).unwrap().unwrap();
+        assert_eq!(exec.state, ExecutionState::Dead);
+    }
+
+    #[tokio::test]
+    async fn api_job_unknown_to_store_returns_not_found() {
+        let store = make_store();
+        let runner = make_runner();
+        let exec_id = seed_execution(&store, "ghost:job");
+
+        // No DSL entry and no JobDefinition in store → NotFound
+        let processor = CompletionProcessor::new(vec![], Arc::clone(&store), runner);
+
+        let outcome = processor
+            .process(event(exec_id, CompletionStatus::Failure, 1))
+            .await;
+
+        assert_eq!(outcome, ProcessedOutcome::NotFound);
     }
 
     #[tokio::test]

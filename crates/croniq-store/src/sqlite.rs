@@ -702,54 +702,72 @@ impl AuthStore for SqliteStore {
 
 // ─── JobDefinitionStore ───
 
+fn map_job_def_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<JobDefinition> {
+    let meta_str: String = row.get(4)?;
+    let max_retries: Option<i64> = row.get(8)?;
+    let dead_letter_enabled: Option<i64> = row.get(9)?;
+    Ok(JobDefinition {
+        job_key: row.get(0)?,
+        description: row.get(1)?,
+        assigned_runner_id: row.get(2)?,
+        is_active: row.get::<_, bool>(3)?,
+        metadata: serde_json::from_str(&meta_str).unwrap_or_default(),
+        created_at: sql_to_dt(&row.get::<_, String>(5)?),
+        updated_at: sql_to_dt(&row.get::<_, String>(6)?),
+        timeout: row.get(7)?,
+        max_retries: max_retries.map(|n| n as u32),
+        dead_letter_enabled: dead_letter_enabled.map(|n| n != 0),
+    })
+}
+
 impl JobDefinitionStore for SqliteStore {
     fn create_job_definition(&self, job: &JobDefinition) -> Result<(), StoreError> {
         let conn = self.conn.lock().unwrap();
         let metadata = serde_json::to_string(&job.metadata).unwrap_or_default();
         conn.execute(
-            "INSERT INTO job_definitions (job_key, description, assigned_runner_id, is_active, metadata, created_at, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
-             ON CONFLICT(job_key) DO UPDATE SET description=excluded.description, assigned_runner_id=excluded.assigned_runner_id, is_active=excluded.is_active, metadata=excluded.metadata, updated_at=excluded.updated_at",
-            params![job.job_key, job.description, job.assigned_runner_id, job.is_active, metadata, dt_to_sql(&job.created_at), dt_to_sql(&job.updated_at)],
+            "INSERT INTO job_definitions
+                (job_key, description, assigned_runner_id, is_active, metadata,
+                 created_at, updated_at, timeout, max_retries, dead_letter_enabled)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+             ON CONFLICT(job_key) DO UPDATE SET
+                description=excluded.description,
+                assigned_runner_id=excluded.assigned_runner_id,
+                is_active=excluded.is_active,
+                metadata=excluded.metadata,
+                updated_at=excluded.updated_at,
+                timeout=excluded.timeout,
+                max_retries=excluded.max_retries,
+                dead_letter_enabled=excluded.dead_letter_enabled",
+            params![
+                job.job_key, job.description, job.assigned_runner_id, job.is_active, metadata,
+                dt_to_sql(&job.created_at), dt_to_sql(&job.updated_at),
+                job.timeout, job.max_retries, job.dead_letter_enabled,
+            ],
         ).map_err(map_err)?;
         Ok(())
     }
 
     fn get_job_definition(&self, job_key: &str) -> Result<Option<JobDefinition>, StoreError> {
         let conn = self.conn.lock().unwrap();
-        conn.prepare("SELECT job_key, description, assigned_runner_id, is_active, metadata, created_at, updated_at FROM job_definitions WHERE job_key = ?1")
+        conn.prepare(
+            "SELECT job_key, description, assigned_runner_id, is_active, metadata,
+                    created_at, updated_at, timeout, max_retries, dead_letter_enabled
+             FROM job_definitions WHERE job_key = ?1"
+        )
             .map_err(map_err)?
-            .query_row(params![job_key], |row| {
-                let meta_str: String = row.get(4)?;
-                Ok(JobDefinition {
-                    job_key: row.get(0)?,
-                    description: row.get(1)?,
-                    assigned_runner_id: row.get(2)?,
-                    is_active: row.get::<_, bool>(3)?,
-                    metadata: serde_json::from_str(&meta_str).unwrap_or_default(),
-                    created_at: sql_to_dt(&row.get::<_, String>(5)?),
-                    updated_at: sql_to_dt(&row.get::<_, String>(6)?),
-                })
-            })
+            .query_row(params![job_key], map_job_def_row)
             .optional()
             .map_err(map_err)
     }
 
     fn list_job_definitions(&self) -> Result<Vec<JobDefinition>, StoreError> {
         let conn = self.conn.lock().unwrap();
-        let mut stmt = conn.prepare("SELECT job_key, description, assigned_runner_id, is_active, metadata, created_at, updated_at FROM job_definitions ORDER BY job_key").map_err(map_err)?;
-        let rows = stmt.query_map([], |row| {
-            let meta_str: String = row.get(4)?;
-            Ok(JobDefinition {
-                job_key: row.get(0)?,
-                description: row.get(1)?,
-                assigned_runner_id: row.get(2)?,
-                is_active: row.get::<_, bool>(3)?,
-                metadata: serde_json::from_str(&meta_str).unwrap_or_default(),
-                created_at: sql_to_dt(&row.get::<_, String>(5)?),
-                updated_at: sql_to_dt(&row.get::<_, String>(6)?),
-            })
-        }).map_err(map_err)?;
+        let mut stmt = conn.prepare(
+            "SELECT job_key, description, assigned_runner_id, is_active, metadata,
+                    created_at, updated_at, timeout, max_retries, dead_letter_enabled
+             FROM job_definitions ORDER BY job_key"
+        ).map_err(map_err)?;
+        let rows = stmt.query_map([], map_job_def_row).map_err(map_err)?;
         rows.collect::<Result<Vec<_>, _>>().map_err(map_err)
     }
 

@@ -218,6 +218,13 @@ pub struct JobDefinition {
     pub metadata: HashMap<String, String>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+    /// Execution timeout string (e.g. "5m", "30s"). None → system default "5m".
+    pub timeout: Option<String>,
+    /// Maximum retry attempts before dead-lettering. None → system default (3).
+    pub max_retries: Option<u32>,
+    /// Whether failed-and-exhausted executions are sent to the dead-letter queue.
+    /// None → system default (true).
+    pub dead_letter_enabled: Option<bool>,
 }
 
 // ─── Trigger Definition ───
