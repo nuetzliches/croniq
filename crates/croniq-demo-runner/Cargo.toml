@@ -1,0 +1,17 @@
+[package]
+name = "croniq-demo-runner"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Croniq demo runner — simulates job execution for quickstart and testing"
+
+[[bin]]
+name = "croniq-demo-runner"
+path = "src/main.rs"
+
+[dependencies]
+croniq-runner-sdk = { path = "../croniq-runner-sdk" }
+tokio = { version = "1", features = ["full"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+rand = "0.8"

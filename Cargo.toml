@@ -12,6 +12,7 @@ members = [
     "crates/croniq-auth",
     "crates/croniq-runner-sdk",
     "crates/croniq-server",
+    "crates/croniq-demo-runner",
 ]
 
 [workspace.package]
