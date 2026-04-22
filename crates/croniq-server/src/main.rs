@@ -112,9 +112,18 @@ async fn main() -> Result<()> {
     // Scheduler command channel for live job registration via API
     let (scheduler_cmd_tx, mut scheduler_cmd_rx) = mpsc::unbounded_channel::<croniq_server::scheduler::SchedulerCommand>();
 
+    // Shared snapshot of DSL jobs — kept in sync by the scheduler task on
+    // Croniqfile reload so the REST API can union DSL entries into
+    // `/v1/jobs` and `/v1/schedules`.
+    let dsl_jobs_shared = Arc::new(tokio::sync::RwLock::new(loaded.runtime.jobs.clone()));
+
     let mut server_state = ServerState::with_auth(Arc::clone(&runner_state), completion_tx, jwt_config, Some(Arc::clone(&store)));
-    // Inject scheduler_tx into the shared state
-    Arc::get_mut(&mut server_state).unwrap().scheduler_tx = Some(scheduler_cmd_tx);
+    // Inject scheduler_tx and dsl_jobs into the shared state
+    {
+        let s = Arc::get_mut(&mut server_state).unwrap();
+        s.scheduler_tx = Some(scheduler_cmd_tx);
+        s.dsl_jobs = Some(Arc::clone(&dsl_jobs_shared));
+    }
 
     // ── File watcher (optional) ─────────────────────────────────────────────
     let (reload_tx, mut reload_rx) = mpsc::unbounded_channel::<std::path::PathBuf>();
@@ -183,7 +192,9 @@ async fn main() -> Result<()> {
                     tracing::info!(path = %path.display(), "Croniqfile changed — reloading");
                     match load_file(&path) {
                         Ok(new_config) => {
+                            let new_jobs = new_config.runtime.jobs.clone();
                             scheduler_loop.reload(new_config.triggers, new_config.runtime.jobs);
+                            *dsl_jobs_shared.write().await = new_jobs;
                         }
                         Err(e) => {
                             tracing::error!(error = %e, "failed to reload Croniqfile — keeping previous config");

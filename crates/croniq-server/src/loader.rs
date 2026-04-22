@@ -509,6 +509,60 @@ pub fn job_config_from_job_def(
     }
 }
 
+/// Synthesize a `JobDefinition` from a DSL-loaded `JobConfig` so DSL jobs
+/// appear alongside stored API/runner-registered jobs in list responses.
+pub fn synth_job_def_from_dsl(
+    cfg: &JobConfig,
+    now: DateTime<Utc>,
+) -> croniq_store::models::JobDefinition {
+    croniq_store::models::JobDefinition {
+        job_key: cfg.key.clone(),
+        description: cfg.description.clone(),
+        assigned_runner_id: None,
+        is_active: !matches!(cfg.schedule, croniq_config::schedule::CompiledSchedule::Disabled),
+        metadata: cfg.metadata.clone(),
+        created_at: now,
+        updated_at: now,
+        timeout: cfg.timeout.clone(),
+        max_retries: Some(cfg.retry.max_attempts),
+        dead_letter_enabled: Some(cfg.dead_letter.enabled),
+    }
+}
+
+/// Stable synthetic trigger ID for DSL-defined schedules.
+/// These are not persisted; the ID is derived from the job key so references
+/// round-trip through `GET /v1/schedules` and `GET /v1/schedules/{id}`.
+pub fn dsl_trigger_id(job_key: &str) -> String {
+    format!("dsl:{job_key}")
+}
+
+/// Synthesize a `TriggerDefinition` from a DSL-loaded `JobConfig`.
+pub fn synth_trigger_def_from_dsl(
+    cfg: &JobConfig,
+    now: DateTime<Utc>,
+) -> croniq_store::models::TriggerDefinition {
+    croniq_store::models::TriggerDefinition {
+        trigger_id: dsl_trigger_id(&cfg.key),
+        job_key: cfg.key.clone(),
+        cron_expression: Some(cfg.schedule_summary.clone()),
+        timezone: cfg.timezone.clone(),
+        calendar: cfg.calendar.clone(),
+        window: cfg.window.clone(),
+        not_before: cfg
+            .not_before
+            .as_deref()
+            .and_then(|s| DateTime::parse_from_rfc3339(s).ok().map(|d| d.with_timezone(&Utc))),
+        not_after: cfg
+            .not_after
+            .as_deref()
+            .and_then(|s| DateTime::parse_from_rfc3339(s).ok().map(|d| d.with_timezone(&Utc))),
+        enabled: !matches!(cfg.schedule, croniq_config::schedule::CompiledSchedule::Disabled),
+        managed_by: "dsl".into(),
+        created_at: now,
+        updated_at: now,
+    }
+}
+
 fn parse_interval_seconds(s: &str) -> Option<u64> {
     let s = s.trim();
     if let Ok(n) = s.parse::<u64>() {
