@@ -3,6 +3,7 @@
 use std::path::Path;
 
 use miette::{Result, miette};
+use uuid::Uuid;
 
 const SAMPLE_CRONIQFILE: &str = r#"# Croniqfile — Quickstart
 
@@ -34,7 +35,7 @@ job ops:heartbeat {
 }
 "#;
 
-pub fn quickstart(data_dir: &Path, croniqfile: &Path, password: &str) -> Result<()> {
+pub fn quickstart(data_dir: &Path, croniqfile: &Path, password: Option<&str>) -> Result<()> {
     // 1. Create Croniqfile if it doesn't exist
     if !croniqfile.exists() {
         std::fs::write(croniqfile, SAMPLE_CRONIQFILE)
@@ -44,8 +45,12 @@ pub fn quickstart(data_dir: &Path, croniqfile: &Path, password: &str) -> Result<
         println!("Using existing {}", croniqfile.display());
     }
 
+    let password = password
+        .map(|p| p.to_string())
+        .unwrap_or_else(|| Uuid::new_v4().simple().to_string());
+
     // 2. Init database
-    super::init::init(data_dir, "admin", Some(password))?;
+    super::init::init(data_dir, "admin", Some(&password))?;
 
     // 3. Print next steps
     println!();

@@ -148,9 +148,9 @@ enum Commands {
         #[arg(long, default_value = "Croniqfile")]
         config: PathBuf,
 
-        /// Admin password
-        #[arg(long, default_value = "changeme")]
-        password: String,
+        /// Admin password (random if not given)
+        #[arg(long)]
+        password: Option<String>,
     },
 
     /// Migrate a crontab file to a Croniqfile
@@ -206,7 +206,7 @@ fn main() -> Result<()> {
             commands::init::init(&data_dir, &username, password.as_deref())
         }
         Commands::Quickstart { data_dir, config, password } => {
-            commands::quickstart::quickstart(&data_dir, &config, &password)
+            commands::quickstart::quickstart(&data_dir, &config, password.as_deref())
         }
         Commands::Migrate { crontab, output } => {
             commands::migrate::migrate(&crontab, output.as_deref())

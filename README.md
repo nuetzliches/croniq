@@ -59,21 +59,23 @@ Full API documentation: [`openapi.yaml`](openapi.yaml)
 ## Quick Start
 
 ```sh
-# Zero-to-running in one command
+# Zero-to-running in one command (generates a random admin password)
 croniq quickstart
 
-# Or step by step:
-croniq init --data-dir .data --username admin --password changeme
+# Or step by step (prompts for password):
+croniq init --data-dir .data --username admin
 croniq-server --config Croniqfile --data-dir .data --ui-dir ui/dist
 ```
 
-Open **http://localhost:4000** — login with `admin` / `changeme`.
+Open **http://localhost:4000** and log in as `admin` with the password shown during init.
 
 ### Docker
 
 ```sh
-docker run -p 4000:4000 -e CRONIQ_ADMIN_PASSWORD=changeme ghcr.io/nuetzliches/croniq:latest
+docker run -p 4000:4000 ghcr.io/nuetzliches/croniq:latest
 ```
+
+On first start a random admin password is generated and printed to the container logs. Set `CRONIQ_ADMIN_PASSWORD` to use a fixed one.
 
 ### Migrate from crontab
 
@@ -253,7 +255,7 @@ croniq dead-letters --data-dir .           # List dead letters
 | `RUST_LOG` | Log level filter | `info` |
 | `CRONIQ_JWT_SECRET` | JWT signing secret | random per-start |
 | `CRONIQ_ADMIN_USER` | Docker auto-init username | `admin` |
-| `CRONIQ_ADMIN_PASSWORD` | Docker auto-init password | `changeme` |
+| `CRONIQ_ADMIN_PASSWORD` | Docker auto-init password (random if unset) | _generated_ |
 | `CRONIQ_ON_FAILURE_CMD` | Shell command on execution failure | — |
 
 ---

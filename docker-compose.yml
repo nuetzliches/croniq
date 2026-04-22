@@ -7,7 +7,7 @@ services:
     environment:
       - RUST_LOG=info
       - CRONIQ_ADMIN_USER=admin
-      - CRONIQ_ADMIN_PASSWORD=changeme
+      # CRONIQ_ADMIN_PASSWORD unset → random password generated & logged on first start
     volumes:
       - croniq-data:/var/lib/croniq
     restart: unless-stopped
