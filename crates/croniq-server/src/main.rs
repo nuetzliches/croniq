@@ -174,6 +174,11 @@ async fn main() -> Result<()> {
         }
     }
 
+    // Share a snapshot of the triggers map with the API layer so the
+    // dashboard forecast endpoint can compute upcoming fires.
+    let trigger_snapshot = Arc::new(tokio::sync::RwLock::new(triggers.clone()));
+    Arc::get_mut(&mut server_state).unwrap().triggers = Some(Arc::clone(&trigger_snapshot));
+
     let mut scheduler_loop =
         SchedulerLoop::new(triggers, jobs.clone(), scheduler_store, Arc::clone(&runner_state));
 
