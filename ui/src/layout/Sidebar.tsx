@@ -4,7 +4,7 @@ import { persist } from 'zustand/middleware'
 import * as Tooltip from '@radix-ui/react-tooltip'
 import {
   LayoutDashboard, Briefcase, CalendarClock, CalendarDays, Cpu, List, MailX,
-  Settings, ChevronLeft, ChevronRight,
+  Settings, PanelLeftClose, PanelLeftOpen,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
@@ -53,7 +53,7 @@ export function Sidebar() {
         </div>
 
         {/* Nav */}
-        <nav className="flex-1 p-2 space-y-0.5" aria-label="Main navigation">
+        <nav className="flex-1 py-2 space-y-0.5" aria-label="Main navigation">
           {links.map((link) => {
             const Icon = link.icon
             const navItem = (
@@ -63,8 +63,8 @@ export function Sidebar() {
                 end={link.to === '/'}
                 className={({ isActive }) =>
                   cn(
-                    'flex items-center gap-2.5 rounded-md text-sm transition-colors',
-                    collapsed ? 'justify-center px-0 py-2 w-10 h-10 mx-auto' : 'px-3 py-2',
+                    'flex items-center gap-2.5 rounded-md text-sm transition-colors mx-2',
+                    collapsed ? 'justify-center p-2.5' : 'px-3 py-2',
                     isActive
                       ? 'bg-primary/10 text-primary font-medium'
                       : 'text-muted-foreground hover:bg-accent hover:text-accent-foreground'
@@ -96,24 +96,32 @@ export function Sidebar() {
           })}
         </nav>
 
-        {/* Collapse toggle */}
-        <div className="p-2 border-t border-border">
-          <button
-            onClick={toggle}
-            aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-            aria-expanded={!collapsed}
-            className={cn(
-              'flex items-center gap-2 rounded-md text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors text-xs',
-              collapsed ? 'justify-center w-10 h-10 mx-auto' : 'w-full px-3 py-2'
-            )}
-          >
-            {collapsed ? <ChevronRight className="h-4 w-4" /> : (
-              <>
-                <ChevronLeft className="h-4 w-4" />
-                <span>Collapse</span>
-              </>
-            )}
-          </button>
+        {/* Collapse toggle — icon only, right-aligned, no border */}
+        <div className="flex justify-end px-2 pb-2">
+          <Tooltip.Root>
+            <Tooltip.Trigger asChild>
+              <button
+                onClick={toggle}
+                aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+                aria-expanded={!collapsed}
+                className="p-2 rounded-md text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors"
+              >
+                {collapsed
+                  ? <PanelLeftOpen className="h-4 w-4" />
+                  : <PanelLeftClose className="h-4 w-4" />
+                }
+              </button>
+            </Tooltip.Trigger>
+            <Tooltip.Portal>
+              <Tooltip.Content
+                side="right"
+                className="z-50 rounded-md bg-foreground px-2.5 py-1 text-xs text-background shadow-md"
+              >
+                {collapsed ? 'Expand' : 'Collapse'}
+                <Tooltip.Arrow className="fill-foreground" />
+              </Tooltip.Content>
+            </Tooltip.Portal>
+          </Tooltip.Root>
         </div>
       </aside>
     </Tooltip.Provider>

@@ -33,10 +33,10 @@ function ExecutionDetail({ execution }: { execution: Execution }) {
           ['Fire at', new Date(execution.fire_at).toLocaleString()],
           ['Completed', execution.completed_at ? new Date(execution.completed_at).toLocaleString() : '—'],
         ].map(([label, value]) => (
-          <>
-            <span key={`l-${label}`} className="text-muted-foreground">{label}</span>
-            <span key={`v-${label}`} className="font-medium text-foreground">{value}</span>
-          </>
+          <div key={String(label)} className="contents">
+            <span className="text-muted-foreground">{label}</span>
+            <span className="font-medium text-foreground">{value}</span>
+          </div>
         ))}
       </div>
 

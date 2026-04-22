@@ -89,6 +89,21 @@ pub async fn handle_activate(
     Ok(Json(job))
 }
 
+/// `POST /v1/jobs/{job_key}/deactivate`
+pub async fn handle_deactivate(
+    State(state): State<Arc<ServerState>>,
+    axum::extract::Path(job_key): axum::extract::Path<String>,
+) -> Result<Json<JobDefinition>, StatusCode> {
+    let store = state.store.as_ref().ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
+    let mut job = store.get_job_definition(&job_key)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::NOT_FOUND)?;
+    job.is_active = false;
+    job.updated_at = Utc::now();
+    store.create_job_definition(&job).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(Json(job))
+}
+
 // ─── Job Registration (Runner/API self-service) ──────────────────────────────
 
 #[derive(Deserialize)]

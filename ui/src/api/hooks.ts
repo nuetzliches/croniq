@@ -31,6 +31,13 @@ export function useActivateJob() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['jobs'] }),
   })
 }
+export function useDeactivateJob() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (jobKey: string) => apiPost<T.JobDefinition>(`/v1/jobs/${jobKey}/deactivate`, {}),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['jobs'] }),
+  })
+}
 export function useRegisterJob() {
   const qc = useQueryClient()
   return useMutation({

@@ -126,6 +126,7 @@ pub fn server_router(state: Arc<ServerState>) -> Router {
         .route("/v1/jobs", get(jobs::handle_list).post(jobs::handle_create))
         .route("/v1/jobs/{job_key}", get(jobs::handle_get).delete(jobs::handle_delete))
         .route("/v1/jobs/{job_key}/activate", post(jobs::handle_activate))
+        .route("/v1/jobs/{job_key}/deactivate", post(jobs::handle_deactivate))
         .route("/v1/jobs/register", post(jobs::handle_register))
         // Schedules CRUD
         .route("/v1/schedules", get(schedules::handle_list).post(schedules::handle_create))

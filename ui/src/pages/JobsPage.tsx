@@ -4,8 +4,11 @@ import { useForm } from 'react-hook-form'
 import * as Dialog from '@radix-ui/react-dialog'
 import * as Switch from '@radix-ui/react-switch'
 import * as Tooltip from '@radix-ui/react-tooltip'
-import { Plus, Play, Trash2, X } from 'lucide-react'
-import { useJobs, useRegisterJob, useDeleteJob, useActivateJob, useTriggerJob, useExecutions } from '@/api/hooks'
+import { Plus, Play, Trash2, X, AlertCircle } from 'lucide-react'
+import {
+  useJobs, useRegisterJob, useDeleteJob, useActivateJob, useDeactivateJob,
+  useTriggerJob, useExecutions,
+} from '@/api/hooks'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Card, CardContent } from '@/components/ui/card'
@@ -26,39 +29,41 @@ function HealthPill({ executions }: { executions: Execution[] }) {
   if (last20.length === 0) return <span className="text-xs text-muted-foreground">no runs</span>
   const ok = last20.filter(e => e.state === 'completed').length
   return (
-    <Tooltip.Provider delayDuration={0}>
-      <Tooltip.Root>
-        <Tooltip.Trigger asChild>
-          <div className="flex gap-0.5 items-center cursor-default" aria-label={`${ok}/${last20.length} successful`}>
-            {last20.map((e, i) => (
-              <span key={i} className={`inline-block w-1.5 h-3.5 rounded-sm ${
-                e.state === 'completed' ? 'bg-status-ok-fg' :
-                e.state === 'failed' || e.state === 'dead' ? 'bg-status-err-fg' :
-                'bg-status-neutral-fg opacity-40'
-              }`} />
-            ))}
-          </div>
-        </Tooltip.Trigger>
-        <Tooltip.Portal>
-          <Tooltip.Content className="z-50 rounded-md bg-foreground px-2.5 py-1 text-xs text-background shadow-md">
-            {ok}/{last20.length} successful
-            <Tooltip.Arrow className="fill-foreground" />
-          </Tooltip.Content>
-        </Tooltip.Portal>
-      </Tooltip.Root>
-    </Tooltip.Provider>
+    <Tooltip.Root>
+      <Tooltip.Trigger asChild>
+        <div className="flex gap-0.5 items-center cursor-default" aria-label={`${ok}/${last20.length} successful`}>
+          {last20.map((e, i) => (
+            <span key={i} className={`inline-block w-1.5 h-3.5 rounded-sm ${
+              e.state === 'completed' ? 'bg-status-ok-fg' :
+              e.state === 'failed' || e.state === 'dead' ? 'bg-status-err-fg' :
+              'bg-status-neutral-fg opacity-40'
+            }`} />
+          ))}
+        </div>
+      </Tooltip.Trigger>
+      <Tooltip.Portal>
+        <Tooltip.Content className="z-50 rounded-md bg-foreground px-2.5 py-1 text-xs text-background shadow-md">
+          {ok}/{last20.length} successful
+          <Tooltip.Arrow className="fill-foreground" />
+        </Tooltip.Content>
+      </Tooltip.Portal>
+    </Tooltip.Root>
   )
 }
+
+const inputCls = 'w-full px-3 py-2 border border-border rounded-md text-sm bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-primary'
 
 export function JobsPage() {
   const jobs = useJobs()
   const registerJob = useRegisterJob()
   const deleteJob = useDeleteJob()
   const activateJob = useActivateJob()
+  const deactivateJob = useDeactivateJob()
   const triggerJob = useTriggerJob()
   const allExecs = useExecutions({ limit: 200 })
   const [open, setOpen] = useState(false)
   const [triggeredId, setTriggeredId] = useState<string | null>(null)
+  const [triggerError, setTriggerError] = useState<string | null>(null)
 
   const { register, handleSubmit, reset, formState: { errors } } = useForm<RegisterForm>({
     defaultValues: { timeout: '5m' }
@@ -83,11 +88,23 @@ export function JobsPage() {
 
   async function handleTrigger(jobKey: string) {
     setTriggeredId(jobKey)
-    try { await triggerJob.mutateAsync(jobKey) }
-    finally { setTriggeredId(null) }
+    setTriggerError(null)
+    try {
+      await triggerJob.mutateAsync(jobKey)
+    } catch (err) {
+      setTriggerError(err instanceof Error ? err.message : 'Trigger failed')
+    } finally {
+      setTriggeredId(null)
+    }
   }
 
-  const inputCls = 'w-full px-3 py-2 border border-border rounded-md text-sm bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-primary'
+  function handleToggle(jobKey: string, isActive: boolean) {
+    if (isActive) {
+      deactivateJob.mutate(jobKey)
+    } else {
+      activateJob.mutate(jobKey)
+    }
+  }
 
   return (
     <Tooltip.Provider delayDuration={200}>
@@ -121,6 +138,11 @@ export function JobsPage() {
                     <input {...register('timezone')} placeholder="Timezone (e.g. Europe/Vienna)" className={inputCls} />
                   </div>
                   <input {...register('description')} placeholder="Description (optional)" className={inputCls} />
+                  {registerJob.error && (
+                    <p className="text-xs text-destructive flex items-center gap-1">
+                      <AlertCircle className="h-3.5 w-3.5" />{String(registerJob.error)}
+                    </p>
+                  )}
                   <div className="flex justify-end gap-2 pt-2">
                     <Dialog.Close asChild><Button variant="secondary" size="sm" type="button">Cancel</Button></Dialog.Close>
                     <Button type="submit" size="sm" disabled={registerJob.isPending}>
@@ -132,6 +154,13 @@ export function JobsPage() {
             </Dialog.Portal>
           </Dialog.Root>
         </div>
+
+        {triggerError && (
+          <div className="flex items-center gap-2 text-xs text-destructive bg-destructive/10 border border-destructive/20 rounded-md px-3 py-2">
+            <AlertCircle className="h-3.5 w-3.5 shrink-0" />
+            {triggerError}
+          </div>
+        )}
 
         {jobs.isLoading && <div className="flex justify-center py-12"><Spinner className="h-6 w-6" /></div>}
 
@@ -149,7 +178,6 @@ export function JobsPage() {
             <Card key={j.job_key}>
               <CardContent className="py-3">
                 <div className="flex items-center gap-4">
-                  {/* Job key + description */}
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2">
                       <Link to={`/jobs/${j.job_key}`} className="font-mono text-sm text-primary hover:underline truncate">
@@ -162,18 +190,18 @@ export function JobsPage() {
                     {j.description && <p className="text-xs text-muted-foreground mt-0.5 truncate">{j.description}</p>}
                   </div>
 
-                  {/* Health pill */}
                   <div className="shrink-0">
                     <HealthPill executions={execsByJob[j.job_key] ?? []} />
                   </div>
 
-                  {/* Activate toggle */}
+                  {/* Activate/Deactivate toggle */}
                   <Tooltip.Root>
                     <Tooltip.Trigger asChild>
                       <Switch.Root
                         checked={j.is_active}
-                        onCheckedChange={() => activateJob.mutate(j.job_key)}
-                        className="relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary data-[state=checked]:bg-primary data-[state=unchecked]:bg-border"
+                        onCheckedChange={() => handleToggle(j.job_key, j.is_active)}
+                        disabled={activateJob.isPending || deactivateJob.isPending}
+                        className="relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary data-[state=checked]:bg-primary data-[state=unchecked]:bg-border disabled:opacity-50 disabled:cursor-not-allowed"
                         aria-label={`${j.is_active ? 'Deactivate' : 'Activate'} ${j.job_key}`}
                       >
                         <Switch.Thumb className="pointer-events-none block h-4 w-4 rounded-full bg-white shadow-lg ring-0 transition-transform data-[state=checked]:translate-x-4 data-[state=unchecked]:translate-x-0" />
