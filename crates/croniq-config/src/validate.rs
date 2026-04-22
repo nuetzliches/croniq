@@ -127,16 +127,8 @@ fn validate_schedule_kind(sched: &ScheduleNode, diags: &mut Vec<Diagnostic>) {
                 });
             }
         }
-        ScheduleKind::Weekdays { days, .. } => {
-            if days.is_empty() {
-                // Shouldn't happen from parser, but defensive
-            }
-        }
-        ScheduleKind::Monthly { ordinals, .. } => {
-            if ordinals.is_empty() {
-                // Shouldn't happen
-            }
-        }
+        ScheduleKind::Weekdays { .. } => {}
+        ScheduleKind::Monthly { .. } => {}
         _ => {}
     }
 }
