@@ -3,7 +3,7 @@ import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import * as Tooltip from '@radix-ui/react-tooltip'
 import {
-  LayoutDashboard, Briefcase, CalendarClock, Cpu, List, MailX,
+  LayoutDashboard, Briefcase, CalendarClock, CalendarDays, Cpu, List, MailX,
   Settings, ChevronLeft, ChevronRight,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
@@ -30,7 +30,7 @@ const links = [
   { to: '/runners', label: 'Runners', icon: Cpu },
   { to: '/executions', label: 'Executions', icon: List },
   { to: '/dead-letters', label: 'Dead Letters', icon: MailX },
-  { to: '/calendars', label: 'Calendars', icon: CalendarClock },
+  { to: '/calendars', label: 'Calendars', icon: CalendarDays },
   { to: '/settings', label: 'Settings', icon: Settings },
 ]
 

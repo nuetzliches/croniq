@@ -1,7 +1,7 @@
 import { Link } from 'react-router'
 import { useRef, useEffect } from 'react'
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell } from 'recharts'
-import { Activity, Cpu, Layers, TriangleAlert, CheckCircle } from 'lucide-react'
+import { Activity, Cpu, TriangleAlert, CheckCircle } from 'lucide-react'
 import { useHealth, useExecutions, useDeadLetters, useForecast } from '@/api/hooks'
 import { StatCard } from '@/components/ui/stat-card'
 import { Badge, stateVariant } from '@/components/ui/badge'
@@ -82,7 +82,7 @@ export function DashboardPage() {
               )}
             </span>
           }
-          sub={h?.runners_stale ? `${h.runners_stale} stale` : 'all healthy'}
+          sub={[h?.runners_stale && `${h.runners_stale} stale`, h?.runners_dead && `${h.runners_dead} dead`].filter(Boolean).join(', ') || 'all healthy'}
           icon={<Cpu className="h-4 w-4" />}
         />
 
@@ -168,12 +168,6 @@ export function DashboardPage() {
         </Card>
       </div>
 
-      {/* Jobs stat mini-row */}
-      <div className="grid grid-cols-3 gap-4">
-        <StatCard label="Runners Stale" value={h?.runners_stale ?? '—'} icon={<Layers className="h-4 w-4" />} />
-        <StatCard label="Runners Dead" value={h?.runners_dead ?? '—'} icon={<Cpu className="h-4 w-4" />} />
-        <StatCard label="Server" value={<span className={h?.status === 'ok' ? 'text-status-ok-fg' : 'text-status-err-fg'}>{h?.status ?? '—'}</span>} icon={<CheckCircle className="h-4 w-4" />} />
-      </div>
     </div>
   )
 }
