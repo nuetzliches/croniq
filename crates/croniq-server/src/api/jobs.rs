@@ -1,5 +1,11 @@
 //! Jobs CRUD endpoints.
+//!
+//! DSL-defined jobs (from the Croniqfile) live in `state.dsl_jobs`, not in the
+//! persistent store. Read endpoints union the two sources; mutation endpoints
+//! refuse to touch DSL-managed entries (the Croniqfile owns them and would
+//! just recreate them on reload).
 
+use std::collections::HashSet;
 use std::sync::Arc;
 
 use axum::{Json, extract::State, http::StatusCode};
@@ -9,7 +15,9 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use super::ServerState;
-use crate::loader::{trigger_from_definition, job_config_from_definition};
+use crate::loader::{
+    job_config_from_definition, synth_job_def_from_dsl, trigger_from_definition,
+};
 use crate::scheduler::SchedulerCommand;
 
 #[derive(Deserialize)]
@@ -24,12 +32,31 @@ pub struct CreateJobRequest {
     pub dead_letter_enabled: Option<bool>,
 }
 
+/// Check whether `job_key` is DSL-managed. Returns `true` if the Croniqfile
+/// owns it; mutations must be refused.
+async fn is_dsl_managed(state: &ServerState, job_key: &str) -> bool {
+    let Some(dsl) = state.dsl_jobs.as_ref() else { return false };
+    dsl.read().await.iter().any(|j| j.key == job_key)
+}
+
 /// `GET /v1/jobs`
 pub async fn handle_list(
     State(state): State<Arc<ServerState>>,
 ) -> Result<Json<Vec<JobDefinition>>, StatusCode> {
     let store = state.store.as_ref().ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
-    let jobs = store.list_job_definitions().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let mut jobs = store.list_job_definitions().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    if let Some(dsl) = state.dsl_jobs.as_ref() {
+        let guard = dsl.read().await;
+        let seen: HashSet<String> = jobs.iter().map(|j| j.job_key.clone()).collect();
+        let now = Utc::now();
+        for cfg in guard.iter() {
+            if !seen.contains(&cfg.key) {
+                jobs.push(synth_job_def_from_dsl(cfg, now));
+            }
+        }
+    }
+
     Ok(Json(jobs))
 }
 
@@ -39,10 +66,20 @@ pub async fn handle_get(
     axum::extract::Path(job_key): axum::extract::Path<String>,
 ) -> Result<Json<JobDefinition>, StatusCode> {
     let store = state.store.as_ref().ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
-    store.get_job_definition(&job_key)
+    if let Some(job) = store.get_job_definition(&job_key)
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-        .map(Json)
-        .ok_or(StatusCode::NOT_FOUND)
+    {
+        return Ok(Json(job));
+    }
+
+    if let Some(dsl) = state.dsl_jobs.as_ref() {
+        let guard = dsl.read().await;
+        if let Some(cfg) = guard.iter().find(|j| j.key == job_key) {
+            return Ok(Json(synth_job_def_from_dsl(cfg, Utc::now())));
+        }
+    }
+
+    Err(StatusCode::NOT_FOUND)
 }
 
 /// `POST /v1/jobs`
@@ -51,6 +88,11 @@ pub async fn handle_create(
     Json(req): Json<CreateJobRequest>,
 ) -> Result<(StatusCode, Json<JobDefinition>), StatusCode> {
     let store = state.store.as_ref().ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
+
+    if is_dsl_managed(&state, &req.job_key).await {
+        return Err(StatusCode::CONFLICT);
+    }
+
     let now = Utc::now();
     let job = JobDefinition {
         job_key: req.job_key,
@@ -74,6 +116,11 @@ pub async fn handle_delete(
     axum::extract::Path(job_key): axum::extract::Path<String>,
 ) -> StatusCode {
     let Some(store) = state.store.as_ref() else { return StatusCode::SERVICE_UNAVAILABLE };
+
+    if is_dsl_managed(&state, &job_key).await {
+        return StatusCode::CONFLICT;
+    }
+
     match store.delete_job_definition(&job_key) {
         Ok(_) => StatusCode::NO_CONTENT,
         Err(_) => StatusCode::INTERNAL_SERVER_ERROR,
@@ -86,6 +133,11 @@ pub async fn handle_activate(
     axum::extract::Path(job_key): axum::extract::Path<String>,
 ) -> Result<Json<JobDefinition>, StatusCode> {
     let store = state.store.as_ref().ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
+
+    if is_dsl_managed(&state, &job_key).await {
+        return Err(StatusCode::CONFLICT);
+    }
+
     let mut job = store.get_job_definition(&job_key)
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::NOT_FOUND)?;
@@ -101,6 +153,11 @@ pub async fn handle_deactivate(
     axum::extract::Path(job_key): axum::extract::Path<String>,
 ) -> Result<Json<JobDefinition>, StatusCode> {
     let store = state.store.as_ref().ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
+
+    if is_dsl_managed(&state, &job_key).await {
+        return Err(StatusCode::CONFLICT);
+    }
+
     let mut job = store.get_job_definition(&job_key)
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::NOT_FOUND)?;
@@ -137,7 +194,7 @@ pub struct RegisterJobResponse {
 /// `POST /v1/jobs/register` — register a job from a runner or API client.
 ///
 /// Collision policy:
-/// - `managed_by: "dsl"` exists → skip (Croniqfile has precedence)
+/// - DSL-managed (Croniqfile) → skip (Croniqfile has precedence)
 /// - `managed_by: "runner"/"api"` exists → update
 /// - Not found → create
 pub async fn handle_register(
@@ -147,17 +204,18 @@ pub async fn handle_register(
     let store = state.store.as_ref().ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
     let now = Utc::now();
 
-    // Check collision: if managed_by "dsl" exists, skip
-    let existing_triggers = store.list_triggers(Some(&req.job_key))
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-
-    if existing_triggers.iter().any(|t| t.managed_by == "dsl") {
+    // DSL precedence — check the in-memory Croniqfile map, not the store,
+    // since DSL entries are not persisted.
+    if is_dsl_managed(&state, &req.job_key).await {
         return Ok((StatusCode::OK, Json(RegisterJobResponse {
-            job_key: req.job_key,
-            trigger_id: existing_triggers[0].trigger_id.clone(),
+            job_key: req.job_key.clone(),
+            trigger_id: crate::loader::dsl_trigger_id(&req.job_key),
             status: "skipped_dsl_precedence".into(),
         })));
     }
+
+    let existing_triggers = store.list_triggers(Some(&req.job_key))
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     // Create or update job definition
     let job_def = JobDefinition {
@@ -214,4 +272,119 @@ pub async fn handle_register(
         trigger_id,
         status: status.into(),
     })))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::api::{ServerState, server_router};
+    use crate::store::{DynStore, sqlite_store};
+    use axum::body::Body;
+    use axum::http::Request;
+    use croniq_config::compile::JobConfig;
+    use croniq_runner::AppState;
+    use croniq_store::sqlite::SqliteStore;
+    use http_body_util::BodyExt;
+    use tokio::sync::{mpsc, RwLock};
+    use tower::util::ServiceExt;
+
+    fn make_store() -> DynStore {
+        sqlite_store(SqliteStore::in_memory().unwrap())
+    }
+
+    fn dsl_job(key: &str) -> JobConfig {
+        crate::loader::load_str(&format!("job {key} {{ every 5 minutes }}"))
+            .unwrap()
+            .runtime
+            .jobs
+            .pop()
+            .unwrap()
+    }
+
+    fn make_state(dsl: Vec<JobConfig>, store: DynStore) -> Arc<ServerState> {
+        let runner = AppState::new();
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let mut state = ServerState::with_auth(runner, tx, None, Some(store));
+        {
+            let s = Arc::get_mut(&mut state).unwrap();
+            s.dsl_jobs = Some(Arc::new(RwLock::new(dsl)));
+        }
+        state
+    }
+
+    async fn body_json(app: axum::Router, method: &str, uri: &str) -> (u16, serde_json::Value) {
+        let resp = app
+            .oneshot(Request::builder().method(method).uri(uri).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        let status = resp.status().as_u16();
+        let bytes = resp.into_body().collect().await.unwrap().to_bytes();
+        let json = serde_json::from_slice(&bytes).unwrap_or(serde_json::Value::Null);
+        (status, json)
+    }
+
+    async fn status_of(app: axum::Router, method: &str, uri: &str) -> u16 {
+        app.oneshot(Request::builder().method(method).uri(uri).body(Body::empty()).unwrap())
+            .await
+            .unwrap()
+            .status()
+            .as_u16()
+    }
+
+    #[tokio::test]
+    async fn list_jobs_unions_dsl_with_store() {
+        let store = make_store();
+        // One API-registered job in the store
+        store
+            .create_job_definition(&JobDefinition {
+                job_key: "api:job".into(),
+                description: None,
+                assigned_runner_id: None,
+                is_active: true,
+                metadata: Default::default(),
+                created_at: Utc::now(),
+                updated_at: Utc::now(),
+                timeout: None,
+                max_retries: None,
+                dead_letter_enabled: None,
+            })
+            .unwrap();
+
+        let state = make_state(vec![dsl_job("dsl:only")], store);
+        let (status, body) = body_json(server_router(state), "GET", "/v1/jobs").await;
+
+        assert_eq!(status, 200);
+        let arr = body.as_array().unwrap();
+        assert_eq!(arr.len(), 2);
+        let keys: Vec<&str> = arr.iter().map(|j| j["job_key"].as_str().unwrap()).collect();
+        assert!(keys.contains(&"api:job"));
+        assert!(keys.contains(&"dsl:only"));
+    }
+
+    #[tokio::test]
+    async fn get_job_falls_back_to_dsl() {
+        let state = make_state(vec![dsl_job("demo:slow-job")], make_store());
+        let (status, body) = body_json(server_router(state), "GET", "/v1/jobs/demo:slow-job").await;
+        assert_eq!(status, 200);
+        assert_eq!(body["job_key"], "demo:slow-job");
+    }
+
+    #[tokio::test]
+    async fn delete_dsl_job_returns_409() {
+        let state = make_state(vec![dsl_job("dsl:locked")], make_store());
+        let status = status_of(server_router(state), "DELETE", "/v1/jobs/dsl:locked").await;
+        assert_eq!(status, 409);
+    }
+
+    #[tokio::test]
+    async fn deactivate_dsl_job_returns_409() {
+        let state = make_state(vec![dsl_job("dsl:locked")], make_store());
+        let status = status_of(
+            server_router(state),
+            "POST",
+            "/v1/jobs/dsl:locked/deactivate",
+        )
+        .await;
+        assert_eq!(status, 409);
+    }
 }

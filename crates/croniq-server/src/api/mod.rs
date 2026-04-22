@@ -35,6 +35,7 @@ use tokio::sync::mpsc;
 use crate::completion::CompletionEvent;
 use crate::scheduler::SchedulerCommand;
 use crate::store::DynStore;
+use croniq_config::compile::JobConfig;
 use croniq_store::models::{Execution, ExecutionFilter, ExecutionState};
 
 /// Default maximum time a poll request will block waiting for work.
@@ -59,6 +60,11 @@ pub struct ServerState {
     pub scheduler_tx: Option<mpsc::UnboundedSender<SchedulerCommand>>,
     /// Shared trigger map for dashboard forecast (read-only snapshot).
     pub triggers: Option<Arc<tokio::sync::RwLock<HashMap<String, Trigger>>>>,
+    /// DSL-defined jobs (from the Croniqfile). Shared with the scheduler task,
+    /// which replaces its contents on Croniqfile hot-reload. The REST API
+    /// unions this with the persisted store so DSL jobs appear in `/v1/jobs`
+    /// and `/v1/schedules` alongside API/runner-registered ones.
+    pub dsl_jobs: Option<Arc<tokio::sync::RwLock<Vec<JobConfig>>>>,
 }
 
 impl ServerState {
@@ -74,6 +80,7 @@ impl ServerState {
             store: None,
             scheduler_tx: None,
             triggers: None,
+            dsl_jobs: None,
         })
     }
 
@@ -92,6 +99,7 @@ impl ServerState {
             store,
             scheduler_tx: None,
             triggers: None,
+            dsl_jobs: None,
         })
     }
 
@@ -101,7 +109,7 @@ impl ServerState {
         completion_tx: mpsc::UnboundedSender<CompletionEvent>,
         long_poll_timeout: Duration,
     ) -> Arc<Self> {
-        Arc::new(Self { runner, completion_tx, long_poll_timeout, jwt_config: None, store: None, scheduler_tx: None, triggers: None })
+        Arc::new(Self { runner, completion_tx, long_poll_timeout, jwt_config: None, store: None, scheduler_tx: None, triggers: None, dsl_jobs: None })
     }
 }
 
@@ -628,6 +636,7 @@ mod tests {
             store: None,
             scheduler_tx: None,
             triggers: None,
+            dsl_jobs: None,
         });
         (state, rx)
     }
