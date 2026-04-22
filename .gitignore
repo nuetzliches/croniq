@@ -6,6 +6,9 @@ target/
 node_modules/
 ui/dist/
 
+# Claude Code
+.claude/
+
 # IDE
 .vs/
 .idea/
