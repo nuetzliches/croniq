@@ -193,7 +193,12 @@ export function useCalendars() {
 export function useCreateCalendar() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (data: { name: string; timezone?: string; rules?: string }) => apiPost<T.CalendarDefinition>('/v1/calendars', data),
+    mutationFn: (data: { name: string; timezone?: string; rules?: string }) =>
+      apiPost<T.CalendarDefinition>('/v1/calendars', {
+        name: data.name,
+        timezone: data.timezone,
+        rules: data.rules ?? '',
+      }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['calendars'] }),
   })
 }
@@ -209,7 +214,11 @@ export function useApiClients() {
 export function useCreateApiClient() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (data: { name: string }) => apiPost<T.CreateClientResponse>('/v1/api-clients', data),
+    mutationFn: (data: { name: string; scopes?: string[] }) =>
+      apiPost<T.CreateClientResponse>('/v1/api-clients', {
+        name: data.name,
+        scopes: data.scopes ?? ['admin'],
+      }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['api-clients'] }),
   })
 }
@@ -219,7 +228,8 @@ export function useDeleteApiClient() {
 }
 export function useIssueClientToken() {
   return useMutation({
-    mutationFn: (clientId: string) => apiPost<T.CreateApiKeyResponse>(`/v1/api-clients/${clientId}/tokens`, {}),
+    mutationFn: (clientId: string) =>
+      apiPost<T.CreateApiKeyResponse>('/v1/api-keys', { client_id: clientId }),
   })
 }
 export function useRevokeApiKey() {
