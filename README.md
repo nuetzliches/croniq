@@ -58,6 +58,43 @@ Full API documentation: [`openapi.yaml`](openapi.yaml)
 
 ## Quick Start
 
+Pick the install method that fits your environment. All produce the same `croniq-server` / `croniq` binaries.
+
+### Docker Compose (recommended for trying it out)
+
+Full stack — server + two demo runners executing live jobs — in one command:
+
+```sh
+git clone https://github.com/nuetzliches/croniq && cd croniq
+docker compose up
+```
+
+Open **http://localhost:4000**. The demo runners register against [`Croniqfile.demo`](Croniqfile.demo), so you'll see executions, retries, and occasional dead letters streaming in immediately. Tune with `RUNNER_REPLICAS` and `RUNNER_FAIL_RATE` env vars.
+
+### Docker (server only)
+
+```sh
+docker run -p 4000:4000 ghcr.io/nuetzliches/croniq:latest
+```
+
+On first start a random admin password is generated and printed to the container logs. Set `CRONIQ_ADMIN_PASSWORD` to use a fixed one.
+
+### curl | sh
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/nuetzliches/croniq/main/install.sh | sh
+```
+
+Detects your OS/arch (Linux/macOS, x64/ARM64), downloads the latest release, installs to `/usr/local/bin`. Override with `INSTALL_DIR` or `CRONIQ_VERSION`.
+
+### Homebrew (macOS / Linux)
+
+```sh
+brew install nuetzliches/tap/croniq
+```
+
+### From source
+
 ```sh
 # Zero-to-running in one command (generates a random admin password)
 croniq quickstart
@@ -68,14 +105,6 @@ croniq-server --config Croniqfile --data-dir .data --ui-dir ui/dist
 ```
 
 Open **http://localhost:4000** and log in as `admin` with the password shown during init.
-
-### Docker
-
-```sh
-docker run -p 4000:4000 ghcr.io/nuetzliches/croniq:latest
-```
-
-On first start a random admin password is generated and printed to the container logs. Set `CRONIQ_ADMIN_PASSWORD` to use a fixed one.
 
 ### Migrate from crontab
 
@@ -205,6 +234,7 @@ graph LR
 | `croniq-mcp` | MCP server for AI assistants |
 | `croniq-cli` | CLI: validate, fmt, compile, init, migrate, quickstart |
 | `croniq-runner-sdk` | Client library for building runners |
+| `croniq-demo-runner` | Ready-made runner binary used by the Docker Compose quickstart |
 
 ---
 
@@ -267,6 +297,10 @@ croniq dead-letters --data-dir .           # List dead letters
 | [`README.md`](README.md) | This file — overview, quick start, architecture |
 | [`openapi.yaml`](openapi.yaml) | OpenAPI 3.1 specification for all REST endpoints |
 | [`Croniqfile.example`](Croniqfile.example) | Full DSL example with calendars, retries, metadata |
+| [`Croniqfile.demo`](Croniqfile.demo) | Minimal demo profile used by `docker compose up` |
+| [`docker-compose.yml`](docker-compose.yml) | Quickstart stack: server + demo runners |
+| [`install.sh`](install.sh) | `curl \| sh` installer for Linux/macOS |
+| [`Formula/croniq.rb`](Formula/croniq.rb) | Homebrew formula (synced to `nuetzliches/homebrew-tap` on release) |
 | [`AGENTS.md`](AGENTS.md) | AI assistant guidance for contributing |
 | [`crates/croniq-runner-sdk/examples/`](crates/croniq-runner-sdk/examples/) | Runner SDK usage examples |
 
