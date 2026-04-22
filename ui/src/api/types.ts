@@ -102,3 +102,31 @@ export interface CalendarDefinition {
   created_at: string
   updated_at: string
 }
+
+export interface ApiClient {
+  client_id: string
+  name: string
+  is_active: boolean
+  created_at: string
+}
+
+export interface CreateClientResponse {
+  client_id: string
+  name: string
+}
+
+export interface CreateApiKeyResponse {
+  raw_key: string
+  key_id: string
+  client_id: string
+}
+
+export interface TriggerResponse {
+  execution_id: string
+  queued: boolean
+}
+
+export interface ReplayResponse {
+  execution_id: string
+  attempt: number
+}

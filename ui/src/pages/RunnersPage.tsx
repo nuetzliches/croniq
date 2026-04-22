@@ -1,54 +1,103 @@
+import { Trash2, Wifi, WifiOff } from 'lucide-react'
 import { useRunnersSSE, useDeleteRunner } from '@/api/hooks'
+import { Badge } from '@/components/ui/badge'
+import { Card, CardContent } from '@/components/ui/card'
+import { Button } from '@/components/ui/button'
+import { EmptyState } from '@/components/ui/empty-state'
 
-const statusColors: Record<string, string> = {
-  Online: 'bg-status-ok-bg text-status-ok-fg',
-  Stale: 'bg-status-warn-bg text-status-warn-fg',
-  Dead: 'bg-status-err-bg text-status-err-fg',
+function CapacityRing({ inflight, max }: { inflight: number; max: number }) {
+  const pct = max > 0 ? Math.min(inflight / max, 1) : 0
+  const r = 20, cx = 26, cy = 26, circ = 2 * Math.PI * r
+  const fill = circ * pct
+  const color = pct < 0.6 ? 'var(--color-status-ok-fg)' : pct < 0.9 ? 'var(--color-status-warn-fg)' : 'var(--color-status-err-fg)'
+  return (
+    <svg width="52" height="52" aria-label={`${inflight} of ${max} inflight`} role="img">
+      <circle cx={cx} cy={cy} r={r} fill="none" stroke="var(--color-border)" strokeWidth="4" />
+      {max > 0 && (
+        <circle cx={cx} cy={cy} r={r} fill="none" stroke={color} strokeWidth="4"
+          strokeDasharray={`${fill} ${circ}`} strokeLinecap="round"
+          transform={`rotate(-90 ${cx} ${cy})`} />
+      )}
+      <text x={cx} y={cy} textAnchor="middle" dominantBaseline="middle"
+        fontSize="9" fill="currentColor" fontWeight="600">
+        {inflight}/{max}
+      </text>
+    </svg>
+  )
 }
 
+const statusVariant = (s: string) =>
+  s === 'Online' ? 'ok' : s === 'Stale' ? 'warn' : 'err'
+
 export function RunnersPage() {
-  const { data: runnersData, isConnected } = useRunnersSSE()
+  const { data: runners, isConnected } = useRunnersSSE()
   const deleteRunner = useDeleteRunner()
 
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <h1 className="text-lg font-semibold">Runners</h1>
-        <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
-          <span className={`w-2 h-2 rounded-full ${isConnected ? 'bg-status-ok-fg' : 'bg-status-neutral-fg'}`} />
-          {isConnected ? 'Live' : 'Reconnecting…'}
+        <p className="text-sm text-muted-foreground">{runners?.length ?? 0} runners</p>
+        <span
+          role="status"
+          aria-live="polite"
+          className="flex items-center gap-1.5 text-xs text-muted-foreground"
+        >
+          {isConnected
+            ? <><Wifi className="h-3.5 w-3.5 text-status-ok-fg" /><span className="text-status-ok-fg">Live</span></>
+            : <><WifiOff className="h-3.5 w-3.5" />Reconnecting…</>}
         </span>
       </div>
-      <div className="bg-card border border-border rounded-lg overflow-hidden">
-        <table className="w-full text-sm">
-          <thead className="bg-muted">
-            <tr>
-              <th className="text-left px-3 py-2 font-medium">Runner ID</th>
-              <th className="text-left px-3 py-2 font-medium">Status</th>
-              <th className="text-left px-3 py-2 font-medium">Capabilities</th>
-              <th className="text-left px-3 py-2 font-medium">Inflight</th>
-              <th className="text-left px-3 py-2 font-medium">Last Poll</th>
-              <th className="px-3 py-2"></th>
-            </tr>
-          </thead>
-          <tbody>
-            {runnersData?.map((r) => (
-              <tr key={r.runner_id} className="border-t border-border">
-                <td className="px-3 py-2 font-mono text-xs">{r.runner_id}</td>
-                <td className="px-3 py-2">
-                  <span className={`px-2 py-0.5 rounded text-xs font-medium ${statusColors[r.status] || 'bg-status-neutral-bg text-status-neutral-fg'}`}>{r.status}</span>
-                </td>
-                <td className="px-3 py-2">{r.capabilities.length ? r.capabilities.join(', ') : '-'}</td>
-                <td className="px-3 py-2">{r.inflight} / {r.max_inflight}</td>
-                <td className="px-3 py-2 text-muted-foreground">{new Date(r.last_poll_at).toLocaleString()}</td>
-                <td className="px-3 py-2 text-right">
-                  <button onClick={() => deleteRunner.mutate(r.runner_id)} className="text-xs text-destructive hover:underline">Remove</button>
-                </td>
-              </tr>
-            ))}
-            {!runnersData?.length && <tr><td colSpan={6} className="px-3 py-4 text-center text-muted-foreground">No runners connected</td></tr>}
-          </tbody>
-        </table>
+
+      {!runners?.length && (
+        <EmptyState
+          icon={<Wifi className="h-10 w-10" />}
+          title="No runners connected"
+          description="Start a runner with the Runner SDK to see it here"
+        />
+      )}
+
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+        {runners?.map((r) => (
+          <Card key={r.runner_id}>
+            <CardContent className="pt-4">
+              <div className="flex items-start justify-between gap-3">
+                <div className="flex-1 min-w-0 space-y-2">
+                  <div className="flex items-center gap-2">
+                    <Badge variant={statusVariant(r.status)}>{r.status}</Badge>
+                    <span className="font-mono text-xs text-muted-foreground truncate">{r.runner_id}</span>
+                  </div>
+
+                  {r.capabilities.length > 0 && (
+                    <div className="flex flex-wrap gap-1">
+                      {r.capabilities.map((c) => (
+                        <span key={c} className="inline-flex items-center rounded-full bg-accent px-2 py-0.5 text-xs text-accent-foreground">
+                          {c}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+
+                  <p className="text-xs text-muted-foreground">
+                    Last poll: {new Date(r.last_poll_at).toLocaleTimeString()}
+                  </p>
+                </div>
+
+                <div className="flex flex-col items-center gap-2 shrink-0">
+                  <CapacityRing inflight={r.inflight} max={r.max_inflight} />
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => deleteRunner.mutate(r.runner_id)}
+                    aria-label={`Remove runner ${r.runner_id}`}
+                    className="h-6 w-6 p-0 text-muted-foreground hover:text-destructive"
+                  >
+                    <Trash2 className="h-3 w-3" />
+                  </Button>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        ))}
       </div>
     </div>
   )

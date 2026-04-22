@@ -24,12 +24,26 @@ export function useDeleteJob() {
   const qc = useQueryClient()
   return useMutation({ mutationFn: (jobKey: string) => apiDelete(`/v1/jobs/${jobKey}`), onSuccess: () => qc.invalidateQueries({ queryKey: ['jobs'] }) })
 }
+export function useActivateJob() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (jobKey: string) => apiPost<T.JobDefinition>(`/v1/jobs/${jobKey}/activate`, {}),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['jobs'] }),
+  })
+}
 export function useRegisterJob() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: (data: { job_key: string; schedule: string; timezone?: string; timeout?: string; description?: string }) =>
       apiPost('/v1/jobs/register', data),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['jobs'] }); qc.invalidateQueries({ queryKey: ['schedules'] }) },
+  })
+}
+export function useTriggerJob() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (jobKey: string) => apiPost<T.TriggerResponse>('/v1/trigger', { job_key: jobKey }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['executions'] }),
   })
 }
 
@@ -125,7 +139,11 @@ export function useExecutions(params?: { job_key?: string; state?: string; limit
   return useQuery({ queryKey: ['executions', params], queryFn: () => apiFetch<T.Execution[]>(`/v1/executions${qs}`) })
 }
 export function useExecutionLogs(executionId: string) {
-  return useQuery({ queryKey: ['execution-logs', executionId], queryFn: () => apiFetch<T.ExecutionLogEntry[]>(`/v1/executions/${executionId}/logs`) })
+  return useQuery({
+    queryKey: ['execution-logs', executionId],
+    queryFn: () => apiFetch<T.ExecutionLogEntry[]>(`/v1/executions/${executionId}/logs`),
+    enabled: !!executionId,
+  })
 }
 
 // Forecast
@@ -143,9 +161,62 @@ export function useDeadLetters(jobKey?: string) {
   return useQuery({ queryKey: ['dead-letters', jobKey], queryFn: () => apiFetch<T.DeadLetter[]>(`/v1/dead-letters${params}`) })
 }
 export function useDeadLetter(id: string) {
-  return useQuery({ queryKey: ['dead-letters', id], queryFn: () => apiFetch<T.DeadLetter>(`/v1/dead-letters/${id}`) })
+  return useQuery({
+    queryKey: ['dead-letter', id],
+    queryFn: () => apiFetch<T.DeadLetter>(`/v1/dead-letters/${id}`),
+    enabled: !!id,
+  })
 }
 export function useDeleteDeadLetter() {
   const qc = useQueryClient()
   return useMutation({ mutationFn: (id: string) => apiDelete(`/v1/dead-letters/${id}`), onSuccess: () => qc.invalidateQueries({ queryKey: ['dead-letters'] }) })
+}
+export function useReplayDeadLetter() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) => apiPost<T.ReplayResponse>(`/v1/dead-letters/${id}/replay`, {}),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['dead-letters'] }); qc.invalidateQueries({ queryKey: ['executions'] }) },
+  })
+}
+
+// Calendars
+export function useCalendars() {
+  return useQuery({ queryKey: ['calendars'], queryFn: () => apiFetch<T.CalendarDefinition[]>('/v1/calendars') })
+}
+export function useCreateCalendar() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (data: { name: string; timezone?: string; rules?: string }) => apiPost<T.CalendarDefinition>('/v1/calendars', data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['calendars'] }),
+  })
+}
+export function useDeleteCalendar() {
+  const qc = useQueryClient()
+  return useMutation({ mutationFn: (id: string) => apiDelete(`/v1/calendars/${id}`), onSuccess: () => qc.invalidateQueries({ queryKey: ['calendars'] }) })
+}
+
+// API Clients
+export function useApiClients() {
+  return useQuery({ queryKey: ['api-clients'], queryFn: () => apiFetch<T.ApiClient[]>('/v1/api-clients') })
+}
+export function useCreateApiClient() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (data: { name: string }) => apiPost<T.CreateClientResponse>('/v1/api-clients', data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['api-clients'] }),
+  })
+}
+export function useDeleteApiClient() {
+  const qc = useQueryClient()
+  return useMutation({ mutationFn: (id: string) => apiDelete(`/v1/api-clients/${id}`), onSuccess: () => qc.invalidateQueries({ queryKey: ['api-clients'] }) })
+}
+export function useIssueClientToken() {
+  return useMutation({
+    mutationFn: (clientId: string) => apiPost<T.CreateApiKeyResponse>(`/v1/api-clients/${clientId}/tokens`, {}),
+  })
+}
+export function useRevokeApiKey() {
+  return useMutation({
+    mutationFn: (keyId: string) => apiDelete(`/v1/api-keys/${keyId}`),
+  })
 }

@@ -10,6 +10,8 @@ import { SchedulesPage } from '@/pages/SchedulesPage'
 import { RunnersPage } from '@/pages/RunnersPage'
 import { DeadLettersPage } from '@/pages/DeadLettersPage'
 import { ExecutionsPage } from '@/pages/ExecutionsPage'
+import { CalendarsPage } from '@/pages/CalendarsPage'
+import { SettingsPage } from '@/pages/SettingsPage'
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -32,6 +34,8 @@ export default function App() {
               <Route path="/runners" element={<RunnersPage />} />
               <Route path="/dead-letters" element={<DeadLettersPage />} />
               <Route path="/executions" element={<ExecutionsPage />} />
+              <Route path="/calendars" element={<CalendarsPage />} />
+              <Route path="/settings" element={<SettingsPage />} />
             </Route>
           </Route>
         </Routes>
