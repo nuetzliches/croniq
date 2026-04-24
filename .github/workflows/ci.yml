@@ -60,6 +60,9 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+      # OCI labels link the container to this (public) repo so new package
+      # names inherit the repo's visibility on first creation. See the note
+      # in release.yml for the full rationale.
       - uses: docker/build-push-action@v6
         with:
           context: .
@@ -67,5 +70,25 @@ jobs:
           tags: |
             ghcr.io/nuetzliches/croniq:latest
             ghcr.io/nuetzliches/croniq:${{ github.sha }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/nuetzliches/croniq
+            org.opencontainers.image.url=https://github.com/nuetzliches/croniq
+            org.opencontainers.image.title=croniq
+            org.opencontainers.image.description=Distributed cron that just works. Single binary. SQLite default. Production-ready retries.
+            org.opencontainers.image.licenses=MIT OR Apache-2.0
+            org.opencontainers.image.revision=${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+      # Best-effort visibility flip (idempotent, non-fatal). See release.yml
+      # for details.
+      - name: Ensure package is public (best-effort)
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh api \
+            --method PATCH \
+            -H "Accept: application/vnd.github+json" \
+            "/orgs/${{ github.repository_owner }}/packages/container/croniq/visibility" \
+            -f visibility=public \
+            || echo "::notice::Package visibility could not be set via API. If this is a new package name, flip it manually at https://github.com/orgs/${{ github.repository_owner }}/packages/container/croniq/settings"
