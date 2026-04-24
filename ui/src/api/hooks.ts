@@ -214,11 +214,8 @@ export function useApiClients() {
 export function useCreateApiClient() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (data: { name: string; scopes?: string[] }) =>
-      apiPost<T.CreateClientResponse>('/v1/api-clients', {
-        name: data.name,
-        scopes: data.scopes ?? ['admin'],
-      }),
+    mutationFn: (data: { name: string; scopes: string[] }) =>
+      apiPost<T.CreateClientResponse>('/v1/api-clients', data),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['api-clients'] }),
   })
 }

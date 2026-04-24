@@ -19,18 +19,43 @@ export function CalendarsPage() {
   const createCalendar = useCreateCalendar()
   const deleteCalendar = useDeleteCalendar()
   const [open, setOpen] = useState(false)
+  const [rulesError, setRulesError] = useState<string | null>(null)
 
   const { register, handleSubmit, reset, formState: { errors } } = useForm<CalendarForm>()
 
   const inputCls = 'w-full px-3 py-2 border border-border rounded-md text-sm bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-primary'
 
-  async function onSubmit(data: CalendarForm) {
-    await createCalendar.mutateAsync({
-      name: data.name,
-      timezone: data.timezone || undefined,
-      rules: data.rules || undefined,
-    })
+  function resetDialog() {
     reset()
+    setRulesError(null)
+  }
+
+  async function onSubmit(data: CalendarForm) {
+    setRulesError(null)
+    try {
+      await createCalendar.mutateAsync({
+        name: data.name,
+        timezone: data.timezone || undefined,
+        rules: data.rules || undefined,
+      })
+    } catch (e) {
+      // apiFetch throws `Error("${status}: ${body}")` — body is JSON
+      // `{ error, message }` on validation failures.
+      const msg = e instanceof Error ? e.message : String(e)
+      const match = msg.match(/^(\d+):\s*(.+)$/s)
+      if (match && match[1] === '400') {
+        try {
+          const parsed = JSON.parse(match[2])
+          setRulesError(parsed.message ?? 'Invalid calendar rules')
+        } catch {
+          setRulesError(match[2] || 'Invalid calendar rules')
+        }
+        return
+      }
+      setRulesError(msg)
+      return
+    }
+    resetDialog()
     setOpen(false)
   }
 
@@ -38,7 +63,7 @@ export function CalendarsPage() {
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <p className="text-sm text-muted-foreground">{calendars?.length ?? 0} calendars defined</p>
-        <Dialog.Root open={open} onOpenChange={setOpen}>
+        <Dialog.Root open={open} onOpenChange={(v) => { setOpen(v); if (!v) resetDialog() }}>
           <Dialog.Trigger asChild>
             <Button size="sm"><Plus className="h-3.5 w-3.5" />Add Calendar</Button>
           </Dialog.Trigger>
@@ -57,12 +82,18 @@ export function CalendarsPage() {
                   {errors.name && <p className="text-xs text-destructive mt-1">{errors.name.message}</p>}
                 </div>
                 <input {...register('timezone')} placeholder="Timezone (e.g. Europe/Vienna)" className={inputCls} />
-                <textarea
-                  {...register('rules')}
-                  placeholder={'Rules (optional DSL)\ne.g. weekly Mon Tue Wed Thu Fri\nwindow 08:00..18:00'}
-                  rows={4}
-                  className={`${inputCls} resize-none font-mono`}
-                />
+                <div>
+                  <textarea
+                    {...register('rules')}
+                    placeholder={'Rules (optional DSL)\ne.g. include weekly "Mon".."Fri"\ninclude window "08:00".."18:00"'}
+                    rows={4}
+                    className={`${inputCls} resize-none font-mono`}
+                    onChange={(e) => { register('rules').onChange(e); if (rulesError) setRulesError(null) }}
+                  />
+                  {rulesError && (
+                    <p className="text-xs text-destructive mt-1 whitespace-pre-wrap">{rulesError}</p>
+                  )}
+                </div>
                 <div className="flex justify-end gap-2 pt-2">
                   <Dialog.Close asChild><Button variant="secondary" size="sm" type="button">Cancel</Button></Dialog.Close>
                   <Button type="submit" size="sm" disabled={createCalendar.isPending}>
