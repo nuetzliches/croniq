@@ -1,6 +1,11 @@
 # Auto detect text files and perform LF normalization
 * text=auto
 
+# Shell scripts and Dockerfile must stay LF so Linux containers can execute them
+# when built from a Windows checkout with core.autocrlf=true.
+*.sh text eol=lf
+Dockerfile text eol=lf
+
 # Normalize line endings for UI sources and generated artifacts.
 src/Croniq.Ui/**/*.ts text eol=lf
 src/Croniq.Ui/**/*.json text eol=lf
