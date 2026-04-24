@@ -2,6 +2,19 @@
 set -e
 
 DATA_DIR="${CRONIQ_DATA_DIR:-/var/lib/croniq}"
+
+# If we're root (first entrypoint invocation), fix data-dir ownership if
+# needed and re-exec ourselves as the croniq user via gosu. Named volumes
+# carried over from older root-based images end up owned by root; this
+# ensures the croniq user can still write the SQLite database and jwt.secret.
+if [ "$(id -u)" = "0" ]; then
+  mkdir -p "$DATA_DIR"
+  if [ "$(stat -c '%U' "$DATA_DIR")" != "croniq" ]; then
+    chown -R croniq:croniq "$DATA_DIR"
+  fi
+  exec gosu croniq:croniq "$0" "$@"
+fi
+
 DB_FILE="$DATA_DIR/croniq.db"
 
 # Auto-initialize on first run if DB doesn't exist
