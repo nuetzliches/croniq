@@ -2,7 +2,8 @@ import { useEffect, useRef, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { useAuthStore } from '@/auth/store'
 
-const BASE = import.meta.env.VITE_API_URL || 'http://localhost:4000'
+// See api/client.ts for the rationale — relative URLs by default.
+const BASE = import.meta.env.VITE_API_URL ?? ''
 
 interface SSEOptions<T> {
   url: string

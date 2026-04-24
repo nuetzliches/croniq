@@ -86,7 +86,7 @@ export function useRunnersSSE() {
   useEffect(() => {
     let stopped = false
     let ctrl = new AbortController()
-    const BASE = import.meta.env.VITE_API_URL || 'http://localhost:4000'
+    const BASE = import.meta.env.VITE_API_URL ?? ''
 
     async function connect() {
       const token = useAuthStore.getState().token
