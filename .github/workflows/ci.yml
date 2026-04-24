@@ -9,6 +9,10 @@ on:
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
+  # Opt into Node 24 for JavaScript actions ahead of the 2026-06-02
+  # default switch, silencing the Node 20 deprecation warnings from
+  # checkout/upload-artifact/docker/login-action/etc.
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
 
 jobs:
   rust:
