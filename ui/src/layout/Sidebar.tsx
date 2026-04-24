@@ -3,7 +3,7 @@ import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import * as Tooltip from '@radix-ui/react-tooltip'
 import {
-  LayoutDashboard, Briefcase, CalendarClock, CalendarDays, Cpu, List, MailX,
+  LayoutDashboard, Briefcase, CalendarDays, Cpu, List, MailX,
   Settings, PanelLeftClose, PanelLeftOpen,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
@@ -33,7 +33,6 @@ interface NavLinkSpec {
 const links: NavLinkSpec[] = [
   { to: '/', label: 'Dashboard', icon: LayoutDashboard },
   { to: '/jobs', label: 'Jobs', icon: Briefcase },
-  { to: '/schedules', label: 'Schedules', icon: CalendarClock },
   { to: '/runners', label: 'Runners', icon: Cpu },
   { to: '/executions', label: 'Executions', icon: List },
   { to: '/dead-letters', label: 'Dead Letters', icon: MailX },

@@ -6,7 +6,6 @@ import { Layout } from '@/layout/Layout'
 import { DashboardPage } from '@/pages/DashboardPage'
 import { JobsPage } from '@/pages/JobsPage'
 import { JobDetailPage } from '@/pages/JobDetailPage'
-import { SchedulesPage } from '@/pages/SchedulesPage'
 import { RunnersPage } from '@/pages/RunnersPage'
 import { DeadLettersPage } from '@/pages/DeadLettersPage'
 import { ExecutionsPage } from '@/pages/ExecutionsPage'
@@ -30,7 +29,6 @@ export default function App() {
               <Route path="/" element={<DashboardPage />} />
               <Route path="/jobs" element={<JobsPage />} />
               <Route path="/jobs/:jobKey" element={<JobDetailPage />} />
-              <Route path="/schedules" element={<SchedulesPage />} />
               <Route path="/runners" element={<RunnersPage />} />
               <Route path="/dead-letters" element={<DeadLettersPage />} />
               <Route path="/executions" element={<ExecutionsPage />} />
