@@ -145,6 +145,11 @@ jobs:
     needs: release
     # Requires a PAT with write access to nuetzliches/homebrew-tap stored
     # as the secret HOMEBREW_TAP_TOKEN.
+    # Job-level env lifts the secret into the env context so the push step's
+    # `if:` can skip cleanly when the token isn't configured — step-level
+    # `if:` cannot reference `secrets.*` directly (GH context-availability).
+    env:
+      HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
@@ -201,9 +206,9 @@ jobs:
               f.write(text)
           PY
       - name: Push updated formula to tap
-        if: ${{ secrets.HOMEBREW_TAP_TOKEN != '' }}
+        if: env.HOMEBREW_TAP_TOKEN != ''
         run: |
-          git clone https://x-access-token:${{ secrets.HOMEBREW_TAP_TOKEN }}@github.com/nuetzliches/homebrew-tap.git tap
+          git clone "https://x-access-token:${HOMEBREW_TAP_TOKEN}@github.com/nuetzliches/homebrew-tap.git" tap
           cp Formula/croniq.rb tap/Formula/croniq.rb
           cd tap
           git config user.name "github-actions[bot]"
