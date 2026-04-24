@@ -31,6 +31,7 @@ services:
       CRONIQ_DATA_DIR: /var/lib/croniq
       CRONIQ_ADMIN_USER: admin
       CRONIQ_ADMIN_PASSWORD: admin
+      CRONIQ_DEMO_MODE: "1"
       CRONIQ_INIT_API_KEY: croniq_demo_local_stack_key_not_for_production_use
     healthcheck:
       test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/localhost/4000"]
