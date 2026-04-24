@@ -220,6 +220,9 @@ pub async fn handle_create_client(
     State(state): State<Arc<ServerState>>,
     Json(req): Json<CreateClientRequest>,
 ) -> Result<(StatusCode, Json<CreateClientResponse>), StatusCode> {
+    if req.name.trim().is_empty() || req.scopes.is_empty() {
+        return Err(StatusCode::BAD_REQUEST);
+    }
     let store = state.store.as_ref().ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
     let client_id = Uuid::new_v4().to_string();
     let client = ApiClient {

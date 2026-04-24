@@ -12,6 +12,60 @@ import type { CreateApiKeyResponse } from '@/api/types'
 
 interface ClientForm { name: string }
 
+// Grouped by prefix for readability. Keep in sync with
+// crates/croniq-auth/src/context.rs :: Scope.
+const SCOPE_GROUPS: { label: string; scopes: { value: string; hint?: string }[] }[] = [
+  {
+    label: 'Admin',
+    scopes: [{ value: 'admin', hint: 'Grants all scopes below' }],
+  },
+  {
+    label: 'Jobs',
+    scopes: [
+      { value: 'jobs:read' },
+      { value: 'jobs:write' },
+      { value: 'jobs:register' },
+      { value: 'jobs:trigger' },
+    ],
+  },
+  {
+    label: 'Schedules',
+    scopes: [
+      { value: 'schedules:read' },
+      { value: 'schedules:write' },
+      { value: 'schedules:deadletter' },
+    ],
+  },
+  {
+    label: 'Executions',
+    scopes: [{ value: 'executions:read' }],
+  },
+  {
+    label: 'Runners',
+    scopes: [
+      { value: 'runners:read' },
+      { value: 'runners:write' },
+      { value: 'runners:heartbeat' },
+    ],
+  },
+  {
+    label: 'Work queue',
+    scopes: [
+      { value: 'work:poll' },
+      { value: 'work:renew' },
+      { value: 'work:ack' },
+      { value: 'work:events' },
+    ],
+  },
+  {
+    label: 'Calendars',
+    scopes: [
+      { value: 'calendars:read' },
+      { value: 'calendars:write' },
+    ],
+  },
+]
+
 function CopyButton({ value }: { value: string }) {
   const [copied, setCopied] = useState(false)
   function copy() {
@@ -33,14 +87,28 @@ export function SettingsPage() {
   const issueToken = useIssueClientToken()
   const [open, setOpen] = useState(false)
   const [newKey, setNewKey] = useState<CreateApiKeyResponse | null>(null)
+  const [scopes, setScopes] = useState<string[]>([])
+  const [submitAttempted, setSubmitAttempted] = useState(false)
 
   const { register, handleSubmit, reset, formState: { errors } } = useForm<ClientForm>()
 
   const inputCls = 'w-full px-3 py-2 border border-border rounded-md text-sm bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-primary'
 
-  async function onCreate(data: ClientForm) {
-    await createClient.mutateAsync({ name: data.name })
+  function toggleScope(scope: string) {
+    setScopes((prev) => (prev.includes(scope) ? prev.filter((s) => s !== scope) : [...prev, scope]))
+  }
+
+  function resetDialog() {
     reset()
+    setScopes([])
+    setSubmitAttempted(false)
+  }
+
+  async function onCreate(data: ClientForm) {
+    setSubmitAttempted(true)
+    if (scopes.length === 0) return
+    await createClient.mutateAsync({ name: data.name, scopes })
+    resetDialog()
     setOpen(false)
   }
 
@@ -56,23 +124,61 @@ export function SettingsPage() {
         <CardHeader>
           <div className="flex items-center justify-between">
             <CardTitle className="text-sm font-semibold text-foreground">API Clients</CardTitle>
-            <Dialog.Root open={open} onOpenChange={setOpen}>
+            <Dialog.Root open={open} onOpenChange={(v) => { setOpen(v); if (!v) resetDialog() }}>
               <Dialog.Trigger asChild>
                 <Button size="sm"><Plus className="h-3.5 w-3.5" />New Client</Button>
               </Dialog.Trigger>
               <Dialog.Portal>
                 <Dialog.Overlay className="fixed inset-0 z-40 bg-black/40" />
-                <Dialog.Content className="fixed left-1/2 top-1/2 z-50 w-full max-w-sm -translate-x-1/2 -translate-y-1/2 rounded-lg border border-border bg-card p-6 shadow-xl">
+                <Dialog.Content className="fixed left-1/2 top-1/2 z-50 w-full max-w-md -translate-x-1/2 -translate-y-1/2 rounded-lg border border-border bg-card p-6 shadow-xl max-h-[85vh] overflow-y-auto">
                   <div className="flex items-center justify-between mb-4">
                     <Dialog.Title className="text-sm font-semibold">New API Client</Dialog.Title>
                     <Dialog.Close className="text-muted-foreground hover:text-foreground">
                       <X className="h-4 w-4" />
                     </Dialog.Close>
                   </div>
-                  <form onSubmit={handleSubmit(onCreate)} className="space-y-3">
+                  <form onSubmit={handleSubmit(onCreate)} className="space-y-4">
                     <div>
                       <input {...register('name', { required: 'Required' })} placeholder="Client name (e.g. my-service)" className={inputCls} />
                       {errors.name && <p className="text-xs text-destructive mt-1">{errors.name.message}</p>}
+                    </div>
+                    <div>
+                      <div className="flex items-center justify-between mb-2">
+                        <label className="text-xs font-medium text-foreground">Scopes</label>
+                        {scopes.length > 0 && (
+                          <button
+                            type="button"
+                            onClick={() => setScopes([])}
+                            className="text-xs text-muted-foreground hover:text-foreground"
+                          >
+                            Clear ({scopes.length})
+                          </button>
+                        )}
+                      </div>
+                      <div className="space-y-3 border border-border rounded-md p-3 bg-background">
+                        {SCOPE_GROUPS.map((group) => (
+                          <fieldset key={group.label} className="space-y-1">
+                            <legend className="text-xs font-semibold text-muted-foreground mb-1">{group.label}</legend>
+                            <div className="grid grid-cols-2 gap-x-3 gap-y-1">
+                              {group.scopes.map((s) => (
+                                <label key={s.value} className="flex items-center gap-2 text-xs cursor-pointer select-none">
+                                  <input
+                                    type="checkbox"
+                                    checked={scopes.includes(s.value)}
+                                    onChange={() => toggleScope(s.value)}
+                                    className="h-3.5 w-3.5 rounded border-border accent-primary"
+                                  />
+                                  <span className="font-mono">{s.value}</span>
+                                  {s.hint && <span className="text-muted-foreground font-normal">— {s.hint}</span>}
+                                </label>
+                              ))}
+                            </div>
+                          </fieldset>
+                        ))}
+                      </div>
+                      {submitAttempted && scopes.length === 0 && (
+                        <p className="text-xs text-destructive mt-1">Select at least one scope</p>
+                      )}
                     </div>
                     <div className="flex justify-end gap-2">
                       <Dialog.Close asChild><Button variant="secondary" size="sm" type="button">Cancel</Button></Dialog.Close>

@@ -17,6 +17,23 @@ export default defineConfig({
       '@': path.resolve(__dirname, './src'),
     },
   },
+  build: {
+    rolldownOptions: {
+      output: {
+        codeSplitting: {
+          groups: [
+            { name: 'charts', test: /node_modules\/recharts/ },
+            { name: 'radix', test: /node_modules\/@radix-ui/ },
+            { name: 'react', test: /node_modules\/(react|react-dom|scheduler)\// },
+            { name: 'router', test: /node_modules\/react-router/ },
+            { name: 'query', test: /node_modules\/@tanstack/ },
+            { name: 'icons', test: /node_modules\/lucide-react/ },
+            { name: 'forms', test: /node_modules\/react-hook-form/ },
+          ],
+        },
+      },
+    },
+  },
   server: {
     proxy: {
       '/v1': API_ORIGIN,

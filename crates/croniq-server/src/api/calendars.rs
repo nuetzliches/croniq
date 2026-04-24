@@ -4,8 +4,9 @@ use std::sync::Arc;
 
 use axum::{Json, extract::State, http::StatusCode};
 use chrono::Utc;
+use croniq_config::parser::Parser;
 use croniq_store::models::CalendarDefinition;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use super::ServerState;
@@ -14,8 +15,25 @@ use super::ServerState;
 pub struct CreateCalendarRequest {
     pub name: String,
     pub timezone: Option<String>,
-    /// JSON-encoded rules array.
+    /// Calendar rules in Croniqfile DSL syntax (lines of `include`/`exclude`/`timezone`).
     pub rules: String,
+}
+
+#[derive(Serialize)]
+pub struct ValidationError {
+    pub error: &'static str,
+    pub message: String,
+}
+
+/// Validate free-form calendar rules by wrapping them in a dummy calendar
+/// block and running the Croniqfile parser. Returns a human-readable error
+/// message on failure.
+fn validate_rules(rules: &str) -> Result<(), String> {
+    if rules.trim().is_empty() {
+        return Ok(());
+    }
+    let source = format!("calendar \"__validate__\" {{\n{rules}\n}}\n");
+    Parser::parse(&source).map(|_| ()).map_err(|e| e.to_string())
 }
 
 /// `GET /v1/calendars`
@@ -43,8 +61,17 @@ pub async fn handle_get(
 pub async fn handle_create(
     State(state): State<Arc<ServerState>>,
     Json(req): Json<CreateCalendarRequest>,
-) -> Result<(StatusCode, Json<CalendarDefinition>), StatusCode> {
-    let store = state.store.as_ref().ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
+) -> Result<(StatusCode, Json<CalendarDefinition>), (StatusCode, Json<ValidationError>)> {
+    if let Err(message) = validate_rules(&req.rules) {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ValidationError { error: "invalid_rules", message }),
+        ));
+    }
+    let store = state.store.as_ref().ok_or((
+        StatusCode::SERVICE_UNAVAILABLE,
+        Json(ValidationError { error: "no_store", message: "store unavailable".into() }),
+    ))?;
     let now = Utc::now();
     let cal = CalendarDefinition {
         calendar_id: Uuid::new_v4().to_string(),
@@ -54,7 +81,10 @@ pub async fn handle_create(
         created_at: now,
         updated_at: now,
     };
-    store.create_calendar(&cal).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    store.create_calendar(&cal).map_err(|_| (
+        StatusCode::INTERNAL_SERVER_ERROR,
+        Json(ValidationError { error: "store_error", message: "failed to persist calendar".into() }),
+    ))?;
     Ok((StatusCode::CREATED, Json(cal)))
 }
 
