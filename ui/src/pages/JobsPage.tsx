@@ -7,7 +7,7 @@ import * as Tooltip from '@radix-ui/react-tooltip'
 import { Plus, Play, Trash2, X, AlertCircle } from 'lucide-react'
 import {
   useJobs, useRegisterJob, useDeleteJob, useActivateJob, useDeactivateJob,
-  useTriggerJob, useExecutions,
+  useTriggerJob, useExecutions, useSchedules,
 } from '@/api/hooks'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -61,9 +61,11 @@ export function JobsPage() {
   const deactivateJob = useDeactivateJob()
   const triggerJob = useTriggerJob()
   const allExecs = useExecutions({ limit: 200 })
+  const allSchedules = useSchedules()
   const [open, setOpen] = useState(false)
   const [triggeredId, setTriggeredId] = useState<string | null>(null)
   const [triggerError, setTriggerError] = useState<string | null>(null)
+  const [toggleError, setToggleError] = useState<string | null>(null)
 
   const { register, handleSubmit, reset, formState: { errors } } = useForm<RegisterForm>({
     defaultValues: { timeout: '5m' }
@@ -73,6 +75,16 @@ export function JobsPage() {
     ;(acc[e.job_key] ??= []).push(e)
     return acc
   }, {})
+
+  // A job is DSL-managed when any of its schedules came from the Croniqfile.
+  // The backend refuses UI toggle/delete for those (HTTP 409), so disable
+  // the controls and tell the user why instead of letting them click into
+  // an error.
+  const dslManagedJobs = new Set(
+    (allSchedules.data ?? [])
+      .filter((s) => s.managed_by === 'dsl')
+      .map((s) => s.job_key)
+  )
 
   async function onSubmit(data: RegisterForm) {
     await registerJob.mutateAsync({
@@ -98,11 +110,21 @@ export function JobsPage() {
     }
   }
 
-  function handleToggle(jobKey: string, isActive: boolean) {
-    if (isActive) {
-      deactivateJob.mutate(jobKey)
-    } else {
-      activateJob.mutate(jobKey)
+  async function handleToggle(jobKey: string, isActive: boolean) {
+    setToggleError(null)
+    const mutation = isActive ? deactivateJob : activateJob
+    const verb = isActive ? 'deactivate' : 'activate'
+    try {
+      await mutation.mutateAsync(jobKey)
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'unknown error'
+      // 409 from the backend typically means the job is DSL-managed
+      // (its lifecycle is owned by the Croniqfile). Surface that plainly
+      // so users don't think the click was swallowed.
+      const body = /409|conflict/i.test(msg)
+        ? 'DSL-managed jobs cannot be toggled via the UI; edit the Croniqfile instead.'
+        : msg
+      setToggleError(`Could not ${verb} ${jobKey}: ${body}`)
     }
   }
 
@@ -162,6 +184,13 @@ export function JobsPage() {
           </div>
         )}
 
+        {toggleError && (
+          <div className="flex items-center gap-2 text-xs text-destructive bg-destructive/10 border border-destructive/20 rounded-md px-3 py-2">
+            <AlertCircle className="h-3.5 w-3.5 shrink-0" />
+            {toggleError}
+          </div>
+        )}
+
         {jobs.isLoading && <div className="flex justify-center py-12"><Spinner className="h-6 w-6" /></div>}
 
         {!jobs.isLoading && jobs.data?.length === 0 && (
@@ -174,7 +203,15 @@ export function JobsPage() {
         )}
 
         <div className="space-y-2">
-          {jobs.data?.map((j) => (
+          {jobs.data?.map((j) => {
+            const isDslManaged = dslManagedJobs.has(j.job_key)
+            const toggleTip = isDslManaged
+              ? 'Managed by Croniqfile — edit the DSL to change this'
+              : (j.is_active ? 'Deactivate' : 'Activate')
+            const deleteTip = isDslManaged
+              ? 'Managed by Croniqfile — delete via the DSL'
+              : 'Delete job'
+            return (
             <Card key={j.job_key}>
               <CardContent className="py-3">
                 <div className="flex items-center gap-4">
@@ -186,6 +223,9 @@ export function JobsPage() {
                       <Badge variant={j.is_active ? 'ok' : 'neutral'}>
                         {j.is_active ? 'active' : 'inactive'}
                       </Badge>
+                      {isDslManaged && (
+                        <Badge variant="neutral" className="font-mono">dsl</Badge>
+                      )}
                     </div>
                     {j.description && <p className="text-xs text-muted-foreground mt-0.5 truncate">{j.description}</p>}
                   </div>
@@ -194,22 +234,31 @@ export function JobsPage() {
                     <HealthPill executions={execsByJob[j.job_key] ?? []} />
                   </div>
 
-                  {/* Activate/Deactivate toggle */}
+                  {/* Activate/Deactivate toggle — Tooltip.Trigger wraps a
+                      span, not the Switch itself. Radix Slot's asChild merge
+                      collides with Switch.Root on `data-state` (Tooltip's
+                      open/closed overwrites Switch's checked/unchecked),
+                      which blanks out the track color AND swallows the
+                      click handler. The span receives the Tooltip data
+                      attributes cleanly and the Switch inside behaves as
+                      intended. */}
                   <Tooltip.Root>
                     <Tooltip.Trigger asChild>
-                      <Switch.Root
-                        checked={j.is_active}
-                        onCheckedChange={() => handleToggle(j.job_key, j.is_active)}
-                        disabled={activateJob.isPending || deactivateJob.isPending}
-                        className="relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary data-[state=checked]:bg-primary data-[state=unchecked]:bg-border disabled:opacity-50 disabled:cursor-not-allowed"
-                        aria-label={`${j.is_active ? 'Deactivate' : 'Activate'} ${j.job_key}`}
-                      >
-                        <Switch.Thumb className="pointer-events-none block h-4 w-4 rounded-full bg-white shadow-lg ring-0 transition-transform data-[state=checked]:translate-x-4 data-[state=unchecked]:translate-x-0" />
-                      </Switch.Root>
+                      <span className="inline-flex">
+                        <Switch.Root
+                          checked={j.is_active}
+                          onCheckedChange={() => handleToggle(j.job_key, j.is_active)}
+                          disabled={isDslManaged || activateJob.isPending || deactivateJob.isPending}
+                          className="relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary data-[state=checked]:bg-primary data-[state=unchecked]:bg-border disabled:opacity-50 disabled:cursor-not-allowed"
+                          aria-label={`${j.is_active ? 'Deactivate' : 'Activate'} ${j.job_key}`}
+                        >
+                          <Switch.Thumb className="pointer-events-none block h-4 w-4 rounded-full bg-white shadow-lg ring-0 transition-transform data-[state=checked]:translate-x-4 data-[state=unchecked]:translate-x-0" />
+                        </Switch.Root>
+                      </span>
                     </Tooltip.Trigger>
                     <Tooltip.Portal>
                       <Tooltip.Content className="z-50 rounded-md bg-foreground px-2 py-1 text-xs text-background shadow-md">
-                        {j.is_active ? 'Deactivate' : 'Activate'}
+                        {toggleTip}
                         <Tooltip.Arrow className="fill-foreground" />
                       </Tooltip.Content>
                     </Tooltip.Portal>
@@ -237,22 +286,28 @@ export function JobsPage() {
                     </Tooltip.Portal>
                   </Tooltip.Root>
 
-                  {/* Delete */}
+                  {/* Delete — disabled for DSL-managed jobs. The button sits
+                      inside a span so the Tooltip still fires on hover even
+                      when the button itself is disabled (disabled buttons
+                      don't emit pointer events in all browsers). */}
                   <Tooltip.Root>
                     <Tooltip.Trigger asChild>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => deleteJob.mutate(j.job_key)}
-                        aria-label={`Delete ${j.job_key}`}
-                        className="h-7 w-7 p-0 text-muted-foreground hover:text-destructive"
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </Button>
+                      <span className="inline-flex">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => deleteJob.mutate(j.job_key)}
+                          disabled={isDslManaged}
+                          aria-label={`Delete ${j.job_key}`}
+                          className="h-7 w-7 p-0 text-muted-foreground hover:text-destructive disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </Button>
+                      </span>
                     </Tooltip.Trigger>
                     <Tooltip.Portal>
                       <Tooltip.Content className="z-50 rounded-md bg-foreground px-2 py-1 text-xs text-background shadow-md">
-                        Delete job
+                        {deleteTip}
                         <Tooltip.Arrow className="fill-foreground" />
                       </Tooltip.Content>
                     </Tooltip.Portal>
@@ -260,7 +315,8 @@ export function JobsPage() {
                 </div>
               </CardContent>
             </Card>
-          ))}
+            )
+          })}
         </div>
       </div>
     </Tooltip.Provider>
