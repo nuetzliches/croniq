@@ -62,8 +62,14 @@ function NavItem({ link, collapsed }: { link: NavLinkSpec; collapsed: boolean })
   // would otherwise shrink to 32px because the hidden span removes the
   // line-height contribution, making the nav total height flicker on
   // collapse.
+  // `whitespace-nowrap overflow-hidden` keeps two-word labels (Dead
+  // Letters) from wrapping to a second line during early expand frames
+  // when the item is still narrow. Without it the span breaks at the
+  // space, jumps to 40px tall, and `items-center` re-seats the icon —
+  // visible as a Dead-Letters-only layout twitch.
   const className = cn(
     'flex items-center gap-2.5 rounded-md text-sm transition-colors mx-2 px-3 h-9',
+    'overflow-hidden whitespace-nowrap',
     isActive
       ? 'bg-primary/10 text-primary font-medium'
       : 'text-muted-foreground hover:bg-accent hover:text-accent-foreground'
