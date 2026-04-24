@@ -266,7 +266,7 @@ Full specification: [`openapi.yaml`](openapi.yaml)
 
 ```sh
 croniq quickstart                          # Zero-to-running: init + sample Croniqfile
-croniq init --data-dir .data               # Seed admin user + API key
+croniq init --data-dir .data               # Seed admin user (add --api-key to also seed a default client)
 croniq validate Croniqfile                 # Check for errors
 croniq fmt Croniqfile --write              # Format in place
 croniq compile Croniqfile                  # Print compiled JSON

@@ -123,7 +123,8 @@ enum Commands {
         limit: u32,
     },
 
-    /// Initialize the database: create admin user and default API client
+    /// Initialize the database: create admin user (pass --api-key to also
+    /// seed a default API client bound to that key)
     Init {
         /// Path to the croniq data directory (will be created if needed)
         #[arg(long, default_value = "./.data")]
@@ -137,8 +138,9 @@ enum Commands {
         #[arg(long)]
         password: Option<String>,
 
-        /// Use a specific API key instead of generating a random one.
-        /// Must start with "croniq_". Intended for reproducible demo/test setups.
+        /// Seed a default API client bound to this key. Must start with
+        /// "croniq_". Without this flag no API client/key is created —
+        /// use the UI (Settings → API Keys) for production setups.
         #[arg(long)]
         api_key: Option<String>,
     },

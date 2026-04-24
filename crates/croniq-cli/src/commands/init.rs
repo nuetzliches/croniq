@@ -1,9 +1,13 @@
-//! `croniq init` — initialize database with admin user and default API client.
+//! `croniq init` — initialize database with an admin user.
+//!
+//! A default API client + key is only seeded when `--api-key` is passed.
+//! Operators who need keys should create scoped clients via the UI
+//! (Settings → API Keys) or `POST /v1/api-clients`.
 
 use std::path::Path;
 
 use chrono::Utc;
-use croniq_auth::api_key::{generate_api_key, hash_api_key};
+use croniq_auth::api_key::hash_api_key;
 use croniq_auth::password::hash_password;
 use croniq_store::models::{ApiClient, ApiKey, PasswordCredential};
 use croniq_store::sqlite::SqliteStore;
@@ -17,7 +21,6 @@ pub fn init(
     password: Option<&str>,
     api_key_override: Option<&str>,
 ) -> Result<()> {
-    // Prompt for password if not given
     let password = match password {
         Some(p) => p.to_string(),
         None => {
@@ -32,7 +35,6 @@ pub fn init(
         }
     };
 
-    // Ensure data dir exists
     std::fs::create_dir_all(data_dir).into_diagnostic()?;
     let db_path = data_dir.join("croniq.db");
 
@@ -43,7 +45,6 @@ pub fn init(
     let now = Utc::now();
     let user_id = Uuid::new_v4().to_string();
 
-    // 1. Create admin user credentials
     let pw_hash = hash_password(&password)
         .map_err(|e| miette!("Failed to hash password: {e}"))?;
 
@@ -60,45 +61,44 @@ pub fn init(
 
     println!("Admin user '{}' created.", username);
 
-    // 2. Create default API client with admin scope
-    let client_id = Uuid::new_v4().to_string();
-    store
-        .create_client(&ApiClient {
-            client_id: client_id.clone(),
-            name: "default".to_string(),
-            scopes: vec!["admin".to_string()],
-            is_active: true,
-            created_at: now,
-        })
-        .map_err(|e| miette!("Failed to create API client: {e}"))?;
-
-    println!("API client 'default' created (id: {}).", client_id);
-
-    // 3. Generate an API key for the default client (or use the override)
-    let (raw_key, key_hash, prefix) = match api_key_override {
-        Some(key) => {
-            if !key.starts_with("croniq_") {
-                return Err(miette!("--api-key must start with 'croniq_'"));
-            }
-            let hash = hash_api_key(key);
-            let prefix = key.chars().take(12).collect();
-            (key.to_string(), hash, prefix)
+    // Seed a default API client + key only when an explicit key is provided.
+    // This keeps reproducible setups (docker-compose demo, CI) working while
+    // skipping auto-seeded admin-scope credentials for production installs.
+    let seeded_key = if let Some(raw_key) = api_key_override {
+        if !raw_key.starts_with("croniq_") {
+            return Err(miette!("--api-key must start with 'croniq_'"));
         }
-        None => generate_api_key(),
-    };
-    let key_id = Uuid::new_v4().to_string();
 
-    store
-        .create_api_key(&ApiKey {
-            key_id,
-            client_id,
-            key_hash,
-            key_prefix: prefix,
-            expires_at: None,
-            revoked_at: None,
-            created_at: now,
-        })
-        .map_err(|e| miette!("Failed to create API key: {e}"))?;
+        let client_id = Uuid::new_v4().to_string();
+        store
+            .create_client(&ApiClient {
+                client_id: client_id.clone(),
+                name: "default".to_string(),
+                scopes: vec!["admin".to_string()],
+                is_active: true,
+                created_at: now,
+            })
+            .map_err(|e| miette!("Failed to create API client: {e}"))?;
+
+        let key_hash = hash_api_key(raw_key);
+        let key_prefix = raw_key.chars().take(12).collect();
+        store
+            .create_api_key(&ApiKey {
+                key_id: Uuid::new_v4().to_string(),
+                client_id,
+                key_hash,
+                key_prefix,
+                expires_at: None,
+                revoked_at: None,
+                created_at: now,
+            })
+            .map_err(|e| miette!("Failed to create API key: {e}"))?;
+
+        println!("API client 'default' seeded with provided key.");
+        Some(raw_key.to_string())
+    } else {
+        None
+    };
 
     println!();
     println!("=== Initialization complete ===");
@@ -107,12 +107,25 @@ pub fn init(
     println!("  Username: {}", username);
     println!("  Password: (as provided)");
     println!();
-    println!("API Key (save this — it won't be shown again):");
-    println!("  {}", raw_key);
-    println!();
-    println!("Use the API key with:");
-    println!("  Authorization: ApiKey {}", raw_key);
-    println!();
+
+    match seeded_key {
+        Some(raw_key) => {
+            println!("API Key (save this — it won't be shown again):");
+            println!("  {}", raw_key);
+            println!();
+            println!("Use the API key with:");
+            println!("  Authorization: ApiKey {}", raw_key);
+            println!();
+        }
+        None => {
+            println!("No API key was seeded. Create scoped clients and keys via:");
+            println!("  UI  → Settings → API Keys");
+            println!("  API → POST /v1/api-clients, then POST /v1/api-keys");
+            println!("  CLI → rerun `croniq init --api-key croniq_...` for reproducible seeds");
+            println!();
+        }
+    }
+
     println!("Or login via:");
     println!("  POST /v1/auth/login {{\"username\": \"{}\", \"password\": \"...\"}}", username);
 

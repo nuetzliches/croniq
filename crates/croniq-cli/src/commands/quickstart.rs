@@ -2,6 +2,7 @@
 
 use std::path::Path;
 
+use croniq_auth::api_key::generate_api_key;
 use miette::{Result, miette};
 use uuid::Uuid;
 
@@ -49,8 +50,12 @@ pub fn quickstart(data_dir: &Path, croniqfile: &Path, password: Option<&str>) ->
         .map(|p| p.to_string())
         .unwrap_or_else(|| Uuid::new_v4().simple().to_string());
 
+    // Quickstart is explicit tutorial mode — seed a default API key so the
+    // demo runner snippet below works end-to-end without a follow-up step.
+    let (api_key, _, _) = generate_api_key();
+
     // 2. Init database
-    super::init::init(data_dir, "admin", Some(&password), None)?;
+    super::init::init(data_dir, "admin", Some(&password), Some(&api_key))?;
 
     // 3. Print next steps
     println!();
