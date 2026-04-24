@@ -22,7 +22,8 @@ FROM debian:bookworm-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates libssl3 && \
-    rm -rf /var/lib/apt/lists/*
+    rm -rf /var/lib/apt/lists/* && \
+    groupadd -r croniq && useradd -r -g croniq -s /sbin/nologin croniq
 
 # Copy Rust binaries
 COPY --from=rust-builder /build/target/release/croniq-server /usr/local/bin/croniq-server
@@ -37,8 +38,8 @@ COPY --from=ui-builder /build/ui/dist /usr/share/croniq/ui
 COPY assets/ /usr/share/croniq/assets/
 COPY Croniqfile.example /etc/croniq/Croniqfile
 
-# Data directory
-RUN mkdir -p /var/lib/croniq
+# Data directory — created and owned before VOLUME so named volumes inherit ownership
+RUN mkdir -p /var/lib/croniq && chown croniq:croniq /var/lib/croniq
 VOLUME /var/lib/croniq
 
 COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
@@ -47,5 +48,6 @@ ENV RUST_LOG=info
 ENV CRONIQ_DATA_DIR=/var/lib/croniq
 EXPOSE 4000 9900
 
+USER croniq
 ENTRYPOINT ["docker-entrypoint.sh"]
 CMD ["croniq-server", "--config", "/etc/croniq/Croniqfile", "--data-dir", "/var/lib/croniq", "--listen", ":4000", "--ui-dir", "/usr/share/croniq/ui"]

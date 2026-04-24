@@ -12,17 +12,25 @@ if [ ! -f "$DB_FILE" ]; then
   if [ -n "$CRONIQ_ADMIN_PASSWORD" ]; then
     ADMIN_PASS="$CRONIQ_ADMIN_PASSWORD"
     PASS_GENERATED=0
+    if [ "$ADMIN_PASS" = "admin" ] && [ "${CRONIQ_DEMO_MODE:-0}" != "1" ]; then
+      echo "ERROR: CRONIQ_ADMIN_PASSWORD='admin' is not allowed outside demo mode." >&2
+      echo "       Set a strong password or add CRONIQ_DEMO_MODE=1 for local development." >&2
+      exit 1
+    fi
   else
     ADMIN_PASS="$(LC_ALL=C tr -dc 'A-Za-z0-9' < /dev/urandom | head -c 24)"
     PASS_GENERATED=1
   fi
 
-  INIT_ARGS="--data-dir $DATA_DIR --username $ADMIN_USER --password $ADMIN_PASS"
-  if [ -n "$CRONIQ_INIT_API_KEY" ]; then
-    INIT_ARGS="$INIT_ARGS --api-key $CRONIQ_INIT_API_KEY"
-  fi
-  # shellcheck disable=SC2086
-  croniq init $INIT_ARGS
+  # Build init args as positional params to preserve values with spaces/special chars.
+  # Run in a subshell so set -- does not clobber the entrypoint's own "$@".
+  (
+    set -- --data-dir "$DATA_DIR" --username "$ADMIN_USER" --password "$ADMIN_PASS"
+    if [ -n "$CRONIQ_INIT_API_KEY" ]; then
+      set -- "$@" --api-key "$CRONIQ_INIT_API_KEY"
+    fi
+    croniq init "$@"
+  )
 
   if [ "$PASS_GENERATED" = "1" ]; then
     echo ""

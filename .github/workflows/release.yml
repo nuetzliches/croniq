@@ -135,6 +135,13 @@ jobs:
         with:
           pattern: croniq-*
           path: artifacts
+      - name: Generate SHA256SUMS
+        run: |
+          cd artifacts
+          find . -name "*.tar.gz" -o -name "*.zip" | sort | while read -r f; do
+            sha256sum "$f" | sed 's|[^/]*/||'
+          done > SHA256SUMS
+          cat SHA256SUMS
       - name: Create release
         uses: softprops/action-gh-release@v2
         with:
@@ -142,6 +149,7 @@ jobs:
           files: |
             artifacts/**/*.tar.gz
             artifacts/**/*.zip
+            artifacts/SHA256SUMS
 
   homebrew:
     name: Update Homebrew tap
