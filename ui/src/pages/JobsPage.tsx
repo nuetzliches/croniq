@@ -64,6 +64,7 @@ export function JobsPage() {
   const [open, setOpen] = useState(false)
   const [triggeredId, setTriggeredId] = useState<string | null>(null)
   const [triggerError, setTriggerError] = useState<string | null>(null)
+  const [toggleError, setToggleError] = useState<string | null>(null)
 
   const { register, handleSubmit, reset, formState: { errors } } = useForm<RegisterForm>({
     defaultValues: { timeout: '5m' }
@@ -98,11 +99,21 @@ export function JobsPage() {
     }
   }
 
-  function handleToggle(jobKey: string, isActive: boolean) {
-    if (isActive) {
-      deactivateJob.mutate(jobKey)
-    } else {
-      activateJob.mutate(jobKey)
+  async function handleToggle(jobKey: string, isActive: boolean) {
+    setToggleError(null)
+    const mutation = isActive ? deactivateJob : activateJob
+    const verb = isActive ? 'deactivate' : 'activate'
+    try {
+      await mutation.mutateAsync(jobKey)
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'unknown error'
+      // 409 from the backend typically means the job is DSL-managed
+      // (its lifecycle is owned by the Croniqfile). Surface that plainly
+      // so users don't think the click was swallowed.
+      const body = /409|conflict/i.test(msg)
+        ? 'DSL-managed jobs cannot be toggled via the UI; edit the Croniqfile instead.'
+        : msg
+      setToggleError(`Could not ${verb} ${jobKey}: ${body}`)
     }
   }
 
@@ -159,6 +170,13 @@ export function JobsPage() {
           <div className="flex items-center gap-2 text-xs text-destructive bg-destructive/10 border border-destructive/20 rounded-md px-3 py-2">
             <AlertCircle className="h-3.5 w-3.5 shrink-0" />
             {triggerError}
+          </div>
+        )}
+
+        {toggleError && (
+          <div className="flex items-center gap-2 text-xs text-destructive bg-destructive/10 border border-destructive/20 rounded-md px-3 py-2">
+            <AlertCircle className="h-3.5 w-3.5 shrink-0" />
+            {toggleError}
           </div>
         )}
 
