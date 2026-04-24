@@ -1,20 +1,55 @@
+import { useState } from 'react'
 import { useParams } from 'react-router'
-import { useJob, useSchedules, useExecutions } from '@/api/hooks'
+import { useForm } from 'react-hook-form'
+import * as Dialog from '@radix-ui/react-dialog'
+import { Plus, Trash2, X } from 'lucide-react'
+import {
+  useJob,
+  useSchedules,
+  useExecutions,
+  useCreateSchedule,
+  useDeleteSchedule,
+} from '@/api/hooks'
 import { Badge, stateVariant } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Spinner } from '@/components/ui/spinner'
 import { formatDate } from '@/lib/utils'
+
+interface ScheduleForm {
+  cron_expression: string
+  timezone: string
+}
 
 export function JobDetailPage() {
   const { jobKey } = useParams<{ jobKey: string }>()
   const job = useJob(jobKey!)
   const schedules = useSchedules(jobKey)
   const executions = useExecutions({ job_key: jobKey, limit: 20 })
+  const createSchedule = useCreateSchedule()
+  const deleteSchedule = useDeleteSchedule()
+  const [scheduleDialogOpen, setScheduleDialogOpen] = useState(false)
+
+  const { register, handleSubmit, reset, formState: { errors } } = useForm<ScheduleForm>()
+  const inputCls =
+    'w-full px-3 py-2 border border-border rounded-md text-sm bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-primary'
+
+  async function onScheduleSubmit(data: ScheduleForm) {
+    if (!jobKey) return
+    await createSchedule.mutateAsync({
+      job_key: jobKey,
+      cron_expression: data.cron_expression,
+      timezone: data.timezone || undefined,
+    })
+    reset()
+    setScheduleDialogOpen(false)
+  }
 
   if (job.isLoading) return <div className="flex justify-center py-12"><Spinner className="h-6 w-6" /></div>
   if (!job.data) return <p className="text-destructive text-sm">Job not found</p>
 
   const j = job.data
+  const scheduleCount = schedules.data?.length ?? 0
 
   return (
     <div className="space-y-6">
@@ -45,8 +80,45 @@ export function JobDetailPage() {
       </Card>
 
       <Card>
-        <CardHeader>
-          <CardTitle>Schedules ({schedules.data?.length ?? 0})</CardTitle>
+        <CardHeader className="flex flex-row items-center justify-between">
+          <CardTitle>Schedules ({scheduleCount})</CardTitle>
+          <Dialog.Root open={scheduleDialogOpen} onOpenChange={setScheduleDialogOpen}>
+            <Dialog.Trigger asChild>
+              <Button size="sm"><Plus className="h-3.5 w-3.5" />Create Schedule</Button>
+            </Dialog.Trigger>
+            <Dialog.Portal>
+              <Dialog.Overlay className="fixed inset-0 z-40 bg-black/40" />
+              <Dialog.Content className="fixed left-1/2 top-1/2 z-50 w-full max-w-md -translate-x-1/2 -translate-y-1/2 rounded-lg border border-border bg-card p-6 shadow-xl">
+                <div className="flex items-center justify-between mb-4">
+                  <Dialog.Title className="text-sm font-semibold">Create Schedule for {j.job_key}</Dialog.Title>
+                  <Dialog.Close className="text-muted-foreground hover:text-foreground">
+                    <X className="h-4 w-4" />
+                  </Dialog.Close>
+                </div>
+                <form onSubmit={handleSubmit(onScheduleSubmit)} className="space-y-3">
+                  <div>
+                    <input
+                      {...register('cron_expression', { required: 'Required' })}
+                      placeholder="Cron or interval (e.g. */15 * * * *, 5m)"
+                      className={inputCls}
+                    />
+                    {errors.cron_expression && <p className="text-xs text-destructive mt-1">{errors.cron_expression.message}</p>}
+                  </div>
+                  <input
+                    {...register('timezone')}
+                    placeholder="Timezone (optional, e.g. Europe/Vienna)"
+                    className={inputCls}
+                  />
+                  <div className="flex justify-end gap-2 pt-2">
+                    <Dialog.Close asChild><Button variant="secondary" size="sm" type="button">Cancel</Button></Dialog.Close>
+                    <Button type="submit" size="sm" disabled={createSchedule.isPending}>
+                      {createSchedule.isPending ? <><Spinner className="h-3.5 w-3.5" />Saving…</> : 'Create'}
+                    </Button>
+                  </div>
+                </form>
+              </Dialog.Content>
+            </Dialog.Portal>
+          </Dialog.Root>
         </CardHeader>
         <CardContent className="p-0">
           {schedules.isLoading ? (
@@ -55,14 +127,14 @@ export function JobDetailPage() {
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-border">
-                  {['Cron', 'Timezone', 'Enabled'].map((h) => (
-                    <th key={h} className="px-3 py-2.5 text-left text-xs font-medium text-muted-foreground uppercase tracking-wide">{h}</th>
+                  {['Cron', 'Timezone', 'Enabled', 'Managed By', ''].map((h, i) => (
+                    <th key={i} className="px-3 py-2.5 text-left text-xs font-medium text-muted-foreground uppercase tracking-wide">{h}</th>
                   ))}
                 </tr>
               </thead>
               <tbody>
-                {schedules.data?.length === 0 && (
-                  <tr><td colSpan={3} className="px-3 py-6 text-center text-sm text-muted-foreground">No schedules</td></tr>
+                {scheduleCount === 0 && (
+                  <tr><td colSpan={5} className="px-3 py-6 text-center text-sm text-muted-foreground">No schedules</td></tr>
                 )}
                 {schedules.data?.map((s) => (
                   <tr key={s.trigger_id} className="border-b border-border last:border-0 hover:bg-accent/30 transition-colors">
@@ -70,6 +142,18 @@ export function JobDetailPage() {
                     <td className="px-3 py-2.5 text-muted-foreground">{s.timezone || 'UTC'}</td>
                     <td className="px-3 py-2.5">
                       <Badge variant={s.enabled ? 'ok' : 'neutral'}>{s.enabled ? 'enabled' : 'disabled'}</Badge>
+                    </td>
+                    <td className="px-3 py-2.5 text-muted-foreground">{s.managed_by}</td>
+                    <td className="px-3 py-2.5 text-right">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => deleteSchedule.mutate(s.trigger_id)}
+                        aria-label={`Delete schedule`}
+                        className="h-7 w-7 p-0 text-muted-foreground hover:text-destructive"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </Button>
                     </td>
                   </tr>
                 ))}
