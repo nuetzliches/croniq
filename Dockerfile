@@ -21,7 +21,7 @@ RUN npm run build
 FROM debian:bookworm-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates libssl3 && \
+    ca-certificates libssl3 gosu && \
     rm -rf /var/lib/apt/lists/* && \
     groupadd -r croniq && useradd -r -g croniq -s /sbin/nologin croniq
 
@@ -48,6 +48,8 @@ ENV RUST_LOG=info
 ENV CRONIQ_DATA_DIR=/var/lib/croniq
 EXPOSE 4000 9900
 
-USER croniq
+# Entrypoint runs as root, fixes data-dir ownership if needed, then
+# drops privileges to the croniq user via gosu. This handles upgrades
+# from older images where the named volume is owned by root.
 ENTRYPOINT ["docker-entrypoint.sh"]
 CMD ["croniq-server", "--config", "/etc/croniq/Croniqfile", "--data-dir", "/var/lib/croniq", "--listen", ":4000", "--ui-dir", "/usr/share/croniq/ui"]
