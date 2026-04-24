@@ -194,18 +194,27 @@ export function JobsPage() {
                     <HealthPill executions={execsByJob[j.job_key] ?? []} />
                   </div>
 
-                  {/* Activate/Deactivate toggle */}
+                  {/* Activate/Deactivate toggle — Tooltip.Trigger wraps a
+                      span, not the Switch itself. Radix Slot's asChild merge
+                      collides with Switch.Root on `data-state` (Tooltip's
+                      open/closed overwrites Switch's checked/unchecked),
+                      which blanks out the track color AND swallows the
+                      click handler. The span receives the Tooltip data
+                      attributes cleanly and the Switch inside behaves as
+                      intended. */}
                   <Tooltip.Root>
                     <Tooltip.Trigger asChild>
-                      <Switch.Root
-                        checked={j.is_active}
-                        onCheckedChange={() => handleToggle(j.job_key, j.is_active)}
-                        disabled={activateJob.isPending || deactivateJob.isPending}
-                        className="relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary data-[state=checked]:bg-primary data-[state=unchecked]:bg-border disabled:opacity-50 disabled:cursor-not-allowed"
-                        aria-label={`${j.is_active ? 'Deactivate' : 'Activate'} ${j.job_key}`}
-                      >
-                        <Switch.Thumb className="pointer-events-none block h-4 w-4 rounded-full bg-white shadow-lg ring-0 transition-transform data-[state=checked]:translate-x-4 data-[state=unchecked]:translate-x-0" />
-                      </Switch.Root>
+                      <span className="inline-flex">
+                        <Switch.Root
+                          checked={j.is_active}
+                          onCheckedChange={() => handleToggle(j.job_key, j.is_active)}
+                          disabled={activateJob.isPending || deactivateJob.isPending}
+                          className="relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary data-[state=checked]:bg-primary data-[state=unchecked]:bg-border disabled:opacity-50 disabled:cursor-not-allowed"
+                          aria-label={`${j.is_active ? 'Deactivate' : 'Activate'} ${j.job_key}`}
+                        >
+                          <Switch.Thumb className="pointer-events-none block h-4 w-4 rounded-full bg-white shadow-lg ring-0 transition-transform data-[state=checked]:translate-x-4 data-[state=unchecked]:translate-x-0" />
+                        </Switch.Root>
+                      </span>
                     </Tooltip.Trigger>
                     <Tooltip.Portal>
                       <Tooltip.Content className="z-50 rounded-md bg-foreground px-2 py-1 text-xs text-background shadow-md">
