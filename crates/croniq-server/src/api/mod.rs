@@ -1,5 +1,6 @@
 //! Extended HTTP API: runner Pull-API, auth, and management endpoints.
 
+pub mod admin;
 pub mod auth_endpoints;
 pub mod auth_middleware;
 pub mod calendars;
@@ -33,6 +34,7 @@ use croniq_runner::{
 use tokio::sync::mpsc;
 
 use crate::completion::CompletionEvent;
+use crate::reload::ReloadCounters;
 use crate::scheduler::SchedulerCommand;
 use crate::store::DynStore;
 use croniq_config::compile::JobConfig;
@@ -65,6 +67,11 @@ pub struct ServerState {
     /// unions this with the persisted store so DSL jobs appear in `/v1/jobs`
     /// and `/v1/schedules` alongside API/runner-registered ones.
     pub dsl_jobs: Option<Arc<tokio::sync::RwLock<Vec<JobConfig>>>>,
+    /// Path to the Croniqfile, needed by the admin reload endpoint.
+    pub config_path: Option<std::path::PathBuf>,
+    /// Counters for `croniq_config_reload_total`, incremented by both the
+    /// file-watcher reload path and the admin reload endpoint.
+    pub reload_counters: Arc<ReloadCounters>,
 }
 
 impl ServerState {
@@ -81,6 +88,8 @@ impl ServerState {
             scheduler_tx: None,
             triggers: None,
             dsl_jobs: None,
+            config_path: None,
+            reload_counters: ReloadCounters::new(),
         })
     }
 
@@ -100,6 +109,8 @@ impl ServerState {
             scheduler_tx: None,
             triggers: None,
             dsl_jobs: None,
+            config_path: None,
+            reload_counters: ReloadCounters::new(),
         })
     }
 
@@ -109,7 +120,18 @@ impl ServerState {
         completion_tx: mpsc::UnboundedSender<CompletionEvent>,
         long_poll_timeout: Duration,
     ) -> Arc<Self> {
-        Arc::new(Self { runner, completion_tx, long_poll_timeout, jwt_config: None, store: None, scheduler_tx: None, triggers: None, dsl_jobs: None })
+        Arc::new(Self {
+            runner,
+            completion_tx,
+            long_poll_timeout,
+            jwt_config: None,
+            store: None,
+            scheduler_tx: None,
+            triggers: None,
+            dsl_jobs: None,
+            config_path: None,
+            reload_counters: ReloadCounters::new(),
+        })
     }
 }
 
@@ -151,6 +173,8 @@ pub fn server_router(state: Arc<ServerState>) -> Router {
         // Executions + logs
         .route("/v1/executions", get(handle_list_executions))
         .route("/v1/executions/{id}/logs", get(execution_logs::handle_get_logs))
+        // Admin
+        .route("/v1/admin/reload-config", post(admin::handle_reload_config))
         // Auth management
         .route("/v1/api-clients", get(auth_endpoints::handle_list_clients).post(auth_endpoints::handle_create_client))
         .route("/v1/api-clients/{id}", delete(auth_endpoints::handle_delete_client))
@@ -637,6 +661,8 @@ mod tests {
             scheduler_tx: None,
             triggers: None,
             dsl_jobs: None,
+            config_path: None,
+            reload_counters: ReloadCounters::new(),
         });
         (state, rx)
     }

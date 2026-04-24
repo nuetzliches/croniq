@@ -30,11 +30,72 @@ pub enum LoadError {
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),
 
-    #[error("parse error: {0}")]
-    Parse(String),
+    #[error("parse error: {message}")]
+    Parse {
+        message: String,
+        /// 1-based line number of the offending token (if known).
+        line: Option<usize>,
+        /// 1-based column of the offending token (if known).
+        column: Option<usize>,
+    },
 
     #[error("schedule error in job '{job}': {reason}")]
     Schedule { job: String, reason: String },
+}
+
+/// Convert a `ParseError` into a `LoadError::Parse` with 1-based line/column
+/// extracted from the parser's SourceSpan when available.
+fn parse_error_to_load(
+    err: croniq_config::parser::ParseError,
+    source: &str,
+) -> LoadError {
+    use croniq_config::lexer::LexError;
+    use croniq_config::parser::ParseError;
+
+    let span = match &err {
+        ParseError::General { span, .. }
+        | ParseError::Unexpected { span, .. }
+        | ParseError::InvalidJobKey { span, .. }
+        | ParseError::InvalidTime { span, .. }
+        | ParseError::InvalidOrdinal { span, .. } => Some(*span),
+        ParseError::Lex(lex) => match lex {
+            LexError::UnterminatedString { span }
+            | LexError::UnterminatedPlaceholder { span }
+            | LexError::InvalidEscape { span, .. } => Some(*span),
+        },
+    };
+
+    let (line, column) = match span {
+        Some(s) => {
+            let (l, c) = line_col(source, s.offset());
+            (Some(l), Some(c))
+        }
+        None => (None, None),
+    };
+
+    LoadError::Parse {
+        message: format!("{err}"),
+        line,
+        column,
+    }
+}
+
+/// Compute 1-based (line, column) for a byte offset into `source`.
+fn line_col(source: &str, offset: usize) -> (usize, usize) {
+    let mut line: usize = 1;
+    let mut col: usize = 1;
+    for (i, ch) in source.char_indices() {
+        if i >= offset {
+            break;
+        }
+        if ch == '\n' {
+            line = line.saturating_add(1);
+            col = 1;
+        } else {
+            col = col.saturating_add(1);
+        }
+    }
+    (line, col)
 }
 
 /// The fully loaded configuration: compiled config + live triggers.
@@ -61,7 +122,7 @@ fn load_and_resolve(
     visited: &mut HashSet<PathBuf>,
 ) -> Result<Croniqfile, LoadError> {
     let src = std::fs::read_to_string(path)?;
-    let mut ast = Parser::parse(&src).map_err(|e| LoadError::Parse(format!("{e}")))?;
+    let mut ast = Parser::parse(&src).map_err(|e| parse_error_to_load(e, &src))?;
 
     let base_dir = path.parent().unwrap_or(Path::new("."));
 
@@ -106,7 +167,7 @@ fn load_and_resolve(
 
 /// Load a Croniqfile from a source string (no import resolution).
 pub fn load_str(src: &str) -> Result<LoadedConfig, LoadError> {
-    let ast = Parser::parse(src).map_err(|e| LoadError::Parse(format!("{e}")))?;
+    let ast = Parser::parse(src).map_err(|e| parse_error_to_load(e, src))?;
     let runtime = compile::compile(&ast);
     load_from_compiled(runtime, &ast)
 }
@@ -660,7 +721,7 @@ mod tests {
     #[test]
     fn invalid_croniqfile_returns_parse_error() {
         let src = r#"this is not valid DSL @@###"#;
-        assert!(matches!(load_str(src), Err(LoadError::Parse(_))));
+        assert!(matches!(load_str(src), Err(LoadError::Parse { .. })));
     }
 
     #[test]

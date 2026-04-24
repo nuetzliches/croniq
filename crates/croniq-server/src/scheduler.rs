@@ -17,6 +17,7 @@ use croniq_bridge::job_to_work_item;
 use croniq_runner::AppState;
 use croniq_scheduler::trigger::{Trigger, TriggerState};
 use croniq_store::models::{Execution, ExecutionState, JobState, JobStatus};
+use tokio::sync::oneshot;
 use uuid::Uuid;
 
 use crate::quota::QuotaGuard;
@@ -29,6 +30,15 @@ pub enum SchedulerCommand {
     AddJob { job: Box<JobConfig>, trigger: Box<Trigger> },
     /// Remove a job from the scheduler.
     RemoveJob { job_key: String },
+    /// Replace the full trigger + job set (hot-reload).
+    ///
+    /// The ack sender fires once the swap is applied so callers (e.g. the
+    /// admin reload endpoint) can wait for completion before responding.
+    Reload {
+        triggers: HashMap<String, Trigger>,
+        jobs: Vec<JobConfig>,
+        ack: oneshot::Sender<()>,
+    },
 }
 
 /// The result of a single scheduler tick.
@@ -122,7 +132,7 @@ impl SchedulerLoop {
         );
     }
 
-    /// Process a runtime command (add/remove job).
+    /// Process a runtime command (add/remove job, or full reload).
     pub fn apply_command(&mut self, cmd: SchedulerCommand) {
         match cmd {
             SchedulerCommand::AddJob { job, trigger } => {
@@ -135,6 +145,12 @@ impl SchedulerLoop {
                 tracing::info!(job_key = %job_key, "scheduler: job removed via API");
                 self.jobs.remove(&job_key);
                 self.triggers.remove(&job_key);
+            }
+            SchedulerCommand::Reload { triggers, jobs, ack } => {
+                self.reload(triggers, jobs);
+                // The receiver may have dropped (caller lost interest);
+                // ignore send failure.
+                let _ = ack.send(());
             }
         }
     }
