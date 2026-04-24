@@ -35,6 +35,7 @@ pub mod loader;
 pub mod metrics;
 pub mod notify;
 pub mod quota;
+pub mod reload;
 pub mod scheduler;
 pub mod store;
 pub mod watcher;
@@ -43,6 +44,10 @@ pub mod watchdog;
 pub use api::ServerState;
 pub use completion::{CompletionEvent, CompletionProcessor, ProcessedOutcome};
 pub use loader::{LoadError, LoadedConfig, load_file, load_str, restore_trigger_states, restore_queued_executions};
+pub use reload::{
+    ApplyError, ReloadCounters, ReloadDiff, ReloadError, ReloadPlan, apply_plan,
+    apply_plan_direct, build_plan,
+};
 pub use scheduler::{FiredExecution, SchedulerLoop, TickResult};
 pub use store::{DynStore, StoreExt, sqlite_store};
 pub use watchdog::{WatchdogLoop, WatchdogResult};

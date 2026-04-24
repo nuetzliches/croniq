@@ -15,6 +15,7 @@ use croniq_server::{
     CompletionProcessor, SchedulerLoop, WatchdogLoop,
     api::{ServerState, server_router},
     loader::{load_file, restore_trigger_states, restore_queued_executions},
+    reload,
     store::{DynStore, sqlite_store},
 };
 use croniq_store::sqlite::SqliteStore;
@@ -117,20 +118,26 @@ async fn main() -> Result<()> {
     // `/v1/jobs` and `/v1/schedules`.
     let dsl_jobs_shared = Arc::new(tokio::sync::RwLock::new(loaded.runtime.jobs.clone()));
 
+    let config_path_abs = cli
+        .config
+        .canonicalize()
+        .unwrap_or_else(|_| cli.config.clone());
+
     let mut server_state = ServerState::with_auth(Arc::clone(&runner_state), completion_tx, jwt_config, Some(Arc::clone(&store)));
-    // Inject scheduler_tx and dsl_jobs into the shared state
+    // Inject scheduler_tx, dsl_jobs, and config_path into the shared state
     {
         let s = Arc::get_mut(&mut server_state).unwrap();
         s.scheduler_tx = Some(scheduler_cmd_tx);
         s.dsl_jobs = Some(Arc::clone(&dsl_jobs_shared));
+        s.config_path = Some(config_path_abs.clone());
     }
+    let reload_counters = Arc::clone(&server_state.reload_counters);
 
-    // ── File watcher (optional) ─────────────────────────────────────────────
+    // ── Reload signalling: file watcher (optional) + SIGHUP ─────────────────
     let (reload_tx, mut reload_rx) = mpsc::unbounded_channel::<std::path::PathBuf>();
 
     if cli.watch {
-        let config_path = cli.config.canonicalize().unwrap_or_else(|_| cli.config.clone());
-        match croniq_server::watcher::watch_config(&config_path) {
+        match croniq_server::watcher::watch_config(&config_path_abs) {
             Ok(raw_rx) => {
                 let debounce_tx = reload_tx.clone();
                 tokio::spawn(croniq_server::watcher::debounced_reload_loop(
@@ -138,13 +145,39 @@ async fn main() -> Result<()> {
                     std::time::Duration::from_millis(500),
                     debounce_tx,
                 ));
-                tracing::info!(path = %config_path.display(), "watching Croniqfile for changes");
+                tracing::info!(path = %config_path_abs.display(), "watching Croniqfile for changes");
             }
             Err(e) => {
                 tracing::warn!(error = %e, "could not start file watcher — hot-reload disabled");
             }
         }
     }
+
+    // SIGHUP → re-read Croniqfile (unix only). Matches the long-standing
+    // daemon convention: `kill -HUP <pid>` reloads config without restart.
+    #[cfg(unix)]
+    {
+        let sighup_tx = reload_tx.clone();
+        let sighup_path = config_path_abs.clone();
+        tokio::spawn(async move {
+            let mut signal = match tokio::signal::unix::signal(
+                tokio::signal::unix::SignalKind::hangup(),
+            ) {
+                Ok(s) => s,
+                Err(e) => {
+                    tracing::warn!(error = %e, "could not register SIGHUP handler");
+                    return;
+                }
+            };
+            while signal.recv().await.is_some() {
+                tracing::info!("SIGHUP received — requesting config reload");
+                if sighup_tx.send(sighup_path.clone()).is_err() {
+                    break;
+                }
+            }
+        });
+    }
+    let _ = reload_tx; // keep sender alive even when no watcher/SIGHUP fires (not applicable on non-unix)
 
     // ── Scheduler task ────────────────────────────────────────────────────────
     let scheduler_store = Arc::clone(&store);
@@ -182,6 +215,11 @@ async fn main() -> Result<()> {
     let mut scheduler_loop =
         SchedulerLoop::new(triggers, jobs.clone(), scheduler_store, Arc::clone(&runner_state));
 
+    let scheduler_reload_store = Arc::clone(&store);
+    let scheduler_reload_snapshot = Arc::clone(&trigger_snapshot);
+    let scheduler_reload_dsl = Arc::clone(&dsl_jobs_shared);
+    let scheduler_reload_counters = Arc::clone(&reload_counters);
+
     let _scheduler_task = tokio::spawn(async move {
         let mut interval = tokio::time::interval(std::time::Duration::from_secs(1));
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
@@ -194,15 +232,33 @@ async fn main() -> Result<()> {
                     }
                 }
                 Some(path) = reload_rx.recv() => {
-                    tracing::info!(path = %path.display(), "Croniqfile changed — reloading");
-                    match load_file(&path) {
-                        Ok(new_config) => {
-                            let new_jobs = new_config.runtime.jobs.clone();
-                            scheduler_loop.reload(new_config.triggers, new_config.runtime.jobs);
-                            *dsl_jobs_shared.write().await = new_jobs;
+                    tracing::info!(path = %path.display(), "Croniqfile reload requested");
+                    match reload::build_plan(
+                        &path,
+                        &scheduler_reload_store,
+                        &scheduler_reload_snapshot,
+                        &scheduler_reload_dsl,
+                    ).await {
+                        Ok(plan) => {
+                            let diff = plan.diff.clone();
+                            reload::apply_plan_direct(
+                                plan,
+                                &mut scheduler_loop,
+                                &scheduler_reload_dsl,
+                                &scheduler_reload_snapshot,
+                            ).await;
+                            scheduler_reload_counters.inc_success();
+                            tracing::info!(
+                                added = diff.added.len(),
+                                removed = diff.removed.len(),
+                                changed = diff.changed.len(),
+                                total = diff.total,
+                                "config reloaded"
+                            );
                         }
                         Err(e) => {
-                            tracing::error!(error = %e, "failed to reload Croniqfile — keeping previous config");
+                            scheduler_reload_counters.inc_validation_error();
+                            tracing::error!(error = %e, "config reload failed — keeping previous config");
                         }
                     }
                 }
