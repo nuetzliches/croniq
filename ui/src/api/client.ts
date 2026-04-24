@@ -1,6 +1,12 @@
 import { useAuthStore } from '@/auth/store'
 
-const BASE = import.meta.env.VITE_API_URL || 'http://localhost:4000'
+// Default to same-origin (relative URLs) so the UI works unchanged in any
+// deployment where croniq-server serves both the UI and the API — which is
+// the standard setup, including the official Docker image. For local dev
+// (npm run dev on :5173) the Vite dev-server proxies /v1, /health, /metrics
+// to http://localhost:4000 — see vite.config.ts. Override VITE_API_URL at
+// build time only when UI and API live on different origins.
+const BASE = import.meta.env.VITE_API_URL ?? ''
 
 export async function apiFetch<T>(path: string, options?: RequestInit): Promise<T> {
   const token = useAuthStore.getState().token

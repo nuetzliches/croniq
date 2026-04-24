@@ -18,7 +18,10 @@ npm install
 npm run dev       # http://localhost:5173
 ```
 
-Set `VITE_API_URL` to point to the Croniq server (default: `http://localhost:4000`).
+The Vite dev server proxies `/v1`, `/health`, and `/metrics` to
+`http://localhost:4000` (override via `CRONIQ_API_ORIGIN`). Start
+`croniq-server` in another terminal and the UI will talk to it through
+the proxy without any CORS juggling.
 
 ## Build
 
@@ -26,7 +29,10 @@ Set `VITE_API_URL` to point to the Croniq server (default: `http://localhost:400
 npm run build     # Output in dist/
 ```
 
-Serve the built files via `croniq-server --ui-dir ui/dist`.
+Serve the built files via `croniq-server --ui-dir ui/dist`. The UI uses
+relative URLs by default, so it works in any deployment where the server
+serves both the UI and the API. Set `VITE_API_URL` at build time only if
+you deploy the UI on a different origin than the API.
 
 ## Views
 
