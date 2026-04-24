@@ -54,15 +54,35 @@ if [ -z "$CRONIQ_VERSION" ]; then
   exit 1
 fi
 
-# ── Download + extract ───────────────────────────────────────────────────────
+# ── Download + verify + extract ──────────────────────────────────────────────
 
 ARCHIVE="croniq-${TARGET}.tar.gz"
-URL="https://github.com/${REPO}/releases/download/v${CRONIQ_VERSION}/${ARCHIVE}"
+BASE_URL="https://github.com/${REPO}/releases/download/v${CRONIQ_VERSION}"
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
 
 echo "Downloading Croniq v${CRONIQ_VERSION} for ${TARGET}..."
-curl -fsSL --progress-bar "$URL" -o "$TMP/$ARCHIVE"
+curl -fsSL --progress-bar "${BASE_URL}/${ARCHIVE}" -o "$TMP/$ARCHIVE"
+
+# Verify SHA256 checksum when a suitable tool is available
+if command -v sha256sum >/dev/null 2>&1; then
+  SHA256_CMD="sha256sum"
+elif command -v shasum >/dev/null 2>&1; then
+  SHA256_CMD="shasum -a 256"
+else
+  SHA256_CMD=""
+fi
+
+if [ -n "$SHA256_CMD" ]; then
+  echo "Verifying checksum..."
+  curl -fsSL "${BASE_URL}/SHA256SUMS" -o "$TMP/SHA256SUMS"
+  # Run the check in a subshell so the working directory change is scoped
+  (cd "$TMP" && grep "$ARCHIVE" SHA256SUMS | $SHA256_CMD --check -)
+  echo "Checksum verified."
+else
+  echo "Warning: sha256sum/shasum not found — skipping checksum verification." >&2
+fi
+
 tar -xzf "$TMP/$ARCHIVE" -C "$TMP"
 
 # ── Install binaries ─────────────────────────────────────────────────────────
