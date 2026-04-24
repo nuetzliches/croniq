@@ -14,6 +14,12 @@ concurrency:
   group: pages
   cancel-in-progress: false
 
+env:
+  # Opt into Node 24 for JavaScript actions ahead of the 2026-06-02
+  # default switch, silencing the Node 20 deprecation warnings from
+  # checkout/configure-pages/upload-pages-artifact/etc.
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
