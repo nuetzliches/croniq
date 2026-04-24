@@ -41,11 +41,12 @@ TARGET="${arch_part}-${os_part}"
 # ── Resolve version ──────────────────────────────────────────────────────────
 
 if [ -z "$CRONIQ_VERSION" ]; then
-  echo "Fetching latest release info..."
-  CRONIQ_VERSION=$(curl -fsSL "https://api.github.com/repos/${REPO}/releases/latest" \
-    | grep '"tag_name"' \
-    | head -1 \
-    | sed 's/.*"v\([^"]*\)".*/\1/')
+  echo "Fetching latest release..."
+  # Follow the redirect from /releases/latest — avoids GitHub API rate limits
+  _url=$(curl -fsSLI -o /dev/null -w '%{url_effective}' \
+    "https://github.com/${REPO}/releases/latest")
+  CRONIQ_VERSION="${_url##*/v}"
+  unset _url
 fi
 
 if [ -z "$CRONIQ_VERSION" ]; then
