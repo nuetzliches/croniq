@@ -39,6 +39,21 @@ pub trait ExecutionStore {
     /// Create a new queued execution.
     fn create_execution(&self, execution: &Execution) -> Result<(), StoreError>;
 
+    /// Atomically persist a new execution AND update the job state.
+    ///
+    /// Used by the scheduler tick to close the window between two
+    /// previously-independent writes. Without this, a crash after
+    /// `create_execution` but before `upsert_job_state` would leave the
+    /// execution row in the DB while `job_state.next_fire_at` still held
+    /// the old fire time — on restart the same trigger fires again and
+    /// produces a duplicate execution. Implementations must commit both
+    /// rows in a single transaction (or refuse).
+    fn create_execution_and_advance_job_state(
+        &self,
+        execution: &Execution,
+        job_state: &JobState,
+    ) -> Result<(), StoreError>;
+
     /// Get an execution by ID.
     fn get_execution(&self, id: Uuid) -> Result<Option<Execution>, StoreError>;
 

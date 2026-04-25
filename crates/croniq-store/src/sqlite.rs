@@ -92,26 +92,7 @@ impl JobStore for SqliteStore {
 
     fn upsert_job_state(&self, state: &JobState) -> Result<(), StoreError> {
         let conn = self.conn.lock().unwrap();
-        conn.execute(
-            "INSERT INTO job_states (job_key, next_fire_at, last_fired_at, fire_count, status, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6)
-             ON CONFLICT(job_key) DO UPDATE SET
-               next_fire_at = excluded.next_fire_at,
-               last_fired_at = excluded.last_fired_at,
-               fire_count = excluded.fire_count,
-               status = excluded.status,
-               updated_at = excluded.updated_at",
-            params![
-                state.job_key,
-                opt_dt_to_sql(&state.next_fire_at),
-                opt_dt_to_sql(&state.last_fired_at),
-                state.fire_count as i64,
-                format!("{:?}", state.status).to_lowercase(),
-                dt_to_sql(&state.updated_at),
-            ],
-        )
-        .map_err(map_err)?;
-        Ok(())
+        upsert_job_state_with(&conn, state)
     }
 
     fn list_job_states(&self) -> Result<Vec<JobState>, StoreError> {
@@ -152,28 +133,19 @@ impl JobStore for SqliteStore {
 impl ExecutionStore for SqliteStore {
     fn create_execution(&self, exec: &Execution) -> Result<(), StoreError> {
         let conn = self.conn.lock().unwrap();
-        let metadata = serde_json::to_string(&exec.metadata).unwrap_or_default();
-        conn.execute(
-            "INSERT INTO executions (id, job_key, fire_at, attempt, state, runner_id, claimed_at, started_at, completed_at, duration_ms, error, dead_reason, metadata, created_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
-            params![
-                exec.id.to_string(),
-                exec.job_key,
-                dt_to_sql(&exec.fire_at),
-                exec.attempt,
-                state_to_str(exec.state),
-                exec.runner_id,
-                opt_dt_to_sql(&exec.claimed_at),
-                opt_dt_to_sql(&exec.started_at),
-                opt_dt_to_sql(&exec.completed_at),
-                exec.duration_ms,
-                exec.error,
-                exec.dead_reason,
-                metadata,
-                dt_to_sql(&exec.created_at),
-            ],
-        )
-        .map_err(map_err)?;
+        insert_execution_with(&conn, exec)
+    }
+
+    fn create_execution_and_advance_job_state(
+        &self,
+        exec: &Execution,
+        job_state: &JobState,
+    ) -> Result<(), StoreError> {
+        let mut conn = self.conn.lock().unwrap();
+        let tx = conn.transaction().map_err(map_err)?;
+        insert_execution_with(&tx, exec)?;
+        upsert_job_state_with(&tx, job_state)?;
+        tx.commit().map_err(map_err)?;
         Ok(())
     }
 
@@ -1069,6 +1041,61 @@ fn row_to_trigger_def(row: &rusqlite::Row<'_>) -> Result<TriggerDefinition, rusq
         created_at: sql_to_dt(&row.get::<_, String>(10)?),
         updated_at: sql_to_dt(&row.get::<_, String>(11)?),
     })
+}
+
+// ─── Reusable insert/upsert helpers ───
+//
+// These take `&rusqlite::Connection` so the same SQL works against either a
+// plain pooled connection (single-statement methods) or a transaction (the
+// atomic scheduler-tick method, where `&Transaction` derefs to `&Connection`).
+
+fn insert_execution_with(conn: &rusqlite::Connection, exec: &Execution) -> Result<(), StoreError> {
+    let metadata = serde_json::to_string(&exec.metadata).unwrap_or_default();
+    conn.execute(
+        "INSERT INTO executions (id, job_key, fire_at, attempt, state, runner_id, claimed_at, started_at, completed_at, duration_ms, error, dead_reason, metadata, created_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+        params![
+            exec.id.to_string(),
+            exec.job_key,
+            dt_to_sql(&exec.fire_at),
+            exec.attempt,
+            state_to_str(exec.state),
+            exec.runner_id,
+            opt_dt_to_sql(&exec.claimed_at),
+            opt_dt_to_sql(&exec.started_at),
+            opt_dt_to_sql(&exec.completed_at),
+            exec.duration_ms,
+            exec.error,
+            exec.dead_reason,
+            metadata,
+            dt_to_sql(&exec.created_at),
+        ],
+    )
+    .map_err(map_err)?;
+    Ok(())
+}
+
+fn upsert_job_state_with(conn: &rusqlite::Connection, state: &JobState) -> Result<(), StoreError> {
+    conn.execute(
+        "INSERT INTO job_states (job_key, next_fire_at, last_fired_at, fire_count, status, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+         ON CONFLICT(job_key) DO UPDATE SET
+           next_fire_at = excluded.next_fire_at,
+           last_fired_at = excluded.last_fired_at,
+           fire_count = excluded.fire_count,
+           status = excluded.status,
+           updated_at = excluded.updated_at",
+        params![
+            state.job_key,
+            opt_dt_to_sql(&state.next_fire_at),
+            opt_dt_to_sql(&state.last_fired_at),
+            state.fire_count as i64,
+            format!("{:?}", state.status).to_lowercase(),
+            dt_to_sql(&state.updated_at),
+        ],
+    )
+    .map_err(map_err)?;
+    Ok(())
 }
 
 // ─── String conversions ───

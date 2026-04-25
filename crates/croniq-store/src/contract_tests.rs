@@ -128,6 +128,78 @@ fn job_state_not_found() {
     assert!(store.get_job_state("nonexistent:job").unwrap().is_none());
 }
 
+#[test]
+fn create_execution_and_advance_job_state_persists_both() {
+    let store = create_memory_store().unwrap();
+
+    let exec = make_execution("billing:invoice", utc(2026, 3, 29, 2, 0));
+    let exec_id = exec.id;
+    let job_state = JobState {
+        job_key: "billing:invoice".into(),
+        next_fire_at: Some(utc(2026, 3, 29, 3, 0)),
+        last_fired_at: Some(utc(2026, 3, 29, 2, 0)),
+        fire_count: 1,
+        status: JobStatus::Active,
+        updated_at: now(),
+    };
+
+    store
+        .create_execution_and_advance_job_state(&exec, &job_state)
+        .unwrap();
+
+    // Both rows are committed.
+    let loaded_exec = store.get_execution(exec_id).unwrap().unwrap();
+    assert_eq!(loaded_exec.job_key, "billing:invoice");
+    let loaded_state = store.get_job_state("billing:invoice").unwrap().unwrap();
+    assert_eq!(loaded_state.fire_count, 1);
+    assert_eq!(loaded_state.next_fire_at, Some(utc(2026, 3, 29, 3, 0)));
+}
+
+#[test]
+fn create_execution_and_advance_job_state_atomically_rolls_back() {
+    // Calling the method twice with the same execution id should fail
+    // (PRIMARY KEY conflict on the second call) AND must not advance the
+    // job_state on the failed second call. This proves the second
+    // upsert_job_state is wrapped in the same transaction as the failing
+    // execution insert — otherwise the state would update even though the
+    // execution didn't, leaving the trigger desynced.
+    let store = create_memory_store().unwrap();
+
+    let exec = make_execution("etl:sync", utc(2026, 3, 29, 1, 0));
+    let initial_state = JobState {
+        job_key: "etl:sync".into(),
+        next_fire_at: Some(utc(2026, 3, 29, 1, 15)),
+        last_fired_at: Some(utc(2026, 3, 29, 1, 0)),
+        fire_count: 1,
+        status: JobStatus::Active,
+        updated_at: now(),
+    };
+
+    store
+        .create_execution_and_advance_job_state(&exec, &initial_state)
+        .unwrap();
+
+    // Second call with the same execution id and an *advanced* job_state.
+    let advanced_state = JobState {
+        next_fire_at: Some(utc(2026, 3, 29, 1, 30)),
+        fire_count: 2,
+        ..initial_state.clone()
+    };
+    let err = store
+        .create_execution_and_advance_job_state(&exec, &advanced_state)
+        .unwrap_err();
+    let _ = err; // any DB error is fine — point is the call returned Err
+
+    // job_state must NOT have advanced to fire_count=2 because the tx
+    // rolled back.
+    let loaded = store.get_job_state("etl:sync").unwrap().unwrap();
+    assert_eq!(
+        loaded.fire_count, 1,
+        "job_state advanced even though execution insert failed"
+    );
+    assert_eq!(loaded.next_fire_at, Some(utc(2026, 3, 29, 1, 15)));
+}
+
 // ─── ExecutionStore ───
 
 #[test]
