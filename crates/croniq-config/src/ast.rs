@@ -197,15 +197,19 @@ pub enum Weekday {
 }
 
 impl Weekday {
+    /// Accepts both full names (`monday`) and 3-letter abbreviations
+    /// (`mon`), case-insensitively. The Croniqfile DSL canonicalises
+    /// to lower-case full names on output, but the parser is generous
+    /// with input so users can paste `Mon` or `MON` from a crontab.
     pub fn parse(s: &str) -> Option<Self> {
-        match s {
-            "monday" => Some(Self::Monday),
-            "tuesday" => Some(Self::Tuesday),
-            "wednesday" => Some(Self::Wednesday),
-            "thursday" => Some(Self::Thursday),
-            "friday" => Some(Self::Friday),
-            "saturday" => Some(Self::Saturday),
-            "sunday" => Some(Self::Sunday),
+        match s.to_ascii_lowercase().as_str() {
+            "monday" | "mon" => Some(Self::Monday),
+            "tuesday" | "tue" => Some(Self::Tuesday),
+            "wednesday" | "wed" => Some(Self::Wednesday),
+            "thursday" | "thu" => Some(Self::Thursday),
+            "friday" | "fri" => Some(Self::Friday),
+            "saturday" | "sat" => Some(Self::Saturday),
+            "sunday" | "sun" => Some(Self::Sunday),
             _ => None,
         }
     }
