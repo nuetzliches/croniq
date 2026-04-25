@@ -3,6 +3,12 @@ name: Release
 on:
   push:
     tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing release tag to (re-)update Homebrew tap for, e.g. v0.5.0"
+        required: true
+        type: string
 
 concurrency:
   group: release-${{ github.ref }}
@@ -22,6 +28,11 @@ env:
 jobs:
   build:
     name: Build (${{ matrix.target }})
+    # Only run the build/release matrix on actual tag pushes. workflow_dispatch
+    # is reserved for re-running the homebrew tap update against an existing
+    # tag — re-building would publish a different binary under the same
+    # version, which would break already-distributed checksums.
+    if: github.event_name == 'push'
     runs-on: ${{ matrix.os }}
     permissions:
       contents: read
@@ -115,6 +126,8 @@ jobs:
 
   docker:
     name: Docker release
+    # Same reasoning as the build job — never re-publish on workflow_dispatch.
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -183,6 +196,7 @@ jobs:
 
   release:
     name: GitHub Release
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     needs: [build, docker]
     steps:
@@ -218,50 +232,86 @@ jobs:
   homebrew:
     name: Update Homebrew tap
     runs-on: ubuntu-latest
+    # On tag push we wait for the GitHub Release job to publish the assets
+    # (we download them by URL, not via build artifacts, so the same flow
+    # also works for `workflow_dispatch` re-runs against an existing tag).
     needs: release
+    if: ${{ always() && (needs.release.result == 'success' || github.event_name == 'workflow_dispatch') }}
     permissions:
       contents: read
     # Requires a PAT with write access to nuetzliches/homebrew-tap stored
-    # as the secret HOMEBREW_TAP_TOKEN.
-    # Job-level env lifts the secret into the env context so the push step's
-    # `if:` can skip cleanly when the token isn't configured — step-level
-    # `if:` cannot reference `secrets.*` directly (GH context-availability).
+    # as the secret HOMEBREW_TAP_TOKEN. Job-level env lifts the secret
+    # into the env context so step-level `if:` can skip cleanly when the
+    # token isn't configured (`secrets.*` is not available there).
     env:
       HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
-        with:
-          pattern: croniq-*
-          path: artifacts
-      - name: Compute SHA256s and update formula
-        env:
-          # Python reads these via os.environ so the single-quoted heredoc
-          # below stays literal (no shell interpolation surprises).
-          SHA_AARCH64_DARWIN_FILE: artifacts/croniq-aarch64-apple-darwin/croniq-aarch64-apple-darwin.tar.gz
-          SHA_X86_64_DARWIN_FILE: artifacts/croniq-x86_64-apple-darwin/croniq-x86_64-apple-darwin.tar.gz
-          SHA_AARCH64_LINUX_FILE: artifacts/croniq-aarch64-unknown-linux-gnu/croniq-aarch64-unknown-linux-gnu.tar.gz
-          SHA_X86_64_LINUX_FILE: artifacts/croniq-x86_64-unknown-linux-gnu/croniq-x86_64-unknown-linux-gnu.tar.gz
+      - name: Skip if token is not configured
+        if: env.HOMEBREW_TAP_TOKEN == ''
         run: |
-          VERSION="${GITHUB_REF#refs/tags/v}"
+          echo "::warning::HOMEBREW_TAP_TOKEN is not set — skipping tap update."
+          exit 0
+      - name: Resolve tag
+        id: tag
+        if: env.HOMEBREW_TAP_TOKEN != ''
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            TAG="${{ inputs.tag }}"
+          else
+            TAG="${GITHUB_REF#refs/tags/}"
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+      - name: Download release assets, update formula, push to tap
+        if: env.HOMEBREW_TAP_TOKEN != ''
+        env:
+          TAG: ${{ steps.tag.outputs.tag }}
+          VERSION: ${{ steps.tag.outputs.version }}
+        run: |
+          set -euo pipefail
 
-          SHA_AARCH64_DARWIN=$(sha256sum "$SHA_AARCH64_DARWIN_FILE" | awk '{print $1}')
-          SHA_X86_64_DARWIN=$(sha256sum "$SHA_X86_64_DARWIN_FILE"  | awk '{print $1}')
-          SHA_AARCH64_LINUX=$(sha256sum "$SHA_AARCH64_LINUX_FILE"  | awk '{print $1}')
-          SHA_X86_64_LINUX=$(sha256sum "$SHA_X86_64_LINUX_FILE"    | awk '{print $1}')
-          export SHA_AARCH64_DARWIN SHA_X86_64_DARWIN SHA_AARCH64_LINUX SHA_X86_64_LINUX
+          # Download the four release archives directly from the GitHub Release.
+          # This works equally for tag-push runs (the release job above just
+          # finished publishing them) and for workflow_dispatch re-runs against
+          # an older tag where the build artifacts no longer exist.
+          mkdir -p assets
+          for target in \
+            aarch64-apple-darwin \
+            x86_64-apple-darwin \
+            aarch64-unknown-linux-gnu \
+            x86_64-unknown-linux-gnu; do
+            gh release download "$TAG" \
+              -R "${{ github.repository }}" \
+              -p "croniq-${target}.tar.gz" \
+              -D assets/
+          done
 
-          sed -i \
-            -e "s/version \".*\"/version \"${VERSION}\"/" \
-            Formula/croniq.rb
+          SHA_AARCH64_DARWIN=$(sha256sum assets/croniq-aarch64-apple-darwin.tar.gz | awk '{print $1}')
+          SHA_X86_64_DARWIN=$(sha256sum  assets/croniq-x86_64-apple-darwin.tar.gz  | awk '{print $1}')
+          SHA_AARCH64_LINUX=$(sha256sum  assets/croniq-aarch64-unknown-linux-gnu.tar.gz | awk '{print $1}')
+          SHA_X86_64_LINUX=$(sha256sum   assets/croniq-x86_64-unknown-linux-gnu.tar.gz  | awk '{print $1}')
+          export SHA_AARCH64_DARWIN SHA_X86_64_DARWIN SHA_AARCH64_LINUX SHA_X86_64_LINUX VERSION
 
-          # Replace each sha256 placeholder in order:
-          # aarch64-darwin, x86_64-darwin, aarch64-linux, x86_64-linux.
+          # The formula lives only in the tap repo (the local copy was
+          # deleted because it went stale every release — tap is the
+          # source of truth). Clone, edit in place, push.
+          git clone --depth 1 \
+            "https://x-access-token:${HOMEBREW_TAP_TOKEN}@github.com/nuetzliches/homebrew-tap.git" tap
+
+          # Single python pass updates version + four sha256 slots. Order
+          # must match the formula's platform order (aarch64-darwin,
+          # x86_64-darwin, aarch64-linux, x86_64-linux).
           python3 - <<'PY'
           import os, re
 
-          with open("Formula/croniq.rb") as f:
+          path = "tap/Formula/croniq.rb"
+          with open(path) as f:
               text = f.read()
+
+          version = os.environ["VERSION"]
+          text = re.sub(r'version "[^"]+"', f'version "{version}"', text, count=1)
 
           shas = [
               os.environ["SHA_AARCH64_DARWIN"],
@@ -280,17 +330,17 @@ jobs:
               text,
           )
 
-          with open("Formula/croniq.rb", "w") as f:
+          with open(path, "w") as f:
               f.write(text)
           PY
-      - name: Push updated formula to tap
-        if: env.HOMEBREW_TAP_TOKEN != ''
-        run: |
-          git clone "https://x-access-token:${HOMEBREW_TAP_TOKEN}@github.com/nuetzliches/homebrew-tap.git" tap
-          cp Formula/croniq.rb tap/Formula/croniq.rb
+
           cd tap
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add Formula/croniq.rb
-          git diff --cached --quiet || git commit -m "croniq ${GITHUB_REF#refs/tags/}"
-          git push
+          if git diff --cached --quiet; then
+              echo "Formula already up to date; nothing to push."
+          else
+              git commit -m "croniq $TAG"
+              git push
+          fi
