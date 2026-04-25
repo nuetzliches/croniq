@@ -390,6 +390,7 @@ impl Parser {
 
         let start = self.read_string_value()?; // include/exclude
         let rule_type = self.read_string_value()?; // weekly/window/annual/monthly/yearly
+        let rule_type_lower = rule_type.value.to_ascii_lowercase();
 
         let mut args = Vec::new();
         while self.is_value_token()
@@ -397,10 +398,67 @@ impl Parser {
             && !self.peek().is_ident("exclude")
             && !self.peek().is_ident("timezone")
         {
-            args.push(self.read_string_value()?);
+            let first = self.read_string_value()?;
             if self.peek().kind == TokenKind::DotDot {
                 self.advance();
-                args.push(self.read_string_value()?);
+                let second = self.read_string_value()?;
+                // Range handling depends on the rule type:
+                //   - `weekly`:  `Mon..Fri` → expand to 5 day tokens.
+                //                Old parser dropped days silently, so this
+                //                is a bugfix — 0.5.x calendars that used
+                //                `weekly "Mon".."Fri"` actually only fired
+                //                Mon/Fri.
+                //   - `monthly`: `1..5` → expand to integer days.
+                //   - `window`:  keep both endpoints; the runtime compiler
+                //                splits on `..` itself.
+                //   - others:    keep raw, pass through to the runtime.
+                match rule_type_lower.as_str() {
+                    "weekly" => {
+                        if let (Some(s), Some(e)) =
+                            (Weekday::parse(&first.value), Weekday::parse(&second.value))
+                        {
+                            // Emit lowercase full-name to match the rest
+                            // of the AST. The runtime compiler accepts
+                            // both forms; consistency simplifies tests.
+                            for day in weekday_range(s, e) {
+                                args.push(StringValue {
+                                    value: day.as_str().to_string(),
+                                    quoted: false,
+                                    is_placeholder: false,
+                                    span: first.span.merge(second.span),
+                                });
+                            }
+                        } else {
+                            args.push(first);
+                            args.push(second);
+                        }
+                    }
+                    "monthly" => match (
+                        first.value.parse::<u32>().ok(),
+                        second.value.parse::<u32>().ok(),
+                    ) {
+                        (Some(a), Some(b)) if a <= 31 && b <= 31 && a <= b => {
+                            for d in a..=b {
+                                args.push(StringValue {
+                                    value: d.to_string(),
+                                    quoted: false,
+                                    is_placeholder: false,
+                                    span: first.span.merge(second.span),
+                                });
+                            }
+                        }
+                        _ => {
+                            args.push(first);
+                            args.push(second);
+                        }
+                    },
+                    _ => {
+                        args.push(first);
+                        args.push(second);
+                    }
+                }
+            } else {
+                args.push(first);
             }
             if matches!(self.peek().kind, TokenKind::Semicolon | TokenKind::Newline) {
                 self.advance();
@@ -634,11 +692,14 @@ impl Parser {
     fn parse_schedule_weekdays(&mut self, start: Span) -> Result<ScheduleNode, ParseError> {
         let mut days = Vec::new();
 
-        // Collect day names
+        // Collect day tokens, expanding `Mon..Fri` ranges and the
+        // `weekday`/`weekend` aliases. Plain day idents push the
+        // single day. Ranges only chain off specific weekdays —
+        // `weekday..Fri` would be ambiguous and is rejected.
         while self.is_day_name(self.peek().text()) {
             let tok = self.peek().clone();
-            let text = tok.text();
-            match text {
+            let text_lower = tok.text().to_ascii_lowercase();
+            match text_lower.as_str() {
                 "weekday" => {
                     days.extend([
                         Weekday::Monday,
@@ -647,17 +708,38 @@ impl Parser {
                         Weekday::Thursday,
                         Weekday::Friday,
                     ]);
+                    self.advance();
                 }
                 "weekend" => {
                     days.extend([Weekday::Saturday, Weekday::Sunday]);
+                    self.advance();
                 }
                 _ => {
-                    if let Some(day) = Weekday::parse(text) {
-                        days.push(day);
+                    let start_day = Weekday::parse(tok.text()).expect("is_day_name guarded");
+                    self.advance();
+                    if self.peek().kind == TokenKind::DotDot {
+                        // Range form: `Mon..Fri`. The lexer emits the
+                        // intermediate token as `..` so we just need
+                        // the next day name.
+                        let dotdot_span = self.peek().span;
+                        self.advance();
+                        let end_tok = self.peek().clone();
+                        let Some(end_day) = Weekday::parse(end_tok.text()) else {
+                            return Err(ParseError::General {
+                                message: format!(
+                                    "expected weekday name after '..', got '{}'",
+                                    end_tok.text()
+                                ),
+                                span: dotdot_span.merge(end_tok.span).into(),
+                            });
+                        };
+                        self.advance();
+                        days.extend(weekday_range(start_day, end_day));
+                    } else {
+                        days.push(start_day);
                     }
                 }
             }
-            self.advance();
         }
 
         self.expect_ident("at")?;
@@ -746,18 +828,12 @@ impl Parser {
     }
 
     fn is_day_name(&self, s: &str) -> bool {
-        matches!(
-            s,
-            "monday"
-                | "tuesday"
-                | "wednesday"
-                | "thursday"
-                | "friday"
-                | "saturday"
-                | "sunday"
-                | "weekday"
-                | "weekend"
-        )
+        // Aliases (`weekday`, `weekend`) stay full-length only — they
+        // expand to multiple days, so a 3-letter form would be
+        // ambiguous (`wee`?). Specific weekdays accept the canonical
+        // full name plus the 3-letter abbreviation, case-insensitive.
+        let lower = s.to_ascii_lowercase();
+        matches!(lower.as_str(), "weekday" | "weekend") || Weekday::parse(s).is_some()
     }
 
     fn is_ordinal(&self, s: &str) -> bool {
@@ -943,6 +1019,41 @@ impl Parser {
     }
 }
 
+/// Expand a `start..end` weekday range into the inclusive list of days
+/// it covers, walking forward through the week starting at `start`.
+/// Wraps around at Sunday so e.g. `Sat..Mon` yields `[Sat, Sun, Mon]`.
+/// The Croniqfile DSL does not document direction, so we accept any
+/// pair without erroring — wrap-around matches what users typing
+/// `Fri..Mon` for "long weekend" would expect.
+fn weekday_range(start: Weekday, end: Weekday) -> Vec<Weekday> {
+    const ORDER: [Weekday; 7] = [
+        Weekday::Monday,
+        Weekday::Tuesday,
+        Weekday::Wednesday,
+        Weekday::Thursday,
+        Weekday::Friday,
+        Weekday::Saturday,
+        Weekday::Sunday,
+    ];
+    let start_idx = ORDER.iter().position(|d| *d == start).unwrap();
+    let end_idx = ORDER.iter().position(|d| *d == end).unwrap();
+    let mut out = Vec::new();
+    let mut i = start_idx;
+    loop {
+        out.push(ORDER[i]);
+        if i == end_idx {
+            break;
+        }
+        i = (i + 1) % 7;
+        // Safety net for an impossible (start_idx == end_idx but loop
+        // logic somehow misses): cap at 7 entries.
+        if out.len() >= 7 {
+            break;
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1000,6 +1111,90 @@ mod tests {
                 assert_eq!(time.minute, 0);
             } else {
                 panic!("expected Weekdays schedule");
+            }
+        }
+    }
+
+    #[test]
+    fn parse_schedule_weekdays_3letter_case_insensitive() {
+        // 3-letter forms — same days as the full-name version. Mixing
+        // cases on purpose to lock the case-insensitive path.
+        let ast = Parser::parse("job demo:k { every Mon TUE wed at 09:00 }").unwrap();
+        if let Item::Job(ref j) = ast.items[0] {
+            if let ScheduleKind::Weekdays { ref days, .. } = j.schedule.as_ref().unwrap().kind {
+                assert_eq!(
+                    *days,
+                    vec![Weekday::Monday, Weekday::Tuesday, Weekday::Wednesday]
+                );
+            } else {
+                panic!("expected Weekdays");
+            }
+        }
+    }
+
+    #[test]
+    fn parse_schedule_weekdays_range() {
+        // `Mon..Fri` should expand to all five business days.
+        let ast = Parser::parse("job demo:k { every Mon..Fri at 09:00 }").unwrap();
+        if let Item::Job(ref j) = ast.items[0] {
+            if let ScheduleKind::Weekdays { ref days, .. } = j.schedule.as_ref().unwrap().kind {
+                assert_eq!(
+                    *days,
+                    vec![
+                        Weekday::Monday,
+                        Weekday::Tuesday,
+                        Weekday::Wednesday,
+                        Weekday::Thursday,
+                        Weekday::Friday,
+                    ]
+                );
+            } else {
+                panic!("expected Weekdays");
+            }
+        }
+    }
+
+    #[test]
+    fn parse_schedule_weekdays_range_wraps_sunday() {
+        // `Fri..Mon` covers a long-weekend duty rotation. Wrap-around
+        // through Sunday is the expected behaviour.
+        let ast = Parser::parse("job demo:k { every Fri..Mon at 09:00 }").unwrap();
+        if let Item::Job(ref j) = ast.items[0] {
+            if let ScheduleKind::Weekdays { ref days, .. } = j.schedule.as_ref().unwrap().kind {
+                assert_eq!(
+                    *days,
+                    vec![
+                        Weekday::Friday,
+                        Weekday::Saturday,
+                        Weekday::Sunday,
+                        Weekday::Monday,
+                    ]
+                );
+            } else {
+                panic!("expected Weekdays");
+            }
+        }
+    }
+
+    #[test]
+    fn parse_schedule_weekdays_mixed_singletons_and_range() {
+        // Day list + range chained together. Resulting vec preserves
+        // order, including any duplicates the user produced.
+        let ast = Parser::parse("job demo:k { every Mon Wed..Fri Sun at 09:00 }").unwrap();
+        if let Item::Job(ref j) = ast.items[0] {
+            if let ScheduleKind::Weekdays { ref days, .. } = j.schedule.as_ref().unwrap().kind {
+                assert_eq!(
+                    *days,
+                    vec![
+                        Weekday::Monday,
+                        Weekday::Wednesday,
+                        Weekday::Thursday,
+                        Weekday::Friday,
+                        Weekday::Sunday,
+                    ]
+                );
+            } else {
+                panic!("expected Weekdays");
             }
         }
     }
@@ -1084,6 +1279,80 @@ mod tests {
             // timezone + include + exclude = 3 rules
             assert_eq!(c.rules.len(), 3);
         }
+    }
+
+    #[test]
+    fn parse_calendar_weekly_range_expands() {
+        // `Mon..Fri` should expand to all five days at parse time.
+        // Pre-PR-D this lost Tue/Wed/Thu silently.
+        let ast = Parser::parse(r#"calendar biz { include weekly "Mon".."Fri" }"#).unwrap();
+        let Item::Calendar(ref c) = ast.items[0] else {
+            panic!("expected calendar")
+        };
+        // Find the include rule — the timezone synthetic Include is
+        // skipped here since this calendar has no timezone directive.
+        let rule = c
+            .rules
+            .iter()
+            .find(|r| r.rule_type.value == "weekly")
+            .expect("weekly rule");
+        let arg_values: Vec<&str> = rule.args.iter().map(|a| a.value.as_str()).collect();
+        assert_eq!(
+            arg_values,
+            vec!["monday", "tuesday", "wednesday", "thursday", "friday"]
+        );
+    }
+
+    #[test]
+    fn parse_calendar_weekly_3letter_unquoted() {
+        // 3-letter unquoted forms accepted now that Weekday::parse is
+        // case-insensitive and the calendar parser stores raw idents.
+        let ast = Parser::parse(r#"calendar biz { include weekly Mon Wed Fri }"#).unwrap();
+        let Item::Calendar(ref c) = ast.items[0] else {
+            panic!()
+        };
+        let rule = c
+            .rules
+            .iter()
+            .find(|r| r.rule_type.value == "weekly")
+            .unwrap();
+        // Args are the raw tokens — the runtime compiler does the
+        // `parse_weekday` step. We only check round-trip through the
+        // parser here.
+        assert_eq!(rule.args.len(), 3);
+    }
+
+    #[test]
+    fn parse_calendar_monthly_range_expands() {
+        // `monthly 1..5` → individual integer days.
+        let ast = Parser::parse(r#"calendar biz { include monthly 1..5 }"#).unwrap();
+        let Item::Calendar(ref c) = ast.items[0] else {
+            panic!()
+        };
+        let rule = c
+            .rules
+            .iter()
+            .find(|r| r.rule_type.value == "monthly")
+            .unwrap();
+        let values: Vec<&str> = rule.args.iter().map(|a| a.value.as_str()).collect();
+        assert_eq!(values, vec!["1", "2", "3", "4", "5"]);
+    }
+
+    #[test]
+    fn parse_calendar_window_keeps_endpoints() {
+        // `window` rules are time-of-day; the runtime expects the two
+        // endpoints, so the parser must NOT expand them.
+        let ast = Parser::parse(r#"calendar biz { include window "08:00".."18:00" }"#).unwrap();
+        let Item::Calendar(ref c) = ast.items[0] else {
+            panic!()
+        };
+        let rule = c
+            .rules
+            .iter()
+            .find(|r| r.rule_type.value == "window")
+            .unwrap();
+        let values: Vec<&str> = rule.args.iter().map(|a| a.value.as_str()).collect();
+        assert_eq!(values, vec!["08:00", "18:00"]);
     }
 
     #[test]
