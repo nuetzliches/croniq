@@ -28,8 +28,7 @@ use croniq_runner::{AppState, RunnerStatus, WorkItem};
 use croniq_store::models::{Execution, ExecutionState};
 use croniq_store::traits::Store;
 use rmcp::{
-    ErrorData as McpError,
-    ServerHandler,
+    ErrorData as McpError, ServerHandler,
     handler::server::{tool::ToolRouter, wrapper::Parameters},
     model::*,
     tool, tool_handler, tool_router,
@@ -233,7 +232,9 @@ impl CroniqMcp {
 
     /// List all connected runners with their current liveness status,
     /// capabilities, and inflight execution count.
-    #[tool(description = "List all connected runners with their status, capabilities, and inflight execution count.")]
+    #[tool(
+        description = "List all connected runners with their status, capabilities, and inflight execution count."
+    )]
     async fn list_runners(&self) -> Result<String, McpError> {
         let now = Utc::now();
         let reg = self.state.registry.read().await;
@@ -311,7 +312,9 @@ impl CroniqMcp {
     }
 
     /// Get the current work queue depth and runner liveness overview.
-    #[tool(description = "Get work queue status: total depth and runner counts by liveness status.")]
+    #[tool(
+        description = "Get work queue status: total depth and runner counts by liveness status."
+    )]
     async fn queue_status(
         &self,
         Parameters(p): Parameters<QueueStatusParams>,
@@ -360,12 +363,16 @@ impl CroniqMcp {
     }
 
     /// List all job states from the persistent store.
-    #[tool(description = "List all job states (active, paused, exhausted) from the store. Requires a persistent store (--data-dir).")]
+    #[tool(
+        description = "List all job states (active, paused, exhausted) from the store. Requires a persistent store (--data-dir)."
+    )]
     async fn list_jobs(&self) -> Result<String, McpError> {
-        let store = self
-            .store
-            .as_ref()
-            .ok_or_else(|| McpError::internal_error("No persistent store available. Start with --data-dir.", None))?;
+        let store = self.store.as_ref().ok_or_else(|| {
+            McpError::internal_error(
+                "No persistent store available. Start with --data-dir.",
+                None,
+            )
+        })?;
 
         let states = store
             .list_job_states()
@@ -376,17 +383,21 @@ impl CroniqMcp {
     }
 
     /// List recent executions with optional filters.
-    #[tool(description = "List recent executions from the store. Filter by job_key and/or state. Requires --data-dir.")]
+    #[tool(
+        description = "List recent executions from the store. Filter by job_key and/or state. Requires --data-dir."
+    )]
     async fn list_executions(
         &self,
         Parameters(p): Parameters<ListExecutionsParams>,
     ) -> Result<String, McpError> {
         use croniq_store::models::{ExecutionFilter, ExecutionState};
 
-        let store = self
-            .store
-            .as_ref()
-            .ok_or_else(|| McpError::internal_error("No persistent store available. Start with --data-dir.", None))?;
+        let store = self.store.as_ref().ok_or_else(|| {
+            McpError::internal_error(
+                "No persistent store available. Start with --data-dir.",
+                None,
+            )
+        })?;
 
         let state = p.state.as_deref().and_then(|s| match s {
             "queued" => Some(ExecutionState::Queued),
@@ -417,7 +428,9 @@ impl CroniqMcp {
 
     /// Enqueue a new job execution. The next available eligible runner will
     /// pick it up on their next poll.
-    #[tool(description = "Add a job to the work queue. The next eligible runner will claim it on their next poll. Requires --mutations.")]
+    #[tool(
+        description = "Add a job to the work queue. The next eligible runner will claim it on their next poll. Requires --mutations."
+    )]
     async fn enqueue_job(
         &self,
         Parameters(p): Parameters<EnqueueJobParams>,
@@ -434,8 +447,9 @@ impl CroniqMcp {
 
         // Persist to store if available.
         if let Some(store) = &self.store {
-            let id = Uuid::parse_str(&execution_id)
-                .map_err(|e| McpError::invalid_params(format!("Invalid execution_id UUID: {e}"), None))?;
+            let id = Uuid::parse_str(&execution_id).map_err(|e| {
+                McpError::invalid_params(format!("Invalid execution_id UUID: {e}"), None)
+            })?;
             let execution = Execution {
                 id,
                 job_key: p.job_key.clone(),
@@ -483,7 +497,9 @@ impl CroniqMcp {
 
     /// Cancel a pending execution before it is dispatched to a runner.
     /// Has no effect if the execution has already been claimed.
-    #[tool(description = "Cancel a pending execution. Has no effect if already dispatched to a runner. Requires --mutations.")]
+    #[tool(
+        description = "Cancel a pending execution. Has no effect if already dispatched to a runner. Requires --mutations."
+    )]
     async fn cancel_execution(
         &self,
         Parameters(p): Parameters<CancelExecutionParams>,
@@ -498,10 +514,11 @@ impl CroniqMcp {
 
         // Also cancel in the persistent store (best-effort).
         if let Some(store) = &self.store
-            && let Ok(id) = Uuid::parse_str(&p.execution_id) {
-                let now = Utc::now();
-                let _ = store.cancel_execution(id, now);
-            }
+            && let Ok(id) = Uuid::parse_str(&p.execution_id)
+        {
+            let now = Utc::now();
+            let _ = store.cancel_execution(id, now);
+        }
 
         Ok(if removed {
             format!("Execution '{}' removed from queue.", p.execution_id)
@@ -515,7 +532,9 @@ impl CroniqMcp {
 
     /// Immediately fire a job by enqueuing a new execution.
     /// This bypasses the schedule — the job runs as soon as an eligible runner picks it up.
-    #[tool(description = "Trigger a job to run immediately, bypassing its schedule. Requires --mutations.")]
+    #[tool(
+        description = "Trigger a job to run immediately, bypassing its schedule. Requires --mutations."
+    )]
     async fn job_trigger(
         &self,
         Parameters(p): Parameters<JobTriggerParams>,
@@ -574,7 +593,9 @@ impl CroniqMcp {
 
     /// Re-enqueue a dead-lettered execution for another attempt.
     /// Requires a persistent store (`--data-dir`).
-    #[tool(description = "Retry a dead-lettered execution. Reads the DLQ entry, creates a new execution with attempt+1, and re-enqueues it. Requires --mutations and --data-dir.")]
+    #[tool(
+        description = "Retry a dead-lettered execution. Reads the DLQ entry, creates a new execution with attempt+1, and re-enqueues it. Requires --mutations and --data-dir."
+    )]
     async fn dlq_retry(
         &self,
         Parameters(p): Parameters<DlqRetryParams>,
@@ -582,8 +603,9 @@ impl CroniqMcp {
         self.require_mutations()?;
         let store = self.require_store()?;
 
-        let dl_id = Uuid::parse_str(&p.dead_letter_id)
-            .map_err(|e| McpError::invalid_params(format!("Invalid dead_letter_id UUID: {e}"), None))?;
+        let dl_id = Uuid::parse_str(&p.dead_letter_id).map_err(|e| {
+            McpError::invalid_params(format!("Invalid dead_letter_id UUID: {e}"), None)
+        })?;
 
         let dl = store
             .get_dead_letter(dl_id)
@@ -1069,9 +1091,7 @@ mod tests {
         assert!(remaining.is_empty());
 
         // A new execution at attempt 4 should exist.
-        let executions = store
-            .list_executions(&ExecutionFilter::default())
-            .unwrap();
+        let executions = store.list_executions(&ExecutionFilter::default()).unwrap();
         assert_eq!(executions.len(), 1);
         assert_eq!(executions[0].attempt, 4);
         assert_eq!(executions[0].job_key, "billing:invoice");

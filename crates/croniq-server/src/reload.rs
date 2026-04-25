@@ -157,12 +157,10 @@ pub async fn build_plan(
         let current_keys: HashSet<String> = current.keys().cloned().collect();
         let merged_keys: HashSet<String> = merged_triggers.keys().cloned().collect();
 
-        let mut added: Vec<String> =
-            merged_keys.difference(&current_keys).cloned().collect();
+        let mut added: Vec<String> = merged_keys.difference(&current_keys).cloned().collect();
         added.sort();
 
-        let mut removed: Vec<String> =
-            current_keys.difference(&merged_keys).cloned().collect();
+        let mut removed: Vec<String> = current_keys.difference(&merged_keys).cloned().collect();
         removed.sort();
 
         let current_dsl_by_key: HashMap<&str, &JobConfig> =
@@ -433,7 +431,10 @@ mod tests {
 
         let keys: HashSet<&str> = plan.merged_triggers.keys().map(|s| s.as_str()).collect();
         assert!(keys.contains("dsl:new"), "DSL job survives");
-        assert!(keys.contains("api:kept"), "API-registered job survives reload");
+        assert!(
+            keys.contains("api:kept"),
+            "API-registered job survives reload"
+        );
         assert!(!keys.contains("dsl:only"), "old DSL job is removed");
     }
 

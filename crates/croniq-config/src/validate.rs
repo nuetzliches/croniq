@@ -28,13 +28,14 @@ pub fn validate(ast: &Croniqfile) -> Vec<Diagnostic> {
     // First pass: collect calendar names
     for item in &ast.items {
         if let Item::Calendar(cal) = item
-            && !calendar_names.insert(cal.name.value.clone()) {
-                diags.push(Diagnostic {
-                    severity: Severity::Error,
-                    message: format!("duplicate calendar name '{}'", cal.name.value),
-                    span: cal.name.span.into(),
-                });
-            }
+            && !calendar_names.insert(cal.name.value.clone())
+        {
+            diags.push(Diagnostic {
+                severity: Severity::Error,
+                message: format!("duplicate calendar name '{}'", cal.name.value),
+                span: cal.name.span.into(),
+            });
+        }
     }
 
     // Second pass: validate everything
@@ -134,10 +135,9 @@ fn validate_schedule_kind(sched: &ScheduleNode, diags: &mut Vec<Diagnostic>) {
 }
 
 fn validate_calendar(cal: &CalendarBlock, diags: &mut Vec<Diagnostic>) {
-    let has_timezone = cal
-        .rules
-        .iter()
-        .any(|r| r.rule_type.value == "timezone" || r.args.first().is_some_and(|a| a.value.contains('/')));
+    let has_timezone = cal.rules.iter().any(|r| {
+        r.rule_type.value == "timezone" || r.args.first().is_some_and(|a| a.value.contains('/'))
+    });
 
     // Timezone is expected but not strictly required (inherits from defaults)
     let _ = has_timezone;
@@ -192,35 +192,36 @@ fn validate_runner_constraints(job: &JobBlock, diags: &mut Vec<Diagnostic>) {
 
     for dob in &job.directives {
         if let DirectiveOrBlock::Block(block) = dob
-            && block.name.value == "runner" {
-                for inner in &block.directives {
-                    if let DirectiveOrBlock::Directive(d) = inner {
-                        let cap = d.args.first().map(|a| a.value.as_str()).unwrap_or("");
-                        match d.key.value.as_str() {
-                            "require" => {
-                                requires.insert(cap.to_string());
-                            }
-                            "prefer" => {
-                                prefers.insert(cap.to_string());
-                            }
-                            "exclude" => {
-                                excludes.insert(cap.to_string());
-                            }
-                            "sticky" => {}
-                            other => {
-                                diags.push(Diagnostic {
-                                    severity: Severity::Warning,
-                                    message: format!(
-                                        "unknown runner directive '{other}' in job '{}'",
-                                        job.key.raw
-                                    ),
-                                    span: d.key.span.into(),
-                                });
-                            }
+            && block.name.value == "runner"
+        {
+            for inner in &block.directives {
+                if let DirectiveOrBlock::Directive(d) = inner {
+                    let cap = d.args.first().map(|a| a.value.as_str()).unwrap_or("");
+                    match d.key.value.as_str() {
+                        "require" => {
+                            requires.insert(cap.to_string());
+                        }
+                        "prefer" => {
+                            prefers.insert(cap.to_string());
+                        }
+                        "exclude" => {
+                            excludes.insert(cap.to_string());
+                        }
+                        "sticky" => {}
+                        other => {
+                            diags.push(Diagnostic {
+                                severity: Severity::Warning,
+                                message: format!(
+                                    "unknown runner directive '{other}' in job '{}'",
+                                    job.key.raw
+                                ),
+                                span: d.key.span.into(),
+                            });
                         }
                     }
                 }
             }
+        }
     }
 
     // Check for overlaps
@@ -274,7 +275,11 @@ mod tests {
             job etl:sync { every 10 minutes; timeout 5m }
         "#,
         );
-        assert!(diags.iter().any(|d| d.message.contains("duplicate job key")));
+        assert!(
+            diags
+                .iter()
+                .any(|d| d.message.contains("duplicate job key"))
+        );
     }
 
     #[test]
@@ -301,18 +306,18 @@ mod tests {
             }
         "#,
         );
-        assert!(diags
-            .iter()
-            .any(|d| d.message.contains("required and excluded")));
+        assert!(
+            diags
+                .iter()
+                .any(|d| d.message.contains("required and excluded"))
+        );
     }
 
     // ── Sub-30s interval warnings ─────────────────────────────────────────────
 
     #[test]
     fn interval_10_seconds_emits_warning() {
-        let diags = validate_src(
-            r#"job ops:ping { every 10 seconds; timeout 30s }"#,
-        );
+        let diags = validate_src(r#"job ops:ping { every 10 seconds; timeout 30s }"#);
         assert!(
             diags
                 .iter()
@@ -323,9 +328,7 @@ mod tests {
 
     #[test]
     fn interval_29_seconds_emits_warning() {
-        let diags = validate_src(
-            r#"job ops:ping { every 29 seconds; timeout 30s }"#,
-        );
+        let diags = validate_src(r#"job ops:ping { every 29 seconds; timeout 30s }"#);
         assert!(
             diags.iter().any(|d| d.severity == Severity::Warning),
             "expected a warning for 29s interval"
@@ -334,35 +337,38 @@ mod tests {
 
     #[test]
     fn interval_30_seconds_no_warning() {
-        let diags = validate_src(
-            r#"job ops:ping { every 30 seconds; timeout 30s }"#,
-        );
+        let diags = validate_src(r#"job ops:ping { every 30 seconds; timeout 30s }"#);
         let warnings: Vec<_> = diags
             .iter()
             .filter(|d| d.severity == Severity::Warning && d.message.contains("poll cycle"))
             .collect();
-        assert!(warnings.is_empty(), "unexpected poll-cycle warning for 30s: {warnings:?}");
+        assert!(
+            warnings.is_empty(),
+            "unexpected poll-cycle warning for 30s: {warnings:?}"
+        );
     }
 
     #[test]
     fn interval_5_minutes_no_warning() {
-        let diags = validate_src(
-            r#"job etl:sync { every 5 minutes; timeout 5m }"#,
-        );
-        let errors: Vec<_> = diags.iter().filter(|d| d.severity == Severity::Error).collect();
+        let diags = validate_src(r#"job etl:sync { every 5 minutes; timeout 5m }"#);
+        let errors: Vec<_> = diags
+            .iter()
+            .filter(|d| d.severity == Severity::Error)
+            .collect();
         assert!(errors.is_empty(), "unexpected errors: {errors:?}");
         let poll_warns: Vec<_> = diags
             .iter()
             .filter(|d| d.severity == Severity::Warning && d.message.contains("poll cycle"))
             .collect();
-        assert!(poll_warns.is_empty(), "unexpected poll-cycle warning for 5m");
+        assert!(
+            poll_warns.is_empty(),
+            "unexpected poll-cycle warning for 5m"
+        );
     }
 
     #[test]
     fn interval_1_hour_no_warning() {
-        let diags = validate_src(
-            r#"job reports:daily { every 1 hours; timeout 30m }"#,
-        );
+        let diags = validate_src(r#"job reports:daily { every 1 hours; timeout 30m }"#);
         assert!(
             !diags.iter().any(|d| d.message.contains("poll cycle")),
             "should not warn for hourly intervals"
@@ -371,11 +377,11 @@ mod tests {
 
     #[test]
     fn interval_1_second_emits_warning() {
-        let diags = validate_src(
-            r#"job debug:tick { every 1 seconds; timeout 5s }"#,
-        );
+        let diags = validate_src(r#"job debug:tick { every 1 seconds; timeout 5s }"#);
         assert!(
-            diags.iter().any(|d| d.severity == Severity::Warning && d.message.contains("1s")),
+            diags
+                .iter()
+                .any(|d| d.severity == Severity::Warning && d.message.contains("1s")),
             "expected a sub-30s warning for 1s interval"
         );
     }

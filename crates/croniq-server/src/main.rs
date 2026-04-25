@@ -14,7 +14,7 @@ use croniq_runner::AppState;
 use croniq_server::{
     CompletionProcessor, SchedulerLoop, WatchdogLoop,
     api::{ServerState, server_router},
-    loader::{load_file, restore_trigger_states, restore_queued_executions},
+    loader::{load_file, restore_queued_executions, restore_trigger_states},
     reload,
     store::{DynStore, sqlite_store},
 };
@@ -83,7 +83,10 @@ async fn main() -> Result<()> {
     tracing::info!("trigger states restored from database");
 
     // Shared runner state (registry + queue) with lease TTL from config
-    let lease_ttl_secs = loaded.runtime.pull_api.as_ref()
+    let lease_ttl_secs = loaded
+        .runtime
+        .pull_api
+        .as_ref()
         .map(|p| parse_duration_secs(&p.lease_ttl))
         .unwrap_or(120);
     let runner_state = AppState::with_lease_ttl(lease_ttl_secs);
@@ -122,7 +125,8 @@ async fn main() -> Result<()> {
         ..Default::default()
     });
     // Scheduler command channel for live job registration via API
-    let (scheduler_cmd_tx, mut scheduler_cmd_rx) = mpsc::unbounded_channel::<croniq_server::scheduler::SchedulerCommand>();
+    let (scheduler_cmd_tx, mut scheduler_cmd_rx) =
+        mpsc::unbounded_channel::<croniq_server::scheduler::SchedulerCommand>();
 
     // Shared snapshot of DSL jobs — kept in sync by the scheduler task on
     // Croniqfile reload so the REST API can union DSL entries into
@@ -134,7 +138,12 @@ async fn main() -> Result<()> {
         .canonicalize()
         .unwrap_or_else(|_| cli.config.clone());
 
-    let mut server_state = ServerState::with_auth(Arc::clone(&runner_state), completion_tx, jwt_config, Some(Arc::clone(&store)));
+    let mut server_state = ServerState::with_auth(
+        Arc::clone(&runner_state),
+        completion_tx,
+        jwt_config,
+        Some(Arc::clone(&store)),
+    );
     // Inject scheduler_tx, dsl_jobs, and config_path into the shared state
     {
         let s = Arc::get_mut(&mut server_state).unwrap();
@@ -171,15 +180,14 @@ async fn main() -> Result<()> {
         let sighup_tx = reload_tx.clone();
         let sighup_path = config_path_abs.clone();
         tokio::spawn(async move {
-            let mut signal = match tokio::signal::unix::signal(
-                tokio::signal::unix::SignalKind::hangup(),
-            ) {
-                Ok(s) => s,
-                Err(e) => {
-                    tracing::warn!(error = %e, "could not register SIGHUP handler");
-                    return;
-                }
-            };
+            let mut signal =
+                match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::hangup()) {
+                    Ok(s) => s,
+                    Err(e) => {
+                        tracing::warn!(error = %e, "could not register SIGHUP handler");
+                        return;
+                    }
+                };
             while signal.recv().await.is_some() {
                 tracing::info!("SIGHUP received — requesting config reload");
                 if sighup_tx.send(sighup_path.clone()).is_err() {
@@ -197,14 +205,18 @@ async fn main() -> Result<()> {
 
     // Reconcile API/runner-registered jobs from DB (not in Croniqfile)
     {
-        use croniq_server::loader::{trigger_from_definition, job_config_from_definition};
+        use croniq_server::loader::{job_config_from_definition, trigger_from_definition};
 
         let now = chrono::Utc::now();
         if let Ok(api_triggers) = store.list_triggers(None) {
             let mut api_count = 0;
             for def in &api_triggers {
-                if def.managed_by == "dsl" || !def.enabled { continue; }
-                if triggers.contains_key(&def.job_key) { continue; } // Croniqfile takes precedence
+                if def.managed_by == "dsl" || !def.enabled {
+                    continue;
+                }
+                if triggers.contains_key(&def.job_key) {
+                    continue;
+                } // Croniqfile takes precedence
                 if let Some(trigger) = trigger_from_definition(def, now) {
                     let job_config = job_config_from_definition(def, None);
                     jobs.push(job_config);
@@ -223,8 +235,12 @@ async fn main() -> Result<()> {
     let trigger_snapshot = Arc::new(tokio::sync::RwLock::new(triggers.clone()));
     Arc::get_mut(&mut server_state).unwrap().triggers = Some(Arc::clone(&trigger_snapshot));
 
-    let mut scheduler_loop =
-        SchedulerLoop::new(triggers, jobs.clone(), scheduler_store, Arc::clone(&runner_state));
+    let mut scheduler_loop = SchedulerLoop::new(
+        triggers,
+        jobs.clone(),
+        scheduler_store,
+        Arc::clone(&runner_state),
+    );
 
     let scheduler_reload_store = Arc::clone(&store);
     let scheduler_reload_snapshot = Arc::clone(&trigger_snapshot);
@@ -284,7 +300,11 @@ async fn main() -> Result<()> {
     let proc_store = Arc::clone(&store);
     let proc_jobs = jobs;
 
-    let processor = Arc::new(CompletionProcessor::new(proc_jobs, proc_store, Arc::clone(&runner_state)));
+    let processor = Arc::new(CompletionProcessor::new(
+        proc_jobs,
+        proc_store,
+        Arc::clone(&runner_state),
+    ));
 
     let _completion_task = tokio::spawn(async move {
         while let Some(event) = completion_rx.recv().await {
@@ -318,7 +338,10 @@ async fn main() -> Result<()> {
 
     // ── Metrics server (from CLI --metrics or observability.metrics in Croniqfile)
     let metrics_listen = cli.metrics.clone().or_else(|| {
-        loaded.runtime.observability.as_ref()
+        loaded
+            .runtime
+            .observability
+            .as_ref()
             .and_then(|o| o.metrics.as_ref())
             .map(|m| m.listen.clone())
     });
@@ -339,7 +362,8 @@ async fn main() -> Result<()> {
     }
 
     // ── HTTP server ───────────────────────────────────────────────────────────
-    let addr: std::net::SocketAddr = cli.listen
+    let addr: std::net::SocketAddr = cli
+        .listen
         .trim_start_matches(':')
         .parse::<u16>()
         .map(|p| ([0, 0, 0, 0], p).into())

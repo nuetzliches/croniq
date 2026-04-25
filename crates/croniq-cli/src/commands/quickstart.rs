@@ -62,10 +62,18 @@ pub fn quickstart(data_dir: &Path, croniqfile: &Path, password: Option<&str>) ->
     println!("=== Quickstart complete! ===");
     println!();
     println!("Start the server:");
-    println!("  croniq-server --config {} --data-dir {} --ui-dir ui/dist", croniqfile.display(), data_dir.display());
+    println!(
+        "  croniq-server --config {} --data-dir {} --ui-dir ui/dist",
+        croniqfile.display(),
+        data_dir.display()
+    );
     println!();
     println!("Or without UI:");
-    println!("  croniq-server --config {} --data-dir {}", croniqfile.display(), data_dir.display());
+    println!(
+        "  croniq-server --config {} --data-dir {}",
+        croniqfile.display(),
+        data_dir.display()
+    );
     println!();
     println!("Then open: http://localhost:4000");
     println!("Login:     admin / {}", password);

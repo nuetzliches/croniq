@@ -10,10 +10,10 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
-use croniq_config::compile::{ExecutionMode, JobConfig};
 #[allow(unused_imports)]
 use chrono_tz;
 use croniq_bridge::job_to_work_item;
+use croniq_config::compile::{ExecutionMode, JobConfig};
 use croniq_runner::AppState;
 use croniq_scheduler::trigger::{Trigger, TriggerState};
 use croniq_store::models::{Execution, ExecutionState, JobState, JobStatus};
@@ -27,7 +27,10 @@ use crate::store::DynStore;
 #[derive(Debug)]
 pub enum SchedulerCommand {
     /// Add or replace a job + trigger in the scheduler.
-    AddJob { job: Box<JobConfig>, trigger: Box<Trigger> },
+    AddJob {
+        job: Box<JobConfig>,
+        trigger: Box<Trigger>,
+    },
     /// Remove a job from the scheduler.
     RemoveJob { job_key: String },
     /// Replace the full trigger + job set (hot-reload).
@@ -77,16 +80,25 @@ impl SchedulerLoop {
         runner: Arc<AppState>,
     ) -> Self {
         let jobs = jobs.into_iter().map(|j| (j.key.clone(), j)).collect();
-        Self { triggers, jobs, store, runner, quota: QuotaGuard::new() }
+        Self {
+            triggers,
+            jobs,
+            store,
+            runner,
+            quota: QuotaGuard::new(),
+        }
     }
 
     /// Override per-job quota limits (useful for benchmarking large trigger counts).
     pub fn set_quota_defaults(&mut self, max_parallel: u32, max_per_minute: u32) {
         for key in self.jobs.keys() {
-            self.quota.set_quota(key, crate::quota::JobQuota {
-                max_parallel,
-                max_per_minute,
-            });
+            self.quota.set_quota(
+                key,
+                crate::quota::JobQuota {
+                    max_parallel,
+                    max_per_minute,
+                },
+            );
         }
     }
 
@@ -94,11 +106,7 @@ impl SchedulerLoop {
     ///
     /// Preserves trigger state (fire_count, next_fire_at) for jobs that
     /// still exist. New jobs get fresh triggers; removed jobs are dropped.
-    pub fn reload(
-        &mut self,
-        new_triggers: HashMap<String, Trigger>,
-        new_jobs: Vec<JobConfig>,
-    ) {
+    pub fn reload(&mut self, new_triggers: HashMap<String, Trigger>, new_jobs: Vec<JobConfig>) {
         let new_jobs_map: HashMap<String, JobConfig> =
             new_jobs.into_iter().map(|j| (j.key.clone(), j)).collect();
 
@@ -118,8 +126,15 @@ impl SchedulerLoop {
             merged.insert(key, new_trigger);
         }
 
-        let added = merged.keys().filter(|k| !self.triggers.contains_key(*k)).count();
-        let removed = self.triggers.keys().filter(|k| !merged.contains_key(*k)).count();
+        let added = merged
+            .keys()
+            .filter(|k| !self.triggers.contains_key(*k))
+            .count();
+        let removed = self
+            .triggers
+            .keys()
+            .filter(|k| !merged.contains_key(*k))
+            .count();
 
         self.triggers = merged;
         self.jobs = new_jobs_map;
@@ -146,7 +161,11 @@ impl SchedulerLoop {
                 self.jobs.remove(&job_key);
                 self.triggers.remove(&job_key);
             }
-            SchedulerCommand::Reload { triggers, jobs, ack } => {
+            SchedulerCommand::Reload {
+                triggers,
+                jobs,
+                ack,
+            } => {
                 self.reload(triggers, jobs);
                 // The receiver may have dropped (caller lost interest);
                 // ignore send failure.
@@ -176,7 +195,11 @@ impl SchedulerLoop {
             // Queue overflow protection: skip if too many queued executions for this job.
             // Per-job max_queue_depth overrides the default of 10.
             let max_depth = job.max_queue_depth.unwrap_or(10) as usize;
-            let queued_count = self.runner.queue.read().await
+            let queued_count = self
+                .runner
+                .queue
+                .read()
+                .await
                 .peek_n(1000)
                 .iter()
                 .filter(|item| item.job_key == trigger.job_key)
@@ -221,10 +244,16 @@ impl SchedulerLoop {
                     metadata: {
                         let mut m = job.metadata.clone();
                         if !job.runner.require.is_empty() {
-                            m.insert("__require".into(), serde_json::to_string(&job.runner.require).unwrap_or_default());
+                            m.insert(
+                                "__require".into(),
+                                serde_json::to_string(&job.runner.require).unwrap_or_default(),
+                            );
                         }
                         if !job.runner.prefer.is_empty() {
-                            m.insert("__prefer".into(), serde_json::to_string(&job.runner.prefer).unwrap_or_default());
+                            m.insert(
+                                "__prefer".into(),
+                                serde_json::to_string(&job.runner.prefer).unwrap_or_default(),
+                            );
                         }
                         m
                     },
@@ -291,12 +320,8 @@ impl SchedulerLoop {
 mod tests {
     use chrono::Duration as ChronoDuration;
     use croniq_config::compile::{DeadLetterConfig, RetryConfig, RunnerConfig};
-    use croniq_scheduler::{
-        misfire::MisfirePolicy,
-        schedule::Schedule,
-        trigger::TriggerState,
-    };
     use croniq_runner::AppState;
+    use croniq_scheduler::{misfire::MisfirePolicy, schedule::Schedule, trigger::TriggerState};
     use croniq_store::sqlite::SqliteStore;
     use pretty_assertions::assert_eq;
 
@@ -373,8 +398,12 @@ mod tests {
         let mut triggers = HashMap::new();
         triggers.insert("test:job".into(), make_trigger_due_now("test:job"));
 
-        let mut scheduler =
-            SchedulerLoop::new(triggers, vec![make_job("test:job")], store, Arc::clone(&runner));
+        let mut scheduler = SchedulerLoop::new(
+            triggers,
+            vec![make_job("test:job")],
+            store,
+            Arc::clone(&runner),
+        );
 
         let result = scheduler.tick(Utc::now()).await;
         assert_eq!(result.fired.len(), 1);
@@ -388,8 +417,7 @@ mod tests {
         let mut triggers = HashMap::new();
         triggers.insert("test:job".into(), make_trigger_future("test:job"));
 
-        let mut scheduler =
-            SchedulerLoop::new(triggers, vec![make_job("test:job")], store, runner);
+        let mut scheduler = SchedulerLoop::new(triggers, vec![make_job("test:job")], store, runner);
 
         let result = scheduler.tick(Utc::now()).await;
         assert!(result.fired.is_empty());
@@ -445,8 +473,7 @@ mod tests {
         let mut triggers = HashMap::new();
         triggers.insert("test:job".into(), make_trigger_due_now("test:job"));
 
-        let mut scheduler =
-            SchedulerLoop::new(triggers, vec![make_job("test:job")], store, runner);
+        let mut scheduler = SchedulerLoop::new(triggers, vec![make_job("test:job")], store, runner);
 
         let result = scheduler.tick(Utc::now()).await;
 

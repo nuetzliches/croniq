@@ -97,12 +97,8 @@ impl CroniqRunner {
     /// The server will create the job + trigger if they don't exist.
     /// If the job is already managed by the Croniqfile, the schedule is skipped
     /// (DSL has precedence).
-    pub async fn register_with_schedule<F, Fut>(
-        &self,
-        job_key: &str,
-        schedule: &str,
-        handler: F,
-    ) where
+    pub async fn register_with_schedule<F, Fut>(&self, job_key: &str, schedule: &str, handler: F)
+    where
         F: Fn(ExecutionContext) -> Fut + Send + Sync + 'static,
         Fut: std::future::Future<Output = Result<(), HandlerError>> + Send + 'static,
     {
@@ -124,7 +120,8 @@ impl CroniqRunner {
 
     /// Signal graceful shutdown: stop accepting new work, wait for inflight.
     pub fn drain(&self) {
-        self.draining.store(true, std::sync::atomic::Ordering::Relaxed);
+        self.draining
+            .store(true, std::sync::atomic::Ordering::Relaxed);
         tracing::info!(runner_id = %self.runner_id, "draining — no new work will be accepted");
     }
 
@@ -141,17 +138,23 @@ impl CroniqRunner {
         let schedules = self.schedules.read().await;
         for sched in schedules.iter() {
             tracing::info!(job_key = %sched.job_key, schedule = %sched.schedule, "registering job on server");
-            match self.client.register_job(&RegisterJobRequest {
-                job_key: sched.job_key.clone(),
-                schedule: sched.schedule.clone(),
-                timezone: None,
-                timeout: None,
-                runner_id: Some(self.runner_id.clone()),
-                capabilities: self.capabilities.clone(),
-                description: None,
-            }).await {
+            match self
+                .client
+                .register_job(&RegisterJobRequest {
+                    job_key: sched.job_key.clone(),
+                    schedule: sched.schedule.clone(),
+                    timezone: None,
+                    timeout: None,
+                    runner_id: Some(self.runner_id.clone()),
+                    capabilities: self.capabilities.clone(),
+                    description: None,
+                })
+                .await
+            {
                 Ok(()) => tracing::info!(job_key = %sched.job_key, "job registered"),
-                Err(e) => tracing::warn!(job_key = %sched.job_key, error = %e, "failed to register job — will still poll"),
+                Err(e) => {
+                    tracing::warn!(job_key = %sched.job_key, error = %e, "failed to register job — will still poll")
+                }
             }
         }
         drop(schedules);
@@ -230,10 +233,16 @@ impl CroniqRunner {
                                 let duration_ms = start.elapsed().as_millis() as i64;
                                 match result {
                                     Ok(()) => ("success".to_string(), None, duration_ms),
-                                    Err(e) => ("failure".to_string(), Some(e.to_string()), duration_ms),
+                                    Err(e) => {
+                                        ("failure".to_string(), Some(e.to_string()), duration_ms)
+                                    }
                                 }
                             } else {
-                                ("failure".to_string(), Some(format!("no handler registered for {job_key}")), 0)
+                                (
+                                    "failure".to_string(),
+                                    Some(format!("no handler registered for {job_key}")),
+                                    0,
+                                )
                             };
 
                             // Ack

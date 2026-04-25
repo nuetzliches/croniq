@@ -9,8 +9,8 @@ use axum::{
 };
 use chrono::Utc;
 use futures_core::Stream;
-use tokio_stream::wrappers::IntervalStream;
 use tokio_stream::StreamExt;
+use tokio_stream::wrappers::IntervalStream;
 
 use super::ServerState;
 

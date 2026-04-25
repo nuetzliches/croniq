@@ -123,12 +123,11 @@ impl Schedule {
                 let today = local.date_naive();
 
                 // Try today
-                if let Some(candidate) = tz
-                    .from_local_datetime(&today.and_time(*time))
-                    .earliest()
-                    && candidate > local {
-                        return Some(candidate.with_timezone(&chrono::Utc));
-                    }
+                if let Some(candidate) = tz.from_local_datetime(&today.and_time(*time)).earliest()
+                    && candidate > local
+                {
+                    return Some(candidate.with_timezone(&chrono::Utc));
+                }
 
                 // Tomorrow
                 let tomorrow = today + Duration::days(1);
@@ -149,9 +148,10 @@ impl Schedule {
                     if days.contains(&weekday)
                         && let Some(candidate) =
                             tz.from_local_datetime(&date.and_time(*time)).earliest()
-                            && candidate > local {
-                                return Some(candidate.with_timezone(&chrono::Utc));
-                            }
+                        && candidate > local
+                    {
+                        return Some(candidate.with_timezone(&chrono::Utc));
+                    }
                 }
                 None
             }
@@ -173,9 +173,10 @@ impl Schedule {
                         if let Some(date) = NaiveDate::from_ymd_opt(year, month, day)
                             && let Some(candidate) =
                                 tz.from_local_datetime(&date.and_time(*time)).earliest()
-                                && candidate > local {
-                                    return Some(candidate.with_timezone(&chrono::Utc));
-                                }
+                            && candidate > local
+                        {
+                            return Some(candidate.with_timezone(&chrono::Utc));
+                        }
                     }
                 }
                 None
@@ -241,7 +242,11 @@ impl Schedule {
                         MonthDay::Last => "last".into(),
                     })
                     .collect();
-                format!("every {} of month at {}", ords.join(", "), time.format("%H:%M"))
+                format!(
+                    "every {} of month at {}",
+                    ords.join(", "),
+                    time.format("%H:%M")
+                )
             }
             Schedule::Once { at } => format!("once at {}", at.to_rfc3339()),
             Schedule::Disabled => "disabled".into(),
@@ -335,9 +340,7 @@ mod tests {
     use chrono::TimeZone;
 
     fn utc(y: i32, m: u32, d: u32, h: u32, min: u32) -> chrono::DateTime<chrono::Utc> {
-        chrono::Utc
-            .with_ymd_and_hms(y, m, d, h, min, 0)
-            .unwrap()
+        chrono::Utc.with_ymd_and_hms(y, m, d, h, min, 0).unwrap()
     }
 
     fn tz_vienna() -> Tz {
@@ -517,9 +520,11 @@ mod tests {
     #[test]
     fn disabled_never_fires() {
         let sched = Schedule::Disabled;
-        assert!(sched
-            .next_fire_after(utc(2026, 3, 29, 0, 0), &tz_utc())
-            .is_none());
+        assert!(
+            sched
+                .next_fire_after(utc(2026, 3, 29, 0, 0), &tz_utc())
+                .is_none()
+        );
     }
 
     // ─── next_n_fires ───

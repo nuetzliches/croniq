@@ -47,9 +47,7 @@ impl PgStore {
             .collect();
 
         if !applied.contains(&"001_initial".to_string()) {
-            client
-                .batch_execute(PG_MIGRATION_001)
-                .map_err(map_err)?;
+            client.batch_execute(PG_MIGRATION_001).map_err(map_err)?;
             client
                 .execute(
                     "INSERT INTO _migrations (name) VALUES ($1)",
@@ -325,7 +323,11 @@ impl ExecutionStore for PgStore {
         limit: u32,
     ) -> Result<Vec<Execution>, StoreError> {
         let mut client = self.client.lock().unwrap();
-        let fetch_limit = if capabilities.is_empty() { limit } else { limit * 4 };
+        let fetch_limit = if capabilities.is_empty() {
+            limit
+        } else {
+            limit * 4
+        };
         let rows = client
             .query(
                 "SELECT id, job_key, fire_at, attempt, state, runner_id, claimed_at, started_at, completed_at, duration_ms, error, dead_reason, metadata, created_at FROM executions WHERE state = 'queued' ORDER BY fire_at ASC LIMIT $1",
@@ -355,7 +357,9 @@ impl ExecutionStore for PgStore {
 
     fn list_executions(&self, filter: &ExecutionFilter) -> Result<Vec<Execution>, StoreError> {
         let mut client = self.client.lock().unwrap();
-        let mut sql = String::from("SELECT id, job_key, fire_at, attempt, state, runner_id, claimed_at, started_at, completed_at, duration_ms, error, dead_reason, metadata, created_at FROM executions WHERE true");
+        let mut sql = String::from(
+            "SELECT id, job_key, fire_at, attempt, state, runner_id, claimed_at, started_at, completed_at, duration_ms, error, dead_reason, metadata, created_at FROM executions WHERE true",
+        );
         let mut params: Vec<Box<dyn postgres::types::ToSql + Sync>> = Vec::new();
         let mut idx = 1;
 
@@ -573,7 +577,9 @@ impl DeadLetterStore for PgStore {
 
     fn list_dead_letters(&self, filter: &DeadLetterFilter) -> Result<Vec<DeadLetter>, StoreError> {
         let mut client = self.client.lock().unwrap();
-        let mut sql = String::from("SELECT id, execution_id, job_key, fire_at, attempt, error, dead_reason, metadata, created_at, expires_at FROM dead_letters WHERE true");
+        let mut sql = String::from(
+            "SELECT id, execution_id, job_key, fire_at, attempt, error, dead_reason, metadata, created_at, expires_at FROM dead_letters WHERE true",
+        );
         let mut params: Vec<Box<dyn postgres::types::ToSql + Sync>> = Vec::new();
         let mut idx = 1;
 

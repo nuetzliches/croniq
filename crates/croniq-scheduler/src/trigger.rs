@@ -84,7 +84,17 @@ impl Trigger {
         misfire_policy: MisfirePolicy,
         now: DateTime<Utc>,
     ) -> Self {
-        Self::with_bounds(job_key, schedule, timezone, calendar, window, misfire_policy, None, None, now)
+        Self::with_bounds(
+            job_key,
+            schedule,
+            timezone,
+            calendar,
+            window,
+            misfire_policy,
+            None,
+            None,
+            now,
+        )
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -137,23 +147,21 @@ impl Trigger {
 
         // Respect not_before: suppress firing until the boundary
         if let Some(nb) = self.not_before
-            && now < nb {
-                return None;
-            }
+            && now < nb
+        {
+            return None;
+        }
 
         // Respect not_after: suppress firing past the boundary
         if let Some(na) = self.not_after
-            && now > na {
-                return None;
-            }
+            && now > na
+        {
+            return None;
+        }
 
         let fire_at = self.next_fire_at?;
 
-        if now >= fire_at {
-            Some(fire_at)
-        } else {
-            None
-        }
+        if now >= fire_at { Some(fire_at) } else { None }
     }
 
     /// Mark this trigger as fired and advance to the next fire time.

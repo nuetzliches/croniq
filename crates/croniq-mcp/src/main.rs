@@ -51,12 +51,17 @@ impl Args {
                     data_dir = Some(PathBuf::from(path));
                 }
                 other => {
-                    anyhow::bail!("Unknown argument: {other}. Usage: croniq-mcp [--mutations] [--data-dir <path>]");
+                    anyhow::bail!(
+                        "Unknown argument: {other}. Usage: croniq-mcp [--mutations] [--data-dir <path>]"
+                    );
                 }
             }
         }
 
-        Ok(Self { mutations, data_dir })
+        Ok(Self {
+            mutations,
+            data_dir,
+        })
     }
 }
 

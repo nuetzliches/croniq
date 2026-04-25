@@ -16,11 +16,11 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use crate::loader::job_config_from_job_def;
+use crate::store::DynStore;
 use chrono::{DateTime, Utc};
 use croniq_config::compile::JobConfig;
 use croniq_runner::{AppState, RunnerStatus, WorkItem};
-use crate::loader::job_config_from_job_def;
-use crate::store::DynStore;
 
 /// Result of a single watchdog sweep.
 #[derive(Debug, Clone, Default)]
@@ -41,13 +41,13 @@ pub struct WatchdogLoop {
 }
 
 impl WatchdogLoop {
-    pub fn new(
-        jobs: Vec<JobConfig>,
-        store: DynStore,
-        runner: Arc<AppState>,
-    ) -> Self {
+    pub fn new(jobs: Vec<JobConfig>, store: DynStore, runner: Arc<AppState>) -> Self {
         let jobs = jobs.into_iter().map(|j| (j.key.clone(), j)).collect();
-        Self { jobs, store, runner }
+        Self {
+            jobs,
+            store,
+            runner,
+        }
     }
 
     /// Resolve `JobConfig` for a key: DSL map first, then store fallback.
@@ -179,13 +179,11 @@ impl WatchdogLoop {
     /// job has a `queue_ttl` configured, check whether the item has been
     /// waiting longer than allowed. If so, remove it from the queue and cancel
     /// the execution in the store.
-    async fn expire_queued_by_ttl(
-        &self,
-        now: DateTime<Utc>,
-        result: &mut WatchdogResult,
-    ) {
+    async fn expire_queued_by_ttl(&self, now: DateTime<Utc>, result: &mut WatchdogResult) {
         // Collect job keys that have a queue_ttl configured.
-        let ttls: HashMap<&str, chrono::Duration> = self.jobs.iter()
+        let ttls: HashMap<&str, chrono::Duration> = self
+            .jobs
+            .iter()
             .filter_map(|(key, job)| {
                 let ttl_str = job.queue_ttl.as_deref()?;
                 let std_dur = croniq_execution::retry::parse_duration(ttl_str)?;
@@ -277,7 +275,10 @@ mod tests {
             window: None,
             not_before: None,
             not_after: None,
-            runner: RunnerConfig { require: vec!["billing".into()], ..RunnerConfig::default() },
+            runner: RunnerConfig {
+                require: vec!["billing".into()],
+                ..RunnerConfig::default()
+            },
             retry: RetryConfig::default(),
             timeout: Some("10m".into()),
             dead_letter: DeadLetterConfig::default(),
@@ -355,8 +356,11 @@ mod tests {
         // Seed an execution that was claimed by the now-dead runner
         let exec_id = seed_claimed_execution(&*store, "test:job", "dead-runner", 1);
 
-        let watchdog =
-            WatchdogLoop::new(vec![make_job("test:job")], Arc::clone(&store), Arc::clone(&runner));
+        let watchdog = WatchdogLoop::new(
+            vec![make_job("test:job")],
+            Arc::clone(&store),
+            Arc::clone(&runner),
+        );
 
         let result = watchdog.sweep(Utc::now()).await;
 
@@ -415,8 +419,7 @@ mod tests {
             }
         }
 
-        let watchdog =
-            WatchdogLoop::new(vec![], Arc::clone(&store), Arc::clone(&runner));
+        let watchdog = WatchdogLoop::new(vec![], Arc::clone(&store), Arc::clone(&runner));
 
         let result = watchdog.sweep(Utc::now()).await;
         assert_eq!(result.dead_runners, vec!["dead-runner"]);

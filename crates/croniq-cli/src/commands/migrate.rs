@@ -24,7 +24,10 @@ pub fn migrate(crontab_path: &Path, output: Option<&Path>) -> Result<()> {
             continue;
         }
 
-        let cron_expr = format!("{} {} {} {} {}", parts[0], parts[1], parts[2], parts[3], parts[4]);
+        let cron_expr = format!(
+            "{} {} {} {} {}",
+            parts[0], parts[1], parts[2], parts[3], parts[4]
+        );
         let command = parts[5].trim();
 
         job_index += 1;
@@ -48,7 +51,10 @@ pub fn migrate(crontab_path: &Path, output: Option<&Path>) -> Result<()> {
     }
 
     if jobs.is_empty() {
-        return Err(miette!("No cron entries found in {}", crontab_path.display()));
+        return Err(miette!(
+            "No cron entries found in {}",
+            crontab_path.display()
+        ));
     }
 
     let croniqfile = format!(
@@ -89,8 +95,12 @@ defaults {{
 fn derive_job_key(command: &str, index: usize) -> String {
     // Try to extract a meaningful name from the command
     let cmd = command
-        .split('|').next().unwrap_or(command)
-        .split('>').next().unwrap_or(command)
+        .split('|')
+        .next()
+        .unwrap_or(command)
+        .split('>')
+        .next()
+        .unwrap_or(command)
         .trim();
 
     // Get the base command name
@@ -108,7 +118,11 @@ fn derive_job_key(command: &str, index: usize) -> String {
         .filter(|c| c.is_alphanumeric() || *c == '-' || *c == '_')
         .collect();
 
-    let name = if clean.is_empty() { "task".to_string() } else { clean };
+    let name = if clean.is_empty() {
+        "task".to_string()
+    } else {
+        clean
+    };
 
     format!("migrated:{name}-{index}")
 }

@@ -6,7 +6,11 @@
 
 use std::sync::Arc;
 
-use axum::{Json, extract::{Query, State}, http::StatusCode};
+use axum::{
+    Json,
+    extract::{Query, State},
+    http::StatusCode,
+};
 use chrono::Utc;
 use croniq_store::models::TriggerDefinition;
 use serde::Deserialize;
@@ -31,15 +35,21 @@ pub struct CreateTriggerRequest {
     pub enabled: bool,
 }
 
-fn default_true() -> bool { true }
+fn default_true() -> bool {
+    true
+}
 
 /// `GET /v1/schedules`
 pub async fn handle_list(
     State(state): State<Arc<ServerState>>,
     Query(q): Query<ListQuery>,
 ) -> Result<Json<Vec<TriggerDefinition>>, StatusCode> {
-    let store = state.store.as_ref().ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
-    let mut triggers = store.list_triggers(q.job_key.as_deref())
+    let store = state
+        .store
+        .as_ref()
+        .ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
+    let mut triggers = store
+        .list_triggers(q.job_key.as_deref())
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     if let Some(dsl) = state.dsl_jobs.as_ref() {
@@ -76,8 +86,12 @@ pub async fn handle_get(
         return Err(StatusCode::NOT_FOUND);
     }
 
-    let store = state.store.as_ref().ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
-    store.get_trigger(&trigger_id)
+    let store = state
+        .store
+        .as_ref()
+        .ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
+    store
+        .get_trigger(&trigger_id)
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .map(Json)
         .ok_or(StatusCode::NOT_FOUND)
@@ -88,7 +102,10 @@ pub async fn handle_create(
     State(state): State<Arc<ServerState>>,
     Json(req): Json<CreateTriggerRequest>,
 ) -> Result<(StatusCode, Json<TriggerDefinition>), StatusCode> {
-    let store = state.store.as_ref().ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
+    let store = state
+        .store
+        .as_ref()
+        .ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
 
     // Refuse to shadow a DSL trigger — the Croniqfile owns scheduling for this job.
     if let Some(dsl) = state.dsl_jobs.as_ref()
@@ -112,17 +129,20 @@ pub async fn handle_create(
         created_at: now,
         updated_at: now,
     };
-    store.create_trigger(&trigger).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    store
+        .create_trigger(&trigger)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     // Push to live scheduler if possible
     if let Some(ref tx) = state.scheduler_tx
-        && let Some(rt_trigger) = crate::loader::trigger_from_definition(&trigger, now) {
-            let job_config = crate::loader::job_config_from_definition(&trigger, None);
-            let _ = tx.send(crate::scheduler::SchedulerCommand::AddJob {
-                job: Box::new(job_config),
-                trigger: Box::new(rt_trigger),
-            });
-        }
+        && let Some(rt_trigger) = crate::loader::trigger_from_definition(&trigger, now)
+    {
+        let job_config = crate::loader::job_config_from_definition(&trigger, None);
+        let _ = tx.send(crate::scheduler::SchedulerCommand::AddJob {
+            job: Box::new(job_config),
+            trigger: Box::new(rt_trigger),
+        });
+    }
 
     Ok((StatusCode::CREATED, Json(trigger)))
 }
@@ -137,7 +157,9 @@ pub async fn handle_delete(
         return StatusCode::CONFLICT;
     }
 
-    let Some(store) = state.store.as_ref() else { return StatusCode::SERVICE_UNAVAILABLE };
+    let Some(store) = state.store.as_ref() else {
+        return StatusCode::SERVICE_UNAVAILABLE;
+    };
     match store.delete_trigger(&trigger_id) {
         Ok(_) => StatusCode::NO_CONTENT,
         Err(_) => StatusCode::INTERNAL_SERVER_ERROR,
@@ -155,7 +177,7 @@ mod tests {
     use croniq_runner::AppState;
     use croniq_store::sqlite::SqliteStore;
     use http_body_util::BodyExt;
-    use tokio::sync::{mpsc, RwLock};
+    use tokio::sync::{RwLock, mpsc};
     use tower::util::ServiceExt;
 
     fn make_store() -> DynStore {
@@ -184,7 +206,13 @@ mod tests {
 
     async fn body_json(app: axum::Router, method: &str, uri: &str) -> (u16, serde_json::Value) {
         let resp = app
-            .oneshot(Request::builder().method(method).uri(uri).body(Body::empty()).unwrap())
+            .oneshot(
+                Request::builder()
+                    .method(method)
+                    .uri(uri)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
             .await
             .unwrap();
         let status = resp.status().as_u16();
@@ -194,11 +222,17 @@ mod tests {
     }
 
     async fn status_of(app: axum::Router, method: &str, uri: &str) -> u16 {
-        app.oneshot(Request::builder().method(method).uri(uri).body(Body::empty()).unwrap())
-            .await
-            .unwrap()
-            .status()
-            .as_u16()
+        app.oneshot(
+            Request::builder()
+                .method(method)
+                .uri(uri)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap()
+        .status()
+        .as_u16()
     }
 
     #[tokio::test]
@@ -238,7 +272,8 @@ mod tests {
     #[tokio::test]
     async fn get_dsl_schedule_by_synthetic_id() {
         let state = make_state(vec![dsl_job("dsl:one")], make_store());
-        let (status, body) = body_json(server_router(state), "GET", "/v1/schedules/dsl:dsl:one").await;
+        let (status, body) =
+            body_json(server_router(state), "GET", "/v1/schedules/dsl:dsl:one").await;
         assert_eq!(status, 200);
         assert_eq!(body["managed_by"], "dsl");
         assert_eq!(body["job_key"], "dsl:one");
@@ -251,4 +286,3 @@ mod tests {
         assert_eq!(status, 409);
     }
 }
-

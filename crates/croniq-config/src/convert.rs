@@ -156,14 +156,20 @@ pub fn convert(expr: &str) -> Result<ConversionResult, String> {
         if is_star(dom) && !is_star(dow) {
             let days = parse_dow(dow)?;
             let sched = format_weekday_schedule(&days, &time);
-            return Ok(ConversionResult { schedule: sched, warnings });
+            return Ok(ConversionResult {
+                schedule: sched,
+                warnings,
+            });
         }
 
         // dom specified (including "L"), dow wildcard → monthly schedule
         if !is_star(dom) && is_star(dow) {
             let ordinals = parse_dom(dom)?;
             let sched = format_monthly_schedule(&ordinals, &time);
-            return Ok(ConversionResult { schedule: sched, warnings });
+            return Ok(ConversionResult {
+                schedule: sched,
+                warnings,
+            });
         }
 
         // Both dom AND dow are set — ambiguous in Croniq
@@ -175,7 +181,10 @@ pub fn convert(expr: &str) -> Result<ConversionResult, String> {
             );
             let days = parse_dow(dow)?;
             let sched = format_weekday_schedule(&days, &time);
-            return Ok(ConversionResult { schedule: sched, warnings });
+            return Ok(ConversionResult {
+                schedule: sched,
+                warnings,
+            });
         }
     }
 
@@ -223,8 +232,13 @@ fn parse_dow(s: &str) -> Result<Vec<String>, String> {
     }
     if s == "0-6" || s == "6-0" {
         return Ok(vec![
-            "sunday".into(), "monday".into(), "tuesday".into(), "wednesday".into(),
-            "thursday".into(), "friday".into(), "saturday".into(),
+            "sunday".into(),
+            "monday".into(),
+            "tuesday".into(),
+            "wednesday".into(),
+            "thursday".into(),
+            "friday".into(),
+            "saturday".into(),
         ]);
     }
     if s == "6,0" || s == "0,6" {
@@ -400,7 +414,10 @@ mod tests {
 
     #[test]
     fn mon_wed_fri() {
-        assert_eq!(conv("0 9 * * 1,3,5"), "every monday wednesday friday at 09:00");
+        assert_eq!(
+            conv("0 9 * * 1,3,5"),
+            "every monday wednesday friday at 09:00"
+        );
     }
 
     #[test]

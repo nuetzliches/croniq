@@ -26,8 +26,7 @@ pub fn resolve(
                 .ok_or(PlaceholderError::Unresolved(format!("${name}")))
         })
     } else if let Some(var_name) = placeholder.strip_prefix("env.") {
-        std::env::var(var_name)
-            .map_err(|_| PlaceholderError::Unresolved(format!("env.{var_name}")))
+        std::env::var(var_name).map_err(|_| PlaceholderError::Unresolved(format!("env.{var_name}")))
     } else if let Some(path) = placeholder.strip_prefix("file.") {
         std::fs::read_to_string(path)
             .map(|s| s.trim().to_string())

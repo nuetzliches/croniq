@@ -9,6 +9,7 @@ use std::path::{Path, PathBuf};
 
 use chrono::{DateTime, Utc};
 use croniq_config::ast::{Croniqfile, Item};
+use croniq_config::compile::JobConfig;
 use croniq_config::compile::{self, CatchUpPolicy, RuntimeConfig};
 use croniq_config::import::resolve_imports_with_visited;
 use croniq_config::parser::Parser;
@@ -18,7 +19,6 @@ use croniq_scheduler::{
     schedule::Schedule,
     trigger::{TimeWindow, Trigger, TriggerState},
 };
-use croniq_config::compile::JobConfig;
 use croniq_store::{
     models::JobStatus,
     traits::{ExecutionStore, JobStore},
@@ -45,10 +45,7 @@ pub enum LoadError {
 
 /// Convert a `ParseError` into a `LoadError::Parse` with 1-based line/column
 /// extracted from the parser's SourceSpan when available.
-fn parse_error_to_load(
-    err: croniq_config::parser::ParseError,
-    source: &str,
-) -> LoadError {
+fn parse_error_to_load(err: croniq_config::parser::ParseError, source: &str) -> LoadError {
     use croniq_config::lexer::LexError;
     use croniq_config::parser::ParseError;
 
@@ -117,10 +114,7 @@ pub fn load_file(path: &Path) -> Result<LoadedConfig, LoadError> {
 }
 
 /// Load and parse a single file, then recursively resolve its imports.
-fn load_and_resolve(
-    path: &Path,
-    visited: &mut HashSet<PathBuf>,
-) -> Result<Croniqfile, LoadError> {
+fn load_and_resolve(path: &Path, visited: &mut HashSet<PathBuf>) -> Result<Croniqfile, LoadError> {
     let src = std::fs::read_to_string(path)?;
     let mut ast = Parser::parse(&src).map_err(|e| parse_error_to_load(e, &src))?;
 
@@ -242,14 +236,16 @@ fn load_from_compiled(runtime: RuntimeConfig, ast: &Croniqfile) -> Result<Loaded
         let window = job_cfg.window.as_deref().and_then(TimeWindow::parse);
 
         // Parse not_before / not_after bounds
-        let not_before = job_cfg
-            .not_before
-            .as_deref()
-            .and_then(|s| DateTime::parse_from_rfc3339(s).ok().map(|dt| dt.with_timezone(&Utc)));
-        let not_after = job_cfg
-            .not_after
-            .as_deref()
-            .and_then(|s| DateTime::parse_from_rfc3339(s).ok().map(|dt| dt.with_timezone(&Utc)));
+        let not_before = job_cfg.not_before.as_deref().and_then(|s| {
+            DateTime::parse_from_rfc3339(s)
+                .ok()
+                .map(|dt| dt.with_timezone(&Utc))
+        });
+        let not_after = job_cfg.not_after.as_deref().and_then(|s| {
+            DateTime::parse_from_rfc3339(s)
+                .ok()
+                .map(|dt| dt.with_timezone(&Utc))
+        });
 
         let trigger = Trigger::with_bounds(
             job_cfg.key.clone(),
@@ -412,7 +408,8 @@ pub async fn restore_queued_executions(
                 for (i, exec) in execs.iter().enumerate() {
                     if i == 0 {
                         // Restore the latest
-                        let item = job_to_work_item(job, exec.id.to_string(), exec.fire_at, exec.attempt);
+                        let item =
+                            job_to_work_item(job, exec.id.to_string(), exec.fire_at, exec.attempt);
                         runner_state.queue.write().await.enqueue(item);
                         restored += 1;
                     } else {
@@ -432,7 +429,8 @@ pub async fn restore_queued_executions(
             CatchUpPolicy::All => {
                 // Restore all (current behaviour).
                 for exec in &execs {
-                    let item = job_to_work_item(job, exec.id.to_string(), exec.fire_at, exec.attempt);
+                    let item =
+                        job_to_work_item(job, exec.id.to_string(), exec.fire_at, exec.attempt);
                     runner_state.queue.write().await.enqueue(item);
                     restored += 1;
                 }
@@ -461,7 +459,9 @@ pub fn trigger_from_definition(
     let secs = parse_interval_seconds(cron_expr)?;
     let schedule = croniq_scheduler::schedule::Schedule::Interval { seconds: secs };
 
-    let tz: chrono_tz::Tz = def.timezone.as_deref()
+    let tz: chrono_tz::Tz = def
+        .timezone
+        .as_deref()
         .and_then(|s| s.parse().ok())
         .unwrap_or(chrono_tz::UTC);
 
@@ -491,7 +491,10 @@ pub fn job_config_from_definition(
     use croniq_config::compile::*;
     use croniq_config::schedule::CompiledSchedule;
 
-    let (ns, name) = def.job_key.split_once(':').unwrap_or(("default", &def.job_key));
+    let (ns, name) = def
+        .job_key
+        .split_once(':')
+        .unwrap_or(("default", &def.job_key));
 
     JobConfig {
         key: def.job_key.clone(),
@@ -509,15 +512,16 @@ pub fn job_config_from_definition(
         runner: RunnerConfig::default(),
         retry: job_def
             .and_then(|j| j.max_retries)
-            .map(|n| RetryConfig { max_attempts: n, ..RetryConfig::default() })
+            .map(|n| RetryConfig {
+                max_attempts: n,
+                ..RetryConfig::default()
+            })
             .unwrap_or_default(),
         timeout: job_def
             .and_then(|j| j.timeout.clone())
             .or_else(|| Some("5m".into())),
         dead_letter: DeadLetterConfig {
-            enabled: job_def
-                .and_then(|j| j.dead_letter_enabled)
-                .unwrap_or(true),
+            enabled: job_def.and_then(|j| j.dead_letter_enabled).unwrap_or(true),
             ..DeadLetterConfig::default()
         },
         metadata: job_def.map(|j| j.metadata.clone()).unwrap_or_default(),
@@ -538,7 +542,10 @@ pub fn job_config_from_job_def(
     use croniq_config::compile::*;
     use croniq_config::schedule::CompiledSchedule;
 
-    let (ns, name) = job_def.job_key.split_once(':').unwrap_or(("default", &job_def.job_key));
+    let (ns, name) = job_def
+        .job_key
+        .split_once(':')
+        .unwrap_or(("default", &job_def.job_key));
 
     JobConfig {
         key: job_def.job_key.clone(),
@@ -554,8 +561,12 @@ pub fn job_config_from_job_def(
         not_before: None,
         not_after: None,
         runner: RunnerConfig::default(),
-        retry: job_def.max_retries
-            .map(|n| RetryConfig { max_attempts: n, ..RetryConfig::default() })
+        retry: job_def
+            .max_retries
+            .map(|n| RetryConfig {
+                max_attempts: n,
+                ..RetryConfig::default()
+            })
             .unwrap_or_default(),
         timeout: job_def.timeout.clone().or_else(|| Some("5m".into())),
         dead_letter: DeadLetterConfig {
@@ -580,7 +591,10 @@ pub fn synth_job_def_from_dsl(
         job_key: cfg.key.clone(),
         description: cfg.description.clone(),
         assigned_runner_id: None,
-        is_active: !matches!(cfg.schedule, croniq_config::schedule::CompiledSchedule::Disabled),
+        is_active: !matches!(
+            cfg.schedule,
+            croniq_config::schedule::CompiledSchedule::Disabled
+        ),
         metadata: cfg.metadata.clone(),
         created_at: now,
         updated_at: now,
@@ -609,15 +623,20 @@ pub fn synth_trigger_def_from_dsl(
         timezone: cfg.timezone.clone(),
         calendar: cfg.calendar.clone(),
         window: cfg.window.clone(),
-        not_before: cfg
-            .not_before
-            .as_deref()
-            .and_then(|s| DateTime::parse_from_rfc3339(s).ok().map(|d| d.with_timezone(&Utc))),
-        not_after: cfg
-            .not_after
-            .as_deref()
-            .and_then(|s| DateTime::parse_from_rfc3339(s).ok().map(|d| d.with_timezone(&Utc))),
-        enabled: !matches!(cfg.schedule, croniq_config::schedule::CompiledSchedule::Disabled),
+        not_before: cfg.not_before.as_deref().and_then(|s| {
+            DateTime::parse_from_rfc3339(s)
+                .ok()
+                .map(|d| d.with_timezone(&Utc))
+        }),
+        not_after: cfg.not_after.as_deref().and_then(|s| {
+            DateTime::parse_from_rfc3339(s)
+                .ok()
+                .map(|d| d.with_timezone(&Utc))
+        }),
+        enabled: !matches!(
+            cfg.schedule,
+            croniq_config::schedule::CompiledSchedule::Disabled
+        ),
         managed_by: "dsl".into(),
         created_at: now,
         updated_at: now,
@@ -640,9 +659,13 @@ fn parse_interval_seconds(s: &str) -> Option<u64> {
     }
     // Try parsing as cron-like interval: */N * * * * → every N minutes
     if let Some(rest) = s.strip_prefix("*/")
-        && let Some(n) = rest.split_whitespace().next().and_then(|n| n.parse::<u64>().ok()) {
-            return Some(n * 60);
-        }
+        && let Some(n) = rest
+            .split_whitespace()
+            .next()
+            .and_then(|n| n.parse::<u64>().ok())
+    {
+        return Some(n * 60);
+    }
     None
 }
 
@@ -712,7 +735,10 @@ mod tests {
         "#;
         let cfg = load_str(src).unwrap();
         // Defaults timezone is compiled into the job config
-        assert_eq!(cfg.runtime.jobs[0].timezone.as_deref(), Some("Europe/Vienna"));
+        assert_eq!(
+            cfg.runtime.jobs[0].timezone.as_deref(),
+            Some("Europe/Vienna")
+        );
         // And the trigger uses it
         let trigger = &cfg.triggers["billing:invoice"];
         assert_eq!(trigger.timezone, chrono_tz::Europe::Vienna);
@@ -772,7 +798,13 @@ mod tests {
         let store = make_store();
 
         // Simulate: this once-job already fired in a previous run
-        seed_job_state(&store, "migration:v2", croniq_store::models::JobStatus::Exhausted, None, 1);
+        seed_job_state(
+            &store,
+            "migration:v2",
+            croniq_store::models::JobStatus::Exhausted,
+            None,
+            1,
+        );
 
         restore_trigger_states(&mut cfg.triggers, &*store, Utc::now());
 
@@ -800,7 +832,10 @@ mod tests {
 
         let trigger = &cfg.triggers["etl:sync"];
         // next_fire_at must be restored from DB (not re-computed from now)
-        assert_eq!(trigger.next_fire_at.unwrap().timestamp(), stored_next.timestamp());
+        assert_eq!(
+            trigger.next_fire_at.unwrap().timestamp(),
+            stored_next.timestamp()
+        );
         assert_eq!(trigger.fire_count, 7);
     }
 
@@ -811,7 +846,13 @@ mod tests {
         let store = make_store();
 
         // Store has a stale job_state for a job that no longer exists in config
-        seed_job_state(&store, "removed:job", croniq_store::models::JobStatus::Exhausted, None, 1);
+        seed_job_state(
+            &store,
+            "removed:job",
+            croniq_store::models::JobStatus::Exhausted,
+            None,
+            1,
+        );
 
         // Should not panic; the etl:sync trigger is unaffected
         restore_trigger_states(&mut cfg.triggers, &*store, Utc::now());
@@ -824,7 +865,13 @@ mod tests {
         let mut cfg = load_str(src).unwrap();
         let store = make_store();
 
-        seed_job_state(&store, "reports:monthly", croniq_store::models::JobStatus::Paused, None, 0);
+        seed_job_state(
+            &store,
+            "reports:monthly",
+            croniq_store::models::JobStatus::Paused,
+            None,
+            0,
+        );
 
         restore_trigger_states(&mut cfg.triggers, &*store, Utc::now());
 

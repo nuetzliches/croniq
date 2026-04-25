@@ -66,7 +66,10 @@ mod tests {
     #[test]
     fn remaining_time() {
         let policy = TimeoutPolicy::new(Duration::from_secs(60));
-        assert_eq!(policy.remaining(Duration::from_secs(20)), Duration::from_secs(40));
+        assert_eq!(
+            policy.remaining(Duration::from_secs(20)),
+            Duration::from_secs(40)
+        );
         assert_eq!(policy.remaining(Duration::from_secs(60)), Duration::ZERO);
         assert_eq!(policy.remaining(Duration::from_secs(90)), Duration::ZERO);
     }

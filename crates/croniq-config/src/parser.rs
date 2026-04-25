@@ -232,7 +232,9 @@ impl Parser {
                 }),
             },
             _ => Err(ParseError::Unexpected {
-                expected: "import, server, pull_api, observability, vars, defaults, calendar, or job".into(),
+                expected:
+                    "import, server, pull_api, observability, vars, defaults, calendar, or job"
+                        .into(),
                 got: format!("{}", tok.kind),
                 span: tok.span.into(),
             }),
@@ -406,7 +408,9 @@ impl Parser {
             }
         }
 
-        let span = start.span.merge(args.last().map(|a| a.span).unwrap_or(rule_type.span));
+        let span = start
+            .span
+            .merge(args.last().map(|a| a.span).unwrap_or(rule_type.span));
         Ok(CalendarRule {
             kind,
             rule_type,
@@ -495,8 +499,11 @@ impl Parser {
 
     fn is_schedule_start(&self) -> bool {
         let tok = self.peek();
-        tok.is_ident("every") || tok.is_ident("once") || tok.is_ident("disabled")
-            || tok.is_ident("ephemeral") || tok.is_ident("queued")
+        tok.is_ident("every")
+            || tok.is_ident("once")
+            || tok.is_ident("disabled")
+            || tok.is_ident("ephemeral")
+            || tok.is_ident("queued")
     }
 
     fn parse_schedule(&mut self) -> Result<ScheduleNode, ParseError> {
@@ -504,8 +511,14 @@ impl Parser {
 
         // Optional execution-mode prefix: `ephemeral every …` / `queued every …`
         let mode = match tok.text() {
-            "ephemeral" => { self.advance(); Some(ScheduleMode::Ephemeral) }
-            "queued" => { self.advance(); Some(ScheduleMode::Queued) }
+            "ephemeral" => {
+                self.advance();
+                Some(ScheduleMode::Ephemeral)
+            }
+            "queued" => {
+                self.advance();
+                Some(ScheduleMode::Queued)
+            }
             _ => None,
         };
 
@@ -575,13 +588,10 @@ impl Parser {
 
     fn parse_schedule_interval(&mut self, start: Span) -> Result<ScheduleNode, ParseError> {
         let count_tok = self.peek().clone();
-        let count: u32 = count_tok
-            .text()
-            .parse()
-            .map_err(|_| ParseError::General {
-                message: format!("expected number, got '{}'", count_tok.text()),
-                span: count_tok.span.into(),
-            })?;
+        let count: u32 = count_tok.text().parse().map_err(|_| ParseError::General {
+            message: format!("expected number, got '{}'", count_tok.text()),
+            span: count_tok.span.into(),
+        })?;
         self.advance();
 
         let unit_tok = self.peek().clone();
@@ -1038,10 +1048,8 @@ mod tests {
 
     #[test]
     fn parse_job_once() {
-        let ast = Parser::parse(
-            "job migration:v2 { once at 2026-04-01T03:00:00Z; timeout 30m }",
-        )
-        .unwrap();
+        let ast = Parser::parse("job migration:v2 { once at 2026-04-01T03:00:00Z; timeout 30m }")
+            .unwrap();
         if let Item::Job(ref j) = ast.items[0] {
             let sched = j.schedule.as_ref().unwrap();
             if let ScheduleKind::Once { ref at } = sched.kind {
@@ -1111,9 +1119,10 @@ mod tests {
         .unwrap();
         if let Item::Job(ref j) = ast.items[0] {
             // window should be in directives
-            let window = j.directives.iter().find(|d| {
-                matches!(d, DirectiveOrBlock::Directive(d) if d.key.value == "window")
-            });
+            let window = j
+                .directives
+                .iter()
+                .find(|d| matches!(d, DirectiveOrBlock::Directive(d) if d.key.value == "window"));
             assert!(window.is_some());
         }
     }
@@ -1129,17 +1138,17 @@ mod tests {
         )
         .unwrap();
         if let Item::Job(ref j) = ast.items[0] {
-            let runner = j.directives.iter().find(|d| {
-                matches!(d, DirectiveOrBlock::Block(b) if b.name.value == "runner")
-            });
+            let runner = j
+                .directives
+                .iter()
+                .find(|d| matches!(d, DirectiveOrBlock::Block(b) if b.name.value == "runner"));
             assert!(runner.is_some());
         }
     }
 
     #[test]
     fn parse_job_key_with_variant() {
-        let ast =
-            Parser::parse("job ops:health:eu-west { every 5 minutes; timeout 30s }").unwrap();
+        let ast = Parser::parse("job ops:health:eu-west { every 5 minutes; timeout 30s }").unwrap();
         if let Item::Job(ref j) = ast.items[0] {
             assert_eq!(j.key.namespace, "ops");
             assert_eq!(j.key.name, "health");

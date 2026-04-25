@@ -13,14 +13,11 @@
 use std::process::Command;
 
 /// Run the failure notification hook if configured.
-pub fn notify_failure(
-    job_key: &str,
-    execution_id: &str,
-    error: &str,
-    attempt: u32,
-    reason: &str,
-) {
-    let Some(cmd) = std::env::var("CRONIQ_ON_FAILURE_CMD").ok().filter(|s| !s.is_empty()) else {
+pub fn notify_failure(job_key: &str, execution_id: &str, error: &str, attempt: u32, reason: &str) {
+    let Some(cmd) = std::env::var("CRONIQ_ON_FAILURE_CMD")
+        .ok()
+        .filter(|s| !s.is_empty())
+    else {
         return;
     };
 

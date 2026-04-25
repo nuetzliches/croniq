@@ -178,9 +178,23 @@ pub trait CalendarDefinitionStore {
 /// Execution log persistence.
 pub trait ExecutionLogStore {
     fn append_log(&self, entry: &ExecutionLogEntry) -> Result<(), StoreError>;
-    fn read_logs(&self, execution_id: Uuid, limit: u32) -> Result<Vec<ExecutionLogEntry>, StoreError>;
+    fn read_logs(
+        &self,
+        execution_id: Uuid,
+        limit: u32,
+    ) -> Result<Vec<ExecutionLogEntry>, StoreError>;
 }
 
 /// Combined store trait for convenience.
-pub trait Store: JobStore + ExecutionStore + RunnerStore + DeadLetterStore + AuthStore
-    + JobDefinitionStore + TriggerDefinitionStore + CalendarDefinitionStore + ExecutionLogStore {}
+pub trait Store:
+    JobStore
+    + ExecutionStore
+    + RunnerStore
+    + DeadLetterStore
+    + AuthStore
+    + JobDefinitionStore
+    + TriggerDefinitionStore
+    + CalendarDefinitionStore
+    + ExecutionLogStore
+{
+}

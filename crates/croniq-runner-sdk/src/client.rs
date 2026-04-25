@@ -160,10 +160,8 @@ impl CroniqClient {
     ) -> Result<(), ClientError> {
         let resp = self
             .add_auth(
-                self.http.post(format!(
-                    "{}/v1/work/{}/events",
-                    self.base_url, execution_id
-                )),
+                self.http
+                    .post(format!("{}/v1/work/{}/events", self.base_url, execution_id)),
             )
             .json(events)
             .send()
@@ -181,7 +179,10 @@ impl CroniqClient {
     /// Register a job on the server (runner self-registration).
     pub async fn register_job(&self, req: &RegisterJobRequest) -> Result<(), ClientError> {
         let resp = self
-            .add_auth(self.http.post(format!("{}/v1/jobs/register", self.base_url)))
+            .add_auth(
+                self.http
+                    .post(format!("{}/v1/jobs/register", self.base_url)),
+            )
             .json(req)
             .send()
             .await?;

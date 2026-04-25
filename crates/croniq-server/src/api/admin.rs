@@ -158,9 +158,5 @@ fn reload_error_response(
             )
         }
     };
-    (
-        status,
-        Json(serde_json::to_value(body).unwrap_or_default()),
-    )
+    (status, Json(serde_json::to_value(body).unwrap_or_default()))
 }
-

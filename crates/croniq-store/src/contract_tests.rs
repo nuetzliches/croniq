@@ -177,7 +177,14 @@ fn execution_complete_success() {
     store.claim_execution(exec.id, "runner-1", now()).unwrap();
 
     store
-        .complete_execution(exec.id, ExecutionState::Completed, Some(4500), None, None, now())
+        .complete_execution(
+            exec.id,
+            ExecutionState::Completed,
+            Some(4500),
+            None,
+            None,
+            now(),
+        )
         .unwrap();
 
     let loaded = store.get_execution(exec.id).unwrap().unwrap();
@@ -231,13 +238,19 @@ fn find_queued_executions_filters_by_capabilities() {
 
     // Execution requiring "billing" capability
     let mut exec1 = make_execution("billing:invoice", utc(2026, 3, 29, 12, 0));
-    exec1.metadata.insert("__require".into(), serde_json::to_string(&vec!["billing"]).unwrap());
+    exec1.metadata.insert(
+        "__require".into(),
+        serde_json::to_string(&vec!["billing"]).unwrap(),
+    );
     store.create_execution(&exec1).unwrap();
 
     // Execution requiring "etl" capability
     let mut exec2 = make_execution("etl:sync", utc(2026, 3, 29, 12, 1));
     exec2.id = Uuid::new_v4();
-    exec2.metadata.insert("__require".into(), serde_json::to_string(&vec!["etl"]).unwrap());
+    exec2.metadata.insert(
+        "__require".into(),
+        serde_json::to_string(&vec!["etl"]).unwrap(),
+    );
     store.create_execution(&exec2).unwrap();
 
     // Execution with no requirements
@@ -246,7 +259,9 @@ fn find_queued_executions_filters_by_capabilities() {
     store.create_execution(&exec3).unwrap();
 
     // Runner with "billing" capability should see exec1 + exec3
-    let billing = store.find_queued_executions(&["billing".into()], 10).unwrap();
+    let billing = store
+        .find_queued_executions(&["billing".into()], 10)
+        .unwrap();
     assert_eq!(billing.len(), 2);
     assert!(billing.iter().any(|e| e.job_key == "billing:invoice"));
     assert!(billing.iter().any(|e| e.job_key == "reports:daily"));
@@ -267,7 +282,9 @@ fn requeue_abandoned() {
     let store = create_memory_store().unwrap();
     let exec = make_execution("billing:invoice", utc(2026, 3, 29, 2, 0));
     store.create_execution(&exec).unwrap();
-    store.claim_execution(exec.id, "dead-runner", now()).unwrap();
+    store
+        .claim_execution(exec.id, "dead-runner", now())
+        .unwrap();
 
     let requeued = store.requeue_abandoned("dead-runner", now()).unwrap();
     assert_eq!(requeued.len(), 1);

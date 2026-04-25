@@ -6,10 +6,7 @@ use std::path::{Path, PathBuf};
 /// Resolve import paths relative to the base directory.
 /// Supports glob patterns. Detects circular imports via a visited set of
 /// canonical paths.
-pub fn resolve_imports(
-    base_dir: &Path,
-    import_path: &str,
-) -> Result<Vec<PathBuf>, ImportError> {
+pub fn resolve_imports(base_dir: &Path, import_path: &str) -> Result<Vec<PathBuf>, ImportError> {
     resolve_imports_with_visited(base_dir, import_path, &mut HashSet::new())
 }
 
@@ -40,9 +37,7 @@ pub fn resolve_imports_with_visited(
     for path in &paths {
         let canonical = path.canonicalize().unwrap_or_else(|_| path.clone());
         if !visited.insert(canonical.clone()) {
-            return Err(ImportError::CircularImport(
-                path.display().to_string(),
-            ));
+            return Err(ImportError::CircularImport(path.display().to_string()));
         }
     }
 

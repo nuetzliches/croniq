@@ -11,9 +11,7 @@ use tokio::sync::mpsc;
 
 /// Start watching a file for changes. Returns a receiver that emits the file
 /// path whenever a modification is detected (debounced to 500ms).
-pub fn watch_config(
-    config_path: &Path,
-) -> Result<mpsc::UnboundedReceiver<PathBuf>, notify::Error> {
+pub fn watch_config(config_path: &Path) -> Result<mpsc::UnboundedReceiver<PathBuf>, notify::Error> {
     let (tx, rx) = mpsc::unbounded_channel();
     let canonical = config_path
         .canonicalize()
@@ -22,12 +20,10 @@ pub fn watch_config(
 
     let mut watcher = notify::recommended_watcher(move |res: Result<Event, _>| {
         if let Ok(event) = res
-            && matches!(
-                event.kind,
-                EventKind::Modify(_) | EventKind::Create(_)
-            ) {
-                let _ = tx.send(watched.clone());
-            }
+            && matches!(event.kind, EventKind::Modify(_) | EventKind::Create(_))
+        {
+            let _ = tx.send(watched.clone());
+        }
     })?;
 
     // Watch the parent directory to handle editor save-and-rename patterns

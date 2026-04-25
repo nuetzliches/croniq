@@ -41,11 +41,12 @@ impl RunnerRegistry {
         // Instance guard: check for conflicting instance_id
         if let Some(ref new_iid) = instance_id
             && let Some(existing) = self.runners.get(&id)
-                && let Some(ref old_iid) = existing.instance_id
-                    && old_iid != new_iid {
-                        // Different instance trying to use the same runner_id
-                        return Err(old_iid.clone());
-                    }
+            && let Some(ref old_iid) = existing.instance_id
+            && old_iid != new_iid
+        {
+            // Different instance trying to use the same runner_id
+            return Err(old_iid.clone());
+        }
 
         let is_new = !self.runners.contains_key(&id);
 
@@ -97,7 +98,12 @@ impl RunnerRegistry {
     }
 
     /// Like `by_status` but with a custom dead threshold in seconds.
-    pub fn by_status_with_ttl(&self, status: RunnerStatus, now: DateTime<Utc>, dead_threshold_secs: u64) -> Vec<&Runner> {
+    pub fn by_status_with_ttl(
+        &self,
+        status: RunnerStatus,
+        now: DateTime<Utc>,
+        dead_threshold_secs: u64,
+    ) -> Vec<&Runner> {
         self.runners
             .values()
             .filter(|r| r.status_at_with_ttl(now, dead_threshold_secs) == status)
@@ -186,7 +192,13 @@ mod tests {
     fn capabilities_updated_on_re_register() {
         let mut reg = RunnerRegistry::new();
         reg.register_or_update("r1", vec!["billing".into()], 3, vec![], None);
-        reg.register_or_update("r1", vec!["billing".into(), "eu-central".into()], 3, vec![], None);
+        reg.register_or_update(
+            "r1",
+            vec!["billing".into(), "eu-central".into()],
+            3,
+            vec![],
+            None,
+        );
 
         let r = reg.get("r1").unwrap();
         assert_eq!(r.capabilities.len(), 2);
@@ -195,7 +207,13 @@ mod tests {
     #[test]
     fn inflight_reflected_in_registry() {
         let mut reg = RunnerRegistry::new();
-        reg.register_or_update("r1", vec![], 3, vec!["exec-1".into(), "exec-2".into()], None);
+        reg.register_or_update(
+            "r1",
+            vec![],
+            3,
+            vec!["exec-1".into(), "exec-2".into()],
+            None,
+        );
 
         let r = reg.get("r1").unwrap();
         assert_eq!(r.inflight, vec!["exec-1", "exec-2"]);

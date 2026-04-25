@@ -149,9 +149,17 @@ jobs:
       - name: Generate SHA256SUMS
         run: |
           cd artifacts
-          find . -name "*.tar.gz" -o -name "*.zip" | sort | while read -r f; do
-            sha256sum "$f" | sed 's|[^/]*/||'
-          done > SHA256SUMS
+          # action-gh-release uploads each file by its basename, flattening the
+          # per-target subdirectories produced by download-artifact. The SHA256SUMS
+          # manifest must therefore reference each archive by basename only —
+          # otherwise `sha256sum --check` in install.sh can't locate the file
+          # relative to the download directory.
+          : > SHA256SUMS
+          find . -type f \( -name "*.tar.gz" -o -name "*.zip" \) | sort | while read -r f; do
+            name=$(basename "$f")
+            hash=$(sha256sum "$f" | awk '{print $1}')
+            printf '%s  %s\n' "$hash" "$name" >> SHA256SUMS
+          done
           cat SHA256SUMS
       - name: Create release
         uses: softprops/action-gh-release@b4309332981a82ec1c5618f44dd2e27cc8bfbfda # v3.0.0

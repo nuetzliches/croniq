@@ -30,8 +30,11 @@ impl From<WorkAssignment> for ExecutionContext {
 }
 
 /// A boxed async handler function.
-pub type HandlerFn =
-    Arc<dyn Fn(ExecutionContext) -> Pin<Box<dyn Future<Output = Result<(), HandlerError>> + Send>> + Send + Sync>;
+pub type HandlerFn = Arc<
+    dyn Fn(ExecutionContext) -> Pin<Box<dyn Future<Output = Result<(), HandlerError>> + Send>>
+        + Send
+        + Sync,
+>;
 
 #[derive(Debug, thiserror::Error)]
 pub enum HandlerError {

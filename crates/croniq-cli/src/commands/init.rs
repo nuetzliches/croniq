@@ -39,14 +39,12 @@ pub fn init(
     let db_path = data_dir.join("croniq.db");
 
     println!("Opening database at {}", db_path.display());
-    let store = SqliteStore::open(&db_path)
-        .map_err(|e| miette!("Failed to open database: {e}"))?;
+    let store = SqliteStore::open(&db_path).map_err(|e| miette!("Failed to open database: {e}"))?;
 
     let now = Utc::now();
     let user_id = Uuid::new_v4().to_string();
 
-    let pw_hash = hash_password(&password)
-        .map_err(|e| miette!("Failed to hash password: {e}"))?;
+    let pw_hash = hash_password(&password).map_err(|e| miette!("Failed to hash password: {e}"))?;
 
     store
         .upsert_credentials(&PasswordCredential {
@@ -127,7 +125,10 @@ pub fn init(
     }
 
     println!("Or login via:");
-    println!("  POST /v1/auth/login {{\"username\": \"{}\", \"password\": \"...\"}}", username);
+    println!(
+        "  POST /v1/auth/login {{\"username\": \"{}\", \"password\": \"...\"}}",
+        username
+    );
 
     Ok(())
 }

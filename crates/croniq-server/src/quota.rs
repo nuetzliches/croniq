@@ -91,7 +91,13 @@ mod tests {
     #[test]
     fn allows_within_quota() {
         let mut guard = QuotaGuard::new();
-        guard.set_quota("test:job", JobQuota { max_parallel: 2, max_per_minute: 10 });
+        guard.set_quota(
+            "test:job",
+            JobQuota {
+                max_parallel: 2,
+                max_per_minute: 10,
+            },
+        );
         assert!(guard.allow("test:job"));
         assert!(guard.allow("test:job"));
         assert!(!guard.allow("test:job")); // 3rd parallel blocked
@@ -100,7 +106,13 @@ mod tests {
     #[test]
     fn release_frees_slot() {
         let mut guard = QuotaGuard::new();
-        guard.set_quota("test:job", JobQuota { max_parallel: 1, max_per_minute: 100 });
+        guard.set_quota(
+            "test:job",
+            JobQuota {
+                max_parallel: 1,
+                max_per_minute: 100,
+            },
+        );
         assert!(guard.allow("test:job"));
         assert!(!guard.allow("test:job"));
         guard.release("test:job");
