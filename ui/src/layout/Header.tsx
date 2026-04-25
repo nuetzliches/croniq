@@ -1,10 +1,11 @@
 import { useLocation, useNavigate } from 'react-router'
-import { Sun, Moon, Bell, LogOut } from 'lucide-react'
+import { Sun, Moon, Bell, LogOut, Menu } from 'lucide-react'
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
 import * as Tooltip from '@radix-ui/react-tooltip'
 import { useAuthStore } from '@/auth/store'
 import { useTheme } from '@/lib/theme'
 import { useDeadLetters } from '@/api/hooks'
+import { useSidebarStore } from '@/layout/sidebar-store'
 import { cn } from '@/lib/utils'
 
 const routeTitles: Record<string, string> = {
@@ -57,6 +58,7 @@ export function Header() {
   const title = usePageTitle()
   const { data: deadLetters } = useDeadLetters()
   const dlCount = deadLetters?.length ?? 0
+  const toggleMobile = useSidebarStore((s) => s.toggleMobile)
 
   function handleLogout() {
     logout()
@@ -65,7 +67,19 @@ export function Header() {
 
   return (
     <header className="h-12 border-b border-border px-4 flex items-center justify-between bg-card shrink-0">
-      <span className="text-sm font-medium">{title}</span>
+      <div className="flex items-center gap-2">
+        {/* Mobile-only hamburger — the sidebar is hidden behind a drawer
+            below the `md` breakpoint. `md:hidden` keeps it out of the
+            tablet/desktop layouts where the rail is always visible. */}
+        <button
+          onClick={toggleMobile}
+          aria-label="Open navigation"
+          className="md:hidden -ml-1 flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+        >
+          <Menu className="h-4 w-4" />
+        </button>
+        <span className="text-sm font-medium">{title}</span>
+      </div>
 
       <div className="flex items-center gap-1">
         {/* Dead letter bell */}

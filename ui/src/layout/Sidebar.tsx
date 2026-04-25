@@ -1,11 +1,13 @@
-import { NavLink, useMatch } from 'react-router'
+import { NavLink, useLocation, useMatch } from 'react-router'
+import { useEffect } from 'react'
 import * as Tooltip from '@radix-ui/react-tooltip'
 import {
   LayoutDashboard, Briefcase, CalendarDays, Cpu, List, MailX,
-  Settings, PanelLeftClose, PanelLeftOpen,
+  Settings, PanelLeftClose, PanelLeftOpen, X,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { useMediaQuery } from '@/lib/use-media-query'
 import { useSidebarStore } from './sidebar-store'
 
 interface NavLinkSpec {
@@ -89,46 +91,98 @@ function NavItem({ link, collapsed }: { link: NavLinkSpec; collapsed: boolean })
 }
 
 export function Sidebar() {
-  const { collapsed, toggle } = useSidebarStore()
+  const collapsedPref = useSidebarStore((s) => s.collapsed)
+  const toggle = useSidebarStore((s) => s.toggle)
+  const mobileOpen = useSidebarStore((s) => s.mobileOpen)
+  const setMobileOpen = useSidebarStore((s) => s.setMobileOpen)
 
-  return (
-    <Tooltip.Provider delayDuration={0}>
-      <aside
-        className={cn(
-          'border-r border-border bg-card flex flex-col transition-all duration-200 shrink-0',
-          collapsed ? 'w-14' : 'w-56'
+  // Tailwind's `lg` breakpoint is 1024px. Below that the sidebar is
+  // forced to icon-only — even on tablet there's not enough room to
+  // give 224px to navigation. Below `md` (768px) we go further and
+  // hide the rail entirely, surfacing it via the header hamburger as
+  // an overlay drawer.
+  const isDesktop = useMediaQuery('(min-width: 1024px)')
+  const isMobile = useMediaQuery('(max-width: 767px)')
+
+  const collapsed = !isDesktop || collapsedPref
+
+  // Auto-close the mobile drawer on navigation so the next page is
+  // immediately readable (otherwise the overlay covers half the
+  // viewport).
+  const { pathname } = useLocation()
+  useEffect(() => {
+    if (mobileOpen) setMobileOpen(false)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pathname])
+
+  // Lock body scroll while the mobile drawer is open so background
+  // content doesn't bleed-scroll under it.
+  useEffect(() => {
+    if (!isMobile) return
+    document.body.style.overflow = mobileOpen ? 'hidden' : ''
+    return () => {
+      document.body.style.overflow = ''
+    }
+  }, [isMobile, mobileOpen])
+
+  // Keep the transform on inline style instead of Tailwind utilities.
+  // Tailwind 4 emits `translate-x-0` and `-translate-x-full` into the
+  // same `@layer utilities` bucket; depending on JIT generation order,
+  // `-translate-x-full` can end up *after* `translate-x-0` in the
+  // stylesheet and win even when only `translate-x-0` is in the
+  // className. Inline `style` sidesteps the cascade entirely.
+  const aside = (
+    <aside
+      className={cn(
+        'border-r border-border bg-card flex flex-col shrink-0',
+        collapsed ? 'w-14' : 'w-56',
+        isMobile ? 'fixed inset-y-0 left-0 z-50' : 'static'
+      )}
+      // Inline style wins over Tailwind 4's `translate-x-*` utilities,
+      // which proved fragile here (their generated CSS sometimes wins
+      // over inline class swaps depending on stylesheet order). Snap
+      // into place — animating a fixed-position drawer is nice but not
+      // worth the cascade fight.
+      style={
+        isMobile
+          ? { translate: mobileOpen ? '0' : '-100%' }
+          : undefined
+      }
+      aria-label="Main navigation"
+    >
+      <div className="border-b border-border flex items-center gap-2 h-12 pl-4 pr-2">
+        <img src="/favicon.svg" alt="Croniq" className="h-6 w-6 shrink-0" />
+        {!collapsed && <span className="font-semibold text-sm flex-1">Croniq</span>}
+        {isMobile && mobileOpen && (
+          <button
+            onClick={() => setMobileOpen(false)}
+            aria-label="Close navigation"
+            className="ml-auto p-1.5 rounded-md text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+          >
+            <X className="h-4 w-4" />
+          </button>
         )}
-        aria-label="Main navigation"
-      >
-        {/* Logo — constant left padding so the icon stays at the same
-            x-offset while the sidebar animates its width. No right padding
-            so the 24px logo never gets subpixel-squeezed against the edge
-            when collapsed (aside=56px would leave exactly 0px of slack). */}
-        <div className="border-b border-border flex items-center gap-2 h-12 pl-4">
-          <img src="/favicon.svg" alt="Croniq" className="h-6 w-6 shrink-0" />
-          {!collapsed && <span className="font-semibold text-sm">Croniq</span>}
-        </div>
+      </div>
 
-        {/* Nav */}
-        <nav className="flex-1 py-2 space-y-0.5" aria-label="Main navigation">
-          {links.map((link) => (
-            <NavItem key={link.to} link={link} collapsed={collapsed} />
-          ))}
-        </nav>
+      <nav className="flex-1 py-2 space-y-0.5" aria-label="Main navigation">
+        {links.map((link) => (
+          <NavItem key={link.to} link={link} collapsed={collapsed} />
+        ))}
+      </nav>
 
-        {/* Collapse toggle — right-aligned in both states so it smoothly
-            slides to the corner as the sidebar narrows instead of snapping
-            to center mid-animation. */}
+      {/* Toggle is desktop-only — on smaller viewports the collapsed
+          state is forced and the user controls the drawer instead. */}
+      {isDesktop && (
         <div className="flex justify-end px-2 pb-2">
           <Tooltip.Root>
             <Tooltip.Trigger asChild>
               <button
                 onClick={toggle}
-                aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-                aria-expanded={!collapsed}
+                aria-label={collapsedPref ? 'Expand sidebar' : 'Collapse sidebar'}
+                aria-expanded={!collapsedPref}
                 className="p-2 rounded-md text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors"
               >
-                {collapsed
+                {collapsedPref
                   ? <PanelLeftOpen className="h-4 w-4" />
                   : <PanelLeftClose className="h-4 w-4" />
                 }
@@ -139,13 +193,29 @@ export function Sidebar() {
                 side="right"
                 className="z-50 rounded-md bg-foreground px-2.5 py-1 text-xs text-background shadow-md"
               >
-                {collapsed ? 'Expand' : 'Collapse'}
+                {collapsedPref ? 'Expand' : 'Collapse'}
                 <Tooltip.Arrow className="fill-foreground" />
               </Tooltip.Content>
             </Tooltip.Portal>
           </Tooltip.Root>
         </div>
-      </aside>
+      )}
+    </aside>
+  )
+
+  return (
+    <Tooltip.Provider delayDuration={0}>
+      {aside}
+      {/* Backdrop for the mobile drawer — clicking it closes the rail.
+          Rendered as a sibling so it doesn't interfere with the slide
+          transform on `aside`. */}
+      {isMobile && mobileOpen && (
+        <button
+          onClick={() => setMobileOpen(false)}
+          aria-label="Close navigation backdrop"
+          className="fixed inset-0 z-40 bg-black/40"
+        />
+      )}
     </Tooltip.Provider>
   )
 }
