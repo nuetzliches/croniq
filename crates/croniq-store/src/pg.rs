@@ -228,29 +228,19 @@ impl JobStore for PgStore {
 impl ExecutionStore for PgStore {
     fn create_execution(&self, exec: &Execution) -> Result<(), StoreError> {
         let mut client = self.client.lock().unwrap();
-        let metadata = metadata_to_json(&exec.metadata);
-        client
-            .execute(
-                "INSERT INTO executions (id, job_key, fire_at, attempt, state, runner_id, claimed_at, started_at, completed_at, duration_ms, error, dead_reason, metadata, created_at)
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)",
-                &[
-                    &exec.id,
-                    &exec.job_key,
-                    &exec.fire_at,
-                    &(exec.attempt as i32),
-                    &state_to_str(exec.state),
-                    &exec.runner_id,
-                    &exec.claimed_at,
-                    &exec.started_at,
-                    &exec.completed_at,
-                    &exec.duration_ms,
-                    &exec.error,
-                    &exec.dead_reason,
-                    &metadata,
-                    &exec.created_at,
-                ],
-            )
-            .map_err(map_err)?;
+        pg_insert_execution(&mut client, exec)
+    }
+
+    fn create_execution_and_advance_job_state(
+        &self,
+        exec: &Execution,
+        job_state: &JobState,
+    ) -> Result<(), StoreError> {
+        let mut client = self.client.lock().unwrap();
+        let mut tx = client.transaction().map_err(map_err)?;
+        pg_insert_execution_tx(&mut tx, exec)?;
+        pg_upsert_job_state_tx(&mut tx, job_state)?;
+        tx.commit().map_err(map_err)?;
         Ok(())
     }
 
@@ -735,3 +725,96 @@ fn parse_runner_status(s: &str) -> RunnerStatus {
         _ => RunnerStatus::Online,
     }
 }
+
+// ─── Reusable insert/upsert helpers ───
+//
+// `postgres::Client` and `postgres::Transaction` don't share a trait we can
+// use generically without bringing in `GenericClient`, so we duplicate the
+// statement bodies into thin wrappers over each. The SQL is identical.
+
+fn pg_insert_execution(client: &mut postgres::Client, exec: &Execution) -> Result<(), StoreError> {
+    let metadata = metadata_to_json(&exec.metadata);
+    client
+        .execute(
+            PG_INSERT_EXECUTION_SQL,
+            &[
+                &exec.id,
+                &exec.job_key,
+                &exec.fire_at,
+                &(exec.attempt as i32),
+                &state_to_str(exec.state),
+                &exec.runner_id,
+                &exec.claimed_at,
+                &exec.started_at,
+                &exec.completed_at,
+                &exec.duration_ms,
+                &exec.error,
+                &exec.dead_reason,
+                &metadata,
+                &exec.created_at,
+            ],
+        )
+        .map_err(map_err)?;
+    Ok(())
+}
+
+fn pg_insert_execution_tx(
+    tx: &mut postgres::Transaction<'_>,
+    exec: &Execution,
+) -> Result<(), StoreError> {
+    let metadata = metadata_to_json(&exec.metadata);
+    tx.execute(
+        PG_INSERT_EXECUTION_SQL,
+        &[
+            &exec.id,
+            &exec.job_key,
+            &exec.fire_at,
+            &(exec.attempt as i32),
+            &state_to_str(exec.state),
+            &exec.runner_id,
+            &exec.claimed_at,
+            &exec.started_at,
+            &exec.completed_at,
+            &exec.duration_ms,
+            &exec.error,
+            &exec.dead_reason,
+            &metadata,
+            &exec.created_at,
+        ],
+    )
+    .map_err(map_err)?;
+    Ok(())
+}
+
+fn pg_upsert_job_state_tx(
+    tx: &mut postgres::Transaction<'_>,
+    state: &JobState,
+) -> Result<(), StoreError> {
+    let status = job_status_to_str(state.status);
+    tx.execute(
+        PG_UPSERT_JOB_STATE_SQL,
+        &[
+            &state.job_key,
+            &state.next_fire_at,
+            &state.last_fired_at,
+            &(state.fire_count as i64),
+            &status,
+            &state.updated_at,
+        ],
+    )
+    .map_err(map_err)?;
+    Ok(())
+}
+
+const PG_INSERT_EXECUTION_SQL: &str = "INSERT INTO executions (id, job_key, fire_at, attempt, state, runner_id, claimed_at, started_at, completed_at, duration_ms, error, dead_reason, metadata, created_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)";
+
+const PG_UPSERT_JOB_STATE_SQL: &str =
+    "INSERT INTO job_states (job_key, next_fire_at, last_fired_at, fire_count, status, updated_at)
+     VALUES ($1, $2, $3, $4, $5, $6)
+     ON CONFLICT(job_key) DO UPDATE SET
+       next_fire_at = EXCLUDED.next_fire_at,
+       last_fired_at = EXCLUDED.last_fired_at,
+       fire_count = EXCLUDED.fire_count,
+       status = EXCLUDED.status,
+       updated_at = EXCLUDED.updated_at";

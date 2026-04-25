@@ -225,8 +225,45 @@ impl SchedulerLoop {
             let exec_id_str = execution_id.to_string();
             let is_ephemeral = job.execution_mode == ExecutionMode::Ephemeral;
 
-            // 1. Persist the execution record (skip for ephemeral jobs)
-            if !is_ephemeral {
+            // Build the post-fire trigger state and the corresponding
+            // JobState row before any mutation, so we can persist the
+            // "this trigger has fired" record together with the new
+            // execution. Trigger state is rolled back if the DB write
+            // fails so a transient store error doesn't desync memory
+            // from disk.
+            let prev_trigger_state = (
+                trigger.fire_count,
+                trigger.next_fire_at,
+                trigger.last_fired_at,
+                trigger.state,
+            );
+            trigger.mark_fired(fire_at, now);
+            let status = if trigger.state == TriggerState::Exhausted {
+                JobStatus::Exhausted
+            } else {
+                JobStatus::Active
+            };
+            let job_state = JobState {
+                job_key: job.key.clone(),
+                next_fire_at: trigger.next_fire_at,
+                last_fired_at: Some(fire_at),
+                fire_count: trigger.fire_count,
+                status,
+                updated_at: now,
+            };
+
+            // 1. Persist the execution record + advance the job state in
+            //    a single transaction (queued mode). For ephemeral jobs
+            //    there is no execution row to write, so we only upsert the
+            //    job state.
+            //
+            //    Without the transaction, a crash between the two writes
+            //    would leave an execution in the DB while `next_fire_at`
+            //    still pointed at the old fire time → on restart the same
+            //    trigger would fire again and produce a duplicate.
+            let persist_result: Result<(), _> = if is_ephemeral {
+                self.store.upsert_job_state(&job_state)
+            } else {
                 let execution = Execution {
                     id: execution_id,
                     job_key: job.key.clone(),
@@ -258,36 +295,25 @@ impl SchedulerLoop {
                     },
                     created_at: now,
                 };
+                self.store
+                    .create_execution_and_advance_job_state(&execution, &job_state)
+            };
 
-                if let Err(e) = self.store.create_execution(&execution) {
-                    tracing::error!(job_key = %job.key, error = %e, "failed to persist execution");
-                    continue;
-                }
+            if let Err(e) = persist_result {
+                tracing::error!(job_key = %job.key, error = %e, "failed to persist execution+job_state — rolling back trigger");
+                // Roll back the in-memory advance so the next tick can retry.
+                let (fire_count, next_fire_at, last_fired_at, state) = prev_trigger_state;
+                trigger.fire_count = fire_count;
+                trigger.next_fire_at = next_fire_at;
+                trigger.last_fired_at = last_fired_at;
+                trigger.state = state;
+                continue;
             }
 
             // 2. Enqueue work item for the runner (always attempt 1 for scheduler-fired jobs)
             let item = job_to_work_item(job, &exec_id_str, fire_at, 1);
             self.runner.queue.write().await.enqueue(item);
             self.runner.work_notify.notify_waiters();
-
-            // 3. Advance the trigger first so we know its new state
-            trigger.mark_fired(fire_at, now);
-
-            // 4. Persist job state (always — needed for trigger restore on restart)
-            let status = if trigger.state == TriggerState::Exhausted {
-                JobStatus::Exhausted
-            } else {
-                JobStatus::Active
-            };
-            let job_state = JobState {
-                job_key: job.key.clone(),
-                next_fire_at: trigger.next_fire_at,
-                last_fired_at: Some(fire_at),
-                fire_count: trigger.fire_count,
-                status,
-                updated_at: now,
-            };
-            let _ = self.store.upsert_job_state(&job_state);
 
             fired.push(FiredExecution {
                 execution_id,
