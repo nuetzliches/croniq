@@ -34,7 +34,10 @@ struct Cli {
     listen: String,
 
     /// Directory for persistent data (SQLite database).
-    #[arg(short, long, default_value = "./.data")]
+    /// Defaults to `$CRONIQ_DATA_DIR` when set, otherwise `./.data`. The
+    /// Docker entrypoint relies on the env-var path for first-run init, so
+    /// the server resolves it the same way to keep both ends in sync.
+    #[arg(short, long, default_value = "./.data", env = "CRONIQ_DATA_DIR")]
     data_dir: PathBuf,
 
     /// Address and port for the Prometheus metrics endpoint (e.g. ":9900").
