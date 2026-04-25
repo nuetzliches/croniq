@@ -19,6 +19,7 @@ import { CopyButton } from '@/components/ui/copy-button'
 import { RelativeTime } from '@/components/ui/relative-time'
 import { useConfirm } from '@/components/ui/confirm-dialog'
 import { ScheduleBuilder } from '@/components/builders/ScheduleBuilder'
+import { TimezoneInput } from '@/components/ui/timezone-input'
 import { formatDate, shortId } from '@/lib/utils'
 
 interface ScheduleForm {
@@ -48,8 +49,11 @@ export function JobDetailPage() {
     if (ok) deleteSchedule.mutate(triggerId)
   }
 
+  // Don't pre-set `timezone` to '' — the TimezoneInput component
+  // falls back to the browser's IANA name when the value is undefined,
+  // which is what we want for a fresh schedule.
   const { register, handleSubmit, reset, formState: { errors }, setValue } =
-    useForm<ScheduleForm>({ defaultValues: { cron_expression: '', timezone: '' } })
+    useForm<ScheduleForm>({ defaultValues: { cron_expression: '' } })
   const inputCls =
     'w-full px-3 py-2 border border-border rounded-md text-sm bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-primary'
 
@@ -178,10 +182,10 @@ export function JobDetailPage() {
                       )}
                     </div>
                   )}
-                  <input
+                  <TimezoneInput
                     {...register('timezone')}
-                    placeholder="Timezone (optional, e.g. Europe/Vienna)"
                     className={inputCls}
+                    showDetectedHint
                   />
                   <div className="flex justify-end gap-2 pt-2">
                     <Dialog.Close asChild><Button variant="secondary" size="sm" type="button">Cancel</Button></Dialog.Close>

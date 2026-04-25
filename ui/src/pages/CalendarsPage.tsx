@@ -10,6 +10,7 @@ import { Spinner } from '@/components/ui/spinner'
 import { useConfirm } from '@/components/ui/confirm-dialog'
 import { RelativeTime } from '@/components/ui/relative-time'
 import { CalendarRuleBuilder } from '@/components/builders/CalendarRuleBuilder'
+import { TimezoneInput } from '@/components/ui/timezone-input'
 
 interface CalendarForm {
   name: string
@@ -112,7 +113,11 @@ export function CalendarsPage() {
                   <input {...register('name', { required: 'Required' })} placeholder="Calendar name (e.g. eu-business-hours)" className={inputCls} />
                   {errors.name && <p className="text-xs text-destructive mt-1">{errors.name.message}</p>}
                 </div>
-                <input {...register('timezone')} placeholder="Timezone (e.g. Europe/Vienna)" className={inputCls} />
+                <TimezoneInput
+                  {...register('timezone')}
+                  className={inputCls}
+                  showDetectedHint
+                />
                 <div>
                   <div className="flex items-center justify-between mb-1.5">
                     <label className="text-xs font-medium text-foreground">Rules (optional)</label>
