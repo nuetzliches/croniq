@@ -88,7 +88,10 @@ async fn main() -> Result<()> {
     // Shared runner state (registry + queue) with lease TTL from config
     let lease_ttl_secs = match loaded.runtime.pull_api.as_ref() {
         Some(p) => parse_duration_secs(&p.lease_ttl).map_err(|e| {
-            anyhow::anyhow!("invalid pull_api.lease_ttl in {}: {e}", cli.config.display())
+            anyhow::anyhow!(
+                "invalid pull_api.lease_ttl in {}: {e}",
+                cli.config.display()
+            )
         })?,
         None => 120,
     };
