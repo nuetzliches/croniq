@@ -56,4 +56,9 @@ EXPOSE 4000 9900
 # drops privileges to the croniq user via gosu. This handles upgrades
 # from older images where the named volume is owned by root.
 ENTRYPOINT ["docker-entrypoint.sh"]
-CMD ["croniq-server", "--config", "/etc/croniq/Croniqfile", "--data-dir", "/var/lib/croniq", "--listen", ":4000", "--ui-dir", "/usr/share/croniq/ui"]
+# `--data-dir` deliberately omitted — the server reads `$CRONIQ_DATA_DIR`
+# (set above) via clap's `env =` fallback, so a `docker run -e
+# CRONIQ_DATA_DIR=…` override stays consistent between the entrypoint's
+# first-run init and the server itself. Hardcoding the path would silently
+# diverge.
+CMD ["croniq-server", "--config", "/etc/croniq/Croniqfile", "--listen", ":4000", "--ui-dir", "/usr/share/croniq/ui"]

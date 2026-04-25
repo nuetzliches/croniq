@@ -52,6 +52,31 @@ jobs:
           sudo apt-get install -y gcc-aarch64-linux-gnu
           echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
 
+      # Pin the workspace version to the pushed tag so every built binary
+      # reports the right version via `--version` (CARGO_PKG_VERSION).
+      # The edit is local to the runner and never committed back.
+      - name: Sync workspace version with release tag
+        shell: bash
+        run: |
+          VERSION="${GITHUB_REF#refs/tags/v}"
+          # Match the first `version = "..."` under the [workspace.package]
+          # block so we don't accidentally rewrite per-crate manifests.
+          python3 -c "
+          import re, sys
+          src = open('Cargo.toml').read()
+          new = re.sub(
+              r'(\[workspace\.package\][^\[]*?\nversion = )\"[^\"]+\"',
+              lambda m: m.group(1) + '\"$VERSION\"',
+              src,
+              count=1,
+              flags=re.DOTALL,
+          )
+          if new == src:
+              sys.exit('failed to rewrite [workspace.package].version')
+          open('Cargo.toml', 'w').write(new)
+          "
+          grep -A1 '^\[workspace.package\]' Cargo.toml | head -3
+
       - name: Build release binaries
         shell: bash
         run: |
@@ -106,6 +131,26 @@ jobs:
       - name: Extract version
         id: version
         run: echo "version=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+      # Same in-place version sync as the binary build job — keeps the
+      # docker image's CARGO_PKG_VERSION aligned with the tag without
+      # requiring a manual Cargo.toml bump in every release commit.
+      - name: Sync workspace version with release tag
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          python3 -c "
+          import re, sys
+          src = open('Cargo.toml').read()
+          new = re.sub(
+              r'(\[workspace\.package\][^\[]*?\nversion = )\"[^\"]+\"',
+              lambda m: m.group(1) + '\"$VERSION\"',
+              src,
+              count=1,
+              flags=re.DOTALL,
+          )
+          if new == src:
+              sys.exit('failed to rewrite [workspace.package].version')
+          open('Cargo.toml', 'w').write(new)
+          "
       # OCI labels link the container to this (public) repo. When a fresh
       # package name is pushed for the first time, GitHub uses this link
       # to inherit the repo's visibility — so new packages default to

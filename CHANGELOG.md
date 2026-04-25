@@ -29,3 +29,28 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   without re-merging API-managed entries from the store.
 - `SchedulerCommand` has a new `Reload { triggers, jobs, ack }` variant used
   by the admin endpoint to swap state atomically and await confirmation.
+- `--data-dir` now falls back to `$CRONIQ_DATA_DIR` when not set explicitly,
+  matching how the Docker entrypoint already resolves it. The `CMD` in the
+  official image no longer hardcodes the path so `docker run -e
+  CRONIQ_DATA_DIR=…` overrides apply consistently to first-run init *and*
+  the running server.
+- The release workflow rewrites the workspace `version` to match the pushed
+  tag at build time, so `--version` output (and the MCP server's
+  identification handshake) always reflects the released version without
+  requiring a manual `Cargo.toml` bump per release.
+
+### Security
+
+- Bumped `jsonwebtoken` from 9 to 10 (advisory GHSA-c9xv-9rwj-9whw —
+  type confusion that could lead to authorization bypass) and pulled in
+  the `rust_crypto` feature, which 10.x requires explicitly.
+- Bumped transitive `rustls-webpki` to ≥0.103.13 (DoS via panic on
+  malformed CRL BIT STRING).
+- Bumped transitive `postcss` to ≥8.5.10 (XSS in CSS Stringify).
+
+### Removed
+
+- `Formula/croniq.rb` is no longer kept in this repo. The Homebrew formula
+  lives in `nuetzliches/homebrew-tap` and is updated by the release
+  workflow; the local copy was a stale template (`version "0.1.0"` and
+  zero-`sha256` placeholders) that confused first-time contributors.

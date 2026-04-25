@@ -300,7 +300,6 @@ croniq dead-letters --data-dir .           # List dead letters
 | [`Croniqfile.demo`](Croniqfile.demo) | Minimal demo profile used by `docker compose up` |
 | [`docker-compose.yml`](docker-compose.yml) | Quickstart stack: server + demo runners |
 | [`install.sh`](install.sh) | `curl \| sh` installer for Linux/macOS |
-| [`Formula/croniq.rb`](Formula/croniq.rb) | Homebrew formula (synced to `nuetzliches/homebrew-tap` on release) |
 | [`AGENTS.md`](AGENTS.md) | AI assistant guidance for contributing |
 | [`crates/croniq-runner-sdk/examples/`](crates/croniq-runner-sdk/examples/) | Runner SDK usage examples |
 

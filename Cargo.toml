@@ -16,7 +16,11 @@ members = [
 ]
 
 [workspace.package]
-version = "0.1.0"
+# Catch up with the most recent release tag. The release workflow rewrites
+# this in-place to match the pushed tag at build time so binaries always
+# carry the matching version (CARGO_PKG_VERSION ends up in `--version`
+# output and the MCP server's identification handshake).
+version = "0.4.0"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/nuetzliches/croniq"
