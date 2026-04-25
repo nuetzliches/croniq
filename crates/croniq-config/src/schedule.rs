@@ -66,11 +66,16 @@ impl CompiledSchedule {
         match self {
             CompiledSchedule::Interval { seconds } => {
                 if *seconds >= 3600 && seconds % 3600 == 0 {
-                    format!("every {} hours", seconds / 3600)
+                    let n = seconds / 3600;
+                    format!("every {n} hour{s}", s = if n == 1 { "" } else { "s" })
                 } else if *seconds >= 60 && seconds % 60 == 0 {
-                    format!("every {} minutes", seconds / 60)
+                    let n = seconds / 60;
+                    format!("every {n} minute{s}", s = if n == 1 { "" } else { "s" })
                 } else {
-                    format!("every {seconds} seconds")
+                    format!(
+                        "every {seconds} second{s}",
+                        s = if *seconds == 1 { "" } else { "s" }
+                    )
                 }
             }
             CompiledSchedule::Daily { hour, minute } => {
@@ -100,5 +105,39 @@ impl CompiledSchedule {
             CompiledSchedule::Once { at } => format!("once at {at}"),
             CompiledSchedule::Disabled => "disabled".to_string(),
         }
+    }
+}
+
+#[cfg(test)]
+mod summary_tests {
+    use super::*;
+
+    #[test]
+    fn interval_singular_pluralisation() {
+        // Pin the n=1 fix — previously rendered "every 1 minutes".
+        assert_eq!(
+            CompiledSchedule::Interval { seconds: 60 }.summary(),
+            "every 1 minute"
+        );
+        assert_eq!(
+            CompiledSchedule::Interval { seconds: 3600 }.summary(),
+            "every 1 hour"
+        );
+        assert_eq!(
+            CompiledSchedule::Interval { seconds: 1 }.summary(),
+            "every 1 second"
+        );
+    }
+
+    #[test]
+    fn interval_plural_unchanged() {
+        assert_eq!(
+            CompiledSchedule::Interval { seconds: 300 }.summary(),
+            "every 5 minutes"
+        );
+        assert_eq!(
+            CompiledSchedule::Interval { seconds: 7200 }.summary(),
+            "every 2 hours"
+        );
     }
 }
