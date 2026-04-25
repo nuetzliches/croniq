@@ -2,17 +2,19 @@
 
 use std::sync::Arc;
 
-use axum::{Json, extract::State, http::StatusCode};
+use axum::{Extension, Json, extract::State, http::StatusCode};
 use chrono::Utc;
-use croniq_auth::CallerType;
 use croniq_auth::api_key::{generate_api_key, hash_api_key};
+use croniq_auth::context::Scope;
 use croniq_auth::jwt::issue_token_pair;
 use croniq_auth::password::verify_password;
+use croniq_auth::{CallerContext, CallerType};
 use croniq_store::models::{ApiClient, ApiKey, RefreshToken};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use super::ServerState;
+use crate::api::auth_middleware::require_scope;
 
 // ─── Request/Response types ──────────────────────────────────────────────────
 
@@ -229,7 +231,9 @@ pub async fn handle_logout(
 /// `GET /v1/api-clients`
 pub async fn handle_list_clients(
     State(state): State<Arc<ServerState>>,
+    Extension(ctx): Extension<CallerContext>,
 ) -> Result<Json<Vec<ApiClient>>, StatusCode> {
+    require_scope(&ctx, Scope::API_CLIENTS_ADMIN)?;
     let store = state
         .store
         .as_ref()
@@ -243,8 +247,10 @@ pub async fn handle_list_clients(
 /// `POST /v1/api-clients`
 pub async fn handle_create_client(
     State(state): State<Arc<ServerState>>,
+    Extension(ctx): Extension<CallerContext>,
     Json(req): Json<CreateClientRequest>,
 ) -> Result<(StatusCode, Json<CreateClientResponse>), StatusCode> {
+    require_scope(&ctx, Scope::API_CLIENTS_ADMIN)?;
     if req.name.trim().is_empty() || req.scopes.is_empty() {
         return Err(StatusCode::BAD_REQUEST);
     }
@@ -276,8 +282,12 @@ pub async fn handle_create_client(
 /// `DELETE /v1/api-clients/{id}`
 pub async fn handle_delete_client(
     State(state): State<Arc<ServerState>>,
+    Extension(ctx): Extension<CallerContext>,
     axum::extract::Path(client_id): axum::extract::Path<String>,
 ) -> StatusCode {
+    if let Err(s) = require_scope(&ctx, Scope::API_CLIENTS_ADMIN) {
+        return s;
+    }
     let Some(store) = state.store.as_ref() else {
         return StatusCode::SERVICE_UNAVAILABLE;
     };
@@ -288,8 +298,10 @@ pub async fn handle_delete_client(
 /// `POST /v1/api-clients/{id}/tokens`
 pub async fn handle_issue_client_token(
     State(state): State<Arc<ServerState>>,
+    Extension(ctx): Extension<CallerContext>,
     axum::extract::Path(client_id): axum::extract::Path<String>,
 ) -> Result<Json<TokenResponse>, StatusCode> {
+    require_scope(&ctx, Scope::API_CLIENTS_ADMIN)?;
     let store = state
         .store
         .as_ref()
@@ -324,8 +336,10 @@ pub async fn handle_issue_client_token(
 /// `POST /v1/api-keys`
 pub async fn handle_create_api_key(
     State(state): State<Arc<ServerState>>,
+    Extension(ctx): Extension<CallerContext>,
     Json(req): Json<CreateApiKeyClientRequest>,
 ) -> Result<(StatusCode, Json<CreateApiKeyResponse>), StatusCode> {
+    require_scope(&ctx, Scope::API_KEYS_ADMIN)?;
     let store = state
         .store
         .as_ref()
@@ -371,8 +385,12 @@ pub struct CreateApiKeyClientRequest {
 /// `DELETE /v1/api-keys/{id}`
 pub async fn handle_revoke_api_key(
     State(state): State<Arc<ServerState>>,
+    Extension(ctx): Extension<CallerContext>,
     axum::extract::Path(key_id): axum::extract::Path<String>,
 ) -> StatusCode {
+    if let Err(s) = require_scope(&ctx, Scope::API_KEYS_ADMIN) {
+        return s;
+    }
     let Some(store) = state.store.as_ref() else {
         return StatusCode::SERVICE_UNAVAILABLE;
     };

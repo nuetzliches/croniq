@@ -8,13 +8,16 @@
 use std::collections::HashSet;
 use std::sync::Arc;
 
-use axum::{Json, extract::State, http::StatusCode};
+use axum::{Extension, Json, extract::State, http::StatusCode};
 use chrono::Utc;
+use croniq_auth::CallerContext;
+use croniq_auth::context::Scope;
 use croniq_store::models::{JobDefinition, TriggerDefinition};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use super::ServerState;
+use crate::api::auth_middleware::require_scope;
 use crate::loader::{job_config_from_definition, synth_job_def_from_dsl, trigger_from_definition};
 use crate::scheduler::SchedulerCommand;
 
@@ -42,7 +45,9 @@ async fn is_dsl_managed(state: &ServerState, job_key: &str) -> bool {
 /// `GET /v1/jobs`
 pub async fn handle_list(
     State(state): State<Arc<ServerState>>,
+    Extension(ctx): Extension<CallerContext>,
 ) -> Result<Json<Vec<JobDefinition>>, StatusCode> {
+    require_scope(&ctx, Scope::JOBS_READ)?;
     let store = state
         .store
         .as_ref()
@@ -68,8 +73,10 @@ pub async fn handle_list(
 /// `GET /v1/jobs/{job_key}`
 pub async fn handle_get(
     State(state): State<Arc<ServerState>>,
+    Extension(ctx): Extension<CallerContext>,
     axum::extract::Path(job_key): axum::extract::Path<String>,
 ) -> Result<Json<JobDefinition>, StatusCode> {
+    require_scope(&ctx, Scope::JOBS_READ)?;
     let store = state
         .store
         .as_ref()
@@ -94,8 +101,10 @@ pub async fn handle_get(
 /// `POST /v1/jobs`
 pub async fn handle_create(
     State(state): State<Arc<ServerState>>,
+    Extension(ctx): Extension<CallerContext>,
     Json(req): Json<CreateJobRequest>,
 ) -> Result<(StatusCode, Json<JobDefinition>), StatusCode> {
+    require_scope(&ctx, Scope::JOBS_WRITE)?;
     let store = state
         .store
         .as_ref()
@@ -127,8 +136,12 @@ pub async fn handle_create(
 /// `DELETE /v1/jobs/{job_key}`
 pub async fn handle_delete(
     State(state): State<Arc<ServerState>>,
+    Extension(ctx): Extension<CallerContext>,
     axum::extract::Path(job_key): axum::extract::Path<String>,
 ) -> StatusCode {
+    if let Err(s) = require_scope(&ctx, Scope::JOBS_WRITE) {
+        return s;
+    }
     let Some(store) = state.store.as_ref() else {
         return StatusCode::SERVICE_UNAVAILABLE;
     };
@@ -146,8 +159,10 @@ pub async fn handle_delete(
 /// `POST /v1/jobs/{job_key}/activate`
 pub async fn handle_activate(
     State(state): State<Arc<ServerState>>,
+    Extension(ctx): Extension<CallerContext>,
     axum::extract::Path(job_key): axum::extract::Path<String>,
 ) -> Result<Json<JobDefinition>, StatusCode> {
+    require_scope(&ctx, Scope::JOBS_WRITE)?;
     let store = state
         .store
         .as_ref()
@@ -172,8 +187,10 @@ pub async fn handle_activate(
 /// `POST /v1/jobs/{job_key}/deactivate`
 pub async fn handle_deactivate(
     State(state): State<Arc<ServerState>>,
+    Extension(ctx): Extension<CallerContext>,
     axum::extract::Path(job_key): axum::extract::Path<String>,
 ) -> Result<Json<JobDefinition>, StatusCode> {
+    require_scope(&ctx, Scope::JOBS_WRITE)?;
     let store = state
         .store
         .as_ref()
@@ -227,8 +244,10 @@ pub struct RegisterJobResponse {
 /// - Not found → create
 pub async fn handle_register(
     State(state): State<Arc<ServerState>>,
+    Extension(ctx): Extension<CallerContext>,
     Json(req): Json<RegisterJobRequest>,
 ) -> Result<(StatusCode, Json<RegisterJobResponse>), StatusCode> {
+    require_scope(&ctx, Scope::JOBS_REGISTER)?;
     let store = state
         .store
         .as_ref()

@@ -4,22 +4,29 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use axum::{
+    Extension,
     extract::State,
+    http::StatusCode,
     response::sse::{Event, KeepAlive, Sse},
 };
 use chrono::Utc;
+use croniq_auth::CallerContext;
+use croniq_auth::context::Scope;
 use futures_core::Stream;
 use tokio_stream::StreamExt;
 use tokio_stream::wrappers::IntervalStream;
 
 use super::ServerState;
+use crate::api::auth_middleware::require_scope;
 
 /// `GET /v1/runners/stream` — SSE stream emitting runner presence snapshots.
 ///
 /// Emits a JSON snapshot every 5 seconds with all runners and their status.
 pub async fn handle_runner_stream(
     State(state): State<Arc<ServerState>>,
-) -> Sse<impl Stream<Item = Result<Event, std::convert::Infallible>>> {
+    Extension(ctx): Extension<CallerContext>,
+) -> Result<Sse<impl Stream<Item = Result<Event, std::convert::Infallible>>>, StatusCode> {
+    require_scope(&ctx, Scope::RUNNERS_READ)?;
     let stream = IntervalStream::new(tokio::time::interval(Duration::from_secs(5)))
         .map(move |_| {
             let state = Arc::clone(&state);
@@ -46,5 +53,5 @@ pub async fn handle_runner_stream(
         })
         .then(|fut| fut);
 
-    Sse::new(stream).keep_alive(KeepAlive::default())
+    Ok(Sse::new(stream).keep_alive(KeepAlive::default()))
 }

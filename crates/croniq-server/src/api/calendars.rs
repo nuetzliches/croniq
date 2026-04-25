@@ -2,14 +2,17 @@
 
 use std::sync::Arc;
 
-use axum::{Json, extract::State, http::StatusCode};
+use axum::{Extension, Json, extract::State, http::StatusCode};
 use chrono::Utc;
+use croniq_auth::CallerContext;
+use croniq_auth::context::Scope;
 use croniq_config::parser::Parser;
 use croniq_store::models::CalendarDefinition;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use super::ServerState;
+use crate::api::auth_middleware::require_scope;
 
 #[derive(Deserialize)]
 pub struct CreateCalendarRequest {
@@ -41,7 +44,9 @@ fn validate_rules(rules: &str) -> Result<(), String> {
 /// `GET /v1/calendars`
 pub async fn handle_list(
     State(state): State<Arc<ServerState>>,
+    Extension(ctx): Extension<CallerContext>,
 ) -> Result<Json<Vec<CalendarDefinition>>, StatusCode> {
+    require_scope(&ctx, Scope::CALENDARS_READ)?;
     let store = state
         .store
         .as_ref()
@@ -55,8 +60,10 @@ pub async fn handle_list(
 /// `GET /v1/calendars/{id}`
 pub async fn handle_get(
     State(state): State<Arc<ServerState>>,
+    Extension(ctx): Extension<CallerContext>,
     axum::extract::Path(id): axum::extract::Path<String>,
 ) -> Result<Json<CalendarDefinition>, StatusCode> {
+    require_scope(&ctx, Scope::CALENDARS_READ)?;
     let store = state
         .store
         .as_ref()
@@ -71,8 +78,18 @@ pub async fn handle_get(
 /// `POST /v1/calendars`
 pub async fn handle_create(
     State(state): State<Arc<ServerState>>,
+    Extension(ctx): Extension<CallerContext>,
     Json(req): Json<CreateCalendarRequest>,
 ) -> Result<(StatusCode, Json<CalendarDefinition>), (StatusCode, Json<ValidationError>)> {
+    if !ctx.has_scope(Scope::CALENDARS_WRITE) {
+        return Err((
+            StatusCode::FORBIDDEN,
+            Json(ValidationError {
+                error: "forbidden",
+                message: format!("missing scope: {}", Scope::CALENDARS_WRITE),
+            }),
+        ));
+    }
     if let Err(message) = validate_rules(&req.rules) {
         return Err((
             StatusCode::BAD_REQUEST,
@@ -113,8 +130,12 @@ pub async fn handle_create(
 /// `DELETE /v1/calendars/{id}`
 pub async fn handle_delete(
     State(state): State<Arc<ServerState>>,
+    Extension(ctx): Extension<CallerContext>,
     axum::extract::Path(id): axum::extract::Path<String>,
 ) -> StatusCode {
+    if let Err(s) = require_scope(&ctx, Scope::CALENDARS_WRITE) {
+        return s;
+    }
     let Some(store) = state.store.as_ref() else {
         return StatusCode::SERVICE_UNAVAILABLE;
     };

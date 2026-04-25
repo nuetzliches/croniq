@@ -9,6 +9,7 @@ use axum::{
     response::Response,
 };
 use croniq_auth::api_key::hash_api_key;
+use croniq_auth::context::Scope;
 use croniq_auth::jwt::validate_token;
 use croniq_auth::{CallerContext, CallerType};
 
@@ -28,7 +29,16 @@ pub async fn require_auth(
     next: Next,
 ) -> Result<Response, StatusCode> {
     let Some(ref jwt_config) = state.jwt_config else {
-        // Auth not configured — allow all (backward compat / dev mode)
+        // Auth not configured — open mode for tests and unconfigured dev
+        // servers. Inject a synthetic admin context so per-handler
+        // `require_scope` checks pass through. Production deployments must
+        // configure JWT/API keys to actually enforce anything.
+        req.extensions_mut().insert(CallerContext {
+            caller_type: CallerType::User,
+            caller_id: "anonymous".into(),
+            client_id: "anonymous".into(),
+            scopes: vec![Scope::ADMIN.to_string()],
+        });
         return Ok(next.run(req).await);
     };
 

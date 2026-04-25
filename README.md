@@ -46,7 +46,7 @@ Full API documentation: [`openapi.yaml`](openapi.yaml)
 
 **Execution modes** — `queued` (default) persists every execution with full retry and restart recovery. `ephemeral` skips persistence for high-frequency fire-and-forget jobs. Configurable per-job or globally in `defaults {}`. Catch-up policies (`all` / `latest` / `none`) control missed-fire behaviour on restart. Queue TTL and per-job depth limits prevent runaway backlogs.
 
-**Auth** — JWT tokens, API keys, and password authentication. Per-scope authorization (jobs:read, runners:write, admin, etc.).
+**Auth** — JWT tokens, API keys, and password authentication. Per-scope authorization is enforced on every endpoint: a token must carry the matching scope (e.g. `jobs:write`, `dead-letters:write`, `runners:read`) or the wildcard `admin` scope. See [Scopes](#scopes) below.
 
 **React dashboard** — login, jobs CRUD with live scheduling, runners with status badges, executions with log viewer, dead letter detail panel.
 
@@ -259,6 +259,26 @@ All `/v1/` endpoints require authentication (`Authorization: Bearer <jwt>` or `A
 | Metrics | `GET /metrics` (separate port) |
 
 Full specification: [`openapi.yaml`](openapi.yaml)
+
+### Scopes
+
+Every endpoint requires the matching scope on the caller's token. `admin` acts as a wildcard. The CLI's `croniq init` issues an admin client by default; for production runners and dashboards, mint API keys with the minimum scope set.
+
+| Endpoint group | Read scope | Write scope |
+|---|---|---|
+| Jobs | `jobs:read` | `jobs:write` (`jobs:register` for `/v1/jobs/register`, `jobs:trigger` for `/v1/trigger`) |
+| Schedules | `schedules:read` | `schedules:write` |
+| Calendars | `calendars:read` | `calendars:write` |
+| Executions + logs | `executions:read` | — |
+| Dead letters | `dead-letters:read` | `dead-letters:write` (delete + replay) |
+| Runners | `runners:read` (incl. SSE) | `runners:write` |
+| Runner pull-protocol | — | `work:poll`, `work:ack`, `work:renew`, `work:events` |
+| Dashboard forecast | `jobs:read` | — |
+| API clients | `api-clients:admin` | `api-clients:admin` |
+| API keys | — | `api-keys:admin` |
+| Admin reload | — | `admin` |
+
+A 403 with no body is returned when the scope is missing. Auth-disabled mode (no `pull_api.auth` and no `CRONIQ_JWT_SECRET`) injects a synthetic admin context so unconfigured dev servers stay open — production must configure JWT or refuse to start.
 
 ---
 

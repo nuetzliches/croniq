@@ -8,6 +8,14 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Per-handler scope checks on every authenticated endpoint. Tokens must
+  carry the matching scope (e.g. `jobs:write`, `dead-letters:write`,
+  `runners:read`, `work:poll`) or the wildcard `admin` scope; missing
+  scope returns 403. The scope catalog lives in `croniq_auth::Scope` —
+  see the README's *Scopes* section for the full table. Auth-disabled
+  mode (no `pull_api.auth` and no `CRONIQ_JWT_SECRET`) keeps working for
+  local dev: the middleware injects a synthetic admin context so the
+  per-handler checks pass through.
 - SIGHUP signal triggers a Croniqfile reload without restarting the server
   (Unix only). Matches the long-standing `kill -HUP <pid>` daemon convention
   so `docker compose kill -s HUP croniq` picks up Croniqfile edits without
