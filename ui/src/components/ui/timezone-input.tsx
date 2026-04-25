@@ -1,4 +1,15 @@
-import { forwardRef, useEffect, useId, useImperativeHandle, useMemo, useRef, useState } from 'react'
+import {
+  forwardRef,
+  useCallback,
+  useEffect,
+  useId,
+  useImperativeHandle,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react'
+import { createPortal } from 'react-dom'
 
 interface TimezoneInputProps
   extends Omit<React.InputHTMLAttributes<HTMLInputElement>, 'onChange'> {
@@ -64,6 +75,35 @@ export const TimezoneInput = forwardRef<HTMLInputElement, TimezoneInputProps>(
     const [value, setValue] = useState(initial)
     const [open, setOpen] = useState(false)
     const [activeIdx, setActiveIdx] = useState(0)
+    // The listbox renders into a portal at <body> level so it isn't
+    // clipped by the dialog's `overflow-y-auto`. We compute its
+    // viewport-fixed coordinates from the input's bounding rect.
+    const [popPos, setPopPos] = useState<{ top: number; left: number; width: number } | null>(null)
+
+    const recomputePos = useCallback(() => {
+      const el = inputRef.current
+      if (!el) return
+      const r = el.getBoundingClientRect()
+      // Anchor 4 px below the input bottom — same offset we had with
+      // the in-flow absolute version, just in viewport coords now.
+      setPopPos({ top: r.bottom + 4, left: r.left, width: r.width })
+    }, [])
+
+    // Recompute on open and on every scroll/resize while open. The
+    // listbox sits in a portal at <body> so any container that scrolls
+    // (the dialog's content area, the page itself) needs to nudge the
+    // popup back under the input.
+    useLayoutEffect(() => {
+      if (!open) return
+      recomputePos()
+      const onScroll = () => recomputePos()
+      window.addEventListener('scroll', onScroll, true) // capture: catches nested scrollers
+      window.addEventListener('resize', onScroll)
+      return () => {
+        window.removeEventListener('scroll', onScroll, true)
+        window.removeEventListener('resize', onScroll)
+      }
+    }, [open, recomputePos])
 
     // Filter on every keystroke. ~430 entries × case-insensitive
     // includes() is sub-millisecond — no need to memoise the filter.
@@ -148,36 +188,45 @@ export const TimezoneInput = forwardRef<HTMLInputElement, TimezoneInputProps>(
           className={className}
           {...rest}
         />
-        {open && filtered.length > 0 && (
-          <ul
-            id={listId}
-            role="listbox"
-            // `max-h-60` ≈ 240 px; the input height + this fits inside
-            // the dialog without overlapping the action bar at the
-            // bottom. `overflow-y-auto` keeps overflow inside the
-            // dropdown rather than letting the document scroll.
-            className="absolute left-0 right-0 z-50 mt-1 max-h-60 overflow-y-auto rounded-md border border-border bg-card shadow-lg"
-          >
-            {filtered.map((tz, idx) => (
-              <li
-                key={tz}
-                role="option"
-                aria-selected={idx === activeIdx}
-                onMouseDown={(e) => {
-                  // Prevent the input's blur firing before our select.
-                  e.preventDefault()
-                  commit(tz)
-                }}
-                onMouseEnter={() => setActiveIdx(idx)}
-                className={`px-3 py-1.5 text-xs font-mono cursor-pointer ${
-                  idx === activeIdx ? 'bg-accent text-accent-foreground' : 'text-foreground'
-                }`}
-              >
-                {tz}
-              </li>
-            ))}
-          </ul>
-        )}
+        {/* Listbox renders into a body-level portal so the dialog's
+            `overflow-y-auto` doesn't clip it. Position is viewport-
+            fixed and recomputed on scroll/resize. `z-[60]` sits above
+            the Radix dialog overlay (`z-50`) and content (`z-50`) so
+            the popup is interactive even while the dialog is open. */}
+        {open && filtered.length > 0 && popPos &&
+          createPortal(
+            <ul
+              id={listId}
+              role="listbox"
+              style={{
+                position: 'fixed',
+                top: popPos.top,
+                left: popPos.left,
+                width: popPos.width,
+              }}
+              className="z-[60] max-h-60 overflow-y-auto rounded-md border border-border bg-card shadow-lg"
+            >
+              {filtered.map((tz, idx) => (
+                <li
+                  key={tz}
+                  role="option"
+                  aria-selected={idx === activeIdx}
+                  onMouseDown={(e) => {
+                    // Prevent the input's blur firing before our select.
+                    e.preventDefault()
+                    commit(tz)
+                  }}
+                  onMouseEnter={() => setActiveIdx(idx)}
+                  className={`px-3 py-1.5 text-xs font-mono cursor-pointer ${
+                    idx === activeIdx ? 'bg-accent text-accent-foreground' : 'text-foreground'
+                  }`}
+                >
+                  {tz}
+                </li>
+              ))}
+            </ul>,
+            document.body,
+          )}
         {showDetectedHint && value && value === browserTz && (
           <p className="text-[11px] text-muted-foreground mt-1">
             Detected from your browser — type to search or paste any IANA name.
