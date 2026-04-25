@@ -47,6 +47,12 @@ export const TimezoneInput = forwardRef<HTMLInputElement, TimezoneInputProps>(
     useImperativeHandle(ref, () => inputRef.current as HTMLInputElement, [])
 
     const containerRef = useRef<HTMLDivElement | null>(null)
+    // The listbox lives in a body-level portal so the outside-click
+    // listener has to know about it explicitly — without this ref a
+    // click on the listbox would land outside `containerRef`, the
+    // popup would close, and the li's `onMouseDown` would never get to
+    // fire its `commit()`.
+    const listboxRef = useRef<HTMLUListElement | null>(null)
     // Flag to suppress the dropdown re-opening from the synthesized
     // `input` event we fire inside `commit()`. Without this, picking an
     // option keeps the listbox open because our own onChange handler
@@ -113,12 +119,15 @@ export const TimezoneInput = forwardRef<HTMLInputElement, TimezoneInputProps>(
       return zones.filter((tz) => tz.toLowerCase().includes(q)).slice(0, 200)
     }, [value, zones])
 
-    // Close on outside click. Use mousedown so the click on a list
-    // option (handled below) still fires before the close runs.
+    // Close on outside click. The listbox is portaled to body, so the
+    // input's container alone isn't enough — without `listboxRef` the
+    // popup would close before the option's `onMouseDown` could call
+    // `commit()`, and the click would appear to do nothing.
     useEffect(() => {
       function onDocMouseDown(e: MouseEvent) {
-        if (!containerRef.current) return
-        if (containerRef.current.contains(e.target as Node)) return
+        const target = e.target as Node
+        if (containerRef.current?.contains(target)) return
+        if (listboxRef.current?.contains(target)) return
         setOpen(false)
       }
       if (open) document.addEventListener('mousedown', onDocMouseDown)
@@ -161,6 +170,16 @@ export const TimezoneInput = forwardRef<HTMLInputElement, TimezoneInputProps>(
       }
     }
 
+    // A non-empty value that doesn't match any IANA name flags the
+    // field as invalid — same UX as a "this isn't a real timezone"
+    // hint. Empty stays valid (user wants UTC fallback). Free text
+    // matching a known zone is accepted; only typos fail.
+    //
+    // We surface this two ways:
+    //   1. CSS — red border via `aria-invalid` + a tailwind variant
+    //   2. ARIA — assistive tech hears "invalid"
+    const isInvalid = value !== '' && zones.length > 0 && !zones.includes(value)
+
     return (
       <div ref={containerRef} className="relative">
         <input
@@ -184,8 +203,14 @@ export const TimezoneInput = forwardRef<HTMLInputElement, TimezoneInputProps>(
           aria-autocomplete="list"
           aria-controls={listId}
           aria-expanded={open}
+          aria-invalid={isInvalid || undefined}
           role="combobox"
-          className={className}
+          className={`${className ?? ''} ${
+            // The invalid state nudges the border red without depending
+            // on RHF — makes the typo obvious before the user even
+            // tries to submit.
+            isInvalid ? '!border-destructive focus:!ring-destructive' : ''
+          }`}
           {...rest}
         />
         {/* Listbox renders into a body-level portal so the dialog's
@@ -196,6 +221,7 @@ export const TimezoneInput = forwardRef<HTMLInputElement, TimezoneInputProps>(
         {open && filtered.length > 0 && popPos &&
           createPortal(
             <ul
+              ref={listboxRef}
               id={listId}
               role="listbox"
               style={{
@@ -227,7 +253,12 @@ export const TimezoneInput = forwardRef<HTMLInputElement, TimezoneInputProps>(
             </ul>,
             document.body,
           )}
-        {showDetectedHint && value && value === browserTz && (
+        {isInvalid && (
+          <p className="text-[11px] text-destructive mt-1">
+            Not a known IANA timezone — pick one from the list or check the spelling.
+          </p>
+        )}
+        {!isInvalid && showDetectedHint && value && value === browserTz && (
           <p className="text-[11px] text-muted-foreground mt-1">
             Detected from your browser — type to search or paste any IANA name.
           </p>
