@@ -15,7 +15,7 @@ fn utc(y: i32, m: u32, d: u32, h: u32, min: u32) -> chrono::DateTime<Utc> {
     Utc.with_ymd_and_hms(y, m, d, h, min, 0).unwrap()
 }
 
-fn make_execution(job_key: &str, i: usize) -> Execution {
+fn make_execution(job_key: &str, _i: usize) -> Execution {
     Execution {
         id: Uuid::new_v4(),
         job_key: job_key.into(),
@@ -206,18 +206,17 @@ fn bench_complete_execution(c: &mut Criterion) {
                     (store, id)
                 },
                 |(store, id)| {
-                    black_box(
-                        store
-                            .complete_execution(
-                                id,
-                                ExecutionState::Completed,
-                                Some(500),
-                                None,
-                                None,
-                                Utc::now(),
-                            )
-                            .unwrap(),
-                    )
+                    store
+                        .complete_execution(
+                            id,
+                            ExecutionState::Completed,
+                            Some(500),
+                            None,
+                            None,
+                            Utc::now(),
+                        )
+                        .unwrap();
+                    black_box(id);
                 },
                 criterion::BatchSize::SmallInput,
             )

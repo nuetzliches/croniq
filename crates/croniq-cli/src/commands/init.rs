@@ -20,6 +20,7 @@ pub fn init(
     username: &str,
     password: Option<&str>,
     api_key_override: Option<&str>,
+    scopes: Option<Vec<String>>,
 ) -> Result<()> {
     let password = match password {
         Some(p) => p.to_string(),
@@ -67,12 +68,20 @@ pub fn init(
             return Err(miette!("--api-key must start with 'croniq_'"));
         }
 
+        // `--scopes a,b,c` lets the operator mint a narrow client (e.g. a
+        // runner key with only `work:*`). Default is `[admin]` so the
+        // existing demo/CI flows keep working without flag changes.
+        let resolved_scopes = scopes.unwrap_or_else(|| vec!["admin".to_string()]);
+        if resolved_scopes.is_empty() {
+            return Err(miette!("--scopes must list at least one scope"));
+        }
+
         let client_id = Uuid::new_v4().to_string();
         store
             .create_client(&ApiClient {
                 client_id: client_id.clone(),
                 name: "default".to_string(),
-                scopes: vec!["admin".to_string()],
+                scopes: resolved_scopes.clone(),
                 is_active: true,
                 created_at: now,
             })
@@ -92,7 +101,10 @@ pub fn init(
             })
             .map_err(|e| miette!("Failed to create API key: {e}"))?;
 
-        println!("API client 'default' seeded with provided key.");
+        println!(
+            "API client 'default' seeded with provided key (scopes: {}).",
+            resolved_scopes.join(", ")
+        );
         Some(raw_key.to_string())
     } else {
         None

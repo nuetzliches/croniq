@@ -103,9 +103,6 @@ pub fn compute_forecast(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use croniq_scheduler::misfire::MisfirePolicy;
-    use croniq_scheduler::schedule::Schedule;
-    use croniq_scheduler::trigger::Trigger;
 
     #[test]
     fn empty_triggers_empty_buckets() {

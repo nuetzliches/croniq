@@ -209,7 +209,7 @@ fn bench_tick_sustained(c: &mut Criterion) {
                     let mut now = Utc::now();
                     for _ in 0..100 {
                         black_box(scheduler.tick(now).await);
-                        now = now + ChronoDuration::seconds(1);
+                        now += ChronoDuration::seconds(1);
                     }
                 })
             },

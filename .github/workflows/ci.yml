@@ -38,7 +38,10 @@ jobs:
       - name: Test
         run: cargo test --workspace
       - name: Clippy
-        run: cargo clippy --workspace -- -D warnings
+        # `--all-targets` covers tests + benches too. Without it, latent
+        # `unused_must_use` and similar lints accumulate quietly in
+        # test-only code (we hit ~25 of them on first sweep).
+        run: cargo clippy --workspace --all-targets -- -D warnings
 
   ui:
     name: UI (build + typecheck)

@@ -86,12 +86,12 @@ async fn main() -> Result<()> {
     tracing::info!("trigger states restored from database");
 
     // Shared runner state (registry + queue) with lease TTL from config
-    let lease_ttl_secs = loaded
-        .runtime
-        .pull_api
-        .as_ref()
-        .map(|p| parse_duration_secs(&p.lease_ttl))
-        .unwrap_or(120);
+    let lease_ttl_secs = match loaded.runtime.pull_api.as_ref() {
+        Some(p) => parse_duration_secs(&p.lease_ttl).map_err(|e| {
+            anyhow::anyhow!("invalid pull_api.lease_ttl in {}: {e}", cli.config.display())
+        })?,
+        None => 120,
+    };
     let runner_state = AppState::with_lease_ttl(lease_ttl_secs);
 
     // Restore queued executions from DB into the in-memory work queue.
@@ -432,16 +432,50 @@ fn write_secret_file(path: &std::path::Path, content: &str) -> std::io::Result<(
     }
 }
 
-/// Parse a duration string like "60s", "2m", "1h" to seconds. Falls back to 120.
-fn parse_duration_secs(s: &str) -> u64 {
+/// Parse a duration string like `"60s"`, `"2m"`, `"1h"`, or a bare integer
+/// (interpreted as seconds) into seconds. Returns an error string on malformed
+/// input rather than silently falling back, so that bad config surfaces at boot
+/// instead of becoming a 2-minute lease nobody asked for.
+fn parse_duration_secs(s: &str) -> Result<u64, String> {
     let s = s.trim();
+    let parse = |body: &str, mult: u64, suffix: char| -> Result<u64, String> {
+        body.parse::<u64>()
+            .map_err(|_| format!("invalid duration {s:?}: cannot parse number before '{suffix}'"))
+            .and_then(|v| {
+                v.checked_mul(mult)
+                    .ok_or_else(|| format!("duration {s:?} overflows u64 seconds"))
+            })
+    };
     if let Some(n) = s.strip_suffix('s') {
-        n.parse().unwrap_or(120)
+        parse(n, 1, 's')
     } else if let Some(n) = s.strip_suffix('m') {
-        n.parse::<u64>().map(|v| v * 60).unwrap_or(120)
+        parse(n, 60, 'm')
     } else if let Some(n) = s.strip_suffix('h') {
-        n.parse::<u64>().map(|v| v * 3600).unwrap_or(120)
+        parse(n, 3600, 'h')
     } else {
-        s.parse().unwrap_or(120)
+        s.parse::<u64>()
+            .map_err(|_| format!("invalid duration {s:?}: expected '<n>[s|m|h]' or bare seconds"))
+    }
+}
+
+#[cfg(test)]
+mod parse_duration_tests {
+    use super::parse_duration_secs;
+
+    #[test]
+    fn parses_units_and_bare_seconds() {
+        assert_eq!(parse_duration_secs("30s").unwrap(), 30);
+        assert_eq!(parse_duration_secs("2m").unwrap(), 120);
+        assert_eq!(parse_duration_secs("1h").unwrap(), 3600);
+        assert_eq!(parse_duration_secs("45").unwrap(), 45);
+        assert_eq!(parse_duration_secs("  10s  ").unwrap(), 10);
+    }
+
+    #[test]
+    fn rejects_garbage() {
+        assert!(parse_duration_secs("abc").is_err());
+        assert!(parse_duration_secs("10x").is_err());
+        assert!(parse_duration_secs("ms").is_err());
+        assert!(parse_duration_secs("").is_err());
     }
 }

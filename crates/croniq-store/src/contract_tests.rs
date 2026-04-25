@@ -316,7 +316,7 @@ fn count_by_state() {
         store.create_execution(&exec).unwrap();
     }
 
-    let mut exec = make_execution("b:job", utc(2026, 3, 29, 12, 0));
+    let exec = make_execution("b:job", utc(2026, 3, 29, 12, 0));
     store.create_execution(&exec).unwrap();
     store.claim_execution(exec.id, "r1", now()).unwrap();
 

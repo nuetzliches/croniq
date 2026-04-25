@@ -688,7 +688,7 @@ mod tests {
 
         {
             let mut reg = state.runner.registry.write().await;
-            reg.register_or_update("r1", vec![], 3, vec!["exec-42".into()], None);
+            let _ = reg.register_or_update("r1", vec![], 3, vec!["exec-42".into()], None);
         }
 
         let app = server_router(Arc::clone(&state));
@@ -717,7 +717,7 @@ mod tests {
 
         {
             let mut reg = state.runner.registry.write().await;
-            reg.register_or_update("r1", vec![], 3, vec!["exec-99".into()], None);
+            let _ = reg.register_or_update("r1", vec![], 3, vec!["exec-99".into()], None);
         }
 
         let app = server_router(Arc::clone(&state));
