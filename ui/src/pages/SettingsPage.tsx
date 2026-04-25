@@ -12,20 +12,20 @@ import type { CreateApiKeyResponse } from '@/api/types'
 
 interface ClientForm { name: string }
 
-// Grouped by prefix for readability. Keep in sync with
-// crates/croniq-auth/src/context.rs :: Scope.
+// Mirror of `croniq_auth::Scope` (crates/croniq-auth/src/context.rs).
+// Keep grouping/ordering aligned with the README's *Scopes* table.
 const SCOPE_GROUPS: { label: string; scopes: { value: string; hint?: string }[] }[] = [
   {
     label: 'Admin',
-    scopes: [{ value: 'admin', hint: 'Grants all scopes below' }],
+    scopes: [{ value: 'admin', hint: 'Grants every scope below' }],
   },
   {
     label: 'Jobs',
     scopes: [
       { value: 'jobs:read' },
       { value: 'jobs:write' },
-      { value: 'jobs:register' },
-      { value: 'jobs:trigger' },
+      { value: 'jobs:register', hint: 'POST /v1/jobs/register (runner SDK)' },
+      { value: 'jobs:trigger', hint: 'POST /v1/trigger (manual fire)' },
     ],
   },
   {
@@ -33,28 +33,6 @@ const SCOPE_GROUPS: { label: string; scopes: { value: string; hint?: string }[] 
     scopes: [
       { value: 'schedules:read' },
       { value: 'schedules:write' },
-      { value: 'schedules:deadletter' },
-    ],
-  },
-  {
-    label: 'Executions',
-    scopes: [{ value: 'executions:read' }],
-  },
-  {
-    label: 'Runners',
-    scopes: [
-      { value: 'runners:read' },
-      { value: 'runners:write' },
-      { value: 'runners:heartbeat' },
-    ],
-  },
-  {
-    label: 'Work queue',
-    scopes: [
-      { value: 'work:poll' },
-      { value: 'work:renew' },
-      { value: 'work:ack' },
-      { value: 'work:events' },
     ],
   },
   {
@@ -62,6 +40,41 @@ const SCOPE_GROUPS: { label: string; scopes: { value: string; hint?: string }[] 
     scopes: [
       { value: 'calendars:read' },
       { value: 'calendars:write' },
+    ],
+  },
+  {
+    label: 'Executions',
+    scopes: [{ value: 'executions:read', hint: 'Includes /executions/{id}/logs' }],
+  },
+  {
+    label: 'Dead letters',
+    scopes: [
+      { value: 'dead-letters:read' },
+      { value: 'dead-letters:write', hint: 'Replay + delete' },
+    ],
+  },
+  {
+    label: 'Runners',
+    scopes: [
+      { value: 'runners:read', hint: 'Includes /runners/stream (SSE)' },
+      { value: 'runners:write' },
+      { value: 'runners:heartbeat' },
+    ],
+  },
+  {
+    label: 'Runner pull-protocol',
+    scopes: [
+      { value: 'work:poll' },
+      { value: 'work:ack' },
+      { value: 'work:renew' },
+      { value: 'work:events' },
+    ],
+  },
+  {
+    label: 'Identity / auth management',
+    scopes: [
+      { value: 'api-clients:admin' },
+      { value: 'api-keys:admin' },
     ],
   },
 ]
@@ -133,7 +146,10 @@ export function SettingsPage() {
                 <Dialog.Content className="fixed left-1/2 top-1/2 z-50 w-full max-w-md -translate-x-1/2 -translate-y-1/2 rounded-lg border border-border bg-card p-6 shadow-xl max-h-[85vh] overflow-y-auto">
                   <div className="flex items-center justify-between mb-4">
                     <Dialog.Title className="text-sm font-semibold">New API Client</Dialog.Title>
-                    <Dialog.Close className="text-muted-foreground hover:text-foreground">
+                    <Dialog.Close
+                      aria-label="Close dialog"
+                      className="text-muted-foreground hover:text-foreground"
+                    >
                       <X className="h-4 w-4" />
                     </Dialog.Close>
                   </div>
@@ -180,6 +196,16 @@ export function SettingsPage() {
                         <p className="text-xs text-destructive mt-1">Select at least one scope</p>
                       )}
                     </div>
+                    {/* CLI escape-hatch: same client can be seeded at boot
+                        with `croniq init --api-key … --scopes …`. Helpful
+                        for reproducible bootstrap and air-gapped setups
+                        where the dashboard isn't reachable yet. */}
+                    <p className="text-xs text-muted-foreground border-t border-border pt-3">
+                      Or seed a client at boot:
+                      <code className="ml-1 font-mono text-foreground">
+                        croniq init --api-key croniq_… --scopes {scopes.length > 0 ? scopes.join(',') : 'jobs:read,executions:read'}
+                      </code>
+                    </p>
                     <div className="flex justify-end gap-2">
                       <Dialog.Close asChild><Button variant="secondary" size="sm" type="button">Cancel</Button></Dialog.Close>
                       <Button type="submit" size="sm" disabled={createClient.isPending}>

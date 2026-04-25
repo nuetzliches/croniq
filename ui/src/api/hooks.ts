@@ -18,17 +18,26 @@ export function useJob(jobKey: string) {
 }
 export function useCreateJob() {
   const qc = useQueryClient()
-  return useMutation({ mutationFn: (data: { job_key: string; description?: string }) => apiPost('/v1/jobs', data), onSuccess: () => qc.invalidateQueries({ queryKey: ['jobs'] }) })
+  return useMutation({
+    mutationFn: (data: { job_key: string; description?: string }) => apiPost('/v1/jobs', data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['jobs'] }),
+    meta: { action: 'Create job' },
+  })
 }
 export function useDeleteJob() {
   const qc = useQueryClient()
-  return useMutation({ mutationFn: (jobKey: string) => apiDelete(`/v1/jobs/${jobKey}`), onSuccess: () => qc.invalidateQueries({ queryKey: ['jobs'] }) })
+  return useMutation({
+    mutationFn: (jobKey: string) => apiDelete(`/v1/jobs/${jobKey}`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['jobs'] }),
+    meta: { action: 'Delete job' },
+  })
 }
 export function useActivateJob() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: (jobKey: string) => apiPost<T.JobDefinition>(`/v1/jobs/${jobKey}/activate`, {}),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['jobs'] }),
+    meta: { action: 'Activate job' },
   })
 }
 export function useDeactivateJob() {
@@ -36,6 +45,7 @@ export function useDeactivateJob() {
   return useMutation({
     mutationFn: (jobKey: string) => apiPost<T.JobDefinition>(`/v1/jobs/${jobKey}/deactivate`, {}),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['jobs'] }),
+    meta: { action: 'Deactivate job' },
   })
 }
 export function useRegisterJob() {
@@ -44,6 +54,7 @@ export function useRegisterJob() {
     mutationFn: (data: { job_key: string; schedule: string; timezone?: string; timeout?: string; description?: string }) =>
       apiPost('/v1/jobs/register', data),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['jobs'] }); qc.invalidateQueries({ queryKey: ['schedules'] }) },
+    meta: { action: 'Register job' },
   })
 }
 export function useTriggerJob() {
@@ -51,6 +62,7 @@ export function useTriggerJob() {
   return useMutation({
     mutationFn: (jobKey: string) => apiPost<T.TriggerResponse>('/v1/trigger', { job_key: jobKey }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['executions'] }),
+    meta: { action: 'Trigger job' },
   })
 }
 
@@ -61,11 +73,19 @@ export function useSchedules(jobKey?: string) {
 }
 export function useCreateSchedule() {
   const qc = useQueryClient()
-  return useMutation({ mutationFn: (data: { job_key: string; cron_expression: string; timezone?: string }) => apiPost('/v1/schedules', data), onSuccess: () => qc.invalidateQueries({ queryKey: ['schedules'] }) })
+  return useMutation({
+    mutationFn: (data: { job_key: string; cron_expression: string; timezone?: string }) => apiPost('/v1/schedules', data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['schedules'] }),
+    meta: { action: 'Create schedule' },
+  })
 }
 export function useDeleteSchedule() {
   const qc = useQueryClient()
-  return useMutation({ mutationFn: (id: string) => apiDelete(`/v1/schedules/${id}`), onSuccess: () => qc.invalidateQueries({ queryKey: ['schedules'] }) })
+  return useMutation({
+    mutationFn: (id: string) => apiDelete(`/v1/schedules/${id}`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['schedules'] }),
+    meta: { action: 'Delete schedule' },
+  })
 }
 
 // Runners
@@ -74,7 +94,11 @@ export function useRunners() {
 }
 export function useDeleteRunner() {
   const qc = useQueryClient()
-  return useMutation({ mutationFn: (id: string) => apiDelete(`/v1/runners/${id}`), onSuccess: () => qc.invalidateQueries({ queryKey: ['runners'] }) })
+  return useMutation({
+    mutationFn: (id: string) => apiDelete(`/v1/runners/${id}`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['runners'] }),
+    meta: { action: 'Delete runner' },
+  })
 }
 export function useRunnersSSE() {
   const qc = useQueryClient()
@@ -176,13 +200,18 @@ export function useDeadLetter(id: string) {
 }
 export function useDeleteDeadLetter() {
   const qc = useQueryClient()
-  return useMutation({ mutationFn: (id: string) => apiDelete(`/v1/dead-letters/${id}`), onSuccess: () => qc.invalidateQueries({ queryKey: ['dead-letters'] }) })
+  return useMutation({
+    mutationFn: (id: string) => apiDelete(`/v1/dead-letters/${id}`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['dead-letters'] }),
+    meta: { action: 'Delete dead letter' },
+  })
 }
 export function useReplayDeadLetter() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: (id: string) => apiPost<T.ReplayResponse>(`/v1/dead-letters/${id}/replay`, {}),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['dead-letters'] }); qc.invalidateQueries({ queryKey: ['executions'] }) },
+    meta: { action: 'Replay dead letter' },
   })
 }
 
@@ -200,11 +229,16 @@ export function useCreateCalendar() {
         rules: data.rules ?? '',
       }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['calendars'] }),
+    meta: { action: 'Create calendar' },
   })
 }
 export function useDeleteCalendar() {
   const qc = useQueryClient()
-  return useMutation({ mutationFn: (id: string) => apiDelete(`/v1/calendars/${id}`), onSuccess: () => qc.invalidateQueries({ queryKey: ['calendars'] }) })
+  return useMutation({
+    mutationFn: (id: string) => apiDelete(`/v1/calendars/${id}`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['calendars'] }),
+    meta: { action: 'Delete calendar' },
+  })
 }
 
 // API Clients
@@ -217,20 +251,27 @@ export function useCreateApiClient() {
     mutationFn: (data: { name: string; scopes: string[] }) =>
       apiPost<T.CreateClientResponse>('/v1/api-clients', data),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['api-clients'] }),
+    meta: { action: 'Create API client' },
   })
 }
 export function useDeleteApiClient() {
   const qc = useQueryClient()
-  return useMutation({ mutationFn: (id: string) => apiDelete(`/v1/api-clients/${id}`), onSuccess: () => qc.invalidateQueries({ queryKey: ['api-clients'] }) })
+  return useMutation({
+    mutationFn: (id: string) => apiDelete(`/v1/api-clients/${id}`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['api-clients'] }),
+    meta: { action: 'Delete API client' },
+  })
 }
 export function useIssueClientToken() {
   return useMutation({
     mutationFn: (clientId: string) =>
       apiPost<T.CreateApiKeyResponse>('/v1/api-keys', { client_id: clientId }),
+    meta: { action: 'Issue API key' },
   })
 }
 export function useRevokeApiKey() {
   return useMutation({
     mutationFn: (keyId: string) => apiDelete(`/v1/api-keys/${keyId}`),
+    meta: { action: 'Revoke API key' },
   })
 }
