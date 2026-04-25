@@ -1,13 +1,15 @@
 import { useState } from 'react'
 import { useForm } from 'react-hook-form'
 import * as Dialog from '@radix-ui/react-dialog'
-import { Plus, Trash2, X, KeyRound, Copy, Check } from 'lucide-react'
+import { Plus, Trash2, X, KeyRound } from 'lucide-react'
 import { useApiClients, useCreateApiClient, useDeleteApiClient, useIssueClientToken } from '@/api/hooks'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
 import { EmptyState } from '@/components/ui/empty-state'
 import { Spinner } from '@/components/ui/spinner'
+import { useConfirm } from '@/components/ui/confirm-dialog'
+import { CopyButton } from '@/components/ui/copy-button'
 import type { CreateApiKeyResponse } from '@/api/types'
 
 interface ClientForm { name: string }
@@ -79,25 +81,12 @@ const SCOPE_GROUPS: { label: string; scopes: { value: string; hint?: string }[] 
   },
 ]
 
-function CopyButton({ value }: { value: string }) {
-  const [copied, setCopied] = useState(false)
-  function copy() {
-    navigator.clipboard.writeText(value)
-    setCopied(true)
-    setTimeout(() => setCopied(false), 2000)
-  }
-  return (
-    <button onClick={copy} aria-label="Copy to clipboard" className="text-muted-foreground hover:text-foreground transition-colors">
-      {copied ? <Check className="h-3.5 w-3.5 text-status-ok-fg" /> : <Copy className="h-3.5 w-3.5" />}
-    </button>
-  )
-}
-
 export function SettingsPage() {
   const { data: clients, isLoading } = useApiClients()
   const createClient = useCreateApiClient()
   const deleteClient = useDeleteApiClient()
   const issueToken = useIssueClientToken()
+  const { confirm, dialog: confirmDialog } = useConfirm()
   const [open, setOpen] = useState(false)
   const [newKey, setNewKey] = useState<CreateApiKeyResponse | null>(null)
   const [scopes, setScopes] = useState<string[]>([])
@@ -130,8 +119,20 @@ export function SettingsPage() {
     setNewKey(result)
   }
 
+  async function handleDeleteClient(client: { client_id: string; name: string }) {
+    const ok = await confirm({
+      title: `Delete client ${client.name}?`,
+      description:
+        'This revokes every API key bound to the client. Anything authenticating with one of those keys will start receiving 401 immediately.',
+      confirmLabel: 'Delete client',
+      destructive: true,
+    })
+    if (ok) deleteClient.mutate(client.client_id)
+  }
+
   return (
     <div className="space-y-6 max-w-2xl">
+      {confirmDialog}
       {/* API Clients */}
       <Card>
         <CardHeader>
@@ -231,7 +232,10 @@ export function SettingsPage() {
                     <span className="text-sm font-medium">{c.name}</span>
                     <Badge variant={c.is_active ? 'ok' : 'neutral'}>{c.is_active ? 'active' : 'inactive'}</Badge>
                   </div>
-                  <p className="text-xs text-muted-foreground font-mono">{c.client_id}</p>
+                  <p className="flex items-center gap-1.5 text-xs text-muted-foreground font-mono">
+                    <span>{c.client_id}</span>
+                    <CopyButton value={c.client_id} label={`Copy client_id ${c.client_id}`} />
+                  </p>
                 </div>
                 <Button
                   variant="secondary" size="sm"
@@ -242,7 +246,7 @@ export function SettingsPage() {
                 </Button>
                 <Button
                   variant="ghost" size="sm"
-                  onClick={() => deleteClient.mutate(c.client_id)}
+                  onClick={() => handleDeleteClient(c)}
                   aria-label={`Delete client ${c.name}`}
                   className="h-7 w-7 p-0 text-muted-foreground hover:text-destructive"
                 >
@@ -268,9 +272,12 @@ export function SettingsPage() {
               <span className="flex-1 break-all">{newKey.raw_key}</span>
               <CopyButton value={newKey.raw_key} />
             </div>
-            <div className="mt-2 grid grid-cols-2 gap-x-4 text-xs">
+            <div className="mt-2 grid grid-cols-2 gap-x-4 text-xs items-center">
               <span className="text-muted-foreground">Key ID</span>
-              <span className="font-mono">{newKey.key_id}</span>
+              <span className="flex items-center gap-1.5 font-mono">
+                {newKey.key_id}
+                <CopyButton value={newKey.key_id} label="Copy key id" />
+              </span>
             </div>
             <Button variant="ghost" size="sm" onClick={() => setNewKey(null)} className="mt-3">Dismiss</Button>
           </CardContent>

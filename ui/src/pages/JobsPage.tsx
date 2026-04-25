@@ -14,6 +14,7 @@ import { Badge } from '@/components/ui/badge'
 import { Card, CardContent } from '@/components/ui/card'
 import { EmptyState } from '@/components/ui/empty-state'
 import { Spinner } from '@/components/ui/spinner'
+import { useConfirm } from '@/components/ui/confirm-dialog'
 import type { Execution } from '@/api/types'
 
 interface RegisterForm {
@@ -28,22 +29,28 @@ function HealthPill({ executions }: { executions: Execution[] }) {
   const last20 = executions.slice(0, 20)
   if (last20.length === 0) return <span className="text-xs text-muted-foreground">no runs</span>
   const ok = last20.filter(e => e.state === 'completed').length
+  // Show the count inline so users don't need to hover. The bar chart
+  // remains because at a glance it surfaces the *pattern* (recent vs
+  // historical failures) better than a raw number can.
   return (
     <Tooltip.Root>
       <Tooltip.Trigger asChild>
-        <div className="flex gap-0.5 items-center cursor-default" aria-label={`${ok}/${last20.length} successful`}>
-          {last20.map((e, i) => (
-            <span key={i} className={`inline-block w-1.5 h-3.5 rounded-sm ${
-              e.state === 'completed' ? 'bg-status-ok-fg' :
-              e.state === 'failed' || e.state === 'dead' ? 'bg-status-err-fg' :
-              'bg-status-neutral-fg opacity-40'
-            }`} />
-          ))}
+        <div className="flex gap-1.5 items-center cursor-default" aria-label={`${ok}/${last20.length} successful`}>
+          <div className="flex gap-0.5 items-center">
+            {last20.map((e, i) => (
+              <span key={i} className={`inline-block w-1.5 h-3.5 rounded-sm ${
+                e.state === 'completed' ? 'bg-status-ok-fg' :
+                e.state === 'failed' || e.state === 'dead' ? 'bg-status-err-fg' :
+                'bg-status-neutral-fg opacity-40'
+              }`} />
+            ))}
+          </div>
+          <span className="text-xs text-muted-foreground tabular-nums">{ok}/{last20.length}</span>
         </div>
       </Tooltip.Trigger>
       <Tooltip.Portal>
         <Tooltip.Content className="z-50 rounded-md bg-foreground px-2.5 py-1 text-xs text-background shadow-md">
-          {ok}/{last20.length} successful
+          Last {last20.length} runs · {ok} successful
           <Tooltip.Arrow className="fill-foreground" />
         </Tooltip.Content>
       </Tooltip.Portal>
@@ -62,6 +69,7 @@ export function JobsPage() {
   const triggerJob = useTriggerJob()
   const allExecs = useExecutions({ limit: 200 })
   const allSchedules = useSchedules()
+  const { confirm, dialog: confirmDialog } = useConfirm()
   const [open, setOpen] = useState(false)
   const [triggeredId, setTriggeredId] = useState<string | null>(null)
   const [triggerError, setTriggerError] = useState<string | null>(null)
@@ -128,8 +136,19 @@ export function JobsPage() {
     }
   }
 
+  async function handleDelete(jobKey: string) {
+    const ok = await confirm({
+      title: `Delete job ${jobKey}?`,
+      description: 'The job, its schedules, and any associated trigger state are removed permanently. Past executions and dead letters are preserved.',
+      confirmLabel: 'Delete job',
+      destructive: true,
+    })
+    if (ok) deleteJob.mutate(jobKey)
+  }
+
   return (
     <Tooltip.Provider delayDuration={200}>
+      {confirmDialog}
       <div className="space-y-4">
         <div className="flex items-center justify-between">
           <p className="text-sm text-muted-foreground">{jobs.data?.length ?? 0} jobs registered</p>
@@ -299,7 +318,7 @@ export function JobsPage() {
                         <Button
                           variant="ghost"
                           size="sm"
-                          onClick={() => deleteJob.mutate(j.job_key)}
+                          onClick={() => handleDelete(j.job_key)}
                           disabled={isDslManaged}
                           aria-label={`Delete ${j.job_key}`}
                           className="h-7 w-7 p-0 text-muted-foreground hover:text-destructive disabled:opacity-50 disabled:cursor-not-allowed"

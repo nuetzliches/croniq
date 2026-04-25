@@ -7,6 +7,8 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { EmptyState } from '@/components/ui/empty-state'
 import { Spinner } from '@/components/ui/spinner'
+import { useConfirm } from '@/components/ui/confirm-dialog'
+import { RelativeTime } from '@/components/ui/relative-time'
 
 interface CalendarForm {
   name: string
@@ -18,8 +20,20 @@ export function CalendarsPage() {
   const { data: calendars, isLoading } = useCalendars()
   const createCalendar = useCreateCalendar()
   const deleteCalendar = useDeleteCalendar()
+  const { confirm, dialog: confirmDialog } = useConfirm()
   const [open, setOpen] = useState(false)
   const [rulesError, setRulesError] = useState<string | null>(null)
+
+  async function handleDelete(cal: { calendar_id: string; name: string }) {
+    const ok = await confirm({
+      title: `Delete calendar ${cal.name}?`,
+      description:
+        'Jobs that reference this calendar by name will fail to load on the next config reload. Existing executions are unaffected.',
+      confirmLabel: 'Delete calendar',
+      destructive: true,
+    })
+    if (ok) deleteCalendar.mutate(cal.calendar_id)
+  }
 
   const { register, handleSubmit, reset, formState: { errors } } = useForm<CalendarForm>()
 
@@ -61,6 +75,7 @@ export function CalendarsPage() {
 
   return (
     <div className="space-y-4">
+      {confirmDialog}
       <div className="flex items-center justify-between">
         <p className="text-sm text-muted-foreground">{calendars?.length ?? 0} calendars defined</p>
         <Dialog.Root open={open} onOpenChange={(v) => { setOpen(v); if (!v) resetDialog() }}>
@@ -86,13 +101,48 @@ export function CalendarsPage() {
                 </div>
                 <input {...register('timezone')} placeholder="Timezone (e.g. Europe/Vienna)" className={inputCls} />
                 <div>
+                  <label className="text-xs font-medium text-foreground block mb-1">Rules (optional)</label>
                   <textarea
                     {...register('rules')}
-                    placeholder={'Rules (optional DSL)\ne.g. include weekly "Mon".."Fri"\ninclude window "08:00".."18:00"'}
+                    placeholder={'Croniqfile DSL — leave empty for "always on"'}
                     rows={4}
                     className={`${inputCls} resize-none font-mono`}
                     onChange={(e) => { register('rules').onChange(e); if (rulesError) setRulesError(null) }}
                   />
+                  {/* HTML textarea placeholders flatten newlines to spaces, so
+                      multi-line examples are unreadable inline. Render the
+                      examples below the field instead — clickable so the
+                      user can drop them straight in. */}
+                  <p className="text-xs text-muted-foreground mt-1.5">
+                    Common patterns:
+                  </p>
+                  <ul className="mt-1 space-y-1 text-xs font-mono text-muted-foreground">
+                    {[
+                      'include weekly "Mon".."Fri"',
+                      'include window "08:00".."18:00"',
+                      'exclude annual 12-25',
+                    ].map((snippet) => (
+                      <li key={snippet}>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            // Append (don't replace) so users can stack patterns.
+                            const ta = document.querySelector<HTMLTextAreaElement>('textarea[name="rules"]')
+                            if (!ta) return
+                            const next = ta.value ? `${ta.value.replace(/\s*$/, '')}\n${snippet}` : snippet
+                            // Trigger react-hook-form's change handler so the
+                            // form state stays in sync with the DOM.
+                            const setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value')?.set
+                            setter?.call(ta, next)
+                            ta.dispatchEvent(new Event('input', { bubbles: true }))
+                          }}
+                          className="hover:text-foreground"
+                        >
+                          + {snippet}
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
                   {rulesError && (
                     <p className="text-xs text-destructive mt-1 whitespace-pre-wrap">{rulesError}</p>
                   )}
@@ -135,11 +185,13 @@ export function CalendarsPage() {
                   {cal.rules && (
                     <pre className="text-xs text-muted-foreground mt-1 font-mono truncate">{cal.rules.slice(0, 80)}{cal.rules.length > 80 ? '…' : ''}</pre>
                   )}
-                  <p className="text-xs text-muted-foreground mt-1">Created {new Date(cal.created_at).toLocaleDateString()}</p>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Created <RelativeTime iso={cal.created_at} />
+                  </p>
                 </div>
                 <Button
                   variant="ghost" size="sm"
-                  onClick={() => deleteCalendar.mutate(cal.calendar_id)}
+                  onClick={() => handleDelete(cal)}
                   aria-label={`Delete calendar ${cal.name}`}
                   className="h-7 w-7 p-0 text-muted-foreground hover:text-destructive shrink-0"
                 >

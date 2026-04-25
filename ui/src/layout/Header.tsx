@@ -1,5 +1,5 @@
 import { useLocation, useNavigate } from 'react-router'
-import { Sun, Moon, Bell, LogOut, Menu } from 'lucide-react'
+import { Sun, Moon, Bell, LogOut, Menu, Monitor } from 'lucide-react'
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
 import * as Tooltip from '@radix-ui/react-tooltip'
 import { useAuthStore } from '@/auth/store'
@@ -20,7 +20,12 @@ const routeTitles: Record<string, string> = {
 
 function usePageTitle() {
   const { pathname } = useLocation()
-  if (pathname.startsWith('/jobs/')) return 'Job Detail'
+  if (pathname.startsWith('/jobs/')) {
+    // Show the job key in the title so the breadcrumb is useful when
+    // a user has multiple job-detail tabs open or returns to a tab.
+    const key = decodeURIComponent(pathname.slice('/jobs/'.length).split('/')[0] ?? '')
+    return key ? `Jobs / ${key}` : 'Job Detail'
+  }
   return routeTitles[pathname] ?? ''
 }
 
@@ -54,8 +59,19 @@ function IconButton({ label, onClick, children }: { label: string; onClick?: () 
 export function Header() {
   const logout = useAuthStore((s) => s.logout)
   const navigate = useNavigate()
-  const { theme, toggle } = useTheme()
+  const { theme, pref, toggle } = useTheme()
   const title = usePageTitle()
+  // Tooltip and icon track the *preference*, not the resolved theme,
+  // so the user can tell which of the three states they're in. Order:
+  // light → dark → auto → light.
+  const themeNext =
+    pref === 'light' ? 'dark' : pref === 'dark' ? 'auto (follow system)' : 'light'
+  const themeIcon =
+    pref === 'auto'
+      ? <Monitor className="h-4 w-4" />
+      : theme === 'dark'
+        ? <Sun className="h-4 w-4" />
+        : <Moon className="h-4 w-4" />
   const { data: deadLetters } = useDeadLetters()
   const dlCount = deadLetters?.length ?? 0
   const toggleMobile = useSidebarStore((s) => s.toggleMobile)
@@ -139,9 +155,9 @@ export function Header() {
           </DropdownMenu.Portal>
         </DropdownMenu.Root>
 
-        {/* Theme toggle */}
-        <IconButton label={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'} onClick={toggle}>
-          {theme === 'dark' ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+        {/* Theme toggle — cycles light → dark → auto */}
+        <IconButton label={`Switch to ${themeNext}`} onClick={toggle}>
+          {themeIcon}
         </IconButton>
 
         {/* Logout */}

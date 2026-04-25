@@ -8,15 +8,19 @@ import {
 import type { LucideIcon } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useMediaQuery } from '@/lib/use-media-query'
+import { useDeadLetters } from '@/api/hooks'
 import { useSidebarStore } from './sidebar-store'
 
 interface NavLinkSpec {
   to: string
   label: string
   icon: LucideIcon
+  // Render a count badge to the right of the label. Drawn as a small dot
+  // when collapsed so the icon-only rail still hints at pending work.
+  badge?: number
 }
 
-const links: NavLinkSpec[] = [
+const baseLinks: Omit<NavLinkSpec, 'badge'>[] = [
   { to: '/', label: 'Dashboard', icon: LayoutDashboard },
   { to: '/jobs', label: 'Jobs', icon: Briefcase },
   { to: '/runners', label: 'Runners', icon: Cpu },
@@ -64,11 +68,27 @@ function NavItem({ link, collapsed }: { link: NavLinkSpec; collapsed: boolean })
     <NavLink
       to={link.to}
       end={end}
-      className={className}
-      aria-label={collapsed ? link.label : undefined}
+      className={cn(className, 'relative')}
+      aria-label={collapsed ? `${link.label}${link.badge ? `, ${link.badge} pending` : ''}` : undefined}
     >
       <Icon className="h-4 w-4 shrink-0" />
-      {!collapsed && <span>{link.label}</span>}
+      {!collapsed && <span className="flex-1">{link.label}</span>}
+      {!collapsed && link.badge ? (
+        <span
+          aria-label={`${link.badge} pending`}
+          className="ml-auto inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-destructive px-1 text-[10px] font-bold text-white"
+        >
+          {link.badge > 9 ? '9+' : link.badge}
+        </span>
+      ) : null}
+      {collapsed && link.badge ? (
+        // Tiny dot in the icon-only rail — same `bg-destructive` as the
+        // expanded badge so the visual cue carries across breakpoints.
+        <span
+          aria-hidden="true"
+          className="absolute right-1.5 top-1.5 h-1.5 w-1.5 rounded-full bg-destructive"
+        />
+      ) : null}
     </NavLink>
   )
 
@@ -95,6 +115,14 @@ export function Sidebar() {
   const toggle = useSidebarStore((s) => s.toggle)
   const mobileOpen = useSidebarStore((s) => s.mobileOpen)
   const setMobileOpen = useSidebarStore((s) => s.setMobileOpen)
+  const { data: deadLetters } = useDeadLetters()
+  const dlCount = deadLetters?.length ?? 0
+  // Splice the dead-letter count onto the matching nav entry. Computed
+  // each render — cheap, and avoids stashing the count in a separate
+  // store just for the badge.
+  const links: NavLinkSpec[] = baseLinks.map((l) =>
+    l.to === '/dead-letters' && dlCount > 0 ? { ...l, badge: dlCount } : l
+  )
 
   // Tailwind's `lg` breakpoint is 1024px. Below that the sidebar is
   // forced to icon-only — even on tablet there's not enough room to
