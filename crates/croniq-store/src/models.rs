@@ -67,7 +67,10 @@ fn serialize_public_metadata<S: serde::Serializer>(
     serializer: S,
 ) -> Result<S::Ok, S::Error> {
     use serde::ser::SerializeMap;
-    let public: Vec<_> = metadata.iter().filter(|(k, _)| !k.starts_with("__")).collect();
+    let public: Vec<_> = metadata
+        .iter()
+        .filter(|(k, _)| !k.starts_with("__"))
+        .collect();
     let mut map = serializer.serialize_map(Some(public.len()))?;
     for (k, v) in public {
         map.serialize_entry(k, v)?;

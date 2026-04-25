@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 
 use chrono::{TimeZone, Utc};
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
+use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
 use croniq_store::{
     models::{Execution, ExecutionState, JobState, JobStatus},
     sqlite::SqliteStore,
@@ -200,7 +200,9 @@ fn bench_complete_execution(c: &mut Criterion) {
                     let execs = store.find_queued_executions(&[], 1).unwrap();
                     let id = execs[0].id;
                     // Claim it first
-                    store.claim_execution(id, "bench-runner", Utc::now()).unwrap();
+                    store
+                        .claim_execution(id, "bench-runner", Utc::now())
+                        .unwrap();
                     (store, id)
                 },
                 |(store, id)| {

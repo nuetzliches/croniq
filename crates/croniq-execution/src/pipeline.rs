@@ -11,14 +11,12 @@ use crate::retry::{RetryDecision, RetryPolicy};
 use crate::timeout::TimeoutPolicy;
 
 /// Complete execution policy set for a job.
-#[derive(Debug, Clone)]
-#[derive(Default)]
+#[derive(Debug, Clone, Default)]
 pub struct ExecutionPolicy {
     pub retry: RetryPolicy,
     pub timeout: TimeoutPolicy,
     pub dead_letter: DeadLetterPolicy,
 }
-
 
 /// The outcome of a completed execution.
 #[derive(Debug, Clone, PartialEq)]
@@ -27,10 +25,7 @@ pub enum ExecutionOutcome {
     Success,
 
     /// Job failed, will be retried after the given delay.
-    Retry {
-        next_attempt: u32,
-        delay: Duration,
-    },
+    Retry { next_attempt: u32, delay: Duration },
 
     /// Job failed, all retries exhausted — moved to dead letter queue.
     DeadLetter {
@@ -40,9 +35,7 @@ pub enum ExecutionOutcome {
     },
 
     /// Job failed, dead-lettering disabled — execution is simply dropped.
-    Dropped {
-        reason: String,
-    },
+    Dropped { reason: String },
 
     /// Job was cancelled.
     Cancelled,
@@ -86,10 +79,7 @@ impl ExecutionPolicy {
                 delay,
             },
             RetryDecision::Exhausted => {
-                let reason = format!(
-                    "exhausted after {} attempts: {}",
-                    result.attempt, error
-                );
+                let reason = format!("exhausted after {} attempts: {}", result.attempt, error);
 
                 if self.dead_letter.enabled {
                     ExecutionOutcome::DeadLetter {
@@ -238,7 +228,10 @@ mod tests {
             duration: Duration::from_secs(30),
             attempt: 1,
         };
-        assert!(matches!(policy.evaluate(&result), ExecutionOutcome::Retry { .. }));
+        assert!(matches!(
+            policy.evaluate(&result),
+            ExecutionOutcome::Retry { .. }
+        ));
 
         // Timed out, last attempt → dead letter
         let result = ExecutionResult {

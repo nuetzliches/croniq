@@ -2,7 +2,11 @@
 
 use std::sync::Arc;
 
-use axum::{Json, extract::{Query, State}, http::StatusCode};
+use axum::{
+    Json,
+    extract::{Query, State},
+    http::StatusCode,
+};
 use chrono::Utc;
 use croniq_runner::WorkItem;
 use croniq_store::models::{DeadLetter, DeadLetterFilter, Execution, ExecutionState};
@@ -22,12 +26,17 @@ pub async fn handle_list(
     State(state): State<Arc<ServerState>>,
     Query(q): Query<ListQuery>,
 ) -> Result<Json<Vec<DeadLetter>>, StatusCode> {
-    let store = state.store.as_ref().ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
+    let store = state
+        .store
+        .as_ref()
+        .ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
     let filter = DeadLetterFilter {
         job_key: q.job_key,
         limit: Some(q.limit.unwrap_or(50)),
     };
-    let letters = store.list_dead_letters(&filter).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let letters = store
+        .list_dead_letters(&filter)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(Json(letters))
 }
 
@@ -36,9 +45,13 @@ pub async fn handle_get(
     State(state): State<Arc<ServerState>>,
     axum::extract::Path(id): axum::extract::Path<String>,
 ) -> Result<Json<DeadLetter>, StatusCode> {
-    let store = state.store.as_ref().ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
+    let store = state
+        .store
+        .as_ref()
+        .ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
     let uuid = Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?;
-    store.get_dead_letter(uuid)
+    store
+        .get_dead_letter(uuid)
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .map(Json)
         .ok_or(StatusCode::NOT_FOUND)
@@ -49,8 +62,12 @@ pub async fn handle_delete(
     State(state): State<Arc<ServerState>>,
     axum::extract::Path(id): axum::extract::Path<String>,
 ) -> StatusCode {
-    let Some(store) = state.store.as_ref() else { return StatusCode::SERVICE_UNAVAILABLE };
-    let Ok(uuid) = Uuid::parse_str(&id) else { return StatusCode::BAD_REQUEST };
+    let Some(store) = state.store.as_ref() else {
+        return StatusCode::SERVICE_UNAVAILABLE;
+    };
+    let Ok(uuid) = Uuid::parse_str(&id) else {
+        return StatusCode::BAD_REQUEST;
+    };
     match store.remove_dead_letter(uuid) {
         Ok(_) => StatusCode::NO_CONTENT,
         Err(_) => StatusCode::INTERNAL_SERVER_ERROR,
@@ -68,10 +85,14 @@ pub async fn handle_replay(
     State(state): State<Arc<ServerState>>,
     axum::extract::Path(id): axum::extract::Path<String>,
 ) -> Result<(StatusCode, Json<ReplayResponse>), StatusCode> {
-    let store = state.store.as_ref().ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
+    let store = state
+        .store
+        .as_ref()
+        .ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
     let dl_uuid = Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?;
 
-    let dl = store.get_dead_letter(dl_uuid)
+    let dl = store
+        .get_dead_letter(dl_uuid)
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::NOT_FOUND)?;
 
@@ -97,8 +118,12 @@ pub async fn handle_replay(
         created_at: now,
     };
 
-    store.create_execution(&execution).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    store.remove_dead_letter(dl_uuid).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    store
+        .create_execution(&execution)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    store
+        .remove_dead_letter(dl_uuid)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     // Enqueue work item
     let item = WorkItem {
@@ -106,14 +131,19 @@ pub async fn handle_replay(
         job_key: dl.job_key,
         fire_at: now,
         attempt: next_attempt,
-        require: dl.metadata.get("__require")
+        require: dl
+            .metadata
+            .get("__require")
             .and_then(|v| serde_json::from_str(v).ok())
             .unwrap_or_default(),
-        prefer: dl.metadata.get("__prefer")
+        prefer: dl
+            .metadata
+            .get("__prefer")
             .and_then(|v| serde_json::from_str(v).ok())
             .unwrap_or_default(),
         metadata: serde_json::Value::Object(
-            dl.metadata.iter()
+            dl.metadata
+                .iter()
                 .map(|(k, v)| (k.clone(), serde_json::Value::String(v.clone())))
                 .collect(),
         ),
@@ -126,8 +156,11 @@ pub async fn handle_replay(
     }
     state.runner.work_notify.notify_waiters();
 
-    Ok((StatusCode::OK, Json(ReplayResponse {
-        execution_id: new_id.to_string(),
-        attempt: next_attempt,
-    })))
+    Ok((
+        StatusCode::OK,
+        Json(ReplayResponse {
+            execution_id: new_id.to_string(),
+            attempt: next_attempt,
+        }),
+    ))
 }

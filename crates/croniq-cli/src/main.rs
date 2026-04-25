@@ -20,7 +20,6 @@ struct Cli {
 #[derive(Subcommand)]
 enum Commands {
     // ── Config commands ───────────────────────────────────────────────────────
-
     /// Validate a Croniqfile for errors and warnings
     Validate {
         /// Path to Croniqfile
@@ -67,7 +66,6 @@ enum Commands {
     },
 
     // ── Server commands ───────────────────────────────────────────────────────
-
     /// Show live scheduler status (queue depth, runner counts)
     Status {
         /// Croniq server URL
@@ -106,7 +104,6 @@ enum Commands {
     },
 
     // ── Store commands ────────────────────────────────────────────────────────
-
     /// List dead-lettered executions from the SQLite store
     #[command(name = "dead-letters")]
     DeadLetters {
@@ -198,23 +195,39 @@ fn main() -> Result<()> {
         // Server
         Commands::Status { url } => commands::server::status(&url),
         Commands::ListRunners { url } => commands::server::list_runners(&url),
-        Commands::Trigger { job_key, url, require, prefer, timeout } => {
-            commands::server::trigger(&url, &job_key, require, prefer, &timeout)
-        }
+        Commands::Trigger {
+            job_key,
+            url,
+            require,
+            prefer,
+            timeout,
+        } => commands::server::trigger(&url, &job_key, require, prefer, &timeout),
 
         // Store
-        Commands::DeadLetters { data_dir, job, limit } => {
-            commands::store::dead_letters(&data_dir, job.as_deref(), limit)
-        }
+        Commands::DeadLetters {
+            data_dir,
+            job,
+            limit,
+        } => commands::store::dead_letters(&data_dir, job.as_deref(), limit),
         Commands::DeadLettersInspect { id, data_dir } => {
             commands::store::dead_letters_inspect(&data_dir, &id)
         }
-        Commands::Init { data_dir, username, password, api_key } => {
-            commands::init::init(&data_dir, &username, password.as_deref(), api_key.as_deref())
-        }
-        Commands::Quickstart { data_dir, config, password } => {
-            commands::quickstart::quickstart(&data_dir, &config, password.as_deref())
-        }
+        Commands::Init {
+            data_dir,
+            username,
+            password,
+            api_key,
+        } => commands::init::init(
+            &data_dir,
+            &username,
+            password.as_deref(),
+            api_key.as_deref(),
+        ),
+        Commands::Quickstart {
+            data_dir,
+            config,
+            password,
+        } => commands::quickstart::quickstart(&data_dir, &config, password.as_deref()),
         Commands::Migrate { crontab, output } => {
             commands::migrate::migrate(&crontab, output.as_deref())
         }

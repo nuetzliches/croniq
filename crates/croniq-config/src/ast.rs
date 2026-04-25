@@ -158,7 +158,10 @@ pub enum ScheduleKind {
     Weekdays { days: Vec<Weekday>, time: TimeValue },
 
     /// `every 1st [15th ...] of month at HH:MM`
-    Monthly { ordinals: Vec<MonthOrdinal>, time: TimeValue },
+    Monthly {
+        ordinals: Vec<MonthOrdinal>,
+        time: TimeValue,
+    },
 
     /// `once at <datetime>`
     Once { at: StringValue },

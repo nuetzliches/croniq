@@ -1,9 +1,9 @@
 //! Benchmarks for the WorkQueue: enqueue, dequeue, capability matching, removal.
 
 use chrono::Utc;
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
-use croniq_runner::queue::WorkQueue;
+use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
 use croniq_runner::WorkItem;
+use croniq_runner::queue::WorkQueue;
 
 fn make_item(id: usize, require: Vec<&str>) -> WorkItem {
     WorkItem {
@@ -33,7 +33,12 @@ fn bench_enqueue(c: &mut Criterion) {
     for n in [100, 1000, 10_000] {
         group.bench_with_input(BenchmarkId::from_parameter(n), &n, |b, &n| {
             b.iter_batched(
-                || (WorkQueue::new(), (0..n).map(|i| make_item(i, vec![])).collect::<Vec<_>>()),
+                || {
+                    (
+                        WorkQueue::new(),
+                        (0..n).map(|i| make_item(i, vec![])).collect::<Vec<_>>(),
+                    )
+                },
                 |(mut q, items)| {
                     for item in items {
                         q.enqueue(item);

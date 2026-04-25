@@ -77,14 +77,15 @@ fn format_job(out: &mut String, job: &JobBlock, indent: usize) {
     // Description first if present
     for dob in &job.directives {
         if let DirectiveOrBlock::Directive(d) = dob
-            && d.key.value == "description" {
-                write_indent(out, indent + 1);
-                out.push_str("description ");
-                out.push_str(&format_string_value(&d.args[0]));
-                out.push('\n');
-                out.push('\n');
-                break;
-            }
+            && d.key.value == "description"
+        {
+            write_indent(out, indent + 1);
+            out.push_str("description ");
+            out.push_str(&format_string_value(&d.args[0]));
+            out.push('\n');
+            out.push('\n');
+            break;
+        }
     }
 
     // Schedule
@@ -269,7 +270,10 @@ fn format_string_value(val: &StringValue) -> String {
     if val.is_placeholder {
         format!("{{{}}}", val.value)
     } else if val.quoted {
-        format!("\"{}\"", val.value.replace('\\', "\\\\").replace('"', "\\\""))
+        format!(
+            "\"{}\"",
+            val.value.replace('\\', "\\\\").replace('"', "\\\"")
+        )
     } else {
         val.value.clone()
     }

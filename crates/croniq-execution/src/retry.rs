@@ -14,14 +14,9 @@ pub struct RetryPolicy {
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum RetryStrategy {
     /// Exponential backoff: delay = base * 2^(attempt-1), capped at `cap`.
-    Exponential {
-        base: Duration,
-        cap: Duration,
-    },
+    Exponential { base: Duration, cap: Duration },
     /// Fixed delay between retries.
-    Fixed {
-        delay: Duration,
-    },
+    Fixed { delay: Duration },
     /// Linear backoff: delay = base + step * (attempt-1), capped at `cap`.
     Linear {
         base: Duration,
@@ -184,12 +179,8 @@ mod tests {
 
     #[test]
     fn exponential_evaluate() {
-        let policy = RetryPolicy::exponential(
-            3,
-            Duration::from_secs(2),
-            Duration::from_secs(30),
-            0.0,
-        );
+        let policy =
+            RetryPolicy::exponential(3, Duration::from_secs(2), Duration::from_secs(30), 0.0);
 
         assert_eq!(
             policy.evaluate(1),
@@ -248,12 +239,8 @@ mod tests {
 
     #[test]
     fn jitter_stays_in_range() {
-        let policy = RetryPolicy::exponential(
-            5,
-            Duration::from_secs(10),
-            Duration::from_secs(60),
-            0.5,
-        );
+        let policy =
+            RetryPolicy::exponential(5, Duration::from_secs(10), Duration::from_secs(60), 0.5);
 
         // Run many times to check jitter range
         for _ in 0..100 {

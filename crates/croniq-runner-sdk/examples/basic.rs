@@ -17,20 +17,22 @@ async fn main() {
         .build();
 
     // Register with schedule — the server creates the job + trigger automatically
-    runner.register_with_schedule(
-        "billing:invoice",
-        "5m", // every 5 minutes
-        |ctx: ExecutionContext| async move {
-            tracing::info!(
-                execution_id = %ctx.execution_id,
-                attempt = ctx.attempt,
-                "processing invoice"
-            );
-            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-            tracing::info!("invoice processed successfully");
-            Ok(())
-        },
-    ).await;
+    runner
+        .register_with_schedule(
+            "billing:invoice",
+            "5m", // every 5 minutes
+            |ctx: ExecutionContext| async move {
+                tracing::info!(
+                    execution_id = %ctx.execution_id,
+                    attempt = ctx.attempt,
+                    "processing invoice"
+                );
+                tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                tracing::info!("invoice processed successfully");
+                Ok(())
+            },
+        )
+        .await;
 
     tracing::info!("runner starting — press Ctrl+C to stop");
 

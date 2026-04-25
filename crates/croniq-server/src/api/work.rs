@@ -34,7 +34,10 @@ pub async fn handle_renew(
         runner.last_poll_at = Utc::now();
         (StatusCode::OK, Json(RenewResponse { renewed: true }))
     } else {
-        (StatusCode::NOT_FOUND, Json(RenewResponse { renewed: false }))
+        (
+            StatusCode::NOT_FOUND,
+            Json(RenewResponse { renewed: false }),
+        )
     }
 }
 
@@ -59,7 +62,10 @@ pub async fn handle_events(
     axum::extract::Path(execution_id): axum::extract::Path<String>,
     Json(events): Json<Vec<WorkEvent>>,
 ) -> Result<(StatusCode, Json<EventsResponse>), StatusCode> {
-    let store = state.store.as_ref().ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
+    let store = state
+        .store
+        .as_ref()
+        .ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
     let exec_uuid = Uuid::parse_str(&execution_id).map_err(|_| StatusCode::BAD_REQUEST)?;
 
     let mut accepted = 0;

@@ -127,8 +127,6 @@ pub fn convert_cron(expr: &str) -> Result<()> {
             }
             Ok(())
         }
-        Err(msg) => {
-            Err(miette::miette!("{msg}"))
-        }
+        Err(msg) => Err(miette::miette!("{msg}")),
     }
 }

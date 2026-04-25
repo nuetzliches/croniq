@@ -15,9 +15,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use super::ServerState;
-use crate::loader::{
-    job_config_from_definition, synth_job_def_from_dsl, trigger_from_definition,
-};
+use crate::loader::{job_config_from_definition, synth_job_def_from_dsl, trigger_from_definition};
 use crate::scheduler::SchedulerCommand;
 
 #[derive(Deserialize)]
@@ -35,7 +33,9 @@ pub struct CreateJobRequest {
 /// Check whether `job_key` is DSL-managed. Returns `true` if the Croniqfile
 /// owns it; mutations must be refused.
 async fn is_dsl_managed(state: &ServerState, job_key: &str) -> bool {
-    let Some(dsl) = state.dsl_jobs.as_ref() else { return false };
+    let Some(dsl) = state.dsl_jobs.as_ref() else {
+        return false;
+    };
     dsl.read().await.iter().any(|j| j.key == job_key)
 }
 
@@ -43,8 +43,13 @@ async fn is_dsl_managed(state: &ServerState, job_key: &str) -> bool {
 pub async fn handle_list(
     State(state): State<Arc<ServerState>>,
 ) -> Result<Json<Vec<JobDefinition>>, StatusCode> {
-    let store = state.store.as_ref().ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
-    let mut jobs = store.list_job_definitions().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let store = state
+        .store
+        .as_ref()
+        .ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
+    let mut jobs = store
+        .list_job_definitions()
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     if let Some(dsl) = state.dsl_jobs.as_ref() {
         let guard = dsl.read().await;
@@ -65,8 +70,12 @@ pub async fn handle_get(
     State(state): State<Arc<ServerState>>,
     axum::extract::Path(job_key): axum::extract::Path<String>,
 ) -> Result<Json<JobDefinition>, StatusCode> {
-    let store = state.store.as_ref().ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
-    if let Some(job) = store.get_job_definition(&job_key)
+    let store = state
+        .store
+        .as_ref()
+        .ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
+    if let Some(job) = store
+        .get_job_definition(&job_key)
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
     {
         return Ok(Json(job));
@@ -87,7 +96,10 @@ pub async fn handle_create(
     State(state): State<Arc<ServerState>>,
     Json(req): Json<CreateJobRequest>,
 ) -> Result<(StatusCode, Json<JobDefinition>), StatusCode> {
-    let store = state.store.as_ref().ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
+    let store = state
+        .store
+        .as_ref()
+        .ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
 
     if is_dsl_managed(&state, &req.job_key).await {
         return Err(StatusCode::CONFLICT);
@@ -106,7 +118,9 @@ pub async fn handle_create(
         max_retries: req.max_retries,
         dead_letter_enabled: req.dead_letter_enabled,
     };
-    store.create_job_definition(&job).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    store
+        .create_job_definition(&job)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok((StatusCode::CREATED, Json(job)))
 }
 
@@ -115,7 +129,9 @@ pub async fn handle_delete(
     State(state): State<Arc<ServerState>>,
     axum::extract::Path(job_key): axum::extract::Path<String>,
 ) -> StatusCode {
-    let Some(store) = state.store.as_ref() else { return StatusCode::SERVICE_UNAVAILABLE };
+    let Some(store) = state.store.as_ref() else {
+        return StatusCode::SERVICE_UNAVAILABLE;
+    };
 
     if is_dsl_managed(&state, &job_key).await {
         return StatusCode::CONFLICT;
@@ -132,18 +148,24 @@ pub async fn handle_activate(
     State(state): State<Arc<ServerState>>,
     axum::extract::Path(job_key): axum::extract::Path<String>,
 ) -> Result<Json<JobDefinition>, StatusCode> {
-    let store = state.store.as_ref().ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
+    let store = state
+        .store
+        .as_ref()
+        .ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
 
     if is_dsl_managed(&state, &job_key).await {
         return Err(StatusCode::CONFLICT);
     }
 
-    let mut job = store.get_job_definition(&job_key)
+    let mut job = store
+        .get_job_definition(&job_key)
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::NOT_FOUND)?;
     job.is_active = true;
     job.updated_at = Utc::now();
-    store.create_job_definition(&job).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    store
+        .create_job_definition(&job)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(Json(job))
 }
 
@@ -152,18 +174,24 @@ pub async fn handle_deactivate(
     State(state): State<Arc<ServerState>>,
     axum::extract::Path(job_key): axum::extract::Path<String>,
 ) -> Result<Json<JobDefinition>, StatusCode> {
-    let store = state.store.as_ref().ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
+    let store = state
+        .store
+        .as_ref()
+        .ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
 
     if is_dsl_managed(&state, &job_key).await {
         return Err(StatusCode::CONFLICT);
     }
 
-    let mut job = store.get_job_definition(&job_key)
+    let mut job = store
+        .get_job_definition(&job_key)
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::NOT_FOUND)?;
     job.is_active = false;
     job.updated_at = Utc::now();
-    store.create_job_definition(&job).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    store
+        .create_job_definition(&job)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(Json(job))
 }
 
@@ -201,20 +229,27 @@ pub async fn handle_register(
     State(state): State<Arc<ServerState>>,
     Json(req): Json<RegisterJobRequest>,
 ) -> Result<(StatusCode, Json<RegisterJobResponse>), StatusCode> {
-    let store = state.store.as_ref().ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
+    let store = state
+        .store
+        .as_ref()
+        .ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
     let now = Utc::now();
 
     // DSL precedence — check the in-memory Croniqfile map, not the store,
     // since DSL entries are not persisted.
     if is_dsl_managed(&state, &req.job_key).await {
-        return Ok((StatusCode::OK, Json(RegisterJobResponse {
-            job_key: req.job_key.clone(),
-            trigger_id: crate::loader::dsl_trigger_id(&req.job_key),
-            status: "skipped_dsl_precedence".into(),
-        })));
+        return Ok((
+            StatusCode::OK,
+            Json(RegisterJobResponse {
+                job_key: req.job_key.clone(),
+                trigger_id: crate::loader::dsl_trigger_id(&req.job_key),
+                status: "skipped_dsl_precedence".into(),
+            }),
+        ));
     }
 
-    let existing_triggers = store.list_triggers(Some(&req.job_key))
+    let existing_triggers = store
+        .list_triggers(Some(&req.job_key))
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     // Create or update job definition
@@ -230,10 +265,13 @@ pub async fn handle_register(
         max_retries: req.max_retries,
         dead_letter_enabled: req.dead_letter_enabled,
     };
-    store.create_job_definition(&job_def).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    store
+        .create_job_definition(&job_def)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     // Create or update trigger definition
-    let trigger_id = existing_triggers.first()
+    let trigger_id = existing_triggers
+        .first()
         .map(|t| t.trigger_id.clone())
         .unwrap_or_else(|| Uuid::new_v4().to_string());
 
@@ -251,13 +289,18 @@ pub async fn handle_register(
         created_at: now,
         updated_at: now,
     };
-    store.create_trigger(&trigger_def).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    store
+        .create_trigger(&trigger_def)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     // Push to live scheduler
     let status = if let Some(ref tx) = state.scheduler_tx {
         if let Some(trigger) = trigger_from_definition(&trigger_def, now) {
             let job_config = job_config_from_definition(&trigger_def, Some(&job_def));
-            let _ = tx.send(SchedulerCommand::AddJob { job: Box::new(job_config), trigger: Box::new(trigger) });
+            let _ = tx.send(SchedulerCommand::AddJob {
+                job: Box::new(job_config),
+                trigger: Box::new(trigger),
+            });
             "registered"
         } else {
             "registered_no_schedule"
@@ -266,12 +309,19 @@ pub async fn handle_register(
         "registered_no_scheduler"
     };
 
-    let code = if existing_triggers.is_empty() { StatusCode::CREATED } else { StatusCode::OK };
-    Ok((code, Json(RegisterJobResponse {
-        job_key: req.job_key,
-        trigger_id,
-        status: status.into(),
-    })))
+    let code = if existing_triggers.is_empty() {
+        StatusCode::CREATED
+    } else {
+        StatusCode::OK
+    };
+    Ok((
+        code,
+        Json(RegisterJobResponse {
+            job_key: req.job_key,
+            trigger_id,
+            status: status.into(),
+        }),
+    ))
 }
 
 #[cfg(test)]
@@ -285,7 +335,7 @@ mod tests {
     use croniq_runner::AppState;
     use croniq_store::sqlite::SqliteStore;
     use http_body_util::BodyExt;
-    use tokio::sync::{mpsc, RwLock};
+    use tokio::sync::{RwLock, mpsc};
     use tower::util::ServiceExt;
 
     fn make_store() -> DynStore {
@@ -314,7 +364,13 @@ mod tests {
 
     async fn body_json(app: axum::Router, method: &str, uri: &str) -> (u16, serde_json::Value) {
         let resp = app
-            .oneshot(Request::builder().method(method).uri(uri).body(Body::empty()).unwrap())
+            .oneshot(
+                Request::builder()
+                    .method(method)
+                    .uri(uri)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
             .await
             .unwrap();
         let status = resp.status().as_u16();
@@ -324,11 +380,17 @@ mod tests {
     }
 
     async fn status_of(app: axum::Router, method: &str, uri: &str) -> u16 {
-        app.oneshot(Request::builder().method(method).uri(uri).body(Body::empty()).unwrap())
-            .await
-            .unwrap()
-            .status()
-            .as_u16()
+        app.oneshot(
+            Request::builder()
+                .method(method)
+                .uri(uri)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap()
+        .status()
+        .as_u16()
     }
 
     #[tokio::test]

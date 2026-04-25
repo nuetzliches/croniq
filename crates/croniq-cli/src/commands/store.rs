@@ -2,22 +2,14 @@
 
 use std::path::Path;
 
-use croniq_store::{
-    models::DeadLetterFilter,
-    sqlite::SqliteStore,
-    traits::DeadLetterStore,
-};
-use uuid::Uuid;
+use croniq_store::{models::DeadLetterFilter, sqlite::SqliteStore, traits::DeadLetterStore};
 use miette::{IntoDiagnostic, Result, miette};
+use uuid::Uuid;
 
 // ─── dead-letters ─────────────────────────────────────────────────────────────
 
 /// `croniq dead-letters` — list dead-lettered executions from the store.
-pub fn dead_letters(
-    data_dir: &Path,
-    job_key: Option<&str>,
-    limit: u32,
-) -> Result<()> {
+pub fn dead_letters(data_dir: &Path, job_key: Option<&str>, limit: u32) -> Result<()> {
     let db_path = data_dir.join("croniq.db");
     let store = SqliteStore::open(&db_path)
         .map_err(|e| miette!("Could not open store at {}: {e}", db_path.display()))?;
@@ -76,8 +68,7 @@ pub fn dead_letters_inspect(data_dir: &Path, id: &str) -> Result<()> {
     let store = SqliteStore::open(&db_path)
         .map_err(|e| miette!("Could not open store at {}: {e}", db_path.display()))?;
 
-    let uuid = Uuid::parse_str(id)
-        .map_err(|e| miette!("Invalid UUID '{id}': {e}"))?;
+    let uuid = Uuid::parse_str(id).map_err(|e| miette!("Invalid UUID '{id}': {e}"))?;
 
     let dl = store
         .get_dead_letter(uuid)

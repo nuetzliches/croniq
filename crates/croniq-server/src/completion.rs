@@ -66,13 +66,13 @@ pub struct CompletionProcessor {
 }
 
 impl CompletionProcessor {
-    pub fn new(
-        jobs: Vec<JobConfig>,
-        store: DynStore,
-        runner: Arc<AppState>,
-    ) -> Self {
+    pub fn new(jobs: Vec<JobConfig>, store: DynStore, runner: Arc<AppState>) -> Self {
         let jobs = jobs.into_iter().map(|j| (j.key.clone(), j)).collect();
-        Self { jobs, store, runner }
+        Self {
+            jobs,
+            store,
+            runner,
+        }
     }
 
     /// Resolve the `JobConfig` for a job key.
@@ -172,7 +172,10 @@ impl CompletionProcessor {
                 ProcessedOutcome::Completed
             }
 
-            ExecutionOutcome::Retry { next_attempt, delay } => {
+            ExecutionOutcome::Retry {
+                next_attempt,
+                delay,
+            } => {
                 // Mark this attempt as failed
                 let _ = self.store.complete_execution(
                     exec_uuid,
@@ -184,8 +187,8 @@ impl CompletionProcessor {
                 );
 
                 // Create a new execution for the retry
-                let retry_fire_at = now
-                    + chrono::Duration::from_std(delay).unwrap_or(chrono::Duration::seconds(0));
+                let retry_fire_at =
+                    now + chrono::Duration::from_std(delay).unwrap_or(chrono::Duration::seconds(0));
                 let retry_id = Uuid::new_v4();
 
                 let retry_execution = Execution {
@@ -229,10 +232,16 @@ impl CompletionProcessor {
                     attempt = next_attempt,
                     "execution will retry"
                 );
-                ProcessedOutcome::Retrying { attempt: next_attempt }
+                ProcessedOutcome::Retrying {
+                    attempt: next_attempt,
+                }
             }
 
-            ExecutionOutcome::DeadLetter { reason, operator_hint, expires_after } => {
+            ExecutionOutcome::DeadLetter {
+                reason,
+                operator_hint,
+                expires_after,
+            } => {
                 let _ = self.store.complete_execution(
                     exec_uuid,
                     ExecutionState::Dead,
@@ -267,8 +276,11 @@ impl CompletionProcessor {
 
                 tracing::warn!(id = %exec_uuid, reason = %reason, "execution dead-lettered");
                 crate::notify::notify_failure(
-                    &execution.job_key, &event.execution_id,
-                    event.error.as_deref().unwrap_or("unknown"), event.attempt, &reason,
+                    &execution.job_key,
+                    &event.execution_id,
+                    event.error.as_deref().unwrap_or("unknown"),
+                    event.attempt,
+                    &reason,
                 );
                 ProcessedOutcome::DeadLettered { reason }
             }
@@ -284,8 +296,11 @@ impl CompletionProcessor {
                 );
                 tracing::warn!(id = %exec_uuid, "execution dropped (dead-letter disabled)");
                 crate::notify::notify_failure(
-                    &execution.job_key, &event.execution_id,
-                    event.error.as_deref().unwrap_or("unknown"), event.attempt, &reason,
+                    &execution.job_key,
+                    &event.execution_id,
+                    event.error.as_deref().unwrap_or("unknown"),
+                    event.attempt,
+                    &reason,
                 );
                 ProcessedOutcome::Dropped { reason }
             }
@@ -450,11 +465,8 @@ mod tests {
         let runner = make_runner();
         let exec_id = seed_execution(&store, "test:job");
 
-        let processor = CompletionProcessor::new(
-            vec![make_job("test:job", 1)],
-            Arc::clone(&store),
-            runner,
-        );
+        let processor =
+            CompletionProcessor::new(vec![make_job("test:job", 1)], Arc::clone(&store), runner);
 
         let outcome = processor
             .process(event(exec_id, CompletionStatus::Failure, 1))
@@ -587,11 +599,8 @@ mod tests {
         let runner = make_runner();
         let exec_id = seed_execution(&store, "test:job");
 
-        let processor = CompletionProcessor::new(
-            vec![make_job("test:job", 3)],
-            Arc::clone(&store),
-            runner,
-        );
+        let processor =
+            CompletionProcessor::new(vec![make_job("test:job", 3)], Arc::clone(&store), runner);
 
         let mut ev = event(exec_id, CompletionStatus::Cancelled, 1);
         ev.error = None;

@@ -177,7 +177,6 @@ impl<'src> Lexer<'src> {
         Some(b)
     }
 
-
     fn skip_spaces(&mut self) {
         while let Some(b) = self.peek() {
             if b == b' ' || b == b'\t' || b == b'\r' {
@@ -202,7 +201,11 @@ impl<'src> Lexer<'src> {
         if b == b'\n' {
             self.pos += 1;
             // Consume consecutive newlines as one
-            while self.peek() == Some(b'\n') || self.peek() == Some(b'\r') || self.peek() == Some(b' ') || self.peek() == Some(b'\t') {
+            while self.peek() == Some(b'\n')
+                || self.peek() == Some(b'\r')
+                || self.peek() == Some(b' ')
+                || self.peek() == Some(b'\t')
+            {
                 self.pos += 1;
             }
             return Ok(Token::new(TokenKind::Newline, Span::new(start, 1)));
@@ -463,10 +466,7 @@ mod tests {
         let kinds = tok_kinds("{$PORT:8080}");
         assert_eq!(
             kinds,
-            vec![
-                TokenKind::Placeholder("$PORT:8080".into()),
-                TokenKind::Eof,
-            ]
+            vec![TokenKind::Placeholder("$PORT:8080".into()), TokenKind::Eof,]
         );
     }
 
@@ -518,7 +518,10 @@ mod tests {
     #[test]
     fn string_escapes() {
         let tokens = Lexer::tokenize(r#""hello\nworld""#).unwrap();
-        assert_eq!(tokens[0].kind, TokenKind::QuotedString("hello\nworld".into()));
+        assert_eq!(
+            tokens[0].kind,
+            TokenKind::QuotedString("hello\nworld".into())
+        );
     }
 
     #[test]

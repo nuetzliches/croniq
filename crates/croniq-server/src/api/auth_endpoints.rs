@@ -2,16 +2,12 @@
 
 use std::sync::Arc;
 
-use axum::{
-    Json,
-    extract::State,
-    http::StatusCode,
-};
+use axum::{Json, extract::State, http::StatusCode};
 use chrono::Utc;
+use croniq_auth::CallerType;
 use croniq_auth::api_key::{generate_api_key, hash_api_key};
 use croniq_auth::jwt::issue_token_pair;
 use croniq_auth::password::verify_password;
-use croniq_auth::{CallerType};
 use croniq_store::models::{ApiClient, ApiKey, RefreshToken};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -73,8 +69,14 @@ pub async fn handle_login(
     State(state): State<Arc<ServerState>>,
     Json(req): Json<LoginRequest>,
 ) -> Result<Json<TokenResponse>, StatusCode> {
-    let store = state.store.as_ref().ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
-    let jwt_config = state.jwt_config.as_ref().ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
+    let store = state
+        .store
+        .as_ref()
+        .ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
+    let jwt_config = state
+        .jwt_config
+        .as_ref()
+        .ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
 
     let cred = store
         .get_credentials(&req.username)
@@ -83,9 +85,10 @@ pub async fn handle_login(
 
     // Check lockout
     if let Some(locked_until) = cred.locked_until
-        && Utc::now() < locked_until {
-            return Err(StatusCode::FORBIDDEN);
-        }
+        && Utc::now() < locked_until
+    {
+        return Err(StatusCode::FORBIDDEN);
+    }
 
     // Verify password
     let valid = verify_password(&req.password, &cred.password_hash)
@@ -144,8 +147,14 @@ pub async fn handle_refresh(
     State(state): State<Arc<ServerState>>,
     Json(req): Json<RefreshRequest>,
 ) -> Result<Json<TokenResponse>, StatusCode> {
-    let store = state.store.as_ref().ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
-    let jwt_config = state.jwt_config.as_ref().ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
+    let store = state
+        .store
+        .as_ref()
+        .ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
+    let jwt_config = state
+        .jwt_config
+        .as_ref()
+        .ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
 
     let token_hash = hash_api_key(&req.refresh_token);
     let token = store
@@ -161,19 +170,30 @@ pub async fn handle_refresh(
     let _ = store.revoke_refresh_token(&token_hash, Utc::now());
 
     // Issue new pair
-    let caller_type = if token.user_id.is_some() { CallerType::User } else { CallerType::ApiKey };
+    let caller_type = if token.user_id.is_some() {
+        CallerType::User
+    } else {
+        CallerType::ApiKey
+    };
     let scopes = if token.user_id.is_some() {
         vec!["admin".to_string()]
     } else {
-        store.get_client(&token.client_id)
+        store
+            .get_client(&token.client_id)
             .ok()
             .flatten()
             .map(|c| c.scopes)
             .unwrap_or_default()
     };
 
-    let pair = issue_token_pair(jwt_config, &token.client_id, &token.client_id, caller_type, &scopes)
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let pair = issue_token_pair(
+        jwt_config,
+        &token.client_id,
+        &token.client_id,
+        caller_type,
+        &scopes,
+    )
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     let new_hash = hash_api_key(&pair.refresh_token);
     let _ = store.create_refresh_token(&RefreshToken {
@@ -210,8 +230,13 @@ pub async fn handle_logout(
 pub async fn handle_list_clients(
     State(state): State<Arc<ServerState>>,
 ) -> Result<Json<Vec<ApiClient>>, StatusCode> {
-    let store = state.store.as_ref().ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
-    let clients = store.list_clients().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let store = state
+        .store
+        .as_ref()
+        .ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
+    let clients = store
+        .list_clients()
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(Json(clients))
 }
 
@@ -223,7 +248,10 @@ pub async fn handle_create_client(
     if req.name.trim().is_empty() || req.scopes.is_empty() {
         return Err(StatusCode::BAD_REQUEST);
     }
-    let store = state.store.as_ref().ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
+    let store = state
+        .store
+        .as_ref()
+        .ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
     let client_id = Uuid::new_v4().to_string();
     let client = ApiClient {
         client_id: client_id.clone(),
@@ -232,12 +260,17 @@ pub async fn handle_create_client(
         is_active: true,
         created_at: Utc::now(),
     };
-    store.create_client(&client).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    Ok((StatusCode::CREATED, Json(CreateClientResponse {
-        client_id,
-        name: req.name,
-        scopes: req.scopes,
-    })))
+    store
+        .create_client(&client)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok((
+        StatusCode::CREATED,
+        Json(CreateClientResponse {
+            client_id,
+            name: req.name,
+            scopes: req.scopes,
+        }),
+    ))
 }
 
 /// `DELETE /v1/api-clients/{id}`
@@ -257,15 +290,28 @@ pub async fn handle_issue_client_token(
     State(state): State<Arc<ServerState>>,
     axum::extract::Path(client_id): axum::extract::Path<String>,
 ) -> Result<Json<TokenResponse>, StatusCode> {
-    let store = state.store.as_ref().ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
-    let jwt_config = state.jwt_config.as_ref().ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
+    let store = state
+        .store
+        .as_ref()
+        .ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
+    let jwt_config = state
+        .jwt_config
+        .as_ref()
+        .ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
 
-    let client = store.get_client(&client_id)
+    let client = store
+        .get_client(&client_id)
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::NOT_FOUND)?;
 
-    let pair = issue_token_pair(jwt_config, &client.client_id, &client.client_id, CallerType::ApiKey, &client.scopes)
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let pair = issue_token_pair(
+        jwt_config,
+        &client.client_id,
+        &client.client_id,
+        CallerType::ApiKey,
+        &client.scopes,
+    )
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     Ok(Json(TokenResponse {
         access_token: pair.access_token,
@@ -280,32 +326,41 @@ pub async fn handle_create_api_key(
     State(state): State<Arc<ServerState>>,
     Json(req): Json<CreateApiKeyClientRequest>,
 ) -> Result<(StatusCode, Json<CreateApiKeyResponse>), StatusCode> {
-    let store = state.store.as_ref().ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
+    let store = state
+        .store
+        .as_ref()
+        .ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
 
     // Verify client exists
-    store.get_client(&req.client_id)
+    store
+        .get_client(&req.client_id)
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::NOT_FOUND)?;
 
     let (raw_key, key_hash, prefix) = generate_api_key();
     let key_id = Uuid::new_v4().to_string();
 
-    store.create_api_key(&ApiKey {
-        key_id: key_id.clone(),
-        client_id: req.client_id.clone(),
-        key_hash,
-        key_prefix: prefix.clone(),
-        expires_at: None,
-        revoked_at: None,
-        created_at: Utc::now(),
-    }).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    store
+        .create_api_key(&ApiKey {
+            key_id: key_id.clone(),
+            client_id: req.client_id.clone(),
+            key_hash,
+            key_prefix: prefix.clone(),
+            expires_at: None,
+            revoked_at: None,
+            created_at: Utc::now(),
+        })
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-    Ok((StatusCode::CREATED, Json(CreateApiKeyResponse {
-        raw_key,
-        key_id,
-        key_prefix: prefix,
-        client_id: req.client_id,
-    })))
+    Ok((
+        StatusCode::CREATED,
+        Json(CreateApiKeyResponse {
+            raw_key,
+            key_id,
+            key_prefix: prefix,
+            client_id: req.client_id,
+        }),
+    ))
 }
 
 #[derive(Deserialize)]

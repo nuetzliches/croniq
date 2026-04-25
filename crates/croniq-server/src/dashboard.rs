@@ -6,7 +6,6 @@ use chrono::{DateTime, Duration, Utc};
 use croniq_scheduler::trigger::Trigger;
 use serde::{Deserialize, Serialize};
 
-
 #[derive(Deserialize)]
 pub struct ForecastQuery {
     /// Forecast window in minutes (max 240). Default: 60.
@@ -17,8 +16,12 @@ pub struct ForecastQuery {
     pub bucket_minutes: u32,
 }
 
-fn default_window() -> u32 { 60 }
-fn default_bucket() -> u32 { 5 }
+fn default_window() -> u32 {
+    60
+}
+fn default_bucket() -> u32 {
+    5
+}
 
 #[derive(Serialize)]
 pub struct ForecastResponse {
@@ -54,7 +57,12 @@ pub fn compute_forecast(
         .map(|i| {
             let start = now + Duration::minutes(i as i64 * bucket_size);
             let end = start + Duration::minutes(bucket_size);
-            ForecastBucket { start, end, count: 0, jobs: Vec::new() }
+            ForecastBucket {
+                start,
+                end,
+                count: 0,
+                jobs: Vec::new(),
+            }
         })
         .collect();
 
@@ -85,15 +93,19 @@ pub fn compute_forecast(
         }
     }
 
-    ForecastResponse { window_minutes, bucket_minutes: bucket_size as u32, buckets }
+    ForecastResponse {
+        window_minutes,
+        bucket_minutes: bucket_size as u32,
+        buckets,
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use croniq_scheduler::misfire::MisfirePolicy;
     use croniq_scheduler::schedule::Schedule;
     use croniq_scheduler::trigger::Trigger;
-    use croniq_scheduler::misfire::MisfirePolicy;
 
     #[test]
     fn empty_triggers_empty_buckets() {

@@ -7,7 +7,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use chrono::{Duration as ChronoDuration, Utc};
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
+use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
 use croniq_config::compile::{
     CatchUpPolicy, DeadLetterConfig, ExecutionMode, JobConfig, RetryConfig, RunnerConfig,
 };
@@ -15,7 +15,7 @@ use croniq_runner::AppState;
 use croniq_scheduler::{misfire::MisfirePolicy, schedule::Schedule, trigger::Trigger};
 use croniq_server::{
     SchedulerLoop,
-    store::{sqlite_store, DynStore},
+    store::{DynStore, sqlite_store},
 };
 use croniq_store::sqlite::SqliteStore;
 
@@ -106,12 +106,7 @@ fn build_setup(n: usize, mode: ExecutionMode, all_due: bool) -> BenchSetup {
 }
 
 fn build_scheduler(setup: BenchSetup) -> SchedulerLoop {
-    let mut scheduler = SchedulerLoop::new(
-        setup.triggers,
-        setup.jobs,
-        setup.store,
-        setup.runner,
-    );
+    let mut scheduler = SchedulerLoop::new(setup.triggers, setup.jobs, setup.store, setup.runner);
     // Disable quota limits for benchmarking
     scheduler.set_quota_defaults(100_000, 100_000);
     scheduler
@@ -127,9 +122,7 @@ fn bench_tick_none_due(c: &mut Criterion) {
         group.bench_with_input(BenchmarkId::from_parameter(n), &n, |b, &n| {
             b.iter_batched(
                 || build_scheduler(build_setup(n, ExecutionMode::Queued, false)),
-                |mut scheduler| {
-                    rt.block_on(async { black_box(scheduler.tick(Utc::now()).await) })
-                },
+                |mut scheduler| rt.block_on(async { black_box(scheduler.tick(Utc::now()).await) }),
                 criterion::BatchSize::SmallInput,
             )
         });
@@ -145,9 +138,7 @@ fn bench_tick_all_due_queued(c: &mut Criterion) {
         group.bench_with_input(BenchmarkId::from_parameter(n), &n, |b, &n| {
             b.iter_batched(
                 || build_scheduler(build_setup(n, ExecutionMode::Queued, true)),
-                |mut scheduler| {
-                    rt.block_on(async { black_box(scheduler.tick(Utc::now()).await) })
-                },
+                |mut scheduler| rt.block_on(async { black_box(scheduler.tick(Utc::now()).await) }),
                 criterion::BatchSize::SmallInput,
             )
         });
@@ -163,9 +154,7 @@ fn bench_tick_all_due_ephemeral(c: &mut Criterion) {
         group.bench_with_input(BenchmarkId::from_parameter(n), &n, |b, &n| {
             b.iter_batched(
                 || build_scheduler(build_setup(n, ExecutionMode::Ephemeral, true)),
-                |mut scheduler| {
-                    rt.block_on(async { black_box(scheduler.tick(Utc::now()).await) })
-                },
+                |mut scheduler| rt.block_on(async { black_box(scheduler.tick(Utc::now()).await) }),
                 criterion::BatchSize::SmallInput,
             )
         });
@@ -201,9 +190,7 @@ fn bench_tick_10pct_due(c: &mut Criterion) {
                     };
                     build_scheduler(setup)
                 },
-                |mut scheduler| {
-                    rt.block_on(async { black_box(scheduler.tick(Utc::now()).await) })
-                },
+                |mut scheduler| rt.block_on(async { black_box(scheduler.tick(Utc::now()).await) }),
                 criterion::BatchSize::SmallInput,
             )
         });

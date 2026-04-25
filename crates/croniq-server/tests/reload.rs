@@ -17,8 +17,8 @@ use std::time::Duration;
 
 use axum::{body::Body, http::Request};
 use chrono::Utc;
-use croniq_auth::jwt::{JwtConfig, issue_token_pair};
 use croniq_auth::CallerType;
+use croniq_auth::jwt::{JwtConfig, issue_token_pair};
 use croniq_runner::AppState;
 use croniq_scheduler::trigger::Trigger;
 use croniq_server::{
@@ -62,9 +62,7 @@ impl Harness {
 
         let (completion_tx, mut completion_rx) = mpsc::unbounded_channel();
         // Drain completion events silently so tests don't block.
-        tokio::spawn(async move {
-            while completion_rx.recv().await.is_some() {}
-        });
+        tokio::spawn(async move { while completion_rx.recv().await.is_some() {} });
 
         let (scheduler_cmd_tx, mut scheduler_cmd_rx) =
             mpsc::unbounded_channel::<SchedulerCommand>();
@@ -158,14 +156,8 @@ impl Harness {
     fn user_token(&self, scopes: &[&str]) -> String {
         let cfg = self.state.jwt_config.as_ref().unwrap();
         let scopes: Vec<String> = scopes.iter().map(|s| (*s).into()).collect();
-        let pair = issue_token_pair(
-            cfg,
-            "test-user",
-            "test-client",
-            CallerType::User,
-            &scopes,
-        )
-        .unwrap();
+        let pair =
+            issue_token_pair(cfg, "test-user", "test-client", CallerType::User, &scopes).unwrap();
         pair.access_token
     }
 
@@ -185,11 +177,7 @@ struct Response {
     body: serde_json::Value,
 }
 
-async fn admin_post(
-    app: axum::Router,
-    uri: &str,
-    token: Option<&str>,
-) -> Response {
+async fn admin_post(app: axum::Router, uri: &str, token: Option<&str>) -> Response {
     let mut builder = Request::builder().method("POST").uri(uri);
     if let Some(t) = token {
         builder = builder.header("authorization", format!("Bearer {t}"));
@@ -200,8 +188,7 @@ async fn admin_post(
         .unwrap();
     let status = resp.status().as_u16();
     let bytes = resp.into_body().collect().await.unwrap().to_bytes();
-    let body: serde_json::Value =
-        serde_json::from_slice(&bytes).unwrap_or(serde_json::Value::Null);
+    let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap_or(serde_json::Value::Null);
     Response { status, body }
 }
 
@@ -305,9 +292,17 @@ async fn reload_invalid_file_does_not_increment_success_counter() {
     h.rewrite_config("@@@garbage@@@");
     let token = h.admin_token();
 
-    let before = h.state.reload_counters.validation_error.load(Ordering::Relaxed);
+    let before = h
+        .state
+        .reload_counters
+        .validation_error
+        .load(Ordering::Relaxed);
     let _ = admin_post(h.router(), "/v1/admin/reload-config", Some(&token)).await;
-    let after = h.state.reload_counters.validation_error.load(Ordering::Relaxed);
+    let after = h
+        .state
+        .reload_counters
+        .validation_error
+        .load(Ordering::Relaxed);
 
     assert_eq!(after, before + 1, "validation_error counter should advance");
     assert_eq!(h.state.reload_counters.success.load(Ordering::Relaxed), 0);
@@ -427,7 +422,12 @@ async fn sighup_path_with_invalid_file_keeps_state_and_increments_validation() {
     h.reload_tx.send(h.config_path.clone()).unwrap();
 
     for _ in 0..50 {
-        if h.state.reload_counters.validation_error.load(Ordering::Relaxed) >= 1 {
+        if h.state
+            .reload_counters
+            .validation_error
+            .load(Ordering::Relaxed)
+            >= 1
+        {
             break;
         }
         tokio::time::sleep(Duration::from_millis(10)).await;

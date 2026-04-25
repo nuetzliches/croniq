@@ -33,10 +33,7 @@ pub fn job_to_work_item(
         require: job.runner.require.clone(),
         prefer: job.runner.prefer.clone(),
         metadata: metadata_to_json(&job.metadata),
-        timeout: job
-            .timeout
-            .clone()
-            .unwrap_or_else(|| "5m".to_string()),
+        timeout: job.timeout.clone().unwrap_or_else(|| "5m".to_string()),
     }
 }
 
@@ -73,10 +70,7 @@ mod tests {
         compile::{DeadLetterConfig, RetryConfig, RunnerConfig},
         schedule::CompiledSchedule,
     };
-    use croniq_execution::{
-        pipeline::ExecutionOutcome,
-        retry::RetryStrategy,
-    };
+    use croniq_execution::{pipeline::ExecutionOutcome, retry::RetryStrategy};
     use pretty_assertions::assert_eq;
     use std::collections::HashMap;
     use std::time::Duration;

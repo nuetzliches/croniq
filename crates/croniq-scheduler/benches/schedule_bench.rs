@@ -1,7 +1,7 @@
 //! Benchmarks for schedule evaluation and trigger state machine.
 
 use chrono::{Duration as ChronoDuration, NaiveTime, TimeZone, Utc};
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
+use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
 use croniq_scheduler::{
     misfire::MisfirePolicy,
     schedule::{MonthDay, Schedule},
@@ -148,9 +148,10 @@ fn bench_compute_next_fire_calendar(c: &mut Criterion) {
         name: "business_days".into(),
         timezone: None,
         includes: vec![],
-        excludes: vec![
-            CalendarRule::Weekly(vec![chrono::Weekday::Sat, chrono::Weekday::Sun]),
-        ],
+        excludes: vec![CalendarRule::Weekly(vec![
+            chrono::Weekday::Sat,
+            chrono::Weekday::Sun,
+        ])],
     };
 
     let now = utc(2026, 4, 11, 10, 0); // Saturday

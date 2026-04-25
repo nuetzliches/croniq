@@ -4,7 +4,7 @@ use crate::migrations;
 use crate::models::*;
 use crate::traits::*;
 use chrono::{DateTime, Utc};
-use rusqlite::{params, Connection};
+use rusqlite::{Connection, params};
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Mutex;
@@ -29,8 +29,10 @@ impl SqliteStore {
     }
 
     fn init(conn: Connection) -> Result<Self, StoreError> {
-        conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;")
-            .map_err(|e| StoreError::Database(e.to_string()))?;
+        conn.execute_batch(
+            "PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;",
+        )
+        .map_err(|e| StoreError::Database(e.to_string()))?;
         migrations::migrate(&conn).map_err(|e| StoreError::Database(e.to_string()))?;
         Ok(Self {
             conn: Mutex::new(conn),
@@ -136,8 +138,11 @@ impl JobStore for SqliteStore {
 
     fn delete_job_state(&self, job_key: &str) -> Result<(), StoreError> {
         let conn = self.conn.lock().unwrap();
-        conn.execute("DELETE FROM job_states WHERE job_key = ?1", params![job_key])
-            .map_err(map_err)?;
+        conn.execute(
+            "DELETE FROM job_states WHERE job_key = ?1",
+            params![job_key],
+        )
+        .map_err(map_err)?;
         Ok(())
     }
 }
@@ -241,7 +246,11 @@ impl ExecutionStore for SqliteStore {
         let conn = self.conn.lock().unwrap();
         // Fetch more than limit to allow for post-filtering by capabilities.
         // If capabilities is empty, all executions match (no filtering needed).
-        let fetch_limit = if capabilities.is_empty() { limit } else { limit * 4 };
+        let fetch_limit = if capabilities.is_empty() {
+            limit
+        } else {
+            limit * 4
+        };
         let mut stmt = conn
             .prepare("SELECT id, job_key, fire_at, attempt, state, runner_id, claimed_at, started_at, completed_at, duration_ms, error, dead_reason, metadata, created_at FROM executions WHERE state = 'queued' ORDER BY fire_at ASC LIMIT ?1")
             .map_err(map_err)?;
@@ -273,7 +282,9 @@ impl ExecutionStore for SqliteStore {
 
     fn list_executions(&self, filter: &ExecutionFilter) -> Result<Vec<Execution>, StoreError> {
         let conn = self.conn.lock().unwrap();
-        let mut sql = String::from("SELECT id, job_key, fire_at, attempt, state, runner_id, claimed_at, started_at, completed_at, duration_ms, error, dead_reason, metadata, created_at FROM executions WHERE 1=1");
+        let mut sql = String::from(
+            "SELECT id, job_key, fire_at, attempt, state, runner_id, claimed_at, started_at, completed_at, duration_ms, error, dead_reason, metadata, created_at FROM executions WHERE 1=1",
+        );
         let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
 
         if let Some(ref jk) = filter.job_key {
@@ -304,7 +315,8 @@ impl ExecutionStore for SqliteStore {
         sql.push_str(&format!(" LIMIT ?{}", param_values.len()));
 
         let mut stmt = conn.prepare(&sql).map_err(map_err)?;
-        let params_ref: Vec<&dyn rusqlite::types::ToSql> = param_values.iter().map(|p| p.as_ref()).collect();
+        let params_ref: Vec<&dyn rusqlite::types::ToSql> =
+            param_values.iter().map(|p| p.as_ref()).collect();
 
         let rows = stmt
             .query_map(params_ref.as_slice(), row_to_execution)
@@ -423,17 +435,18 @@ impl RunnerStore for SqliteStore {
             .prepare("SELECT runner_id, capabilities, max_inflight, last_poll_at, inflight, status, registered_at FROM runners ORDER BY runner_id")
             .map_err(map_err)?;
 
-        let rows = stmt
-            .query_map([], row_to_runner)
-            .map_err(map_err)?;
+        let rows = stmt.query_map([], row_to_runner).map_err(map_err)?;
 
         rows.collect::<Result<Vec<_>, _>>().map_err(map_err)
     }
 
     fn remove_runner(&self, runner_id: &str) -> Result<(), StoreError> {
         let conn = self.conn.lock().unwrap();
-        conn.execute("DELETE FROM runners WHERE runner_id = ?1", params![runner_id])
-            .map_err(map_err)?;
+        conn.execute(
+            "DELETE FROM runners WHERE runner_id = ?1",
+            params![runner_id],
+        )
+        .map_err(map_err)?;
         Ok(())
     }
 
@@ -493,7 +506,9 @@ impl DeadLetterStore for SqliteStore {
 
     fn list_dead_letters(&self, filter: &DeadLetterFilter) -> Result<Vec<DeadLetter>, StoreError> {
         let conn = self.conn.lock().unwrap();
-        let mut sql = String::from("SELECT id, execution_id, job_key, fire_at, attempt, error, dead_reason, metadata, created_at, expires_at FROM dead_letters WHERE 1=1");
+        let mut sql = String::from(
+            "SELECT id, execution_id, job_key, fire_at, attempt, error, dead_reason, metadata, created_at, expires_at FROM dead_letters WHERE 1=1",
+        );
 
         if let Some(ref jk) = filter.job_key {
             sql.push_str(&format!(" AND job_key = '{jk}'"));
@@ -504,17 +519,18 @@ impl DeadLetterStore for SqliteStore {
         sql.push_str(&format!(" LIMIT {limit}"));
 
         let mut stmt = conn.prepare(&sql).map_err(map_err)?;
-        let rows = stmt
-            .query_map([], row_to_dead_letter)
-            .map_err(map_err)?;
+        let rows = stmt.query_map([], row_to_dead_letter).map_err(map_err)?;
 
         rows.collect::<Result<Vec<_>, _>>().map_err(map_err)
     }
 
     fn remove_dead_letter(&self, id: Uuid) -> Result<(), StoreError> {
         let conn = self.conn.lock().unwrap();
-        conn.execute("DELETE FROM dead_letters WHERE id = ?1", params![id.to_string()])
-            .map_err(map_err)?;
+        conn.execute(
+            "DELETE FROM dead_letters WHERE id = ?1",
+            params![id.to_string()],
+        )
+        .map_err(map_err)?;
         Ok(())
     }
 
@@ -566,23 +582,33 @@ impl AuthStore for SqliteStore {
     fn list_clients(&self) -> Result<Vec<ApiClient>, StoreError> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare("SELECT client_id, name, scopes, is_active, created_at FROM api_clients ORDER BY name").map_err(map_err)?;
-        let rows = stmt.query_map([], |row| {
-            let scopes_str: String = row.get(2)?;
-            Ok(ApiClient {
-                client_id: row.get(0)?,
-                name: row.get(1)?,
-                scopes: serde_json::from_str(&scopes_str).unwrap_or_default(),
-                is_active: row.get::<_, bool>(3)?,
-                created_at: sql_to_dt(&row.get::<_, String>(4)?),
+        let rows = stmt
+            .query_map([], |row| {
+                let scopes_str: String = row.get(2)?;
+                Ok(ApiClient {
+                    client_id: row.get(0)?,
+                    name: row.get(1)?,
+                    scopes: serde_json::from_str(&scopes_str).unwrap_or_default(),
+                    is_active: row.get::<_, bool>(3)?,
+                    created_at: sql_to_dt(&row.get::<_, String>(4)?),
+                })
             })
-        }).map_err(map_err)?;
+            .map_err(map_err)?;
         rows.collect::<Result<Vec<_>, _>>().map_err(map_err)
     }
 
     fn delete_client(&self, client_id: &str) -> Result<(), StoreError> {
         let conn = self.conn.lock().unwrap();
-        conn.execute("DELETE FROM api_keys WHERE client_id = ?1", params![client_id]).map_err(map_err)?;
-        conn.execute("DELETE FROM api_clients WHERE client_id = ?1", params![client_id]).map_err(map_err)?;
+        conn.execute(
+            "DELETE FROM api_keys WHERE client_id = ?1",
+            params![client_id],
+        )
+        .map_err(map_err)?;
+        conn.execute(
+            "DELETE FROM api_clients WHERE client_id = ?1",
+            params![client_id],
+        )
+        .map_err(map_err)?;
         Ok(())
     }
 
@@ -616,24 +642,30 @@ impl AuthStore for SqliteStore {
 
     fn revoke_api_key(&self, key_id: &str, now: DateTime<Utc>) -> Result<(), StoreError> {
         let conn = self.conn.lock().unwrap();
-        conn.execute("UPDATE api_keys SET revoked_at = ?1 WHERE key_id = ?2", params![dt_to_sql(&now), key_id]).map_err(map_err)?;
+        conn.execute(
+            "UPDATE api_keys SET revoked_at = ?1 WHERE key_id = ?2",
+            params![dt_to_sql(&now), key_id],
+        )
+        .map_err(map_err)?;
         Ok(())
     }
 
     fn list_api_keys(&self, client_id: &str) -> Result<Vec<ApiKey>, StoreError> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare("SELECT key_id, client_id, key_hash, key_prefix, expires_at, revoked_at, created_at FROM api_keys WHERE client_id = ?1 ORDER BY created_at DESC").map_err(map_err)?;
-        let rows = stmt.query_map(params![client_id], |row| {
-            Ok(ApiKey {
-                key_id: row.get(0)?,
-                client_id: row.get(1)?,
-                key_hash: row.get(2)?,
-                key_prefix: row.get(3)?,
-                expires_at: sql_to_opt_dt(row.get(4)?),
-                revoked_at: sql_to_opt_dt(row.get(5)?),
-                created_at: sql_to_dt(&row.get::<_, String>(6)?),
+        let rows = stmt
+            .query_map(params![client_id], |row| {
+                Ok(ApiKey {
+                    key_id: row.get(0)?,
+                    client_id: row.get(1)?,
+                    key_hash: row.get(2)?,
+                    key_prefix: row.get(3)?,
+                    expires_at: sql_to_opt_dt(row.get(4)?),
+                    revoked_at: sql_to_opt_dt(row.get(5)?),
+                    created_at: sql_to_dt(&row.get::<_, String>(6)?),
+                })
             })
-        }).map_err(map_err)?;
+            .map_err(map_err)?;
         rows.collect::<Result<Vec<_>, _>>().map_err(map_err)
     }
 
@@ -695,7 +727,11 @@ impl AuthStore for SqliteStore {
 
     fn revoke_refresh_token(&self, token_hash: &str, now: DateTime<Utc>) -> Result<(), StoreError> {
         let conn = self.conn.lock().unwrap();
-        conn.execute("UPDATE refresh_tokens SET revoked_at = ?1 WHERE token_hash = ?2", params![dt_to_sql(&now), token_hash]).map_err(map_err)?;
+        conn.execute(
+            "UPDATE refresh_tokens SET revoked_at = ?1 WHERE token_hash = ?2",
+            params![dt_to_sql(&now), token_hash],
+        )
+        .map_err(map_err)?;
         Ok(())
     }
 }
@@ -739,11 +775,19 @@ impl JobDefinitionStore for SqliteStore {
                 max_retries=excluded.max_retries,
                 dead_letter_enabled=excluded.dead_letter_enabled",
             params![
-                job.job_key, job.description, job.assigned_runner_id, job.is_active, metadata,
-                dt_to_sql(&job.created_at), dt_to_sql(&job.updated_at),
-                job.timeout, job.max_retries, job.dead_letter_enabled,
+                job.job_key,
+                job.description,
+                job.assigned_runner_id,
+                job.is_active,
+                metadata,
+                dt_to_sql(&job.created_at),
+                dt_to_sql(&job.updated_at),
+                job.timeout,
+                job.max_retries,
+                job.dead_letter_enabled,
             ],
-        ).map_err(map_err)?;
+        )
+        .map_err(map_err)?;
         Ok(())
     }
 
@@ -752,29 +796,39 @@ impl JobDefinitionStore for SqliteStore {
         conn.prepare(
             "SELECT job_key, description, assigned_runner_id, is_active, metadata,
                     created_at, updated_at, timeout, max_retries, dead_letter_enabled
-             FROM job_definitions WHERE job_key = ?1"
+             FROM job_definitions WHERE job_key = ?1",
         )
-            .map_err(map_err)?
-            .query_row(params![job_key], map_job_def_row)
-            .optional()
-            .map_err(map_err)
+        .map_err(map_err)?
+        .query_row(params![job_key], map_job_def_row)
+        .optional()
+        .map_err(map_err)
     }
 
     fn list_job_definitions(&self) -> Result<Vec<JobDefinition>, StoreError> {
         let conn = self.conn.lock().unwrap();
-        let mut stmt = conn.prepare(
-            "SELECT job_key, description, assigned_runner_id, is_active, metadata,
+        let mut stmt = conn
+            .prepare(
+                "SELECT job_key, description, assigned_runner_id, is_active, metadata,
                     created_at, updated_at, timeout, max_retries, dead_letter_enabled
-             FROM job_definitions ORDER BY job_key"
-        ).map_err(map_err)?;
+             FROM job_definitions ORDER BY job_key",
+            )
+            .map_err(map_err)?;
         let rows = stmt.query_map([], map_job_def_row).map_err(map_err)?;
         rows.collect::<Result<Vec<_>, _>>().map_err(map_err)
     }
 
     fn delete_job_definition(&self, job_key: &str) -> Result<(), StoreError> {
         let conn = self.conn.lock().unwrap();
-        conn.execute("DELETE FROM trigger_definitions WHERE job_key = ?1", params![job_key]).map_err(map_err)?;
-        conn.execute("DELETE FROM job_definitions WHERE job_key = ?1", params![job_key]).map_err(map_err)?;
+        conn.execute(
+            "DELETE FROM trigger_definitions WHERE job_key = ?1",
+            params![job_key],
+        )
+        .map_err(map_err)?;
+        conn.execute(
+            "DELETE FROM job_definitions WHERE job_key = ?1",
+            params![job_key],
+        )
+        .map_err(map_err)?;
         Ok(())
     }
 }
@@ -821,7 +875,9 @@ impl TriggerDefinitionStore for SqliteStore {
         let conn = self.conn.lock().unwrap();
         if let Some(jk) = job_key {
             let mut stmt = conn.prepare("SELECT trigger_id, job_key, cron_expression, timezone, calendar, window, not_before, not_after, enabled, managed_by, created_at, updated_at FROM trigger_definitions WHERE job_key = ?1 ORDER BY created_at").map_err(map_err)?;
-            let rows = stmt.query_map(params![jk], row_to_trigger_def).map_err(map_err)?;
+            let rows = stmt
+                .query_map(params![jk], row_to_trigger_def)
+                .map_err(map_err)?;
             rows.collect::<Result<Vec<_>, _>>().map_err(map_err)
         } else {
             let mut stmt = conn.prepare("SELECT trigger_id, job_key, cron_expression, timezone, calendar, window, not_before, not_after, enabled, managed_by, created_at, updated_at FROM trigger_definitions ORDER BY created_at").map_err(map_err)?;
@@ -832,7 +888,11 @@ impl TriggerDefinitionStore for SqliteStore {
 
     fn delete_trigger(&self, trigger_id: &str) -> Result<(), StoreError> {
         let conn = self.conn.lock().unwrap();
-        conn.execute("DELETE FROM trigger_definitions WHERE trigger_id = ?1", params![trigger_id]).map_err(map_err)?;
+        conn.execute(
+            "DELETE FROM trigger_definitions WHERE trigger_id = ?1",
+            params![trigger_id],
+        )
+        .map_err(map_err)?;
         Ok(())
     }
 }
@@ -872,22 +932,28 @@ impl CalendarDefinitionStore for SqliteStore {
     fn list_calendars(&self) -> Result<Vec<CalendarDefinition>, StoreError> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare("SELECT calendar_id, name, timezone, rules, created_at, updated_at FROM calendar_definitions ORDER BY name").map_err(map_err)?;
-        let rows = stmt.query_map([], |row| {
-            Ok(CalendarDefinition {
-                calendar_id: row.get(0)?,
-                name: row.get(1)?,
-                timezone: row.get(2)?,
-                rules: row.get(3)?,
-                created_at: sql_to_dt(&row.get::<_, String>(4)?),
-                updated_at: sql_to_dt(&row.get::<_, String>(5)?),
+        let rows = stmt
+            .query_map([], |row| {
+                Ok(CalendarDefinition {
+                    calendar_id: row.get(0)?,
+                    name: row.get(1)?,
+                    timezone: row.get(2)?,
+                    rules: row.get(3)?,
+                    created_at: sql_to_dt(&row.get::<_, String>(4)?),
+                    updated_at: sql_to_dt(&row.get::<_, String>(5)?),
+                })
             })
-        }).map_err(map_err)?;
+            .map_err(map_err)?;
         rows.collect::<Result<Vec<_>, _>>().map_err(map_err)
     }
 
     fn delete_calendar(&self, calendar_id: &str) -> Result<(), StoreError> {
         let conn = self.conn.lock().unwrap();
-        conn.execute("DELETE FROM calendar_definitions WHERE calendar_id = ?1", params![calendar_id]).map_err(map_err)?;
+        conn.execute(
+            "DELETE FROM calendar_definitions WHERE calendar_id = ?1",
+            params![calendar_id],
+        )
+        .map_err(map_err)?;
         Ok(())
     }
 }
@@ -905,22 +971,28 @@ impl ExecutionLogStore for SqliteStore {
         Ok(())
     }
 
-    fn read_logs(&self, execution_id: Uuid, limit: u32) -> Result<Vec<ExecutionLogEntry>, StoreError> {
+    fn read_logs(
+        &self,
+        execution_id: Uuid,
+        limit: u32,
+    ) -> Result<Vec<ExecutionLogEntry>, StoreError> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare("SELECT id, execution_id, timestamp, level, message, fields FROM execution_logs WHERE execution_id = ?1 ORDER BY timestamp ASC LIMIT ?2").map_err(map_err)?;
-        let rows = stmt.query_map(params![execution_id.to_string(), limit], |row| {
-            let id_str: String = row.get(0)?;
-            let exec_id_str: String = row.get(1)?;
-            let fields_str: String = row.get(5)?;
-            Ok(ExecutionLogEntry {
-                id: Uuid::parse_str(&id_str).unwrap(),
-                execution_id: Uuid::parse_str(&exec_id_str).unwrap(),
-                timestamp: sql_to_dt(&row.get::<_, String>(2)?),
-                level: row.get(3)?,
-                message: row.get(4)?,
-                fields: serde_json::from_str(&fields_str).unwrap_or_default(),
+        let rows = stmt
+            .query_map(params![execution_id.to_string(), limit], |row| {
+                let id_str: String = row.get(0)?;
+                let exec_id_str: String = row.get(1)?;
+                let fields_str: String = row.get(5)?;
+                Ok(ExecutionLogEntry {
+                    id: Uuid::parse_str(&id_str).unwrap(),
+                    execution_id: Uuid::parse_str(&exec_id_str).unwrap(),
+                    timestamp: sql_to_dt(&row.get::<_, String>(2)?),
+                    level: row.get(3)?,
+                    message: row.get(4)?,
+                    fields: serde_json::from_str(&fields_str).unwrap_or_default(),
+                })
             })
-        }).map_err(map_err)?;
+            .map_err(map_err)?;
         rows.collect::<Result<Vec<_>, _>>().map_err(map_err)
     }
 }

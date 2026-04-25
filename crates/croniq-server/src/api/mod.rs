@@ -21,16 +21,16 @@ use axum::{
     extract::State,
     http::StatusCode,
     middleware,
-    routing::{get, post, delete},
+    routing::{delete, get, post},
 };
 use chrono::Utc;
 use croniq_auth::jwt::JwtConfig;
-use croniq_scheduler::trigger::Trigger;
 use croniq_runner::{
     AppState, CompleteResponse, RunnerStatus, RunnerSummary, TriggerRequest, TriggerResponse,
     WorkAssignment, WorkItem,
     types::{CompleteRequest, HealthResponse, PollRequest, PollResponse},
 };
+use croniq_scheduler::trigger::Trigger;
 use tokio::sync::mpsc;
 
 use crate::completion::CompletionEvent;
@@ -141,8 +141,8 @@ pub fn server_router(state: Arc<ServerState>) -> Router {
     // Authenticated routes
     let authenticated = Router::new()
         // Work protocol
-        .route("/v1/poll", post(handle_poll))             // legacy compat
-        .route("/v1/complete", post(handle_complete))       // legacy compat
+        .route("/v1/poll", post(handle_poll)) // legacy compat
+        .route("/v1/complete", post(handle_complete)) // legacy compat
         .route("/v1/work/poll", post(handle_poll))
         .route("/v1/work/ack", post(handle_complete))
         .route("/v1/work/renew", post(work::handle_renew))
@@ -154,33 +154,72 @@ pub fn server_router(state: Arc<ServerState>) -> Router {
         .route("/v1/trigger", post(handle_trigger))
         // Jobs CRUD
         .route("/v1/jobs", get(jobs::handle_list).post(jobs::handle_create))
-        .route("/v1/jobs/{job_key}", get(jobs::handle_get).delete(jobs::handle_delete))
+        .route(
+            "/v1/jobs/{job_key}",
+            get(jobs::handle_get).delete(jobs::handle_delete),
+        )
         .route("/v1/jobs/{job_key}/activate", post(jobs::handle_activate))
-        .route("/v1/jobs/{job_key}/deactivate", post(jobs::handle_deactivate))
+        .route(
+            "/v1/jobs/{job_key}/deactivate",
+            post(jobs::handle_deactivate),
+        )
         .route("/v1/jobs/register", post(jobs::handle_register))
         // Schedules CRUD
-        .route("/v1/schedules", get(schedules::handle_list).post(schedules::handle_create))
-        .route("/v1/schedules/{trigger_id}", get(schedules::handle_get).delete(schedules::handle_delete))
+        .route(
+            "/v1/schedules",
+            get(schedules::handle_list).post(schedules::handle_create),
+        )
+        .route(
+            "/v1/schedules/{trigger_id}",
+            get(schedules::handle_get).delete(schedules::handle_delete),
+        )
         // Calendars CRUD
-        .route("/v1/calendars", get(calendars::handle_list).post(calendars::handle_create))
-        .route("/v1/calendars/{id}", get(calendars::handle_get).delete(calendars::handle_delete))
+        .route(
+            "/v1/calendars",
+            get(calendars::handle_list).post(calendars::handle_create),
+        )
+        .route(
+            "/v1/calendars/{id}",
+            get(calendars::handle_get).delete(calendars::handle_delete),
+        )
         // Dead letters
         .route("/v1/dead-letters", get(dead_letters::handle_list))
-        .route("/v1/dead-letters/{id}", get(dead_letters::handle_get).delete(dead_letters::handle_delete))
-        .route("/v1/dead-letters/{id}/replay", post(dead_letters::handle_replay))
+        .route(
+            "/v1/dead-letters/{id}",
+            get(dead_letters::handle_get).delete(dead_letters::handle_delete),
+        )
+        .route(
+            "/v1/dead-letters/{id}/replay",
+            post(dead_letters::handle_replay),
+        )
         // Dashboard
         .route("/v1/dashboard/forecast", get(dashboard::handle_forecast))
         // Executions + logs
         .route("/v1/executions", get(handle_list_executions))
-        .route("/v1/executions/{id}/logs", get(execution_logs::handle_get_logs))
+        .route(
+            "/v1/executions/{id}/logs",
+            get(execution_logs::handle_get_logs),
+        )
         // Admin
         .route("/v1/admin/reload-config", post(admin::handle_reload_config))
         // Auth management
-        .route("/v1/api-clients", get(auth_endpoints::handle_list_clients).post(auth_endpoints::handle_create_client))
-        .route("/v1/api-clients/{id}", delete(auth_endpoints::handle_delete_client))
-        .route("/v1/api-clients/{id}/tokens", post(auth_endpoints::handle_issue_client_token))
+        .route(
+            "/v1/api-clients",
+            get(auth_endpoints::handle_list_clients).post(auth_endpoints::handle_create_client),
+        )
+        .route(
+            "/v1/api-clients/{id}",
+            delete(auth_endpoints::handle_delete_client),
+        )
+        .route(
+            "/v1/api-clients/{id}/tokens",
+            post(auth_endpoints::handle_issue_client_token),
+        )
         .route("/v1/api-keys", post(auth_endpoints::handle_create_api_key))
-        .route("/v1/api-keys/{id}", delete(auth_endpoints::handle_revoke_api_key))
+        .route(
+            "/v1/api-keys/{id}",
+            delete(auth_endpoints::handle_revoke_api_key),
+        )
         .route_layer(middleware::from_fn_with_state(
             Arc::clone(&state),
             auth_middleware::require_auth,
@@ -225,7 +264,13 @@ async fn handle_poll(
                 conflicting_instance = %conflict,
                 "runner instance conflict — another instance already registered"
             );
-            return (StatusCode::CONFLICT, Json(PollResponse { work: vec![], cancel: vec![] }));
+            return (
+                StatusCode::CONFLICT,
+                Json(PollResponse {
+                    work: vec![],
+                    cancel: vec![],
+                }),
+            );
         }
     }
 
@@ -233,7 +278,13 @@ async fn handle_poll(
 
     if capacity == 0 {
         // Runner is at capacity — no point waiting
-        return (StatusCode::OK, Json(PollResponse { work: vec![], cancel: vec![] }));
+        return (
+            StatusCode::OK,
+            Json(PollResponse {
+                work: vec![],
+                cancel: vec![],
+            }),
+        );
     }
 
     // Try to dequeue immediately; if nothing available, long-poll for up to
@@ -243,7 +294,8 @@ async fn handle_poll(
         // cannot miss an enqueue that races with our check.
         let notified = state.runner.work_notify.notified();
 
-        let work = try_dequeue_for(&state.runner, &req.runner_id, &req.capabilities, capacity).await;
+        let work =
+            try_dequeue_for(&state.runner, &req.runner_id, &req.capabilities, capacity).await;
 
         if !work.is_empty() {
             // Mark claimed executions in the persistent store so we track runner_id
@@ -255,7 +307,13 @@ async fn handle_poll(
                     }
                 }
             }
-            return (StatusCode::OK, Json(PollResponse { work, cancel: vec![] }));
+            return (
+                StatusCode::OK,
+                Json(PollResponse {
+                    work,
+                    cancel: vec![],
+                }),
+            );
         }
 
         // Queue empty — wait for a notification or timeout
@@ -321,9 +379,7 @@ async fn handle_complete(
 }
 
 /// `GET /v1/runners` — list all known runners with liveness status.
-async fn handle_list_runners(
-    State(state): State<Arc<ServerState>>,
-) -> Json<Vec<RunnerSummary>> {
+async fn handle_list_runners(State(state): State<Arc<ServerState>>) -> Json<Vec<RunnerSummary>> {
     let now = Utc::now();
     let reg = state.runner.registry.read().await;
 
@@ -372,10 +428,16 @@ async fn handle_trigger(
         }
     }
     if !req.require.is_empty() {
-        metadata.insert("__require".into(), serde_json::to_string(&req.require).unwrap_or_default());
+        metadata.insert(
+            "__require".into(),
+            serde_json::to_string(&req.require).unwrap_or_default(),
+        );
     }
     if !req.prefer.is_empty() {
-        metadata.insert("__prefer".into(), serde_json::to_string(&req.prefer).unwrap_or_default());
+        metadata.insert(
+            "__prefer".into(),
+            serde_json::to_string(&req.prefer).unwrap_or_default(),
+        );
     }
 
     // Persist the execution record to the store so that the CompletionProcessor
@@ -422,7 +484,10 @@ async fn handle_trigger(
 
     (
         StatusCode::OK,
-        Json(TriggerResponse { execution_id, queued }),
+        Json(TriggerResponse {
+            execution_id,
+            queued,
+        }),
     )
 }
 
@@ -431,7 +496,10 @@ async fn handle_list_executions(
     State(state): State<Arc<ServerState>>,
     axum::extract::Query(params): axum::extract::Query<HashMap<String, String>>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let store = state.store.as_ref().ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
+    let store = state
+        .store
+        .as_ref()
+        .ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
     let filter = ExecutionFilter {
         job_key: params.get("job_key").cloned(),
         state: params.get("state").and_then(|s| match s.as_str() {
@@ -446,7 +514,9 @@ async fn handle_list_executions(
         limit: params.get("limit").and_then(|l| l.parse().ok()),
         ..Default::default()
     };
-    let executions = store.list_executions(&filter).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let executions = store
+        .list_executions(&filter)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(Json(serde_json::to_value(&executions).unwrap_or_default()))
 }
 
@@ -645,7 +715,9 @@ mod tests {
 
     // ─── Auth middleware tests ────────────────────────────────────────────────
 
-    fn make_auth_state(secret: &str) -> (Arc<ServerState>, mpsc::UnboundedReceiver<CompletionEvent>) {
+    fn make_auth_state(
+        secret: &str,
+    ) -> (Arc<ServerState>, mpsc::UnboundedReceiver<CompletionEvent>) {
         let runner = AppState::new();
         let (tx, rx) = mpsc::unbounded_channel();
         let jwt_config = JwtConfig {
@@ -667,7 +739,13 @@ mod tests {
         (state, rx)
     }
 
-    async fn status_of(app: Router, method: &str, uri: &str, body: Option<serde_json::Value>, bearer: Option<&str>) -> u16 {
+    async fn status_of(
+        app: Router,
+        method: &str,
+        uri: &str,
+        body: Option<serde_json::Value>,
+        bearer: Option<&str>,
+    ) -> u16 {
         let mut builder = Request::builder().method(method).uri(uri);
         if let Some(token) = bearer {
             builder = builder.header("authorization", format!("Bearer {token}"));
@@ -675,7 +753,9 @@ mod tests {
         if body.is_some() {
             builder = builder.header("content-type", "application/json");
         }
-        let body = body.map(|b| Body::from(b.to_string())).unwrap_or(Body::empty());
+        let body = body
+            .map(|b| Body::from(b.to_string()))
+            .unwrap_or(Body::empty());
         let resp = app.oneshot(builder.body(body).unwrap()).await.unwrap();
         resp.status().as_u16()
     }
@@ -685,9 +765,16 @@ mod tests {
         let (state, _rx) = make_auth_state("test-secret");
         let app = server_router(Arc::clone(&state));
 
-        let status = status_of(app, "POST", "/v1/poll", Some(serde_json::json!({
-            "runner_id": "r1", "capabilities": [], "max_inflight": 1, "inflight": []
-        })), None).await;
+        let status = status_of(
+            app,
+            "POST",
+            "/v1/poll",
+            Some(serde_json::json!({
+                "runner_id": "r1", "capabilities": [], "max_inflight": 1, "inflight": []
+            })),
+            None,
+        )
+        .await;
 
         assert_eq!(status, 401);
     }
@@ -697,9 +784,16 @@ mod tests {
         let (state, _rx) = make_auth_state("test-secret");
         let app = server_router(Arc::clone(&state));
 
-        let status = status_of(app, "POST", "/v1/poll", Some(serde_json::json!({
-            "runner_id": "r1", "capabilities": [], "max_inflight": 1, "inflight": []
-        })), Some("invalid.jwt.token")).await;
+        let status = status_of(
+            app,
+            "POST",
+            "/v1/poll",
+            Some(serde_json::json!({
+                "runner_id": "r1", "capabilities": [], "max_inflight": 1, "inflight": []
+            })),
+            Some("invalid.jwt.token"),
+        )
+        .await;
 
         assert_eq!(status, 401);
     }
@@ -709,14 +803,25 @@ mod tests {
         let (state, _rx) = make_auth_state("test-secret");
         let jwt_config = state.jwt_config.as_ref().unwrap();
         let pair = croniq_auth::jwt::issue_token_pair(
-            jwt_config, "test-user", "test-client",
-            croniq_auth::CallerType::User, &["admin".into()],
-        ).unwrap();
+            jwt_config,
+            "test-user",
+            "test-client",
+            croniq_auth::CallerType::User,
+            &["admin".into()],
+        )
+        .unwrap();
 
         let app = server_router(Arc::clone(&state));
-        let status = status_of(app, "POST", "/v1/poll", Some(serde_json::json!({
-            "runner_id": "r1", "capabilities": [], "max_inflight": 1, "inflight": []
-        })), Some(&pair.access_token)).await;
+        let status = status_of(
+            app,
+            "POST",
+            "/v1/poll",
+            Some(serde_json::json!({
+                "runner_id": "r1", "capabilities": [], "max_inflight": 1, "inflight": []
+            })),
+            Some(&pair.access_token),
+        )
+        .await;
 
         assert_eq!(status, 200);
     }
@@ -736,9 +841,16 @@ mod tests {
         let app = server_router(Arc::clone(&state));
 
         // Login endpoint should be reachable (will fail with 503 since no store)
-        let status = status_of(app, "POST", "/v1/auth/login", Some(serde_json::json!({
-            "username": "admin", "password": "pass"
-        })), None).await;
+        let status = status_of(
+            app,
+            "POST",
+            "/v1/auth/login",
+            Some(serde_json::json!({
+                "username": "admin", "password": "pass"
+            })),
+            None,
+        )
+        .await;
 
         // 503 because no store configured, but NOT 401/404
         assert_eq!(status, 503);

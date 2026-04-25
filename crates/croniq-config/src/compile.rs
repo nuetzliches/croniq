@@ -229,7 +229,11 @@ pub fn compile(ast: &Croniqfile) -> RuntimeConfig {
                         }
                         "auth" => {
                             cfg.auth = Some(
-                                d.args.iter().map(|a| a.value.as_str()).collect::<Vec<_>>().join(" "),
+                                d.args
+                                    .iter()
+                                    .map(|a| a.value.as_str())
+                                    .collect::<Vec<_>>()
+                                    .join(" "),
                             );
                         }
                         "lease_ttl" => {
@@ -254,8 +258,7 @@ pub fn compile(ast: &Croniqfile) -> RuntimeConfig {
                     match dob {
                         DirectiveOrBlock::Directive(dir) => match dir.key.value.as_str() {
                             "timezone" => {
-                                default_timezone =
-                                    dir.args.first().map(|a| a.value.clone());
+                                default_timezone = dir.args.first().map(|a| a.value.clone());
                             }
                             "timeout" => {
                                 default_timeout = dir.args.first().map(|a| a.value.clone());
@@ -278,13 +281,15 @@ pub fn compile(ast: &Croniqfile) -> RuntimeConfig {
                                 }
                             }
                             "queue_ttl" => {
-                                default_queue_ttl = dir.args.first()
+                                default_queue_ttl = dir
+                                    .args
+                                    .first()
                                     .map(|a| a.value.clone())
                                     .filter(|v| v != "none");
                             }
                             "max_queue_depth" => {
-                                default_max_queue_depth = dir.args.first()
-                                    .and_then(|a| a.value.parse().ok());
+                                default_max_queue_depth =
+                                    dir.args.first().and_then(|a| a.value.parse().ok());
                             }
                             _ => {}
                         },
@@ -332,9 +337,21 @@ pub fn compile(ast: &Croniqfile) -> RuntimeConfig {
                             for d in &block.directives {
                                 if let DirectiveOrBlock::Directive(dir) = d {
                                     match dir.key.value.as_str() {
-                                        "level" => { if let Some(a) = dir.args.first() { log.level = a.value.clone(); } }
-                                        "format" => { if let Some(a) = dir.args.first() { log.format = a.value.clone(); } }
-                                        "output" => { if let Some(a) = dir.args.first() { log.output = a.value.clone(); } }
+                                        "level" => {
+                                            if let Some(a) = dir.args.first() {
+                                                log.level = a.value.clone();
+                                            }
+                                        }
+                                        "format" => {
+                                            if let Some(a) = dir.args.first() {
+                                                log.format = a.value.clone();
+                                            }
+                                        }
+                                        "output" => {
+                                            if let Some(a) = dir.args.first() {
+                                                log.output = a.value.clone();
+                                            }
+                                        }
                                         _ => {}
                                     }
                                 }
@@ -349,8 +366,16 @@ pub fn compile(ast: &Croniqfile) -> RuntimeConfig {
                             for d in &block.directives {
                                 if let DirectiveOrBlock::Directive(dir) = d {
                                     match dir.key.value.as_str() {
-                                        "listen" => { if let Some(a) = dir.args.first() { metrics.listen = a.value.clone(); } }
-                                        "path" => { if let Some(a) = dir.args.first() { metrics.path = a.value.clone(); } }
+                                        "listen" => {
+                                            if let Some(a) = dir.args.first() {
+                                                metrics.listen = a.value.clone();
+                                            }
+                                        }
+                                        "path" => {
+                                            if let Some(a) = dir.args.first() {
+                                                metrics.path = a.value.clone();
+                                            }
+                                        }
                                         _ => {}
                                     }
                                 }
@@ -456,7 +481,9 @@ fn compile_job(job: &JobBlock, defaults: &JobDefaults) -> JobConfig {
                     }
                 }
                 "queue_ttl" => {
-                    queue_ttl = d.args.first()
+                    queue_ttl = d
+                        .args
+                        .first()
                         .map(|a| a.value.clone())
                         .filter(|v| v != "none");
                 }
@@ -472,9 +499,10 @@ fn compile_job(job: &JobBlock, defaults: &JobDefaults) -> JobConfig {
                 "metadata" => {
                     for inner in &block.directives {
                         if let DirectiveOrBlock::Directive(d) = inner
-                            && let Some(v) = d.args.first() {
-                                metadata.insert(d.key.value.clone(), v.value.clone());
-                            }
+                            && let Some(v) = d.args.first()
+                        {
+                            metadata.insert(d.key.value.clone(), v.value.clone());
+                        }
                     }
                 }
                 _ => {}

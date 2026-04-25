@@ -25,8 +25,8 @@ async fn main() {
         )
         .init();
 
-    let server_url = std::env::var("CRONIQ_SERVER_URL")
-        .unwrap_or_else(|_| "http://localhost:4000".into());
+    let server_url =
+        std::env::var("CRONIQ_SERVER_URL").unwrap_or_else(|_| "http://localhost:4000".into());
     // Use the container hostname (or a random suffix) so docker-compose replicas
     // don't collide on the same runner_id.
     let runner_id = std::env::var("RUNNER_ID").unwrap_or_else(|_| {

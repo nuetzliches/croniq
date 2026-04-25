@@ -31,11 +31,7 @@ pub enum RunnerStatus {
 }
 
 impl Runner {
-    pub fn new(
-        runner_id: impl Into<String>,
-        capabilities: Vec<String>,
-        max_inflight: u32,
-    ) -> Self {
+    pub fn new(runner_id: impl Into<String>, capabilities: Vec<String>, max_inflight: u32) -> Self {
         Self {
             runner_id: runner_id.into(),
             capabilities,

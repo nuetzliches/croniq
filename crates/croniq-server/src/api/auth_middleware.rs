@@ -8,9 +8,9 @@ use axum::{
     middleware::Next,
     response::Response,
 };
-use croniq_auth::{CallerContext, CallerType};
 use croniq_auth::api_key::hash_api_key;
 use croniq_auth::jwt::validate_token;
+use croniq_auth::{CallerContext, CallerType};
 
 use super::ServerState;
 
@@ -47,7 +47,10 @@ pub async fn require_auth(
         validate_token(jwt_config, token).map_err(|_| StatusCode::UNAUTHORIZED)?
     } else if let Some(raw_key) = header.strip_prefix("ApiKey ") {
         // API key lookup
-        let store = state.store.as_ref().ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
+        let store = state
+            .store
+            .as_ref()
+            .ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
         let key_hash = hash_api_key(raw_key);
         let api_key = store
             .find_api_key_by_hash(&key_hash)
@@ -61,9 +64,10 @@ pub async fn require_auth(
 
         // Check not expired
         if let Some(expires) = api_key.expires_at
-            && chrono::Utc::now() > expires {
-                return Err(StatusCode::UNAUTHORIZED);
-            }
+            && chrono::Utc::now() > expires
+        {
+            return Err(StatusCode::UNAUTHORIZED);
+        }
 
         // Load client for scopes
         let client = store

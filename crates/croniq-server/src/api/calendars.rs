@@ -33,15 +33,22 @@ fn validate_rules(rules: &str) -> Result<(), String> {
         return Ok(());
     }
     let source = format!("calendar \"__validate__\" {{\n{rules}\n}}\n");
-    Parser::parse(&source).map(|_| ()).map_err(|e| e.to_string())
+    Parser::parse(&source)
+        .map(|_| ())
+        .map_err(|e| e.to_string())
 }
 
 /// `GET /v1/calendars`
 pub async fn handle_list(
     State(state): State<Arc<ServerState>>,
 ) -> Result<Json<Vec<CalendarDefinition>>, StatusCode> {
-    let store = state.store.as_ref().ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
-    let cals = store.list_calendars().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let store = state
+        .store
+        .as_ref()
+        .ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
+    let cals = store
+        .list_calendars()
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(Json(cals))
 }
 
@@ -50,8 +57,12 @@ pub async fn handle_get(
     State(state): State<Arc<ServerState>>,
     axum::extract::Path(id): axum::extract::Path<String>,
 ) -> Result<Json<CalendarDefinition>, StatusCode> {
-    let store = state.store.as_ref().ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
-    store.get_calendar(&id)
+    let store = state
+        .store
+        .as_ref()
+        .ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
+    store
+        .get_calendar(&id)
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .map(Json)
         .ok_or(StatusCode::NOT_FOUND)
@@ -65,12 +76,18 @@ pub async fn handle_create(
     if let Err(message) = validate_rules(&req.rules) {
         return Err((
             StatusCode::BAD_REQUEST,
-            Json(ValidationError { error: "invalid_rules", message }),
+            Json(ValidationError {
+                error: "invalid_rules",
+                message,
+            }),
         ));
     }
     let store = state.store.as_ref().ok_or((
         StatusCode::SERVICE_UNAVAILABLE,
-        Json(ValidationError { error: "no_store", message: "store unavailable".into() }),
+        Json(ValidationError {
+            error: "no_store",
+            message: "store unavailable".into(),
+        }),
     ))?;
     let now = Utc::now();
     let cal = CalendarDefinition {
@@ -81,10 +98,15 @@ pub async fn handle_create(
         created_at: now,
         updated_at: now,
     };
-    store.create_calendar(&cal).map_err(|_| (
-        StatusCode::INTERNAL_SERVER_ERROR,
-        Json(ValidationError { error: "store_error", message: "failed to persist calendar".into() }),
-    ))?;
+    store.create_calendar(&cal).map_err(|_| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ValidationError {
+                error: "store_error",
+                message: "failed to persist calendar".into(),
+            }),
+        )
+    })?;
     Ok((StatusCode::CREATED, Json(cal)))
 }
 
@@ -93,7 +115,9 @@ pub async fn handle_delete(
     State(state): State<Arc<ServerState>>,
     axum::extract::Path(id): axum::extract::Path<String>,
 ) -> StatusCode {
-    let Some(store) = state.store.as_ref() else { return StatusCode::SERVICE_UNAVAILABLE };
+    let Some(store) = state.store.as_ref() else {
+        return StatusCode::SERVICE_UNAVAILABLE;
+    };
     match store.delete_calendar(&id) {
         Ok(_) => StatusCode::NO_CONTENT,
         Err(_) => StatusCode::INTERNAL_SERVER_ERROR,

@@ -118,9 +118,7 @@ mod tests {
         let r_full = runner("r2", vec!["billing"], 3, 3);
         let w = work(vec!["billing"], vec![]);
 
-        assert!(
-            CapabilityRouter::score(&r_free, &w) > CapabilityRouter::score(&r_full, &w)
-        );
+        assert!(CapabilityRouter::score(&r_free, &w) > CapabilityRouter::score(&r_full, &w));
     }
 
     #[test]

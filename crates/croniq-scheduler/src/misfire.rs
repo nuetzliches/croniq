@@ -6,8 +6,7 @@
 use chrono::{DateTime, Duration, Utc};
 
 /// What to do when a fire time is missed.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, Default)]
 pub enum MisfirePolicy {
     /// Fire immediately, regardless of how late.
     /// Good for: jobs that must always run (billing, data sync).
@@ -25,7 +24,6 @@ pub enum MisfirePolicy {
         max_delay_secs: u64,
     },
 }
-
 
 /// Result of evaluating a misfire.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -146,9 +144,7 @@ mod tests {
         for policy in [
             MisfirePolicy::FireNow,
             MisfirePolicy::Skip,
-            MisfirePolicy::GracePeriod {
-                max_delay_secs: 60,
-            },
+            MisfirePolicy::GracePeriod { max_delay_secs: 60 },
         ] {
             let fire_at = utc(2026, 3, 29, 2, 0);
             assert_eq!(policy.evaluate(fire_at, fire_at), MisfireAction::Fire);

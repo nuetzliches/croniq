@@ -23,9 +23,7 @@ pub fn metrics_router(state: Arc<ServerState>) -> Router {
         .with_state(state)
 }
 
-async fn handle_metrics(
-    State(state): State<Arc<ServerState>>,
-) -> impl IntoResponse {
+async fn handle_metrics(State(state): State<Arc<ServerState>>) -> impl IntoResponse {
     use std::sync::atomic::Ordering;
 
     let now = chrono::Utc::now();
@@ -38,7 +36,10 @@ async fn handle_metrics(
     let queue_depth = queue.len();
 
     let reload_success = state.reload_counters.success.load(Ordering::Relaxed);
-    let reload_validation_err = state.reload_counters.validation_error.load(Ordering::Relaxed);
+    let reload_validation_err = state
+        .reload_counters
+        .validation_error
+        .load(Ordering::Relaxed);
     let reload_apply_err = state.reload_counters.apply_error.load(Ordering::Relaxed);
 
     let body = format!(
@@ -59,7 +60,10 @@ async fn handle_metrics(
 
     (
         StatusCode::OK,
-        [(header::CONTENT_TYPE, "text/plain; version=0.0.4; charset=utf-8")],
+        [(
+            header::CONTENT_TYPE,
+            "text/plain; version=0.0.4; charset=utf-8",
+        )],
         body,
     )
 }
@@ -92,11 +96,21 @@ mod tests {
             .unwrap();
 
         assert_eq!(resp.status(), StatusCode::OK);
-        let ct = resp.headers().get("content-type").unwrap().to_str().unwrap();
+        let ct = resp
+            .headers()
+            .get("content-type")
+            .unwrap()
+            .to_str()
+            .unwrap();
         assert!(ct.contains("text/plain"));
 
         let body = String::from_utf8(
-            resp.into_body().collect().await.unwrap().to_bytes().to_vec(),
+            resp.into_body()
+                .collect()
+                .await
+                .unwrap()
+                .to_bytes()
+                .to_vec(),
         )
         .unwrap();
 

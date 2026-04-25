@@ -34,12 +34,9 @@ use croniq_server::{
     scheduler::SchedulerLoop,
     store::{DynStore, sqlite_store},
 };
-use std::time::Duration;
-use croniq_store::{
-    models::ExecutionState,
-    sqlite::SqliteStore,
-};
+use croniq_store::{models::ExecutionState, sqlite::SqliteStore};
 use http_body_util::BodyExt;
+use std::time::Duration;
 use tokio::sync::mpsc;
 use tower::util::ServiceExt;
 
@@ -90,7 +87,13 @@ impl TestServer {
         // when the queue happens to be empty at poll time.
         let state = ServerState::with_timeout(runner, tx, Duration::from_millis(50));
 
-        Self { state, scheduler, processor, store, completion_rx: rx }
+        Self {
+            state,
+            scheduler,
+            processor,
+            store,
+            completion_rx: rx,
+        }
     }
 
     /// Advance the scheduler by one tick.
@@ -234,7 +237,10 @@ async fn failure_then_retry_then_success() {
         }),
     )
     .await;
-    let exec_id_1 = poll1["work"][0]["execution_id"].as_str().unwrap().to_string();
+    let exec_id_1 = poll1["work"][0]["execution_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
 
     // Runner fails on attempt 1
     post_json(
@@ -326,7 +332,10 @@ async fn exhausted_retries_dead_lettered() {
         }),
     )
     .await;
-    let exec_id = poll["work"][0]["execution_id"].as_str().unwrap().to_string();
+    let exec_id = poll["work"][0]["execution_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
 
     // Fail on the only attempt
     post_json(
@@ -498,7 +507,10 @@ async fn complete_releases_runner_inflight() {
         }),
     )
     .await;
-    let exec_id = poll["work"][0]["execution_id"].as_str().unwrap().to_string();
+    let exec_id = poll["work"][0]["execution_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
 
     // Verify inflight before completion
     {
@@ -617,7 +629,10 @@ async fn store_state_consistent_through_lifecycle() {
         }),
     )
     .await;
-    let exec_id = poll["work"][0]["execution_id"].as_str().unwrap().to_string();
+    let exec_id = poll["work"][0]["execution_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
 
     // Complete (success)
     post_json(

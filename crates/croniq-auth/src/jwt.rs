@@ -1,7 +1,7 @@
 //! JWT token issuance and validation.
 
 use chrono::{Duration, Utc};
-use jsonwebtoken::{decode, encode, DecodingKey, EncodingKey, Header, Validation};
+use jsonwebtoken::{DecodingKey, EncodingKey, Header, Validation, decode, encode};
 use serde::{Deserialize, Serialize};
 
 use crate::context::{CallerContext, CallerType};
@@ -170,8 +170,14 @@ mod tests {
 
     #[test]
     fn wrong_secret_rejected() {
-        let config1 = JwtConfig { secret: "secret-1".into(), ..Default::default() };
-        let config2 = JwtConfig { secret: "secret-2".into(), ..Default::default() };
+        let config1 = JwtConfig {
+            secret: "secret-1".into(),
+            ..Default::default()
+        };
+        let config2 = JwtConfig {
+            secret: "secret-2".into(),
+            ..Default::default()
+        };
 
         let pair = issue_token_pair(&config1, "u", "c", CallerType::User, &[]).unwrap();
         let result = validate_token(&config2, &pair.access_token);
