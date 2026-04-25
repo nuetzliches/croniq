@@ -120,8 +120,7 @@ fn format_schedule(out: &mut String, sched: &ScheduleNode, indent: usize) {
         }
         ScheduleKind::Weekdays { days, time } => {
             out.push_str("every ");
-            let day_names: Vec<&str> = days.iter().map(|d| d.as_str()).collect();
-            out.push_str(&day_names.join(" "));
+            out.push_str(&format_weekday_list(days));
             out.push_str(&format!(" at {}", time.raw));
         }
         ScheduleKind::Monthly { ordinals, time } => {
@@ -151,6 +150,104 @@ fn format_schedule(out: &mut String, sched: &ScheduleNode, indent: usize) {
         format_directives(out, &sched.options, indent + 1);
         write_indent(out, indent);
         out.push_str("}\n");
+    }
+}
+
+/// 3-letter capitalised weekday name, e.g. `Monday → "Mon"`. Used in
+/// formatter output where the DSL convention since #60 is "3-letter,
+/// no quotes, full names accepted on input."
+pub fn weekday_short(day: Weekday) -> &'static str {
+    match day {
+        Weekday::Monday => "Mon",
+        Weekday::Tuesday => "Tue",
+        Weekday::Wednesday => "Wed",
+        Weekday::Thursday => "Thu",
+        Weekday::Friday => "Fri",
+        Weekday::Saturday => "Sat",
+        Weekday::Sunday => "Sun",
+    }
+}
+
+/// Format a list of weekdays into the canonical compact DSL form.
+///
+/// Rules, applied in order:
+///   1. Mon–Fri (any order, deduped) → `"weekday"` alias.
+///   2. Sat + Sun (any order, deduped) → `"weekend"` alias.
+///   3. Otherwise: dedupe + sort by week order, then collapse any
+///      contiguous run of ≥ 3 days to `Start..End` and emit the rest
+///      as 3-letter singletons. So `[Mon, Tue, Wed]` becomes
+///      `"Mon..Wed"`, `[Mon, Wed, Fri]` stays `"Mon Wed Fri"`, and
+///      `[Mon, Fri, Sat, Sun]` becomes `"Mon Fri..Sun"`.
+///
+/// Wrap-around collapsing (e.g. `Sat..Mon`) is intentionally **not**
+/// performed — emitting an inverse range when the user typed three
+/// scattered days felt surprising. Round-tripping a wrap-around input
+/// (`Fri..Mon`) yields a non-collapsed list (`Mon Fri..Sun`) which is
+/// still semantically equivalent and readable.
+pub fn format_weekday_list(days: &[Weekday]) -> String {
+    if days.is_empty() {
+        return String::new();
+    }
+    // Dedupe via canonical-order index.
+    const ORDER: [Weekday; 7] = [
+        Weekday::Monday,
+        Weekday::Tuesday,
+        Weekday::Wednesday,
+        Weekday::Thursday,
+        Weekday::Friday,
+        Weekday::Saturday,
+        Weekday::Sunday,
+    ];
+    let mut present = [false; 7];
+    for d in days {
+        if let Some(i) = ORDER.iter().position(|x| *x == *d) {
+            present[i] = true;
+        }
+    }
+    let indices: Vec<usize> = present
+        .iter()
+        .enumerate()
+        .filter_map(|(i, p)| if *p { Some(i) } else { None })
+        .collect();
+
+    // Aliases.
+    if indices.as_slice() == [0, 1, 2, 3, 4] {
+        return "weekday".into();
+    }
+    if indices.as_slice() == [5, 6] {
+        return "weekend".into();
+    }
+
+    // Walk for runs.
+    let mut parts: Vec<String> = Vec::new();
+    let mut run_start = indices[0];
+    let mut run_end = indices[0];
+    for &i in &indices[1..] {
+        if i == run_end + 1 {
+            run_end = i;
+        } else {
+            parts.push(emit_run(&ORDER, run_start, run_end));
+            run_start = i;
+            run_end = i;
+        }
+    }
+    parts.push(emit_run(&ORDER, run_start, run_end));
+    parts.join(" ")
+}
+
+fn emit_run(order: &[Weekday; 7], start: usize, end: usize) -> String {
+    let len = end - start + 1;
+    if len >= 3 {
+        format!(
+            "{}..{}",
+            weekday_short(order[start]),
+            weekday_short(order[end])
+        )
+    } else {
+        (start..=end)
+            .map(|i| weekday_short(order[i]))
+            .collect::<Vec<_>>()
+            .join(" ")
     }
 }
 
@@ -259,6 +356,28 @@ fn format_calendar_rule(out: &mut String, rule: &CalendarRule, indent: usize) {
     out.push_str(kind);
     out.push(' ');
     out.push_str(&format_string_value(&rule.rule_type));
+
+    // Special case `weekly`: re-collapse the expanded list back to
+    // 3-letter capitalised tokens, dropping quotes and emitting
+    // `Mon..Fri` for runs ≥ 3. This matches the DSL convention from
+    // #60 — pre-expansion the parser stored args like `["monday",
+    // "tuesday", …]` (lowercase full, after PR-D's range expansion).
+    let rule_type_lower = rule.rule_type.value.to_ascii_lowercase();
+    if rule_type_lower == "weekly" {
+        let parsed: Option<Vec<Weekday>> =
+            rule.args.iter().map(|a| Weekday::parse(&a.value)).collect();
+        if let Some(days) = parsed
+            && !days.is_empty()
+        {
+            out.push(' ');
+            out.push_str(&format_weekday_list(&days));
+            out.push('\n');
+            return;
+        }
+        // Fall-through if any arg failed to parse — preserve verbatim
+        // so the user still sees what they wrote and can fix the typo.
+    }
+
     for arg in &rule.args {
         out.push(' ');
         out.push_str(&format_string_value(arg));
@@ -321,5 +440,107 @@ job etl:sync {
         let formatted = format(&ast);
         assert!(formatted.contains("runner"));
         assert!(formatted.contains("require health-check"));
+    }
+
+    #[test]
+    fn weekday_list_aliases_take_priority() {
+        assert_eq!(
+            format_weekday_list(&[
+                Weekday::Monday,
+                Weekday::Tuesday,
+                Weekday::Wednesday,
+                Weekday::Thursday,
+                Weekday::Friday,
+            ]),
+            "weekday"
+        );
+        assert_eq!(
+            format_weekday_list(&[Weekday::Saturday, Weekday::Sunday]),
+            "weekend"
+        );
+        // Order of input doesn't matter.
+        assert_eq!(
+            format_weekday_list(&[Weekday::Sunday, Weekday::Saturday]),
+            "weekend"
+        );
+    }
+
+    #[test]
+    fn weekday_list_collapses_runs_of_three_or_more() {
+        // Three-day run → range.
+        assert_eq!(
+            format_weekday_list(&[Weekday::Monday, Weekday::Tuesday, Weekday::Wednesday]),
+            "Mon..Wed"
+        );
+        // Two-day run stays uncollapsed.
+        assert_eq!(
+            format_weekday_list(&[Weekday::Monday, Weekday::Tuesday]),
+            "Mon Tue"
+        );
+        // Singleton.
+        assert_eq!(format_weekday_list(&[Weekday::Wednesday]), "Wed");
+    }
+
+    #[test]
+    fn weekday_list_mixed_runs_and_singletons() {
+        // `Mon Wed Thu Fri` → singleton + 3-run.
+        assert_eq!(
+            format_weekday_list(&[
+                Weekday::Monday,
+                Weekday::Wednesday,
+                Weekday::Thursday,
+                Weekday::Friday,
+            ]),
+            "Mon Wed..Fri"
+        );
+    }
+
+    #[test]
+    fn weekday_list_dedupes() {
+        assert_eq!(
+            format_weekday_list(&[Weekday::Monday, Weekday::Monday, Weekday::Tuesday]),
+            "Mon Tue"
+        );
+    }
+
+    #[test]
+    fn schedule_weekdays_round_trip_to_short_form() {
+        // Long-form input parses correctly, the formatter emits the
+        // canonical short form, and a second parse pass yields the
+        // same Weekdays list.
+        let src = "job demo:k { every monday tuesday wednesday at 09:00 }";
+        let ast = Parser::parse(src).unwrap();
+        let formatted = format(&ast);
+        assert!(formatted.contains("every Mon..Wed at 09:00"));
+        // Re-parse to confirm the new short form is a valid input.
+        let ast2 = Parser::parse(&formatted).unwrap();
+        if let Item::Job(ref j) = ast2.items[0] {
+            if let ScheduleKind::Weekdays { ref days, .. } = j.schedule.as_ref().unwrap().kind {
+                assert_eq!(
+                    *days,
+                    vec![Weekday::Monday, Weekday::Tuesday, Weekday::Wednesday]
+                );
+            } else {
+                panic!("expected Weekdays after round-trip");
+            }
+        }
+    }
+
+    #[test]
+    fn calendar_weekly_round_trip_to_short_form() {
+        let src = r#"calendar biz { include weekly "Mon".."Fri" }"#;
+        let ast = Parser::parse(src).unwrap();
+        let formatted = format(&ast);
+        // "weekday" alias since Mon..Fri is the full business week.
+        assert!(formatted.contains("include weekly weekday"));
+        Parser::parse(&formatted).unwrap();
+    }
+
+    #[test]
+    fn calendar_weekly_three_days_collapses_to_range() {
+        let src = "calendar biz { include weekly Mon Tue Wed }";
+        let ast = Parser::parse(src).unwrap();
+        let formatted = format(&ast);
+        assert!(formatted.contains("include weekly Mon..Wed"));
     }
 }
