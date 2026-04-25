@@ -7,9 +7,11 @@ node_modules/
 ui/dist/
 
 # WASM bridge — built by `ui/scripts/build-wasm.sh` (or vite dev/prebuild
-# hooks) into the wasm crate's `pkg/` and copied into ui/src/lib/wasm/.
+# hooks) into the wasm crate's `pkg/`, then copied into ui/src/lib/wasm/
+# (UI build) and site/wasm/ (Pages deploy + local generator preview).
 crates/croniq-config-wasm/pkg/
 ui/src/lib/wasm/
+site/wasm/
 
 # Claude Code
 .claude/

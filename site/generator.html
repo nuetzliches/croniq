@@ -1,0 +1,462 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Croniq — DSL Generator</title>
+  <meta name="description" content="Build Croniqfile schedules and calendars from a form. Copy-paste straight into your Croniqfile — no install required.">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><circle cx='12' cy='12' r='8' fill='none' stroke='%23a78bfa' stroke-width='2'/><circle cx='12' cy='12' r='2' fill='%23a78bfa'/></svg>">
+  <link rel="stylesheet" href="styles.css">
+  <style>
+    /* ── Page-local styles ────────────────────────────────────────────
+       Everything below is generator-only so we don't bloat the shared
+       styles.css that `index.html` ships unconditionally. */
+
+    .gen-hero {
+      padding: 3rem 0 2rem;
+      text-align: center;
+    }
+    .gen-hero h1 {
+      font-size: 2rem;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+    }
+    .gen-hero p {
+      color: var(--fg-muted);
+      max-width: 36rem;
+      margin: 0.5rem auto 0;
+    }
+    .back-link {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.4rem;
+      font-size: 0.875rem;
+      color: var(--fg-muted);
+      margin-bottom: 1.5rem;
+    }
+    .back-link:hover { color: var(--accent); }
+
+    .tabs {
+      display: flex;
+      border-bottom: 1px solid var(--border);
+      margin-bottom: 1.5rem;
+    }
+    .tab-btn {
+      background: none;
+      border: none;
+      color: var(--fg-muted);
+      padding: 0.75rem 1.25rem;
+      font-size: 0.875rem;
+      font-weight: 500;
+      cursor: pointer;
+      border-bottom: 2px solid transparent;
+      margin-bottom: -1px;
+    }
+    .tab-btn.active {
+      color: var(--accent);
+      border-bottom-color: var(--accent);
+    }
+    .tab-panel { display: none; }
+    .tab-panel.active { display: block; }
+
+    .gen-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1.5rem;
+      align-items: start;
+    }
+    @media (max-width: 768px) {
+      .gen-grid { grid-template-columns: 1fr; }
+    }
+
+    .gen-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 1.25rem;
+    }
+    .gen-card h3 {
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--fg-muted);
+      margin-bottom: 0.75rem;
+    }
+
+    .field {
+      display: flex;
+      flex-direction: column;
+      gap: 0.35rem;
+      margin-bottom: 0.85rem;
+    }
+    .field-row {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(0, 1fr));
+      gap: 0.5rem;
+    }
+    .field label {
+      font-size: 0.8125rem;
+      color: var(--fg-muted);
+    }
+    .field input[type="number"],
+    .field input[type="time"],
+    .field input[type="text"],
+    .field select {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      color: var(--fg);
+      padding: 0.5rem 0.65rem;
+      border-radius: 6px;
+      font-family: var(--font-sans);
+      font-size: 0.875rem;
+    }
+    .field select { cursor: pointer; }
+    .field input:focus, .field select:focus {
+      outline: none;
+      border-color: var(--accent);
+    }
+
+    .day-toggles {
+      display: grid;
+      grid-template-columns: repeat(7, 1fr);
+      gap: 0.25rem;
+    }
+    .day-toggle {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      color: var(--fg-muted);
+      padding: 0.4rem 0;
+      border-radius: 4px;
+      font-size: 0.75rem;
+      font-family: var(--font-mono);
+      cursor: pointer;
+      text-align: center;
+    }
+    .day-toggle.active {
+      background: rgba(167, 139, 250, 0.15);
+      border-color: var(--accent);
+      color: var(--accent);
+    }
+
+    .ord-toggles {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(56px, 1fr));
+      gap: 0.25rem;
+    }
+    .ord-toggle {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      color: var(--fg-muted);
+      padding: 0.35rem 0;
+      border-radius: 4px;
+      font-size: 0.75rem;
+      font-family: var(--font-mono);
+      cursor: pointer;
+      text-align: center;
+    }
+    .ord-toggle.active {
+      background: rgba(167, 139, 250, 0.15);
+      border-color: var(--accent);
+      color: var(--accent);
+    }
+
+    .dsl-output {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 0.75rem 0.9rem;
+      font-family: var(--font-mono);
+      font-size: 0.875rem;
+      color: var(--fg);
+      white-space: pre-wrap;
+      word-break: break-word;
+      min-height: 2.6rem;
+    }
+    .dsl-error {
+      color: #f87171;
+      font-size: 0.8125rem;
+      margin-top: 0.5rem;
+      font-family: var(--font-mono);
+    }
+
+    .copy-btn-inline {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      color: var(--fg-muted);
+      padding: 0.4rem 0.8rem;
+      border-radius: 4px;
+      font-size: 0.8125rem;
+      cursor: pointer;
+      margin-top: 0.6rem;
+    }
+    .copy-btn-inline:hover {
+      color: var(--accent);
+      border-color: var(--accent);
+    }
+
+    .fires {
+      list-style: none;
+      font-family: var(--font-mono);
+      font-size: 0.8125rem;
+      color: var(--fg-muted);
+    }
+    .fires li {
+      padding: 0.15rem 0;
+      border-bottom: 1px solid var(--border);
+    }
+    .fires li:last-child { border-bottom: none; }
+
+    /* Calendar grid */
+    .cal-nav {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 0.6rem;
+    }
+    .cal-nav button {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      color: var(--fg-muted);
+      padding: 0.3rem 0.7rem;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 0.8125rem;
+    }
+    .cal-nav button:hover {
+      color: var(--accent);
+      border-color: var(--accent);
+    }
+    .cal-month-label {
+      font-size: 0.875rem;
+      font-weight: 500;
+    }
+    .cal-grid {
+      display: grid;
+      grid-template-columns: repeat(7, 1fr);
+      gap: 2px;
+    }
+    .cal-head {
+      font-size: 0.6875rem;
+      text-align: center;
+      color: var(--fg-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      padding: 0.25rem 0;
+    }
+    .cal-day {
+      aspect-ratio: 1;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 0.8125rem;
+      border-radius: 4px;
+      background: var(--bg);
+      color: var(--fg-muted);
+      font-family: var(--font-mono);
+    }
+    .cal-day.outside { opacity: 0.3; }
+    .cal-day.included { background: rgba(34, 197, 94, 0.18); color: #4ade80; }
+    .cal-day.excluded { background: rgba(248, 113, 113, 0.18); color: #f87171; }
+    .cal-day.today { outline: 1px solid var(--accent); }
+
+    /* Rule editor list */
+    .rule-list { display: flex; flex-direction: column; gap: 0.5rem; }
+    .rule-row {
+      display: grid;
+      grid-template-columns: 88px 92px 1fr auto;
+      gap: 0.5rem;
+      align-items: center;
+    }
+    .rule-row select, .rule-row input {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      color: var(--fg);
+      padding: 0.4rem 0.55rem;
+      border-radius: 4px;
+      font-family: var(--font-sans);
+      font-size: 0.8125rem;
+    }
+    .rule-remove {
+      background: none;
+      border: none;
+      color: var(--fg-muted);
+      cursor: pointer;
+      padding: 0.25rem 0.4rem;
+      font-size: 1rem;
+    }
+    .rule-remove:hover { color: #f87171; }
+    .rule-add {
+      background: var(--bg);
+      border: 1px dashed var(--border);
+      color: var(--fg-muted);
+      padding: 0.5rem;
+      border-radius: 4px;
+      cursor: pointer;
+      width: 100%;
+      font-size: 0.8125rem;
+      margin-top: 0.5rem;
+    }
+    .rule-add:hover { color: var(--accent); border-color: var(--accent); }
+
+    .loading {
+      color: var(--fg-muted);
+      font-size: 0.875rem;
+      text-align: center;
+      padding: 2rem 0;
+    }
+  </style>
+</head>
+<body>
+  <section>
+    <div class="container">
+      <a href="./index.html" class="back-link">← Back to home</a>
+      <div class="gen-hero">
+        <h1>Croniqfile DSL Generator</h1>
+        <p>Build schedule and calendar blocks from a form. Copy-paste straight into your <code>Croniqfile</code> — no Croniq install required.</p>
+      </div>
+
+      <div class="tabs" role="tablist">
+        <button class="tab-btn active" data-tab="schedule" role="tab" aria-selected="true">Schedule</button>
+        <button class="tab-btn" data-tab="calendar" role="tab" aria-selected="false">Calendar</button>
+      </div>
+
+      <!-- Schedule tab ------------------------------------------------- -->
+      <div class="tab-panel active" id="tab-schedule">
+        <div class="gen-grid">
+          <div class="gen-card">
+            <h3>Schedule</h3>
+            <div class="field">
+              <label for="sch-mode">Mode</label>
+              <select id="sch-mode">
+                <option value="interval">Interval (every N seconds/minutes/hours)</option>
+                <option value="daily">Daily (every day at HH:MM)</option>
+                <option value="weekdays">Weekdays (specific days at HH:MM)</option>
+                <option value="monthly">Monthly (specific days of month)</option>
+                <option value="once">Once (at a specific UTC time)</option>
+                <option value="disabled">Disabled (won't fire)</option>
+              </select>
+            </div>
+
+            <!-- Mode-specific fieldsets — only one is shown at a time. -->
+            <div id="sch-fields-interval" class="sch-fields">
+              <div class="field-row">
+                <div class="field">
+                  <label for="sch-int-count">Count</label>
+                  <input id="sch-int-count" type="number" min="1" value="5">
+                </div>
+                <div class="field">
+                  <label for="sch-int-unit">Unit</label>
+                  <select id="sch-int-unit">
+                    <option value="seconds">seconds</option>
+                    <option value="minutes" selected>minutes</option>
+                    <option value="hours">hours</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+
+            <div id="sch-fields-daily" class="sch-fields" hidden>
+              <div class="field">
+                <label for="sch-daily-time">Time (UTC)</label>
+                <input id="sch-daily-time" type="time" value="09:00">
+              </div>
+            </div>
+
+            <div id="sch-fields-weekdays" class="sch-fields" hidden>
+              <div class="field">
+                <label>Days</label>
+                <div class="day-toggles" id="sch-wd-days"></div>
+              </div>
+              <div class="field">
+                <label for="sch-wd-time">Time (UTC)</label>
+                <input id="sch-wd-time" type="time" value="09:00">
+              </div>
+            </div>
+
+            <div id="sch-fields-monthly" class="sch-fields" hidden>
+              <div class="field">
+                <label>Day(s) of month</label>
+                <div class="ord-toggles" id="sch-mth-ords"></div>
+              </div>
+              <div class="field">
+                <label for="sch-mth-time">Time (UTC)</label>
+                <input id="sch-mth-time" type="time" value="03:00">
+              </div>
+            </div>
+
+            <div id="sch-fields-once" class="sch-fields" hidden>
+              <div class="field">
+                <label for="sch-once-at">UTC datetime</label>
+                <input id="sch-once-at" type="text" placeholder="2026-12-31T23:00:00Z" value="2026-12-31T23:00:00Z">
+              </div>
+            </div>
+
+            <div id="sch-fields-disabled" class="sch-fields" hidden>
+              <p style="color: var(--fg-muted); font-size: 0.8125rem;">
+                Disabled jobs stay in the Croniqfile but never fire. Useful
+                during incident triage when you want the config in source
+                control but don't want triggers to enqueue.
+              </p>
+            </div>
+          </div>
+
+          <div class="gen-card">
+            <h3>DSL output</h3>
+            <pre class="dsl-output" id="sch-dsl"></pre>
+            <button class="copy-btn-inline" id="sch-copy">Copy DSL</button>
+            <div id="sch-error" class="dsl-error" hidden></div>
+
+            <h3 style="margin-top: 1.25rem;">Next 5 fires (UTC)</h3>
+            <ul class="fires" id="sch-fires"></ul>
+          </div>
+        </div>
+      </div>
+
+      <!-- Calendar tab ------------------------------------------------- -->
+      <div class="tab-panel" id="tab-calendar">
+        <div class="gen-grid">
+          <div class="gen-card">
+            <h3>Rules</h3>
+            <div class="rule-list" id="cal-rules"></div>
+            <button class="rule-add" id="cal-add-rule">+ Add rule</button>
+
+            <h3 style="margin-top: 1.25rem;">DSL output</h3>
+            <pre class="dsl-output" id="cal-dsl"></pre>
+            <button class="copy-btn-inline" id="cal-copy">Copy DSL</button>
+            <div id="cal-error" class="dsl-error" hidden></div>
+          </div>
+
+          <div class="gen-card">
+            <h3>Active days</h3>
+            <div class="cal-nav">
+              <button id="cal-prev">←</button>
+              <span class="cal-month-label" id="cal-month"></span>
+              <button id="cal-next">→</button>
+            </div>
+            <div class="cal-grid" id="cal-grid"></div>
+            <p style="margin-top: 0.75rem; font-size: 0.75rem; color: var(--fg-muted);">
+              Green = an <code>include</code> rule covers this day.
+              Red = an <code>exclude</code> rule wins.
+              Empty = no rule activates the day.
+              The grid is a static preview; the Croniq scheduler also
+              respects timezone, time-of-day windows, and rule ordering.
+            </p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <footer>
+    <div class="container">
+      <div class="footer-links">
+        <a href="https://github.com/nuetzliches/croniq">GitHub</a>
+        <a href="./index.html">Home</a>
+        <span>MIT / Apache-2.0</span>
+      </div>
+    </div>
+  </footer>
+
+  <script type="module" src="./generator.js"></script>
+</body>
+</html>
