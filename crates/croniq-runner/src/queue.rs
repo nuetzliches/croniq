@@ -1,6 +1,6 @@
 //! Work queue: pending executions waiting to be dispatched to runners.
 
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 
 use crate::types::WorkItem;
 
@@ -10,9 +10,17 @@ use crate::types::WorkItem;
 /// the requesting runner is eligible to execute. Items that don't match are
 /// left in place (not re-ordered), preserving fairness across runners with
 /// different capability sets.
+///
+/// Maintains an O(1) per-`job_key` counter (`per_job_count`) so the scheduler
+/// can enforce `max_queue_depth` without scanning the queue on every tick.
 #[derive(Debug, Default)]
 pub struct WorkQueue {
     items: VecDeque<WorkItem>,
+    /// Number of currently-queued items keyed by `job_key`. Updated in
+    /// lockstep with `items` by every mutating method on this struct.
+    /// Entries are removed when the count reaches zero so iteration stays
+    /// proportional to active jobs, not total job_keys ever seen.
+    per_job_count: HashMap<String, usize>,
 }
 
 impl WorkQueue {
@@ -22,6 +30,7 @@ impl WorkQueue {
 
     /// Add a work item at the back of the queue.
     pub fn enqueue(&mut self, item: WorkItem) {
+        *self.per_job_count.entry(item.job_key.clone()).or_insert(0) += 1;
         self.items.push_back(item);
     }
 
@@ -35,7 +44,11 @@ impl WorkQueue {
             .iter()
             .position(|item| item.require.iter().all(|req| capabilities.contains(req)));
 
-        pos.map(|i| self.items.remove(i).expect("index just found"))
+        pos.map(|i| {
+            let item = self.items.remove(i).expect("index just found");
+            self.dec_count(&item.job_key);
+            item
+        })
     }
 
     /// Remove up to `limit` eligible items for a runner in one call.
@@ -68,18 +81,43 @@ impl WorkQueue {
         self.items.is_empty()
     }
 
+    /// Number of currently-queued items for `job_key`. O(1) lookup;
+    /// the scheduler tick uses this to enforce `max_queue_depth` instead
+    /// of scanning the queue every second.
+    pub fn count_for_job(&self, job_key: &str) -> usize {
+        self.per_job_count.get(job_key).copied().unwrap_or(0)
+    }
+
     /// Remove a specific execution by ID (e.g. when cancelled before dispatch).
     ///
     /// Returns `true` if an item was found and removed.
     pub fn remove(&mut self, execution_id: &str) -> bool {
-        let before = self.items.len();
-        self.items.retain(|i| i.execution_id != execution_id);
-        self.items.len() < before
+        if let Some(idx) = self
+            .items
+            .iter()
+            .position(|i| i.execution_id == execution_id)
+        {
+            let removed = self.items.remove(idx).expect("index just found");
+            self.dec_count(&removed.job_key);
+            true
+        } else {
+            false
+        }
     }
 
     /// Drain all items from the queue (e.g. for shutdown).
     pub fn drain(&mut self) -> Vec<WorkItem> {
+        self.per_job_count.clear();
         self.items.drain(..).collect()
+    }
+
+    fn dec_count(&mut self, job_key: &str) {
+        if let Some(count) = self.per_job_count.get_mut(job_key) {
+            *count = count.saturating_sub(1);
+            if *count == 0 {
+                self.per_job_count.remove(job_key);
+            }
+        }
     }
 }
 
@@ -223,5 +261,68 @@ mod tests {
         let drained = q.drain();
         assert_eq!(drained.len(), 3);
         assert!(q.is_empty());
+    }
+
+    fn item_with_job(execution_id: &str, job_key: &str) -> WorkItem {
+        WorkItem {
+            execution_id: execution_id.into(),
+            job_key: job_key.into(),
+            fire_at: Utc::now(),
+            attempt: 1,
+            require: vec![],
+            prefer: vec![],
+            metadata: serde_json::Value::Null,
+            timeout: "5m".into(),
+        }
+    }
+
+    #[test]
+    fn count_for_job_tracks_enqueue_and_dequeue() {
+        let mut q = WorkQueue::new();
+        assert_eq!(q.count_for_job("billing:invoice"), 0);
+
+        q.enqueue(item_with_job("e1", "billing:invoice"));
+        q.enqueue(item_with_job("e2", "billing:invoice"));
+        q.enqueue(item_with_job("e3", "etl:sync"));
+
+        assert_eq!(q.count_for_job("billing:invoice"), 2);
+        assert_eq!(q.count_for_job("etl:sync"), 1);
+        assert_eq!(q.count_for_job("nonexistent"), 0);
+
+        // Dequeue one billing:invoice → counter drops to 1
+        let _ = q.dequeue_for(&[]);
+        assert_eq!(
+            q.count_for_job("billing:invoice") + q.count_for_job("etl:sync"),
+            2
+        );
+    }
+
+    #[test]
+    fn count_for_job_handles_remove_by_id() {
+        let mut q = WorkQueue::new();
+        q.enqueue(item_with_job("e1", "billing:invoice"));
+        q.enqueue(item_with_job("e2", "billing:invoice"));
+        assert_eq!(q.count_for_job("billing:invoice"), 2);
+
+        assert!(q.remove("e1"));
+        assert_eq!(q.count_for_job("billing:invoice"), 1);
+
+        assert!(q.remove("e2"));
+        assert_eq!(q.count_for_job("billing:invoice"), 0);
+        // No-op remove leaves counter alone
+        assert!(!q.remove("nonexistent"));
+        assert_eq!(q.count_for_job("billing:invoice"), 0);
+    }
+
+    #[test]
+    fn count_for_job_resets_on_drain() {
+        let mut q = WorkQueue::new();
+        q.enqueue(item_with_job("e1", "billing:invoice"));
+        q.enqueue(item_with_job("e2", "etl:sync"));
+        assert_eq!(q.count_for_job("billing:invoice"), 1);
+
+        let _ = q.drain();
+        assert_eq!(q.count_for_job("billing:invoice"), 0);
+        assert_eq!(q.count_for_job("etl:sync"), 0);
     }
 }
