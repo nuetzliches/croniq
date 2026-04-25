@@ -4,6 +4,9 @@ import { Badge } from '@/components/ui/badge'
 import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { EmptyState } from '@/components/ui/empty-state'
+import { CopyButton } from '@/components/ui/copy-button'
+import { RelativeTime } from '@/components/ui/relative-time'
+import { useConfirm } from '@/components/ui/confirm-dialog'
 
 function CapacityRing({ inflight, max }: { inflight: number; max: number }) {
   const pct = max > 0 ? Math.min(inflight / max, 1) : 0
@@ -32,9 +35,22 @@ const statusVariant = (s: string) =>
 export function RunnersPage() {
   const { data: runners, isConnected } = useRunnersSSE()
   const deleteRunner = useDeleteRunner()
+  const { confirm, dialog: confirmDialog } = useConfirm()
+
+  async function handleDelete(runnerId: string) {
+    const ok = await confirm({
+      title: `Remove runner ${runnerId}?`,
+      description:
+        'In-flight executions belonging to this runner stay claimed until their lease expires, then time out. Use the runner shutdown signal for a graceful drain.',
+      confirmLabel: 'Remove runner',
+      destructive: true,
+    })
+    if (ok) deleteRunner.mutate(runnerId)
+  }
 
   return (
     <div className="space-y-4">
+      {confirmDialog}
       <div className="flex items-center justify-between">
         <p className="text-sm text-muted-foreground">{runners?.length ?? 0} runners</p>
         <span
@@ -64,7 +80,8 @@ export function RunnersPage() {
                 <div className="flex-1 min-w-0 space-y-2">
                   <div className="flex items-center gap-2">
                     <Badge variant={statusVariant(r.status)}>{r.status}</Badge>
-                    <span className="font-mono text-xs text-muted-foreground truncate">{r.runner_id}</span>
+                    <span className="font-mono text-xs text-muted-foreground truncate" title={r.runner_id}>{r.runner_id}</span>
+                    <CopyButton value={r.runner_id} label={`Copy runner id ${r.runner_id}`} />
                   </div>
 
                   {r.capabilities.length > 0 && (
@@ -78,7 +95,7 @@ export function RunnersPage() {
                   )}
 
                   <p className="text-xs text-muted-foreground">
-                    Last poll: {new Date(r.last_poll_at).toLocaleTimeString()}
+                    Last poll <RelativeTime iso={r.last_poll_at} />
                   </p>
                 </div>
 
@@ -87,7 +104,7 @@ export function RunnersPage() {
                   <Button
                     variant="ghost"
                     size="sm"
-                    onClick={() => deleteRunner.mutate(r.runner_id)}
+                    onClick={() => handleDelete(r.runner_id)}
                     aria-label={`Remove runner ${r.runner_id}`}
                     className="h-6 w-6 p-0 text-muted-foreground hover:text-destructive"
                   >

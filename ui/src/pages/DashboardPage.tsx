@@ -9,7 +9,7 @@ import { stateVariant } from '@/components/ui/badge-variants'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
 import { Spinner } from '@/components/ui/spinner'
 import { EmptyState } from '@/components/ui/empty-state'
-import { formatDate } from '@/lib/utils'
+import { RelativeTime } from '@/components/ui/relative-time'
 
 function QueueGauge({ value }: { value: number }) {
   const max = Math.max(value, 10)
@@ -153,15 +153,22 @@ export function DashboardPage() {
               {executions.isLoading && (
                 <div className="flex justify-center py-6"><Spinner className="h-4 w-4" /></div>
               )}
-              {executions.data?.length === 0 && (
-                <EmptyState icon={<Activity className="h-8 w-8" />} title="No executions yet" />
+              {!executions.isLoading && executions.data?.length === 0 && (
+                // Compact placeholder — the full <EmptyState> component
+                // adds 12+ rem of padding, which overshoots the 12rem
+                // (max-h-48) panel and forces a scrollbar onto a totally
+                // empty card. Two centered lines fit and read.
+                <div className="flex flex-col items-center justify-center text-center py-6 px-4 text-muted-foreground">
+                  <Activity className="h-6 w-6 mb-1.5" aria-hidden="true" />
+                  <p className="text-xs">No executions yet</p>
+                </div>
               )}
               {executions.data?.map((e) => (
                 <div key={e.id} className="flex items-center gap-3 px-4 py-2 text-xs hover:bg-accent/30 transition-colors">
                   <Badge variant={stateVariant(e.state)} className="shrink-0 w-20 justify-center">{e.state}</Badge>
                   <span className="font-mono text-foreground truncate flex-1">{e.job_key}</span>
                   {e.duration_ms && <span className="text-muted-foreground shrink-0">{e.duration_ms}ms</span>}
-                  <span className="text-muted-foreground shrink-0">{formatDate(e.fire_at)}</span>
+                  <span className="text-muted-foreground shrink-0"><RelativeTime iso={e.fire_at} /></span>
                 </div>
               ))}
             </div>

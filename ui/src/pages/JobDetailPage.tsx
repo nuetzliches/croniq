@@ -15,7 +15,10 @@ import { stateVariant } from '@/components/ui/badge-variants'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Spinner } from '@/components/ui/spinner'
-import { formatDate } from '@/lib/utils'
+import { CopyButton } from '@/components/ui/copy-button'
+import { RelativeTime } from '@/components/ui/relative-time'
+import { useConfirm } from '@/components/ui/confirm-dialog'
+import { formatDate, shortId } from '@/lib/utils'
 
 interface ScheduleForm {
   cron_expression: string
@@ -29,7 +32,20 @@ export function JobDetailPage() {
   const executions = useExecutions({ job_key: jobKey, limit: 20 })
   const createSchedule = useCreateSchedule()
   const deleteSchedule = useDeleteSchedule()
+  const { confirm, dialog: confirmDialog } = useConfirm()
   const [scheduleDialogOpen, setScheduleDialogOpen] = useState(false)
+
+  async function handleDeleteSchedule(triggerId: string, cron: string | null) {
+    const ok = await confirm({
+      title: 'Delete schedule?',
+      description: cron
+        ? `The cron schedule "${cron}" will stop firing. Existing in-flight executions are not affected.`
+        : 'This schedule will stop firing. Existing in-flight executions are not affected.',
+      confirmLabel: 'Delete schedule',
+      destructive: true,
+    })
+    if (ok) deleteSchedule.mutate(triggerId)
+  }
 
   const { register, handleSubmit, reset, formState: { errors } } = useForm<ScheduleForm>()
   const inputCls =
@@ -54,9 +70,11 @@ export function JobDetailPage() {
 
   return (
     <div className="space-y-6">
+      {confirmDialog}
       <div className="flex items-center gap-3">
         <span className="font-mono text-base font-semibold">{j.job_key}</span>
         <Badge variant={j.is_active ? 'ok' : 'neutral'}>{j.is_active ? 'active' : 'inactive'}</Badge>
+        <CopyButton value={j.job_key} label={`Copy job key ${j.job_key}`} />
       </div>
 
       <Card>
@@ -152,7 +170,7 @@ export function JobDetailPage() {
                       <Button
                         variant="ghost"
                         size="sm"
-                        onClick={() => deleteSchedule.mutate(s.trigger_id)}
+                        onClick={() => handleDeleteSchedule(s.trigger_id, s.cron_expression)}
                         aria-label={`Delete schedule`}
                         className="h-7 w-7 p-0 text-muted-foreground hover:text-destructive"
                       >
@@ -178,22 +196,27 @@ export function JobDetailPage() {
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-border">
-                  {['ID', 'State', 'Fire At', 'Duration'].map((h) => (
+                  {['ID', 'State', 'Runner', 'Fire At', 'Duration'].map((h) => (
                     <th key={h} className="px-3 py-2.5 text-left text-xs font-medium text-muted-foreground uppercase tracking-wide">{h}</th>
                   ))}
                 </tr>
               </thead>
               <tbody>
                 {executions.data?.length === 0 && (
-                  <tr><td colSpan={4} className="px-3 py-6 text-center text-sm text-muted-foreground">No executions yet</td></tr>
+                  <tr><td colSpan={5} className="px-3 py-6 text-center text-sm text-muted-foreground">No executions yet</td></tr>
                 )}
                 {executions.data?.map((e) => (
                   <tr key={e.id} className="border-b border-border last:border-0 hover:bg-accent/30 transition-colors">
-                    <td className="px-3 py-2.5 font-mono text-xs text-muted-foreground">{e.id.slice(0, 8)}</td>
+                    <td className="px-3 py-2.5 font-mono text-xs text-muted-foreground" title={e.id}>{shortId(e.id)}</td>
                     <td className="px-3 py-2.5">
                       <Badge variant={stateVariant(e.state)}>{e.state}</Badge>
                     </td>
-                    <td className="px-3 py-2.5 text-muted-foreground">{formatDate(e.fire_at)}</td>
+                    <td className="px-3 py-2.5 text-muted-foreground font-mono text-xs">
+                      <div className="max-w-[14rem] truncate" title={e.runner_id || undefined}>{e.runner_id || '—'}</div>
+                    </td>
+                    <td className="px-3 py-2.5 text-muted-foreground">
+                      <RelativeTime iso={e.fire_at} />
+                    </td>
                     <td className="px-3 py-2.5 text-muted-foreground">{e.duration_ms ? `${e.duration_ms}ms` : '—'}</td>
                   </tr>
                 ))}
