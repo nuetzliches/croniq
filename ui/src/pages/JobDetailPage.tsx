@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useCallback, useState } from 'react'
 import { useParams } from 'react-router'
 import { useForm } from 'react-hook-form'
 import * as Dialog from '@radix-ui/react-dialog'
@@ -18,6 +18,7 @@ import { Spinner } from '@/components/ui/spinner'
 import { CopyButton } from '@/components/ui/copy-button'
 import { RelativeTime } from '@/components/ui/relative-time'
 import { useConfirm } from '@/components/ui/confirm-dialog'
+import { ScheduleBuilder } from '@/components/builders/ScheduleBuilder'
 import { formatDate, shortId } from '@/lib/utils'
 
 interface ScheduleForm {
@@ -47,9 +48,21 @@ export function JobDetailPage() {
     if (ok) deleteSchedule.mutate(triggerId)
   }
 
-  const { register, handleSubmit, reset, formState: { errors } } = useForm<ScheduleForm>()
+  const { register, handleSubmit, reset, formState: { errors }, setValue } =
+    useForm<ScheduleForm>({ defaultValues: { cron_expression: '', timezone: '' } })
   const inputCls =
     'w-full px-3 py-2 border border-border rounded-md text-sm bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-primary'
+
+  // Two ways to enter the schedule:
+  //   "builder"  — form-driven, drives `cron_expression` via wasm
+  //   "advanced" — raw text, same as before (cron syntax or DSL)
+  // The `cron_expression` field stays a single string in the form so
+  // the API call is unchanged regardless of mode.
+  const [scheduleMode, setScheduleMode] = useState<'builder' | 'advanced'>('builder')
+  const onBuilderChange = useCallback(
+    (dsl: string) => setValue('cron_expression', dsl, { shouldValidate: true }),
+    [setValue],
+  )
 
   async function onScheduleSubmit(data: ScheduleForm) {
     if (!jobKey) return
@@ -59,6 +72,7 @@ export function JobDetailPage() {
       timezone: data.timezone || undefined,
     })
     reset()
+    setScheduleMode('builder')
     setScheduleDialogOpen(false)
   }
 
@@ -107,7 +121,7 @@ export function JobDetailPage() {
             </Dialog.Trigger>
             <Dialog.Portal>
               <Dialog.Overlay className="fixed inset-0 z-40 bg-black/40" />
-              <Dialog.Content className="fixed left-1/2 top-1/2 z-50 w-full max-w-md -translate-x-1/2 -translate-y-1/2 rounded-lg border border-border bg-card p-6 shadow-xl">
+              <Dialog.Content className="fixed left-1/2 top-1/2 z-50 w-full max-w-md -translate-x-1/2 -translate-y-1/2 rounded-lg border border-border bg-card p-6 shadow-xl max-h-[90vh] overflow-y-auto">
                 <div className="flex items-center justify-between mb-4">
                   <Dialog.Title className="text-sm font-semibold">Create Schedule for {j.job_key}</Dialog.Title>
                   <Dialog.Close
@@ -117,15 +131,53 @@ export function JobDetailPage() {
                     <X className="h-4 w-4" />
                   </Dialog.Close>
                 </div>
+                {/* Mode toggle — Builder is the default for new schedules,
+                    Advanced is the escape hatch for pasting cron syntax
+                    or for power users who prefer the raw DSL. */}
+                <div role="tablist" className="inline-flex border border-border rounded-md p-0.5 mb-3 text-xs">
+                  {(['builder', 'advanced'] as const).map((m) => (
+                    <button
+                      key={m}
+                      type="button"
+                      role="tab"
+                      aria-selected={scheduleMode === m}
+                      onClick={() => setScheduleMode(m)}
+                      className={`px-3 py-1 rounded-sm capitalize ${
+                        scheduleMode === m
+                          ? 'bg-primary/15 text-primary'
+                          : 'text-muted-foreground hover:text-foreground'
+                      }`}
+                    >
+                      {m === 'builder' ? 'Builder' : 'Advanced (raw)'}
+                    </button>
+                  ))}
+                </div>
                 <form onSubmit={handleSubmit(onScheduleSubmit)} className="space-y-3">
-                  <div>
-                    <input
-                      {...register('cron_expression', { required: 'Required' })}
-                      placeholder="Cron or interval (e.g. */15 * * * *, 5m)"
-                      className={inputCls}
-                    />
-                    {errors.cron_expression && <p className="text-xs text-destructive mt-1">{errors.cron_expression.message}</p>}
-                  </div>
+                  {scheduleMode === 'builder' ? (
+                    <>
+                      <ScheduleBuilder onChange={onBuilderChange} />
+                      {/* Hidden RHF input — the builder writes here so
+                          the form's required-validation still works. */}
+                      <input
+                        type="hidden"
+                        {...register('cron_expression', { required: 'Required' })}
+                      />
+                      {errors.cron_expression && (
+                        <p className="text-xs text-destructive">{errors.cron_expression.message}</p>
+                      )}
+                    </>
+                  ) : (
+                    <div>
+                      <input
+                        {...register('cron_expression', { required: 'Required' })}
+                        placeholder="Cron or interval (e.g. */15 * * * *, 5m, every 5 minutes)"
+                        className={inputCls}
+                      />
+                      {errors.cron_expression && (
+                        <p className="text-xs text-destructive mt-1">{errors.cron_expression.message}</p>
+                      )}
+                    </div>
+                  )}
                   <input
                     {...register('timezone')}
                     placeholder="Timezone (optional, e.g. Europe/Vienna)"

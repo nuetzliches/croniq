@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useCallback, useState } from 'react'
 import { useForm } from 'react-hook-form'
 import * as Dialog from '@radix-ui/react-dialog'
 import { Plus, Trash2, X, CalendarDays } from 'lucide-react'
@@ -9,6 +9,7 @@ import { EmptyState } from '@/components/ui/empty-state'
 import { Spinner } from '@/components/ui/spinner'
 import { useConfirm } from '@/components/ui/confirm-dialog'
 import { RelativeTime } from '@/components/ui/relative-time'
+import { CalendarRuleBuilder } from '@/components/builders/CalendarRuleBuilder'
 
 interface CalendarForm {
   name: string
@@ -35,13 +36,25 @@ export function CalendarsPage() {
     if (ok) deleteCalendar.mutate(cal.calendar_id)
   }
 
-  const { register, handleSubmit, reset, formState: { errors } } = useForm<CalendarForm>()
+  const { register, handleSubmit, reset, setValue, formState: { errors } } = useForm<CalendarForm>()
 
   const inputCls = 'w-full px-3 py-2 border border-border rounded-md text-sm bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-primary'
+
+  // Two ways to enter the rules:
+  //   "builder"  — interactive form, drives `rules` via wasm
+  //   "advanced" — raw textarea (the original UX, kept as escape hatch)
+  // Server still receives a single DSL string in `rules`.
+  const [rulesMode, setRulesMode] = useState<'builder' | 'advanced'>('builder')
+  const onBuilderChange = useCallback(
+    (dsl: string) => setValue('rules', dsl),
+    [setValue],
+  )
+  const onBuilderError = useCallback((msg: string | null) => setRulesError(msg), [])
 
   function resetDialog() {
     reset()
     setRulesError(null)
+    setRulesMode('builder')
   }
 
   async function onSubmit(data: CalendarForm) {
@@ -101,48 +114,49 @@ export function CalendarsPage() {
                 </div>
                 <input {...register('timezone')} placeholder="Timezone (e.g. Europe/Vienna)" className={inputCls} />
                 <div>
-                  <label className="text-xs font-medium text-foreground block mb-1">Rules (optional)</label>
-                  <textarea
-                    {...register('rules')}
-                    placeholder={'Croniqfile DSL — leave empty for "always on"'}
-                    rows={4}
-                    className={`${inputCls} resize-none font-mono`}
-                    onChange={(e) => { register('rules').onChange(e); if (rulesError) setRulesError(null) }}
-                  />
-                  {/* HTML textarea placeholders flatten newlines to spaces, so
-                      multi-line examples are unreadable inline. Render the
-                      examples below the field instead — clickable so the
-                      user can drop them straight in. */}
-                  <p className="text-xs text-muted-foreground mt-1.5">
-                    Common patterns:
-                  </p>
-                  <ul className="mt-1 space-y-1 text-xs font-mono text-muted-foreground">
-                    {[
-                      'include weekly "Mon".."Fri"',
-                      'include window "08:00".."18:00"',
-                      'exclude annual 12-25',
-                    ].map((snippet) => (
-                      <li key={snippet}>
+                  <div className="flex items-center justify-between mb-1.5">
+                    <label className="text-xs font-medium text-foreground">Rules (optional)</label>
+                    {/* Mode toggle — Builder is the default, Advanced is
+                        the escape hatch for power users editing existing
+                        calendars in raw DSL. */}
+                    <div role="tablist" className="inline-flex border border-border rounded-md p-0.5 text-[11px]">
+                      {(['builder', 'advanced'] as const).map((m) => (
                         <button
+                          key={m}
                           type="button"
-                          onClick={() => {
-                            // Append (don't replace) so users can stack patterns.
-                            const ta = document.querySelector<HTMLTextAreaElement>('textarea[name="rules"]')
-                            if (!ta) return
-                            const next = ta.value ? `${ta.value.replace(/\s*$/, '')}\n${snippet}` : snippet
-                            // Trigger react-hook-form's change handler so the
-                            // form state stays in sync with the DOM.
-                            const setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value')?.set
-                            setter?.call(ta, next)
-                            ta.dispatchEvent(new Event('input', { bubbles: true }))
-                          }}
-                          className="hover:text-foreground"
+                          role="tab"
+                          aria-selected={rulesMode === m}
+                          onClick={() => setRulesMode(m)}
+                          className={`px-2 py-0.5 rounded-sm capitalize ${
+                            rulesMode === m
+                              ? 'bg-primary/15 text-primary'
+                              : 'text-muted-foreground hover:text-foreground'
+                          }`}
                         >
-                          + {snippet}
+                          {m === 'builder' ? 'Builder' : 'Advanced (raw)'}
                         </button>
-                      </li>
-                    ))}
-                  </ul>
+                      ))}
+                    </div>
+                  </div>
+                  {rulesMode === 'builder' ? (
+                    <>
+                      <CalendarRuleBuilder onChange={onBuilderChange} onError={onBuilderError} />
+                      {/* Hidden RHF field — the builder writes here so
+                          submit picks up the produced DSL string. */}
+                      <input type="hidden" {...register('rules')} />
+                    </>
+                  ) : (
+                    <textarea
+                      {...register('rules')}
+                      placeholder={'Croniqfile DSL — leave empty for "always on"'}
+                      rows={4}
+                      className={`${inputCls} resize-none font-mono`}
+                      onChange={(e) => {
+                        register('rules').onChange(e)
+                        if (rulesError) setRulesError(null)
+                      }}
+                    />
+                  )}
                   {rulesError && (
                     <p className="text-xs text-destructive mt-1 whitespace-pre-wrap">{rulesError}</p>
                   )}
