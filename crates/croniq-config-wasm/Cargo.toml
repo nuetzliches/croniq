@@ -1,0 +1,42 @@
+[package]
+name = "croniq-config-wasm"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "WebAssembly bindings for the Croniqfile DSL — parse, validate, format, next-fire preview"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+croniq-config = { path = "../croniq-config" }
+wasm-bindgen = "0.2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde-wasm-bindgen = "0.6"
+# `default-features = false` skips the `clock` system-time path (we
+# always pass `now` from the JS caller) and `chrono-tz` (keeps the
+# bundle out of timezone-data territory). `wasmbind` exposes the JS
+# Date type for ergonomic interop, `alloc` enables `Box`/`String`.
+chrono = { version = "0.4", default-features = false, features = ["wasmbind", "alloc", "serde"] }
+console_error_panic_hook = { version = "0.1", optional = true }
+
+[features]
+default = ["console_error_panic_hook"]
+
+[package.metadata.wasm-pack.profile.release]
+# Run binaryen's `wasm-opt` for an extra ~10–20 % shrink. The `-Oz` pass
+# prioritises size over speed; the schedule preview is not on a hot path
+# and any constant overhead vanishes next to the network round-trip the
+# user already accepted by loading the page.
+#
+# `nontrapping-fptoint` is required because rustc 1.94 emits
+# `i64.trunc_sat_f64_s` instructions for float→int conversions in
+# chrono's path. Without the flag wasm-opt rejects them as unknown.
+# `bulk-memory` is enabled by recent rustc by default, so wasm-opt also
+# needs it.
+wasm-opt = [
+    "-Oz",
+    "--enable-bulk-memory",
+    "--enable-nontrapping-float-to-int",
+]

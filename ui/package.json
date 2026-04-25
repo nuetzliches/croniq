@@ -4,6 +4,9 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
+    "build:wasm": "bash scripts/build-wasm.sh",
+    "predev": "bash scripts/build-wasm.sh",
+    "prebuild": "bash scripts/build-wasm.sh",
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
