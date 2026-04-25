@@ -193,17 +193,16 @@ impl SchedulerLoop {
             };
 
             // Queue overflow protection: skip if too many queued executions for this job.
-            // Per-job max_queue_depth overrides the default of 10.
+            // Per-job max_queue_depth overrides the default of 10. The
+            // `count_for_job` lookup is O(1) — replaces a previous scan that
+            // peeked the first 1000 items every tick per trigger.
             let max_depth = job.max_queue_depth.unwrap_or(10) as usize;
             let queued_count = self
                 .runner
                 .queue
                 .read()
                 .await
-                .peek_n(1000)
-                .iter()
-                .filter(|item| item.job_key == trigger.job_key)
-                .count();
+                .count_for_job(&trigger.job_key);
             if queued_count >= max_depth {
                 tracing::warn!(
                     job_key = %trigger.job_key,
