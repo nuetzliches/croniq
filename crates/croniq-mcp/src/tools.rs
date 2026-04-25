@@ -741,7 +741,7 @@ mod tests {
 
         {
             let mut reg = server.state.registry.write().await;
-            reg.register_or_update("runner-1", vec!["billing".into()], 3, vec![], None);
+            let _ = reg.register_or_update("runner-1", vec!["billing".into()], 3, vec![], None);
         }
 
         let result = server.list_runners().await.unwrap();
@@ -769,7 +769,7 @@ mod tests {
 
         {
             let mut reg = server.state.registry.write().await;
-            reg.register_or_update(
+            let _ = reg.register_or_update(
                 "worker-eu",
                 vec!["billing".into(), "eu-central".into()],
                 5,

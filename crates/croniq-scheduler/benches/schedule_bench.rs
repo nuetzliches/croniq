@@ -132,7 +132,7 @@ fn bench_trigger_lifecycle(c: &mut Criterion) {
                     if let Some(fire_at) = trigger.evaluate(now) {
                         trigger.mark_fired(fire_at, now);
                     }
-                    now = now + ChronoDuration::seconds(10);
+                    now += ChronoDuration::seconds(10);
                 }
             },
             criterion::BatchSize::SmallInput,

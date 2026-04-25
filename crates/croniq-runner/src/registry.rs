@@ -176,7 +176,7 @@ mod tests {
     #[test]
     fn re_register_updates_heartbeat() {
         let mut reg = RunnerRegistry::new();
-        reg.register_or_update("r1", vec!["billing".into()], 3, vec![], None);
+        let _ = reg.register_or_update("r1", vec!["billing".into()], 3, vec![], None);
         let first_poll = reg.get("r1").unwrap().last_poll_at;
 
         // Simulate time passing by sleeping 1ms (not ideal but cheap)
@@ -191,8 +191,8 @@ mod tests {
     #[test]
     fn capabilities_updated_on_re_register() {
         let mut reg = RunnerRegistry::new();
-        reg.register_or_update("r1", vec!["billing".into()], 3, vec![], None);
-        reg.register_or_update(
+        let _ = reg.register_or_update("r1", vec!["billing".into()], 3, vec![], None);
+        let _ = reg.register_or_update(
             "r1",
             vec!["billing".into(), "eu-central".into()],
             3,
@@ -207,7 +207,7 @@ mod tests {
     #[test]
     fn inflight_reflected_in_registry() {
         let mut reg = RunnerRegistry::new();
-        reg.register_or_update(
+        let _ = reg.register_or_update(
             "r1",
             vec![],
             3,
@@ -222,7 +222,7 @@ mod tests {
     #[test]
     fn claim_and_release() {
         let mut reg = RunnerRegistry::new();
-        reg.register_or_update("r1", vec![], 3, vec![], None);
+        let _ = reg.register_or_update("r1", vec![], 3, vec![], None);
 
         assert!(reg.claim("r1", "exec-42"));
         assert_eq!(reg.get("r1").unwrap().inflight, vec!["exec-42"]);
@@ -240,14 +240,14 @@ mod tests {
     #[test]
     fn release_unknown_execution_returns_false() {
         let mut reg = RunnerRegistry::new();
-        reg.register_or_update("r1", vec![], 3, vec![], None);
+        let _ = reg.register_or_update("r1", vec![], 3, vec![], None);
         assert!(!reg.release("r1", "exec-does-not-exist"));
     }
 
     #[test]
     fn remove_runner() {
         let mut reg = RunnerRegistry::new();
-        reg.register_or_update("r1", vec![], 3, vec![], None);
+        let _ = reg.register_or_update("r1", vec![], 3, vec![], None);
         let removed = reg.remove("r1");
         assert!(removed.is_some());
         assert!(reg.is_empty());
@@ -256,7 +256,7 @@ mod tests {
     #[test]
     fn by_status_filters_correctly() {
         let mut reg = RunnerRegistry::new();
-        reg.register_or_update("online", vec![], 1, vec![], None);
+        let _ = reg.register_or_update("online", vec![], 1, vec![], None);
 
         // Manually set a stale/dead runner by inserting with old timestamp
         reg.runners.insert(

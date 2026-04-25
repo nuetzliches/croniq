@@ -140,6 +140,13 @@ enum Commands {
         /// use the UI (Settings → API Keys) for production setups.
         #[arg(long)]
         api_key: Option<String>,
+
+        /// Comma-separated scopes for the seeded client when `--api-key` is
+        /// passed. Defaults to `admin`. Examples:
+        ///   `--scopes work:poll,work:ack,work:renew,work:events` (runner)
+        ///   `--scopes jobs:read,executions:read,dead-letters:read` (read-only dashboard)
+        #[arg(long, value_delimiter = ',', requires = "api_key")]
+        scopes: Option<Vec<String>>,
     },
 
     /// Zero-to-running in one command: creates Croniqfile, inits DB, prints next steps
@@ -217,11 +224,13 @@ fn main() -> Result<()> {
             username,
             password,
             api_key,
+            scopes,
         } => commands::init::init(
             &data_dir,
             &username,
             password.as_deref(),
             api_key.as_deref(),
+            scopes,
         ),
         Commands::Quickstart {
             data_dir,
