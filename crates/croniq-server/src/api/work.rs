@@ -2,13 +2,16 @@
 
 use std::sync::Arc;
 
-use axum::{Json, extract::State, http::StatusCode};
+use axum::{Extension, Json, extract::State, http::StatusCode};
 use chrono::Utc;
+use croniq_auth::CallerContext;
+use croniq_auth::context::Scope;
 use croniq_store::models::ExecutionLogEntry;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use super::ServerState;
+use crate::api::auth_middleware::require_scope;
 
 // ─── Renew ───
 
@@ -26,8 +29,12 @@ pub struct RenewResponse {
 /// `POST /v1/work/renew` — renew a lease on a claimed execution.
 pub async fn handle_renew(
     State(state): State<Arc<ServerState>>,
+    Extension(ctx): Extension<CallerContext>,
     Json(req): Json<RenewRequest>,
 ) -> (StatusCode, Json<RenewResponse>) {
+    if let Err(s) = require_scope(&ctx, Scope::WORK_RENEW) {
+        return (s, Json(RenewResponse { renewed: false }));
+    }
     // Update the runner's last_poll_at to extend its liveness
     let mut reg = state.runner.registry.write().await;
     if let Some(runner) = reg.get_mut(&req.runner_id) {
@@ -59,9 +66,11 @@ pub struct EventsResponse {
 /// `POST /v1/work/{execution_id}:events` — push structured log events.
 pub async fn handle_events(
     State(state): State<Arc<ServerState>>,
+    Extension(ctx): Extension<CallerContext>,
     axum::extract::Path(execution_id): axum::extract::Path<String>,
     Json(events): Json<Vec<WorkEvent>>,
 ) -> Result<(StatusCode, Json<EventsResponse>), StatusCode> {
+    require_scope(&ctx, Scope::WORK_EVENTS)?;
     let store = state
         .store
         .as_ref()

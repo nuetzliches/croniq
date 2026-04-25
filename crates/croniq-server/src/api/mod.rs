@@ -16,14 +16,17 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
+use crate::api::auth_middleware::require_scope;
 use axum::{
-    Json, Router,
+    Extension, Json, Router,
     extract::State,
     http::StatusCode,
     middleware,
     routing::{delete, get, post},
 };
 use chrono::Utc;
+use croniq_auth::CallerContext;
+use croniq_auth::context::Scope;
 use croniq_auth::jwt::JwtConfig;
 use croniq_runner::{
     AppState, CompleteResponse, RunnerStatus, RunnerSummary, TriggerRequest, TriggerResponse,
@@ -246,8 +249,18 @@ pub fn server_router(state: Arc<ServerState>) -> Router {
 /// response. This eliminates the need for runners to busy-poll.
 async fn handle_poll(
     State(state): State<Arc<ServerState>>,
+    Extension(ctx): Extension<CallerContext>,
     Json(req): Json<PollRequest>,
 ) -> (StatusCode, Json<PollResponse>) {
+    if let Err(s) = require_scope(&ctx, Scope::WORK_POLL) {
+        return (
+            s,
+            Json(PollResponse {
+                work: vec![],
+                cancel: vec![],
+            }),
+        );
+    }
     // Update registry heartbeat
     {
         let mut reg = state.runner.registry.write().await;
@@ -355,8 +368,12 @@ async fn try_dequeue_for(
 /// `POST /v1/complete` — release inflight + forward to processor.
 async fn handle_complete(
     State(state): State<Arc<ServerState>>,
+    Extension(ctx): Extension<CallerContext>,
     Json(req): Json<CompleteRequest>,
 ) -> (StatusCode, Json<CompleteResponse>) {
+    if let Err(s) = require_scope(&ctx, Scope::WORK_ACK) {
+        return (s, Json(CompleteResponse { received: false }));
+    }
     {
         let mut reg = state.runner.registry.write().await;
         reg.release(&req.runner_id, &req.execution_id);
@@ -379,7 +396,11 @@ async fn handle_complete(
 }
 
 /// `GET /v1/runners` — list all known runners with liveness status.
-async fn handle_list_runners(State(state): State<Arc<ServerState>>) -> Json<Vec<RunnerSummary>> {
+async fn handle_list_runners(
+    State(state): State<Arc<ServerState>>,
+    Extension(ctx): Extension<CallerContext>,
+) -> Result<Json<Vec<RunnerSummary>>, StatusCode> {
+    require_scope(&ctx, Scope::RUNNERS_READ)?;
     let now = Utc::now();
     let reg = state.runner.registry.read().await;
 
@@ -395,14 +416,18 @@ async fn handle_list_runners(State(state): State<Arc<ServerState>>) -> Json<Vec<
         })
         .collect();
 
-    Json(summaries)
+    Ok(Json(summaries))
 }
 
 /// `DELETE /v1/runners/{id}` — deregister a runner.
 async fn handle_delete_runner(
     State(state): State<Arc<ServerState>>,
+    Extension(ctx): Extension<CallerContext>,
     axum::extract::Path(runner_id): axum::extract::Path<String>,
 ) -> StatusCode {
+    if let Err(s) = require_scope(&ctx, Scope::RUNNERS_WRITE) {
+        return s;
+    }
     let mut reg = state.runner.registry.write().await;
     reg.remove(&runner_id);
     StatusCode::NO_CONTENT
@@ -414,8 +439,18 @@ async fn handle_delete_runner(
 /// so that the CompletionProcessor can find it for retries and dead-lettering.
 async fn handle_trigger(
     State(state): State<Arc<ServerState>>,
+    Extension(ctx): Extension<CallerContext>,
     Json(req): Json<TriggerRequest>,
 ) -> (StatusCode, Json<TriggerResponse>) {
+    if let Err(s) = require_scope(&ctx, Scope::JOBS_TRIGGER) {
+        return (
+            s,
+            Json(TriggerResponse {
+                execution_id: String::new(),
+                queued: 0,
+            }),
+        );
+    }
     let now = Utc::now();
     let exec_uuid = uuid::Uuid::new_v4();
     let execution_id = exec_uuid.to_string();
@@ -494,8 +529,10 @@ async fn handle_trigger(
 /// `GET /v1/executions` — list recent executions from the store.
 async fn handle_list_executions(
     State(state): State<Arc<ServerState>>,
+    Extension(ctx): Extension<CallerContext>,
     axum::extract::Query(params): axum::extract::Query<HashMap<String, String>>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
+    require_scope(&ctx, Scope::EXECUTIONS_READ)?;
     let store = state
         .store
         .as_ref()

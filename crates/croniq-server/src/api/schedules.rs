@@ -7,16 +7,19 @@
 use std::sync::Arc;
 
 use axum::{
-    Json,
+    Extension, Json,
     extract::{Query, State},
     http::StatusCode,
 };
 use chrono::Utc;
+use croniq_auth::CallerContext;
+use croniq_auth::context::Scope;
 use croniq_store::models::TriggerDefinition;
 use serde::Deserialize;
 use uuid::Uuid;
 
 use super::ServerState;
+use crate::api::auth_middleware::require_scope;
 use crate::loader::synth_trigger_def_from_dsl;
 
 #[derive(Deserialize, Default)]
@@ -42,8 +45,10 @@ fn default_true() -> bool {
 /// `GET /v1/schedules`
 pub async fn handle_list(
     State(state): State<Arc<ServerState>>,
+    Extension(ctx): Extension<CallerContext>,
     Query(q): Query<ListQuery>,
 ) -> Result<Json<Vec<TriggerDefinition>>, StatusCode> {
+    require_scope(&ctx, Scope::SCHEDULES_READ)?;
     let store = state
         .store
         .as_ref()
@@ -74,8 +79,10 @@ pub async fn handle_list(
 /// `GET /v1/schedules/{trigger_id}`
 pub async fn handle_get(
     State(state): State<Arc<ServerState>>,
+    Extension(ctx): Extension<CallerContext>,
     axum::extract::Path(trigger_id): axum::extract::Path<String>,
 ) -> Result<Json<TriggerDefinition>, StatusCode> {
+    require_scope(&ctx, Scope::SCHEDULES_READ)?;
     if let Some(job_key) = trigger_id.strip_prefix("dsl:")
         && let Some(dsl) = state.dsl_jobs.as_ref()
     {
@@ -100,8 +107,10 @@ pub async fn handle_get(
 /// `POST /v1/schedules`
 pub async fn handle_create(
     State(state): State<Arc<ServerState>>,
+    Extension(ctx): Extension<CallerContext>,
     Json(req): Json<CreateTriggerRequest>,
 ) -> Result<(StatusCode, Json<TriggerDefinition>), StatusCode> {
+    require_scope(&ctx, Scope::SCHEDULES_WRITE)?;
     let store = state
         .store
         .as_ref()
@@ -150,8 +159,12 @@ pub async fn handle_create(
 /// `DELETE /v1/schedules/{trigger_id}`
 pub async fn handle_delete(
     State(state): State<Arc<ServerState>>,
+    Extension(ctx): Extension<CallerContext>,
     axum::extract::Path(trigger_id): axum::extract::Path<String>,
 ) -> StatusCode {
+    if let Err(s) = require_scope(&ctx, Scope::SCHEDULES_WRITE) {
+        return s;
+    }
     // DSL triggers carry a synthetic prefix — refuse to delete them.
     if trigger_id.starts_with("dsl:") {
         return StatusCode::CONFLICT;

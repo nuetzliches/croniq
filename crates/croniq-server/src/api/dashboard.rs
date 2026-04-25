@@ -3,14 +3,17 @@
 use std::sync::Arc;
 
 use axum::{
-    Json,
+    Extension, Json,
     extract::{Query, State},
     http::StatusCode,
 };
 use chrono::Utc;
+use croniq_auth::CallerContext;
+use croniq_auth::context::Scope;
 use serde::Deserialize;
 
 use super::ServerState;
+use crate::api::auth_middleware::require_scope;
 use crate::dashboard::compute_forecast;
 
 #[derive(Deserialize)]
@@ -31,8 +34,10 @@ fn default_bucket() -> u32 {
 /// `GET /v1/dashboard/forecast`
 pub async fn handle_forecast(
     State(state): State<Arc<ServerState>>,
+    Extension(ctx): Extension<CallerContext>,
     Query(q): Query<ForecastQuery>,
 ) -> Result<Json<crate::dashboard::ForecastResponse>, StatusCode> {
+    require_scope(&ctx, Scope::JOBS_READ)?;
     let triggers = state
         .triggers
         .as_ref()

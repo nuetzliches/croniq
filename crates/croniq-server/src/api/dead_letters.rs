@@ -3,17 +3,20 @@
 use std::sync::Arc;
 
 use axum::{
-    Json,
+    Extension, Json,
     extract::{Query, State},
     http::StatusCode,
 };
 use chrono::Utc;
+use croniq_auth::CallerContext;
+use croniq_auth::context::Scope;
 use croniq_runner::WorkItem;
 use croniq_store::models::{DeadLetter, DeadLetterFilter, Execution, ExecutionState};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use super::ServerState;
+use crate::api::auth_middleware::require_scope;
 
 #[derive(Deserialize, Default)]
 pub struct ListQuery {
@@ -24,8 +27,10 @@ pub struct ListQuery {
 /// `GET /v1/dead-letters`
 pub async fn handle_list(
     State(state): State<Arc<ServerState>>,
+    Extension(ctx): Extension<CallerContext>,
     Query(q): Query<ListQuery>,
 ) -> Result<Json<Vec<DeadLetter>>, StatusCode> {
+    require_scope(&ctx, Scope::DEAD_LETTERS_READ)?;
     let store = state
         .store
         .as_ref()
@@ -43,8 +48,10 @@ pub async fn handle_list(
 /// `GET /v1/dead-letters/{id}`
 pub async fn handle_get(
     State(state): State<Arc<ServerState>>,
+    Extension(ctx): Extension<CallerContext>,
     axum::extract::Path(id): axum::extract::Path<String>,
 ) -> Result<Json<DeadLetter>, StatusCode> {
+    require_scope(&ctx, Scope::DEAD_LETTERS_READ)?;
     let store = state
         .store
         .as_ref()
@@ -60,8 +67,12 @@ pub async fn handle_get(
 /// `DELETE /v1/dead-letters/{id}`
 pub async fn handle_delete(
     State(state): State<Arc<ServerState>>,
+    Extension(ctx): Extension<CallerContext>,
     axum::extract::Path(id): axum::extract::Path<String>,
 ) -> StatusCode {
+    if let Err(s) = require_scope(&ctx, Scope::DEAD_LETTERS_WRITE) {
+        return s;
+    }
     let Some(store) = state.store.as_ref() else {
         return StatusCode::SERVICE_UNAVAILABLE;
     };
@@ -83,8 +94,10 @@ pub struct ReplayResponse {
 /// `POST /v1/dead-letters/{id}/replay` — replay a dead letter as a new execution.
 pub async fn handle_replay(
     State(state): State<Arc<ServerState>>,
+    Extension(ctx): Extension<CallerContext>,
     axum::extract::Path(id): axum::extract::Path<String>,
 ) -> Result<(StatusCode, Json<ReplayResponse>), StatusCode> {
+    require_scope(&ctx, Scope::DEAD_LETTERS_WRITE)?;
     let store = state
         .store
         .as_ref()
