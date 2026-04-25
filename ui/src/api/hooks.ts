@@ -167,7 +167,14 @@ export function useExecutions(params?: { job_key?: string; state?: string; limit
   if (params?.state) search.set('state', params.state)
   if (params?.limit) search.set('limit', String(params.limit))
   const qs = search.toString() ? `?${search}` : ''
-  return useQuery({ queryKey: ['executions', params], queryFn: () => apiFetch<T.Execution[]>(`/v1/executions${qs}`) })
+  return useQuery({
+    queryKey: ['executions', params],
+    queryFn: () => apiFetch<T.Execution[]>(`/v1/executions${qs}`),
+    // High-frequency jobs (heartbeat = every minute) make even a 30 s
+    // refetch feel stale. 5 s is cheap on a SQLite store with the
+    // (state, fire_at) and created_at indexes added in #47.
+    refetchInterval: 5_000,
+  })
 }
 export function useExecutionLogs(executionId: string) {
   return useQuery({
@@ -189,7 +196,13 @@ export function useForecast(windowMinutes = 120) {
 // Dead Letters
 export function useDeadLetters(jobKey?: string) {
   const params = jobKey ? `?job_key=${jobKey}` : ''
-  return useQuery({ queryKey: ['dead-letters', jobKey], queryFn: () => apiFetch<T.DeadLetter[]>(`/v1/dead-letters${params}`) })
+  return useQuery({
+    queryKey: ['dead-letters', jobKey],
+    queryFn: () => apiFetch<T.DeadLetter[]>(`/v1/dead-letters${params}`),
+    // Polling drives the header's bell badge counter — 10 s is a fair
+    // compromise between freshness ("a job just died") and traffic.
+    refetchInterval: 10_000,
+  })
 }
 export function useDeadLetter(id: string) {
   return useQuery({
