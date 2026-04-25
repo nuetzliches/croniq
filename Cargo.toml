@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "crates/croniq-cli",
     "crates/croniq-config",
+    "crates/croniq-config-wasm",
     "crates/croniq-scheduler",
     "crates/croniq-store",
     "crates/croniq-execution",
@@ -29,3 +30,13 @@ homepage = "https://github.com/nuetzliches/croniq"
 [profile.bench]
 debug = true
 lto = "thin"
+
+# Dedicated profile for the wasm bridge — applied via
+# `wasm-pack build --release` (see crates/croniq-config-wasm).
+# Tuned for size, not speed: the schedule preview runs once per
+# keystroke and is dwarfed by the network round-trip that loaded the
+# page in the first place. Native `profile.release` is left untouched.
+[profile.release.package.croniq-config-wasm]
+opt-level = "z"
+codegen-units = 1
+strip = true

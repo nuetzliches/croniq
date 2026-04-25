@@ -51,6 +51,25 @@ jobs:
         working-directory: ui
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      # The UI build needs the wasm bridge from `crates/croniq-config-wasm`.
+      # We install the toolchain + wasm-pack here rather than splitting it
+      # into a separate matrix job so `npm run build`'s `prebuild` hook
+      # (`bash scripts/build-wasm.sh`) can produce `ui/src/lib/wasm/`
+      # in-place without needing an artefact upload step.
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          # Scope the cache to just the wasm-relevant crates so the rust
+          # job's full-workspace cache stays cleanly separated.
+          workspaces: ". -> target"
+          shared-key: wasm
+      - name: Install wasm-pack
+        run: |
+          if ! command -v wasm-pack >/dev/null 2>&1; then
+            curl -fsSL https://rustwasm.github.io/wasm-pack/installer/init.sh | sh
+          fi
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
@@ -60,6 +79,17 @@ jobs:
       - run: npm run lint
       - run: npx tsc --noEmit
       - run: npm run build
+      - name: Check wasm bundle size budget
+        # Soft 250 KB gzipped ceiling — we ship at ~70 KB today, so this
+        # only fires if a future change accidentally pulls a heavy dep
+        # (chrono-tz, regex, etc.) back into the wasm path.
+        run: |
+          size=$(gzip -9c src/lib/wasm/croniq_config_wasm_bg.wasm | wc -c)
+          echo "WASM bridge: $size bytes gzipped"
+          if [ "$size" -gt 256000 ]; then
+            echo "::error::WASM bundle exceeds 250 KB gzipped budget ($size bytes)"
+            exit 1
+          fi
 
   docker:
     name: Docker build + push
