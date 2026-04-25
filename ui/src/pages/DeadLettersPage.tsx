@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { Fragment, useState } from 'react'
 import { TriangleAlert, RotateCcw, Trash2, MailX } from 'lucide-react'
 import { useDeadLetters, useDeleteDeadLetter, useDeadLetter, useReplayDeadLetter } from '@/api/hooks'
 import { Sheet } from '@/components/ui/sheet'
@@ -26,10 +26,14 @@ function DeadLetterDetail({ id }: { id: string }) {
           ['Created', new Date(data.created_at).toLocaleString()],
           ['Expires', data.expires_at ? new Date(data.expires_at).toLocaleString() : '—'],
         ].map(([label, value]) => (
-          <>
-            <span key={`l-${label}`} className="text-muted-foreground">{label}</span>
-            <span key={`v-${label}`} className="font-medium text-foreground">{value}</span>
-          </>
+          // Plain `<>` fragments don't accept `key`; React warns when one
+          // element of a list is rendered through them. The label/value
+          // pair sits inside a CSS grid, so we need the two spans as
+          // siblings — Fragment with a key gives us both.
+          <Fragment key={String(label)}>
+            <span className="text-muted-foreground">{label}</span>
+            <span className="font-medium text-foreground">{value}</span>
+          </Fragment>
         ))}
       </div>
 

@@ -29,7 +29,10 @@ export function Sheet({ open, onOpenChange, title, children, className }: SheetP
             {title && (
               <Dialog.Title className="text-sm font-semibold">{title}</Dialog.Title>
             )}
-            <Dialog.Close className="ml-auto rounded-sm text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary">
+            <Dialog.Close
+              aria-label="Close panel"
+              className="ml-auto rounded-sm text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+            >
               <X className="h-4 w-4" />
             </Dialog.Close>
           </div>
