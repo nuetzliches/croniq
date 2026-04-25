@@ -276,7 +276,15 @@ impl<'src> Lexer<'src> {
 
     fn lex_string(&mut self, start: usize) -> Result<Token, LexError> {
         self.pos += 1; // skip opening "
-        let mut value = String::new();
+        // Build the string body as a byte buffer. The bytes we read either
+        // come straight from the source (which is `&str`, guaranteed valid
+        // UTF-8) or from ASCII escape replacements — both safe to pass to
+        // `String::from_utf8`. The previous version pushed individual bytes
+        // through `b as char`, which silently treated UTF-8 continuation
+        // bytes as Latin-1 code points and mangled any non-ASCII content
+        // (e.g. an em-dash `—` would arrive over the wire as `â` plus two
+        // control chars).
+        let mut value = Vec::<u8>::new();
         loop {
             let Some(b) = self.advance() else {
                 return Err(LexError::UnterminatedString {
@@ -293,11 +301,11 @@ impl<'src> Lexer<'src> {
                         });
                     };
                     match esc {
-                        b'n' => value.push('\n'),
-                        b't' => value.push('\t'),
-                        b'r' => value.push('\r'),
-                        b'\\' => value.push('\\'),
-                        b'"' => value.push('"'),
+                        b'n' => value.push(b'\n'),
+                        b't' => value.push(b'\t'),
+                        b'r' => value.push(b'\r'),
+                        b'\\' => value.push(b'\\'),
+                        b'"' => value.push(b'"'),
                         _ => {
                             return Err(LexError::InvalidEscape {
                                 ch: esc as char,
@@ -311,9 +319,12 @@ impl<'src> Lexer<'src> {
                         span: Span::new(start, 1).into(),
                     });
                 }
-                _ => value.push(b as char),
+                _ => value.push(b),
             }
         }
+        let value = String::from_utf8(value).expect(
+            "string body is built from valid-UTF-8 source bytes plus ASCII escape replacements",
+        );
         Ok(Token::new(
             TokenKind::QuotedString(value),
             Span::new(start, self.pos - start),
@@ -528,6 +539,30 @@ mod tests {
     fn unterminated_string() {
         let err = Lexer::tokenize(r#""hello"#).unwrap_err();
         assert!(matches!(err, LexError::UnterminatedString { .. }));
+    }
+
+    #[test]
+    fn string_preserves_utf8_multibyte_chars() {
+        // The previous byte-as-char implementation would split the
+        // em-dash's three UTF-8 bytes (e2 80 94) into three Latin-1 code
+        // points (â + 0x80 + 0x94) and re-encode them as UTF-8. This test
+        // pins the correct round-trip.
+        let tokens = Lexer::tokenize("\"Liveness ping — runs every minute\"").unwrap();
+        match &tokens[0].kind {
+            TokenKind::QuotedString(s) => {
+                assert_eq!(s, "Liveness ping — runs every minute");
+                assert_eq!(s.chars().count(), 33);
+                assert!(s.contains('—'), "em-dash U+2014 must round-trip intact");
+            }
+            other => panic!("expected QuotedString, got {other:?}"),
+        }
+
+        // Wider coverage: emoji (4-byte UTF-8) + accented Latin (2-byte).
+        let tokens = Lexer::tokenize("\"Düsseldorf 🚀\"").unwrap();
+        match &tokens[0].kind {
+            TokenKind::QuotedString(s) => assert_eq!(s, "Düsseldorf 🚀"),
+            other => panic!("expected QuotedString, got {other:?}"),
+        }
     }
 
     #[test]

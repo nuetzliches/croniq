@@ -220,11 +220,16 @@ impl Schedule {
         match self {
             Schedule::Interval { seconds } => {
                 if *seconds >= 3600 && seconds % 3600 == 0 {
-                    format!("every {} hours", seconds / 3600)
+                    let n = seconds / 3600;
+                    format!("every {n} hour{s}", s = if n == 1 { "" } else { "s" })
                 } else if *seconds >= 60 && seconds % 60 == 0 {
-                    format!("every {} minutes", seconds / 60)
+                    let n = seconds / 60;
+                    format!("every {n} minute{s}", s = if n == 1 { "" } else { "s" })
                 } else {
-                    format!("every {seconds} seconds")
+                    format!(
+                        "every {seconds} second{s}",
+                        s = if *seconds == 1 { "" } else { "s" }
+                    )
                 }
             }
             Schedule::Daily { time } => {
@@ -555,6 +560,23 @@ mod tests {
     fn summary_interval() {
         let sched = Schedule::Interval { seconds: 900 };
         assert_eq!(sched.summary(), "every 15 minutes");
+    }
+
+    #[test]
+    fn summary_interval_singular() {
+        // Pin the n=1 fix — previously rendered "every 1 minutes".
+        assert_eq!(
+            Schedule::Interval { seconds: 60 }.summary(),
+            "every 1 minute"
+        );
+        assert_eq!(
+            Schedule::Interval { seconds: 3600 }.summary(),
+            "every 1 hour"
+        );
+        assert_eq!(
+            Schedule::Interval { seconds: 1 }.summary(),
+            "every 1 second"
+        );
     }
 
     #[test]
