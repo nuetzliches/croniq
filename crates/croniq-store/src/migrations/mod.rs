@@ -7,6 +7,7 @@ const MIGRATIONS: &[(&str, &str)] = &[
     ("002_auth", include_str!("002_auth.sql")),
     ("003_definitions", include_str!("003_definitions.sql")),
     ("004_job_policy", include_str!("004_job_policy.sql")),
+    ("005_perf_indexes", include_str!("005_perf_indexes.sql")),
 ];
 
 /// Run all pending migrations.
