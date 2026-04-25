@@ -23,7 +23,21 @@ use tokio::sync::mpsc;
 use tracing_subscriber::{EnvFilter, fmt};
 
 #[derive(Parser)]
-#[command(name = "croniq-server", about = "Croniq distributed job scheduler")]
+#[command(
+    name = "croniq-server",
+    about = "Croniq distributed job scheduler",
+    long_about = "Croniq distributed job scheduler.\n\
+\n\
+Logging is controlled via the RUST_LOG environment variable using the\n\
+tracing-subscriber EnvFilter syntax. Examples:\n\
+\n\
+    RUST_LOG=info                       # default in Docker / docker-compose\n\
+    RUST_LOG=debug                      # verbose, includes per-tick logs\n\
+    RUST_LOG=info,croniq_scheduler=debug  # mixed: info globally, debug for scheduler\n\
+    RUST_LOG=warn                       # production-quiet\n\
+\n\
+Unset RUST_LOG behaves as `info`."
+)]
 struct Cli {
     /// Path to the Croniqfile configuration.
     #[arg(short, long, default_value = "Croniqfile")]
