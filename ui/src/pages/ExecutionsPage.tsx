@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useExecutions, useExecutionLogs } from '@/api/hooks'
-import { Badge, stateVariant } from '@/components/ui/badge'
+import { Badge } from '@/components/ui/badge'
+import { stateVariant } from '@/components/ui/badge-variants'
 import { Sheet } from '@/components/ui/sheet'
 import { EmptyState } from '@/components/ui/empty-state'
 import { Spinner } from '@/components/ui/spinner'

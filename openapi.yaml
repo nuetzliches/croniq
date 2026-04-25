@@ -238,6 +238,38 @@ paths:
       responses:
         "204": { description: Deleted }
 
+  /v1/jobs/{job_key}/activate:
+    post:
+      summary: Activate a job
+      description: Flips `is_active` to true; the scheduler starts evaluating its triggers again.
+      parameters:
+        - name: job_key
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/JobDefinition" }
+        "404": { description: Unknown job }
+
+  /v1/jobs/{job_key}/deactivate:
+    post:
+      summary: Deactivate a job
+      description: Flips `is_active` to false; triggers remain but stop firing until re-activated.
+      parameters:
+        - name: job_key
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/JobDefinition" }
+        "404": { description: Unknown job }
+
   /v1/schedules:
     get:
       summary: List trigger definitions
@@ -679,3 +711,47 @@ paths:
                 properties:
                   execution_id: { type: string }
                   queued: { type: integer }
+
+  /v1/admin/reload-config:
+    post:
+      summary: Hot-reload the Croniqfile
+      description: >
+        Re-reads the Croniqfile, merges API-registered triggers (DSL
+        precedence) and reconciles the live scheduler. Use `?dry_run=true`
+        to validate and return a diff without applying. Requires the
+        `admin` scope.
+      parameters:
+        - name: dry_run
+          in: query
+          schema: { type: boolean, default: false }
+      responses:
+        "200":
+          description: Reload applied (or validated when dry_run=true)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  applied: { type: boolean }
+                  dry_run: { type: boolean }
+                  diff:
+                    type: object
+                    properties:
+                      added: { type: array, items: { type: string } }
+                      removed: { type: array, items: { type: string } }
+                      changed: { type: array, items: { type: string } }
+                      total: { type: integer }
+        "403": { description: Missing admin scope }
+        "422":
+          description: Validation or file-read error
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error: { type: string, enum: [read_error, validation_error, store_error] }
+                  message: { type: string }
+                  line: { type: integer, nullable: true }
+                  column: { type: integer, nullable: true }
+        "500": { description: Apply failed after successful validation }
+        "503": { description: Server not configured for reload (missing store or config path) }

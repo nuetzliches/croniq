@@ -37,6 +37,11 @@ export async function apiDelete(path: string): Promise<void> {
   })
   if (res.status === 401) {
     useAuthStore.getState().logout()
+    throw new Error('Unauthorized')
+  }
+  if (!res.ok) {
+    const body = await res.text()
+    throw new Error(`${res.status}: ${body}`)
   }
 }
 

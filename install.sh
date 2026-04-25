@@ -75,11 +75,17 @@ else
 fi
 
 if [ -n "$SHA256_CMD" ]; then
-  echo "Verifying checksum..."
-  curl -fsSL "${BASE_URL}/SHA256SUMS" -o "$TMP/SHA256SUMS"
-  # Run the check in a subshell so the working directory change is scoped
-  (cd "$TMP" && grep "$ARCHIVE" SHA256SUMS | $SHA256_CMD --check -)
-  echo "Checksum verified."
+  # SHA256SUMS is published starting with the release that shipped this
+  # installer. For older releases the file is absent; fall back to an
+  # unverified install with a loud warning so the install path still works.
+  if curl -fsSL "${BASE_URL}/SHA256SUMS" -o "$TMP/SHA256SUMS" 2>/dev/null; then
+    echo "Verifying checksum..."
+    # Run the check in a subshell so the working directory change is scoped
+    (cd "$TMP" && grep "$ARCHIVE" SHA256SUMS | $SHA256_CMD --check -)
+    echo "Checksum verified."
+  else
+    echo "Warning: SHA256SUMS not available for v${CRONIQ_VERSION} — skipping checksum verification." >&2
+  fi
 else
   echo "Warning: sha256sum/shasum not found — skipping checksum verification." >&2
 fi

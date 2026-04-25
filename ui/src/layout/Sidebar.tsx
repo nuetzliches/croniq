@@ -1,6 +1,4 @@
 import { NavLink, useMatch } from 'react-router'
-import { create } from 'zustand'
-import { persist } from 'zustand/middleware'
 import * as Tooltip from '@radix-ui/react-tooltip'
 import {
   LayoutDashboard, Briefcase, CalendarDays, Cpu, List, MailX,
@@ -8,21 +6,7 @@ import {
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { cn } from '@/lib/utils'
-
-interface SidebarStore {
-  collapsed: boolean
-  toggle: () => void
-}
-
-export const useSidebarStore = create<SidebarStore>()(
-  persist(
-    (set) => ({
-      collapsed: false,
-      toggle: () => set((s) => ({ collapsed: !s.collapsed })),
-    }),
-    { name: 'croniq_sidebar' }
-  )
-)
+import { useSidebarStore } from './sidebar-store'
 
 interface NavLinkSpec {
   to: string

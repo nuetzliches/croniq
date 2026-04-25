@@ -13,7 +13,11 @@ FROM node:24-bookworm-slim AS ui-builder
 
 WORKDIR /build/ui
 COPY ui/package.json ui/package-lock.json ./
-RUN npm install --frozen-lockfile || npm install
+# `npm ci` enforces the lockfile; fall back to `npm install` only when the
+# lockfile is out of sync (e.g. mid-bump). The previous `--frozen-lockfile`
+# flag is a yarn/pnpm option — npm silently ignores it, so the lockfile was
+# never actually enforced.
+RUN npm ci || npm install
 COPY ui/ .
 RUN npm run build
 

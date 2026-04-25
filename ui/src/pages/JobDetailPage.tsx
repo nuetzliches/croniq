@@ -10,7 +10,8 @@ import {
   useCreateSchedule,
   useDeleteSchedule,
 } from '@/api/hooks'
-import { Badge, stateVariant } from '@/components/ui/badge'
+import { Badge } from '@/components/ui/badge'
+import { stateVariant } from '@/components/ui/badge-variants'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Spinner } from '@/components/ui/spinner'
