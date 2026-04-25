@@ -56,6 +56,20 @@ impl PgStore {
                 .map_err(map_err)?;
         }
 
+        if !applied.contains(&"005_perf_indexes".to_string()) {
+            // Mirrors the SQLite migration: drop the single-column state
+            // index, replace it with a (state, fire_at) composite, and add
+            // a created_at index for the list-executions endpoint. See the
+            // SQLite migration for the rationale.
+            client.batch_execute(PG_MIGRATION_005).map_err(map_err)?;
+            client
+                .execute(
+                    "INSERT INTO _migrations (name) VALUES ($1)",
+                    &[&"005_perf_indexes"],
+                )
+                .map_err(map_err)?;
+        }
+
         Ok(())
     }
 }
@@ -117,6 +131,14 @@ CREATE TABLE IF NOT EXISTS dead_letters (
 
 CREATE INDEX IF NOT EXISTS idx_dead_letters_job_key ON dead_letters(job_key);
 CREATE INDEX IF NOT EXISTS idx_dead_letters_expires_at ON dead_letters(expires_at);
+"#;
+
+const PG_MIGRATION_005: &str = r#"
+DROP INDEX IF EXISTS idx_executions_state;
+CREATE INDEX IF NOT EXISTS idx_executions_state_fire_at
+    ON executions(state, fire_at);
+CREATE INDEX IF NOT EXISTS idx_executions_created_at
+    ON executions(created_at);
 "#;
 
 fn map_err(e: postgres::Error) -> StoreError {
