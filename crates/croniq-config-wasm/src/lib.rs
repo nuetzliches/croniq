@@ -19,6 +19,7 @@ use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
 
 use croniq_config::ast::{IntervalUnit, MonthOrdinal, ScheduleKind, ScheduleNode, Weekday};
+use croniq_config::format::format_weekday_list;
 use croniq_config::parser::Parser;
 
 /// Install a panic hook that forwards Rust panics to `console.error`.
@@ -223,24 +224,14 @@ fn format_schedule_inner(p: &SchedulePayload) -> String {
             format!("every day at {hour:02}:{minute:02}")
         }
         SchedulePayload::Weekdays { days, hour, minute } => {
-            // Special-case Mon–Fri to "weekday" for readability, matching
-            // the converter in croniq-config::convert.
-            let normalized: Vec<&str> = days.iter().map(|d| d.as_str()).collect();
-            let body = if normalized.len() == 5
-                && ["monday", "tuesday", "wednesday", "thursday", "friday"]
-                    .iter()
-                    .all(|d| normalized.contains(d))
-            {
-                "weekday".to_string()
-            } else if normalized.len() == 2
-                && normalized.contains(&"saturday")
-                && normalized.contains(&"sunday")
-            {
-                "weekend".to_string()
-            } else {
-                normalized.join(" ")
-            };
-            format!("every {body} at {hour:02}:{minute:02}")
+            // Use the shared helper from croniq-config — single source
+            // of truth for "Mon..Fri" range collapsing, weekday/weekend
+            // alias detection, and 3-letter capitalised output.
+            let parsed: Vec<Weekday> = days.iter().filter_map(|d| Weekday::parse(d)).collect();
+            format!(
+                "every {} at {hour:02}:{minute:02}",
+                format_weekday_list(&parsed)
+            )
         }
         SchedulePayload::Monthly {
             ordinals,
@@ -543,30 +534,31 @@ pub fn format_calendar_rules(value: JsValue) -> Result<String, JsValue> {
 }
 
 fn format_rule(r: &CalendarRulePayload) -> String {
-    // The parser-level shape stores args as raw token strings. For the
-    // common rule types the form-builder enforces canonical formatting
-    // (weekly: 3-letter day strings, window: HH:MM..HH:MM as a single
-    // arg, annual: MM-DD as a single arg) — so concatenating is enough.
+    // Per-rule-type formatting. `weekly` goes through the shared
+    // helper so the WASM bridge emits the same canonical form
+    // (`Mon..Fri`, weekday alias, etc.) as `croniq-config::format`.
+    // `window` keeps its inline `"HH:MM".."HH:MM"` shape because the
+    // runtime compiler in `croniq-scheduler::calendar` parses that
+    // form by splitting on `..` itself.
     let body = if r.args.is_empty() {
         String::new()
     } else if r.rule_type == "weekly" {
-        // Weekly args are the day tokens — quote each one.
-        r.args
-            .iter()
-            .map(|d| format!("\"{d}\""))
-            .collect::<Vec<_>>()
-            .join(" ")
+        let parsed: Vec<Weekday> = r.args.iter().filter_map(|d| Weekday::parse(d)).collect();
+        if parsed.is_empty() {
+            // None of the args parsed as a weekday — keep them raw so
+            // the user can see and correct the typo.
+            r.args.join(" ")
+        } else {
+            format_weekday_list(&parsed)
+        }
     } else if r.rule_type == "window" {
-        // Window arg is `"HH:MM".."HH:MM"` already-formatted, but if the
-        // caller passes two raw times we join them with `..`.
         if r.args.len() == 2 {
             format!("\"{}\"..\"{}\"", r.args[0], r.args[1])
         } else {
             r.args.join(" ")
         }
     } else {
-        // annual / monthly / etc — just space-join as-is (parser accepts
-        // un-quoted numerics).
+        // annual / monthly / timezone / etc — space-joined raw.
         r.args.join(" ")
     };
     if body.is_empty() {
@@ -673,6 +665,32 @@ mod tests {
                 "2026-04-27T09:00:00Z".to_string(),
             ]
         );
+    }
+
+    #[test]
+    fn format_weekday_collapses_three_to_range() {
+        let p = SchedulePayload::Weekdays {
+            days: vec!["monday".into(), "tuesday".into(), "wednesday".into()],
+            hour: 9,
+            minute: 0,
+        };
+        assert_eq!(format_schedule_inner(&p), "every Mon..Wed at 09:00");
+    }
+
+    #[test]
+    fn format_calendar_weekly_uses_weekday_alias_via_helper() {
+        let rule = CalendarRulePayload {
+            action: "include".into(),
+            rule_type: "weekly".into(),
+            args: vec![
+                "Mon".into(),
+                "Tue".into(),
+                "Wed".into(),
+                "Thu".into(),
+                "Fri".into(),
+            ],
+        };
+        assert_eq!(format_rule(&rule), "include weekly weekday");
     }
 
     #[test]
