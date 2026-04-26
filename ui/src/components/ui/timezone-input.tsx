@@ -235,7 +235,12 @@ export const TimezoneInput = forwardRef<HTMLInputElement, TimezoneInputProps>(
                 left: popPos.left,
                 width: popPos.width,
               }}
-              className="z-[60] max-h-60 overflow-y-auto rounded-md border border-border bg-card shadow-lg"
+              // `pointer-events-auto` is critical inside a Radix Dialog:
+              // the modal sets `pointer-events: none` on `<body>` to
+              // block clicks on the page beneath, and our body-level
+              // portal inherits that — clicks would otherwise pass
+              // through the listbox to the dialog form below.
+              className="pointer-events-auto z-[60] max-h-60 overflow-y-auto rounded-md border border-border bg-card shadow-lg"
             >
               {filtered.map((tz, idx) => (
                 <li
