@@ -174,7 +174,9 @@ pub fn server_router(state: Arc<ServerState>) -> Router {
         )
         .route(
             "/v1/schedules/{trigger_id}",
-            get(schedules::handle_get).delete(schedules::handle_delete),
+            get(schedules::handle_get)
+                .put(schedules::handle_update)
+                .delete(schedules::handle_delete),
         )
         // Calendars CRUD
         .route(

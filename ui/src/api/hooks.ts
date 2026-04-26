@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { apiFetch, apiPost, apiDelete } from './client'
+import { apiFetch, apiPost, apiPut, apiDelete } from './client'
 import type * as T from './types'
 import { useAuthStore } from '@/auth/store'
 
@@ -77,6 +77,22 @@ export function useCreateSchedule() {
     mutationFn: (data: { job_key: string; cron_expression: string; timezone?: string }) => apiPost('/v1/schedules', data),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['schedules'] }),
     meta: { action: 'Create schedule' },
+  })
+}
+export function useUpdateSchedule() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({
+      trigger_id,
+      ...patch
+    }: {
+      trigger_id: string
+      cron_expression?: string
+      timezone?: string
+      enabled?: boolean
+    }) => apiPut<T.TriggerDefinition>(`/v1/schedules/${trigger_id}`, patch),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['schedules'] }),
+    meta: { action: 'Update schedule' },
   })
 }
 export function useDeleteSchedule() {
