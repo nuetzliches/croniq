@@ -259,13 +259,32 @@
     .cal-day.excluded { background: rgba(248, 113, 113, 0.18); color: #f87171; }
     .cal-day.today { outline: 1px solid var(--accent); }
 
-    /* Rule editor list */
-    .rule-list { display: flex; flex-direction: column; gap: 0.5rem; }
+    /* Rule editor list — each rule is a card with a head row
+       (action / type / remove) and a structured body that swaps out
+       per rule type (weekday picker, time window inputs, ordinals,
+       month+day, timezone). Replaces the old single-text-input shape
+       which couldn't validate per-type and made `Mon..Fri` ranges
+       silently misalign with the Active Days widget. */
+    .rule-list { display: flex; flex-direction: column; gap: 0.75rem; }
     .rule-row {
+      display: flex;
+      flex-direction: column;
+      gap: 0.5rem;
+      padding: 0.6rem 0.75rem;
+      background: rgba(255, 255, 255, 0.02);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+    }
+    .rule-row-head {
       display: grid;
-      grid-template-columns: 88px 92px 1fr auto;
+      grid-template-columns: 96px 1fr auto;
       gap: 0.5rem;
       align-items: center;
+    }
+    .rule-row-body {
+      display: flex;
+      flex-direction: column;
+      gap: 0.4rem;
     }
     .rule-row select, .rule-row input {
       background: var(--bg);
@@ -285,6 +304,65 @@
       font-size: 1rem;
     }
     .rule-remove:hover { color: #f87171; }
+    .rule-weekly .day-grid {
+      display: grid;
+      grid-template-columns: repeat(7, 1fr);
+      gap: 0.25rem;
+    }
+    .rule-weekly .day-toggle, .rule-monthly .ord-toggle {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      color: var(--fg-muted);
+      padding: 0.35rem 0.25rem;
+      border-radius: 4px;
+      font-family: var(--font-mono);
+      font-size: 0.75rem;
+      cursor: pointer;
+      transition: border-color 0.1s, background 0.1s, color 0.1s;
+    }
+    .rule-weekly .day-toggle:hover, .rule-monthly .ord-toggle:hover {
+      border-color: var(--accent);
+    }
+    .rule-weekly .day-toggle.active, .rule-monthly .ord-toggle.active {
+      background: rgba(34, 197, 94, 0.12);
+      border-color: var(--accent);
+      color: var(--accent);
+    }
+    .rule-monthly .ord-grid {
+      display: grid;
+      grid-template-columns: repeat(8, 1fr);
+      gap: 0.2rem;
+    }
+    .rule-window {
+      display: flex;
+      align-items: center;
+      gap: 0.4rem;
+    }
+    .rule-window input[type=time] { width: 110px; }
+    .rule-sep { color: var(--fg-muted); font-size: 0.8125rem; }
+    .rule-annual {
+      display: flex;
+      align-items: center;
+      gap: 0.4rem;
+      flex-wrap: wrap;
+    }
+    .rule-annual select { width: 110px; }
+    .rule-annual input[type=number] { width: 88px; }
+    .rule-preview { color: var(--fg-muted); font-size: 0.75rem; font-family: var(--font-mono); }
+    .rule-timezone input { width: 100%; }
+    .rule-presets { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+    .rule-preset {
+      background: none;
+      border: none;
+      color: var(--fg-muted);
+      font-size: 0.6875rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      cursor: pointer;
+      padding: 0.15rem 0;
+    }
+    .rule-preset:hover { color: var(--accent); }
+    .rule-hint { color: var(--fg-muted); font-size: 0.6875rem; margin: 0.25rem 0 0; }
     .rule-add {
       background: var(--bg);
       border: 1px dashed var(--border);
@@ -457,6 +535,6 @@
     </div>
   </footer>
 
-  <script type="module" src="./generator.js"></script>
+  <script type="module" src="./generator.js?v=2026-04-26b"></script>
 </body>
 </html>
