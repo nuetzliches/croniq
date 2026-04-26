@@ -161,6 +161,10 @@
     }
 
     .dsl-output {
+      /* `<output>` defaults to inline; force block so the visual box
+         is preserved after the <pre> → <output> swap (the latter is
+         the right semantic for a form-computed value + aria-live). */
+      display: block;
       background: var(--bg);
       border: 1px solid var(--border);
       border-radius: 6px;
@@ -402,7 +406,10 @@
 
           <div class="gen-card">
             <h3>DSL output</h3>
-            <pre class="dsl-output" id="sch-dsl"></pre>
+            <!-- `<output>` + `aria-live="polite"` so assistive tech
+                 announces changes to the produced DSL. The `<pre>`
+                 styling stays intact via the existing class. -->
+            <output class="dsl-output" id="sch-dsl" aria-live="polite"></output>
             <button class="copy-btn-inline" id="sch-copy">Copy DSL</button>
             <div id="sch-error" class="dsl-error" hidden></div>
 
@@ -421,7 +428,8 @@
             <button class="rule-add" id="cal-add-rule">+ Add rule</button>
 
             <h3 style="margin-top: 1.25rem;">DSL output</h3>
-            <pre class="dsl-output" id="cal-dsl"></pre>
+            <!-- See sch-dsl for the rationale on <output>/aria-live. -->
+            <output class="dsl-output" id="cal-dsl" aria-live="polite"></output>
             <button class="copy-btn-inline" id="cal-copy">Copy DSL</button>
             <div id="cal-error" class="dsl-error" hidden></div>
           </div>
