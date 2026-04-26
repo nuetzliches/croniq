@@ -144,6 +144,11 @@ export const TimezoneInput = forwardRef<HTMLInputElement, TimezoneInputProps>(
         const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')!.set!
         setter.call(el, next)
         el.dispatchEvent(new Event('input', { bubbles: true }))
+        // Re-focus the input. Some click pipelines (CDP, certain
+        // a11y tools, pen taps) shift focus to <body> before our
+        // handler runs, even with `mousedown.preventDefault` — pulling
+        // focus back here makes selection robust across all paths.
+        el.focus()
       }
       // Drop the flag on the next macrotask — by then the synthesized
       // input event has already been processed by the onChange handler.
@@ -237,11 +242,13 @@ export const TimezoneInput = forwardRef<HTMLInputElement, TimezoneInputProps>(
                   key={tz}
                   role="option"
                   aria-selected={idx === activeIdx}
-                  onMouseDown={(e) => {
-                    // Prevent the input's blur firing before our select.
-                    e.preventDefault()
-                    commit(tz)
-                  }}
+                  // Combobox pattern: `mousedown.preventDefault` keeps
+                  // input focused (no blur). Commit on `click` so the
+                  // listbox stays mounted across the full click cycle.
+                  // `commit()` also re-focuses the input as a fallback
+                  // for pipelines where `preventDefault` was bypassed.
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={() => commit(tz)}
                   onMouseEnter={() => setActiveIdx(idx)}
                   className={`px-3 py-1.5 text-xs font-mono cursor-pointer ${
                     idx === activeIdx ? 'bg-accent text-accent-foreground' : 'text-foreground'
