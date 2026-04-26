@@ -5,13 +5,21 @@
 // preview output. The wasm bundle is gzipped ~70 KB; we lazy-load on
 // first interaction so the page paints immediately.
 
-import init, * as wasm from './wasm/croniq_config_wasm.js'
+// Cache-bust both the JS shim and the .wasm binary on every release.
+// Bump WASM_VERSION whenever `site/wasm/` is rebuilt — otherwise long-
+// lived browser/CDN caches will keep serving an old bundle and the DSL
+// output drifts from the actual config crate.
+const WASM_VERSION = '2026-04-26b'
+
+import init, * as wasm from './wasm/croniq_config_wasm.js?v=2026-04-26b'
 
 // ── Wasm loader ──────────────────────────────────────────────────────
 
 let wasmReady = null
 function ensureWasm() {
-  if (!wasmReady) wasmReady = init()
+  if (!wasmReady) {
+    wasmReady = init(new URL(`./wasm/croniq_config_wasm_bg.wasm?v=${WASM_VERSION}`, import.meta.url))
+  }
   return wasmReady
 }
 
