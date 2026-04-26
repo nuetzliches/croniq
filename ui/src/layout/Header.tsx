@@ -64,8 +64,12 @@ export function Header() {
   // Tooltip and icon track the *preference*, not the resolved theme,
   // so the user can tell which of the three states they're in. Order:
   // light → dark → auto → light.
+  // Three-state cycle: light → dark → auto. The plain noun-only labels
+  // ("dark", "light") read as ambiguous in screenshots and bug reports
+  // — qualify them as "theme" so the tooltip/aria-label is self-
+  // contained. The auto variant keeps its hint about following the OS.
   const themeNext =
-    pref === 'light' ? 'dark' : pref === 'dark' ? 'auto (follow system)' : 'light'
+    pref === 'light' ? 'dark theme' : pref === 'dark' ? 'auto (follow system)' : 'light theme'
   const themeIcon =
     pref === 'auto'
       ? <Monitor className="h-4 w-4" />

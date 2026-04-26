@@ -2,7 +2,7 @@ import { useCallback, useState } from 'react'
 import { useParams } from 'react-router'
 import { useForm } from 'react-hook-form'
 import * as Dialog from '@radix-ui/react-dialog'
-import { Pencil, Plus, Trash2, X } from 'lucide-react'
+import { Pencil, Plus, Trash2, X, Play } from 'lucide-react'
 import {
   useJob,
   useSchedules,
@@ -10,6 +10,7 @@ import {
   useCreateSchedule,
   useUpdateSchedule,
   useDeleteSchedule,
+  useTriggerJob,
 } from '@/api/hooks'
 import type { TriggerDefinition } from '@/api/types'
 import { Badge } from '@/components/ui/badge'
@@ -50,12 +51,14 @@ export function JobDetailPage() {
   const createSchedule = useCreateSchedule()
   const updateSchedule = useUpdateSchedule()
   const deleteSchedule = useDeleteSchedule()
+  const triggerJob = useTriggerJob()
   const { confirm, dialog: confirmDialog } = useConfirm()
   const [scheduleDialogOpen, setScheduleDialogOpen] = useState(false)
   // null → create mode; a trigger → edit mode (form is seeded with
   // its current cron + timezone, submit calls PUT).
   const [editingSchedule, setEditingSchedule] = useState<TriggerDefinition | null>(null)
   const [submitError, setSubmitError] = useState<string | null>(null)
+  const [triggering, setTriggering] = useState(false)
 
   async function handleDeleteSchedule(triggerId: string, cron: string | null) {
     const ok = await confirm({
@@ -150,12 +153,22 @@ export function JobDetailPage() {
 
   const j = job.data
   const scheduleCount = schedules.data?.length ?? 0
-  // The API rejects creating an API-managed schedule on a job whose
-  // schedules are owned by the Croniqfile (any `managed_by !== 'api'`
-  // row signals that). Hide the Create button in that case so the
-  // user doesn't get a 409 dead-end; an explanatory hint replaces it.
-  const isDslManaged = (schedules.data ?? []).some((s) => s.managed_by !== 'api')
+  // A job counts as DSL-managed when at least one of its schedules came
+  // from the Croniqfile. The API rejects mutations on these — hide the
+  // Create button and the per-row edit/delete actions to avoid a 409
+  // dead-end. Also drives the "dsl" badge in the header.
+  const isDslManaged = (schedules.data ?? []).some((s) => s.managed_by === 'dsl')
   const isPending = createSchedule.isPending || updateSchedule.isPending
+
+  async function handleTrigger() {
+    if (!jobKey || triggering) return
+    setTriggering(true)
+    try {
+      await triggerJob.mutateAsync(jobKey)
+    } finally {
+      setTriggering(false)
+    }
+  }
 
   return (
     <div className="space-y-6">
@@ -163,7 +176,19 @@ export function JobDetailPage() {
       <div className="flex items-center gap-3">
         <span className="font-mono text-base font-semibold">{j.job_key}</span>
         <Badge variant={j.is_active ? 'ok' : 'neutral'}>{j.is_active ? 'active' : 'inactive'}</Badge>
+        {isDslManaged && <Badge variant="neutral" className="font-mono">dsl</Badge>}
         <CopyButton value={j.job_key} label={`Copy job key ${j.job_key}`} />
+        <Button
+          variant="secondary"
+          size="sm"
+          onClick={handleTrigger}
+          disabled={triggering || !j.is_active}
+          aria-label={`Trigger ${j.job_key} now`}
+          className="ml-auto"
+        >
+          {triggering ? <Spinner className="h-3.5 w-3.5" /> : <Play className="h-3.5 w-3.5" />}
+          Trigger now
+        </Button>
       </div>
 
       <Card>
@@ -176,11 +201,18 @@ export function JobDetailPage() {
               </div>
             )}
             <div>
-              <dt className="text-xs text-muted-foreground uppercase tracking-wide mb-0.5">Runner</dt>
+              {/* The header field shows who *registered* the job (which
+                  runner the SDK call came from). The Recent Executions
+                  table below shows who *ran* each execution — different
+                  concept, same word, kept reusers reading "RUNNER" twice
+                  and confused. Disambiguate. */}
+              <dt className="text-xs text-muted-foreground uppercase tracking-wide mb-0.5">Assigned Runner</dt>
               <dd className="font-mono text-xs">{j.assigned_runner_id || '—'}</dd>
             </div>
             <div>
-              <dt className="text-xs text-muted-foreground uppercase tracking-wide mb-0.5">Updated</dt>
+              <dt className="text-xs text-muted-foreground uppercase tracking-wide mb-0.5">
+                {isDslManaged ? 'Loaded' : 'Updated'}
+              </dt>
               <dd>{formatDate(j.updated_at)}</dd>
             </div>
           </dl>

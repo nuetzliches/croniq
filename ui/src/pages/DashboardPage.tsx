@@ -1,7 +1,7 @@
 import { Link } from 'react-router'
-import { useRef, useEffect } from 'react'
+import { Fragment, useRef, useEffect, useState } from 'react'
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell } from 'recharts'
-import { Activity, Cpu, TriangleAlert, CheckCircle } from 'lucide-react'
+import { Activity, Cpu, TriangleAlert, CheckCircle, Clock } from 'lucide-react'
 import { useHealth, useExecutions, useDeadLetters, useForecast } from '@/api/hooks'
 import { StatCard } from '@/components/ui/stat-card'
 import { Badge } from '@/components/ui/badge'
@@ -10,6 +10,30 @@ import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
 import { Spinner } from '@/components/ui/spinner'
 import { EmptyState } from '@/components/ui/empty-state'
 import { RelativeTime } from '@/components/ui/relative-time'
+import { formatRelative } from '@/lib/utils'
+
+// If the most recent execution is older than this, the feed is treated
+// as stale and a banner appears. Five minutes catches "all runners are
+// down" without false-firing during a normal between-fire gap on a
+// 1-min job.
+const STALE_THRESHOLD_MS = 5 * 60_000
+
+// Inline a divider in the feed when two adjacent rows are this far
+// apart. Otherwise a multi-hour silence between two clusters reads as
+// continuous activity ("12s ago, 4h ago, 5h ago…") with no visual
+// break.
+const GAP_THRESHOLD_MS = 30 * 60_000
+
+/// Compact "X minutes / hours / days" label for a millisecond gap. Used
+/// for the silence divider in the activity feed; deliberately coarser
+/// than `formatRelative` so e.g. "12m 34s" rounds to "12m".
+function formatGap(ms: number): string {
+  const sec = Math.floor(ms / 1000)
+  if (sec < 60) return `${sec}s`
+  if (sec < 3600) return `${Math.floor(sec / 60)}m`
+  if (sec < 86400) return `${Math.floor(sec / 3600)}h`
+  return `${Math.floor(sec / 86400)}d`
+}
 
 function QueueGauge({ value }: { value: number }) {
   const max = Math.max(value, 10)
@@ -58,6 +82,21 @@ export function DashboardPage() {
       feedRef.current.scrollTop = 0
     }
   }, [executions.data])
+
+  // Tick once a minute so the staleness banner re-evaluates as time
+  // passes (otherwise a tab left open would never transition from "fresh"
+  // to "stale" until the executions query refetches). Counter-based to
+  // keep render pure under react-hooks/purity.
+  const [nowTick, setNowTick] = useState(() => Date.now())
+  useEffect(() => {
+    const id = setInterval(() => setNowTick(Date.now()), 30_000)
+    return () => clearInterval(id)
+  }, [])
+  const latestFireMs = executions.data?.[0]
+    ? new Date(executions.data[0].fire_at).getTime()
+    : null
+  const stale =
+    latestFireMs !== null && nowTick - latestFireMs > STALE_THRESHOLD_MS
 
   return (
     <div className="space-y-6">
@@ -143,6 +182,28 @@ export function DashboardPage() {
             </CardTitle>
           </CardHeader>
           <CardContent className="p-0">
+            {/* Stale-data banner: if the most recent execution is more
+                than STALE_THRESHOLD_MS old, surface that explicitly so
+                a runner-offline situation doesn't read as "everything's
+                fine, just quiet". Health-card runner counts catch the
+                same condition in numbers; this lets a glance at the
+                feed itself answer the question. */}
+            {stale && executions.data?.[0] && (
+              <div
+                role="status"
+                className="mx-4 mt-3 flex items-start gap-2 rounded-md border border-status-warn-fg/40 bg-status-warn-bg/40 px-3 py-2 text-xs text-status-warn-fg"
+              >
+                <Clock className="h-3.5 w-3.5 shrink-0 mt-0.5" aria-hidden="true" />
+                <span>
+                  No new executions for{' '}
+                  <RelativeTime iso={executions.data[0].fire_at} />. Check{' '}
+                  <Link to="/runners" className="underline hover:opacity-90">
+                    runner health
+                  </Link>
+                  .
+                </span>
+              </div>
+            )}
             <div
               ref={feedRef}
               role="feed"
@@ -163,14 +224,38 @@ export function DashboardPage() {
                   <p className="text-xs">No executions yet</p>
                 </div>
               )}
-              {executions.data?.map((e) => (
-                <div key={e.id} className="flex items-center gap-3 px-4 py-2 text-xs hover:bg-accent/30 transition-colors">
-                  <Badge variant={stateVariant(e.state)} className="shrink-0 w-20 justify-center">{e.state}</Badge>
-                  <span className="font-mono text-foreground truncate flex-1">{e.job_key}</span>
-                  {e.duration_ms && <span className="text-muted-foreground shrink-0">{e.duration_ms}ms</span>}
-                  <span className="text-muted-foreground shrink-0"><RelativeTime iso={e.fire_at} /></span>
-                </div>
-              ))}
+              {executions.data?.map((e, i) => {
+                // Insert a gap divider above this row when the previous
+                // row is more than GAP_THRESHOLD_MS more recent —
+                // surfaces "system was idle for X" between two clusters
+                // of activity instead of letting them visually merge.
+                const prev = executions.data?.[i - 1]
+                const prevAt = prev ? new Date(prev.fire_at).getTime() : null
+                const thisAt = new Date(e.fire_at).getTime()
+                const gap = prevAt !== null ? prevAt - thisAt : 0
+                const showGap = gap > GAP_THRESHOLD_MS
+                return (
+                  <Fragment key={e.id}>
+                    {showGap && (
+                      <div
+                        className="px-4 py-1.5 text-[10px] uppercase tracking-wide text-muted-foreground bg-muted/30 flex items-center gap-1.5"
+                        role="separator"
+                        aria-label={`Gap of ${formatRelative(new Date(thisAt + gap).toISOString(), thisAt)}`}
+                      >
+                        <span className="h-px flex-1 bg-border" />
+                        <span>silence · {formatGap(gap)}</span>
+                        <span className="h-px flex-1 bg-border" />
+                      </div>
+                    )}
+                    <div className="flex items-center gap-3 px-4 py-2 text-xs hover:bg-accent/30 transition-colors">
+                      <Badge variant={stateVariant(e.state)} className="shrink-0 w-20 justify-center">{e.state}</Badge>
+                      <span className="font-mono text-foreground truncate flex-1">{e.job_key}</span>
+                      {e.duration_ms && <span className="text-muted-foreground shrink-0">{e.duration_ms}ms</span>}
+                      <span className="text-muted-foreground shrink-0"><RelativeTime iso={e.fire_at} /></span>
+                    </div>
+                  </Fragment>
+                )
+              })}
             </div>
           </CardContent>
         </Card>
