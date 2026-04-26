@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Trash2, Plus } from 'lucide-react'
+import { Trash2, Plus, Minus } from 'lucide-react'
 import { formatCalendarRules, parseCalendarRules, type CalendarRulePayload } from '@/lib/croniq-dsl'
 import { CopyButton } from '@/components/ui/copy-button'
 import { TimezoneInput } from '@/components/ui/timezone-input'
@@ -124,15 +124,26 @@ export function CalendarRuleBuilder({ onChange, onError, initial }: Props) {
       {rules.map((rule, idx) => (
         <div key={idx} className="rounded-md border border-border bg-background/50 p-3 space-y-2">
           <div className="flex items-center gap-2">
-            <select
-              value={rule.action}
-              onChange={(e) => updateRule(idx, { action: e.target.value as 'include' | 'exclude' })}
-              className={`${inputCls} py-1.5 text-xs w-[88px]`}
-              aria-label={`Rule ${idx + 1} action`}
+            {/* Compact toggle for include/exclude — the full-width
+                <select> ate too much space next to the rule type. The
+                "+"/"−" mirrors the way calendar rules read aloud
+                (include adds days, exclude removes them) and the
+                colour reinforces the semantics at a glance. */}
+            <button
+              type="button"
+              onClick={() =>
+                updateRule(idx, { action: rule.action === 'include' ? 'exclude' : 'include' })
+              }
+              aria-label={`Rule ${idx + 1} action: ${rule.action} (click to switch)`}
+              title={`${rule.action} — click to switch`}
+              className={`h-7 w-7 inline-flex items-center justify-center rounded-md border text-xs font-bold shrink-0 ${
+                rule.action === 'include'
+                  ? 'border-status-ok-fg/40 bg-status-ok-bg text-status-ok-fg'
+                  : 'border-destructive/40 bg-destructive/10 text-destructive'
+              }`}
             >
-              <option value="include">include</option>
-              <option value="exclude">exclude</option>
-            </select>
+              {rule.action === 'include' ? <Plus className="h-3.5 w-3.5" /> : <Minus className="h-3.5 w-3.5" />}
+            </button>
             <select
               value={rule.rule_type}
               onChange={(e) => {
