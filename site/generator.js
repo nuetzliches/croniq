@@ -218,19 +218,46 @@ const calMonthLbl = document.getElementById('cal-month')
 const calGridEl = document.getElementById('cal-grid')
 
 const RULE_TYPES = ['weekly', 'window', 'monthly', 'annual', 'timezone']
-const RULE_ARG_HINTS = {
-  weekly: 'Days: e.g. Mon Tue Wed (space-separated 3-letter)',
-  window: 'Window: e.g. 08:00..18:00 (single arg)',
-  monthly: 'Days: e.g. 1 15 (space-separated, "last" allowed)',
-  annual: 'Date: MM-DD (e.g. 12-25)',
-  timezone: 'IANA name: e.g. Europe/Vienna',
+
+const RULE_TYPE_LABELS = {
+  weekly: 'Weekdays',
+  window: 'Time window',
+  monthly: 'Days of month',
+  annual: 'Specific date',
+  timezone: 'Timezone',
 }
+
+const SHORT_DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
+const MONTHLY_ORDINALS = [
+  '1', '2', '3', '4', '5', '6', '7', '8', '9', '10',
+  '11', '12', '13', '14', '15', '16', '17', '18', '19', '20',
+  '21', '22', '23', '24', '25', '26', '27', '28', '29', '30',
+  '31', 'last',
+]
+const MONTH_LABELS = [
+  'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+  'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+]
+
+// IANA list — populated lazily for the timezone rule's <datalist>.
+// `Intl.supportedValuesOf` is in all evergreen browsers; we still
+// gracefully degrade to a free-form text field if it isn't.
+const IANA_TIMEZONES = (() => {
+  try {
+    return Intl.supportedValuesOf('timeZone')
+  } catch {
+    return []
+  }
+})()
 
 function renderRuleEditor() {
   calRulesEl.innerHTML = ''
   calState.rules.forEach((rule, idx) => {
     const row = document.createElement('div')
     row.className = 'rule-row'
+
+    const head = document.createElement('div')
+    head.className = 'rule-row-head'
 
     const action = document.createElement('select')
     ;['include', 'exclude'].forEach((a) => {
@@ -244,27 +271,18 @@ function renderRuleEditor() {
     const ruleType = document.createElement('select')
     RULE_TYPES.forEach((t) => {
       const opt = document.createElement('option')
-      opt.value = t; opt.textContent = t
+      opt.value = t
+      opt.textContent = `${RULE_TYPE_LABELS[t]} (${t})`
       ruleType.appendChild(opt)
     })
     ruleType.value = rule.rule_type
     ruleType.addEventListener('change', () => {
       rule.rule_type = ruleType.value
-      // Reset args when the rule type changes — the args have type-
-      // specific shape (single-string-with-dotdot vs. space-separated
-      // tokens) and a stale carry-over would silently mis-render.
+      // Reset args whenever the rule type changes — the args have
+      // type-specific shape and a stale carry-over would silently
+      // mis-render the DSL.
       rule.args = []
-      argsInput.value = ''
-      argsInput.placeholder = RULE_ARG_HINTS[ruleType.value] || ''
-      refreshCalendar()
-    })
-
-    const argsInput = document.createElement('input')
-    argsInput.type = 'text'
-    argsInput.placeholder = RULE_ARG_HINTS[rule.rule_type] || ''
-    argsInput.value = serializeArgs(rule)
-    argsInput.addEventListener('input', () => {
-      rule.args = parseArgs(rule.rule_type, argsInput.value)
+      renderRuleEditor()
       refreshCalendar()
     })
 
@@ -279,35 +297,293 @@ function renderRuleEditor() {
       refreshCalendar()
     })
 
-    row.appendChild(action)
-    row.appendChild(ruleType)
-    row.appendChild(argsInput)
-    row.appendChild(remove)
+    head.appendChild(action)
+    head.appendChild(ruleType)
+    head.appendChild(remove)
+    row.appendChild(head)
+
+    // Per-type structured editor. Each branch mutates `rule.args` in
+    // place and calls `refreshCalendar()` so the live preview updates
+    // immediately. The args shape stays compatible with the existing
+    // wasm format/parse pair — only the UI changes, not the data.
+    const body = document.createElement('div')
+    body.className = 'rule-row-body'
+    if (rule.rule_type === 'weekly') {
+      body.appendChild(buildWeeklyEditor(rule))
+    } else if (rule.rule_type === 'window') {
+      body.appendChild(buildWindowEditor(rule))
+    } else if (rule.rule_type === 'monthly') {
+      body.appendChild(buildMonthlyEditor(rule))
+    } else if (rule.rule_type === 'annual') {
+      body.appendChild(buildAnnualEditor(rule))
+    } else if (rule.rule_type === 'timezone') {
+      body.appendChild(buildTimezoneEditor(rule))
+    }
+    row.appendChild(body)
+
     calRulesEl.appendChild(row)
   })
 }
 
-// Args are stored as a list of strings that round-trip cleanly through
-// the wasm format/parse pair. The UI exposes them as a single text
-// box (it's a doc-page tool, not a full form) — these helpers split
-// the text into the right shape per rule type.
-function parseArgs(ruleType, text) {
-  const t = (text || '').trim()
-  if (!t) return []
-  if (ruleType === 'window') {
-    // The parser expects `"HH:MM".."HH:MM"` as a single argument
-    // string. The caller types `08:00..18:00` and we split on `..`.
-    const [a, b] = t.split('..').map((s) => s.replace(/^"|"$/g, '').trim())
-    return a && b ? [a, b] : [t]
-  }
-  // weekly / monthly / annual / timezone — space-separated tokens.
-  return t.split(/\s+/)
+function buildWeeklyEditor(rule) {
+  // Stored args may be 3-letter (`Mon`) or full (`monday`); normalise
+  // to capitalised 3-letter for both display and storage so the WASM
+  // formatter sees a consistent shape it can collapse to `weekday` /
+  // `Mon..Fri` / etc.
+  rule.args = rule.args.map(normaliseDay).filter((d) => d !== null)
+  const wrap = document.createElement('div')
+  wrap.className = 'rule-weekly'
+  const grid = document.createElement('div')
+  grid.className = 'day-grid'
+  SHORT_DAYS.forEach((d) => {
+    const b = document.createElement('button')
+    b.type = 'button'
+    b.className = 'day-toggle'
+    b.textContent = d
+    b.setAttribute('aria-pressed', String(rule.args.includes(d)))
+    if (rule.args.includes(d)) b.classList.add('active')
+    b.addEventListener('click', () => {
+      const i = rule.args.indexOf(d)
+      if (i >= 0) rule.args.splice(i, 1)
+      else rule.args.push(d)
+      // Keep stored order canonical so the formatter's range collapse
+      // sees `Mon Tue Wed` rather than the click order.
+      rule.args.sort((a, b2) => SHORT_DAYS.indexOf(a) - SHORT_DAYS.indexOf(b2))
+      b.classList.toggle('active')
+      b.setAttribute('aria-pressed', String(rule.args.includes(d)))
+      refreshCalendar()
+    })
+    grid.appendChild(b)
+  })
+  wrap.appendChild(grid)
+
+  const presets = document.createElement('div')
+  presets.className = 'rule-presets'
+  const presetEntries = [
+    { label: 'Weekday', days: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'] },
+    { label: 'Weekend', days: ['Sat', 'Sun'] },
+    { label: 'Every day', days: SHORT_DAYS.slice() },
+  ]
+  presetEntries.forEach((p) => {
+    const b = document.createElement('button')
+    b.type = 'button'
+    b.className = 'rule-preset'
+    b.textContent = p.label
+    b.addEventListener('click', () => {
+      rule.args = p.days.slice()
+      renderRuleEditor()
+      refreshCalendar()
+    })
+    presets.appendChild(b)
+  })
+  wrap.appendChild(presets)
+  return wrap
 }
-function serializeArgs(rule) {
-  if (rule.rule_type === 'window' && rule.args.length === 2) {
-    return `${rule.args[0]}..${rule.args[1]}`
+
+function buildWindowEditor(rule) {
+  const wrap = document.createElement('div')
+  wrap.className = 'rule-window'
+  const from = document.createElement('input')
+  from.type = 'time'
+  from.value = rule.args[0] ?? ''
+  from.setAttribute('aria-label', 'Window start (UTC)')
+  const to = document.createElement('input')
+  to.type = 'time'
+  to.value = rule.args[1] ?? ''
+  to.setAttribute('aria-label', 'Window end (UTC)')
+  function sync() {
+    const a = from.value
+    const b = to.value
+    rule.args = a && b ? [a, b] : []
+    refreshCalendar()
   }
-  return rule.args.join(' ')
+  from.addEventListener('input', sync)
+  to.addEventListener('input', sync)
+  const sep = document.createElement('span')
+  sep.className = 'rule-sep'
+  sep.textContent = 'to'
+  wrap.appendChild(from)
+  wrap.appendChild(sep)
+  wrap.appendChild(to)
+  return wrap
+}
+
+function buildMonthlyEditor(rule) {
+  // Stored as a list of "1".."31" + "last". Tolerate older "1st"-style
+  // tokens by stripping the suffix.
+  rule.args = rule.args.map((a) => a.replace(/^(\d+)(st|nd|rd|th)$/i, '$1').toLowerCase())
+  const wrap = document.createElement('div')
+  wrap.className = 'rule-monthly'
+  const grid = document.createElement('div')
+  grid.className = 'ord-grid'
+  MONTHLY_ORDINALS.forEach((o) => {
+    const b = document.createElement('button')
+    b.type = 'button'
+    b.className = 'ord-toggle'
+    b.textContent = o
+    b.setAttribute('aria-pressed', String(rule.args.includes(o)))
+    if (rule.args.includes(o)) b.classList.add('active')
+    b.addEventListener('click', () => {
+      const i = rule.args.indexOf(o)
+      if (i >= 0) rule.args.splice(i, 1)
+      else rule.args.push(o)
+      rule.args.sort((a, b2) => {
+        if (a === 'last') return 1
+        if (b2 === 'last') return -1
+        return parseInt(a, 10) - parseInt(b2, 10)
+      })
+      b.classList.toggle('active')
+      b.setAttribute('aria-pressed', String(rule.args.includes(o)))
+      refreshCalendar()
+    })
+    grid.appendChild(b)
+  })
+  wrap.appendChild(grid)
+
+  const presets = document.createElement('div')
+  presets.className = 'rule-presets'
+  const presetEntries = [
+    { label: '1st', days: ['1'] },
+    { label: '15th', days: ['15'] },
+    { label: '1st + 15th', days: ['1', '15'] },
+    { label: 'Last day', days: ['last'] },
+  ]
+  presetEntries.forEach((p) => {
+    const b = document.createElement('button')
+    b.type = 'button'
+    b.className = 'rule-preset'
+    b.textContent = p.label
+    b.addEventListener('click', () => {
+      rule.args = p.days.slice()
+      renderRuleEditor()
+      refreshCalendar()
+    })
+    presets.appendChild(b)
+  })
+  wrap.appendChild(presets)
+  return wrap
+}
+
+function buildAnnualEditor(rule) {
+  // Stored as ["MM-DD"]. Split into separate month/day controls so
+  // the user gets a labelled month dropdown + a numeric day input
+  // instead of a free-form `12-25` text field.
+  const cur = rule.args[0] ?? ''
+  const m = /^(\d{1,2})-(\d{1,2})$/.exec(cur)
+  let month = m ? parseInt(m[1], 10) : 0
+  let day = m ? parseInt(m[2], 10) : 0
+
+  const wrap = document.createElement('div')
+  wrap.className = 'rule-annual'
+
+  const monthSel = document.createElement('select')
+  monthSel.setAttribute('aria-label', 'Month')
+  const blank = document.createElement('option')
+  blank.value = '0'
+  blank.textContent = 'Month…'
+  monthSel.appendChild(blank)
+  MONTH_LABELS.forEach((label, i) => {
+    const opt = document.createElement('option')
+    opt.value = String(i + 1)
+    opt.textContent = label
+    monthSel.appendChild(opt)
+  })
+  monthSel.value = String(month)
+
+  const dayInp = document.createElement('input')
+  dayInp.type = 'number'
+  dayInp.min = '1'
+  dayInp.max = '31'
+  dayInp.placeholder = 'Day'
+  dayInp.setAttribute('aria-label', 'Day of month')
+  dayInp.value = day ? String(day) : ''
+
+  const preview = document.createElement('span')
+  preview.className = 'rule-preview'
+
+  function sync() {
+    if (!month || !day) {
+      rule.args = []
+      preview.textContent = ''
+    } else {
+      const mm = String(month).padStart(2, '0')
+      const dd = String(day).padStart(2, '0')
+      rule.args = [`${mm}-${dd}`]
+      preview.textContent = `${MONTH_LABELS[month - 1]} ${day}`
+    }
+    refreshCalendar()
+  }
+  monthSel.addEventListener('change', () => { month = parseInt(monthSel.value, 10); sync() })
+  dayInp.addEventListener('input', () => { day = parseInt(dayInp.value, 10) || 0; sync() })
+
+  // Initial render of the preview label without firing refreshCalendar
+  // (the row was just rebuilt by renderRuleEditor → refreshCalendar
+  // already follows).
+  if (month && day) preview.textContent = `${MONTH_LABELS[month - 1]} ${day}`
+
+  wrap.appendChild(monthSel)
+  wrap.appendChild(dayInp)
+  wrap.appendChild(preview)
+  return wrap
+}
+
+function buildTimezoneEditor(rule) {
+  const wrap = document.createElement('div')
+  wrap.className = 'rule-timezone'
+  const inp = document.createElement('input')
+  inp.type = 'text'
+  inp.value = rule.args[0] ?? ''
+  inp.placeholder = 'IANA name (type to search)'
+  inp.setAttribute('aria-label', 'Timezone')
+  if (IANA_TIMEZONES.length > 0) {
+    // Lazy-create the shared <datalist>; reuse it across rules so we
+    // don't ship a 300-entry DOM tree per timezone rule.
+    const listId = 'cal-iana-tz-list'
+    if (!document.getElementById(listId)) {
+      const list = document.createElement('datalist')
+      list.id = listId
+      IANA_TIMEZONES.forEach((tz) => {
+        const o = document.createElement('option')
+        o.value = tz
+        list.appendChild(o)
+      })
+      document.body.appendChild(list)
+    }
+    inp.setAttribute('list', listId)
+  }
+  inp.addEventListener('input', () => {
+    const v = inp.value.trim()
+    rule.args = v ? [v] : []
+    refreshCalendar()
+  })
+  wrap.appendChild(inp)
+  if (!rule.args[0]) {
+    const hint = document.createElement('p')
+    hint.className = 'rule-hint'
+    let detected = ''
+    try { detected = Intl.DateTimeFormat().resolvedOptions().timeZone } catch { /* noop */ }
+    hint.textContent = detected ? `Detected: ${detected}` : ''
+    if (detected) wrap.appendChild(hint)
+  }
+  return wrap
+}
+
+/// Normalise a weekday token to its capitalised 3-letter form
+/// (`Mon`, `Tue`, ..., `Sun`). Returns `null` if the input doesn't
+/// look like a weekday token — used to drop garbage when storage
+/// transitions from the old free-text editor to the new picker.
+function normaliseDay(s) {
+  const lower = String(s).toLowerCase().slice(0, 3)
+  switch (lower) {
+    case 'mon': return 'Mon'
+    case 'tue': return 'Tue'
+    case 'wed': return 'Wed'
+    case 'thu': return 'Thu'
+    case 'fri': return 'Fri'
+    case 'sat': return 'Sat'
+    case 'sun': return 'Sun'
+    default: return null
+  }
 }
 
 document.getElementById('cal-add-rule').addEventListener('click', () => {
@@ -390,10 +666,53 @@ function evaluateDay(date) {
 }
 
 const SHORT_DAY = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
+const WEEKDAY_INDEX = { mon: 0, tue: 1, wed: 2, thu: 3, fri: 4, sat: 5, sun: 6 }
+const WEEKDAY_ALIASES = {
+  weekday: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'],
+  weekdays: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'],
+  weekend: ['Sat', 'Sun'],
+}
+
+/// Expand a single weekly arg into the list of 3-letter weekdays it
+/// represents. Handles single tokens (`Mon`), aliases (`weekday`) and
+/// `Mon..Fri` ranges. Range wrap-around (`Fri..Mon`) is supported so
+/// users typing it in the Advanced (raw) tab see the right Active
+/// Days highlight.
+function expandWeeklyArg(arg) {
+  const raw = String(arg).replace(/"/g, '').trim().toLowerCase()
+  if (!raw) return []
+  if (WEEKDAY_ALIASES[raw]) return WEEKDAY_ALIASES[raw].slice()
+  const m = /^([a-z]{3,9})\.\.([a-z]{3,9})$/.exec(raw)
+  if (m) {
+    const a = m[1].slice(0, 3)
+    const b = m[2].slice(0, 3)
+    if (a in WEEKDAY_INDEX && b in WEEKDAY_INDEX) {
+      const start = WEEKDAY_INDEX[a]
+      const end = WEEKDAY_INDEX[b]
+      const out = []
+      // Walk Mon-first; wrap around when end < start so Sat..Tue
+      // covers Sat Sun Mon Tue.
+      let i = start
+      while (true) {
+        out.push(SHORT_DAY[(i + 1) % 7]) // SHORT_DAY is Sun-first, our index is Mon-first
+        if (i === end) break
+        i = (i + 1) % 7
+        if (out.length > 7) break
+      }
+      return out
+    }
+  }
+  // Single token: full ("monday") or 3-letter ("mon").
+  const key = raw.slice(0, 3)
+  if (key in WEEKDAY_INDEX) return [SHORT_DAY[(WEEKDAY_INDEX[key] + 1) % 7]]
+  return []
+}
 
 function ruleMatches(rule, date) {
   if (rule.rule_type === 'weekly') {
-    return rule.args.some((a) => a.replace(/"/g, '').toLowerCase() === SHORT_DAY[date.getUTCDay()].toLowerCase())
+    const expanded = rule.args.flatMap(expandWeeklyArg)
+    const today = SHORT_DAY[date.getUTCDay()]
+    return expanded.includes(today)
   }
   if (rule.rule_type === 'monthly') {
     return rule.args.some((a) => {
