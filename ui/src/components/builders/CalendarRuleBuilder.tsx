@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Trash2, Plus } from 'lucide-react'
 import { formatCalendarRules, parseCalendarRules, type CalendarRulePayload } from '@/lib/croniq-dsl'
+import { CopyButton } from '@/components/ui/copy-button'
 
 const RULE_TYPES = ['weekly', 'window', 'monthly', 'annual', 'timezone'] as const
 const RULE_ARG_HINTS: Record<string, string> = {
@@ -145,10 +146,29 @@ export function CalendarRuleBuilder({ onChange, onError, initial }: Props) {
         Add rule
       </button>
       <div>
-        <label className="text-xs font-medium text-foreground block mb-1">DSL</label>
-        <pre className="text-xs bg-muted rounded-md p-2 font-mono whitespace-pre-wrap break-words">
+        <div className="flex items-center justify-between mb-1">
+          <label htmlFor="calendar-rule-builder-dsl" className="text-xs font-medium text-foreground">
+            DSL
+          </label>
+          {/* Copy is useful when the user wants to paste the rules into a
+              hand-edited Croniqfile rather than (or in addition to)
+              saving them as a Calendar resource. Hide while empty so a
+              click never copies the placeholder hint. */}
+          {dsl && <CopyButton value={dsl} label="Copy calendar DSL" />}
+        </div>
+        {/*
+          `<output>` semantically marks this as the form's computed
+          result, and `aria-live="polite"` lets screen readers announce
+          updates as the user toggles rules. The previous `<pre>` was
+          invisible to assistive tech.
+        */}
+        <output
+          id="calendar-rule-builder-dsl"
+          aria-live="polite"
+          className="block text-xs bg-muted rounded-md p-2 font-mono whitespace-pre-wrap break-words"
+        >
           {dsl || '(empty calendar — always on)'}
-        </pre>
+        </output>
       </div>
     </div>
   )

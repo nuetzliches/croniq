@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { formatSchedule, nextFires, type SchedulePayload } from '@/lib/croniq-dsl'
+import { CopyButton } from '@/components/ui/copy-button'
 
 const WEEKDAYS = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday']
 const WEEKDAY_SHORT: Record<string, string> = {
@@ -228,10 +229,24 @@ export function ScheduleBuilder({ onChange, initial }: Props) {
       )}
 
       <div>
-        <label className="text-xs font-medium text-foreground block mb-1">DSL</label>
-        <pre className="text-xs bg-muted rounded-md p-2 font-mono break-words whitespace-pre-wrap">
+        <div className="flex items-center justify-between mb-1">
+          <label htmlFor="schedule-builder-dsl" className="text-xs font-medium text-foreground">
+            DSL
+          </label>
+          {dsl && <CopyButton value={dsl} label="Copy schedule DSL" />}
+        </div>
+        {/*
+          `<output>` + `aria-live="polite"` so screen readers actually
+          announce the produced DSL when the user changes the form.
+          The previous `<pre>` was invisible to assistive tech.
+        */}
+        <output
+          id="schedule-builder-dsl"
+          aria-live="polite"
+          className="block text-xs bg-muted rounded-md p-2 font-mono break-words whitespace-pre-wrap"
+        >
           {dsl || '(loading…)'}
-        </pre>
+        </output>
       </div>
 
       {error && <p className="text-xs text-destructive">{error}</p>}
