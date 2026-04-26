@@ -180,6 +180,12 @@ pub trait TriggerDefinitionStore {
     fn get_trigger(&self, trigger_id: &str) -> Result<Option<TriggerDefinition>, StoreError>;
     fn list_triggers(&self, job_key: Option<&str>) -> Result<Vec<TriggerDefinition>, StoreError>;
     fn delete_trigger(&self, trigger_id: &str) -> Result<(), StoreError>;
+    /// Update the editable fields of an existing API-managed trigger.
+    /// Returns `Ok(true)` when a row was updated, `Ok(false)` when no
+    /// row matched (`trigger_id` unknown or `managed_by != 'api'`).
+    /// Implementations MUST refuse to update DSL-owned triggers — the
+    /// 409 vs 404 distinction is enforced one layer up in the handler.
+    fn update_trigger(&self, trigger: &TriggerDefinition) -> Result<bool, StoreError>;
 }
 
 /// Calendar definition persistence.

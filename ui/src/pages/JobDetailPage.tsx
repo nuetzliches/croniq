@@ -2,14 +2,16 @@ import { useCallback, useState } from 'react'
 import { useParams } from 'react-router'
 import { useForm } from 'react-hook-form'
 import * as Dialog from '@radix-ui/react-dialog'
-import { Plus, Trash2, X } from 'lucide-react'
+import { Pencil, Plus, Trash2, X } from 'lucide-react'
 import {
   useJob,
   useSchedules,
   useExecutions,
   useCreateSchedule,
+  useUpdateSchedule,
   useDeleteSchedule,
 } from '@/api/hooks'
+import type { TriggerDefinition } from '@/api/types'
 import { Badge } from '@/components/ui/badge'
 import { stateVariant } from '@/components/ui/badge-variants'
 import { Button } from '@/components/ui/button'
@@ -27,15 +29,33 @@ interface ScheduleForm {
   timezone: string
 }
 
+/// Map raw API errors to actionable inline messages. The most common
+/// failure for create is 409 (job is DSL-managed); for edit it's 409
+/// (trying to PUT a `dsl:` schedule, which the row UI shouldn't even
+/// expose but we guard against it).
+function humanizeScheduleError(raw: string, isEdit: boolean): string {
+  if (raw.startsWith('409')) {
+    return isEdit
+      ? 'This schedule is managed by the Croniqfile DSL and can\'t be edited via the API. Edit the Croniqfile instead.'
+      : 'This job is managed by the Croniqfile DSL — schedules are owned there. Edit the Croniqfile to change the schedule.'
+  }
+  return raw
+}
+
 export function JobDetailPage() {
   const { jobKey } = useParams<{ jobKey: string }>()
   const job = useJob(jobKey!)
   const schedules = useSchedules(jobKey)
   const executions = useExecutions({ job_key: jobKey, limit: 20 })
   const createSchedule = useCreateSchedule()
+  const updateSchedule = useUpdateSchedule()
   const deleteSchedule = useDeleteSchedule()
   const { confirm, dialog: confirmDialog } = useConfirm()
   const [scheduleDialogOpen, setScheduleDialogOpen] = useState(false)
+  // null → create mode; a trigger → edit mode (form is seeded with
+  // its current cron + timezone, submit calls PUT).
+  const [editingSchedule, setEditingSchedule] = useState<TriggerDefinition | null>(null)
+  const [submitError, setSubmitError] = useState<string | null>(null)
 
   async function handleDeleteSchedule(triggerId: string, cron: string | null) {
     const ok = await confirm({
@@ -68,16 +88,61 @@ export function JobDetailPage() {
     [setValue],
   )
 
+  // Seed the form synchronously when opening the dialog so React
+  // doesn't see a stale snapshot before the effect runs. Builder mode
+  // has its own internal state we can't easily round-trip into, so
+  // editing defaults to "advanced" — the saved DSL/cron is the most
+  // accurate representation we have, and re-parsing into the builder
+  // is best-effort future work.
+  function openCreateDialog() {
+    reset({ cron_expression: '', timezone: '' })
+    setScheduleMode('builder')
+    setEditingSchedule(null)
+    setSubmitError(null)
+    setScheduleDialogOpen(true)
+  }
+  function openEditDialog(s: TriggerDefinition) {
+    reset({
+      cron_expression: s.cron_expression ?? '',
+      timezone: s.timezone ?? '',
+    })
+    setScheduleMode('advanced')
+    setEditingSchedule(s)
+    setSubmitError(null)
+    setScheduleDialogOpen(true)
+  }
+  function closeDialog(open: boolean) {
+    setScheduleDialogOpen(open)
+    if (!open) {
+      setEditingSchedule(null)
+      setSubmitError(null)
+    }
+  }
+
   async function onScheduleSubmit(data: ScheduleForm) {
     if (!jobKey) return
-    await createSchedule.mutateAsync({
-      job_key: jobKey,
-      cron_expression: data.cron_expression,
-      timezone: data.timezone || undefined,
-    })
-    reset()
-    setScheduleMode('builder')
-    setScheduleDialogOpen(false)
+    setSubmitError(null)
+    try {
+      if (editingSchedule) {
+        await updateSchedule.mutateAsync({
+          trigger_id: editingSchedule.trigger_id,
+          cron_expression: data.cron_expression,
+          timezone: data.timezone || '',
+        })
+      } else {
+        await createSchedule.mutateAsync({
+          job_key: jobKey,
+          cron_expression: data.cron_expression,
+          timezone: data.timezone || undefined,
+        })
+      }
+      closeDialog(false)
+    } catch (e) {
+      // Surface API errors inline so 409 (DSL-managed job, etc.)
+      // doesn't disappear into a toast the user might miss.
+      const msg = e instanceof Error ? e.message : String(e)
+      setSubmitError(humanizeScheduleError(msg, !!editingSchedule))
+    }
   }
 
   if (job.isLoading) return <div className="flex justify-center py-12"><Spinner className="h-6 w-6" /></div>
@@ -85,6 +150,12 @@ export function JobDetailPage() {
 
   const j = job.data
   const scheduleCount = schedules.data?.length ?? 0
+  // The API rejects creating an API-managed schedule on a job whose
+  // schedules are owned by the Croniqfile (any `managed_by !== 'api'`
+  // row signals that). Hide the Create button in that case so the
+  // user doesn't get a 409 dead-end; an explanatory hint replaces it.
+  const isDslManaged = (schedules.data ?? []).some((s) => s.managed_by !== 'api')
+  const isPending = createSchedule.isPending || updateSchedule.isPending
 
   return (
     <div className="space-y-6">
@@ -119,15 +190,23 @@ export function JobDetailPage() {
       <Card>
         <CardHeader className="flex flex-row items-center justify-between">
           <CardTitle>Schedules ({scheduleCount})</CardTitle>
-          <Dialog.Root open={scheduleDialogOpen} onOpenChange={setScheduleDialogOpen}>
-            <Dialog.Trigger asChild>
-              <Button size="sm"><Plus className="h-3.5 w-3.5" />Create Schedule</Button>
-            </Dialog.Trigger>
+          {isDslManaged ? (
+            <span className="text-xs text-muted-foreground">
+              Owned by Croniqfile — edit the DSL to change.
+            </span>
+          ) : (
+            <Button size="sm" onClick={openCreateDialog}>
+              <Plus className="h-3.5 w-3.5" />Create Schedule
+            </Button>
+          )}
+          <Dialog.Root open={scheduleDialogOpen} onOpenChange={closeDialog}>
             <Dialog.Portal>
               <Dialog.Overlay className="fixed inset-0 z-40 bg-black/40" />
               <Dialog.Content className="fixed left-1/2 top-1/2 z-50 w-full max-w-md -translate-x-1/2 -translate-y-1/2 rounded-lg border border-border bg-card p-6 shadow-xl max-h-[90vh] overflow-y-auto">
                 <div className="flex items-center justify-between mb-4">
-                  <Dialog.Title className="text-sm font-semibold">Create Schedule for {j.job_key}</Dialog.Title>
+                  <Dialog.Title className="text-sm font-semibold">
+                    {editingSchedule ? 'Edit' : 'Create'} Schedule for {j.job_key}
+                  </Dialog.Title>
                   <Dialog.Close
                     aria-label="Close dialog"
                     className="text-muted-foreground hover:text-foreground"
@@ -187,10 +266,17 @@ export function JobDetailPage() {
                     className={inputCls}
                     showDetectedHint
                   />
+                  {submitError && (
+                    <p className="text-xs text-destructive bg-destructive/10 border border-destructive/30 rounded-md px-3 py-2">
+                      {submitError}
+                    </p>
+                  )}
                   <div className="flex justify-end gap-2 pt-2">
                     <Dialog.Close asChild><Button variant="secondary" size="sm" type="button">Cancel</Button></Dialog.Close>
-                    <Button type="submit" size="sm" disabled={createSchedule.isPending}>
-                      {createSchedule.isPending ? <><Spinner className="h-3.5 w-3.5" />Saving…</> : 'Create'}
+                    <Button type="submit" size="sm" disabled={isPending}>
+                      {isPending ? (
+                        <><Spinner className="h-3.5 w-3.5" />Saving…</>
+                      ) : editingSchedule ? 'Save' : 'Create'}
                     </Button>
                   </div>
                 </form>
@@ -223,15 +309,33 @@ export function JobDetailPage() {
                     </td>
                     <td className="px-3 py-2.5 text-muted-foreground">{s.managed_by}</td>
                     <td className="px-3 py-2.5 text-right">
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => handleDeleteSchedule(s.trigger_id, s.cron_expression)}
-                        aria-label={`Delete schedule`}
-                        className="h-7 w-7 p-0 text-muted-foreground hover:text-destructive"
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </Button>
+                      <div className="flex justify-end gap-0.5">
+                        {/* Edit + delete are gated on `managed_by === 'api'`
+                            because DSL-owned schedules must be changed via
+                            the Croniqfile — the API rejects mutations. */}
+                        {s.managed_by === 'api' && (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => openEditDialog(s)}
+                            aria-label="Edit schedule"
+                            className="h-7 w-7 p-0 text-muted-foreground hover:text-primary"
+                          >
+                            <Pencil className="h-3.5 w-3.5" />
+                          </Button>
+                        )}
+                        {s.managed_by === 'api' && (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => handleDeleteSchedule(s.trigger_id, s.cron_expression)}
+                            aria-label="Delete schedule"
+                            className="h-7 w-7 p-0 text-muted-foreground hover:text-destructive"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </Button>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 ))}

@@ -318,6 +318,34 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/TriggerDefinition" }
+    put:
+      summary: Update an API-managed trigger
+      description: |
+        Patch the editable fields of an API-managed schedule. Omitted
+        fields are preserved. Returns 409 for DSL-managed triggers
+        (Croniqfile owns those), 404 if the trigger_id is unknown.
+      parameters:
+        - name: trigger_id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                cron_expression: { type: string }
+                timezone: { type: string }
+                enabled: { type: boolean }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TriggerDefinition" }
+        "404": { description: Trigger not found }
+        "409": { description: Trigger is DSL-managed and cannot be edited via API }
     delete:
       summary: Delete a trigger
       responses:

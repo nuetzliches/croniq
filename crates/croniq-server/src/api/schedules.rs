@@ -156,6 +156,95 @@ pub async fn handle_create(
     Ok((StatusCode::CREATED, Json(trigger)))
 }
 
+#[derive(Deserialize)]
+pub struct UpdateTriggerRequest {
+    /// Optional — omitted fields are left untouched. Note: only the
+    /// editable fields are exposed; `job_key`, `created_at`, and
+    /// `managed_by` cannot be changed via update.
+    pub cron_expression: Option<String>,
+    pub timezone: Option<String>,
+    pub enabled: Option<bool>,
+}
+
+/// `PUT /v1/schedules/{trigger_id}`
+///
+/// Update an API-managed schedule's cron expression, timezone, or
+/// enabled flag. DSL-managed schedules (any with the `dsl:` prefix or
+/// `managed_by != "api"`) return 409 — those are owned by the
+/// Croniqfile and must be edited there. Unknown trigger ids return
+/// 404. Omitted body fields preserve their current value so callers
+/// can patch a single field without re-sending the whole record.
+pub async fn handle_update(
+    State(state): State<Arc<ServerState>>,
+    Extension(ctx): Extension<CallerContext>,
+    axum::extract::Path(trigger_id): axum::extract::Path<String>,
+    Json(req): Json<UpdateTriggerRequest>,
+) -> Result<Json<TriggerDefinition>, StatusCode> {
+    require_scope(&ctx, Scope::SCHEDULES_WRITE)?;
+    if trigger_id.starts_with("dsl:") {
+        return Err(StatusCode::CONFLICT);
+    }
+    let store = state
+        .store
+        .as_ref()
+        .ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
+
+    let mut existing = store
+        .get_trigger(&trigger_id)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::NOT_FOUND)?;
+
+    // Defensive — shouldn't happen since `dsl:` prefix is filtered above
+    // and stored rows always carry `managed_by = "api"`, but guards
+    // against future managed_by values (e.g. operator imports) sneaking
+    // into the editable path.
+    if existing.managed_by != "api" {
+        return Err(StatusCode::CONFLICT);
+    }
+
+    if let Some(cron) = req.cron_expression {
+        existing.cron_expression = Some(cron);
+    }
+    if let Some(tz) = req.timezone {
+        // Empty string clears the override — same convention as create.
+        existing.timezone = if tz.is_empty() { None } else { Some(tz) };
+    }
+    if let Some(enabled) = req.enabled {
+        existing.enabled = enabled;
+    }
+    let now = Utc::now();
+    existing.updated_at = now;
+
+    let updated = store
+        .update_trigger(&existing)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    if !updated {
+        // Row vanished between get and update (race) — surface as 404
+        // rather than success so the caller knows the write didn't land.
+        return Err(StatusCode::NOT_FOUND);
+    }
+
+    // Push the new trigger to the live scheduler. The scheduler keys
+    // by job_key, so RemoveJob+AddJob replaces in place — matches the
+    // create-after-delete pattern callers used to fake updates.
+    if let Some(ref tx) = state.scheduler_tx {
+        let _ = tx.send(crate::scheduler::SchedulerCommand::RemoveJob {
+            job_key: existing.job_key.clone(),
+        });
+        if existing.enabled
+            && let Some(rt_trigger) = crate::loader::trigger_from_definition(&existing, now)
+        {
+            let job_config = crate::loader::job_config_from_definition(&existing, None);
+            let _ = tx.send(crate::scheduler::SchedulerCommand::AddJob {
+                job: Box::new(job_config),
+                trigger: Box::new(rt_trigger),
+            });
+        }
+    }
+
+    Ok(Json(existing))
+}
+
 /// `DELETE /v1/schedules/{trigger_id}`
 pub async fn handle_delete(
     State(state): State<Arc<ServerState>>,
@@ -297,5 +386,115 @@ mod tests {
         let state = make_state(vec![dsl_job("dsl:one")], make_store());
         let status = status_of(server_router(state), "DELETE", "/v1/schedules/dsl:dsl:one").await;
         assert_eq!(status, 409);
+    }
+
+    async fn put_json(
+        app: axum::Router,
+        uri: &str,
+        body: serde_json::Value,
+    ) -> (u16, serde_json::Value) {
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("PUT")
+                    .uri(uri)
+                    .header("content-type", "application/json")
+                    .body(Body::from(body.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let status = resp.status().as_u16();
+        let bytes = resp.into_body().collect().await.unwrap().to_bytes();
+        let json = serde_json::from_slice(&bytes).unwrap_or(serde_json::Value::Null);
+        (status, json)
+    }
+
+    fn seed_api_trigger(store: &DynStore, job_key: &str, cron: &str) -> String {
+        let id = Uuid::new_v4().to_string();
+        let now = Utc::now() - chrono::Duration::seconds(60);
+        store
+            .create_trigger(&TriggerDefinition {
+                trigger_id: id.clone(),
+                job_key: job_key.into(),
+                cron_expression: Some(cron.into()),
+                timezone: None,
+                calendar: None,
+                window: None,
+                not_before: None,
+                not_after: None,
+                enabled: true,
+                managed_by: "api".into(),
+                created_at: now,
+                updated_at: now,
+            })
+            .unwrap();
+        id
+    }
+
+    #[tokio::test]
+    async fn update_api_schedule_changes_cron_and_timezone() {
+        let store = make_store();
+        let id = seed_api_trigger(&store, "api:job", "30s");
+        let state = make_state(vec![], store.clone());
+        let (status, body) = put_json(
+            server_router(state),
+            &format!("/v1/schedules/{id}"),
+            serde_json::json!({
+                "cron_expression": "1m",
+                "timezone": "Europe/Vienna",
+            }),
+        )
+        .await;
+        assert_eq!(status, 200);
+        assert_eq!(body["cron_expression"], "1m");
+        assert_eq!(body["timezone"], "Europe/Vienna");
+        // Persisted — re-read through the store, not the response.
+        let row = store.get_trigger(&id).unwrap().unwrap();
+        assert_eq!(row.cron_expression.as_deref(), Some("1m"));
+        assert_eq!(row.timezone.as_deref(), Some("Europe/Vienna"));
+        assert_eq!(row.job_key, "api:job");
+        assert!(row.updated_at > row.created_at);
+    }
+
+    #[tokio::test]
+    async fn update_dsl_schedule_returns_409() {
+        let state = make_state(vec![dsl_job("dsl:one")], make_store());
+        let (status, _) = put_json(
+            server_router(state),
+            "/v1/schedules/dsl:dsl:one",
+            serde_json::json!({ "cron_expression": "1m" }),
+        )
+        .await;
+        assert_eq!(status, 409);
+    }
+
+    #[tokio::test]
+    async fn update_unknown_trigger_returns_404() {
+        let state = make_state(vec![], make_store());
+        let (status, _) = put_json(
+            server_router(state),
+            "/v1/schedules/00000000-0000-0000-0000-000000000000",
+            serde_json::json!({ "cron_expression": "1m" }),
+        )
+        .await;
+        assert_eq!(status, 404);
+    }
+
+    #[tokio::test]
+    async fn update_toggles_enabled_and_preserves_unset_fields() {
+        let store = make_store();
+        let id = seed_api_trigger(&store, "api:job", "30s");
+        let state = make_state(vec![], store.clone());
+        let (status, body) = put_json(
+            server_router(state),
+            &format!("/v1/schedules/{id}"),
+            serde_json::json!({ "enabled": false }),
+        )
+        .await;
+        assert_eq!(status, 200);
+        assert_eq!(body["enabled"], false);
+        // Cron untouched because the body omitted it.
+        assert_eq!(body["cron_expression"], "30s");
     }
 }
