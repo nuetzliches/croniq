@@ -2,13 +2,14 @@ import { useCallback, useState } from 'react'
 import { useParams } from 'react-router'
 import { useForm } from 'react-hook-form'
 import * as Dialog from '@radix-ui/react-dialog'
-import { Plus, Trash2, X } from 'lucide-react'
+import { Plus, Trash2, X, Play } from 'lucide-react'
 import {
   useJob,
   useSchedules,
   useExecutions,
   useCreateSchedule,
   useDeleteSchedule,
+  useTriggerJob,
 } from '@/api/hooks'
 import { Badge } from '@/components/ui/badge'
 import { stateVariant } from '@/components/ui/badge-variants'
@@ -34,8 +35,10 @@ export function JobDetailPage() {
   const executions = useExecutions({ job_key: jobKey, limit: 20 })
   const createSchedule = useCreateSchedule()
   const deleteSchedule = useDeleteSchedule()
+  const triggerJob = useTriggerJob()
   const { confirm, dialog: confirmDialog } = useConfirm()
   const [scheduleDialogOpen, setScheduleDialogOpen] = useState(false)
+  const [triggering, setTriggering] = useState(false)
 
   async function handleDeleteSchedule(triggerId: string, cron: string | null) {
     const ok = await confirm({
@@ -85,6 +88,22 @@ export function JobDetailPage() {
 
   const j = job.data
   const scheduleCount = schedules.data?.length ?? 0
+  // A job counts as DSL-managed when at least one of its schedules came
+  // from the Croniqfile. The server stamps `updated_at = now()` on every
+  // request for these (because they're synthesised on read), so the
+  // JobDefinition timestamp is meaningless for them — relabel to make the
+  // intent explicit instead of letting users read it as "edited 5s ago".
+  const isDslManaged = (schedules.data ?? []).some((s) => s.managed_by === 'dsl')
+
+  async function handleTrigger() {
+    if (!jobKey || triggering) return
+    setTriggering(true)
+    try {
+      await triggerJob.mutateAsync(jobKey)
+    } finally {
+      setTriggering(false)
+    }
+  }
 
   return (
     <div className="space-y-6">
@@ -92,7 +111,19 @@ export function JobDetailPage() {
       <div className="flex items-center gap-3">
         <span className="font-mono text-base font-semibold">{j.job_key}</span>
         <Badge variant={j.is_active ? 'ok' : 'neutral'}>{j.is_active ? 'active' : 'inactive'}</Badge>
+        {isDslManaged && <Badge variant="neutral" className="font-mono">dsl</Badge>}
         <CopyButton value={j.job_key} label={`Copy job key ${j.job_key}`} />
+        <Button
+          variant="secondary"
+          size="sm"
+          onClick={handleTrigger}
+          disabled={triggering || !j.is_active}
+          aria-label={`Trigger ${j.job_key} now`}
+          className="ml-auto"
+        >
+          {triggering ? <Spinner className="h-3.5 w-3.5" /> : <Play className="h-3.5 w-3.5" />}
+          Trigger now
+        </Button>
       </div>
 
       <Card>
@@ -105,11 +136,18 @@ export function JobDetailPage() {
               </div>
             )}
             <div>
-              <dt className="text-xs text-muted-foreground uppercase tracking-wide mb-0.5">Runner</dt>
+              {/* The header field shows who *registered* the job (which
+                  runner the SDK call came from). The Recent Executions
+                  table below shows who *ran* each execution — different
+                  concept, same word, kept reusers reading "RUNNER" twice
+                  and confused. Disambiguate. */}
+              <dt className="text-xs text-muted-foreground uppercase tracking-wide mb-0.5">Assigned Runner</dt>
               <dd className="font-mono text-xs">{j.assigned_runner_id || '—'}</dd>
             </div>
             <div>
-              <dt className="text-xs text-muted-foreground uppercase tracking-wide mb-0.5">Updated</dt>
+              <dt className="text-xs text-muted-foreground uppercase tracking-wide mb-0.5">
+                {isDslManaged ? 'Loaded' : 'Updated'}
+              </dt>
               <dd>{formatDate(j.updated_at)}</dd>
             </div>
           </dl>
