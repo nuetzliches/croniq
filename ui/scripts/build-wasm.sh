@@ -26,7 +26,12 @@ needs_rebuild() {
     newest_input=$(find "$CRATE_DIR/src" "$CRATE_DIR/Cargo.toml" "$ROOT/crates/croniq-config" \
         -name '*.rs' -o -name 'Cargo.toml' 2>/dev/null \
         | xargs -r ls -t 2>/dev/null | head -n 1 || true)
-    [ -z "$newest_input" ] && return 0
+    # No source tree to compare against (e.g. Docker stage with only
+    # `ui/` mounted, where the WASM artefacts were copied in from an
+    # earlier stage) — trust the existing artefact and skip the
+    # rebuild. Without this guard the script forces a rebuild and then
+    # fails on the missing wasm-pack a few lines down.
+    [ -z "$newest_input" ] && return 1
     [ "$newest_input" -nt "$UI_DEST/croniq_config_wasm_bg.wasm" ] && return 0
     return 1
 }

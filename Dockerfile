@@ -8,6 +8,30 @@ COPY crates/ crates/
 # Build release binaries
 RUN cargo build --release --bin croniq-server --bin croniq --bin croniq-mcp --bin croniq-demo-runner
 
+# ── Stage 1b: Build the croniq-config-wasm bridge ────────────────────────────
+# WASM output is platform-independent, so we pin this stage to BUILDPLATFORM
+# and reuse the artefacts across every TARGETPLATFORM. wasm-pack itself is
+# fetched as a pre-built binary (cargo install wasm-pack would add ~2 min).
+FROM --platform=$BUILDPLATFORM rust:1.88-bookworm AS wasm-builder
+
+ARG WASM_PACK_VERSION=0.13.1
+RUN set -eux; \
+    case "$(uname -m)" in \
+      x86_64)  arch=x86_64 ;; \
+      aarch64) arch=aarch64 ;; \
+      *) echo "unsupported build arch: $(uname -m)" >&2; exit 1 ;; \
+    esac; \
+    url="https://github.com/rustwasm/wasm-pack/releases/download/v${WASM_PACK_VERSION}/wasm-pack-v${WASM_PACK_VERSION}-${arch}-unknown-linux-musl.tar.gz"; \
+    curl -fsSL "$url" \
+      | tar xz -C /usr/local/bin --strip-components=1 --wildcards '*/wasm-pack'; \
+    wasm-pack --version
+
+WORKDIR /build
+COPY Cargo.toml Cargo.lock ./
+COPY crates/ crates/
+RUN cd crates/croniq-config-wasm \
+    && wasm-pack build --target web --release --out-dir pkg
+
 # ── Stage 2: Build React UI ──────────────────────────────────────────────────
 FROM node:24-bookworm-slim AS ui-builder
 
@@ -19,6 +43,18 @@ COPY ui/package.json ui/package-lock.json ./
 # never actually enforced.
 RUN npm ci || npm install
 COPY ui/ .
+
+# Drop the pre-built WASM bridge into ui/src/lib/wasm/ so the prebuild
+# hook (build-wasm.sh) sees fresh artefacts and skips the wasm-pack
+# step. Without this the prebuild hook fails because wasm-pack isn't
+# installed in node:bookworm-slim.
+COPY --from=wasm-builder \
+    /build/crates/croniq-config-wasm/pkg/croniq_config_wasm.js \
+    /build/crates/croniq-config-wasm/pkg/croniq_config_wasm.d.ts \
+    /build/crates/croniq-config-wasm/pkg/croniq_config_wasm_bg.wasm \
+    /build/crates/croniq-config-wasm/pkg/croniq_config_wasm_bg.wasm.d.ts \
+    src/lib/wasm/
+
 RUN npm run build
 
 # ── Stage 3: Runtime image ───────────────────────────────────────────────────
