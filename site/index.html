@@ -4,7 +4,8 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Croniq — Distributed cron that just works</title>
-  <meta name="description" content="Open-source distributed cron scheduler. Single Rust binary, SQLite default, production-ready retries, React dashboard.">
+  <meta name="description" content="Open-source distributed cron scheduler. Single Rust binary, SQLite default, production-ready retries, React dashboard, MCP server.">
+  <meta name="color-scheme" content="dark light">
   <meta property="og:title" content="Croniq — Distributed cron that just works">
   <meta property="og:description" content="Open-source distributed cron scheduler. Single Rust binary, SQLite default, production-ready retries.">
   <meta property="og:type" content="website">
@@ -26,20 +27,15 @@
       </svg>
       <h1>Croniq</h1>
       <p class="hero-tagline">Distributed cron that just works.</p>
-      <p class="hero-sub">Single binary. SQLite default. Production-ready retries.</p>
+      <p class="hero-sub">Single binary. SQLite default. Production-ready retries. MCP-ready.</p>
       <div class="hero-cta">
-        <a href="https://github.com/nuetzliches/croniq" class="btn btn-primary">
+        <a href="#run" class="btn btn-ghost">&#9654; See it run</a>
+        <a href="https://github.com/nuetzliches/croniq" class="btn btn-primary" target="_blank" rel="noopener">
           <svg width="20" height="20" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
-          View on GitHub
+          Star on GitHub
         </a>
-        <a href="https://github.com/nuetzliches/croniq/pkgs/container/croniq" class="btn btn-outline">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12A10 10 0 0 0 12 2v10z"/><path d="M12 2a10 10 0 0 0 0 20 10 10 0 0 0 10-10H12z"/></svg>
-          Docker Image
-        </a>
-        <a href="./generator.html" class="btn btn-outline">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="9" y1="13" x2="15" y2="13"/><line x1="9" y1="17" x2="15" y2="17"/></svg>
-          DSL Generator
-        </a>
+        <a href="#install" class="btn btn-outline">Quick start &#8594;</a>
+        <a href="./generator.html" class="btn btn-outline">DSL Generator &#8594;</a>
       </div>
       <div class="docker-cmd">
         <code>docker run -p 4000:4000 ghcr.io/nuetzliches/croniq</code>
@@ -48,11 +44,58 @@
     </div>
   </section>
 
+  <!-- How it works -->
+  <section>
+    <div class="container">
+      <h2 class="section-title">How it works</h2>
+      <p class="section-sub">Deploy once, define in code, execute everywhere — no external dependencies.</p>
+      <div class="how-grid">
+        <div class="how-card">
+          <div class="how-num">1</div>
+          <h3>Deploy</h3>
+          <p>One binary, zero setup. SQLite is embedded — you're in production in seconds. Swap to Postgres when you're ready to scale.</p>
+          <code>docker run -p 4000:4000 ghcr.io/nuetzliches/croniq</code>
+        </div>
+        <div class="how-card">
+          <div class="how-num">2</div>
+          <h3>Define</h3>
+          <p>Write a Croniqfile: human-readable schedules, retry policies, business-day calendars, and capability routing. Track it in git like any config.</p>
+          <code>croniq file apply Croniqfile</code>
+        </div>
+        <div class="how-card">
+          <div class="how-num">3</div>
+          <h3>Execute</h3>
+          <p>Runners poll for work via HTTP long-poll — no inbound ports, no firewall rules. Scale runners independently from the scheduler.</p>
+          <code>croniq-server run --runner</code>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Terminal Demo -->
+  <section id="run">
+    <div class="container">
+      <h2 class="section-title">See it in action</h2>
+      <p class="section-sub">From zero to running jobs in one command — no config files needed.</p>
+      <div class="terminal" id="term-demo" data-active="quickstart">
+        <div class="terminal-chrome">
+          <span class="terminal-dots"><span></span><span></span><span></span></span>
+          <div class="terminal-tabs" role="tablist">
+            <button type="button" class="term-tab active" role="tab" data-term="quickstart">croniq quickstart</button>
+            <button type="button" class="term-tab" role="tab" data-term="jobs">croniq jobs list</button>
+          </div>
+          <button type="button" class="terminal-replay" id="term-replay">&#8635; Replay</button>
+        </div>
+        <div class="terminal-body"><pre id="term-out"></pre><span class="terminal-cursor" id="term-cursor"></span></div>
+      </div>
+    </div>
+  </section>
+
   <!-- Features -->
   <section>
     <div class="container">
       <h2 class="section-title">Built for reliability</h2>
-      <p class="section-sub">Everything you need to replace fragile crontabs with something you can trust.</p>
+      <p class="section-sub">Everything you need to replace fragile crontabs with something you can actually trust.</p>
       <div class="features-grid">
 
         <div class="feature-card">
@@ -141,35 +184,98 @@
 <span class="kw">job</span> <span class="str">etl:sync</span> <span class="pn">{</span>
   <span class="kw">every</span> <span class="num">15</span> <span class="str">minutes</span>
 <span class="pn">}</span></pre>
+      <p class="code-note">&#8594; <a href="./generator.html">Generate a Croniqfile</a> from your existing crontabs using the web DSL generator.</p>
     </div>
   </section>
 
-  <!-- Quick Start -->
-  <section>
+  <!-- Install / Quick start -->
+  <section id="install">
     <div class="container">
       <h2 class="section-title">Up and running in 60 seconds</h2>
-      <p class="section-sub">Zero to scheduled jobs — no config files needed.</p>
-      <div class="steps">
-        <div class="step">
-          <span class="step-num">1</span>
-          <div class="step-body">
-            <h3>Install</h3>
-            <code>cargo install croniq</code>
-          </div>
+      <p class="section-sub">Choose your preferred install method. The CLI is free and open source (MIT / Apache-2.0).</p>
+      <div class="install-tabs">
+        <div class="tab-bar" role="tablist">
+          <button class="tab-btn active" role="tab" data-tab="docker">docker</button>
+          <button class="tab-btn" role="tab" data-tab="brew">brew</button>
+          <button class="tab-btn" role="tab" data-tab="cargo">cargo</button>
+          <button class="tab-btn" role="tab" data-tab="curl">curl</button>
         </div>
-        <div class="step">
-          <span class="step-num">2</span>
-          <div class="step-body">
-            <h3>Quick start</h3>
-            <code>croniq quickstart</code>
+
+        <!-- docker -->
+        <div class="tab-panel active" id="tab-docker">
+          <div class="tab-panel-header">
+            <span>No toolchain required &middot; CI-ready</span>
+            <button type="button" class="tab-copy" data-copy="docker run -p 4000:4000 ghcr.io/nuetzliches/croniq">Copy</button>
           </div>
+<pre><span class="comment"># Start the scheduler — dashboard opens at http://localhost:4000</span>
+docker run -p 4000:4000 ghcr.io/nuetzliches/croniq</pre>
+          <div class="tab-note">Image at <a href="https://github.com/nuetzliches/croniq/pkgs/container/croniq" target="_blank" rel="noopener">ghcr.io/nuetzliches/croniq</a>. Builds for linux/amd64 and linux/arm64.</div>
         </div>
-        <div class="step">
-          <span class="step-num">3</span>
-          <div class="step-body">
-            <h3>Open the dashboard</h3>
-            <code>http://localhost:4000</code>
+
+        <!-- brew -->
+        <div class="tab-panel" id="tab-brew">
+          <div class="tab-panel-header">
+            <span>macOS &middot; Linux</span>
+            <button type="button" class="tab-copy" data-copy="brew tap nuetzliches/tap && brew install croniq">Copy</button>
           </div>
+<pre><span class="comment"># Add the tap once, then install.</span>
+brew tap nuetzliches/tap
+brew install croniq
+
+<span class="comment"># Start the scheduler</span>
+croniq-server serve</pre>
+          <div class="tab-note">Formula at <a href="https://github.com/nuetzliches/homebrew-tap" target="_blank" rel="noopener">nuetzliches/homebrew-tap</a> — auto-bumped by the release workflow.</div>
+        </div>
+
+        <!-- cargo -->
+        <div class="tab-panel" id="tab-cargo">
+          <div class="tab-panel-header">
+            <span>Rust toolchain required</span>
+            <button type="button" class="tab-copy" data-copy="cargo install croniq">Copy</button>
+          </div>
+<pre><span class="comment"># Installs croniq, croniq-server, and croniq-mcp.</span>
+cargo install croniq
+
+<span class="comment"># Start the scheduler</span>
+croniq-server serve</pre>
+          <div class="tab-note">No Rust? <a href="https://rustup.rs" target="_blank" rel="noopener">rustup.rs</a> gets you set up in 60 seconds.</div>
+        </div>
+
+        <!-- curl -->
+        <div class="tab-panel" id="tab-curl">
+          <div class="tab-panel-header">
+            <span>macOS &middot; Linux &middot; pre-built binary</span>
+            <button type="button" class="tab-copy" data-copy="curl -fsSL https://raw.githubusercontent.com/nuetzliches/croniq/main/install.sh | sh">Copy</button>
+          </div>
+<pre><span class="comment"># Downloads the pre-built binary for your platform.</span>
+curl -fsSL https://raw.githubusercontent.com/nuetzliches/croniq/main/install.sh | sh
+
+<span class="comment"># Start the scheduler</span>
+croniq-server serve</pre>
+          <div class="tab-note">Installs <code>croniq</code>, <code>croniq-server</code>, and <code>croniq-mcp</code> to <code>/usr/local/bin</code>. Script at <a href="https://github.com/nuetzliches/croniq/blob/main/install.sh" target="_blank" rel="noopener">install.sh</a>.</div>
+        </div>
+      </div>
+      <p class="install-note">Dashboard opens at <strong>http://localhost:4000</strong> after <code>croniq-server serve</code>.</p>
+    </div>
+  </section>
+
+  <!-- Who it's for -->
+  <section>
+    <div class="container">
+      <h2 class="section-title">Who it's for</h2>
+      <p class="section-sub">Teams tired of cron-at-scale being a solved-but-still-painful problem.</p>
+      <div class="who-grid">
+        <div class="who-card">
+          <strong>Backend engineers</strong>
+          <span>Replacing systemd timers or Celery beat. Want retries, visibility, and something that doesn't fall over at 03:00.</span>
+        </div>
+        <div class="who-card">
+          <strong>Platform teams</strong>
+          <span>Need a shared job scheduler across services. Croniq runs standalone, exposes an OpenAPI, and fits any stack.</span>
+        </div>
+        <div class="who-card">
+          <strong>AI-native teams</strong>
+          <span>Using MCP clients like Claude or Cursor? The built-in MCP server exposes 12 tools for agent-driven scheduling.</span>
         </div>
       </div>
     </div>
@@ -179,22 +285,174 @@
   <footer>
     <div class="container">
       <div class="footer-links">
-        <a href="https://github.com/nuetzliches/croniq">GitHub</a>
-        <a href="https://github.com/nuetzliches/croniq/blob/main/openapi.yaml">API Docs</a>
+        <a href="https://github.com/nuetzliches/croniq" target="_blank" rel="noopener">GitHub</a>
+        <a href="https://github.com/nuetzliches/croniq/blob/main/openapi.yaml" target="_blank" rel="noopener">API Docs</a>
+        <a href="./generator.html">DSL Generator</a>
+        <a href="https://github.com/nuetzliches/croniq/blob/main/CHANGELOG.md" target="_blank" rel="noopener">Changelog</a>
         <span>MIT / Apache-2.0</span>
+      </div>
+      <div class="footer-legal">
+        Built by <a href="https://nuetzliche.it" target="_blank" rel="noopener">nuetzliche.it</a>
+        &middot; Questions? <a href="mailto:croniq@nuetzliche.it">croniq@nuetzliche.it</a>
+      </div>
+      <div class="footer-legal">
+        <a href="https://nuetzliche.it/impressum" target="_blank" rel="noopener">Impressum</a>
+        &middot;
+        <a href="https://nuetzliche.it/datenschutz" target="_blank" rel="noopener">Datenschutz</a>
       </div>
     </div>
   </footer>
 
   <script>
-    document.querySelectorAll('[data-copy]').forEach(function(btn) {
+    // ---- Install tabs --------------------------------------------------------
+    document.querySelectorAll('.tab-btn').forEach(function(btn) {
       btn.addEventListener('click', function() {
-        navigator.clipboard.writeText(btn.dataset.copy);
-        var orig = btn.textContent;
-        btn.textContent = 'Copied!';
-        setTimeout(function() { btn.textContent = orig; }, 1500);
+        var tab = btn.dataset.tab;
+        var container = btn.closest('.install-tabs');
+        container.querySelectorAll('.tab-btn').forEach(function(b) { b.classList.remove('active'); });
+        container.querySelectorAll('.tab-panel').forEach(function(p) { p.classList.remove('active'); });
+        btn.classList.add('active');
+        container.querySelector('#tab-' + tab).classList.add('active');
       });
     });
+
+    // ---- Copy buttons -------------------------------------------------------
+    document.querySelectorAll('[data-copy]').forEach(function(btn) {
+      btn.addEventListener('click', function() {
+        navigator.clipboard.writeText(btn.dataset.copy).then(function() {
+          var orig = btn.textContent;
+          btn.textContent = 'Copied!';
+          if (btn.classList.contains('tab-copy')) {
+            btn.classList.add('copied');
+            setTimeout(function() { btn.textContent = 'Copy'; btn.classList.remove('copied'); }, 1500);
+          } else {
+            setTimeout(function() { btn.textContent = orig; }, 1500);
+          }
+        }).catch(function() {});
+      });
+    });
+
+    // ---- Animated terminal demo ---------------------------------------------
+    (function() {
+      var term = document.getElementById('term-demo');
+      if (!term) return;
+      var out   = document.getElementById('term-out');
+      var replay = document.getElementById('term-replay');
+      var tabs  = term.querySelectorAll('.term-tab');
+
+      var SCRIPTS = {
+        quickstart: [
+          { t: 'prompt' },
+          { t: 'type', text: 'croniq quickstart', speed: 55 },
+          { t: 'wait', ms: 400 },
+          { t: 'nl' },
+          { t: 'line', html: '  <span class="accent">Croniq v0.5.0</span>' },
+          { t: 'nl' },
+          { t: 'line', html: '  <span class="dim">database  </span>SQLite  <span class="dim">./croniq.db</span>' },
+          { t: 'line', html: '  <span class="dim">api       </span>http://localhost:4000' },
+          { t: 'line', html: '  <span class="dim">dashboard </span><span class="accent">http://localhost:4000/ui</span>' },
+          { t: 'nl' },
+          { t: 'line', html: '  Seeding demo jobs\u2026' },
+          { t: 'wait', ms: 250 },
+          { t: 'line', html: '    <span class="ok">\u2713</span> billing:invoice     weekday at 02:00' },
+          { t: 'line', html: '    <span class="ok">\u2713</span> etl:sync            every 15 minutes' },
+          { t: 'line', html: '    <span class="ok">\u2713</span> reports:weekly      friday at 08:00' },
+          { t: 'nl' },
+          { t: 'line', html: '  <span class="ok">3 jobs active</span> \u2014 scheduler running' },
+          { t: 'line', html: '  MCP server ready   <span class="dim">http://localhost:4000/mcp  (12 tools)</span>' },
+          { t: 'nl' },
+          { t: 'line', html: '  <span class="dim">Press Ctrl+C to stop</span>' },
+          { t: 'done' },
+        ],
+        jobs: [
+          { t: 'prompt' },
+          { t: 'type', text: 'croniq jobs list', speed: 55 },
+          { t: 'wait', ms: 400 },
+          { t: 'nl' },
+          { t: 'line', html: '  <span class="dim">NAME                SCHEDULE            NEXT RUN             STATUS</span>' },
+          { t: 'line', html: '  <span class="dim">\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500 \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500  \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500  \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500</span>' },
+          { t: 'line', html: '  billing:invoice     weekday @ 02:00     2026-04-27 02:00     <span class="ok">\u25cf active</span>' },
+          { t: 'line', html: '  etl:sync            every 15m           2026-04-26 14:15     <span class="ok">\u25cf active</span>' },
+          { t: 'line', html: '  reports:weekly      friday @ 08:00      2026-05-01 08:00     <span class="ok">\u25cf active</span>' },
+          { t: 'line', html: '  data:cleanup        daily @ 00:00       2026-04-27 00:00     <span class="dim">\u25cb paused</span>' },
+          { t: 'nl' },
+          { t: 'line', html: '  <span class="dim">4 jobs \u00b7 </span><span class="ok">3 active</span><span class="dim"> \u00b7 1 paused</span>' },
+          { t: 'done' },
+        ],
+      };
+
+      var token = 0;
+
+      function escapeHtml(s) {
+        return s.replace(/[&<>]/g, function(c) {
+          return { '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c];
+        });
+      }
+
+      function sleep(ms, t) {
+        return new Promise(function(resolve) {
+          setTimeout(function() { resolve(t === token); }, ms);
+        });
+      }
+
+      function append(html) { out.insertAdjacentHTML('beforeend', html); }
+
+      async function run(name) {
+        token++;
+        var myToken = token;
+        term.classList.remove('done');
+        out.innerHTML = '';
+        var script = SCRIPTS[name] || SCRIPTS.quickstart;
+        for (var i = 0; i < script.length; i++) {
+          var step = script[i];
+          if (myToken !== token) return;
+          if (step.t === 'prompt') {
+            append('<span class="prompt">$</span> ');
+          } else if (step.t === 'type') {
+            for (var ci = 0; ci < step.text.length; ci++) {
+              if (myToken !== token) return;
+              append('<span class="cmd">' + escapeHtml(step.text[ci]) + '</span>');
+              var alive = await sleep(step.speed || 50, myToken);
+              if (!alive) return;
+            }
+          } else if (step.t === 'wait') {
+            var ok = await sleep(step.ms, myToken);
+            if (!ok) return;
+          } else if (step.t === 'nl') {
+            append('\n');
+          } else if (step.t === 'line') {
+            append((step.html != null ? step.html : escapeHtml(step.text || '')) + '\n');
+            var ok2 = await sleep(90, myToken);
+            if (!ok2) return;
+          } else if (step.t === 'done') {
+            term.classList.add('done');
+          }
+        }
+      }
+
+      function setActive(name) {
+        tabs.forEach(function(b) { b.classList.toggle('active', b.dataset.term === name); });
+        term.dataset.active = name;
+        run(name);
+      }
+
+      tabs.forEach(function(btn) {
+        btn.addEventListener('click', function() { setActive(btn.dataset.term); });
+      });
+
+      replay.addEventListener('click', function() { run(term.dataset.active || 'quickstart'); });
+
+      // Autoplay when scrolled into view
+      var io = new IntersectionObserver(function(entries) {
+        entries.forEach(function(e) {
+          if (e.isIntersecting) {
+            run(term.dataset.active || 'quickstart');
+            io.unobserve(e.target);
+          }
+        });
+      }, { threshold: 0.3 });
+      io.observe(term);
+    })();
   </script>
 
 </body>
