@@ -222,6 +222,7 @@ impl Parser {
                 "server" => Ok(Item::Server(self.parse_server()?)),
                 "pull_api" => Ok(Item::PullApi(self.parse_pull_api()?)),
                 "observability" => Ok(Item::Observability(self.parse_observability()?)),
+                "mcp" => Ok(Item::Mcp(self.parse_mcp()?)),
                 "vars" => Ok(Item::Vars(self.parse_vars()?)),
                 "defaults" => Ok(Item::Defaults(self.parse_defaults()?)),
                 "calendar" => Ok(Item::Calendar(self.parse_calendar()?)),
@@ -233,7 +234,7 @@ impl Parser {
             },
             _ => Err(ParseError::Unexpected {
                 expected:
-                    "import, server, pull_api, observability, vars, defaults, calendar, or job"
+                    "import, server, pull_api, observability, mcp, vars, defaults, calendar, or job"
                         .into(),
                 got: format!("{}", tok.kind),
                 span: tok.span.into(),
@@ -283,6 +284,17 @@ impl Parser {
         let directives = self.parse_directives_until_rbrace()?;
         let end = self.expect_rbrace()?;
         Ok(PullApiBlock {
+            directives,
+            span: start.merge(end),
+        })
+    }
+
+    fn parse_mcp(&mut self) -> Result<McpBlock, ParseError> {
+        let start = self.expect_ident("mcp")?;
+        self.expect_lbrace()?;
+        let directives = self.parse_directives_until_rbrace()?;
+        let end = self.expect_rbrace()?;
+        Ok(McpBlock {
             directives,
             span: start.merge(end),
         })

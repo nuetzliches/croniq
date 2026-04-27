@@ -255,6 +255,17 @@ async fn main() -> Result<()> {
     let trigger_snapshot = Arc::new(tokio::sync::RwLock::new(triggers.clone()));
     Arc::get_mut(&mut server_state).unwrap().triggers = Some(Arc::clone(&trigger_snapshot));
 
+    // Capture handles for the MCP HTTP transport. Must happen after the last
+    // `Arc::get_mut(&mut server_state)` so the unique-ref invariant holds; the
+    // clone here is harmless thereafter. Defaults to enabled when the
+    // Croniqfile has no `mcp { ... }` block.
+    let mcp_enabled = loaded.runtime.mcp.as_ref().is_none_or(|m| m.enabled);
+    let mcp_state = Arc::clone(&server_state);
+    let mcp_runner = Arc::clone(&runner_state);
+    let mcp_store = Arc::clone(&store);
+    let mcp_jobs = loaded.runtime.jobs.clone();
+    let mcp_triggers = Arc::clone(&trigger_snapshot);
+
     let mut scheduler_loop = SchedulerLoop::new(
         triggers,
         jobs.clone(),
@@ -391,6 +402,22 @@ async fn main() -> Result<()> {
         .with_context(|| format!("invalid listen address: {}", cli.listen))?;
 
     let mut app = server_router(server_state);
+
+    // Mount the in-process MCP HTTP transport at /mcp. Auth + per-tool
+    // admin-scope gating are applied inside `mcp_router`.
+    if mcp_enabled {
+        let mcp_router = croniq_server::mcp::mcp_router(
+            mcp_state,
+            mcp_runner,
+            Some(mcp_store),
+            mcp_jobs,
+            Some(mcp_triggers),
+        );
+        app = app.merge(mcp_router);
+        tracing::info!("MCP HTTP transport enabled at /mcp");
+    } else {
+        tracing::info!("MCP HTTP transport disabled by Croniqfile");
+    }
 
     // Serve UI static files if --ui-dir is set
     if let Some(ref ui_dir) = cli.ui_dir {

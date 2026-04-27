@@ -60,13 +60,13 @@
           <div class="how-num">2</div>
           <h3>Define</h3>
           <p>Write a Croniqfile: human-readable schedules, retry policies, business-day calendars, and capability routing. Track it in git like any config.</p>
-          <code>croniq file apply Croniqfile</code>
+          <code>croniq validate Croniqfile</code>
         </div>
         <div class="how-card">
           <div class="how-num">3</div>
           <h3>Execute</h3>
           <p>Runners poll for work via HTTP long-poll — no inbound ports, no firewall rules. Scale runners independently from the scheduler.</p>
-          <code>croniq-server run --runner</code>
+          <code>croniq-demo-runner</code>
         </div>
       </div>
     </div>
@@ -82,7 +82,7 @@
           <span class="terminal-dots"><span></span><span></span><span></span></span>
           <div class="terminal-tabs" role="tablist">
             <button type="button" class="term-tab active" role="tab" data-term="quickstart">croniq quickstart</button>
-            <button type="button" class="term-tab" role="tab" data-term="jobs">croniq jobs list</button>
+            <button type="button" class="term-tab" role="tab" data-term="status">croniq status</button>
           </div>
           <button type="button" class="terminal-replay" id="term-replay">&#8635; Replay</button>
         </div>
@@ -152,7 +152,7 @@
             <path d="M2 12l10 5 10-5"/>
           </svg>
           <h3>MCP Server</h3>
-          <p>12 tools for AI assistant integration. Manage jobs, observe queues, trigger runs from Claude, Cursor, or any MCP client.</p>
+          <p>31 tools for AI assistant integration. Manage jobs, observe queues, trigger runs from Claude, Cursor, or any MCP client.</p>
         </div>
 
       </div>
@@ -222,8 +222,11 @@ docker run -p 4000:4000 ghcr.io/nuetzliches/croniq</pre>
 brew tap nuetzliches/tap
 brew install croniq
 
+<span class="comment"># One-time setup (creates Croniqfile + admin user)</span>
+croniq quickstart
+
 <span class="comment"># Start the scheduler</span>
-croniq-server serve</pre>
+croniq-server</pre>
           <div class="tab-note">Formula at <a href="https://github.com/nuetzliches/homebrew-tap" target="_blank" rel="noopener">nuetzliches/homebrew-tap</a> — auto-bumped by the release workflow.</div>
         </div>
 
@@ -236,8 +239,11 @@ croniq-server serve</pre>
 <pre><span class="comment"># Installs croniq, croniq-server, and croniq-mcp.</span>
 cargo install croniq
 
+<span class="comment"># One-time setup (creates Croniqfile + admin user)</span>
+croniq quickstart
+
 <span class="comment"># Start the scheduler</span>
-croniq-server serve</pre>
+croniq-server</pre>
           <div class="tab-note">No Rust? <a href="https://rustup.rs" target="_blank" rel="noopener">rustup.rs</a> gets you set up in 60 seconds.</div>
         </div>
 
@@ -250,12 +256,15 @@ croniq-server serve</pre>
 <pre><span class="comment"># Downloads the pre-built binary for your platform.</span>
 curl -fsSL https://raw.githubusercontent.com/nuetzliches/croniq/main/install.sh | sh
 
+<span class="comment"># One-time setup (creates Croniqfile + admin user)</span>
+croniq quickstart
+
 <span class="comment"># Start the scheduler</span>
-croniq-server serve</pre>
+croniq-server</pre>
           <div class="tab-note">Installs <code>croniq</code>, <code>croniq-server</code>, and <code>croniq-mcp</code> to <code>/usr/local/bin</code>. Script at <a href="https://github.com/nuetzliches/croniq/blob/main/install.sh" target="_blank" rel="noopener">install.sh</a>.</div>
         </div>
       </div>
-      <p class="install-note">Dashboard opens at <strong>http://localhost:4000</strong> after <code>croniq-server serve</code>.</p>
+      <p class="install-note">Dashboard opens at <strong>http://localhost:4000</strong> after <code>croniq-server</code>.</p>
     </div>
   </section>
 
@@ -275,7 +284,7 @@ croniq-server serve</pre>
         </div>
         <div class="who-card">
           <strong>AI-native teams</strong>
-          <span>Using MCP clients like Claude or Cursor? The built-in MCP server exposes 12 tools for agent-driven scheduling.</span>
+          <span>Using MCP clients like Claude or Cursor? The built-in MCP server exposes 31 tools for agent-driven scheduling.</span>
         </div>
       </div>
     </div>
@@ -350,7 +359,7 @@ croniq-server serve</pre>
           { t: 'nl' },
           { t: 'line', html: '  <span class="dim">database  </span>SQLite  <span class="dim">./croniq.db</span>' },
           { t: 'line', html: '  <span class="dim">api       </span>http://localhost:4000' },
-          { t: 'line', html: '  <span class="dim">dashboard </span><span class="accent">http://localhost:4000/ui</span>' },
+          { t: 'line', html: '  <span class="dim">dashboard </span><span class="accent">http://localhost:4000</span>' },
           { t: 'nl' },
           { t: 'line', html: '  Seeding demo jobs\u2026' },
           { t: 'wait', ms: 250 },
@@ -359,24 +368,21 @@ croniq-server serve</pre>
           { t: 'line', html: '    <span class="ok">\u2713</span> reports:weekly      friday at 08:00' },
           { t: 'nl' },
           { t: 'line', html: '  <span class="ok">3 jobs active</span> \u2014 scheduler running' },
-          { t: 'line', html: '  MCP server ready   <span class="dim">http://localhost:4000/mcp  (12 tools)</span>' },
+          { t: 'line', html: '  MCP server ready   <span class="dim">http://localhost:4000/mcp  (31 tools)</span>' },
           { t: 'nl' },
           { t: 'line', html: '  <span class="dim">Press Ctrl+C to stop</span>' },
           { t: 'done' },
         ],
-        jobs: [
+        status: [
           { t: 'prompt' },
-          { t: 'type', text: 'croniq jobs list', speed: 55 },
+          { t: 'type', text: 'croniq status', speed: 55 },
           { t: 'wait', ms: 400 },
           { t: 'nl' },
-          { t: 'line', html: '  <span class="dim">NAME                SCHEDULE            NEXT RUN             STATUS</span>' },
-          { t: 'line', html: '  <span class="dim">\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500 \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500  \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500  \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500</span>' },
-          { t: 'line', html: '  billing:invoice     weekday @ 02:00     2026-04-27 02:00     <span class="ok">\u25cf active</span>' },
-          { t: 'line', html: '  etl:sync            every 15m           2026-04-26 14:15     <span class="ok">\u25cf active</span>' },
-          { t: 'line', html: '  reports:weekly      friday @ 08:00      2026-05-01 08:00     <span class="ok">\u25cf active</span>' },
-          { t: 'line', html: '  data:cleanup        daily @ 00:00       2026-04-27 00:00     <span class="dim">\u25cb paused</span>' },
-          { t: 'nl' },
-          { t: 'line', html: '  <span class="dim">4 jobs \u00b7 </span><span class="ok">3 active</span><span class="dim"> \u00b7 1 paused</span>' },
+          { t: 'line', html: '  <span class="dim">Status:         </span> <span class="ok">ok</span>' },
+          { t: 'line', html: '  <span class="dim">Queue depth:    </span> 7' },
+          { t: 'line', html: '  <span class="dim">Runners online: </span> <span class="ok">3</span>' },
+          { t: 'line', html: '  <span class="dim">Runners stale:  </span> 0' },
+          { t: 'line', html: '  <span class="dim">Runners dead:   </span> 0' },
           { t: 'done' },
         ],
       };

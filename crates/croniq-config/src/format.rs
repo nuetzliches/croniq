@@ -41,6 +41,11 @@ fn format_item(out: &mut String, item: &Item, indent: usize) {
             format_directives(out, &p.directives, indent + 1);
             out.push_str("}\n");
         }
+        Item::Mcp(m) => {
+            out.push_str("mcp {\n");
+            format_directives(out, &m.directives, indent + 1);
+            out.push_str("}\n");
+        }
         Item::Observability(o) => {
             out.push_str("observability {\n");
             for block in &o.sub_blocks {

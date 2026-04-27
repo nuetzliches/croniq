@@ -78,6 +78,10 @@ impl Scope {
     // Identity / auth management — privileged
     pub const API_CLIENTS_ADMIN: &str = "api-clients:admin";
     pub const API_KEYS_ADMIN: &str = "api-keys:admin";
+
+    // HTTP MCP transport (Streamable-HTTP at /mcp)
+    pub const MCP_READ: &str = "mcp:read";
+    pub const MCP_WRITE: &str = "mcp:write";
 }
 
 #[cfg(test)]

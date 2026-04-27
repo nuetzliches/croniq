@@ -1,43 +1,13 @@
 //! Shared store type alias for dependency injection.
 
-use croniq_store::{
-    sqlite::SqliteStore,
-    traits::{
-        AuthStore, CalendarDefinitionStore, DeadLetterStore, ExecutionLogStore, ExecutionStore,
-        JobDefinitionStore, JobStore, RunnerStore, TriggerDefinitionStore,
-    },
-};
+use croniq_store::sqlite::SqliteStore;
+use croniq_store::traits::Store;
 use std::sync::Arc;
 
-/// A type-erased, cloneable store that satisfies all store traits.
-pub type DynStore = Arc<dyn StoreExt + Send + Sync>;
-
-/// Supertrait combining all store capabilities.
-pub trait StoreExt:
-    JobStore
-    + ExecutionStore
-    + RunnerStore
-    + DeadLetterStore
-    + AuthStore
-    + JobDefinitionStore
-    + TriggerDefinitionStore
-    + CalendarDefinitionStore
-    + ExecutionLogStore
-{
-}
-
-impl<T> StoreExt for T where
-    T: JobStore
-        + ExecutionStore
-        + RunnerStore
-        + DeadLetterStore
-        + AuthStore
-        + JobDefinitionStore
-        + TriggerDefinitionStore
-        + CalendarDefinitionStore
-        + ExecutionLogStore
-{
-}
+/// A type-erased, cloneable store that satisfies all store sub-traits via
+/// [`croniq_store::traits::Store`]. The same alias is shared with `croniq-mcp`
+/// so the in-process MCP service factory can accept the server's store.
+pub type DynStore = Arc<dyn Store + Send + Sync>;
 
 /// Convenience constructor: wrap a SqliteStore as a DynStore.
 pub fn sqlite_store(store: SqliteStore) -> DynStore {

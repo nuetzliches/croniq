@@ -50,7 +50,7 @@ Full API documentation: [`openapi.yaml`](openapi.yaml)
 
 **React dashboard** — login, jobs CRUD with live scheduling, runners with status badges, executions with log viewer, dead letter detail panel.
 
-**MCP server** — 12 tools for AI assistant integration. Observe queue status, list runners, trigger jobs, manage dead letters — all from Claude, Cursor, or any MCP client.
+**MCP server** — 31 tools for AI assistant integration. Full CRUD over jobs, schedules, calendars, dead letters; queue observability; live forecast and execution log access — all from Claude, Cursor, or any MCP client. Available over stdio (`croniq-mcp`) or HTTP at `/mcp` on the running server. JWT-scoped: `mcp:read` for any tool, `mcp:write` for the 17 mutation tools; `admin` is a wildcard. Toggle via Croniqfile `mcp { enabled false }`.
 
 **Failure notifications** — `CRONIQ_ON_FAILURE_CMD` runs a shell command when executions fail. Pipe to Slack, PagerDuty, or any webhook endpoint.
 
