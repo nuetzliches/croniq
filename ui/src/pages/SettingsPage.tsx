@@ -1,8 +1,15 @@
 import { useState } from 'react'
 import { useForm } from 'react-hook-form'
 import * as Dialog from '@radix-ui/react-dialog'
-import { Plus, Trash2, X, KeyRound } from 'lucide-react'
-import { useApiClients, useCreateApiClient, useDeleteApiClient, useIssueClientToken } from '@/api/hooks'
+import { Plus, Pencil, Trash2, X, KeyRound } from 'lucide-react'
+import {
+  useApiClients,
+  useCreateApiClient,
+  useUpdateApiClient,
+  useDeleteApiClient,
+  useIssueClientToken,
+} from '@/api/hooks'
+import type { ApiClient } from '@/api/types'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
@@ -84,6 +91,7 @@ const SCOPE_GROUPS: { label: string; scopes: { value: string; hint?: string }[] 
 export function SettingsPage() {
   const { data: clients, isLoading } = useApiClients()
   const createClient = useCreateApiClient()
+  const updateClient = useUpdateApiClient()
   const deleteClient = useDeleteApiClient()
   const issueToken = useIssueClientToken()
   const { confirm, dialog: confirmDialog } = useConfirm()
@@ -91,6 +99,9 @@ export function SettingsPage() {
   const [newKey, setNewKey] = useState<CreateApiKeyResponse | null>(null)
   const [scopes, setScopes] = useState<string[]>([])
   const [submitAttempted, setSubmitAttempted] = useState(false)
+  // null → create mode, set → edit mode (form is seeded with the
+  // client's current name/scopes; submit calls PUT instead of POST).
+  const [editingClient, setEditingClient] = useState<ApiClient | null>(null)
 
   const { register, handleSubmit, reset, formState: { errors } } = useForm<ClientForm>()
 
@@ -101,21 +112,49 @@ export function SettingsPage() {
   }
 
   function resetDialog() {
-    reset()
+    reset({ name: '' })
     setScopes([])
     setSubmitAttempted(false)
+    setEditingClient(null)
   }
 
-  async function onCreate(data: ClientForm) {
+  function openEdit(client: ApiClient) {
+    reset({ name: client.name })
+    setScopes(client.scopes)
+    setSubmitAttempted(false)
+    setEditingClient(client)
+    setOpen(true)
+  }
+
+  async function onSubmit(data: ClientForm) {
     setSubmitAttempted(true)
     if (scopes.length === 0) return
-    await createClient.mutateAsync({ name: data.name, scopes })
+    if (editingClient) {
+      await updateClient.mutateAsync({
+        client_id: editingClient.client_id,
+        name: data.name,
+        scopes,
+      })
+    } else {
+      await createClient.mutateAsync({ name: data.name, scopes })
+    }
     resetDialog()
     setOpen(false)
   }
 
-  async function handleIssueToken(clientId: string) {
-    const result = await issueToken.mutateAsync(clientId)
+  async function handleIssueToken(client: { client_id: string; name: string }) {
+    // Issuing a key is destructive in the sense that it grants long-lived
+    // access — make the user confirm so a stray click doesn't silently
+    // mint credentials. The reveal card afterwards still requires they
+    // copy the key themselves.
+    const ok = await confirm({
+      title: `Issue API key for ${client.name}?`,
+      description:
+        'A new API key will be created with the client\'s scopes. The raw key is shown only once — copy it before dismissing.',
+      confirmLabel: 'Issue key',
+    })
+    if (!ok) return
+    const result = await issueToken.mutateAsync(client.client_id)
     setNewKey(result)
   }
 
@@ -146,7 +185,9 @@ export function SettingsPage() {
                 <Dialog.Overlay className="fixed inset-0 z-40 bg-black/40" />
                 <Dialog.Content className="fixed left-1/2 top-1/2 z-50 w-full max-w-md -translate-x-1/2 -translate-y-1/2 rounded-lg border border-border bg-card p-6 shadow-xl max-h-[85vh] overflow-y-auto">
                   <div className="flex items-center justify-between mb-4">
-                    <Dialog.Title className="text-sm font-semibold">New API Client</Dialog.Title>
+                    <Dialog.Title className="text-sm font-semibold">
+                      {editingClient ? `Edit API Client — ${editingClient.name}` : 'New API Client'}
+                    </Dialog.Title>
                     <Dialog.Close
                       aria-label="Close dialog"
                       className="text-muted-foreground hover:text-foreground"
@@ -154,7 +195,7 @@ export function SettingsPage() {
                       <X className="h-4 w-4" />
                     </Dialog.Close>
                   </div>
-                  <form onSubmit={handleSubmit(onCreate)} className="space-y-4">
+                  <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
                     <div>
                       <input {...register('name', { required: 'Required' })} placeholder="Client name (e.g. my-service)" className={inputCls} />
                       {errors.name && <p className="text-xs text-destructive mt-1">{errors.name.message}</p>}
@@ -176,19 +217,48 @@ export function SettingsPage() {
                         {SCOPE_GROUPS.map((group) => (
                           <fieldset key={group.label} className="space-y-1">
                             <legend className="text-xs font-semibold text-muted-foreground mb-1">{group.label}</legend>
-                            <div className="grid grid-cols-2 gap-x-3 gap-y-1">
-                              {group.scopes.map((s) => (
-                                <label key={s.value} className="flex items-center gap-2 text-xs cursor-pointer select-none">
-                                  <input
-                                    type="checkbox"
-                                    checked={scopes.includes(s.value)}
-                                    onChange={() => toggleScope(s.value)}
-                                    className="h-3.5 w-3.5 rounded border-border accent-primary"
-                                  />
-                                  <span className="font-mono">{s.value}</span>
-                                  {s.hint && <span className="text-muted-foreground font-normal">— {s.hint}</span>}
-                                </label>
-                              ))}
+                            {/* Single column — hints can be long and a 2-col
+                                grid was crashing them into neighbouring
+                                checkboxes. The list is short enough that
+                                stacking reads fine. */}
+                            <div className="space-y-1">
+                              {group.scopes.map((s) => {
+                                // `admin` is a wildcard that grants every
+                                // other scope (see `CallerContext::has_scope`).
+                                // When it's selected, show the rest as
+                                // checked + disabled so the UI reflects the
+                                // implication — and don't pollute the
+                                // `scopes` array with redundant entries on
+                                // submit.
+                                const adminGranted = scopes.includes('admin')
+                                const isAdmin = s.value === 'admin'
+                                const disabled = adminGranted && !isAdmin
+                                const checked = isAdmin
+                                  ? adminGranted
+                                  : adminGranted || scopes.includes(s.value)
+                                return (
+                                  <label
+                                    key={s.value}
+                                    className={`flex items-start gap-2 text-xs select-none ${
+                                      disabled ? 'cursor-not-allowed opacity-60' : 'cursor-pointer'
+                                    }`}
+                                  >
+                                    <input
+                                      type="checkbox"
+                                      checked={checked}
+                                      disabled={disabled}
+                                      onChange={() => toggleScope(s.value)}
+                                      className="h-3.5 w-3.5 mt-0.5 shrink-0 rounded border-border accent-primary disabled:cursor-not-allowed"
+                                    />
+                                    <span className="min-w-0">
+                                      <span className="font-mono">{s.value}</span>
+                                      {s.hint && (
+                                        <span className="text-muted-foreground font-normal"> — {s.hint}</span>
+                                      )}
+                                    </span>
+                                  </label>
+                                )
+                              })}
                             </div>
                           </fieldset>
                         ))}
@@ -209,8 +279,14 @@ export function SettingsPage() {
                     </p>
                     <div className="flex justify-end gap-2">
                       <Dialog.Close asChild><Button variant="secondary" size="sm" type="button">Cancel</Button></Dialog.Close>
-                      <Button type="submit" size="sm" disabled={createClient.isPending}>
-                        {createClient.isPending ? <Spinner className="h-3.5 w-3.5" /> : 'Create'}
+                      <Button
+                        type="submit"
+                        size="sm"
+                        disabled={createClient.isPending || updateClient.isPending}
+                      >
+                        {(createClient.isPending || updateClient.isPending) ? (
+                          <Spinner className="h-3.5 w-3.5" />
+                        ) : editingClient ? 'Save Changes' : 'Create'}
                       </Button>
                     </div>
                   </form>
@@ -239,10 +315,18 @@ export function SettingsPage() {
                 </div>
                 <Button
                   variant="secondary" size="sm"
-                  onClick={() => handleIssueToken(c.client_id)}
+                  onClick={() => handleIssueToken(c)}
                   disabled={issueToken.isPending}
                 >
                   <KeyRound className="h-3.5 w-3.5" />Issue Key
+                </Button>
+                <Button
+                  variant="ghost" size="sm"
+                  onClick={() => openEdit(c)}
+                  aria-label={`Edit client ${c.name}`}
+                  className="h-7 w-7 p-0 text-muted-foreground hover:text-primary"
+                >
+                  <Pencil className="h-3.5 w-3.5" />
                 </Button>
                 <Button
                   variant="ghost" size="sm"

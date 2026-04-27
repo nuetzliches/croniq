@@ -62,3 +62,11 @@
     --color-status-neutral-fg: #a1a1aa;
   }
 }
+
+/* Native <select> chevrons sit flush against the right edge by default,
+ * which crashes into the px-3 horizontal padding most of our inputs use.
+ * Forcing extra right padding on every <select> avoids having to remember
+ * `pr-8` at every call site (and keeps the look consistent app-wide). */
+select {
+  padding-right: 2rem;
+}

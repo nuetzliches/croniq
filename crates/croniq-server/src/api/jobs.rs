@@ -8,7 +8,12 @@
 use std::collections::HashSet;
 use std::sync::Arc;
 
-use axum::{Extension, Json, extract::State, http::StatusCode};
+use axum::{
+    Extension, Json,
+    extract::State,
+    http::StatusCode,
+    response::{IntoResponse, Response},
+};
 use chrono::Utc;
 use croniq_auth::CallerContext;
 use croniq_auth::context::Scope;
@@ -20,6 +25,40 @@ use super::ServerState;
 use crate::api::auth_middleware::require_scope;
 use crate::loader::{job_config_from_definition, synth_job_def_from_dsl, trigger_from_definition};
 use crate::scheduler::SchedulerCommand;
+
+/// Error type for job-mutation handlers. Carries a reason string for
+/// `409 Conflict` (DSL-managed jobs) so the body explains *why* the request
+/// was refused — clients see the same wording the MCP `update_job` tool uses.
+/// `From<StatusCode>` makes `?` keep working for plain status returns from
+/// existing helpers like [`require_scope`].
+pub enum JobError {
+    Status(StatusCode),
+    DslManaged { job_key: String },
+}
+
+impl From<StatusCode> for JobError {
+    fn from(s: StatusCode) -> Self {
+        Self::Status(s)
+    }
+}
+
+impl IntoResponse for JobError {
+    fn into_response(self) -> Response {
+        match self {
+            Self::Status(s) => s.into_response(),
+            Self::DslManaged { job_key } => (
+                StatusCode::CONFLICT,
+                Json(serde_json::json!({
+                    "error": "dsl_managed",
+                    "message": format!(
+                        "Job '{job_key}' is managed by the Croniqfile — edit the file and reload instead."
+                    ),
+                })),
+            )
+                .into_response(),
+        }
+    }
+}
 
 #[derive(Deserialize)]
 pub struct CreateJobRequest {
@@ -103,7 +142,7 @@ pub async fn handle_create(
     State(state): State<Arc<ServerState>>,
     Extension(ctx): Extension<CallerContext>,
     Json(req): Json<CreateJobRequest>,
-) -> Result<(StatusCode, Json<JobDefinition>), StatusCode> {
+) -> Result<(StatusCode, Json<JobDefinition>), JobError> {
     require_scope(&ctx, Scope::JOBS_WRITE)?;
     let store = state
         .store
@@ -111,7 +150,9 @@ pub async fn handle_create(
         .ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
 
     if is_dsl_managed(&state, &req.job_key).await {
-        return Err(StatusCode::CONFLICT);
+        return Err(JobError::DslManaged {
+            job_key: req.job_key,
+        });
     }
 
     let now = Utc::now();
@@ -133,35 +174,20 @@ pub async fn handle_create(
     Ok((StatusCode::CREATED, Json(job)))
 }
 
-/// `DELETE /v1/jobs/{job_key}`
-pub async fn handle_delete(
+/// `PUT /v1/jobs/{job_key}` — update mutable metadata (description, timeout,
+/// retry/dead-letter policy). Identity (`job_key`) and lifecycle
+/// (`is_active`) stay on their dedicated endpoints. Schedules are owned by
+/// `/v1/schedules`.
+///
+/// Each field is optional; omitting one leaves the stored value untouched.
+/// To clear a field, send `null` explicitly (serde maps that to `None` and
+/// the column is overwritten with NULL).
+pub async fn handle_update(
     State(state): State<Arc<ServerState>>,
     Extension(ctx): Extension<CallerContext>,
     axum::extract::Path(job_key): axum::extract::Path<String>,
-) -> StatusCode {
-    if let Err(s) = require_scope(&ctx, Scope::JOBS_WRITE) {
-        return s;
-    }
-    let Some(store) = state.store.as_ref() else {
-        return StatusCode::SERVICE_UNAVAILABLE;
-    };
-
-    if is_dsl_managed(&state, &job_key).await {
-        return StatusCode::CONFLICT;
-    }
-
-    match store.delete_job_definition(&job_key) {
-        Ok(_) => StatusCode::NO_CONTENT,
-        Err(_) => StatusCode::INTERNAL_SERVER_ERROR,
-    }
-}
-
-/// `POST /v1/jobs/{job_key}/activate`
-pub async fn handle_activate(
-    State(state): State<Arc<ServerState>>,
-    Extension(ctx): Extension<CallerContext>,
-    axum::extract::Path(job_key): axum::extract::Path<String>,
-) -> Result<Json<JobDefinition>, StatusCode> {
+    Json(req): Json<serde_json::Value>,
+) -> Result<Json<JobDefinition>, JobError> {
     require_scope(&ctx, Scope::JOBS_WRITE)?;
     let store = state
         .store
@@ -169,18 +195,87 @@ pub async fn handle_activate(
         .ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
 
     if is_dsl_managed(&state, &job_key).await {
-        return Err(StatusCode::CONFLICT);
+        return Err(JobError::DslManaged { job_key });
     }
 
     let mut job = store
         .get_job_definition(&job_key)
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-        .ok_or(StatusCode::NOT_FOUND)?;
+        .map_err(|_| JobError::from(StatusCode::INTERNAL_SERVER_ERROR))?
+        .ok_or(JobError::from(StatusCode::NOT_FOUND))?;
+
+    // Patch semantics: a missing key leaves the field as-is, an explicit
+    // `null` clears it. We work directly on the JSON so we can tell those
+    // apart — a typed struct can't.
+    let obj = req
+        .as_object()
+        .ok_or(JobError::from(StatusCode::BAD_REQUEST))?;
+    if let Some(v) = obj.get("description") {
+        job.description = v.as_str().map(|s| s.to_string());
+    }
+    if let Some(v) = obj.get("timeout") {
+        job.timeout = v.as_str().map(|s| s.to_string());
+    }
+    if let Some(v) = obj.get("max_retries") {
+        job.max_retries = v.as_u64().map(|n| n as u32);
+    }
+    if let Some(v) = obj.get("dead_letter_enabled") {
+        job.dead_letter_enabled = v.as_bool();
+    }
+    job.updated_at = Utc::now();
+
+    store
+        .create_job_definition(&job)
+        .map_err(|_| JobError::from(StatusCode::INTERNAL_SERVER_ERROR))?;
+    Ok(Json(job))
+}
+
+/// `DELETE /v1/jobs/{job_key}`
+pub async fn handle_delete(
+    State(state): State<Arc<ServerState>>,
+    Extension(ctx): Extension<CallerContext>,
+    axum::extract::Path(job_key): axum::extract::Path<String>,
+) -> Result<StatusCode, JobError> {
+    require_scope(&ctx, Scope::JOBS_WRITE)?;
+    let store = state
+        .store
+        .as_ref()
+        .ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
+
+    if is_dsl_managed(&state, &job_key).await {
+        return Err(JobError::DslManaged { job_key });
+    }
+
+    store
+        .delete_job_definition(&job_key)
+        .map(|_| StatusCode::NO_CONTENT)
+        .map_err(|_| JobError::from(StatusCode::INTERNAL_SERVER_ERROR))
+}
+
+/// `POST /v1/jobs/{job_key}/activate`
+pub async fn handle_activate(
+    State(state): State<Arc<ServerState>>,
+    Extension(ctx): Extension<CallerContext>,
+    axum::extract::Path(job_key): axum::extract::Path<String>,
+) -> Result<Json<JobDefinition>, JobError> {
+    require_scope(&ctx, Scope::JOBS_WRITE)?;
+    let store = state
+        .store
+        .as_ref()
+        .ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
+
+    if is_dsl_managed(&state, &job_key).await {
+        return Err(JobError::DslManaged { job_key });
+    }
+
+    let mut job = store
+        .get_job_definition(&job_key)
+        .map_err(|_| JobError::from(StatusCode::INTERNAL_SERVER_ERROR))?
+        .ok_or(JobError::from(StatusCode::NOT_FOUND))?;
     job.is_active = true;
     job.updated_at = Utc::now();
     store
         .create_job_definition(&job)
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        .map_err(|_| JobError::from(StatusCode::INTERNAL_SERVER_ERROR))?;
     Ok(Json(job))
 }
 
@@ -189,7 +284,7 @@ pub async fn handle_deactivate(
     State(state): State<Arc<ServerState>>,
     Extension(ctx): Extension<CallerContext>,
     axum::extract::Path(job_key): axum::extract::Path<String>,
-) -> Result<Json<JobDefinition>, StatusCode> {
+) -> Result<Json<JobDefinition>, JobError> {
     require_scope(&ctx, Scope::JOBS_WRITE)?;
     let store = state
         .store
@@ -197,18 +292,18 @@ pub async fn handle_deactivate(
         .ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
 
     if is_dsl_managed(&state, &job_key).await {
-        return Err(StatusCode::CONFLICT);
+        return Err(JobError::DslManaged { job_key });
     }
 
     let mut job = store
         .get_job_definition(&job_key)
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-        .ok_or(StatusCode::NOT_FOUND)?;
+        .map_err(|_| JobError::from(StatusCode::INTERNAL_SERVER_ERROR))?
+        .ok_or(JobError::from(StatusCode::NOT_FOUND))?;
     job.is_active = false;
     job.updated_at = Utc::now();
     store
         .create_job_definition(&job)
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        .map_err(|_| JobError::from(StatusCode::INTERNAL_SERVER_ERROR))?;
     Ok(Json(job))
 }
 
@@ -227,6 +322,10 @@ pub struct RegisterJobRequest {
     pub description: Option<String>,
     pub max_retries: Option<u32>,
     pub dead_letter_enabled: Option<bool>,
+    /// Optional calendar **name** that gates execution (matches a row in
+    /// `calendar_definitions.name`). The runtime resolves this to a
+    /// compiled calendar at scheduler attach time.
+    pub calendar: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -299,12 +398,16 @@ pub async fn handle_register(
         job_key: req.job_key.clone(),
         cron_expression: Some(req.schedule.clone()),
         timezone: req.timezone.clone(),
-        calendar: None,
+        calendar: req.calendar.clone(),
         window: None,
         not_before: None,
         not_after: None,
         enabled: true,
-        managed_by: "runner".into(),
+        // "api" so the schedule is editable via PUT /v1/schedules — the
+        // register endpoint is just an upsert convenience and the result
+        // should look identical to a POST /v1/schedules row, not a
+        // separate read-only kind.
+        managed_by: "api".into(),
         created_at: now,
         updated_at: now,
     };

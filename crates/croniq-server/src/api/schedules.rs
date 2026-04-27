@@ -164,6 +164,9 @@ pub struct UpdateTriggerRequest {
     pub cron_expression: Option<String>,
     pub timezone: Option<String>,
     pub enabled: Option<bool>,
+    /// Optional calendar **name** that gates execution. Empty string
+    /// clears the gate (same convention as `timezone`).
+    pub calendar: Option<String>,
 }
 
 /// `PUT /v1/schedules/{trigger_id}`
@@ -194,11 +197,11 @@ pub async fn handle_update(
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::NOT_FOUND)?;
 
-    // Defensive — shouldn't happen since `dsl:` prefix is filtered above
-    // and stored rows always carry `managed_by = "api"`, but guards
-    // against future managed_by values (e.g. operator imports) sneaking
-    // into the editable path.
-    if existing.managed_by != "api" {
+    // DSL-managed rows are filtered by the `dsl:` trigger_id prefix
+    // above; we additionally guard against a stored row whose
+    // `managed_by` says `dsl` (defensive, not expected). Every other
+    // origin (`api`, `runner`, future operator imports) is editable.
+    if existing.managed_by == "dsl" {
         return Err(StatusCode::CONFLICT);
     }
 
@@ -208,6 +211,10 @@ pub async fn handle_update(
     if let Some(tz) = req.timezone {
         // Empty string clears the override — same convention as create.
         existing.timezone = if tz.is_empty() { None } else { Some(tz) };
+    }
+    if let Some(cal) = req.calendar {
+        // Same convention: empty string clears the calendar gate.
+        existing.calendar = if cal.is_empty() { None } else { Some(cal) };
     }
     if let Some(enabled) = req.enabled {
         existing.enabled = enabled;
