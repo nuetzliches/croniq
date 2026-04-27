@@ -22,7 +22,7 @@ use axum::{
     extract::State,
     http::StatusCode,
     middleware,
-    routing::{delete, get, post},
+    routing::{delete, get, post, put},
 };
 use chrono::Utc;
 use croniq_auth::CallerContext;
@@ -159,7 +159,9 @@ pub fn server_router(state: Arc<ServerState>) -> Router {
         .route("/v1/jobs", get(jobs::handle_list).post(jobs::handle_create))
         .route(
             "/v1/jobs/{job_key}",
-            get(jobs::handle_get).delete(jobs::handle_delete),
+            get(jobs::handle_get)
+                .put(jobs::handle_update)
+                .delete(jobs::handle_delete),
         )
         .route("/v1/jobs/{job_key}/activate", post(jobs::handle_activate))
         .route(
@@ -185,7 +187,9 @@ pub fn server_router(state: Arc<ServerState>) -> Router {
         )
         .route(
             "/v1/calendars/{id}",
-            get(calendars::handle_get).delete(calendars::handle_delete),
+            get(calendars::handle_get)
+                .put(calendars::handle_update)
+                .delete(calendars::handle_delete),
         )
         // Dead letters
         .route("/v1/dead-letters", get(dead_letters::handle_list))
@@ -214,7 +218,7 @@ pub fn server_router(state: Arc<ServerState>) -> Router {
         )
         .route(
             "/v1/api-clients/{id}",
-            delete(auth_endpoints::handle_delete_client),
+            put(auth_endpoints::handle_update_client).delete(auth_endpoints::handle_delete_client),
         )
         .route(
             "/v1/api-clients/{id}/tokens",

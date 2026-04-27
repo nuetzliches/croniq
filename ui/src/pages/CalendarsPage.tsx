@@ -1,8 +1,9 @@
 import { useCallback, useState } from 'react'
 import { useForm } from 'react-hook-form'
 import * as Dialog from '@radix-ui/react-dialog'
-import { Plus, Trash2, X, CalendarDays } from 'lucide-react'
-import { useCalendars, useCreateCalendar, useDeleteCalendar } from '@/api/hooks'
+import { Plus, Pencil, Trash2, X, CalendarDays } from 'lucide-react'
+import { useCalendars, useCreateCalendar, useUpdateCalendar, useDeleteCalendar } from '@/api/hooks'
+import type { CalendarDefinition } from '@/api/types'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { EmptyState } from '@/components/ui/empty-state'
@@ -21,10 +22,14 @@ interface CalendarForm {
 export function CalendarsPage() {
   const { data: calendars, isLoading } = useCalendars()
   const createCalendar = useCreateCalendar()
+  const updateCalendar = useUpdateCalendar()
   const deleteCalendar = useDeleteCalendar()
   const { confirm, dialog: confirmDialog } = useConfirm()
   const [open, setOpen] = useState(false)
   const [rulesError, setRulesError] = useState<string | null>(null)
+  // null → create mode, set → edit mode (form is seeded with the row's
+  // current name/timezone/rules and submit calls PUT).
+  const [editingCalendar, setEditingCalendar] = useState<CalendarDefinition | null>(null)
 
   async function handleDelete(cal: { calendar_id: string; name: string }) {
     const ok = await confirm({
@@ -53,14 +58,44 @@ export function CalendarsPage() {
   const onBuilderError = useCallback((msg: string | null) => setRulesError(msg), [])
 
   function resetDialog() {
-    reset()
+    reset({ name: '', timezone: '', rules: '' })
     setRulesError(null)
     setRulesMode('builder')
+    setEditingCalendar(null)
+  }
+
+  function openEdit(cal: CalendarDefinition) {
+    reset({
+      name: cal.name,
+      timezone: cal.timezone ?? '',
+      rules: cal.rules ?? '',
+    })
+    // The builder's `initial` would let us round-trip into form state,
+    // but parsing a stored DSL string back into the typed payload is
+    // best-effort. Default to "advanced" — the saved DSL is the most
+    // accurate representation we have.
+    setRulesMode('advanced')
+    setRulesError(null)
+    setEditingCalendar(cal)
+    setOpen(true)
   }
 
   async function onSubmit(data: CalendarForm) {
     setRulesError(null)
     try {
+      if (editingCalendar) {
+        await updateCalendar.mutateAsync({
+          calendar_id: editingCalendar.calendar_id,
+          name: data.name,
+          // Empty string clears the override — same convention as the
+          // schedule update endpoint.
+          timezone: data.timezone ?? '',
+          rules: data.rules ?? '',
+        })
+        resetDialog()
+        setOpen(false)
+        return
+      }
       await createCalendar.mutateAsync({
         name: data.name,
         timezone: data.timezone || undefined,
@@ -100,7 +135,9 @@ export function CalendarsPage() {
             <Dialog.Overlay className="fixed inset-0 z-40 bg-black/40" />
             <Dialog.Content className="fixed left-1/2 top-1/2 z-50 w-full max-w-md -translate-x-1/2 -translate-y-1/2 rounded-lg border border-border bg-card p-6 shadow-xl">
               <div className="flex items-center justify-between mb-4">
-                <Dialog.Title className="text-sm font-semibold">Add Calendar</Dialog.Title>
+                <Dialog.Title className="text-sm font-semibold">
+                  {editingCalendar ? `Edit Calendar — ${editingCalendar.name}` : 'Add Calendar'}
+                </Dialog.Title>
                 <Dialog.Close
                   aria-label="Close dialog"
                   className="text-muted-foreground hover:text-foreground"
@@ -168,8 +205,14 @@ export function CalendarsPage() {
                 </div>
                 <div className="flex justify-end gap-2 pt-2">
                   <Dialog.Close asChild><Button variant="secondary" size="sm" type="button">Cancel</Button></Dialog.Close>
-                  <Button type="submit" size="sm" disabled={createCalendar.isPending}>
-                    {createCalendar.isPending ? <><Spinner className="h-3.5 w-3.5" />Saving…</> : 'Save Calendar'}
+                  <Button
+                    type="submit"
+                    size="sm"
+                    disabled={createCalendar.isPending || updateCalendar.isPending}
+                  >
+                    {(createCalendar.isPending || updateCalendar.isPending) ? (
+                      <><Spinner className="h-3.5 w-3.5" />Saving…</>
+                    ) : editingCalendar ? 'Save Changes' : 'Save Calendar'}
                   </Button>
                 </div>
               </form>
@@ -208,14 +251,24 @@ export function CalendarsPage() {
                     Created <RelativeTime iso={cal.created_at} />
                   </p>
                 </div>
-                <Button
-                  variant="ghost" size="sm"
-                  onClick={() => handleDelete(cal)}
-                  aria-label={`Delete calendar ${cal.name}`}
-                  className="h-7 w-7 p-0 text-muted-foreground hover:text-destructive shrink-0"
-                >
-                  <Trash2 className="h-3.5 w-3.5" />
-                </Button>
+                <div className="flex items-center gap-0.5 shrink-0">
+                  <Button
+                    variant="ghost" size="sm"
+                    onClick={() => openEdit(cal)}
+                    aria-label={`Edit calendar ${cal.name}`}
+                    className="h-7 w-7 p-0 text-muted-foreground hover:text-primary"
+                  >
+                    <Pencil className="h-3.5 w-3.5" />
+                  </Button>
+                  <Button
+                    variant="ghost" size="sm"
+                    onClick={() => handleDelete(cal)}
+                    aria-label={`Delete calendar ${cal.name}`}
+                    className="h-7 w-7 p-0 text-muted-foreground hover:text-destructive"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </Button>
+                </div>
               </div>
             </CardContent>
           </Card>

@@ -1,21 +1,25 @@
-import { useState } from 'react'
+import { useState, useCallback } from 'react'
 import { Link } from 'react-router'
 import { useForm } from 'react-hook-form'
 import * as Dialog from '@radix-ui/react-dialog'
 import * as Switch from '@radix-ui/react-switch'
 import * as Tooltip from '@radix-ui/react-tooltip'
-import { Plus, Play, Trash2, X, AlertCircle } from 'lucide-react'
+import { Plus, Play, Trash2, X, AlertCircle, Pencil } from 'lucide-react'
 import {
   useJobs, useRegisterJob, useDeleteJob, useActivateJob, useDeactivateJob,
   useTriggerJob, useExecutions, useSchedules,
 } from '@/api/hooks'
+import { ScheduleBuilder } from '@/components/builders/ScheduleBuilder'
+import { TimezoneInput } from '@/components/ui/timezone-input'
+import { CalendarPicker } from '@/components/ui/calendar-picker'
+import { EditJobDialog } from '@/components/EditJobDialog'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Card, CardContent } from '@/components/ui/card'
 import { EmptyState } from '@/components/ui/empty-state'
 import { Spinner } from '@/components/ui/spinner'
 import { useConfirm } from '@/components/ui/confirm-dialog'
-import type { Execution } from '@/api/types'
+import type { Execution, JobDefinition } from '@/api/types'
 
 interface RegisterForm {
   job_key: string
@@ -23,6 +27,7 @@ interface RegisterForm {
   schedule: string
   timezone: string
   timeout: string
+  calendar: string
 }
 
 function HealthPill({ executions }: { executions: Execution[] }) {
@@ -74,10 +79,16 @@ export function JobsPage() {
   const [triggeredId, setTriggeredId] = useState<string | null>(null)
   const [triggerError, setTriggerError] = useState<string | null>(null)
   const [toggleError, setToggleError] = useState<string | null>(null)
+  const [editingJob, setEditingJob] = useState<JobDefinition | null>(null)
 
-  const { register, handleSubmit, reset, formState: { errors } } = useForm<RegisterForm>({
-    defaultValues: { timeout: '5m' }
+  const { register, handleSubmit, reset, setValue, formState: { errors } } = useForm<RegisterForm>({
+    defaultValues: { timeout: '5m' },
   })
+  const [scheduleMode, setScheduleMode] = useState<'builder' | 'advanced'>('builder')
+  const onBuilderChange = useCallback(
+    (dsl: string) => setValue('schedule', dsl, { shouldValidate: true }),
+    [setValue],
+  )
 
   const execsByJob = (allExecs.data ?? []).reduce<Record<string, Execution[]>>((acc, e) => {
     ;(acc[e.job_key] ??= []).push(e)
@@ -101,8 +112,10 @@ export function JobsPage() {
       timezone: data.timezone || undefined,
       timeout: data.timeout || undefined,
       description: data.description || undefined,
+      calendar: data.calendar || undefined,
     })
     reset()
+    setScheduleMode('builder')
     setOpen(false)
   }
 
@@ -149,6 +162,11 @@ export function JobsPage() {
   return (
     <Tooltip.Provider delayDuration={200}>
       {confirmDialog}
+      <EditJobDialog
+        job={editingJob}
+        open={editingJob !== null}
+        onOpenChange={(o) => { if (!o) setEditingJob(null) }}
+      />
       <div className="space-y-4">
         <div className="flex items-center justify-between">
           <p className="text-sm text-muted-foreground">{jobs.data?.length ?? 0} jobs registered</p>
@@ -158,7 +176,7 @@ export function JobsPage() {
             </Dialog.Trigger>
             <Dialog.Portal>
               <Dialog.Overlay className="fixed inset-0 z-40 bg-black/40" />
-              <Dialog.Content className="fixed left-1/2 top-1/2 z-50 w-full max-w-md -translate-x-1/2 -translate-y-1/2 rounded-lg border border-border bg-card p-6 shadow-xl">
+              <Dialog.Content className="fixed left-1/2 top-1/2 z-50 w-full max-w-lg -translate-x-1/2 -translate-y-1/2 rounded-lg border border-border bg-card p-6 shadow-xl">
                 <div className="flex items-center justify-between mb-4">
                   <Dialog.Title className="text-sm font-semibold">Create Job</Dialog.Title>
                   <Dialog.Close
@@ -168,20 +186,83 @@ export function JobsPage() {
                     <X className="h-4 w-4" />
                   </Dialog.Close>
                 </div>
-                <form onSubmit={handleSubmit(onSubmit)} className="space-y-3">
-                  <div>
-                    <input {...register('job_key', { required: 'Required' })} placeholder="Job key (e.g. billing:invoice)" className={inputCls} />
-                    {errors.job_key && <p className="text-xs text-destructive mt-1">{errors.job_key.message}</p>}
-                  </div>
-                  <div>
-                    <input {...register('schedule', { required: 'Required' })} placeholder="Schedule (e.g. 5m, 1h, */15 * * * *)" className={inputCls} />
-                    {errors.schedule && <p className="text-xs text-destructive mt-1">{errors.schedule.message}</p>}
-                  </div>
-                  <div className="grid grid-cols-2 gap-3">
-                    <input {...register('timeout')} placeholder="Timeout (default: 5m)" className={inputCls} />
-                    <input {...register('timezone')} placeholder="Timezone (e.g. Europe/Vienna)" className={inputCls} />
-                  </div>
-                  <input {...register('description')} placeholder="Description (optional)" className={inputCls} />
+                <form onSubmit={handleSubmit(onSubmit)} className="space-y-5 max-h-[80vh] overflow-y-auto">
+                  {/* Section: Job — identity + execution metadata. The
+                      schedule below is technically a separate aggregate
+                      (a job can carry many schedules), but creating a
+                      job without one is rarely what users want, so we
+                      prompt for both here and split visually instead. */}
+                  <fieldset className="space-y-3">
+                    <legend className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                      Job
+                    </legend>
+                    <div>
+                      <input {...register('job_key', { required: 'Required' })} placeholder="Job key (e.g. billing:invoice)" className={inputCls} />
+                      {errors.job_key && <p className="text-xs text-destructive mt-1">{errors.job_key.message}</p>}
+                    </div>
+                    <input {...register('description')} placeholder="Description (optional)" className={inputCls} />
+                    <div>
+                      <label className="block text-xs text-muted-foreground mb-1">
+                        Execution timeout
+                      </label>
+                      <input
+                        {...register('timeout')}
+                        placeholder="e.g. 5m, 30s, 1h"
+                        className={inputCls}
+                      />
+                      <p className="text-[11px] text-muted-foreground mt-1">
+                        How long an execution may run before being killed. Default: 5m.
+                      </p>
+                    </div>
+                  </fieldset>
+
+                  <hr className="border-border" />
+
+                  {/* Section: Schedule — when this job fires + calendar
+                      gating. Mirrors the standalone Create Schedule
+                      dialog on JobDetailPage so users see the same form
+                      shape in both places. */}
+                  <fieldset className="space-y-3">
+                    <legend className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                      Schedule
+                    </legend>
+                    <div>
+                      <div role="tablist" className="inline-flex border border-border rounded-md p-0.5 mb-3 text-xs">
+                        {(['builder', 'advanced'] as const).map((m) => (
+                          <button
+                            key={m}
+                            type="button"
+                            role="tab"
+                            aria-selected={scheduleMode === m}
+                            onClick={() => setScheduleMode(m)}
+                            className={`px-3 py-1 rounded-sm capitalize ${
+                              scheduleMode === m
+                                ? 'bg-primary/15 text-primary'
+                                : 'text-muted-foreground hover:text-foreground'
+                            }`}
+                          >
+                            {m}
+                          </button>
+                        ))}
+                      </div>
+                      {scheduleMode === 'builder' ? (
+                        <>
+                          <ScheduleBuilder onChange={onBuilderChange} />
+                          <input type="hidden" {...register('schedule', { required: 'Required' })} />
+                        </>
+                      ) : (
+                        <input {...register('schedule', { required: 'Required' })} placeholder="Schedule (e.g. 5m, 1h, */15 * * * *)" className={inputCls} />
+                      )}
+                      {errors.schedule && <p className="text-xs text-destructive mt-1">{errors.schedule.message}</p>}
+                    </div>
+                    <TimezoneInput
+                      {...register('timezone')}
+                      className={inputCls}
+                      showDetectedHint
+                    />
+                    <CalendarPicker {...register('calendar')} />
+                  </fieldset>
+
                   {registerJob.error && (
                     <p className="text-xs text-destructive flex items-center gap-1">
                       <AlertCircle className="h-3.5 w-3.5" />{String(registerJob.error)}
@@ -303,6 +384,31 @@ export function JobsPage() {
                     <Tooltip.Portal>
                       <Tooltip.Content className="z-50 rounded-md bg-foreground px-2 py-1 text-xs text-background shadow-md">
                         Trigger now
+                        <Tooltip.Arrow className="fill-foreground" />
+                      </Tooltip.Content>
+                    </Tooltip.Portal>
+                  </Tooltip.Root>
+
+                  {/* Edit — disabled for DSL-managed jobs (Croniqfile owns
+                      them; PUT would 409). */}
+                  <Tooltip.Root>
+                    <Tooltip.Trigger asChild>
+                      <span className="inline-flex">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => setEditingJob(j)}
+                          disabled={isDslManaged}
+                          aria-label={`Edit ${j.job_key}`}
+                          className="h-7 w-7 p-0 text-muted-foreground hover:text-primary disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                          <Pencil className="h-3.5 w-3.5" />
+                        </Button>
+                      </span>
+                    </Tooltip.Trigger>
+                    <Tooltip.Portal>
+                      <Tooltip.Content className="z-50 rounded-md bg-foreground px-2 py-1 text-xs text-background shadow-md">
+                        {isDslManaged ? 'Managed by Croniqfile — edit the DSL to change' : 'Edit job'}
                         <Tooltip.Arrow className="fill-foreground" />
                       </Tooltip.Content>
                     </Tooltip.Portal>

@@ -127,6 +127,92 @@ pub async fn handle_create(
     Ok((StatusCode::CREATED, Json(cal)))
 }
 
+#[derive(Deserialize)]
+pub struct UpdateCalendarRequest {
+    pub name: Option<String>,
+    pub timezone: Option<String>,
+    pub rules: Option<String>,
+}
+
+/// `PUT /v1/calendars/{id}` — patch one or more fields of an existing
+/// calendar. Omitted fields are left untouched. Same validation as
+/// `handle_create`: `rules`, when provided, must parse as Croniqfile DSL.
+pub async fn handle_update(
+    State(state): State<Arc<ServerState>>,
+    Extension(ctx): Extension<CallerContext>,
+    axum::extract::Path(id): axum::extract::Path<String>,
+    Json(req): Json<UpdateCalendarRequest>,
+) -> Result<Json<CalendarDefinition>, (StatusCode, Json<ValidationError>)> {
+    if !ctx.has_scope(Scope::CALENDARS_WRITE) {
+        return Err((
+            StatusCode::FORBIDDEN,
+            Json(ValidationError {
+                error: "forbidden",
+                message: format!("missing scope: {}", Scope::CALENDARS_WRITE),
+            }),
+        ));
+    }
+    if let Some(ref rules) = req.rules
+        && let Err(message) = validate_rules(rules)
+    {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ValidationError {
+                error: "invalid_rules",
+                message,
+            }),
+        ));
+    }
+    let store = state.store.as_ref().ok_or((
+        StatusCode::SERVICE_UNAVAILABLE,
+        Json(ValidationError {
+            error: "no_store",
+            message: "store unavailable".into(),
+        }),
+    ))?;
+
+    let mut existing = store
+        .get_calendar(&id)
+        .map_err(|_| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ValidationError {
+                    error: "store_error",
+                    message: "failed to load calendar".into(),
+                }),
+            )
+        })?
+        .ok_or((
+            StatusCode::NOT_FOUND,
+            Json(ValidationError {
+                error: "not_found",
+                message: format!("calendar {id} not found"),
+            }),
+        ))?;
+
+    if let Some(name) = req.name {
+        existing.name = name;
+    }
+    if let Some(tz) = req.timezone {
+        existing.timezone = if tz.is_empty() { None } else { Some(tz) };
+    }
+    if let Some(rules) = req.rules {
+        existing.rules = rules;
+    }
+    existing.updated_at = Utc::now();
+
+    store.create_calendar(&existing).map_err(|_| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ValidationError {
+                error: "store_error",
+                message: "failed to persist calendar".into(),
+            }),
+        )
+    })?;
+    Ok(Json(existing))
+}
+
 /// `DELETE /v1/calendars/{id}`
 pub async fn handle_delete(
     State(state): State<Arc<ServerState>>,

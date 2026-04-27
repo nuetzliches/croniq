@@ -869,20 +869,22 @@ impl TriggerDefinitionStore for SqliteStore {
     }
 
     fn update_trigger(&self, t: &TriggerDefinition) -> Result<bool, StoreError> {
-        // Scoped to `managed_by = 'api'` so DSL-owned rows can never be
-        // edited through this path even if a caller fabricates the
-        // trigger_id. Returns rows_affected as the found-flag — the
-        // handler maps `false` to 404.
+        // Scoped to `managed_by != 'dsl'` so Croniqfile-owned rows can
+        // never be edited through this path even if a caller fabricates
+        // the trigger_id; everything else (`api`, `runner`, future
+        // operator imports) is editable. Returns rows_affected as the
+        // found-flag — the handler maps `false` to 404.
         let conn = self.conn.lock().unwrap();
         let n = conn
             .execute(
                 "UPDATE trigger_definitions
-             SET cron_expression = ?2, timezone = ?3, enabled = ?4, updated_at = ?5
-             WHERE trigger_id = ?1 AND managed_by = 'api'",
+             SET cron_expression = ?2, timezone = ?3, calendar = ?4, enabled = ?5, updated_at = ?6
+             WHERE trigger_id = ?1 AND managed_by != 'dsl'",
                 params![
                     t.trigger_id,
                     t.cron_expression,
                     t.timezone,
+                    t.calendar,
                     t.enabled,
                     dt_to_sql(&t.updated_at),
                 ],

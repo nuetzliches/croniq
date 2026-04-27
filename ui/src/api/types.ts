@@ -109,6 +109,7 @@ export interface CalendarDefinition {
 export interface ApiClient {
   client_id: string
   name: string
+  scopes: string[]
   is_active: boolean
   created_at: string
 }

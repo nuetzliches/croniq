@@ -279,6 +279,55 @@ pub async fn handle_create_client(
     ))
 }
 
+#[derive(Deserialize)]
+pub struct UpdateClientRequest {
+    pub name: Option<String>,
+    pub scopes: Option<Vec<String>>,
+    pub is_active: Option<bool>,
+}
+
+/// `PUT /v1/api-clients/{id}` — patch name, scopes, or active flag.
+/// Omitted fields are left untouched. Empty `scopes` is rejected — a
+/// scope-less client can't authorise anything and is almost always a
+/// mistake.
+pub async fn handle_update_client(
+    State(state): State<Arc<ServerState>>,
+    Extension(ctx): Extension<CallerContext>,
+    axum::extract::Path(client_id): axum::extract::Path<String>,
+    Json(req): Json<UpdateClientRequest>,
+) -> Result<Json<ApiClient>, StatusCode> {
+    require_scope(&ctx, Scope::API_CLIENTS_ADMIN)?;
+    if let Some(ref scopes) = req.scopes
+        && scopes.is_empty()
+    {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+    let store = state
+        .store
+        .as_ref()
+        .ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
+    let mut client = store
+        .get_client(&client_id)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::NOT_FOUND)?;
+    if let Some(name) = req.name {
+        if name.trim().is_empty() {
+            return Err(StatusCode::BAD_REQUEST);
+        }
+        client.name = name;
+    }
+    if let Some(scopes) = req.scopes {
+        client.scopes = scopes;
+    }
+    if let Some(active) = req.is_active {
+        client.is_active = active;
+    }
+    store
+        .create_client(&client)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(Json(client))
+}
+
 /// `DELETE /v1/api-clients/{id}`
 pub async fn handle_delete_client(
     State(state): State<Arc<ServerState>>,

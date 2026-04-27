@@ -32,6 +32,26 @@ export function useDeleteJob() {
     meta: { action: 'Delete job' },
   })
 }
+export function useUpdateJob() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({
+      job_key,
+      ...patch
+    }: {
+      job_key: string
+      description?: string | null
+      timeout?: string | null
+      max_retries?: number | null
+      dead_letter_enabled?: boolean | null
+    }) => apiPut<T.JobDefinition>(`/v1/jobs/${job_key}`, patch),
+    onSuccess: (_data, vars) => {
+      qc.invalidateQueries({ queryKey: ['jobs'] })
+      qc.invalidateQueries({ queryKey: ['jobs', vars.job_key] })
+    },
+    meta: { action: 'Update job' },
+  })
+}
 export function useActivateJob() {
   const qc = useQueryClient()
   return useMutation({
@@ -51,8 +71,14 @@ export function useDeactivateJob() {
 export function useRegisterJob() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (data: { job_key: string; schedule: string; timezone?: string; timeout?: string; description?: string }) =>
-      apiPost('/v1/jobs/register', data),
+    mutationFn: (data: {
+      job_key: string
+      schedule: string
+      timezone?: string
+      timeout?: string
+      description?: string
+      calendar?: string
+    }) => apiPost('/v1/jobs/register', data),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['jobs'] }); qc.invalidateQueries({ queryKey: ['schedules'] }) },
     meta: { action: 'Register job' },
   })
@@ -74,7 +100,12 @@ export function useSchedules(jobKey?: string) {
 export function useCreateSchedule() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (data: { job_key: string; cron_expression: string; timezone?: string }) => apiPost('/v1/schedules', data),
+    mutationFn: (data: {
+      job_key: string
+      cron_expression: string
+      timezone?: string
+      calendar?: string
+    }) => apiPost('/v1/schedules', data),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['schedules'] }),
     meta: { action: 'Create schedule' },
   })
@@ -89,6 +120,7 @@ export function useUpdateSchedule() {
       trigger_id: string
       cron_expression?: string
       timezone?: string
+      calendar?: string | null
       enabled?: boolean
     }) => apiPut<T.TriggerDefinition>(`/v1/schedules/${trigger_id}`, patch),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['schedules'] }),
@@ -261,6 +293,22 @@ export function useCreateCalendar() {
     meta: { action: 'Create calendar' },
   })
 }
+export function useUpdateCalendar() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({
+      calendar_id,
+      ...patch
+    }: {
+      calendar_id: string
+      name?: string
+      timezone?: string
+      rules?: string
+    }) => apiPut<T.CalendarDefinition>(`/v1/calendars/${calendar_id}`, patch),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['calendars'] }),
+    meta: { action: 'Update calendar' },
+  })
+}
 export function useDeleteCalendar() {
   const qc = useQueryClient()
   return useMutation({
@@ -281,6 +329,22 @@ export function useCreateApiClient() {
       apiPost<T.CreateClientResponse>('/v1/api-clients', data),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['api-clients'] }),
     meta: { action: 'Create API client' },
+  })
+}
+export function useUpdateApiClient() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({
+      client_id,
+      ...patch
+    }: {
+      client_id: string
+      name?: string
+      scopes?: string[]
+      is_active?: boolean
+    }) => apiPut<T.ApiClient>(`/v1/api-clients/${client_id}`, patch),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['api-clients'] }),
+    meta: { action: 'Update API client' },
   })
 }
 export function useDeleteApiClient() {

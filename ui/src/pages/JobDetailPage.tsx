@@ -2,7 +2,7 @@ import { useCallback, useState } from 'react'
 import { useParams } from 'react-router'
 import { useForm } from 'react-hook-form'
 import * as Dialog from '@radix-ui/react-dialog'
-import { Pencil, Plus, Trash2, X, Play } from 'lucide-react'
+import { Pencil, Plus, Trash2, X, Play, Edit3 } from 'lucide-react'
 import {
   useJob,
   useSchedules,
@@ -23,22 +23,40 @@ import { RelativeTime } from '@/components/ui/relative-time'
 import { useConfirm } from '@/components/ui/confirm-dialog'
 import { ScheduleBuilder } from '@/components/builders/ScheduleBuilder'
 import { TimezoneInput } from '@/components/ui/timezone-input'
+import { CalendarPicker } from '@/components/ui/calendar-picker'
+import { EditJobDialog } from '@/components/EditJobDialog'
 import { formatDate, shortId } from '@/lib/utils'
 
 interface ScheduleForm {
   cron_expression: string
   timezone: string
+  calendar: string
 }
 
-/// Map raw API errors to actionable inline messages. The most common
-/// failure for create is 409 (job is DSL-managed); for edit it's 409
-/// (trying to PUT a `dsl:` schedule, which the row UI shouldn't even
-/// expose but we guard against it).
-function humanizeScheduleError(raw: string, isEdit: boolean): string {
+/// Map raw API errors to actionable inline messages.
+///
+/// 409 has two flavours:
+///   1. DSL-managed (the Croniqfile owns the row) — only solvable by
+///      editing the file.
+///   2. Server's update gate refused for another reason (e.g. legacy
+///      `managed_by: "runner"` rows on a backend that hasn't been
+///      upgraded yet) — solvable by re-creating the schedule.
+/// We can tell them apart from the schedule we're acting on: if its
+/// `managed_by` is "dsl", flavour 1; otherwise flavour 2.
+function humanizeScheduleError(
+  raw: string,
+  isEdit: boolean,
+  context: { managedBy?: string | null } = {},
+): string {
   if (raw.startsWith('409')) {
+    if (context.managedBy === 'dsl') {
+      return isEdit
+        ? 'This schedule is managed by the Croniqfile DSL and can\'t be edited via the API. Edit the Croniqfile instead.'
+        : 'This job is managed by the Croniqfile DSL — schedules are owned there. Edit the Croniqfile to change the schedule.'
+    }
     return isEdit
-      ? 'This schedule is managed by the Croniqfile DSL and can\'t be edited via the API. Edit the Croniqfile instead.'
-      : 'This job is managed by the Croniqfile DSL — schedules are owned there. Edit the Croniqfile to change the schedule.'
+      ? `Server refused the update (409). The schedule may be marked "${context.managedBy ?? 'unknown'}" on a backend that doesn't allow API edits — try deleting and re-creating it.`
+      : 'Server refused the request (409). Reload the page and try again.'
   }
   return raw
 }
@@ -59,6 +77,7 @@ export function JobDetailPage() {
   const [editingSchedule, setEditingSchedule] = useState<TriggerDefinition | null>(null)
   const [submitError, setSubmitError] = useState<string | null>(null)
   const [triggering, setTriggering] = useState(false)
+  const [editJobOpen, setEditJobOpen] = useState(false)
 
   async function handleDeleteSchedule(triggerId: string, cron: string | null) {
     const ok = await confirm({
@@ -98,7 +117,7 @@ export function JobDetailPage() {
   // accurate representation we have, and re-parsing into the builder
   // is best-effort future work.
   function openCreateDialog() {
-    reset({ cron_expression: '', timezone: '' })
+    reset({ cron_expression: '', timezone: '', calendar: '' })
     setScheduleMode('builder')
     setEditingSchedule(null)
     setSubmitError(null)
@@ -108,6 +127,7 @@ export function JobDetailPage() {
     reset({
       cron_expression: s.cron_expression ?? '',
       timezone: s.timezone ?? '',
+      calendar: s.calendar ?? '',
     })
     setScheduleMode('advanced')
     setEditingSchedule(s)
@@ -131,12 +151,16 @@ export function JobDetailPage() {
           trigger_id: editingSchedule.trigger_id,
           cron_expression: data.cron_expression,
           timezone: data.timezone || '',
+          // Empty string clears the calendar gate — same convention as
+          // timezone above.
+          calendar: data.calendar ?? '',
         })
       } else {
         await createSchedule.mutateAsync({
           job_key: jobKey,
           cron_expression: data.cron_expression,
           timezone: data.timezone || undefined,
+          calendar: data.calendar || undefined,
         })
       }
       closeDialog(false)
@@ -144,7 +168,11 @@ export function JobDetailPage() {
       // Surface API errors inline so 409 (DSL-managed job, etc.)
       // doesn't disappear into a toast the user might miss.
       const msg = e instanceof Error ? e.message : String(e)
-      setSubmitError(humanizeScheduleError(msg, !!editingSchedule))
+      setSubmitError(
+        humanizeScheduleError(msg, !!editingSchedule, {
+          managedBy: editingSchedule?.managed_by,
+        }),
+      )
     }
   }
 
@@ -178,18 +206,31 @@ export function JobDetailPage() {
         <Badge variant={j.is_active ? 'ok' : 'neutral'}>{j.is_active ? 'active' : 'inactive'}</Badge>
         {isDslManaged && <Badge variant="neutral" className="font-mono">dsl</Badge>}
         <CopyButton value={j.job_key} label={`Copy job key ${j.job_key}`} />
-        <Button
-          variant="secondary"
-          size="sm"
-          onClick={handleTrigger}
-          disabled={triggering || !j.is_active}
-          aria-label={`Trigger ${j.job_key} now`}
-          className="ml-auto"
-        >
-          {triggering ? <Spinner className="h-3.5 w-3.5" /> : <Play className="h-3.5 w-3.5" />}
-          Trigger now
-        </Button>
+        <div className="ml-auto flex items-center gap-2">
+          {!isDslManaged && (
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => setEditJobOpen(true)}
+              aria-label={`Edit ${j.job_key}`}
+            >
+              <Edit3 className="h-3.5 w-3.5" />
+              Edit
+            </Button>
+          )}
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={handleTrigger}
+            disabled={triggering || !j.is_active}
+            aria-label={`Trigger ${j.job_key} now`}
+          >
+            {triggering ? <Spinner className="h-3.5 w-3.5" /> : <Play className="h-3.5 w-3.5" />}
+            Trigger now
+          </Button>
+        </div>
       </div>
+      <EditJobDialog job={j} open={editJobOpen} onOpenChange={setEditJobOpen} />
 
       <Card>
         <CardContent className="pt-4">
@@ -298,6 +339,7 @@ export function JobDetailPage() {
                     className={inputCls}
                     showDetectedHint
                   />
+                  <CalendarPicker {...register('calendar')} />
                   {submitError && (
                     <p className="text-xs text-destructive bg-destructive/10 border border-destructive/30 rounded-md px-3 py-2">
                       {submitError}
@@ -345,7 +387,7 @@ export function JobDetailPage() {
                         {/* Edit + delete are gated on `managed_by === 'api'`
                             because DSL-owned schedules must be changed via
                             the Croniqfile — the API rejects mutations. */}
-                        {s.managed_by === 'api' && (
+                        {s.managed_by !== 'dsl' && (
                           <Button
                             variant="ghost"
                             size="sm"
@@ -356,7 +398,7 @@ export function JobDetailPage() {
                             <Pencil className="h-3.5 w-3.5" />
                           </Button>
                         )}
-                        {s.managed_by === 'api' && (
+                        {s.managed_by !== 'dsl' && (
                           <Button
                             variant="ghost"
                             size="sm"
