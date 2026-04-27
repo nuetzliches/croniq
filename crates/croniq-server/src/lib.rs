@@ -32,6 +32,7 @@ pub mod api;
 pub mod completion;
 pub mod dashboard;
 pub mod loader;
+pub mod mcp;
 pub mod metrics;
 pub mod notify;
 pub mod quota;
@@ -51,5 +52,5 @@ pub use reload::{
     build_plan,
 };
 pub use scheduler::{FiredExecution, SchedulerLoop, TickResult};
-pub use store::{DynStore, StoreExt, sqlite_store};
+pub use store::{DynStore, sqlite_store};
 pub use watchdog::{WatchdogLoop, WatchdogResult};

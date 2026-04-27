@@ -11,8 +11,21 @@ pub struct RuntimeConfig {
     pub server: ServerConfig,
     pub pull_api: Option<PullApiConfig>,
     pub observability: Option<ObservabilityConfig>,
+    pub mcp: Option<McpConfig>,
     pub jobs: Vec<JobConfig>,
     pub calendars: Vec<CalendarConfig>,
+}
+
+/// HTTP MCP-server configuration. Absent block ⇒ default (enabled).
+#[derive(Debug, Clone, Serialize)]
+pub struct McpConfig {
+    pub enabled: bool,
+}
+
+impl Default for McpConfig {
+    fn default() -> Self {
+        Self { enabled: true }
+    }
 }
 
 #[derive(Debug, Clone, Default, Serialize)]
@@ -178,6 +191,7 @@ pub fn compile(ast: &Croniqfile) -> RuntimeConfig {
     };
     let mut pull_api = None;
     let mut observability = None;
+    let mut mcp: Option<McpConfig> = None;
     let mut default_timezone: Option<String> = None;
     let mut default_timeout: Option<String> = None;
     let mut default_retry = RetryConfig::default();
@@ -387,6 +401,17 @@ pub fn compile(ast: &Croniqfile) -> RuntimeConfig {
                 }
                 observability = Some(obs_cfg);
             }
+            Item::Mcp(m) => {
+                let mut cfg = McpConfig::default();
+                for d in &m.directives {
+                    if d.key.value.as_str() == "enabled"
+                        && let Some(a) = d.args.first()
+                    {
+                        cfg.enabled = matches!(a.value.as_str(), "true" | "yes" | "1" | "on");
+                    }
+                }
+                mcp = Some(cfg);
+            }
             _ => {}
         }
     }
@@ -395,6 +420,7 @@ pub fn compile(ast: &Croniqfile) -> RuntimeConfig {
         server,
         pull_api,
         observability,
+        mcp,
         jobs,
         calendars,
     }

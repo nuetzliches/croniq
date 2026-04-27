@@ -11,6 +11,14 @@ pull_api {
   lease_ttl 60s
 }
 
+# HTTP MCP transport (Model Context Protocol). Mounted at /mcp on the same
+# port as the REST API. Requires `mcp:read` (any tool) and `mcp:write`
+# (mutation tools) — admin tokens always pass. Comment the block out or set
+# `enabled false` to disable the endpoint entirely.
+mcp {
+  enabled true
+}
+
 observability {
   log { level info; format json; output stderr }
   metrics { listen :9900; path /metrics }

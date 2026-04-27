@@ -17,6 +17,7 @@ croniq-execution = { path = "../croniq-execution" }
 croniq-runner    = { path = "../croniq-runner" }
 croniq-bridge    = { path = "../croniq-bridge" }
 croniq-auth      = { path = "../croniq-auth" }
+croniq-mcp       = { path = "../croniq-mcp" }
 
 axum = { version = "0.8", features = ["json", "macros"] }
 tower-http = { version = "0.6", features = ["cors", "fs"] }

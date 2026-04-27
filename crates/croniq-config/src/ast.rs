@@ -15,6 +15,7 @@ pub enum Item {
     Server(ServerBlock),
     PullApi(PullApiBlock),
     Observability(ObservabilityBlock),
+    Mcp(McpBlock),
     Vars(VarsBlock),
     Defaults(DefaultsBlock),
     Calendar(CalendarBlock),
@@ -59,6 +60,14 @@ pub struct PullApiBlock {
 #[derive(Debug, Clone, Serialize)]
 pub struct ObservabilityBlock {
     pub sub_blocks: Vec<NamedBlock>,
+    pub span: Span,
+}
+
+// ─── MCP (HTTP transport) ───
+
+#[derive(Debug, Clone, Serialize)]
+pub struct McpBlock {
+    pub directives: Vec<Directive>,
     pub span: Span,
 }
 
