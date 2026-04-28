@@ -260,8 +260,28 @@ pub struct CalendarDefinition {
     pub timezone: Option<String>,
     /// JSON-encoded rules array.
     pub rules: String,
+    /// Who manages this calendar: "dsl" (Croniqfile, synthesized at read time)
+    /// or "api" (REST/UI, persisted). Mirrors `TriggerDefinition.managed_by`.
+    pub managed_by: String,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+}
+
+// ─── DSL Adoption ───
+
+/// A record indicating that a DSL-defined resource has been adopted into the
+/// API store. The loader skips DSL definitions whose key matches an adoption
+/// entry on next reload, so the API row wins. See migration 007.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DslAdoption {
+    /// One of: "calendar", "job", "trigger".
+    pub resource_type: String,
+    /// DSL identifier — calendar/job name.
+    pub resource_key: String,
+    pub adopted_at: DateTime<Utc>,
+    /// Caller user_id / api_client_id when the adoption was initiated. May
+    /// be `None` for system-level adoptions.
+    pub adopted_by: Option<String>,
 }
 
 // ─── Work Item Tracking ───

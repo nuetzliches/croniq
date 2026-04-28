@@ -17,7 +17,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use chrono::Utc;
-use croniq_config::compile::JobConfig;
+use croniq_config::compile::{CalendarConfig, JobConfig};
 use croniq_scheduler::trigger::Trigger;
 use tokio::sync::{RwLock, mpsc, oneshot};
 
@@ -50,6 +50,11 @@ impl ReloadDiff {
 pub struct ReloadPlan {
     /// DSL-only jobs (for `dsl_jobs_shared` update on apply).
     pub dsl_jobs: Vec<JobConfig>,
+    /// DSL-only calendars (for `dsl_calendars_shared` update on apply).
+    pub dsl_calendars: Vec<CalendarConfig>,
+    /// Whether `policy { dsl_adopt_on_mutate true }` is set in the new file.
+    /// Apply propagates this into `ServerState.policy_dsl_adopt_on_mutate`.
+    pub policy_dsl_adopt_on_mutate: bool,
     /// Merged jobs: DSL + API-registered (DSL wins on conflict).
     pub merged_jobs: Vec<JobConfig>,
     /// Merged triggers: DSL + API-registered (DSL wins on conflict).
@@ -126,10 +131,33 @@ pub async fn build_plan(
     })?;
 
     let now = Utc::now();
-    let dsl_keys: HashSet<String> = loaded.runtime.jobs.iter().map(|j| j.key.clone()).collect();
 
-    let mut merged_triggers = loaded.triggers.clone();
-    let mut merged_jobs = loaded.runtime.jobs.clone();
+    // Adopted DSL keys are skipped on this reload — the API store wins.
+    // Calendars and jobs are tracked under separate resource_type values
+    // (`calendar`, `job`); here we only need the job-level set.
+    let adopted_jobs: HashSet<String> = store
+        .list_adoptions("job")
+        .map_err(|e| ReloadError::Store(format!("{e}")))?
+        .into_iter()
+        .map(|a| a.resource_key)
+        .collect();
+
+    // Filter the DSL output: drop adopted entries before they enter the
+    // merged plan, otherwise they'd shadow the API definitions.
+    let dsl_jobs: Vec<JobConfig> = loaded
+        .runtime
+        .jobs
+        .into_iter()
+        .filter(|j| !adopted_jobs.contains(&j.key))
+        .collect();
+    let dsl_keys: HashSet<String> = dsl_jobs.iter().map(|j| j.key.clone()).collect();
+
+    let mut merged_triggers: HashMap<String, Trigger> = loaded
+        .triggers
+        .into_iter()
+        .filter(|(k, _)| !adopted_jobs.contains(k))
+        .collect();
+    let mut merged_jobs = dsl_jobs.clone();
 
     let api_triggers = store
         .list_triggers(None)
@@ -183,8 +211,23 @@ pub async fn build_plan(
         }
     };
 
+    let adopted_calendars: HashSet<String> = store
+        .list_adoptions("calendar")
+        .map_err(|e| ReloadError::Store(format!("{e}")))?
+        .into_iter()
+        .map(|a| a.resource_key)
+        .collect();
+    let dsl_calendars: Vec<CalendarConfig> = loaded
+        .runtime
+        .calendars
+        .into_iter()
+        .filter(|c| !adopted_calendars.contains(&c.name))
+        .collect();
+
     Ok(ReloadPlan {
-        dsl_jobs: loaded.runtime.jobs,
+        dsl_jobs,
+        dsl_calendars,
+        policy_dsl_adopt_on_mutate: loaded.runtime.policy.dsl_adopt_on_mutate,
         merged_jobs,
         merged_triggers,
         diff,
@@ -210,16 +253,20 @@ fn job_changed(a: &JobConfig, b: &JobConfig) -> bool {
 /// Apply a validated reload plan from outside the scheduler task.
 ///
 /// Sends a `SchedulerCommand::Reload` and waits for the scheduler to ack.
-/// After the ack, updates the shared DSL job list and trigger snapshot so
-/// subsequent API reads and reload diffs see the new state.
+/// After the ack, updates the shared DSL job/calendar lists and trigger
+/// snapshot so subsequent API reads and reload diffs see the new state.
 pub async fn apply_plan(
     plan: ReloadPlan,
     scheduler_tx: &mpsc::UnboundedSender<SchedulerCommand>,
     dsl_jobs_shared: &RwLock<Vec<JobConfig>>,
+    dsl_calendars_shared: &RwLock<Vec<CalendarConfig>>,
+    policy_dsl_adopt: &std::sync::atomic::AtomicBool,
     trigger_snapshot: &RwLock<HashMap<String, Trigger>>,
 ) -> Result<(), ApplyError> {
     let post_triggers = plan.merged_triggers.clone();
     let post_dsl = plan.dsl_jobs;
+    let post_dsl_cals = plan.dsl_calendars;
+    let post_policy = plan.policy_dsl_adopt_on_mutate;
 
     let (ack_tx, ack_rx) = oneshot::channel();
     scheduler_tx
@@ -233,6 +280,8 @@ pub async fn apply_plan(
     ack_rx.await.map_err(|_| ApplyError::SchedulerDown)?;
 
     *dsl_jobs_shared.write().await = post_dsl;
+    *dsl_calendars_shared.write().await = post_dsl_cals;
+    policy_dsl_adopt.store(post_policy, std::sync::atomic::Ordering::Relaxed);
     *trigger_snapshot.write().await = post_triggers;
     Ok(())
 }
@@ -246,11 +295,16 @@ pub async fn apply_plan_direct(
     plan: ReloadPlan,
     scheduler: &mut SchedulerLoop,
     dsl_jobs_shared: &RwLock<Vec<JobConfig>>,
+    dsl_calendars_shared: &RwLock<Vec<CalendarConfig>>,
+    policy_dsl_adopt: &std::sync::atomic::AtomicBool,
     trigger_snapshot: &RwLock<HashMap<String, Trigger>>,
 ) {
     let post_triggers = plan.merged_triggers.clone();
+    let post_policy = plan.policy_dsl_adopt_on_mutate;
     scheduler.reload(plan.merged_triggers, plan.merged_jobs);
     *dsl_jobs_shared.write().await = plan.dsl_jobs;
+    *dsl_calendars_shared.write().await = plan.dsl_calendars;
+    policy_dsl_adopt.store(post_policy, std::sync::atomic::Ordering::Relaxed);
     *trigger_snapshot.write().await = post_triggers;
 }
 
@@ -481,5 +535,103 @@ mod tests {
                 .count(),
             1
         );
+    }
+
+    #[tokio::test]
+    async fn adopted_dsl_calendar_is_skipped_in_plan() {
+        let (cur_tr, cur_dsl) = state_from("").await;
+        let store = empty_store();
+
+        // Mark `business-days` as adopted — the loader should drop it from
+        // the DSL output even though the Croniqfile still defines it.
+        store
+            .insert_adoption(&croniq_store::models::DslAdoption {
+                resource_type: "calendar".into(),
+                resource_key: "business-days".into(),
+                adopted_at: Utc::now(),
+                adopted_by: None,
+            })
+            .unwrap();
+
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(
+            tmp.path(),
+            r#"
+            calendar business-days {
+              include weekly monday
+            }
+            calendar still-dsl {
+              include weekly tuesday
+            }
+            "#,
+        )
+        .unwrap();
+
+        let plan = build_plan(tmp.path(), &store, &cur_tr, &cur_dsl)
+            .await
+            .unwrap();
+
+        let names: Vec<&str> = plan.dsl_calendars.iter().map(|c| c.name.as_str()).collect();
+        assert!(
+            !names.contains(&"business-days"),
+            "adopted DSL calendar must be skipped"
+        );
+        assert!(
+            names.contains(&"still-dsl"),
+            "non-adopted DSL calendar still surfaces"
+        );
+    }
+
+    #[tokio::test]
+    async fn adopted_dsl_job_is_skipped_in_plan() {
+        let (cur_tr, cur_dsl) = state_from("").await;
+        let store = empty_store();
+
+        store
+            .insert_adoption(&croniq_store::models::DslAdoption {
+                resource_type: "job".into(),
+                resource_key: "billing:invoice".into(),
+                adopted_at: Utc::now(),
+                adopted_by: None,
+            })
+            .unwrap();
+
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(
+            tmp.path(),
+            "job billing:invoice { every 1 hours }\njob etl:sync { every 5 minutes }\n",
+        )
+        .unwrap();
+
+        let plan = build_plan(tmp.path(), &store, &cur_tr, &cur_dsl)
+            .await
+            .unwrap();
+
+        let keys: Vec<&str> = plan.dsl_jobs.iter().map(|j| j.key.as_str()).collect();
+        assert!(
+            !keys.contains(&"billing:invoice"),
+            "adopted job dropped from DSL set"
+        );
+        assert!(keys.contains(&"etl:sync"), "non-adopted job still in DSL set");
+        assert!(
+            !plan.merged_triggers.contains_key("billing:invoice"),
+            "adopted job's trigger must not appear in merged set"
+        );
+    }
+
+    #[tokio::test]
+    async fn policy_dsl_adopt_on_mutate_propagates() {
+        let (cur_tr, cur_dsl) = state_from("").await;
+        let store = empty_store();
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(
+            tmp.path(),
+            "policy { dsl_adopt_on_mutate true }\njob a:b { every 1 hours }\n",
+        )
+        .unwrap();
+        let plan = build_plan(tmp.path(), &store, &cur_tr, &cur_dsl)
+            .await
+            .unwrap();
+        assert!(plan.policy_dsl_adopt_on_mutate);
     }
 }

@@ -4,10 +4,10 @@ import { useForm } from 'react-hook-form'
 import * as Dialog from '@radix-ui/react-dialog'
 import * as Switch from '@radix-ui/react-switch'
 import * as Tooltip from '@radix-ui/react-tooltip'
-import { Plus, Play, Trash2, X, AlertCircle, Pencil } from 'lucide-react'
+import { Plus, Play, Trash2, X, AlertCircle, Pencil, Download } from 'lucide-react'
 import {
   useJobs, useRegisterJob, useDeleteJob, useActivateJob, useDeactivateJob,
-  useTriggerJob, useExecutions, useSchedules,
+  useTriggerJob, useExecutions, useSchedules, useAdoptJob,
 } from '@/api/hooks'
 import { ScheduleBuilder } from '@/components/builders/ScheduleBuilder'
 import { TimezoneInput } from '@/components/ui/timezone-input'
@@ -72,6 +72,7 @@ export function JobsPage() {
   const activateJob = useActivateJob()
   const deactivateJob = useDeactivateJob()
   const triggerJob = useTriggerJob()
+  const adoptJob = useAdoptJob()
   const allExecs = useExecutions({ limit: 200 })
   const allSchedules = useSchedules()
   const { confirm, dialog: confirmDialog } = useConfirm()
@@ -79,6 +80,7 @@ export function JobsPage() {
   const [triggeredId, setTriggeredId] = useState<string | null>(null)
   const [triggerError, setTriggerError] = useState<string | null>(null)
   const [toggleError, setToggleError] = useState<string | null>(null)
+  const [adoptError, setAdoptError] = useState<string | null>(null)
   const [editingJob, setEditingJob] = useState<JobDefinition | null>(null)
 
   const { register, handleSubmit, reset, setValue, formState: { errors } } = useForm<RegisterForm>({
@@ -157,6 +159,33 @@ export function JobsPage() {
       destructive: true,
     })
     if (ok) deleteJob.mutate(jobKey)
+  }
+
+  async function handleAdopt(jobKey: string) {
+    const ok = await confirm({
+      title: `Adopt job ${jobKey}?`,
+      description:
+        'The Croniqfile job + its trigger are copied into the API store. The DSL definition is ignored on the next reload until you unadopt. Requires `policy { dsl_adopt_on_mutate true }`.',
+      confirmLabel: 'Adopt to edit',
+    })
+    if (!ok) return
+    setAdoptError(null)
+    try {
+      await adoptJob.mutateAsync(jobKey)
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e)
+      const m = msg.match(/^409:\s*(.+)$/s)
+      if (m) {
+        try {
+          const parsed = JSON.parse(m[1])
+          setAdoptError(parsed.message ?? msg)
+        } catch {
+          setAdoptError(m[1])
+        }
+      } else {
+        setAdoptError(msg)
+      }
+    }
   }
 
   return (
@@ -294,6 +323,13 @@ export function JobsPage() {
           </div>
         )}
 
+        {adoptError && (
+          <div className="flex items-center gap-2 text-xs text-destructive bg-destructive/10 border border-destructive/20 rounded-md px-3 py-2">
+            <AlertCircle className="h-3.5 w-3.5 shrink-0" />
+            {adoptError}
+          </div>
+        )}
+
         {jobs.isLoading && <div className="flex justify-center py-12"><Spinner className="h-6 w-6" /></div>}
 
         {!jobs.isLoading && jobs.data?.length === 0 && (
@@ -389,6 +425,35 @@ export function JobsPage() {
                     </Tooltip.Portal>
                   </Tooltip.Root>
 
+                  {/* Adopt — only shown for DSL-managed jobs. Copies the
+                      DSL definition into the API store so the user can
+                      edit it without touching the Croniqfile. Requires
+                      `policy { dsl_adopt_on_mutate true }` server-side. */}
+                  {isDslManaged && (
+                    <Tooltip.Root>
+                      <Tooltip.Trigger asChild>
+                        <span className="inline-flex">
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => handleAdopt(j.job_key)}
+                            disabled={adoptJob.isPending}
+                            aria-label={`Adopt ${j.job_key}`}
+                            className="h-7 w-7 p-0 text-muted-foreground hover:text-primary"
+                          >
+                            <Download className="h-3.5 w-3.5" />
+                          </Button>
+                        </span>
+                      </Tooltip.Trigger>
+                      <Tooltip.Portal>
+                        <Tooltip.Content className="z-50 max-w-xs rounded-md bg-foreground px-2 py-1 text-xs text-background shadow-md">
+                          Adopt to API store (requires <code>policy {`{ dsl_adopt_on_mutate true }`}</code>)
+                          <Tooltip.Arrow className="fill-foreground" />
+                        </Tooltip.Content>
+                      </Tooltip.Portal>
+                    </Tooltip.Root>
+                  )}
+
                   {/* Edit — disabled for DSL-managed jobs (Croniqfile owns
                       them; PUT would 409). */}
                   <Tooltip.Root>
@@ -408,7 +473,7 @@ export function JobsPage() {
                     </Tooltip.Trigger>
                     <Tooltip.Portal>
                       <Tooltip.Content className="z-50 rounded-md bg-foreground px-2 py-1 text-xs text-background shadow-md">
-                        {isDslManaged ? 'Managed by Croniqfile — edit the DSL to change' : 'Edit job'}
+                        {isDslManaged ? 'Managed by Croniqfile — adopt or edit the DSL to change' : 'Edit job'}
                         <Tooltip.Arrow className="fill-foreground" />
                       </Tooltip.Content>
                     </Tooltip.Portal>

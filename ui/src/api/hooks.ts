@@ -317,6 +317,61 @@ export function useDeleteCalendar() {
     meta: { action: 'Delete calendar' },
   })
 }
+/// POST /v1/calendars/{dsl-id}/adopt — copies a DSL calendar into the
+/// API store (Phase 2). Requires `policy { dsl_adopt_on_mutate true }` in
+/// the Croniqfile; otherwise the server returns 409.
+export function useAdoptCalendar() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (dslId: string) =>
+      apiPost<{ calendar: T.CalendarDefinition; dsl_key: string }>(
+        `/v1/calendars/${dslId}/adopt`,
+        {},
+      ),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['calendars'] }),
+    meta: { action: 'Adopt DSL calendar' },
+  })
+}
+/// POST /v1/calendars/{api-id}/unadopt — drops an adopted API row so the
+/// next reload reinstates the DSL definition.
+export function useUnadoptCalendar() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (apiId: string) => apiPost<void>(`/v1/calendars/${apiId}/unadopt`, {}),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['calendars'] }),
+    meta: { action: 'Unadopt calendar' },
+  })
+}
+/// POST /v1/jobs/{job_key}/adopt — copies a DSL job + its trigger into
+/// the API store. Same opt-in flag as adopt-calendar.
+export function useAdoptJob() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (jobKey: string) =>
+      apiPost<{ job: T.JobDefinition; trigger: unknown; dsl_key: string }>(
+        `/v1/jobs/${jobKey}/adopt`,
+        {},
+      ),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['jobs'] })
+      qc.invalidateQueries({ queryKey: ['schedules'] })
+    },
+    meta: { action: 'Adopt DSL job' },
+  })
+}
+/// POST /v1/jobs/{job_key}/unadopt — drops the API copy + adoption record
+/// so the next reload reinstates the DSL job definition + trigger.
+export function useUnadoptJob() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (jobKey: string) => apiPost<void>(`/v1/jobs/${jobKey}/unadopt`, {}),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['jobs'] })
+      qc.invalidateQueries({ queryKey: ['schedules'] })
+    },
+    meta: { action: 'Unadopt job' },
+  })
+}
 
 // API Clients
 export function useApiClients() {

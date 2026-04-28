@@ -107,12 +107,39 @@ components:
     CalendarDefinition:
       type: object
       properties:
-        calendar_id: { type: string }
+        calendar_id:
+          type: string
+          description: Real UUID for API-managed calendars; synthetic `dsl:{name}` for Croniqfile-defined ones.
         name: { type: string }
         timezone: { type: string, nullable: true }
         rules: { type: string }
+        managed_by:
+          type: string
+          enum: [api, dsl]
+          description: '`dsl` rows are synthesized at read time from the Croniqfile and refuse mutations (409). Use `/adopt` to take ownership.'
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
+
+    DslAdoptResponse:
+      type: object
+      properties:
+        calendar: { $ref: "#/components/schemas/CalendarDefinition" }
+        dsl_key:
+          type: string
+          description: The DSL identifier (calendar name or job key) that was adopted. Used by `/unadopt` to find the row and the loader to skip it on reload.
+
+    DslJobAdoptResponse:
+      type: object
+      properties:
+        job: { $ref: "#/components/schemas/JobDefinition" }
+        trigger: { $ref: "#/components/schemas/TriggerDefinition" }
+        dsl_key: { type: string }
+
+    DslManagedError:
+      type: object
+      properties:
+        error: { type: string, enum: [dsl_managed, adoption_disabled, not_adopted] }
+        message: { type: string }
 
     ApiClient:
       type: object
@@ -269,6 +296,54 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/JobDefinition" }
         "404": { description: Unknown job }
+
+  /v1/jobs/{job_key}/adopt:
+    post:
+      summary: Adopt a DSL-managed job (and its trigger) into the API store
+      description: |
+        Copies the Croniqfile job + its synthesized trigger into persistent storage
+        with `managed_by="api"`, and inserts a row in `dsl_adoptions` so the loader
+        skips this DSL key on subsequent reloads. The newly API-managed trigger is
+        also pushed to the live scheduler so the job keeps firing without a reload.
+
+        Requires `policy { dsl_adopt_on_mutate true }` in the Croniqfile — without
+        it, returns 409 (`error: adoption_disabled`).
+      parameters:
+        - name: job_key
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DslJobAdoptResponse" }
+        "404": { description: DSL job with that key not found }
+        "409":
+          description: Policy disabled.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DslManagedError" }
+
+  /v1/jobs/{job_key}/unadopt:
+    post:
+      summary: Drop the API copy so the next reload reinstates the DSL job
+      description: |
+        Removes all `managed_by="api"` triggers belonging to this job, the API
+        `JobDefinition`, and the `dsl_adoptions` record. The live scheduler stops
+        firing the job until the next reload re-arms the DSL trigger.
+      parameters:
+        - name: job_key
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "204": { description: Adoption removed; API job + triggers deleted. }
+        "409":
+          description: Job exists but was not adopted from DSL.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DslManagedError" }
 
   /v1/schedules:
     get:
@@ -479,15 +554,101 @@ paths:
   /v1/calendars/{id}:
     get:
       summary: Get a calendar
+      description: |
+        Accepts both real UUIDs (API-managed rows) and synthetic `dsl:{name}` IDs
+        (Croniqfile-defined calendars synthesized at read time).
       responses:
         "200":
           content:
             application/json:
               schema: { $ref: "#/components/schemas/CalendarDefinition" }
+        "404": { description: Unknown calendar }
+    put:
+      summary: Update a calendar
+      description: |
+        Refuses DSL-managed calendars (409 with `error: dsl_managed`). To take
+        ownership, call `POST /v1/calendars/dsl:{name}/adopt` first.
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CalendarDefinition" }
+        "409":
+          description: DSL-managed; mutation refused.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DslManagedError" }
     delete:
       summary: Delete a calendar
+      description: Refuses DSL-managed calendars (409). Adopt first if you want to remove it.
       responses:
         "204": { description: Deleted }
+        "409":
+          description: DSL-managed; mutation refused.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DslManagedError" }
+
+  /v1/calendars/{id}/adopt:
+    post:
+      summary: Adopt a DSL-managed calendar into the API store
+      description: |
+        Copies the Croniqfile calendar named in the synthetic ID `dsl:{name}` into the
+        persistent store with a fresh UUID and `managed_by="api"`, and inserts a row
+        in `dsl_adoptions` so the loader skips this DSL key on subsequent reloads.
+        Reversible via `/unadopt`.
+
+        Requires `policy { dsl_adopt_on_mutate true }` in the Croniqfile — without
+        it, returns 409 (`error: adoption_disabled`).
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Synthetic DSL ID (`dsl:{name}`).
+          schema: { type: string }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DslAdoptResponse" }
+        "400":
+          description: ID does not have the `dsl:` prefix.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DslManagedError" }
+        "404": { description: DSL calendar with that name not found }
+        "409":
+          description: Policy disabled or other adoption refusal.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DslManagedError" }
+
+  /v1/calendars/{id}/unadopt:
+    post:
+      summary: Drop an adopted calendar so the next reload reinstates the DSL definition
+      description: |
+        Removes the API-managed row plus the `dsl_adoptions` record for the calendar.
+        On the next config reload the Croniqfile definition surfaces again with
+        `managed_by="dsl"`.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: API UUID of the calendar (returned from `/adopt`).
+          schema: { type: string }
+      responses:
+        "204": { description: Adoption removed; API copy deleted. }
+        "400":
+          description: Caller passed a `dsl:` synthetic ID instead of the API UUID.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DslManagedError" }
+        "404": { description: Calendar not found }
+        "409":
+          description: Calendar exists but was not adopted from DSL.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DslManagedError" }
 
   /v1/dashboard/forecast:
     get:

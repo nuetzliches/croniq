@@ -19,6 +19,19 @@ mcp {
   enabled true
 }
 
+# Server-wide policy flags. Default state is restrictive — every flag must
+# be set explicitly to take effect.
+#
+# `dsl_adopt_on_mutate true` enables the explicit POST /v1/{resource}/{id}/adopt
+# endpoint, which copies a DSL-managed resource (calendar, job, schedule) into
+# the API store and excludes it from subsequent reloads. Without this flag,
+# DSL resources are read-only via the API and mutations return 409. Uncomment
+# the block to opt in.
+#
+# policy {
+#   dsl_adopt_on_mutate true
+# }
+
 observability {
   log { level info; format json; output stderr }
   metrics { listen :9900; path /metrics }

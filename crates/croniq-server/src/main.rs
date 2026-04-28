@@ -148,10 +148,50 @@ async fn main() -> Result<()> {
     let (scheduler_cmd_tx, mut scheduler_cmd_rx) =
         mpsc::unbounded_channel::<croniq_server::scheduler::SchedulerCommand>();
 
-    // Shared snapshot of DSL jobs — kept in sync by the scheduler task on
-    // Croniqfile reload so the REST API can union DSL entries into
-    // `/v1/jobs` and `/v1/schedules`.
-    let dsl_jobs_shared = Arc::new(tokio::sync::RwLock::new(loaded.runtime.jobs.clone()));
+    // Apply DSL adoptions on startup: anything in dsl_adoptions is owned by
+    // the API store, so the in-memory DSL view must drop it. Without this,
+    // an adopted resource would resurface every time the server restarts.
+    let adopted_jobs: std::collections::HashSet<String> = store
+        .list_adoptions("job")
+        .unwrap_or_default()
+        .into_iter()
+        .map(|a| a.resource_key)
+        .collect();
+    let adopted_calendars: std::collections::HashSet<String> = store
+        .list_adoptions("calendar")
+        .unwrap_or_default()
+        .into_iter()
+        .map(|a| a.resource_key)
+        .collect();
+
+    let dsl_jobs_initial: Vec<_> = loaded
+        .runtime
+        .jobs
+        .iter()
+        .filter(|j| !adopted_jobs.contains(&j.key))
+        .cloned()
+        .collect();
+    let dsl_calendars_initial: Vec<_> = loaded
+        .runtime
+        .calendars
+        .iter()
+        .filter(|c| !adopted_calendars.contains(&c.name))
+        .cloned()
+        .collect();
+    if !adopted_jobs.is_empty() || !adopted_calendars.is_empty() {
+        tracing::info!(
+            jobs = adopted_jobs.len(),
+            calendars = adopted_calendars.len(),
+            "skipping DSL definitions superseded by API adoptions"
+        );
+    }
+
+    // Shared snapshots of DSL jobs and calendars — kept in sync by the
+    // scheduler task on Croniqfile reload so the REST API can union DSL
+    // entries into `/v1/jobs`, `/v1/schedules`, and `/v1/calendars`.
+    let dsl_jobs_shared = Arc::new(tokio::sync::RwLock::new(dsl_jobs_initial.clone()));
+    let dsl_calendars_shared =
+        Arc::new(tokio::sync::RwLock::new(dsl_calendars_initial.clone()));
 
     let config_path_abs = cli
         .config
@@ -169,6 +209,11 @@ async fn main() -> Result<()> {
         let s = Arc::get_mut(&mut server_state).unwrap();
         s.scheduler_tx = Some(scheduler_cmd_tx);
         s.dsl_jobs = Some(Arc::clone(&dsl_jobs_shared));
+        s.dsl_calendars = Some(Arc::clone(&dsl_calendars_shared));
+        s.policy_dsl_adopt_on_mutate.store(
+            loaded.runtime.policy.dsl_adopt_on_mutate,
+            std::sync::atomic::Ordering::Relaxed,
+        );
         s.config_path = Some(config_path_abs.clone());
     }
     let reload_counters = Arc::clone(&server_state.reload_counters);
@@ -220,8 +265,21 @@ async fn main() -> Result<()> {
 
     // ── Scheduler task ────────────────────────────────────────────────────────
     let scheduler_store = Arc::clone(&store);
-    let mut jobs = loaded.runtime.jobs.clone();
-    let mut triggers = loaded.triggers;
+    // Drop adopted DSL keys from the scheduler's view too — otherwise the
+    // adopted job would still fire from the in-memory trigger built by the
+    // loader, alongside (or instead of) the API-managed copy.
+    let mut jobs: Vec<_> = loaded
+        .runtime
+        .jobs
+        .clone()
+        .into_iter()
+        .filter(|j| !adopted_jobs.contains(&j.key))
+        .collect();
+    let mut triggers: std::collections::HashMap<_, _> = loaded
+        .triggers
+        .into_iter()
+        .filter(|(k, _)| !adopted_jobs.contains(k))
+        .collect();
 
     // Reconcile API/runner-registered jobs from DB (not in Croniqfile)
     {
@@ -263,7 +321,7 @@ async fn main() -> Result<()> {
     let mcp_state = Arc::clone(&server_state);
     let mcp_runner = Arc::clone(&runner_state);
     let mcp_store = Arc::clone(&store);
-    let mcp_jobs = loaded.runtime.jobs.clone();
+    let mcp_jobs = dsl_jobs_initial.clone();
     let mcp_triggers = Arc::clone(&trigger_snapshot);
 
     let mut scheduler_loop = SchedulerLoop::new(
@@ -276,6 +334,8 @@ async fn main() -> Result<()> {
     let scheduler_reload_store = Arc::clone(&store);
     let scheduler_reload_snapshot = Arc::clone(&trigger_snapshot);
     let scheduler_reload_dsl = Arc::clone(&dsl_jobs_shared);
+    let scheduler_reload_dsl_cals = Arc::clone(&dsl_calendars_shared);
+    let scheduler_reload_policy = Arc::clone(&server_state.policy_dsl_adopt_on_mutate);
     let scheduler_reload_counters = Arc::clone(&reload_counters);
 
     let _scheduler_task = tokio::spawn(async move {
@@ -303,6 +363,8 @@ async fn main() -> Result<()> {
                                 plan,
                                 &mut scheduler_loop,
                                 &scheduler_reload_dsl,
+                                &scheduler_reload_dsl_cals,
+                                &scheduler_reload_policy,
                                 &scheduler_reload_snapshot,
                             ).await;
                             scheduler_reload_counters.inc_success();

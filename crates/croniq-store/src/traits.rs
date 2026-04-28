@@ -196,6 +196,28 @@ pub trait CalendarDefinitionStore {
     fn delete_calendar(&self, calendar_id: &str) -> Result<(), StoreError>;
 }
 
+/// DSL adoption tracking. An adoption record means the loader should skip
+/// the DSL definition for the named resource on next reload — the API copy
+/// in the corresponding store table wins.
+pub trait DslAdoptionStore {
+    /// Insert an adoption record. Idempotent — replaces an existing record
+    /// with the same `(resource_type, resource_key)` pair (re-adopt scenario
+    /// after an unadopt + re-adopt).
+    fn insert_adoption(&self, adoption: &DslAdoption) -> Result<(), StoreError>;
+    /// Remove an adoption record. Returns `Ok(true)` when a row was removed,
+    /// `Ok(false)` when no matching adoption existed.
+    fn delete_adoption(
+        &self,
+        resource_type: &str,
+        resource_key: &str,
+    ) -> Result<bool, StoreError>;
+    /// Returns `true` if an adoption record exists for the given resource.
+    fn is_adopted(&self, resource_type: &str, resource_key: &str) -> Result<bool, StoreError>;
+    /// List all adoption records for the given `resource_type`. Used by the
+    /// loader to build the exclusion set.
+    fn list_adoptions(&self, resource_type: &str) -> Result<Vec<DslAdoption>, StoreError>;
+}
+
 /// Execution log persistence.
 pub trait ExecutionLogStore {
     fn append_log(&self, entry: &ExecutionLogEntry) -> Result<(), StoreError>;
@@ -216,6 +238,7 @@ pub trait Store:
     + JobDefinitionStore
     + TriggerDefinitionStore
     + CalendarDefinitionStore
+    + DslAdoptionStore
     + ExecutionLogStore
 {
 }

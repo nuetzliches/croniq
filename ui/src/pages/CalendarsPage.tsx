@@ -1,9 +1,17 @@
 import { useCallback, useState } from 'react'
 import { useForm } from 'react-hook-form'
 import * as Dialog from '@radix-ui/react-dialog'
-import { Plus, Pencil, Trash2, X, CalendarDays } from 'lucide-react'
-import { useCalendars, useCreateCalendar, useUpdateCalendar, useDeleteCalendar } from '@/api/hooks'
+import * as Tooltip from '@radix-ui/react-tooltip'
+import { Plus, Pencil, Trash2, X, CalendarDays, Download } from 'lucide-react'
+import {
+  useCalendars,
+  useCreateCalendar,
+  useUpdateCalendar,
+  useDeleteCalendar,
+  useAdoptCalendar,
+} from '@/api/hooks'
 import type { CalendarDefinition } from '@/api/types'
+import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { EmptyState } from '@/components/ui/empty-state'
@@ -24,12 +32,42 @@ export function CalendarsPage() {
   const createCalendar = useCreateCalendar()
   const updateCalendar = useUpdateCalendar()
   const deleteCalendar = useDeleteCalendar()
+  const adoptCalendar = useAdoptCalendar()
   const { confirm, dialog: confirmDialog } = useConfirm()
+  const [adoptError, setAdoptError] = useState<string | null>(null)
   const [open, setOpen] = useState(false)
   const [rulesError, setRulesError] = useState<string | null>(null)
   // null → create mode, set → edit mode (form is seeded with the row's
   // current name/timezone/rules and submit calls PUT).
   const [editingCalendar, setEditingCalendar] = useState<CalendarDefinition | null>(null)
+
+  async function handleAdopt(cal: { calendar_id: string; name: string }) {
+    const ok = await confirm({
+      title: `Adopt calendar ${cal.name}?`,
+      description:
+        'A copy of this calendar is created in the API store and the Croniqfile definition is ignored on the next reload until you unadopt. Requires `policy { dsl_adopt_on_mutate true }` in the Croniqfile.',
+      confirmLabel: 'Adopt to edit',
+    })
+    if (!ok) return
+    setAdoptError(null)
+    try {
+      await adoptCalendar.mutateAsync(cal.calendar_id)
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e)
+      // 409 carries `{error, message}` JSON; surface the message.
+      const m = msg.match(/^409:\s*(.+)$/s)
+      if (m) {
+        try {
+          const parsed = JSON.parse(m[1])
+          setAdoptError(parsed.message ?? msg)
+        } catch {
+          setAdoptError(m[1])
+        }
+      } else {
+        setAdoptError(msg)
+      }
+    }
+  }
 
   async function handleDelete(cal: { calendar_id: string; name: string }) {
     const ok = await confirm({
@@ -232,48 +270,116 @@ export function CalendarsPage() {
         />
       )}
 
-      <div className="space-y-2">
-        {calendars?.map((cal) => (
-          <Card key={cal.calendar_id}>
-            <CardContent className="py-3">
-              <div className="flex items-center gap-4">
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2">
-                    <span className="font-mono text-sm font-medium">{cal.name}</span>
-                    {cal.timezone && (
-                      <span className="text-xs text-muted-foreground">{cal.timezone}</span>
-                    )}
+      {adoptError && (
+        <div className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+          {adoptError}
+        </div>
+      )}
+      <Tooltip.Provider delayDuration={200}>
+        <div className="space-y-2">
+          {calendars?.map((cal) => {
+            const isDsl = cal.managed_by === 'dsl'
+            const dslTip =
+              'Managed by the Croniqfile — edit the file to change, or click the adopt button to copy it into the API store.'
+            return (
+              <Card key={cal.calendar_id}>
+                <CardContent className="py-3">
+                  <div className="flex items-center gap-4">
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2">
+                        <span className="font-mono text-sm font-medium">{cal.name}</span>
+                        {cal.timezone && (
+                          <span className="text-xs text-muted-foreground">{cal.timezone}</span>
+                        )}
+                        {isDsl && (
+                          <Badge variant="neutral" className="font-mono">dsl</Badge>
+                        )}
+                      </div>
+                      {cal.rules && (
+                        <pre className="text-xs text-muted-foreground mt-1 font-mono truncate">{cal.rules.slice(0, 80)}{cal.rules.length > 80 ? '…' : ''}</pre>
+                      )}
+                      <p className="text-xs text-muted-foreground mt-1">
+                        Created <RelativeTime iso={cal.created_at} />
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-0.5 shrink-0">
+                      {isDsl && (
+                        <Tooltip.Root>
+                          <Tooltip.Trigger asChild>
+                            <span className="inline-flex">
+                              <Button
+                                variant="ghost" size="sm"
+                                onClick={() => handleAdopt(cal)}
+                                disabled={adoptCalendar.isPending}
+                                aria-label={`Adopt calendar ${cal.name}`}
+                                className="h-7 w-7 p-0 text-muted-foreground hover:text-primary"
+                              >
+                                <Download className="h-3.5 w-3.5" />
+                              </Button>
+                            </span>
+                          </Tooltip.Trigger>
+                          <Tooltip.Portal>
+                            <Tooltip.Content className="z-50 max-w-xs rounded-md bg-foreground px-2 py-1 text-xs text-background shadow-md">
+                              Adopt to API store (requires <code>policy {`{ dsl_adopt_on_mutate true }`}</code>)
+                              <Tooltip.Arrow className="fill-foreground" />
+                            </Tooltip.Content>
+                          </Tooltip.Portal>
+                        </Tooltip.Root>
+                      )}
+                      <Tooltip.Root>
+                        <Tooltip.Trigger asChild>
+                          <span className="inline-flex">
+                            <Button
+                              variant="ghost" size="sm"
+                              onClick={() => openEdit(cal)}
+                              disabled={isDsl}
+                              aria-label={`Edit calendar ${cal.name}`}
+                              className="h-7 w-7 p-0 text-muted-foreground hover:text-primary disabled:cursor-not-allowed"
+                            >
+                              <Pencil className="h-3.5 w-3.5" />
+                            </Button>
+                          </span>
+                        </Tooltip.Trigger>
+                        {isDsl && (
+                          <Tooltip.Portal>
+                            <Tooltip.Content className="z-50 max-w-xs rounded-md bg-foreground px-2 py-1 text-xs text-background shadow-md">
+                              {dslTip}
+                              <Tooltip.Arrow className="fill-foreground" />
+                            </Tooltip.Content>
+                          </Tooltip.Portal>
+                        )}
+                      </Tooltip.Root>
+                      <Tooltip.Root>
+                        <Tooltip.Trigger asChild>
+                          <span className="inline-flex">
+                            <Button
+                              variant="ghost" size="sm"
+                              onClick={() => handleDelete(cal)}
+                              disabled={isDsl}
+                              aria-label={`Delete calendar ${cal.name}`}
+                              className="h-7 w-7 p-0 text-muted-foreground hover:text-destructive disabled:cursor-not-allowed"
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </Button>
+                          </span>
+                        </Tooltip.Trigger>
+                        {isDsl && (
+                          <Tooltip.Portal>
+                            <Tooltip.Content className="z-50 max-w-xs rounded-md bg-foreground px-2 py-1 text-xs text-background shadow-md">
+                              {dslTip}
+                              <Tooltip.Arrow className="fill-foreground" />
+                            </Tooltip.Content>
+                          </Tooltip.Portal>
+                        )}
+                      </Tooltip.Root>
+                    </div>
                   </div>
-                  {cal.rules && (
-                    <pre className="text-xs text-muted-foreground mt-1 font-mono truncate">{cal.rules.slice(0, 80)}{cal.rules.length > 80 ? '…' : ''}</pre>
-                  )}
-                  <p className="text-xs text-muted-foreground mt-1">
-                    Created <RelativeTime iso={cal.created_at} />
-                  </p>
-                </div>
-                <div className="flex items-center gap-0.5 shrink-0">
-                  <Button
-                    variant="ghost" size="sm"
-                    onClick={() => openEdit(cal)}
-                    aria-label={`Edit calendar ${cal.name}`}
-                    className="h-7 w-7 p-0 text-muted-foreground hover:text-primary"
-                  >
-                    <Pencil className="h-3.5 w-3.5" />
-                  </Button>
-                  <Button
-                    variant="ghost" size="sm"
-                    onClick={() => handleDelete(cal)}
-                    aria-label={`Delete calendar ${cal.name}`}
-                    className="h-7 w-7 p-0 text-muted-foreground hover:text-destructive"
-                  >
-                    <Trash2 className="h-3.5 w-3.5" />
-                  </Button>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-        ))}
-      </div>
+                </CardContent>
+              </Card>
+            )
+          })}
+        </div>
+      </Tooltip.Provider>
     </div>
   )
 }

@@ -67,6 +67,9 @@ pub async fn handle_reload_config(
     let Some(dsl_jobs) = state.dsl_jobs.clone() else {
         return Err(StatusCode::SERVICE_UNAVAILABLE);
     };
+    let Some(dsl_calendars) = state.dsl_calendars.clone() else {
+        return Err(StatusCode::SERVICE_UNAVAILABLE);
+    };
 
     // Stage 1: build + validate the plan. No state changed yet.
     let plan = match reload::build_plan(&config_path, &store, &triggers, &dsl_jobs).await {
@@ -91,7 +94,16 @@ pub async fn handle_reload_config(
 
     // Stage 2: apply via the scheduler command channel + await ack.
     let diff = plan.diff.clone();
-    match reload::apply_plan(plan, &scheduler_tx, &dsl_jobs, &triggers).await {
+    match reload::apply_plan(
+        plan,
+        &scheduler_tx,
+        &dsl_jobs,
+        &dsl_calendars,
+        &state.policy_dsl_adopt_on_mutate,
+        &triggers,
+    )
+    .await
+    {
         Ok(()) => {
             state.reload_counters.inc_success();
             let body = ReloadSuccess {

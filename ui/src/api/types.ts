@@ -102,6 +102,9 @@ export interface CalendarDefinition {
   name: string
   timezone: string | null
   rules: string
+  /** "dsl" — synthesized from the Croniqfile (read-only via API).
+   *  "api" — created via API/UI, fully editable. */
+  managed_by: 'dsl' | 'api'
   created_at: string
   updated_at: string
 }
