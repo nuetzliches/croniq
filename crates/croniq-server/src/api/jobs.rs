@@ -17,7 +17,7 @@ use axum::{
 use chrono::Utc;
 use croniq_auth::CallerContext;
 use croniq_auth::context::Scope;
-use croniq_store::models::{JobDefinition, TriggerDefinition};
+use croniq_store::models::{DslAdoption, JobDefinition, TriggerDefinition};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -51,7 +51,7 @@ impl IntoResponse for JobError {
                 Json(serde_json::json!({
                     "error": "dsl_managed",
                     "message": format!(
-                        "Job '{job_key}' is managed by the Croniqfile — edit the file and reload instead."
+                        "Job '{job_key}' is managed by the Croniqfile. Edit the file and reload, or call POST /v1/jobs/{job_key}/adopt to take ownership (requires `policy {{ dsl_adopt_on_mutate true }}`)."
                     ),
                 })),
             )
@@ -446,6 +446,263 @@ pub async fn handle_register(
     ))
 }
 
+// ─── Adoption ─────────────────────────────────────────────────────────────────
+
+#[derive(Serialize)]
+pub struct JobAdoptResponse {
+    pub job: JobDefinition,
+    pub trigger: TriggerDefinition,
+    pub dsl_key: String,
+}
+
+/// `POST /v1/jobs/{job_key}/adopt` — copy a DSL-managed job (and its trigger)
+/// into the API store with `managed_by="api"` and a fresh trigger UUID, then
+/// record the adoption so the loader skips the DSL key on subsequent reloads.
+///
+/// Requires `policy { dsl_adopt_on_mutate true }` in the Croniqfile. Mirrors
+/// [`crate::api::calendars::handle_adopt`] with the extra step of also
+/// pushing the new trigger to the live scheduler so the job keeps firing
+/// without waiting for a reload.
+pub async fn handle_adopt(
+    State(state): State<Arc<ServerState>>,
+    Extension(ctx): Extension<CallerContext>,
+    axum::extract::Path(job_key): axum::extract::Path<String>,
+) -> Result<(StatusCode, Json<JobAdoptResponse>), (StatusCode, Json<serde_json::Value>)> {
+    if !ctx.has_scope(Scope::JOBS_WRITE) {
+        return Err((
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({
+                "error": "forbidden",
+                "message": format!("missing scope: {}", Scope::JOBS_WRITE),
+            })),
+        ));
+    }
+    if !state
+        .policy_dsl_adopt_on_mutate
+        .load(std::sync::atomic::Ordering::Relaxed)
+    {
+        return Err((
+            StatusCode::CONFLICT,
+            Json(serde_json::json!({
+                "error": "adoption_disabled",
+                "message": "DSL adoption is disabled — set `policy { dsl_adopt_on_mutate true }` in the Croniqfile to enable",
+            })),
+        ));
+    }
+
+    let cfg = {
+        let dsl = state.dsl_jobs.as_ref().ok_or((
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({"error": "no_dsl_state", "message": "DSL job state unavailable"})),
+        ))?;
+        let guard = dsl.read().await;
+        match guard.iter().find(|j| j.key == job_key) {
+            Some(c) => c.clone(),
+            None => {
+                return Err((
+                    StatusCode::NOT_FOUND,
+                    Json(serde_json::json!({
+                        "error": "not_found",
+                        "message": format!("DSL job '{job_key}' not found"),
+                    })),
+                ));
+            }
+        }
+    };
+
+    let store = state.store.as_ref().ok_or((
+        StatusCode::SERVICE_UNAVAILABLE,
+        Json(serde_json::json!({"error": "no_store", "message": "store unavailable"})),
+    ))?;
+
+    let now = Utc::now();
+    let job_def = synth_job_def_from_dsl(&cfg, now);
+    store.create_job_definition(&job_def).map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({
+                "error": "store_error",
+                "message": format!("failed to persist adopted job: {e}"),
+            })),
+        )
+    })?;
+
+    // Trigger gets a real UUID and managed_by="api"; everything else mirrors
+    // the synthetic trigger the loader builds from the same JobConfig.
+    let trigger_def = TriggerDefinition {
+        trigger_id: Uuid::new_v4().to_string(),
+        job_key: cfg.key.clone(),
+        cron_expression: Some(cfg.schedule_summary.clone()),
+        timezone: cfg.timezone.clone(),
+        calendar: cfg.calendar.clone(),
+        window: cfg.window.clone(),
+        not_before: cfg.not_before.as_deref().and_then(|s| {
+            chrono::DateTime::parse_from_rfc3339(s)
+                .ok()
+                .map(|d| d.with_timezone(&Utc))
+        }),
+        not_after: cfg.not_after.as_deref().and_then(|s| {
+            chrono::DateTime::parse_from_rfc3339(s)
+                .ok()
+                .map(|d| d.with_timezone(&Utc))
+        }),
+        enabled: !matches!(
+            cfg.schedule,
+            croniq_config::schedule::CompiledSchedule::Disabled
+        ),
+        managed_by: "api".into(),
+        created_at: now,
+        updated_at: now,
+    };
+    store.create_trigger(&trigger_def).map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({
+                "error": "store_error",
+                "message": format!("failed to persist adopted trigger: {e}"),
+            })),
+        )
+    })?;
+
+    store
+        .insert_adoption(&DslAdoption {
+            resource_type: "job".into(),
+            resource_key: cfg.key.clone(),
+            adopted_at: now,
+            adopted_by: Some(ctx.caller_id.clone()),
+        })
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({
+                    "error": "store_error",
+                    "message": format!("failed to record adoption: {e}"),
+                })),
+            )
+        })?;
+
+    // Drop the DSL entry from the in-memory snapshot so the API list stops
+    // double-counting until the next reload re-emits a filtered set.
+    if let Some(dsl) = state.dsl_jobs.as_ref() {
+        let mut guard = dsl.write().await;
+        guard.retain(|j| j.key != cfg.key);
+    }
+
+    // Push the freshly-API-managed trigger to the running scheduler so the
+    // job keeps firing without waiting for a reload. The DSL trigger keyed
+    // by the same job_key gets replaced inside the scheduler.
+    if let Some(ref tx) = state.scheduler_tx
+        && let Some(trigger) = trigger_from_definition(&trigger_def, now)
+    {
+        let job_config = job_config_from_definition(&trigger_def, Some(&job_def));
+        let _ = tx.send(SchedulerCommand::AddJob {
+            job: Box::new(job_config),
+            trigger: Box::new(trigger),
+        });
+    }
+
+    Ok((
+        StatusCode::OK,
+        Json(JobAdoptResponse {
+            job: job_def,
+            trigger: trigger_def,
+            dsl_key: cfg.key,
+        }),
+    ))
+}
+
+/// `POST /v1/jobs/{job_key}/unadopt` — remove the API copy plus the
+/// `dsl_adoptions` row so the next reload reinstates the DSL definition.
+/// Looks up triggers by `job_key`; deletes any API-managed ones.
+pub async fn handle_unadopt(
+    State(state): State<Arc<ServerState>>,
+    Extension(ctx): Extension<CallerContext>,
+    axum::extract::Path(job_key): axum::extract::Path<String>,
+) -> Result<StatusCode, (StatusCode, Json<serde_json::Value>)> {
+    if !ctx.has_scope(Scope::JOBS_WRITE) {
+        return Err((
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({
+                "error": "forbidden",
+                "message": format!("missing scope: {}", Scope::JOBS_WRITE),
+            })),
+        ));
+    }
+    let store = state.store.as_ref().ok_or((
+        StatusCode::SERVICE_UNAVAILABLE,
+        Json(serde_json::json!({"error": "no_store", "message": "store unavailable"})),
+    ))?;
+
+    let was_adopted = store.is_adopted("job", &job_key).map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({
+                "error": "store_error",
+                "message": format!("adoption lookup failed: {e}"),
+            })),
+        )
+    })?;
+    if !was_adopted {
+        return Err((
+            StatusCode::CONFLICT,
+            Json(serde_json::json!({
+                "error": "not_adopted",
+                "message": format!("job '{job_key}' was not adopted from DSL — use DELETE for API-only jobs"),
+            })),
+        ));
+    }
+
+    let _ = ctx;
+
+    // Delete any API-managed triggers belonging to this job. There may be
+    // more than one if the user added schedules after adoption — drop them
+    // all so the DSL trigger gets a clean slate on next reload.
+    let triggers = store.list_triggers(Some(&job_key)).map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({
+                "error": "store_error",
+                "message": format!("failed to list triggers: {e}"),
+            })),
+        )
+    })?;
+    for t in &triggers {
+        if t.managed_by == "api" {
+            store.delete_trigger(&t.trigger_id).map_err(|e| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(serde_json::json!({
+                        "error": "store_error",
+                        "message": format!("failed to delete trigger {}: {e}", t.trigger_id),
+                    })),
+                )
+            })?;
+        }
+    }
+    // Also drop the API job definition so the DSL one isn't shadowed.
+    let _ = store.delete_job_definition(&job_key);
+
+    store.delete_adoption("job", &job_key).map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({
+                "error": "store_error",
+                "message": format!("failed to clear adoption: {e}"),
+            })),
+        )
+    })?;
+
+    // Tell the live scheduler to drop the job now — the DSL trigger comes
+    // back on next reload (file change or admin endpoint).
+    if let Some(ref tx) = state.scheduler_tx {
+        let _ = tx.send(SchedulerCommand::RemoveJob {
+            job_key: job_key.clone(),
+        });
+    }
+
+    Ok(StatusCode::NO_CONTENT)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -570,5 +827,138 @@ mod tests {
         )
         .await;
         assert_eq!(status, 409);
+    }
+
+    // ─── Adoption (Phase 2.5) ─────────────────────────────────────────────
+
+    fn make_state_with_policy(
+        dsl: Vec<JobConfig>,
+        store: DynStore,
+        adopt: bool,
+    ) -> Arc<ServerState> {
+        let state = make_state(dsl, store);
+        state
+            .policy_dsl_adopt_on_mutate
+            .store(adopt, std::sync::atomic::Ordering::Relaxed);
+        state
+    }
+
+    #[tokio::test]
+    async fn adopt_job_returns_409_when_policy_off() {
+        let state = make_state(vec![dsl_job("billing:invoice")], make_store());
+        let (status, body) = body_json(
+            server_router(state),
+            "POST",
+            "/v1/jobs/billing:invoice/adopt",
+        )
+        .await;
+        assert_eq!(status, 409);
+        assert_eq!(body["error"], "adoption_disabled");
+    }
+
+    #[tokio::test]
+    async fn adopt_job_succeeds_when_policy_on() {
+        let store = make_store();
+        let state =
+            make_state_with_policy(vec![dsl_job("billing:invoice")], Arc::clone(&store), true);
+
+        let (status, body) = body_json(
+            server_router(Arc::clone(&state)),
+            "POST",
+            "/v1/jobs/billing:invoice/adopt",
+        )
+        .await;
+        assert_eq!(status, 200);
+        assert_eq!(body["dsl_key"], "billing:invoice");
+        assert_eq!(body["job"]["job_key"], "billing:invoice");
+        assert_eq!(body["trigger"]["job_key"], "billing:invoice");
+        assert_eq!(body["trigger"]["managed_by"], "api");
+
+        // Adoption row exists and the API records are in the store.
+        assert!(store.is_adopted("job", "billing:invoice").unwrap());
+        assert!(
+            store
+                .get_job_definition("billing:invoice")
+                .unwrap()
+                .is_some()
+        );
+        let triggers = store.list_triggers(Some("billing:invoice")).unwrap();
+        assert_eq!(triggers.len(), 1);
+        assert_eq!(triggers[0].managed_by, "api");
+
+        // The DSL snapshot dropped the adopted entry.
+        let dsl = state.dsl_jobs.as_ref().unwrap().read().await;
+        assert!(dsl.iter().all(|j| j.key != "billing:invoice"));
+    }
+
+    #[tokio::test]
+    async fn unadopt_job_clears_api_records_and_adoption() {
+        let store = make_store();
+        let state =
+            make_state_with_policy(vec![dsl_job("billing:invoice")], Arc::clone(&store), true);
+
+        // Adopt first.
+        let (s1, _) = body_json(
+            server_router(Arc::clone(&state)),
+            "POST",
+            "/v1/jobs/billing:invoice/adopt",
+        )
+        .await;
+        assert_eq!(s1, 200);
+
+        // Unadopt.
+        let s2 = status_of(
+            server_router(Arc::clone(&state)),
+            "POST",
+            "/v1/jobs/billing:invoice/unadopt",
+        )
+        .await;
+        assert_eq!(s2, 204);
+
+        // Store side-effects undone.
+        assert!(!store.is_adopted("job", "billing:invoice").unwrap());
+        assert!(
+            store
+                .get_job_definition("billing:invoice")
+                .unwrap()
+                .is_none()
+        );
+        let triggers = store.list_triggers(Some("billing:invoice")).unwrap();
+        assert!(triggers.is_empty());
+    }
+
+    #[tokio::test]
+    async fn unadopt_returns_409_for_non_adopted_job() {
+        let store = make_store();
+        // Seed a regular API job that was never adopted.
+        store
+            .create_job_definition(&JobDefinition {
+                job_key: "api:regular".into(),
+                description: None,
+                assigned_runner_id: None,
+                is_active: true,
+                metadata: Default::default(),
+                created_at: Utc::now(),
+                updated_at: Utc::now(),
+                timeout: None,
+                max_retries: None,
+                dead_letter_enabled: None,
+            })
+            .unwrap();
+        let state = make_state_with_policy(vec![], Arc::clone(&store), true);
+
+        let (status, body) =
+            body_json(server_router(state), "POST", "/v1/jobs/api:regular/unadopt").await;
+        assert_eq!(status, 409);
+        assert_eq!(body["error"], "not_adopted");
+    }
+
+    #[tokio::test]
+    async fn adopt_returns_404_for_unknown_dsl_key() {
+        let state = make_state_with_policy(vec![dsl_job("only:one")], make_store(), true);
+        let (status, body) =
+            body_json(server_router(state), "POST", "/v1/jobs/missing:job/adopt").await;
+        assert_eq!(status, 404);
+        assert_eq!(body["error"], "not_found");
     }
 }

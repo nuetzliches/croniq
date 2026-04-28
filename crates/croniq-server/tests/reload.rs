@@ -46,6 +46,8 @@ struct Harness {
     store: DynStore,
     trigger_snapshot: Arc<RwLock<HashMap<String, Trigger>>>,
     dsl_jobs_shared: Arc<RwLock<Vec<croniq_config::compile::JobConfig>>>,
+    #[allow(dead_code)] // exposed for test harness symmetry; new tests will exercise it
+    dsl_calendars_shared: Arc<RwLock<Vec<croniq_config::compile::CalendarConfig>>>,
     _tmp: TempDir,
     _scheduler_task: tokio::task::JoinHandle<()>,
 }
@@ -69,6 +71,7 @@ impl Harness {
         let (reload_tx, mut reload_rx) = mpsc::unbounded_channel::<PathBuf>();
 
         let dsl_jobs_shared = Arc::new(RwLock::new(loaded.runtime.jobs.clone()));
+        let dsl_calendars_shared = Arc::new(RwLock::new(loaded.runtime.calendars.clone()));
         let trigger_snapshot = Arc::new(RwLock::new(loaded.triggers.clone()));
 
         let mut state = ServerState::with_timeout(
@@ -81,6 +84,7 @@ impl Harness {
             s.store = Some(Arc::clone(&store));
             s.scheduler_tx = Some(scheduler_cmd_tx);
             s.dsl_jobs = Some(Arc::clone(&dsl_jobs_shared));
+            s.dsl_calendars = Some(Arc::clone(&dsl_calendars_shared));
             s.triggers = Some(Arc::clone(&trigger_snapshot));
             s.config_path = Some(config_path.clone());
             s.jwt_config = Some(JwtConfig {
@@ -99,6 +103,8 @@ impl Harness {
         let task_store = Arc::clone(&store);
         let task_snapshot = Arc::clone(&trigger_snapshot);
         let task_dsl = Arc::clone(&dsl_jobs_shared);
+        let task_dsl_cals = Arc::clone(&dsl_calendars_shared);
+        let task_policy = Arc::clone(&state.policy_dsl_adopt_on_mutate);
         let task_counters = Arc::clone(&state.reload_counters);
 
         let _scheduler_task = tokio::spawn(async move {
@@ -114,6 +120,8 @@ impl Harness {
                                     plan,
                                     &mut scheduler_loop,
                                     &task_dsl,
+                                    &task_dsl_cals,
+                                    &task_policy,
                                     &task_snapshot,
                                 ).await;
                                 task_counters.inc_success();
@@ -135,6 +143,7 @@ impl Harness {
             store,
             trigger_snapshot,
             dsl_jobs_shared,
+            dsl_calendars_shared,
             _tmp: tmp,
             _scheduler_task,
         }

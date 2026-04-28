@@ -8,6 +8,11 @@ const MIGRATIONS: &[(&str, &str)] = &[
     ("003_definitions", include_str!("003_definitions.sql")),
     ("004_job_policy", include_str!("004_job_policy.sql")),
     ("005_perf_indexes", include_str!("005_perf_indexes.sql")),
+    (
+        "006_calendar_managed_by",
+        include_str!("006_calendar_managed_by.sql"),
+    ),
+    ("007_dsl_adoptions", include_str!("007_dsl_adoptions.sql")),
 ];
 
 /// Run all pending migrations.

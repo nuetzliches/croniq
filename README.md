@@ -282,6 +282,37 @@ A 403 with no body is returned when the scope is missing. Auth-disabled mode (no
 
 ---
 
+## DSL vs. API: Source of Truth
+
+Resources can come from two places: the **Croniqfile** (declarative, in-file source of truth) or the **API/UI** (mutable, persisted in SQLite). Both surfaces are unified at read time:
+
+- `GET /v1/jobs`, `GET /v1/schedules`, `GET /v1/calendars` return the union, tagged with `managed_by: "dsl"` or `"api"`.
+- The UI shows a `dsl` badge on Croniqfile-managed rows; their edit/delete buttons are disabled.
+
+By default, mutations on `managed_by: "dsl"` rows return **409 Conflict** — the Croniqfile owns them, and an API edit would silently revert on the next reload. The error body includes the `adopt` URL and the policy flag needed to enable it.
+
+### Adoption (opt-in)
+
+Set `policy { dsl_adopt_on_mutate true }` in the Croniqfile to allow taking ownership of a DSL-managed resource through the API:
+
+```sh
+# Calendars: synthetic ID is dsl:{name}
+curl -X POST http://localhost:4000/v1/calendars/dsl:business-days/adopt \
+  -H "Authorization: Bearer $TOKEN"
+
+# Jobs: identified by job_key
+curl -X POST http://localhost:4000/v1/jobs/billing:invoice/adopt \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+Adopt copies the resource into the persistent store with a fresh UUID and `managed_by="api"`, and records the adoption in `dsl_adoptions` so the loader skips that key on subsequent reloads. The resource is then editable via the standard PUT/DELETE endpoints. Reversible via `POST .../unadopt` — the next reload reinstates the Croniqfile definition.
+
+The flag is server-wide and default-off: existing deployments see no behaviour change. Adoption requires the `calendars:write` or `jobs:write` scope; no separate scope is needed.
+
+See `openapi.yaml` for the full request/response schema.
+
+---
+
 ## CLI
 
 ```sh

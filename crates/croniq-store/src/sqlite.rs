@@ -900,17 +900,17 @@ impl CalendarDefinitionStore for SqliteStore {
     fn create_calendar(&self, cal: &CalendarDefinition) -> Result<(), StoreError> {
         let conn = self.conn.lock().unwrap();
         conn.execute(
-            "INSERT INTO calendar_definitions (calendar_id, name, timezone, rules, created_at, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6)
-             ON CONFLICT(calendar_id) DO UPDATE SET name=excluded.name, timezone=excluded.timezone, rules=excluded.rules, updated_at=excluded.updated_at",
-            params![cal.calendar_id, cal.name, cal.timezone, cal.rules, dt_to_sql(&cal.created_at), dt_to_sql(&cal.updated_at)],
+            "INSERT INTO calendar_definitions (calendar_id, name, timezone, rules, managed_by, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+             ON CONFLICT(calendar_id) DO UPDATE SET name=excluded.name, timezone=excluded.timezone, rules=excluded.rules, managed_by=excluded.managed_by, updated_at=excluded.updated_at",
+            params![cal.calendar_id, cal.name, cal.timezone, cal.rules, cal.managed_by, dt_to_sql(&cal.created_at), dt_to_sql(&cal.updated_at)],
         ).map_err(map_err)?;
         Ok(())
     }
 
     fn get_calendar(&self, calendar_id: &str) -> Result<Option<CalendarDefinition>, StoreError> {
         let conn = self.conn.lock().unwrap();
-        conn.prepare("SELECT calendar_id, name, timezone, rules, created_at, updated_at FROM calendar_definitions WHERE calendar_id = ?1")
+        conn.prepare("SELECT calendar_id, name, timezone, rules, managed_by, created_at, updated_at FROM calendar_definitions WHERE calendar_id = ?1")
             .map_err(map_err)?
             .query_row(params![calendar_id], |row| {
                 Ok(CalendarDefinition {
@@ -918,8 +918,9 @@ impl CalendarDefinitionStore for SqliteStore {
                     name: row.get(1)?,
                     timezone: row.get(2)?,
                     rules: row.get(3)?,
-                    created_at: sql_to_dt(&row.get::<_, String>(4)?),
-                    updated_at: sql_to_dt(&row.get::<_, String>(5)?),
+                    managed_by: row.get(4)?,
+                    created_at: sql_to_dt(&row.get::<_, String>(5)?),
+                    updated_at: sql_to_dt(&row.get::<_, String>(6)?),
                 })
             })
             .optional()
@@ -928,7 +929,7 @@ impl CalendarDefinitionStore for SqliteStore {
 
     fn list_calendars(&self) -> Result<Vec<CalendarDefinition>, StoreError> {
         let conn = self.conn.lock().unwrap();
-        let mut stmt = conn.prepare("SELECT calendar_id, name, timezone, rules, created_at, updated_at FROM calendar_definitions ORDER BY name").map_err(map_err)?;
+        let mut stmt = conn.prepare("SELECT calendar_id, name, timezone, rules, managed_by, created_at, updated_at FROM calendar_definitions ORDER BY name").map_err(map_err)?;
         let rows = stmt
             .query_map([], |row| {
                 Ok(CalendarDefinition {
@@ -936,8 +937,9 @@ impl CalendarDefinitionStore for SqliteStore {
                     name: row.get(1)?,
                     timezone: row.get(2)?,
                     rules: row.get(3)?,
-                    created_at: sql_to_dt(&row.get::<_, String>(4)?),
-                    updated_at: sql_to_dt(&row.get::<_, String>(5)?),
+                    managed_by: row.get(4)?,
+                    created_at: sql_to_dt(&row.get::<_, String>(5)?),
+                    updated_at: sql_to_dt(&row.get::<_, String>(6)?),
                 })
             })
             .map_err(map_err)?;
@@ -947,7 +949,7 @@ impl CalendarDefinitionStore for SqliteStore {
     fn delete_calendar(&self, calendar_id: &str) -> Result<(), StoreError> {
         let conn = self.conn.lock().unwrap();
         conn.execute(
-            "DELETE FROM calendar_definitions WHERE calendar_id = ?1",
+            "DELETE FROM calendar_definitions WHERE calendar_id = ?1 AND managed_by != 'dsl'",
             params![calendar_id],
         )
         .map_err(map_err)?;
@@ -987,6 +989,73 @@ impl ExecutionLogStore for SqliteStore {
                     level: row.get(3)?,
                     message: row.get(4)?,
                     fields: serde_json::from_str(&fields_str).unwrap_or_default(),
+                })
+            })
+            .map_err(map_err)?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(map_err)
+    }
+}
+
+// ─── DslAdoptionStore ───
+
+impl DslAdoptionStore for SqliteStore {
+    fn insert_adoption(&self, adoption: &DslAdoption) -> Result<(), StoreError> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO dsl_adoptions (resource_type, resource_key, adopted_at, adopted_by)
+             VALUES (?1, ?2, ?3, ?4)
+             ON CONFLICT(resource_type, resource_key) DO UPDATE SET
+                adopted_at = excluded.adopted_at,
+                adopted_by = excluded.adopted_by",
+            params![
+                adoption.resource_type,
+                adoption.resource_key,
+                dt_to_sql(&adoption.adopted_at),
+                adoption.adopted_by,
+            ],
+        )
+        .map_err(map_err)?;
+        Ok(())
+    }
+
+    fn delete_adoption(&self, resource_type: &str, resource_key: &str) -> Result<bool, StoreError> {
+        let conn = self.conn.lock().unwrap();
+        let n = conn
+            .execute(
+                "DELETE FROM dsl_adoptions WHERE resource_type = ?1 AND resource_key = ?2",
+                params![resource_type, resource_key],
+            )
+            .map_err(map_err)?;
+        Ok(n > 0)
+    }
+
+    fn is_adopted(&self, resource_type: &str, resource_key: &str) -> Result<bool, StoreError> {
+        let conn = self.conn.lock().unwrap();
+        let n: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM dsl_adoptions WHERE resource_type = ?1 AND resource_key = ?2",
+                params![resource_type, resource_key],
+                |row| row.get(0),
+            )
+            .map_err(map_err)?;
+        Ok(n > 0)
+    }
+
+    fn list_adoptions(&self, resource_type: &str) -> Result<Vec<DslAdoption>, StoreError> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn
+            .prepare(
+                "SELECT resource_type, resource_key, adopted_at, adopted_by
+                 FROM dsl_adoptions WHERE resource_type = ?1 ORDER BY resource_key",
+            )
+            .map_err(map_err)?;
+        let rows = stmt
+            .query_map(params![resource_type], |row| {
+                Ok(DslAdoption {
+                    resource_type: row.get(0)?,
+                    resource_key: row.get(1)?,
+                    adopted_at: sql_to_dt(&row.get::<_, String>(2)?),
+                    adopted_by: row.get(3)?,
                 })
             })
             .map_err(map_err)?;

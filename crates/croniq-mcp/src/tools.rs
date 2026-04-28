@@ -414,6 +414,35 @@ pub struct DeadLetterIdParams {
     pub dead_letter_id: String,
 }
 
+// ─── DSL-managed refusal messages ─────────────────────────────────────────────
+//
+// All MCP mutation tools that hit a DSL-owned resource return one of these
+// strings. They mention the REST adopt endpoint and the Croniqfile policy
+// flag so the AI client can suggest adoption to the user instead of just
+// reporting "no, can't do that". REST 409 messages stay shorter — the MCP
+// caller is the one that needs the actionable hint.
+
+fn dsl_calendar_refusal_msg(id_or_name: &str, action: &str) -> String {
+    // Accepts either a bare name (`business-days`) or the synthetic ID
+    // (`dsl:business-days`); strips the prefix to keep the adopt URL clean.
+    let name = id_or_name.strip_prefix("dsl:").unwrap_or(id_or_name);
+    format!(
+        "Calendar '{name}' is managed by the Croniqfile. To take ownership and {action} it via the API, call `POST /v1/calendars/dsl:{name}/adopt` (requires `policy {{ dsl_adopt_on_mutate true }}` in the Croniqfile)."
+    )
+}
+
+fn dsl_job_refusal_msg(job_key: &str) -> String {
+    format!(
+        "Job '{job_key}' is managed by the Croniqfile. To take ownership and edit it via the API, call `POST /v1/jobs/{job_key}/adopt` (requires `policy {{ dsl_adopt_on_mutate true }}` in the Croniqfile)."
+    )
+}
+
+fn dsl_schedule_refusal_msg(trigger_id: &str, job_key: &str) -> String {
+    format!(
+        "Schedule '{trigger_id}' belongs to DSL-managed job '{job_key}'. Adopt the job via `POST /v1/jobs/{job_key}/adopt` to edit its schedule (requires `policy {{ dsl_adopt_on_mutate true }}` in the Croniqfile)."
+    )
+}
+
 // ─── Tool implementations ─────────────────────────────────────────────────────
 
 #[tool_router]
@@ -875,10 +904,7 @@ impl CroniqMcp {
 
         if self.jobs.contains_key(&p.job_key) {
             return Err(McpError::invalid_params(
-                format!(
-                    "Job '{}' is managed by the Croniqfile — edit the file and reload instead.",
-                    p.job_key
-                ),
+                dsl_job_refusal_msg(&p.job_key),
                 None,
             ));
         }
@@ -1057,6 +1083,7 @@ impl CroniqMcp {
             name: p.name,
             timezone: p.timezone,
             rules: p.rules,
+            managed_by: "api".into(),
             created_at: now,
             updated_at: now,
         };
@@ -1079,6 +1106,13 @@ impl CroniqMcp {
         self.require_mutations()?;
         let store = self.require_store()?;
 
+        if p.calendar_id.starts_with("dsl:") {
+            return Err(McpError::invalid_params(
+                dsl_calendar_refusal_msg(&p.calendar_id, "edit"),
+                None,
+            ));
+        }
+
         if let Some(ref rules) = p.rules {
             validate_calendar_rules(rules)
                 .map_err(|msg| McpError::invalid_params(format!("invalid_rules: {msg}"), None))?;
@@ -1090,6 +1124,13 @@ impl CroniqMcp {
             .ok_or_else(|| {
                 McpError::invalid_params(format!("Calendar '{}' not found.", p.calendar_id), None)
             })?;
+
+        if existing.managed_by == "dsl" {
+            return Err(McpError::invalid_params(
+                dsl_calendar_refusal_msg(&existing.name, "edit"),
+                None,
+            ));
+        }
 
         if let Some(name) = p.name {
             existing.name = name;
@@ -1120,6 +1161,24 @@ impl CroniqMcp {
     ) -> Result<String, McpError> {
         self.require_mutations()?;
         let store = self.require_store()?;
+
+        if p.calendar_id.starts_with("dsl:") {
+            return Err(McpError::invalid_params(
+                dsl_calendar_refusal_msg(&p.calendar_id, "delete"),
+                None,
+            ));
+        }
+
+        if let Some(existing) = store
+            .get_calendar(&p.calendar_id)
+            .map_err(|e| McpError::internal_error(e.to_string(), None))?
+            && existing.managed_by == "dsl"
+        {
+            return Err(McpError::invalid_params(
+                dsl_calendar_refusal_msg(&existing.name, "delete"),
+                None,
+            ));
+        }
 
         store
             .delete_calendar(&p.calendar_id)
@@ -1258,10 +1317,7 @@ impl CroniqMcp {
 
         if self.jobs.contains_key(&p.job_key) {
             return Err(McpError::invalid_params(
-                format!(
-                    "Job '{}' is managed by the Croniqfile — edit the file and reload instead.",
-                    p.job_key
-                ),
+                dsl_job_refusal_msg(&p.job_key),
                 None,
             ));
         }
@@ -1301,10 +1357,7 @@ impl CroniqMcp {
 
         if self.jobs.contains_key(&p.job_key) {
             return Err(McpError::invalid_params(
-                format!(
-                    "Job '{}' is managed by the Croniqfile — edit the file and reload instead.",
-                    p.job_key
-                ),
+                dsl_job_refusal_msg(&p.job_key),
                 None,
             ));
         }
@@ -1371,10 +1424,11 @@ impl CroniqMcp {
     ) -> Result<String, McpError> {
         let store = self.require_store()?;
         if p.trigger_id.starts_with("dsl:") {
+            let job_key = p.trigger_id.trim_start_matches("dsl:");
             return Err(McpError::invalid_params(
                 format!(
-                    "Schedule '{}' is DSL-managed; read the Croniqfile instead.",
-                    p.trigger_id
+                    "Schedule '{}' is DSL-managed. It is included in `list_schedules`; to make it independently editable, adopt the owning job via `POST /v1/jobs/{}/adopt` (requires `policy {{ dsl_adopt_on_mutate true }}`).",
+                    p.trigger_id, job_key
                 ),
                 None,
             ));
@@ -1405,10 +1459,7 @@ impl CroniqMcp {
 
         if self.jobs.contains_key(&p.job_key) {
             return Err(McpError::invalid_params(
-                format!(
-                    "Job '{}' is DSL-managed; the Croniqfile owns its schedule.",
-                    p.job_key
-                ),
+                dsl_schedule_refusal_msg(&format!("dsl:{}", p.job_key), &p.job_key),
                 None,
             ));
         }
@@ -1449,11 +1500,9 @@ impl CroniqMcp {
         let store = self.require_store()?;
 
         if p.trigger_id.starts_with("dsl:") {
+            let job_key = p.trigger_id.trim_start_matches("dsl:");
             return Err(McpError::invalid_params(
-                format!(
-                    "Schedule '{}' is DSL-managed; edit the Croniqfile instead.",
-                    p.trigger_id
-                ),
+                dsl_schedule_refusal_msg(&p.trigger_id, job_key),
                 None,
             ));
         }
@@ -1467,10 +1516,7 @@ impl CroniqMcp {
 
         if existing.managed_by == "dsl" {
             return Err(McpError::invalid_params(
-                format!(
-                    "Schedule '{}' is DSL-managed; edit the Croniqfile instead.",
-                    p.trigger_id
-                ),
+                dsl_schedule_refusal_msg(&p.trigger_id, &existing.job_key),
                 None,
             ));
         }
@@ -1518,11 +1564,9 @@ impl CroniqMcp {
         let store = self.require_store()?;
 
         if p.trigger_id.starts_with("dsl:") {
+            let job_key = p.trigger_id.trim_start_matches("dsl:");
             return Err(McpError::invalid_params(
-                format!(
-                    "Schedule '{}' is DSL-managed; edit the Croniqfile instead.",
-                    p.trigger_id
-                ),
+                dsl_schedule_refusal_msg(&p.trigger_id, job_key),
                 None,
             ));
         }
@@ -1610,13 +1654,7 @@ impl CroniqMcp {
         let store = self.require_store()?;
 
         if self.jobs.contains_key(job_key) {
-            return Err(McpError::invalid_params(
-                format!(
-                    "Job '{}' is managed by the Croniqfile — edit the file and reload instead.",
-                    job_key
-                ),
-                None,
-            ));
+            return Err(McpError::invalid_params(dsl_job_refusal_msg(job_key), None));
         }
 
         let mut job = store

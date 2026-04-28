@@ -16,6 +16,7 @@ pub enum Item {
     PullApi(PullApiBlock),
     Observability(ObservabilityBlock),
     Mcp(McpBlock),
+    Policy(PolicyBlock),
     Vars(VarsBlock),
     Defaults(DefaultsBlock),
     Calendar(CalendarBlock),
@@ -67,6 +68,17 @@ pub struct ObservabilityBlock {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct McpBlock {
+    pub directives: Vec<Directive>,
+    pub span: Span,
+}
+
+// ─── Policy (server-wide opt-in flags) ───
+
+/// Server-wide policy block. Currently carries the adoption opt-in flag
+/// (`dsl_adopt_on_mutate`); future flags can be added without breaking
+/// existing Croniqfiles.
+#[derive(Debug, Clone, Serialize)]
+pub struct PolicyBlock {
     pub directives: Vec<Directive>,
     pub span: Span,
 }

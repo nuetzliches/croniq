@@ -40,7 +40,7 @@ use crate::completion::CompletionEvent;
 use crate::reload::ReloadCounters;
 use crate::scheduler::SchedulerCommand;
 use crate::store::DynStore;
-use croniq_config::compile::JobConfig;
+use croniq_config::compile::{CalendarConfig, JobConfig};
 use croniq_store::models::{Execution, ExecutionFilter, ExecutionState};
 
 /// Default maximum time a poll request will block waiting for work.
@@ -70,6 +70,15 @@ pub struct ServerState {
     /// unions this with the persisted store so DSL jobs appear in `/v1/jobs`
     /// and `/v1/schedules` alongside API/runner-registered ones.
     pub dsl_jobs: Option<Arc<tokio::sync::RwLock<Vec<JobConfig>>>>,
+    /// DSL-defined calendars (from the Croniqfile). Same hot-reload semantics
+    /// as `dsl_jobs`. The REST API synthesizes them with `managed_by="dsl"`
+    /// in `/v1/calendars` so the UI can reference them in schedule editors.
+    pub dsl_calendars: Option<Arc<tokio::sync::RwLock<Vec<CalendarConfig>>>>,
+    /// Server-wide policy flag from the Croniqfile `policy { dsl_adopt_on_mutate ... }`
+    /// block. When `true`, the explicit `/adopt` endpoint copies a DSL
+    /// resource into the API store; when `false` (default), `/adopt`
+    /// returns 409 and PUT/DELETE on DSL resources stay blocked.
+    pub policy_dsl_adopt_on_mutate: Arc<std::sync::atomic::AtomicBool>,
     /// Path to the Croniqfile, needed by the admin reload endpoint.
     pub config_path: Option<std::path::PathBuf>,
     /// Counters for `croniq_config_reload_total`, incremented by both the
@@ -91,6 +100,8 @@ impl ServerState {
             scheduler_tx: None,
             triggers: None,
             dsl_jobs: None,
+            dsl_calendars: None,
+            policy_dsl_adopt_on_mutate: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             config_path: None,
             reload_counters: ReloadCounters::new(),
         })
@@ -112,6 +123,8 @@ impl ServerState {
             scheduler_tx: None,
             triggers: None,
             dsl_jobs: None,
+            dsl_calendars: None,
+            policy_dsl_adopt_on_mutate: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             config_path: None,
             reload_counters: ReloadCounters::new(),
         })
@@ -132,6 +145,8 @@ impl ServerState {
             scheduler_tx: None,
             triggers: None,
             dsl_jobs: None,
+            dsl_calendars: None,
+            policy_dsl_adopt_on_mutate: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             config_path: None,
             reload_counters: ReloadCounters::new(),
         })
@@ -191,6 +206,15 @@ pub fn server_router(state: Arc<ServerState>) -> Router {
                 .put(calendars::handle_update)
                 .delete(calendars::handle_delete),
         )
+        // Calendar adoption (Phase 2 — opt-in via Croniqfile policy block).
+        .route("/v1/calendars/{id}/adopt", post(calendars::handle_adopt))
+        .route(
+            "/v1/calendars/{id}/unadopt",
+            post(calendars::handle_unadopt),
+        )
+        // Job adoption (Phase 2.5 — same opt-in policy applies).
+        .route("/v1/jobs/{job_key}/adopt", post(jobs::handle_adopt))
+        .route("/v1/jobs/{job_key}/unadopt", post(jobs::handle_unadopt))
         // Dead letters
         .route("/v1/dead-letters", get(dead_letters::handle_list))
         .route(
@@ -776,6 +800,8 @@ mod tests {
             scheduler_tx: None,
             triggers: None,
             dsl_jobs: None,
+            dsl_calendars: None,
+            policy_dsl_adopt_on_mutate: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             config_path: None,
             reload_counters: ReloadCounters::new(),
         });

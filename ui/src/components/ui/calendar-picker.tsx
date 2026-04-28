@@ -30,7 +30,9 @@ export const CalendarPicker = forwardRef<HTMLSelectElement, Props>(
         >
           <option value="">— No calendar —</option>
           {calendars.data?.map((c) => (
-            <option key={c.calendar_id} value={c.name}>{c.name}</option>
+            <option key={c.calendar_id} value={c.name}>
+              {c.name}{c.managed_by === 'dsl' ? ' (DSL)' : ''}
+            </option>
           ))}
         </select>
         <p className="text-[11px] text-muted-foreground mt-1">

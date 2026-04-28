@@ -71,6 +71,8 @@ pub struct RuntimeConfig {
     pub pull_api: Option<PullApiConfig>,
     pub observability: Option<ObservabilityConfig>,
     pub mcp: Option<McpConfig>,
+    /// Server-wide opt-in flags. Absent block ⇒ all defaults (deny).
+    pub policy: PolicyConfig,
     pub jobs: Vec<JobConfig>,
     pub calendars: Vec<CalendarConfig>,
 }
@@ -85,6 +87,21 @@ impl Default for McpConfig {
     fn default() -> Self {
         Self { enabled: true }
     }
+}
+
+/// Server-wide opt-in policy flags. Default state is restrictive — every
+/// flag must be set explicitly in the Croniqfile to take effect.
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct PolicyConfig {
+    /// When `true`, mutating an API endpoint on a DSL-managed resource (job,
+    /// schedule, calendar) is allowed via the explicit `/adopt` action: the
+    /// resource is copied into the API store and the DSL key is excluded
+    /// from subsequent reloads. Default: `false` (mutations return 409).
+    ///
+    /// Phase 2 only supports the boolean form. The grammar is shaped so a
+    /// future per-resource block (`dsl_adopt_on_mutate { calendars true; jobs false }`)
+    /// can be added without breaking existing files.
+    pub dsl_adopt_on_mutate: bool,
 }
 
 #[derive(Debug, Clone, Default, Serialize)]
@@ -251,6 +268,7 @@ pub fn compile(ast: &Croniqfile) -> RuntimeConfig {
     let mut pull_api = None;
     let mut observability = None;
     let mut mcp: Option<McpConfig> = None;
+    let mut policy = PolicyConfig::default();
     let mut default_timezone: Option<String> = None;
     let mut default_timeout: Option<String> = None;
     let mut default_retry = RetryConfig::default();
@@ -467,6 +485,16 @@ pub fn compile(ast: &Croniqfile) -> RuntimeConfig {
                 }
                 mcp = Some(cfg);
             }
+            Item::Policy(p) => {
+                for d in &p.directives {
+                    if d.key.value.as_str() == "dsl_adopt_on_mutate"
+                        && let Some(a) = d.args.first()
+                    {
+                        policy.dsl_adopt_on_mutate =
+                            matches!(a.value.as_str(), "true" | "yes" | "1" | "on");
+                    }
+                }
+            }
             _ => {}
         }
     }
@@ -476,6 +504,7 @@ pub fn compile(ast: &Croniqfile) -> RuntimeConfig {
         pull_api,
         observability,
         mcp,
+        policy,
         jobs,
         calendars,
     }
