@@ -356,7 +356,10 @@ async fn unadopt_restores_dsl_visibility() {
     )
     .await;
     assert_eq!(status, 200);
-    let api_id = body["calendar"]["calendar_id"].as_str().unwrap().to_string();
+    let api_id = body["calendar"]["calendar_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
 
     // Unadopt by API UUID.
     let app2 = server_router(Arc::clone(&state));

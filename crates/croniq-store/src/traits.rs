@@ -206,11 +206,7 @@ pub trait DslAdoptionStore {
     fn insert_adoption(&self, adoption: &DslAdoption) -> Result<(), StoreError>;
     /// Remove an adoption record. Returns `Ok(true)` when a row was removed,
     /// `Ok(false)` when no matching adoption existed.
-    fn delete_adoption(
-        &self,
-        resource_type: &str,
-        resource_key: &str,
-    ) -> Result<bool, StoreError>;
+    fn delete_adoption(&self, resource_type: &str, resource_key: &str) -> Result<bool, StoreError>;
     /// Returns `true` if an adoption record exists for the given resource.
     fn is_adopted(&self, resource_type: &str, resource_key: &str) -> Result<bool, StoreError>;
     /// List all adoption records for the given `resource_type`. Used by the

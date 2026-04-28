@@ -190,8 +190,7 @@ async fn main() -> Result<()> {
     // scheduler task on Croniqfile reload so the REST API can union DSL
     // entries into `/v1/jobs`, `/v1/schedules`, and `/v1/calendars`.
     let dsl_jobs_shared = Arc::new(tokio::sync::RwLock::new(dsl_jobs_initial.clone()));
-    let dsl_calendars_shared =
-        Arc::new(tokio::sync::RwLock::new(dsl_calendars_initial.clone()));
+    let dsl_calendars_shared = Arc::new(tokio::sync::RwLock::new(dsl_calendars_initial.clone()));
 
     let config_path_abs = cli
         .config

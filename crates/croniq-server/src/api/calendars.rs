@@ -394,18 +394,15 @@ pub async fn handle_delete(
             message: "store unavailable".into(),
         }),
     ))?;
-    if let Some(existing) = store
-        .get_calendar(&id)
-        .map_err(|_| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ValidationError {
-                    error: "store_error",
-                    message: "failed to load calendar".into(),
-                }),
-            )
-        })?
-        && existing.managed_by == "dsl"
+    if let Some(existing) = store.get_calendar(&id).map_err(|_| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ValidationError {
+                error: "store_error",
+                message: "failed to load calendar".into(),
+            }),
+        )
+    })? && existing.managed_by == "dsl"
     {
         return Err((
             StatusCode::CONFLICT,
@@ -459,10 +456,7 @@ pub async fn handle_adopt(
             }),
         ));
     }
-    if !state
-        .policy_dsl_adopt_on_mutate
-        .load(Ordering::Relaxed)
-    {
+    if !state.policy_dsl_adopt_on_mutate.load(Ordering::Relaxed) {
         return Err((
             StatusCode::CONFLICT,
             Json(ValidationError {
@@ -621,17 +615,15 @@ pub async fn handle_unadopt(
             }),
         ))?;
 
-    let was_adopted = store
-        .is_adopted("calendar", &existing.name)
-        .map_err(|_| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ValidationError {
-                    error: "store_error",
-                    message: "failed to look up adoption".into(),
-                }),
-            )
-        })?;
+    let was_adopted = store.is_adopted("calendar", &existing.name).map_err(|_| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ValidationError {
+                error: "store_error",
+                message: "failed to look up adoption".into(),
+            }),
+        )
+    })?;
     if !was_adopted {
         return Err((
             StatusCode::CONFLICT,

@@ -846,8 +846,12 @@ mod tests {
     #[tokio::test]
     async fn adopt_job_returns_409_when_policy_off() {
         let state = make_state(vec![dsl_job("billing:invoice")], make_store());
-        let (status, body) =
-            body_json(server_router(state), "POST", "/v1/jobs/billing:invoice/adopt").await;
+        let (status, body) = body_json(
+            server_router(state),
+            "POST",
+            "/v1/jobs/billing:invoice/adopt",
+        )
+        .await;
         assert_eq!(status, 409);
         assert_eq!(body["error"], "adoption_disabled");
     }
@@ -943,12 +947,8 @@ mod tests {
             .unwrap();
         let state = make_state_with_policy(vec![], Arc::clone(&store), true);
 
-        let (status, body) = body_json(
-            server_router(state),
-            "POST",
-            "/v1/jobs/api:regular/unadopt",
-        )
-        .await;
+        let (status, body) =
+            body_json(server_router(state), "POST", "/v1/jobs/api:regular/unadopt").await;
         assert_eq!(status, 409);
         assert_eq!(body["error"], "not_adopted");
     }
@@ -956,8 +956,8 @@ mod tests {
     #[tokio::test]
     async fn adopt_returns_404_for_unknown_dsl_key() {
         let state = make_state_with_policy(vec![dsl_job("only:one")], make_store(), true);
-        let (status, body) = body_json(server_router(state), "POST", "/v1/jobs/missing:job/adopt")
-            .await;
+        let (status, body) =
+            body_json(server_router(state), "POST", "/v1/jobs/missing:job/adopt").await;
         assert_eq!(status, 404);
         assert_eq!(body["error"], "not_found");
     }

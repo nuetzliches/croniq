@@ -612,7 +612,10 @@ mod tests {
             !keys.contains(&"billing:invoice"),
             "adopted job dropped from DSL set"
         );
-        assert!(keys.contains(&"etl:sync"), "non-adopted job still in DSL set");
+        assert!(
+            keys.contains(&"etl:sync"),
+            "non-adopted job still in DSL set"
+        );
         assert!(
             !plan.merged_triggers.contains_key("billing:invoice"),
             "adopted job's trigger must not appear in merged set"

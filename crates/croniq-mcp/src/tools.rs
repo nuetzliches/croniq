@@ -1654,10 +1654,7 @@ impl CroniqMcp {
         let store = self.require_store()?;
 
         if self.jobs.contains_key(job_key) {
-            return Err(McpError::invalid_params(
-                dsl_job_refusal_msg(job_key),
-                None,
-            ));
+            return Err(McpError::invalid_params(dsl_job_refusal_msg(job_key), None));
         }
 
         let mut job = store

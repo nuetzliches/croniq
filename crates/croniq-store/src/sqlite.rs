@@ -1018,11 +1018,7 @@ impl DslAdoptionStore for SqliteStore {
         Ok(())
     }
 
-    fn delete_adoption(
-        &self,
-        resource_type: &str,
-        resource_key: &str,
-    ) -> Result<bool, StoreError> {
+    fn delete_adoption(&self, resource_type: &str, resource_key: &str) -> Result<bool, StoreError> {
         let conn = self.conn.lock().unwrap();
         let n = conn
             .execute(
