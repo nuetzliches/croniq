@@ -1,9 +1,68 @@
 //! Compiles a Croniqfile AST into a RuntimeConfig with resolved defaults and placeholders.
 
 use crate::ast::{self, *};
+use crate::placeholders;
 use crate::schedule::CompiledSchedule;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+
+/// Resolve a single `StringValue` against the vars map.
+///
+/// If the value is a placeholder (`{vars.X}`, `{env.X}`, `{$X}`, `{file.X}`),
+/// run it through `placeholders::resolve`. On failure (unresolved env var,
+/// missing file, etc.) we fall back to the raw value so a misconfigured
+/// Croniqfile still compiles — same shape as the previous behaviour, which
+/// was to never resolve at all.
+fn resolve_str(val: &StringValue, vars: &HashMap<String, String>) -> String {
+    if val.is_placeholder {
+        placeholders::resolve(&val.value, vars).unwrap_or_else(|_| val.value.clone())
+    } else {
+        val.value.clone()
+    }
+}
+
+/// Resolve the first arg of a directive into an owned `String`, applying
+/// placeholder substitution if present.
+fn first_arg(d: &Directive, vars: &HashMap<String, String>) -> Option<String> {
+    d.args.first().map(|a| resolve_str(a, vars))
+}
+
+/// Walk the top-level items and collect every `vars { … }` entry into a
+/// `HashMap` BEFORE compilation proper begins. This makes the order of
+/// `vars`/`defaults`/`calendar`/`job` blocks irrelevant — placeholders are
+/// resolvable as long as the referenced var is defined somewhere in the file.
+fn collect_vars(ast: &Croniqfile) -> HashMap<String, String> {
+    let mut vars = HashMap::new();
+    // First, gather literal entries (so {vars.X} placeholders inside other
+    // vars values can resolve against already-known vars). We do not attempt
+    // recursive resolution beyond a single pass.
+    for item in &ast.items {
+        if let Item::Vars(v) = item {
+            for d in &v.entries {
+                if let Some(val) = d.args.first()
+                    && !val.is_placeholder
+                {
+                    vars.insert(d.key.value.clone(), val.value.clone());
+                }
+            }
+        }
+    }
+    // Second pass: resolve placeholder vars values against the literals we
+    // just collected (plus env/file lookups via `placeholders::resolve`).
+    for item in &ast.items {
+        if let Item::Vars(v) = item {
+            for d in &v.entries {
+                if let Some(val) = d.args.first()
+                    && val.is_placeholder
+                {
+                    let resolved = resolve_str(val, &vars);
+                    vars.insert(d.key.value.clone(), resolved);
+                }
+            }
+        }
+    }
+    vars
+}
 
 /// Fully resolved runtime configuration.
 #[derive(Debug, Clone, Serialize)]
@@ -202,7 +261,10 @@ pub fn compile(ast: &Croniqfile) -> RuntimeConfig {
     let mut default_max_queue_depth: Option<u32> = None;
     let mut jobs = Vec::new();
     let mut calendars = Vec::new();
-    let mut vars = HashMap::new();
+
+    // Collect every `vars { … }` entry from the file up-front so placeholder
+    // resolution does not depend on block ordering.
+    let vars = collect_vars(ast);
 
     for item in &ast.items {
         match item {
@@ -210,18 +272,18 @@ pub fn compile(ast: &Croniqfile) -> RuntimeConfig {
                 for d in &s.directives {
                     match d.key.value.as_str() {
                         "listen" => {
-                            if let Some(a) = d.args.first() {
-                                server.listen = a.value.clone();
+                            if let Some(v) = first_arg(d, &vars) {
+                                server.listen = v;
                             }
                         }
                         "data_dir" => {
-                            if let Some(a) = d.args.first() {
-                                server.data_dir = a.value.clone();
+                            if let Some(v) = first_arg(d, &vars) {
+                                server.data_dir = v;
                             }
                         }
                         "db" => {
-                            if let Some(a) = d.args.first() {
-                                server.db = a.value.clone();
+                            if let Some(v) = first_arg(d, &vars) {
+                                server.db = v;
                             }
                         }
                         _ => {}
@@ -237,22 +299,22 @@ pub fn compile(ast: &Croniqfile) -> RuntimeConfig {
                 for d in &p.directives {
                     match d.key.value.as_str() {
                         "listen" => {
-                            if let Some(a) = d.args.first() {
-                                cfg.listen = a.value.clone();
+                            if let Some(v) = first_arg(d, &vars) {
+                                cfg.listen = v;
                             }
                         }
                         "auth" => {
                             cfg.auth = Some(
                                 d.args
                                     .iter()
-                                    .map(|a| a.value.as_str())
+                                    .map(|a| resolve_str(a, &vars))
                                     .collect::<Vec<_>>()
                                     .join(" "),
                             );
                         }
                         "lease_ttl" => {
-                            if let Some(a) = d.args.first() {
-                                cfg.lease_ttl = a.value.clone();
+                            if let Some(v) = first_arg(d, &vars) {
+                                cfg.lease_ttl = v;
                             }
                         }
                         _ => {}
@@ -260,34 +322,30 @@ pub fn compile(ast: &Croniqfile) -> RuntimeConfig {
                 }
                 pull_api = Some(cfg);
             }
-            Item::Vars(v) => {
-                for d in &v.entries {
-                    if let Some(val) = d.args.first() {
-                        vars.insert(d.key.value.clone(), val.value.clone());
-                    }
-                }
+            Item::Vars(_) => {
+                // Vars are pre-collected via `collect_vars`; nothing to do here.
             }
             Item::Defaults(d) => {
                 for dob in &d.directives {
                     match dob {
                         DirectiveOrBlock::Directive(dir) => match dir.key.value.as_str() {
                             "timezone" => {
-                                default_timezone = dir.args.first().map(|a| a.value.clone());
+                                default_timezone = first_arg(dir, &vars);
                             }
                             "timeout" => {
-                                default_timeout = dir.args.first().map(|a| a.value.clone());
+                                default_timeout = first_arg(dir, &vars);
                             }
                             "execution_mode" => {
-                                if let Some(v) = dir.args.first() {
-                                    default_execution_mode = match v.value.as_str() {
+                                if let Some(v) = first_arg(dir, &vars) {
+                                    default_execution_mode = match v.as_str() {
                                         "ephemeral" => ExecutionMode::Ephemeral,
                                         _ => ExecutionMode::Queued,
                                     };
                                 }
                             }
                             "catch_up" => {
-                                if let Some(v) = dir.args.first() {
-                                    default_catch_up = match v.value.as_str() {
+                                if let Some(v) = first_arg(dir, &vars) {
+                                    default_catch_up = match v.as_str() {
                                         "latest" => CatchUpPolicy::Latest,
                                         "none" => CatchUpPolicy::None,
                                         _ => CatchUpPolicy::All,
@@ -295,24 +353,20 @@ pub fn compile(ast: &Croniqfile) -> RuntimeConfig {
                                 }
                             }
                             "queue_ttl" => {
-                                default_queue_ttl = dir
-                                    .args
-                                    .first()
-                                    .map(|a| a.value.clone())
-                                    .filter(|v| v != "none");
+                                default_queue_ttl = first_arg(dir, &vars).filter(|v| v != "none");
                             }
                             "max_queue_depth" => {
                                 default_max_queue_depth =
-                                    dir.args.first().and_then(|a| a.value.parse().ok());
+                                    first_arg(dir, &vars).and_then(|v| v.parse().ok());
                             }
                             _ => {}
                         },
                         DirectiveOrBlock::Block(block) => match block.name.value.as_str() {
                             "retry" => {
-                                default_retry = compile_retry_block(block);
+                                default_retry = compile_retry_block(block, &vars);
                             }
                             "dead_letter" => {
-                                default_dead_letter = compile_dead_letter_block(block);
+                                default_dead_letter = compile_dead_letter_block(block, &vars);
                             }
                             _ => {}
                         },
@@ -321,7 +375,7 @@ pub fn compile(ast: &Croniqfile) -> RuntimeConfig {
                 }
             }
             Item::Calendar(cal) => {
-                calendars.push(compile_calendar(cal));
+                calendars.push(compile_calendar(cal, &vars));
             }
             Item::Job(job) => {
                 jobs.push(compile_job(
@@ -336,6 +390,7 @@ pub fn compile(ast: &Croniqfile) -> RuntimeConfig {
                         queue_ttl: default_queue_ttl.clone(),
                         max_queue_depth: default_max_queue_depth,
                     },
+                    &vars,
                 ));
             }
             Item::Observability(obs) => {
@@ -352,18 +407,18 @@ pub fn compile(ast: &Croniqfile) -> RuntimeConfig {
                                 if let DirectiveOrBlock::Directive(dir) = d {
                                     match dir.key.value.as_str() {
                                         "level" => {
-                                            if let Some(a) = dir.args.first() {
-                                                log.level = a.value.clone();
+                                            if let Some(v) = first_arg(dir, &vars) {
+                                                log.level = v;
                                             }
                                         }
                                         "format" => {
-                                            if let Some(a) = dir.args.first() {
-                                                log.format = a.value.clone();
+                                            if let Some(v) = first_arg(dir, &vars) {
+                                                log.format = v;
                                             }
                                         }
                                         "output" => {
-                                            if let Some(a) = dir.args.first() {
-                                                log.output = a.value.clone();
+                                            if let Some(v) = first_arg(dir, &vars) {
+                                                log.output = v;
                                             }
                                         }
                                         _ => {}
@@ -381,13 +436,13 @@ pub fn compile(ast: &Croniqfile) -> RuntimeConfig {
                                 if let DirectiveOrBlock::Directive(dir) = d {
                                     match dir.key.value.as_str() {
                                         "listen" => {
-                                            if let Some(a) = dir.args.first() {
-                                                metrics.listen = a.value.clone();
+                                            if let Some(v) = first_arg(dir, &vars) {
+                                                metrics.listen = v;
                                             }
                                         }
                                         "path" => {
-                                            if let Some(a) = dir.args.first() {
-                                                metrics.path = a.value.clone();
+                                            if let Some(v) = first_arg(dir, &vars) {
+                                                metrics.path = v;
                                             }
                                         }
                                         _ => {}
@@ -438,7 +493,11 @@ struct JobDefaults {
     max_queue_depth: Option<u32>,
 }
 
-fn compile_job(job: &JobBlock, defaults: &JobDefaults) -> JobConfig {
+fn compile_job(
+    job: &JobBlock,
+    defaults: &JobDefaults,
+    vars: &HashMap<String, String>,
+) -> JobConfig {
     let schedule = job
         .schedule
         .as_ref()
@@ -456,10 +515,10 @@ fn compile_job(job: &JobBlock, defaults: &JobDefaults) -> JobConfig {
     if let Some(ref sched) = job.schedule {
         for opt in &sched.options {
             match opt.key.value.as_str() {
-                "timezone" => timezone = opt.args.first().map(|a| a.value.clone()),
-                "calendar" => calendar = opt.args.first().map(|a| a.value.clone()),
-                "not_before" => not_before = opt.args.first().map(|a| a.value.clone()),
-                "not_after" => not_after = opt.args.first().map(|a| a.value.clone()),
+                "timezone" => timezone = first_arg(opt, vars),
+                "calendar" => calendar = first_arg(opt, vars),
+                "not_before" => not_before = first_arg(opt, vars),
+                "not_after" => not_after = first_arg(opt, vars),
                 _ => {}
             }
         }
@@ -486,20 +545,20 @@ fn compile_job(job: &JobBlock, defaults: &JobDefaults) -> JobConfig {
     for dob in &job.directives {
         match dob {
             DirectiveOrBlock::Directive(d) => match d.key.value.as_str() {
-                "description" => description = d.args.first().map(|a| a.value.clone()),
-                "timeout" => timeout = d.args.first().map(|a| a.value.clone()),
-                "window" => window = d.args.first().map(|a| a.value.clone()),
+                "description" => description = first_arg(d, vars),
+                "timeout" => timeout = first_arg(d, vars),
+                "window" => window = first_arg(d, vars),
                 "execution_mode" => {
-                    if let Some(v) = d.args.first() {
-                        execution_mode = match v.value.as_str() {
+                    if let Some(v) = first_arg(d, vars) {
+                        execution_mode = match v.as_str() {
                             "ephemeral" => ExecutionMode::Ephemeral,
                             _ => ExecutionMode::Queued,
                         };
                     }
                 }
                 "catch_up" => {
-                    if let Some(v) = d.args.first() {
-                        catch_up = match v.value.as_str() {
+                    if let Some(v) = first_arg(d, vars) {
+                        catch_up = match v.as_str() {
                             "latest" => CatchUpPolicy::Latest,
                             "none" => CatchUpPolicy::None,
                             _ => CatchUpPolicy::All,
@@ -507,27 +566,23 @@ fn compile_job(job: &JobBlock, defaults: &JobDefaults) -> JobConfig {
                     }
                 }
                 "queue_ttl" => {
-                    queue_ttl = d
-                        .args
-                        .first()
-                        .map(|a| a.value.clone())
-                        .filter(|v| v != "none");
+                    queue_ttl = first_arg(d, vars).filter(|v| v != "none");
                 }
                 "max_queue_depth" => {
-                    max_queue_depth = d.args.first().and_then(|a| a.value.parse().ok());
+                    max_queue_depth = first_arg(d, vars).and_then(|v| v.parse().ok());
                 }
                 _ => {}
             },
             DirectiveOrBlock::Block(block) => match block.name.value.as_str() {
-                "runner" => runner = compile_runner_block(block),
-                "retry" => retry = compile_retry_block(block),
-                "dead_letter" => dead_letter = compile_dead_letter_block(block),
+                "runner" => runner = compile_runner_block(block, vars),
+                "retry" => retry = compile_retry_block(block, vars),
+                "dead_letter" => dead_letter = compile_dead_letter_block(block, vars),
                 "metadata" => {
                     for inner in &block.directives {
                         if let DirectiveOrBlock::Directive(d) = inner
-                            && let Some(v) = d.args.first()
+                            && let Some(v) = first_arg(d, vars)
                         {
-                            metadata.insert(d.key.value.clone(), v.value.clone());
+                            metadata.insert(d.key.value.clone(), v);
                         }
                     }
                 }
@@ -570,11 +625,11 @@ fn compile_job(job: &JobBlock, defaults: &JobDefaults) -> JobConfig {
     }
 }
 
-fn compile_runner_block(block: &NamedBlock) -> RunnerConfig {
+fn compile_runner_block(block: &NamedBlock, vars: &HashMap<String, String>) -> RunnerConfig {
     let mut cfg = RunnerConfig::default();
     for dob in &block.directives {
         if let DirectiveOrBlock::Directive(d) = dob {
-            let val = d.args.first().map(|a| a.value.clone()).unwrap_or_default();
+            let val = first_arg(d, vars).unwrap_or_default();
             match d.key.value.as_str() {
                 "require" => cfg.require.push(val),
                 "prefer" => cfg.prefer.push(val),
@@ -587,7 +642,7 @@ fn compile_runner_block(block: &NamedBlock) -> RunnerConfig {
     cfg
 }
 
-fn compile_retry_block(block: &NamedBlock) -> RetryConfig {
+fn compile_retry_block(block: &NamedBlock, vars: &HashMap<String, String>) -> RetryConfig {
     let strategy = block
         .qualifier
         .as_ref()
@@ -601,13 +656,13 @@ fn compile_retry_block(block: &NamedBlock) -> RetryConfig {
 
     for dob in &block.directives {
         if let DirectiveOrBlock::Directive(d) = dob {
-            let val = d.args.first().map(|a| a.value.as_str()).unwrap_or("");
+            let val = first_arg(d, vars).unwrap_or_default();
             match d.key.value.as_str() {
                 "max_attempts" => cfg.max_attempts = val.parse().unwrap_or(3),
-                "base" => cfg.base = Some(val.to_string()),
-                "cap" => cfg.cap = Some(val.to_string()),
-                "delay" => cfg.delay = Some(val.to_string()),
-                "step" => cfg.step = Some(val.to_string()),
+                "base" => cfg.base = Some(val),
+                "cap" => cfg.cap = Some(val),
+                "delay" => cfg.delay = Some(val),
+                "step" => cfg.step = Some(val),
                 "jitter" => cfg.jitter = val.parse().ok(),
                 _ => {}
             }
@@ -616,13 +671,16 @@ fn compile_retry_block(block: &NamedBlock) -> RetryConfig {
     cfg
 }
 
-fn compile_dead_letter_block(block: &NamedBlock) -> DeadLetterConfig {
+fn compile_dead_letter_block(
+    block: &NamedBlock,
+    vars: &HashMap<String, String>,
+) -> DeadLetterConfig {
     let mut cfg = DeadLetterConfig::default();
     for dob in &block.directives {
         if let DirectiveOrBlock::Directive(d) = dob {
             match d.key.value.as_str() {
-                "retention" => cfg.retention = d.args.first().map(|a| a.value.clone()),
-                "operator_hint" => cfg.operator_hint = d.args.first().map(|a| a.value.clone()),
+                "retention" => cfg.retention = first_arg(d, vars),
+                "operator_hint" => cfg.operator_hint = first_arg(d, vars),
                 _ => {}
             }
         }
@@ -630,14 +688,14 @@ fn compile_dead_letter_block(block: &NamedBlock) -> DeadLetterConfig {
     cfg
 }
 
-fn compile_calendar(cal: &CalendarBlock) -> CalendarConfig {
+fn compile_calendar(cal: &CalendarBlock, vars: &HashMap<String, String>) -> CalendarConfig {
     let mut timezone = None;
     let mut rules = Vec::new();
 
     for rule in &cal.rules {
         if rule.rule_type.value == "timezone" {
             // Special case: timezone is stored as a rule in AST
-            timezone = rule.args.first().map(|a| a.value.clone());
+            timezone = rule.args.first().map(|a| resolve_str(a, vars));
             continue;
         }
         let kind = match rule.kind {
@@ -647,7 +705,7 @@ fn compile_calendar(cal: &CalendarBlock) -> CalendarConfig {
         rules.push(CalendarRuleConfig {
             kind: kind.to_string(),
             rule_type: rule.rule_type.value.clone(),
-            args: rule.args.iter().map(|a| a.value.clone()).collect(),
+            args: rule.args.iter().map(|a| resolve_str(a, vars)).collect(),
         });
     }
 
@@ -707,5 +765,73 @@ mod tests {
         .unwrap();
         let cfg = compile(&ast);
         assert_eq!(cfg.jobs[0].timeout.as_deref(), Some("10m"));
+    }
+
+    #[test]
+    fn vars_placeholder_resolves_in_calendar_timezone() {
+        let ast = Parser::parse(
+            r#"
+            vars { default_tz Europe/Vienna }
+            calendar business-days {
+                timezone {vars.default_tz}
+                include weekly monday tuesday wednesday thursday friday
+            }
+        "#,
+        )
+        .unwrap();
+        let cfg = compile(&ast);
+        assert_eq!(cfg.calendars.len(), 1);
+        assert_eq!(
+            cfg.calendars[0].timezone.as_deref(),
+            Some("Europe/Vienna"),
+            "calendar timezone must resolve {{vars.default_tz}} to its value"
+        );
+    }
+
+    #[test]
+    fn vars_placeholder_resolves_in_defaults_and_job_timezone() {
+        let ast = Parser::parse(
+            r#"
+            vars { default_tz Europe/Vienna; alt_tz UTC }
+            defaults { timezone {vars.default_tz} }
+            job etl:sync { every 15 minutes { timezone {vars.alt_tz} } }
+            job etl:report { every 1 hours }
+        "#,
+        )
+        .unwrap();
+        let cfg = compile(&ast);
+        // Job with explicit schedule timezone option uses its own var.
+        let sync = cfg.jobs.iter().find(|j| j.key == "etl:sync").unwrap();
+        assert_eq!(sync.timezone.as_deref(), Some("UTC"));
+        // Job without override inherits the resolved defaults timezone.
+        let report = cfg.jobs.iter().find(|j| j.key == "etl:report").unwrap();
+        assert_eq!(report.timezone.as_deref(), Some("Europe/Vienna"));
+    }
+
+    #[test]
+    fn vars_resolution_works_when_vars_block_is_after_consumer() {
+        // collect_vars runs as a pre-pass, so block ordering must not matter.
+        let ast = Parser::parse(
+            r#"
+            calendar business-days { timezone {vars.default_tz} }
+            vars { default_tz Europe/Vienna }
+        "#,
+        )
+        .unwrap();
+        let cfg = compile(&ast);
+        assert_eq!(cfg.calendars[0].timezone.as_deref(), Some("Europe/Vienna"));
+    }
+
+    #[test]
+    fn unresolved_vars_placeholder_falls_back_to_raw_value() {
+        // Missing var → raw `vars.X` is preserved (does not panic).
+        let ast = Parser::parse(
+            r#"
+            calendar holidays { timezone {vars.missing} }
+        "#,
+        )
+        .unwrap();
+        let cfg = compile(&ast);
+        assert_eq!(cfg.calendars[0].timezone.as_deref(), Some("vars.missing"));
     }
 }
