@@ -6,6 +6,162 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-04-27
+
+### Added
+
+- **HTTP MCP transport** mounted at `/mcp` on the same port as the REST API.
+  Streamable-HTTP per the MCP spec, behind the same JWT/API-key auth layer.
+  Toggle via Croniqfile `mcp { enabled false }`; default is enabled when the
+  block is absent. Available alongside the existing stdio transport
+  (`croniq-mcp`).
+- `mcp:read` and `mcp:write` scopes for HTTP MCP access. `mcp:read` gates any
+  `/mcp` request (initialize, tools/list, tools/call); `mcp:write`
+  additionally gates the 17 mutation tools (`enqueue_job`, `cancel_execution`,
+  `job_trigger`, all `*_job` / `*_schedule` / `*_calendar` mutations,
+  `delete_runner`, `delete_dead_letter`, `dlq_retry`). `admin` is a wildcard.
+- `croniq-mcp` toolset expanded from 12 to 31 tools — full CRUD over jobs,
+  schedules, calendars, and dead letters; queue observability; live forecast
+  (`dashboard_forecast`, HTTP transport only); execution log access
+  (`get_execution_logs`).
+- `PUT /v1/jobs/{job_key}` patches mutable job metadata (`description`,
+  `timeout`, `max_retries`, `dead_letter_enabled`); JSON object semantics —
+  missing key keeps the value, explicit `null` clears it. DSL-managed jobs
+  return 409 `JobError::DslManaged`.
+- `PUT /v1/calendars/{id}` patches name, timezone, and rules. Rules are
+  re-validated through the Croniqfile DSL parser; failures return 422.
+- `PUT /v1/api-clients/{id}` patches `name`, `scopes`, `is_active`. Empty
+  scope set is rejected.
+- Schedule calendar gating: `RegisterJobRequest` and `UpdateTriggerRequest`
+  accept a `calendar` field (calendar name); `UPDATE schedules` matches
+  `managed_by != 'dsl'` so DSL-owned rows are not mutated by API edits.
+- `EditJobDialog` UI component with separate JOB and SCHEDULE fieldsets,
+  Builder/Advanced toggle for the cron expression, `TimezoneInput`
+  typeahead, and a clarified "Execution timeout" label.
+- `CalendarPicker` dropdown reused in Create Job and Create/Edit Schedule,
+  driven by `useCalendars()`.
+- Pencil / "Edit" buttons on `JobsPage`, `CalendarsPage`, and `SettingsPage`
+  rows; dialogs seed from the selected row and submit to the new PUT
+  endpoints.
+- API-key reveal in Settings is gated behind a confirm dialog with a
+  "shown only once" warning.
+
+### Changed
+
+- Forecast logic moved from `croniq-server::dashboard` to
+  `croniq-scheduler::forecast` so the HTTP API (`GET /v1/dashboard/forecast`)
+  and the MCP `dashboard_forecast` tool produce identical bucketing from a
+  single implementation.
+- `DynStore` is now a re-export of `croniq-store::traits::Store`. The local
+  `StoreExt` supertrait shim in `croniq-server::store` is removed.
+- `humanizeScheduleError` (UI) accepts a `managedBy` context so a 409 on a
+  non-DSL row renders the correct ownership message instead of a generic
+  conflict toast.
+- 409 errors on edit dialogs render inline next to the field instead of
+  surfacing as a toast; the dialog stays open so the user can correct.
+
+### CI/Build
+
+- `actions/setup-node` bumped from a v4 SHA (Node 20 entrypoint) to v6.4.0,
+  removing the "Node.js 20 is deprecated" warning that was being emitted on
+  every CI run after the GitHub Actions Node 20 deprecation took effect.
+
+## [0.6.0] - 2026-04-27
+
+### Added
+
+- `PUT /v1/schedules/{trigger_id}` patches API-managed trigger fields
+  (`cron_expression`, `timezone`, `enabled`); DSL-managed rows return 409.
+  The live scheduler is updated atomically via `Remove + AddJob`.
+- Schedule create/edit dialog: pencil icon on each row seeds the form from
+  the existing trigger; Builder/Advanced toggle for the cron expression,
+  shared with the DSL generator.
+- Dashboard stale-data banner: when the most recent execution is older than
+  5 minutes, a banner appears above the Live Activity feed (30-second tick)
+  with a link to `/runners` for investigation.
+- Silence dividers in the activity feed between rows more than 30 minutes
+  apart (`silence · 4h` instead of stacked timestamps).
+- Standalone Croniqfile DSL generator at `/generator.html` with live
+  `<output aria-live="polite">` and Copy button — matches the in-app
+  Schedule and Calendar panels.
+- WASM bridge for `croniq-config` via `wasm-pack`; the React UI calls
+  `format_calendar_rules` and `format_schedule_inner` for canonical DSL
+  preview output.
+- Animated terminal demo on the landing page (typewriter effect, two tabs:
+  `croniq quickstart` / `croniq jobs list`, autoplay on scroll, replay
+  button).
+- Install tabs on the landing page replacing the static install list:
+  docker / brew / cargo / curl with copy buttons.
+- Landing page footer with DSL Generator link, Changelog, contact email,
+  Impressum, Datenschutz.
+- "Trigger now" button on the JobDetail header next to "Copy job key";
+  disabled when the job is inactive.
+
+### Changed
+
+- **Calendar rule editor rebuilt** in both surfaces (in-app
+  `CalendarRuleBuilder` and `/generator.html`). Weekly: 7 day-toggle buttons
+  plus Weekday / Weekend / Every-day presets. Monthly: 31 ordinal toggles
+  plus "last day" plus 1st / 15th / Last presets. Annual: month `<select>`
+  plus day `<input>` with live "Jan 25" preview. Window: two
+  `<input type="time">` joined "to". Timezone: typeahead via
+  `TimezoneInput` (in-app) / shared `<datalist>` (standalone).
+- **Active-day DSL expansion**: parser accepts `Mon..Fri` ranges and
+  `weekday` / `weekend` aliases; expands inclusively (wraps for long-weekend
+  rotations like `Fri..Mon`). Weekdays are case-insensitive in 3-letter and
+  full forms. The formatter emits 3-letter capitalised aliases
+  (`weekday`, `Mon..Wed`) instead of quoted full names — output is stable
+  round-trip.
+- JobDetail header: relabeled `UPDATED` → `LOADED` for DSL-managed jobs
+  (detected via `schedules.managed_by`); `Runner` → `Assigned Runner`.
+- Timezone combobox is portaled to `<body>` so it floats above modal
+  dialogs. Free-text validation: non-IANA values render with inline error
+  and red border; empty stays valid (server falls back to UTC).
+- `/generator.html` emits DSL into `<output aria-live="polite">` (was
+  plain `<pre>`) for screen-reader consistency.
+
+### Fixed
+
+- **Weekday range expansion bug**: `Mon..Fri` previously dropped middle
+  days, so calendars using ranges fired only on Monday and Friday instead of
+  all five. Fixed by computing inclusive weekday ranges.
+- **Docker build regression in the WASM bridge**: added a `wasm-builder`
+  stage pinned to `$BUILDPLATFORM`, fetches a pre-built `wasm-pack`
+  binary, copies the WASM artefacts into `ui/src/lib/wasm/` before
+  `npm run build`. `build-wasm.sh` trusts existing artefacts in the
+  Docker context so CI does not re-build inside the container.
+- Timezone combobox: option clicks now properly select; the outside-click
+  predicate now checks `listboxRef` so listbox clicks no longer dismiss.
+- UI polish bundle: copy buttons, confirm dialogs on destructive actions,
+  relative-time + ISO timestamps in tooltips, theme follows OS by default,
+  pagination on long lists, dead-letter id surfaced in the table row.
+- Responsive sidebar on narrow viewports; live polling on executions and
+  dead-letter pages refreshes without manual reload.
+- Scope picker sync (form state stayed stale on add/remove); fragment keys
+  on list rendering; mutation toasts on success and failure paths; dialog
+  labels matching their bound fields.
+- UTF-8 string lexing in the Croniqfile parser; the schedule pluralisation
+  rule now produces correct singular forms (`every 1 minute`, not
+  `every 1 minutes`).
+- Release workflow clones the tap repo for the formula update; the local
+  `Formula/croniq.rb` was deleted in v0.5.0 so the previous in-place edit
+  path no longer existed.
+
+### Performance
+
+- Multi-arch Docker build split across native runners: `ubuntu-latest`
+  (amd64) and `ubuntu-24.04-arm` (arm64 native, no QEMU). Each platform
+  caches independently; a `docker-merge` job stitches the manifests by
+  digest into a single multi-arch list. Wall time ~10–15 min, down from
+  ~60 min.
+- Docs-only PRs skip the Docker build and release-binary jobs by detecting
+  changes against `docs/`, `site/`, `README*`, and `CHANGELOG*`.
+
+### Documentation
+
+- `croniq-server --help` documents the `RUST_LOG` env var for
+  level/per-module log control.
+
 ## [0.5.0] - 2026-04-25
 
 ### Added
