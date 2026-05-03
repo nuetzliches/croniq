@@ -6,13 +6,16 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.8.1] - 2026-05-03
+
 ### Fixed
 
 - **First-run init**: `croniq init` now validates the `--api-key` prefix (and
   `--scopes`) **before** any DB writes, so a malformed `CRONIQ_INIT_API_KEY`
   no longer leaves behind a half-initialized database (admin user created, no
   API key persisted) that masked the failure on subsequent boots
-  ([#84](https://github.com/nuetzliches/croniq/issues/84)).
+  ([#84](https://github.com/nuetzliches/croniq/issues/84),
+  [#85](https://github.com/nuetzliches/croniq/pull/85)).
 - **Docker entrypoint**: `docker-entrypoint.sh` now captures the exit status
   of `croniq init`, removes the partial `croniq.db` on failure, and exits
   non-zero — so the container crash-loops visibly instead of silently
@@ -25,6 +28,19 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `croniq_` prefix requirement and an `openssl rand -hex 32` example.
 - `docker-compose.yml` clarifies the prefix requirement inline next to the
   demo `CRONIQ_INIT_API_KEY` value.
+
+### CI / Dependencies
+
+- Bump `actions/download-artifact` 7.0.0 → 8.0.1
+  ([#79](https://github.com/nuetzliches/croniq/pull/79)).
+- Bump `actions/upload-pages-artifact` 3.0.1 → 5.0.0
+  ([#80](https://github.com/nuetzliches/croniq/pull/80)).
+- Bump `docker/setup-qemu-action` 3.7.0 → 4.0.0
+  ([#81](https://github.com/nuetzliches/croniq/pull/81)).
+- Bump `docker/login-action` 3.7.0 → 4.1.0
+  ([#82](https://github.com/nuetzliches/croniq/pull/82)).
+- Bump `actions/deploy-pages` 4.0.5 → 5.0.0
+  ([#83](https://github.com/nuetzliches/croniq/pull/83)).
 
 ## [0.7.0] - 2026-04-27
 
