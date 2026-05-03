@@ -1,7 +1,7 @@
 # Croniq Roadmap
 
 Living punchlist of known improvements. Each item is sized for a single focused PR.
-Last reviewed: 2026-04-23.
+Last reviewed: 2026-05-03.
 
 ## Security hardening
 
@@ -50,3 +50,25 @@ Last reviewed: 2026-04-23.
   ([ui/src/pages/CalendarsPage.tsx](ui/src/pages/CalendarsPage.tsx))
 - **Code-split large UI bundle** — the UI build warns about a >500 kB chunk;
   consider `manualChunks` in `vite.config.ts`.
+
+## Integrations
+
+- **`runner publish { … }` — hookaido bridge** — thin DSL block that
+  publishes to a [hookaido](https://github.com/nuetzliches/hookaido) channel
+  on fire instead of running a subprocess. Croniq stays the scheduler;
+  hookaido handles durable HTTP delivery, HMAC signing, retries on the
+  delivery side, and DLQ for failed callbacks. Shape (proposal):
+  ```croniqfile
+  job ops:nightly-poke {
+    every day at 04:00
+    runner publish {
+      endpoint http://hookaido:8080/c/ops-nightly
+      auth hmac {env.HOOKAIDO_INGRESS_SECRET}
+      payload { window 24h; tag {vars.env} }
+    }
+  }
+  ```
+  Implementation lives next to `croniq-shell-runner`: a sibling
+  `croniq-publish-runner` crate that consumes the same `__runner_*` metadata
+  pattern. Until then, `runner shell { command "curl -X POST … " }` covers
+  the use case.
