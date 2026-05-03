@@ -6,7 +6,12 @@ COPY Cargo.toml Cargo.lock ./
 COPY crates/ crates/
 
 # Build release binaries
-RUN cargo build --release --bin croniq-server --bin croniq --bin croniq-mcp --bin croniq-demo-runner
+RUN cargo build --release \
+      --bin croniq-server \
+      --bin croniq \
+      --bin croniq-mcp \
+      --bin croniq-demo-runner \
+      --bin croniq-shell-runner
 
 # ── Stage 1b: Build the croniq-config-wasm bridge ────────────────────────────
 # WASM output is platform-independent, so we pin this stage to BUILDPLATFORM
@@ -70,6 +75,7 @@ COPY --from=rust-builder /build/target/release/croniq-server /usr/local/bin/cron
 COPY --from=rust-builder /build/target/release/croniq /usr/local/bin/croniq
 COPY --from=rust-builder /build/target/release/croniq-mcp /usr/local/bin/croniq-mcp
 COPY --from=rust-builder /build/target/release/croniq-demo-runner /usr/local/bin/croniq-demo-runner
+COPY --from=rust-builder /build/target/release/croniq-shell-runner /usr/local/bin/croniq-shell-runner
 
 # Copy UI static files
 COPY --from=ui-builder /build/ui/dist /usr/share/croniq/ui

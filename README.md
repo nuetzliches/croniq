@@ -203,6 +203,60 @@ async fn main() {
 
 ---
 
+## Generic shell runner
+
+For "run this command on a schedule" use-cases you don't need to write Rust at
+all. The `croniq-shell-runner` binary (shipped in the same Docker image)
+executes any job whose Croniqfile carries a `runner shell { … }` or
+`runner exec { … }` block.
+
+```croniqfile
+job ops:db-dump {
+  every day at 03:00
+  runner { require shell-runner }
+  runner shell {
+    command "pg_dump -U app app > /backups/app-$(date +%F).sql"
+    workdir /opt
+    env { PGPASSWORD {env.PGPASSWORD} }
+  }
+  timeout 10m
+  retry exponential { max_attempts 3 }
+}
+
+# argv form — no shell, no quoting hazards
+job ops:logrotate {
+  every 1 hour
+  runner exec { args /usr/sbin/logrotate /etc/logrotate.conf }
+}
+```
+
+The runner advertises the `shell-runner` capability and matches the standard
+`runner { require shell-runner }` placement constraint, so you can keep
+sensitive shell-runner pools separate from your custom-Rust runners.
+
+```yaml
+# docker-compose.yml — additional service
+shell-runner:
+  image: ghcr.io/nuetzliches/croniq:latest
+  entrypoint: ["croniq-shell-runner"]
+  environment:
+    CRONIQ_SERVER_URL: http://server:4000
+    CRONIQ_API_KEY: croniq_…
+    RUNNER_MAX_INFLIGHT: "4"
+  volumes:
+    - /opt:/opt
+    - /backups:/backups
+```
+
+**Trust model.** Anyone with write access to the Croniqfile (or to
+`__runner_exec` job metadata via the API) can run arbitrary commands as the
+shell-runner process. Treat the runner pool's filesystem and network as
+exposed to whoever can ship a Croniqfile change. Run separate shell-runner
+pools per blast-radius bracket and use `runner { require <pool> }` /
+`exclude <pool>` to pin sensitive jobs to the right pool.
+
+---
+
 ## Architecture
 
 ```mermaid
@@ -235,6 +289,7 @@ graph LR
 | `croniq-cli` | CLI: validate, fmt, compile, init, migrate, quickstart |
 | `croniq-runner-sdk` | Client library for building runners |
 | `croniq-demo-runner` | Ready-made runner binary used by the Docker Compose quickstart |
+| `croniq-shell-runner` | Generic runner that executes `runner shell { … }` / `runner exec { … }` jobs as subprocesses |
 
 ---
 

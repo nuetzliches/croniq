@@ -189,36 +189,70 @@ fn validate_runner_constraints(job: &JobBlock, diags: &mut Vec<Diagnostic>) {
     let mut requires = HashSet::new();
     let mut prefers = HashSet::new();
     let mut excludes = HashSet::new();
+    let mut exec_block_seen = false;
 
     for dob in &job.directives {
         if let DirectiveOrBlock::Block(block) = dob
             && block.name.value == "runner"
         {
-            for inner in &block.directives {
-                if let DirectiveOrBlock::Directive(d) = inner {
-                    let cap = d.args.first().map(|a| a.value.as_str()).unwrap_or("");
-                    match d.key.value.as_str() {
-                        "require" => {
-                            requires.insert(cap.to_string());
-                        }
-                        "prefer" => {
-                            prefers.insert(cap.to_string());
-                        }
-                        "exclude" => {
-                            excludes.insert(cap.to_string());
-                        }
-                        "sticky" => {}
-                        other => {
-                            diags.push(Diagnostic {
-                                severity: Severity::Warning,
-                                message: format!(
-                                    "unknown runner directive '{other}' in job '{}'",
-                                    job.key.raw
-                                ),
-                                span: d.key.span.into(),
-                            });
+            match block.qualifier.as_ref().map(|q| q.value.as_str()) {
+                None => {
+                    for inner in &block.directives {
+                        if let DirectiveOrBlock::Directive(d) = inner {
+                            let cap = d.args.first().map(|a| a.value.as_str()).unwrap_or("");
+                            match d.key.value.as_str() {
+                                "require" => {
+                                    requires.insert(cap.to_string());
+                                }
+                                "prefer" => {
+                                    prefers.insert(cap.to_string());
+                                }
+                                "exclude" => {
+                                    excludes.insert(cap.to_string());
+                                }
+                                "sticky" => {}
+                                other => {
+                                    diags.push(Diagnostic {
+                                        severity: Severity::Warning,
+                                        message: format!(
+                                            "unknown runner directive '{other}' in job '{}'",
+                                            job.key.raw
+                                        ),
+                                        span: d.key.span.into(),
+                                    });
+                                }
+                            }
                         }
                     }
+                }
+                Some(kind @ ("shell" | "exec")) => {
+                    if exec_block_seen {
+                        diags.push(Diagnostic {
+                            severity: Severity::Error,
+                            message: format!(
+                                "job '{}' has more than one `runner shell|exec` block; only one execution payload is allowed",
+                                job.key.raw
+                            ),
+                            span: block.name.span.into(),
+                        });
+                    }
+                    exec_block_seen = true;
+                    validate_runner_exec_block(job, kind, block, diags);
+                }
+                Some(other) => {
+                    diags.push(Diagnostic {
+                        severity: Severity::Error,
+                        message: format!(
+                            "unknown runner type '{other}' in job '{}' \u{2014} expected `shell` or `exec`",
+                            job.key.raw
+                        ),
+                        span: block
+                            .qualifier
+                            .as_ref()
+                            .map(|q| q.span)
+                            .unwrap_or(block.name.span)
+                            .into(),
+                    });
                 }
             }
         }
@@ -234,6 +268,132 @@ fn validate_runner_constraints(job: &JobBlock, diags: &mut Vec<Diagnostic>) {
             ),
             span: job.key.span.into(),
         });
+    }
+}
+
+fn validate_runner_exec_block(
+    job: &JobBlock,
+    kind: &str,
+    block: &NamedBlock,
+    diags: &mut Vec<Diagnostic>,
+) {
+    let mut has_command = false;
+    let mut has_args = false;
+
+    for inner in &block.directives {
+        match inner {
+            DirectiveOrBlock::Directive(d) => match d.key.value.as_str() {
+                "command" => {
+                    has_command = true;
+                    if d.args.is_empty() {
+                        diags.push(Diagnostic {
+                            severity: Severity::Error,
+                            message: format!(
+                                "`command` in job '{}' requires a string argument",
+                                job.key.raw
+                            ),
+                            span: d.key.span.into(),
+                        });
+                    }
+                }
+                "args" => {
+                    has_args = true;
+                    if d.args.is_empty() {
+                        diags.push(Diagnostic {
+                            severity: Severity::Error,
+                            message: format!(
+                                "`args` in job '{}' requires at least one argv entry",
+                                job.key.raw
+                            ),
+                            span: d.key.span.into(),
+                        });
+                    }
+                }
+                "workdir" | "user" => {
+                    if d.args.len() != 1 {
+                        diags.push(Diagnostic {
+                            severity: Severity::Error,
+                            message: format!(
+                                "`{}` in job '{}' takes exactly one argument",
+                                d.key.value, job.key.raw
+                            ),
+                            span: d.key.span.into(),
+                        });
+                    }
+                }
+                other => {
+                    diags.push(Diagnostic {
+                        severity: Severity::Warning,
+                        message: format!(
+                            "unknown directive '{other}' in `runner {kind}` block of job '{}'",
+                            job.key.raw
+                        ),
+                        span: d.key.span.into(),
+                    });
+                }
+            },
+            DirectiveOrBlock::Block(inner) if inner.name.value == "env" => { /* validated by shape */
+            }
+            DirectiveOrBlock::Block(inner) => {
+                diags.push(Diagnostic {
+                    severity: Severity::Warning,
+                    message: format!(
+                        "unknown sub-block '{}' in `runner {kind}` of job '{}'",
+                        inner.name.value, job.key.raw
+                    ),
+                    span: inner.name.span.into(),
+                });
+            }
+            DirectiveOrBlock::Comment(_) => {}
+        }
+    }
+
+    match kind {
+        "shell" => {
+            if !has_command {
+                diags.push(Diagnostic {
+                    severity: Severity::Error,
+                    message: format!(
+                        "`runner shell` in job '{}' requires `command \"…\"`",
+                        job.key.raw
+                    ),
+                    span: block.name.span.into(),
+                });
+            }
+            if has_args {
+                diags.push(Diagnostic {
+                    severity: Severity::Error,
+                    message: format!(
+                        "`args` is only valid in `runner exec`; use `command` for shell strings (job '{}')",
+                        job.key.raw
+                    ),
+                    span: block.name.span.into(),
+                });
+            }
+        }
+        "exec" => {
+            if !has_args {
+                diags.push(Diagnostic {
+                    severity: Severity::Error,
+                    message: format!(
+                        "`runner exec` in job '{}' requires `args <argv0> <argv1> …`",
+                        job.key.raw
+                    ),
+                    span: block.name.span.into(),
+                });
+            }
+            if has_command {
+                diags.push(Diagnostic {
+                    severity: Severity::Error,
+                    message: format!(
+                        "`command` is only valid in `runner shell`; use `args` for argv arrays (job '{}')",
+                        job.key.raw
+                    ),
+                    span: block.name.span.into(),
+                });
+            }
+        }
+        _ => {}
     }
 }
 
@@ -383,6 +543,117 @@ mod tests {
                 .iter()
                 .any(|d| d.severity == Severity::Warning && d.message.contains("1s")),
             "expected a sub-30s warning for 1s interval"
+        );
+    }
+
+    // ── runner shell / runner exec ────────────────────────────────────────────
+
+    #[test]
+    fn runner_shell_with_command_validates() {
+        let diags = validate_src(
+            r#"
+            job ops:dump {
+                every day at 03:00
+                runner shell { command "echo hi" }
+            }
+        "#,
+        );
+        let errs: Vec<_> = diags
+            .iter()
+            .filter(|d| d.severity == Severity::Error)
+            .collect();
+        assert!(errs.is_empty(), "unexpected errors: {errs:?}");
+    }
+
+    #[test]
+    fn runner_shell_without_command_errors() {
+        let diags = validate_src(
+            r#"
+            job ops:dump {
+                every day at 03:00
+                runner shell { workdir /opt }
+            }
+        "#,
+        );
+        assert!(
+            diags
+                .iter()
+                .any(|d| d.severity == Severity::Error && d.message.contains("requires `command")),
+            "expected `requires command` error, got: {diags:?}"
+        );
+    }
+
+    #[test]
+    fn runner_exec_without_args_errors() {
+        let diags = validate_src(
+            r#"
+            job ops:rotate {
+                every 1 hour
+                runner exec { workdir /opt }
+            }
+        "#,
+        );
+        assert!(
+            diags
+                .iter()
+                .any(|d| d.severity == Severity::Error && d.message.contains("requires `args")),
+            "expected `requires args` error, got: {diags:?}"
+        );
+    }
+
+    #[test]
+    fn runner_shell_rejects_args_directive() {
+        let diags = validate_src(
+            r#"
+            job ops:dump {
+                every 1 hour
+                runner shell {
+                    command "echo hi"
+                    args /bin/echo
+                }
+            }
+        "#,
+        );
+        assert!(
+            diags.iter().any(|d| d.severity == Severity::Error
+                && d.message.contains("only valid in `runner exec`")),
+            "expected mutually-exclusive error, got: {diags:?}"
+        );
+    }
+
+    #[test]
+    fn unknown_runner_qualifier_errors() {
+        let diags = validate_src(
+            r#"
+            job ops:weird {
+                every 1 hour
+                runner http { url "https://example.com" }
+            }
+        "#,
+        );
+        assert!(
+            diags.iter().any(|d| d.severity == Severity::Error
+                && d.message.contains("unknown runner type 'http'")),
+            "expected unknown-qualifier error, got: {diags:?}"
+        );
+    }
+
+    #[test]
+    fn duplicate_runner_exec_blocks_error() {
+        let diags = validate_src(
+            r#"
+            job ops:dump {
+                every 1 hour
+                runner shell { command "echo a" }
+                runner exec { args /bin/echo b }
+            }
+        "#,
+        );
+        assert!(
+            diags
+                .iter()
+                .any(|d| d.severity == Severity::Error && d.message.contains("more than one")),
+            "expected duplicate-exec error, got: {diags:?}"
         );
     }
 }

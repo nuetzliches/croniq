@@ -750,6 +750,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "croniq-shell-runner"
+version = "0.4.0"
+dependencies = [
+ "croniq-config",
+ "croniq-runner-sdk",
+ "serde_json",
+ "thiserror",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "croniq-store"
 version = "0.4.0"
 dependencies = [
