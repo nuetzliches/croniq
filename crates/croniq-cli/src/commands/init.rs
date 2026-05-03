@@ -22,6 +22,27 @@ pub fn init(
     api_key_override: Option<&str>,
     scopes: Option<Vec<String>>,
 ) -> Result<()> {
+    // Validate `--api-key` and `--scopes` up front, before any disk/DB writes,
+    // so a malformed key cannot leave behind a half-initialized DB (admin user
+    // created, no API key persisted) that masks the failure on the next start.
+    let seed_request: Option<(&str, Vec<String>)> = match api_key_override {
+        Some(raw_key) => {
+            if !raw_key.starts_with("croniq_") {
+                return Err(miette!(
+                    "--api-key must start with 'croniq_' (got prefix '{}…'); \
+                     e.g. CRONIQ_INIT_API_KEY=croniq_$(openssl rand -hex 32)",
+                    raw_key.chars().take(6).collect::<String>()
+                ));
+            }
+            let resolved = scopes.unwrap_or_else(|| vec!["admin".to_string()]);
+            if resolved.is_empty() {
+                return Err(miette!("--scopes must list at least one scope"));
+            }
+            Some((raw_key, resolved))
+        }
+        None => None,
+    };
+
     let password = match password {
         Some(p) => p.to_string(),
         None => {
@@ -63,19 +84,8 @@ pub fn init(
     // Seed a default API client + key only when an explicit key is provided.
     // This keeps reproducible setups (docker-compose demo, CI) working while
     // skipping auto-seeded admin-scope credentials for production installs.
-    let seeded_key = if let Some(raw_key) = api_key_override {
-        if !raw_key.starts_with("croniq_") {
-            return Err(miette!("--api-key must start with 'croniq_'"));
-        }
-
-        // `--scopes a,b,c` lets the operator mint a narrow client (e.g. a
-        // runner key with only `work:*`). Default is `[admin]` so the
-        // existing demo/CI flows keep working without flag changes.
-        let resolved_scopes = scopes.unwrap_or_else(|| vec!["admin".to_string()]);
-        if resolved_scopes.is_empty() {
-            return Err(miette!("--scopes must list at least one scope"));
-        }
-
+    // Prefix and scope validation already happened up top — see fail-fast block.
+    let seeded_key = if let Some((raw_key, resolved_scopes)) = seed_request {
         let client_id = Uuid::new_v4().to_string();
         store
             .create_client(&ApiClient {

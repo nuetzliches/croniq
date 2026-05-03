@@ -6,6 +6,26 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- **First-run init**: `croniq init` now validates the `--api-key` prefix (and
+  `--scopes`) **before** any DB writes, so a malformed `CRONIQ_INIT_API_KEY`
+  no longer leaves behind a half-initialized database (admin user created, no
+  API key persisted) that masked the failure on subsequent boots
+  ([#84](https://github.com/nuetzliches/croniq/issues/84)).
+- **Docker entrypoint**: `docker-entrypoint.sh` now captures the exit status
+  of `croniq init`, removes the partial `croniq.db` on failure, and exits
+  non-zero — so the container crash-loops visibly instead of silently
+  reporting healthy with broken auth. The error message also points the
+  operator at the `croniq_` prefix requirement when applicable.
+
+### Documentation
+
+- README env-var table documents `CRONIQ_INIT_API_KEY`, including the
+  `croniq_` prefix requirement and an `openssl rand -hex 32` example.
+- `docker-compose.yml` clarifies the prefix requirement inline next to the
+  demo `CRONIQ_INIT_API_KEY` value.
+
 ## [0.7.0] - 2026-04-27
 
 ### Added

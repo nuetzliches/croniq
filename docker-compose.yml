@@ -32,6 +32,9 @@ services:
       CRONIQ_ADMIN_USER: admin
       CRONIQ_ADMIN_PASSWORD: admin
       CRONIQ_DEMO_MODE: "1"
+      # Optional: seed a default admin API client on first run. Must start
+      # with the `croniq_` prefix — the entrypoint fails fast if it doesn't.
+      # In production: CRONIQ_INIT_API_KEY=croniq_$(openssl rand -hex 32)
       CRONIQ_INIT_API_KEY: croniq_demo_local_stack_key_not_for_production_use
     healthcheck:
       test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/localhost/4000"]
