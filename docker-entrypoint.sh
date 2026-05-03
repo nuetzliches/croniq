@@ -37,6 +37,10 @@ if [ ! -f "$DB_FILE" ]; then
 
   # Build init args as positional params to preserve values with spaces/special chars.
   # Run in a subshell so set -- does not clobber the entrypoint's own "$@".
+  # Capture the exit status explicitly so a failure (e.g. malformed
+  # CRONIQ_INIT_API_KEY) crash-loops the container instead of leaving
+  # the server up with a half-initialized DB and no working API key.
+  set +e
   (
     set -- --data-dir "$DATA_DIR" --username "$ADMIN_USER" --password "$ADMIN_PASS"
     if [ -n "$CRONIQ_INIT_API_KEY" ]; then
@@ -44,6 +48,20 @@ if [ ! -f "$DB_FILE" ]; then
     fi
     croniq init "$@"
   )
+  init_status=$?
+  set -e
+  if [ "$init_status" -ne 0 ]; then
+    echo "" >&2
+    echo "ERROR: 'croniq init' failed with exit status $init_status." >&2
+    if [ -n "$CRONIQ_INIT_API_KEY" ] && \
+       ! printf '%s' "$CRONIQ_INIT_API_KEY" | grep -q '^croniq_'; then
+      echo "       CRONIQ_INIT_API_KEY must start with 'croniq_' (e.g." >&2
+      echo "       CRONIQ_INIT_API_KEY=croniq_\$(openssl rand -hex 32))." >&2
+    fi
+    # Remove any half-initialized DB so a corrected restart starts cleanly.
+    rm -f "$DB_FILE"
+    exit "$init_status"
+  fi
 
   if [ "$PASS_GENERATED" = "1" ]; then
     echo ""

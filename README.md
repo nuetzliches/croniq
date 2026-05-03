@@ -337,6 +337,7 @@ croniq dead-letters --data-dir .           # List dead letters
 | `CRONIQ_JWT_SECRET` | JWT signing secret | random per-start |
 | `CRONIQ_ADMIN_USER` | Docker auto-init username | `admin` |
 | `CRONIQ_ADMIN_PASSWORD` | Docker auto-init password (random if unset) | _generated_ |
+| `CRONIQ_INIT_API_KEY` | Seed a default admin API client on first run. Must start with `croniq_` (e.g. `croniq_$(openssl rand -hex 32)`). Fails fast on first run if the prefix is missing. | — |
 | `CRONIQ_ON_FAILURE_CMD` | Shell command on execution failure | — |
 
 ---
