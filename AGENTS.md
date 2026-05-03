@@ -11,10 +11,11 @@
 
 ## Architecture
 
-- Workspace with 11 crates under `crates/`
+- Workspace with 14 crates under `crates/`
 - `croniq-server` is the main binary (HTTP server, scheduler, watchdog, metrics, UI serving)
 - `croniq-cli` is the CLI tool
 - `croniq-runner-sdk` is the client library for building runners
+- `croniq-shell-runner` is the generic runner that executes `runner shell { … }` / `runner exec { … }` jobs as subprocesses
 - `croniq-store` holds persistence traits + SQLite/Postgres implementations
 - `croniq-auth` handles JWT, API keys, password auth
 - UI is a React SPA under `ui/`
@@ -28,5 +29,5 @@
 - Scheduler loop ticks every second in `croniq-server/src/scheduler.rs`
 - Triggers return to Armed immediately after firing (async execution model)
 - Queue overflow protection: max 10 queued executions per job key
-- Internal metadata (`__require`, `__prefer`) is filtered from API responses
+- Internal metadata keys are prefixed with `__` (`__require`, `__prefer`, `__runner_exec`) — set by the scheduler / DSL compiler and consumed by runners; do not let user-supplied metadata clash with this namespace
 - JWT secret resolved from: Croniqfile > CRONIQ_JWT_SECRET env > random fallback

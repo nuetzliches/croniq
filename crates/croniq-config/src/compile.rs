@@ -202,6 +202,40 @@ pub struct RunnerConfig {
     pub sticky: bool,
 }
 
+/// Execution payload attached to a job by a qualified `runner shell { ... }`
+/// or `runner exec { ... }` block. Carried verbatim through the dispatch
+/// pipeline as a JSON-encoded `__runner_exec` metadata key so that
+/// thin runner binaries (e.g. `croniq-shell-runner`) can decode it without
+/// touching the server-side data model.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "kind", rename_all = "lowercase")]
+pub enum RunnerExec {
+    /// `sh -c "<command>"` — the shell handles word-splitting, pipes, redirects.
+    Shell {
+        command: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        workdir: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        user: Option<String>,
+        #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+        env: HashMap<String, String>,
+    },
+    /// `argv[0] argv[1] ...` — direct exec, no shell. Avoids quoting hazards.
+    Exec {
+        argv: Vec<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        workdir: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        user: Option<String>,
+        #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+        env: HashMap<String, String>,
+    },
+}
+
+/// Metadata key under which a compiled `RunnerExec` is stamped on the job's
+/// `metadata` map. The runner binary deserialises this back into `RunnerExec`.
+pub const RUNNER_EXEC_METADATA_KEY: &str = "__runner_exec";
+
 #[derive(Debug, Clone, Serialize)]
 pub struct RetryConfig {
     pub strategy: String,
@@ -603,7 +637,21 @@ fn compile_job(
                 _ => {}
             },
             DirectiveOrBlock::Block(block) => match block.name.value.as_str() {
-                "runner" => runner = compile_runner_block(block, vars),
+                "runner" => match block.qualifier.as_ref().map(|q| q.value.as_str()) {
+                    None => runner = compile_runner_block(block, vars),
+                    Some("shell") | Some("exec") => {
+                        if let Some(exec) = compile_runner_exec_block(block, vars)
+                            && let Ok(json) = serde_json::to_string(&exec)
+                        {
+                            metadata.insert(RUNNER_EXEC_METADATA_KEY.into(), json);
+                        }
+                    }
+                    Some(_) => {
+                        // Unknown qualifier — leave to validate.rs to surface a
+                        // diagnostic so unrecognised runner types don't silently
+                        // compile to a bare placement-constraint block.
+                    }
+                },
                 "retry" => retry = compile_retry_block(block, vars),
                 "dead_letter" => dead_letter = compile_dead_letter_block(block, vars),
                 "metadata" => {
@@ -669,6 +717,69 @@ fn compile_runner_block(block: &NamedBlock, vars: &HashMap<String, String>) -> R
         }
     }
     cfg
+}
+
+/// Compile a qualified `runner shell { ... }` or `runner exec { ... }` block
+/// into a [`RunnerExec`]. Returns `None` if required directives are missing
+/// (`command` for shell, `args` for exec) — `validate.rs` surfaces the
+/// diagnostic so that the user-facing error has a span to point at.
+fn compile_runner_exec_block(
+    block: &NamedBlock,
+    vars: &HashMap<String, String>,
+) -> Option<RunnerExec> {
+    let kind = block.qualifier.as_ref()?.value.clone();
+
+    let mut command: Option<String> = None;
+    let mut argv: Vec<String> = Vec::new();
+    let mut workdir: Option<String> = None;
+    let mut user: Option<String> = None;
+    let mut env: HashMap<String, String> = HashMap::new();
+
+    for dob in &block.directives {
+        match dob {
+            DirectiveOrBlock::Directive(d) => match d.key.value.as_str() {
+                "command" => command = first_arg(d, vars),
+                "args" => {
+                    argv = d.args.iter().map(|a| resolve_str(a, vars)).collect();
+                }
+                "workdir" => workdir = first_arg(d, vars),
+                "user" => user = first_arg(d, vars),
+                _ => {}
+            },
+            DirectiveOrBlock::Block(inner) if inner.name.value == "env" => {
+                for entry in &inner.directives {
+                    if let DirectiveOrBlock::Directive(d) = entry
+                        && let Some(val) = first_arg(d, vars)
+                    {
+                        env.insert(d.key.value.clone(), val);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    match kind.as_str() {
+        "shell" => command.map(|command| RunnerExec::Shell {
+            command,
+            workdir,
+            user,
+            env,
+        }),
+        "exec" => {
+            if argv.is_empty() {
+                None
+            } else {
+                Some(RunnerExec::Exec {
+                    argv,
+                    workdir,
+                    user,
+                    env,
+                })
+            }
+        }
+        _ => None,
+    }
 }
 
 fn compile_retry_block(block: &NamedBlock, vars: &HashMap<String, String>) -> RetryConfig {
@@ -862,5 +973,146 @@ mod tests {
         .unwrap();
         let cfg = compile(&ast);
         assert_eq!(cfg.calendars[0].timezone.as_deref(), Some("vars.missing"));
+    }
+
+    fn exec_payload(cfg: &RuntimeConfig, key: &str) -> RunnerExec {
+        let job = cfg.jobs.iter().find(|j| j.key == key).expect("job present");
+        let raw = job
+            .metadata
+            .get(RUNNER_EXEC_METADATA_KEY)
+            .expect("__runner_exec metadata stamped");
+        serde_json::from_str::<RunnerExec>(raw).expect("metadata is valid RunnerExec JSON")
+    }
+
+    #[test]
+    fn runner_shell_block_compiles_to_metadata_stamp() {
+        let ast = Parser::parse(
+            r#"
+            job ops:dump {
+                every day at 03:00
+                runner shell {
+                    command "pg_dump -U app app > /backups/app.sql"
+                    workdir /opt
+                    user 0
+                    env { PGPASSWORD secret-stuff; LANG en_US.UTF-8 }
+                }
+            }
+        "#,
+        )
+        .unwrap();
+        let cfg = compile(&ast);
+        let exec = exec_payload(&cfg, "ops:dump");
+        match exec {
+            RunnerExec::Shell {
+                command,
+                workdir,
+                user,
+                env,
+            } => {
+                assert_eq!(command, "pg_dump -U app app > /backups/app.sql");
+                assert_eq!(workdir.as_deref(), Some("/opt"));
+                assert_eq!(user.as_deref(), Some("0"));
+                assert_eq!(
+                    env.get("PGPASSWORD").map(String::as_str),
+                    Some("secret-stuff")
+                );
+                assert_eq!(env.get("LANG").map(String::as_str), Some("en_US.UTF-8"));
+            }
+            other => panic!("expected Shell, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn runner_exec_block_compiles_argv() {
+        let ast = Parser::parse(
+            r#"
+            job ops:rotate {
+                every 1 hour
+                runner exec {
+                    args /usr/local/bin/logrotate /etc/logrotate.conf
+                }
+            }
+        "#,
+        )
+        .unwrap();
+        let cfg = compile(&ast);
+        let exec = exec_payload(&cfg, "ops:rotate");
+        match exec {
+            RunnerExec::Exec { argv, env, .. } => {
+                assert_eq!(
+                    argv,
+                    vec!["/usr/local/bin/logrotate", "/etc/logrotate.conf"]
+                );
+                assert!(env.is_empty());
+            }
+            other => panic!("expected Exec, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn runner_placement_and_exec_blocks_coexist() {
+        let ast = Parser::parse(
+            r#"
+            job ops:dump {
+                every day at 03:00
+                runner { require shell-runner; sticky }
+                runner shell { command "echo hello" }
+            }
+        "#,
+        )
+        .unwrap();
+        let cfg = compile(&ast);
+        let job = cfg.jobs.iter().find(|j| j.key == "ops:dump").unwrap();
+        assert!(job.runner.require.contains(&"shell-runner".to_string()));
+        assert!(job.runner.sticky);
+        assert!(job.metadata.contains_key(RUNNER_EXEC_METADATA_KEY));
+    }
+
+    #[test]
+    fn runner_shell_without_command_does_not_stamp() {
+        // Compile is best-effort; validate.rs surfaces the error. We just
+        // need to make sure we do not stamp a half-baked payload.
+        let ast = Parser::parse(
+            r#"
+            job ops:broken {
+                every 1 hour
+                runner shell { workdir /opt }
+            }
+        "#,
+        )
+        .unwrap();
+        let cfg = compile(&ast);
+        let job = cfg.jobs.iter().find(|j| j.key == "ops:broken").unwrap();
+        assert!(!job.metadata.contains_key(RUNNER_EXEC_METADATA_KEY));
+    }
+
+    #[test]
+    fn runner_exec_resolves_placeholders_in_argv_and_env() {
+        let ast = Parser::parse(
+            r#"
+            vars { backup_dir /var/backups }
+            job ops:dump {
+                every 1 hour
+                runner exec {
+                    args /usr/bin/pg_dump -f {vars.backup_dir} app
+                    env { TARGET {vars.backup_dir} }
+                }
+            }
+        "#,
+        )
+        .unwrap();
+        let cfg = compile(&ast);
+        let exec = exec_payload(&cfg, "ops:dump");
+        match exec {
+            RunnerExec::Exec { argv, env, .. } => {
+                assert_eq!(
+                    argv,
+                    vec!["/usr/bin/pg_dump", "-f", "/var/backups", "app"],
+                    "argv should resolve isolated {{vars.X}} placeholders"
+                );
+                assert_eq!(env.get("TARGET").map(String::as_str), Some("/var/backups"));
+            }
+            other => panic!("expected Exec, got {other:?}"),
+        }
     }
 }

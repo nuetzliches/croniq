@@ -102,3 +102,26 @@ job legacy:old-report {
   disabled
   timeout 5m
 }
+
+# --- Generic shell / exec runners ---
+# Pick these up by running `croniq-shell-runner` (ships in the same image as
+# the server). The runner advertises the `shell-runner` capability — pin
+# sensitive jobs to a dedicated pool with `runner { require shell-runner }`.
+
+job ops:db-dump {
+  every day at 03:00
+  runner { require shell-runner }
+  runner shell {
+    command "pg_dump -U app app > /backups/app.sql"
+    workdir /opt
+    env { PGPASSWORD {env.PGPASSWORD} }
+  }
+  timeout 10m
+  retry exponential { max_attempts 3 }
+}
+
+job ops:logrotate {
+  every 1 hour
+  runner { require shell-runner }
+  runner exec { args /usr/sbin/logrotate /etc/logrotate.conf }
+}

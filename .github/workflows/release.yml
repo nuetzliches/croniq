@@ -92,7 +92,11 @@ jobs:
         shell: bash
         run: |
           cargo build --release --target ${{ matrix.target }} \
-            --bin croniq-server --bin croniq --bin croniq-mcp --bin croniq-demo-runner
+            --bin croniq-server \
+            --bin croniq \
+            --bin croniq-mcp \
+            --bin croniq-demo-runner \
+            --bin croniq-shell-runner
 
       - name: Package (unix)
         if: runner.os != 'Windows'
@@ -102,6 +106,7 @@ jobs:
           cp target/${{ matrix.target }}/release/croniq dist/
           cp target/${{ matrix.target }}/release/croniq-mcp dist/
           cp target/${{ matrix.target }}/release/croniq-demo-runner dist/
+          cp target/${{ matrix.target }}/release/croniq-shell-runner dist/
           cp README.md LICENSE-MIT LICENSE-APACHE dist/
           cd dist && tar czf ../croniq-${{ matrix.target }}.tar.gz *
 
@@ -114,6 +119,7 @@ jobs:
           Copy-Item "target/${{ matrix.target }}/release/croniq.exe" dist/
           Copy-Item "target/${{ matrix.target }}/release/croniq-mcp.exe" dist/
           Copy-Item "target/${{ matrix.target }}/release/croniq-demo-runner.exe" dist/
+          Copy-Item "target/${{ matrix.target }}/release/croniq-shell-runner.exe" dist/
           Copy-Item README.md, LICENSE-MIT, LICENSE-APACHE dist/
           Compress-Archive -Path dist/* -DestinationPath "croniq-${{ matrix.target }}.zip"
 

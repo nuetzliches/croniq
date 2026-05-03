@@ -6,7 +6,42 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-## [0.8.1] - 2026-05-03
+## [0.9.0] - 2026-05-03
+
+### Added
+
+- **Generic shell runner** — new `crates/croniq-shell-runner` crate and
+  `croniq-shell-runner` binary, shipped in the same `ghcr.io/nuetzliches/croniq`
+  image. Picks up jobs declared with the new `runner shell { command "…" }`
+  or `runner exec { args … }` Croniqfile blocks and dispatches them to a
+  local subprocess — no Rust required for "run this shell command on a
+  schedule" use-cases.
+
+  ```croniqfile
+  job ops:db-dump {
+    every day at 03:00
+    runner shell {
+      command "pg_dump -U app app > /backups/app-$(date +%F).sql"
+      workdir /opt
+      env { PGPASSWORD secret-stuff }
+    }
+    timeout 10m
+  }
+  ```
+
+  See [`README.md`](README.md#generic-shell-runner) for trust-model details
+  and the recommended capability-based runner-pool layout.
+
+### DSL
+
+- `runner` now accepts a qualifier: existing `runner { require X }` keeps its
+  placement-constraint meaning, and `runner shell { … }` / `runner exec { … }`
+  carry execution payload (command, argv, workdir, user, env). Both blocks may
+  coexist in the same job. The compiled payload is shipped to runners via the
+  internal `__runner_exec` metadata key.
+- New validation diagnostics: `runner shell` requires `command`; `runner exec`
+  requires `args`; `command`/`args` are mutually exclusive between the two
+  modes; unknown qualifiers (e.g. `runner http`) error out with a hint.
 
 ### Fixed
 
