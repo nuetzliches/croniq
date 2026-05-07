@@ -1138,8 +1138,7 @@ mod tests {
         match exec {
             RunnerExec::Shell { command, .. } => {
                 assert_eq!(
-                    command,
-                    "docker ps --format '{{.Image}}'",
+                    command, "docker ps --format '{{.Image}}'",
                     "{{...}} must survive the DSL round-trip verbatim"
                 );
             }
