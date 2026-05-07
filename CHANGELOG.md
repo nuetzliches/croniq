@@ -6,6 +6,22 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.9.1] - 2026-05-08
+
+### Fixed
+
+- **`POST /v1/trigger` now propagates DSL job metadata** to the runner. The
+  manual-trigger endpoint built `WorkItem.metadata` from the HTTP request
+  body only, discarding the DSL-compiled `__runner_exec` payload — so every
+  manually triggered (and every retry of any) `runner shell { … }` or
+  `runner exec { … }` job in v0.9.0 failed with the misleading
+  `metadata is missing the __runner_exec payload` error. The trigger handler
+  now seeds the metadata from `state.dsl_jobs` and overlays the caller's
+  values on top, applying the same combined map to both the persisted
+  `Execution` row and the dispatched `WorkItem`
+  ([#89](https://github.com/nuetzliches/croniq/issues/89),
+  [#90](https://github.com/nuetzliches/croniq/pull/90)).
+
 ## [0.9.0] - 2026-05-03
 
 ### Added
