@@ -485,8 +485,19 @@ async fn handle_trigger(
     let exec_uuid = uuid::Uuid::new_v4();
     let execution_id = exec_uuid.to_string();
 
-    // Build metadata from the request, encoding require/prefer for capability routing
-    let mut metadata = HashMap::<String, String>::new();
+    // Build metadata: start from the DSL job's compiled metadata so that
+    // __runner_exec (and other DSL-stamped keys) survive into the WorkItem
+    // and the DB execution row. The caller's req.metadata values are overlaid
+    // on top so they can still override or extend individual entries.
+    let mut metadata: HashMap<String, String> = if let Some(ref dsl_jobs) = state.dsl_jobs {
+        let jobs = dsl_jobs.read().await;
+        jobs.iter()
+            .find(|j| j.key == req.job_key)
+            .map(|j| j.metadata.clone())
+            .unwrap_or_default()
+    } else {
+        HashMap::new()
+    };
     if let serde_json::Value::Object(ref map) = req.metadata {
         for (k, v) in map {
             metadata.insert(k.clone(), v.as_str().unwrap_or(&v.to_string()).to_string());
@@ -536,7 +547,7 @@ async fn handle_trigger(
         attempt: 1,
         require: req.require,
         prefer: req.prefer,
-        metadata: req.metadata,
+        metadata: serde_json::to_value(&metadata).unwrap_or_default(),
         timeout: req.timeout,
     };
 
@@ -923,5 +934,144 @@ mod tests {
 
         // 503 because no store configured, but NOT 401/404
         assert_eq!(status, 503);
+    }
+
+    // ─── Trigger endpoint: DSL metadata propagation (issue #89) ─────────────
+
+    #[tokio::test]
+    async fn trigger_inherits_dsl_runner_exec_metadata() {
+        // Regression for issue #89: POST /v1/trigger must include __runner_exec
+        // from the DSL-compiled job metadata so the shell runner can decode the
+        // command. {{...}} inside quoted command strings must survive the round-trip.
+        use crate::loader::load_str;
+        use croniq_config::compile::RUNNER_EXEC_METADATA_KEY;
+
+        let dsl = r#"
+            job test:docker-ps {
+                every 1 hour
+                runner { require shell-runner }
+                runner shell {
+                    command "docker ps --format '{{.Image}}'"
+                }
+            }
+        "#;
+        let loaded = load_str(dsl).unwrap();
+        let jobs = loaded.runtime.jobs;
+        assert!(
+            jobs[0].metadata.contains_key(RUNNER_EXEC_METADATA_KEY),
+            "compile should stamp __runner_exec: {:?}",
+            jobs[0].metadata
+        );
+
+        let runner = AppState::new();
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let dsl_jobs = Arc::new(tokio::sync::RwLock::new(jobs));
+        let state = Arc::new(ServerState {
+            runner,
+            completion_tx: tx,
+            long_poll_timeout: Duration::from_millis(50),
+            jwt_config: None,
+            store: None,
+            scheduler_tx: None,
+            triggers: None,
+            dsl_jobs: Some(dsl_jobs),
+            dsl_calendars: None,
+            policy_dsl_adopt_on_mutate: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            config_path: None,
+            reload_counters: ReloadCounters::new(),
+        });
+        let app = server_router(Arc::clone(&state));
+
+        let resp = post_json(
+            app,
+            "/v1/trigger",
+            serde_json::json!({
+                "job_key": "test:docker-ps",
+                "metadata": {},
+                "require": [],
+                "prefer": []
+            }),
+        )
+        .await;
+
+        assert!(
+            resp["execution_id"].is_string(),
+            "expected execution_id in response, got: {resp}"
+        );
+
+        // The WorkItem in the queue must carry __runner_exec so the shell runner
+        // can decode the command string (the original failure mode from issue #89).
+        let q = state.runner.queue.read().await;
+        let items = q.peek_n(1);
+        assert_eq!(items.len(), 1, "one item should be queued");
+        assert!(
+            items[0].metadata.get(RUNNER_EXEC_METADATA_KEY).is_some(),
+            "__runner_exec must be present in WorkItem.metadata; got: {:?}",
+            items[0].metadata
+        );
+    }
+
+    #[tokio::test]
+    async fn trigger_request_metadata_overrides_dsl_metadata() {
+        // Caller-supplied metadata overrides DSL values but does not wipe DSL keys
+        // that the caller did not touch (e.g. __runner_exec stays present).
+        use crate::loader::load_str;
+        use croniq_config::compile::RUNNER_EXEC_METADATA_KEY;
+
+        let dsl = r#"
+            job test:override {
+                every 1 hour
+                runner shell { command "echo hello" }
+                metadata { env prod }
+            }
+        "#;
+        let loaded = load_str(dsl).unwrap();
+        let jobs = loaded.runtime.jobs;
+
+        let runner = AppState::new();
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let dsl_jobs = Arc::new(tokio::sync::RwLock::new(jobs));
+        let state = Arc::new(ServerState {
+            runner,
+            completion_tx: tx,
+            long_poll_timeout: Duration::from_millis(50),
+            jwt_config: None,
+            store: None,
+            scheduler_tx: None,
+            triggers: None,
+            dsl_jobs: Some(dsl_jobs),
+            dsl_calendars: None,
+            policy_dsl_adopt_on_mutate: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            config_path: None,
+            reload_counters: ReloadCounters::new(),
+        });
+        let app = server_router(Arc::clone(&state));
+
+        post_json(
+            app,
+            "/v1/trigger",
+            serde_json::json!({
+                "job_key": "test:override",
+                "metadata": { "env": "staging" },
+                "require": [],
+                "prefer": []
+            }),
+        )
+        .await;
+
+        let q = state.runner.queue.read().await;
+        let items = q.peek_n(1);
+        assert_eq!(items.len(), 1);
+        // __runner_exec from DSL must survive
+        assert!(
+            items[0].metadata.get(RUNNER_EXEC_METADATA_KEY).is_some(),
+            "__runner_exec must survive caller override"
+        );
+        // Caller's env=staging must override DSL env=prod
+        assert_eq!(
+            items[0].metadata["env"].as_str().unwrap(),
+            "staging",
+            "caller env must override DSL env"
+        );
     }
 }

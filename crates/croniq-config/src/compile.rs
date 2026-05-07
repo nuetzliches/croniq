@@ -1115,4 +1115,34 @@ mod tests {
             other => panic!("expected Exec, got {other:?}"),
         }
     }
+
+    #[test]
+    fn runner_shell_command_with_double_braces_is_stamped() {
+        // Reproducer for issue #89: {{...}} inside a quoted command string
+        // (Docker/Go-template format) must be passed verbatim to the runner
+        // and must not confuse the block tokenizer into dropping the command.
+        let ast = Parser::parse(
+            r#"
+            job test:docker-format-string {
+                every 1 hour
+                runner { require shell-runner }
+                runner shell {
+                    command "docker ps --format '{{.Image}}'"
+                }
+            }
+        "#,
+        )
+        .unwrap();
+        let cfg = compile(&ast);
+        let exec = exec_payload(&cfg, "test:docker-format-string");
+        match exec {
+            RunnerExec::Shell { command, .. } => {
+                assert_eq!(
+                    command, "docker ps --format '{{.Image}}'",
+                    "{{...}} must survive the DSL round-trip verbatim"
+                );
+            }
+            other => panic!("expected Shell, got {other:?}"),
+        }
+    }
 }
