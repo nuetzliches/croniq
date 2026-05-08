@@ -192,6 +192,10 @@ pub struct JobConfig {
     /// Max queued executions per job before new fires are skipped.
     /// `None` falls back to the global default of 10.
     pub max_queue_depth: Option<u32>,
+    /// Free-form tags for filtering/grouping. NOT routing-relevant —
+    /// runner capabilities handle routing. Convention: `key=value` strings.
+    #[serde(default)]
+    pub tags: Vec<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize)]
@@ -604,6 +608,7 @@ fn compile_job(
     let mut catch_up = defaults.catch_up;
     let mut queue_ttl = defaults.queue_ttl.clone();
     let mut max_queue_depth = defaults.max_queue_depth;
+    let mut tags: Vec<String> = Vec::new();
 
     for dob in &job.directives {
         match dob {
@@ -633,6 +638,14 @@ fn compile_job(
                 }
                 "max_queue_depth" => {
                     max_queue_depth = first_arg(d, vars).and_then(|v| v.parse().ok());
+                }
+                "tags" => {
+                    for a in &d.args {
+                        let v = resolve_str(a, vars);
+                        if !v.is_empty() && !tags.contains(&v) {
+                            tags.push(v);
+                        }
+                    }
                 }
                 _ => {}
             },
@@ -699,6 +712,7 @@ fn compile_job(
         catch_up,
         queue_ttl,
         max_queue_depth,
+        tags,
     }
 }
 

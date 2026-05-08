@@ -70,6 +70,8 @@ pub struct CreateJobRequest {
     pub timeout: Option<String>,
     pub max_retries: Option<u32>,
     pub dead_letter_enabled: Option<bool>,
+    #[serde(default)]
+    pub tags: Vec<String>,
 }
 
 /// Check whether `job_key` is DSL-managed. Returns `true` if the Croniqfile
@@ -156,6 +158,16 @@ pub async fn handle_create(
     }
 
     let now = Utc::now();
+    // Normalize tags: trim, drop empties, dedupe while preserving order.
+    // Mirrors the PUT /v1/jobs/{key} handler so a round-trip create-then-update
+    // can't introduce subtle "env=prod" vs " env=prod" duplicates.
+    let mut tags: Vec<String> = Vec::new();
+    for t in req.tags {
+        let trimmed = t.trim();
+        if !trimmed.is_empty() && !tags.iter().any(|x| x == trimmed) {
+            tags.push(trimmed.to_string());
+        }
+    }
     let job = JobDefinition {
         job_key: req.job_key,
         description: req.description,
@@ -167,6 +179,7 @@ pub async fn handle_create(
         timeout: req.timeout,
         max_retries: req.max_retries,
         dead_letter_enabled: req.dead_letter_enabled,
+        tags,
     };
     store
         .create_job_definition(&job)
@@ -220,6 +233,20 @@ pub async fn handle_update(
     }
     if let Some(v) = obj.get("dead_letter_enabled") {
         job.dead_letter_enabled = v.as_bool();
+    }
+    if let Some(v) = obj.get("tags") {
+        let mut out: Vec<String> = Vec::new();
+        if let Some(arr) = v.as_array() {
+            for item in arr {
+                if let Some(s) = item.as_str() {
+                    let trimmed = s.trim();
+                    if !trimmed.is_empty() && !out.iter().any(|x| x == trimmed) {
+                        out.push(trimmed.to_string());
+                    }
+                }
+            }
+        }
+        job.tags = out;
     }
     job.updated_at = Utc::now();
 
@@ -382,6 +409,7 @@ pub async fn handle_register(
         timeout: req.timeout.clone(),
         max_retries: req.max_retries,
         dead_letter_enabled: req.dead_letter_enabled,
+        tags: Vec::new(),
     };
     store
         .create_job_definition(&job_def)
@@ -788,6 +816,7 @@ mod tests {
                 timeout: None,
                 max_retries: None,
                 dead_letter_enabled: None,
+                tags: vec![],
             })
             .unwrap();
 
@@ -943,6 +972,7 @@ mod tests {
                 timeout: None,
                 max_retries: None,
                 dead_letter_enabled: None,
+                tags: vec![],
             })
             .unwrap();
         let state = make_state_with_policy(vec![], Arc::clone(&store), true);

@@ -20,8 +20,20 @@ export function LoginPage() {
       const res = await apiPost<TokenResponse>('/v1/auth/login', { username, password })
       login(res.access_token, res.refresh_token)
       navigate('/')
-    } catch {
-      setError('Login failed. Check your credentials.')
+    } catch (err) {
+      // Distinguish "the server said no" from "I couldn't reach the server".
+      // A bare "Login failed" message led operators to chase password issues
+      // when the backend was simply down. Reachability failures look like:
+      //   - TypeError from fetch() in production (no proxy, network/CORS error)
+      //   - 5xx wrapped by apiFetch in dev (Vite proxy returns 502/504 when
+      //     it can't reach the upstream)
+      const msg = err instanceof Error ? err.message : ''
+      const unreachable = err instanceof TypeError || /^5\d\d[: ]/.test(msg)
+      if (unreachable) {
+        setError('Cannot reach server. Check that the Croniq backend is running.')
+      } else {
+        setError('Login failed. Check your credentials.')
+      }
     } finally {
       setLoading(false)
     }

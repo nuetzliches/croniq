@@ -13,6 +13,7 @@ const MIGRATIONS: &[(&str, &str)] = &[
         include_str!("006_calendar_managed_by.sql"),
     ),
     ("007_dsl_adoptions", include_str!("007_dsl_adoptions.sql")),
+    ("008_job_tags", include_str!("008_job_tags.sql")),
 ];
 
 /// Run all pending migrations.

@@ -7,7 +7,7 @@ import * as Tooltip from '@radix-ui/react-tooltip'
 import { Plus, Play, Trash2, X, AlertCircle, Pencil, Download } from 'lucide-react'
 import {
   useJobs, useRegisterJob, useDeleteJob, useActivateJob, useDeactivateJob,
-  useTriggerJob, useExecutions, useSchedules, useAdoptJob,
+  useTriggerJob, useExecutions, useSchedules, useAdoptJob, useJobTags,
 } from '@/api/hooks'
 import { ScheduleBuilder } from '@/components/builders/ScheduleBuilder'
 import { TimezoneInput } from '@/components/ui/timezone-input'
@@ -67,6 +67,7 @@ const inputCls = 'w-full px-3 py-2 border border-border rounded-md text-sm bg-ba
 
 export function JobsPage() {
   const jobs = useJobs()
+  const tagCounts = useJobTags()
   const registerJob = useRegisterJob()
   const deleteJob = useDeleteJob()
   const activateJob = useActivateJob()
@@ -82,6 +83,23 @@ export function JobsPage() {
   const [toggleError, setToggleError] = useState<string | null>(null)
   const [adoptError, setAdoptError] = useState<string | null>(null)
   const [editingJob, setEditingJob] = useState<JobDefinition | null>(null)
+  const [activeTags, setActiveTags] = useState<Set<string>>(new Set())
+
+  const toggleTag = (tag: string) =>
+    setActiveTags((prev) => {
+      const next = new Set(prev)
+      if (next.has(tag)) next.delete(tag)
+      else next.add(tag)
+      return next
+    })
+
+  // AND-semantics across selected tags: a job must carry all of them.
+  const filteredJobs = (jobs.data ?? []).filter((j) => {
+    if (activeTags.size === 0) return true
+    const have = new Set(j.tags ?? [])
+    for (const t of activeTags) if (!have.has(t)) return false
+    return true
+  })
 
   const { register, handleSubmit, reset, setValue, formState: { errors } } = useForm<RegisterForm>({
     defaultValues: { timeout: '5m' },
@@ -330,6 +348,40 @@ export function JobsPage() {
           </div>
         )}
 
+        {(tagCounts.data?.length ?? 0) > 0 && (
+          <div className="flex flex-wrap items-center gap-1.5">
+            <span className="text-xs text-muted-foreground mr-1">Tags:</span>
+            {tagCounts.data?.map((tc) => {
+              const active = activeTags.has(tc.tag)
+              return (
+                <button
+                  key={tc.tag}
+                  type="button"
+                  onClick={() => toggleTag(tc.tag)}
+                  className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs transition-colors ${
+                    active
+                      ? 'bg-primary text-primary-foreground'
+                      : 'bg-accent text-accent-foreground hover:bg-accent/70'
+                  }`}
+                  aria-pressed={active}
+                >
+                  <span className="font-mono">{tc.tag}</span>
+                  <span className="opacity-70 tabular-nums">{tc.count}</span>
+                </button>
+              )
+            })}
+            {activeTags.size > 0 && (
+              <button
+                type="button"
+                onClick={() => setActiveTags(new Set())}
+                className="text-xs text-muted-foreground hover:text-foreground underline ml-1"
+              >
+                clear
+              </button>
+            )}
+          </div>
+        )}
+
         {jobs.isLoading && <div className="flex justify-center py-12"><Spinner className="h-6 w-6" /></div>}
 
         {!jobs.isLoading && jobs.data?.length === 0 && (
@@ -341,8 +393,14 @@ export function JobsPage() {
           />
         )}
 
+        {!jobs.isLoading && (jobs.data?.length ?? 0) > 0 && filteredJobs.length === 0 && (
+          <p className="text-sm text-muted-foreground py-6 text-center">
+            No jobs match the selected tags.
+          </p>
+        )}
+
         <div className="space-y-2">
-          {jobs.data?.map((j) => {
+          {filteredJobs.map((j) => {
             const isDslManaged = dslManagedJobs.has(j.job_key)
             const toggleTip = isDslManaged
               ? 'Managed by Croniqfile — edit the DSL to change this'
@@ -355,7 +413,7 @@ export function JobsPage() {
               <CardContent className="py-3">
                 <div className="flex items-center gap-4">
                   <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2 flex-wrap">
                       <Link to={`/jobs/${j.job_key}`} className="font-mono text-sm text-primary hover:underline truncate">
                         {j.job_key}
                       </Link>
@@ -365,6 +423,17 @@ export function JobsPage() {
                       {isDslManaged && (
                         <Badge variant="neutral" className="font-mono">dsl</Badge>
                       )}
+                      {(j.tags ?? []).map((t) => (
+                        <button
+                          key={t}
+                          type="button"
+                          onClick={(e) => { e.preventDefault(); e.stopPropagation(); toggleTag(t) }}
+                          className="inline-flex items-center rounded-full bg-accent px-2 py-0.5 text-[10px] font-mono text-accent-foreground hover:bg-accent/70"
+                          title={`Filter by ${t}`}
+                        >
+                          {t}
+                        </button>
+                      ))}
                     </div>
                     {j.description && <p className="text-xs text-muted-foreground mt-0.5 truncate">{j.description}</p>}
                   </div>

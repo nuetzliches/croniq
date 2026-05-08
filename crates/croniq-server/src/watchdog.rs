@@ -287,6 +287,7 @@ mod tests {
             catch_up: croniq_config::compile::CatchUpPolicy::default(),
             queue_ttl: None,
             max_queue_depth: None,
+            tags: vec![],
         }
     }
 
@@ -346,7 +347,14 @@ mod tests {
         // Simulate a runner that polled 5 minutes ago (Dead threshold = 2 min)
         {
             let mut reg = runner.registry.write().await;
-            let _ = reg.register_or_update("dead-runner", vec!["billing".into()], 3, vec![], None);
+            let _ = reg.register_or_update(
+                "dead-runner",
+                vec!["billing".into()],
+                3,
+                vec![],
+                None,
+                vec![],
+            );
             // Manually set last_poll_at to long ago
             if let Some(r) = reg.get_mut("dead-runner") {
                 r.last_poll_at = long_dead_time();
@@ -383,7 +391,7 @@ mod tests {
 
         {
             let mut reg = runner.registry.write().await;
-            let _ = reg.register_or_update("dead-runner", vec![], 3, vec![], None);
+            let _ = reg.register_or_update("dead-runner", vec![], 3, vec![], None, vec![]);
             if let Some(r) = reg.get_mut("dead-runner") {
                 r.last_poll_at = long_dead_time();
             }
@@ -413,7 +421,7 @@ mod tests {
 
         {
             let mut reg = runner.registry.write().await;
-            let _ = reg.register_or_update("dead-runner", vec![], 3, vec![], None);
+            let _ = reg.register_or_update("dead-runner", vec![], 3, vec![], None, vec![]);
             if let Some(r) = reg.get_mut("dead-runner") {
                 r.last_poll_at = long_dead_time();
             }
@@ -437,7 +445,7 @@ mod tests {
         {
             let mut reg = runner.registry.write().await;
             for name in ["runner-a", "runner-b"] {
-                let _ = reg.register_or_update(name, vec![], 3, vec![], None);
+                let _ = reg.register_or_update(name, vec![], 3, vec![], None, vec![]);
                 if let Some(r) = reg.get_mut(name) {
                     r.last_poll_at = long_dead_time();
                 }

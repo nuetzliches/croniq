@@ -228,6 +228,10 @@ pub struct JobDefinition {
     /// Whether failed-and-exhausted executions are sent to the dead-letter queue.
     /// None → system default (true).
     pub dead_letter_enabled: Option<bool>,
+    /// Free-form tags for filtering and grouping in the UI. NOT routing-relevant
+    /// (use runner capabilities for routing). Convention: `key=value` strings.
+    #[serde(default)]
+    pub tags: Vec<String>,
 }
 
 // ─── Trigger Definition ───

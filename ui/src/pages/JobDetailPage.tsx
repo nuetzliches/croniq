@@ -1,4 +1,7 @@
 import { useCallback, useState } from 'react'
+import { Sheet } from '@/components/ui/sheet'
+import { ExecutionDetail } from '@/components/ExecutionDetail'
+import type { Execution } from '@/api/types'
 import { useParams } from 'react-router'
 import { useForm } from 'react-hook-form'
 import * as Dialog from '@radix-ui/react-dialog'
@@ -78,6 +81,7 @@ export function JobDetailPage() {
   const [submitError, setSubmitError] = useState<string | null>(null)
   const [triggering, setTriggering] = useState(false)
   const [editJobOpen, setEditJobOpen] = useState(false)
+  const [selectedExecution, setSelectedExecution] = useState<Execution | null>(null)
 
   async function handleDeleteSchedule(triggerId: string, cron: string | null) {
     const ok = await confirm({
@@ -239,6 +243,21 @@ export function JobDetailPage() {
               <div className="col-span-full">
                 <dt className="text-xs text-muted-foreground uppercase tracking-wide mb-0.5">Description</dt>
                 <dd>{j.description}</dd>
+              </div>
+            )}
+            {(j.tags ?? []).length > 0 && (
+              <div className="col-span-full">
+                <dt className="text-xs text-muted-foreground uppercase tracking-wide mb-1">Tags</dt>
+                <dd className="flex flex-wrap gap-1.5">
+                  {(j.tags ?? []).map((t) => (
+                    <span
+                      key={t}
+                      className="inline-flex items-center rounded-full bg-accent px-2 py-0.5 text-xs font-mono text-accent-foreground"
+                    >
+                      {t}
+                    </span>
+                  ))}
+                </dd>
               </div>
             )}
             <div>
@@ -440,7 +459,7 @@ export function JobDetailPage() {
                   <tr><td colSpan={5} className="px-3 py-6 text-center text-sm text-muted-foreground">No executions yet</td></tr>
                 )}
                 {executions.data?.map((e) => (
-                  <tr key={e.id} className="border-b border-border last:border-0 hover:bg-accent/30 transition-colors">
+                  <tr key={e.id} onClick={() => setSelectedExecution(e)} className={`border-b border-border last:border-0 cursor-pointer transition-colors hover:bg-accent/40 ${selectedExecution?.id === e.id ? 'bg-accent/60' : ''}`}>
                     <td className="px-3 py-2.5 font-mono text-xs text-muted-foreground" title={e.id}>{shortId(e.id)}</td>
                     <td className="px-3 py-2.5">
                       <Badge variant={stateVariant(e.state)}>{e.state}</Badge>
@@ -459,6 +478,10 @@ export function JobDetailPage() {
           )}
         </CardContent>
       </Card>
+
+      <Sheet open={!!selectedExecution} onOpenChange={(o) => !o && setSelectedExecution(null)} title="Execution Detail">
+        {selectedExecution && <ExecutionDetail execution={selectedExecution} />}
+      </Sheet>
     </div>
   )
 }

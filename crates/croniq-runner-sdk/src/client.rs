@@ -28,6 +28,8 @@ pub struct PollRequest {
     pub inflight: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub instance_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tags: Vec<String>,
 }
 
 #[derive(Deserialize)]
@@ -65,7 +67,7 @@ pub struct RenewRequest {
     pub execution_id: String,
 }
 
-#[derive(Serialize)]
+#[derive(Clone, Serialize)]
 pub struct WorkEvent {
     pub level: Option<String>,
     pub message: String,

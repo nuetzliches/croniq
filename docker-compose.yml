@@ -55,6 +55,9 @@ services:
       CRONIQ_API_KEY: croniq_demo_local_stack_key_not_for_production_use
       RUNNER_FAIL_RATE: ${RUNNER_FAIL_RATE:-0.05}
       RUNNER_MAX_INFLIGHT: "4"
+      # Free-form tags so the Runners page filter chip bar shows real
+      # data out of the box. Override with `RUNNER_TAGS=` to clear them.
+      RUNNER_TAGS: ${RUNNER_TAGS:-env=demo,role=worker}
       RUST_LOG: info
     depends_on:
       server:

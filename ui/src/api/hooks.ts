@@ -44,12 +44,30 @@ export function useUpdateJob() {
       timeout?: string | null
       max_retries?: number | null
       dead_letter_enabled?: boolean | null
+      tags?: string[]
     }) => apiPut<T.JobDefinition>(`/v1/jobs/${job_key}`, patch),
     onSuccess: (_data, vars) => {
       qc.invalidateQueries({ queryKey: ['jobs'] })
       qc.invalidateQueries({ queryKey: ['jobs', vars.job_key] })
+      qc.invalidateQueries({ queryKey: ['tags'] })
     },
     meta: { action: 'Update job' },
+  })
+}
+
+// Tags
+export function useJobTags() {
+  return useQuery({
+    queryKey: ['tags', 'jobs'],
+    queryFn: () => apiFetch<T.TagCount[]>('/v1/tags?entity=jobs'),
+  })
+}
+
+export function useRunnerTags() {
+  return useQuery({
+    queryKey: ['tags', 'runners'],
+    queryFn: () => apiFetch<T.TagCount[]>('/v1/tags?entity=runners'),
+    refetchInterval: 10000,
   })
 }
 export function useActivateJob() {
@@ -209,11 +227,12 @@ export function useRunnersSSE() {
 }
 
 // Executions
-export function useExecutions(params?: { job_key?: string; state?: string; limit?: number }) {
+export function useExecutions(params?: { job_key?: string; state?: string; limit?: number; runner_id?: string }) {
   const search = new URLSearchParams()
   if (params?.job_key) search.set('job_key', params.job_key)
   if (params?.state) search.set('state', params.state)
   if (params?.limit) search.set('limit', String(params.limit))
+  if (params?.runner_id) search.set('runner_id', params.runner_id)
   const qs = search.toString() ? `?${search}` : ''
   return useQuery({
     queryKey: ['executions', params],

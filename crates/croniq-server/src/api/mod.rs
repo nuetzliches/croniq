@@ -10,6 +10,7 @@ pub mod execution_logs;
 pub mod jobs;
 pub mod runners_sse;
 pub mod schedules;
+pub mod tags;
 pub mod work;
 
 use std::collections::HashMap;
@@ -227,6 +228,8 @@ pub fn server_router(state: Arc<ServerState>) -> Router {
         )
         // Dashboard
         .route("/v1/dashboard/forecast", get(dashboard::handle_forecast))
+        // Tags
+        .route("/v1/tags", get(tags::handle_list_tags))
         // Executions + logs
         .route("/v1/executions", get(handle_list_executions))
         .route(
@@ -300,6 +303,7 @@ async fn handle_poll(
             req.max_inflight,
             req.inflight.clone(),
             req.instance_id.clone(),
+            req.tags.clone(),
         );
         if let Err(conflict) = result {
             tracing::warn!(
@@ -443,6 +447,7 @@ async fn handle_list_runners(
             max_inflight: r.max_inflight,
             inflight: r.inflight.len(),
             last_poll_at: r.last_poll_at,
+            tags: r.tags.clone(),
         })
         .collect();
 
@@ -580,6 +585,7 @@ async fn handle_list_executions(
         .ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
     let filter = ExecutionFilter {
         job_key: params.get("job_key").cloned(),
+        runner_id: params.get("runner_id").cloned(),
         state: params.get("state").and_then(|s| match s.as_str() {
             "queued" => Some(croniq_store::models::ExecutionState::Queued),
             "claimed" => Some(croniq_store::models::ExecutionState::Claimed),
@@ -729,7 +735,7 @@ mod tests {
 
         {
             let mut reg = state.runner.registry.write().await;
-            let _ = reg.register_or_update("r1", vec![], 3, vec!["exec-42".into()], None);
+            let _ = reg.register_or_update("r1", vec![], 3, vec!["exec-42".into()], None, vec![]);
         }
 
         let app = server_router(Arc::clone(&state));
@@ -758,7 +764,7 @@ mod tests {
 
         {
             let mut reg = state.runner.registry.write().await;
-            let _ = reg.register_or_update("r1", vec![], 3, vec!["exec-99".into()], None);
+            let _ = reg.register_or_update("r1", vec![], 3, vec!["exec-99".into()], None, vec![]);
         }
 
         let app = server_router(Arc::clone(&state));

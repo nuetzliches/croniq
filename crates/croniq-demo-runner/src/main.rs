@@ -9,6 +9,7 @@
 //!   RUNNER_ID            — runner name      (default: demo-runner)
 //!   RUNNER_FAIL_RATE     — fraction 0.0–1.0 that fail (default: 0.05)
 //!   RUNNER_MAX_INFLIGHT  — concurrency cap  (default: 4)
+//!   RUNNER_TAGS          — comma-separated free-form filter tags (optional)
 
 use std::time::Duration;
 
@@ -57,8 +58,20 @@ async fn main() {
         "croniq demo runner starting"
     );
 
+    let tags: Vec<String> = std::env::var("RUNNER_TAGS")
+        .ok()
+        .map(|s| {
+            s.split(',')
+                .map(str::trim)
+                .filter(|x| !x.is_empty())
+                .map(String::from)
+                .collect()
+        })
+        .unwrap_or_default();
+
     let mut builder = CroniqRunner::builder(&server_url, &runner_id)
         .capabilities(vec!["demo".into()])
+        .tags(tags)
         .max_inflight(max_inflight);
 
     if let Ok(key) = std::env::var("CRONIQ_API_KEY") {

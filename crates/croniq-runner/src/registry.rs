@@ -34,6 +34,7 @@ impl RunnerRegistry {
         max_inflight: u32,
         inflight: Vec<String>,
         instance_id: Option<String>,
+        tags: Vec<String>,
     ) -> Result<bool, String> {
         let id = runner_id.into();
         let now = Utc::now();
@@ -57,13 +58,15 @@ impl RunnerRegistry {
             last_poll_at: now,
             inflight: inflight.clone(),
             instance_id: instance_id.clone(),
+            tags: tags.clone(),
         });
 
-        // Always update heartbeat + inflight; capabilities may change too.
+        // Always update heartbeat + inflight; capabilities + tags may change too.
         runner.capabilities = capabilities;
         runner.max_inflight = max_inflight;
         runner.last_poll_at = now;
         runner.inflight = inflight;
+        runner.tags = tags;
         if instance_id.is_some() {
             runner.instance_id = instance_id;
         }
@@ -168,7 +171,7 @@ mod tests {
     #[test]
     fn register_new_runner() {
         let mut reg = RunnerRegistry::new();
-        let is_new = reg.register_or_update("r1", vec!["billing".into()], 3, vec![], None);
+        let is_new = reg.register_or_update("r1", vec!["billing".into()], 3, vec![], None, vec![]);
         assert!(is_new.unwrap());
         assert_eq!(reg.len(), 1);
     }
@@ -176,13 +179,13 @@ mod tests {
     #[test]
     fn re_register_updates_heartbeat() {
         let mut reg = RunnerRegistry::new();
-        let _ = reg.register_or_update("r1", vec!["billing".into()], 3, vec![], None);
+        let _ = reg.register_or_update("r1", vec!["billing".into()], 3, vec![], None, vec![]);
         let first_poll = reg.get("r1").unwrap().last_poll_at;
 
         // Simulate time passing by sleeping 1ms (not ideal but cheap)
         std::thread::sleep(std::time::Duration::from_millis(5));
 
-        let is_new = reg.register_or_update("r1", vec!["billing".into()], 3, vec![], None);
+        let is_new = reg.register_or_update("r1", vec!["billing".into()], 3, vec![], None, vec![]);
         assert!(!is_new.unwrap());
         let second_poll = reg.get("r1").unwrap().last_poll_at;
         assert!(second_poll > first_poll);
@@ -191,13 +194,14 @@ mod tests {
     #[test]
     fn capabilities_updated_on_re_register() {
         let mut reg = RunnerRegistry::new();
-        let _ = reg.register_or_update("r1", vec!["billing".into()], 3, vec![], None);
+        let _ = reg.register_or_update("r1", vec!["billing".into()], 3, vec![], None, vec![]);
         let _ = reg.register_or_update(
             "r1",
             vec!["billing".into(), "eu-central".into()],
             3,
             vec![],
             None,
+            vec![],
         );
 
         let r = reg.get("r1").unwrap();
@@ -213,6 +217,7 @@ mod tests {
             3,
             vec!["exec-1".into(), "exec-2".into()],
             None,
+            vec![],
         );
 
         let r = reg.get("r1").unwrap();
@@ -222,7 +227,7 @@ mod tests {
     #[test]
     fn claim_and_release() {
         let mut reg = RunnerRegistry::new();
-        let _ = reg.register_or_update("r1", vec![], 3, vec![], None);
+        let _ = reg.register_or_update("r1", vec![], 3, vec![], None, vec![]);
 
         assert!(reg.claim("r1", "exec-42"));
         assert_eq!(reg.get("r1").unwrap().inflight, vec!["exec-42"]);
@@ -240,14 +245,14 @@ mod tests {
     #[test]
     fn release_unknown_execution_returns_false() {
         let mut reg = RunnerRegistry::new();
-        let _ = reg.register_or_update("r1", vec![], 3, vec![], None);
+        let _ = reg.register_or_update("r1", vec![], 3, vec![], None, vec![]);
         assert!(!reg.release("r1", "exec-does-not-exist"));
     }
 
     #[test]
     fn remove_runner() {
         let mut reg = RunnerRegistry::new();
-        let _ = reg.register_or_update("r1", vec![], 3, vec![], None);
+        let _ = reg.register_or_update("r1", vec![], 3, vec![], None, vec![]);
         let removed = reg.remove("r1");
         assert!(removed.is_some());
         assert!(reg.is_empty());
@@ -256,7 +261,7 @@ mod tests {
     #[test]
     fn by_status_filters_correctly() {
         let mut reg = RunnerRegistry::new();
-        let _ = reg.register_or_update("online", vec![], 1, vec![], None);
+        let _ = reg.register_or_update("online", vec![], 1, vec![], None, vec![]);
 
         // Manually set a stale/dead runner by inserting with old timestamp
         reg.runners.insert(
@@ -268,6 +273,7 @@ mod tests {
                 last_poll_at: now() - Duration::seconds(200),
                 inflight: vec![],
                 instance_id: None,
+                tags: vec![],
             },
         );
 
@@ -292,6 +298,7 @@ mod tests {
                 last_poll_at: now() - Duration::seconds(300),
                 inflight: vec!["exec-1".into()],
                 instance_id: None,
+                tags: vec![],
             },
         );
 
