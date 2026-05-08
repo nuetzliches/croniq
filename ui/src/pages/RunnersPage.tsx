@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { Link } from 'react-router'
 import { Trash2, Wifi, WifiOff } from 'lucide-react'
-import { useRunnersSSE, useDeleteRunner, useJobs, useExecutions, useExecutionLogs } from '@/api/hooks'
+import { useRunnersSSE, useDeleteRunner, useJobs, useExecutions, useExecutionLogs, useRunnerTags } from '@/api/hooks'
 import { Badge } from '@/components/ui/badge'
 import { stateVariant } from '@/components/ui/badge-variants'
 import { Card, CardContent } from '@/components/ui/card'
@@ -140,6 +140,19 @@ function RunnerDetail({ runner }: { runner: RunnerSummary }) {
               </div>
             </>
           )}
+
+          {(runner.tags ?? []).length > 0 && (
+            <>
+              <span className="text-muted-foreground pt-0.5">Tags</span>
+              <div className="flex flex-wrap gap-1">
+                {(runner.tags ?? []).map((t) => (
+                  <span key={t} className="inline-flex items-center rounded-full bg-accent px-2 py-0.5 text-xs font-mono text-accent-foreground">
+                    {t}
+                  </span>
+                ))}
+              </div>
+            </>
+          )}
         </div>
       </section>
 
@@ -211,9 +224,26 @@ function RunnerDetail({ runner }: { runner: RunnerSummary }) {
 
 export function RunnersPage() {
   const { data: runners, isConnected } = useRunnersSSE()
+  const tagCounts = useRunnerTags()
   const deleteRunner = useDeleteRunner()
   const { confirm, dialog: confirmDialog } = useConfirm()
   const [selectedRunner, setSelectedRunner] = useState<RunnerSummary | null>(null)
+  const [activeTags, setActiveTags] = useState<Set<string>>(new Set())
+
+  const toggleTag = (tag: string) =>
+    setActiveTags((prev) => {
+      const next = new Set(prev)
+      next.has(tag) ? next.delete(tag) : next.add(tag)
+      return next
+    })
+
+  // AND-semantics: runner must carry every selected tag.
+  const filteredRunners = (runners ?? []).filter((r) => {
+    if (activeTags.size === 0) return true
+    const have = new Set(r.tags ?? [])
+    for (const t of activeTags) if (!have.has(t)) return false
+    return true
+  })
 
   async function handleDelete(e: React.MouseEvent, runnerId: string) {
     e.stopPropagation()
@@ -243,6 +273,40 @@ export function RunnersPage() {
         </span>
       </div>
 
+      {(tagCounts.data?.length ?? 0) > 0 && (
+        <div className="flex flex-wrap items-center gap-1.5">
+          <span className="text-xs text-muted-foreground mr-1">Tags:</span>
+          {tagCounts.data?.map((tc) => {
+            const active = activeTags.has(tc.tag)
+            return (
+              <button
+                key={tc.tag}
+                type="button"
+                onClick={() => toggleTag(tc.tag)}
+                className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs transition-colors ${
+                  active
+                    ? 'bg-primary text-primary-foreground'
+                    : 'bg-accent text-accent-foreground hover:bg-accent/70'
+                }`}
+                aria-pressed={active}
+              >
+                <span className="font-mono">{tc.tag}</span>
+                <span className="opacity-70 tabular-nums">{tc.count}</span>
+              </button>
+            )
+          })}
+          {activeTags.size > 0 && (
+            <button
+              type="button"
+              onClick={() => setActiveTags(new Set())}
+              className="text-xs text-muted-foreground hover:text-foreground underline ml-1"
+            >
+              clear
+            </button>
+          )}
+        </div>
+      )}
+
       {!runners?.length && (
         <EmptyState
           icon={<Wifi className="h-10 w-10" />}
@@ -251,8 +315,14 @@ export function RunnersPage() {
         />
       )}
 
+      {(runners?.length ?? 0) > 0 && filteredRunners.length === 0 && (
+        <p className="text-sm text-muted-foreground py-6 text-center">
+          No runners match the selected tags.
+        </p>
+      )}
+
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-        {runners?.map((r) => (
+        {filteredRunners.map((r) => (
           <Card
             key={r.runner_id}
             className="cursor-pointer transition-colors hover:bg-accent/40"
@@ -275,6 +345,22 @@ export function RunnersPage() {
                         <span key={c} className="inline-flex items-center rounded-full bg-accent px-2 py-0.5 text-xs text-accent-foreground">
                           {c}
                         </span>
+                      ))}
+                    </div>
+                  )}
+
+                  {(r.tags ?? []).length > 0 && (
+                    <div className="flex flex-wrap gap-1">
+                      {(r.tags ?? []).map((t) => (
+                        <button
+                          key={t}
+                          type="button"
+                          onClick={(e) => { e.stopPropagation(); toggleTag(t) }}
+                          className="inline-flex items-center rounded-full bg-accent px-2 py-0.5 text-[10px] font-mono text-accent-foreground hover:bg-accent/70"
+                          title={`Filter by ${t}`}
+                        >
+                          {t}
+                        </button>
                       ))}
                     </div>
                   )}

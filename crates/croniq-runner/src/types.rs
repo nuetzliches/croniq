@@ -16,6 +16,10 @@ pub struct Runner {
     pub inflight: Vec<String>,
     /// Unique instance ID — detects when a different process registers with the same runner_id.
     pub instance_id: Option<String>,
+    /// Free-form tags for filtering/grouping. NOT routing-relevant — runner
+    /// capabilities handle routing. Convention: `key=value` strings.
+    #[serde(default)]
+    pub tags: Vec<String>,
 }
 
 /// Liveness status derived from how recently a runner polled.
@@ -39,6 +43,7 @@ impl Runner {
             last_poll_at: Utc::now(),
             inflight: Vec::new(),
             instance_id: None,
+            tags: Vec::new(),
         }
     }
 
@@ -108,6 +113,10 @@ pub struct PollRequest {
     /// runner IDs from different processes (instance guard).
     #[serde(default)]
     pub instance_id: Option<String>,
+    /// Free-form tags self-declared by the runner. Filter-only, not used for
+    /// routing.
+    #[serde(default)]
+    pub tags: Vec<String>,
 }
 
 fn default_max_inflight() -> u32 {
@@ -203,6 +212,8 @@ pub struct RunnerSummary {
     pub max_inflight: u32,
     pub inflight: usize,
     pub last_poll_at: DateTime<Utc>,
+    #[serde(default)]
+    pub tags: Vec<String>,
 }
 
 /// `POST /v1/trigger` request — immediately fire a job.

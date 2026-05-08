@@ -45,6 +45,7 @@ export interface RunnerSummary {
   max_inflight: number
   inflight: number
   last_poll_at: string
+  tags: string[]
 }
 
 export interface Execution {

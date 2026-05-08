@@ -21,6 +21,7 @@ pub struct RunnerBuilder {
     api_key: Option<String>,
     capabilities: Vec<String>,
     max_inflight: u32,
+    tags: Vec<String>,
 }
 
 impl RunnerBuilder {
@@ -39,6 +40,14 @@ impl RunnerBuilder {
         self
     }
 
+    /// Free-form tags self-declared by the runner. Filter-only — does not
+    /// influence routing (capabilities do that). Convention: `key=value`
+    /// strings (`env=prod`, `team=ops`) but plain labels are equally valid.
+    pub fn tags(mut self, tags: Vec<String>) -> Self {
+        self.tags = tags;
+        self
+    }
+
     pub fn build(self) -> CroniqRunner {
         let mut client = CroniqClient::new(&self.server_url);
         if let Some(key) = &self.api_key {
@@ -50,6 +59,7 @@ impl RunnerBuilder {
             runner_id: self.runner_id,
             capabilities: self.capabilities,
             max_inflight: self.max_inflight,
+            tags: self.tags,
             instance_id: uuid::Uuid::new_v4().to_string(),
             handlers: Arc::new(RwLock::new(HandlerRegistry::new())),
             schedules: Arc::new(RwLock::new(Vec::new())),
@@ -65,6 +75,7 @@ pub struct CroniqRunner {
     runner_id: String,
     capabilities: Vec<String>,
     max_inflight: u32,
+    tags: Vec<String>,
     instance_id: String,
     handlers: Arc<RwLock<HandlerRegistry>>,
     schedules: Arc<RwLock<Vec<JobSchedule>>>,
@@ -80,6 +91,7 @@ impl CroniqRunner {
             api_key: None,
             capabilities: Vec::new(),
             max_inflight: 5,
+            tags: Vec::new(),
         }
     }
 
@@ -185,6 +197,7 @@ impl CroniqRunner {
                 max_inflight: self.max_inflight,
                 inflight,
                 instance_id: Some(self.instance_id.clone()),
+                tags: self.tags.clone(),
             };
 
             match self.client.poll(&poll_req).await {

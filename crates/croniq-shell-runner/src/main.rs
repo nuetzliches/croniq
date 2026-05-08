@@ -11,6 +11,9 @@
 //!   `RUNNER_MAX_INFLIGHT`  — concurrency cap  (default: 4)
 //!   `RUNNER_CAPABILITIES`  — comma-separated extra capabilities to advertise on
 //!                            top of the implicit `shell-runner` capability.
+//!   `RUNNER_TAGS`          — comma-separated free-form tags for filtering in
+//!                            the UI. Not routing-relevant. Convention:
+//!                            `key=value` strings (`env=prod`, `team=ops`).
 
 use croniq_runner_sdk::{CroniqRunner, ExecutionContext, HandlerError, WorkEvent};
 use croniq_shell_runner::exec;
@@ -50,16 +53,29 @@ async fn main() {
         }
     }
 
+    let tags: Vec<String> = std::env::var("RUNNER_TAGS")
+        .ok()
+        .map(|s| {
+            s.split(',')
+                .map(str::trim)
+                .filter(|x| !x.is_empty())
+                .map(String::from)
+                .collect()
+        })
+        .unwrap_or_default();
+
     info!(
         server_url = %server_url,
         runner_id = %runner_id,
         ?capabilities,
+        ?tags,
         max_inflight,
         "croniq shell runner starting"
     );
 
     let mut builder = CroniqRunner::builder(&server_url, &runner_id)
         .capabilities(capabilities)
+        .tags(tags)
         .max_inflight(max_inflight);
 
     if let Ok(key) = std::env::var("CRONIQ_API_KEY") {

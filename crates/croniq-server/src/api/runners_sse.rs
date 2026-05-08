@@ -40,6 +40,7 @@ pub async fn handle_runner_stream(
                             "runner_id": r.runner_id,
                             "status": format!("{:?}", r.status_at(now)),
                             "capabilities": r.capabilities,
+                            "tags": r.tags,
                             "inflight": r.inflight.len(),
                             "max_inflight": r.max_inflight,
                             "last_poll_at": r.last_poll_at.to_rfc3339(),

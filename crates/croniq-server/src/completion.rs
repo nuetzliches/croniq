@@ -364,6 +364,7 @@ mod tests {
             catch_up: croniq_config::compile::CatchUpPolicy::default(),
             queue_ttl: None,
             max_queue_depth: None,
+            tags: vec![],
         }
     }
 
@@ -515,6 +516,7 @@ mod tests {
                 timeout: Some("1m".into()),
                 max_retries: Some(1), // one attempt → dead-letter on first failure
                 dead_letter_enabled: Some(true),
+                tags: vec![],
             })
             .unwrap();
 

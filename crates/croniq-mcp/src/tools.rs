@@ -1747,7 +1747,7 @@ mod tests {
 
         {
             let mut reg = server.state.registry.write().await;
-            let _ = reg.register_or_update("runner-1", vec!["billing".into()], 3, vec![], None);
+            let _ = reg.register_or_update("runner-1", vec!["billing".into()], 3, vec![], None, vec![]);
         }
 
         let result = server.list_runners().await.unwrap();
@@ -1781,6 +1781,7 @@ mod tests {
                 5,
                 vec!["exec-1".into()],
                 None,
+                vec![],
             );
         }
 

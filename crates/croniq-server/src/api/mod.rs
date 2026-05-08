@@ -303,6 +303,7 @@ async fn handle_poll(
             req.max_inflight,
             req.inflight.clone(),
             req.instance_id.clone(),
+            req.tags.clone(),
         );
         if let Err(conflict) = result {
             tracing::warn!(
@@ -446,6 +447,7 @@ async fn handle_list_runners(
             max_inflight: r.max_inflight,
             inflight: r.inflight.len(),
             last_poll_at: r.last_poll_at,
+            tags: r.tags.clone(),
         })
         .collect();
 
@@ -733,7 +735,7 @@ mod tests {
 
         {
             let mut reg = state.runner.registry.write().await;
-            let _ = reg.register_or_update("r1", vec![], 3, vec!["exec-42".into()], None);
+            let _ = reg.register_or_update("r1", vec![], 3, vec!["exec-42".into()], None, vec![]);
         }
 
         let app = server_router(Arc::clone(&state));
@@ -762,7 +764,7 @@ mod tests {
 
         {
             let mut reg = state.runner.registry.write().await;
-            let _ = reg.register_or_update("r1", vec![], 3, vec!["exec-99".into()], None);
+            let _ = reg.register_or_update("r1", vec![], 3, vec!["exec-99".into()], None, vec![]);
         }
 
         let app = server_router(Arc::clone(&state));

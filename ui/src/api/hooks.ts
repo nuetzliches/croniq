@@ -62,6 +62,14 @@ export function useJobTags() {
     queryFn: () => apiFetch<T.TagCount[]>('/v1/tags?entity=jobs'),
   })
 }
+
+export function useRunnerTags() {
+  return useQuery({
+    queryKey: ['tags', 'runners'],
+    queryFn: () => apiFetch<T.TagCount[]>('/v1/tags?entity=runners'),
+    refetchInterval: 10000,
+  })
+}
 export function useActivateJob() {
   const qc = useQueryClient()
   return useMutation({

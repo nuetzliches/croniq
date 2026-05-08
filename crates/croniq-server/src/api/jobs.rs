@@ -803,6 +803,7 @@ mod tests {
                 timeout: None,
                 max_retries: None,
                 dead_letter_enabled: None,
+                tags: vec![],
             })
             .unwrap();
 
@@ -958,6 +959,7 @@ mod tests {
                 timeout: None,
                 max_retries: None,
                 dead_letter_enabled: None,
+                tags: vec![],
             })
             .unwrap();
         let state = make_state_with_policy(vec![], Arc::clone(&store), true);
