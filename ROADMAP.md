@@ -51,6 +51,22 @@ Last reviewed: 2026-05-03.
 - **Code-split large UI bundle** — the UI build warns about a >500 kB chunk;
   consider `manualChunks` in `vite.config.ts`.
 
+## Observability
+
+- **Job-level metrics** — the `/metrics` endpoint currently only exposes
+  infrastructure-level gauges (runner count, queue depth). Add per-job metrics
+  aggregated from the `executions` store:
+  - `croniq_job_executions_total{job_key, status}` — counter, success/failure/timeout
+  - `croniq_job_duration_seconds{job_key, quantile}` — histogram of `duration_ms`
+  - `croniq_job_last_run_timestamp{job_key}` — gauge, Unix epoch of last fire
+  - `croniq_job_log_bytes_total{job_key}` — counter, cumulative log volume pushed
+    via `POST /v1/work/{id}/events`
+
+  All four can be computed on-the-fly from the existing SQLite store on each
+  `/metrics` scrape; no schema change required.
+  ([crates/croniq-server/src/metrics.rs](crates/croniq-server/src/metrics.rs),
+  [crates/croniq-store/src/traits.rs](crates/croniq-store/src/traits.rs))
+
 ## Integrations
 
 - **`runner publish { … }` — hookaido bridge** — thin DSL block that

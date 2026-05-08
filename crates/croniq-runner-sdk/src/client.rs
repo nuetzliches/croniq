@@ -65,7 +65,7 @@ pub struct RenewRequest {
     pub execution_id: String,
 }
 
-#[derive(Serialize)]
+#[derive(Clone, Serialize)]
 pub struct WorkEvent {
     pub level: Option<String>,
     pub message: String,

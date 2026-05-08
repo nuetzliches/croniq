@@ -12,7 +12,7 @@
 //!   `RUNNER_CAPABILITIES`  — comma-separated extra capabilities to advertise on
 //!                            top of the implicit `shell-runner` capability.
 
-use croniq_runner_sdk::{CroniqRunner, ExecutionContext, HandlerError};
+use croniq_runner_sdk::{CroniqRunner, ExecutionContext, HandlerError, WorkEvent};
 use croniq_shell_runner::exec;
 use tracing::info;
 
@@ -100,6 +100,31 @@ async fn handle_job(ctx: ExecutionContext) -> Result<(), HandlerError> {
     let outcome = exec::run(&exec)
         .await
         .map_err(|e| HandlerError::msg(format!("exec failed: {e}")))?;
+
+    // Push captured output to the server so the Execution Detail UI can show it.
+    // Failures here are non-fatal — just warn and continue.
+    let mut events: Vec<WorkEvent> = Vec::new();
+    if !outcome.stdout.is_empty() {
+        events.push(WorkEvent {
+            level: Some("info".into()),
+            message: outcome.stdout.clone(),
+            fields: Default::default(),
+        });
+    }
+    if !outcome.stderr.is_empty() {
+        events.push(WorkEvent {
+            level: Some("warn".into()),
+            message: outcome.stderr.clone(),
+            fields: Default::default(),
+        });
+    }
+    if let Err(e) = ctx.push_log_events(&events).await {
+        tracing::warn!(
+            execution_id = %ctx.execution_id,
+            error = %e,
+            "failed to push log events — output is only in container logs"
+        );
+    }
 
     exec::outcome_to_handler_result(outcome, &ctx.job_key)
 }

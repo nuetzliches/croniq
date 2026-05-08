@@ -194,9 +194,16 @@ impl CroniqRunner {
                         let job_key = assignment.job_key.clone();
                         self.inflight.write().await.push(exec_id.clone());
 
-                        let ctx = ExecutionContext::from(assignment);
-                        let handlers = Arc::clone(&self.handlers);
                         let client = Arc::clone(&self.client);
+                        let ctx = ExecutionContext {
+                            client: Arc::clone(&client),
+                            execution_id: assignment.execution_id,
+                            job_key: assignment.job_key,
+                            attempt: assignment.attempt,
+                            metadata: assignment.metadata,
+                            timeout: assignment.timeout,
+                        };
+                        let handlers = Arc::clone(&self.handlers);
                         let runner_id = self.runner_id.clone();
                         let inflight = Arc::clone(&self.inflight);
 

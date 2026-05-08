@@ -41,5 +41,6 @@ pub mod client;
 pub mod handler;
 pub mod runner;
 
+pub use client::{ClientError, WorkEvent};
 pub use handler::{ExecutionContext, HandlerError};
 pub use runner::CroniqRunner;
