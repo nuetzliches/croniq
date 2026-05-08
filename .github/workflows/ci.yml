@@ -15,11 +15,13 @@ on:
       - 'LICENSE*'
   pull_request:
     branches: [main]
-    paths-ignore:
-      - 'site/**'
-      - 'docs/**'
-      - '**.md'
-      - 'LICENSE*'
+    # NB: no `paths-ignore` on the PR trigger — `Rust (build + test +
+    # clippy)` and `UI (build + typecheck)` are required status checks
+    # under main's branch protection. If we skipped them on docs-only
+    # PRs, the rule's "must pass" condition becomes unsatisfiable and
+    # the PR can never merge without an admin override (see #98 for the
+    # incident that motivated lifting this filter). Cargo/npm caches
+    # make the no-op rebuild cheap enough to not be worth chasing.
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
