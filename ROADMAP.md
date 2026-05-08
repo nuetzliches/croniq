@@ -1,7 +1,7 @@
 # Croniq Roadmap
 
 Living punchlist of known improvements. Each item is sized for a single focused PR.
-Last reviewed: 2026-05-03.
+Last reviewed: 2026-05-08.
 
 ## Security hardening
 
@@ -88,3 +88,53 @@ Last reviewed: 2026-05-03.
   `croniq-publish-runner` crate that consumes the same `__runner_*` metadata
   pattern. Until then, `runner shell { command "curl -X POST … " }` covers
   the use case.
+
+## Tags follow-ups
+
+Tags shipped for jobs (DSL `tags "k=v" …`) and runners (`RUNNER_TAGS` env)
+as filter-only metadata distinct from routing-relevant capabilities. These
+are the deliberate gaps left for follow-up:
+
+- **Admin override for runner tags via API** — runners are the source of
+  truth via self-registration on every poll, but ops sometimes wants to
+  override (e.g. mark a runner `quarantine=true` from the UI without
+  deploying). Add `PATCH /v1/runners/{id}/tags` with merge semantics:
+  admin tags layer on top of the runner-declared set, persist across
+  restarts in a small `runner_tag_overrides` table, and the registry
+  unions them on each poll. ([crates/croniq-runner/src/registry.rs](crates/croniq-runner/src/registry.rs))
+- **Tag injection into log events** — `ExecutionContext::push_log_events`
+  already auto-injects `job_key` into every event's `fields`. Extend this
+  to inject the job's tags + the runner's tags so log queries can filter
+  by `tag:env=prod` without the call site having to thread the values
+  through. Cheap on the SDK side; Loki/CloudWatch users get
+  free filterable structured logs.
+  ([crates/croniq-runner-sdk/src/handler.rs](crates/croniq-runner-sdk/src/handler.rs))
+- **URL-state for list filters** — Jobs/Runners/Executions pages filter
+  client-side; the state (selected tags, status, job-key substring) is
+  not in the URL, so links/bookmarks don't capture context. Lift filter
+  state into `useSearchParams` (`?tag=env=prod&tag=team=ops&state=failed`)
+  and add a `?selected=<id>` param so deep-linking opens a specific
+  detail panel. Would also collapse the nested-Sheet UX from the runner
+  detail (clicking an execution there → navigates to
+  `/jobs/<key>?execution=<id>` instead of stacking sheets).
+  ([ui/src/pages/JobsPage.tsx](ui/src/pages/JobsPage.tsx),
+  [ui/src/pages/RunnersPage.tsx](ui/src/pages/RunnersPage.tsx),
+  [ui/src/pages/ExecutionsPage.tsx](ui/src/pages/ExecutionsPage.tsx))
+
+## Operator tooling
+
+- **Add-Runner SDK template generator** — Runners page has no
+  "Add Runner" affordance; new runners require reading the SDK README,
+  finding the right `docker run` snippet, and minting an API key by
+  hand. v1 scope: a wizard that asks {SDK target, capabilities,
+  environment} and emits a ready-to-paste docker-compose snippet plus
+  a freshly-minted scoped API key. v2 scope: full code-skeleton
+  generation per language (Rust / Python / Shell-runner). Issue #93
+  Wish 2. ([ui/src/pages/RunnersPage.tsx](ui/src/pages/RunnersPage.tsx))
+- **Aggregate stats on Job detail page** — surface success rate (7d),
+  p50/p95 duration, last-failure timestamp at the top of
+  `/jobs/{key}`. Reads the same data the planned per-job Prometheus
+  metrics aggregate, just displayed inline so operators don't need to
+  go through Grafana for the obvious questions. Issue #94 bonus.
+  ([ui/src/pages/JobDetailPage.tsx](ui/src/pages/JobDetailPage.tsx),
+  [crates/croniq-store/src/traits.rs](crates/croniq-store/src/traits.rs))
