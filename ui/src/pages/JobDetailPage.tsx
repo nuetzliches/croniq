@@ -245,6 +245,21 @@ export function JobDetailPage() {
                 <dd>{j.description}</dd>
               </div>
             )}
+            {(j.tags ?? []).length > 0 && (
+              <div className="col-span-full">
+                <dt className="text-xs text-muted-foreground uppercase tracking-wide mb-1">Tags</dt>
+                <dd className="flex flex-wrap gap-1.5">
+                  {(j.tags ?? []).map((t) => (
+                    <span
+                      key={t}
+                      className="inline-flex items-center rounded-full bg-accent px-2 py-0.5 text-xs font-mono text-accent-foreground"
+                    >
+                      {t}
+                    </span>
+                  ))}
+                </dd>
+              </div>
+            )}
             <div>
               {/* The header field shows who *registered* the job (which
                   runner the SDK call came from). The Recent Executions

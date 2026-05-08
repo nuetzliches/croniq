@@ -529,6 +529,7 @@ pub fn job_config_from_definition(
         catch_up: CatchUpPolicy::default(),
         queue_ttl: None,
         max_queue_depth: None,
+        tags: job_def.map(|j| j.tags.clone()).unwrap_or_default(),
     }
 }
 
@@ -578,6 +579,7 @@ pub fn job_config_from_job_def(
         catch_up: CatchUpPolicy::default(),
         queue_ttl: None,
         max_queue_depth: None,
+        tags: job_def.tags.clone(),
     }
 }
 
@@ -601,6 +603,7 @@ pub fn synth_job_def_from_dsl(
         timeout: cfg.timeout.clone(),
         max_retries: Some(cfg.retry.max_attempts),
         dead_letter_enabled: Some(cfg.dead_letter.enabled),
+        tags: cfg.tags.clone(),
     }
 }
 

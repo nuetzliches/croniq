@@ -16,6 +16,7 @@ interface Props {
 interface EditForm {
   description: string
   timeout: string
+  tags: string
 }
 
 const inputCls =
@@ -37,12 +38,17 @@ export function EditJobDialog({ job, open, onOpenChange }: Props) {
       reset({
         description: job.description ?? '',
         timeout: job.timeout ?? '',
+        tags: (job.tags ?? []).join(', '),
       })
     }
   }, [open, job, reset])
 
   async function onSubmit(data: EditForm) {
     if (!job) return
+    const tags = data.tags
+      .split(',')
+      .map((t) => t.trim())
+      .filter((t) => t.length > 0)
     await updateJob.mutateAsync({
       job_key: job.job_key,
       // Empty string clears the field — send explicit null so the backend
@@ -50,6 +56,7 @@ export function EditJobDialog({ job, open, onOpenChange }: Props) {
       // value.
       description: data.description.trim() === '' ? null : data.description,
       timeout: data.timeout.trim() === '' ? null : data.timeout,
+      tags,
     })
     onOpenChange(false)
   }
@@ -95,6 +102,19 @@ export function EditJobDialog({ job, open, onOpenChange }: Props) {
               />
               <p className="text-[11px] text-muted-foreground mt-1">
                 How long an execution may run before being killed. Empty for the server default.
+              </p>
+            </div>
+            <div>
+              <label className="block text-xs text-muted-foreground mb-1">
+                Tags
+              </label>
+              <input
+                {...register('tags')}
+                placeholder="env=prod, team=ops, owner=alice"
+                className={inputCls}
+              />
+              <p className="text-[11px] text-muted-foreground mt-1">
+                Comma-separated free-form tags for filtering. Convention: <code>key=value</code>. Not routing-relevant.
               </p>
             </div>
             {updateJob.error && (

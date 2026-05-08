@@ -70,6 +70,8 @@ pub struct CreateJobRequest {
     pub timeout: Option<String>,
     pub max_retries: Option<u32>,
     pub dead_letter_enabled: Option<bool>,
+    #[serde(default)]
+    pub tags: Vec<String>,
 }
 
 /// Check whether `job_key` is DSL-managed. Returns `true` if the Croniqfile
@@ -167,6 +169,7 @@ pub async fn handle_create(
         timeout: req.timeout,
         max_retries: req.max_retries,
         dead_letter_enabled: req.dead_letter_enabled,
+        tags: req.tags,
     };
     store
         .create_job_definition(&job)
@@ -220,6 +223,17 @@ pub async fn handle_update(
     }
     if let Some(v) = obj.get("dead_letter_enabled") {
         job.dead_letter_enabled = v.as_bool();
+    }
+    if let Some(v) = obj.get("tags") {
+        job.tags = v
+            .as_array()
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|x| x.as_str().map(|s| s.to_string()))
+                    .filter(|s| !s.is_empty())
+                    .collect()
+            })
+            .unwrap_or_default();
     }
     job.updated_at = Utc::now();
 
@@ -382,6 +396,7 @@ pub async fn handle_register(
         timeout: req.timeout.clone(),
         max_retries: req.max_retries,
         dead_letter_enabled: req.dead_letter_enabled,
+        tags: Vec::new(),
     };
     store
         .create_job_definition(&job_def)

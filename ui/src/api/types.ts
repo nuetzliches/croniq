@@ -17,6 +17,12 @@ export interface JobDefinition {
   timeout: string | null
   max_retries: number | null
   dead_letter_enabled: boolean | null
+  tags: string[]
+}
+
+export interface TagCount {
+  tag: string
+  count: number
 }
 
 export interface TriggerDefinition {

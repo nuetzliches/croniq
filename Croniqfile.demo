@@ -32,6 +32,7 @@ job demo:heartbeat {
   description "Liveness ping — runs every minute"
   every 1 minute
   timeout 30s
+  tags "env=demo" "kind=health"
 }
 
 job demo:data-sync {
@@ -39,12 +40,14 @@ job demo:data-sync {
   every 5 minutes
   timeout 1m
   retry fixed { max_attempts 2; delay 10s }
+  tags "env=demo" "kind=etl" "team=data"
 }
 
 job demo:report {
   description "Generates a summary report — runs every 15 minutes"
   every 15 minutes
   timeout 90s
+  tags "env=demo" "kind=report" "team=data"
 }
 
 job demo:cleanup {
@@ -52,6 +55,7 @@ job demo:cleanup {
   every 1 hour
   timeout 5m
   dead_letter { retention 3d }
+  tags "env=demo" "kind=ops"
 }
 
 job demo:slow-job {
@@ -59,4 +63,5 @@ job demo:slow-job {
   every 30 minutes
   timeout 45s
   retry fixed { max_attempts 1; delay 0s }
+  tags "env=demo" "kind=ops"
 }

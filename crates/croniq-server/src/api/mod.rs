@@ -10,6 +10,7 @@ pub mod execution_logs;
 pub mod jobs;
 pub mod runners_sse;
 pub mod schedules;
+pub mod tags;
 pub mod work;
 
 use std::collections::HashMap;
@@ -227,6 +228,8 @@ pub fn server_router(state: Arc<ServerState>) -> Router {
         )
         // Dashboard
         .route("/v1/dashboard/forecast", get(dashboard::handle_forecast))
+        // Tags
+        .route("/v1/tags", get(tags::handle_list_tags))
         // Executions + logs
         .route("/v1/executions", get(handle_list_executions))
         .route(

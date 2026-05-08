@@ -319,6 +319,10 @@ pub struct CreateJobParams {
     /// Toggle dead-letter persistence on permanent failure.
     #[serde(default)]
     pub dead_letter_enabled: Option<bool>,
+    /// Free-form tags for filtering (e.g. `["env=prod", "team=ops"]`).
+    /// Not routing-relevant — runner capabilities handle routing.
+    #[serde(default)]
+    pub tags: Option<Vec<String>>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -1293,6 +1297,7 @@ impl CroniqMcp {
                 timeout: cfg.timeout.clone(),
                 max_retries: None,
                 dead_letter_enabled: None,
+                tags: cfg.tags.clone(),
             };
             return serde_json::to_string_pretty(&synth)
                 .map_err(|e| McpError::internal_error(e.to_string(), None));
@@ -1334,6 +1339,7 @@ impl CroniqMcp {
             timeout: p.timeout,
             max_retries: p.max_retries,
             dead_letter_enabled: p.dead_letter_enabled,
+            tags: p.tags.unwrap_or_default(),
         };
         store
             .create_job_definition(&job)
