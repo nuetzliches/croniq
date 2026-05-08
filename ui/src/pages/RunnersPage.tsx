@@ -97,8 +97,15 @@ function ExecutionDetail({ execution }: { execution: Execution }) {
 function RunnerDetail({ runner }: { runner: RunnerSummary }) {
   const [selectedExecution, setSelectedExecution] = useState<Execution | null>(null)
   const jobs = useJobs()
-  const executions = useExecutions({ runner_id: runner.runner_id, limit: 10 })
-  const linkedJobs = jobs.data?.filter((j) => j.assigned_runner_id === runner.runner_id) ?? []
+  const executions = useExecutions({ runner_id: runner.runner_id, limit: 50 })
+  // Jobs this runner has actually handled recently — derived from execution
+  // history. Croniq routes mostly by capability matching (not by pinning via
+  // `assigned_runner_id`), so the explicit-assignment field is null for most
+  // jobs even when a runner regularly executes them.
+  const handledJobKeys = Array.from(new Set((executions.data ?? []).map((e) => e.job_key)))
+  const handledJobs = handledJobKeys
+    .map((key) => jobs.data?.find((j) => j.job_key === key) ?? { job_key: key })
+    .sort((a, b) => a.job_key.localeCompare(b.job_key))
 
   return (
     <div className="space-y-6">
@@ -136,16 +143,16 @@ function RunnerDetail({ runner }: { runner: RunnerSummary }) {
         </div>
       </section>
 
-      {/* Assigned jobs */}
+      {/* Jobs handled (derived from recent executions) */}
       <section className="space-y-2">
-        <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Assigned jobs</h3>
-        {jobs.isLoading && <Spinner className="h-4 w-4" />}
-        {!jobs.isLoading && linkedJobs.length === 0 && (
-          <p className="text-xs text-muted-foreground">No jobs assigned to this runner</p>
+        <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Jobs handled</h3>
+        {executions.isLoading && <Spinner className="h-4 w-4" />}
+        {!executions.isLoading && handledJobs.length === 0 && (
+          <p className="text-xs text-muted-foreground">This runner hasn't handled any jobs recently</p>
         )}
-        {linkedJobs.length > 0 && (
+        {handledJobs.length > 0 && (
           <ul className="space-y-1">
-            {linkedJobs.map((j) => (
+            {handledJobs.map((j) => (
               <li key={j.job_key}>
                 <Link
                   to={`/jobs/${j.job_key}`}

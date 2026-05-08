@@ -11,6 +11,7 @@ import type { Execution } from '@/api/types'
 import { shortId } from '@/lib/utils'
 import { ExecutionDetail } from '@/components/ExecutionDetail'
 
+const STATES = ['queued', 'claimed', 'completed', 'failed', 'dead', 'cancelled']
 const PAGE_SIZE = 50
 
 export function ExecutionsPage() {
