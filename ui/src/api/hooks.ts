@@ -209,11 +209,12 @@ export function useRunnersSSE() {
 }
 
 // Executions
-export function useExecutions(params?: { job_key?: string; state?: string; limit?: number }) {
+export function useExecutions(params?: { job_key?: string; state?: string; limit?: number; runner_id?: string }) {
   const search = new URLSearchParams()
   if (params?.job_key) search.set('job_key', params.job_key)
   if (params?.state) search.set('state', params.state)
   if (params?.limit) search.set('limit', String(params.limit))
+  if (params?.runner_id) search.set('runner_id', params.runner_id)
   const qs = search.toString() ? `?${search}` : ''
   return useQuery({
     queryKey: ['executions', params],

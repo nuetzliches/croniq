@@ -580,6 +580,7 @@ async fn handle_list_executions(
         .ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
     let filter = ExecutionFilter {
         job_key: params.get("job_key").cloned(),
+        runner_id: params.get("runner_id").cloned(),
         state: params.get("state").and_then(|s| match s.as_str() {
             "queued" => Some(croniq_store::models::ExecutionState::Queued),
             "claimed" => Some(croniq_store::models::ExecutionState::Claimed),
