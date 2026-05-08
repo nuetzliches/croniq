@@ -233,7 +233,8 @@ export function RunnersPage() {
   const toggleTag = (tag: string) =>
     setActiveTags((prev) => {
       const next = new Set(prev)
-      next.has(tag) ? next.delete(tag) : next.add(tag)
+      if (next.has(tag)) next.delete(tag)
+      else next.add(tag)
       return next
     })
 

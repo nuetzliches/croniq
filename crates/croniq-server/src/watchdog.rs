@@ -347,7 +347,14 @@ mod tests {
         // Simulate a runner that polled 5 minutes ago (Dead threshold = 2 min)
         {
             let mut reg = runner.registry.write().await;
-            let _ = reg.register_or_update("dead-runner", vec!["billing".into()], 3, vec![], None, vec![]);
+            let _ = reg.register_or_update(
+                "dead-runner",
+                vec!["billing".into()],
+                3,
+                vec![],
+                None,
+                vec![],
+            );
             // Manually set last_poll_at to long ago
             if let Some(r) = reg.get_mut("dead-runner") {
                 r.last_poll_at = long_dead_time();
