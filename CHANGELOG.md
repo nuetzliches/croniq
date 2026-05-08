@@ -6,6 +6,39 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.10.1] - 2026-05-09
+
+### Security
+
+- **Bump `rmcp` ~1.3 → ~1.5 — patches DNS-rebinding in the Streamable
+  HTTP transport** ([GHSA-89vp-x53w-74fx](https://github.com/modelcontextprotocol/rust-sdk/security/advisories/GHSA-89vp-x53w-74fx),
+  CVE-2026-42559, CVSS 8.8). Croniq mounts rmcp's HTTP transport at
+  `/mcp` via [`croniq-server::mcp::mcp_router`](crates/croniq-server/src/mcp.rs);
+  rmcp < 1.4 did not validate the `Host` header, so a malicious public
+  page could DNS-rebind a name it controls to the victim's local IP and
+  invoke any MCP tool — including mutation tools — with the user's
+  privileges. rmcp ≥ 1.4 ships a loopback-only `Host` allowlist by
+  default (`localhost`, `127.0.0.1`, `::1`) and rejects mismatched
+  hosts with HTTP 403 (f72da47).
+
+  **Operator note for non-loopback deployments:** `croniq-server`'s
+  default `--listen :4000` binds to `0.0.0.0`. If you currently reach
+  `/mcp` via a public hostname, you will start receiving HTTP 403 from
+  rmcp until an explicit allowlist is configured. Workaround until a
+  Croniqfile-level `mcp { allowed_hosts … }` directive lands: front
+  the server with a reverse proxy that rewrites `Host` to `localhost`,
+  or wrap [`croniq_mcp::streamable_http_service`](crates/croniq-mcp/src/lib.rs)
+  with an explicit `with_allowed_hosts(...)` call.
+
+### Added
+
+- **`SECURITY.md` published security policy** — establishes a private
+  disclosure channel via GitHub Private Vulnerability Reporting (with
+  email fallback), declares supported-versions matrix, and an initial
+  response SLA. Surfaces a "Security Policy" tab on the repo landing
+  page so researchers have a clear path that isn't a public issue
+  (e9648c3).
+
 ## [0.10.0] - 2026-05-09
 
 ### Added
