@@ -6,6 +6,76 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-05-09
+
+### Added
+
+- **Free-form tags on jobs** — DSL syntax `tags "env=prod" "team=ops"` on
+  `job:` blocks; `tags` column on `job_definitions` (migration 008); UI
+  chip-bar filter (AND-semantics, multi-select) plus inline pills on the
+  Jobs list and Job detail page; tags editable in the Edit-Job dialog
+  for store-managed jobs. Tags are deliberately distinct from runner
+  capabilities — they do NOT influence routing, only display + filter,
+  so a typo in a tag can never break job dispatch
+  (a42ad76).
+- **Free-form tags on runners** — runners self-declare tags via
+  `RUNNER_TAGS=env=prod,team=ops` env var (`croniq-shell-runner` and
+  `croniq-demo-runner`); tags travel in every PollRequest so the server
+  tracks them as live state, not registration-time snapshot; tag filter
+  chips and per-card pills on the Runners page; tags shown in the
+  Runner Detail panel
+  (a5a5ec7).
+- **`GET /v1/tags?entity={jobs|runners}`** — distinct tag values across
+  the entity kind with usage counts, sorted by count desc then
+  alphabetically. Powers the UI filter bars
+  (a42ad76, a5a5ec7).
+- **Runner detail Sheet panel** — clicking a runner card opens a slide-in
+  with identity (id, status, last poll, capabilities, tags), the jobs
+  this runner has actually handled recently (derived from execution
+  history — Croniq routes by capability matching, so `assigned_runner_id`
+  is null for most jobs), and the 10 most recent executions with
+  click-through to the Execution Detail
+  ([#93](https://github.com/nuetzliches/croniq/issues/93), 3cb4538, 57e4b7f).
+- **Clickable Recent Executions on the Job detail page** — opens the
+  same Execution Detail Sheet used on the Executions tab. The detail
+  component is now extracted to `ui/src/components/ExecutionDetail.tsx`
+  and reused across three pages
+  ([#94](https://github.com/nuetzliches/croniq/issues/94), 472b93a).
+- **Shell-runner stdout/stderr now reach the Execution Detail Logs
+  section** — `handle_job` calls `ctx.push_log_events()` after
+  `exec::run()`, capturing stdout as `info` and stderr as `warn` events.
+  Failures to push are non-fatal (warned in tracing) so a flaky server
+  never breaks a job run
+  ([#92](https://github.com/nuetzliches/croniq/issues/92), 6d44dd0).
+- **`ExecutionContext::push_log_events` + `log` SDK helpers** — narrows
+  the runner-SDK API: `client` is now `pub(crate)`, external callers
+  can no longer mis-call poll/ack/renew. `push_log_events` auto-injects
+  `job_key` into every event's `fields` so log queries stay filterable
+  by job even when the raw message doesn't carry it
+  (6d44dd0).
+
+### Fixed
+
+- **Login error message disambiguates unreachable backend from wrong
+  password** — a bare "Login failed. Check your credentials." led
+  operators to chase password issues when the server was simply down.
+  TypeError from `fetch()` (production network/CORS) and 5xx from the
+  Vite dev-proxy (when upstream is gone) now surface as
+  "Cannot reach server. Check that the Croniq backend is running."
+  (89bf62d).
+- **Executions page state-filter dropdown was empty** — the `STATES`
+  constant was lost when `ExecutionDetail` was extracted to a shared
+  component. Re-added in the same fix that derives Runner detail's
+  job list from execution history instead of `assigned_runner_id`
+  (which is null for most Croniq jobs in practice)
+  (57e4b7f).
+
+### Changed
+
+- Demo `docker-compose.yml` seeds `RUNNER_TAGS=env=demo,role=worker` on
+  demo runners so the Runners filter chip bar shows real data on first
+  start. Override with `RUNNER_TAGS=` (empty) to clear.
+
 ## [0.9.1] - 2026-05-08
 
 ### Fixed

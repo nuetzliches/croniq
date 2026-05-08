@@ -158,6 +158,16 @@ pub async fn handle_create(
     }
 
     let now = Utc::now();
+    // Normalize tags: trim, drop empties, dedupe while preserving order.
+    // Mirrors the PUT /v1/jobs/{key} handler so a round-trip create-then-update
+    // can't introduce subtle "env=prod" vs " env=prod" duplicates.
+    let mut tags: Vec<String> = Vec::new();
+    for t in req.tags {
+        let trimmed = t.trim();
+        if !trimmed.is_empty() && !tags.iter().any(|x| x == trimmed) {
+            tags.push(trimmed.to_string());
+        }
+    }
     let job = JobDefinition {
         job_key: req.job_key,
         description: req.description,
@@ -169,7 +179,7 @@ pub async fn handle_create(
         timeout: req.timeout,
         max_retries: req.max_retries,
         dead_letter_enabled: req.dead_letter_enabled,
-        tags: req.tags,
+        tags,
     };
     store
         .create_job_definition(&job)
@@ -225,15 +235,18 @@ pub async fn handle_update(
         job.dead_letter_enabled = v.as_bool();
     }
     if let Some(v) = obj.get("tags") {
-        job.tags = v
-            .as_array()
-            .map(|arr| {
-                arr.iter()
-                    .filter_map(|x| x.as_str().map(|s| s.to_string()))
-                    .filter(|s| !s.is_empty())
-                    .collect()
-            })
-            .unwrap_or_default();
+        let mut out: Vec<String> = Vec::new();
+        if let Some(arr) = v.as_array() {
+            for item in arr {
+                if let Some(s) = item.as_str() {
+                    let trimmed = s.trim();
+                    if !trimmed.is_empty() && !out.iter().any(|x| x == trimmed) {
+                        out.push(trimmed.to_string());
+                    }
+                }
+            }
+        }
+        job.tags = out;
     }
     job.updated_at = Utc::now();
 
