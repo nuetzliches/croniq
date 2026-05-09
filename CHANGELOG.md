@@ -16,6 +16,20 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   threading these values through every call site. Callers can still
   override either field by setting it explicitly on `WorkEvent.fields`.
 
+### Changed
+
+- **Per-route code splitting in the UI** — every page (`Dashboard`,
+  `Jobs`, `JobDetail`, `Runners`, `DeadLetters`, `Executions`,
+  `Calendars`, `Settings`) is now lazy-loaded via `React.lazy` so
+  the heavy chunks (notably `recharts` at 357 kB used only on the
+  Dashboard) are fetched on demand. Initial app bundle dropped from
+  159 kB → 19 kB; first navigation pulls only the chunks the active
+  route needs. A Suspense boundary in `Layout` provides a single
+  shared spinner fallback while the chunk loads. Vendor chunks
+  (`react`, `router`, `query`, `charts`, `radix`, `icons`, `forms`)
+  remain split via the existing `rolldownOptions.codeSplitting.groups`
+  config.
+
 ## [0.10.1] - 2026-05-09
 
 ### Security
