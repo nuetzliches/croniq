@@ -1,18 +1,40 @@
+import { lazy } from 'react'
 import { BrowserRouter, Routes, Route } from 'react-router'
 import { MutationCache, QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { LoginPage } from '@/auth/LoginPage'
 import { ProtectedRoute } from '@/auth/ProtectedRoute'
 import { Layout } from '@/layout/Layout'
-import { DashboardPage } from '@/pages/DashboardPage'
-import { JobsPage } from '@/pages/JobsPage'
-import { JobDetailPage } from '@/pages/JobDetailPage'
-import { RunnersPage } from '@/pages/RunnersPage'
-import { DeadLettersPage } from '@/pages/DeadLettersPage'
-import { ExecutionsPage } from '@/pages/ExecutionsPage'
-import { CalendarsPage } from '@/pages/CalendarsPage'
-import { SettingsPage } from '@/pages/SettingsPage'
 import { Toaster } from '@/components/ui/toaster'
 import { pushApiError } from '@/lib/toast'
+
+// Page-level code splitting. Each route loads its own chunk on demand so
+// the initial bundle is just login + layout + the chunks needed for the
+// landing route. The Suspense boundary lives in Layout, around <Outlet />,
+// so all protected pages share a single fallback spinner.
+const DashboardPage = lazy(() =>
+  import('@/pages/DashboardPage').then((m) => ({ default: m.DashboardPage })),
+)
+const JobsPage = lazy(() =>
+  import('@/pages/JobsPage').then((m) => ({ default: m.JobsPage })),
+)
+const JobDetailPage = lazy(() =>
+  import('@/pages/JobDetailPage').then((m) => ({ default: m.JobDetailPage })),
+)
+const RunnersPage = lazy(() =>
+  import('@/pages/RunnersPage').then((m) => ({ default: m.RunnersPage })),
+)
+const DeadLettersPage = lazy(() =>
+  import('@/pages/DeadLettersPage').then((m) => ({ default: m.DeadLettersPage })),
+)
+const ExecutionsPage = lazy(() =>
+  import('@/pages/ExecutionsPage').then((m) => ({ default: m.ExecutionsPage })),
+)
+const CalendarsPage = lazy(() =>
+  import('@/pages/CalendarsPage').then((m) => ({ default: m.CalendarsPage })),
+)
+const SettingsPage = lazy(() =>
+  import('@/pages/SettingsPage').then((m) => ({ default: m.SettingsPage })),
+)
 
 // Surface every failed mutation as a toast. Individual callers can
 // still pass their own `onError` to override or augment. Auth-401
