@@ -6,6 +6,16 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **Auto-injected `runner_id` and `runner_tags` on every log event** —
+  `ExecutionContext::push_log_events` already auto-injected `job_key`;
+  now also injects which runner instance produced the event and that
+  runner's self-declared tags as a JSON-array string. Loki / CloudWatch
+  / OpenSearch users get free filterable structured logs without
+  threading these values through every call site. Callers can still
+  override either field by setting it explicitly on `WorkEvent.fields`.
+
 ## [0.10.1] - 2026-05-09
 
 ### Security
