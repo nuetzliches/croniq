@@ -54,3 +54,20 @@ export function truncate(s: string, n: number): string {
 export function shortId(id: string): string {
   return id.slice(0, 8)
 }
+
+/// Differentiated message for the empty-logs state. A "completed" run with
+/// zero logs is not a missing-data bug — it's a job whose runner produced
+/// no stdout/stderr. A "failed"/"dead" run with zero logs usually means
+/// the runner crashed before push_log_events landed. A still-pending run
+/// just hasn't logged anything yet.
+export function emptyLogsMessage(state: string): string {
+  switch (state) {
+    case "completed":
+      return "Silent run completed (no stdout)"
+    case "failed":
+    case "dead":
+      return "No logs captured"
+    default:
+      return "No logs yet"
+  }
+}

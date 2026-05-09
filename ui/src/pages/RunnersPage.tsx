@@ -13,7 +13,7 @@ import { useConfirm } from '@/components/ui/confirm-dialog'
 import { Sheet } from '@/components/ui/sheet'
 import { Spinner } from '@/components/ui/spinner'
 import type { RunnerSummary, Execution } from '@/api/types'
-import { shortId, formatDate } from '@/lib/utils'
+import { emptyLogsMessage, shortId, formatDate } from '@/lib/utils'
 
 function CapacityRing({ inflight, max }: { inflight: number; max: number }) {
   const pct = max > 0 ? Math.min(inflight / max, 1) : 0
@@ -85,7 +85,9 @@ function ExecutionDetail({ execution }: { execution: Execution }) {
       <div>
         <p className="text-xs text-muted-foreground mb-1">Logs</p>
         {logs.isLoading && <Spinner className="h-4 w-4" />}
-        {logs.data?.length === 0 && <p className="text-xs text-muted-foreground">No logs for this execution</p>}
+        {logs.data?.length === 0 && (
+          <p className="text-xs text-muted-foreground">{emptyLogsMessage(execution.state)}</p>
+        )}
         <div className="bg-muted rounded-md p-3 max-h-64 overflow-auto space-y-0.5">
           {logs.data?.map((l) => <LogLine key={l.id} level={l.level} message={l.message} />)}
         </div>
