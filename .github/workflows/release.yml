@@ -309,6 +309,11 @@ jobs:
         uses: softprops/action-gh-release@b4309332981a82ec1c5618f44dd2e27cc8bfbfda # v3.0.0
         with:
           generate_release_notes: true
+          # Semver pre-release identifiers always contain a `-` (e.g.
+          # `v0.10.2-rc1`, `v0.10.2-beta.1`). Mark those as GitHub
+          # pre-releases so they don't replace the latest stable release
+          # in the UI / install.sh resolution.
+          prerelease: ${{ contains(github.ref_name, '-') }}
           files: |
             artifacts/**/*.tar.gz
             artifacts/**/*.zip
@@ -349,8 +354,20 @@ jobs:
           fi
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+          # Skip the tap update for semver pre-releases (`v0.10.2-rc1`,
+          # `-beta.1`, …). Homebrew users follow the latest stable formula;
+          # rolling the tap to an RC would override that and force everyone
+          # onto a pre-release on next `brew upgrade`. The release job
+          # itself still publishes the GitHub Release (marked as
+          # pre-release) so the binaries are available for testing.
+          if [[ "$TAG" == *-* ]]; then
+            echo "is_release=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Tag $TAG is a pre-release (contains '-'); skipping Homebrew tap update."
+          else
+            echo "is_release=true" >> "$GITHUB_OUTPUT"
+          fi
       - name: Download release assets, update formula, push to tap
-        if: env.HOMEBREW_TAP_TOKEN != ''
+        if: env.HOMEBREW_TAP_TOKEN != '' && steps.tag.outputs.is_release == 'true'
         env:
           TAG: ${{ steps.tag.outputs.tag }}
           VERSION: ${{ steps.tag.outputs.version }}
