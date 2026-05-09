@@ -215,6 +215,8 @@ impl CroniqRunner {
                             attempt: assignment.attempt,
                             metadata: assignment.metadata,
                             timeout: assignment.timeout,
+                            runner_id: self.runner_id.clone(),
+                            runner_tags: self.tags.clone(),
                         };
                         let handlers = Arc::clone(&self.handlers);
                         let runner_id = self.runner_id.clone();
