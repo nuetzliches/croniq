@@ -1,22 +1,11 @@
-import { useExecutionLogs } from '@/api/hooks'
 import { Badge } from '@/components/ui/badge'
 import { stateVariant } from '@/components/ui/badge-variants'
 import { CopyButton } from '@/components/ui/copy-button'
-import { Spinner } from '@/components/ui/spinner'
+import { LogsPanel } from '@/components/LogsPanel'
 import type { Execution } from '@/api/types'
-import { emptyLogsMessage, formatDate } from '@/lib/utils'
-
-function LogLine({ level, message }: { level: string; message: string }) {
-  const color = level === 'error' ? 'text-status-err-fg' : level === 'warn' ? 'text-status-warn-fg' : 'text-muted-foreground'
-  return (
-    <div className="text-xs font-mono leading-5">
-      <span className={color}>[{level}]</span>{' '}{message}
-    </div>
-  )
-}
+import { formatDate } from '@/lib/utils'
 
 export function ExecutionDetail({ execution }: { execution: Execution }) {
-  const logs = useExecutionLogs(execution.id)
   return (
     <div className="space-y-4">
       <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-xs">
@@ -49,16 +38,7 @@ export function ExecutionDetail({ execution }: { execution: Execution }) {
         </div>
       )}
 
-      <div>
-        <p className="text-xs text-muted-foreground mb-1">Logs</p>
-        {logs.isLoading && <Spinner className="h-4 w-4" />}
-        {logs.data?.length === 0 && (
-          <p className="text-xs text-muted-foreground">{emptyLogsMessage(execution.state)}</p>
-        )}
-        <div className="bg-muted rounded-md p-3 max-h-64 overflow-auto space-y-0.5">
-          {logs.data?.map((l) => <LogLine key={l.id} level={l.level} message={l.message} />)}
-        </div>
-      </div>
+      <LogsPanel executionId={execution.id} executionState={execution.state} />
     </div>
   )
 }

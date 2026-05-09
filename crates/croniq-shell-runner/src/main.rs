@@ -118,23 +118,13 @@ async fn handle_job(ctx: ExecutionContext) -> Result<(), HandlerError> {
         .map_err(|e| HandlerError::msg(format!("exec failed: {e}")))?;
 
     // Push captured output to the server so the Execution Detail UI can show it.
-    // Failures here are non-fatal — just warn and continue.
-    let mut events: Vec<WorkEvent> = Vec::new();
-    if !outcome.stdout.is_empty() {
-        events.push(WorkEvent {
-            level: Some("info".into()),
-            message: outcome.stdout.clone(),
-            fields: Default::default(),
-        });
-    }
-    if !outcome.stderr.is_empty() {
-        events.push(WorkEvent {
-            level: Some("warn".into()),
-            message: outcome.stderr.clone(),
-            fields: Default::default(),
-        });
-    }
-    if let Err(e) = ctx.push_log_events(&events).await {
+    // One event per line so the UI can filter / search and downstream log
+    // sinks (Loki, CloudWatch) get individually-indexed entries instead of
+    // a single multi-KB blob. Failures here are non-fatal — just warn.
+    let events = build_log_events(&outcome.stdout, &outcome.stderr);
+    if !events.is_empty()
+        && let Err(e) = ctx.push_log_events(&events).await
+    {
         tracing::warn!(
             execution_id = %ctx.execution_id,
             error = %e,
@@ -143,4 +133,70 @@ async fn handle_job(ctx: ExecutionContext) -> Result<(), HandlerError> {
     }
 
     exec::outcome_to_handler_result(outcome, &ctx.job_key)
+}
+
+/// Split captured stdout/stderr into per-line `WorkEvent`s. Empty trailing
+/// newlines are skipped; truly empty streams produce no events.
+fn build_log_events(stdout: &str, stderr: &str) -> Vec<WorkEvent> {
+    let mut events = Vec::new();
+    push_lines_as_events(&mut events, stdout, "info");
+    push_lines_as_events(&mut events, stderr, "warn");
+    events
+}
+
+fn push_lines_as_events(events: &mut Vec<WorkEvent>, text: &str, level: &str) {
+    for line in text.lines() {
+        if line.is_empty() {
+            continue;
+        }
+        events.push(WorkEvent {
+            level: Some(level.into()),
+            message: line.to_string(),
+            fields: Default::default(),
+        });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn build_log_events_emits_one_event_per_line() {
+        let events = build_log_events("first line\nsecond line\nthird\n", "");
+        assert_eq!(events.len(), 3);
+        assert_eq!(events[0].message, "first line");
+        assert_eq!(events[0].level.as_deref(), Some("info"));
+        assert_eq!(events[2].message, "third");
+    }
+
+    #[test]
+    fn build_log_events_skips_empty_lines() {
+        let events = build_log_events("a\n\n\nb\n", "");
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[0].message, "a");
+        assert_eq!(events[1].message, "b");
+    }
+
+    #[test]
+    fn build_log_events_uses_warn_for_stderr() {
+        let events = build_log_events("", "ERROR: boom\nstack trace");
+        assert_eq!(events.len(), 2);
+        assert!(events.iter().all(|e| e.level.as_deref() == Some("warn")));
+    }
+
+    #[test]
+    fn build_log_events_orders_stdout_before_stderr() {
+        let events = build_log_events("out", "err");
+        assert_eq!(events[0].message, "out");
+        assert_eq!(events[0].level.as_deref(), Some("info"));
+        assert_eq!(events[1].message, "err");
+        assert_eq!(events[1].level.as_deref(), Some("warn"));
+    }
+
+    #[test]
+    fn build_log_events_returns_empty_for_silent_run() {
+        assert!(build_log_events("", "").is_empty());
+        assert!(build_log_events("\n\n", "").is_empty());
+    }
 }

@@ -18,6 +18,10 @@ const MIGRATIONS: &[(&str, &str)] = &[
         "009_backfill_dead_letters",
         include_str!("009_backfill_dead_letters.sql"),
     ),
+    (
+        "010_execution_log_seq",
+        include_str!("010_execution_log_seq.sql"),
+    ),
 ];
 
 /// Run all pending migrations.

@@ -234,6 +234,18 @@ pub trait DslAdoptionStore {
 /// Execution log persistence.
 pub trait ExecutionLogStore {
     fn append_log(&self, entry: &ExecutionLogEntry) -> Result<(), StoreError>;
+
+    /// Append many log entries for the same execution in one transaction,
+    /// auto-assigning each entry's `seq` to be strictly increasing within
+    /// its execution. Used by the per-line log path (#108) so a job that
+    /// produces 3000 lines of output doesn't take 3000 separate
+    /// lock+INSERT round-trips.
+    ///
+    /// The `seq` field on the input entries is ignored — the store is the
+    /// source of truth for ordering. The other fields are persisted as-is.
+    /// Implementations must ensure all entries commit together or none do.
+    fn append_logs_batch(&self, entries: &[ExecutionLogEntry]) -> Result<(), StoreError>;
+
     fn read_logs(
         &self,
         execution_id: Uuid,

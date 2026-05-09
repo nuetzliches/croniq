@@ -82,6 +82,9 @@ export interface ExecutionLogEntry {
   level: string
   message: string
   fields: Record<string, string>
+  /** Per-execution monotonic sequence number assigned at insert time;
+   * resolves ties when many events share a millisecond. */
+  seq: number
 }
 
 export interface TokenResponse {

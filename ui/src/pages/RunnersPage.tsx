@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { Link } from 'react-router'
 import { Trash2, Wifi, WifiOff } from 'lucide-react'
-import { useRunnersSSE, useDeleteRunner, useJobs, useExecutions, useExecutionLogs, useRunnerTags } from '@/api/hooks'
+import { useRunnersSSE, useDeleteRunner, useJobs, useExecutions, useRunnerTags } from '@/api/hooks'
 import { Badge } from '@/components/ui/badge'
 import { stateVariant } from '@/components/ui/badge-variants'
 import { Card, CardContent } from '@/components/ui/card'
@@ -12,8 +12,9 @@ import { RelativeTime } from '@/components/ui/relative-time'
 import { useConfirm } from '@/components/ui/confirm-dialog'
 import { Sheet } from '@/components/ui/sheet'
 import { Spinner } from '@/components/ui/spinner'
+import { LogsPanel } from '@/components/LogsPanel'
 import type { RunnerSummary, Execution } from '@/api/types'
-import { emptyLogsMessage, shortId, formatDate } from '@/lib/utils'
+import { shortId, formatDate } from '@/lib/utils'
 
 function CapacityRing({ inflight, max }: { inflight: number; max: number }) {
   const pct = max > 0 ? Math.min(inflight / max, 1) : 0
@@ -39,17 +40,7 @@ function CapacityRing({ inflight, max }: { inflight: number; max: number }) {
 const statusVariant = (s: string) =>
   s === 'Online' ? 'ok' : s === 'Stale' ? 'warn' : 'err'
 
-function LogLine({ level, message }: { level: string; message: string }) {
-  const color = level === 'error' ? 'text-status-err-fg' : level === 'warn' ? 'text-status-warn-fg' : 'text-muted-foreground'
-  return (
-    <div className="text-xs font-mono leading-5">
-      <span className={color}>[{level}]</span>{' '}{message}
-    </div>
-  )
-}
-
 function ExecutionDetail({ execution }: { execution: Execution }) {
-  const logs = useExecutionLogs(execution.id)
   return (
     <div className="space-y-4">
       <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-xs">
@@ -82,16 +73,7 @@ function ExecutionDetail({ execution }: { execution: Execution }) {
         </div>
       )}
 
-      <div>
-        <p className="text-xs text-muted-foreground mb-1">Logs</p>
-        {logs.isLoading && <Spinner className="h-4 w-4" />}
-        {logs.data?.length === 0 && (
-          <p className="text-xs text-muted-foreground">{emptyLogsMessage(execution.state)}</p>
-        )}
-        <div className="bg-muted rounded-md p-3 max-h-64 overflow-auto space-y-0.5">
-          {logs.data?.map((l) => <LogLine key={l.id} level={l.level} message={l.message} />)}
-        </div>
-      </div>
+      <LogsPanel executionId={execution.id} executionState={execution.state} />
     </div>
   )
 }

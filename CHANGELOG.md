@@ -15,6 +15,24 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   / OpenSearch users get free filterable structured logs without
   threading these values through every call site. Callers can still
   override either field by setting it explicitly on `WorkEvent.fields`.
+- **Per-line execution logs with level filter and search** — the
+  shell-runner used to push captured stdout and stderr as exactly two
+  big `WorkEvent` blobs per execution, which collapsed into a single
+  multi-KB DOM node in the Execution Detail Logs panel and was
+  unreadable for chatty jobs (CVE scans, long test runs, …). Each
+  line now becomes its own `WorkEvent`, gets its own row in the
+  `execution_logs` table, and renders as a memo'd `<LogLine>`. The
+  panel grows level-filter chips (`info` / `warn` / `error`) and a
+  substring search input above the log box, both client-side so
+  navigation between filters is instant. Per-execution `seq` column
+  (migration `010_execution_log_seq`) keeps order stable when many
+  events share a millisecond timestamp; existing rows get `seq = 0`
+  so old single-blob entries still display correctly. Server-side
+  `ExecutionLogStore::append_logs_batch` writes the whole stream in
+  one transaction so a 3000-line job no longer takes 3000 lock + INSERT
+  round-trips, and `GET /v1/executions/{id}/logs` accepts an optional
+  `?level=` query and returns up to 10 000 rows
+  ([#108](https://github.com/nuetzliches/croniq/issues/108)).
 
 ### Changed
 
