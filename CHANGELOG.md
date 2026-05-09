@@ -30,6 +30,27 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   remain split via the existing `rolldownOptions.codeSplitting.groups`
   config.
 
+### Fixed
+
+- **Dead-letter writes now happen atomically with the dead-state transition,
+  and orphans are backfilled** — the completion processor previously made
+  two separate non-transactional store calls (`UPDATE executions SET
+  state='dead'` followed by `INSERT INTO dead_letters`) and swallowed
+  errors with `let _ = ...`. Failures of the second call left
+  `state='dead'` rows with no corresponding dead-letter, so the Dead
+  Letters UI page stayed empty even when actionable failures existed.
+  New `DeadLetterStore::complete_as_dead` runs both writes in one
+  transaction; the new SQLite migration `009_backfill_dead_letters`
+  populates the table for existing orphan rows on first start
+  (`expires_at = NULL` so the purge sweeper leaves them alone).
+  Errors are now logged at `tracing::error!` level (#104).
+- **Dead-letter retention TTL is now actually enforced** — the
+  watchdog tick (every 30s) calls `store.purge_expired(now)` so rows
+  whose `expires_at` has passed are reaped. The function existed since
+  v0.9 but was never called from the server's main loop, meaning
+  `dead_letter { retention 14d }` was a documented setting with no
+  effect (#104).
+
 ## [0.10.1] - 2026-05-09
 
 ### Security

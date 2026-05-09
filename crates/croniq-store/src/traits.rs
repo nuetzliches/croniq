@@ -129,6 +129,23 @@ pub trait DeadLetterStore {
     /// Add an execution to the dead letter queue.
     fn add_dead_letter(&self, dl: &DeadLetter) -> Result<(), StoreError>;
 
+    /// Mark an execution as dead AND insert the matching dead-letter row in
+    /// a single transaction. Both writes commit together or both fail.
+    ///
+    /// Replaces the previous two-call pattern (`complete_execution(.., Dead)`
+    /// followed by `add_dead_letter`) where errors were swallowed and the
+    /// executions table could end up with `state='dead'` rows that had no
+    /// corresponding `dead_letters` row, leaving the Dead Letters UI page
+    /// empty (#104).
+    fn complete_as_dead(
+        &self,
+        execution_id: Uuid,
+        duration_ms: Option<i64>,
+        error: Option<&str>,
+        dead_letter: &DeadLetter,
+        now: DateTime<Utc>,
+    ) -> Result<(), StoreError>;
+
     /// Get a dead letter by ID.
     fn get_dead_letter(&self, id: Uuid) -> Result<Option<DeadLetter>, StoreError>;
 

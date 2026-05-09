@@ -444,24 +444,29 @@ impl RunnerStore for SqliteStore {
 impl DeadLetterStore for SqliteStore {
     fn add_dead_letter(&self, dl: &DeadLetter) -> Result<(), StoreError> {
         let conn = self.conn.lock().unwrap();
-        let metadata = serde_json::to_string(&dl.metadata).unwrap();
-        conn.execute(
-            "INSERT INTO dead_letters (id, execution_id, job_key, fire_at, attempt, error, dead_reason, metadata, created_at, expires_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
-            params![
-                dl.id.to_string(),
-                dl.execution_id.to_string(),
-                dl.job_key,
-                dt_to_sql(&dl.fire_at),
-                dl.attempt,
-                dl.error,
-                dl.dead_reason,
-                metadata,
-                dt_to_sql(&dl.created_at),
-                opt_dt_to_sql(&dl.expires_at),
-            ],
-        )
-        .map_err(map_err)?;
+        insert_dead_letter_with(&conn, dl)
+    }
+
+    fn complete_as_dead(
+        &self,
+        execution_id: Uuid,
+        duration_ms: Option<i64>,
+        error: Option<&str>,
+        dead_letter: &DeadLetter,
+        now: DateTime<Utc>,
+    ) -> Result<(), StoreError> {
+        let mut conn = self.conn.lock().unwrap();
+        let tx = conn.transaction().map_err(map_err)?;
+        update_to_dead_with(
+            &tx,
+            execution_id,
+            duration_ms,
+            error,
+            Some(&dead_letter.dead_reason),
+            now,
+        )?;
+        insert_dead_letter_with(&tx, dead_letter)?;
+        tx.commit().map_err(map_err)?;
         Ok(())
     }
 
@@ -1168,6 +1173,50 @@ fn insert_execution_with(conn: &rusqlite::Connection, exec: &Execution) -> Resul
             exec.dead_reason,
             metadata,
             dt_to_sql(&exec.created_at),
+        ],
+    )
+    .map_err(map_err)?;
+    Ok(())
+}
+
+fn update_to_dead_with(
+    conn: &rusqlite::Connection,
+    id: Uuid,
+    duration_ms: Option<i64>,
+    error: Option<&str>,
+    dead_reason: Option<&str>,
+    now: DateTime<Utc>,
+) -> Result<(), StoreError> {
+    conn.execute(
+        "UPDATE executions SET state = 'dead', completed_at = ?1, duration_ms = ?2, error = ?3, dead_reason = ?4 WHERE id = ?5",
+        params![
+            dt_to_sql(&now),
+            duration_ms,
+            error,
+            dead_reason,
+            id.to_string(),
+        ],
+    )
+    .map_err(map_err)?;
+    Ok(())
+}
+
+fn insert_dead_letter_with(conn: &rusqlite::Connection, dl: &DeadLetter) -> Result<(), StoreError> {
+    let metadata = serde_json::to_string(&dl.metadata).unwrap();
+    conn.execute(
+        "INSERT INTO dead_letters (id, execution_id, job_key, fire_at, attempt, error, dead_reason, metadata, created_at, expires_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+        params![
+            dl.id.to_string(),
+            dl.execution_id.to_string(),
+            dl.job_key,
+            dt_to_sql(&dl.fire_at),
+            dl.attempt,
+            dl.error,
+            dl.dead_reason,
+            metadata,
+            dt_to_sql(&dl.created_at),
+            opt_dt_to_sql(&dl.expires_at),
         ],
     )
     .map_err(map_err)?;

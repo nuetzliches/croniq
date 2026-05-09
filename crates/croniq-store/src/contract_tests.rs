@@ -554,6 +554,100 @@ fn dead_letter_list_and_remove() {
 }
 
 #[test]
+fn complete_as_dead_writes_execution_and_dead_letter_atomically() {
+    let store = create_memory_store().unwrap();
+
+    let exec = make_execution("billing:invoice", utc(2026, 3, 29, 2, 0));
+    store.create_execution(&exec).unwrap();
+
+    let dl = DeadLetter {
+        id: Uuid::new_v4(),
+        execution_id: exec.id,
+        job_key: exec.job_key.clone(),
+        fire_at: exec.fire_at,
+        attempt: 3,
+        error: "connection refused".into(),
+        dead_reason: "exhausted after 3 attempts: connection refused".into(),
+        metadata: HashMap::new(),
+        created_at: now(),
+        expires_at: Some(utc(2026, 4, 28, 12, 0)),
+    };
+
+    store
+        .complete_as_dead(exec.id, Some(123), Some("connection refused"), &dl, now())
+        .unwrap();
+
+    // Execution row is now in `dead` state.
+    let updated = store.get_execution(exec.id).unwrap().unwrap();
+    assert_eq!(updated.state, ExecutionState::Dead);
+    assert_eq!(updated.duration_ms, Some(123));
+    assert_eq!(updated.error.as_deref(), Some("connection refused"));
+    assert_eq!(
+        updated.dead_reason.as_deref(),
+        Some("exhausted after 3 attempts: connection refused")
+    );
+
+    // Matching dead-letter row was inserted.
+    let stored = store.get_dead_letter(dl.id).unwrap().unwrap();
+    assert_eq!(stored.execution_id, exec.id);
+    assert_eq!(stored.attempt, 3);
+    assert_eq!(stored.expires_at, dl.expires_at);
+}
+
+#[test]
+fn complete_as_dead_rolls_back_when_dead_letter_id_collides() {
+    let store = create_memory_store().unwrap();
+
+    let exec = make_execution("etl:sync", utc(2026, 3, 29, 2, 0));
+    store.create_execution(&exec).unwrap();
+
+    // Pre-seed a dead-letter row with a fixed ID so the second insert collides.
+    let conflicting_id = Uuid::new_v4();
+    store
+        .add_dead_letter(&DeadLetter {
+            id: conflicting_id,
+            execution_id: Uuid::new_v4(),
+            job_key: "other:job".into(),
+            fire_at: now(),
+            attempt: 1,
+            error: "x".into(),
+            dead_reason: "x".into(),
+            metadata: HashMap::new(),
+            created_at: now(),
+            expires_at: None,
+        })
+        .unwrap();
+
+    let dl = DeadLetter {
+        id: conflicting_id, // primary-key collision
+        execution_id: exec.id,
+        job_key: exec.job_key.clone(),
+        fire_at: exec.fire_at,
+        attempt: 3,
+        error: "boom".into(),
+        dead_reason: "exhausted".into(),
+        metadata: HashMap::new(),
+        created_at: now(),
+        expires_at: None,
+    };
+
+    let res = store.complete_as_dead(exec.id, Some(50), Some("boom"), &dl, now());
+    assert!(
+        res.is_err(),
+        "expected complete_as_dead to fail on PK collision"
+    );
+
+    // Execution must still be in its original Queued state — the UPDATE was
+    // rolled back together with the failing INSERT.
+    let untouched = store.get_execution(exec.id).unwrap().unwrap();
+    assert_eq!(
+        untouched.state,
+        ExecutionState::Queued,
+        "execution state changed despite failed dead-letter insert — atomicity broken"
+    );
+}
+
+#[test]
 fn dead_letter_purge_expired() {
     let store = create_memory_store().unwrap();
 

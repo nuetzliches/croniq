@@ -554,16 +554,16 @@ impl DeadLetterStore for PgStore {
     fn add_dead_letter(&self, dl: &DeadLetter) -> Result<(), StoreError> {
         let mut client = self.client.lock().unwrap();
         let metadata = metadata_to_json(&dl.metadata);
+        let attempt = dl.attempt as i32;
         client
             .execute(
-                "INSERT INTO dead_letters (id, execution_id, job_key, fire_at, attempt, error, dead_reason, metadata, created_at, expires_at)
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)",
+                PG_INSERT_DEAD_LETTER_SQL,
                 &[
                     &dl.id,
                     &dl.execution_id,
                     &dl.job_key,
                     &dl.fire_at,
-                    &(dl.attempt as i32),
+                    &attempt,
                     &dl.error,
                     &dl.dead_reason,
                     &metadata,
@@ -572,6 +572,44 @@ impl DeadLetterStore for PgStore {
                 ],
             )
             .map_err(map_err)?;
+        Ok(())
+    }
+
+    fn complete_as_dead(
+        &self,
+        execution_id: Uuid,
+        duration_ms: Option<i64>,
+        error: Option<&str>,
+        dead_letter: &DeadLetter,
+        now: DateTime<Utc>,
+    ) -> Result<(), StoreError> {
+        let mut client = self.client.lock().unwrap();
+        let mut tx = client.transaction().map_err(map_err)?;
+        let dead_reason = dead_letter.dead_reason.as_str();
+        tx.execute(
+            "UPDATE executions SET state = 'dead', completed_at = $1, duration_ms = $2, error = $3, dead_reason = $4 WHERE id = $5",
+            &[&now, &duration_ms, &error, &dead_reason, &execution_id],
+        )
+        .map_err(map_err)?;
+        let metadata = metadata_to_json(&dead_letter.metadata);
+        let attempt = dead_letter.attempt as i32;
+        tx.execute(
+            PG_INSERT_DEAD_LETTER_SQL,
+            &[
+                &dead_letter.id,
+                &dead_letter.execution_id,
+                &dead_letter.job_key,
+                &dead_letter.fire_at,
+                &attempt,
+                &dead_letter.error,
+                &dead_letter.dead_reason,
+                &metadata,
+                &dead_letter.created_at,
+                &dead_letter.expires_at,
+            ],
+        )
+        .map_err(map_err)?;
+        tx.commit().map_err(map_err)?;
         Ok(())
     }
 
@@ -830,6 +868,9 @@ fn pg_upsert_job_state_tx(
 
 const PG_INSERT_EXECUTION_SQL: &str = "INSERT INTO executions (id, job_key, fire_at, attempt, state, runner_id, claimed_at, started_at, completed_at, duration_ms, error, dead_reason, metadata, created_at)
      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)";
+
+const PG_INSERT_DEAD_LETTER_SQL: &str = "INSERT INTO dead_letters (id, execution_id, job_key, fire_at, attempt, error, dead_reason, metadata, created_at, expires_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)";
 
 const PG_UPSERT_JOB_STATE_SQL: &str =
     "INSERT INTO job_states (job_key, next_fire_at, last_fired_at, fire_count, status, updated_at)
