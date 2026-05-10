@@ -242,20 +242,16 @@ impl CompletionProcessor {
                 operator_hint,
                 expires_after,
             } => {
-                let _ = self.store.complete_execution(
-                    exec_uuid,
-                    ExecutionState::Dead,
-                    Some(event.duration_ms as i64),
-                    event.error.as_deref(),
-                    Some(&reason),
-                    now,
-                );
-
                 let expires_at = expires_after.map(|d| {
                     now + chrono::Duration::from_std(d).unwrap_or(chrono::Duration::zero())
                 });
 
                 let hint = operator_hint.unwrap_or_default();
+                let dead_reason = if hint.is_empty() {
+                    reason.clone()
+                } else {
+                    format!("{reason} — {hint}")
+                };
                 let dl = DeadLetter {
                     id: Uuid::new_v4(),
                     execution_id: exec_uuid,
@@ -263,16 +259,25 @@ impl CompletionProcessor {
                     fire_at: execution.fire_at,
                     attempt: execution.attempt,
                     error: event.error.clone().unwrap_or_default(),
-                    dead_reason: if hint.is_empty() {
-                        reason.clone()
-                    } else {
-                        format!("{reason} — {hint}")
-                    },
+                    dead_reason,
                     metadata: execution.metadata.clone(),
                     created_at: now,
                     expires_at,
                 };
-                let _ = self.store.add_dead_letter(&dl);
+
+                if let Err(e) = self.store.complete_as_dead(
+                    exec_uuid,
+                    Some(event.duration_ms as i64),
+                    event.error.as_deref(),
+                    &dl,
+                    now,
+                ) {
+                    tracing::error!(
+                        id = %exec_uuid,
+                        error = %e,
+                        "failed to record dead-lettered execution — execution row may now be inconsistent with dead_letters table"
+                    );
+                }
 
                 tracing::warn!(id = %exec_uuid, reason = %reason, "execution dead-lettered");
                 crate::notify::notify_failure(

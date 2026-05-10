@@ -411,19 +411,34 @@ async fn main() -> Result<()> {
         Arc::clone(&store),
         Arc::clone(&runner_state),
     );
+    let watchdog_store = Arc::clone(&store);
 
     let _watchdog_task = tokio::spawn(async move {
         let mut interval = tokio::time::interval(std::time::Duration::from_secs(30));
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         loop {
             interval.tick().await;
-            let result = watchdog.sweep(chrono::Utc::now()).await;
+            let now = chrono::Utc::now();
+            let result = watchdog.sweep(now).await;
             if !result.dead_runners.is_empty() {
                 tracing::warn!(
                     dead = result.dead_runners.len(),
                     requeued = result.requeued.len(),
                     "watchdog: processed dead runners"
                 );
+            }
+
+            // Reap dead-letter rows whose retention has lapsed. Same cadence
+            // as the abandoned-runner sweep — `purge_expired` is a single
+            // DELETE so the cost is negligible even on busy deployments.
+            match watchdog_store.purge_expired(now) {
+                Ok(count) if count > 0 => {
+                    tracing::info!(count, "watchdog: purged expired dead-letter rows");
+                }
+                Ok(_) => {}
+                Err(e) => {
+                    tracing::error!(error = %e, "watchdog: failed to purge expired dead-letters");
+                }
             }
         }
     });
