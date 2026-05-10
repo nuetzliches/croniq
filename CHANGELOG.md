@@ -6,15 +6,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-05-10
+
 ### Added
 
-- **Auto-injected `runner_id` and `runner_tags` on every log event** —
-  `ExecutionContext::push_log_events` already auto-injected `job_key`;
-  now also injects which runner instance produced the event and that
-  runner's self-declared tags as a JSON-array string. Loki / CloudWatch
-  / OpenSearch users get free filterable structured logs without
-  threading these values through every call site. Callers can still
-  override either field by setting it explicitly on `WorkEvent.fields`.
 - **Per-line execution logs with level filter and search** — the
   shell-runner used to push captured stdout and stderr as exactly two
   big `WorkEvent` blobs per execution, which collapsed into a single
@@ -32,7 +27,16 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   one transaction so a 3000-line job no longer takes 3000 lock + INSERT
   round-trips, and `GET /v1/executions/{id}/logs` accepts an optional
   `?level=` query and returns up to 10 000 rows
-  ([#108](https://github.com/nuetzliches/croniq/issues/108)).
+  ([#108](https://github.com/nuetzliches/croniq/issues/108),
+  [#111](https://github.com/nuetzliches/croniq/pull/111)).
+- **Auto-injected `runner_id` and `runner_tags` on every log event** —
+  `ExecutionContext::push_log_events` already auto-injected `job_key`;
+  now also injects which runner instance produced the event and that
+  runner's self-declared tags as a JSON-array string. Loki / CloudWatch
+  / OpenSearch users get free filterable structured logs without
+  threading these values through every call site. Callers can still
+  override either field by setting it explicitly on `WorkEvent.fields`
+  ([#109](https://github.com/nuetzliches/croniq/pull/109)).
 
 ### Changed
 
@@ -46,7 +50,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   shared spinner fallback while the chunk loads. Vendor chunks
   (`react`, `router`, `query`, `charts`, `radix`, `icons`, `forms`)
   remain split via the existing `rolldownOptions.codeSplitting.groups`
-  config.
+  config ([#110](https://github.com/nuetzliches/croniq/pull/110)).
 
 ### Fixed
 
@@ -59,25 +63,39 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   identity across `docker compose up -d --force-recreate`, so the
   Runner Detail Sheet's "Jobs Handled" and "Recent Executions" panes
   no longer reset on every recreate. Setting `RUNNER_ID` explicitly
-  still overrides everything (#103).
-- **Dead-letter writes now happen atomically with the dead-state transition,
-  and orphans are backfilled** — the completion processor previously made
-  two separate non-transactional store calls (`UPDATE executions SET
-  state='dead'` followed by `INSERT INTO dead_letters`) and swallowed
-  errors with `let _ = ...`. Failures of the second call left
-  `state='dead'` rows with no corresponding dead-letter, so the Dead
-  Letters UI page stayed empty even when actionable failures existed.
-  New `DeadLetterStore::complete_as_dead` runs both writes in one
-  transaction; the new SQLite migration `009_backfill_dead_letters`
+  still overrides everything
+  ([#103](https://github.com/nuetzliches/croniq/issues/103),
+  [#105](https://github.com/nuetzliches/croniq/pull/105)).
+- **Dead-letter writes now happen atomically with the dead-state
+  transition, and orphans are backfilled** — the completion processor
+  previously made two separate non-transactional store calls (`UPDATE
+  executions SET state='dead'` followed by `INSERT INTO dead_letters`)
+  and swallowed errors with `let _ = ...`. Failures of the second
+  call left `state='dead'` rows with no corresponding dead-letter, so
+  the Dead Letters UI page stayed empty even when actionable failures
+  existed. New `DeadLetterStore::complete_as_dead` runs both writes
+  in one transaction; SQLite migration `009_backfill_dead_letters`
   populates the table for existing orphan rows on first start
   (`expires_at = NULL` so the purge sweeper leaves them alone).
-  Errors are now logged at `tracing::error!` level (#104).
+  Errors are now logged at `tracing::error!` level
+  ([#104](https://github.com/nuetzliches/croniq/issues/104),
+  [#106](https://github.com/nuetzliches/croniq/pull/106)).
 - **Dead-letter retention TTL is now actually enforced** — the
   watchdog tick (every 30s) calls `store.purge_expired(now)` so rows
-  whose `expires_at` has passed are reaped. The function existed since
-  v0.9 but was never called from the server's main loop, meaning
-  `dead_letter { retention 14d }` was a documented setting with no
-  effect (#104).
+  whose `expires_at` has passed are reaped. The function existed
+  since v0.9 but was never called from the server's main loop,
+  meaning `dead_letter { retention 14d }` was a documented setting
+  with no effect
+  ([#104](https://github.com/nuetzliches/croniq/issues/104),
+  [#106](https://github.com/nuetzliches/croniq/pull/106)).
+- **Differentiated empty-logs message in the Execution Detail panel** —
+  the shared "No logs for this execution" line implied a missing-data
+  bug for *every* zero-log execution, including completed runs whose
+  runners simply produced no stdout. Operators interpreted silent
+  healthy runs as broken instrumentation. The message now splits by
+  state: `completed` → "Silent run completed (no stdout)", `failed`/
+  `dead` → "No logs captured", anything else → "No logs yet"
+  ([#107](https://github.com/nuetzliches/croniq/pull/107)).
 
 ## [0.10.1] - 2026-05-09
 
