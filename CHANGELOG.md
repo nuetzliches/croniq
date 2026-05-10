@@ -50,6 +50,16 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **Persistent runner identity across container recreates** — the
+  `croniq-shell-runner` and `croniq-demo-runner` binaries now read or
+  generate-and-persist their `runner_id` at
+  `${CRONIQ_RUNNER_DATA_DIR:-/var/lib/croniq-runner}/runner-id` instead
+  of deriving it from the volatile container hostname. Operators who
+  mount a small persistent volume on this path keep the same runner
+  identity across `docker compose up -d --force-recreate`, so the
+  Runner Detail Sheet's "Jobs Handled" and "Recent Executions" panes
+  no longer reset on every recreate. Setting `RUNNER_ID` explicitly
+  still overrides everything (#103).
 - **Dead-letter writes now happen atomically with the dead-state transition,
   and orphans are backfilled** — the completion processor previously made
   two separate non-transactional store calls (`UPDATE executions SET

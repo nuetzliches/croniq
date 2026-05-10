@@ -4,16 +4,22 @@
 //! them with a simulated workload: random sleep + configurable fail rate.
 //!
 //! Environment variables:
-//!   CRONIQ_SERVER_URL    — server base URL  (default: http://localhost:4000)
-//!   CRONIQ_API_KEY       — bearer token     (optional for open dev setups)
-//!   RUNNER_ID            — runner name      (default: demo-runner)
-//!   RUNNER_FAIL_RATE     — fraction 0.0–1.0 that fail (default: 0.05)
-//!   RUNNER_MAX_INFLIGHT  — concurrency cap  (default: 4)
-//!   RUNNER_TAGS          — comma-separated free-form filter tags (optional)
+//!   CRONIQ_SERVER_URL       — server base URL  (default: http://localhost:4000)
+//!   CRONIQ_API_KEY          — bearer token     (optional for open dev setups)
+//!   RUNNER_ID               — explicit runner name override. If unset, the
+//!                             runner reads/persists a stable ID at
+//!                             `${CRONIQ_RUNNER_DATA_DIR}/runner-id` so the
+//!                             same identity survives container recreates
+//!                             (issue #103).
+//!   CRONIQ_RUNNER_DATA_DIR  — directory for persistent runner state
+//!                             (default: /var/lib/croniq-runner)
+//!   RUNNER_FAIL_RATE        — fraction 0.0–1.0 that fail (default: 0.05)
+//!   RUNNER_MAX_INFLIGHT     — concurrency cap  (default: 4)
+//!   RUNNER_TAGS             — comma-separated free-form filter tags (optional)
 
 use std::time::Duration;
 
-use croniq_runner_sdk::{CroniqRunner, ExecutionContext, HandlerError};
+use croniq_runner_sdk::{CroniqRunner, ExecutionContext, HandlerError, resolve_runner_id};
 use rand::Rng as _; // for gen_range
 use tracing::{info, warn};
 
@@ -28,19 +34,7 @@ async fn main() {
 
     let server_url =
         std::env::var("CRONIQ_SERVER_URL").unwrap_or_else(|_| "http://localhost:4000".into());
-    // Use the container hostname (or a random suffix) so docker-compose replicas
-    // don't collide on the same runner_id.
-    let runner_id = std::env::var("RUNNER_ID").unwrap_or_else(|_| {
-        let suffix = std::env::var("HOSTNAME")
-            .ok()
-            .filter(|s| !s.is_empty())
-            .unwrap_or_else(|| {
-                use rand::Rng as _;
-                let n: u32 = rand::thread_rng().gen_range(0..0xFFFF);
-                format!("{n:04x}")
-            });
-        format!("demo-runner-{suffix}")
-    });
+    let runner_id = resolve_runner_id("demo-runner");
     let fail_rate: f64 = std::env::var("RUNNER_FAIL_RATE")
         .ok()
         .and_then(|s| s.parse().ok())

@@ -5,17 +5,29 @@
 //! `runner shell { ... }` or `runner exec { ... }` block.
 //!
 //! Environment variables:
-//!   `CRONIQ_SERVER_URL`    — server base URL  (default: http://localhost:4000)
-//!   `CRONIQ_API_KEY`       — bearer token     (recommended)
-//!   `RUNNER_ID`            — runner name      (default: shell-runner-<hostname>)
-//!   `RUNNER_MAX_INFLIGHT`  — concurrency cap  (default: 4)
-//!   `RUNNER_CAPABILITIES`  — comma-separated extra capabilities to advertise on
-//!                            top of the implicit `shell-runner` capability.
-//!   `RUNNER_TAGS`          — comma-separated free-form tags for filtering in
-//!                            the UI. Not routing-relevant. Convention:
-//!                            `key=value` strings (`env=prod`, `team=ops`).
+//!   `CRONIQ_SERVER_URL`       — server base URL  (default: http://localhost:4000)
+//!   `CRONIQ_API_KEY`          — bearer token     (recommended)
+//!   `RUNNER_ID`               — explicit runner name override. If unset, the
+//!                               runner reads/persists a stable ID at
+//!                               `${CRONIQ_RUNNER_DATA_DIR}/runner-id` so the
+//!                               same identity survives container recreates
+//!                               (issue #103). Mount a volume on this path to
+//!                               make it stable, e.g.
+//!                                 volumes:
+//!                                   - croniq-runner-state:/var/lib/croniq-runner
+//!   `CRONIQ_RUNNER_DATA_DIR`  — directory for persistent runner state
+//!                               (default: /var/lib/croniq-runner)
+//!   `RUNNER_MAX_INFLIGHT`     — concurrency cap  (default: 4)
+//!   `RUNNER_CAPABILITIES`     — comma-separated extra capabilities to
+//!                               advertise on top of the implicit
+//!                               `shell-runner` capability.
+//!   `RUNNER_TAGS`             — comma-separated free-form tags for filtering
+//!                               in the UI. Not routing-relevant. Convention:
+//!                               `key=value` strings (`env=prod`, `team=ops`).
 
-use croniq_runner_sdk::{CroniqRunner, ExecutionContext, HandlerError, WorkEvent};
+use croniq_runner_sdk::{
+    CroniqRunner, ExecutionContext, HandlerError, WorkEvent, resolve_runner_id,
+};
 use croniq_shell_runner::exec;
 use tracing::info;
 
@@ -32,13 +44,7 @@ async fn main() {
 
     let server_url =
         std::env::var("CRONIQ_SERVER_URL").unwrap_or_else(|_| "http://localhost:4000".into());
-    let runner_id = std::env::var("RUNNER_ID").unwrap_or_else(|_| {
-        let suffix = std::env::var("HOSTNAME")
-            .ok()
-            .filter(|s| !s.is_empty())
-            .unwrap_or_else(|| "0".into());
-        format!("shell-runner-{suffix}")
-    });
+    let runner_id = resolve_runner_id(IMPLICIT_CAPABILITY);
     let max_inflight: u32 = std::env::var("RUNNER_MAX_INFLIGHT")
         .ok()
         .and_then(|s| s.parse().ok())

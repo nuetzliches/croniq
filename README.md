@@ -244,6 +244,11 @@ shell-runner:
     CRONIQ_API_KEY: croniq_…
     RUNNER_MAX_INFLIGHT: "4"
   volumes:
+    # Persistent runner identity. Without this, every container recreate
+    # generates a new runner_id and the Runner Detail Sheet's history
+    # disappears. Set RUNNER_ID explicitly to override the auto-generated
+    # ID for human-readable names (e.g. RUNNER_ID=shell-runner-vps-prod).
+    - shell-runner-state:/var/lib/croniq-runner
     - /opt:/opt
     - /backups:/backups
 ```
