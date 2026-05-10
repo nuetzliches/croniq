@@ -64,6 +64,11 @@ pub struct EventsResponse {
 }
 
 /// `POST /v1/work/{execution_id}:events` — push structured log events.
+///
+/// Per-line log emission (#108) means a single shell-runner job may push
+/// thousands of events at once. Use the bulk-insert path so the entire
+/// batch lands in one transaction with auto-assigned `seq` numbers
+/// instead of one lock + INSERT per event.
 pub async fn handle_events(
     State(state): State<Arc<ServerState>>,
     Extension(ctx): Extension<CallerContext>,
@@ -77,20 +82,26 @@ pub async fn handle_events(
         .ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
     let exec_uuid = Uuid::parse_str(&execution_id).map_err(|_| StatusCode::BAD_REQUEST)?;
 
-    let mut accepted = 0;
-    for event in &events {
-        let entry = ExecutionLogEntry {
+    let now = Utc::now();
+    let entries: Vec<ExecutionLogEntry> = events
+        .iter()
+        .map(|event| ExecutionLogEntry {
             id: Uuid::new_v4(),
             execution_id: exec_uuid,
-            timestamp: Utc::now(),
+            timestamp: now,
             level: event.level.clone().unwrap_or_else(|| "info".into()),
             message: event.message.clone(),
             fields: event.fields.clone(),
-        };
-        if store.append_log(&entry).is_ok() {
-            accepted += 1;
+            seq: 0, // assigned by store on insert
+        })
+        .collect();
+
+    let total = entries.len();
+    match store.append_logs_batch(&entries) {
+        Ok(()) => Ok((StatusCode::OK, Json(EventsResponse { accepted: total }))),
+        Err(e) => {
+            tracing::warn!(execution_id = %execution_id, error = %e, "failed to append log batch");
+            Ok((StatusCode::OK, Json(EventsResponse { accepted: 0 })))
         }
     }
-
-    Ok((StatusCode::OK, Json(EventsResponse { accepted })))
 }

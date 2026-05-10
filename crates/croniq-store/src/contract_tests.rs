@@ -693,3 +693,113 @@ fn dead_letter_purge_expired() {
         1
     );
 }
+
+// ─── ExecutionLogStore ───
+
+fn log_entry(execution_id: Uuid, level: &str, message: &str) -> ExecutionLogEntry {
+    ExecutionLogEntry {
+        id: Uuid::new_v4(),
+        execution_id,
+        timestamp: now(),
+        level: level.into(),
+        message: message.into(),
+        fields: HashMap::new(),
+        seq: 0, // ignored by the store; assigned at insert
+    }
+}
+
+/// Seed an execution row so the FOREIGN KEY on `execution_logs.execution_id`
+/// is satisfied. Returns the row's UUID.
+fn seed_execution(store: &impl ExecutionStore, suffix: &str) -> Uuid {
+    let exec = make_execution(&format!("log:test:{suffix}"), utc(2026, 3, 29, 2, 0));
+    let id = exec.id;
+    store.create_execution(&exec).unwrap();
+    id
+}
+
+#[test]
+fn append_logs_batch_assigns_strictly_increasing_seq() {
+    let store = create_memory_store().unwrap();
+    let exec = seed_execution(&store, "a");
+
+    let entries: Vec<ExecutionLogEntry> = (0..5)
+        .map(|i| log_entry(exec, "info", &format!("line {i}")))
+        .collect();
+
+    store.append_logs_batch(&entries).unwrap();
+
+    let read = store.read_logs(exec, 100).unwrap();
+    assert_eq!(read.len(), 5);
+    let seqs: Vec<i64> = read.iter().map(|l| l.seq).collect();
+    assert_eq!(seqs, vec![0, 1, 2, 3, 4]);
+    // Order matches insertion order — same timestamp, seq is the tiebreaker.
+    assert_eq!(read[0].message, "line 0");
+    assert_eq!(read[4].message, "line 4");
+}
+
+#[test]
+fn append_logs_batch_continues_seq_across_calls() {
+    let store = create_memory_store().unwrap();
+    let exec = seed_execution(&store, "b");
+
+    let first: Vec<_> = (0..3)
+        .map(|i| log_entry(exec, "info", &format!("a{i}")))
+        .collect();
+    store.append_logs_batch(&first).unwrap();
+
+    let second: Vec<_> = (0..2)
+        .map(|i| log_entry(exec, "warn", &format!("b{i}")))
+        .collect();
+    store.append_logs_batch(&second).unwrap();
+
+    let read = store.read_logs(exec, 100).unwrap();
+    let seqs: Vec<i64> = read.iter().map(|l| l.seq).collect();
+    // The second batch must NOT reuse seq 0,1 — those belong to the first.
+    assert_eq!(seqs, vec![0, 1, 2, 3, 4]);
+}
+
+#[test]
+fn append_log_single_also_assigns_seq() {
+    let store = create_memory_store().unwrap();
+    let exec = seed_execution(&store, "c");
+
+    store.append_log(&log_entry(exec, "info", "first")).unwrap();
+    store
+        .append_log(&log_entry(exec, "info", "second"))
+        .unwrap();
+
+    let read = store.read_logs(exec, 100).unwrap();
+    assert_eq!(read.len(), 2);
+    assert_eq!(read[0].seq, 0);
+    assert_eq!(read[1].seq, 1);
+}
+
+#[test]
+fn append_logs_batch_isolates_seq_per_execution() {
+    let store = create_memory_store().unwrap();
+    let exec_a = seed_execution(&store, "iso-a");
+    let exec_b = seed_execution(&store, "iso-b");
+
+    let mixed = vec![
+        log_entry(exec_a, "info", "a0"),
+        log_entry(exec_b, "info", "b0"),
+        log_entry(exec_a, "info", "a1"),
+        log_entry(exec_b, "info", "b1"),
+    ];
+    store.append_logs_batch(&mixed).unwrap();
+
+    let read_a = store.read_logs(exec_a, 100).unwrap();
+    let read_b = store.read_logs(exec_b, 100).unwrap();
+
+    let seqs_a: Vec<i64> = read_a.iter().map(|l| l.seq).collect();
+    let seqs_b: Vec<i64> = read_b.iter().map(|l| l.seq).collect();
+    assert_eq!(seqs_a, vec![0, 1]);
+    assert_eq!(seqs_b, vec![0, 1]);
+}
+
+#[test]
+fn append_logs_batch_empty_is_a_noop() {
+    let store = create_memory_store().unwrap();
+    store.append_logs_batch(&[]).unwrap();
+    // No assertion needed — just confirming it doesn't panic or error.
+}

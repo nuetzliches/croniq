@@ -299,4 +299,10 @@ pub struct ExecutionLogEntry {
     pub level: String,
     pub message: String,
     pub fields: HashMap<String, String>,
+    /// Strictly-increasing per-execution sequence number assigned at insert
+    /// time. Keeps per-line ordering stable even when many events share the
+    /// same millisecond timestamp. Reads return rows ordered by
+    /// `(timestamp ASC, seq ASC)`. Pre-#108 rows have `seq = 0`.
+    #[serde(default)]
+    pub seq: i64,
 }

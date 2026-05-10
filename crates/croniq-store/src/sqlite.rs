@@ -972,11 +972,31 @@ impl CalendarDefinitionStore for SqliteStore {
 impl ExecutionLogStore for SqliteStore {
     fn append_log(&self, entry: &ExecutionLogEntry) -> Result<(), StoreError> {
         let conn = self.conn.lock().unwrap();
-        let fields = serde_json::to_string(&entry.fields).unwrap_or_default();
-        conn.execute(
-            "INSERT INTO execution_logs (id, execution_id, timestamp, level, message, fields) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-            params![entry.id.to_string(), entry.execution_id.to_string(), dt_to_sql(&entry.timestamp), entry.level, entry.message, fields],
-        ).map_err(map_err)?;
+        let next = next_seq_for_execution(&conn, entry.execution_id)?;
+        insert_log_with(&conn, entry, next)
+    }
+
+    fn append_logs_batch(&self, entries: &[ExecutionLogEntry]) -> Result<(), StoreError> {
+        if entries.is_empty() {
+            return Ok(());
+        }
+        let mut conn = self.conn.lock().unwrap();
+        // Group by execution_id so each group gets a contiguous seq range.
+        // In practice every entry in a single batch shares one execution_id
+        // (push_log_events is per-execution), but be defensive.
+        let mut next_seq_by_exec: std::collections::HashMap<Uuid, i64> =
+            std::collections::HashMap::new();
+
+        let tx = conn.transaction().map_err(map_err)?;
+        for entry in entries {
+            let next = match next_seq_by_exec.get(&entry.execution_id).copied() {
+                Some(n) => n,
+                None => next_seq_for_execution(&tx, entry.execution_id)?,
+            };
+            insert_log_with(&tx, entry, next)?;
+            next_seq_by_exec.insert(entry.execution_id, next + 1);
+        }
+        tx.commit().map_err(map_err)?;
         Ok(())
     }
 
@@ -986,7 +1006,13 @@ impl ExecutionLogStore for SqliteStore {
         limit: u32,
     ) -> Result<Vec<ExecutionLogEntry>, StoreError> {
         let conn = self.conn.lock().unwrap();
-        let mut stmt = conn.prepare("SELECT id, execution_id, timestamp, level, message, fields FROM execution_logs WHERE execution_id = ?1 ORDER BY timestamp ASC LIMIT ?2").map_err(map_err)?;
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, execution_id, timestamp, level, message, fields, seq \
+             FROM execution_logs WHERE execution_id = ?1 \
+             ORDER BY timestamp ASC, seq ASC LIMIT ?2",
+            )
+            .map_err(map_err)?;
         let rows = stmt
             .query_map(params![execution_id.to_string(), limit], |row| {
                 let id_str: String = row.get(0)?;
@@ -999,11 +1025,49 @@ impl ExecutionLogStore for SqliteStore {
                     level: row.get(3)?,
                     message: row.get(4)?,
                     fields: serde_json::from_str(&fields_str).unwrap_or_default(),
+                    seq: row.get(6)?,
                 })
             })
             .map_err(map_err)?;
         rows.collect::<Result<Vec<_>, _>>().map_err(map_err)
     }
+}
+
+fn next_seq_for_execution(
+    conn: &rusqlite::Connection,
+    execution_id: Uuid,
+) -> Result<i64, StoreError> {
+    let max: Option<i64> = conn
+        .query_row(
+            "SELECT MAX(seq) FROM execution_logs WHERE execution_id = ?1",
+            params![execution_id.to_string()],
+            |row| row.get(0),
+        )
+        .map_err(map_err)?;
+    Ok(max.map(|m| m + 1).unwrap_or(0))
+}
+
+fn insert_log_with(
+    conn: &rusqlite::Connection,
+    entry: &ExecutionLogEntry,
+    seq: i64,
+) -> Result<(), StoreError> {
+    let fields = serde_json::to_string(&entry.fields).unwrap_or_default();
+    conn.execute(
+        "INSERT INTO execution_logs (id, execution_id, timestamp, level, message, fields, seq) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+        params![
+            entry.id.to_string(),
+            entry.execution_id.to_string(),
+            dt_to_sql(&entry.timestamp),
+            entry.level,
+            entry.message,
+            fields,
+            seq,
+        ],
+    )
+    .map_err(map_err)?;
+    Ok(())
 }
 
 // ─── DslAdoptionStore ───
