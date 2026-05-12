@@ -26,6 +26,24 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   ```
 
   Closes [#114](https://github.com/nuetzliches/croniq/issues/114).
+- **Runner SDK: streaming log writer** —
+  [`ExecutionContext::log_writer`](crates/croniq-runner-sdk/src/handler.rs)
+  returns a cloneable `LogWriter` handle backed by a bounded
+  `tokio::sync::mpsc` channel and a background flusher task. Calls to
+  `writer.send(level, msg).await` only suspend on channel capacity,
+  never on HTTP — eliminating the previous trade-off where SDK-based
+  runners wrapping long-running subprocesses had to choose between
+  batch-at-end (no live progress) and per-line `ctx.log().await` (which
+  backpressures the stdout reader into a self-induced deadlock when the
+  server is slow). The flusher batches by size (32 events), time
+  (200 ms), or explicit `writer.flush().await`, with a hard cap of 100
+  events per POST. The runner deterministically drains the writer (up
+  to 5 s) before sending `ack`, so logs are server-side by the time the
+  execution is marked complete. Existing `ctx.log()` and
+  `ctx.push_log_events()` are unchanged. Adoption in
+  `croniq-shell-runner` is tracked separately because it requires
+  switching `exec::run` from `wait_with_output` to streaming pipes.
+  Closes [#115](https://github.com/nuetzliches/croniq/issues/115).
 
 ## [0.11.0] - 2026-05-10
 

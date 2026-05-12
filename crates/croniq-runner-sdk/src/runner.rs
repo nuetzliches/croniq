@@ -1,6 +1,6 @@
 //! CroniqRunner: the main orchestrator for job execution runners.
 
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 use tokio::sync::RwLock;
@@ -208,8 +208,13 @@ impl CroniqRunner {
                         self.inflight.write().await.push(exec_id.clone());
 
                         let client = Arc::clone(&self.client);
+                        // Shared between the ExecutionContext (where the handler
+                        // may lazy-init a streaming log writer) and the post-
+                        // handler drain step. See `crate::log_writer` and #115.
+                        let log_writer_slot = Arc::new(OnceLock::new());
                         let ctx = ExecutionContext {
                             client: Arc::clone(&client),
+                            log_writer_slot: Arc::clone(&log_writer_slot),
                             execution_id: assignment.execution_id,
                             job_key: assignment.job_key,
                             attempt: assignment.attempt,
@@ -266,6 +271,15 @@ impl CroniqRunner {
                                     0,
                                 )
                             };
+
+                            // Drain any streaming log writer the handler used
+                            // before we ack — guarantees logs are server-side
+                            // by the time the execution is marked complete.
+                            // Capped at 5 s so an unreachable server doesn't
+                            // wedge the dispatch loop (#115).
+                            if let Some(inner) = log_writer_slot.get() {
+                                inner.shutdown_and_drain().await;
+                            }
 
                             // Ack
                             let ack = AckRequest {

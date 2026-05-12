@@ -38,11 +38,14 @@
 //! ```
 
 pub mod client;
+pub(crate) mod enrichment;
 pub mod handler;
 pub mod identity;
+pub mod log_writer;
 pub mod runner;
 
 pub use client::{ClientError, WorkEvent};
 pub use handler::{ExecutionContext, HandlerError};
 pub use identity::resolve_runner_id;
+pub use log_writer::LogWriter;
 pub use runner::CroniqRunner;
