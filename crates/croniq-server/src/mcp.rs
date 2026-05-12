@@ -43,14 +43,19 @@ const MAX_BODY_BYTES: usize = 64 * 1024;
 /// Build a router that nests the MCP Streamable-HTTP service at `/mcp` with
 /// JWT/API-key auth and two-tier scope gating (`mcp:read` for access,
 /// `mcp:write` for mutations).
+///
+/// `extra_allowed_hosts` is forwarded to rmcp's `Host`-header allowlist on
+/// top of the loopback defaults (see [`croniq_mcp::streamable_http_service`]
+/// and issue #114). `None` keeps loopback-only behaviour.
 pub fn mcp_router(
     state: Arc<ServerState>,
     runner: Arc<AppState>,
     store: Option<DynStore>,
     jobs: Vec<JobConfig>,
     triggers: Option<Arc<tokio::sync::RwLock<HashMap<String, Trigger>>>>,
+    extra_allowed_hosts: Option<Vec<String>>,
 ) -> Router {
-    let svc = streamable_http_service(runner, store, jobs, triggers);
+    let svc = streamable_http_service(runner, store, jobs, triggers, extra_allowed_hosts);
 
     // route_layer applies in reverse order — `require_auth` runs first
     // (injects CallerContext), then `require_mcp_read`, then

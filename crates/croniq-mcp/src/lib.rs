@@ -111,11 +111,16 @@ pub const MUTATION_TOOL_NAMES: &[&str] = &[
 ///
 /// The `jobs` snapshot is captured at build time. Croniqfile reloads do not
 /// propagate to in-flight MCP sessions; restart `croniq-server` to refresh.
+///
+/// `extra_allowed_hosts` is **additive** on top of rmcp's loopback-only
+/// default (`localhost`, `127.0.0.1`, `::1`) — see issue #114. `None` or an
+/// empty `Some(vec![])` keeps the v0.10.1 loopback-only behaviour intact.
 pub fn streamable_http_service(
     state: Arc<AppState>,
     store: Option<DynStore>,
     jobs: Vec<JobConfig>,
     triggers: Option<Arc<tokio::sync::RwLock<HashMap<String, Trigger>>>>,
+    extra_allowed_hosts: Option<Vec<String>>,
 ) -> StreamableHttpService<CroniqMcp, LocalSessionManager> {
     let factory = move || {
         let mut server = match store.as_ref() {
@@ -130,9 +135,25 @@ pub fn streamable_http_service(
         Ok::<_, std::io::Error>(server)
     };
 
-    StreamableHttpService::new(
-        factory,
-        Arc::new(LocalSessionManager::default()),
-        StreamableHttpServerConfig::default(),
-    )
+    // APPEND-not-replace semantics for `allowed_hosts` per issue #114
+    // ("entries are appended to rmcp's allowlist"). Keep the loopback
+    // defaults so an operator who lists only their public hostname does
+    // not accidentally lose local debugging access; this also guards
+    // against the rmcp footgun where an empty `with_allowed_hosts(vec![])`
+    // would silently flip to allow-all (tower.rs:196).
+    let cfg = match extra_allowed_hosts {
+        Some(extra) if !extra.is_empty() => {
+            let default_cfg = StreamableHttpServerConfig::default();
+            let mut merged = default_cfg.allowed_hosts.clone();
+            for host in extra {
+                if !merged.contains(&host) {
+                    merged.push(host);
+                }
+            }
+            default_cfg.with_allowed_hosts(merged)
+        }
+        _ => StreamableHttpServerConfig::default(),
+    };
+
+    StreamableHttpService::new(factory, Arc::new(LocalSessionManager::default()), cfg)
 }
