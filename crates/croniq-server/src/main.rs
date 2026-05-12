@@ -482,12 +482,29 @@ async fn main() -> Result<()> {
     // Mount the in-process MCP HTTP transport at /mcp. Auth + per-tool
     // admin-scope gating are applied inside `mcp_router`.
     if mcp_enabled {
+        // `mcp { allowed_hosts ... }` is additive on top of rmcp's
+        // loopback-only default (issue #114). `None` / empty Vec keeps the
+        // post-v0.10.1 behaviour where only `localhost` / `127.0.0.1` / `::1`
+        // are accepted.
+        let extra_allowed_hosts = loaded
+            .runtime
+            .mcp
+            .as_ref()
+            .map(|m| m.allowed_hosts.clone())
+            .filter(|v| !v.is_empty());
+        if let Some(ref hosts) = extra_allowed_hosts {
+            tracing::info!(
+                hosts = ?hosts,
+                "MCP allowed_hosts directive appends entries to rmcp loopback default"
+            );
+        }
         let mcp_router = croniq_server::mcp::mcp_router(
             mcp_state,
             mcp_runner,
             Some(mcp_store),
             mcp_jobs,
             Some(mcp_triggers),
+            extra_allowed_hosts,
         );
         app = app.merge(mcp_router);
         tracing::info!("MCP HTTP transport enabled at /mcp");
