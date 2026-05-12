@@ -155,9 +155,5 @@ pub fn streamable_http_service(
         _ => StreamableHttpServerConfig::default(),
     };
 
-    StreamableHttpService::new(
-        factory,
-        Arc::new(LocalSessionManager::default()),
-        cfg,
-    )
+    StreamableHttpService::new(factory, Arc::new(LocalSessionManager::default()), cfg)
 }
