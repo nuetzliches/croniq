@@ -1,4 +1,11 @@
 //! Embedded SQL migrations for SQLite.
+//!
+//! Numbers are monotonic; pick the next free slot when opening a PR. If
+//! two migration PRs are in flight at once, the second to merge rebases
+//! to bump its number above the first. Migrations are idempotent and
+//! additive (or use `IF NOT EXISTS` guards) so order shifts don't break
+//! existing data, but the embedded list must stay monotonic for
+//! deterministic apply order. See AGENTS.md for the full convention.
 
 use rusqlite::Connection;
 
