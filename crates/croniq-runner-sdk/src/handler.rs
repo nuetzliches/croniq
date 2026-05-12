@@ -3,14 +3,21 @@
 use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use crate::client::{ClientError, CroniqClient, WorkEvent};
+use crate::enrichment::{enrich_event, serialize_tags};
+use crate::log_writer::{HttpPusher, LogWriter, LogWriterInner};
 
 /// Context passed to job handlers during execution.
 #[derive(Clone)]
 pub struct ExecutionContext {
     pub(crate) client: Arc<CroniqClient>,
+    /// Lazily-spawned streaming log writer. Initialised on the first
+    /// `log_writer()` call so handlers that don't need streaming pay no
+    /// cost. Cloned across every `ExecutionContext` clone so all writer
+    /// handles for one execution share one flusher task. See issue #115.
+    pub(crate) log_writer_slot: Arc<OnceLock<Arc<LogWriterInner>>>,
     pub execution_id: String,
     pub job_key: String,
     pub attempt: u32,
@@ -46,6 +53,12 @@ impl ExecutionContext {
     ///
     /// Existing keys in the caller's event are preserved — auto-injection
     /// uses `entry().or_insert_with(...)` so explicit values win.
+    ///
+    /// This call **awaits the HTTP POST inline**. For high-volume,
+    /// long-running jobs that stream stdout/stderr line by line, prefer
+    /// [`ExecutionContext::log_writer`] which buffers events and posts
+    /// them asynchronously, avoiding the backpressure-vs-end-of-run
+    /// trade-off documented in issue #115.
     pub async fn push_log_events(&self, events: &[WorkEvent]) -> Result<(), ClientError> {
         if events.is_empty() {
             return Ok(());
@@ -67,6 +80,10 @@ impl ExecutionContext {
 
     /// Push a single log line. Errors are swallowed with a `tracing::warn` so
     /// callers don't need to handle the Result for fire-and-forget logging.
+    ///
+    /// Like [`push_log_events`](Self::push_log_events), this awaits the HTTP
+    /// POST inline. For high-volume scenarios, see
+    /// [`ExecutionContext::log_writer`].
     pub async fn log(&self, level: &str, message: impl Into<String>) {
         let event = WorkEvent {
             level: Some(level.into()),
@@ -81,41 +98,41 @@ impl ExecutionContext {
             );
         }
     }
-}
 
-/// JSON-encode the runner's tag list for inclusion as a single
-/// `runner_tags` log field. Returns `None` when the runner has no tags.
-fn serialize_tags(tags: &[String]) -> Option<String> {
-    if tags.is_empty() {
-        return None;
-    }
-    serde_json::to_string(tags).ok()
-}
-
-/// Auto-inject `job_key`, `runner_id`, and `runner_tags` into a log event's
-/// fields without overwriting caller-provided values.
-fn enrich_event(
-    event: &WorkEvent,
-    job_key: &str,
-    runner_id: &str,
-    serialized_tags: Option<&str>,
-) -> WorkEvent {
-    let mut fields = event.fields.clone();
-    fields
-        .entry("job_key".into())
-        .or_insert_with(|| job_key.to_string());
-    fields
-        .entry("runner_id".into())
-        .or_insert_with(|| runner_id.to_string());
-    if let Some(tags) = serialized_tags {
-        fields
-            .entry("runner_tags".into())
-            .or_insert_with(|| tags.to_string());
-    }
-    WorkEvent {
-        level: event.level.clone(),
-        message: event.message.clone(),
-        fields,
+    /// Return a streaming log writer for this execution (issue #115).
+    ///
+    /// The writer enqueues events into a bounded channel; a background
+    /// task batches and POSTs them to the server. `send()` only suspends
+    /// on channel capacity, never on HTTP, so a long-running subprocess's
+    /// stdout reader will not deadlock when the server is slow.
+    ///
+    /// The first call spawns the flusher task. Subsequent calls (and
+    /// clones of the returned [`LogWriter`]) share that single task. The
+    /// runner awaits the writer's drain (up to 5s) before sending the
+    /// `ack` for this execution, so all queued events are server-side by
+    /// the time the execution is marked complete.
+    ///
+    /// # Mixing with `log()` / `push_log_events()`
+    ///
+    /// You may mix paths within one handler, but the server may receive
+    /// events out-of-order relative to client-side issue order because
+    /// timestamps are assigned on receipt. For strict ordering pick one
+    /// path per handler.
+    pub fn log_writer(&self) -> LogWriter {
+        let inner = self.log_writer_slot.get_or_init(|| {
+            // Explicit Arc → Arc<dyn Trait> coercion via let-binding —
+            // `Arc::clone` cannot infer the unsizing on its own.
+            let client = Arc::clone(&self.client);
+            let pusher: Arc<dyn HttpPusher> = client;
+            Arc::new(LogWriterInner::spawn(
+                pusher,
+                self.execution_id.clone(),
+                self.job_key.clone(),
+                self.runner_id.clone(),
+                self.runner_tags.clone(),
+            ))
+        });
+        inner.handle()
     }
 }
 
@@ -185,77 +202,5 @@ impl HandlerRegistry {
 
     pub fn job_keys(&self) -> Vec<String> {
         self.handlers.keys().cloned().collect()
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn event(level: &str, message: &str) -> WorkEvent {
-        WorkEvent {
-            level: Some(level.into()),
-            message: message.into(),
-            fields: HashMap::new(),
-        }
-    }
-
-    #[test]
-    fn enrich_event_injects_three_fields_when_tags_present() {
-        let tags = serialize_tags(&["env=prod".into(), "team=ops".into()]);
-        let enriched = enrich_event(
-            &event("info", "hello"),
-            "billing:invoice",
-            "shell-runner-1",
-            tags.as_deref(),
-        );
-        assert_eq!(enriched.fields.get("job_key").unwrap(), "billing:invoice");
-        assert_eq!(enriched.fields.get("runner_id").unwrap(), "shell-runner-1");
-        // JSON-array string so downstream log indexers can parse it.
-        assert_eq!(
-            enriched.fields.get("runner_tags").unwrap(),
-            r#"["env=prod","team=ops"]"#
-        );
-    }
-
-    #[test]
-    fn enrich_event_skips_runner_tags_when_runner_has_none() {
-        let enriched = enrich_event(
-            &event("info", "hello"),
-            "billing:invoice",
-            "shell-runner-1",
-            serialize_tags(&[]).as_deref(),
-        );
-        assert!(!enriched.fields.contains_key("runner_tags"));
-        assert_eq!(enriched.fields.get("runner_id").unwrap(), "shell-runner-1");
-    }
-
-    #[test]
-    fn enrich_event_does_not_overwrite_caller_provided_fields() {
-        let mut e = event("warn", "hi");
-        e.fields.insert("job_key".into(), "explicit:value".into());
-        e.fields
-            .insert("runner_id".into(), "explicit-runner".into());
-
-        let tags = serialize_tags(&["env=prod".into()]);
-        let enriched = enrich_event(&e, "auto:job", "auto-runner", tags.as_deref());
-        assert_eq!(enriched.fields.get("job_key").unwrap(), "explicit:value");
-        assert_eq!(enriched.fields.get("runner_id").unwrap(), "explicit-runner");
-        assert_eq!(
-            enriched.fields.get("runner_tags").unwrap(),
-            r#"["env=prod"]"#
-        );
-    }
-
-    #[test]
-    fn serialize_tags_empty_returns_none() {
-        assert!(serialize_tags(&[]).is_none());
-    }
-
-    #[test]
-    fn serialize_tags_round_trips_as_json_array() {
-        let s = serialize_tags(&["a=1".into(), "b=2".into()]).unwrap();
-        let back: Vec<String> = serde_json::from_str(&s).unwrap();
-        assert_eq!(back, vec!["a=1", "b=2"]);
     }
 }
