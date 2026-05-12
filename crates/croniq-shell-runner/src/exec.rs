@@ -3,18 +3,41 @@
 //! The actual SDK plumbing (poll/ack/lease) lives in `croniq-runner-sdk`;
 //! this module is just the shell/exec dispatcher that the runner binary
 //! plugs in as a job handler.
+//!
+//! As of #118, stdout/stderr are no longer buffered until process exit —
+//! each line is streamed live through the SDK's `LogWriter` so the
+//! Execution Detail Logs panel renders chatty / long-running jobs as they
+//! progress. A bounded rolling tail-buffer keeps the last lines around so
+//! failure snippets in the dead-letter view stay meaningful.
 
+use std::collections::VecDeque;
 use std::process::Stdio;
 
 use croniq_config::compile::RunnerExec;
-use croniq_runner_sdk::HandlerError;
+use croniq_runner_sdk::{HandlerError, LogWriter};
+use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
+
+/// How many lines of stdout AND stderr to retain in the rolling tail
+/// buffer for failure-snippet assembly. The previous snippet was 400
+/// chars of stderr; 50 lines comfortably covers that for typical line
+/// lengths while bounding memory to ~50 KB / stream worst-case.
+const TAIL_BUFFER_LINES: usize = 50;
+
+/// How many trailing characters to splice into the failure-snippet that
+/// becomes the Result::Err message. Matches the pre-streaming behaviour
+/// so dead-letter UI snippets look identical to v0.11.0.
+const FAILURE_SNIPPET_CHARS: usize = 400;
 
 #[derive(Debug)]
 pub struct Outcome {
     pub status: std::process::ExitStatus,
-    pub stdout: String,
-    pub stderr: String,
+    /// Last [`TAIL_BUFFER_LINES`] lines of stdout, in chronological
+    /// order. Older lines have already been streamed to the server but
+    /// are no longer retained here.
+    pub stdout_tail: VecDeque<String>,
+    /// Last [`TAIL_BUFFER_LINES`] lines of stderr, same semantics.
+    pub stderr_tail: VecDeque<String>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -124,48 +147,138 @@ pub fn build_command(exec: &RunnerExec) -> Result<Command, RunError> {
     Ok(cmd)
 }
 
-/// Spawn the subprocess, capture stdout / stderr, return an `Outcome`.
+/// Spawn the subprocess and stream stdout / stderr line-by-line through
+/// the runner SDK's [`LogWriter`].
 ///
-/// Note: stdout/stderr are captured in full and only returned at the end. For
-/// long-running jobs this means the runner buffers all output in memory.
-/// Streaming via `croniq_runner_sdk::client::push_events` is a follow-up.
-pub async fn run(exec: &RunnerExec) -> Result<Outcome, RunError> {
+/// Each line is:
+///
+/// 1. Mirrored to the runner's own container logs via `tracing::info!`
+///    (target `shell_runner::stdout` / `shell_runner::stderr`) so a
+///    sidecar log shipper (Loki, Promtail, CloudWatch agent) picks it
+///    up alongside the runner's lifecycle messages.
+/// 2. Appended to a rolling tail buffer capped at [`TAIL_BUFFER_LINES`]
+///    so [`outcome_to_handler_result`] can build a meaningful snippet
+///    for the failure path.
+/// 3. Forwarded to the streaming `LogWriter`, which batches and POSTs
+///    to the server without blocking the reader on HTTP.
+///
+/// Backpressure for genuinely slow servers propagates from the writer's
+/// bounded channel back through the reader → OS pipe → child process
+/// `write()`, which is the safe degraded mode (vs. v0.11.0's pattern-B
+/// per-line `ctx.log().await` deadlock potential, per issue #115).
+pub async fn run(exec: &RunnerExec, writer: &LogWriter) -> Result<Outcome, RunError> {
     let mut cmd = build_command(exec)?;
     cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
 
-    let output = cmd
-        .spawn()
-        .map_err(RunError::Spawn)?
-        .wait_with_output()
-        .await
-        .map_err(RunError::Wait)?;
+    let mut child = cmd.spawn().map_err(RunError::Spawn)?;
+    let stdout = child
+        .stdout
+        .take()
+        .expect("stdout pipe must be present after Stdio::piped()");
+    let stderr = child
+        .stderr
+        .take()
+        .expect("stderr pipe must be present after Stdio::piped()");
+
+    let stdout_task = tokio::spawn(stream_lines(stdout, writer.clone(), Stream::Stdout));
+    let stderr_task = tokio::spawn(stream_lines(stderr, writer.clone(), Stream::Stderr));
+
+    // Wait for the child to exit. Once it does the kernel closes its
+    // end of the pipes; the reader tasks see EOF and finish naturally.
+    let status = child.wait().await.map_err(RunError::Wait)?;
+
+    let stdout_tail = match stdout_task.await {
+        Ok(Ok(tail)) => tail,
+        Ok(Err(e)) => {
+            tracing::warn!(error = %e, "stdout reader errored — tail buffer may be incomplete");
+            VecDeque::new()
+        }
+        Err(e) => {
+            tracing::warn!(error = %e, "stdout reader task panicked");
+            VecDeque::new()
+        }
+    };
+    let stderr_tail = match stderr_task.await {
+        Ok(Ok(tail)) => tail,
+        Ok(Err(e)) => {
+            tracing::warn!(error = %e, "stderr reader errored — tail buffer may be incomplete");
+            VecDeque::new()
+        }
+        Err(e) => {
+            tracing::warn!(error = %e, "stderr reader task panicked");
+            VecDeque::new()
+        }
+    };
 
     Ok(Outcome {
-        status: output.status,
-        stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
-        stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+        status,
+        stdout_tail,
+        stderr_tail,
     })
+}
+
+/// Which pipe the reader task is consuming. Decides the log level used
+/// for [`LogWriter::send`] and the tracing target name.
+#[derive(Copy, Clone)]
+enum Stream {
+    Stdout,
+    Stderr,
+}
+
+impl Stream {
+    fn level(self) -> &'static str {
+        match self {
+            Stream::Stdout => "info",
+            Stream::Stderr => "warn",
+        }
+    }
+
+    fn tracing_target(self) -> &'static str {
+        match self {
+            Stream::Stdout => "shell_runner::stdout",
+            Stream::Stderr => "shell_runner::stderr",
+        }
+    }
+}
+
+/// Reader task body. Pulls lines from one pipe, streams them through
+/// the writer + tracing, and returns the rolling tail buffer.
+async fn stream_lines<R>(
+    reader: R,
+    writer: LogWriter,
+    stream: Stream,
+) -> std::io::Result<VecDeque<String>>
+where
+    R: tokio::io::AsyncRead + Unpin,
+{
+    let mut tail: VecDeque<String> = VecDeque::with_capacity(TAIL_BUFFER_LINES);
+    let mut lines = BufReader::new(reader).lines();
+    while let Some(line) = lines.next_line().await? {
+        // 1. Operator-visible container log.
+        tracing::info!(target: "shell_runner::pipe", stream = stream.tracing_target(), line = %line);
+        // 2. Rolling tail buffer for the failure snippet.
+        if tail.len() == TAIL_BUFFER_LINES {
+            tail.pop_front();
+        }
+        tail.push_back(line.clone());
+        // 3. Stream to the server-side execution log panel. Awaits only
+        //    on bounded channel capacity, never on HTTP (per LogWriter
+        //    contract documented in croniq-runner-sdk::log_writer).
+        writer.send(stream.level(), line).await;
+    }
+    Ok(tail)
 }
 
 /// Convert an `Outcome` into a runner-SDK `Result`. A non-zero exit becomes a
 /// `HandlerError` whose message is short enough to fit in the execution log
 /// row but informative enough to debug from.
-pub fn outcome_to_handler_result(outcome: Outcome, job_key: &str) -> Result<(), HandlerError> {
+///
+/// Each individual line was already streamed via the `LogWriter`, so this
+/// function does **not** re-emit stdout/stderr. Operators see live progress
+/// in the Logs panel; the runner's own `tracing::info!` per-line in
+/// [`stream_lines`] handles container-log visibility.
+pub fn outcome_to_handler_result(outcome: Outcome, _job_key: &str) -> Result<(), HandlerError> {
     if outcome.status.success() {
-        if !outcome.stdout.is_empty() {
-            tracing::info!(
-                job_key = %job_key,
-                stdout = %outcome.stdout.trim_end(),
-                "job stdout"
-            );
-        }
-        if !outcome.stderr.is_empty() {
-            tracing::info!(
-                job_key = %job_key,
-                stderr = %outcome.stderr.trim_end(),
-                "job stderr"
-            );
-        }
         Ok(())
     } else {
         let code = outcome
@@ -173,17 +286,35 @@ pub fn outcome_to_handler_result(outcome: Outcome, job_key: &str) -> Result<(), 
             .code()
             .map(|c| c.to_string())
             .unwrap_or_else(|| "signal".into());
-        let tail = outcome.stderr.trim_end();
-        let snippet: String = tail
-            .chars()
-            .rev()
-            .take(400)
-            .collect::<String>()
-            .chars()
-            .rev()
-            .collect();
-        Err(HandlerError::msg(format!("exit {code}: {snippet}")))
+        let snippet = build_failure_snippet(&outcome.stderr_tail);
+        if snippet.is_empty() {
+            Err(HandlerError::msg(format!("exit {code}")))
+        } else {
+            Err(HandlerError::msg(format!("exit {code}: {snippet}")))
+        }
     }
+}
+
+/// Reconstruct a trailing snippet from the rolling stderr tail buffer.
+/// Joins the buffer with `\n`, then takes the last
+/// [`FAILURE_SNIPPET_CHARS`] characters — char-aware to avoid splitting
+/// multi-byte UTF-8 sequences (the old impl used the same `chars().rev()`
+/// trick).
+fn build_failure_snippet(tail: &VecDeque<String>) -> String {
+    let joined: String = tail
+        .iter()
+        .map(String::as_str)
+        .collect::<Vec<_>>()
+        .join("\n");
+    let trimmed = joined.trim_end();
+    trimmed
+        .chars()
+        .rev()
+        .take(FAILURE_SNIPPET_CHARS)
+        .collect::<String>()
+        .chars()
+        .rev()
+        .collect()
 }
 
 #[cfg(test)]
@@ -192,23 +323,26 @@ mod tests {
     use std::collections::HashMap;
 
     #[tokio::test]
-    async fn shell_command_runs_and_returns_stdout() {
+    async fn shell_command_runs_and_returns_stdout_tail() {
         let exec = RunnerExec::Shell {
             command: "echo croniq-shell-runner".into(),
             workdir: None,
             user: None,
             env: HashMap::new(),
         };
-        let outcome = run(&exec).await.expect("spawn ok");
+        let outcome = run(&exec, &LogWriter::null()).await.expect("spawn ok");
         assert!(
             outcome.status.success(),
             "exit status: {:?}",
             outcome.status
         );
         assert!(
-            outcome.stdout.contains("croniq-shell-runner"),
-            "stdout: {:?}",
-            outcome.stdout
+            outcome
+                .stdout_tail
+                .iter()
+                .any(|l| l.contains("croniq-shell-runner")),
+            "stdout_tail: {:?}",
+            outcome.stdout_tail
         );
     }
 
@@ -220,7 +354,7 @@ mod tests {
             user: None,
             env: HashMap::new(),
         };
-        let outcome = run(&exec).await.expect("spawn ok");
+        let outcome = run(&exec, &LogWriter::null()).await.expect("spawn ok");
         assert!(!outcome.status.success());
         assert_eq!(outcome.status.code(), Some(7));
     }
@@ -234,12 +368,12 @@ mod tests {
             user: None,
             env: HashMap::new(),
         };
-        let outcome = run(&exec).await.expect("spawn ok");
+        let outcome = run(&exec, &LogWriter::null()).await.expect("spawn ok");
         assert!(outcome.status.success());
         assert!(
-            outcome.stdout.contains("hello exec"),
-            "stdout: {:?}",
-            outcome.stdout
+            outcome.stdout_tail.iter().any(|l| l.contains("hello exec")),
+            "stdout_tail: {:?}",
+            outcome.stdout_tail
         );
     }
 
@@ -253,9 +387,13 @@ mod tests {
             user: None,
             env,
         };
-        let outcome = run(&exec).await.expect("spawn ok");
+        let outcome = run(&exec, &LogWriter::null()).await.expect("spawn ok");
         assert!(outcome.status.success());
-        assert_eq!(outcome.stdout, "from-dsl");
+        // `printf %s` produces a single line with no trailing newline.
+        assert_eq!(
+            outcome.stdout_tail.back().map(String::as_str),
+            Some("from-dsl")
+        );
     }
 
     #[test]
@@ -291,5 +429,94 @@ mod tests {
     fn decode_reports_missing_payload() {
         let metadata = serde_json::json!({});
         assert!(matches!(decode(&metadata), Err(RunError::MissingExec)));
+    }
+
+    // ─── Tail buffer + failure snippet (issue #118) ─────────────────────────
+
+    #[tokio::test]
+    async fn tail_buffer_caps_at_configured_limit() {
+        // Emit far more than TAIL_BUFFER_LINES so we can verify the cap
+        // discards the oldest lines but keeps the newest ones.
+        let count = TAIL_BUFFER_LINES + 10;
+        let exec = RunnerExec::Shell {
+            command: format!("for i in $(seq 1 {count}); do echo line $i; done"),
+            workdir: None,
+            user: None,
+            env: HashMap::new(),
+        };
+        let outcome = run(&exec, &LogWriter::null()).await.expect("spawn ok");
+        assert!(outcome.status.success());
+        assert_eq!(
+            outcome.stdout_tail.len(),
+            TAIL_BUFFER_LINES,
+            "tail buffer must cap at {TAIL_BUFFER_LINES}, got {}",
+            outcome.stdout_tail.len()
+        );
+        // Newest lines retained — last one should be `line {count}`.
+        assert_eq!(
+            outcome.stdout_tail.back().map(String::as_str),
+            Some(format!("line {count}").as_str())
+        );
+        // Oldest line is the (count - TAIL_BUFFER_LINES + 1)-th.
+        let expected_oldest = count - TAIL_BUFFER_LINES + 1;
+        assert_eq!(
+            outcome.stdout_tail.front().map(String::as_str),
+            Some(format!("line {expected_oldest}").as_str())
+        );
+    }
+
+    #[test]
+    fn build_failure_snippet_joins_lines_with_newlines() {
+        let mut tail = VecDeque::new();
+        tail.push_back("first".to_string());
+        tail.push_back("second".to_string());
+        tail.push_back("third".to_string());
+        let snippet = build_failure_snippet(&tail);
+        assert_eq!(snippet, "first\nsecond\nthird");
+    }
+
+    #[test]
+    fn build_failure_snippet_truncates_to_last_400_chars() {
+        // Build a tail that exceeds the 400-char snippet budget.
+        let mut tail = VecDeque::new();
+        for i in 0..30 {
+            tail.push_back(format!("line {i} with some filler text to make it longer"));
+        }
+        let snippet = build_failure_snippet(&tail);
+        assert!(snippet.len() <= FAILURE_SNIPPET_CHARS);
+        // Snippet covers the tail end, not the head.
+        assert!(snippet.ends_with(&tail[tail.len() - 1]));
+    }
+
+    #[test]
+    fn build_failure_snippet_handles_empty_tail() {
+        assert_eq!(build_failure_snippet(&VecDeque::new()), "");
+    }
+
+    #[tokio::test]
+    async fn outcome_to_handler_result_failure_includes_stderr_snippet() {
+        let exec = RunnerExec::Shell {
+            command: "echo 'boom — something went wrong' 1>&2; exit 2".into(),
+            workdir: None,
+            user: None,
+            env: HashMap::new(),
+        };
+        let outcome = run(&exec, &LogWriter::null()).await.expect("spawn ok");
+        let err = outcome_to_handler_result(outcome, "test:job").unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.starts_with("exit 2"), "msg: {msg}");
+        assert!(msg.contains("boom"), "stderr snippet missing: {msg}");
+    }
+
+    #[tokio::test]
+    async fn outcome_to_handler_result_success_returns_ok() {
+        let exec = RunnerExec::Shell {
+            command: "true".into(),
+            workdir: None,
+            user: None,
+            env: HashMap::new(),
+        };
+        let outcome = run(&exec, &LogWriter::null()).await.expect("spawn ok");
+        assert!(outcome_to_handler_result(outcome, "test:job").is_ok());
     }
 }
