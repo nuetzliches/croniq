@@ -81,11 +81,22 @@ pub struct RuntimeConfig {
 #[derive(Debug, Clone, Serialize)]
 pub struct McpConfig {
     pub enabled: bool,
+    /// Additional Host-header values the `/mcp` endpoint should accept on
+    /// top of rmcp's built-in loopback allowlist (`localhost`, `127.0.0.1`,
+    /// `::1`). Per issue #114 the directive is additive — empty / absent
+    /// keeps the loopback-only default; entries listed here are appended
+    /// to rmcp's allowlist, never replace it. Wildcards are not supported;
+    /// enumerate every public hostname explicitly. For an IPv6 literal with
+    /// port, quote it: `allowed_hosts "[::1]:8443"`.
+    pub allowed_hosts: Vec<String>,
 }
 
 impl Default for McpConfig {
     fn default() -> Self {
-        Self { enabled: true }
+        Self {
+            enabled: true,
+            allowed_hosts: Vec::new(),
+        }
     }
 }
 
@@ -514,11 +525,27 @@ pub fn compile(ast: &Croniqfile) -> RuntimeConfig {
             }
             Item::Mcp(m) => {
                 let mut cfg = McpConfig::default();
+                // Multiple `allowed_hosts` directives: last one wins. Matches
+                // the existing `enabled` behaviour in this block — duplicate
+                // directives across a single Croniqfile block are vanishingly
+                // rare and a louder warning lives in `validate.rs`.
                 for d in &m.directives {
-                    if d.key.value.as_str() == "enabled"
-                        && let Some(a) = d.args.first()
-                    {
-                        cfg.enabled = matches!(a.value.as_str(), "true" | "yes" | "1" | "on");
+                    match d.key.value.as_str() {
+                        "enabled" => {
+                            if let Some(a) = d.args.first() {
+                                cfg.enabled =
+                                    matches!(a.value.as_str(), "true" | "yes" | "1" | "on");
+                            }
+                        }
+                        "allowed_hosts" => {
+                            cfg.allowed_hosts = d
+                                .args
+                                .iter()
+                                .map(|a| resolve_str(a, &vars))
+                                .filter(|s| !s.is_empty())
+                                .collect();
+                        }
+                        _ => {}
                     }
                 }
                 mcp = Some(cfg);
@@ -1158,5 +1185,86 @@ mod tests {
             }
             other => panic!("expected Shell, got {other:?}"),
         }
+    }
+
+    // ─── mcp { allowed_hosts ... } (issue #114) ───
+
+    #[test]
+    fn compile_mcp_block_without_allowed_hosts_yields_empty_vec() {
+        let ast = Parser::parse("mcp { enabled true }").unwrap();
+        let cfg = compile(&ast);
+        let mcp = cfg.mcp.expect("mcp block compiled");
+        assert!(mcp.enabled);
+        assert!(
+            mcp.allowed_hosts.is_empty(),
+            "absent `allowed_hosts` directive must leave the Vec empty so the server \
+             falls through to rmcp's loopback default"
+        );
+    }
+
+    #[test]
+    fn compile_mcp_allowed_hosts_collects_all_args() {
+        // Includes the IPv6 literal `::1` to lock its lexing as a single
+        // bare ident — `:` is part of `is_ident_char` (lexer.rs).
+        let ast = Parser::parse(
+            r#"mcp {
+                enabled true
+                allowed_hosts cron.internal admin.example.com 127.0.0.1 ::1
+            }"#,
+        )
+        .unwrap();
+        let cfg = compile(&ast);
+        let mcp = cfg.mcp.expect("mcp block compiled");
+        assert!(mcp.enabled);
+        assert_eq!(
+            mcp.allowed_hosts,
+            vec![
+                "cron.internal".to_string(),
+                "admin.example.com".to_string(),
+                "127.0.0.1".to_string(),
+                "::1".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn compile_mcp_allowed_hosts_resolves_placeholders() {
+        let ast = Parser::parse(
+            r#"
+            vars { proxy_host edge.internal }
+            mcp {
+                allowed_hosts {vars.proxy_host} localhost
+            }
+            "#,
+        )
+        .unwrap();
+        let cfg = compile(&ast);
+        let mcp = cfg.mcp.expect("mcp block compiled");
+        assert_eq!(
+            mcp.allowed_hosts,
+            vec!["edge.internal".to_string(), "localhost".to_string()]
+        );
+    }
+
+    #[test]
+    fn compile_mcp_duplicate_allowed_hosts_last_wins() {
+        let ast = Parser::parse(
+            r#"mcp {
+                allowed_hosts first.example.com
+                allowed_hosts second.example.com third.example.com
+            }"#,
+        )
+        .unwrap();
+        let cfg = compile(&ast);
+        let mcp = cfg.mcp.expect("mcp block compiled");
+        assert_eq!(
+            mcp.allowed_hosts,
+            vec![
+                "second.example.com".to_string(),
+                "third.example.com".to_string(),
+            ],
+            "second `allowed_hosts` directive must replace the first — matches \
+             the `enabled` directive behaviour in the same block"
+        );
     }
 }

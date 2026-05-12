@@ -6,6 +6,27 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **Croniqfile `mcp { allowed_hosts ... }` directive** — explicit
+  `Host`-header allowlist for the `/mcp` Streamable-HTTP transport,
+  resolving the workaround documented in v0.10.1. Empty / absent list
+  keeps rmcp's loopback-only default (`localhost`, `127.0.0.1`, `::1`);
+  entries listed in the directive are **appended** to the default — they
+  do not replace it, so an operator who lists their public hostname does
+  not lose local debugging access. Wildcards are not supported; enumerate
+  every public hostname explicitly. IPv6 literals with port require
+  quoting (`"[::1]:8443"`). Example:
+
+  ```
+  mcp {
+    enabled true
+    allowed_hosts cron.internal admin.example.com
+  }
+  ```
+
+  Closes [#114](https://github.com/nuetzliches/croniq/issues/114).
+
 ## [0.11.0] - 2026-05-10
 
 ### Added

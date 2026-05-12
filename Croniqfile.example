@@ -15,6 +15,13 @@ pull_api {
 # port as the REST API. Requires `mcp:read` (any tool) and `mcp:write`
 # (mutation tools) — admin tokens always pass. Comment the block out or set
 # `enabled false` to disable the endpoint entirely.
+#
+# `allowed_hosts` (issue #114) extends rmcp's built-in DNS-rebinding allowlist.
+# `localhost`, `127.0.0.1`, and `::1` are always accepted; entries listed here
+# are appended. Wildcards are NOT supported — enumerate every public hostname
+# explicitly. For an IPv6 literal with port, quote it: `"[::1]:8443"`.
+#
+#   allowed_hosts cron.internal admin.example.com
 mcp {
   enabled true
 }
