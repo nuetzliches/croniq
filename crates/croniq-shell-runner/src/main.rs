@@ -25,9 +25,7 @@
 //!                               in the UI. Not routing-relevant. Convention:
 //!                               `key=value` strings (`env=prod`, `team=ops`).
 
-use croniq_runner_sdk::{
-    CroniqRunner, ExecutionContext, HandlerError, WorkEvent, resolve_runner_id,
-};
+use croniq_runner_sdk::{CroniqRunner, ExecutionContext, HandlerError, resolve_runner_id};
 use croniq_shell_runner::exec;
 use tracing::info;
 
@@ -119,90 +117,16 @@ async fn handle_job(ctx: ExecutionContext) -> Result<(), HandlerError> {
         "running"
     );
 
-    let outcome = exec::run(&exec)
+    // Acquire the streaming log writer up-front; `exec::run` feeds each
+    // stdout/stderr line into it as the subprocess emits them. The
+    // runner SDK awaits the writer's drain (up to 5 s) before sending
+    // `ack`, so all queued events are server-side by the time the
+    // execution is marked complete (#115 / #117 / #118).
+    let writer = ctx.log_writer();
+
+    let outcome = exec::run(&exec, &writer)
         .await
         .map_err(|e| HandlerError::msg(format!("exec failed: {e}")))?;
 
-    // Push captured output to the server so the Execution Detail UI can show it.
-    // One event per line so the UI can filter / search and downstream log
-    // sinks (Loki, CloudWatch) get individually-indexed entries instead of
-    // a single multi-KB blob. Failures here are non-fatal — just warn.
-    let events = build_log_events(&outcome.stdout, &outcome.stderr);
-    if !events.is_empty()
-        && let Err(e) = ctx.push_log_events(&events).await
-    {
-        tracing::warn!(
-            execution_id = %ctx.execution_id,
-            error = %e,
-            "failed to push log events — output is only in container logs"
-        );
-    }
-
     exec::outcome_to_handler_result(outcome, &ctx.job_key)
-}
-
-/// Split captured stdout/stderr into per-line `WorkEvent`s. Empty trailing
-/// newlines are skipped; truly empty streams produce no events.
-fn build_log_events(stdout: &str, stderr: &str) -> Vec<WorkEvent> {
-    let mut events = Vec::new();
-    push_lines_as_events(&mut events, stdout, "info");
-    push_lines_as_events(&mut events, stderr, "warn");
-    events
-}
-
-fn push_lines_as_events(events: &mut Vec<WorkEvent>, text: &str, level: &str) {
-    for line in text.lines() {
-        if line.is_empty() {
-            continue;
-        }
-        events.push(WorkEvent {
-            level: Some(level.into()),
-            message: line.to_string(),
-            fields: Default::default(),
-        });
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn build_log_events_emits_one_event_per_line() {
-        let events = build_log_events("first line\nsecond line\nthird\n", "");
-        assert_eq!(events.len(), 3);
-        assert_eq!(events[0].message, "first line");
-        assert_eq!(events[0].level.as_deref(), Some("info"));
-        assert_eq!(events[2].message, "third");
-    }
-
-    #[test]
-    fn build_log_events_skips_empty_lines() {
-        let events = build_log_events("a\n\n\nb\n", "");
-        assert_eq!(events.len(), 2);
-        assert_eq!(events[0].message, "a");
-        assert_eq!(events[1].message, "b");
-    }
-
-    #[test]
-    fn build_log_events_uses_warn_for_stderr() {
-        let events = build_log_events("", "ERROR: boom\nstack trace");
-        assert_eq!(events.len(), 2);
-        assert!(events.iter().all(|e| e.level.as_deref() == Some("warn")));
-    }
-
-    #[test]
-    fn build_log_events_orders_stdout_before_stderr() {
-        let events = build_log_events("out", "err");
-        assert_eq!(events[0].message, "out");
-        assert_eq!(events[0].level.as_deref(), Some("info"));
-        assert_eq!(events[1].message, "err");
-        assert_eq!(events[1].level.as_deref(), Some("warn"));
-    }
-
-    #[test]
-    fn build_log_events_returns_empty_for_silent_run() {
-        assert!(build_log_events("", "").is_empty());
-        assert!(build_log_events("\n\n", "").is_empty());
-    }
 }

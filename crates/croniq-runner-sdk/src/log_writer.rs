@@ -116,6 +116,27 @@ enum Cmd {
 }
 
 impl LogWriter {
+    /// Construct a no-op writer that silently discards every event.
+    ///
+    /// Useful for:
+    /// - unit tests where a function takes a `&LogWriter` but the test
+    ///   doesn't care about delivery (e.g. [`croniq_shell_runner::exec::run`]
+    ///   tests assert on exit status / tail buffer instead);
+    /// - dev/CLI tools where streaming to a Croniq server is irrelevant.
+    ///
+    /// A small background task drains the channel so producers never
+    /// suspend on backpressure and never see closed-channel warnings.
+    /// Must be called from inside a Tokio runtime.
+    pub fn null() -> Self {
+        let (tx, mut rx) = mpsc::channel(64);
+        tokio::spawn(async move {
+            while rx.recv().await.is_some() {
+                // drop on the floor
+            }
+        });
+        Self { tx }
+    }
+
     /// Push a structured log event. Async only because the bounded channel
     /// may apply backpressure when the server is genuinely slow — this is
     /// the intended mechanism that propagates pressure back to the caller

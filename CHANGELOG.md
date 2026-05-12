@@ -6,8 +6,34 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- **`croniq-shell-runner` now streams stdout/stderr live** — every
+  line emitted by a `runner shell { ... }` / `runner exec { ... }`
+  subprocess goes through the SDK's `LogWriter` as it appears, so the
+  Execution Detail Logs panel renders chatty / long-running jobs (CVE
+  scans, restic backups, multi-minute test runs) incrementally instead
+  of all-at-once at process exit. `exec::run` no longer uses
+  `wait_with_output`; it spawns the child and reads stdout/stderr via
+  `tokio::io::BufReader::lines`, mirroring each line into (a) the
+  runner's own container logs (`tracing::info!` with stream-specific
+  targets so a sidecar shipper picks them up), (b) a rolling 50-line
+  tail buffer per stream for failure-snippet assembly, and (c) the
+  streaming `LogWriter`. `Outcome` now exposes `stdout_tail` /
+  `stderr_tail` (`VecDeque<String>`, last 50 lines each) instead of
+  the full strings; failure messages remain identical in shape
+  (`exit {code}: {last 400 chars of stderr}`). Backpressure for slow
+  servers propagates safely from the writer's bounded channel back
+  through the OS pipe to the child's `write()` syscall — the
+  pattern-B deadlock described in #115 cannot occur. Closes
+  [#118](https://github.com/nuetzliches/croniq/issues/118).
+
 ### Added
 
+- **`LogWriter::null()`** — public no-op constructor that silently
+  drains every event. Useful for unit tests where a function takes a
+  `&LogWriter` but the test asserts on side-effects elsewhere (e.g.
+  `croniq-shell-runner`'s exec tests asserting on the tail buffer).
 - **Croniqfile `mcp { allowed_hosts ... }` directive** — explicit
   `Host`-header allowlist for the `/mcp` Streamable-HTTP transport,
   resolving the workaround documented in v0.10.1. Empty / absent list
