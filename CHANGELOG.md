@@ -6,6 +6,52 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-05-12
+
+### Added
+
+- **Croniqfile `mcp { allowed_hosts ... }` directive** — explicit
+  `Host`-header allowlist for the `/mcp` Streamable-HTTP transport,
+  resolving the workaround documented in v0.10.1. Empty / absent list
+  keeps rmcp's loopback-only default (`localhost`, `127.0.0.1`, `::1`);
+  entries listed in the directive are **appended** to the default — they
+  do not replace it, so an operator who lists their public hostname does
+  not lose local debugging access. Wildcards are not supported; enumerate
+  every public hostname explicitly. IPv6 literals with port require
+  quoting (`"[::1]:8443"`). Example:
+
+  ```
+  mcp {
+    enabled true
+    allowed_hosts cron.internal admin.example.com
+  }
+  ```
+
+  Closes [#114](https://github.com/nuetzliches/croniq/issues/114),
+  [#116](https://github.com/nuetzliches/croniq/pull/116).
+- **Runner SDK: streaming log writer** —
+  [`ExecutionContext::log_writer`](crates/croniq-runner-sdk/src/handler.rs)
+  returns a cloneable `LogWriter` handle backed by a bounded
+  `tokio::sync::mpsc` channel and a background flusher task. Calls to
+  `writer.send(level, msg).await` only suspend on channel capacity,
+  never on HTTP — eliminating the previous trade-off where SDK-based
+  runners wrapping long-running subprocesses had to choose between
+  batch-at-end (no live progress) and per-line `ctx.log().await` (which
+  backpressures the stdout reader into a self-induced deadlock when the
+  server is slow). The flusher batches by size (32 events), time
+  (200 ms), or explicit `writer.flush().await`, with a hard cap of 100
+  events per POST. The runner deterministically drains the writer (up
+  to 5 s) before sending `ack`, so logs are server-side by the time the
+  execution is marked complete. Existing `ctx.log()` and
+  `ctx.push_log_events()` are unchanged
+  ([#115](https://github.com/nuetzliches/croniq/issues/115),
+  [#117](https://github.com/nuetzliches/croniq/pull/117)).
+- **`LogWriter::null()`** — public no-op constructor that silently
+  drains every event. Useful for unit tests where a function takes a
+  `&LogWriter` but the test asserts on side-effects elsewhere (e.g.
+  `croniq-shell-runner`'s exec tests asserting on the tail buffer)
+  ([#119](https://github.com/nuetzliches/croniq/pull/119)).
+
 ### Changed
 
 - **`croniq-shell-runner` now streams stdout/stderr live** — every
@@ -25,51 +71,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   (`exit {code}: {last 400 chars of stderr}`). Backpressure for slow
   servers propagates safely from the writer's bounded channel back
   through the OS pipe to the child's `write()` syscall — the
-  pattern-B deadlock described in #115 cannot occur. Closes
-  [#118](https://github.com/nuetzliches/croniq/issues/118).
-
-### Added
-
-- **`LogWriter::null()`** — public no-op constructor that silently
-  drains every event. Useful for unit tests where a function takes a
-  `&LogWriter` but the test asserts on side-effects elsewhere (e.g.
-  `croniq-shell-runner`'s exec tests asserting on the tail buffer).
-- **Croniqfile `mcp { allowed_hosts ... }` directive** — explicit
-  `Host`-header allowlist for the `/mcp` Streamable-HTTP transport,
-  resolving the workaround documented in v0.10.1. Empty / absent list
-  keeps rmcp's loopback-only default (`localhost`, `127.0.0.1`, `::1`);
-  entries listed in the directive are **appended** to the default — they
-  do not replace it, so an operator who lists their public hostname does
-  not lose local debugging access. Wildcards are not supported; enumerate
-  every public hostname explicitly. IPv6 literals with port require
-  quoting (`"[::1]:8443"`). Example:
-
-  ```
-  mcp {
-    enabled true
-    allowed_hosts cron.internal admin.example.com
-  }
-  ```
-
-  Closes [#114](https://github.com/nuetzliches/croniq/issues/114).
-- **Runner SDK: streaming log writer** —
-  [`ExecutionContext::log_writer`](crates/croniq-runner-sdk/src/handler.rs)
-  returns a cloneable `LogWriter` handle backed by a bounded
-  `tokio::sync::mpsc` channel and a background flusher task. Calls to
-  `writer.send(level, msg).await` only suspend on channel capacity,
-  never on HTTP — eliminating the previous trade-off where SDK-based
-  runners wrapping long-running subprocesses had to choose between
-  batch-at-end (no live progress) and per-line `ctx.log().await` (which
-  backpressures the stdout reader into a self-induced deadlock when the
-  server is slow). The flusher batches by size (32 events), time
-  (200 ms), or explicit `writer.flush().await`, with a hard cap of 100
-  events per POST. The runner deterministically drains the writer (up
-  to 5 s) before sending `ack`, so logs are server-side by the time the
-  execution is marked complete. Existing `ctx.log()` and
-  `ctx.push_log_events()` are unchanged. Adoption in
-  `croniq-shell-runner` is tracked separately because it requires
-  switching `exec::run` from `wait_with_output` to streaming pipes.
-  Closes [#115](https://github.com/nuetzliches/croniq/issues/115).
+  pattern-B deadlock described in #115 cannot occur
+  ([#118](https://github.com/nuetzliches/croniq/issues/118),
+  [#119](https://github.com/nuetzliches/croniq/pull/119)).
 
 ## [0.11.0] - 2026-05-10
 
