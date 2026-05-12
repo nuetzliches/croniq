@@ -208,7 +208,9 @@ impl LogWriterInner {
         }
         let join = self.join.lock().await.take();
         if let Some(handle) = join
-            && tokio::time::timeout(SHUTDOWN_TIMEOUT, handle).await.is_err()
+            && tokio::time::timeout(SHUTDOWN_TIMEOUT, handle)
+                .await
+                .is_err()
         {
             tracing::warn!(
                 timeout_secs = SHUTDOWN_TIMEOUT.as_secs(),
@@ -356,8 +358,8 @@ async fn flush_all(
 mod tests {
     use super::*;
     use std::collections::HashMap;
-    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Mutex as StdMutex;
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
     /// Recording mock that captures every batch posted, with an optional
     /// failure injector and per-call latency knob.
