@@ -6,6 +6,51 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.13.0] - 2026-05-21
+
+### Added
+
+- **Optional OTLP exporter for traces + logs** — new
+  [`croniq-server`](crates/croniq-server) Cargo feature `otlp` (off by
+  default) installs OTLP span and log exporters in parallel with the
+  existing stderr `tracing-subscriber` fmt layer. Configuration is
+  driven entirely by the standard W3C / OpenTelemetry environment
+  variables — no Croniqfile changes:
+  - `OTEL_EXPORTER_OTLP_ENDPOINT` — if set, OTLP layers are installed;
+    if unset, behaviour is identical to pre-0.13.
+  - `OTEL_EXPORTER_OTLP_PROTOCOL` — `grpc` (default, port 4317) or
+    `http/protobuf` / `http/json` (port 4318). Both transports are
+    compiled into the `otlp` feature, so the choice is purely runtime.
+  - `OTEL_SERVICE_NAME` (defaults to `croniq`),
+    `OTEL_RESOURCE_ATTRIBUTES`, and `OTEL_LOG_LEVEL` (separate
+    EnvFilter for the OTLP log bridge so `RUST_LOG=trace` does not
+    flood the collector).
+
+  `Scheduler::tick` and `CompletionProcessor::process` carry
+  `#[tracing::instrument]` annotations so operators can trace a job
+  from schedule → fire → dispatch → ack → outcome in their collector.
+  A `TelemetryGuard` flushes the OTLP batch exporters after
+  `axum::serve` returns so in-flight spans are not dropped on
+  SIGINT/SIGTERM. Targeted at users running Croniq alongside .NET
+  Aspire, Grafana Tempo/Loki, or any OTLP-speaking collector — see the
+  [README "Observability" section](README.md#observability) for the
+  full env-var matrix and Aspire example
+  ([#121](https://github.com/nuetzliches/croniq/issues/121),
+  [#122](https://github.com/nuetzliches/croniq/pull/122)).
+
+### Notes
+
+- The default release binaries / Docker images currently ship **without**
+  the `otlp` feature. Operators who want OTLP today need to build with
+  `cargo install --path crates/croniq-server --features otlp` or build a
+  custom image with the feature flag. Whether to flip the default for
+  the official images is tracked as a follow-up decision; the change is
+  zero-cost at runtime when the endpoint env var is unset.
+- Out of scope for this release (tracked separately on the ROADMAP):
+  OTLP metrics push, W3C `traceparent` propagation between server and
+  runners, and alignment with the stabilising `messaging.*` / `cron.*`
+  OpenTelemetry semantic conventions.
+
 ## [0.12.0] - 2026-05-12
 
 ### Added
