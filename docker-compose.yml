@@ -36,6 +36,12 @@ services:
       # with the `croniq_` prefix — the entrypoint fails fast if it doesn't.
       # In production: CRONIQ_INIT_API_KEY=croniq_$(openssl rand -hex 32)
       CRONIQ_INIT_API_KEY: croniq_demo_local_stack_key_not_for_production_use
+      # Optional: ship scheduler traces + logs to an OTLP collector
+      # (Aspire Dashboard, OTel-Collector, Grafana Tempo/Loki, …). Only
+      # honoured by images built with `--features croniq-server/otlp`
+      # — see README.md#observability for the full env-var matrix.
+      # OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
+      # OTEL_SERVICE_NAME: croniq
     healthcheck:
       test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/localhost/4000"]
       interval: 5s

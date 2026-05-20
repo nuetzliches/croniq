@@ -80,6 +80,26 @@ Last reviewed: 2026-05-09.
   ([crates/croniq-server/src/metrics.rs](crates/croniq-server/src/metrics.rs),
   [crates/croniq-store/src/traits.rs](crates/croniq-store/src/traits.rs))
 
+- **OTLP metrics push** — the OTLP exporter for traces + logs landed in #121
+  ([README — Observability](README.md#observability),
+  [crates/croniq-server/src/telemetry.rs](crates/croniq-server/src/telemetry.rs)).
+  An OTLP push path for metrics is a parallel decision — some operators prefer
+  push (collector-driven aggregation), some pull (Prometheus scrape). Keep
+  `/metrics` as the default and add `otlp-metrics` as a follow-up Cargo feature
+  once the job-level metrics above stabilise.
+
+- **Trace propagation runner ↔ server** — the `#[instrument]` spans on the
+  server side currently terminate at the enqueue boundary. Have
+  `croniq-shell-runner` (and custom runners via `croniq-runner-sdk`) accept
+  and forward a W3C `traceparent` so a job span continues into the runner
+  process. Bigger design discussion; tracked separately now that the server
+  side ships.
+
+- **OTel semantic conventions** — align span attribute names with the
+  stabilising `messaging.*` / `cron.*` OTel semantic conventions once those
+  hit Stable. Currently spans use Croniq-native attribute names
+  (`job_key`, `execution_id`, `runner_id`).
+
 ## Integrations
 
 - **`runner publish { … }` — hookaido bridge** — thin DSL block that
