@@ -349,6 +349,68 @@ A 403 with no body is returned when the scope is missing. Auth-disabled mode (no
 
 ---
 
+## Observability
+
+Beyond the Prometheus `/metrics` endpoint, Croniq can ship scheduler **traces and logs** to any OTLP-speaking collector — Aspire Dashboard, OTel-Collector, Grafana Tempo/Loki, etc. The exporter is **off by default**; enable it at compile time and configure at runtime.
+
+### Build with the `otlp` feature
+
+```sh
+# from source
+cargo install --path crates/croniq-server --features otlp
+# or in a workspace build
+cargo build --workspace --features croniq-server/otlp
+```
+
+The default release binaries / Docker images currently ship **without** the `otlp` feature. Build your own image (or wait for a future tagged release that enables it) if you need OTLP in production.
+
+### Configure at runtime
+
+Croniq reads the standard W3C / OpenTelemetry environment variables — no Croniqfile changes needed:
+
+| Env var | Default | Effect |
+|---|---|---|
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | *(unset)* | If set, install OTLP span + log exporters in parallel with stderr logs. If unset, behaviour is identical to today. |
+| `OTEL_EXPORTER_OTLP_PROTOCOL` | `grpc` | `grpc` (port 4317) or `http/protobuf` / `http/json` (port 4318). Both transports are compiled into the `otlp` feature. |
+| `OTEL_SERVICE_NAME` | `croniq` | Service identity attached to every span / log record. |
+| `OTEL_RESOURCE_ATTRIBUTES` | *(empty)* | Free-form `key1=val1,key2=val2` extra attributes (e.g. `deployment.environment=prod,host.name=ops01`). |
+| `OTEL_LOG_LEVEL` | `info` | EnvFilter directive used as a per-OTLP filter so `RUST_LOG=trace` does not flood the collector. |
+
+Example — point at a local OTel-Collector:
+
+```sh
+OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317 \
+OTEL_SERVICE_NAME=croniq-prod \
+croniq-server --config Croniqfile
+```
+
+Example — alongside a .NET Aspire stack:
+
+```yaml
+# docker-compose.yml (additions to the server service)
+services:
+  server:
+    environment:
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://aspire-dashboard:18889
+      OTEL_RESOURCE_ATTRIBUTES: deployment.environment=staging
+```
+
+### What gets exported
+
+- **Spans** — `scheduler.tick` per scheduler tick (every second), `CompletionProcessor::process` per completion event. Existing trigger-fire events and execution-queued events become span events under the parent tick span.
+- **Logs** — every `tracing::info!` / `warn!` / `error!` emitted by croniq-server is also sent as an OTLP log record. The stderr `fmt` layer remains in parallel so local logs still work.
+
+### Security note
+
+Croniq's events include public identifiers — `job_key`, `runner_id`, `execution_id`, request paths. These are not credentials (the same identifiers appear in every PollRequest, ack, log row, and UI display) and are exported by design. CodeQL's `rust/cleartext-logging` heuristic flags them; see [`AGENTS.md`](AGENTS.md) for the project's standing dismissal of that pattern. Genuine credentials (API keys, JWT secrets, passwords) are never logged or exported.
+
+### Out of scope (deferred)
+
+- **OTLP metrics** — the Prometheus `/metrics` endpoint stays the metrics path. OTLP-push metrics is tracked separately.
+- **Trace propagation runner ↔ server** — runners do not yet accept/forward a W3C `traceparent`, so the trace ends at the server's enqueue. Tracked separately.
+
+---
+
 ## DSL vs. API: Source of Truth
 
 Resources can come from two places: the **Croniqfile** (declarative, in-file source of truth) or the **API/UI** (mutable, persisted in SQLite). Both surfaces are unified at read time:

@@ -175,6 +175,7 @@ impl SchedulerLoop {
     }
 
     /// Evaluate all triggers at `now`, fire due ones, return results.
+    #[tracing::instrument(skip(self), fields(now = %now, trigger_count = self.triggers.len()))]
     pub async fn tick(&mut self, now: DateTime<Utc>) -> TickResult {
         let mut fired = Vec::new();
 
@@ -182,6 +183,12 @@ impl SchedulerLoop {
             let Some(fire_at) = trigger.evaluate(now) else {
                 continue;
             };
+
+            // Per-fire trace event — gives operators a single "decided to
+            // fire" record per trigger inside the parent `tick` span,
+            // without holding a `!Send` `EnteredSpan` across the queue
+            // RwLock awaits below.
+            tracing::trace!(job_key = %trigger.job_key, fire_at = %fire_at, "evaluating trigger for fire");
 
             let job = match self.jobs.get(&trigger.job_key) {
                 Some(j) => j,

@@ -53,6 +53,11 @@ jobs:
         run: cargo fmt --all -- --check
       - name: Build
         run: cargo build --workspace
+      - name: Build (otlp feature)
+        # Optional OTLP exporter (issue #121). The feature is off by
+        # default; explicitly building it here catches drift between the
+        # default and feature-gated code paths.
+        run: cargo build --workspace --features croniq-server/otlp
       - name: Test
         run: cargo test --workspace
       - name: Clippy

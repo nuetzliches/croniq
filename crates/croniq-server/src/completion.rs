@@ -98,6 +98,15 @@ impl CompletionProcessor {
     }
 
     /// Process a single completion event.
+    #[tracing::instrument(
+        skip(self),
+        fields(
+            execution_id = %event.execution_id,
+            runner_id = %event.runner_id,
+            attempt = event.attempt,
+            duration_ms = event.duration_ms,
+        ),
+    )]
     pub async fn process(&self, event: CompletionEvent) -> ProcessedOutcome {
         let now = Utc::now();
 

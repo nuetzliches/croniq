@@ -39,6 +39,7 @@ pub mod quota;
 pub mod reload;
 pub mod scheduler;
 pub mod store;
+pub mod telemetry;
 pub mod watchdog;
 pub mod watcher;
 

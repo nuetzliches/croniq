@@ -36,6 +36,27 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 clap = { version = "4", features = ["derive", "env"] }
 notify = "8"
 
+# OTLP exporter (issue #121). Off by default — when disabled, behaviour is
+# identical to plain tracing-subscriber fmt on stderr. When enabled and
+# OTEL_EXPORTER_OTLP_ENDPOINT is set at runtime, scheduler spans and
+# tracing events are exported to a configured collector (Aspire Dashboard,
+# OTel-Collector, …) in parallel with stderr.
+opentelemetry = { version = "0.32", optional = true }
+opentelemetry_sdk = { version = "0.32", features = ["rt-tokio"], optional = true }
+opentelemetry-otlp = { version = "0.32", default-features = false, features = ["grpc-tonic", "http-proto", "trace", "logs"], optional = true }
+opentelemetry-appender-tracing = { version = "0.32", optional = true }
+tracing-opentelemetry = { version = "0.33", optional = true }
+
+[features]
+default = []
+otlp = [
+    "dep:opentelemetry",
+    "dep:opentelemetry_sdk",
+    "dep:opentelemetry-otlp",
+    "dep:opentelemetry-appender-tracing",
+    "dep:tracing-opentelemetry",
+]
+
 [dev-dependencies]
 pretty_assertions = "1"
 tokio = { version = "1", features = ["full", "test-util"] }

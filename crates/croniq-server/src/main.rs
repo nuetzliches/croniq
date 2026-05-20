@@ -17,10 +17,10 @@ use croniq_server::{
     loader::{load_file, restore_queued_executions, restore_trigger_states},
     reload,
     store::{DynStore, sqlite_store},
+    telemetry,
 };
 use croniq_store::sqlite::SqliteStore;
 use tokio::sync::mpsc;
-use tracing_subscriber::{EnvFilter, fmt};
 
 #[derive(Parser)]
 #[command(
@@ -71,10 +71,7 @@ struct Cli {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    fmt()
-        .with_env_filter(EnvFilter::from_default_env())
-        .with_writer(std::io::stderr)
-        .init();
+    let telemetry_guard = telemetry::init()?;
 
     let cli = Cli::parse();
 
@@ -527,6 +524,10 @@ async fn main() -> Result<()> {
         .with_graceful_shutdown(shutdown_signal())
         .await?;
     tracing::info!("croniq-server stopped gracefully");
+
+    // Flush in-flight OTLP spans/logs before the process exits.
+    // No-op when the `otlp` feature is off or the endpoint env was unset.
+    telemetry_guard.shutdown();
 
     Ok(())
 }
