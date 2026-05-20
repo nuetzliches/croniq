@@ -5,8 +5,13 @@ WORKDIR /build
 COPY Cargo.toml Cargo.lock ./
 COPY crates/ crates/
 
-# Build release binaries
+# Build release binaries. `--features croniq-server/otlp` compiles the
+# optional OTLP exporter (issue #121) into croniq-server so the official
+# image honours `OTEL_EXPORTER_OTLP_ENDPOINT` out of the box. The runtime
+# gate in src/telemetry.rs::decide keeps the layer dormant when the env
+# var is unset — same behaviour as the off-build, just discoverable.
 RUN cargo build --release \
+      --features croniq-server/otlp \
       --bin croniq-server \
       --bin croniq \
       --bin croniq-mcp \

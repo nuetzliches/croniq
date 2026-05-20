@@ -351,18 +351,22 @@ A 403 with no body is returned when the scope is missing. Auth-disabled mode (no
 
 ## Observability
 
-Beyond the Prometheus `/metrics` endpoint, Croniq can ship scheduler **traces and logs** to any OTLP-speaking collector — Aspire Dashboard, OTel-Collector, Grafana Tempo/Loki, etc. The exporter is **off by default**; enable it at compile time and configure at runtime.
+Beyond the Prometheus `/metrics` endpoint, Croniq can ship scheduler **traces and logs** to any OTLP-speaking collector — Aspire Dashboard, OTel-Collector, Grafana Tempo/Loki, etc. The OTLP exporter is **compiled into the official Docker image and release binaries**; activation stays opt-in at runtime via a single env var.
 
-### Build with the `otlp` feature
+### Official artefacts ship with OTLP compiled in
+
+Since v0.14.0, `ghcr.io/nuetzliches/croniq:latest`, the per-target `croniq-*.tar.gz` archives, and the Homebrew formula are all built with `--features croniq-server/otlp`. With `OTEL_EXPORTER_OTLP_ENDPOINT` unset, behaviour is identical to a no-feature build — the runtime gate in [`telemetry.rs::decide`](crates/croniq-server/src/telemetry.rs) only installs the OTLP layer when the endpoint is set and non-empty.
+
+### Build from source
+
+The Cargo default stays off so a plain `cargo build` from a checkout does not pull the opentelemetry stack. Pass the flag explicitly to match the shipped artefacts:
 
 ```sh
-# from source
+# from source — single crate install
 cargo install --path crates/croniq-server --features otlp
 # or in a workspace build
 cargo build --workspace --features croniq-server/otlp
 ```
-
-The default release binaries / Docker images currently ship **without** the `otlp` feature. Build your own image (or wait for a future tagged release that enables it) if you need OTLP in production.
 
 ### Configure at runtime
 

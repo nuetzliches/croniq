@@ -6,6 +6,32 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.14.0] - 2026-05-21
+
+### Changed
+
+- **Official Docker image and release binaries now ship with the `otlp`
+  feature compiled in.** `ghcr.io/nuetzliches/croniq:latest` (and the
+  `croniq-*-{tar.gz,zip}` archives consumed by Homebrew) honour
+  `OTEL_EXPORTER_OTLP_ENDPOINT` out of the box; setting the endpoint env
+  var activates the OTLP span + log exporters at runtime, no rebuild
+  required. The runtime gate in
+  [`telemetry.rs::decide`](crates/croniq-server/src/telemetry.rs) keeps
+  the layer dormant when the endpoint is unset, so behaviour is identical
+  to the previous off-build for operators who do not opt in. Cargo
+  default stays off so a checkout `cargo build` does not pull the
+  opentelemetry stack — pass `--features croniq-server/otlp` explicitly
+  when building from source
+  ([#124](https://github.com/nuetzliches/croniq/issues/124)).
+
+### CI
+
+- The `Build (otlp feature)` step is now the primary workspace build;
+  added a `cargo build -p croniq-server` (no-default-features) smoke +
+  matching `cargo test -p croniq-server` to keep the
+  `#[cfg(not(feature = "otlp"))]` branches in `telemetry.rs` exercised
+  on every push.
+
 ## [0.13.0] - 2026-05-21
 
 ### Added
