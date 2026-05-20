@@ -51,20 +51,34 @@ jobs:
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
       - name: Format check
         run: cargo fmt --all -- --check
-      - name: Build
-        run: cargo build --workspace
-      - name: Build (otlp feature)
-        # Optional OTLP exporter (issue #121). The feature is off by
-        # default; explicitly building it here catches drift between the
-        # default and feature-gated code paths.
+      - name: Build (with otlp — matches shipped artefacts)
+        # Default Cargo feature stays off so a plain `cargo build` from a
+        # checkout doesn't pull the opentelemetry stack. But the official
+        # image + release binaries are built with `--features
+        # croniq-server/otlp` (see Dockerfile and release.yml), so CI must
+        # exercise that path on every push to catch breakage in the
+        # otlp-gated code before a release.
         run: cargo build --workspace --features croniq-server/otlp
-      - name: Test
-        run: cargo test --workspace
+      - name: Build (no-default-features — guards off-path)
+        # Counterpart to the otlp build above. The off-path has
+        # `#[cfg(not(feature = "otlp"))]` branches in
+        # crates/croniq-server/src/telemetry.rs that would silently bitrot
+        # if only the otlp build is exercised. Server crate only — the
+        # workspace's other crates don't gate on this feature.
+        run: cargo build -p croniq-server
+      - name: Test (with otlp)
+        run: cargo test --workspace --features croniq-server/otlp
+      - name: Test (no-default-features, server only)
+        # telemetry.rs has #[cfg(not(feature = "otlp"))]-only tests
+        # (e.g. decide_stderr_only_when_feature_off_even_if_endpoint_set)
+        # that the otlp build above never compiles. Run the server's own
+        # test suite in the no-feature config to keep that path exercised.
+        run: cargo test -p croniq-server
       - name: Clippy
         # `--all-targets` covers tests + benches too. Without it, latent
         # `unused_must_use` and similar lints accumulate quietly in
         # test-only code (we hit ~25 of them on first sweep).
-        run: cargo clippy --workspace --all-targets -- -D warnings
+        run: cargo clippy --workspace --all-targets --features croniq-server/otlp -- -D warnings
 
   ui:
     name: UI (build + typecheck)

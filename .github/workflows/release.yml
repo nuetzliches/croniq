@@ -91,8 +91,13 @@ jobs:
 
       - name: Build release binaries
         shell: bash
+        # `--features croniq-server/otlp` matches the Dockerfile so brew /
+        # tarball / image installs all honour `OTEL_EXPORTER_OTLP_ENDPOINT`
+        # without a separate "otlp" asset matrix. Runtime gate in
+        # src/telemetry.rs keeps the exporter dormant when unset.
         run: |
           cargo build --release --target ${{ matrix.target }} \
+            --features croniq-server/otlp \
             --bin croniq-server \
             --bin croniq \
             --bin croniq-mcp \
