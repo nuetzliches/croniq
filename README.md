@@ -56,6 +56,19 @@ Full API documentation: [`openapi.yaml`](openapi.yaml)
 
 ---
 
+## Runner SDKs
+
+Build custom job execution runners in your language of choice. Runners poll the Croniq server for work, dispatch handlers, and report outcomes — schedules and policies stay in your Croniqfile.
+
+| Language | Source | Package |
+|----------|--------|---------|
+| Rust     | [`crates/croniq-runner-sdk`](crates/croniq-runner-sdk) | (bundled with workspace, not published separately yet) |
+| .NET (8, 10) | [`sdks/dotnet`](sdks/dotnet) | `Croniq.Runner.Sdk` + `Croniq.Runner.Sdk.OpenTelemetry` (NuGet — pre-release) |
+
+The .NET SDK ships Generic Host (`IHostedService`) integration, options-pattern configuration, server-side cancellation, OpenTelemetry tracing + metrics, streaming structured logs via `System.Threading.Channels`, health checks, and a generic shell-exec decoder for DSL `runner shell { ... }` jobs. See [`sdks/dotnet/README.md`](sdks/dotnet/README.md) for the quickstart.
+
+---
+
 ## Quick Start
 
 Pick the install method that fits your environment. All produce the same `croniq-server` / `croniq` binaries.

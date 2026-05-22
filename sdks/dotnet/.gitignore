@@ -1,0 +1,17 @@
+# Build output
+bin/
+obj/
+artifacts/
+TestResults/
+
+# IDE
+.vs/
+*.user
+*.suo
+
+# Lock-files are committed for reproducible CI restores (see ci.yml — uses
+# --locked-mode). Override here would defeat that, so don't ignore them.
+
+# Test/coverage artifacts
+coverage.cobertura.xml
+*.trx
