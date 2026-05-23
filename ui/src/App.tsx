@@ -65,7 +65,8 @@ export default function App() {
             <Route element={<Layout />}>
               <Route path="/" element={<DashboardPage />} />
               <Route path="/jobs" element={<JobsPage />} />
-              <Route path="/jobs/:jobKey" element={<JobDetailPage />} />
+              <Route path="/jobs/:jobKey" element={<JobsPage />} />
+              <Route path="/jobs/:jobKey/edit" element={<JobDetailPage />} />
               <Route path="/runners" element={<RunnersPage />} />
               <Route path="/dead-letters" element={<DeadLettersPage />} />
               <Route path="/executions" element={<ExecutionsPage />} />

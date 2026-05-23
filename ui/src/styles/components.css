@@ -380,6 +380,81 @@
   border: 2px solid transparent;
 }
 
+/* ── tabs ──────────────────────────────────────────────────── */
+.tabs {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 6px 10px 0;
+  border-bottom: 1px solid var(--divider);
+}
+.tabs .tab {
+  height: 30px;
+  padding: 0 10px;
+  font-size: 13px;
+  color: var(--fg-2);
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  font-family: inherit;
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.tabs .tab:hover { color: var(--fg); }
+.tabs .tab.active { color: var(--fg); font-weight: 500; }
+.tabs .tab.active::after {
+  content: '';
+  position: absolute;
+  left: 6px;
+  right: 6px;
+  bottom: -1px;
+  height: 2px;
+  background: var(--accent);
+  border-radius: 2px 2px 0 0;
+}
+.tabs .tab .count {
+  font-family: var(--font-mono-app);
+  font-size: 11px;
+  color: var(--fg-mute);
+  padding: 1px 5px;
+  background: var(--bg-2);
+  border-radius: 999px;
+  margin-left: 4px;
+}
+
+/* ── master list row (Jobs/Runners master-detail) ──────────── */
+.master-row {
+  display: flex; flex-direction: column; gap: 6px;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--divider);
+  cursor: pointer;
+  transition: background .12s var(--easing);
+  background: transparent;
+  border-top: 0;
+  border-left: 2px solid transparent;
+  border-right: 0;
+  width: 100%;
+  text-align: left;
+  font-family: inherit;
+  color: inherit;
+}
+.master-row:hover { background: var(--hover); }
+.master-row.active {
+  background: var(--accent-bg);
+  border-left-color: var(--accent);
+}
+.master-row .key {
+  font-family: var(--font-mono-app);
+  font-size: 13px;
+  color: var(--fg);
+}
+.master-row .meta {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 11.5px; color: var(--fg-3);
+}
+
 /* ── focus states ──────────────────────────────────────────── */
 .focus-ring:focus-visible,
 .btn:focus-visible,
