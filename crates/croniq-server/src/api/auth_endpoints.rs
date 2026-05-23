@@ -2,7 +2,12 @@
 
 use std::sync::Arc;
 
-use axum::{Extension, Json, extract::State, http::StatusCode};
+use axum::{
+    Extension, Json,
+    extract::State,
+    http::StatusCode,
+    response::{IntoResponse, Response},
+};
 use chrono::Utc;
 use croniq_auth::api_key::{generate_api_key, hash_api_key};
 use croniq_auth::context::Scope;
@@ -99,37 +104,63 @@ pub struct CreateApiKeyResponse {
     pub client_id: String,
 }
 
+// ─── Error helpers ───────────────────────────────────────────────────────────
+
+/// Lift a bare `StatusCode` into the `Response` error type. Produces the same
+/// body-less response that the previous `Result<_, StatusCode>` signature did,
+/// so the only externally visible response that changed is the new 403 with a
+/// JSON body (see [`password_disabled_response`]).
+pub(super) fn status_err(s: StatusCode) -> Response {
+    s.into_response()
+}
+
+/// 403 response with a `{"error":"…"}` envelope, returned by every password-flow
+/// endpoint when password login is disabled (issue #138).
+pub(super) fn password_disabled_response() -> Response {
+    (
+        StatusCode::FORBIDDEN,
+        Json(serde_json::json!({
+            "error": "password_login_disabled",
+            "message": "password login is disabled on this server",
+        })),
+    )
+        .into_response()
+}
+
 // ─── Handlers ────────────────────────────────────────────────────────────────
 
 /// `POST /v1/auth/login`
 pub async fn handle_login(
     State(state): State<Arc<ServerState>>,
     Json(req): Json<LoginRequest>,
-) -> Result<Json<LoginResponse>, StatusCode> {
+) -> Result<Json<LoginResponse>, Response> {
+    if !state.password_login_enabled {
+        return Err(password_disabled_response());
+    }
     let store = state
         .store
         .as_ref()
-        .ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
+        .ok_or_else(|| status_err(StatusCode::SERVICE_UNAVAILABLE))?;
     let jwt_config = state
         .jwt_config
         .as_ref()
-        .ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
+        .ok_or_else(|| status_err(StatusCode::SERVICE_UNAVAILABLE))?;
 
     let cred = store
         .get_credentials(&req.username)
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-        .ok_or(StatusCode::UNAUTHORIZED)?;
+        .map_err(|_| status_err(StatusCode::INTERNAL_SERVER_ERROR))?
+        .ok_or_else(|| status_err(StatusCode::UNAUTHORIZED))?;
 
     // Check lockout
     if let Some(locked_until) = cred.locked_until
         && Utc::now() < locked_until
     {
-        return Err(StatusCode::FORBIDDEN);
+        return Err(status_err(StatusCode::FORBIDDEN));
     }
 
     // Verify password
     let valid = verify_password(&req.password, &cred.password_hash)
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        .map_err(|_| status_err(StatusCode::INTERNAL_SERVER_ERROR))?;
 
     if !valid {
         // Increment failed attempts
@@ -147,7 +178,7 @@ pub async fn handle_login(
             "user",
             Some(&cred.user_id),
         );
-        return Err(StatusCode::UNAUTHORIZED);
+        return Err(status_err(StatusCode::UNAUTHORIZED));
     }
 
     // Reset failed attempts on success
@@ -165,11 +196,11 @@ pub async fn handle_login(
     // hand-rollback to before migration 011).
     let user = store
         .users_get_by_id(&cred.user_id)
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-        .ok_or(StatusCode::UNAUTHORIZED)?;
+        .map_err(|_| status_err(StatusCode::INTERNAL_SERVER_ERROR))?
+        .ok_or_else(|| status_err(StatusCode::UNAUTHORIZED))?;
 
     if !user.is_active {
-        return Err(StatusCode::FORBIDDEN);
+        return Err(status_err(StatusCode::FORBIDDEN));
     }
 
     // TOTP step-up: if the user has a confirmed TOTP secret, return an
@@ -178,12 +209,12 @@ pub async fn handle_login(
     // step. The client must then POST to /v1/auth/login/totp.
     let totp_enabled = store
         .totp_get(&user.user_id)
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .map_err(|_| status_err(StatusCode::INTERNAL_SERVER_ERROR))?
         .map(|t| t.enabled)
         .unwrap_or(false);
     if totp_enabled {
         let (mfa_token, expires_in) = issue_mfa_token(jwt_config, &user.user_id)
-            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+            .map_err(|_| status_err(StatusCode::INTERNAL_SERVER_ERROR))?;
         audit::record_event(
             store,
             "user",
@@ -199,7 +230,7 @@ pub async fn handle_login(
         })));
     }
 
-    let tokens = mint_user_tokens(jwt_config, &user, store)?;
+    let tokens = mint_user_tokens(jwt_config, &user, store).map_err(status_err)?;
     audit::record_event(
         store,
         "user",
@@ -216,32 +247,36 @@ pub async fn handle_login(
 pub async fn handle_totp_login(
     State(state): State<Arc<ServerState>>,
     Json(req): Json<TotpLoginRequest>,
-) -> Result<Json<TokenResponse>, StatusCode> {
+) -> Result<Json<TokenResponse>, Response> {
+    if !state.password_login_enabled {
+        // TOTP login is the second step of the password flow; gate the same way.
+        return Err(password_disabled_response());
+    }
     let store = state
         .store
         .as_ref()
-        .ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
+        .ok_or_else(|| status_err(StatusCode::SERVICE_UNAVAILABLE))?;
     let jwt_config = state
         .jwt_config
         .as_ref()
-        .ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
+        .ok_or_else(|| status_err(StatusCode::SERVICE_UNAVAILABLE))?;
 
-    let user_id =
-        validate_mfa_token(jwt_config, &req.mfa_token).map_err(|_| StatusCode::UNAUTHORIZED)?;
+    let user_id = validate_mfa_token(jwt_config, &req.mfa_token)
+        .map_err(|_| status_err(StatusCode::UNAUTHORIZED))?;
     let user = store
         .users_get_by_id(&user_id)
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-        .ok_or(StatusCode::UNAUTHORIZED)?;
+        .map_err(|_| status_err(StatusCode::INTERNAL_SERVER_ERROR))?
+        .ok_or_else(|| status_err(StatusCode::UNAUTHORIZED))?;
     if !user.is_active {
-        return Err(StatusCode::FORBIDDEN);
+        return Err(status_err(StatusCode::FORBIDDEN));
     }
 
     let secret_row = store
         .totp_get(&user_id)
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-        .ok_or(StatusCode::UNAUTHORIZED)?;
+        .map_err(|_| status_err(StatusCode::INTERNAL_SERVER_ERROR))?
+        .ok_or_else(|| status_err(StatusCode::UNAUTHORIZED))?;
     if !secret_row.enabled {
-        return Err(StatusCode::UNAUTHORIZED);
+        return Err(status_err(StatusCode::UNAUTHORIZED));
     }
 
     // Accept either a current 6-digit TOTP code OR an 8-char recovery
@@ -249,30 +284,30 @@ pub async fn handle_totp_login(
     match (&req.code, &req.recovery_code) {
         (Some(code), None) => {
             let raw = unwrap_totp_secret(&jwt_config.secret, &secret_row.secret_enc)
-                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-            let secret_b32 =
-                String::from_utf8(raw).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+                .map_err(|_| status_err(StatusCode::INTERNAL_SERVER_ERROR))?;
+            let secret_b32 = String::from_utf8(raw)
+                .map_err(|_| status_err(StatusCode::INTERNAL_SERVER_ERROR))?;
             match verify_code(&secret_b32, code) {
                 Ok(true) => {}
-                _ => return Err(StatusCode::UNAUTHORIZED),
+                _ => return Err(status_err(StatusCode::UNAUTHORIZED)),
             }
         }
         (None, Some(recovery)) => {
             let hash = hash_recovery_code(recovery);
             let row = store
                 .recovery_codes_find_unused(&user_id, &hash)
-                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-                .ok_or(StatusCode::UNAUTHORIZED)?;
+                .map_err(|_| status_err(StatusCode::INTERNAL_SERVER_ERROR))?
+                .ok_or_else(|| status_err(StatusCode::UNAUTHORIZED))?;
             // Mark used BEFORE minting tokens so a parallel retry can't
             // double-spend.
             store
                 .recovery_codes_mark_used(&row.code_id, Utc::now())
-                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+                .map_err(|_| status_err(StatusCode::INTERNAL_SERVER_ERROR))?;
         }
-        _ => return Err(StatusCode::BAD_REQUEST),
+        _ => return Err(status_err(StatusCode::BAD_REQUEST)),
     }
 
-    let tokens = mint_user_tokens(jwt_config, &user, store)?;
+    let tokens = mint_user_tokens(jwt_config, &user, store).map_err(status_err)?;
     let action = if req.recovery_code.is_some() {
         "auth.login_totp_recovery_success"
     } else {
