@@ -490,6 +490,99 @@ export function useFailureHeatmap(days = 28) {
   })
 }
 
+// Users (admin)
+export function useUsers() {
+  return useQuery({
+    queryKey: ['users'],
+    queryFn: () => apiFetch<T.User[]>('/v1/users'),
+    staleTime: 30_000,
+  })
+}
+export function useDeleteUser() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (userId: string) => apiDelete(`/v1/users/${userId}`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['users'] }),
+    meta: { action: 'Delete user' },
+  })
+}
+
+// Invitations (admin)
+export function useInvitations() {
+  return useQuery({
+    queryKey: ['invitations'],
+    queryFn: () => apiFetch<T.Invitation[]>('/v1/invitations'),
+    staleTime: 30_000,
+  })
+}
+export function useCreateInvitation() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (body: { email: string; role: T.Role; expires_in_hours?: number }) =>
+      apiPost<T.CreateInvitationResponse>('/v1/invitations', body),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['invitations'] }),
+    meta: { action: 'Create invitation' },
+  })
+}
+export function useRevokeInvitation() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) => apiDelete(`/v1/invitations/${id}`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['invitations'] }),
+    meta: { action: 'Revoke invitation' },
+  })
+}
+
+// Personal Access Tokens (self)
+export function usePersonalAccessTokens() {
+  return useQuery({
+    queryKey: ['users', 'me', 'tokens'],
+    queryFn: () => apiFetch<T.PersonalAccessToken[]>('/v1/users/me/tokens'),
+    staleTime: 30_000,
+  })
+}
+export function useCreatePat() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (body: { name: string; scopes: string[]; expires_in_hours?: number }) =>
+      apiPost<T.CreatePatResponse>('/v1/users/me/tokens', body),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['users', 'me', 'tokens'] }),
+    meta: { action: 'Create PAT' },
+  })
+}
+export function useRevokePat() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) => apiDelete(`/v1/users/me/tokens/${id}`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['users', 'me', 'tokens'] }),
+    meta: { action: 'Revoke PAT' },
+  })
+}
+
+// TOTP (self) — setup returns the secret + recovery codes, confirm enables it.
+export function useTotpSetup() {
+  return useMutation({
+    mutationFn: () => apiPost<T.TotpSetupResponse>('/v1/users/me/totp/setup', {}),
+    meta: { action: 'Begin TOTP setup' },
+  })
+}
+export function useTotpConfirm() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (code: string) => apiPost('/v1/users/me/totp/confirm', { code }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['users', 'me'] }),
+    meta: { action: 'Confirm TOTP' },
+  })
+}
+export function useTotpDisable() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (code: string) => apiPost('/v1/users/me/totp/disable', { code }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['users', 'me'] }),
+    meta: { action: 'Disable TOTP' },
+  })
+}
+
 // Current user — only resolves for password/OIDC/PAT logins, not anonymous
 // API-key sessions. Returns 404 for callers without a user record; the hook
 // surfaces that as `data === null` so the UI can branch cleanly.
