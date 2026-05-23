@@ -28,30 +28,101 @@ const DOCS_URL = 'https://nuetzliches.github.io/croniq/'
 // Hero verb rotation — each verb stays ~3.5s before fading to the next.
 const VERBS = ['recover', 'replay', 'diagnose', 'audit', 'scale']
 
-// Tip-of-the-day ticker contents. Pairs of (CLI command, one-line note).
-// Picked to surface the most useful flags + the features that newcomers
-// usually don't find in the README.
-interface Tip {
+// Demo console — types a CLI command at the top, then streams the
+// output that running it would produce. Each entry is one full demo:
+// the command (`cmd` + optional `arg`) plus the lines that follow.
+interface DemoLine {
+  lvl: 'info' | 'warn' | 'error' | 'ok' | 'debug'
+  text: string
+}
+interface Demo {
   cmd: string
   arg?: string
-  note: string
+  output: DemoLine[]
 }
-const TIPS: Tip[] = [
-  { cmd: 'croniq job register', arg: '--file croniqfile.hcl', note: 'declarative job + schedule from a single file' },
-  { cmd: 'croniq trigger', arg: 'payroll', note: 'manual fire — schedule and next-fire untouched' },
-  { cmd: 'croniq dead-letter replay', arg: '--since 1h', note: 'requeue everything that failed in the last hour' },
-  { cmd: 'croniq job adopt', arg: 'payroll', note: 'edit a DSL-managed job through the API store' },
-  { cmd: 'croniq runner attach', arg: '--capability gpu --tag prod', note: 'label runners so routing can target them' },
-  { cmd: 'croniq calendar attach', arg: 'payroll eu-business', note: 'exclude holidays without touching the cron' },
-  { cmd: 'croniq stats', arg: '--job payroll --days 30', note: 'p50/p95/p99 + success rate over a window' },
-  { cmd: 'croniq totp setup', note: 'enable 2FA for your own account from the CLI' },
-  { cmd: 'croniq pat new', arg: '--name ci-deploy --scopes jobs:read', note: 'mint a least-privilege personal access token' },
-  { cmd: 'croniq audit', arg: '--target job:payroll', note: 'who touched a job, when, with which diff' },
+const DEMOS: Demo[] = [
+  {
+    cmd: 'croniq job register',
+    arg: '--file croniqfile.hcl',
+    output: [
+      { lvl: 'info', text: 'parsed croniqfile.hcl · 3 jobs · 1 calendar' },
+      { lvl: 'info', text: 'registered job payroll (sha 9f3a1e22)' },
+      { lvl: 'info', text: 'attached schedule "0 9 * * 1-5" (Europe/Berlin)' },
+      { lvl: 'ok', text: '3 jobs reconciled in 142ms' },
+    ],
+  },
+  {
+    cmd: 'croniq trigger',
+    arg: 'payroll',
+    output: [
+      { lvl: 'info', text: 'queued execution ex_5a8c2244 (attempt 1)' },
+      { lvl: 'info', text: 'claimed by runner shell-runner-7b31d0ee' },
+      { lvl: 'ok', text: 'completed in 1.4s · exit 0' },
+    ],
+  },
+  {
+    cmd: 'croniq dead-letter replay',
+    arg: '--since 1h',
+    output: [
+      { lvl: 'info', text: 'found 4 dead executions in window' },
+      { lvl: 'warn', text: 'demo:cve-scan-daily still failing (OOMKilled)' },
+      { lvl: 'ok', text: 'replayed 3 · skipped 1 · enqueued for retry' },
+    ],
+  },
+  {
+    cmd: 'croniq runner attach',
+    arg: '--capability gpu --tag prod',
+    output: [
+      { lvl: 'info', text: 'minted runner key croniq_ak_…2e27ca82' },
+      { lvl: 'info', text: 'pulled work-pool config · max_inflight=4' },
+      { lvl: 'ok', text: 'runner online · awaiting fire' },
+    ],
+  },
+  {
+    cmd: 'croniq calendar attach',
+    arg: 'payroll eu-business',
+    output: [
+      { lvl: 'info', text: 'loaded calendar eu-business (255 holidays)' },
+      { lvl: 'info', text: 'next 5 fires recomputed · skipping 2025-12-26' },
+      { lvl: 'ok', text: 'schedule constraints updated' },
+    ],
+  },
+  {
+    cmd: 'croniq stats',
+    arg: '--job payroll --days 30',
+    output: [
+      { lvl: 'info', text: '420 / 420 runs completed · 0 failed' },
+      { lvl: 'info', text: 'p50 412ms · p95 980ms · p99 1.4s' },
+      { lvl: 'ok', text: 'success rate 100.0% · no SLO breaches' },
+    ],
+  },
+  {
+    cmd: 'croniq pat new',
+    arg: '--name ci-deploy --scopes jobs:read',
+    output: [
+      { lvl: 'info', text: 'created token croniq_pat_…3ae7b2c9 (90d ttl)' },
+      { lvl: 'warn', text: 'reveal once — copy the secret now' },
+      { lvl: 'ok', text: 'scopes: jobs:read · audit logged' },
+    ],
+  },
+  {
+    cmd: 'croniq audit',
+    arg: '--target job:payroll',
+    output: [
+      { lvl: 'info', text: 'alex · job.update · timeout: 5m → 10m' },
+      { lvl: 'info', text: 'dsl  · job.sync   · 1 add · 3 mod · 0 del' },
+      { lvl: 'info', text: 'alex · job.trigger · manual fire from CLI' },
+      { lvl: 'ok', text: '3 events · scroll for older' },
+    ],
+  },
 ]
 
-const TIPS_VISIBLE = 5
-const TIP_INTERVAL_MS = 3800
 const VERB_INTERVAL_MS = 3400
+const TYPE_CHAR_MS = 38
+const PAUSE_AFTER_TYPING_MS = 380
+const OUTPUT_LINE_MS = 320
+const HOLD_AFTER_OUTPUT_MS = 2400
+const CLEAR_FADE_MS = 320
 
 export function LoginPage() {
   const [method, setMethod] = useState<Method>('password')
@@ -371,7 +442,7 @@ function LoginStage({ health }: { health: HealthResponse | null }) {
         />
       </div>
 
-      <LoginTipTicker />
+      <LoginDemoConsole />
 
       <div className="login-foot">
         <span>© Croniq</span>
@@ -414,20 +485,58 @@ function Stat({
   )
 }
 
-function LoginTipTicker() {
-  // The visible window slides through TIPS, one entry per tick. Each tip
-  // mounts under a fresh React key so its CSS fade-in animation runs on
-  // every rotation — cheaper than tracking timestamps.
-  const [offset, setOffset] = useState(0)
-  useEffect(() => {
-    const t = window.setInterval(() => setOffset((n) => n + 1), TIP_INTERVAL_MS)
-    return () => window.clearInterval(t)
-  }, [])
+type DemoPhase = 'typing' | 'output' | 'hold' | 'clearing'
 
-  const visible = useMemo(
-    () => Array.from({ length: TIPS_VISIBLE }, (_, i) => TIPS[(offset + i) % TIPS.length]),
-    [offset],
-  )
+function LoginDemoConsole() {
+  const [demoIdx, setDemoIdx] = useState(0)
+  const [typed, setTyped] = useState('')
+  const [shownLines, setShownLines] = useState(0)
+  const [phase, setPhase] = useState<DemoPhase>('typing')
+
+  const demo = DEMOS[demoIdx]
+  const fullCmd = demo.arg ? `${demo.cmd} ${demo.arg}` : demo.cmd
+
+  // Single ticking state-machine: each phase schedules its own timeout
+  // and transitions on tick. Captures the next phase in a sibling
+  // setState so renders stay deterministic.
+  useEffect(() => {
+    if (phase === 'typing') {
+      if (typed.length < fullCmd.length) {
+        const t = window.setTimeout(
+          () => setTyped(fullCmd.slice(0, typed.length + 1)),
+          TYPE_CHAR_MS,
+        )
+        return () => window.clearTimeout(t)
+      }
+      const t = window.setTimeout(() => setPhase('output'), PAUSE_AFTER_TYPING_MS)
+      return () => window.clearTimeout(t)
+    }
+    if (phase === 'output') {
+      if (shownLines < demo.output.length) {
+        const t = window.setTimeout(() => setShownLines((n) => n + 1), OUTPUT_LINE_MS)
+        return () => window.clearTimeout(t)
+      }
+      const t = window.setTimeout(() => setPhase('hold'), HOLD_AFTER_OUTPUT_MS)
+      return () => window.clearTimeout(t)
+    }
+    if (phase === 'hold') {
+      const t = window.setTimeout(() => setPhase('clearing'), CLEAR_FADE_MS)
+      return () => window.clearTimeout(t)
+    }
+    // clearing → wait one fade beat, then reset to the next demo. The
+    // timeout indirection keeps the state mutation out of the effect
+    // body so React's set-state-in-effect rule stays happy.
+    const t = window.setTimeout(() => {
+      setTyped('')
+      setShownLines(0)
+      setDemoIdx((i) => (i + 1) % DEMOS.length)
+      setPhase('typing')
+    }, CLEAR_FADE_MS)
+    return () => window.clearTimeout(t)
+  }, [phase, typed, shownLines, fullCmd, demo.output.length])
+
+  const stillTyping = phase === 'typing' && typed.length < fullCmd.length
+  const fading = phase === 'clearing'
 
   return (
     <div className="login-console">
@@ -438,35 +547,48 @@ function LoginTipTicker() {
           <span style={{ background: 'oklch(0.70 0.16 145)' }} />
         </div>
         <span className="mono dim" style={{ fontSize: 11 }}>
-          ~ croniq --help · daily tips
+          ~ croniq · live demo
         </span>
-        <span className="row gap-6" style={{ marginLeft: 'auto', fontSize: 10.5, color: 'var(--fg-3)' }}>
+        <span
+          className="row gap-6"
+          style={{ marginLeft: 'auto', fontSize: 10.5, color: 'var(--fg-3)' }}
+        >
           <span className="live-dot" />
-          rotating
+          {phase === 'typing' ? 'typing' : phase === 'output' ? 'running' : 'idle'}
         </span>
       </div>
-      <div className="login-console-body">
-        {visible.map((tip, i) => (
-          // Key by content so only the freshly-appearing tip re-mounts
-          // and runs its fade-in animation. The other tips just shift
-          // position in the DOM without flickering.
-          <div
-            key={tip.cmd}
-            className="login-console-tip"
-            style={{ opacity: 0.55 + i * 0.11 }}
-          >
-            <div className="cmd">
-              <span className="prompt">$</span>
-              <span>{tip.cmd}</span>
-              {tip.arg ? <span className="arg"> {tip.arg}</span> : null}
-            </div>
-            <div className="note"># {tip.note}</div>
-          </div>
-        ))}
-        <div className="login-console-line login-console-cursor" style={{ marginTop: 4 }}>
-          <span className="prompt" style={{ color: 'var(--accent-3)', marginRight: 8 }}>$</span>
-          <span className="login-blink">▌</span>
+      <div className={`login-console-body${fading ? ' login-console-fading' : ''}`}>
+        <div className="login-console-line" style={{ color: 'var(--fg)' }}>
+          <span style={{ color: 'var(--accent-3)', marginRight: 8 }}>$</span>
+          <span className="mono" style={{ whiteSpace: 'pre' }}>
+            {typed}
+          </span>
+          {stillTyping || phase === 'typing' ? (
+            <span className="login-blink" aria-hidden>
+              ▌
+            </span>
+          ) : null}
         </div>
+        {Array.from({ length: shownLines }).map((_, i) => {
+          const line = demo.output[i]
+          return (
+            <div
+              key={`${demoIdx}-${i}`}
+              className="login-console-line login-console-output"
+            >
+              <span className={`lvl-${line.lvl}`}>{line.lvl}</span>
+              <span style={{ color: 'var(--fg-1)' }}>{line.text}</span>
+            </div>
+          )
+        })}
+        {phase === 'output' || phase === 'hold' ? (
+          <div className="login-console-line login-console-cursor" style={{ marginTop: 4 }}>
+            <span style={{ color: 'var(--accent-3)', marginRight: 8 }}>$</span>
+            <span className="login-blink" aria-hidden>
+              ▌
+            </span>
+          </div>
+        ) : null}
       </div>
     </div>
   )

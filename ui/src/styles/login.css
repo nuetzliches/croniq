@@ -232,33 +232,26 @@
   to   { opacity: 1; transform: translateY(0); }
 }
 
-/* ── tip ticker (replaces fake log stream) ─────────────────── */
-.login-console-tip {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  padding: 4px 0;
-  animation: croniq-tip-in .45s var(--easing) both;
+/* ── demo console (replaces fake log stream) ───────────────── */
+.login-console-output {
+  animation: croniq-tip-in .35s var(--easing) both;
+}
+.login-console-output .lvl-ok {
+  width: 38px;
+  display: inline-block;
+  flex-shrink: 0;
+  color: var(--success);
+}
+.login-console-body.login-console-fading > .login-console-line {
+  animation: croniq-tip-out .3s var(--easing) both;
 }
 @keyframes croniq-tip-in {
-  from { opacity: 0; transform: translateY(10px); }
+  from { opacity: 0; transform: translateY(8px); }
   to   { opacity: 1; transform: translateY(0); }
 }
-.login-console-tip .cmd {
-  color: var(--fg-1);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.login-console-tip .cmd .prompt { color: var(--accent-3); margin-right: 8px; }
-.login-console-tip .cmd .arg    { color: var(--fg-3); }
-.login-console-tip .note {
-  color: var(--fg-mute);
-  font-size: 11px;
-  padding-left: 16px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+@keyframes croniq-tip-out {
+  from { opacity: 1; }
+  to   { opacity: 0; }
 }
 
 .login-foot {
