@@ -10,10 +10,126 @@
   background: var(--bg);
   color: var(--fg);
   overflow: hidden;
+  position: relative;
 }
+
+/* The compact strip + stage-bg only matter at the narrow breakpoint;
+ * they're hidden by default. */
+.login-stage-bg,
+.login-compact-strip { display: none; }
+
 @media (max-width: 900px) {
-  .login { grid-template-columns: 1fr; }
+  /* Stack to a single column. Drop the full stage but keep the
+   * marketing background so the form lands on the same palette. */
+  .login {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto;
+    height: auto;
+    min-height: 100vh;
+    overflow-y: auto;
+  }
   .login-stage { display: none; }
+
+  /* Recreates the stage's gradient + grid + glow as a fixed
+   * background layer behind .login-formwrap. Pulse animation
+   * survives the rewrite. */
+  .login-stage-bg {
+    display: block;
+    position: absolute;
+    inset: 0;
+    z-index: 0;
+    overflow: hidden;
+    background:
+      radial-gradient(ellipse 80% 60% at 18% 0%, oklch(0.32 0.13 285 / 0.40) 0%, transparent 60%),
+      radial-gradient(ellipse 60% 50% at 110% 90%, oklch(0.36 0.18 250 / 0.32) 0%, transparent 55%),
+      linear-gradient(180deg, oklch(0.13 0.020 265) 0%, oklch(0.10 0.015 265) 100%);
+    pointer-events: none;
+  }
+  .login-stage-bg::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background-image:
+      linear-gradient(oklch(1 0 0 / 0.04) 1px, transparent 1px),
+      linear-gradient(90deg, oklch(1 0 0 / 0.04) 1px, transparent 1px);
+    background-size: 36px 36px;
+    mask-image: radial-gradient(ellipse 100% 80% at 50% 40%, black 30%, transparent 90%);
+  }
+  .login-stage-bg::after {
+    content: "";
+    position: absolute;
+    width: 600px;
+    height: 600px;
+    left: -100px;
+    top: 30%;
+    background: radial-gradient(circle, oklch(0.66 0.19 285 / 0.18) 0%, transparent 60%);
+    animation: croniq-login-pulse 6s ease-in-out infinite;
+    pointer-events: none;
+  }
+
+  .login-formwrap {
+    position: relative;
+    z-index: 1;
+    background: transparent;
+    padding: 22px 20px 32px;
+    /* Top-aligned so brand → stats → form stack with USERNAME above
+     * the fold. The centered layout from desktop pushes the form
+     * below the initial viewport on phones. */
+    justify-content: flex-start;
+    gap: 14px;
+  }
+
+  .login-compact-strip {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    width: 100%;
+    max-width: 400px;
+  }
+  .login-compact-brand {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .login-compact-brand .login-mark {
+    width: 30px;
+    height: 30px;
+    border-radius: 8px;
+  }
+  .login-compact-brand .login-name {
+    font-size: 16px;
+  }
+  /* Slimmer stat tiles in the compact strip. */
+  .login-compact-strip .login-stats {
+    grid-template-columns: repeat(3, 1fr);
+    gap: 8px;
+  }
+  .login-compact-strip .login-stat {
+    padding: 9px 10px;
+  }
+  .login-compact-strip .login-stat-value {
+    font-size: 18px;
+  }
+  .login-compact-strip .login-stat-sub {
+    font-size: 10.5px;
+  }
+
+  /* The form mark + welcome head are still helpful, but tighten the
+   * vertical rhythm so the input is reachable without scrolling. */
+  .login-form { gap: 14px; }
+  .login-form-title { font-size: 20px; }
+  .login-mark { margin-bottom: 4px; }
+}
+
+@media (max-width: 380px) {
+  /* Sub-380 px (narrow phones in portrait): drop status tile to keep
+   * the two most useful stats prominent. */
+  .login-compact-strip .login-stats {
+    grid-template-columns: 1fr 1fr;
+  }
+  .login-compact-strip .login-stat:nth-child(3) {
+    display: none;
+  }
 }
 
 .login-stage {

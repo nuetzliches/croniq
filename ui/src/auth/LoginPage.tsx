@@ -229,7 +229,9 @@ export function LoginPage() {
   return (
     <div className="login">
       <LoginStage health={health} />
+      <div className="login-stage-bg" aria-hidden />
       <div className="login-formwrap">
+        <LoginCompactStrip health={health} />
         <div className={clsx('login-form', shake && 'shake')}>
           <div className="login-mark" aria-hidden>
             <BrandMark size={22} />
@@ -648,6 +650,65 @@ function VersionChip({ version }: { version: VersionResponse }) {
     >
       v{version.version}
     </span>
+  )
+}
+
+/** Narrow-viewport companion to <LoginStage />. Renders brand + version/
+ *  env chips and a slim three-up stats row above the form so the
+ *  marketing context (who you are, where you are, what's running) stays
+ *  on screen even when the full stage panel is hidden. */
+function LoginCompactStrip({ health }: { health: HealthResponse | null }) {
+  const { data: version } = useVersion()
+  const runnersOnline = health?.runners_online ?? 0
+  const runnersStale = health?.runners_stale ?? 0
+  const runnersDead = health?.runners_dead ?? 0
+  const runnersTotal = runnersOnline + runnersStale + runnersDead
+  const queued = health?.queued ?? 0
+  const status = health?.status ?? '—'
+  const runnersTone: 'up' | 'warn' = runnersStale > 0 || runnersDead > 0 ? 'warn' : 'up'
+  const statusTone: 'up' | 'warn' = status === 'ok' ? 'up' : 'warn'
+
+  return (
+    <div className="login-compact-strip">
+      <div className="login-compact-brand">
+        <span className="login-mark" aria-hidden>
+          <BrandMark size={20} />
+        </span>
+        <span className="login-name">Croniq</span>
+        {version ? <VersionChip version={version} /> : null}
+        {version ? <EnvBadge env={version.env} /> : null}
+        <span
+          className="row gap-6"
+          style={{ marginLeft: 'auto', color: 'var(--fg-3)', fontSize: 11 }}
+        >
+          <span className="live-dot" />
+          <span className="mono">{window.location.host}</span>
+        </span>
+      </div>
+      <div className="login-stats">
+        <div className="login-stat">
+          <div className="login-stat-label">queue</div>
+          <div className="login-stat-value">{queued}</div>
+          <div className="login-stat-sub login-stat-up">awaiting fire</div>
+        </div>
+        <div className="login-stat">
+          <div className="login-stat-label">runners</div>
+          <div className="login-stat-value">
+            {runnersOnline} / {runnersTotal || '—'}
+          </div>
+          <div className={`login-stat-sub login-stat-${runnersTone}`}>
+            {runnersStale > 0 ? `${runnersStale} stale` : 'all healthy'}
+          </div>
+        </div>
+        <div className="login-stat">
+          <div className="login-stat-label">status</div>
+          <div className="login-stat-value">{status}</div>
+          <div className={`login-stat-sub login-stat-${statusTone}`}>
+            {status === 'ok' ? 'operational' : 'check /health'}
+          </div>
+        </div>
+      </div>
+    </div>
   )
 }
 
