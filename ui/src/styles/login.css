@@ -38,20 +38,62 @@
   background-size: 36px 36px;
   mask-image: radial-gradient(ellipse 100% 80% at 50% 40%, black 30%, transparent 90%);
 }
-.login-stage-bg::after {
-  content: "";
+/* Stage spotlights — large coloured radial blobs that drift across
+ * the marketing background to give the page a slow, alive feel.
+ * The two spots use different sizes, colours and easings so they
+ * never sync. Spot A is the warm purple key light, spot B the
+ * cooler cyan fill. translate(Xvw, Yvh) keeps the motion in
+ * viewport units so the path covers both desktop and mobile
+ * stages without re-tuning. */
+.login-spot {
   position: absolute;
-  width: 600px;
-  height: 600px;
-  left: -100px;
-  top: 30%;
-  background: radial-gradient(circle, oklch(0.66 0.19 285 / 0.18) 0%, transparent 60%);
-  animation: croniq-login-pulse 6s ease-in-out infinite;
+  top: 0;
+  left: 0;
+  border-radius: 50%;
   pointer-events: none;
+  will-change: transform, opacity;
+  mix-blend-mode: screen;
 }
-@keyframes croniq-login-pulse {
-  0%, 100% { opacity: 0.6; transform: scale(1); }
-  50%      { opacity: 1;   transform: scale(1.1); }
+.login-spot-a {
+  width: 720px;
+  height: 720px;
+  margin: -360px 0 0 -360px;
+  background: radial-gradient(circle, oklch(0.66 0.19 285 / 0.45) 0%, oklch(0.66 0.19 285 / 0.18) 35%, transparent 70%);
+  animation: croniq-spot-a 24s cubic-bezier(0.45, 0, 0.55, 1) infinite;
+}
+.login-spot-b {
+  width: 580px;
+  height: 580px;
+  margin: -290px 0 0 -290px;
+  background: radial-gradient(circle, oklch(0.65 0.17 230 / 0.40) 0%, oklch(0.65 0.17 230 / 0.16) 40%, transparent 70%);
+  animation: croniq-spot-b 32s cubic-bezier(0.55, 0, 0.45, 1) infinite;
+}
+
+@keyframes croniq-spot-a {
+  0%   { transform: translate(18vw, 22vh); opacity: 0.85; }
+  20%  { transform: translate(48vw, 12vh); opacity: 1;    }
+  40%  { transform: translate(78vw, 38vh); opacity: 0.95; }
+  60%  { transform: translate(58vw, 72vh); opacity: 0.8;  }
+  80%  { transform: translate(28vw, 58vh); opacity: 0.9;  }
+  100% { transform: translate(18vw, 22vh); opacity: 0.85; }
+}
+@keyframes croniq-spot-b {
+  0%   { transform: translate(75vw, 70vh); opacity: 0.7;  }
+  20%  { transform: translate(35vw, 80vh); opacity: 0.85; }
+  40%  { transform: translate(10vw, 50vh); opacity: 0.95; }
+  60%  { transform: translate(40vw, 20vh); opacity: 0.8;  }
+  80%  { transform: translate(85vw, 30vh); opacity: 0.75; }
+  100% { transform: translate(75vw, 70vh); opacity: 0.7;  }
+}
+/* Respect user motion preferences — keep the spots in their
+ * resting positions instead of looping. */
+@media (prefers-reduced-motion: reduce) {
+  .login-spot-a,
+  .login-spot-b {
+    animation: none;
+  }
+  .login-spot-a { transform: translate(20vw, 25vh); }
+  .login-spot-b { transform: translate(75vw, 70vh); }
 }
 
 /* Compact strip only matters at the narrow breakpoint; hidden by

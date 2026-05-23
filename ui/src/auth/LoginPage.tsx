@@ -229,7 +229,10 @@ export function LoginPage() {
   return (
     <div className="login">
       <LoginStage health={health} />
-      <div className="login-stage-bg" aria-hidden />
+      <div className="login-stage-bg" aria-hidden>
+        <div className="login-spot login-spot-a" />
+        <div className="login-spot login-spot-b" />
+      </div>
       <div className="login-formwrap">
         <LoginCompactStrip health={health} />
         <div className={clsx('login-form', shake && 'shake')}>
