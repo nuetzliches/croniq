@@ -16,6 +16,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use super::ServerState;
+use crate::api::audit;
 use crate::api::auth_middleware::require_scope;
 
 // ─── Request/Response types ──────────────────────────────────────────────────
@@ -138,6 +139,14 @@ pub async fn handle_login(
             updated.locked_until = Some(Utc::now() + chrono::Duration::minutes(15));
         }
         let _ = store.upsert_credentials(&updated);
+        audit::record_event(
+            store,
+            "user",
+            Some(&cred.user_id),
+            "auth.login_failed",
+            "user",
+            Some(&cred.user_id),
+        );
         return Err(StatusCode::UNAUTHORIZED);
     }
 
@@ -175,6 +184,14 @@ pub async fn handle_login(
     if totp_enabled {
         let (mfa_token, expires_in) = issue_mfa_token(jwt_config, &user.user_id)
             .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        audit::record_event(
+            store,
+            "user",
+            Some(&user.user_id),
+            "auth.login_password_ok_totp_required",
+            "user",
+            Some(&user.user_id),
+        );
         return Ok(Json(LoginResponse::MfaRequired(MfaRequiredResponse {
             requires_totp: true,
             mfa_token,
@@ -183,6 +200,14 @@ pub async fn handle_login(
     }
 
     let tokens = mint_user_tokens(jwt_config, &user, store)?;
+    audit::record_event(
+        store,
+        "user",
+        Some(&user.user_id),
+        "auth.login_success",
+        "user",
+        Some(&user.user_id),
+    );
     Ok(Json(LoginResponse::Tokens(tokens)))
 }
 
@@ -247,7 +272,21 @@ pub async fn handle_totp_login(
         _ => return Err(StatusCode::BAD_REQUEST),
     }
 
-    Ok(Json(mint_user_tokens(jwt_config, &user, store)?))
+    let tokens = mint_user_tokens(jwt_config, &user, store)?;
+    let action = if req.recovery_code.is_some() {
+        "auth.login_totp_recovery_success"
+    } else {
+        "auth.login_totp_success"
+    };
+    audit::record_event(
+        store,
+        "user",
+        Some(&user.user_id),
+        action,
+        "user",
+        Some(&user.user_id),
+    );
+    Ok(Json(tokens))
 }
 
 /// Mint + persist an access/refresh pair for a fully-authenticated

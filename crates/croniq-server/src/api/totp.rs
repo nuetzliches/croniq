@@ -25,6 +25,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use super::ServerState;
+use crate::api::audit;
 
 // ─── DTOs ────────────────────────────────────────────────────────────────────
 
@@ -147,6 +148,7 @@ pub async fn handle_confirm(
     {
         return StatusCode::INTERNAL_SERVER_ERROR;
     }
+    audit::record(store, &ctx, "totp.enabled", "user", Some(user_id), None);
     StatusCode::NO_CONTENT
 }
 
@@ -169,6 +171,7 @@ pub async fn handle_disable(
         return StatusCode::UNAUTHORIZED;
     }
     let _ = store.totp_delete(user_id);
+    audit::record(store, &ctx, "totp.disabled", "user", Some(user_id), None);
     StatusCode::NO_CONTENT
 }
 

@@ -27,6 +27,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use super::ServerState;
+use crate::api::audit;
 use crate::api::auth_middleware::require_scope;
 
 // ─── DTOs ────────────────────────────────────────────────────────────────────
@@ -167,6 +168,14 @@ pub async fn handle_create(
         })
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
+    audit::record(
+        store,
+        &ctx,
+        "user.created",
+        "user",
+        Some(&user.user_id),
+        None,
+    );
     Ok((StatusCode::CREATED, Json(UserView::from(user))))
 }
 
@@ -233,6 +242,14 @@ pub async fn handle_update(
     store
         .users_update(&user)
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    audit::record(
+        store,
+        &ctx,
+        "user.updated",
+        "user",
+        Some(&user.user_id),
+        None,
+    );
     Ok(Json(UserView::from(user)))
 }
 
@@ -259,6 +276,7 @@ pub async fn handle_delete(
         }
     }
     let _ = store.users_delete(&user_id);
+    audit::record(store, &ctx, "user.deleted", "user", Some(&user_id), None);
     StatusCode::NO_CONTENT
 }
 
@@ -352,6 +370,14 @@ pub async fn handle_change_password(
     if store.upsert_credentials(&updated).is_err() {
         return StatusCode::INTERNAL_SERVER_ERROR;
     }
+    audit::record(
+        store,
+        &ctx,
+        "user.password_changed",
+        "user",
+        Some(user_id),
+        None,
+    );
     StatusCode::NO_CONTENT
 }
 

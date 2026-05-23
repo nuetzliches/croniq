@@ -102,6 +102,35 @@ pub async fn handle_list(
 
 // ─── Convenience helpers used by other API modules to record events ──────────
 
+/// Variant for paths that don't have a CallerContext yet — the login
+/// flow before the JWT is issued, the public invitation-accept and
+/// password-reset endpoints, OIDC callback before user resolution, …
+/// Caller spells out actor_type / actor_id directly.
+pub fn record_event(
+    store: &crate::store::DynStore,
+    actor_type: &str,
+    actor_id: Option<&str>,
+    action: &str,
+    target_type: &str,
+    target_id: Option<&str>,
+) {
+    let event = AuditEvent {
+        event_id: uuid::Uuid::new_v4().to_string(),
+        actor_type: actor_type.into(),
+        actor_id: actor_id.map(|s| s.into()),
+        action: action.into(),
+        target_type: target_type.into(),
+        target_id: target_id.map(|s| s.into()),
+        diff_json: None,
+        ip_address: None,
+        user_agent: None,
+        created_at: Utc::now(),
+    };
+    if let Err(e) = store.audit_log(&event) {
+        tracing::warn!(target: "croniq::audit", error = ?e, action = %action, "audit_log write failed");
+    }
+}
+
 /// Best-effort audit-log write. Fire-and-forget — every caller already
 /// returns a response, and the audit log being unavailable should never
 /// fail the original mutation.

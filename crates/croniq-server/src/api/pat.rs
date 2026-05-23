@@ -18,6 +18,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use super::ServerState;
+use crate::api::audit;
 
 const PAT_PREFIX: &str = "croniq_pat";
 
@@ -129,6 +130,7 @@ pub async fn handle_create(
         .pat_create(&pat)
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
+    audit::record(store, &ctx, "pat.issued", "pat", Some(&pat.token_id), None);
     Ok((
         StatusCode::CREATED,
         Json(CreatePatResponse {
@@ -182,6 +184,7 @@ pub async fn handle_revoke(
         return StatusCode::NOT_FOUND;
     }
     let _ = store.pat_revoke(&token_id, Utc::now());
+    audit::record(store, &ctx, "pat.revoked", "pat", Some(&token_id), None);
     StatusCode::NO_CONTENT
 }
 

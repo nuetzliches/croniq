@@ -27,6 +27,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use super::ServerState;
+use crate::api::audit;
 use crate::api::auth_endpoints::TokenResponse;
 
 const PENDING_TTL: Duration = Duration::from_secs(600); // 10 min
@@ -148,17 +149,26 @@ pub async fn handle_callback(
     )
     .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-    let _ = store.users_set_last_login(&user.user_id, now);
+    let user_id = user.user_id.clone();
+    let _ = store.users_set_last_login(&user_id, now);
     let refresh_hash = hash_api_key(&pair.refresh_token);
     let _ = store.create_refresh_token(&RefreshToken {
         token_hash: refresh_hash,
-        client_id: user.user_id.clone(),
-        user_id: Some(user.user_id),
+        client_id: user_id.clone(),
+        user_id: Some(user_id.clone()),
         expires_at: pair.refresh_expires_at,
         revoked_at: None,
         created_at: now,
     });
 
+    audit::record_event(
+        store,
+        "oidc",
+        Some(&user_id),
+        "auth.oidc_login_success",
+        "user",
+        Some(&user_id),
+    );
     Ok(Json(TokenResponse {
         access_token: pair.access_token,
         refresh_token: pair.refresh_token,

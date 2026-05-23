@@ -26,6 +26,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use super::ServerState;
+use crate::api::audit;
 use crate::api::auth_middleware::require_scope;
 
 const INVITE_TOKEN_TTL: Duration = Duration::from_secs(7 * 24 * 3600); // 7 days
@@ -141,6 +142,14 @@ pub async fn handle_create(
         ),
     );
 
+    audit::record(
+        store,
+        &ctx,
+        "invitation.issued",
+        "invitation",
+        Some(&invitation_id),
+        None,
+    );
     Ok((
         StatusCode::CREATED,
         Json(CreateInvitationResponse {
@@ -189,6 +198,14 @@ pub async fn handle_revoke(
         return StatusCode::CONFLICT; // already accepted, nothing to revoke
     }
     let _ = store.invitations_revoke(&invitation_id, Utc::now());
+    audit::record(
+        store,
+        &ctx,
+        "invitation.revoked",
+        "invitation",
+        Some(&invitation_id),
+        None,
+    );
     StatusCode::NO_CONTENT
 }
 
@@ -268,6 +285,16 @@ pub async fn handle_accept(
 
     let _ = store.invitations_mark_accepted(&invite.invitation_id, now);
 
+    // Public endpoint — no CallerContext. Actor is the freshly-created
+    // user; target is the invitation that just got consumed.
+    audit::record_event(
+        store,
+        "user",
+        Some(&user.user_id),
+        "invitation.accepted",
+        "invitation",
+        Some(&invite.invitation_id),
+    );
     StatusCode::CREATED
 }
 
