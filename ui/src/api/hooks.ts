@@ -442,3 +442,20 @@ export function useRevokeApiKey() {
     meta: { action: 'Revoke API key' },
   })
 }
+
+// Current user — only resolves for password/OIDC/PAT logins, not anonymous
+// API-key sessions. Returns 404 for callers without a user record; the hook
+// surfaces that as `data === null` so the UI can branch cleanly.
+export function useCurrentUser() {
+  const token = useAuthStore((s) => s.token)
+  return useQuery({
+    queryKey: ['users', 'me'],
+    enabled: !!token,
+    queryFn: () =>
+      apiFetch<T.User>('/v1/users/me').catch((err) => {
+        if (err instanceof Error && err.message.toLowerCase().includes('not found')) return null
+        throw err
+      }),
+    staleTime: 60_000,
+  })
+}
