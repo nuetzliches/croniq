@@ -8,6 +8,18 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **UI login flow understands the MFA step-up + OIDC button (PR-B2).**
+  `LoginPage` now drives the two-step exchange added in PR-A3: when
+  `/v1/auth/login` returns `{requires_totp, mfa_token}` it switches
+  to a 6-digit code prompt with an inline "Use recovery code"
+  toggle. An "OIDC sign-in" button appears when
+  `/v1/auth/oidc/config` reports the provider is configured;
+  otherwise the SSO panel stays hidden so the page is unchanged for
+  password-only deploys. New TypeScript types in
+  `ui/src/api/types.ts` cover the full PR-A1…B1 surface (User,
+  Invitation, PAT, TotpSetupResponse, AuditEvent, JobStatsResponse,
+  ThroughputResponse, FailureHeatmap).
+
 - **Audit log + per-job stats + throughput + failure heatmap (PR-B1).**
   Backend foundation for the redesigned Dashboard / Insights pages.
   Read-only aggregations, all computed on-the-fly from the existing
