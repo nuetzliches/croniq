@@ -1,5 +1,12 @@
 name: .NET SDK CI
 
+# Branch-protection contract:
+# This workflow is intended to gate merges into main once feat/dotnet-sdk-init
+# lands. Add the `.NET SDK CI required` job (defined at the bottom of this
+# file) as the single required status check — it aggregates the result of
+# schema, build, conformance, and pack-smoke into one signal so branch
+# protection only has to know about a single job name.
+
 on:
   push:
     branches: [main]
@@ -185,3 +192,29 @@ jobs:
           path: sdks/dotnet/artifacts/
           if-no-files-found: error
           retention-days: 7
+
+  required:
+    # Aggregator job for branch-protection. Add ONE check to the protected
+    # branch's required status list — `.NET SDK CI required` — and the
+    # rule transitively gates schema, build, conformance, and pack-smoke.
+    #
+    # Without this aggregator, branch protection has to list every job by
+    # name; adding or renaming a job means updating the rule in GitHub UI.
+    # The aggregator pattern means workflow authors own the contract.
+    name: .NET SDK CI required
+    if: always()
+    runs-on: ubuntu-latest
+    needs: [schema, build, conformance, pack-smoke]
+    steps:
+      - name: Fail if any required job failed or was cancelled
+        if: ${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') }}
+        run: |
+          echo "::error::A required job did not succeed:"
+          echo "  schema:      ${{ needs.schema.result }}"
+          echo "  build:       ${{ needs.build.result }}"
+          echo "  conformance: ${{ needs.conformance.result }}"
+          echo "  pack-smoke:  ${{ needs.pack-smoke.result }}"
+          exit 1
+      - name: All required jobs passed
+        if: ${{ !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled') }}
+        run: echo "✓ schema, build, conformance, pack-smoke all succeeded"
