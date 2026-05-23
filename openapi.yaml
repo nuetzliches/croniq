@@ -150,6 +150,173 @@ components:
         is_active: { type: boolean }
         created_at: { type: string, format: date-time }
 
+    # ─── PR-A1+ Auth + Multi-User ─────────────────────────────────────────
+
+    Role:
+      type: string
+      enum: [admin, operator, viewer]
+      description: >
+        Maps to a default scope set via croniq_auth::default_scopes_for_role.
+
+    User:
+      type: object
+      properties:
+        user_id: { type: string }
+        username: { type: string }
+        email: { type: string, nullable: true }
+        display_name: { type: string, nullable: true }
+        role: { $ref: "#/components/schemas/Role" }
+        is_active: { type: boolean }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        last_login_at: { type: string, format: date-time, nullable: true }
+
+    MfaRequiredResponse:
+      type: object
+      description: >
+        Returned by `POST /v1/auth/login` instead of TokenResponse when
+        the user has TOTP enabled. Distinct shape via `requires_totp:
+        true`. The `mfa_token` is a 5-minute JWT (purpose="mfa") only
+        valid against `/v1/auth/login/totp`.
+      properties:
+        requires_totp: { type: boolean, enum: [true] }
+        mfa_token: { type: string }
+        mfa_token_expires_in: { type: integer }
+
+    Invitation:
+      type: object
+      properties:
+        invitation_id: { type: string }
+        email: { type: string }
+        role: { $ref: "#/components/schemas/Role" }
+        invited_by: { type: string }
+        expires_at: { type: string, format: date-time }
+        accepted_at: { type: string, format: date-time, nullable: true }
+        revoked_at: { type: string, format: date-time, nullable: true }
+        created_at: { type: string, format: date-time }
+
+    CreateInvitationResponse:
+      type: object
+      properties:
+        invitation_id: { type: string }
+        email: { type: string }
+        role: { $ref: "#/components/schemas/Role" }
+        expires_at: { type: string, format: date-time }
+        token:
+          type: string
+          description: Raw `croniq_inv_…` token — shown ONCE.
+        accept_url: { type: string }
+
+    PersonalAccessToken:
+      type: object
+      description: PAT metadata (without the raw token).
+      properties:
+        token_id: { type: string }
+        name: { type: string }
+        token_prefix: { type: string }
+        scopes: { type: array, items: { type: string } }
+        expires_at: { type: string, format: date-time, nullable: true }
+        revoked_at: { type: string, format: date-time, nullable: true }
+        last_used_at: { type: string, format: date-time, nullable: true }
+        created_at: { type: string, format: date-time }
+
+    CreatePatResponse:
+      type: object
+      properties:
+        token_id: { type: string }
+        name: { type: string }
+        token:
+          type: string
+          description: Raw `croniq_pat_…` token — shown ONCE.
+        token_prefix: { type: string }
+        scopes: { type: array, items: { type: string } }
+        expires_at: { type: string, format: date-time, nullable: true }
+
+    TotpSetupResponse:
+      type: object
+      properties:
+        secret:
+          type: string
+          description: Base32-encoded TOTP seed.
+        otpauth_url: { type: string }
+        recovery_codes:
+          type: array
+          items: { type: string }
+
+    OidcConfigResponse:
+      type: object
+      properties:
+        enabled: { type: boolean }
+        provider_name: { type: string, nullable: true }
+        login_url: { type: string, nullable: true }
+
+    # ─── PR-B1 Audit + Stats ──────────────────────────────────────────────
+
+    AuditEvent:
+      type: object
+      properties:
+        event_id: { type: string }
+        actor_type:
+          type: string
+          enum: [user, api_key, pat, oidc, system]
+        actor_id: { type: string, nullable: true }
+        action: { type: string }
+        target_type: { type: string }
+        target_id: { type: string, nullable: true }
+        diff_json: { type: string, nullable: true }
+        created_at: { type: string, format: date-time }
+
+    JobStatsResponse:
+      type: object
+      properties:
+        job_key: { type: string }
+        window_days: { type: integer }
+        total: { type: integer }
+        completed: { type: integer }
+        failed: { type: integer }
+        dead: { type: integer }
+        success_rate: { type: number, format: double }
+        p50_ms: { type: integer, nullable: true }
+        p95_ms: { type: integer, nullable: true }
+        p99_ms: { type: integer, nullable: true }
+        last_failure_at: { type: string, format: date-time, nullable: true }
+
+    ThroughputBucket:
+      type: object
+      properties:
+        start: { type: string, format: date-time }
+        ok: { type: integer }
+        err: { type: integer }
+
+    ThroughputResponse:
+      type: object
+      properties:
+        window: { type: string }
+        bucket:
+          type: string
+          enum: [hour, day]
+        buckets:
+          type: array
+          items: { $ref: "#/components/schemas/ThroughputBucket" }
+
+    FailureHeatmap:
+      type: object
+      properties:
+        days: { type: integer }
+        rows:
+          type: array
+          description: rows[day][hour] = failure count
+          items:
+            type: array
+            items: { type: integer }
+        hotspots:
+          type: array
+          items:
+            type: object
+            properties:
+              hour: { type: integer }
+              failures: { type: integer }
+
 paths:
   /health:
     get:
@@ -944,3 +1111,520 @@ paths:
                   column: { type: integer, nullable: true }
         "500": { description: Apply failed after successful validation }
         "503": { description: Server not configured for reload (missing store or config path) }
+
+  # ─── PR-A1+ Auth (TOTP step-up, OIDC, password-reset) ───────────────────
+
+  /v1/auth/login/totp:
+    post:
+      summary: Complete a step-up login by submitting the TOTP code
+      description: >
+        Exchange the short-lived `mfa_token` returned by `/v1/auth/login`
+        (when the user has TOTP enabled) for a normal `TokenResponse`.
+        Supply EITHER `code` (6-digit authenticator code) OR
+        `recovery_code` (single-use 8-char recovery code) — never both.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [mfa_token]
+              properties:
+                mfa_token: { type: string }
+                code:
+                  type: string
+                  description: 6-digit TOTP from the authenticator app.
+                recovery_code:
+                  type: string
+                  description: 8-char single-use recovery code.
+      responses:
+        "200":
+          description: Tokens
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TokenResponse" }
+        "400": { description: Neither code nor recovery_code provided }
+        "401": { description: Invalid mfa_token, expired, or wrong code }
+        "403": { description: User deactivated }
+
+  /v1/auth/password-reset/request:
+    post:
+      summary: Initiate a password reset for a username
+      description: >
+        Always returns 202, regardless of whether the username exists,
+        to avoid user enumeration. When the username does exist and the
+        user is active, a single-use 1-hour token is created and emitted
+        via the configured `EmailSender` (NoopSender logs an audit
+        entry; an admin can recover the URL from server logs).
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [username]
+              properties:
+                username: { type: string }
+      responses:
+        "202": { description: Reset processed (whether or not the user exists) }
+
+  /v1/auth/password-reset/confirm:
+    post:
+      summary: Complete a password reset using the emailed token
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [token, new_password]
+              properties:
+                token: { type: string }
+                new_password:
+                  type: string
+                  minLength: 8
+      responses:
+        "204": { description: Password updated }
+        "400": { description: new_password too short }
+        "401": { description: Token unknown }
+        "410": { description: Token expired or already used }
+        "404": { description: User vanished between issue and use }
+
+  /v1/auth/oidc/config:
+    get:
+      summary: Inspect whether OIDC sign-in is available
+      description: >
+        Read-only metadata for the login UI. Returns `enabled: false` when
+        no OIDC provider is configured (env vars unset and no `oidc {}`
+        block in the Croniqfile).
+      security: []
+      responses:
+        "200":
+          description: Provider metadata
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OidcConfigResponse" }
+
+  /v1/auth/oidc/login:
+    get:
+      summary: Start an OIDC sign-in (302 redirect to the IdP)
+      security: []
+      responses:
+        "302": { description: Redirect to the IdP authorize URL }
+        "404": { description: OIDC not configured }
+
+  /v1/auth/oidc/callback:
+    get:
+      summary: IdP redirect target — completes the authorization-code flow
+      security: []
+      parameters:
+        - name: code
+          in: query
+          required: true
+          schema: { type: string }
+        - name: state
+          in: query
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Tokens minted (JIT-creates the user on first sign-in)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TokenResponse" }
+        "401": { description: Unknown state, bad code, or invalid ID token }
+        "403": { description: Linked user is deactivated }
+        "404": { description: OIDC not configured }
+        "410": { description: State expired }
+
+  # ─── PR-A2 Users + Invitations ──────────────────────────────────────────
+
+  /v1/users:
+    get:
+      summary: List all users (admin)
+      responses:
+        "200":
+          description: Users
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/User" }
+        "403": { description: Missing users:admin or admin scope }
+    post:
+      summary: Create a user with password (admin)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [username, password, role]
+              properties:
+                username: { type: string }
+                password: { type: string, minLength: 8 }
+                role:
+                  type: string
+                  enum: [admin, operator, viewer]
+                email: { type: string, nullable: true }
+                display_name: { type: string, nullable: true }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/User" }
+        "400": { description: Validation error (empty username or short password) }
+        "403": { description: Missing scope }
+        "409": { description: Username already exists }
+
+  /v1/users/{id}:
+    get:
+      summary: Load one user (admin)
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      responses:
+        "200":
+          description: User
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/User" }
+        "404": { description: Not found }
+    patch:
+      summary: Partial user update (admin)
+      description: >
+        PATCH the role to a non-admin value, or set is_active=false, on
+        the last active admin returns 409 Conflict — the lock-out guard.
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                email: { type: string, nullable: true }
+                display_name: { type: string, nullable: true }
+                role:
+                  type: string
+                  enum: [admin, operator, viewer]
+                is_active: { type: boolean }
+      responses:
+        "200":
+          description: Updated user
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/User" }
+        "409": { description: Operation would leave zero active admins }
+        "404": { description: Not found }
+    delete:
+      summary: Delete a user (admin)
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      responses:
+        "204": { description: Deleted }
+        "404": { description: Not found }
+        "409": { description: Last active admin — refuse }
+
+  /v1/users/me:
+    get:
+      summary: Load the authenticated user's profile
+      responses:
+        "200":
+          description: User
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/User" }
+        "401": { description: Not a user caller }
+    patch:
+      summary: Update own display_name / email
+      description: Role + is_active require `users:admin`; this endpoint refuses to change them.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                email: { type: string, nullable: true }
+                display_name: { type: string, nullable: true }
+      responses:
+        "200":
+          description: Updated user
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/User" }
+
+  /v1/users/me/change-password:
+    post:
+      summary: Change own password
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [old_password, new_password]
+              properties:
+                old_password: { type: string }
+                new_password: { type: string, minLength: 8 }
+      responses:
+        "204": { description: Password updated }
+        "400": { description: new_password too short }
+        "401": { description: old_password wrong }
+
+  /v1/invitations:
+    get:
+      summary: List outstanding invitations (admin)
+      responses:
+        "200":
+          description: Invitations
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Invitation" }
+    post:
+      summary: Issue a new invitation (admin)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, role]
+              properties:
+                email: { type: string }
+                role:
+                  type: string
+                  enum: [admin, operator, viewer]
+      responses:
+        "201":
+          description: Invitation created — raw token is shown ONCE
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CreateInvitationResponse" }
+
+  /v1/invitations/{id}:
+    delete:
+      summary: Revoke an outstanding invitation (admin)
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      responses:
+        "204": { description: Revoked }
+        "404": { description: Not found }
+        "409": { description: Already accepted }
+
+  /v1/invitations/accept:
+    post:
+      summary: Redeem an invitation token to create the new user
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [token, username, password]
+              properties:
+                token: { type: string }
+                username: { type: string }
+                password: { type: string, minLength: 8 }
+      responses:
+        "201": { description: User created and logged in }
+        "401": { description: Unknown token }
+        "409": { description: Username collision }
+        "410": { description: Token expired or revoked }
+
+  # ─── PR-A3 TOTP (self-service) ──────────────────────────────────────────
+
+  /v1/users/me/totp/setup:
+    post:
+      summary: Begin TOTP enrolment
+      description: >
+        Returns the base32 seed, an otpauth:// URL for QR rendering, and
+        10 single-use recovery codes (8-char alphanumeric). Idempotent
+        until /confirm; calling it again on a confirmed secret returns
+        409.
+      responses:
+        "200":
+          description: Setup info — shown ONCE
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TotpSetupResponse" }
+        "409": { description: Already confirmed; call /disable first }
+
+  /v1/users/me/totp/confirm:
+    post:
+      summary: Activate TOTP by submitting a current code
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [code]
+              properties:
+                code: { type: string, pattern: "^[0-9]{6}$" }
+      responses:
+        "204": { description: TOTP enabled }
+        "401": { description: Code did not match }
+        "409": { description: Already enabled }
+        "404": { description: No pending setup }
+
+  /v1/users/me/totp/disable:
+    post:
+      summary: Disable TOTP (requires fresh password proof)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [password]
+              properties:
+                password: { type: string }
+      responses:
+        "204": { description: TOTP disabled, recovery codes wiped }
+        "401": { description: Password wrong }
+
+  /v1/users/me/totp/recovery-codes/regenerate:
+    post:
+      summary: Mint a fresh batch of recovery codes (invalidates previous)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [password]
+              properties:
+                password: { type: string }
+      responses:
+        "200":
+          description: New codes — shown ONCE
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  recovery_codes:
+                    type: array
+                    items: { type: string }
+        "401": { description: Password wrong }
+        "409": { description: TOTP not enabled }
+
+  # ─── PR-A4 Personal Access Tokens ───────────────────────────────────────
+
+  /v1/users/me/tokens:
+    get:
+      summary: List own PATs
+      responses:
+        "200":
+          description: PATs (without raw tokens)
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/PersonalAccessToken" }
+    post:
+      summary: Issue a new PAT
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { type: string }
+                scopes:
+                  type: array
+                  items: { type: string }
+                  description: Subset of the role's default scopes.
+                expires_at:
+                  type: string
+                  format: date-time
+                  nullable: true
+      responses:
+        "201":
+          description: Created — raw token shown ONCE
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CreatePatResponse" }
+        "400": { description: Empty name or empty scopes }
+        "403": { description: Requested scope outside role's default-set }
+
+  /v1/users/me/tokens/{id}:
+    delete:
+      summary: Revoke a PAT
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      responses:
+        "204": { description: Revoked }
+        "404": { description: Not your token }
+
+  # ─── PR-B1 Stats + Audit + Insights ─────────────────────────────────────
+
+  /v1/audit:
+    get:
+      summary: List audit events (admin)
+      parameters:
+        - { name: actor_type, in: query, schema: { type: string } }
+        - { name: actor_id, in: query, schema: { type: string } }
+        - { name: action, in: query, schema: { type: string } }
+        - { name: target_type, in: query, schema: { type: string } }
+        - { name: target_id, in: query, schema: { type: string } }
+        - { name: since, in: query, schema: { type: string, format: date-time } }
+        - { name: until, in: query, schema: { type: string, format: date-time } }
+        - { name: limit, in: query, schema: { type: integer, default: 200, maximum: 1000 } }
+      responses:
+        "200":
+          description: Events newest-first
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/AuditEvent" }
+
+  /v1/jobs/{job_key}/stats:
+    get:
+      summary: Aggregate execution stats for a job
+      parameters:
+        - { name: job_key, in: path, required: true, schema: { type: string } }
+        - { name: days, in: query, schema: { type: integer, default: 7, minimum: 1, maximum: 90 } }
+      responses:
+        "200":
+          description: Stats
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/JobStatsResponse" }
+
+  /v1/executions/throughput:
+    get:
+      summary: Stacked throughput buckets for the dashboard
+      parameters:
+        - name: window
+          in: query
+          schema:
+            type: string
+            enum: [24h, 7d, 30d]
+            default: "24h"
+      responses:
+        "200":
+          description: Bucket array
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ThroughputResponse" }
+        "400": { description: Unknown window }
+
+  /v1/insights/failures:
+    get:
+      summary: Failure heatmap (day × hour) + hourly hotspots
+      parameters:
+        - { name: days, in: query, schema: { type: integer, default: 28, minimum: 7, maximum: 90 } }
+      responses:
+        "200":
+          description: Heatmap
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/FailureHeatmap" }

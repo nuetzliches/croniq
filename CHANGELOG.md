@@ -8,6 +8,17 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **OpenAPI 3.1 spec covers the PR-A1…B1b surface (PR-B1c).** Every
+  new endpoint added between PR-A1 and PR-B1b is documented in
+  `openapi.yaml` — User CRUD, Invitations, Password-Reset, TOTP,
+  PATs, OIDC (login + callback + config), the MFA step-up exchange,
+  Audit-Log read, per-job stats, throughput, failure heatmap. Schema
+  components include `User`, `Role`, `Invitation`, `PersonalAccessToken`,
+  `TotpSetupResponse`, `OidcConfigResponse`, `MfaRequiredResponse`,
+  `AuditEvent`, `JobStatsResponse`, `ThroughputResponse`, and
+  `FailureHeatmap`. SDK generators and external API clients can pick
+  up the new surface mechanically.
+
 - **UI login flow understands the MFA step-up + OIDC button (PR-B2).**
   `LoginPage` now drives the two-step exchange added in PR-A3: when
   `/v1/auth/login` returns `{requires_totp, mfa_token}` it switches
