@@ -711,6 +711,119 @@ impl AuthStore for SqliteStore {
         .map_err(map_err)?;
         Ok(())
     }
+
+    fn users_create(&self, user: &User) -> Result<(), StoreError> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO users (user_id, username, email, display_name, role, is_active, created_at, updated_at, last_login_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+             ON CONFLICT(user_id) DO UPDATE SET
+                username = excluded.username,
+                email = excluded.email,
+                display_name = excluded.display_name,
+                role = excluded.role,
+                is_active = excluded.is_active,
+                updated_at = excluded.updated_at",
+            params![
+                user.user_id,
+                user.username,
+                user.email,
+                user.display_name,
+                user.role.as_str(),
+                user.is_active as i64,
+                dt_to_sql(&user.created_at),
+                dt_to_sql(&user.updated_at),
+                opt_dt_to_sql(&user.last_login_at),
+            ],
+        ).map_err(map_err)?;
+        Ok(())
+    }
+
+    fn users_get_by_id(&self, user_id: &str) -> Result<Option<User>, StoreError> {
+        let conn = self.conn.lock().unwrap();
+        conn.prepare("SELECT user_id, username, email, display_name, role, is_active, created_at, updated_at, last_login_at FROM users WHERE user_id = ?1")
+            .map_err(map_err)?
+            .query_row(params![user_id], map_user_row)
+            .optional()
+            .map_err(map_err)
+    }
+
+    fn users_get_by_username(&self, username: &str) -> Result<Option<User>, StoreError> {
+        let conn = self.conn.lock().unwrap();
+        conn.prepare("SELECT user_id, username, email, display_name, role, is_active, created_at, updated_at, last_login_at FROM users WHERE username = ?1")
+            .map_err(map_err)?
+            .query_row(params![username], map_user_row)
+            .optional()
+            .map_err(map_err)
+    }
+
+    fn users_list(&self) -> Result<Vec<User>, StoreError> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn
+            .prepare("SELECT user_id, username, email, display_name, role, is_active, created_at, updated_at, last_login_at FROM users ORDER BY username")
+            .map_err(map_err)?;
+        let rows = stmt.query_map([], map_user_row).map_err(map_err)?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(map_err)
+    }
+
+    fn users_update(&self, user: &User) -> Result<(), StoreError> {
+        // users_create is upsert-on-user_id, so update is the same write.
+        // The last-admin-demotion check lives in the API layer (calls
+        // users_count_active_admins before mutating).
+        self.users_create(user)
+    }
+
+    fn users_delete(&self, user_id: &str) -> Result<(), StoreError> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute("DELETE FROM users WHERE user_id = ?1", params![user_id])
+            .map_err(map_err)?;
+        Ok(())
+    }
+
+    fn users_set_last_login(&self, user_id: &str, at: DateTime<Utc>) -> Result<(), StoreError> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE users SET last_login_at = ?1, updated_at = ?1 WHERE user_id = ?2",
+            params![dt_to_sql(&at), user_id],
+        )
+        .map_err(map_err)?;
+        Ok(())
+    }
+
+    fn users_count_active_admins(&self) -> Result<u64, StoreError> {
+        let conn = self.conn.lock().unwrap();
+        let count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM users WHERE role = 'admin' AND is_active = 1",
+                [],
+                |row| row.get(0),
+            )
+            .map_err(map_err)?;
+        Ok(count as u64)
+    }
+}
+
+fn map_user_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<User> {
+    use std::str::FromStr;
+    let role_str: String = row.get(4)?;
+    let role = Role::from_str(&role_str).map_err(|_| {
+        rusqlite::Error::FromSqlConversionFailure(
+            4,
+            rusqlite::types::Type::Text,
+            format!("unknown role: {role_str}").into(),
+        )
+    })?;
+    Ok(User {
+        user_id: row.get(0)?,
+        username: row.get(1)?,
+        email: row.get(2)?,
+        display_name: row.get(3)?,
+        role,
+        is_active: row.get::<_, bool>(5)?,
+        created_at: sql_to_dt(&row.get::<_, String>(6)?),
+        updated_at: sql_to_dt(&row.get::<_, String>(7)?),
+        last_login_at: sql_to_opt_dt(row.get(8)?),
+    })
 }
 
 // ─── JobDefinitionStore ───

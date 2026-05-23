@@ -893,6 +893,9 @@ mod tests {
             "test-user",
             "test-client",
             croniq_auth::CallerType::User,
+            Some("test-user"),
+            Some(croniq_auth::Role::Admin),
+            croniq_auth::AuthMethod::Password,
             &["admin".into()],
         )
         .unwrap();

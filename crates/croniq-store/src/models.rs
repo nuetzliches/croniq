@@ -208,6 +208,59 @@ pub struct PasswordCredential {
     pub created_at: DateTime<Utc>,
 }
 
+/// A user identity. One row per human (or service account in machine mode).
+/// Decoupled from any specific auth method so a user can have password +
+/// TOTP + PATs + OIDC linked simultaneously.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct User {
+    pub user_id: String,
+    pub username: String,
+    pub email: Option<String>,
+    pub display_name: Option<String>,
+    pub role: Role,
+    pub is_active: bool,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+    pub last_login_at: Option<DateTime<Utc>>,
+}
+
+/// Role of a user. Maps to a fixed set of scopes via
+/// `croniq_auth::context::Role::default_scopes`. The variants are stable
+/// strings persisted in `users.role` (kebab-case in the DB).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Role {
+    /// Wildcard — every scope.
+    Admin,
+    /// Read everything + write jobs/schedules/calendars + trigger.
+    Operator,
+    /// Read-only across the board.
+    Viewer,
+}
+
+impl Role {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Role::Admin => "admin",
+            Role::Operator => "operator",
+            Role::Viewer => "viewer",
+        }
+    }
+}
+
+impl std::str::FromStr for Role {
+    type Err = ();
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "admin" => Ok(Role::Admin),
+            "operator" => Ok(Role::Operator),
+            "viewer" => Ok(Role::Viewer),
+            _ => Err(()),
+        }
+    }
+}
+
 // ─── Job Definition ───
 
 /// A persisted job definition (distinct from the runtime JobState).

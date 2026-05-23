@@ -29,6 +29,7 @@ const MIGRATIONS: &[(&str, &str)] = &[
         "010_execution_log_seq",
         include_str!("010_execution_log_seq.sql"),
     ),
+    ("011_users", include_str!("011_users.sql")),
 ];
 
 /// Run all pending migrations.
@@ -158,6 +159,104 @@ mod tests {
         migrate(&conn).unwrap();
         let count: i64 = conn
             .query_row("SELECT COUNT(*) FROM dead_letters", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(count, 0);
+    }
+
+    #[test]
+    fn migration_011_backfills_users_from_password_credentials() {
+        let conn = Connection::open_in_memory().unwrap();
+        // Apply everything up to and including 010 so password_credentials exists
+        // but the users table doesn't yet.
+        apply_through(&conn, "010_execution_log_seq").unwrap();
+
+        // Seed two existing single-user-deploy rows.
+        conn.execute(
+            "INSERT INTO password_credentials (user_id, username, password_hash, failed_attempts, created_at)
+             VALUES (?1, 'alex', 'bcrypt-hash-1', 0, '2026-01-01T00:00:00+00:00')",
+            ["00000000-0000-0000-0000-000000000010"],
+        ).unwrap();
+        conn.execute(
+            "INSERT INTO password_credentials (user_id, username, password_hash, failed_attempts, created_at)
+             VALUES (?1, 'andre', 'bcrypt-hash-2', 0, '2026-02-01T00:00:00+00:00')",
+            ["00000000-0000-0000-0000-000000000011"],
+        ).unwrap();
+
+        // Apply 011 in isolation.
+        let (_, sql) = MIGRATIONS
+            .iter()
+            .find(|(name, _)| *name == "011_users")
+            .unwrap();
+        conn.execute_batch(sql).unwrap();
+
+        // Both rows landed in users with role=admin.
+        let users: Vec<(String, String, String, i64)> = conn
+            .prepare("SELECT user_id, username, role, is_active FROM users ORDER BY username")
+            .unwrap()
+            .query_map([], |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, String>(2)?,
+                    r.get::<_, i64>(3)?,
+                ))
+            })
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+
+        assert_eq!(users.len(), 2);
+        assert_eq!(users[0].1, "alex");
+        assert_eq!(users[0].2, "admin");
+        assert_eq!(users[0].3, 1);
+        assert_eq!(users[1].1, "andre");
+        assert_eq!(users[1].2, "admin");
+    }
+
+    #[test]
+    fn migration_011_is_idempotent_on_reapply() {
+        // Simulates a failed first apply that left an inconsistent state — the
+        // second run must not duplicate the backfilled rows. INSERT OR IGNORE
+        // on user_id PK makes this safe.
+        let conn = Connection::open_in_memory().unwrap();
+        apply_through(&conn, "010_execution_log_seq").unwrap();
+
+        conn.execute(
+            "INSERT INTO password_credentials (user_id, username, password_hash, failed_attempts, created_at)
+             VALUES (?1, 'alex', 'bcrypt-hash', 0, '2026-01-01T00:00:00+00:00')",
+            ["00000000-0000-0000-0000-000000000020"],
+        ).unwrap();
+
+        let (_, sql) = MIGRATIONS
+            .iter()
+            .find(|(name, _)| *name == "011_users")
+            .unwrap();
+        conn.execute_batch(sql).unwrap();
+        // Replaying the backfill is safe — no duplicate row.
+        conn.execute(
+            "INSERT OR IGNORE INTO users (user_id, username, role, is_active, created_at, updated_at)
+             SELECT user_id, username, 'admin', 1, created_at, created_at FROM password_credentials",
+            [],
+        ).unwrap();
+
+        let count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM users WHERE username = 'alex'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 1);
+    }
+
+    #[test]
+    fn migration_011_handles_empty_password_credentials() {
+        // Fresh deploy: no existing users, table is empty after migration.
+        let conn = Connection::open_in_memory().unwrap();
+        migrate(&conn).unwrap();
+
+        let count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM users", [], |r| r.get(0))
             .unwrap();
         assert_eq!(count, 0);
     }

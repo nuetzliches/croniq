@@ -181,6 +181,22 @@ pub trait AuthStore {
     fn create_refresh_token(&self, token: &RefreshToken) -> Result<(), StoreError>;
     fn validate_refresh_token(&self, token_hash: &str) -> Result<Option<RefreshToken>, StoreError>;
     fn revoke_refresh_token(&self, token_hash: &str, now: DateTime<Utc>) -> Result<(), StoreError>;
+
+    // Users — identity decoupled from auth method. Migration 011 backfills
+    // existing password_credentials rows into users with role=admin; new
+    // multi-user flows (invitations, OIDC JIT, PATs) all attach to a row
+    // here. `users_create` is upsert-on-user_id; `users_update` rejects
+    // attempts to remove the last admin.
+    fn users_create(&self, user: &User) -> Result<(), StoreError>;
+    fn users_get_by_id(&self, user_id: &str) -> Result<Option<User>, StoreError>;
+    fn users_get_by_username(&self, username: &str) -> Result<Option<User>, StoreError>;
+    fn users_list(&self) -> Result<Vec<User>, StoreError>;
+    fn users_update(&self, user: &User) -> Result<(), StoreError>;
+    fn users_delete(&self, user_id: &str) -> Result<(), StoreError>;
+    fn users_set_last_login(&self, user_id: &str, at: DateTime<Utc>) -> Result<(), StoreError>;
+    /// Count active users with role=admin. Used by user_update / user_delete to
+    /// prevent the last admin from being demoted or removed (avoids lock-out).
+    fn users_count_active_admins(&self) -> Result<u64, StoreError>;
 }
 
 /// Job definition persistence (CRUD for job definitions, distinct from runtime JobState).

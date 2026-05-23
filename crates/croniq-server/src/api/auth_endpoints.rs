@@ -8,7 +8,7 @@ use croniq_auth::api_key::{generate_api_key, hash_api_key};
 use croniq_auth::context::Scope;
 use croniq_auth::jwt::issue_token_pair;
 use croniq_auth::password::verify_password;
-use croniq_auth::{CallerContext, CallerType};
+use croniq_auth::{AuthMethod, CallerContext, CallerType, default_scopes_for_role};
 use croniq_store::models::{ApiClient, ApiKey, RefreshToken};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -115,22 +115,44 @@ pub async fn handle_login(
         let _ = store.upsert_credentials(&updated);
     }
 
-    // Issue tokens
+    // Look up the user row to pull role + active flag. Pre-PR-A1 deploys
+    // backfill an admin user via migration 011, so this should always
+    // resolve. A missing user is treated as 401 — the credential exists
+    // but the identity it points at no longer does (manual DB tamper or
+    // hand-rollback to before migration 011).
+    let user = store
+        .users_get_by_id(&cred.user_id)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::UNAUTHORIZED)?;
+
+    if !user.is_active {
+        return Err(StatusCode::FORBIDDEN);
+    }
+
+    // Issue tokens with role-derived scopes (no more hardcoded admin).
+    let scopes = default_scopes_for_role(user.role);
     let pair = issue_token_pair(
         jwt_config,
-        &cred.user_id,
-        &cred.user_id,
+        &user.user_id,
+        &user.user_id,
         CallerType::User,
-        &["admin".to_string()], // Users get admin scope
+        Some(&user.user_id),
+        Some(user.role),
+        AuthMethod::Password,
+        &scopes,
     )
     .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    // Stamp last-login so the UI can show "last seen N min ago" without
+    // joining against login_events (added in PR-A5).
+    let _ = store.users_set_last_login(&user.user_id, Utc::now());
 
     // Store refresh token
     let refresh_hash = hash_api_key(&pair.refresh_token);
     let _ = store.create_refresh_token(&RefreshToken {
         token_hash: refresh_hash,
-        client_id: cred.user_id.clone(),
-        user_id: Some(cred.user_id),
+        client_id: user.user_id.clone(),
+        user_id: Some(user.user_id.clone()),
         expires_at: pair.refresh_expires_at,
         revoked_at: None,
         created_at: Utc::now(),
@@ -171,28 +193,44 @@ pub async fn handle_refresh(
     // Revoke old token
     let _ = store.revoke_refresh_token(&token_hash, Utc::now());
 
-    // Issue new pair
-    let caller_type = if token.user_id.is_some() {
-        CallerType::User
+    // Branch on caller type. User refresh re-loads the user row so role
+    // changes propagate without forcing a re-login; API-key refresh
+    // picks up scope changes on the owning client the same way.
+    let (caller_type, user_id, role, auth_method, scopes) = if let Some(uid) = &token.user_id {
+        let user = store
+            .users_get_by_id(uid)
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+            .ok_or(StatusCode::UNAUTHORIZED)?;
+        if !user.is_active {
+            return Err(StatusCode::FORBIDDEN);
+        }
+        let scopes = default_scopes_for_role(user.role);
+        (
+            CallerType::User,
+            Some(user.user_id.clone()),
+            Some(user.role),
+            AuthMethod::Password,
+            scopes,
+        )
     } else {
-        CallerType::ApiKey
-    };
-    let scopes = if token.user_id.is_some() {
-        vec!["admin".to_string()]
-    } else {
-        store
+        let scopes = store
             .get_client(&token.client_id)
             .ok()
             .flatten()
             .map(|c| c.scopes)
-            .unwrap_or_default()
+            .unwrap_or_default();
+        (CallerType::ApiKey, None, None, AuthMethod::ApiKey, scopes)
     };
 
+    let caller_id = user_id.clone().unwrap_or_else(|| token.client_id.clone());
     let pair = issue_token_pair(
         jwt_config,
-        &token.client_id,
+        &caller_id,
         &token.client_id,
         caller_type,
+        user_id.as_deref(),
+        role,
+        auth_method,
         &scopes,
     )
     .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
@@ -370,6 +408,9 @@ pub async fn handle_issue_client_token(
         &client.client_id,
         &client.client_id,
         CallerType::ApiKey,
+        None,
+        None,
+        AuthMethod::ApiKey,
         &client.scopes,
     )
     .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;

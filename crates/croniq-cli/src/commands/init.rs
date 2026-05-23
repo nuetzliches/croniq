@@ -9,7 +9,7 @@ use std::path::Path;
 use chrono::Utc;
 use croniq_auth::api_key::hash_api_key;
 use croniq_auth::password::hash_password;
-use croniq_store::models::{ApiClient, ApiKey, PasswordCredential};
+use croniq_store::models::{ApiClient, ApiKey, PasswordCredential, Role, User};
 use croniq_store::sqlite::SqliteStore;
 use croniq_store::traits::AuthStore;
 use miette::{IntoDiagnostic, Result, miette};
@@ -68,6 +68,24 @@ pub fn init(
 
     let pw_hash = hash_password(&password).map_err(|e| miette!("Failed to hash password: {e}"))?;
 
+    // Create the identity row first so the credential's user_id has
+    // something to point at conceptually. Migration 011 backfills
+    // existing single-admin password_credentials rows into users; for
+    // fresh inits we create both side by side.
+    store
+        .users_create(&User {
+            user_id: user_id.clone(),
+            username: username.to_string(),
+            email: None,
+            display_name: None,
+            role: Role::Admin,
+            is_active: true,
+            created_at: now,
+            updated_at: now,
+            last_login_at: None,
+        })
+        .map_err(|e| miette!("Failed to create admin user identity: {e}"))?;
+
     store
         .upsert_credentials(&PasswordCredential {
             user_id: user_id.clone(),
@@ -77,9 +95,9 @@ pub fn init(
             locked_until: None,
             created_at: now,
         })
-        .map_err(|e| miette!("Failed to create admin user: {e}"))?;
+        .map_err(|e| miette!("Failed to create admin password: {e}"))?;
 
-    println!("Admin user '{}' created.", username);
+    println!("Admin user '{}' created (role: admin).", username);
 
     // Seed a default API client + key only when an explicit key is provided.
     // This keeps reproducible setups (docker-compose demo, CI) working while

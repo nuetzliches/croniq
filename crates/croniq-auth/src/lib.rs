@@ -11,5 +11,8 @@ pub mod context;
 pub mod jwt;
 pub mod password;
 
-pub use context::{CallerContext, CallerType, Scope};
-pub use jwt::{JwtConfig, TokenPair};
+pub use context::{AuthMethod, CallerContext, CallerType, Scope, default_scopes_for_role};
+pub use jwt::{JWT_ISSUER, JwtConfig, TokenPair};
+// Re-export Role so consumers can use `croniq_auth::Role` without a
+// separate `croniq_store` dependency just for the enum.
+pub use croniq_store::models::Role;

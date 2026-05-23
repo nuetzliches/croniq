@@ -11,7 +11,7 @@ use axum::{
 use croniq_auth::api_key::hash_api_key;
 use croniq_auth::context::Scope;
 use croniq_auth::jwt::validate_token;
-use croniq_auth::{CallerContext, CallerType};
+use croniq_auth::{AuthMethod, CallerContext, CallerType};
 
 use super::ServerState;
 
@@ -37,6 +37,9 @@ pub async fn require_auth(
             caller_type: CallerType::User,
             caller_id: "anonymous".into(),
             client_id: "anonymous".into(),
+            user_id: None,
+            role: None,
+            auth_method: AuthMethod::ApiKey,
             scopes: vec![Scope::ADMIN.to_string()],
         });
         return Ok(next.run(req).await);
@@ -93,6 +96,9 @@ pub async fn require_auth(
             caller_type: CallerType::ApiKey,
             caller_id: api_key.key_id,
             client_id: api_key.client_id,
+            user_id: None,
+            role: None,
+            auth_method: AuthMethod::ApiKey,
             scopes: client.scopes,
         }
     } else {

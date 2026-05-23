@@ -6,6 +6,41 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **Multi-user identity model with role-based scopes** — new `users` table
+  (migration 011) splits identity from credentials. Three roles map to
+  pre-defined scope sets via `croniq_auth::default_scopes_for_role`:
+  `admin` (wildcard, unchanged), `operator` (read everything + write
+  jobs/schedules/calendars + trigger), `viewer` (read-only across the
+  board). The login handler embeds the user's role-scopes in the JWT
+  instead of the previous hardcoded `["admin"]`; existing single-admin
+  deploys are backfilled into `users` with `role=admin` so behaviour is
+  preserved. User-CRUD endpoints (`/v1/users`, `/v1/users/me`, invite
+  flow, TOTP, OIDC) land in follow-up PRs A2-A5.
+  ([`crates/croniq-store/src/migrations/011_users.sql`](crates/croniq-store/src/migrations/011_users.sql),
+  [`crates/croniq-auth/src/context.rs`](crates/croniq-auth/src/context.rs))
+
+- **`CallerContext` now carries `user_id`, `role`, and `auth_method`.**
+  Audit-log consumers, alert routing, and the upcoming `/v1/users/me`
+  endpoint depend on knowing which user (not just which client) made a
+  request, and which auth method was used (password / API key / PAT /
+  OIDC — the latter two reserved for follow-up PRs but enumerated now
+  to avoid a breaking JSON change later).
+  ([`crates/croniq-auth/src/context.rs`](crates/croniq-auth/src/context.rs))
+
+### Changed
+
+- **BREAKING — JWT issuer hard-cut.** The issuer claim moves from
+  `"croniq"` to `"croniq-v1"` to invalidate tokens minted before the
+  Multi-User schema landed (those tokens lack the new `user_id` / `role` /
+  `auth_method` claims). All UI sessions are forced to re-login on the
+  first request after upgrade; API-key authentication is unaffected
+  because it bypasses JWT validation. The bump is centralised in
+  `croniq_auth::JWT_ISSUER` — future migrations follow the same `-vN`
+  pattern.
+  ([`crates/croniq-auth/src/jwt.rs`](crates/croniq-auth/src/jwt.rs))
+
 ## [0.14.0] - 2026-05-21
 
 ### Changed

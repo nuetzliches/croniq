@@ -803,3 +803,116 @@ fn append_logs_batch_empty_is_a_noop() {
     store.append_logs_batch(&[]).unwrap();
     // No assertion needed — just confirming it doesn't panic or error.
 }
+
+// ─── Users ───
+
+fn make_user(username: &str, role: Role) -> User {
+    User {
+        user_id: Uuid::new_v4().to_string(),
+        username: username.into(),
+        email: None,
+        display_name: None,
+        role,
+        is_active: true,
+        created_at: now(),
+        updated_at: now(),
+        last_login_at: None,
+    }
+}
+
+#[test]
+fn users_create_and_lookup_round_trip() {
+    let store = create_memory_store().unwrap();
+    let u = make_user("alex", Role::Admin);
+    store.users_create(&u).unwrap();
+
+    let by_id = store.users_get_by_id(&u.user_id).unwrap().unwrap();
+    let by_name = store.users_get_by_username("alex").unwrap().unwrap();
+
+    assert_eq!(by_id.user_id, u.user_id);
+    assert_eq!(by_name.user_id, u.user_id);
+    assert_eq!(by_id.role, Role::Admin);
+}
+
+#[test]
+fn users_create_is_upsert_on_user_id() {
+    let store = create_memory_store().unwrap();
+    let mut u = make_user("alex", Role::Operator);
+    store.users_create(&u).unwrap();
+
+    u.role = Role::Admin;
+    u.email = Some("alex@example.org".into());
+    store.users_create(&u).unwrap();
+
+    let loaded = store.users_get_by_id(&u.user_id).unwrap().unwrap();
+    assert_eq!(loaded.role, Role::Admin);
+    assert_eq!(loaded.email.as_deref(), Some("alex@example.org"));
+}
+
+#[test]
+fn users_list_returns_all_sorted_by_username() {
+    let store = create_memory_store().unwrap();
+    store
+        .users_create(&make_user("carol", Role::Admin))
+        .unwrap();
+    store.users_create(&make_user("alex", Role::Admin)).unwrap();
+    store
+        .users_create(&make_user("bob", Role::Operator))
+        .unwrap();
+
+    let names: Vec<String> = store
+        .users_list()
+        .unwrap()
+        .into_iter()
+        .map(|u| u.username)
+        .collect();
+    assert_eq!(names, vec!["alex", "bob", "carol"]);
+}
+
+#[test]
+fn users_set_last_login_updates_field() {
+    let store = create_memory_store().unwrap();
+    let u = make_user("alex", Role::Admin);
+    store.users_create(&u).unwrap();
+
+    let when = utc(2026, 5, 23, 14, 30);
+    store.users_set_last_login(&u.user_id, when).unwrap();
+
+    let loaded = store.users_get_by_id(&u.user_id).unwrap().unwrap();
+    assert_eq!(loaded.last_login_at, Some(when));
+}
+
+#[test]
+fn users_count_active_admins_excludes_deactivated_and_non_admins() {
+    let store = create_memory_store().unwrap();
+
+    let mut a1 = make_user("a1", Role::Admin);
+    let mut a2 = make_user("a2", Role::Admin);
+    let op = make_user("op", Role::Operator);
+    let view = make_user("view", Role::Viewer);
+
+    a2.is_active = false; // deactivated admin doesn't count
+    a1.is_active = true;
+
+    store.users_create(&a1).unwrap();
+    store.users_create(&a2).unwrap();
+    store.users_create(&op).unwrap();
+    store.users_create(&view).unwrap();
+
+    assert_eq!(store.users_count_active_admins().unwrap(), 1);
+}
+
+#[test]
+fn users_delete_removes_row() {
+    let store = create_memory_store().unwrap();
+    let u = make_user("alex", Role::Admin);
+    store.users_create(&u).unwrap();
+    store.users_delete(&u.user_id).unwrap();
+    assert!(store.users_get_by_id(&u.user_id).unwrap().is_none());
+}
+
+#[test]
+fn users_get_by_id_unknown_returns_none() {
+    let store = create_memory_store().unwrap();
+    assert!(store.users_get_by_id("does-not-exist").unwrap().is_none());
+}
