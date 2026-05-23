@@ -190,6 +190,19 @@ export interface OidcConfigResponse {
   login_url: string | null
 }
 
+// ─── #138 Sign-in method gates ───────────────────────────────────
+
+export interface PasswordConfigResponse {
+  enabled: boolean
+}
+
+/// Returned by `GET /v1/auth/config` — combined OIDC + password gate
+/// probe that the login UI hits before any auth happens.
+export interface AuthConfigResponse {
+  oidc: OidcConfigResponse
+  password: PasswordConfigResponse
+}
+
 // ─── PR-B1 Stats & Audit ─────────────────────────────────────────
 
 export interface AuditEvent {

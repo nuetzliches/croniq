@@ -17,7 +17,12 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use axum::{Json, extract::State, http::StatusCode};
+use axum::{
+    Json,
+    extract::State,
+    http::StatusCode,
+    response::{IntoResponse, Response},
+};
 use chrono::Utc;
 use croniq_auth::api_key::{generate_token, hash_token};
 use croniq_auth::password::hash_password;
@@ -26,6 +31,7 @@ use serde::Deserialize;
 use uuid::Uuid;
 
 use super::ServerState;
+use super::auth_endpoints::password_disabled_response;
 
 const RESET_TOKEN_TTL: Duration = Duration::from_secs(60 * 60); // 1 hour
 const RESET_PREFIX: &str = "croniq_pwr";
@@ -45,19 +51,22 @@ pub struct ConfirmResetRequest {
 pub async fn handle_request(
     State(state): State<Arc<ServerState>>,
     Json(req): Json<RequestResetRequest>,
-) -> StatusCode {
+) -> Response {
+    if !state.password_login_enabled {
+        return password_disabled_response();
+    }
     let Some(store) = state.store.as_ref() else {
-        return StatusCode::SERVICE_UNAVAILABLE;
+        return StatusCode::SERVICE_UNAVAILABLE.into_response();
     };
 
     // Constant-response: hashing dominates either way, so user-enumeration
     // by timing is harder to mount. (Bcrypt is too slow to call here, so
     // we just no-op symmetrically.)
     let Some(user) = store.users_get_by_username(&req.username).ok().flatten() else {
-        return StatusCode::ACCEPTED;
+        return StatusCode::ACCEPTED.into_response();
     };
     if !user.is_active {
-        return StatusCode::ACCEPTED;
+        return StatusCode::ACCEPTED.into_response();
     }
 
     let (raw_token, token_hash) = generate_token(RESET_PREFIX);
@@ -74,7 +83,7 @@ pub async fn handle_request(
         created_at: now,
     };
     if store.password_resets_create(&reset).is_err() {
-        return StatusCode::INTERNAL_SERVER_ERROR;
+        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
     }
 
     let confirm_url = format!(
@@ -107,19 +116,22 @@ pub async fn handle_request(
         "password reset issued"
     );
 
-    StatusCode::ACCEPTED
+    StatusCode::ACCEPTED.into_response()
 }
 
 /// `POST /v1/auth/password-reset/confirm`
 pub async fn handle_confirm(
     State(state): State<Arc<ServerState>>,
     Json(req): Json<ConfirmResetRequest>,
-) -> StatusCode {
+) -> Response {
+    if !state.password_login_enabled {
+        return password_disabled_response();
+    }
     if req.new_password.len() < 8 {
-        return StatusCode::BAD_REQUEST;
+        return StatusCode::BAD_REQUEST.into_response();
     }
     let Some(store) = state.store.as_ref() else {
-        return StatusCode::SERVICE_UNAVAILABLE;
+        return StatusCode::SERVICE_UNAVAILABLE.into_response();
     };
 
     let token_hash = hash_token(&req.token);
@@ -128,26 +140,26 @@ pub async fn handle_confirm(
         .ok()
         .flatten()
     else {
-        return StatusCode::UNAUTHORIZED;
+        return StatusCode::UNAUTHORIZED.into_response();
     };
 
     if reset.used_at.is_some() {
-        return StatusCode::GONE;
+        return StatusCode::GONE.into_response();
     }
     if Utc::now() > reset.expires_at {
-        return StatusCode::GONE;
+        return StatusCode::GONE.into_response();
     }
 
     let Some(user) = store.users_get_by_id(&reset.user_id).ok().flatten() else {
-        return StatusCode::NOT_FOUND;
+        return StatusCode::NOT_FOUND.into_response();
     };
 
     let pw_hash = match hash_password(&req.new_password) {
         Ok(h) => h,
-        Err(_) => return StatusCode::INTERNAL_SERVER_ERROR,
+        Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     };
     let Some(cred) = store.get_credentials(&user.username).ok().flatten() else {
-        return StatusCode::NOT_FOUND;
+        return StatusCode::NOT_FOUND.into_response();
     };
     let updated = PasswordCredential {
         password_hash: pw_hash,
@@ -156,9 +168,9 @@ pub async fn handle_confirm(
         ..cred
     };
     if store.upsert_credentials(&updated).is_err() {
-        return StatusCode::INTERNAL_SERVER_ERROR;
+        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
     }
     let _ = store.password_resets_mark_used(&reset.reset_id, Utc::now());
 
-    StatusCode::NO_CONTENT
+    StatusCode::NO_CONTENT.into_response()
 }

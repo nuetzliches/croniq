@@ -45,6 +45,20 @@ pub struct OidcConfigResponse {
     pub login_url: Option<String>,
 }
 
+/// Combined sign-in-method probe — what the login UI hits before any auth
+/// happens (issue #138). Keeps OIDC and password gates in one payload so a
+/// fresh LoginPage only needs a single fetch.
+#[derive(Serialize)]
+pub struct AuthConfigResponse {
+    pub oidc: OidcConfigResponse,
+    pub password: PasswordConfigResponse,
+}
+
+#[derive(Serialize)]
+pub struct PasswordConfigResponse {
+    pub enabled: bool,
+}
+
 /// `GET /v1/auth/oidc/login` — 302-redirect to the IdP's authorize URL.
 pub async fn handle_login(State(state): State<Arc<ServerState>>) -> Result<Response, StatusCode> {
     let provider = state.oidc.clone().ok_or(StatusCode::NOT_FOUND)?;
@@ -179,22 +193,40 @@ pub async fn handle_callback(
 
 /// `GET /v1/auth/oidc/config` — read-only metadata so the login UI can
 /// hide the SSO button when OIDC isn't configured. No secrets here.
+///
+/// Kept for back-compat with anything probing the OIDC-only endpoint;
+/// the canonical probe is now [`handle_auth_config`] (`GET /v1/auth/config`).
 pub async fn handle_config(State(state): State<Arc<ServerState>>) -> Json<OidcConfigResponse> {
+    Json(oidc_config(&state))
+}
+
+/// `GET /v1/auth/config` — read-only summary of every UI sign-in method
+/// (issue #138). Combines [`handle_config`] with the password-login flag.
+pub async fn handle_auth_config(State(state): State<Arc<ServerState>>) -> Json<AuthConfigResponse> {
+    Json(AuthConfigResponse {
+        oidc: oidc_config(&state),
+        password: PasswordConfigResponse {
+            enabled: state.password_login_enabled,
+        },
+    })
+}
+
+fn oidc_config(state: &ServerState) -> OidcConfigResponse {
     if let Some(provider) = &state.oidc {
-        Json(OidcConfigResponse {
+        OidcConfigResponse {
             enabled: true,
             provider_name: Some(provider.config.provider_name.clone()),
             login_url: Some(format!(
                 "{}/v1/auth/oidc/login",
                 state.app_base_url.trim_end_matches('/')
             )),
-        })
+        }
     } else {
-        Json(OidcConfigResponse {
+        OidcConfigResponse {
             enabled: false,
             provider_name: None,
             login_url: None,
-        })
+        }
     }
 }
 

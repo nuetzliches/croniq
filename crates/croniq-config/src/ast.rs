@@ -17,6 +17,7 @@ pub enum Item {
     Observability(ObservabilityBlock),
     Mcp(McpBlock),
     Oidc(OidcBlock),
+    Auth(AuthBlock),
     Policy(PolicyBlock),
     Vars(VarsBlock),
     Defaults(DefaultsBlock),
@@ -86,6 +87,22 @@ pub struct McpBlock {
 #[derive(Debug, Clone, Serialize)]
 pub struct OidcBlock {
     pub directives: Vec<Directive>,
+    pub span: Span,
+}
+
+// ─── Auth (UI sign-in method gates) ───
+
+/// `auth { password { enabled false } }`
+///
+/// Container for sub-blocks gating individual UI sign-in methods. Today
+/// only the `password { enabled bool }` sub-block is recognised; future
+/// versions may nest the `oidc { … }` provider config here too.
+///
+/// The outer block has no directives — only sub-blocks — so it mirrors
+/// `ObservabilityBlock` in shape.
+#[derive(Debug, Clone, Serialize)]
+pub struct AuthBlock {
+    pub sub_blocks: Vec<NamedBlock>,
     pub span: Span,
 }
 

@@ -6,9 +6,9 @@ import { useAuthStore } from './store'
 import { apiFetch, apiPost } from '@/api/client'
 import {
   isMfaRequired,
+  type AuthConfigResponse,
   type HealthResponse,
   type LoginResponse,
-  type OidcConfigResponse,
   type TokenResponse,
   type VersionResponse,
 } from '@/api/types'
@@ -146,18 +146,36 @@ export function LoginPage() {
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
   const [shake, setShake] = useState(false)
-  const [oidc, setOidc] = useState<OidcConfigResponse | null>(null)
+  const [authCfg, setAuthCfg] = useState<AuthConfigResponse | null>(null)
   const [health, setHealth] = useState<HealthResponse | null>(null)
 
   const login = useAuthStore((s) => s.login)
   const navigate = useNavigate()
 
   useEffect(() => {
-    apiFetch<OidcConfigResponse>('/v1/auth/oidc/config')
-      .then(setOidc)
-      .catch(() => setOidc({ enabled: false, provider_name: null, login_url: null }))
+    // Combined sign-in-method probe — surfaces both `oidc.enabled` and
+    // `password.enabled` so the LoginPage can hide whichever flow the
+    // operator has turned off (issue #138).
+    apiFetch<AuthConfigResponse>('/v1/auth/config')
+      .then(setAuthCfg)
+      .catch(() =>
+        setAuthCfg({
+          oidc: { enabled: false, provider_name: null, login_url: null },
+          password: { enabled: true },
+        }),
+      )
     apiFetch<HealthResponse>('/health').then(setHealth, () => setHealth(null))
   }, [])
+
+  const oidc = authCfg?.oidc ?? null
+  const passwordEnabled = authCfg?.password.enabled ?? true
+  // When password login is disabled by the operator, force the SSO view —
+  // regardless of whatever `method` the user clicked. The tab strip is
+  // hidden in this state so there's nothing to switch back to.
+  const effectiveMethod: Method = passwordEnabled ? method : 'sso'
+  const showTabStrip = passwordEnabled && !!oidc?.enabled
+  const bothDisabled =
+    authCfg !== null && !passwordEnabled && !oidc?.enabled
 
   function flashError(msg: string) {
     setError(msg)
@@ -243,11 +261,11 @@ export function LoginPage() {
                 Sign in to <span className="mono" style={{ color: 'var(--fg-1)' }}>{window.location.host}</span>
               </p>
 
-              {/* Only render the tab strip when more than one method is
-                  actually available. Showing a single, always-selected
-                  "Password" tab is visual noise; showing SSO disabled
-                  exposes a feature the user has no path to enable. */}
-              {oidc?.enabled ? (
+              {/* Only render the tab strip when both methods are actually
+                  available. Showing a single, always-selected "Password"
+                  tab is visual noise; showing SSO disabled exposes a
+                  feature the user has no path to enable. */}
+              {showTabStrip ? (
                 <div
                   className="login-method-tabs"
                   role="tablist"
@@ -259,7 +277,28 @@ export function LoginPage() {
                 </div>
               ) : null}
 
-              {method === 'password' ? (
+              {bothDisabled ? (
+                <div className="col gap-14">
+                  <div className="login-sso-card">
+                    <span className="login-sso-icon">
+                      <Lock size={18} />
+                    </span>
+                    <div className="col" style={{ gap: 0, flex: 1, minWidth: 0 }}>
+                      <span style={{ fontSize: 13.5, fontWeight: 500, color: 'var(--fg)' }}>
+                        No sign-in method configured
+                      </span>
+                      <span className="dim" style={{ fontSize: 11.5 }}>
+                        Password login is disabled and SSO is not set up.
+                      </span>
+                    </div>
+                  </div>
+                  <p className="dim" style={{ fontSize: 12.5, textAlign: 'center', margin: 0 }}>
+                    Contact your Croniq administrator to enable a UI sign-in method.
+                  </p>
+                </div>
+              ) : null}
+
+              {!bothDisabled && effectiveMethod === 'password' ? (
                 <form className="col gap-14" onSubmit={handleCredentialsSubmit}>
                   <LoginField label="Username">
                     <input
@@ -290,7 +329,7 @@ export function LoginPage() {
                 </form>
               ) : null}
 
-              {method === 'sso' ? (
+              {!bothDisabled && effectiveMethod === 'sso' ? (
                 <div className="col gap-14">
                   {oidc?.enabled && oidc.login_url ? (
                     <>
@@ -325,14 +364,20 @@ export function LoginPage() {
                 </div>
               ) : null}
 
-              <div className="login-divider">
-                <span>Lost access?</span>
-              </div>
-              <div className="row gap-10" style={{ justifyContent: 'center', flexWrap: 'wrap' }}>
-                <button type="button" className="login-recovery" onClick={handleForgotPassword}>
-                  <Bell size={12} /> Email a recovery link
-                </button>
-              </div>
+              {/* Password-reset recovery is only meaningful when password
+                  login is on — hide the section entirely otherwise. */}
+              {passwordEnabled ? (
+                <>
+                  <div className="login-divider">
+                    <span>Lost access?</span>
+                  </div>
+                  <div className="row gap-10" style={{ justifyContent: 'center', flexWrap: 'wrap' }}>
+                    <button type="button" className="login-recovery" onClick={handleForgotPassword}>
+                      <Bell size={12} /> Email a recovery link
+                    </button>
+                  </div>
+                </>
+              ) : null}
             </>
           ) : (
             <MfaStep

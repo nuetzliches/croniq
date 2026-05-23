@@ -224,6 +224,7 @@ impl Parser {
                 "observability" => Ok(Item::Observability(self.parse_observability()?)),
                 "mcp" => Ok(Item::Mcp(self.parse_mcp()?)),
                 "oidc" => Ok(Item::Oidc(self.parse_oidc()?)),
+                "auth" => Ok(Item::Auth(self.parse_auth()?)),
                 "policy" => Ok(Item::Policy(self.parse_policy()?)),
                 "vars" => Ok(Item::Vars(self.parse_vars()?)),
                 "defaults" => Ok(Item::Defaults(self.parse_defaults()?)),
@@ -236,7 +237,7 @@ impl Parser {
             },
             _ => Err(ParseError::Unexpected {
                 expected:
-                    "import, server, pull_api, observability, mcp, oidc, policy, vars, defaults, calendar, or job"
+                    "import, server, pull_api, observability, mcp, oidc, auth, policy, vars, defaults, calendar, or job"
                         .into(),
                 got: format!("{}", tok.kind),
                 span: tok.span.into(),
@@ -320,6 +321,28 @@ impl Parser {
         let end = self.expect_rbrace()?;
         Ok(OidcBlock {
             directives,
+            span: start.merge(end),
+        })
+    }
+
+    fn parse_auth(&mut self) -> Result<AuthBlock, ParseError> {
+        let start = self.expect_ident("auth")?;
+        self.expect_lbrace()?;
+        let mut sub_blocks = Vec::new();
+        loop {
+            self.skip_newlines();
+            if self.peek().kind == TokenKind::RBrace || self.at_end() {
+                break;
+            }
+            if let TokenKind::Comment(_) = self.peek().kind {
+                self.advance();
+                continue;
+            }
+            sub_blocks.push(self.parse_named_block()?);
+        }
+        let end = self.expect_rbrace()?;
+        Ok(AuthBlock {
+            sub_blocks,
             span: start.merge(end),
         })
     }

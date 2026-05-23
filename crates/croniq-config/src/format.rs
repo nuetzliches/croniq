@@ -51,6 +51,13 @@ fn format_item(out: &mut String, item: &Item, indent: usize) {
             format_directives(out, &o.directives, indent + 1);
             out.push_str("}\n");
         }
+        Item::Auth(a) => {
+            out.push_str("auth {\n");
+            for block in &a.sub_blocks {
+                format_named_block(out, block, indent + 1);
+            }
+            out.push_str("}\n");
+        }
         Item::Policy(p) => {
             out.push_str("policy {\n");
             format_directives(out, &p.directives, indent + 1);
