@@ -382,12 +382,17 @@
 }
 @supports (backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px)) {
   .login-form {
-    background: transparent;
-    border-color: transparent;
-    box-shadow: 0 24px 56px -22px oklch(0 0 0 / 0.55);
+    background: color-mix(in srgb, var(--panel) 76%, transparent);
+    border-color: color-mix(in srgb, var(--border-2) 60%, transparent);
+    box-shadow:
+      0 24px 56px -22px oklch(0 0 0 / 0.55),
+      inset 0 1px 0 oklch(1 0 0 / 0.05);
   }
   [data-theme="light"] .login-form {
-    box-shadow: 0 22px 52px -20px oklch(0 0 0 / 0.16);
+    background: color-mix(in srgb, var(--panel) 86%, transparent);
+    box-shadow:
+      0 22px 52px -20px oklch(0 0 0 / 0.16),
+      inset 0 1px 0 oklch(1 0 0 / 0.55);
   }
 }
 
