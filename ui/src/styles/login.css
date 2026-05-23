@@ -315,6 +315,17 @@
   flex-direction: column;
   gap: 18px;
   position: relative;
+  /* Card chrome — gives the form a visible container against both
+   * the right-pane plain bg (desktop) and the marketing gradient
+   * underneath the compact strip (mobile). */
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--r-4);
+  padding: 28px 28px 24px;
+  box-shadow: var(--shadow);
+}
+[data-theme="light"] .login-form {
+  box-shadow: 0 8px 28px -10px oklch(0 0 0 / 0.10), 0 2px 4px -1px oklch(0 0 0 / 0.06);
 }
 .login-form.shake { animation: croniq-shake .4s; }
 @keyframes croniq-shake {
@@ -541,7 +552,7 @@
   }
 
   /* Tighter vertical rhythm so USERNAME lands above the fold. */
-  .login-form { gap: 14px; }
+  .login-form { gap: 14px; padding: 22px 22px 20px; }
   .login-form-title { font-size: 20px; }
 }
 
