@@ -9,7 +9,7 @@ import {
   useRevokeInvitation,
   useCurrentUser,
 } from '@/api/hooks'
-import { EmptyState, StatusPill, Avatar, CopyBtn } from '@/components/primitives'
+import { BrandMark, EmptyState, StatusPill, Avatar, CopyBtn } from '@/components/primitives'
 import { useConfirm } from '@/components/ui/confirm-dialog'
 import { formatRelative } from '@/lib/utils'
 import type { CreateInvitationResponse, Role } from '@/api/types'
@@ -162,7 +162,7 @@ function UsersTabAdmin() {
                         onClick={invite}
                         disabled={!email.trim() || createInvitation.isPending}
                       >
-                        <Send size={13} /> Send invitation
+                        {createInvitation.isPending ? <BrandMark spinning size={13} /> : <Send size={13} />} Send invitation
                       </button>
                     </>
                   )}

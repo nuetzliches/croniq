@@ -9,13 +9,12 @@ import {
   CalendarDays,
   Settings,
   MoreHorizontal,
-  Settings2,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import clsx from 'clsx'
 import { useDeadLetters, useCurrentUser } from '@/api/hooks'
 import { useSidebarStore } from './sidebar-store'
-import { Avatar } from '@/components/primitives'
+import { Avatar, BrandMark } from '@/components/primitives'
 import { UserMenu } from './UserMenu'
 
 interface NavSpec {
@@ -104,7 +103,7 @@ export function Sidebar() {
         title={collapsed ? 'Expand sidebar' : undefined}
       >
         <span className="gear">
-          <Settings2 size={16} />
+          <BrandMark size={18} />
         </span>
         <span className="name">Croniq</span>
         {!collapsed ? (

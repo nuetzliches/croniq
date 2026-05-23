@@ -36,6 +36,7 @@ import {
   Sparkline,
   CopyBtn,
   Avatar,
+  BrandMark,
 } from '@/components/primitives'
 import type { RunOutcome } from '@/components/primitives'
 import type { AuditEvent, Execution, JobDefinition, TriggerDefinition } from '@/api/types'
@@ -498,7 +499,7 @@ function JobDetailHeader({
           <Pencil size={13} /> Edit
         </button>
         <button type="button" className="btn sm primary" onClick={onTrigger} disabled={triggerPending}>
-          <Play size={13} /> Trigger
+          {triggerPending ? <BrandMark spinning size={13} /> : <Play size={13} />} Trigger
         </button>
         <Link
           to={`/jobs/${encodeURIComponent(job.job_key)}/edit`}

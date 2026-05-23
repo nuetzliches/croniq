@@ -10,7 +10,7 @@ import {
   useTotpConfirm,
   useTotpDisable,
 } from '@/api/hooks'
-import { EmptyState, StatusPill, CopyBtn } from '@/components/primitives'
+import { BrandMark, EmptyState, StatusPill, CopyBtn } from '@/components/primitives'
 import { useConfirm } from '@/components/ui/confirm-dialog'
 import { formatRelative } from '@/lib/utils'
 import type { CreatePatResponse, TotpSetupResponse } from '@/api/types'
@@ -151,7 +151,7 @@ function TotpSection() {
               disabled={!savedAck || code.length !== 6 || confirm.isPending}
               onClick={confirmSetup}
             >
-              <ShieldCheck size={13} /> Enable
+              {confirm.isPending ? <BrandMark spinning size={13} /> : <ShieldCheck size={13} />} Enable
             </button>
           </div>
           {error ? <p className="error" style={{ color: 'var(--error)', fontSize: 12, margin: 0 }}>{error}</p> : null}
@@ -163,7 +163,7 @@ function TotpSection() {
           </p>
           <div className="row" style={{ gap: 6, flexWrap: 'wrap' }}>
             <button type="button" className="btn primary" onClick={startSetup} disabled={setup.isPending}>
-              <ShieldCheck size={13} /> Begin setup
+              {setup.isPending ? <BrandMark spinning size={13} /> : <ShieldCheck size={13} />} Begin setup
             </button>
             <div className="row" style={{ gap: 6, marginLeft: 'auto' }}>
               <input
@@ -182,7 +182,7 @@ function TotpSection() {
                 onClick={disableTotp}
                 title="Disable TOTP (requires current 6-digit code)"
               >
-                <ShieldOff size={13} /> Disable
+                {disable.isPending ? <BrandMark spinning size={13} /> : <ShieldOff size={13} />} Disable
               </button>
             </div>
           </div>
@@ -307,7 +307,7 @@ function PatSection() {
                   <>
                     <Dialog.Close className="btn ghost">Cancel</Dialog.Close>
                     <button type="button" className="btn primary" onClick={issuePat} disabled={!name.trim() || createPat.isPending}>
-                      Issue token
+                      {createPat.isPending ? <BrandMark spinning size={13} /> : null} Issue token
                     </button>
                   </>
                 )}

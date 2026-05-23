@@ -1,14 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router'
-import {
-  Settings2,
-  Lock,
-  Key,
-  Shield,
-  ArrowRight,
-  ExternalLink,
-  Bell,
-} from 'lucide-react'
+import { Lock, Shield, ArrowRight, ExternalLink, Bell } from 'lucide-react'
 import clsx from 'clsx'
 import { useAuthStore } from './store'
 import { apiFetch, apiPost } from '@/api/client'
@@ -19,14 +11,15 @@ import {
   type OidcConfigResponse,
   type TokenResponse,
 } from '@/api/types'
+import { BrandMark } from '@/components/primitives'
 
-type Method = 'password' | 'token' | 'sso'
+type Method = 'password' | 'sso'
 type Step = 'credentials' | 'mfa'
 
 const DOCS_URL = 'https://nuetzliches.github.io/croniq/'
 
 // Hero verb rotation — each verb stays ~3.5s before fading to the next.
-const VERBS = ['recover', 'replay', 'diagnose', 'audit', 'scale']
+const VERBS = ['Recover', 'Replay', 'Diagnose', 'Audit', 'Scale']
 
 // Demo console — types a CLI command at the top, then streams the
 // output that running it would produce. Each entry is one full demo:
@@ -129,7 +122,6 @@ export function LoginPage() {
   const [step, setStep] = useState<Step>('credentials')
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
-  const [token, setToken] = useState('')
   const [mfaToken, setMfaToken] = useState('')
   const [mfaCode, setMfaCode] = useState('')
   const [useRecovery, setUseRecovery] = useState(false)
@@ -222,7 +214,7 @@ export function LoginPage() {
       <div className="login-formwrap">
         <div className={clsx('login-form', shake && 'shake')}>
           <div className="login-mark" aria-hidden>
-            <Settings2 size={18} />
+            <BrandMark size={22} />
           </div>
           {step === 'credentials' ? (
             <>
@@ -231,10 +223,21 @@ export function LoginPage() {
                 Sign in to <span className="mono" style={{ color: 'var(--fg-1)' }}>{window.location.host}</span>
               </p>
 
-              <div className="login-method-tabs" role="tablist" aria-label="Sign-in method">
+              <div
+                className="login-method-tabs"
+                role="tablist"
+                aria-label="Sign-in method"
+                style={{ gridTemplateColumns: 'repeat(2, 1fr)' }}
+              >
                 <LoginTab id="password" current={method} setMethod={setMethod} icon={Lock} label="Password" />
-                <LoginTab id="token" current={method} setMethod={setMethod} icon={Key} label="API token" />
-                <LoginTab id="sso" current={method} setMethod={setMethod} icon={Shield} label="SSO" enabled={oidc?.enabled !== false} />
+                <LoginTab
+                  id="sso"
+                  current={method}
+                  setMethod={setMethod}
+                  icon={Shield}
+                  label="SSO"
+                  enabled={oidc?.enabled !== false}
+                />
               </div>
 
               {method === 'password' ? (
@@ -264,28 +267,6 @@ export function LoginPage() {
                   <SubmitButton loading={loading}>
                     {loading ? 'Signing in…' : 'Sign in'}
                     {loading ? null : <ArrowRight size={14} />}
-                  </SubmitButton>
-                </form>
-              ) : null}
-
-              {method === 'token' ? (
-                <form className="col gap-14" onSubmit={(e) => e.preventDefault()}>
-                  <LoginField
-                    label="API token"
-                    hint="Personal access tokens are for CLI / CI usage. The browser UI requires password or SSO sign-in."
-                  >
-                    <textarea
-                      className="input mono"
-                      rows={3}
-                      placeholder="croniq_pat_…"
-                      value={token}
-                      onChange={(e) => setToken(e.target.value)}
-                      style={{ height: 'auto', padding: 10, fontSize: 12.5, resize: 'none' }}
-                      readOnly
-                    />
-                  </LoginField>
-                  <SubmitButton loading={false} disabled>
-                    <Key size={14} /> Use the CLI with this token
                   </SubmitButton>
                 </form>
               ) : null}
@@ -402,7 +383,7 @@ function LoginStage({ health }: { health: HealthResponse | null }) {
 
       <div className="login-brand">
         <span className="login-mark" aria-hidden>
-          <Settings2 size={18} />
+          <BrandMark size={22} />
         </span>
         <span className="login-name">Croniq</span>
         <span className="row gap-6" style={{ marginLeft: 'auto', color: 'var(--fg-3)', fontSize: 11.5 }}>
@@ -672,7 +653,7 @@ function SubmitButton({
       disabled={loading || disabled}
       style={{ height: 42, fontSize: 14, marginTop: 4, opacity: loading || disabled ? 0.7 : 1 }}
     >
-      {loading ? <span className="login-spinner" /> : null}
+      {loading ? <BrandMark spinning size={14} /> : null}
       {children}
     </button>
   )

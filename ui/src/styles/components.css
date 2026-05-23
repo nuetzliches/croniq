@@ -380,6 +380,16 @@
   border: 2px solid transparent;
 }
 
+/* ── brand mark spinner (logo loading indicator) ───────────── */
+.brand-spin {
+  animation: croniq-brand-spin 0.9s linear infinite;
+  transform-origin: 50% 50%;
+}
+@keyframes croniq-brand-spin {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+
 /* ── tabs ──────────────────────────────────────────────────── */
 .tabs {
   display: flex;

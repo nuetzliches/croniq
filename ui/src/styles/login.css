@@ -401,13 +401,3 @@
   justify-content: center;
 }
 
-.login-spinner {
-  width: 14px;
-  height: 14px;
-  border: 2px solid oklch(1 0 0 / 0.25);
-  border-top-color: white;
-  border-radius: 50%;
-  animation: croniq-spin .6s linear infinite;
-  display: inline-block;
-}
-@keyframes croniq-spin { to { transform: rotate(360deg); } }

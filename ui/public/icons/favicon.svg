@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="100" height="100" role="img" aria-label="Croniq">
+  <defs>
+    <mask id="g">
+      <rect width="100" height="100" fill="white"></rect>
+      <circle cx="76" cy="76" r="12" fill="black"></circle>
+    </mask>
+  </defs>
+  <rect width="100" height="100" rx="20" fill="#6A54DF"></rect>
+  <circle cx="50" cy="50" r="34" fill="none" stroke="#ffffff" stroke-width="5" mask="url(#g)"></circle>
+  <circle cx="76" cy="76" r="7.5" fill="#ffffff"></circle>
+</svg>

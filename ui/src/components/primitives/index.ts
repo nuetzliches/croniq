@@ -1,5 +1,7 @@
 export { Avatar } from './Avatar'
 export type { AvatarProps } from './Avatar'
+export { BrandMark } from './BrandMark'
+export type { BrandMarkProps } from './BrandMark'
 export { CopyBtn } from './CopyBtn'
 export type { CopyBtnProps } from './CopyBtn'
 export { Donut } from './Donut'
