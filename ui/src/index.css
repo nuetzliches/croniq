@@ -1,5 +1,6 @@
 @import "tailwindcss";
 @import "./styles/tokens.css";
+@import "./styles/components.css";
 
 @theme {
   --color-background: #ffffff;
