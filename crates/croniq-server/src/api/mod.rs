@@ -26,7 +26,6 @@ use axum::{
     routing::{delete, get, post, put},
 };
 use chrono::{DateTime, Utc};
-use serde::Serialize;
 use croniq_auth::CallerContext;
 use croniq_auth::context::Scope;
 use croniq_auth::jwt::JwtConfig;
@@ -36,6 +35,7 @@ use croniq_runner::{
     types::{CompleteRequest, HealthResponse, PollRequest, PollResponse},
 };
 use croniq_scheduler::trigger::Trigger;
+use serde::Serialize;
 use tokio::sync::mpsc;
 
 use crate::completion::CompletionEvent;
