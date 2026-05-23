@@ -801,6 +801,155 @@ impl AuthStore for SqliteStore {
             .map_err(map_err)?;
         Ok(count as u64)
     }
+
+    fn invitations_create(&self, invite: &Invitation) -> Result<(), StoreError> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO invitations (invitation_id, email, role, token_hash, invited_by, expires_at, accepted_at, revoked_at, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            params![
+                invite.invitation_id,
+                invite.email,
+                invite.role.as_str(),
+                invite.token_hash,
+                invite.invited_by,
+                dt_to_sql(&invite.expires_at),
+                opt_dt_to_sql(&invite.accepted_at),
+                opt_dt_to_sql(&invite.revoked_at),
+                dt_to_sql(&invite.created_at),
+            ],
+        ).map_err(map_err)?;
+        Ok(())
+    }
+
+    fn invitations_get(&self, invitation_id: &str) -> Result<Option<Invitation>, StoreError> {
+        let conn = self.conn.lock().unwrap();
+        conn.prepare("SELECT invitation_id, email, role, token_hash, invited_by, expires_at, accepted_at, revoked_at, created_at FROM invitations WHERE invitation_id = ?1")
+            .map_err(map_err)?
+            .query_row(params![invitation_id], map_invitation_row)
+            .optional()
+            .map_err(map_err)
+    }
+
+    fn invitations_get_by_token_hash(
+        &self,
+        token_hash: &str,
+    ) -> Result<Option<Invitation>, StoreError> {
+        let conn = self.conn.lock().unwrap();
+        conn.prepare("SELECT invitation_id, email, role, token_hash, invited_by, expires_at, accepted_at, revoked_at, created_at FROM invitations WHERE token_hash = ?1")
+            .map_err(map_err)?
+            .query_row(params![token_hash], map_invitation_row)
+            .optional()
+            .map_err(map_err)
+    }
+
+    fn invitations_list(&self) -> Result<Vec<Invitation>, StoreError> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn
+            .prepare("SELECT invitation_id, email, role, token_hash, invited_by, expires_at, accepted_at, revoked_at, created_at FROM invitations ORDER BY created_at DESC")
+            .map_err(map_err)?;
+        let rows = stmt.query_map([], map_invitation_row).map_err(map_err)?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(map_err)
+    }
+
+    fn invitations_mark_accepted(
+        &self,
+        invitation_id: &str,
+        at: DateTime<Utc>,
+    ) -> Result<(), StoreError> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE invitations SET accepted_at = ?1 WHERE invitation_id = ?2",
+            params![dt_to_sql(&at), invitation_id],
+        )
+        .map_err(map_err)?;
+        Ok(())
+    }
+
+    fn invitations_revoke(&self, invitation_id: &str, at: DateTime<Utc>) -> Result<(), StoreError> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE invitations SET revoked_at = ?1 WHERE invitation_id = ?2",
+            params![dt_to_sql(&at), invitation_id],
+        )
+        .map_err(map_err)?;
+        Ok(())
+    }
+
+    fn password_resets_create(&self, reset: &PasswordReset) -> Result<(), StoreError> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO password_resets (reset_id, user_id, token_hash, expires_at, used_at, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![
+                reset.reset_id,
+                reset.user_id,
+                reset.token_hash,
+                dt_to_sql(&reset.expires_at),
+                opt_dt_to_sql(&reset.used_at),
+                dt_to_sql(&reset.created_at),
+            ],
+        ).map_err(map_err)?;
+        Ok(())
+    }
+
+    fn password_resets_get_by_token_hash(
+        &self,
+        token_hash: &str,
+    ) -> Result<Option<PasswordReset>, StoreError> {
+        let conn = self.conn.lock().unwrap();
+        conn.prepare("SELECT reset_id, user_id, token_hash, expires_at, used_at, created_at FROM password_resets WHERE token_hash = ?1")
+            .map_err(map_err)?
+            .query_row(params![token_hash], |row| {
+                Ok(PasswordReset {
+                    reset_id: row.get(0)?,
+                    user_id: row.get(1)?,
+                    token_hash: row.get(2)?,
+                    expires_at: sql_to_dt(&row.get::<_, String>(3)?),
+                    used_at: sql_to_opt_dt(row.get(4)?),
+                    created_at: sql_to_dt(&row.get::<_, String>(5)?),
+                })
+            })
+            .optional()
+            .map_err(map_err)
+    }
+
+    fn password_resets_mark_used(
+        &self,
+        reset_id: &str,
+        at: DateTime<Utc>,
+    ) -> Result<(), StoreError> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE password_resets SET used_at = ?1 WHERE reset_id = ?2",
+            params![dt_to_sql(&at), reset_id],
+        )
+        .map_err(map_err)?;
+        Ok(())
+    }
+}
+
+fn map_invitation_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Invitation> {
+    use std::str::FromStr;
+    let role_str: String = row.get(2)?;
+    let role = Role::from_str(&role_str).map_err(|_| {
+        rusqlite::Error::FromSqlConversionFailure(
+            2,
+            rusqlite::types::Type::Text,
+            format!("unknown role: {role_str}").into(),
+        )
+    })?;
+    Ok(Invitation {
+        invitation_id: row.get(0)?,
+        email: row.get(1)?,
+        role,
+        token_hash: row.get(3)?,
+        invited_by: row.get(4)?,
+        expires_at: sql_to_dt(&row.get::<_, String>(5)?),
+        accepted_at: sql_to_opt_dt(row.get(6)?),
+        revoked_at: sql_to_opt_dt(row.get(7)?),
+        created_at: sql_to_dt(&row.get::<_, String>(8)?),
+    })
 }
 
 fn map_user_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<User> {

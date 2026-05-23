@@ -120,6 +120,10 @@ impl Scope {
     // Identity / auth management — privileged
     pub const API_CLIENTS_ADMIN: &str = "api-clients:admin";
     pub const API_KEYS_ADMIN: &str = "api-keys:admin";
+    /// User management: create/list/update/delete /v1/users + issue
+    /// invitations. Implied by `admin` wildcard. Operators and viewers
+    /// never get this even via role default scopes.
+    pub const USERS_ADMIN: &str = "users:admin";
 
     // HTTP MCP transport (Streamable-HTTP at /mcp)
     pub const MCP_READ: &str = "mcp:read";

@@ -30,6 +30,10 @@ const MIGRATIONS: &[(&str, &str)] = &[
         include_str!("010_execution_log_seq.sql"),
     ),
     ("011_users", include_str!("011_users.sql")),
+    (
+        "012_invitations_and_resets",
+        include_str!("012_invitations_and_resets.sql"),
+    ),
 ];
 
 /// Run all pending migrations.

@@ -916,3 +916,157 @@ fn users_get_by_id_unknown_returns_none() {
     let store = create_memory_store().unwrap();
     assert!(store.users_get_by_id("does-not-exist").unwrap().is_none());
 }
+
+// ─── Invitations + Password Resets ───
+
+fn seed_admin(store: &impl AuthStore) -> User {
+    let u = make_user("admin-issuer", Role::Admin);
+    store.users_create(&u).unwrap();
+    u
+}
+
+fn make_invitation(invited_by: &str, email: &str, role: Role) -> Invitation {
+    Invitation {
+        invitation_id: Uuid::new_v4().to_string(),
+        email: email.into(),
+        role,
+        token_hash: format!("hash-{}", Uuid::new_v4()),
+        invited_by: invited_by.into(),
+        expires_at: utc(2026, 6, 1, 0, 0),
+        accepted_at: None,
+        revoked_at: None,
+        created_at: now(),
+    }
+}
+
+#[test]
+fn invitation_create_and_lookup_round_trip() {
+    let store = create_memory_store().unwrap();
+    let admin = seed_admin(&store);
+    let inv = make_invitation(&admin.user_id, "bob@example.org", Role::Operator);
+    store.invitations_create(&inv).unwrap();
+
+    let by_id = store.invitations_get(&inv.invitation_id).unwrap().unwrap();
+    let by_hash = store
+        .invitations_get_by_token_hash(&inv.token_hash)
+        .unwrap()
+        .unwrap();
+    assert_eq!(by_id.email, "bob@example.org");
+    assert_eq!(by_id.role, Role::Operator);
+    assert_eq!(by_hash.invitation_id, inv.invitation_id);
+    assert!(by_id.accepted_at.is_none());
+}
+
+#[test]
+fn invitations_list_ordered_by_recency() {
+    let store = create_memory_store().unwrap();
+    let admin = seed_admin(&store);
+
+    let mut older = make_invitation(&admin.user_id, "a@e.org", Role::Viewer);
+    older.created_at = utc(2026, 5, 1, 0, 0);
+    let mut newer = make_invitation(&admin.user_id, "b@e.org", Role::Viewer);
+    newer.created_at = utc(2026, 5, 20, 0, 0);
+
+    store.invitations_create(&older).unwrap();
+    store.invitations_create(&newer).unwrap();
+
+    let list = store.invitations_list().unwrap();
+    assert_eq!(list.len(), 2);
+    assert_eq!(list[0].email, "b@e.org");
+    assert_eq!(list[1].email, "a@e.org");
+}
+
+#[test]
+fn invitations_mark_accepted_persists() {
+    let store = create_memory_store().unwrap();
+    let admin = seed_admin(&store);
+    let inv = make_invitation(&admin.user_id, "x@e.org", Role::Viewer);
+    store.invitations_create(&inv).unwrap();
+
+    let when = utc(2026, 5, 23, 14, 0);
+    store
+        .invitations_mark_accepted(&inv.invitation_id, when)
+        .unwrap();
+
+    let loaded = store.invitations_get(&inv.invitation_id).unwrap().unwrap();
+    assert_eq!(loaded.accepted_at, Some(when));
+}
+
+#[test]
+fn invitations_revoke_persists() {
+    let store = create_memory_store().unwrap();
+    let admin = seed_admin(&store);
+    let inv = make_invitation(&admin.user_id, "x@e.org", Role::Viewer);
+    store.invitations_create(&inv).unwrap();
+
+    let when = utc(2026, 5, 23, 15, 0);
+    store.invitations_revoke(&inv.invitation_id, when).unwrap();
+
+    let loaded = store.invitations_get(&inv.invitation_id).unwrap().unwrap();
+    assert_eq!(loaded.revoked_at, Some(when));
+    assert!(loaded.accepted_at.is_none());
+}
+
+#[test]
+fn password_reset_create_and_get_round_trip() {
+    let store = create_memory_store().unwrap();
+    let user = make_user("alex", Role::Operator);
+    store.users_create(&user).unwrap();
+
+    let reset = PasswordReset {
+        reset_id: Uuid::new_v4().to_string(),
+        user_id: user.user_id.clone(),
+        token_hash: "reset-hash-abc".into(),
+        expires_at: utc(2026, 5, 24, 0, 0),
+        used_at: None,
+        created_at: now(),
+    };
+    store.password_resets_create(&reset).unwrap();
+
+    let loaded = store
+        .password_resets_get_by_token_hash("reset-hash-abc")
+        .unwrap()
+        .unwrap();
+    assert_eq!(loaded.reset_id, reset.reset_id);
+    assert_eq!(loaded.user_id, user.user_id);
+    assert!(loaded.used_at.is_none());
+}
+
+#[test]
+fn password_resets_mark_used_persists() {
+    let store = create_memory_store().unwrap();
+    let user = make_user("alex", Role::Operator);
+    store.users_create(&user).unwrap();
+
+    let reset = PasswordReset {
+        reset_id: Uuid::new_v4().to_string(),
+        user_id: user.user_id.clone(),
+        token_hash: "reset-hash-xyz".into(),
+        expires_at: utc(2026, 5, 24, 0, 0),
+        used_at: None,
+        created_at: now(),
+    };
+    store.password_resets_create(&reset).unwrap();
+
+    let when = utc(2026, 5, 23, 16, 0);
+    store
+        .password_resets_mark_used(&reset.reset_id, when)
+        .unwrap();
+
+    let loaded = store
+        .password_resets_get_by_token_hash("reset-hash-xyz")
+        .unwrap()
+        .unwrap();
+    assert_eq!(loaded.used_at, Some(when));
+}
+
+#[test]
+fn password_resets_unknown_token_returns_none() {
+    let store = create_memory_store().unwrap();
+    assert!(
+        store
+            .password_resets_get_by_token_hash("nope")
+            .unwrap()
+            .is_none()
+    );
+}

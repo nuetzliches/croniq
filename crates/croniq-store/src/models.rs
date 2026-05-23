@@ -261,6 +261,37 @@ impl std::str::FromStr for Role {
     }
 }
 
+/// An outstanding invitation. The raw token is delivered once (via email
+/// when SMTP is configured, otherwise as the `token` field in the create
+/// response). Only the SHA-256 hash is persisted.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Invitation {
+    pub invitation_id: String,
+    pub email: String,
+    pub role: Role,
+    /// SHA-256 hash of the raw invitation token.
+    pub token_hash: String,
+    /// `users.user_id` of the admin who issued the invite.
+    pub invited_by: String,
+    pub expires_at: DateTime<Utc>,
+    pub accepted_at: Option<DateTime<Utc>>,
+    pub revoked_at: Option<DateTime<Utc>>,
+    pub created_at: DateTime<Utc>,
+}
+
+/// A pending password-reset token. Single-use; `used_at` is set on first
+/// successful consumption.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PasswordReset {
+    pub reset_id: String,
+    pub user_id: String,
+    /// SHA-256 hash of the raw reset token.
+    pub token_hash: String,
+    pub expires_at: DateTime<Utc>,
+    pub used_at: Option<DateTime<Utc>>,
+    pub created_at: DateTime<Utc>,
+}
+
 // ─── Job Definition ───
 
 /// A persisted job definition (distinct from the runtime JobState).

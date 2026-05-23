@@ -197,6 +197,33 @@ pub trait AuthStore {
     /// Count active users with role=admin. Used by user_update / user_delete to
     /// prevent the last admin from being demoted or removed (avoids lock-out).
     fn users_count_active_admins(&self) -> Result<u64, StoreError>;
+
+    // Invitations — admin issues, user redeems with a raw token.
+    fn invitations_create(&self, invite: &Invitation) -> Result<(), StoreError>;
+    fn invitations_get(&self, invitation_id: &str) -> Result<Option<Invitation>, StoreError>;
+    fn invitations_get_by_token_hash(
+        &self,
+        token_hash: &str,
+    ) -> Result<Option<Invitation>, StoreError>;
+    fn invitations_list(&self) -> Result<Vec<Invitation>, StoreError>;
+    fn invitations_mark_accepted(
+        &self,
+        invitation_id: &str,
+        at: DateTime<Utc>,
+    ) -> Result<(), StoreError>;
+    fn invitations_revoke(&self, invitation_id: &str, at: DateTime<Utc>) -> Result<(), StoreError>;
+
+    // Password resets — same hash-on-create / raw-token-on-redeem pattern.
+    fn password_resets_create(&self, reset: &PasswordReset) -> Result<(), StoreError>;
+    fn password_resets_get_by_token_hash(
+        &self,
+        token_hash: &str,
+    ) -> Result<Option<PasswordReset>, StoreError>;
+    fn password_resets_mark_used(
+        &self,
+        reset_id: &str,
+        at: DateTime<Utc>,
+    ) -> Result<(), StoreError>;
 }
 
 /// Job definition persistence (CRUD for job definitions, distinct from runtime JobState).

@@ -8,6 +8,35 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **User-CRUD + Invitations + Password-Reset (PR-A2).** New endpoints
+  build on the role model from PR-A1 so a workspace admin can grow the
+  team beyond the seeded admin user:
+  - `GET/POST /v1/users`, `GET/PATCH/DELETE /v1/users/{id}` — admin-only.
+    PATCH and DELETE refuse with 409 Conflict when the operation would
+    leave zero active admins (role-demotion, deactivation, deletion).
+  - `GET /v1/users/me`, `PATCH /v1/users/me`, `POST /v1/users/me/change-password`
+    — self-only (display name + email + own password).
+  - `POST/GET /v1/invitations`, `DELETE /v1/invitations/{id}` (admin),
+    `POST /v1/invitations/accept` (public, body `{token, username, password}`).
+    Invitations carry a single-use SHA-256-hashed token; the raw token
+    is returned **once** in the create response together with the
+    pre-built `accept_url`. Expiry: 7 days.
+  - `POST /v1/auth/password-reset/request` (always returns 202 to avoid
+    user-enumeration), `POST /v1/auth/password-reset/confirm`. Reset
+    tokens live 1 hour, single-use.
+  - New `users:admin` scope. `admin` wildcard still implies it.
+  - New migration `012_invitations_and_resets.sql`.
+  ([`crates/croniq-server/src/api/users.rs`](crates/croniq-server/src/api/users.rs),
+  [`invitations.rs`](crates/croniq-server/src/api/invitations.rs),
+  [`password_reset.rs`](crates/croniq-server/src/api/password_reset.rs))
+
+- **`EmailSender` trait with `NoopSender` default.** Outbound mail is
+  abstracted behind a trait so PR-A6 can drop in an `lettre`-backed
+  `SmtpSender` behind the `smtp` cargo feature. Until then, every
+  invite + reset endpoint returns the token URL in the API response
+  (and logs an audit line) so admins can deliver it out-of-band.
+  ([`crates/croniq-server/src/email.rs`](crates/croniq-server/src/email.rs))
+
 - **Multi-user identity model with role-based scopes** — new `users` table
   (migration 011) splits identity from credentials. Three roles map to
   pre-defined scope sets via `croniq_auth::default_scopes_for_role`:

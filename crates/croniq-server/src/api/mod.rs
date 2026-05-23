@@ -7,10 +7,13 @@ pub mod calendars;
 pub mod dashboard;
 pub mod dead_letters;
 pub mod execution_logs;
+pub mod invitations;
 pub mod jobs;
+pub mod password_reset;
 pub mod runners_sse;
 pub mod schedules;
 pub mod tags;
+pub mod users;
 pub mod work;
 
 use std::collections::HashMap;
@@ -38,6 +41,7 @@ use croniq_scheduler::trigger::Trigger;
 use tokio::sync::mpsc;
 
 use crate::completion::CompletionEvent;
+use crate::email::EmailSender;
 use crate::reload::ReloadCounters;
 use crate::scheduler::SchedulerCommand;
 use crate::store::DynStore;
@@ -85,6 +89,14 @@ pub struct ServerState {
     /// Counters for `croniq_config_reload_total`, incremented by both the
     /// file-watcher reload path and the admin reload endpoint.
     pub reload_counters: Arc<ReloadCounters>,
+    /// Outbound email sender — used for invitations and password resets.
+    /// Defaults to `NoopSender` (logs but doesn't deliver); SMTP backend
+    /// lands in PR-A6 behind the `smtp` cargo feature.
+    pub email_sender: Arc<dyn EmailSender>,
+    /// Public base URL used to build invite + reset links. Read from
+    /// `CRONIQ_APP_URL` at startup; defaults to `http://localhost:4000`
+    /// for fresh installs. The admin can override per environment.
+    pub app_base_url: String,
 }
 
 impl ServerState {
@@ -105,6 +117,8 @@ impl ServerState {
             policy_dsl_adopt_on_mutate: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             config_path: None,
             reload_counters: ReloadCounters::new(),
+            email_sender: crate::email::default_sender(),
+            app_base_url: "http://localhost:4000".into(),
         })
     }
 
@@ -128,6 +142,8 @@ impl ServerState {
             policy_dsl_adopt_on_mutate: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             config_path: None,
             reload_counters: ReloadCounters::new(),
+            email_sender: crate::email::default_sender(),
+            app_base_url: "http://localhost:4000".into(),
         })
     }
 
@@ -150,6 +166,8 @@ impl ServerState {
             policy_dsl_adopt_on_mutate: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             config_path: None,
             reload_counters: ReloadCounters::new(),
+            email_sender: crate::email::default_sender(),
+            app_base_url: "http://localhost:4000".into(),
         })
     }
 }
@@ -256,17 +274,51 @@ pub fn server_router(state: Arc<ServerState>) -> Router {
             "/v1/api-keys/{id}",
             delete(auth_endpoints::handle_revoke_api_key),
         )
+        // Users
+        .route(
+            "/v1/users",
+            get(users::handle_list).post(users::handle_create),
+        )
+        .route(
+            "/v1/users/me",
+            get(users::handle_get_me).patch(users::handle_update_me),
+        )
+        .route(
+            "/v1/users/me/change-password",
+            post(users::handle_change_password),
+        )
+        .route(
+            "/v1/users/{id}",
+            get(users::handle_get)
+                .patch(users::handle_update)
+                .delete(users::handle_delete),
+        )
+        // Invitations
+        .route(
+            "/v1/invitations",
+            get(invitations::handle_list).post(invitations::handle_create),
+        )
+        .route("/v1/invitations/{id}", delete(invitations::handle_revoke))
         .route_layer(middleware::from_fn_with_state(
             Arc::clone(&state),
             auth_middleware::require_auth,
         ));
 
-    // Public routes (health + auth login/refresh/logout)
+    // Public routes (health + auth login/refresh/logout + invite-accept + password-reset)
     let public = Router::new()
         .route("/health", get(handle_health))
         .route("/v1/auth/login", post(auth_endpoints::handle_login))
         .route("/v1/auth/refresh", post(auth_endpoints::handle_refresh))
-        .route("/v1/auth/logout", post(auth_endpoints::handle_logout));
+        .route("/v1/auth/logout", post(auth_endpoints::handle_logout))
+        .route(
+            "/v1/auth/password-reset/request",
+            post(password_reset::handle_request),
+        )
+        .route(
+            "/v1/auth/password-reset/confirm",
+            post(password_reset::handle_confirm),
+        )
+        .route("/v1/invitations/accept", post(invitations::handle_accept));
 
     let cors = tower_http::cors::CorsLayer::permissive();
 
@@ -821,6 +873,8 @@ mod tests {
             policy_dsl_adopt_on_mutate: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             config_path: None,
             reload_counters: ReloadCounters::new(),
+            email_sender: crate::email::default_sender(),
+            app_base_url: "http://localhost:4000".into(),
         });
         (state, rx)
     }
@@ -988,6 +1042,8 @@ mod tests {
             policy_dsl_adopt_on_mutate: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             config_path: None,
             reload_counters: ReloadCounters::new(),
+            email_sender: crate::email::default_sender(),
+            app_base_url: "http://localhost:4000".into(),
         });
         let app = server_router(Arc::clone(&state));
 
@@ -1053,6 +1109,8 @@ mod tests {
             policy_dsl_adopt_on_mutate: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             config_path: None,
             reload_counters: ReloadCounters::new(),
+            email_sender: crate::email::default_sender(),
+            app_base_url: "http://localhost:4000".into(),
         });
         let app = server_router(Arc::clone(&state));
 
