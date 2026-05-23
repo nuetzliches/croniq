@@ -41,16 +41,19 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Install check-jsonschema
+        # `python-jsonschema/check-jsonschema` is a Python library, not a
+        # GitHub Action (no action.yml in the repo). Install via pip with
+        # a pinned version — the runner image already ships Python.
+        run: pip install --user check-jsonschema==0.37.2
       - name: Validate every case against case-schema.json
-        # check-jsonschema speaks YAML natively. If a case file mistypes a
-        # field or adds an unknown key, this fails the build before the
-        # .NET runner tries to deserialise it into a CaseSpec. Cheap,
-        # ~3s, and catches the most common authoring error class.
-        uses: python-jsonschema/check-jsonschema@943377262562a12b57292fc98fabd7dbf81451fe # 0.37.2
-        with:
-          schemafile: sdks/conformance/schema/case-schema.json
-          args: --verbose
-          files: sdks/conformance/cases/*.yaml
+        # Catches typos / unknown keys / missing required fields before
+        # the .NET runner deserialises a case into a CaseSpec. Cheap,
+        # ~3s, and produces actionable JSON-Pointer errors.
+        run: |
+          check-jsonschema --verbose \
+            --schemafile sdks/conformance/schema/case-schema.json \
+            sdks/conformance/cases/*.yaml
 
   build:
     name: Build & test (${{ matrix.os }})
