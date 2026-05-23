@@ -40,6 +40,12 @@
       "items": { "$ref": "#/$defs/scriptEntry" }
     },
 
+    "shutdown_after_ms": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Binding-specific directive: cancel the runner this many ms after RunAsync starts. Useful for drain/shutdown cases. Bindings without this capability should skip such cases."
+    },
+
     "expectations": {
       "type": "object",
       "additionalProperties": false,

@@ -5,12 +5,13 @@ on:
     branches: [main]
     paths:
       - 'sdks/dotnet/**'
+      - 'sdks/conformance/**'
       - 'openapi.yaml'
       - '.github/workflows/dotnet-sdk-ci.yml'
   pull_request:
-    # No paths-ignore here — if this becomes a required check under branch
-    # protection, path-based skipping makes the requirement unsatisfiable.
-    # See ci.yml for the same pattern.
+    # NB: No `paths-ignore` for the same reason as `ci.yml` — once a job
+    # here becomes a required status check, path-based skipping makes the
+    # requirement unsatisfiable (see ci.yml #98 incident note).
     branches: [main]
 
 concurrency:
@@ -21,13 +22,29 @@ permissions:
   contents: read
 
 env:
-  DOTNET_NOLOGO: true
-  DOTNET_CLI_TELEMETRY_OPTOUT: true
-  DOTNET_SKIP_FIRST_TIME_EXPERIENCE: true
+  DOTNET_NOLOGO: 'true'
+  DOTNET_CLI_TELEMETRY_OPTOUT: 'true'
+  DOTNET_SKIP_FIRST_TIME_EXPERIENCE: 'true'
   NUGET_XMLDOC_MODE: skip
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
 
 jobs:
+  schema:
+    name: Conformance YAML schema
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Validate every case against case-schema.json
+        # check-jsonschema speaks YAML natively. If a case file mistypes a
+        # field or adds an unknown key, this fails the build before the
+        # .NET runner tries to deserialise it into a CaseSpec. Cheap,
+        # ~3s, and catches the most common authoring error class.
+        uses: python-jsonschema/check-jsonschema@943377262562a12b57292fc98fabd7dbf81451fe # 0.37.2
+        with:
+          schemafile: sdks/conformance/schema/case-schema.json
+          args: --verbose
+          files: sdks/conformance/cases/*.yaml
+
   build:
     name: Build & test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
@@ -37,41 +54,99 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # OS-only matrix — `dotnet build` resolves both TFMs
+        # (net8.0;net10.0) in a single invocation via the 10 SDK's
+        # targeting packs. A separate framework axis would just re-run
+        # the same restore.
         os: [ubuntu-latest, windows-latest, macos-latest]
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           fetch-depth: 0  # MinVer needs full tag history
       - name: Setup .NET (10 SDK pinned via global.json)
-        uses: actions/setup-dotnet@v4
+        uses: actions/setup-dotnet@c2fa09f4bde5ebb9d1777cf28262a3eb3db3ced7 # v5.2.0
         with:
           global-json-file: sdks/dotnet/global.json
       - name: Setup .NET 8 runtime (for net8.0 test target)
-        uses: actions/setup-dotnet@v4
+        uses: actions/setup-dotnet@c2fa09f4bde5ebb9d1777cf28262a3eb3db3ced7 # v5.2.0
         with:
           dotnet-version: '8.0.x'
-      - name: Cache NuGet
-        uses: actions/cache@v4
+      - name: Cache NuGet packages
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
         with:
           path: ~/.nuget/packages
-          key: ${{ runner.os }}-nuget-${{ hashFiles('sdks/dotnet/**/*.csproj', 'sdks/dotnet/Directory.Packages.props') }}
+          key: ${{ runner.os }}-nuget-${{ hashFiles('sdks/dotnet/Directory.Packages.props', 'sdks/dotnet/**/*.csproj') }}
           restore-keys: ${{ runner.os }}-nuget-
       - name: Restore
-        run: dotnet restore
+        run: dotnet restore Croniq.Runner.Sdk.slnx
+      - name: Format check
+        # Closest analogue to `cargo fmt --check`. Kept separate from
+        # build so a formatting nit doesn't mask a compile error.
+        run: dotnet format Croniq.Runner.Sdk.slnx --verify-no-changes --severity warn
       - name: Build
-        run: dotnet build --configuration Release --no-restore
+        run: dotnet build Croniq.Runner.Sdk.slnx --configuration Release --no-restore
       - name: Test (both TFMs)
         run: |
-          dotnet test --configuration Release --no-build \
+          dotnet test Croniq.Runner.Sdk.slnx --configuration Release --no-build \
             --logger "trx;LogFileName=test-results-${{ matrix.os }}.trx" \
             --collect:"XPlat Code Coverage" \
             --results-directory TestResults/
       - name: Upload test results
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: test-results-${{ matrix.os }}
           path: sdks/dotnet/TestResults/
+          if-no-files-found: warn
+          retention-days: 7
+
+  conformance:
+    # Runs every conformance YAML against the .NET binding. Depends on
+    # `schema` so a malformed case never produces a confusing C# test
+    # failure first; the schema error is the more actionable signal.
+    #
+    # Linux-only — the suite is wire-level and OS-agnostic. The matrix
+    # in `build` covers cross-platform compile / unit-test concerns.
+    name: Conformance suite
+    runs-on: ubuntu-latest
+    needs: [schema]
+    defaults:
+      run:
+        working-directory: sdks/dotnet
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Setup .NET (10 SDK)
+        uses: actions/setup-dotnet@c2fa09f4bde5ebb9d1777cf28262a3eb3db3ced7 # v5.2.0
+        with:
+          global-json-file: sdks/dotnet/global.json
+      - name: Cache NuGet packages
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: ~/.nuget/packages
+          key: ${{ runner.os }}-nuget-${{ hashFiles('sdks/dotnet/Directory.Packages.props', 'sdks/dotnet/**/*.csproj') }}
+          restore-keys: ${{ runner.os }}-nuget-
+      - name: Restore (conformance project)
+        run: dotnet restore tests/Croniq.Runner.Sdk.Conformance.Tests/Croniq.Runner.Sdk.Conformance.Tests.csproj
+      - name: Build
+        run: dotnet build tests/Croniq.Runner.Sdk.Conformance.Tests/Croniq.Runner.Sdk.Conformance.Tests.csproj --configuration Release --no-restore
+      - name: Run conformance suite
+        # net10.0 only — the wire behaviour we're testing is identical
+        # across TFMs and the test harness setup (WireMock.Net) doesn't
+        # benefit from re-running on net8.0.
+        run: |
+          dotnet test tests/Croniq.Runner.Sdk.Conformance.Tests/Croniq.Runner.Sdk.Conformance.Tests.csproj \
+            --configuration Release --no-build --framework net10.0 \
+            --logger "console;verbosity=normal" \
+            --logger "trx;LogFileName=conformance.trx" \
+            --results-directory TestResults
+      - name: Upload conformance test results
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: conformance-results
+          path: sdks/dotnet/TestResults/
+          if-no-files-found: warn
+          retention-days: 7
 
   pack-smoke:
     name: Pack smoke
@@ -83,14 +158,20 @@ jobs:
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
-          fetch-depth: 0
-      - uses: actions/setup-dotnet@v4
+          fetch-depth: 0  # MinVer needs full tag history
+      - uses: actions/setup-dotnet@c2fa09f4bde5ebb9d1777cf28262a3eb3db3ced7 # v5.2.0
         with:
           global-json-file: sdks/dotnet/global.json
+      - name: Cache NuGet packages
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: ~/.nuget/packages
+          key: ${{ runner.os }}-nuget-${{ hashFiles('sdks/dotnet/Directory.Packages.props', 'sdks/dotnet/**/*.csproj') }}
+          restore-keys: ${{ runner.os }}-nuget-
       - name: Restore
-        run: dotnet restore
+        run: dotnet restore Croniq.Runner.Sdk.slnx
       - name: Pack
-        run: dotnet pack --configuration Release --output ./artifacts
+        run: dotnet pack Croniq.Runner.Sdk.slnx --configuration Release --output ./artifacts
       - name: Validate package contents
         run: |
           ls -la artifacts/
@@ -98,7 +179,9 @@ jobs:
             echo "=== $nupkg ==="
             unzip -l "$nupkg" | grep -E "(README|icon|nuspec)" || true
           done
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: nupkg-smoke
           path: sdks/dotnet/artifacts/
+          if-no-files-found: error
+          retention-days: 7
