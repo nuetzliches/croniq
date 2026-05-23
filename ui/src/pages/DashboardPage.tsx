@@ -1,266 +1,386 @@
+import { useMemo } from 'react'
 import { Link } from 'react-router'
-import { Fragment, useRef, useEffect, useState } from 'react'
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell } from 'recharts'
-import { Activity, Cpu, TriangleAlert, CheckCircle, Clock } from 'lucide-react'
-import { useHealth, useExecutions, useDeadLetters, useForecast } from '@/api/hooks'
-import { StatCard } from '@/components/ui/stat-card'
-import { Badge } from '@/components/ui/badge'
-import { stateVariant } from '@/components/ui/badge-variants'
-import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
-import { Spinner } from '@/components/ui/spinner'
-import { EmptyState } from '@/components/ui/empty-state'
-import { RelativeTime } from '@/components/ui/relative-time'
+import { ArrowUpRight, Cpu, Activity, BarChart2 } from 'lucide-react'
+import {
+  useHealth,
+  useJobs,
+  useThroughput,
+  useFailureHeatmap,
+  useAuditEvents,
+  useRunners,
+  useDeadLetters,
+} from '@/api/hooks'
+import {
+  KPICard,
+  Sparkline,
+  Donut,
+  EmptyState,
+  StatusPill,
+  HeatCell,
+} from '@/components/primitives'
 import { formatRelative } from '@/lib/utils'
+import type { AuditEvent, ThroughputBucket, RunnerSummary } from '@/api/types'
 
-// If the most recent execution is older than this, the feed is treated
-// as stale and a banner appears. Five minutes catches "all runners are
-// down" without false-firing during a normal between-fire gap on a
-// 1-min job.
-const STALE_THRESHOLD_MS = 5 * 60_000
-
-// Inline a divider in the feed when two adjacent rows are this far
-// apart. Otherwise a multi-hour silence between two clusters reads as
-// continuous activity ("12s ago, 4h ago, 5h ago…") with no visual
-// break.
-const GAP_THRESHOLD_MS = 30 * 60_000
-
-/// Compact "X minutes / hours / days" label for a millisecond gap. Used
-/// for the silence divider in the activity feed; deliberately coarser
-/// than `formatRelative` so e.g. "12m 34s" rounds to "12m".
-function formatGap(ms: number): string {
-  const sec = Math.floor(ms / 1000)
-  if (sec < 60) return `${sec}s`
-  if (sec < 3600) return `${Math.floor(sec / 60)}m`
-  if (sec < 86400) return `${Math.floor(sec / 3600)}h`
-  return `${Math.floor(sec / 86400)}d`
+const AUDIT_ICON_TONES: Record<string, 'success' | 'warn' | 'error' | 'info' | 'accent'> = {
+  'auth.login_success': 'info',
+  'auth.login_failed': 'warn',
+  'job.create': 'accent',
+  'job.update': 'accent',
+  'job.delete': 'error',
+  'job.trigger': 'success',
+  'execution.complete': 'success',
+  'execution.fail': 'error',
 }
 
-function QueueGauge({ value }: { value: number }) {
-  const max = Math.max(value, 10)
-  const pct = Math.min(value / max, 1)
-  const r = 28, cx = 36, cy = 36, circ = 2 * Math.PI * r
-  const fill = circ * pct
-  const color = value === 0 ? 'var(--color-status-ok-fg)' : value < 5 ? 'var(--color-status-warn-fg)' : 'var(--color-status-err-fg)'
-  return (
-    <svg width="72" height="72" aria-label={`Queue depth: ${value} jobs`} role="img">
-      <circle cx={cx} cy={cy} r={r} fill="none" stroke="var(--color-border)" strokeWidth="5" />
-      <circle cx={cx} cy={cy} r={r} fill="none" stroke={color} strokeWidth="5"
-        strokeDasharray={`${fill} ${circ}`} strokeLinecap="round"
-        transform={`rotate(-90 ${cx} ${cy})`} />
-      <text x={cx} y={cy} textAnchor="middle" dominantBaseline="middle"
-        fontSize="13" fontWeight="bold" fill="currentColor">{value}</text>
-    </svg>
-  )
+function auditLabel(a: AuditEvent): string {
+  const verb = a.action.replace(/_/g, ' ')
+  if (a.target_type === 'job' && a.target_id) return `${verb} → ${a.target_id}`
+  return verb
 }
 
 export function DashboardPage() {
   const health = useHealth()
-  const executions = useExecutions({ limit: 20 })
-  const execStats = useExecutions({ limit: 100 })
+  const jobs = useJobs()
+  const runners = useRunners()
   const deadLetters = useDeadLetters()
-  const forecast = useForecast(120)
-  const feedRef = useRef<HTMLDivElement>(null)
+  const throughput = useThroughput('24h')
+  const heatmap = useFailureHeatmap(7)
+  const audit = useAuditEvents({ limit: 12 })
 
-  const h = health.data
-  const dlCount = deadLetters.data?.length ?? 0
+  const okSeries = useMemo(
+    () => (throughput.data?.buckets ?? []).map((b) => b.ok),
+    [throughput.data],
+  )
+  const errSeries = useMemo(
+    () => (throughput.data?.buckets ?? []).map((b) => b.err),
+    [throughput.data],
+  )
+  const totalOk24h = okSeries.reduce((a, b) => a + b, 0)
+  const totalErr24h = errSeries.reduce((a, b) => a + b, 0)
+  const total = totalOk24h + totalErr24h
+  const successRate = total === 0 ? null : (totalOk24h / total) * 100
 
-  const terminal = execStats.data?.filter(e => ['completed', 'failed', 'dead'].includes(e.state)) ?? []
-  const successRate = terminal.length > 0
-    ? Math.round(terminal.filter(e => e.state === 'completed').length / terminal.length * 100)
-    : null
+  const queueDepth = jobs.data?.filter((j) => j.is_active).length ?? 0
+  const runnersOnline = (runners.data ?? []).filter((r) => r.status === 'online').length
+  const runnersTotal = runners.data?.length ?? 0
+  const deadCount = deadLetters.data?.length ?? 0
 
-  const forecastData = (forecast.data?.buckets ?? [])
-    .filter(b => b.count > 0)
-    .slice(0, 12)
-    .map(b => ({
-      time: new Date(b.start).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-      count: b.count,
-    }))
-
-  useEffect(() => {
-    if (feedRef.current) {
-      feedRef.current.scrollTop = 0
-    }
-  }, [executions.data])
-
-  // Tick once a minute so the staleness banner re-evaluates as time
-  // passes (otherwise a tab left open would never transition from "fresh"
-  // to "stale" until the executions query refetches). Counter-based to
-  // keep render pure under react-hooks/purity.
-  const [nowTick, setNowTick] = useState(() => Date.now())
-  useEffect(() => {
-    const id = setInterval(() => setNowTick(Date.now()), 30_000)
-    return () => clearInterval(id)
-  }, [])
-  const latestFireMs = executions.data?.[0]
-    ? new Date(executions.data[0].fire_at).getTime()
-    : null
-  const stale =
-    latestFireMs !== null && nowTick - latestFireMs > STALE_THRESHOLD_MS
+  // Heatmap → flatten to a 24-cell-wide grid where each row is one day
+  // (oldest first, newest last). Cap intensity to the 95th percentile so
+  // one extreme outlier doesn't wash out the rest.
+  const heatPeak = useMemo(() => {
+    const vals = (heatmap.data?.rows ?? []).flat().filter((v) => v > 0)
+    if (vals.length === 0) return 1
+    vals.sort((a, b) => a - b)
+    return Math.max(1, vals[Math.floor(vals.length * 0.95)] ?? 1)
+  }, [heatmap.data])
 
   return (
-    <div className="space-y-6">
-      {/* Stats row */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <Card>
-          <CardContent className="pt-4">
-            <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-2">Queue Depth</p>
-            <QueueGauge value={h?.queued ?? 0} />
-          </CardContent>
-        </Card>
+    <div className="page wide">
+      <div className="page-head">
+        <div>
+          <h1 className="page-title">Dashboard</h1>
+          <p className="page-subtitle">
+            Health, throughput and reliability across all jobs.
+          </p>
+        </div>
+        <Link to="/jobs" className="btn primary">
+          Browse jobs <ArrowUpRight size={14} />
+        </Link>
+      </div>
 
-        <StatCard
-          label="Runners Online"
-          value={
-            <span className="flex items-center gap-2">
-              {h?.runners_online ?? '-'}
-              {(h?.runners_online ?? 0) > 0 && (
-                <span className="relative flex h-2 w-2">
-                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-status-ok-fg opacity-75" />
-                  <span className="relative inline-flex rounded-full h-2 w-2 bg-status-ok-fg" />
-                </span>
-              )}
+      <div className="grid cols-4">
+        <KPICard
+          title="Queue depth"
+          value={queueDepth}
+          sub={<span>{jobs.data?.length ?? 0} jobs total</span>}
+          icon={
+            <span className="dot-status idle" aria-hidden style={{ width: 10, height: 10 }} />
+          }
+        />
+        <KPICard
+          title="Runners online"
+          value={runnersOnline}
+          sub={
+            <span className={runnersOnline === runnersTotal ? 'muted' : ''}>
+              {runnersOnline === runnersTotal && runnersTotal > 0
+                ? 'all healthy'
+                : `${runnersTotal} total`}
             </span>
           }
-          sub={[h?.runners_stale && `${h.runners_stale} stale`, h?.runners_dead && `${h.runners_dead} dead`].filter(Boolean).join(', ') || 'all healthy'}
-          icon={<Cpu className="h-4 w-4" />}
+          icon={
+            <span
+              className={`dot-status ${
+                runnersOnline === 0
+                  ? 'error'
+                  : runnersOnline < runnersTotal
+                    ? 'warn'
+                    : 'success'
+              }`}
+              aria-hidden
+              style={{ width: 10, height: 10 }}
+            />
+          }
         />
-
-        <StatCard
-          label="Success Rate"
-          value={successRate !== null ? `${successRate}%` : '—'}
-          sub={`${terminal.length} terminal executions`}
-          icon={<CheckCircle className="h-4 w-4" />}
-        />
-
-        <StatCard
-          label="Dead Letters"
-          value={dlCount || '0'}
-          sub={dlCount > 0 ? <Link to="/dead-letters" className="text-destructive hover:underline">View →</Link> : 'none pending'}
-          icon={<TriangleAlert className={`h-4 w-4 ${dlCount > 0 ? 'text-destructive' : ''}`} />}
-        />
-      </div>
-
-      {/* Charts row */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        <Card>
-          <CardHeader>
-            <CardTitle>Upcoming Executions (2h)</CardTitle>
-          </CardHeader>
-          <CardContent>
-            {forecast.isLoading ? (
-              <div className="flex justify-center py-8"><Spinner className="h-5 w-5" /></div>
-            ) : forecastData.length === 0 ? (
-              <EmptyState title="No upcoming triggers" description="No jobs scheduled in the next 2 hours" />
+        <KPICard
+          title="Success rate (24h)"
+          value={successRate === null ? '—' : `${successRate.toFixed(1)}%`}
+          sub={
+            total > 0 ? (
+              <span>
+                {totalOk24h.toLocaleString()} ok · {totalErr24h.toLocaleString()} err
+              </span>
             ) : (
-              <ResponsiveContainer width="100%" height={160} aria-label="Forecast bar chart">
-                <BarChart data={forecastData} margin={{ top: 4, right: 4, bottom: 0, left: -20 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border)" />
-                  <XAxis dataKey="time" tick={{ fontSize: 10, fill: 'var(--color-muted-foreground)' }} />
-                  <YAxis tick={{ fontSize: 10, fill: 'var(--color-muted-foreground)' }} allowDecimals={false} />
-                  <Tooltip
-                    contentStyle={{ background: 'var(--color-card)', border: '1px solid var(--color-border)', borderRadius: 6, fontSize: 12 }}
-                    labelStyle={{ color: 'var(--color-foreground)' }}
-                  />
-                  <Bar dataKey="count" radius={[3, 3, 0, 0]}>
-                    {forecastData.map((_, i) => (
-                      <Cell key={i} fill="var(--color-primary)" fillOpacity={0.8} />
-                    ))}
-                  </Bar>
-                </BarChart>
-              </ResponsiveContainer>
-            )}
-          </CardContent>
-        </Card>
-
-        {/* Activity feed */}
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center justify-between">
-              <span>Live Activity</span>
-              <Link to="/executions" className="text-xs text-primary hover:underline font-normal">View all →</Link>
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="p-0">
-            {/* Stale-data banner: if the most recent execution is more
-                than STALE_THRESHOLD_MS old, surface that explicitly so
-                a runner-offline situation doesn't read as "everything's
-                fine, just quiet". Health-card runner counts catch the
-                same condition in numbers; this lets a glance at the
-                feed itself answer the question. */}
-            {stale && executions.data?.[0] && (
-              <div
-                role="status"
-                className="mx-4 mt-3 flex items-start gap-2 rounded-md border border-status-warn-fg/40 bg-status-warn-bg/40 px-3 py-2 text-xs text-status-warn-fg"
-              >
-                <Clock className="h-3.5 w-3.5 shrink-0 mt-0.5" aria-hidden="true" />
-                <span>
-                  No new executions for{' '}
-                  <RelativeTime iso={executions.data[0].fire_at} />. Check{' '}
-                  <Link to="/runners" className="underline hover:opacity-90">
-                    runner health
-                  </Link>
-                  .
-                </span>
-              </div>
-            )}
-            <div
-              ref={feedRef}
-              role="feed"
-              aria-label="Recent execution activity"
-              aria-live="polite"
-              className="max-h-48 overflow-y-auto divide-y divide-border"
-            >
-              {executions.isLoading && (
-                <div className="flex justify-center py-6"><Spinner className="h-4 w-4" /></div>
-              )}
-              {!executions.isLoading && executions.data?.length === 0 && (
-                // Compact placeholder — the full <EmptyState> component
-                // adds 12+ rem of padding, which overshoots the 12rem
-                // (max-h-48) panel and forces a scrollbar onto a totally
-                // empty card. Two centered lines fit and read.
-                <div className="flex flex-col items-center justify-center text-center py-6 px-4 text-muted-foreground">
-                  <Activity className="h-6 w-6 mb-1.5" aria-hidden="true" />
-                  <p className="text-xs">No executions yet</p>
-                </div>
-              )}
-              {executions.data?.map((e, i) => {
-                // Insert a gap divider above this row when the previous
-                // row is more than GAP_THRESHOLD_MS more recent —
-                // surfaces "system was idle for X" between two clusters
-                // of activity instead of letting them visually merge.
-                const prev = executions.data?.[i - 1]
-                const prevAt = prev ? new Date(prev.fire_at).getTime() : null
-                const thisAt = new Date(e.fire_at).getTime()
-                const gap = prevAt !== null ? prevAt - thisAt : 0
-                const showGap = gap > GAP_THRESHOLD_MS
-                return (
-                  <Fragment key={e.id}>
-                    {showGap && (
-                      <div
-                        className="px-4 py-1.5 text-[10px] uppercase tracking-wide text-muted-foreground bg-muted/30 flex items-center gap-1.5"
-                        role="separator"
-                        aria-label={`Gap of ${formatRelative(new Date(thisAt + gap).toISOString(), thisAt)}`}
-                      >
-                        <span className="h-px flex-1 bg-border" />
-                        <span>silence · {formatGap(gap)}</span>
-                        <span className="h-px flex-1 bg-border" />
-                      </div>
-                    )}
-                    <div className="flex items-center gap-3 px-4 py-2 text-xs hover:bg-accent/30 transition-colors">
-                      <Badge variant={stateVariant(e.state)} className="shrink-0 w-20 justify-center">{e.state}</Badge>
-                      <span className="font-mono text-foreground truncate flex-1">{e.job_key}</span>
-                      {e.duration_ms && <span className="text-muted-foreground shrink-0">{e.duration_ms}ms</span>}
-                      <span className="text-muted-foreground shrink-0"><RelativeTime iso={e.fire_at} /></span>
-                    </div>
-                  </Fragment>
-                )
-              })}
-            </div>
-          </CardContent>
-        </Card>
+              <span>No executions in window</span>
+            )
+          }
+          chart={total > 0 ? <Sparkline data={okSeries} height={32} /> : null}
+        />
+        <KPICard
+          title="Dead letters"
+          value={deadCount}
+          sub={
+            deadCount > 0 ? (
+              <Link to="/dead-letters" className="kpi-delta down">
+                View →
+              </Link>
+            ) : (
+              <span className="muted">none pending</span>
+            )
+          }
+          icon={
+            <span
+              className={`dot-status ${deadCount > 0 ? 'error' : 'success'}`}
+              aria-hidden
+              style={{ width: 10, height: 10 }}
+            />
+          }
+        />
       </div>
 
+      <div className="grid cols-2" style={{ marginTop: 14 }}>
+        <ThroughputCard ok={okSeries} err={errSeries} loading={throughput.isLoading} />
+        <HeatmapCard
+          rows={heatmap.data?.rows ?? []}
+          days={heatmap.data?.days ?? 7}
+          peak={heatPeak}
+          loading={heatmap.isLoading}
+        />
+      </div>
+
+      <div className="grid cols-2" style={{ marginTop: 14 }}>
+        <ActivityCard events={audit.data ?? []} loading={audit.isLoading} />
+        <RunnerFleetCard runners={runners.data ?? []} loading={runners.isLoading} />
+      </div>
+
+      {health.data && health.data.status !== 'ok' ? (
+        <div className="banner warn" style={{ marginTop: 14 }} role="status">
+          <span className="grow">
+            Backend health: <strong>{health.data.status}</strong>
+          </span>
+        </div>
+      ) : null}
     </div>
   )
 }
+
+function ThroughputCard({
+  ok,
+  err,
+  loading,
+}: {
+  ok: number[]
+  err: number[]
+  loading: boolean
+}) {
+  const okSum = ok.reduce((a, b) => a + b, 0)
+  const errSum = err.reduce((a, b) => a + b, 0)
+  return (
+    <section className="card">
+      <div className="card-head">
+        <p className="card-title">Throughput · last 24h</p>
+        <span className="dim row gap-6" style={{ fontSize: 11.5 }}>
+          <BarChart2 size={12} /> hourly buckets
+        </span>
+      </div>
+      {loading ? (
+        <div style={{ height: 76 }} className="dim center">
+          Loading…
+        </div>
+      ) : ok.length === 0 ? (
+        <EmptyState icon={Activity} title="No data yet" desc="Trigger a job to populate this chart." />
+      ) : (
+        <div className="col" style={{ gap: 6 }}>
+          <div className="row between" style={{ fontSize: 12 }}>
+            <span className="dim">ok</span>
+            <span className="mono tnum" style={{ color: 'var(--success)' }}>
+              {okSum.toLocaleString()}
+            </span>
+          </div>
+          <Sparkline data={ok} color="var(--success)" height={36} />
+          <div className="row between" style={{ fontSize: 12, marginTop: 6 }}>
+            <span className="dim">err</span>
+            <span className="mono tnum" style={{ color: 'var(--error)' }}>
+              {errSum.toLocaleString()}
+            </span>
+          </div>
+          <Sparkline data={err.length === 0 ? ok.map(() => 0) : err} color="var(--error)" height={28} />
+        </div>
+      )}
+    </section>
+  )
+}
+
+function HeatmapCard({
+  rows,
+  days,
+  peak,
+  loading,
+}: {
+  rows: number[][]
+  days: number
+  peak: number
+  loading: boolean
+}) {
+  return (
+    <section className="card">
+      <div className="card-head">
+        <p className="card-title">Failures · last {days}d</p>
+        <span className="dim" style={{ fontSize: 11.5 }}>
+          day × hour
+        </span>
+      </div>
+      {loading ? (
+        <div style={{ height: 100 }} className="dim center">
+          Loading…
+        </div>
+      ) : rows.length === 0 ? (
+        <EmptyState icon={Activity} title="No failures recorded" desc="Smooth sailing so far." />
+      ) : (
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(24, 1fr)',
+            gap: 2,
+          }}
+        >
+          {rows.flatMap((row, dIdx) =>
+            row.map((v, hIdx) => (
+              <HeatCell
+                key={`${dIdx}-${hIdx}`}
+                value={v}
+                max={peak}
+                title={`Day -${rows.length - 1 - dIdx}, ${hIdx}:00 — ${v} failures`}
+              />
+            )),
+          )}
+        </div>
+      )}
+    </section>
+  )
+}
+
+function ActivityCard({ events, loading }: { events: AuditEvent[]; loading: boolean }) {
+  return (
+    <section className="card" style={{ padding: 0 }}>
+      <div className="row between" style={{ padding: 16 }}>
+        <p className="card-title">Recent activity</p>
+        <Link to="/executions" className="dim" style={{ fontSize: 12, textDecoration: 'none' }}>
+          View executions →
+        </Link>
+      </div>
+      <div style={{ borderTop: '1px solid var(--divider)', padding: 6 }}>
+        {loading ? (
+          <div className="dim center" style={{ padding: 20 }}>
+            Loading…
+          </div>
+        ) : events.length === 0 ? (
+          <EmptyState icon={Activity} title="No activity yet" desc="Audit events will appear here as soon as something happens." />
+        ) : (
+          events.slice(0, 8).map((e) => (
+            <div
+              key={e.event_id}
+              className="row"
+              style={{
+                padding: '8px 10px',
+                gap: 10,
+                fontSize: 12.5,
+                borderRadius: 'var(--r-2)',
+              }}
+            >
+              <span
+                className={`pill ${AUDIT_ICON_TONES[e.action] ?? 'outline'}`}
+                style={{ fontFamily: 'var(--font-mono-app)' }}
+              >
+                {e.action.split('.')[0]}
+              </span>
+              <span className="ellipsis grow">{auditLabel(e)}</span>
+              <span className="dim mono tnum" style={{ fontSize: 11 }}>
+                {formatRelative(e.created_at)}
+              </span>
+            </div>
+          ))
+        )}
+      </div>
+    </section>
+  )
+}
+
+function RunnerFleetCard({
+  runners,
+  loading,
+}: {
+  runners: RunnerSummary[]
+  loading: boolean
+}) {
+  return (
+    <section className="card" style={{ padding: 0 }}>
+      <div className="row between" style={{ padding: 16 }}>
+        <p className="card-title">Runner fleet</p>
+        <Link to="/runners" className="dim" style={{ fontSize: 12, textDecoration: 'none' }}>
+          Manage →
+        </Link>
+      </div>
+      <div style={{ borderTop: '1px solid var(--divider)' }}>
+        {loading ? (
+          <div className="dim center" style={{ padding: 20 }}>
+            Loading…
+          </div>
+        ) : runners.length === 0 ? (
+          <EmptyState
+            icon={Cpu}
+            title="No runners registered"
+            desc="Register a runner with `croniq-runner` to start executing jobs."
+          />
+        ) : (
+          runners.slice(0, 6).map((r) => (
+            <div
+              key={r.runner_id}
+              className="row"
+              style={{
+                padding: '10px 16px',
+                gap: 12,
+                borderBottom: '1px solid var(--divider)',
+              }}
+            >
+              <Donut value={r.inflight} max={Math.max(r.max_inflight, 1)} size={32} thickness={3} />
+              <div className="col" style={{ gap: 2, flex: 1, minWidth: 0 }}>
+                <span className="mono ellipsis" style={{ fontSize: 12.5, color: 'var(--fg)' }}>
+                  {r.runner_id}
+                </span>
+                <span className="dim mono" style={{ fontSize: 11 }}>
+                  {r.tags.length > 0 ? r.tags.join(' · ') : 'no tags'}
+                </span>
+              </div>
+              <StatusPill state={r.status} />
+            </div>
+          ))
+        )}
+      </div>
+    </section>
+  )
+}
+
+// Unused export prevented by tree-shaking but kept for backwards compat
+// imports from older test files.
+export type { ThroughputBucket }

@@ -443,6 +443,53 @@ export function useRevokeApiKey() {
   })
 }
 
+// PR-B1 stats + audit ─────────────────────────────────────────────
+export function useAuditEvents(params?: {
+  limit?: number
+  actor_id?: string
+  target_type?: string
+  action?: string
+}) {
+  const search = new URLSearchParams()
+  if (params?.limit) search.set('limit', String(params.limit))
+  if (params?.actor_id) search.set('actor_id', params.actor_id)
+  if (params?.target_type) search.set('target_type', params.target_type)
+  if (params?.action) search.set('action', params.action)
+  const qs = search.toString()
+  return useQuery({
+    queryKey: ['audit', params ?? {}],
+    queryFn: () => apiFetch<T.AuditEvent[]>(`/v1/audit${qs ? `?${qs}` : ''}`),
+    staleTime: 30_000,
+  })
+}
+
+export function useJobStats(jobKey: string, days = 7) {
+  return useQuery({
+    queryKey: ['jobs', jobKey, 'stats', days],
+    enabled: !!jobKey,
+    queryFn: () =>
+      apiFetch<T.JobStatsResponse>(`/v1/jobs/${encodeURIComponent(jobKey)}/stats?days=${days}`),
+    staleTime: 60_000,
+  })
+}
+
+export function useThroughput(window: '1h' | '6h' | '24h' | '7d' = '24h') {
+  return useQuery({
+    queryKey: ['executions', 'throughput', window],
+    queryFn: () => apiFetch<T.ThroughputResponse>(`/v1/executions/throughput?window=${window}`),
+    refetchInterval: 30_000,
+    staleTime: 30_000,
+  })
+}
+
+export function useFailureHeatmap(days = 28) {
+  return useQuery({
+    queryKey: ['insights', 'failures', days],
+    queryFn: () => apiFetch<T.FailureHeatmap>(`/v1/insights/failures?days=${days}`),
+    staleTime: 60_000,
+  })
+}
+
 // Current user — only resolves for password/OIDC/PAT logins, not anonymous
 // API-key sessions. Returns 404 for callers without a user record; the hook
 // surfaces that as `data === null` so the UI can branch cleanly.
