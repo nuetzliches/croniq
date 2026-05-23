@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router'
 import { Lock, Shield, ArrowRight, ExternalLink, Bell } from 'lucide-react'
 import clsx from 'clsx'
@@ -114,8 +114,8 @@ const VERB_INTERVAL_MS = 3400
 const TYPE_CHAR_MS = 38
 const PAUSE_AFTER_TYPING_MS = 380
 const OUTPUT_LINE_MS = 320
-const HOLD_AFTER_OUTPUT_MS = 2400
-const CLEAR_FADE_MS = 320
+const HOLD_AFTER_OUTPUT_MS = 5000
+const CLEAR_FADE_MS = 220
 
 export function LoginPage() {
   const [method, setMethod] = useState<Method>('password')
@@ -473,13 +473,17 @@ function LoginDemoConsole() {
   const [typed, setTyped] = useState('')
   const [shownLines, setShownLines] = useState(0)
   const [phase, setPhase] = useState<DemoPhase>('typing')
+  const [paused, setPaused] = useState(false)
+  // Track elapsed-during-hold so hovering off mid-countdown picks up
+  // exactly where it left off instead of restarting the full 5 s.
+  const holdElapsedRef = useRef(0)
 
   const demo = DEMOS[demoIdx]
   const fullCmd = demo.arg ? `${demo.cmd} ${demo.arg}` : demo.cmd
 
-  // Single ticking state-machine: each phase schedules its own timeout
-  // and transitions on tick. Captures the next phase in a sibling
-  // setState so renders stay deterministic.
+  // Single ticking state-machine. The HOLD phase is the only one that
+  // respects `paused` — typing and output ticks are too short for a
+  // hover pause to be useful, and clearing is intentionally fast.
   useEffect(() => {
     if (phase === 'typing') {
       if (typed.length < fullCmd.length) {
@@ -497,12 +501,27 @@ function LoginDemoConsole() {
         const t = window.setTimeout(() => setShownLines((n) => n + 1), OUTPUT_LINE_MS)
         return () => window.clearTimeout(t)
       }
-      const t = window.setTimeout(() => setPhase('hold'), HOLD_AFTER_OUTPUT_MS)
+      // Entering hold — reset the elapsed counter so the next time
+      // pause/resume runs it starts from zero.
+      holdElapsedRef.current = 0
+      const t = window.setTimeout(() => setPhase('hold'), 0)
       return () => window.clearTimeout(t)
     }
     if (phase === 'hold') {
-      const t = window.setTimeout(() => setPhase('clearing'), CLEAR_FADE_MS)
-      return () => window.clearTimeout(t)
+      if (paused) return undefined
+      const remaining = Math.max(0, HOLD_AFTER_OUTPUT_MS - holdElapsedRef.current)
+      const startedAt = Date.now()
+      const t = window.setTimeout(() => setPhase('clearing'), remaining)
+      return () => {
+        // Capture elapsed time so a follow-up resume restarts from the
+        // right offset. Only count it once per pause cycle by clamping
+        // to HOLD_AFTER_OUTPUT_MS.
+        holdElapsedRef.current = Math.min(
+          HOLD_AFTER_OUTPUT_MS,
+          holdElapsedRef.current + (Date.now() - startedAt),
+        )
+        window.clearTimeout(t)
+      }
     }
     // clearing → wait one fade beat, then reset to the next demo. The
     // timeout indirection keeps the state mutation out of the effect
@@ -514,13 +533,25 @@ function LoginDemoConsole() {
       setPhase('typing')
     }, CLEAR_FADE_MS)
     return () => window.clearTimeout(t)
-  }, [phase, typed, shownLines, fullCmd, demo.output.length])
+  }, [phase, typed, shownLines, fullCmd, demo.output.length, paused])
 
   const stillTyping = phase === 'typing' && typed.length < fullCmd.length
   const fading = phase === 'clearing'
+  const headerLabel =
+    phase === 'typing'
+      ? 'typing'
+      : phase === 'output'
+        ? 'running'
+        : phase === 'hold'
+          ? paused ? 'paused' : 'idle'
+          : null
 
   return (
-    <div className="login-console">
+    <div
+      className="login-console"
+      onMouseEnter={() => setPaused(true)}
+      onMouseLeave={() => setPaused(false)}
+    >
       <div className="login-console-head">
         <div className="login-traffic">
           <span style={{ background: 'oklch(0.65 0.18 25)' }} />
@@ -530,13 +561,15 @@ function LoginDemoConsole() {
         <span className="mono dim" style={{ fontSize: 11 }}>
           ~ croniq · live demo
         </span>
-        <span
-          className="row gap-6"
-          style={{ marginLeft: 'auto', fontSize: 10.5, color: 'var(--fg-3)' }}
-        >
-          <span className="live-dot" />
-          {phase === 'typing' ? 'typing' : phase === 'output' ? 'running' : 'idle'}
-        </span>
+        {headerLabel ? (
+          <span
+            className="row gap-6"
+            style={{ marginLeft: 'auto', fontSize: 10.5, color: 'var(--fg-3)' }}
+          >
+            <span className="live-dot" />
+            {headerLabel}
+          </span>
+        ) : null}
       </div>
       <div className={`login-console-body${fading ? ' login-console-fading' : ''}`}>
         <div className="login-console-line" style={{ color: 'var(--fg)' }}>
@@ -571,6 +604,17 @@ function LoginDemoConsole() {
           </div>
         ) : null}
       </div>
+      {phase === 'hold' ? (
+        <div
+          key={demoIdx}
+          className="login-console-countdown"
+          style={{
+            animationDuration: `${HOLD_AFTER_OUTPUT_MS}ms`,
+            animationPlayState: paused ? 'paused' : 'running',
+          }}
+          aria-hidden
+        />
+      ) : null}
     </div>
   )
 }

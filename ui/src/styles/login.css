@@ -254,6 +254,32 @@
   to   { opacity: 0; }
 }
 
+/* Countdown bar that shrinks during the hold phase to visualise how
+ * long until the next demo. The animation pauses while the user
+ * hovers (the React component drives animation-play-state). */
+.login-console-countdown {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 2px;
+  background: linear-gradient(90deg, var(--accent), oklch(0.78 0.20 240));
+  transform-origin: left center;
+  animation-name: croniq-console-countdown;
+  animation-timing-function: linear;
+  animation-fill-mode: forwards;
+}
+@keyframes croniq-console-countdown {
+  from { transform: scaleX(1); opacity: 0.85; }
+  to   { transform: scaleX(0); opacity: 0.4; }
+}
+/* Subtle wash that pulses while paused so it's clear hover is doing
+ * something even when the bar is frozen. */
+.login-console:hover {
+  outline: 1px solid oklch(0.66 0.19 285 / 0.35);
+  outline-offset: 0;
+}
+
 .login-foot {
   position: relative;
   margin-top: auto;
