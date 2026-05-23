@@ -223,6 +223,7 @@ impl Parser {
                 "pull_api" => Ok(Item::PullApi(self.parse_pull_api()?)),
                 "observability" => Ok(Item::Observability(self.parse_observability()?)),
                 "mcp" => Ok(Item::Mcp(self.parse_mcp()?)),
+                "oidc" => Ok(Item::Oidc(self.parse_oidc()?)),
                 "policy" => Ok(Item::Policy(self.parse_policy()?)),
                 "vars" => Ok(Item::Vars(self.parse_vars()?)),
                 "defaults" => Ok(Item::Defaults(self.parse_defaults()?)),
@@ -235,7 +236,7 @@ impl Parser {
             },
             _ => Err(ParseError::Unexpected {
                 expected:
-                    "import, server, pull_api, observability, mcp, policy, vars, defaults, calendar, or job"
+                    "import, server, pull_api, observability, mcp, oidc, policy, vars, defaults, calendar, or job"
                         .into(),
                 got: format!("{}", tok.kind),
                 span: tok.span.into(),
@@ -307,6 +308,17 @@ impl Parser {
         let directives = self.parse_directives_until_rbrace()?;
         let end = self.expect_rbrace()?;
         Ok(PolicyBlock {
+            directives,
+            span: start.merge(end),
+        })
+    }
+
+    fn parse_oidc(&mut self) -> Result<OidcBlock, ParseError> {
+        let start = self.expect_ident("oidc")?;
+        self.expect_lbrace()?;
+        let directives = self.parse_directives_until_rbrace()?;
+        let end = self.expect_rbrace()?;
+        Ok(OidcBlock {
             directives,
             span: start.merge(end),
         })

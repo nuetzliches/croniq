@@ -16,6 +16,7 @@ pub enum Item {
     PullApi(PullApiBlock),
     Observability(ObservabilityBlock),
     Mcp(McpBlock),
+    Oidc(OidcBlock),
     Policy(PolicyBlock),
     Vars(VarsBlock),
     Defaults(DefaultsBlock),
@@ -68,6 +69,22 @@ pub struct ObservabilityBlock {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct McpBlock {
+    pub directives: Vec<Directive>,
+    pub span: Span,
+}
+
+// ─── OIDC (SSO provider config) ───
+
+/// `oidc { issuer "…"; client_id "…"; redirect_url "…"; default_role
+/// "viewer"; provider_name "authentik"; post_login_redirect "/" }`
+///
+/// `client_secret` is intentionally NOT a DSL directive — Croniqfiles
+/// are infrastructure-as-code, secrets stay in `CRONIQ_OIDC_CLIENT_SECRET`.
+/// All other fields are optional in the AST and validated at server-
+/// boot; missing required fields fall back to the equivalent env vars
+/// (`CRONIQ_OIDC_ISSUER`, etc.).
+#[derive(Debug, Clone, Serialize)]
+pub struct OidcBlock {
     pub directives: Vec<Directive>,
     pub span: Span,
 }

@@ -311,6 +311,64 @@ pub struct OidcUser {
 
 pub type SharedOidcProvider = Option<Arc<OidcProvider>>;
 
+/// Build the final config by merging an optional Croniqfile `oidc {}`
+/// block with the env vars. DSL fields win where set; env vars fill
+/// the gaps. `client_secret` is env-only (it never appears in the DSL).
+///
+/// Returns `Err(NotConfigured)` when issuer / client_id / redirect_url /
+/// client_secret can't be assembled from either source.
+pub fn config_from_dsl_and_env(
+    dsl: Option<&croniq_config::compile::OidcDslConfig>,
+) -> Result<OidcConfig, OidcError> {
+    fn dsl_or_env(dsl_val: Option<&String>, env_key: &str) -> Option<String> {
+        dsl_val.cloned().or_else(|| std::env::var(env_key).ok())
+    }
+
+    let issuer = dsl
+        .and_then(|d| d.issuer.clone())
+        .or_else(|| std::env::var("CRONIQ_OIDC_ISSUER").ok())
+        .ok_or(OidcError::NotConfigured)?;
+    let client_id = dsl
+        .and_then(|d| d.client_id.clone())
+        .or_else(|| std::env::var("CRONIQ_OIDC_CLIENT_ID").ok())
+        .ok_or(OidcError::NotConfigured)?;
+    let client_secret =
+        std::env::var("CRONIQ_OIDC_CLIENT_SECRET").map_err(|_| OidcError::NotConfigured)?;
+    let redirect_url = dsl
+        .and_then(|d| d.redirect_url.clone())
+        .or_else(|| std::env::var("CRONIQ_OIDC_REDIRECT_URL").ok())
+        .ok_or(OidcError::NotConfigured)?;
+
+    let default_role_str = dsl_or_env(
+        dsl.and_then(|d| d.default_role.as_ref()),
+        "CRONIQ_OIDC_DEFAULT_ROLE",
+    );
+    let default_role = default_role_str
+        .as_deref()
+        .and_then(|s| s.parse::<Role>().ok())
+        .unwrap_or(Role::Viewer);
+    let provider_name = dsl_or_env(
+        dsl.and_then(|d| d.provider_name.as_ref()),
+        "CRONIQ_OIDC_PROVIDER_NAME",
+    )
+    .unwrap_or_else(|| "oidc".into());
+    let post_login_redirect = dsl_or_env(
+        dsl.and_then(|d| d.post_login_redirect.as_ref()),
+        "CRONIQ_OIDC_POST_LOGIN",
+    )
+    .unwrap_or_else(|| "/".into());
+
+    Ok(OidcConfig {
+        issuer,
+        client_id,
+        client_secret,
+        redirect_url,
+        default_role,
+        post_login_redirect,
+        provider_name,
+    })
+}
+
 /// Read the operator config from env vars. Returns `Err(NotConfigured)`
 /// when any required var is missing — the caller logs + continues
 /// with OIDC disabled.
