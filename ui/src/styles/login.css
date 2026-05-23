@@ -371,17 +371,31 @@
   flex-direction: column;
   gap: 18px;
   position: relative;
-  /* Card chrome — gives the form a visible container against both
-   * the right-pane plain bg (desktop) and the marketing gradient
-   * underneath the compact strip (mobile). */
+  /* Card chrome — glass over the marketing background so the
+   * drifting spots tint the form gently. Fallback opaque
+   * appearance when backdrop-filter isn't supported. */
   background: var(--panel);
   border: 1px solid var(--border);
   border-radius: var(--r-4);
   padding: 28px 28px 24px;
   box-shadow: var(--shadow);
 }
-[data-theme="light"] .login-form {
-  box-shadow: 0 8px 28px -10px oklch(0 0 0 / 0.10), 0 2px 4px -1px oklch(0 0 0 / 0.06);
+@supports (backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px)) {
+  .login-form {
+    background: color-mix(in srgb, var(--panel) 70%, transparent);
+    backdrop-filter: blur(22px) saturate(150%);
+    -webkit-backdrop-filter: blur(22px) saturate(150%);
+    border-color: color-mix(in srgb, var(--border-2) 65%, transparent);
+    box-shadow:
+      0 20px 50px -20px oklch(0 0 0 / 0.55),
+      inset 0 1px 0 oklch(1 0 0 / 0.06);
+  }
+  [data-theme="light"] .login-form {
+    background: color-mix(in srgb, var(--panel) 80%, transparent);
+    box-shadow:
+      0 20px 50px -20px oklch(0 0 0 / 0.15),
+      inset 0 1px 0 oklch(1 0 0 / 0.5);
+  }
 }
 .login-form.shake { animation: croniq-shake .4s; }
 @keyframes croniq-shake {
