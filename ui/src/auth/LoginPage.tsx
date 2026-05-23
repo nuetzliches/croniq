@@ -186,14 +186,7 @@ export function LoginPage() {
                       required
                     />
                   </LoginField>
-                  <LoginField
-                    label="Password"
-                    action={
-                      <a href="#" onClick={handleForgotPassword} style={{ fontSize: 11.5, color: 'var(--accent-3)' }}>
-                        Forgot password?
-                      </a>
-                    }
-                  >
+                  <LoginField label="Password">
                     <input
                       className="input"
                       type="password"
@@ -203,6 +196,15 @@ export function LoginPage() {
                       placeholder="•••••••••"
                       required
                     />
+                    <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                      <a
+                        href="#"
+                        onClick={handleForgotPassword}
+                        style={{ fontSize: 11.5, color: 'var(--accent-3)' }}
+                      >
+                        Forgot password?
+                      </a>
+                    </div>
                   </LoginField>
                   {error ? <ErrorBanner msg={error} /> : null}
                   <SubmitButton loading={loading}>
@@ -499,31 +501,26 @@ function LoginTab({
 
 function LoginField({
   label,
-  action,
   hint,
   children,
 }: {
   label: string
-  action?: React.ReactNode
   hint?: string
   children: React.ReactNode
 }) {
   return (
     <div className="col" style={{ gap: 6 }}>
-      <div className="between" style={{ alignItems: 'center' }}>
-        <label
-          className="dim"
-          style={{
-            fontSize: 11.5,
-            letterSpacing: '0.04em',
-            textTransform: 'uppercase',
-            fontFamily: 'var(--font-mono-app)',
-          }}
-        >
-          {label}
-        </label>
-        {action}
-      </div>
+      <label
+        className="dim"
+        style={{
+          fontSize: 11.5,
+          letterSpacing: '0.04em',
+          textTransform: 'uppercase',
+          fontFamily: 'var(--font-mono-app)',
+        }}
+      >
+        {label}
+      </label>
       {children}
       {hint ? (
         <div className="dim" style={{ fontSize: 11.5 }}>
