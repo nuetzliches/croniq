@@ -493,6 +493,7 @@ croniq dead-letters --data-dir .           # List dead letters
 | `CRONIQ_ADMIN_PASSWORD` | Docker auto-init password (random if unset) | _generated_ |
 | `CRONIQ_INIT_API_KEY` | Seed a default admin API client on first run. Must start with `croniq_` (e.g. `croniq_$(openssl rand -hex 32)`). Fails fast on first run if the prefix is missing. | — |
 | `CRONIQ_ON_FAILURE_CMD` | Shell command on execution failure | — |
+| `CRONIQ_ENV` | Deployment label surfaced by `GET /version` (and rendered as an env badge in the UI). See [`docs/operations.md`](docs/operations.md). | `unknown` |
 
 ---
 
@@ -502,6 +503,7 @@ croniq dead-letters --data-dir .           # List dead letters
 |---|---|
 | [`README.md`](README.md) | This file — overview, quick start, architecture |
 | [`openapi.yaml`](openapi.yaml) | OpenAPI 3.1 specification for all REST endpoints |
+| [`docs/operations.md`](docs/operations.md) | Operational notes: public endpoints, environment variables |
 | [`Croniqfile.example`](Croniqfile.example) | Full DSL example with calendars, retries, metadata |
 | [`Croniqfile.demo`](Croniqfile.demo) | Minimal demo profile used by `docker compose up` |
 | [`docker-compose.yml`](docker-compose.yml) | Quickstart stack: server + demo runners |

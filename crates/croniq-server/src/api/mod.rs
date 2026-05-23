@@ -25,7 +25,8 @@ use axum::{
     middleware,
     routing::{delete, get, post, put},
 };
-use chrono::Utc;
+use chrono::{DateTime, Utc};
+use serde::Serialize;
 use croniq_auth::CallerContext;
 use croniq_auth::context::Scope;
 use croniq_auth::jwt::JwtConfig;
@@ -261,9 +262,10 @@ pub fn server_router(state: Arc<ServerState>) -> Router {
             auth_middleware::require_auth,
         ));
 
-    // Public routes (health + auth login/refresh/logout)
+    // Public routes (health + version + auth login/refresh/logout)
     let public = Router::new()
         .route("/health", get(handle_health))
+        .route("/version", get(handle_version))
         .route("/v1/auth/login", post(auth_endpoints::handle_login))
         .route("/v1/auth/refresh", post(auth_endpoints::handle_refresh))
         .route("/v1/auth/logout", post(auth_endpoints::handle_logout));
@@ -619,6 +621,50 @@ async fn handle_health(State(state): State<Arc<ServerState>>) -> Json<HealthResp
     })
 }
 
+/// `GET /version` response — build + environment metadata.
+///
+/// Public (no auth) so the login page can render a live version chip before
+/// the user has a token. All four values are non-sensitive: the Cargo
+/// version, the short git SHA, the build timestamp, and a deploy-environment
+/// label (`production`, `staging`, `dev`, …) read from `CRONIQ_ENV`.
+#[derive(Debug, Clone, Serialize)]
+pub struct VersionResponse {
+    pub version: &'static str,
+    pub git_sha: &'static str,
+    pub build_time: String,
+    pub env: String,
+}
+
+/// Cargo package version, baked in at compile time.
+const VERSION: &str = env!("CARGO_PKG_VERSION");
+
+/// Short git SHA, stamped by `build.rs`. Falls back to `"unknown"` outside
+/// a git checkout (release tarball, no `git` on PATH).
+const GIT_SHA: &str = env!("CRONIQ_GIT_SHA");
+
+/// Unix seconds at which this binary was built. Stamped by `build.rs` and
+/// formatted as RFC 3339 at request time.
+const BUILD_TIME_UNIX: &str = env!("CRONIQ_BUILD_TIME_UNIX");
+
+/// `GET /version` — build + environment metadata.
+async fn handle_version() -> Json<VersionResponse> {
+    let build_time = BUILD_TIME_UNIX
+        .parse::<i64>()
+        .ok()
+        .and_then(|s| DateTime::<Utc>::from_timestamp(s, 0))
+        .map(|t| t.to_rfc3339_opts(chrono::SecondsFormat::Secs, true))
+        .unwrap_or_else(|| "unknown".into());
+
+    let env = std::env::var("CRONIQ_ENV").unwrap_or_else(|_| "unknown".into());
+
+    Json(VersionResponse {
+        version: VERSION,
+        git_sha: GIT_SHA,
+        build_time,
+        env,
+    })
+}
+
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -795,6 +841,59 @@ mod tests {
         let resp = get_json(app, "/health").await;
         assert_eq!(resp["status"], "ok");
         assert_eq!(resp["queued"], 0);
+    }
+
+    #[tokio::test]
+    async fn version_returns_build_metadata() {
+        let (state, _rx) = make_state();
+        let app = server_router(Arc::clone(&state));
+
+        let resp = get_json(app, "/version").await;
+        // Cargo always sets CARGO_PKG_VERSION, so this is never "unknown".
+        assert_eq!(resp["version"], env!("CARGO_PKG_VERSION"));
+        // git_sha + build_time are stamped by build.rs. We don't assert exact
+        // values (they change every commit/build), only that they're present.
+        assert!(resp["git_sha"].is_string());
+        assert!(resp["build_time"].is_string());
+        // env is read from CRONIQ_ENV at request time. The test process may or
+        // may not have it set, but the field must always be a string.
+        assert!(resp["env"].is_string());
+    }
+
+    #[tokio::test]
+    async fn version_is_public() {
+        // The login page renders before auth, so /version must not require a
+        // token even when JWT auth is configured.
+        let (state, _rx) = make_auth_state("test-secret");
+        let app = server_router(Arc::clone(&state));
+
+        let status = status_of(app, "GET", "/version", None, None).await;
+        assert_eq!(status, 200);
+    }
+
+    #[tokio::test]
+    async fn version_reads_env_var() {
+        // SAFETY: tests in this module run on the tokio current-thread runtime
+        // and don't race on env vars within a single test. CRONIQ_ENV is only
+        // read by handle_version, so isolating to one test is sufficient.
+        //
+        // # Safety
+        // `set_var` / `remove_var` are unsafe in Rust 2024 because they mutate
+        // process-global state that may be observed by other threads. We
+        // accept the risk here: the test runtime is single-threaded for this
+        // test and no other code path reads CRONIQ_ENV concurrently.
+        unsafe {
+            std::env::set_var("CRONIQ_ENV", "staging");
+        }
+        let (state, _rx) = make_state();
+        let app = server_router(Arc::clone(&state));
+
+        let resp = get_json(app, "/version").await;
+        assert_eq!(resp["env"], "staging");
+
+        unsafe {
+            std::env::remove_var("CRONIQ_ENV");
+        }
     }
 
     // ─── Auth middleware tests ────────────────────────────────────────────────

@@ -36,6 +36,28 @@ components:
         runners_dead: { type: integer }
         queued: { type: integer }
 
+    VersionResponse:
+      type: object
+      required: [version, git_sha, build_time, env]
+      properties:
+        version:
+          type: string
+          description: "Cargo package version, baked in at compile time (e.g. \"0.4.2\")."
+          example: "0.4.2"
+        git_sha:
+          type: string
+          description: "Short git SHA of the build commit, or \"unknown\" outside a git checkout."
+          example: "f3aea44"
+        build_time:
+          type: string
+          format: date-time
+          description: "RFC 3339 UTC timestamp at which this binary was built."
+          example: "2026-05-23T12:35:00Z"
+        env:
+          type: string
+          description: "Deploy-environment label from CRONIQ_ENV. Defaults to \"unknown\" when unset."
+          example: "production"
+
     TokenResponse:
       type: object
       properties:
@@ -161,6 +183,22 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/HealthResponse" }
+
+  /version:
+    get:
+      summary: Build and environment metadata
+      description: |
+        Public (no auth) so pre-login UI can render a version chip and an
+        environment badge. All four fields are non-sensitive: Cargo version,
+        short git SHA, RFC 3339 build timestamp, and a deploy-environment
+        label sourced from `CRONIQ_ENV` (defaults to `"unknown"`).
+      security: []
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/VersionResponse" }
 
   /v1/auth/login:
     post:
