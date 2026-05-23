@@ -8,8 +8,10 @@
 
 pub mod api_key;
 pub mod context;
+pub mod crypto;
 pub mod jwt;
 pub mod password;
+pub mod totp;
 
 pub use context::{AuthMethod, CallerContext, CallerType, Scope, default_scopes_for_role};
 pub use jwt::{JWT_ISSUER, JwtConfig, TokenPair};

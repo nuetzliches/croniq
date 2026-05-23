@@ -292,6 +292,32 @@ pub struct PasswordReset {
     pub created_at: DateTime<Utc>,
 }
 
+/// A TOTP secret for a user. The base32-encoded seed lives inside
+/// `secret_enc` after AES-256-GCM wrapping (see
+/// `croniq_auth::crypto::wrap_totp_secret`). `enabled` is `false`
+/// during the setup window between `/totp/setup` and `/totp/confirm`;
+/// only confirmed secrets can be used to step up login.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TotpSecret {
+    pub user_id: String,
+    /// base64(nonce || ciphertext+tag) — opaque to the store.
+    pub secret_enc: String,
+    pub enabled: bool,
+    pub confirmed_at: Option<DateTime<Utc>>,
+    pub created_at: DateTime<Utc>,
+}
+
+/// A single recovery code (SHA-256 hash of an 8-char lowercase
+/// alphanumeric). Consumed once via `password_resets`-style flow.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RecoveryCode {
+    pub code_id: String,
+    pub user_id: String,
+    pub code_hash: String,
+    pub used_at: Option<DateTime<Utc>>,
+    pub created_at: DateTime<Utc>,
+}
+
 // ─── Job Definition ───
 
 /// A persisted job definition (distinct from the runtime JobState).

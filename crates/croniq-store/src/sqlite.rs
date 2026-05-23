@@ -927,6 +927,154 @@ impl AuthStore for SqliteStore {
         .map_err(map_err)?;
         Ok(())
     }
+
+    fn totp_upsert(&self, secret: &TotpSecret) -> Result<(), StoreError> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO totp_secrets (user_id, secret_enc, enabled, confirmed_at, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5)
+             ON CONFLICT(user_id) DO UPDATE SET
+                secret_enc = excluded.secret_enc,
+                enabled = excluded.enabled,
+                confirmed_at = excluded.confirmed_at",
+            params![
+                secret.user_id,
+                secret.secret_enc,
+                secret.enabled as i64,
+                opt_dt_to_sql(&secret.confirmed_at),
+                dt_to_sql(&secret.created_at),
+            ],
+        )
+        .map_err(map_err)?;
+        Ok(())
+    }
+
+    fn totp_get(&self, user_id: &str) -> Result<Option<TotpSecret>, StoreError> {
+        let conn = self.conn.lock().unwrap();
+        conn.prepare(
+            "SELECT user_id, secret_enc, enabled, confirmed_at, created_at FROM totp_secrets WHERE user_id = ?1",
+        )
+        .map_err(map_err)?
+        .query_row(params![user_id], |row| {
+            Ok(TotpSecret {
+                user_id: row.get(0)?,
+                secret_enc: row.get(1)?,
+                enabled: row.get::<_, bool>(2)?,
+                confirmed_at: sql_to_opt_dt(row.get(3)?),
+                created_at: sql_to_dt(&row.get::<_, String>(4)?),
+            })
+        })
+        .optional()
+        .map_err(map_err)
+    }
+
+    fn totp_set_enabled(
+        &self,
+        user_id: &str,
+        enabled: bool,
+        confirmed_at: Option<DateTime<Utc>>,
+    ) -> Result<(), StoreError> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE totp_secrets SET enabled = ?1, confirmed_at = ?2 WHERE user_id = ?3",
+            params![enabled as i64, opt_dt_to_sql(&confirmed_at), user_id,],
+        )
+        .map_err(map_err)?;
+        Ok(())
+    }
+
+    fn totp_delete(&self, user_id: &str) -> Result<(), StoreError> {
+        let conn = self.conn.lock().unwrap();
+        // Recovery codes cascade via FK ON DELETE CASCADE (foreign_keys PRAGMA on),
+        // but be explicit to keep the contract test stable across backends.
+        conn.execute(
+            "DELETE FROM totp_secrets WHERE user_id = ?1",
+            params![user_id],
+        )
+        .map_err(map_err)?;
+        conn.execute(
+            "DELETE FROM recovery_codes WHERE user_id = ?1",
+            params![user_id],
+        )
+        .map_err(map_err)?;
+        Ok(())
+    }
+
+    fn recovery_codes_replace_all(
+        &self,
+        user_id: &str,
+        codes: &[RecoveryCode],
+    ) -> Result<(), StoreError> {
+        let mut conn = self.conn.lock().unwrap();
+        let tx = conn.transaction().map_err(map_err)?;
+        tx.execute(
+            "DELETE FROM recovery_codes WHERE user_id = ?1",
+            params![user_id],
+        )
+        .map_err(map_err)?;
+        for code in codes {
+            tx.execute(
+                "INSERT INTO recovery_codes (code_id, user_id, code_hash, used_at, created_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5)",
+                params![
+                    code.code_id,
+                    code.user_id,
+                    code.code_hash,
+                    opt_dt_to_sql(&code.used_at),
+                    dt_to_sql(&code.created_at),
+                ],
+            )
+            .map_err(map_err)?;
+        }
+        tx.commit().map_err(map_err)?;
+        Ok(())
+    }
+
+    fn recovery_codes_find_unused(
+        &self,
+        user_id: &str,
+        code_hash: &str,
+    ) -> Result<Option<RecoveryCode>, StoreError> {
+        let conn = self.conn.lock().unwrap();
+        conn.prepare(
+            "SELECT code_id, user_id, code_hash, used_at, created_at FROM recovery_codes
+             WHERE user_id = ?1 AND code_hash = ?2 AND used_at IS NULL",
+        )
+        .map_err(map_err)?
+        .query_row(params![user_id, code_hash], |row| {
+            Ok(RecoveryCode {
+                code_id: row.get(0)?,
+                user_id: row.get(1)?,
+                code_hash: row.get(2)?,
+                used_at: sql_to_opt_dt(row.get(3)?),
+                created_at: sql_to_dt(&row.get::<_, String>(4)?),
+            })
+        })
+        .optional()
+        .map_err(map_err)
+    }
+
+    fn recovery_codes_mark_used(&self, code_id: &str, at: DateTime<Utc>) -> Result<(), StoreError> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE recovery_codes SET used_at = ?1 WHERE code_id = ?2",
+            params![dt_to_sql(&at), code_id],
+        )
+        .map_err(map_err)?;
+        Ok(())
+    }
+
+    fn recovery_codes_count_unused(&self, user_id: &str) -> Result<u64, StoreError> {
+        let conn = self.conn.lock().unwrap();
+        let count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM recovery_codes WHERE user_id = ?1 AND used_at IS NULL",
+                params![user_id],
+                |row| row.get(0),
+            )
+            .map_err(map_err)?;
+        Ok(count as u64)
+    }
 }
 
 fn map_invitation_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Invitation> {

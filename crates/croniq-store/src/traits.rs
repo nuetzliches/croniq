@@ -224,6 +224,34 @@ pub trait AuthStore {
         reset_id: &str,
         at: DateTime<Utc>,
     ) -> Result<(), StoreError>;
+
+    // TOTP secrets — one per user_id (PK). Upsert lets `/totp/setup`
+    // be retried (the secret stays at enabled=0 until confirmed).
+    fn totp_upsert(&self, secret: &TotpSecret) -> Result<(), StoreError>;
+    fn totp_get(&self, user_id: &str) -> Result<Option<TotpSecret>, StoreError>;
+    fn totp_set_enabled(
+        &self,
+        user_id: &str,
+        enabled: bool,
+        confirmed_at: Option<DateTime<Utc>>,
+    ) -> Result<(), StoreError>;
+    fn totp_delete(&self, user_id: &str) -> Result<(), StoreError>;
+
+    // Recovery codes — bulk insert at TOTP confirm time, single-use
+    // consumption via mark_used. Replace_all is used by the
+    // regenerate-codes endpoint.
+    fn recovery_codes_replace_all(
+        &self,
+        user_id: &str,
+        codes: &[RecoveryCode],
+    ) -> Result<(), StoreError>;
+    fn recovery_codes_find_unused(
+        &self,
+        user_id: &str,
+        code_hash: &str,
+    ) -> Result<Option<RecoveryCode>, StoreError>;
+    fn recovery_codes_mark_used(&self, code_id: &str, at: DateTime<Utc>) -> Result<(), StoreError>;
+    fn recovery_codes_count_unused(&self, user_id: &str) -> Result<u64, StoreError>;
 }
 
 /// Job definition persistence (CRUD for job definitions, distinct from runtime JobState).

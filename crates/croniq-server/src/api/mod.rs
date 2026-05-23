@@ -13,6 +13,7 @@ pub mod password_reset;
 pub mod runners_sse;
 pub mod schedules;
 pub mod tags;
+pub mod totp;
 pub mod users;
 pub mod work;
 
@@ -299,6 +300,14 @@ pub fn server_router(state: Arc<ServerState>) -> Router {
             get(invitations::handle_list).post(invitations::handle_create),
         )
         .route("/v1/invitations/{id}", delete(invitations::handle_revoke))
+        // TOTP / 2FA (self-service)
+        .route("/v1/users/me/totp/setup", post(totp::handle_setup))
+        .route("/v1/users/me/totp/confirm", post(totp::handle_confirm))
+        .route("/v1/users/me/totp/disable", post(totp::handle_disable))
+        .route(
+            "/v1/users/me/totp/recovery-codes/regenerate",
+            post(totp::handle_regenerate),
+        )
         .route_layer(middleware::from_fn_with_state(
             Arc::clone(&state),
             auth_middleware::require_auth,
@@ -308,6 +317,10 @@ pub fn server_router(state: Arc<ServerState>) -> Router {
     let public = Router::new()
         .route("/health", get(handle_health))
         .route("/v1/auth/login", post(auth_endpoints::handle_login))
+        .route(
+            "/v1/auth/login/totp",
+            post(auth_endpoints::handle_totp_login),
+        )
         .route("/v1/auth/refresh", post(auth_endpoints::handle_refresh))
         .route("/v1/auth/logout", post(auth_endpoints::handle_logout))
         .route(

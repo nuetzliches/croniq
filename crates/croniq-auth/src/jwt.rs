@@ -152,6 +152,58 @@ pub fn issue_token_pair(
     })
 }
 
+/// Short-lived token issued between password-success and TOTP-verify
+/// during step-up login. Distinct claim shape (no scopes, no role) so
+/// `validate_token` rejects it for normal API calls — the only valid
+/// consumer is `/v1/auth/login/totp` which calls
+/// [`validate_mfa_token`] instead.
+#[derive(Debug, Serialize, Deserialize)]
+struct MfaClaims {
+    sub: String,
+    purpose: String, // always "mfa"
+    iss: String,
+    exp: i64,
+    iat: i64,
+}
+
+/// Mint an MFA step-up token for `user_id`. TTL is 5 minutes —
+/// generous enough to switch to an authenticator app, short enough
+/// that a leaked half-state-token decays quickly.
+pub fn issue_mfa_token(config: &JwtConfig, user_id: &str) -> Result<(String, i64), AuthError> {
+    let now = Utc::now();
+    let exp = now + Duration::seconds(300);
+    let claims = MfaClaims {
+        sub: user_id.to_string(),
+        purpose: "mfa".into(),
+        iss: config.issuer.clone(),
+        exp: exp.timestamp(),
+        iat: now.timestamp(),
+    };
+    let token = encode(
+        &Header::default(),
+        &claims,
+        &EncodingKey::from_secret(config.secret.as_bytes()),
+    )
+    .map_err(|e| AuthError::TokenError(e.to_string()))?;
+    Ok((token, 300))
+}
+
+/// Validate an MFA step-up token. Returns the user_id it was issued for.
+pub fn validate_mfa_token(config: &JwtConfig, token: &str) -> Result<String, AuthError> {
+    let mut validation = Validation::default();
+    validation.set_issuer(&[&config.issuer]);
+    let data = decode::<MfaClaims>(
+        token,
+        &DecodingKey::from_secret(config.secret.as_bytes()),
+        &validation,
+    )
+    .map_err(|e| AuthError::TokenError(e.to_string()))?;
+    if data.claims.purpose != "mfa" {
+        return Err(AuthError::TokenError("not an MFA token".into()));
+    }
+    Ok(data.claims.sub)
+}
+
 /// Validate a JWT and extract the caller context.
 ///
 /// Rejects tokens whose `iss` claim doesn't match the configured issuer.

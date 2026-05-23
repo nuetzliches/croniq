@@ -8,6 +8,34 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **TOTP/2FA with single-use recovery codes (PR-A3).** Users can
+  enable a second factor in self-service. The login flow becomes
+  two-step when 2FA is on:
+  - `POST /v1/auth/login` returns
+    `{ requires_totp: true, mfa_token, mfa_token_expires_in }` instead
+    of access tokens. The MFA token is a short-lived JWT
+    (`purpose: "mfa"`, 5 min TTL) that `validate_token` rejects for
+    every other endpoint.
+  - `POST /v1/auth/login/totp` exchanges the MFA token + a 6-digit
+    code (or single-use recovery code) for normal access + refresh
+    tokens.
+  - `POST /v1/users/me/totp/setup` returns the base32 seed, an
+    `otpauth://` URL for QR-code rendering, and 10 fresh recovery
+    codes (8 lowercase alphanumerics each). Idempotent until
+    confirmed.
+  - `POST /v1/users/me/totp/confirm` (body `{ code }`) flips
+    `enabled=true`.
+  - `POST /v1/users/me/totp/disable` (body `{ password }`) requires
+    fresh password proof and wipes the secret + all recovery codes.
+  - `POST /v1/users/me/totp/recovery-codes/regenerate` (body
+    `{ password }`) mints a new set, invalidating the previous batch.
+  TOTP secrets are wrapped at rest with AES-256-GCM using a key
+  derived from `CRONIQ_JWT_SECRET` via HKDF-SHA256
+  ([`croniq-auth::crypto`](crates/croniq-auth/src/crypto.rs)).
+  Recovery codes are SHA-256 hashed and case-/whitespace-normalised
+  for paste-from-PDF UX. New migration:
+  `013_totp_and_recovery.sql`.
+
 - **User-CRUD + Invitations + Password-Reset (PR-A2).** New endpoints
   build on the role model from PR-A1 so a workspace admin can grow the
   team beyond the seeded admin user:

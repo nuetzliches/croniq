@@ -1070,3 +1070,189 @@ fn password_resets_unknown_token_returns_none() {
             .is_none()
     );
 }
+
+// ─── TOTP secrets + recovery codes ───
+
+fn seed_user(store: &impl AuthStore, username: &str) -> User {
+    let u = make_user(username, Role::Admin);
+    store.users_create(&u).unwrap();
+    u
+}
+
+#[test]
+fn totp_upsert_and_get_round_trip() {
+    let store = create_memory_store().unwrap();
+    let user = seed_user(&store, "alex");
+    let secret = TotpSecret {
+        user_id: user.user_id.clone(),
+        secret_enc: "fake-wrapped".into(),
+        enabled: false,
+        confirmed_at: None,
+        created_at: now(),
+    };
+    store.totp_upsert(&secret).unwrap();
+
+    let loaded = store.totp_get(&user.user_id).unwrap().unwrap();
+    assert!(!loaded.enabled);
+    assert_eq!(loaded.secret_enc, "fake-wrapped");
+}
+
+#[test]
+fn totp_upsert_is_idempotent() {
+    let store = create_memory_store().unwrap();
+    let user = seed_user(&store, "alex");
+    let mut secret = TotpSecret {
+        user_id: user.user_id.clone(),
+        secret_enc: "first-wrap".into(),
+        enabled: false,
+        confirmed_at: None,
+        created_at: now(),
+    };
+    store.totp_upsert(&secret).unwrap();
+    // Re-upsert with a different wrapped secret (e.g. user retried setup).
+    secret.secret_enc = "second-wrap".into();
+    store.totp_upsert(&secret).unwrap();
+
+    let loaded = store.totp_get(&user.user_id).unwrap().unwrap();
+    assert_eq!(loaded.secret_enc, "second-wrap");
+}
+
+#[test]
+fn totp_set_enabled_persists_confirmed_at() {
+    let store = create_memory_store().unwrap();
+    let user = seed_user(&store, "alex");
+    store
+        .totp_upsert(&TotpSecret {
+            user_id: user.user_id.clone(),
+            secret_enc: "wrapped".into(),
+            enabled: false,
+            confirmed_at: None,
+            created_at: now(),
+        })
+        .unwrap();
+
+    let when = utc(2026, 5, 23, 17, 0);
+    store.totp_set_enabled(&user.user_id, true, Some(when)).unwrap();
+
+    let loaded = store.totp_get(&user.user_id).unwrap().unwrap();
+    assert!(loaded.enabled);
+    assert_eq!(loaded.confirmed_at, Some(when));
+}
+
+#[test]
+fn totp_delete_removes_secret_and_recovery_codes() {
+    let store = create_memory_store().unwrap();
+    let user = seed_user(&store, "alex");
+    store
+        .totp_upsert(&TotpSecret {
+            user_id: user.user_id.clone(),
+            secret_enc: "wrapped".into(),
+            enabled: true,
+            confirmed_at: Some(now()),
+            created_at: now(),
+        })
+        .unwrap();
+
+    let codes: Vec<RecoveryCode> = (0..10)
+        .map(|i| RecoveryCode {
+            code_id: Uuid::new_v4().to_string(),
+            user_id: user.user_id.clone(),
+            code_hash: format!("hash-{i}"),
+            used_at: None,
+            created_at: now(),
+        })
+        .collect();
+    store
+        .recovery_codes_replace_all(&user.user_id, &codes)
+        .unwrap();
+    assert_eq!(
+        store.recovery_codes_count_unused(&user.user_id).unwrap(),
+        10
+    );
+
+    store.totp_delete(&user.user_id).unwrap();
+
+    assert!(store.totp_get(&user.user_id).unwrap().is_none());
+    assert_eq!(
+        store.recovery_codes_count_unused(&user.user_id).unwrap(),
+        0
+    );
+}
+
+#[test]
+fn recovery_codes_find_unused_skips_used_ones() {
+    let store = create_memory_store().unwrap();
+    let user = seed_user(&store, "alex");
+    let code_id = Uuid::new_v4().to_string();
+    let codes = vec![RecoveryCode {
+        code_id: code_id.clone(),
+        user_id: user.user_id.clone(),
+        code_hash: "target-hash".into(),
+        used_at: None,
+        created_at: now(),
+    }];
+    store
+        .recovery_codes_replace_all(&user.user_id, &codes)
+        .unwrap();
+
+    let found = store
+        .recovery_codes_find_unused(&user.user_id, "target-hash")
+        .unwrap();
+    assert!(found.is_some());
+
+    store
+        .recovery_codes_mark_used(&code_id, utc(2026, 5, 23, 18, 0))
+        .unwrap();
+
+    let after = store
+        .recovery_codes_find_unused(&user.user_id, "target-hash")
+        .unwrap();
+    assert!(after.is_none(), "used code must not match find_unused");
+}
+
+#[test]
+fn recovery_codes_replace_all_clears_previous_set() {
+    let store = create_memory_store().unwrap();
+    let user = seed_user(&store, "alex");
+
+    let first: Vec<RecoveryCode> = (0..10)
+        .map(|i| RecoveryCode {
+            code_id: Uuid::new_v4().to_string(),
+            user_id: user.user_id.clone(),
+            code_hash: format!("first-{i}"),
+            used_at: None,
+            created_at: now(),
+        })
+        .collect();
+    store
+        .recovery_codes_replace_all(&user.user_id, &first)
+        .unwrap();
+
+    let second: Vec<RecoveryCode> = (0..10)
+        .map(|i| RecoveryCode {
+            code_id: Uuid::new_v4().to_string(),
+            user_id: user.user_id.clone(),
+            code_hash: format!("second-{i}"),
+            used_at: None,
+            created_at: now(),
+        })
+        .collect();
+    store
+        .recovery_codes_replace_all(&user.user_id, &second)
+        .unwrap();
+
+    // None of the first batch matches anymore.
+    for i in 0..10 {
+        let hash = format!("first-{i}");
+        assert!(
+            store
+                .recovery_codes_find_unused(&user.user_id, &hash)
+                .unwrap()
+                .is_none()
+        );
+    }
+    assert_eq!(
+        store.recovery_codes_count_unused(&user.user_id).unwrap(),
+        10
+    );
+}

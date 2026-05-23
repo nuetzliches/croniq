@@ -34,6 +34,10 @@ const MIGRATIONS: &[(&str, &str)] = &[
         "012_invitations_and_resets",
         include_str!("012_invitations_and_resets.sql"),
     ),
+    (
+        "013_totp_and_recovery",
+        include_str!("013_totp_and_recovery.sql"),
+    ),
 ];
 
 /// Run all pending migrations.
