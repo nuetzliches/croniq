@@ -1,0 +1,41 @@
+name: "Poll 5xx is retried with backoff and does not hot-loop"
+description: |
+  Transient server errors must:
+    1. Not crash the runner (recovery)
+    2. Be retried at most every poll_retry_delay_ms (backoff)
+
+  Without backoff a broken server would get hammered with thousands of
+  polls a second; with backoff at 400 ms, a 1500 ms window allows for
+  at most ~4 attempts (one immediate + ~3 retries). We keep the server
+  returning 500 for the entire run so the count is bounded by the
+  backoff, not by recovery timing.
+
+  The presence of max_count forces the case to wait its full
+  duration_max_ms before asserting (see ExpectationsAreMet in the
+  binding) — otherwise a runner that violated max only after the
+  early-exit point would pass trivially.
+
+runner_config:
+  capabilities: ["work"]
+  max_inflight: 1
+  api_key: "croniq_testkey"
+  poll_timeout_ms: 1000
+  poll_retry_delay_ms: 400
+  drain_timeout_ms: 500
+
+handlers: []
+
+server_script:
+  - on: "POST /v1/work/poll"
+    respond:
+      status: 500
+      body:
+        error: "database unavailable"
+
+expectations:
+  duration_max_ms: 1500
+  http:
+    - method: POST
+      path: /v1/work/poll
+      min_count: 2
+      max_count: 6

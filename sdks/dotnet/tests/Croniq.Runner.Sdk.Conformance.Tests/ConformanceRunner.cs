@@ -72,7 +72,13 @@ internal static class ConformanceRunner
         }
         stopwatch.Stop();
 
-        AssertExpectations(spec, mock.RecordedRequests, stopwatch.Elapsed);
+        var recorded2 = mock.RecordedRequests;
+        if (Environment.GetEnvironmentVariable("CRONIQ_CONFORMANCE_DEBUG") == "1")
+        {
+            Console.WriteLine($"[debug-{spec.Name}] {recorded2.Count} request(s) in {stopwatch.ElapsedMilliseconds}ms:");
+            foreach (var r in recorded2) Console.WriteLine($"[debug]   {r.Method} {r.Path}");
+        }
+        AssertExpectations(spec, recorded2, stopwatch.Elapsed);
     }
 
     private static ServiceProvider BuildServices(CaseSpec spec, string serverUrl)
@@ -120,15 +126,20 @@ internal static class ConformanceRunner
     {
         foreach (var ex in expectations.Http)
         {
+            // max_count is a "ceiling over a time window" assertion. If
+            // we'd let the loop exit as soon as min/exact were satisfied,
+            // a runner that violates max only AFTER the early exit would
+            // pass trivially. Force the case to wait its full
+            // duration_max_ms in that case so the ceiling is observable.
+            if (ex.MaxCount.HasValue) return false;
+
             var matching = recorded.Count(r =>
                 r.Method.Equals(ex.Method, StringComparison.OrdinalIgnoreCase) &&
                 r.Path == ex.Path);
 
             if (ex.ExactCount is int exact && matching < exact) return false;
             if (ex.MinCount is int min && matching < min) return false;
-            // We don't gate on max_count or body_match here — those are
-            // checked once after the loop ends, since "saw enough" is the
-            // only positive early-exit signal.
+            // body_match and header checks happen post-hoc.
         }
         return true;
     }

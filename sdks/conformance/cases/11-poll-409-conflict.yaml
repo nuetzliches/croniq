@@ -1,0 +1,43 @@
+name: "Poll returning 409 instance-conflict does not crash the runner"
+description: |
+  openapi.yaml documents /v1/work/poll returning 409 when another runner
+  instance is already registered with the same runner_id. The current
+  SDK behaviour is to treat it as a transient error and back off — same
+  as any non-2xx. That's debatable (an instance conflict is arguably
+  permanent and should bail with an actionable message) but it is the
+  observable contract today. This case pins that behaviour so a future
+  refactor of the poll error path can't silently regress it.
+
+  Server returns 409 on the first poll, 200/empty thereafter. The
+  runner should: not throw out of RunAsync, retry after poll_retry_delay,
+  and successfully poll again. We assert at least 2 polls happened — if
+  the runner crashed on the 409, we'd see exactly 1.
+
+runner_config:
+  capabilities: ["work"]
+  max_inflight: 1
+  api_key: "croniq_testkey"
+  poll_timeout_ms: 1000
+  poll_retry_delay_ms: 200
+  drain_timeout_ms: 1000
+
+handlers: []
+
+server_script:
+  - on: "POST /v1/work/poll"
+    match_count: 1
+    respond:
+      status: 409
+      body:
+        error: "runner instance conflict"
+  - on: "POST /v1/work/poll"
+    respond:
+      status: 200
+      body: { work: [], cancel: [] }
+
+expectations:
+  duration_max_ms: 2500
+  http:
+    - method: POST
+      path: /v1/work/poll
+      min_count: 2
