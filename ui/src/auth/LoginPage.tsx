@@ -36,9 +36,9 @@ interface Demo {
 const DEMOS: Demo[] = [
   {
     cmd: 'croniq job register',
-    arg: '--file croniqfile.hcl',
+    arg: '--file ./Croniqfile',
     output: [
-      { lvl: 'info', text: 'parsed croniqfile.hcl · 3 jobs · 1 calendar' },
+      { lvl: 'info', text: 'parsed ./Croniqfile · 3 jobs · 1 calendar' },
       { lvl: 'info', text: 'registered job payroll (sha 9f3a1e22)' },
       { lvl: 'info', text: 'attached schedule "0 9 * * 1-5" (Europe/Berlin)' },
       { lvl: 'ok', text: '3 jobs reconciled in 142ms' },

@@ -868,7 +868,7 @@ function DslTab({
     <section className="card" style={{ padding: 0 }}>
       <div className="between" style={{ padding: '10px 14px', borderBottom: '1px solid var(--border)' }}>
         <div className="mono dim" style={{ fontSize: 12 }}>
-          Croniqfile.hcl
+          Croniqfile
         </div>
         <div className="row gap-6">
           <CopyBtn value={dsl} label="Copy" />
