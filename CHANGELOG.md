@@ -8,6 +8,22 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Personal Access Tokens (PR-A4).** User-bound API credentials,
+  distinct from `api_keys` (which belong to service identities). PATs
+  carry a stable `user_id`, a human label ("laptop", "ci-personal"),
+  and a scope subset of the owning user's role's default-scope set —
+  a Viewer can't mint a PAT with `jobs:write`, the API refuses with 403.
+  - `POST /v1/users/me/tokens` — issue. Raw `croniq_pat_…` token is
+    returned ONCE; only the SHA-256 hash is persisted.
+  - `GET /v1/users/me/tokens` — list the caller's tokens.
+  - `DELETE /v1/users/me/tokens/{id}` — revoke.
+  - Auth middleware accepts `Authorization: Bearer croniq_pat_…` and
+    the explicit `Authorization: PAT …` header. `last_used_at` is
+    stamped best-effort on every successful request.
+  New migration: `014_personal_access_tokens.sql`. `CallerType::User`
+  with `auth_method: pat` distinguishes PAT-authenticated requests
+  from password-authenticated sessions in the audit log.
+
 - **TOTP/2FA with single-use recovery codes (PR-A3).** Users can
   enable a second factor in self-service. The login flow becomes
   two-step when 2FA is on:

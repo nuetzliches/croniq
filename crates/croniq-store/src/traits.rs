@@ -252,6 +252,14 @@ pub trait AuthStore {
     ) -> Result<Option<RecoveryCode>, StoreError>;
     fn recovery_codes_mark_used(&self, code_id: &str, at: DateTime<Utc>) -> Result<(), StoreError>;
     fn recovery_codes_count_unused(&self, user_id: &str) -> Result<u64, StoreError>;
+
+    // Personal Access Tokens — user-bound API credentials.
+    fn pat_create(&self, pat: &PersonalAccessToken) -> Result<(), StoreError>;
+    fn pat_find_by_hash(&self, token_hash: &str)
+    -> Result<Option<PersonalAccessToken>, StoreError>;
+    fn pat_list(&self, user_id: &str) -> Result<Vec<PersonalAccessToken>, StoreError>;
+    fn pat_revoke(&self, token_id: &str, at: DateTime<Utc>) -> Result<(), StoreError>;
+    fn pat_touch_last_used(&self, token_id: &str, at: DateTime<Utc>) -> Result<(), StoreError>;
 }
 
 /// Job definition persistence (CRUD for job definitions, distinct from runtime JobState).

@@ -1075,6 +1075,93 @@ impl AuthStore for SqliteStore {
             .map_err(map_err)?;
         Ok(count as u64)
     }
+
+    fn pat_create(&self, pat: &PersonalAccessToken) -> Result<(), StoreError> {
+        let conn = self.conn.lock().unwrap();
+        let scopes_json =
+            serde_json::to_string(&pat.scopes).map_err(|e| StoreError::Database(e.to_string()))?;
+        conn.execute(
+            "INSERT INTO personal_access_tokens (token_id, user_id, name, token_hash, token_prefix, scopes, expires_at, revoked_at, last_used_at, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+            params![
+                pat.token_id,
+                pat.user_id,
+                pat.name,
+                pat.token_hash,
+                pat.token_prefix,
+                scopes_json,
+                opt_dt_to_sql(&pat.expires_at),
+                opt_dt_to_sql(&pat.revoked_at),
+                opt_dt_to_sql(&pat.last_used_at),
+                dt_to_sql(&pat.created_at),
+            ],
+        )
+        .map_err(map_err)?;
+        Ok(())
+    }
+
+    fn pat_find_by_hash(
+        &self,
+        token_hash: &str,
+    ) -> Result<Option<PersonalAccessToken>, StoreError> {
+        let conn = self.conn.lock().unwrap();
+        conn.prepare(
+            "SELECT token_id, user_id, name, token_hash, token_prefix, scopes, expires_at, revoked_at, last_used_at, created_at
+             FROM personal_access_tokens WHERE token_hash = ?1",
+        )
+        .map_err(map_err)?
+        .query_row(params![token_hash], map_pat_row)
+        .optional()
+        .map_err(map_err)
+    }
+
+    fn pat_list(&self, user_id: &str) -> Result<Vec<PersonalAccessToken>, StoreError> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn
+            .prepare("SELECT token_id, user_id, name, token_hash, token_prefix, scopes, expires_at, revoked_at, last_used_at, created_at FROM personal_access_tokens WHERE user_id = ?1 ORDER BY created_at DESC")
+            .map_err(map_err)?;
+        let rows = stmt
+            .query_map(params![user_id], map_pat_row)
+            .map_err(map_err)?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(map_err)
+    }
+
+    fn pat_revoke(&self, token_id: &str, at: DateTime<Utc>) -> Result<(), StoreError> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE personal_access_tokens SET revoked_at = ?1 WHERE token_id = ?2",
+            params![dt_to_sql(&at), token_id],
+        )
+        .map_err(map_err)?;
+        Ok(())
+    }
+
+    fn pat_touch_last_used(&self, token_id: &str, at: DateTime<Utc>) -> Result<(), StoreError> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE personal_access_tokens SET last_used_at = ?1 WHERE token_id = ?2",
+            params![dt_to_sql(&at), token_id],
+        )
+        .map_err(map_err)?;
+        Ok(())
+    }
+}
+
+fn map_pat_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<PersonalAccessToken> {
+    let scopes_json: String = row.get(5)?;
+    let scopes: Vec<String> = serde_json::from_str(&scopes_json).unwrap_or_default();
+    Ok(PersonalAccessToken {
+        token_id: row.get(0)?,
+        user_id: row.get(1)?,
+        name: row.get(2)?,
+        token_hash: row.get(3)?,
+        token_prefix: row.get(4)?,
+        scopes,
+        expires_at: sql_to_opt_dt(row.get(6)?),
+        revoked_at: sql_to_opt_dt(row.get(7)?),
+        last_used_at: sql_to_opt_dt(row.get(8)?),
+        created_at: sql_to_dt(&row.get::<_, String>(9)?),
+    })
 }
 
 fn map_invitation_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Invitation> {

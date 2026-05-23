@@ -10,6 +10,7 @@ pub mod execution_logs;
 pub mod invitations;
 pub mod jobs;
 pub mod password_reset;
+pub mod pat;
 pub mod runners_sse;
 pub mod schedules;
 pub mod tags;
@@ -308,6 +309,12 @@ pub fn server_router(state: Arc<ServerState>) -> Router {
             "/v1/users/me/totp/recovery-codes/regenerate",
             post(totp::handle_regenerate),
         )
+        // Personal Access Tokens (self-service)
+        .route(
+            "/v1/users/me/tokens",
+            get(pat::handle_list).post(pat::handle_create),
+        )
+        .route("/v1/users/me/tokens/{id}", delete(pat::handle_revoke))
         .route_layer(middleware::from_fn_with_state(
             Arc::clone(&state),
             auth_middleware::require_auth,

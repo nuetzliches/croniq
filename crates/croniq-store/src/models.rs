@@ -318,6 +318,28 @@ pub struct RecoveryCode {
     pub created_at: DateTime<Utc>,
 }
 
+/// A Personal Access Token — a user-bound API credential with a stable
+/// `user_id` and a scope subset of the owning user's role. Raw token
+/// is delivered once at creation; only the SHA-256 hash is persisted.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PersonalAccessToken {
+    pub token_id: String,
+    pub user_id: String,
+    /// Human label ("laptop", "ci-personal").
+    pub name: String,
+    /// SHA-256 hash of the raw token.
+    pub token_hash: String,
+    /// First 12 chars of the raw token for display ("croniq_pat_…").
+    pub token_prefix: String,
+    /// Scopes granted to this token. Must be a subset of the owning
+    /// user's role's default scopes (enforced at create time).
+    pub scopes: Vec<String>,
+    pub expires_at: Option<DateTime<Utc>>,
+    pub revoked_at: Option<DateTime<Utc>>,
+    pub last_used_at: Option<DateTime<Utc>>,
+    pub created_at: DateTime<Utc>,
+}
+
 // ─── Job Definition ───
 
 /// A persisted job definition (distinct from the runtime JobState).

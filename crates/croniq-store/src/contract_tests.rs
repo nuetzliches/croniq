@@ -1132,7 +1132,9 @@ fn totp_set_enabled_persists_confirmed_at() {
         .unwrap();
 
     let when = utc(2026, 5, 23, 17, 0);
-    store.totp_set_enabled(&user.user_id, true, Some(when)).unwrap();
+    store
+        .totp_set_enabled(&user.user_id, true, Some(when))
+        .unwrap();
 
     let loaded = store.totp_get(&user.user_id).unwrap().unwrap();
     assert!(loaded.enabled);
@@ -1173,10 +1175,7 @@ fn totp_delete_removes_secret_and_recovery_codes() {
     store.totp_delete(&user.user_id).unwrap();
 
     assert!(store.totp_get(&user.user_id).unwrap().is_none());
-    assert_eq!(
-        store.recovery_codes_count_unused(&user.user_id).unwrap(),
-        0
-    );
+    assert_eq!(store.recovery_codes_count_unused(&user.user_id).unwrap(), 0);
 }
 
 #[test]
@@ -1255,4 +1254,88 @@ fn recovery_codes_replace_all_clears_previous_set() {
         store.recovery_codes_count_unused(&user.user_id).unwrap(),
         10
     );
+}
+
+// ─── Personal Access Tokens ───
+
+fn make_pat(user_id: &str, name: &str, token_hash: &str) -> PersonalAccessToken {
+    PersonalAccessToken {
+        token_id: Uuid::new_v4().to_string(),
+        user_id: user_id.into(),
+        name: name.into(),
+        token_hash: token_hash.into(),
+        token_prefix: "croniq_pat_".into(),
+        scopes: vec!["jobs:read".into()],
+        expires_at: None,
+        revoked_at: None,
+        last_used_at: None,
+        created_at: now(),
+    }
+}
+
+#[test]
+fn pat_create_and_find_by_hash() {
+    let store = create_memory_store().unwrap();
+    let user = seed_user(&store, "alex");
+    let pat = make_pat(&user.user_id, "laptop", "hash-a");
+    store.pat_create(&pat).unwrap();
+
+    let found = store.pat_find_by_hash("hash-a").unwrap().unwrap();
+    assert_eq!(found.token_id, pat.token_id);
+    assert_eq!(found.user_id, user.user_id);
+    assert_eq!(found.scopes, vec!["jobs:read".to_string()]);
+}
+
+#[test]
+fn pat_list_orders_by_created_desc() {
+    let store = create_memory_store().unwrap();
+    let user = seed_user(&store, "alex");
+
+    let mut older = make_pat(&user.user_id, "older", "hash-old");
+    older.created_at = utc(2026, 5, 1, 0, 0);
+    let mut newer = make_pat(&user.user_id, "newer", "hash-new");
+    newer.created_at = utc(2026, 5, 20, 0, 0);
+    store.pat_create(&older).unwrap();
+    store.pat_create(&newer).unwrap();
+
+    let list = store.pat_list(&user.user_id).unwrap();
+    assert_eq!(list.len(), 2);
+    assert_eq!(list[0].name, "newer");
+    assert_eq!(list[1].name, "older");
+}
+
+#[test]
+fn pat_revoke_sets_revoked_at() {
+    let store = create_memory_store().unwrap();
+    let user = seed_user(&store, "alex");
+    let pat = make_pat(&user.user_id, "laptop", "hash-r");
+    store.pat_create(&pat).unwrap();
+
+    let when = utc(2026, 5, 23, 19, 0);
+    store.pat_revoke(&pat.token_id, when).unwrap();
+
+    // After revoke, find_by_hash still returns the row (auth middleware
+    // checks revoked_at separately) — but the timestamp is set.
+    let loaded = store.pat_find_by_hash("hash-r").unwrap().unwrap();
+    assert_eq!(loaded.revoked_at, Some(when));
+}
+
+#[test]
+fn pat_touch_last_used_updates_field() {
+    let store = create_memory_store().unwrap();
+    let user = seed_user(&store, "alex");
+    let pat = make_pat(&user.user_id, "laptop", "hash-t");
+    store.pat_create(&pat).unwrap();
+
+    let when = utc(2026, 5, 23, 20, 0);
+    store.pat_touch_last_used(&pat.token_id, when).unwrap();
+
+    let loaded = store.pat_find_by_hash("hash-t").unwrap().unwrap();
+    assert_eq!(loaded.last_used_at, Some(when));
+}
+
+#[test]
+fn pat_find_by_unknown_hash_returns_none() {
+    let store = create_memory_store().unwrap();
+    assert!(store.pat_find_by_hash("nope").unwrap().is_none());
 }
