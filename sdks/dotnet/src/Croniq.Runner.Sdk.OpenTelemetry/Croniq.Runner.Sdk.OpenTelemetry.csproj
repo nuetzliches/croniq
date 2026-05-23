@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <PackageId>Croniq.Runner.Sdk.OpenTelemetry</PackageId>
+    <IsPackable>true</IsPackable>
+    <RootNamespace>Croniq.Runner.Sdk.OpenTelemetry</RootNamespace>
+    <AssemblyName>Croniq.Runner.Sdk.OpenTelemetry</AssemblyName>
+    <Description>OpenTelemetry tracing and metrics instrumentation for the Croniq Runner SDK. Provides ActivitySource and Meter constants plus TracerProviderBuilder/MeterProviderBuilder extensions.</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Croniq.Runner.Sdk\Croniq.Runner.Sdk.csproj" />
+    <PackageReference Include="OpenTelemetry.Api" />
+    <PackageReference Include="OpenTelemetry.Extensions.Hosting" />
+  </ItemGroup>
+
+</Project>

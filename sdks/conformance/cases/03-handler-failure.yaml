@@ -1,0 +1,51 @@
+name: "Handler throws, runner acks failure with error message"
+description: |
+  When a handler throws, the runner must ack with status=failure and forward
+  the exception message in the error field. The runner must continue polling
+  afterwards (a single failing job does not stop the loop).
+
+runner_config:
+  capabilities: ["billing"]
+  max_inflight: 1
+  api_key: "croniq_testkey"
+  poll_timeout_ms: 2000
+  poll_retry_delay_ms: 200
+  drain_timeout_ms: 2000
+
+handlers:
+  - job_key: "billing:invoice"
+    behavior: throw
+    error_message: "billing service unreachable"
+
+server_script:
+  - on: "POST /v1/work/poll"
+    match_count: 1
+    respond:
+      status: 200
+      body:
+        work:
+          - execution_id: "exec-fail"
+            job_key: "billing:invoice"
+            fire_at: "2026-05-23T10:00:00Z"
+            attempt: 2
+            metadata: {}
+            timeout: "1m"
+        cancel: []
+  - on: "POST /v1/work/poll"
+    respond:
+      status: 200
+      body: { work: [], cancel: [] }
+  - on: "POST /v1/work/ack"
+    respond: { status: 200, body: {} }
+
+expectations:
+  duration_max_ms: 3000
+  http:
+    - method: POST
+      path: /v1/work/ack
+      exact_count: 1
+      body_match:
+        execution_id: "exec-fail"
+        status: "failure"
+        attempt: 2
+        error: "*"

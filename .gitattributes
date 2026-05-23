@@ -11,3 +11,20 @@ src/Croniq.Ui/**/*.ts text eol=lf
 src/Croniq.Ui/**/*.json text eol=lf
 src/Croniq.Ui/**/*.css text eol=lf
 src/Croniq.Ui/**/*.html text eol=lf
+
+# .NET SDK sources — .editorconfig under sdks/dotnet/ enforces end_of_line=lf
+# but `dotnet format --verify-no-changes` running on a Windows runner sees
+# CRLF (the default `core.autocrlf=true` flips LF→CRLF on checkout) and
+# fails the CI format gate. Pinning eol=lf here keeps the working copy on
+# every OS aligned with the editorconfig.
+sdks/dotnet/**/*.cs text eol=lf
+sdks/dotnet/**/*.csproj text eol=lf
+sdks/dotnet/**/*.slnx text eol=lf
+sdks/dotnet/**/*.props text eol=lf
+sdks/dotnet/**/*.targets text eol=lf
+sdks/dotnet/**/*.json text eol=lf
+
+# Conformance suite YAMLs / schema are read by Linux/macOS/Windows bindings
+# and embedded comparisons need a deterministic encoding.
+sdks/conformance/**/*.yaml text eol=lf
+sdks/conformance/**/*.json text eol=lf

@@ -1,0 +1,80 @@
+<Project>
+  <PropertyGroup Label="Identity">
+    <Authors>Croniq Contributors</Authors>
+    <Company>nuetzliches</Company>
+    <Copyright>Copyright (c) Croniq Contributors</Copyright>
+    <Product>Croniq Runner SDK</Product>
+  </PropertyGroup>
+
+  <PropertyGroup Label="Compiler">
+    <TargetFrameworks>net10.0;net8.0</TargetFrameworks>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <EnableNETAnalyzers>true</EnableNETAnalyzers>
+    <AnalysisLevel>latest-recommended</AnalysisLevel>
+    <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
+    <!--
+      CS1591: missing XML doc (intentional for internal members)
+      CA1068: cancellation tokens not last (ExecutionContext ctor is internal, ordered for ergonomics)
+      CA1873: Use LoggerMessage source generator (premature for foundation code; revisit when stable)
+      CA1844: Override memory-based Stream.WriteAsync (TextWriterStream is a tiny bridge; not hot path)
+      CA2007: ConfigureAwait(false) noise — modern code uses sync context awareness instead
+      CA1062: validate parameters (handled by ArgumentNullException.ThrowIfNull where useful)
+    -->
+    <NoWarn>$(NoWarn);CS1591;CA1068;CA1873;CA1844;CA2007;CA1062</NoWarn>
+  </PropertyGroup>
+
+  <PropertyGroup Label="Pack" Condition="'$(IsPackable)' == 'true'">
+    <PackageTags>croniq;cron;scheduler;jobs;runner;worker;sdk</PackageTags>
+    <PackageLicenseExpression>MIT OR Apache-2.0</PackageLicenseExpression>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <PackageIcon>croniq-icon.png</PackageIcon>
+    <PackageProjectUrl>https://github.com/nuetzliches/croniq</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/nuetzliches/croniq</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageRequireLicenseAcceptance>false</PackageRequireLicenseAcceptance>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+  </PropertyGroup>
+
+  <PropertyGroup Label="SourceLink" Condition="'$(IsPackable)' == 'true'">
+    <PublishRepositoryUrl>true</PublishRepositoryUrl>
+    <EmbedUntrackedSources>true</EmbedUntrackedSources>
+    <IncludeSymbols>true</IncludeSymbols>
+    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+    <DebugType>portable</DebugType>
+    <DebugSymbols>true</DebugSymbols>
+    <ContinuousIntegrationBuild Condition="'$(GITHUB_ACTIONS)' == 'true'">true</ContinuousIntegrationBuild>
+  </PropertyGroup>
+
+  <PropertyGroup Label="AOT" Condition="'$(IsPackable)' == 'true'">
+    <IsAotCompatible>true</IsAotCompatible>
+    <IsTrimmable>true</IsTrimmable>
+  </PropertyGroup>
+
+  <PropertyGroup Label="MinVer" Condition="'$(IsPackable)' == 'true'">
+    <MinVerTagPrefix>dotnet-sdk-v</MinVerTagPrefix>
+    <MinVerDefaultPreReleaseIdentifiers>preview.0</MinVerDefaultPreReleaseIdentifiers>
+  </PropertyGroup>
+
+  <ItemGroup Condition="'$(IsPackable)' == 'true'">
+    <PackageReference Include="MinVer" PrivateAssets="all" />
+    <PackageReference Include="Microsoft.SourceLink.GitHub" PrivateAssets="all" />
+    <None Include="$(MSBuildThisFileDirectory)README.md" Pack="true" PackagePath="\" Visible="false" />
+    <None Include="$(MSBuildThisFileDirectory)croniq-icon.png" Pack="true" PackagePath="\" Visible="false" />
+  </ItemGroup>
+
+  <ItemGroup Label="NuGetAudit suppressions">
+    <!--
+      Known OpenTelemetry-related advisories. None have a fixed version available
+      against OpenTelemetry 1.14.0 (latest stable). Tracked upstream — we surface
+      the suppressions explicitly so a future audit pass signals when they can be
+      dropped. Applied to every project (incl. examples) via Directory.Build.props.
+    -->
+    <NuGetAuditSuppress Include="https://github.com/advisories/GHSA-g94r-2vxg-569j" />
+    <NuGetAuditSuppress Include="https://github.com/advisories/GHSA-4625-4j76-fww9" />
+    <NuGetAuditSuppress Include="https://github.com/advisories/GHSA-mr8r-92fq-pj8p" />
+    <NuGetAuditSuppress Include="https://github.com/advisories/GHSA-q834-8qmm-v933" />
+  </ItemGroup>
+</Project>

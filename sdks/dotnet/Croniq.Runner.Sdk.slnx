@@ -1,0 +1,13 @@
+<Solution>
+  <Folder Name="/examples/">
+    <Project Path="examples/CroniqRunner.Demo/CroniqRunner.Demo.csproj" />
+  </Folder>
+  <Folder Name="/src/">
+    <Project Path="src/Croniq.Runner.Sdk.OpenTelemetry/Croniq.Runner.Sdk.OpenTelemetry.csproj" />
+    <Project Path="src/Croniq.Runner.Sdk/Croniq.Runner.Sdk.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Croniq.Runner.Sdk.Tests/Croniq.Runner.Sdk.Tests.csproj" />
+    <Project Path="tests/Croniq.Runner.Sdk.Conformance.Tests/Croniq.Runner.Sdk.Conformance.Tests.csproj" />
+  </Folder>
+</Solution>

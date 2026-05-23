@@ -1,0 +1,68 @@
+name: "Shutdown drains in-flight handlers before returning"
+description: |
+  When the runner's cancellation token fires while a handler is still
+  executing, the runner must:
+    1. Stop polling for new work.
+    2. Wait for the in-flight handler to finish (bounded by drain_timeout_ms).
+    3. Ack the completed work with status=success.
+
+  The binding triggers shutdown 300 ms after the case starts; the handler
+  sleeps for 500 ms. Net effect: drain waits ~200 ms for the handler to
+  finish on its own, then the ack is emitted as success.
+
+  This matches the Rust SDK's drain semantics: host shutdown stops the
+  poll loop but does NOT cancel running handlers — they run to natural
+  completion. Hard-cancellation only happens if drain_timeout_ms elapses
+  while handlers are still in-flight.
+
+runner_config:
+  capabilities: ["work"]
+  max_inflight: 1
+  api_key: "croniq_testkey"
+  poll_timeout_ms: 1000
+  poll_retry_delay_ms: 200
+  drain_timeout_ms: 3000
+  capacity_backoff_ms: 50
+
+handlers:
+  - job_key: "graceful:job"
+    behavior: sleep
+    duration_ms: 500
+
+server_script:
+  - on: "POST /v1/work/poll"
+    match_count: 1
+    respond:
+      status: 200
+      body:
+        work:
+          - execution_id: "exec-drain"
+            job_key: "graceful:job"
+            fire_at: "2026-05-23T10:00:00Z"
+            attempt: 1
+            metadata: {}
+            timeout: "5m"
+        cancel: []
+  - on: "POST /v1/work/poll"
+    respond:
+      status: 200
+      body: { work: [], cancel: [] }
+  - on: "POST /v1/work/ack"
+    respond: { status: 200, body: {} }
+  - on: "POST /v1/work/renew"
+    respond: { status: 200, body: {} }
+
+# Binding-specific directive: cancel the runner this many ms after start.
+# Bindings without this hook should treat the absence as "let it run until
+# expectations are met" and skip the case if they cannot trigger shutdown.
+shutdown_after_ms: 300
+
+expectations:
+  duration_max_ms: 4000
+  http:
+    - method: POST
+      path: /v1/work/ack
+      exact_count: 1
+      body_match:
+        execution_id: "exec-drain"
+        status: "success"

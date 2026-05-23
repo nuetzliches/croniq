@@ -1,0 +1,67 @@
+name: "Streaming log writer drains before ack"
+description: |
+  When a handler emits events via the streaming LogWriter, every queued
+  event must be POSTed to /v1/work/{id}/events before the runner acks
+  the execution. This is the central guarantee of issue #115 — without
+  it, late events would arrive after the execution is already marked
+  complete on the server, which the UI would attribute to a different
+  attempt or drop entirely.
+
+  The handler emits 50 events synchronously. The dispatcher's
+  DisposeAsync on the lazy LogWriter waits for the flusher to drain
+  the bounded channel before AckAsync runs.
+
+runner_config:
+  capabilities: ["log"]
+  max_inflight: 1
+  api_key: "croniq_testkey"
+  poll_timeout_ms: 1000
+  poll_retry_delay_ms: 200
+  drain_timeout_ms: 5000
+
+handlers:
+  - job_key: "log:burst"
+    behavior: stream_logs
+    count: 50
+    interval_ms: 0
+    level: info
+
+server_script:
+  - on: "POST /v1/work/poll"
+    match_count: 1
+    respond:
+      status: 200
+      body:
+        work:
+          - execution_id: "exec-stream"
+            job_key: "log:burst"
+            fire_at: "2026-05-23T10:00:00Z"
+            attempt: 1
+            metadata: {}
+            timeout: "5m"
+        cancel: []
+  - on: "POST /v1/work/poll"
+    respond:
+      status: 200
+      body: { work: [], cancel: [] }
+  - on: "POST /v1/work/exec-stream/events"
+    respond:
+      status: 200
+      body: { accepted: 0 }   # value is unused by SDK, just needs to be a valid envelope
+  - on: "POST /v1/work/ack"
+    respond: { status: 200, body: {} }
+  - on: "POST /v1/work/renew"
+    respond: { status: 200, body: {} }
+
+expectations:
+  duration_max_ms: 4000
+  http:
+    - method: POST
+      path: /v1/work/exec-stream/events
+      min_count: 1
+    - method: POST
+      path: /v1/work/ack
+      exact_count: 1
+      body_match:
+        execution_id: "exec-stream"
+        status: "success"
