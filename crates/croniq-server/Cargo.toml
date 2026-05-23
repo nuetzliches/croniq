@@ -46,6 +46,12 @@ jsonwebtoken = { version = "10", features = ["rust_crypto"] }
 base64 = "0.22"
 rand = "0.9"
 
+# PR-A6: optional SMTP transport for invitations + password resets.
+# Off by default — NoopSender keeps working and the API still returns
+# the token URL in the JSON response. Enable the `smtp` cargo feature
+# to drop in a lettre-backed sender.
+lettre = { version = "0.11", default-features = false, features = ["smtp-transport", "rustls-tls", "tokio1-rustls-tls", "builder"], optional = true }
+
 # OTLP exporter (issue #121). Off by default — when disabled, behaviour is
 # identical to plain tracing-subscriber fmt on stderr. When enabled and
 # OTEL_EXPORTER_OTLP_ENDPOINT is set at runtime, scheduler spans and
@@ -66,6 +72,10 @@ otlp = [
     "dep:opentelemetry-appender-tracing",
     "dep:tracing-opentelemetry",
 ]
+# Outbound SMTP via lettre for invitations + password-reset email
+# delivery. When off (default), NoopSender is used and tokens come
+# back in the API response only.
+smtp = ["dep:lettre"]
 
 [dev-dependencies]
 pretty_assertions = "1"

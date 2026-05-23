@@ -8,6 +8,15 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Optional SMTP transport for invitations + password-reset (PR-A6).**
+  New cargo feature `smtp` gates a lettre-backed `SmtpSender`. When
+  the feature is built in AND `CRONIQ_SMTP_URL` + `CRONIQ_SMTP_FROM`
+  are set, outbound mail is sent for real; otherwise the `NoopSender`
+  default keeps working and the token URL still comes back in the
+  API response (the explicit-fallback mode the operator picked over
+  SMTP-mandatory in the spike Q&A). URL format follows lettre's
+  conventions: `smtp://user:pass@host:587/?tls=required`.
+
 - **OIDC/SSO login (PR-A5).** Manual Authorization-Code flow against
   any OpenID-Connect provider with Discovery — tested mentally
   against Authentik, Keycloak, Auth0. New env-only config (a DSL
