@@ -160,39 +160,76 @@
   box-shadow: 0 2px 8px -4px oklch(0 0 0 / 0.30);
 }
 [data-theme="light"] .card { box-shadow: 0 2px 8px -4px oklch(0 0 0 / 0.06); }
-/* Deep-water glass — stronger refraction than the basic frosted
- * card. The combination of low surface opacity + heavy saturate
- * + slight brightness + heavier blur makes anything underneath
- * (the drifting marketing spots) read as a smaller, more
- * concentrated bright point inside the card than its raw outside
- * area, mimicking the way light bends through a deep pool. The
- * inset top + bottom highlights suggest the water surface and
- * the meniscus at the bottom edge. */
+/* Two-zone glass: the card BODY uses a mild frosted blur (so the
+ * content stays readable), and a separate ::before pseudo paints
+ * a thicker refraction ring at the border with much stronger
+ * saturation + brightness. That's the deep-water analogy: light
+ * bends most where the wave meets the surface (the edge), and
+ * the interior stays calm. backdrop-filter is per-element, so
+ * the pseudo is what makes the per-zone treatment possible. */
 @supports (backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px)) {
   .card {
-    background: color-mix(in srgb, var(--panel) 55%, transparent);
-    backdrop-filter: blur(28px) saturate(180%) brightness(108%);
-    -webkit-backdrop-filter: blur(28px) saturate(180%) brightness(108%);
+    background: color-mix(in srgb, var(--panel) 70%, transparent);
+    backdrop-filter: blur(14px) saturate(130%);
+    -webkit-backdrop-filter: blur(14px) saturate(130%);
     border-color: color-mix(in srgb, var(--border) 55%, transparent);
     box-shadow:
-      0 14px 36px -14px oklch(0 0 0 / 0.55),
-      inset 0 1px 0 oklch(1 0 0 / 0.08),
-      inset 0 -1px 0 oklch(0 0 0 / 0.22);
+      0 12px 30px -14px oklch(0 0 0 / 0.45),
+      inset 0 1px 0 oklch(1 0 0 / 0.06);
   }
   [data-theme="light"] .card {
-    background: color-mix(in srgb, var(--panel) 72%, transparent);
-    backdrop-filter: blur(20px) saturate(150%) brightness(102%);
-    -webkit-backdrop-filter: blur(20px) saturate(150%) brightness(102%);
+    background: color-mix(in srgb, var(--panel) 80%, transparent);
+    backdrop-filter: blur(12px) saturate(120%);
+    -webkit-backdrop-filter: blur(12px) saturate(120%);
     box-shadow:
-      0 12px 32px -14px oklch(0 0 0 / 0.18),
-      inset 0 1px 0 oklch(1 0 0 / 0.55),
-      inset 0 -1px 0 oklch(0 0 0 / 0.05);
+      0 10px 28px -14px oklch(0 0 0 / 0.14),
+      inset 0 1px 0 oklch(1 0 0 / 0.5);
   }
   .panel {
-    background: color-mix(in srgb, var(--panel) 60%, transparent);
-    backdrop-filter: blur(24px) saturate(160%);
-    -webkit-backdrop-filter: blur(24px) saturate(160%);
+    background: color-mix(in srgb, var(--panel) 72%, transparent);
+    backdrop-filter: blur(14px) saturate(130%);
+    -webkit-backdrop-filter: blur(14px) saturate(130%);
     border-color: color-mix(in srgb, var(--border) 60%, transparent);
+  }
+}
+
+/* Refraction ring — a ~7 px hollow border-zone pseudo with its
+ * own, much stronger backdrop-filter. Mask-composite punches out
+ * the interior so the strong filter is bound to the edge band
+ * only. */
+@supports ((mask-composite: exclude) or (-webkit-mask-composite: xor)) and (backdrop-filter: blur(1px)) {
+  .card,
+  .panel {
+    position: relative;
+    isolation: isolate;
+  }
+  .card::before,
+  .panel::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    padding: 7px;
+    pointer-events: none;
+    z-index: 0;
+    /* The actual refraction lens */
+    backdrop-filter: blur(6px) saturate(260%) brightness(118%);
+    -webkit-backdrop-filter: blur(6px) saturate(260%) brightness(118%);
+    /* Mask: paint the full box white XOR the content-box white,
+     * leaving only the padding band visible. */
+    -webkit-mask:
+      linear-gradient(#fff 0 0) content-box,
+      linear-gradient(#fff 0 0);
+    -webkit-mask-composite: xor;
+    mask:
+      linear-gradient(#fff 0 0) content-box,
+      linear-gradient(#fff 0 0);
+    mask-composite: exclude;
+  }
+  [data-theme="light"] .card::before,
+  [data-theme="light"] .panel::before {
+    backdrop-filter: blur(4px) saturate(170%) brightness(104%);
+    -webkit-backdrop-filter: blur(4px) saturate(170%) brightness(104%);
   }
 }
 .card-head {
