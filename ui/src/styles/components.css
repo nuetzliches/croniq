@@ -193,10 +193,13 @@
   }
 }
 
-/* Refraction ring — a ~7 px hollow border-zone pseudo with its
- * own, much stronger backdrop-filter. Mask-composite punches out
- * the interior so the strong filter is bound to the edge band
- * only. */
+/* Refraction edge — a thin (~3 px) hollow border-zone pseudo
+ * that gets its own backdrop-filter. No brightness boost — the
+ * earlier 118 % uniformly lightened the whole ring band, which
+ * read as a glowing frame rather than refraction. Here we keep
+ * the band the same lightness as the body and only crank
+ * saturation + contrast so the spots passing behind the ring
+ * read more vividly than they do behind the card body. */
 @supports ((mask-composite: exclude) or (-webkit-mask-composite: xor)) and (backdrop-filter: blur(1px)) {
   .card,
   .panel {
@@ -209,14 +212,12 @@
     position: absolute;
     inset: 0;
     border-radius: inherit;
-    padding: 7px;
+    padding: 3px;
     pointer-events: none;
     z-index: 0;
-    /* The actual refraction lens */
-    backdrop-filter: blur(6px) saturate(260%) brightness(118%);
-    -webkit-backdrop-filter: blur(6px) saturate(260%) brightness(118%);
-    /* Mask: paint the full box white XOR the content-box white,
-     * leaving only the padding band visible. */
+    /* Sharper spot pickup + higher saturation, no brightness boost. */
+    backdrop-filter: blur(3px) saturate(200%) contrast(112%);
+    -webkit-backdrop-filter: blur(3px) saturate(200%) contrast(112%);
     -webkit-mask:
       linear-gradient(#fff 0 0) content-box,
       linear-gradient(#fff 0 0);
@@ -228,8 +229,8 @@
   }
   [data-theme="light"] .card::before,
   [data-theme="light"] .panel::before {
-    backdrop-filter: blur(4px) saturate(170%) brightness(104%);
-    -webkit-backdrop-filter: blur(4px) saturate(170%) brightness(104%);
+    backdrop-filter: blur(2px) saturate(150%) contrast(108%);
+    -webkit-backdrop-filter: blur(2px) saturate(150%) contrast(108%);
   }
 }
 .card-head {

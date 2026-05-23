@@ -400,9 +400,11 @@
   }
 }
 
-/* Refraction ring on the login form border — wider band (10 px)
- * than the generic .card because the marketing spots actively
- * drift behind it, making the edge effect the headline visual. */
+/* Refraction edge on the login form border — slightly wider band
+ * (4 px) than generic .card because the marketing spots drift
+ * directly behind it, but no brightness boost (that read as a
+ * glowing frame on the previous attempt) — just sharper blur +
+ * saturation so the spots concentrate at the edge. */
 @supports ((mask-composite: exclude) or (-webkit-mask-composite: xor)) and (backdrop-filter: blur(1px)) {
   .login-form {
     isolation: isolate;
@@ -412,11 +414,11 @@
     position: absolute;
     inset: 0;
     border-radius: inherit;
-    padding: 10px;
+    padding: 4px;
     pointer-events: none;
     z-index: 0;
-    backdrop-filter: blur(5px) saturate(300%) brightness(122%);
-    -webkit-backdrop-filter: blur(5px) saturate(300%) brightness(122%);
+    backdrop-filter: blur(2px) saturate(240%) contrast(115%);
+    -webkit-backdrop-filter: blur(2px) saturate(240%) contrast(115%);
     -webkit-mask:
       linear-gradient(#fff 0 0) content-box,
       linear-gradient(#fff 0 0);
@@ -427,8 +429,8 @@
     mask-composite: exclude;
   }
   [data-theme="light"] .login-form::before {
-    backdrop-filter: blur(4px) saturate(180%) brightness(105%);
-    -webkit-backdrop-filter: blur(4px) saturate(180%) brightness(105%);
+    backdrop-filter: blur(2px) saturate(160%) contrast(108%);
+    -webkit-backdrop-filter: blur(2px) saturate(160%) contrast(108%);
   }
 }
 .login-form.shake { animation: croniq-shake .4s; }
