@@ -15,7 +15,6 @@ import type { LucideIcon } from 'lucide-react'
 import clsx from 'clsx'
 import { useDeadLetters, useCurrentUser } from '@/api/hooks'
 import { useSidebarStore } from './sidebar-store'
-import { useMediaQuery } from '@/lib/use-media-query'
 import { Avatar } from '@/components/primitives'
 import { UserMenu } from './UserMenu'
 
@@ -83,12 +82,13 @@ export function Sidebar() {
   const { data: deadLetters } = useDeadLetters()
   const { data: me } = useCurrentUser()
 
-  // Below 768px we always show the icon-only rail (60px). Above 1024px the
-  // user can collapse it via the topbar toggle; in between the persisted
-  // preference applies. Skip an explicit mobile drawer for now — the
-  // collapsed rail is reachable on any viewport.
-  const isCompact = useMediaQuery('(max-width: 1023px)')
-  const collapsed = isCompact || collapsedPref
+  // Collapsed state is purely user-driven via the persisted preference.
+  // Below ~1023 px the page is still fully usable with the expanded
+  // sidebar (232 px) — and users who want more room manually collapse
+  // through the topbar toggle. The earlier auto-force-collapsed-below-
+  // 1024 left the topbar toggle as a no-op, which the operator (rightly)
+  // called confusing. Make it always work.
+  const collapsed = collapsedPref
 
   const items = navItems(deadLetters?.length ?? 0)
 
@@ -97,7 +97,12 @@ export function Sidebar() {
 
   return (
     <aside className="sidebar" data-collapsed={collapsed ? '' : undefined}>
-      <div className="brand">
+      <div
+        className="brand"
+        onClick={collapsed ? toggle : undefined}
+        style={collapsed ? { cursor: 'pointer' } : undefined}
+        title={collapsed ? 'Expand sidebar' : undefined}
+      >
         <span className="gear">
           <Settings2 size={16} />
         </span>
@@ -106,7 +111,10 @@ export function Sidebar() {
           <button
             type="button"
             className="brand-toggle"
-            onClick={toggle}
+            onClick={(e) => {
+              e.stopPropagation()
+              toggle()
+            }}
             aria-label="Collapse sidebar"
             title="Collapse sidebar"
           >
