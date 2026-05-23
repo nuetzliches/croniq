@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router'
+import { Settings2 } from 'lucide-react'
 import { useAuthStore } from './store'
 import { apiFetch, apiPost } from '@/api/client'
 import {
@@ -80,7 +81,6 @@ export function LoginPage() {
       login(res.access_token, res.refresh_token)
       navigate('/')
     } catch (err) {
-      // Wrong code → 401, expired mfa_token → 401 too. Generic message.
       reportFailure(err)
     } finally {
       setLoading(false)
@@ -88,119 +88,269 @@ export function LoginPage() {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-muted">
-      <div className="w-full max-w-sm bg-card rounded-lg border border-border p-8 shadow-sm">
-        <div className="flex justify-center mb-6">
-          <img src="/favicon.svg" alt="Croniq" className="h-10 w-10" />
+    <div
+      style={{
+        minHeight: '100vh',
+        display: 'grid',
+        placeItems: 'center',
+        background: 'var(--bg)',
+        padding: 20,
+      }}
+    >
+      <div
+        className="panel"
+        style={{
+          width: '100%',
+          maxWidth: 380,
+          padding: 28,
+          boxShadow: 'var(--shadow-lg)',
+        }}
+      >
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6, marginBottom: 18 }}>
+          <span
+            className="center"
+            style={{
+              width: 38,
+              height: 38,
+              borderRadius: 9,
+              background: 'var(--accent)',
+              color: 'white',
+              marginBottom: 6,
+            }}
+          >
+            <Settings2 size={20} />
+          </span>
+          <h1
+            style={{
+              margin: 0,
+              fontSize: 19,
+              fontWeight: 600,
+              letterSpacing: '-0.015em',
+              color: 'var(--fg)',
+            }}
+          >
+            Sign in to Croniq
+          </h1>
+          <p className="dim" style={{ fontSize: 12.5, margin: 0 }}>
+            Schedule, run and observe cron jobs across your fleet.
+          </p>
         </div>
 
         {step === 'credentials' ? (
-          <>
-            <h1 className="text-xl font-semibold text-center mb-6">Sign in to Croniq</h1>
-            <form onSubmit={handleCredentialsSubmit} className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium mb-1">Username</label>
-                <input
-                  type="text"
-                  value={username}
-                  onChange={(e) => setUsername(e.target.value)}
-                  className="w-full px-3 py-2 border border-border rounded-md bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary"
-                  required
-                  autoFocus
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium mb-1">Password</label>
-                <input
-                  type="password"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  className="w-full px-3 py-2 border border-border rounded-md bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary"
-                  required
-                />
-              </div>
-              {error && <p className="text-sm text-destructive">{error}</p>}
-              <button
-                type="submit"
-                disabled={loading}
-                className="w-full py-2 px-4 bg-primary text-primary-foreground rounded-md text-sm font-medium hover:opacity-90 disabled:opacity-50"
-              >
-                {loading ? 'Signing in...' : 'Sign in'}
-              </button>
-            </form>
-
-            {oidc?.enabled && oidc.login_url && (
-              <div className="mt-6 pt-6 border-t border-border">
-                <a
-                  href={oidc.login_url}
-                  className="block w-full text-center py-2 px-4 border border-border rounded-md text-sm font-medium hover:bg-muted"
-                >
-                  Sign in with {oidc.provider_name ?? 'SSO'}
-                </a>
-              </div>
-            )}
-          </>
+          <CredentialsForm
+            username={username}
+            password={password}
+            error={error}
+            loading={loading}
+            onUsername={setUsername}
+            onPassword={setPassword}
+            onSubmit={handleCredentialsSubmit}
+            oidc={oidc}
+          />
         ) : (
-          <>
-            <h1 className="text-xl font-semibold text-center mb-2">Two-factor required</h1>
-            <p className="text-sm text-muted-foreground text-center mb-6">
-              {useRecovery
-                ? 'Enter one of your 8-character recovery codes.'
-                : 'Enter the 6-digit code from your authenticator app.'}
-            </p>
-            <form onSubmit={handleMfaSubmit} className="space-y-4">
-              <div>
-                <input
-                  type="text"
-                  inputMode={useRecovery ? 'text' : 'numeric'}
-                  pattern={useRecovery ? undefined : '[0-9]{6}'}
-                  maxLength={useRecovery ? 8 : 6}
-                  value={mfaCode}
-                  onChange={(e) => setMfaCode(e.target.value)}
-                  className="w-full px-3 py-2 border border-border rounded-md bg-background text-center font-mono text-lg tracking-widest focus:outline-none focus:ring-2 focus:ring-primary"
-                  placeholder={useRecovery ? 'xxxxxxxx' : '000000'}
-                  required
-                  autoFocus
-                />
-              </div>
-              {error && <p className="text-sm text-destructive">{error}</p>}
-              <button
-                type="submit"
-                disabled={loading}
-                className="w-full py-2 px-4 bg-primary text-primary-foreground rounded-md text-sm font-medium hover:opacity-90 disabled:opacity-50"
-              >
-                {loading ? 'Verifying...' : 'Verify'}
-              </button>
-              <div className="flex justify-between text-xs text-muted-foreground">
-                <button
-                  type="button"
-                  className="underline-offset-2 hover:underline"
-                  onClick={() => {
-                    setUseRecovery((v) => !v)
-                    setMfaCode('')
-                    setError('')
-                  }}
-                >
-                  {useRecovery ? 'Use authenticator code' : 'Use recovery code'}
-                </button>
-                <button
-                  type="button"
-                  className="underline-offset-2 hover:underline"
-                  onClick={() => {
-                    setStep('credentials')
-                    setMfaToken('')
-                    setMfaCode('')
-                    setError('')
-                    setUseRecovery(false)
-                  }}
-                >
-                  Cancel
-                </button>
-              </div>
-            </form>
-          </>
+          <MfaForm
+            code={mfaCode}
+            error={error}
+            loading={loading}
+            useRecovery={useRecovery}
+            onCode={setMfaCode}
+            onSubmit={handleMfaSubmit}
+            onToggleRecovery={() => {
+              setUseRecovery((v) => !v)
+              setMfaCode('')
+              setError('')
+            }}
+            onCancel={() => {
+              setStep('credentials')
+              setMfaToken('')
+              setMfaCode('')
+              setError('')
+              setUseRecovery(false)
+            }}
+          />
         )}
       </div>
     </div>
+  )
+}
+
+interface CredentialsFormProps {
+  username: string
+  password: string
+  error: string
+  loading: boolean
+  oidc: OidcConfigResponse | null
+  onUsername: (v: string) => void
+  onPassword: (v: string) => void
+  onSubmit: (e: React.FormEvent) => void
+}
+
+function CredentialsForm({
+  username,
+  password,
+  error,
+  loading,
+  oidc,
+  onUsername,
+  onPassword,
+  onSubmit,
+}: CredentialsFormProps) {
+  return (
+    <form onSubmit={onSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+      <Field label="Username">
+        <input
+          type="text"
+          className="input"
+          value={username}
+          onChange={(e) => onUsername(e.target.value)}
+          autoComplete="username"
+          required
+          autoFocus
+        />
+      </Field>
+      <Field label="Password">
+        <input
+          type="password"
+          className="input"
+          value={password}
+          onChange={(e) => onPassword(e.target.value)}
+          autoComplete="current-password"
+          required
+        />
+      </Field>
+      {error ? (
+        <div className="banner error" role="alert" style={{ fontSize: 12.5 }}>
+          <span className="grow">{error}</span>
+        </div>
+      ) : null}
+      <button type="submit" disabled={loading} className="btn primary" style={{ height: 36, marginTop: 2 }}>
+        {loading ? 'Signing in…' : 'Sign in'}
+      </button>
+
+      {oidc?.enabled && oidc.login_url ? (
+        <>
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 10,
+              margin: '4px 0',
+              color: 'var(--fg-mute)',
+              fontSize: 11,
+            }}
+          >
+            <span style={{ flex: 1, height: 1, background: 'var(--divider)' }} />
+            or continue with
+            <span style={{ flex: 1, height: 1, background: 'var(--divider)' }} />
+          </div>
+          <a
+            href={oidc.login_url}
+            className="btn"
+            style={{ height: 36, textDecoration: 'none' }}
+          >
+            Sign in with {oidc.provider_name ?? 'SSO'}
+          </a>
+        </>
+      ) : null}
+    </form>
+  )
+}
+
+interface MfaFormProps {
+  code: string
+  error: string
+  loading: boolean
+  useRecovery: boolean
+  onCode: (v: string) => void
+  onSubmit: (e: React.FormEvent) => void
+  onToggleRecovery: () => void
+  onCancel: () => void
+}
+
+function MfaForm({
+  code,
+  error,
+  loading,
+  useRecovery,
+  onCode,
+  onSubmit,
+  onToggleRecovery,
+  onCancel,
+}: MfaFormProps) {
+  return (
+    <form onSubmit={onSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+      <p className="dim" style={{ fontSize: 12.5, margin: 0, textAlign: 'center' }}>
+        {useRecovery
+          ? 'Enter one of your 8-character recovery codes.'
+          : 'Enter the 6-digit code from your authenticator app.'}
+      </p>
+      <input
+        type="text"
+        inputMode={useRecovery ? 'text' : 'numeric'}
+        pattern={useRecovery ? undefined : '[0-9]{6}'}
+        maxLength={useRecovery ? 8 : 6}
+        value={code}
+        onChange={(e) => onCode(e.target.value)}
+        placeholder={useRecovery ? 'xxxxxxxx' : '000000'}
+        required
+        autoFocus
+        className="input mono"
+        style={{ textAlign: 'center', letterSpacing: '0.4em', fontSize: 16, height: 40 }}
+      />
+      {error ? (
+        <div className="banner error" role="alert" style={{ fontSize: 12.5 }}>
+          <span className="grow">{error}</span>
+        </div>
+      ) : null}
+      <button type="submit" disabled={loading} className="btn primary" style={{ height: 36 }}>
+        {loading ? 'Verifying…' : 'Verify'}
+      </button>
+      <div
+        style={{
+          display: 'flex',
+          justifyContent: 'space-between',
+          fontSize: 11.5,
+          color: 'var(--fg-3)',
+        }}
+      >
+        <button
+          type="button"
+          onClick={onToggleRecovery}
+          style={{
+            background: 'transparent',
+            border: 0,
+            color: 'inherit',
+            cursor: 'pointer',
+            padding: 0,
+            font: 'inherit',
+          }}
+        >
+          {useRecovery ? 'Use authenticator code' : 'Use recovery code'}
+        </button>
+        <button
+          type="button"
+          onClick={onCancel}
+          style={{
+            background: 'transparent',
+            border: 0,
+            color: 'inherit',
+            cursor: 'pointer',
+            padding: 0,
+            font: 'inherit',
+          }}
+        >
+          Cancel
+        </button>
+      </div>
+    </form>
+  )
+}
+
+function Field({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+      <span style={{ fontSize: 12, color: 'var(--fg-2)', fontWeight: 500 }}>{label}</span>
+      {children}
+    </label>
   )
 }
