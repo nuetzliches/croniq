@@ -9,6 +9,25 @@ export function useHealth() {
   return useQuery({ queryKey: ['health'], queryFn: () => apiFetch<T.HealthResponse>('/health'), refetchInterval: 5000 })
 }
 
+// Version + environment metadata (public, no auth). Failures are
+// expected against older backends that don't ship /version yet — the
+// caller treats `null` data as "chip / badge stays hidden".
+export function useVersion() {
+  return useQuery({
+    queryKey: ['version'],
+    queryFn: async () => {
+      try {
+        return await apiFetch<T.VersionResponse>('/version')
+      } catch {
+        return null
+      }
+    },
+    // The build never changes between renders; fetch once and pin.
+    staleTime: Infinity,
+    retry: false,
+  })
+}
+
 // Jobs
 export function useJobs() {
   return useQuery({ queryKey: ['jobs'], queryFn: () => apiFetch<T.JobDefinition[]>('/v1/jobs') })

@@ -2,7 +2,8 @@ import { useState } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router'
 import { PanelLeft, Search, Bell } from 'lucide-react'
 import { useSidebarStore } from './sidebar-store'
-import { useDeadLetters } from '@/api/hooks'
+import { useDeadLetters, useVersion } from '@/api/hooks'
+import { EnvBadge } from '@/components/primitives'
 import { CommandPalette } from './CommandPalette'
 
 const ROUTE_TITLES: Record<string, string> = {
@@ -38,6 +39,7 @@ export function Topbar() {
   const toggle = useSidebarStore((s) => s.toggle)
   const navigate = useNavigate()
   const { data: deadLetters } = useDeadLetters()
+  const { data: version } = useVersion()
   const dlCount = deadLetters?.length ?? 0
   const [paletteOpen, setPaletteOpen] = useState(false)
 
@@ -59,6 +61,7 @@ export function Topbar() {
         <Link to="/" className="muted">
           Croniq
         </Link>
+        {version ? <EnvBadge env={version.env} /> : null}
         {crumbs.map((c, i) => (
           <span key={`crumb-${i}`} style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
             <span className="sep">/</span>

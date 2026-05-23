@@ -10,8 +10,10 @@ import {
   type LoginResponse,
   type OidcConfigResponse,
   type TokenResponse,
+  type VersionResponse,
 } from '@/api/types'
-import { BrandMark } from '@/components/primitives'
+import { BrandMark, EnvBadge } from '@/components/primitives'
+import { useVersion } from '@/api/hooks'
 
 type Method = 'password' | 'sso'
 type Step = 'credentials' | 'mfa'
@@ -33,79 +35,95 @@ interface Demo {
   arg?: string
   output: DemoLine[]
 }
+// Each entry is a real subcommand of the `croniq` CLI (see
+// crates/croniq-cli/src/main.rs). The output lines are illustrative but
+// shaped after the actual command's responsibility — nothing here
+// implies a feature the binary doesn't ship.
 const DEMOS: Demo[] = [
   {
-    cmd: 'croniq job register',
-    arg: '--file ./Croniqfile',
+    cmd: 'croniq quickstart',
     output: [
-      { lvl: 'info', text: 'parsed ./Croniqfile · 3 jobs · 1 calendar' },
-      { lvl: 'info', text: 'registered job payroll (sha 9f3a1e22)' },
-      { lvl: 'info', text: 'attached schedule "0 9 * * 1-5" (Europe/Berlin)' },
-      { lvl: 'ok', text: '3 jobs reconciled in 142ms' },
+      { lvl: 'info', text: 'wrote ./Croniqfile with a sample heartbeat job' },
+      { lvl: 'info', text: 'created ./.data/croniq.db · admin user provisioned' },
+      { lvl: 'ok', text: 'next: croniq-server --config Croniqfile --data-dir ./.data' },
+    ],
+  },
+  {
+    cmd: 'croniq validate',
+    arg: 'Croniqfile',
+    output: [
+      { lvl: 'info', text: 'parsed Croniqfile · 3 jobs · 1 calendar · 1 runner pool' },
+      { lvl: 'info', text: 'no scheduling collisions · all rules reachable' },
+      { lvl: 'ok', text: 'Croniqfile is valid' },
     ],
   },
   {
     cmd: 'croniq trigger',
-    arg: 'payroll',
+    arg: 'demo:heartbeat',
     output: [
-      { lvl: 'info', text: 'queued execution ex_5a8c2244 (attempt 1)' },
+      { lvl: 'info', text: 'POST /v1/trigger → execution ex_5a8c2244 queued' },
       { lvl: 'info', text: 'claimed by runner shell-runner-7b31d0ee' },
       { lvl: 'ok', text: 'completed in 1.4s · exit 0' },
     ],
   },
   {
-    cmd: 'croniq dead-letter replay',
-    arg: '--since 1h',
+    cmd: 'croniq status',
     output: [
-      { lvl: 'info', text: 'found 4 dead executions in window' },
-      { lvl: 'warn', text: 'demo:cve-scan-daily still failing (OOMKilled)' },
-      { lvl: 'ok', text: 'replayed 3 · skipped 1 · enqueued for retry' },
+      { lvl: 'info', text: 'http://localhost:4000 · 2 runners online · 0 stale' },
+      { lvl: 'info', text: 'queue depth 0 · 12 jobs registered' },
+      { lvl: 'ok', text: 'scheduler healthy' },
     ],
   },
   {
-    cmd: 'croniq runner attach',
-    arg: '--capability gpu --tag prod',
+    cmd: 'croniq list-runners',
     output: [
-      { lvl: 'info', text: 'minted runner key croniq_ak_…2e27ca82' },
-      { lvl: 'info', text: 'pulled work-pool config · max_inflight=4' },
-      { lvl: 'ok', text: 'runner online · awaiting fire' },
+      { lvl: 'info', text: 'shell-runner-7b31d0ee · online · last poll 2s ago' },
+      { lvl: 'info', text: 'shell-runner-954fa504 · online · capabilities: shell' },
+      { lvl: 'ok', text: '2/2 runners online · 0 stale · 0 dead' },
     ],
   },
   {
-    cmd: 'croniq calendar attach',
-    arg: 'payroll eu-business',
+    cmd: 'croniq convert',
+    arg: "'0 9 * * 1-5'",
     output: [
-      { lvl: 'info', text: 'loaded calendar eu-business (255 holidays)' },
-      { lvl: 'info', text: 'next 5 fires recomputed · skipping 2025-12-26' },
-      { lvl: 'ok', text: 'schedule constraints updated' },
+      { lvl: 'info', text: 'parsed as 5-field standard cron' },
+      { lvl: 'ok', text: 'DSL: every weekday at 09:00' },
     ],
   },
   {
-    cmd: 'croniq stats',
-    arg: '--job payroll --days 30',
+    cmd: 'croniq fmt',
+    arg: '-w Croniqfile',
     output: [
-      { lvl: 'info', text: '420 / 420 runs completed · 0 failed' },
-      { lvl: 'info', text: 'p50 412ms · p95 980ms · p99 1.4s' },
-      { lvl: 'ok', text: 'success rate 100.0% · no SLO breaches' },
+      { lvl: 'info', text: 'normalised whitespace · sorted top-level blocks' },
+      { lvl: 'info', text: 'wrote Croniqfile · 12 lines reflowed' },
+      { lvl: 'ok', text: 'formatting clean' },
     ],
   },
   {
-    cmd: 'croniq pat new',
-    arg: '--name ci-deploy --scopes jobs:read',
+    cmd: 'croniq diff',
+    arg: 'Croniqfile.old Croniqfile',
     output: [
-      { lvl: 'info', text: 'created token croniq_pat_…3ae7b2c9 (90d ttl)' },
-      { lvl: 'warn', text: 'reveal once — copy the secret now' },
-      { lvl: 'ok', text: 'scopes: jobs:read · audit logged' },
+      { lvl: 'info', text: 'compared 2 files · 1 add · 3 mod · 0 del' },
+      { lvl: 'info', text: '+ job "payroll" · timeout 5m → 10m · calendar attached' },
+      { lvl: 'ok', text: 'diff complete' },
     ],
   },
   {
-    cmd: 'croniq audit',
-    arg: '--target job:payroll',
+    cmd: 'croniq migrate',
+    arg: '/etc/crontab -o Croniqfile',
     output: [
-      { lvl: 'info', text: 'alex · job.update · timeout: 5m → 10m' },
-      { lvl: 'info', text: 'dsl  · job.sync   · 1 add · 3 mod · 0 del' },
-      { lvl: 'info', text: 'alex · job.trigger · manual fire from CLI' },
-      { lvl: 'ok', text: '3 events · scroll for older' },
+      { lvl: 'info', text: 'parsed 7 entries from /etc/crontab' },
+      { lvl: 'warn', text: 'skipped 1 line (unparseable @reboot directive)' },
+      { lvl: 'ok', text: 'wrote Croniqfile · review before deploying' },
+    ],
+  },
+  {
+    cmd: 'croniq dead-letters',
+    arg: '--data-dir ./.data --job payroll',
+    output: [
+      { lvl: 'info', text: 'found 2 dead letters for payroll in croniq.db' },
+      { lvl: 'info', text: 'ex_98a4… · attempt 3/3 · exit 137 · OOMKilled · 26d ago' },
+      { lvl: 'ok', text: 'use `dead-letters-inspect <id>` for stdout/stderr' },
     ],
   },
 ]
@@ -223,22 +241,21 @@ export function LoginPage() {
                 Sign in to <span className="mono" style={{ color: 'var(--fg-1)' }}>{window.location.host}</span>
               </p>
 
-              <div
-                className="login-method-tabs"
-                role="tablist"
-                aria-label="Sign-in method"
-                style={{ gridTemplateColumns: 'repeat(2, 1fr)' }}
-              >
-                <LoginTab id="password" current={method} setMethod={setMethod} icon={Lock} label="Password" />
-                <LoginTab
-                  id="sso"
-                  current={method}
-                  setMethod={setMethod}
-                  icon={Shield}
-                  label="SSO"
-                  enabled={oidc?.enabled !== false}
-                />
-              </div>
+              {/* Only render the tab strip when more than one method is
+                  actually available. Showing a single, always-selected
+                  "Password" tab is visual noise; showing SSO disabled
+                  exposes a feature the user has no path to enable. */}
+              {oidc?.enabled ? (
+                <div
+                  className="login-method-tabs"
+                  role="tablist"
+                  aria-label="Sign-in method"
+                  style={{ gridTemplateColumns: 'repeat(2, 1fr)' }}
+                >
+                  <LoginTab id="password" current={method} setMethod={setMethod} icon={Lock} label="Password" />
+                  <LoginTab id="sso" current={method} setMethod={setMethod} icon={Shield} label="SSO" />
+                </div>
+              ) : null}
 
               {method === 'password' ? (
                 <form className="col gap-14" onSubmit={handleCredentialsSubmit}>
@@ -351,6 +368,7 @@ export function LoginPage() {
 
 function LoginStage({ health }: { health: HealthResponse | null }) {
   const [verbIdx, setVerbIdx] = useState(0)
+  const { data: version } = useVersion()
 
   useEffect(() => {
     const t = window.setInterval(
@@ -386,6 +404,8 @@ function LoginStage({ health }: { health: HealthResponse | null }) {
           <BrandMark size={22} />
         </span>
         <span className="login-name">Croniq</span>
+        {version ? <VersionChip version={version} /> : null}
+        {version ? <EnvBadge env={version.env} /> : null}
         <span className="row gap-6" style={{ marginLeft: 'auto', color: 'var(--fg-3)', fontSize: 11.5 }}>
           <span className="live-dot" />
           <span>{window.location.host}</span>
@@ -616,6 +636,18 @@ function LoginDemoConsole() {
         />
       ) : null}
     </div>
+  )
+}
+
+function VersionChip({ version }: { version: VersionResponse }) {
+  return (
+    <span
+      className="tag mono"
+      title={`Build ${version.git_sha} · ${version.build_time}`}
+      style={{ height: 20, fontSize: 11 }}
+    >
+      v{version.version}
+    </span>
   )
 }
 
