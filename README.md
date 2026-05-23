@@ -60,12 +60,20 @@ Full API documentation: [`openapi.yaml`](openapi.yaml)
 
 Build custom job execution runners in your language of choice. Runners poll the Croniq server for work, dispatch handlers, and report outcomes — schedules and policies stay in your Croniqfile.
 
-| Language | Source | Package |
-|----------|--------|---------|
-| Rust     | [`crates/croniq-runner-sdk`](crates/croniq-runner-sdk) | (bundled with workspace, not published separately yet) |
-| .NET (8, 10) | [`sdks/dotnet`](sdks/dotnet) | `Croniq.Runner.Sdk` + `Croniq.Runner.Sdk.OpenTelemetry` (NuGet — pre-release) |
+| Language | Source | Package | Status |
+|----------|--------|---------|--------|
+| Rust     | [`crates/croniq-runner-sdk`](crates/croniq-runner-sdk) | (bundled with workspace, not published separately yet) | ✅ available |
+| .NET (8, 10) | [`sdks/dotnet`](sdks/dotnet) | `Croniq.Runner.Sdk` + `Croniq.Runner.Sdk.OpenTelemetry` (NuGet — pre-release) | ✅ available |
+| Python | [#130](https://github.com/nuetzliches/croniq/issues/130) | PyPI (planned) | 🛠 planned |
+| Go | [#131](https://github.com/nuetzliches/croniq/issues/131) | Go modules (planned) | 🛠 planned |
+| TypeScript / Node.js | [#132](https://github.com/nuetzliches/croniq/issues/132) | npm (planned) | 🛠 planned |
+| Java / Kotlin | [#133](https://github.com/nuetzliches/croniq/issues/133) | Maven Central (planned) | 🛠 planned |
 
 The .NET SDK ships Generic Host (`IHostedService`) integration, options-pattern configuration, server-side cancellation, OpenTelemetry tracing + metrics, streaming structured logs via `System.Threading.Channels`, health checks, and a generic shell-exec decoder for DSL `runner shell { ... }` jobs. See [`sdks/dotnet/README.md`](sdks/dotnet/README.md) for the quickstart.
+
+### Language-agnostic conformance suite
+
+Every runner SDK — present or future — must pass the same wire-level test bundle at [`sdks/conformance/`](sdks/conformance/). It scripts a mock HTTP server from YAML cases, runs the SDK against it, and asserts the recorded request stream. A new SDK author gets ~12 "definition of done" cases instead of guessing what to test. See [`sdks/conformance/README.md`](sdks/conformance/README.md) for the case format and how to wire up a new language binding.
 
 ---
 

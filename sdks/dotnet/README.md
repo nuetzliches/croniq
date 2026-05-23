@@ -110,6 +110,16 @@ builder.Services.AddOpenTelemetry()
 
 Span name: `croniq.execute {job_key}`. Standard attributes: `croniq.job.key`, `croniq.execution.id`, `croniq.execution.attempt`, `croniq.runner.id`, `croniq.execution.outcome`.
 
+## Wire-protocol conformance
+
+The SDK is validated against the shared, language-neutral conformance suite at [`sdks/conformance/`](../conformance/) — 12 YAML cases pinning poll/ack/renew, server-initiated cancel, drain, lease renewal, streaming logs, auth, self-register, and error handling. Future Python / Go / TypeScript / Java SDKs are expected to pass the same cases. Run them locally with:
+
+```sh
+dotnet test sdks/dotnet/tests/Croniq.Runner.Sdk.Conformance.Tests
+```
+
+When the wire protocol gains a new behaviour, the case is added to `sdks/conformance/cases/` first — that way every SDK author has a single artifact describing the contract change.
+
 ## Compatibility matrix
 
 | SDK Version | Croniq Server (min) | Croniq Server (max tested) |
