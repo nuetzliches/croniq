@@ -424,6 +424,97 @@
   margin-left: 4px;
 }
 
+/* ── job-overview grid (Jobs detail tab) ───────────────────── */
+.job-overview-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(260px, 1fr);
+  gap: 14px;
+}
+@media (max-width: 1200px) {
+  .job-overview-grid { grid-template-columns: 1fr; }
+}
+
+/* ── audit timeline ────────────────────────────────────────── */
+.audit-timeline {
+  position: relative;
+  padding-left: 6px;
+}
+.audit-timeline::before {
+  content: "";
+  position: absolute;
+  left: 13px;
+  top: 14px;
+  bottom: 14px;
+  width: 1px;
+  background: var(--divider);
+}
+.audit-event {
+  display: flex;
+  gap: 14px;
+  padding: 10px 0;
+  position: relative;
+}
+.audit-marker {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  color: var(--fg-2);
+  flex-shrink: 0;
+  z-index: 1;
+}
+.audit-marker.audit-sync    { background: var(--info-bg);    color: var(--info); }
+.audit-marker.audit-edit    { background: var(--accent-bg);  color: var(--accent-3); }
+.audit-marker.audit-trigger { background: var(--success-bg); color: var(--success); }
+.audit-marker.audit-create  { background: var(--accent-bg);  color: var(--accent-3); }
+.audit-marker.audit-delete  { background: var(--error-bg);   color: var(--error); }
+[data-theme="light"] .audit-marker.audit-edit,
+[data-theme="light"] .audit-marker.audit-create { color: var(--accent); }
+.audit-content {
+  flex: 1;
+  min-width: 0;
+  padding-top: 2px;
+}
+
+/* ── job-row (master list, design parity) ──────────────────── */
+.job-row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--divider);
+  cursor: pointer;
+  transition: background .12s var(--easing);
+  background: transparent;
+  border-top: 0;
+  border-left: 2px solid transparent;
+  border-right: 0;
+  width: 100%;
+  text-align: left;
+  font-family: inherit;
+  color: inherit;
+}
+.job-row:hover { background: var(--hover); }
+.job-row.active {
+  background: var(--accent-bg);
+  border-left-color: var(--accent);
+}
+.job-row .key {
+  font-family: var(--font-mono-app);
+  font-size: 13px;
+  color: var(--fg);
+}
+.job-row .meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11.5px;
+  color: var(--fg-3);
+}
+
 /* ── master list row (Jobs/Runners master-detail) ──────────── */
 .master-row {
   display: flex; flex-direction: column; gap: 6px;
