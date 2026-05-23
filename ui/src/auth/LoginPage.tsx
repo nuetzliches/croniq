@@ -398,9 +398,6 @@ function LoginStage({ health }: { health: HealthResponse | null }) {
 
   return (
     <div className="login-stage">
-      <div className="login-grid" />
-      <div className="login-glow" />
-
       <div className="login-brand">
         <span className="login-mark" aria-hidden>
           <BrandMark size={22} />
