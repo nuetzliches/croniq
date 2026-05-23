@@ -160,37 +160,43 @@
   box-shadow: 0 2px 8px -4px oklch(0 0 0 / 0.30);
 }
 [data-theme="light"] .card { box-shadow: 0 2px 8px -4px oklch(0 0 0 / 0.06); }
-/* Body keeps its semi-transparent panel fill + visible border —
- * what the user sees there is the card surface, not refraction.
- * The glass / refraction treatment moves entirely into the
- * 2 px ring pseudo below. No backdrop-filter on the body. */
+/* Body keeps its panel fill + border, but the bg is clipped to
+ * the padding-box so it does NOT paint over the 1 px border
+ * area. That leaves a thin strip at the perimeter where only the
+ * (semi-transparent) border + marketing bg are visible — and
+ * that's where the ::before refraction pseudo lives. Means the
+ * ring's backdrop-filter samples the spots through ~the border
+ * only, not through the body's opaque fill, so the refraction
+ * stays visibly punchy without making the whole card see-through. */
 @supports (backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px)) {
   .card {
-    background: color-mix(in srgb, var(--panel) 78%, transparent);
-    border-color: color-mix(in srgb, var(--border) 65%, transparent);
+    background: color-mix(in srgb, var(--panel) 75%, transparent);
+    background-clip: padding-box;
+    border-color: color-mix(in srgb, var(--border) 55%, transparent);
     box-shadow:
       0 12px 30px -14px oklch(0 0 0 / 0.45),
       inset 0 1px 0 oklch(1 0 0 / 0.04);
   }
   [data-theme="light"] .card {
-    background: color-mix(in srgb, var(--panel) 88%, transparent);
+    background: color-mix(in srgb, var(--panel) 86%, transparent);
+    background-clip: padding-box;
     box-shadow:
       0 10px 28px -14px oklch(0 0 0 / 0.14),
       inset 0 1px 0 oklch(1 0 0 / 0.5);
   }
   .panel {
-    background: color-mix(in srgb, var(--panel) 80%, transparent);
-    border-color: color-mix(in srgb, var(--border) 65%, transparent);
+    background: color-mix(in srgb, var(--panel) 78%, transparent);
+    background-clip: padding-box;
+    border-color: color-mix(in srgb, var(--border) 55%, transparent);
   }
 }
 
-/* Refraction edge — a thin (2 px) hollow border-zone pseudo
- * carrying the entire glass effect. The mask-composite trick
- * carves out the content-box so the backdrop-filter only paints
- * the 2 px ring along the edge. The body of the card has no
- * filter, so anything passing behind the card body shows
- * unchanged — but at the very edge, the same content is
- * refracted (sharper, more saturated). */
+/* Refraction edge — 2 px hollow ring positioned to overlap the
+ * card's border zone (where the body bg is clipped away), so the
+ * pseudo's backdrop-filter samples the marketing bg directly
+ * without the body fill in the way. Higher saturation + contrast
+ * than before to push the spots through the semi-transparent
+ * border. */
 @supports ((mask-composite: exclude) or (-webkit-mask-composite: xor)) and (backdrop-filter: blur(1px)) {
   .card,
   .panel {
@@ -206,8 +212,8 @@
     padding: 2px;
     pointer-events: none;
     z-index: 0;
-    backdrop-filter: blur(3px) saturate(220%) contrast(115%);
-    -webkit-backdrop-filter: blur(3px) saturate(220%) contrast(115%);
+    backdrop-filter: blur(3px) saturate(320%) contrast(125%);
+    -webkit-backdrop-filter: blur(3px) saturate(320%) contrast(125%);
     -webkit-mask:
       linear-gradient(#fff 0 0) content-box,
       linear-gradient(#fff 0 0);
@@ -219,8 +225,8 @@
   }
   [data-theme="light"] .card::before,
   [data-theme="light"] .panel::before {
-    backdrop-filter: blur(2px) saturate(160%) contrast(110%);
-    -webkit-backdrop-filter: blur(2px) saturate(160%) contrast(110%);
+    backdrop-filter: blur(2px) saturate(200%) contrast(115%);
+    -webkit-backdrop-filter: blur(2px) saturate(200%) contrast(115%);
   }
 }
 .card-head {
