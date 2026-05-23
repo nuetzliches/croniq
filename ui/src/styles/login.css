@@ -382,19 +382,23 @@
 }
 @supports (backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px)) {
   .login-form {
-    background: color-mix(in srgb, var(--panel) 70%, transparent);
-    backdrop-filter: blur(22px) saturate(150%);
-    -webkit-backdrop-filter: blur(22px) saturate(150%);
-    border-color: color-mix(in srgb, var(--border-2) 65%, transparent);
+    background: color-mix(in srgb, var(--panel) 52%, transparent);
+    backdrop-filter: blur(32px) saturate(200%) brightness(110%);
+    -webkit-backdrop-filter: blur(32px) saturate(200%) brightness(110%);
+    border-color: color-mix(in srgb, var(--border-2) 50%, transparent);
     box-shadow:
-      0 20px 50px -20px oklch(0 0 0 / 0.55),
-      inset 0 1px 0 oklch(1 0 0 / 0.06);
+      0 28px 60px -24px oklch(0 0 0 / 0.6),
+      inset 0 1px 0 oklch(1 0 0 / 0.1),
+      inset 0 -1px 0 oklch(0 0 0 / 0.25);
   }
   [data-theme="light"] .login-form {
-    background: color-mix(in srgb, var(--panel) 80%, transparent);
+    background: color-mix(in srgb, var(--panel) 72%, transparent);
+    backdrop-filter: blur(24px) saturate(150%) brightness(102%);
+    -webkit-backdrop-filter: blur(24px) saturate(150%) brightness(102%);
     box-shadow:
-      0 20px 50px -20px oklch(0 0 0 / 0.15),
-      inset 0 1px 0 oklch(1 0 0 / 0.5);
+      0 24px 56px -22px oklch(0 0 0 / 0.18),
+      inset 0 1px 0 oklch(1 0 0 / 0.6),
+      inset 0 -1px 0 oklch(0 0 0 / 0.05);
   }
 }
 .login-form.shake { animation: croniq-shake .4s; }

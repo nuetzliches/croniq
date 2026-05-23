@@ -160,80 +160,40 @@
   box-shadow: 0 2px 8px -4px oklch(0 0 0 / 0.30);
 }
 [data-theme="light"] .card { box-shadow: 0 2px 8px -4px oklch(0 0 0 / 0.06); }
+/* Deep-water glass — stronger refraction than the basic frosted
+ * card. The combination of low surface opacity + heavy saturate
+ * + slight brightness + heavier blur makes anything underneath
+ * (the drifting marketing spots) read as a smaller, more
+ * concentrated bright point inside the card than its raw outside
+ * area, mimicking the way light bends through a deep pool. The
+ * inset top + bottom highlights suggest the water surface and
+ * the meniscus at the bottom edge. */
 @supports (backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px)) {
   .card {
-    background: color-mix(in srgb, var(--panel) 68%, transparent);
-    backdrop-filter: blur(18px) saturate(140%);
-    -webkit-backdrop-filter: blur(18px) saturate(140%);
-    border-color: color-mix(in srgb, var(--border) 75%, transparent);
+    background: color-mix(in srgb, var(--panel) 55%, transparent);
+    backdrop-filter: blur(28px) saturate(180%) brightness(108%);
+    -webkit-backdrop-filter: blur(28px) saturate(180%) brightness(108%);
+    border-color: color-mix(in srgb, var(--border) 55%, transparent);
     box-shadow:
-      0 8px 24px -10px oklch(0 0 0 / 0.45),
-      inset 0 1px 0 oklch(1 0 0 / 0.04);
+      0 14px 36px -14px oklch(0 0 0 / 0.55),
+      inset 0 1px 0 oklch(1 0 0 / 0.08),
+      inset 0 -1px 0 oklch(0 0 0 / 0.22);
   }
   [data-theme="light"] .card {
-    background: color-mix(in srgb, var(--panel) 78%, transparent);
+    background: color-mix(in srgb, var(--panel) 72%, transparent);
+    backdrop-filter: blur(20px) saturate(150%) brightness(102%);
+    -webkit-backdrop-filter: blur(20px) saturate(150%) brightness(102%);
     box-shadow:
-      0 8px 24px -10px oklch(0 0 0 / 0.12),
-      inset 0 1px 0 oklch(1 0 0 / 0.4);
+      0 12px 32px -14px oklch(0 0 0 / 0.18),
+      inset 0 1px 0 oklch(1 0 0 / 0.55),
+      inset 0 -1px 0 oklch(0 0 0 / 0.05);
   }
-}
-
-/* Rim-light — a slow-rotating conic gradient painted on a ring
- * around the card edge. Two coloured arcs (purple + cyan) mimic
- * the marketing spots passing behind the glass and catching the
- * border. Pure CSS, so it doesn't literally follow the spot
- * positions; it rotates on its own ~18 s schedule and works
- * regardless of what lives behind the card. */
-@supports ((mask-composite: exclude) or (-webkit-mask-composite: xor)) {
-  .card,
   .panel {
-    position: relative;
-    isolation: isolate;
+    background: color-mix(in srgb, var(--panel) 60%, transparent);
+    backdrop-filter: blur(24px) saturate(160%);
+    -webkit-backdrop-filter: blur(24px) saturate(160%);
+    border-color: color-mix(in srgb, var(--border) 60%, transparent);
   }
-  .card::before,
-  .panel::before {
-    content: "";
-    position: absolute;
-    inset: 0;
-    border-radius: inherit;
-    padding: 1px;
-    background: conic-gradient(
-      from 0deg,
-      transparent 0deg,
-      oklch(0.66 0.19 285 / 0.7) 25deg,
-      transparent 80deg,
-      transparent 170deg,
-      oklch(0.65 0.17 230 / 0.55) 210deg,
-      transparent 270deg,
-      transparent 360deg
-    );
-    -webkit-mask:
-      linear-gradient(#fff 0 0) content-box,
-      linear-gradient(#fff 0 0);
-    -webkit-mask-composite: xor;
-    mask:
-      linear-gradient(#fff 0 0) content-box,
-      linear-gradient(#fff 0 0);
-    mask-composite: exclude;
-    pointer-events: none;
-    z-index: 1;
-    animation: croniq-card-rim 18s linear infinite;
-    opacity: 0.85;
-  }
-  /* Light theme: rim glow is much subtler — the cards already
-   * have clear separation from the bg, no need to dramatize the
-   * edge. */
-  [data-theme="light"] .card::before,
-  [data-theme="light"] .panel::before {
-    opacity: 0.55;
-  }
-  @media (prefers-reduced-motion: reduce) {
-    .card::before,
-    .panel::before { animation: none; }
-  }
-}
-@keyframes croniq-card-rim {
-  to { transform: rotate(360deg); }
 }
 .card-head {
   display: flex; align-items: center; justify-content: space-between;
