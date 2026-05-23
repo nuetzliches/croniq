@@ -1,0 +1,31 @@
+name: "API-key auth sends Authorization: ApiKey {key}"
+description: |
+  When api_key is configured, every outbound request to the server must
+  carry the Authorization header in the form "ApiKey {raw_key}". Tested on
+  the poll endpoint; covers ack and renew implicitly because the same
+  delegating handler applies to every request.
+
+runner_config:
+  capabilities: ["work"]
+  max_inflight: 1
+  api_key: "croniq_abc123def456"
+  poll_timeout_ms: 1000
+  poll_retry_delay_ms: 200
+  drain_timeout_ms: 1000
+
+handlers: []
+
+server_script:
+  - on: "POST /v1/work/poll"
+    respond:
+      status: 200
+      body: { work: [], cancel: [] }
+
+expectations:
+  duration_max_ms: 2000
+  http:
+    - method: POST
+      path: /v1/work/poll
+      min_count: 1
+      headers:
+        authorization: "ApiKey croniq_abc123def456"

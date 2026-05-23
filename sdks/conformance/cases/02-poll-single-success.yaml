@@ -1,0 +1,55 @@
+name: "Single assignment, handler succeeds, runner acks success"
+description: |
+  Baseline happy path. The first poll returns one assignment; subsequent polls
+  are empty. The noop handler completes immediately. The runner must ack with
+  status=success carrying the original execution_id and attempt.
+
+runner_config:
+  capabilities: ["billing"]
+  max_inflight: 1
+  api_key: "croniq_testkey"
+  poll_timeout_ms: 2000
+  poll_retry_delay_ms: 200
+  drain_timeout_ms: 2000
+
+handlers:
+  - job_key: "billing:invoice"
+    behavior: noop
+
+server_script:
+  - on: "POST /v1/work/poll"
+    match_count: 1
+    respond:
+      status: 200
+      body:
+        work:
+          - execution_id: "exec-001"
+            job_key: "billing:invoice"
+            fire_at: "2026-05-23T10:00:00Z"
+            attempt: 1
+            metadata: {}
+            timeout: "1m"
+        cancel: []
+  - on: "POST /v1/work/poll"
+    respond:
+      status: 200
+      body: { work: [], cancel: [] }
+  - on: "POST /v1/work/ack"
+    respond: { status: 200, body: {} }
+
+expectations:
+  duration_max_ms: 3000
+  http:
+    - method: POST
+      path: /v1/work/poll
+      min_count: 1
+      headers:
+        authorization: "ApiKey croniq_testkey"
+    - method: POST
+      path: /v1/work/ack
+      exact_count: 1
+      body_match:
+        runner_id: "*"
+        execution_id: "exec-001"
+        status: "success"
+        attempt: 1

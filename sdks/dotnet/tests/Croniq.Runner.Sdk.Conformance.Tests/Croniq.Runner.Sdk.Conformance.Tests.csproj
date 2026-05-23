@@ -1,0 +1,35 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFrameworks>net10.0;net8.0</TargetFrameworks>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+    <RootNamespace>Croniq.Runner.Sdk.Conformance.Tests</RootNamespace>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+    <!--
+      CA1707: underscores in member names (acceptable for snake_case JSON DTOs)
+      CA2007: ConfigureAwait noise
+      CA1305: IFormatProvider on string formatting (test code)
+      CA1822: Mark as static (xunit theories must be instance)
+    -->
+    <NoWarn>$(NoWarn);CA1707;CA2007;CA1305;CA1822</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Croniq.Runner.Sdk\Croniq.Runner.Sdk.csproj" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="xunit" />
+    <PackageReference Include="xunit.runner.visualstudio" />
+    <PackageReference Include="Shouldly" />
+    <PackageReference Include="WireMock.Net" />
+    <PackageReference Include="YamlDotNet" />
+    <PackageReference Include="coverlet.collector" />
+    <PackageReference Include="Microsoft.Extensions.Hosting" />
+  </ItemGroup>
+
+  <ItemGroup Label="Conformance cases — copied to output for runtime discovery">
+    <None Include="..\..\..\conformance\cases\*.yaml">
+      <Link>cases\%(Filename)%(Extension)</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+</Project>

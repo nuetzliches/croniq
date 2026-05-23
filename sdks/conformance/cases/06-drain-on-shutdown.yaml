@@ -1,0 +1,66 @@
+name: "Shutdown cancels in-flight handlers and acks failure"
+description: |
+  When the runner's cancellation token fires while a handler is still
+  executing, the SDK propagates the cancellation to the handler's token
+  (it's linked to the host-shutdown token). The handler observes the
+  cancellation, the runner stops polling, and the ack reports
+  status=failure with an error indicating the runner was draining.
+
+  NOTE: This is the .NET SDK's current behaviour. The Rust SDK leaves
+  in-flight handlers running through their natural completion and only
+  hard-aborts after drain_timeout_ms — a semantic difference tracked in
+  the SDK conformance gaps. Either behaviour is observable here; this
+  case pins the .NET semantics so regressions are caught.
+
+runner_config:
+  capabilities: ["work"]
+  max_inflight: 1
+  api_key: "croniq_testkey"
+  poll_timeout_ms: 1000
+  poll_retry_delay_ms: 200
+  drain_timeout_ms: 3000
+  capacity_backoff_ms: 50
+
+handlers:
+  - job_key: "graceful:job"
+    behavior: sleep
+    duration_ms: 500
+
+server_script:
+  - on: "POST /v1/work/poll"
+    match_count: 1
+    respond:
+      status: 200
+      body:
+        work:
+          - execution_id: "exec-drain"
+            job_key: "graceful:job"
+            fire_at: "2026-05-23T10:00:00Z"
+            attempt: 1
+            metadata: {}
+            timeout: "5m"
+        cancel: []
+  - on: "POST /v1/work/poll"
+    respond:
+      status: 200
+      body: { work: [], cancel: [] }
+  - on: "POST /v1/work/ack"
+    respond: { status: 200, body: {} }
+  - on: "POST /v1/work/renew"
+    respond: { status: 200, body: {} }
+
+# Binding-specific directive: cancel the runner this many ms after start.
+# Bindings without this hook should treat the absence as "let it run until
+# expectations are met" and skip the case if they cannot trigger shutdown.
+shutdown_after_ms: 300
+
+expectations:
+  duration_max_ms: 4000
+  http:
+    - method: POST
+      path: /v1/work/ack
+      exact_count: 1
+      body_match:
+        execution_id: "exec-drain"
+        status: "failure"
+        error: "*"

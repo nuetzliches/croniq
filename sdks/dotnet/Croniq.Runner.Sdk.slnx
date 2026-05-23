@@ -8,5 +8,6 @@
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/Croniq.Runner.Sdk.Tests/Croniq.Runner.Sdk.Tests.csproj" />
+    <Project Path="tests/Croniq.Runner.Sdk.Conformance.Tests/Croniq.Runner.Sdk.Conformance.Tests.csproj" />
   </Folder>
 </Solution>

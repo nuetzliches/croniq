@@ -1,0 +1,70 @@
+name: "Server-requested cancel via PollResponse interrupts in-flight handler"
+description: |
+  An in-flight execution can be cancelled by the server returning its id in
+  PollResponse.cancel on a subsequent poll. The handler's cancellation token
+  must fire, the handler must abort, and the runner must ack with
+  status=failure.
+
+  This is a behaviour the Rust SDK currently leaves unused — explicit
+  coverage here documents the .NET SDK's improvement and keeps future
+  implementations honest.
+
+runner_config:
+  # max_inflight: 2 so the runner keeps polling while one execution is in
+  # flight — necessary because cancellations are delivered via PollResponse.
+  # A single-slot runner that's at capacity stops polling and therefore
+  # cannot receive a server-initiated cancel; this is a known architectural
+  # consequence of the pull model documented in openapi.yaml.
+  capabilities: ["work"]
+  max_inflight: 2
+  api_key: "croniq_testkey"
+  poll_timeout_ms: 500
+  poll_retry_delay_ms: 200
+  drain_timeout_ms: 3000
+  capacity_backoff_ms: 50
+
+handlers:
+  - job_key: "long:running"
+    behavior: sleep
+    duration_ms: 10000          # would block far longer than the case allows
+
+server_script:
+  - on: "POST /v1/work/poll"
+    match_count: 1
+    respond:
+      status: 200
+      body:
+        work:
+          - execution_id: "exec-cancel"
+            job_key: "long:running"
+            fire_at: "2026-05-23T10:00:00Z"
+            attempt: 1
+            metadata: {}
+            timeout: "5m"
+        cancel: []
+  - on: "POST /v1/work/poll"
+    match_count: 2
+    respond:
+      status: 200
+      body: { work: [], cancel: ["exec-cancel"] }
+  - on: "POST /v1/work/poll"
+    respond:
+      status: 200
+      body: { work: [], cancel: [] }
+  - on: "POST /v1/work/ack"
+    respond: { status: 200, body: {} }
+  - on: "POST /v1/work/renew"
+    respond: { status: 200, body: {} }
+
+expectations:
+  duration_max_ms: 4000
+  http:
+    - method: POST
+      path: /v1/work/poll
+      min_count: 2
+    - method: POST
+      path: /v1/work/ack
+      exact_count: 1
+      body_match:
+        execution_id: "exec-cancel"
+        status: "failure"
