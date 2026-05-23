@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router'
 import {
   Settings2,
@@ -23,43 +23,35 @@ import {
 type Method = 'password' | 'token' | 'sso'
 type Step = 'credentials' | 'mfa'
 
-interface ConsoleLine {
-  id: string
-  ts: string
-  lvl: 'info' | 'warn' | 'error' | 'debug'
-  job: string
-  msg: string
-}
+const DOCS_URL = 'https://nuetzliches.github.io/croniq/'
 
-const LOG_POOL: Omit<ConsoleLine, 'id' | 'ts'>[] = [
-  { lvl: 'info', job: 'neurawerk:db-dump', msg: 'completed in 412ms · 4.2 MB' },
-  { lvl: 'info', job: 'infra:cert-renew-check', msg: 'all 12 certs > 14d remaining' },
-  { lvl: 'info', job: 'ops:shell-runner-heartbeat', msg: 'wrote /backup/runner.heartbeat (3ms)' },
-  { lvl: 'warn', job: 'ops:cve-scan-daily', msg: 'HIGH CVE-2024-21626 in golang-runner-base' },
-  { lvl: 'info', job: 'neurawerk:db-dump:matrix', msg: 'pg_dump synapse → 142.8 MB' },
-  { lvl: 'info', job: 'ml:embeddings-rebuild', msg: 'scheduled · gpu-runner-9f3a1e22' },
-  { lvl: 'warn', job: 'fleet', msg: 'shell-runner-7a1bd44c stale 64s' },
-  { lvl: 'info', job: 'billing:reconcile', msg: 'stripe in sync · 0 deltas' },
+// Hero verb rotation — each verb stays ~3.5s before fading to the next.
+const VERBS = ['recover', 'replay', 'diagnose', 'audit', 'scale']
+
+// Tip-of-the-day ticker contents. Pairs of (CLI command, one-line note).
+// Picked to surface the most useful flags + the features that newcomers
+// usually don't find in the README.
+interface Tip {
+  cmd: string
+  arg?: string
+  note: string
+}
+const TIPS: Tip[] = [
+  { cmd: 'croniq job register', arg: '--file croniqfile.hcl', note: 'declarative job + schedule from a single file' },
+  { cmd: 'croniq trigger', arg: 'payroll', note: 'manual fire — schedule and next-fire untouched' },
+  { cmd: 'croniq dead-letter replay', arg: '--since 1h', note: 'requeue everything that failed in the last hour' },
+  { cmd: 'croniq job adopt', arg: 'payroll', note: 'edit a DSL-managed job through the API store' },
+  { cmd: 'croniq runner attach', arg: '--capability gpu --tag prod', note: 'label runners so routing can target them' },
+  { cmd: 'croniq calendar attach', arg: 'payroll eu-business', note: 'exclude holidays without touching the cron' },
+  { cmd: 'croniq stats', arg: '--job payroll --days 30', note: 'p50/p95/p99 + success rate over a window' },
+  { cmd: 'croniq totp setup', note: 'enable 2FA for your own account from the CLI' },
+  { cmd: 'croniq pat new', arg: '--name ci-deploy --scopes jobs:read', note: 'mint a least-privilege personal access token' },
+  { cmd: 'croniq audit', arg: '--target job:payroll', note: 'who touched a job, when, with which diff' },
 ]
 
-function nowIso(): string {
-  return new Date().toISOString().slice(11, 19)
-}
-
-function synthLine(seed: number, atMs?: number): ConsoleLine {
-  const pick = LOG_POOL[Math.abs(seed * 31 + (atMs ?? 0)) % LOG_POOL.length]
-  const t = new Date(atMs ?? Date.now())
-  return {
-    id: Math.random().toString(36).slice(2, 9),
-    ts: t.toISOString().slice(11, 19),
-    ...pick,
-  }
-}
-
-function seedLog(): ConsoleLine[] {
-  const now = Date.now()
-  return Array.from({ length: 7 }, (_, i) => synthLine(i, now - (7 - i) * 1400))
-}
+const TIPS_VISIBLE = 5
+const TIP_INTERVAL_MS = 3800
+const VERB_INTERVAL_MS = 3400
 
 export function LoginPage() {
   const [method, setMethod] = useState<Method>('password')
@@ -196,15 +188,6 @@ export function LoginPage() {
                       placeholder="•••••••••"
                       required
                     />
-                    <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-                      <a
-                        href="#"
-                        onClick={handleForgotPassword}
-                        style={{ fontSize: 11.5, color: 'var(--accent-3)' }}
-                      >
-                        Forgot password?
-                      </a>
-                    </div>
                   </LoginField>
                   {error ? <ErrorBanner msg={error} /> : null}
                   <SubmitButton loading={loading}>
@@ -315,12 +298,13 @@ export function LoginPage() {
 }
 
 function LoginStage({ health }: { health: HealthResponse | null }) {
-  const [lines, setLines] = useState<ConsoleLine[]>(() => seedLog())
+  const [verbIdx, setVerbIdx] = useState(0)
 
   useEffect(() => {
-    const t = window.setInterval(() => {
-      setLines((prev) => [...prev, synthLine(prev.length)].slice(-9))
-    }, 1400)
+    const t = window.setInterval(
+      () => setVerbIdx((i) => (i + 1) % VERBS.length),
+      VERB_INTERVAL_MS,
+    )
     return () => window.clearInterval(t)
   }, [])
 
@@ -350,9 +334,6 @@ function LoginStage({ health }: { health: HealthResponse | null }) {
           <Settings2 size={18} />
         </span>
         <span className="login-name">Croniq</span>
-        <span className="tag mono" style={{ marginLeft: 2 }}>
-          v1
-        </span>
         <span className="row gap-6" style={{ marginLeft: 'auto', color: 'var(--fg-3)', fontSize: 11.5 }}>
           <span className="live-dot" />
           <span>{window.location.host}</span>
@@ -361,12 +342,16 @@ function LoginStage({ health }: { health: HealthResponse | null }) {
 
       <div className="login-hero">
         <h1 className="login-tag">
-          Schedule, observe and recover
+          Schedule. Observe.
           <br />
-          <span className="login-tag-accent">without leaving your terminal.</span>
+          <span className="login-tag-accent">
+            <span key={verbIdx} className="login-tag-verb" aria-live="polite">
+              {VERBS[verbIdx]}.
+            </span>
+          </span>
         </h1>
         <p className="login-sub">
-          A self-hosted job orchestrator with a DSL, capability-routed runners, calendars and dead-letter triage. Built for operators who outgrew cron.
+          Self-hosted cron for fleets that outgrew the crontab. A typed DSL, capability-routed runners, calendars, dead-letter triage and an audit log on every mutation.
         </p>
       </div>
 
@@ -386,12 +371,20 @@ function LoginStage({ health }: { health: HealthResponse | null }) {
         />
       </div>
 
-      <LoginConsole lines={lines} />
+      <LoginTipTicker />
 
       <div className="login-foot">
         <span>© Croniq</span>
         <span className="dim">·</span>
-        <span className="mono dim">docs.croniq.io</span>
+        <a
+          href={DOCS_URL}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="mono dim"
+          style={{ textDecoration: 'none' }}
+        >
+          {new URL(DOCS_URL).host}
+        </a>
         <span className="row gap-6" style={{ marginLeft: 'auto' }}>
           <span className="live-dot" />
           {stats.status === 'ok' ? 'all systems operational' : 'backend degraded'}
@@ -421,11 +414,20 @@ function Stat({
   )
 }
 
-function LoginConsole({ lines }: { lines: ConsoleLine[] }) {
-  const bodyRef = useRef<HTMLDivElement>(null)
+function LoginTipTicker() {
+  // The visible window slides through TIPS, one entry per tick. Each tip
+  // mounts under a fresh React key so its CSS fade-in animation runs on
+  // every rotation — cheaper than tracking timestamps.
+  const [offset, setOffset] = useState(0)
   useEffect(() => {
-    if (bodyRef.current) bodyRef.current.scrollTop = bodyRef.current.scrollHeight
-  }, [lines])
+    const t = window.setInterval(() => setOffset((n) => n + 1), TIP_INTERVAL_MS)
+    return () => window.clearInterval(t)
+  }, [])
+
+  const visible = useMemo(
+    () => Array.from({ length: TIPS_VISIBLE }, (_, i) => TIPS[(offset + i) % TIPS.length]),
+    [offset],
+  )
 
   return (
     <div className="login-console">
@@ -436,32 +438,33 @@ function LoginConsole({ lines }: { lines: ConsoleLine[] }) {
           <span style={{ background: 'oklch(0.70 0.16 145)' }} />
         </div>
         <span className="mono dim" style={{ fontSize: 11 }}>
-          ~ croniq tail --all
+          ~ croniq --help · daily tips
         </span>
         <span className="row gap-6" style={{ marginLeft: 'auto', fontSize: 10.5, color: 'var(--fg-3)' }}>
           <span className="live-dot" />
-          streaming
+          rotating
         </span>
       </div>
-      <div className="login-console-body" ref={bodyRef}>
-        {lines.map((l, i) => (
+      <div className="login-console-body">
+        {visible.map((tip, i) => (
+          // Key by content so only the freshly-appearing tip re-mounts
+          // and runs its fade-in animation. The other tips just shift
+          // position in the DOM without flickering.
           <div
-            key={l.id}
-            className="login-console-line"
-            style={{ opacity: Math.max(0.25, 0.35 + i * 0.085) }}
+            key={tip.cmd}
+            className="login-console-tip"
+            style={{ opacity: 0.55 + i * 0.11 }}
           >
-            <span className="login-console-ts">{l.ts}</span>
-            <span className={`lvl-${l.lvl}`}>{l.lvl}</span>
-            <span className="mono" style={{ color: 'var(--fg-3)', marginRight: 8 }}>
-              {l.job}
-            </span>
-            <span style={{ color: 'var(--fg-1)' }}>{l.msg}</span>
+            <div className="cmd">
+              <span className="prompt">$</span>
+              <span>{tip.cmd}</span>
+              {tip.arg ? <span className="arg"> {tip.arg}</span> : null}
+            </div>
+            <div className="note"># {tip.note}</div>
           </div>
         ))}
-        <div className="login-console-line login-console-cursor">
-          <span className="login-console-ts">{nowIso()}</span>
-          <span className="lvl-info">info</span>
-          <span>awaiting next fire </span>
+        <div className="login-console-line login-console-cursor" style={{ marginTop: 4 }}>
+          <span className="prompt" style={{ color: 'var(--accent-3)', marginRight: 8 }}>$</span>
           <span className="login-blink">▌</span>
         </div>
       </div>

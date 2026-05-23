@@ -94,10 +94,12 @@
   text-wrap: balance;
 }
 .login-tag-accent {
-  background: linear-gradient(135deg, var(--accent-3) 0%, oklch(0.78 0.13 240) 100%);
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent;
+  color: var(--accent-3);
+  text-shadow: 0 0 28px oklch(0.66 0.19 285 / 0.45);
+}
+[data-theme="light"] .login-tag-accent {
+  color: var(--accent);
+  text-shadow: none;
 }
 .login-sub {
   font-size: 14.5px;
@@ -207,6 +209,57 @@
   margin-left: 4px;
 }
 @keyframes croniq-blink { to { opacity: 0; } }
+
+/* ── hero verb rotation ────────────────────────────────────── */
+.login-tag-verb {
+  display: inline-block;
+  animation: croniq-verb-in .55s var(--easing) both;
+}
+@keyframes croniq-verb-in {
+  from { opacity: 0; transform: translateY(14px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* ── hero intro (one-shot on first render) ─────────────────── */
+.login-hero > * {
+  opacity: 0;
+  animation: croniq-hero-up .6s var(--easing) both;
+}
+.login-hero > *:nth-child(2) { animation-delay: .12s; }
+.login-hero > *:nth-child(3) { animation-delay: .22s; }
+@keyframes croniq-hero-up {
+  from { opacity: 0; transform: translateY(12px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* ── tip ticker (replaces fake log stream) ─────────────────── */
+.login-console-tip {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 4px 0;
+  animation: croniq-tip-in .45s var(--easing) both;
+}
+@keyframes croniq-tip-in {
+  from { opacity: 0; transform: translateY(10px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.login-console-tip .cmd {
+  color: var(--fg-1);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.login-console-tip .cmd .prompt { color: var(--accent-3); margin-right: 8px; }
+.login-console-tip .cmd .arg    { color: var(--fg-3); }
+.login-console-tip .note {
+  color: var(--fg-mute);
+  font-size: 11px;
+  padding-left: 16px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 
 .login-foot {
   position: relative;
