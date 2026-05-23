@@ -96,6 +96,11 @@ jobs:
       - name: Build
         run: dotnet build Croniq.Runner.Sdk.slnx --configuration Release --no-restore
       - name: Test (both TFMs)
+        # Force bash on windows-latest — the default PowerShell parses
+        # bash-style `\` line continuations as parse errors. Git Bash
+        # ships preinstalled on the windows runner image, no extra
+        # setup needed.
+        shell: bash
         run: |
           dotnet test Croniq.Runner.Sdk.slnx --configuration Release --no-build \
             --logger "trx;LogFileName=test-results-${{ matrix.os }}.trx" \
