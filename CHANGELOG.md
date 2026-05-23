@@ -8,6 +8,27 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Audit log + per-job stats + throughput + failure heatmap (PR-B1).**
+  Backend foundation for the redesigned Dashboard / Insights pages.
+  Read-only aggregations, all computed on-the-fly from the existing
+  executions table (no extra materialisation yet).
+  - `GET /v1/audit` — list events with optional filters
+    (`actor_type`, `actor_id`, `action`, `target_type`, `target_id`,
+    `since`, `until`, `limit ≤ 1000`). Scope: `users:admin` or
+    `admin` wildcard.
+  - `GET /v1/jobs/{job_key}/stats?days=N` — total / completed /
+    failed / dead, success_rate, p50/p95/p99 duration, last failure
+    timestamp. Default window 7 days, clamped to [1, 90].
+  - `GET /v1/executions/throughput?window=24h|7d|30d` — stacked
+    `{ok, err}` buckets aligned to UTC hour/day starts.
+  - `GET /v1/insights/failures?days=N` — 2D heatmap rows (day × hour
+    of UTC), plus top-3 hourly hotspots. Default 28 days,
+    clamped to [7, 90].
+  New `audit_log` table (migration 016) — append-only, indexed on
+  `created_at`, `(target_type, target_id)`, `(actor_type, actor_id)`.
+  Mutation handlers in subsequent PRs will call
+  `audit::record(...)` to populate it.
+
 - **Optional SMTP transport for invitations + password-reset (PR-A6).**
   New cargo feature `smtp` gates a lettre-backed `SmtpSender`. When
   the feature is built in AND `CRONIQ_SMTP_URL` + `CRONIQ_SMTP_FROM`

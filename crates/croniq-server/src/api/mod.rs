@@ -1,6 +1,7 @@
 //! Extended HTTP API: runner Pull-API, auth, and management endpoints.
 
 pub mod admin;
+pub mod audit;
 pub mod auth_endpoints;
 pub mod auth_middleware;
 pub mod calendars;
@@ -14,6 +15,7 @@ pub mod password_reset;
 pub mod pat;
 pub mod runners_sse;
 pub mod schedules;
+pub mod stats;
 pub mod tags;
 pub mod totp;
 pub mod users;
@@ -256,6 +258,11 @@ pub fn server_router(state: Arc<ServerState>) -> Router {
         )
         // Dashboard
         .route("/v1/dashboard/forecast", get(dashboard::handle_forecast))
+        // Job stats + insights + audit (PR-B1)
+        .route("/v1/jobs/{job_key}/stats", get(stats::handle_job_stats))
+        .route("/v1/executions/throughput", get(stats::handle_throughput))
+        .route("/v1/insights/failures", get(stats::handle_failure_heatmap))
+        .route("/v1/audit", get(audit::handle_list))
         // Tags
         .route("/v1/tags", get(tags::handle_list_tags))
         // Executions + logs

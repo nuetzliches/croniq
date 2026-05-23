@@ -279,6 +279,10 @@ pub trait AuthStore {
     /// Purge expired oidc_pending_logins rows. Called opportunistically
     /// (e.g. before every callback handler invocation) — best-effort.
     fn oidc_pending_purge_expired(&self, now: DateTime<Utc>) -> Result<u64, StoreError>;
+
+    // Audit log — append-only.
+    fn audit_log(&self, event: &AuditEvent) -> Result<(), StoreError>;
+    fn audit_list(&self, filter: &AuditFilter) -> Result<Vec<AuditEvent>, StoreError>;
 }
 
 /// Job definition persistence (CRUD for job definitions, distinct from runtime JobState).

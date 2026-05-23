@@ -365,6 +365,37 @@ pub struct PersonalAccessToken {
     pub created_at: DateTime<Utc>,
 }
 
+/// An audit-log entry. Append-only. Drives the Activity Feed on the
+/// Dashboard, per-job Audit tabs, and Settings → Audit.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AuditEvent {
+    pub event_id: String,
+    /// `user`, `api_key`, `pat`, `oidc`, or `system`.
+    pub actor_type: String,
+    pub actor_id: Option<String>,
+    /// Dotted action ID. Conventions: `<target>.<verb>` — e.g.
+    /// `job.created`, `auth.login_success`, `dead_letter.replayed`.
+    pub action: String,
+    pub target_type: String,
+    pub target_id: Option<String>,
+    pub diff_json: Option<String>,
+    pub ip_address: Option<String>,
+    pub user_agent: Option<String>,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct AuditFilter {
+    pub actor_type: Option<String>,
+    pub actor_id: Option<String>,
+    pub action: Option<String>,
+    pub target_type: Option<String>,
+    pub target_id: Option<String>,
+    pub since: Option<DateTime<Utc>>,
+    pub until: Option<DateTime<Utc>>,
+    pub limit: Option<u32>,
+}
+
 // ─── Job Definition ───
 
 /// A persisted job definition (distinct from the runtime JobState).

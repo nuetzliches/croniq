@@ -1265,6 +1265,95 @@ impl AuthStore for SqliteStore {
             .map_err(map_err)?;
         Ok(affected as u64)
     }
+
+    fn audit_log(&self, event: &AuditEvent) -> Result<(), StoreError> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO audit_log (event_id, actor_type, actor_id, action, target_type, target_id, diff_json, ip_address, user_agent, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+            params![
+                event.event_id,
+                event.actor_type,
+                event.actor_id,
+                event.action,
+                event.target_type,
+                event.target_id,
+                event.diff_json,
+                event.ip_address,
+                event.user_agent,
+                dt_to_sql(&event.created_at),
+            ],
+        )
+        .map_err(map_err)?;
+        Ok(())
+    }
+
+    fn audit_list(&self, filter: &AuditFilter) -> Result<Vec<AuditEvent>, StoreError> {
+        let conn = self.conn.lock().unwrap();
+        // Build a dynamic WHERE clause. Bind params in the same order
+        // they're pushed onto `clauses`/`vals`.
+        let mut clauses: Vec<&str> = Vec::new();
+        let mut vals: Vec<String> = Vec::new();
+        if let Some(v) = &filter.actor_type {
+            clauses.push("actor_type = ?");
+            vals.push(v.clone());
+        }
+        if let Some(v) = &filter.actor_id {
+            clauses.push("actor_id = ?");
+            vals.push(v.clone());
+        }
+        if let Some(v) = &filter.action {
+            clauses.push("action = ?");
+            vals.push(v.clone());
+        }
+        if let Some(v) = &filter.target_type {
+            clauses.push("target_type = ?");
+            vals.push(v.clone());
+        }
+        if let Some(v) = &filter.target_id {
+            clauses.push("target_id = ?");
+            vals.push(v.clone());
+        }
+        if let Some(t) = filter.since {
+            clauses.push("created_at >= ?");
+            vals.push(dt_to_sql(&t));
+        }
+        if let Some(t) = filter.until {
+            clauses.push("created_at <= ?");
+            vals.push(dt_to_sql(&t));
+        }
+
+        let where_sql = if clauses.is_empty() {
+            String::new()
+        } else {
+            format!("WHERE {}", clauses.join(" AND "))
+        };
+        let limit = filter.limit.unwrap_or(200).min(1000);
+        let sql = format!(
+            "SELECT event_id, actor_type, actor_id, action, target_type, target_id, diff_json, ip_address, user_agent, created_at
+             FROM audit_log {where_sql} ORDER BY created_at DESC LIMIT {limit}"
+        );
+        let mut stmt = conn.prepare(&sql).map_err(map_err)?;
+        let bind_params: Vec<&dyn rusqlite::ToSql> =
+            vals.iter().map(|v| v as &dyn rusqlite::ToSql).collect();
+        let rows = stmt
+            .query_map(bind_params.as_slice(), |row| {
+                Ok(AuditEvent {
+                    event_id: row.get(0)?,
+                    actor_type: row.get(1)?,
+                    actor_id: row.get(2)?,
+                    action: row.get(3)?,
+                    target_type: row.get(4)?,
+                    target_id: row.get(5)?,
+                    diff_json: row.get(6)?,
+                    ip_address: row.get(7)?,
+                    user_agent: row.get(8)?,
+                    created_at: sql_to_dt(&row.get::<_, String>(9)?),
+                })
+            })
+            .map_err(map_err)?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(map_err)
+    }
 }
 
 fn map_pat_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<PersonalAccessToken> {
