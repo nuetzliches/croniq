@@ -1,0 +1,33 @@
+name: "Empty poll cycle produces no acks"
+description: |
+  Server reports no work. Runner must keep polling but never ack anything.
+  Verifies the baseline poll loop with no side effects.
+
+runner_config:
+  capabilities: ["billing"]
+  max_inflight: 1
+  api_key: "croniq_testkey"
+  poll_timeout_ms: 2000
+  poll_retry_delay_ms: 200
+  drain_timeout_ms: 1000
+
+handlers: []
+
+server_script:
+  - on: "POST /v1/work/poll"
+    respond:
+      status: 200
+      body: { work: [], cancel: [] }
+
+expectations:
+  duration_max_ms: 2000
+  http:
+    - method: POST
+      path: /v1/work/poll
+      min_count: 1
+    - method: POST
+      path: /v1/work/ack
+      exact_count: 0
+    - method: POST
+      path: /v1/work/renew
+      exact_count: 0

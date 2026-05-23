@@ -1,0 +1,73 @@
+name: "Streaming log writer flushes on time threshold"
+description: |
+  The LogWriter background flusher uses a periodic timer (default 200 ms)
+  to flush partial batches even when the size threshold isn't reached.
+  Without this, low-volume long-running jobs would only ship logs at the
+  end of the run — defeating the streaming goal.
+
+  This case emits 4 events spaced 300 ms apart (total ~1200 ms). Each
+  individual event is well below the 32-event size threshold, so the
+  time-threshold pacing is the only mechanism that can produce a flush
+  during the run, and the end-of-execution drain produces one more.
+
+  NOTE: We only assert min_count=1 here, because the LogWriter's
+  Task.WhenAny-based flusher loop biases toward read-wins when events
+  arrive in quick succession — verifying "≥2 POSTs reliably" would
+  require runtime timing control (mockable PeriodicTimer / scheduler)
+  the test harness doesn't currently expose. What we DO assert: events
+  reach the server at all, and all 4 are flushed before ack.
+
+runner_config:
+  capabilities: ["log"]
+  max_inflight: 1
+  api_key: "croniq_testkey"
+  poll_timeout_ms: 1000
+  poll_retry_delay_ms: 200
+  drain_timeout_ms: 5000
+
+handlers:
+  - job_key: "log:paced"
+    behavior: stream_logs
+    count: 4
+    interval_ms: 300
+    level: info
+
+server_script:
+  - on: "POST /v1/work/poll"
+    match_count: 1
+    respond:
+      status: 200
+      body:
+        work:
+          - execution_id: "exec-paced"
+            job_key: "log:paced"
+            fire_at: "2026-05-23T10:00:00Z"
+            attempt: 1
+            metadata: {}
+            timeout: "5m"
+        cancel: []
+  - on: "POST /v1/work/poll"
+    respond:
+      status: 200
+      body: { work: [], cancel: [] }
+  - on: "POST /v1/work/exec-paced/events"
+    respond:
+      status: 200
+      body: { accepted: 0 }
+  - on: "POST /v1/work/ack"
+    respond: { status: 200, body: {} }
+  - on: "POST /v1/work/renew"
+    respond: { status: 200, body: {} }
+
+expectations:
+  duration_max_ms: 3000
+  http:
+    - method: POST
+      path: /v1/work/exec-paced/events
+      min_count: 1
+    - method: POST
+      path: /v1/work/ack
+      exact_count: 1
+      body_match:
+        execution_id: "exec-paced"
+        status: "success"

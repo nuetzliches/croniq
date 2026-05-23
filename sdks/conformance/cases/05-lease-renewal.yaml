@@ -1,0 +1,59 @@
+name: "Long-running handler triggers periodic lease renewal"
+description: |
+  While a handler is in flight, the runner must send periodic
+  POST /v1/work/renew heartbeats at the configured interval. With a 200 ms
+  renew interval and a 1500 ms handler, we expect at least two renews
+  (some leeway for scheduling jitter).
+
+runner_config:
+  capabilities: ["work"]
+  max_inflight: 1
+  api_key: "croniq_testkey"
+  poll_timeout_ms: 1000
+  renew_interval_ms: 200
+  poll_retry_delay_ms: 200
+  drain_timeout_ms: 3000
+
+handlers:
+  - job_key: "long:job"
+    behavior: sleep
+    duration_ms: 1500
+
+server_script:
+  - on: "POST /v1/work/poll"
+    match_count: 1
+    respond:
+      status: 200
+      body:
+        work:
+          - execution_id: "exec-renew"
+            job_key: "long:job"
+            fire_at: "2026-05-23T10:00:00Z"
+            attempt: 1
+            metadata: {}
+            timeout: "5m"
+        cancel: []
+  - on: "POST /v1/work/poll"
+    respond:
+      status: 200
+      body: { work: [], cancel: [] }
+  - on: "POST /v1/work/renew"
+    respond: { status: 200, body: {} }
+  - on: "POST /v1/work/ack"
+    respond: { status: 200, body: {} }
+
+expectations:
+  duration_max_ms: 4000
+  http:
+    - method: POST
+      path: /v1/work/renew
+      min_count: 2
+      body_match:
+        runner_id: "*"
+        execution_id: "exec-renew"
+    - method: POST
+      path: /v1/work/ack
+      exact_count: 1
+      body_match:
+        execution_id: "exec-renew"
+        status: "success"

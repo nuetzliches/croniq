@@ -1,0 +1,43 @@
+name: "Handler with schedule self-registers via /v1/jobs/register on start"
+description: |
+  When a handler is registered with a schedule string, the runner must POST
+  to /v1/jobs/register exactly once at startup. The request body must carry
+  job_key, schedule, runner_id, and the runner's capabilities.
+
+runner_config:
+  capabilities: ["billing", "reporting"]
+  max_inflight: 1
+  api_key: "croniq_testkey"
+  poll_timeout_ms: 1000
+  poll_retry_delay_ms: 200
+  drain_timeout_ms: 1000
+
+handlers:
+  - job_key: "billing:invoice"
+    schedule: "5m"
+    behavior: noop
+
+server_script:
+  - on: "POST /v1/jobs/register"
+    respond:
+      status: 201
+      body:
+        job_key: "billing:invoice"
+        trigger_id: "trg-test-001"
+        status: "registered"
+  - on: "POST /v1/work/poll"
+    respond:
+      status: 200
+      body: { work: [], cancel: [] }
+
+expectations:
+  duration_max_ms: 2500
+  http:
+    - method: POST
+      path: /v1/jobs/register
+      exact_count: 1
+      body_match:
+        job_key: "billing:invoice"
+        schedule: "5m"
+        runner_id: "*"
+        capabilities: ["billing", "reporting"]
