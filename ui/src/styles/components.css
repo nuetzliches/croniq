@@ -177,6 +177,64 @@
       inset 0 1px 0 oklch(1 0 0 / 0.4);
   }
 }
+
+/* Rim-light — a slow-rotating conic gradient painted on a ring
+ * around the card edge. Two coloured arcs (purple + cyan) mimic
+ * the marketing spots passing behind the glass and catching the
+ * border. Pure CSS, so it doesn't literally follow the spot
+ * positions; it rotates on its own ~18 s schedule and works
+ * regardless of what lives behind the card. */
+@supports ((mask-composite: exclude) or (-webkit-mask-composite: xor)) {
+  .card,
+  .panel {
+    position: relative;
+    isolation: isolate;
+  }
+  .card::before,
+  .panel::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    padding: 1px;
+    background: conic-gradient(
+      from 0deg,
+      transparent 0deg,
+      oklch(0.66 0.19 285 / 0.7) 25deg,
+      transparent 80deg,
+      transparent 170deg,
+      oklch(0.65 0.17 230 / 0.55) 210deg,
+      transparent 270deg,
+      transparent 360deg
+    );
+    -webkit-mask:
+      linear-gradient(#fff 0 0) content-box,
+      linear-gradient(#fff 0 0);
+    -webkit-mask-composite: xor;
+    mask:
+      linear-gradient(#fff 0 0) content-box,
+      linear-gradient(#fff 0 0);
+    mask-composite: exclude;
+    pointer-events: none;
+    z-index: 1;
+    animation: croniq-card-rim 18s linear infinite;
+    opacity: 0.85;
+  }
+  /* Light theme: rim glow is much subtler — the cards already
+   * have clear separation from the bg, no need to dramatize the
+   * edge. */
+  [data-theme="light"] .card::before,
+  [data-theme="light"] .panel::before {
+    opacity: 0.55;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .card::before,
+    .panel::before { animation: none; }
+  }
+}
+@keyframes croniq-card-rim {
+  to { transform: rotate(360deg); }
+}
 .card-head {
   display: flex; align-items: center; justify-content: space-between;
   margin-bottom: 12px;
