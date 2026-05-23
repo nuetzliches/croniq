@@ -6,6 +6,13 @@ export interface HealthResponse {
   queued: number
 }
 
+export interface VersionResponse {
+  version: string
+  git_sha: string
+  build_time: string
+  env: string
+}
+
 export interface JobDefinition {
   job_key: string
   description: string | null
