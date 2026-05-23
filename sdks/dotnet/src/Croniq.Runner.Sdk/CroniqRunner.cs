@@ -221,7 +221,13 @@ public sealed class CroniqRunner : IAsyncDisposable
 
             foreach (var assignment in response.Work)
             {
-                var executionCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                // Standalone CTS — intentionally NOT linked to the outer poll
+                // token. Host-shutdown stops new polls but in-flight handlers
+                // run to natural completion (matching the Rust SDK's drain
+                // semantics, and what most graceful-shutdown stories expect).
+                // Server-initiated cancel (PollResponse.cancel) and the
+                // drain-timeout fallback hard-cancel via this CTS.
+                var executionCts = new CancellationTokenSource();
                 if (!_inflight.TryAdd(assignment.ExecutionId, executionCts))
                 {
                     // Already tracking — server sent a duplicate; ignore.
@@ -282,7 +288,24 @@ public sealed class CroniqRunner : IAsyncDisposable
         }
         if (!_inflight.IsEmpty)
         {
-            _logger.LogWarning("drain timed out with {Count} execution(s) still in-flight", _inflight.Count);
+            // Drain budget exhausted — handlers had their grace period.
+            // Hard-cancel via the per-execution CTS so any well-behaved
+            // handler that respects ctx.CancellationToken aborts cleanly;
+            // the dispatcher then acks with status=failure. Handlers that
+            // ignore the token block until they finish naturally; the
+            // runner returns from RunAsync anyway.
+            _logger.LogWarning("drain timed out with {Count} execution(s) still in-flight — hard-cancelling", _inflight.Count);
+            foreach (var cts in _inflight.Values)
+            {
+                try
+                {
+                    cts.Cancel();
+                }
+                catch (ObjectDisposedException)
+                {
+                    // race with handler completion — harmless
+                }
+            }
         }
     }
 }

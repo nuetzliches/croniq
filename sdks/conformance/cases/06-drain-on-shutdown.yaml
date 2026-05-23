@@ -1,16 +1,19 @@
-name: "Shutdown cancels in-flight handlers and acks failure"
+name: "Shutdown drains in-flight handlers before returning"
 description: |
   When the runner's cancellation token fires while a handler is still
-  executing, the SDK propagates the cancellation to the handler's token
-  (it's linked to the host-shutdown token). The handler observes the
-  cancellation, the runner stops polling, and the ack reports
-  status=failure with an error indicating the runner was draining.
+  executing, the runner must:
+    1. Stop polling for new work.
+    2. Wait for the in-flight handler to finish (bounded by drain_timeout_ms).
+    3. Ack the completed work with status=success.
 
-  NOTE: This is the .NET SDK's current behaviour. The Rust SDK leaves
-  in-flight handlers running through their natural completion and only
-  hard-aborts after drain_timeout_ms — a semantic difference tracked in
-  the SDK conformance gaps. Either behaviour is observable here; this
-  case pins the .NET semantics so regressions are caught.
+  The binding triggers shutdown 300 ms after the case starts; the handler
+  sleeps for 500 ms. Net effect: drain waits ~200 ms for the handler to
+  finish on its own, then the ack is emitted as success.
+
+  This matches the Rust SDK's drain semantics: host shutdown stops the
+  poll loop but does NOT cancel running handlers — they run to natural
+  completion. Hard-cancellation only happens if drain_timeout_ms elapses
+  while handlers are still in-flight.
 
 runner_config:
   capabilities: ["work"]
@@ -62,5 +65,4 @@ expectations:
       exact_count: 1
       body_match:
         execution_id: "exec-drain"
-        status: "failure"
-        error: "*"
+        status: "success"
