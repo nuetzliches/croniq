@@ -160,46 +160,34 @@
   box-shadow: 0 2px 8px -4px oklch(0 0 0 / 0.30);
 }
 [data-theme="light"] .card { box-shadow: 0 2px 8px -4px oklch(0 0 0 / 0.06); }
-/* Two-zone glass: the card BODY uses a mild frosted blur (so the
- * content stays readable), and a separate ::before pseudo paints
- * a thicker refraction ring at the border with much stronger
- * saturation + brightness. That's the deep-water analogy: light
- * bends most where the wave meets the surface (the edge), and
- * the interior stays calm. backdrop-filter is per-element, so
- * the pseudo is what makes the per-zone treatment possible. */
+/* Edge-only glass: the card body itself is fully transparent (no
+ * fill, no border, no backdrop-filter), and the ::before pseudo
+ * carries the entire glass treatment as a 2 px refraction ring
+ * along the edge. The drop-shadow still telegraphs the card's
+ * bounding box, but the body becomes a pure "window" — text
+ * floats directly on whatever lives behind. */
 @supports (backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px)) {
   .card {
-    background: color-mix(in srgb, var(--panel) 70%, transparent);
-    backdrop-filter: blur(14px) saturate(130%);
-    -webkit-backdrop-filter: blur(14px) saturate(130%);
-    border-color: color-mix(in srgb, var(--border) 55%, transparent);
-    box-shadow:
-      0 12px 30px -14px oklch(0 0 0 / 0.45),
-      inset 0 1px 0 oklch(1 0 0 / 0.06);
+    background: transparent;
+    border-color: transparent;
+    box-shadow: 0 12px 30px -14px oklch(0 0 0 / 0.45);
   }
   [data-theme="light"] .card {
-    background: color-mix(in srgb, var(--panel) 80%, transparent);
-    backdrop-filter: blur(12px) saturate(120%);
-    -webkit-backdrop-filter: blur(12px) saturate(120%);
-    box-shadow:
-      0 10px 28px -14px oklch(0 0 0 / 0.14),
-      inset 0 1px 0 oklch(1 0 0 / 0.5);
+    box-shadow: 0 10px 28px -14px oklch(0 0 0 / 0.14);
   }
   .panel {
-    background: color-mix(in srgb, var(--panel) 72%, transparent);
-    backdrop-filter: blur(14px) saturate(130%);
-    -webkit-backdrop-filter: blur(14px) saturate(130%);
-    border-color: color-mix(in srgb, var(--border) 60%, transparent);
+    background: transparent;
+    border-color: transparent;
   }
 }
 
-/* Refraction edge — a thin (~3 px) hollow border-zone pseudo
- * that gets its own backdrop-filter. No brightness boost — the
- * earlier 118 % uniformly lightened the whole ring band, which
- * read as a glowing frame rather than refraction. Here we keep
- * the band the same lightness as the body and only crank
- * saturation + contrast so the spots passing behind the ring
- * read more vividly than they do behind the card body. */
+/* Refraction edge — a thin (2 px) hollow border-zone pseudo
+ * carrying the entire glass effect. The mask-composite trick
+ * carves out the content-box so the backdrop-filter only paints
+ * the 2 px ring along the edge. The body of the card has no
+ * filter, so anything passing behind the card body shows
+ * unchanged — but at the very edge, the same content is
+ * refracted (sharper, more saturated). */
 @supports ((mask-composite: exclude) or (-webkit-mask-composite: xor)) and (backdrop-filter: blur(1px)) {
   .card,
   .panel {
@@ -212,12 +200,11 @@
     position: absolute;
     inset: 0;
     border-radius: inherit;
-    padding: 3px;
+    padding: 2px;
     pointer-events: none;
     z-index: 0;
-    /* Sharper spot pickup + higher saturation, no brightness boost. */
-    backdrop-filter: blur(3px) saturate(200%) contrast(112%);
-    -webkit-backdrop-filter: blur(3px) saturate(200%) contrast(112%);
+    backdrop-filter: blur(3px) saturate(220%) contrast(115%);
+    -webkit-backdrop-filter: blur(3px) saturate(220%) contrast(115%);
     -webkit-mask:
       linear-gradient(#fff 0 0) content-box,
       linear-gradient(#fff 0 0);
@@ -229,8 +216,8 @@
   }
   [data-theme="light"] .card::before,
   [data-theme="light"] .panel::before {
-    backdrop-filter: blur(2px) saturate(150%) contrast(108%);
-    -webkit-backdrop-filter: blur(2px) saturate(150%) contrast(108%);
+    backdrop-filter: blur(2px) saturate(160%) contrast(110%);
+    -webkit-backdrop-filter: blur(2px) saturate(160%) contrast(110%);
   }
 }
 .card-head {

@@ -382,29 +382,19 @@
 }
 @supports (backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px)) {
   .login-form {
-    background: color-mix(in srgb, var(--panel) 68%, transparent);
-    backdrop-filter: blur(16px) saturate(135%);
-    -webkit-backdrop-filter: blur(16px) saturate(135%);
-    border-color: color-mix(in srgb, var(--border-2) 50%, transparent);
-    box-shadow:
-      0 24px 56px -22px oklch(0 0 0 / 0.55),
-      inset 0 1px 0 oklch(1 0 0 / 0.08);
+    background: transparent;
+    border-color: transparent;
+    box-shadow: 0 24px 56px -22px oklch(0 0 0 / 0.55);
   }
   [data-theme="light"] .login-form {
-    background: color-mix(in srgb, var(--panel) 78%, transparent);
-    backdrop-filter: blur(14px) saturate(125%);
-    -webkit-backdrop-filter: blur(14px) saturate(125%);
-    box-shadow:
-      0 22px 52px -20px oklch(0 0 0 / 0.16),
-      inset 0 1px 0 oklch(1 0 0 / 0.55);
+    box-shadow: 0 22px 52px -20px oklch(0 0 0 / 0.16);
   }
 }
 
-/* Refraction edge on the login form border — slightly wider band
- * (4 px) than generic .card because the marketing spots drift
- * directly behind it, but no brightness boost (that read as a
- * glowing frame on the previous attempt) — just sharper blur +
- * saturation so the spots concentrate at the edge. */
+/* Refraction edge on the login form — same 2 px ring as the
+ * generic .card with a slightly stronger filter because the
+ * marketing spots drift directly behind it. The body itself is
+ * fully transparent; only the ring carries the glass effect. */
 @supports ((mask-composite: exclude) or (-webkit-mask-composite: xor)) and (backdrop-filter: blur(1px)) {
   .login-form {
     isolation: isolate;
@@ -414,11 +404,11 @@
     position: absolute;
     inset: 0;
     border-radius: inherit;
-    padding: 4px;
+    padding: 2px;
     pointer-events: none;
     z-index: 0;
-    backdrop-filter: blur(2px) saturate(240%) contrast(115%);
-    -webkit-backdrop-filter: blur(2px) saturate(240%) contrast(115%);
+    backdrop-filter: blur(3px) saturate(260%) contrast(120%);
+    -webkit-backdrop-filter: blur(3px) saturate(260%) contrast(120%);
     -webkit-mask:
       linear-gradient(#fff 0 0) content-box,
       linear-gradient(#fff 0 0);
@@ -429,8 +419,8 @@
     mask-composite: exclude;
   }
   [data-theme="light"] .login-form::before {
-    backdrop-filter: blur(2px) saturate(160%) contrast(108%);
-    -webkit-backdrop-filter: blur(2px) saturate(160%) contrast(108%);
+    backdrop-filter: blur(2px) saturate(170%) contrast(112%);
+    -webkit-backdrop-filter: blur(2px) saturate(170%) contrast(112%);
   }
 }
 .login-form.shake { animation: croniq-shake .4s; }
