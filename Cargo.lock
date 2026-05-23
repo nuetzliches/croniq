@@ -774,6 +774,7 @@ version = "0.4.0"
 dependencies = [
  "anyhow",
  "axum",
+ "base64",
  "chrono",
  "chrono-tz",
  "clap",
@@ -788,12 +789,15 @@ dependencies = [
  "croniq-store",
  "futures-core",
  "http-body-util",
+ "jsonwebtoken",
  "notify",
  "opentelemetry",
  "opentelemetry-appender-tracing",
  "opentelemetry-otlp",
  "opentelemetry_sdk",
  "pretty_assertions",
+ "rand 0.9.3",
+ "reqwest",
  "serde",
  "serde_json",
  "tempfile",
@@ -805,6 +809,7 @@ dependencies = [
  "tracing",
  "tracing-opentelemetry",
  "tracing-subscriber",
+ "url",
  "uuid",
 ]
 

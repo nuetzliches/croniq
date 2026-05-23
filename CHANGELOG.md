@@ -8,6 +8,37 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **OIDC/SSO login (PR-A5).** Manual Authorization-Code flow against
+  any OpenID-Connect provider with Discovery — tested mentally
+  against Authentik, Keycloak, Auth0. New env-only config (a DSL
+  `oidc {}` block follows in PR-A5b):
+  - `CRONIQ_OIDC_ISSUER` — base URL, `.well-known/openid-configuration` is appended
+  - `CRONIQ_OIDC_CLIENT_ID`, `CRONIQ_OIDC_CLIENT_SECRET`, `CRONIQ_OIDC_REDIRECT_URL`
+  - `CRONIQ_OIDC_DEFAULT_ROLE` (default `viewer`), `CRONIQ_OIDC_PROVIDER_NAME` (default `oidc`)
+  - When any required var is missing, OIDC stays disabled and the
+    routes return 404.
+
+  New endpoints:
+  - `GET /v1/auth/oidc/config` — read-only metadata (`enabled`,
+    `provider_name`, `login_url`) for the login UI's "Sign in with SSO" button.
+  - `GET /v1/auth/oidc/login` — 302-redirect to the IdP's authorize
+    URL. Random `state` + `nonce` persisted in `oidc_pending_logins`
+    (TTL 10 min, single-use take-and-delete).
+  - `GET /v1/auth/oidc/callback?code=&state=` — atomic state lookup,
+    token exchange, JWKS-based ID-token verify (RS256/384/512), nonce
+    check, userinfo fetch. Returns the standard `TokenResponse`.
+
+  JIT user provisioning: first sign-in creates a `users` row with
+  `role=viewer` (or whatever `CRONIQ_OIDC_DEFAULT_ROLE` sets). The
+  link lives in `oidc_identities (provider, subject) → user_id`.
+  Username collision with an existing local password user is refused
+  with 409 to prevent silent account hijack.
+
+  Schema: `015_oidc.sql` (oidc_identities + oidc_pending_logins).
+  Dependencies: `reqwest` (rustls), `jsonwebtoken`, `base64`, `rand`.
+  `auth_method=oidc` is set on every OIDC-issued token so the audit
+  log distinguishes SSO sessions from password ones.
+
 - **Personal Access Tokens (PR-A4).** User-bound API credentials,
   distinct from `api_keys` (which belong to service identities). PATs
   carry a stable `user_id`, a human label ("laptop", "ci-personal"),

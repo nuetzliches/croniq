@@ -318,6 +318,31 @@ pub struct RecoveryCode {
     pub created_at: DateTime<Utc>,
 }
 
+/// Link between a Croniq user and an external OIDC subject. JIT-created
+/// on first OIDC sign-in; subsequent sign-ins reuse the existing
+/// `user_id` so role + last_login_at history is preserved.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OidcIdentity {
+    pub provider: String,
+    pub subject: String,
+    pub user_id: String,
+    pub email: Option<String>,
+    pub linked_at: DateTime<Utc>,
+    pub last_login_at: Option<DateTime<Utc>>,
+}
+
+/// Short-TTL store entry for the `state` param of an outbound OIDC
+/// authorization-code request. Holds the random `nonce` we expect to
+/// see back in the ID token, plus an optional post-login redirect.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OidcPendingLogin {
+    pub state: String,
+    pub nonce: String,
+    pub redirect_to: Option<String>,
+    pub created_at: DateTime<Utc>,
+    pub expires_at: DateTime<Utc>,
+}
+
 /// A Personal Access Token — a user-bound API credential with a stable
 /// `user_id` and a scope subset of the owning user's role. Raw token
 /// is delivered once at creation; only the SHA-256 hash is persisted.

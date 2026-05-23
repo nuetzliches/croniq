@@ -9,6 +9,7 @@ pub mod dead_letters;
 pub mod execution_logs;
 pub mod invitations;
 pub mod jobs;
+pub mod oidc;
 pub mod password_reset;
 pub mod pat;
 pub mod runners_sse;
@@ -44,6 +45,7 @@ use tokio::sync::mpsc;
 
 use crate::completion::CompletionEvent;
 use crate::email::EmailSender;
+use crate::oidc::SharedOidcProvider;
 use crate::reload::ReloadCounters;
 use crate::scheduler::SchedulerCommand;
 use crate::store::DynStore;
@@ -99,6 +101,9 @@ pub struct ServerState {
     /// `CRONIQ_APP_URL` at startup; defaults to `http://localhost:4000`
     /// for fresh installs. The admin can override per environment.
     pub app_base_url: String,
+    /// OIDC provider for SSO login. `None` disables the OIDC routes.
+    /// Discovered once at startup (see `oidc::OidcProvider::discover`).
+    pub oidc: SharedOidcProvider,
 }
 
 impl ServerState {
@@ -121,6 +126,7 @@ impl ServerState {
             reload_counters: ReloadCounters::new(),
             email_sender: crate::email::default_sender(),
             app_base_url: "http://localhost:4000".into(),
+            oidc: None,
         })
     }
 
@@ -146,6 +152,7 @@ impl ServerState {
             reload_counters: ReloadCounters::new(),
             email_sender: crate::email::default_sender(),
             app_base_url: "http://localhost:4000".into(),
+            oidc: None,
         })
     }
 
@@ -170,6 +177,7 @@ impl ServerState {
             reload_counters: ReloadCounters::new(),
             email_sender: crate::email::default_sender(),
             app_base_url: "http://localhost:4000".into(),
+            oidc: None,
         })
     }
 }
@@ -338,7 +346,11 @@ pub fn server_router(state: Arc<ServerState>) -> Router {
             "/v1/auth/password-reset/confirm",
             post(password_reset::handle_confirm),
         )
-        .route("/v1/invitations/accept", post(invitations::handle_accept));
+        .route("/v1/invitations/accept", post(invitations::handle_accept))
+        // OIDC/SSO
+        .route("/v1/auth/oidc/login", get(oidc::handle_login))
+        .route("/v1/auth/oidc/callback", get(oidc::handle_callback))
+        .route("/v1/auth/oidc/config", get(oidc::handle_config));
 
     let cors = tower_http::cors::CorsLayer::permissive();
 
@@ -895,6 +907,7 @@ mod tests {
             reload_counters: ReloadCounters::new(),
             email_sender: crate::email::default_sender(),
             app_base_url: "http://localhost:4000".into(),
+            oidc: None,
         });
         (state, rx)
     }
@@ -1064,6 +1077,7 @@ mod tests {
             reload_counters: ReloadCounters::new(),
             email_sender: crate::email::default_sender(),
             app_base_url: "http://localhost:4000".into(),
+            oidc: None,
         });
         let app = server_router(Arc::clone(&state));
 
@@ -1131,6 +1145,7 @@ mod tests {
             reload_counters: ReloadCounters::new(),
             email_sender: crate::email::default_sender(),
             app_base_url: "http://localhost:4000".into(),
+            oidc: None,
         });
         let app = server_router(Arc::clone(&state));
 

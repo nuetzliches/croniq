@@ -42,6 +42,7 @@ const MIGRATIONS: &[(&str, &str)] = &[
         "014_personal_access_tokens",
         include_str!("014_personal_access_tokens.sql"),
     ),
+    ("015_oidc", include_str!("015_oidc.sql")),
 ];
 
 /// Run all pending migrations.

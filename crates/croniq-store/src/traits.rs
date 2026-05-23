@@ -260,6 +260,25 @@ pub trait AuthStore {
     fn pat_list(&self, user_id: &str) -> Result<Vec<PersonalAccessToken>, StoreError>;
     fn pat_revoke(&self, token_id: &str, at: DateTime<Utc>) -> Result<(), StoreError>;
     fn pat_touch_last_used(&self, token_id: &str, at: DateTime<Utc>) -> Result<(), StoreError>;
+
+    // OIDC — JIT-linked external identities + short-TTL state-param store.
+    fn oidc_link(&self, identity: &OidcIdentity) -> Result<(), StoreError>;
+    fn oidc_get_by_subject(
+        &self,
+        provider: &str,
+        subject: &str,
+    ) -> Result<Option<OidcIdentity>, StoreError>;
+    fn oidc_touch_last_login(
+        &self,
+        provider: &str,
+        subject: &str,
+        at: DateTime<Utc>,
+    ) -> Result<(), StoreError>;
+    fn oidc_pending_create(&self, pending: &OidcPendingLogin) -> Result<(), StoreError>;
+    fn oidc_pending_take(&self, state: &str) -> Result<Option<OidcPendingLogin>, StoreError>;
+    /// Purge expired oidc_pending_logins rows. Called opportunistically
+    /// (e.g. before every callback handler invocation) — best-effort.
+    fn oidc_pending_purge_expired(&self, now: DateTime<Utc>) -> Result<u64, StoreError>;
 }
 
 /// Job definition persistence (CRUD for job definitions, distinct from runtime JobState).

@@ -1145,6 +1145,126 @@ impl AuthStore for SqliteStore {
         .map_err(map_err)?;
         Ok(())
     }
+
+    fn oidc_link(&self, identity: &OidcIdentity) -> Result<(), StoreError> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO oidc_identities (provider, subject, user_id, email, linked_at, last_login_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+             ON CONFLICT(provider, subject) DO UPDATE SET
+                user_id = excluded.user_id,
+                email = excluded.email,
+                last_login_at = excluded.last_login_at",
+            params![
+                identity.provider,
+                identity.subject,
+                identity.user_id,
+                identity.email,
+                dt_to_sql(&identity.linked_at),
+                opt_dt_to_sql(&identity.last_login_at),
+            ],
+        )
+        .map_err(map_err)?;
+        Ok(())
+    }
+
+    fn oidc_get_by_subject(
+        &self,
+        provider: &str,
+        subject: &str,
+    ) -> Result<Option<OidcIdentity>, StoreError> {
+        let conn = self.conn.lock().unwrap();
+        conn.prepare(
+            "SELECT provider, subject, user_id, email, linked_at, last_login_at FROM oidc_identities WHERE provider = ?1 AND subject = ?2",
+        )
+        .map_err(map_err)?
+        .query_row(params![provider, subject], |row| {
+            Ok(OidcIdentity {
+                provider: row.get(0)?,
+                subject: row.get(1)?,
+                user_id: row.get(2)?,
+                email: row.get(3)?,
+                linked_at: sql_to_dt(&row.get::<_, String>(4)?),
+                last_login_at: sql_to_opt_dt(row.get(5)?),
+            })
+        })
+        .optional()
+        .map_err(map_err)
+    }
+
+    fn oidc_touch_last_login(
+        &self,
+        provider: &str,
+        subject: &str,
+        at: DateTime<Utc>,
+    ) -> Result<(), StoreError> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE oidc_identities SET last_login_at = ?1 WHERE provider = ?2 AND subject = ?3",
+            params![dt_to_sql(&at), provider, subject],
+        )
+        .map_err(map_err)?;
+        Ok(())
+    }
+
+    fn oidc_pending_create(&self, pending: &OidcPendingLogin) -> Result<(), StoreError> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO oidc_pending_logins (state, nonce, redirect_to, created_at, expires_at)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![
+                pending.state,
+                pending.nonce,
+                pending.redirect_to,
+                dt_to_sql(&pending.created_at),
+                dt_to_sql(&pending.expires_at),
+            ],
+        )
+        .map_err(map_err)?;
+        Ok(())
+    }
+
+    fn oidc_pending_take(&self, state: &str) -> Result<Option<OidcPendingLogin>, StoreError> {
+        let conn = self.conn.lock().unwrap();
+        // Atomic read+delete to make state single-use even under
+        // concurrent callbacks. SQLite has no RETURNING DELETE in older
+        // versions, so we select first, then delete by PK.
+        let found: Option<OidcPendingLogin> = conn
+            .prepare(
+                "SELECT state, nonce, redirect_to, created_at, expires_at FROM oidc_pending_logins WHERE state = ?1",
+            )
+            .map_err(map_err)?
+            .query_row(params![state], |row| {
+                Ok(OidcPendingLogin {
+                    state: row.get(0)?,
+                    nonce: row.get(1)?,
+                    redirect_to: row.get(2)?,
+                    created_at: sql_to_dt(&row.get::<_, String>(3)?),
+                    expires_at: sql_to_dt(&row.get::<_, String>(4)?),
+                })
+            })
+            .optional()
+            .map_err(map_err)?;
+        if found.is_some() {
+            conn.execute(
+                "DELETE FROM oidc_pending_logins WHERE state = ?1",
+                params![state],
+            )
+            .map_err(map_err)?;
+        }
+        Ok(found)
+    }
+
+    fn oidc_pending_purge_expired(&self, now: DateTime<Utc>) -> Result<u64, StoreError> {
+        let conn = self.conn.lock().unwrap();
+        let affected = conn
+            .execute(
+                "DELETE FROM oidc_pending_logins WHERE expires_at < ?1",
+                params![dt_to_sql(&now)],
+            )
+            .map_err(map_err)?;
+        Ok(affected as u64)
+    }
 }
 
 fn map_pat_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<PersonalAccessToken> {
