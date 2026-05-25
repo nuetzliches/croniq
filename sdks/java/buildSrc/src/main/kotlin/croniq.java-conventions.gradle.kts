@@ -32,7 +32,11 @@ tasks.withType<JavaCompile>().configureEach {
     // -parameters keeps method parameter names in the bytecode. Required
     // for Spring's @ConfigurationProperties record binding and useful for
     // anyone reflecting over our public API.
-    options.compilerArgs.addAll(listOf("-parameters", "-Xlint:all", "-Werror"))
+    // -Xlint:-processing excludes the "annotation was not claimed by any
+    // processor" warning. Spring Boot's @Bean / @AutoConfiguration etc. are
+    // processed at runtime, not at compile time, but javac doesn't know that
+    // and warns. With -Werror set, the warning would fail the build.
+    options.compilerArgs.addAll(listOf("-parameters", "-Xlint:all,-processing", "-Werror"))
 }
 
 tasks.withType<Javadoc>().configureEach {
