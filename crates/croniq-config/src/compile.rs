@@ -216,7 +216,20 @@ pub enum ChannelKind {
         signing_key: Option<String>,
         timeout_secs: u64,
     },
-    /// Placeholder for unknown or future kinds (email, slack-native, …).
+    /// `email "addr@example.com" ["second@…" …]` — send plain-text
+    /// notification to each recipient via the server's configured
+    /// `EmailSender` (issue #140 PR-3).
+    ///
+    /// With no SMTP backend (the default `NoopSender`), delivery is a
+    /// noop that logs `to` + `subject` and never emits the body. The
+    /// evaluator still records `delivered` in `alert_deliveries` so
+    /// operators can see what *would* have been sent.
+    ///
+    /// Operators enable real delivery by setting
+    /// `CRONIQ_SMTP_URL` + `CRONIQ_SMTP_FROM` and building
+    /// croniq-server with the `smtp` cargo feature.
+    Email { recipients: Vec<String> },
+    /// Placeholder for unknown or future kinds (slack-native, …).
     /// Channels with this kind compile cleanly so rule references
     /// resolve; the evaluator logs and skips them.
     Unknown { reason: String },
@@ -832,7 +845,7 @@ fn compile_channel_kind(block: &NamedBlock, vars: &HashMap<String, String>) -> C
     let mut webhook_url: Option<String> = None;
     let mut webhook_signing_key: Option<String> = None;
     let mut webhook_timeout_secs: u64 = 5;
-    let mut saw_email = false;
+    let mut email_recipients: Vec<String> = Vec::new();
 
     for dob in &block.directives {
         let DirectiveOrBlock::Directive(d) = dob else {
@@ -873,7 +886,16 @@ fn compile_channel_kind(block: &NamedBlock, vars: &HashMap<String, String>) -> C
                 }
             }
             "email" => {
-                saw_email = true;
+                // Grammar: `email "a@x.com" ["b@y.com" …]` — one or
+                // more recipient addresses, space-separated. Each is
+                // resolved against vars/env placeholders independently
+                // so `email {env.OPS_PAGER_EMAIL}` is valid.
+                for arg in &d.args {
+                    let v = resolve_str(arg, vars);
+                    if !v.trim().is_empty() {
+                        email_recipients.push(v);
+                    }
+                }
             }
             _ => {}
         }
@@ -889,9 +911,9 @@ fn compile_channel_kind(block: &NamedBlock, vars: &HashMap<String, String>) -> C
             timeout_secs: webhook_timeout_secs,
         };
     }
-    if saw_email {
-        return ChannelKind::Unknown {
-            reason: "channel kind `email` is not yet implemented (lands in PR-3 of #140)".into(),
+    if !email_recipients.is_empty() {
+        return ChannelKind::Email {
+            recipients: email_recipients,
         };
     }
     ChannelKind::Unknown {
@@ -1857,11 +1879,10 @@ mod tests {
         assert!(cfg.alerts.channels.contains_key("x"));
     }
 
+    // ─── #140 PR-3 email channel ───────────────────────────────────
+
     #[test]
-    fn compile_alerts_email_kind_is_unknown_variant() {
-        // `email` is reserved for PR-3 of #140 — recognised at compile
-        // time so the error message points at the right PR rather than
-        // a generic "unknown kind".
+    fn compile_alerts_email_single_recipient() {
         let ast = Parser::parse(
             r#"
             alerts {
@@ -1879,10 +1900,66 @@ mod tests {
             .get("ops-email")
             .expect("channel parsed");
         match &ch.kind {
-            ChannelKind::Unknown { reason } => {
-                assert!(reason.contains("email"), "reason mentions kind: {reason}");
+            ChannelKind::Email { recipients } => {
+                assert_eq!(recipients, &vec!["ops@example.com".to_string()]);
             }
-            other => panic!("expected Unknown for email in PR-2, got {other:?}"),
+            other => panic!("expected Email, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn compile_alerts_email_multiple_recipients() {
+        let ast = Parser::parse(
+            r#"
+            alerts {
+                channel "ops-team" {
+                    email "ops@example.com" "oncall@example.com" "leads@example.com"
+                }
+            }
+            "#,
+        )
+        .unwrap();
+        let cfg = compile(&ast);
+        let ch = cfg.alerts.channels.get("ops-team").expect("channel parsed");
+        match &ch.kind {
+            ChannelKind::Email { recipients } => {
+                assert_eq!(
+                    recipients,
+                    &vec![
+                        "ops@example.com".to_string(),
+                        "oncall@example.com".to_string(),
+                        "leads@example.com".to_string(),
+                    ]
+                );
+            }
+            other => panic!("expected Email, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn compile_alerts_email_with_placeholder() {
+        // The `{vars.X}` placeholder resolution path must work for
+        // each recipient — useful when ops mailbox is per-environment.
+        let ast = Parser::parse(
+            r#"
+            vars {
+                ops_mailbox "ops-prod@example.com"
+            }
+            alerts {
+                channel "ops" {
+                    email {vars.ops_mailbox}
+                }
+            }
+            "#,
+        )
+        .unwrap();
+        let cfg = compile(&ast);
+        let ch = cfg.alerts.channels.get("ops").expect("channel parsed");
+        match &ch.kind {
+            ChannelKind::Email { recipients } => {
+                assert_eq!(recipients, &vec!["ops-prod@example.com".to_string()]);
+            }
+            other => panic!("expected Email, got {other:?}"),
         }
     }
 

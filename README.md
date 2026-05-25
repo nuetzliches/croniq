@@ -181,8 +181,8 @@ calendar business-days {
 
 # Failure alerts (issue #140) — fire per-rule when an execution
 # permanently fails (dead-letter or drop). Throttled per (rule, job)
-# so a job that loops failing doesn't flood the channel. Shell and
-# webhook channels ship today; `email` follows in PR-3.
+# so a job that loops failing doesn't flood the channel. Shell,
+# webhook, and email channels all ship today.
 alerts {
   channel "ops-paging" {
     shell "/usr/local/bin/page-oncall.sh"
@@ -192,12 +192,18 @@ alerts {
     sign hmac {env.SLACK_SIGNING_SECRET}
     timeout 5s
   }
+  channel "ops-mail" {
+    # One address per arg, multiple addresses get one mail each.
+    # Needs CRONIQ_SMTP_URL + CRONIQ_SMTP_FROM (server built with
+    # --features smtp); otherwise NoopSender just logs the recipient.
+    email "ops@example.com" "oncall@example.com"
+  }
   rule "billing-fail" {
     when job_failed
     job_key "billing:*"
     min_attempts 2     # fire only after retry exhaustion
     throttle 10m       # one alert per (rule, job_key) per window
-    channels "ops-paging" "slack"
+    channels "ops-paging" "slack" "ops-mail"
   }
 }
 

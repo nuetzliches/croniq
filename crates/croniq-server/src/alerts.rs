@@ -148,6 +148,7 @@ pub async fn evaluate_failure(
     ctx: &FailureContext,
     throttle: &ThrottleMap,
     store: &DynStore,
+    email_sender: &Arc<dyn crate::email::EmailSender>,
 ) -> Vec<AlertDelivery> {
     let now = Utc::now();
     let mut recorded = Vec::new();
@@ -223,7 +224,7 @@ pub async fn evaluate_failure(
                 continue;
             };
 
-            let delivery = dispatch(channel, &rule.name, ctx, now).await;
+            let delivery = dispatch(channel, &rule.name, ctx, now, email_sender).await;
             let _ = store.record_alert_delivery(&delivery);
             recorded.push(delivery);
         }
@@ -314,6 +315,7 @@ async fn dispatch(
     rule_name: &str,
     ctx: &FailureContext,
     now: DateTime<Utc>,
+    email_sender: &Arc<dyn crate::email::EmailSender>,
 ) -> AlertDelivery {
     match &channel.kind {
         ChannelKind::Shell { command } => deliver_shell(channel, command, rule_name, ctx, now),
@@ -332,6 +334,9 @@ async fn dispatch(
                 now,
             )
             .await
+        }
+        ChannelKind::Email { recipients } => {
+            deliver_email(channel, recipients, rule_name, ctx, now, email_sender).await
         }
         ChannelKind::Unknown { reason } => {
             tracing::warn!(
@@ -647,6 +652,130 @@ fn hmac_sha256_hex(key: &[u8], body: &[u8]) -> String {
     hex::encode(mac.finalize().into_bytes())
 }
 
+/// Compose the subject + plain-text body for a failure-alert email.
+///
+/// Kept pure for unit-testing — the actual `EmailSender` call lives in
+/// [`deliver_email`]. New fields are added at the END of the body to
+/// preserve any greps / parsers operators may have built on top of
+/// the existing format.
+fn compose_email(rule_name: &str, ctx: &FailureContext, now: DateTime<Utc>) -> (String, String) {
+    let subject = format!("[Croniq] {} failed (rule: {})", ctx.job_key, rule_name);
+    let body = format!(
+        "Croniq detected a permanent job failure.\n\
+         \n\
+         Job:           {job_key}\n\
+         Rule:          {rule_name}\n\
+         Reason:        {reason}\n\
+         Attempt:       {attempt}\n\
+         Execution ID:  {execution_id}\n\
+         Fired at:      {fired_at}\n\
+         Error:\n\
+         {error}\n\
+         \n\
+         -- \n\
+         Sent by Croniq {version}.\n",
+        job_key = ctx.job_key,
+        rule_name = rule_name,
+        reason = ctx.reason,
+        attempt = ctx.attempt,
+        execution_id = ctx.execution_id,
+        fired_at = now.to_rfc3339(),
+        error = ctx.error,
+        version = env!("CARGO_PKG_VERSION"),
+    );
+    (subject, body)
+}
+
+/// Email channel handler. Sends one message per recipient via the
+/// `EmailSender` trait. With the default `NoopSender`, "delivery" is
+/// the audit log line in `croniq::email`; the row in
+/// `alert_deliveries` still says `delivered` because the sender's
+/// contract is "Ok = the operator's chosen path accepted the
+/// message" — and `NoopSender` is itself the chosen path until SMTP
+/// is configured.
+///
+/// Failure semantics: if any recipient errors, the whole delivery is
+/// marked `failed` and the first error wins the `error` column. The
+/// remaining recipients are NOT attempted — we expect mailbox issues
+/// to be transient and re-firing on the next failure is cheap.
+async fn deliver_email(
+    channel: &ChannelConfig,
+    recipients: &[String],
+    rule_name: &str,
+    ctx: &FailureContext,
+    now: DateTime<Utc>,
+    email_sender: &Arc<dyn crate::email::EmailSender>,
+) -> AlertDelivery {
+    let delivery_id = Uuid::new_v4().to_string();
+    let (subject, body) = compose_email(rule_name, ctx, now);
+
+    // `EmailSender::send` is synchronous — wrap in `spawn_blocking` so
+    // an SMTP round-trip doesn't stall the completion processor's
+    // async task. NoopSender is fast enough that the overhead is
+    // irrelevant; the wrapper is a no-op cost on that path.
+    let sender = email_sender.clone();
+    let subject_owned = subject.clone();
+    let body_owned = body.clone();
+    let recipients_owned: Vec<String> = recipients.to_vec();
+    let result = tokio::task::spawn_blocking(move || {
+        let mut first_err: Option<(String, String)> = None;
+        for to in &recipients_owned {
+            if let Err(e) = sender.send(to, &subject_owned, &body_owned) {
+                first_err = Some((to.clone(), e));
+                break;
+            }
+        }
+        first_err
+    })
+    .await
+    .unwrap_or_else(|join_err| {
+        Some((
+            "<task-join>".into(),
+            format!("email task panicked: {join_err}"),
+        ))
+    });
+
+    let (state, error) = match result {
+        None => (AlertDeliveryState::Delivered, None),
+        Some((to, msg)) => (
+            AlertDeliveryState::Failed,
+            Some(format!("email to {to}: {}", truncate(&msg, 400))),
+        ),
+    };
+
+    match (&state, &error) {
+        (AlertDeliveryState::Delivered, _) => tracing::info!(
+            target: "croniq::alerts",
+            rule = %rule_name,
+            channel = %channel.name,
+            job_key = %ctx.job_key,
+            recipients = recipients.len(),
+            "alerts.delivered (email)"
+        ),
+        (_, Some(err)) => tracing::warn!(
+            target: "croniq::alerts",
+            rule = %rule_name,
+            channel = %channel.name,
+            job_key = %ctx.job_key,
+            error = %err,
+            "alerts.delivery_failed (email)"
+        ),
+        _ => {}
+    }
+
+    AlertDelivery {
+        delivery_id,
+        rule_name: rule_name.to_string(),
+        channel_name: channel.name.clone(),
+        job_key: ctx.job_key.clone(),
+        execution_id: Some(ctx.execution_id.clone()),
+        state,
+        error,
+        fired_at: now,
+        delivered_at: Some(Utc::now()),
+    }
+}
+
 /// Synthesise a back-compat catch-all rule + shell channel from the
 /// `CRONIQ_ON_FAILURE_CMD` env var, if set. Logs a one-shot
 /// deprecation pointer at INFO so operators see the migration path
@@ -722,6 +851,12 @@ mod tests {
         crate::store::sqlite_store(croniq_store::sqlite::SqliteStore::in_memory().unwrap())
     }
 
+    /// Default email sender for tests that aren't exercising the
+    /// email channel. NoopSender accepts everything and never blocks.
+    fn make_noop_sender() -> Arc<dyn crate::email::EmailSender> {
+        crate::email::default_sender()
+    }
+
     #[test]
     fn glob_matches_wildcard_prefix() {
         assert!(glob_match("billing:*", "billing:invoice"));
@@ -768,8 +903,14 @@ mod tests {
         };
         let throttle = empty_throttle_map();
         let store = make_store();
-        let recorded =
-            evaluate_failure(&alerts, &make_ctx("billing:invoice"), &throttle, &store).await;
+        let recorded = evaluate_failure(
+            &alerts,
+            &make_ctx("billing:invoice"),
+            &throttle,
+            &store,
+            &make_noop_sender(),
+        )
+        .await;
         assert_eq!(recorded.len(), 1);
         assert_eq!(recorded[0].state, AlertDeliveryState::Delivered);
         assert_eq!(recorded[0].channel_name, "ops");
@@ -801,7 +942,14 @@ mod tests {
         };
         let throttle = empty_throttle_map();
         let store = make_store();
-        let recorded = evaluate_failure(&alerts, &make_ctx("ops:nightly"), &throttle, &store).await;
+        let recorded = evaluate_failure(
+            &alerts,
+            &make_ctx("ops:nightly"),
+            &throttle,
+            &store,
+            &make_noop_sender(),
+        )
+        .await;
         assert!(recorded.is_empty());
     }
 
@@ -833,11 +981,13 @@ mod tests {
         let store = make_store();
         let mut ctx = make_ctx("any:job");
         ctx.attempt = 3;
-        let recorded = evaluate_failure(&alerts, &ctx, &throttle, &store).await;
+        let recorded =
+            evaluate_failure(&alerts, &ctx, &throttle, &store, &make_noop_sender()).await;
         assert!(recorded.is_empty(), "attempt 3 < min_attempts 5 — no fire");
 
         ctx.attempt = 5;
-        let recorded = evaluate_failure(&alerts, &ctx, &throttle, &store).await;
+        let recorded =
+            evaluate_failure(&alerts, &ctx, &throttle, &store, &make_noop_sender()).await;
         assert_eq!(recorded.len(), 1);
         assert_eq!(recorded[0].state, AlertDeliveryState::Delivered);
     }
@@ -871,11 +1021,13 @@ mod tests {
 
         let mut ctx = make_ctx("a:b");
         ctx.reason = "dropped".into();
-        let recorded = evaluate_failure(&alerts, &ctx, &throttle, &store).await;
+        let recorded =
+            evaluate_failure(&alerts, &ctx, &throttle, &store, &make_noop_sender()).await;
         assert!(recorded.is_empty(), "dropped reason is filtered out");
 
         ctx.reason = "dead_letter".into();
-        let recorded = evaluate_failure(&alerts, &ctx, &throttle, &store).await;
+        let recorded =
+            evaluate_failure(&alerts, &ctx, &throttle, &store, &make_noop_sender()).await;
         assert_eq!(recorded.len(), 1);
     }
 
@@ -908,12 +1060,12 @@ mod tests {
         let ctx = make_ctx("a:b");
 
         // First fire goes through.
-        let r1 = evaluate_failure(&alerts, &ctx, &throttle, &store).await;
+        let r1 = evaluate_failure(&alerts, &ctx, &throttle, &store, &make_noop_sender()).await;
         assert_eq!(r1.len(), 1);
         assert_eq!(r1[0].state, AlertDeliveryState::Delivered);
 
         // Second fire within the window is suppressed.
-        let r2 = evaluate_failure(&alerts, &ctx, &throttle, &store).await;
+        let r2 = evaluate_failure(&alerts, &ctx, &throttle, &store, &make_noop_sender()).await;
         assert_eq!(r2.len(), 1);
         assert_eq!(r2[0].state, AlertDeliveryState::Throttled);
 
@@ -950,7 +1102,14 @@ mod tests {
         };
         let throttle = empty_throttle_map();
         let store = make_store();
-        let recorded = evaluate_failure(&alerts, &make_ctx("a:b"), &throttle, &store).await;
+        let recorded = evaluate_failure(
+            &alerts,
+            &make_ctx("a:b"),
+            &throttle,
+            &store,
+            &make_noop_sender(),
+        )
+        .await;
         assert_eq!(recorded.len(), 1);
         assert_eq!(recorded[0].state, AlertDeliveryState::Failed);
         assert!(recorded[0].error.as_ref().unwrap().contains("webhook"));
@@ -972,7 +1131,14 @@ mod tests {
         };
         let throttle = empty_throttle_map();
         let store = make_store();
-        let recorded = evaluate_failure(&alerts, &make_ctx("a:b"), &throttle, &store).await;
+        let recorded = evaluate_failure(
+            &alerts,
+            &make_ctx("a:b"),
+            &throttle,
+            &store,
+            &make_noop_sender(),
+        )
+        .await;
         assert_eq!(recorded.len(), 1);
         assert_eq!(recorded[0].state, AlertDeliveryState::Failed);
         assert_eq!(recorded[0].error.as_deref(), Some("unknown channel"));
@@ -1139,8 +1305,14 @@ mod tests {
         };
         let throttle = empty_throttle_map();
         let store = make_store();
-        let recorded =
-            evaluate_failure(&alerts, &make_ctx("billing:invoice"), &throttle, &store).await;
+        let recorded = evaluate_failure(
+            &alerts,
+            &make_ctx("billing:invoice"),
+            &throttle,
+            &store,
+            &make_noop_sender(),
+        )
+        .await;
 
         assert_eq!(recorded.len(), 1);
         assert_eq!(
@@ -1209,7 +1381,14 @@ mod tests {
         };
         let throttle = empty_throttle_map();
         let store = make_store();
-        evaluate_failure(&alerts, &make_ctx("a:b"), &throttle, &store).await;
+        evaluate_failure(
+            &alerts,
+            &make_ctx("a:b"),
+            &throttle,
+            &store,
+            &make_noop_sender(),
+        )
+        .await;
 
         let caps = captured.lock().unwrap();
         assert_eq!(caps.len(), 1);
@@ -1251,7 +1430,14 @@ mod tests {
         let store = make_store();
 
         let start = std::time::Instant::now();
-        let recorded = evaluate_failure(&alerts, &make_ctx("a:b"), &throttle, &store).await;
+        let recorded = evaluate_failure(
+            &alerts,
+            &make_ctx("a:b"),
+            &throttle,
+            &store,
+            &make_noop_sender(),
+        )
+        .await;
         let elapsed = start.elapsed();
 
         assert_eq!(
@@ -1310,7 +1496,14 @@ mod tests {
         };
         let throttle = empty_throttle_map();
         let store = make_store();
-        let recorded = evaluate_failure(&alerts, &make_ctx("a:b"), &throttle, &store).await;
+        let recorded = evaluate_failure(
+            &alerts,
+            &make_ctx("a:b"),
+            &throttle,
+            &store,
+            &make_noop_sender(),
+        )
+        .await;
 
         assert_eq!(recorded[0].state, AlertDeliveryState::Failed);
         assert!(recorded[0].error.as_ref().unwrap().contains("401"));
@@ -1319,5 +1512,187 @@ mod tests {
             1,
             "4xx must NOT trigger a retry"
         );
+    }
+
+    // ─── #140 PR-3: email channel ──────────────────────────────────
+
+    /// Recording sender for tests. Captures every `(to, subject, body)`
+    /// tuple it sees and reports back via the shared `Arc<Mutex<Vec<…>>>`.
+    /// Optional failure injection: if `fail_for` matches a recipient,
+    /// `send()` returns an error for that one and skips capturing.
+    struct RecordingSender {
+        captured: std::sync::Arc<std::sync::Mutex<Vec<(String, String, String)>>>,
+        fail_for: Option<String>,
+    }
+
+    impl crate::email::EmailSender for RecordingSender {
+        fn send(&self, to: &str, subject: &str, body: &str) -> Result<(), String> {
+            if let Some(ref bad) = self.fail_for
+                && bad == to
+            {
+                return Err(format!("simulated SMTP failure for {to}"));
+            }
+            self.captured
+                .lock()
+                .unwrap()
+                .push((to.into(), subject.into(), body.into()));
+            Ok(())
+        }
+    }
+
+    /// `(to, subject, body)` triples captured by `RecordingSender`,
+    /// shared across the sender and the assertion site.
+    type CapturedMessages = std::sync::Arc<std::sync::Mutex<Vec<(String, String, String)>>>;
+
+    fn recording_sender() -> (Arc<dyn crate::email::EmailSender>, CapturedMessages) {
+        let captured: CapturedMessages = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let sender: Arc<dyn crate::email::EmailSender> = Arc::new(RecordingSender {
+            captured: captured.clone(),
+            fail_for: None,
+        });
+        (sender, captured)
+    }
+
+    fn failing_sender_for(
+        bad_recipient: &str,
+    ) -> (Arc<dyn crate::email::EmailSender>, CapturedMessages) {
+        let captured: CapturedMessages = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let sender: Arc<dyn crate::email::EmailSender> = Arc::new(RecordingSender {
+            captured: captured.clone(),
+            fail_for: Some(bad_recipient.to_string()),
+        });
+        (sender, captured)
+    }
+
+    #[test]
+    fn compose_email_subject_and_body_contain_key_fields() {
+        let ctx = make_ctx("billing:invoice");
+        let now = chrono::DateTime::parse_from_rfc3339("2026-05-25T08:12:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let (subject, body) = compose_email("billing-fail", &ctx, now);
+
+        // Subject is short and includes both job key and rule name.
+        assert!(subject.starts_with("[Croniq]"));
+        assert!(subject.contains("billing:invoice"));
+        assert!(subject.contains("billing-fail"));
+        assert!(
+            subject.len() <= 100,
+            "subject must stay under ~80-100 chars: got {} chars",
+            subject.len()
+        );
+
+        // Body has every FailureContext field for operator triage.
+        for needle in &[
+            "billing:invoice",
+            "billing-fail",
+            "dead_letter",
+            "exec-1",
+            "2026-05-25T08:12:00",
+            "boom",
+        ] {
+            assert!(
+                body.contains(needle),
+                "body must contain {needle:?}: got {body}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn email_channel_delivers_one_message_per_recipient() {
+        let alerts = AlertsConfig {
+            channels: [(
+                "ops".into(),
+                ChannelConfig {
+                    name: "ops".into(),
+                    kind: ChannelKind::Email {
+                        recipients: vec!["alice@example.com".into(), "bob@example.com".into()],
+                    },
+                },
+            )]
+            .into_iter()
+            .collect(),
+            rules: vec![RuleConfig {
+                name: "fire".into(),
+                trigger: RuleTrigger::JobFailed,
+                job_key_glob: "*".into(),
+                min_attempts: 1,
+                dead_letter_only: false,
+                throttle: None,
+                channels: vec!["ops".into()],
+            }],
+        };
+        let throttle = empty_throttle_map();
+        let store = make_store();
+        let (sender, captured) = recording_sender();
+        let recorded = evaluate_failure(
+            &alerts,
+            &make_ctx("billing:invoice"),
+            &throttle,
+            &store,
+            &sender,
+        )
+        .await;
+
+        assert_eq!(recorded.len(), 1);
+        assert_eq!(recorded[0].state, AlertDeliveryState::Delivered);
+
+        let caps = captured.lock().unwrap();
+        assert_eq!(caps.len(), 2, "one message per recipient");
+        assert_eq!(caps[0].0, "alice@example.com");
+        assert_eq!(caps[1].0, "bob@example.com");
+        // Subject and body identical across recipients.
+        assert_eq!(caps[0].1, caps[1].1);
+        assert_eq!(caps[0].2, caps[1].2);
+        // Spot-check content.
+        assert!(caps[0].1.contains("billing:invoice"));
+        assert!(caps[0].2.contains("billing:invoice"));
+    }
+
+    #[tokio::test]
+    async fn email_channel_records_failure_on_sender_error() {
+        let alerts = AlertsConfig {
+            channels: [(
+                "ops".into(),
+                ChannelConfig {
+                    name: "ops".into(),
+                    kind: ChannelKind::Email {
+                        recipients: vec!["good@example.com".into(), "bad@example.com".into()],
+                    },
+                },
+            )]
+            .into_iter()
+            .collect(),
+            rules: vec![RuleConfig {
+                name: "fire".into(),
+                trigger: RuleTrigger::JobFailed,
+                job_key_glob: "*".into(),
+                min_attempts: 1,
+                dead_letter_only: false,
+                throttle: None,
+                channels: vec!["ops".into()],
+            }],
+        };
+        let throttle = empty_throttle_map();
+        let store = make_store();
+        let (sender, captured) = failing_sender_for("bad@example.com");
+        let recorded =
+            evaluate_failure(&alerts, &make_ctx("a:b"), &throttle, &store, &sender).await;
+
+        assert_eq!(recorded.len(), 1);
+        assert_eq!(recorded[0].state, AlertDeliveryState::Failed);
+        let err = recorded[0].error.as_deref().unwrap();
+        assert!(
+            err.contains("bad@example.com"),
+            "error must name the failing recipient: {err}"
+        );
+
+        let caps = captured.lock().unwrap();
+        assert_eq!(
+            caps.len(),
+            1,
+            "first recipient succeeds, then we stop on the failure"
+        );
+        assert_eq!(caps[0].0, "good@example.com");
     }
 }

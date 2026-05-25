@@ -218,7 +218,10 @@ async fn main() -> Result<()> {
         jwt_config,
         Some(Arc::clone(&store)),
     );
-    // Inject scheduler_tx, dsl_jobs, and config_path into the shared state
+    // Inject scheduler_tx, dsl_jobs, and config_path into the shared state.
+    // Also resolves the EmailSender once here so both the user-management
+    // endpoints (invitations / password-reset) and the alerts evaluator
+    // share the same SMTP transport — operators only configure it once.
     {
         let s = Arc::get_mut(&mut server_state).unwrap();
         s.scheduler_tx = Some(scheduler_cmd_tx);
@@ -230,6 +233,7 @@ async fn main() -> Result<()> {
         );
         s.config_path = Some(config_path_abs.clone());
         s.password_login_enabled = password_login_enabled;
+        s.email_sender = croniq_server::email::build_from_env();
     }
     let reload_counters = Arc::clone(&server_state.reload_counters);
 
@@ -429,6 +433,7 @@ async fn main() -> Result<()> {
         Arc::clone(&runner_state),
         alerts_cfg,
         alert_throttle,
+        Arc::clone(&server_state.email_sender),
     ));
 
     let _completion_task = tokio::spawn(async move {
