@@ -6,6 +6,13 @@ go 1.22
 // Bumping past v1.32 would break consumers on Go 1.22.x because OTel
 // 1.33+ raised its minimum Go to 1.23, and 1.43+ raised it to 1.25.
 // If we ever bump the SDK's minimum Go, lift this floor in lock-step.
+//
+// Cross-module local development is handled by `go.work` at the repo
+// root — its `use ./sdks/go` line resolves the parent SDK to the
+// in-tree source even though the require below pins a released
+// version. The release workflow forbids any `replace` directive in
+// this file (see sdks/go/RELEASING.md), so dev-only redirects must
+// stay in go.work, not here.
 require (
 	github.com/nuetzliches/croniq/sdks/go v0.1.0
 	go.opentelemetry.io/otel v1.32.0
@@ -20,14 +27,3 @@ require (
 	go.opentelemetry.io/otel/metric v1.32.0 // indirect
 	golang.org/x/sys v0.27.0 // indirect
 )
-
-// During in-repo development, resolve the parent SDK from the parent
-// directory rather than the (yet-to-be-tagged) module cache version.
-//
-// Replace directives only take effect in the *main* module — when
-// downstream consumers `go get` this otel package, the directive is
-// ignored and the `require` version above is what resolves on
-// proxy.golang.org. The release workflow at .github/workflows/
-// go-sdk-release.yml validates this require line during otel tag
-// builds; see sdks/go/RELEASING.md for the bootstrap procedure.
-replace github.com/nuetzliches/croniq/sdks/go => ../
