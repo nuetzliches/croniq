@@ -311,7 +311,7 @@ pub async fn handle_failure_heatmap(
             failures: v,
         })
         .collect();
-    hotspots.sort_by(|a, b| b.failures.cmp(&a.failures));
+    hotspots.sort_by_key(|h| std::cmp::Reverse(h.failures));
     hotspots.truncate(3);
 
     Ok(Json(FailureHeatmap {
