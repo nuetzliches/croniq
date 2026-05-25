@@ -16,104 +16,80 @@ Two modules instead of one is deliberate: the core stays
 dependency-light (single yaml dep in the conformance suite); only users
 who want tracing pull in the OpenTelemetry SDK.
 
-## Bootstrapping: the first release
+## How cross-module local dev works
 
 The otel sub-module's [`go.mod`](otel/go.mod) carries
-`require github.com/nuetzliches/croniq/sdks/go vX.Y.Z` — a version that
-must exist on `proxy.golang.org` before downstream consumers can resolve
-the otel package. That sets up an ordering constraint for the first
-release.
+`require github.com/nuetzliches/croniq/sdks/go vX.Y.Z` pointing at a
+released version. Local development uses [`go.work`](../../go.work) at
+the repo root to redirect that require to the in-tree source:
 
-### 1. Release `sdks/go/vX.Y.Z` (core)
+```
+use (
+    ./sdks/go
+    ./sdks/go/otel
+)
+```
+
+This means contributors editing the core SDK see their changes from the
+otel module immediately, without committing a `replace` directive that
+would break downstream `go get` consumers. The release workflow's
+validate step **rejects any `replace` directive in
+[otel/go.mod](otel/go.mod)** so the asymmetry stays committed in
+`go.work`, not in the published module.
+
+Run tests from the repo root (`go test ./sdks/go/...`) to use the
+workspace; both modules resolve to in-tree source automatically.
+
+## Cutting a release
+
+### Core SDK
 
 ```sh
-# From main, after the SDK PR has merged and all CI is green:
 git checkout main && git pull
-git tag sdks/go/v0.1.0
+git tag -a sdks/go/v0.1.0 -m "sdks/go v0.1.0 — short summary"
 git push origin sdks/go/v0.1.0
 ```
 
 The `Go SDK Release` workflow re-validates the tag, warms
 `proxy.golang.org`, and creates a GitHub Release.
 
-Wait until `proxy.golang.org/github.com/nuetzliches/croniq/sdks/go/@v/v0.1.0.info`
-returns HTTP 200 (a few seconds, usually).
+Wait until
+`https://proxy.golang.org/github.com/nuetzliches/croniq/sdks/go/@v/v0.1.0.info`
+returns HTTP 200 (the workflow does this for you; the warning at the
+end of the validate step is harmless if you see it).
 
-### 2. Bump the otel module's core requirement
+### OTel adapter
 
-The otel module ships with a `replace github.com/nuetzliches/croniq/sdks/go => ../`
-directive so the in-repo source resolves during local development. The
-release workflow rejects any otel tag that still carries this directive
-— removing it is part of the otel release procedure.
+Cutting a new otel release means making its `require` line point at a
+core version that has already been tagged and indexed by
+`proxy.golang.org`. The flow is a single PR:
 
 ```sh
-git checkout main
-# 1. Remove the replace directive from sdks/go/otel/go.mod
-#    (everything from `// During in-repo development...` to the
-#    `replace github.com/nuetzliches/croniq/sdks/go => ../` line)
-# 2. Update the require version to the core release you just cut
-#    (sed below works for the common case; verify with `git diff`)
-sed -i.bak 's|github.com/nuetzliches/croniq/sdks/go v[0-9.]\+|github.com/nuetzliches/croniq/sdks/go v0.1.0|' \
+git checkout main && git pull
+git checkout -b chore/bump-otel-core-require
+
+# Bump the require to the latest core release. `go mod tidy` with
+# GOWORK=off mirrors what the release workflow's validate step does.
+sed -i 's|github.com/nuetzliches/croniq/sdks/go v[0-9][^ ]*|github.com/nuetzliches/croniq/sdks/go v0.2.0|' \
     sdks/go/otel/go.mod
-rm sdks/go/otel/go.mod.bak
-( cd sdks/go/otel && go mod tidy && go test ./... )
+( cd sdks/go/otel && GOWORK=off go mod tidy && go test ./... )
 
 git add sdks/go/otel/go.mod sdks/go/otel/go.sum
-git commit -m "chore(go-sdk): drop replace + pin core sdks/go v0.1.0 for otel release"
-git push
+git commit -m "chore(go-sdk): bump otel core require to v0.2.0"
+git push -u origin chore/bump-otel-core-require
+gh pr create --fill
 ```
 
-### 3. Restore the replace directive on `main`
-
-Future contributors editing the core SDK need the replace back so their
-changes are visible to the otel module without round-tripping through
-the proxy. Open a follow-up PR that re-adds it.
-
-```diff
- require (
-     github.com/nuetzliches/croniq/sdks/go v0.1.0
-     ...
- )
-+
-+// During in-repo development, resolve the parent SDK from the parent
-+// directory rather than the (yet-to-be-tagged) module cache version.
-+replace github.com/nuetzliches/croniq/sdks/go => ../
-```
-
-This back-and-forth at every release is the only viable workflow for a
-sub-module that has a dependency on its parent. The release workflow
-fails fast if the replace ships in a release commit, so the cost of
-forgetting step 3 is "next release is blocked", not "downstream users
-break".
-
-### 4. Release `sdks/go/otel/vX.Y.Z`
+After the PR merges:
 
 ```sh
-git checkout <commit-from-step-2>   # the one without `replace`
-git tag sdks/go/otel/v0.1.0
-git push origin sdks/go/otel/v0.1.0
+git checkout main && git pull
+git tag -a sdks/go/otel/v0.2.0 -m "sdks/go/otel v0.2.0 — short summary"
+git push origin sdks/go/otel/v0.2.0
 ```
 
-The `Go SDK Release` workflow validates, warms the proxy, and creates a
-GitHub Release with `go get` instructions.
-
-## Subsequent releases
-
-For releases that don't change the cross-module require (e.g.
-patch-level fixes that don't touch the otel module's `go.mod`):
-
-```sh
-# Core-only patch:
-git tag sdks/go/v0.1.1
-git push origin sdks/go/v0.1.1
-
-# OTel-only patch (no need to bump core's tag):
-git tag sdks/go/otel/v0.1.1
-git push origin sdks/go/otel/v0.1.1
-```
-
-For releases that need the otel module to track a new core release,
-repeat steps 1 → 4.
+If the otel release is independent of any core change (e.g. an
+OTel-side bug fix), skip the bump PR — just tag straight off `main`.
 
 ## Pre-releases
 
