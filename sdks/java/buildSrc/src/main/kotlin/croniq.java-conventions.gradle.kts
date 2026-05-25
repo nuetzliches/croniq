@@ -83,6 +83,11 @@ tasks.named("checkstyleTest") {
 }
 
 spotless {
+    // Force LF everywhere — Windows runners check out with CRLF by default
+    // and ktlint's line-ending check fails the build before the formatter
+    // even runs. The repo .gitattributes also pins LF; double-belted.
+    lineEndings = com.diffplug.spotless.LineEnding.UNIX
+
     java {
         target("src/**/*.java")
         palantirJavaFormat("2.50.0")
