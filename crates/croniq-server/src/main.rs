@@ -408,10 +408,27 @@ async fn main() -> Result<()> {
     let proc_store = Arc::clone(&store);
     let proc_jobs = jobs;
 
-    let processor = Arc::new(CompletionProcessor::new(
+    // Failure-alert config (issue #140): DSL `alerts {}` block plus the
+    // back-compat synthesis from `CRONIQ_ON_FAILURE_CMD` for installs
+    // that haven't migrated yet. Throttle map is seeded from the
+    // existing delivery log so a server restart doesn't reset
+    // suppression windows.
+    let alerts_cfg = croniq_server::alerts::merge_legacy_env_hook(loaded.runtime.alerts.clone());
+    let alert_throttle = croniq_server::alerts::load_throttle_state(&proc_store, &alerts_cfg);
+    if !alerts_cfg.rules.is_empty() {
+        tracing::info!(
+            channels = alerts_cfg.channels.len(),
+            rules = alerts_cfg.rules.len(),
+            "failure-alert evaluator armed"
+        );
+    }
+
+    let processor = Arc::new(CompletionProcessor::with_alerts(
         proc_jobs,
         proc_store,
         Arc::clone(&runner_state),
+        alerts_cfg,
+        alert_throttle,
     ));
 
     let _completion_task = tokio::spawn(async move {

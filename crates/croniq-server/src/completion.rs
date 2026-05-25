@@ -63,15 +63,47 @@ pub struct CompletionProcessor {
     jobs: HashMap<String, JobConfig>,
     store: DynStore,
     runner: Arc<AppState>,
+    /// Failure-alert configuration (issue #140). Empty default means no
+    /// rules fire — keeping the old behaviour for installs without an
+    /// `alerts {}` block. The `CRONIQ_ON_FAILURE_CMD` back-compat path
+    /// is layered in at boot via [`crate::alerts::merge_legacy_env_hook`].
+    alerts: croniq_config::compile::AlertsConfig,
+    /// In-process throttle state keyed by `(rule_name, job_key)`. Seeded
+    /// at boot from `alert_deliveries.fired_at` so a server restart
+    /// doesn't reset suppression windows.
+    alert_throttle: crate::alerts::ThrottleMap,
 }
 
 impl CompletionProcessor {
     pub fn new(jobs: Vec<JobConfig>, store: DynStore, runner: Arc<AppState>) -> Self {
+        Self::with_alerts(
+            jobs,
+            store,
+            runner,
+            croniq_config::compile::AlertsConfig::default(),
+            crate::alerts::empty_throttle_map(),
+        )
+    }
+
+    /// Construct with an explicit alerts config + throttle map.
+    ///
+    /// Used by `main.rs` to wire the Croniqfile `alerts {}` block (plus
+    /// any synthesised legacy env-var rule) into the failure pipeline.
+    /// Tests use `new()` to keep the no-alerts behaviour.
+    pub fn with_alerts(
+        jobs: Vec<JobConfig>,
+        store: DynStore,
+        runner: Arc<AppState>,
+        alerts: croniq_config::compile::AlertsConfig,
+        alert_throttle: crate::alerts::ThrottleMap,
+    ) -> Self {
         let jobs = jobs.into_iter().map(|j| (j.key.clone(), j)).collect();
         Self {
             jobs,
             store,
             runner,
+            alerts,
+            alert_throttle,
         }
     }
 
@@ -80,6 +112,29 @@ impl CompletionProcessor {
     /// Fast path: DSL jobs loaded at startup. Slow path: store lookup for jobs
     /// registered via the API at runtime. Returns `None` only if the job truly
     /// does not exist anywhere.
+    /// Dispatch the configured alert rules against a permanent
+    /// failure event. Replaces the old single-shot
+    /// `notify::notify_failure()` env-var hook — back-compat for that
+    /// env var lives in [`crate::alerts::merge_legacy_env_hook`] at
+    /// boot, so this method needs no special-cases.
+    fn fire_alerts(&self, job_key: &str, event: &CompletionEvent, reason: &str) {
+        // Fast-path: no rules configured means no work to do. Important
+        // because the evaluator otherwise walks `alerts.rules` and may
+        // open a store cursor — wasteful on the common path.
+        if self.alerts.rules.is_empty() {
+            return;
+        }
+        let ctx = crate::alerts::FailureContext {
+            job_key: job_key.to_string(),
+            execution_id: event.execution_id.clone(),
+            error: event.error.clone().unwrap_or_else(|| "unknown".to_string()),
+            attempt: event.attempt,
+            reason: reason.to_string(),
+        };
+        let _ =
+            crate::alerts::evaluate_failure(&self.alerts, &ctx, &self.alert_throttle, &self.store);
+    }
+
     fn resolve_job_config(&self, job_key: &str) -> Option<JobConfig> {
         if let Some(c) = self.jobs.get(job_key) {
             return Some(c.clone());
@@ -289,13 +344,7 @@ impl CompletionProcessor {
                 }
 
                 tracing::warn!(id = %exec_uuid, reason = %reason, "execution dead-lettered");
-                crate::notify::notify_failure(
-                    &execution.job_key,
-                    &event.execution_id,
-                    event.error.as_deref().unwrap_or("unknown"),
-                    event.attempt,
-                    &reason,
-                );
+                self.fire_alerts(&execution.job_key, &event, &reason);
                 ProcessedOutcome::DeadLettered { reason }
             }
 
@@ -309,13 +358,7 @@ impl CompletionProcessor {
                     now,
                 );
                 tracing::warn!(id = %exec_uuid, "execution dropped (dead-letter disabled)");
-                crate::notify::notify_failure(
-                    &execution.job_key,
-                    &event.execution_id,
-                    event.error.as_deref().unwrap_or("unknown"),
-                    event.attempt,
-                    &reason,
-                );
+                self.fire_alerts(&execution.job_key, &event, &reason);
                 ProcessedOutcome::Dropped { reason }
             }
 
@@ -625,5 +668,91 @@ mod tests {
         assert_eq!(outcome, ProcessedOutcome::Completed);
         let exec = store.get_execution(exec_id).unwrap().unwrap();
         assert_eq!(exec.state, ExecutionState::Cancelled);
+    }
+
+    // ─── Alerts (issue #140) ────────────────────────────────────────
+
+    #[tokio::test]
+    async fn dead_letter_dispatches_configured_alert_rule() {
+        use croniq_config::compile::{
+            AlertsConfig, ChannelConfig, ChannelKind, RuleConfig, RuleTrigger,
+        };
+        use croniq_store::models::{AlertDeliveryFilter, AlertDeliveryState};
+
+        let store = make_store();
+        let runner = make_runner();
+        let exec_id = seed_execution(&store, "billing:invoice");
+
+        // One rule, one channel — `true` is a shell-noop that returns 0.
+        let alerts = AlertsConfig {
+            channels: [(
+                "ops".to_string(),
+                ChannelConfig {
+                    name: "ops".into(),
+                    kind: ChannelKind::Shell {
+                        command: "true".into(),
+                    },
+                },
+            )]
+            .into_iter()
+            .collect(),
+            rules: vec![RuleConfig {
+                name: "billing-fail".into(),
+                trigger: RuleTrigger::JobFailed,
+                job_key_glob: "billing:*".into(),
+                min_attempts: 1,
+                dead_letter_only: false,
+                throttle: None,
+                channels: vec!["ops".into()],
+            }],
+        };
+
+        let job = make_job("billing:invoice", 1); // single attempt → dead-letter
+        let processor = CompletionProcessor::with_alerts(
+            vec![job],
+            Arc::clone(&store),
+            runner,
+            alerts,
+            crate::alerts::empty_throttle_map(),
+        );
+
+        let outcome = processor
+            .process(event(exec_id, CompletionStatus::Failure, 1))
+            .await;
+        assert!(matches!(outcome, ProcessedOutcome::DeadLettered { .. }));
+
+        let deliveries = store
+            .list_alert_deliveries(&AlertDeliveryFilter::default())
+            .unwrap();
+        assert_eq!(deliveries.len(), 1, "exactly one rule fired");
+        assert_eq!(deliveries[0].rule_name, "billing-fail");
+        assert_eq!(deliveries[0].channel_name, "ops");
+        assert_eq!(deliveries[0].job_key, "billing:invoice");
+        assert_eq!(deliveries[0].state, AlertDeliveryState::Delivered);
+    }
+
+    #[tokio::test]
+    async fn dead_letter_with_empty_alerts_records_no_deliveries() {
+        // Mirrors the pre-#140 baseline: an install without an
+        // `alerts {}` block and no `CRONIQ_ON_FAILURE_CMD` env var is
+        // completely silent. The completion processor must not write
+        // anything to alert_deliveries.
+        use croniq_store::models::AlertDeliveryFilter;
+
+        let store = make_store();
+        let runner = make_runner();
+        let exec_id = seed_execution(&store, "any:job");
+        let job = make_job("any:job", 1);
+        let processor = CompletionProcessor::new(vec![job], Arc::clone(&store), runner);
+
+        let outcome = processor
+            .process(event(exec_id, CompletionStatus::Failure, 1))
+            .await;
+        assert!(matches!(outcome, ProcessedOutcome::DeadLettered { .. }));
+
+        let deliveries = store
+            .list_alert_deliveries(&AlertDeliveryFilter::default())
+            .unwrap();
+        assert!(deliveries.is_empty(), "no alerts config = no deliveries");
     }
 }

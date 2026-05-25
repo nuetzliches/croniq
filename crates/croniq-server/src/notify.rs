@@ -1,57 +1,17 @@
-//! Failure notification hooks.
+//! Deprecated.
 //!
-//! Executes a configurable shell command when executions fail permanently
-//! (dead-lettered or dropped). The command receives job details via environment
-//! variables.
+//! The old `notify_failure()` env-var-only shell hook lived here. As
+//! of issue #140 PR-1 the failure-notification path runs through
+//! [`crate::alerts`] — a rule-driven evaluator with named channels,
+//! throttling, and a persistent delivery log.
 //!
-//! Configuration via environment variable:
-//!   CRONIQ_ON_FAILURE_CMD="curl -X POST https://hooks.slack.com/... -d '{\"text\": \"Job $CRONIQ_JOB_KEY failed\"}'"
+//! Back-compat for `CRONIQ_ON_FAILURE_CMD` is preserved: at boot,
+//! [`crate::alerts::merge_legacy_env_hook`] synthesises a catch-all
+//! shell-channel rule from the env var when no DSL `alerts {}` block
+//! is present. Operators see a one-shot deprecation notice on first
+//! boot pointing them at the DSL migration.
 //!
-//! Available env vars passed to the command:
-//!   CRONIQ_JOB_KEY, CRONIQ_EXECUTION_ID, CRONIQ_ERROR, CRONIQ_ATTEMPT, CRONIQ_REASON
-
-use std::process::Command;
-
-/// Run the failure notification hook if configured.
-pub fn notify_failure(job_key: &str, execution_id: &str, error: &str, attempt: u32, reason: &str) {
-    let Some(cmd) = std::env::var("CRONIQ_ON_FAILURE_CMD")
-        .ok()
-        .filter(|s| !s.is_empty())
-    else {
-        return;
-    };
-
-    let result = Command::new("sh")
-        .arg("-c")
-        .arg(&cmd)
-        .env("CRONIQ_JOB_KEY", job_key)
-        .env("CRONIQ_EXECUTION_ID", execution_id)
-        .env("CRONIQ_ERROR", error)
-        .env("CRONIQ_ATTEMPT", attempt.to_string())
-        .env("CRONIQ_REASON", reason)
-        .output();
-
-    match result {
-        Ok(output) => {
-            if !output.status.success() {
-                let stderr = String::from_utf8_lossy(&output.stderr);
-                tracing::warn!(
-                    job_key,
-                    cmd = cmd.as_str(),
-                    stderr = %stderr,
-                    "failure notification hook exited with error"
-                );
-            } else {
-                tracing::debug!(job_key, "failure notification hook executed");
-            }
-        }
-        Err(e) => {
-            tracing::warn!(
-                job_key,
-                cmd = cmd.as_str(),
-                error = %e,
-                "failed to execute notification hook"
-            );
-        }
-    }
-}
+//! This file is intentionally left in the crate (with no public items)
+//! so external callers that referenced `croniq_server::notify` get a
+//! clean module-not-empty signal rather than a missing-module error
+//! during incremental upgrades.

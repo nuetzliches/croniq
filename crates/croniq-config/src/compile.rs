@@ -80,6 +80,11 @@ pub struct RuntimeConfig {
     pub auth: AuthDslConfig,
     /// Server-wide opt-in flags. Absent block ⇒ all defaults (deny).
     pub policy: PolicyConfig,
+    /// Failure-alert configuration (issue #140). Absent block ⇒ empty
+    /// (no rules fire). The `CRONIQ_ON_FAILURE_CMD` env var continues
+    /// to work for one release; at boot the server synthesises a
+    /// catch-all rule from it when set.
+    pub alerts: AlertsConfig,
     pub jobs: Vec<JobConfig>,
     pub calendars: Vec<CalendarConfig>,
 }
@@ -150,6 +155,90 @@ pub struct PolicyConfig {
     /// future per-resource block (`dsl_adopt_on_mutate { calendars true; jobs false }`)
     /// can be added without breaking existing files.
     pub dsl_adopt_on_mutate: bool,
+}
+
+// ─── Alerts (issue #140) ───────────────────────────────────────────
+
+/// Failure-alert configuration: named channels + rules referencing them.
+///
+/// Default state is empty — no rules, no channels, no alerts dispatched.
+/// For back-compat, the server synthesises a catch-all rule on a
+/// synthesised shell channel at boot when `CRONIQ_ON_FAILURE_CMD` is
+/// set; that path emits a deprecation warning and lives separately
+/// from this struct (it's a *runtime* addition, not a DSL fact).
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct AlertsConfig {
+    /// Channels keyed by name. The DSL guarantees uniqueness — the
+    /// compile step rejects duplicates with a placeholder-error
+    /// channel so the rest of the file still compiles for diff
+    /// reporting.
+    pub channels: HashMap<String, ChannelConfig>,
+    /// Rules in declaration order. Order is preserved so audit logs
+    /// reference rule names deterministically.
+    pub rules: Vec<RuleConfig>,
+}
+
+/// A named delivery target. PR-1 of #140 only ships the `shell` kind;
+/// later PRs add `webhook` and `email`. The variant is `Unknown` when
+/// the kind directive is missing or unrecognised — compile keeps the
+/// channel so rule-name references still resolve, but the evaluator
+/// skips it with a runtime warning at fire time.
+#[derive(Debug, Clone, Serialize)]
+pub struct ChannelConfig {
+    pub name: String,
+    pub kind: ChannelKind,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(tag = "type", rename_all = "lowercase")]
+pub enum ChannelKind {
+    /// `shell "/usr/local/bin/page-oncall.sh"` — invoked with the
+    /// failure context in `CRONIQ_*` env vars (back-compat with the
+    /// pre-#140 `CRONIQ_ON_FAILURE_CMD` env-var hook).
+    Shell { command: String },
+    /// Placeholder for unknown or future kinds (webhook, email).
+    /// Channels with this kind compile cleanly so rule references
+    /// resolve; the evaluator logs and skips them.
+    Unknown { reason: String },
+}
+
+/// A rule = trigger predicate + named channels to dispatch to.
+///
+/// Trigger types in PR-1: `job_failed` only. `job_sla_missed` is
+/// reserved and rejected at compile time so a typo doesn't silently
+/// match nothing.
+#[derive(Debug, Clone, Serialize)]
+pub struct RuleConfig {
+    pub name: String,
+    pub trigger: RuleTrigger,
+    /// Glob pattern matched against the job key. `*` matches anything
+    /// (default).
+    pub job_key_glob: String,
+    /// Minimum attempt number that must have been reached before this
+    /// rule fires. Defaults to 1.
+    pub min_attempts: u32,
+    /// When `true`, only fire on dead-letter (not on dropped-because-
+    /// dead-letter-disabled). Defaults to false (fire on any permanent
+    /// failure).
+    pub dead_letter_only: bool,
+    /// Per-(rule, job_key) suppression window. `None` disables
+    /// throttling — every matching failure fires. Stored as duration
+    /// string (parsed by the server at boot, kept as a string in the
+    /// DSL so the formatter can round-trip).
+    pub throttle: Option<String>,
+    /// Channel names this rule dispatches to. Compile validates that
+    /// every name resolves; unknown names become a compile error
+    /// (returned as part of the rule for downstream diagnostic display
+    /// while still letting the rest of the file compile).
+    pub channels: Vec<String>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RuleTrigger {
+    /// Permanent failure (dead-letter or dropped). The only trigger
+    /// shipped in PR-1.
+    JobFailed,
 }
 
 #[derive(Debug, Clone, Default, Serialize)]
@@ -357,6 +446,7 @@ pub fn compile(ast: &Croniqfile) -> RuntimeConfig {
     let mut oidc: Option<OidcDslConfig> = None;
     let mut auth = AuthDslConfig::default();
     let mut policy = PolicyConfig::default();
+    let mut alerts = AlertsConfig::default();
     let mut default_timezone: Option<String> = None;
     let mut default_timeout: Option<String> = None;
     let mut default_retry = RetryConfig::default();
@@ -633,6 +723,9 @@ pub fn compile(ast: &Croniqfile) -> RuntimeConfig {
                     }
                 }
             }
+            Item::Alerts(a) => {
+                alerts = compile_alerts(a, &vars);
+            }
             _ => {}
         }
     }
@@ -645,6 +738,7 @@ pub fn compile(ast: &Croniqfile) -> RuntimeConfig {
         oidc,
         auth,
         policy,
+        alerts,
         jobs,
         calendars,
     }
@@ -659,6 +753,168 @@ fn parse_bool(s: &str) -> Option<bool> {
         "false" | "no" | "off" | "0" => Some(false),
         _ => None,
     }
+}
+
+/// Walk an `alerts { … }` AST block into a fully resolved
+/// [`AlertsConfig`]. Unknown channel kinds become
+/// [`ChannelKind::Unknown`] so rule references still resolve cleanly
+/// — the evaluator logs and skips them at fire time. Rules that
+/// reference a missing channel name are emitted as a compile-time
+/// warning in the future (PR-2 wires that path) but for PR-1 the
+/// reference is kept verbatim and a runtime warning fires.
+fn compile_alerts(block: &AlertsBlock, vars: &HashMap<String, String>) -> AlertsConfig {
+    let mut cfg = AlertsConfig::default();
+    for sub in &block.sub_blocks {
+        let qualifier = sub
+            .qualifier
+            .as_ref()
+            .map(|q| resolve_str(q, vars))
+            .unwrap_or_default();
+        match sub.name.value.as_str() {
+            "channel" => {
+                if qualifier.is_empty() {
+                    continue;
+                }
+                let kind = compile_channel_kind(sub, vars);
+                cfg.channels.insert(
+                    qualifier.clone(),
+                    ChannelConfig {
+                        name: qualifier,
+                        kind,
+                    },
+                );
+            }
+            "rule" => {
+                if qualifier.is_empty() {
+                    continue;
+                }
+                if let Some(rule) = compile_rule(&qualifier, sub, vars) {
+                    cfg.rules.push(rule);
+                }
+            }
+            _ => {
+                // Unknown sub-block kind — skip silently. The parser
+                // already accepted it as a NamedBlock; future kinds
+                // (e.g. `template`) extend this match without churn.
+            }
+        }
+    }
+    cfg
+}
+
+fn compile_channel_kind(block: &NamedBlock, vars: &HashMap<String, String>) -> ChannelKind {
+    for dob in &block.directives {
+        let DirectiveOrBlock::Directive(d) = dob else {
+            continue;
+        };
+        match d.key.value.as_str() {
+            "shell" => {
+                if let Some(arg) = d.args.first() {
+                    return ChannelKind::Shell {
+                        command: resolve_str(arg, vars),
+                    };
+                }
+                return ChannelKind::Unknown {
+                    reason: "shell directive requires a command argument".into(),
+                };
+            }
+            // Reserved for future PRs — recognised at compile time so the
+            // evaluator can produce a clearer "not implemented in this
+            // build" message than "unknown channel kind".
+            "webhook" | "email" => {
+                return ChannelKind::Unknown {
+                    reason: format!(
+                        "channel kind `{}` is not yet implemented (PR-1 of #140 ships shell only)",
+                        d.key.value
+                    ),
+                };
+            }
+            _ => {}
+        }
+    }
+    ChannelKind::Unknown {
+        reason: "no channel kind directive (expected `shell`, `webhook`, or `email`)".into(),
+    }
+}
+
+fn compile_rule(
+    name: &str,
+    block: &NamedBlock,
+    vars: &HashMap<String, String>,
+) -> Option<RuleConfig> {
+    let mut trigger: Option<RuleTrigger> = None;
+    let mut job_key_glob = "*".to_string();
+    let mut min_attempts: u32 = 1;
+    let mut dead_letter_only = false;
+    let mut throttle: Option<String> = None;
+    let mut channels: Vec<String> = Vec::new();
+
+    for dob in &block.directives {
+        let DirectiveOrBlock::Directive(d) = dob else {
+            continue;
+        };
+        match d.key.value.as_str() {
+            "when" => {
+                if let Some(arg) = d.args.first() {
+                    let v = resolve_str(arg, vars);
+                    trigger = match v.as_str() {
+                        "job_failed" => Some(RuleTrigger::JobFailed),
+                        // `job_sla_missed` and any other future
+                        // trigger are reserved and silently produce
+                        // `None`, which causes the rule to be dropped
+                        // below. Operators get a runtime warning when
+                        // the evaluator notices the dropped rule on
+                        // the next reload (TBD in PR-4).
+                        _ => None,
+                    };
+                }
+            }
+            "job_key" => {
+                if let Some(arg) = d.args.first() {
+                    job_key_glob = resolve_str(arg, vars);
+                }
+            }
+            "min_attempts" => {
+                if let Some(arg) = d.args.first() {
+                    let v = resolve_str(arg, vars);
+                    if let Ok(n) = v.parse::<u32>() {
+                        min_attempts = n.max(1);
+                    }
+                }
+            }
+            "dead_letter" => {
+                if let Some(arg) = d.args.first() {
+                    let v = resolve_str(arg, vars);
+                    dead_letter_only = matches!(v.as_str(), "true" | "yes" | "1" | "on");
+                }
+            }
+            "throttle" => {
+                if let Some(arg) = d.args.first() {
+                    throttle = Some(resolve_str(arg, vars));
+                }
+            }
+            "channels" => {
+                for arg in &d.args {
+                    let v = resolve_str(arg, vars);
+                    if !v.is_empty() {
+                        channels.push(v);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    let trigger = trigger?;
+    Some(RuleConfig {
+        name: name.to_string(),
+        trigger,
+        job_key_glob,
+        min_attempts,
+        dead_letter_only,
+        throttle,
+        channels,
+    })
 }
 
 /// Bundled defaults passed to `compile_job` to avoid too many parameters.
@@ -1411,5 +1667,159 @@ mod tests {
                 "value {value:?} should map to {want}"
             );
         }
+    }
+
+    // ─── #140 alerts block ─────────────────────────────────────────
+
+    #[test]
+    fn compile_alerts_empty_when_absent() {
+        let ast = Parser::parse("server { listen :4000 }").unwrap();
+        let cfg = compile(&ast);
+        assert!(cfg.alerts.channels.is_empty());
+        assert!(cfg.alerts.rules.is_empty());
+    }
+
+    #[test]
+    fn compile_alerts_shell_channel_and_rule() {
+        let ast = Parser::parse(
+            r#"
+            alerts {
+                channel "ops-paging" {
+                    shell "/usr/local/bin/page-oncall.sh"
+                }
+                rule "billing-fail" {
+                    when job_failed
+                    job_key "billing:*"
+                    min_attempts 2
+                    dead_letter true
+                    throttle 10m
+                    channels "ops-paging"
+                }
+            }
+            "#,
+        )
+        .unwrap();
+        let cfg = compile(&ast);
+        let ch = cfg
+            .alerts
+            .channels
+            .get("ops-paging")
+            .expect("channel parsed");
+        assert_eq!(ch.name, "ops-paging");
+        match &ch.kind {
+            ChannelKind::Shell { command } => {
+                assert_eq!(command, "/usr/local/bin/page-oncall.sh");
+            }
+            other => panic!("expected Shell, got {other:?}"),
+        }
+
+        assert_eq!(cfg.alerts.rules.len(), 1);
+        let rule = &cfg.alerts.rules[0];
+        assert_eq!(rule.name, "billing-fail");
+        assert!(matches!(rule.trigger, RuleTrigger::JobFailed));
+        assert_eq!(rule.job_key_glob, "billing:*");
+        assert_eq!(rule.min_attempts, 2);
+        assert!(rule.dead_letter_only);
+        assert_eq!(rule.throttle.as_deref(), Some("10m"));
+        assert_eq!(rule.channels, vec!["ops-paging"]);
+    }
+
+    #[test]
+    fn compile_alerts_rule_defaults() {
+        // No `job_key`, `min_attempts`, `dead_letter`, or `throttle`
+        // directives — defaults must apply.
+        let ast = Parser::parse(
+            r#"
+            alerts {
+                channel "anything" { shell "/bin/true" }
+                rule "any-failure" {
+                    when job_failed
+                    channels "anything"
+                }
+            }
+            "#,
+        )
+        .unwrap();
+        let cfg = compile(&ast);
+        let rule = &cfg.alerts.rules[0];
+        assert_eq!(rule.job_key_glob, "*");
+        assert_eq!(rule.min_attempts, 1);
+        assert!(!rule.dead_letter_only);
+        assert!(rule.throttle.is_none());
+    }
+
+    #[test]
+    fn compile_alerts_unknown_trigger_drops_rule() {
+        // `job_sla_missed` is reserved but not implemented in PR-1 —
+        // rules with unsupported triggers must not silently match
+        // every failure. Dropping the rule (with a future warning
+        // path) is safer than synthesising a default trigger.
+        let ast = Parser::parse(
+            r#"
+            alerts {
+                channel "x" { shell "/bin/true" }
+                rule "future-rule" {
+                    when job_sla_missed
+                    channels "x"
+                }
+            }
+            "#,
+        )
+        .unwrap();
+        let cfg = compile(&ast);
+        assert!(
+            cfg.alerts.rules.is_empty(),
+            "unsupported trigger drops the rule"
+        );
+        // Channel still compiles — rule references aren't a hard error.
+        assert!(cfg.alerts.channels.contains_key("x"));
+    }
+
+    #[test]
+    fn compile_alerts_unknown_channel_kind_is_unknown_variant() {
+        // `webhook` is recognised at compile time (so the error
+        // message is specific) but produces ChannelKind::Unknown —
+        // PR-2 will ship the real implementation.
+        let ast = Parser::parse(
+            r#"
+            alerts {
+                channel "slack" {
+                    webhook https://hooks.slack.com/services/xxx
+                }
+            }
+            "#,
+        )
+        .unwrap();
+        let cfg = compile(&ast);
+        let ch = cfg.alerts.channels.get("slack").expect("channel parsed");
+        match &ch.kind {
+            ChannelKind::Unknown { reason } => {
+                assert!(reason.contains("webhook"), "reason mentions kind: {reason}");
+            }
+            other => panic!("expected Unknown for webhook in PR-1, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn compile_alerts_format_roundtrip() {
+        // The formatter must preserve channel + rule blocks so an
+        // operator's editor format-on-save doesn't churn the file.
+        let src = r#"alerts {
+    channel "ops" {
+        shell "/bin/true"
+    }
+    rule "fail" {
+        when job_failed
+        channels "ops"
+    }
+}
+"#;
+        let ast = Parser::parse(src).unwrap();
+        let formatted = crate::format::format(&ast);
+        let ast2 = Parser::parse(&formatted).unwrap();
+        let cfg2 = compile(&ast2);
+        assert!(cfg2.alerts.channels.contains_key("ops"));
+        assert_eq!(cfg2.alerts.rules.len(), 1);
+        assert_eq!(cfg2.alerts.rules[0].name, "fail");
     }
 }

@@ -226,6 +226,7 @@ impl Parser {
                 "oidc" => Ok(Item::Oidc(self.parse_oidc()?)),
                 "auth" => Ok(Item::Auth(self.parse_auth()?)),
                 "policy" => Ok(Item::Policy(self.parse_policy()?)),
+                "alerts" => Ok(Item::Alerts(self.parse_alerts()?)),
                 "vars" => Ok(Item::Vars(self.parse_vars()?)),
                 "defaults" => Ok(Item::Defaults(self.parse_defaults()?)),
                 "calendar" => Ok(Item::Calendar(self.parse_calendar()?)),
@@ -237,7 +238,7 @@ impl Parser {
             },
             _ => Err(ParseError::Unexpected {
                 expected:
-                    "import, server, pull_api, observability, mcp, oidc, auth, policy, vars, defaults, calendar, or job"
+                    "import, server, pull_api, observability, mcp, oidc, auth, policy, alerts, vars, defaults, calendar, or job"
                         .into(),
                 got: format!("{}", tok.kind),
                 span: tok.span.into(),
@@ -342,6 +343,54 @@ impl Parser {
         }
         let end = self.expect_rbrace()?;
         Ok(AuthBlock {
+            sub_blocks,
+            span: start.merge(end),
+        })
+    }
+
+    /// `alerts { channel "name" { … } rule "name" { … } }`
+    ///
+    /// Each sub-block requires a string qualifier (the channel / rule
+    /// name). The compile pass distinguishes channel vs rule by the
+    /// outer `name` field and resolves channel-name references.
+    fn parse_alerts(&mut self) -> Result<AlertsBlock, ParseError> {
+        let start = self.expect_ident("alerts")?;
+        self.expect_lbrace()?;
+        let mut sub_blocks = Vec::new();
+        loop {
+            self.skip_newlines();
+            if self.peek().kind == TokenKind::RBrace || self.at_end() {
+                break;
+            }
+            if let TokenKind::Comment(_) = self.peek().kind {
+                self.advance();
+                continue;
+            }
+            let name = self.read_string_value()?;
+            let name_span = name.span;
+            // Require a qualifier — unnamed channels/rules are unreferenceable.
+            if self.peek().kind == TokenKind::LBrace {
+                return Err(ParseError::General {
+                    message: format!(
+                        "expected a string identifier after `{}` (e.g. `{0} \"name\" {{ … }}`)",
+                        name.value
+                    ),
+                    span: name_span.into(),
+                });
+            }
+            let qualifier = self.read_string_value()?;
+            self.expect_lbrace()?;
+            let directives = self.parse_directives_or_blocks_until_rbrace()?;
+            let end = self.expect_rbrace()?;
+            sub_blocks.push(NamedBlock {
+                name,
+                qualifier: Some(qualifier),
+                directives,
+                span: name_span.merge(end),
+            });
+        }
+        let end = self.expect_rbrace()?;
+        Ok(AlertsBlock {
             sub_blocks,
             span: start.merge(end),
         })

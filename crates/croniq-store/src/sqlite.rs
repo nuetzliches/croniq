@@ -1843,6 +1843,87 @@ impl DslAdoptionStore for SqliteStore {
     }
 }
 
+impl AlertStore for SqliteStore {
+    fn record_alert_delivery(&self, d: &AlertDelivery) -> Result<(), StoreError> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT OR IGNORE INTO alert_deliveries
+                (delivery_id, rule_name, channel_name, job_key, execution_id,
+                 state, error, fired_at, delivered_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            params![
+                d.delivery_id,
+                d.rule_name,
+                d.channel_name,
+                d.job_key,
+                d.execution_id,
+                d.state.as_str(),
+                d.error,
+                dt_to_sql(&d.fired_at),
+                opt_dt_to_sql(&d.delivered_at),
+            ],
+        )
+        .map_err(map_err)?;
+        Ok(())
+    }
+
+    fn list_alert_deliveries(
+        &self,
+        filter: &AlertDeliveryFilter,
+    ) -> Result<Vec<AlertDelivery>, StoreError> {
+        let conn = self.conn.lock().unwrap();
+        let mut sql = String::from(
+            "SELECT delivery_id, rule_name, channel_name, job_key, execution_id,
+                    state, error, fired_at, delivered_at
+             FROM alert_deliveries WHERE 1=1",
+        );
+        let mut params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+        if let Some(ref jk) = filter.job_key {
+            sql.push_str(" AND job_key = ?");
+            params.push(Box::new(jk.clone()));
+        }
+        if let Some(ref rn) = filter.rule_name {
+            sql.push_str(" AND rule_name = ?");
+            params.push(Box::new(rn.clone()));
+        }
+        if let Some(since) = filter.since {
+            sql.push_str(" AND fired_at >= ?");
+            params.push(Box::new(dt_to_sql(&since)));
+        }
+        sql.push_str(" ORDER BY fired_at DESC");
+        let limit = filter.limit.unwrap_or(200);
+        sql.push_str(&format!(" LIMIT {limit}"));
+
+        let mut stmt = conn.prepare(&sql).map_err(map_err)?;
+        let param_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|b| b.as_ref()).collect();
+        let rows = stmt
+            .query_map(param_refs.as_slice(), row_to_alert_delivery)
+            .map_err(map_err)?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(map_err)
+    }
+
+    fn last_alert_fire_at(
+        &self,
+        rule_name: &str,
+        job_key: &str,
+    ) -> Result<Option<DateTime<Utc>>, StoreError> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn
+            .prepare(
+                "SELECT fired_at FROM alert_deliveries
+                 WHERE rule_name = ?1 AND job_key = ?2
+                 ORDER BY fired_at DESC LIMIT 1",
+            )
+            .map_err(map_err)?;
+        stmt.query_row(params![rule_name, job_key], |row| {
+            let s: String = row.get(0)?;
+            Ok(sql_to_dt(&s))
+        })
+        .optional()
+        .map_err(map_err)
+    }
+}
+
 impl Store for SqliteStore {}
 
 // ─── Row mappers ───
@@ -1897,6 +1978,22 @@ fn row_to_dead_letter(row: &rusqlite::Row<'_>) -> Result<DeadLetter, rusqlite::E
         metadata: serde_json::from_str(&metadata_str).unwrap_or_default(),
         created_at: sql_to_dt(&row.get::<_, String>(8)?),
         expires_at: sql_to_opt_dt(row.get(9)?),
+    })
+}
+
+fn row_to_alert_delivery(row: &rusqlite::Row<'_>) -> Result<AlertDelivery, rusqlite::Error> {
+    let state_str: String = row.get(5)?;
+    let state = AlertDeliveryState::parse_db(&state_str).unwrap_or(AlertDeliveryState::Failed);
+    Ok(AlertDelivery {
+        delivery_id: row.get(0)?,
+        rule_name: row.get(1)?,
+        channel_name: row.get(2)?,
+        job_key: row.get(3)?,
+        execution_id: row.get(4)?,
+        state,
+        error: row.get(6)?,
+        fired_at: sql_to_dt(&row.get::<_, String>(7)?),
+        delivered_at: sql_to_opt_dt(row.get(8)?),
     })
 }
 
