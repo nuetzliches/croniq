@@ -1,0 +1,190 @@
+name: Python SDK Release
+
+# Triggered by a tag push matching `python-sdk-vX.Y.Z`. Builds the sdist +
+# wheel from the tag's source tree, attaches them to a GitHub Release, and
+# uploads to PyPI via Trusted Publishing (OIDC — no PYPI_API_TOKEN secret).
+#
+# Releaser workflow:
+#   1. Bump `version = "X.Y.Z"` in `sdks/python/pyproject.toml`.
+#   2. Update `sdks/python/CHANGELOG.md`.
+#   3. Commit + push to main.
+#   4. `git tag python-sdk-vX.Y.Z && git push --tags`.
+#   5. Watch this workflow; PyPI upload completes within ~2 min.
+#
+# One-time PyPI setup (project owner, NOT in this workflow):
+#   - Reserve the `croniq-runner` name on https://pypi.org via the
+#     "Pending Publishers" UI: project name `croniq-runner`, owner
+#     `nuetzliches`, repo `croniq`, workflow `python-sdk-release.yml`,
+#     environment `pypi`. After the first successful publish the pending
+#     publisher promotes to a regular Trusted Publisher.
+
+on:
+  push:
+    tags:
+      - 'python-sdk-v*'
+  # Manual dispatch for re-runs against an already-published tag (e.g.
+  # if the PyPI upload flaked but the build succeeded — uploading the
+  # same files is idempotent on PyPI).
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to build (must already exist on origin), e.g. python-sdk-v0.1.0'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  # Serialise releases — concurrent PyPI uploads of the same version
+  # would just produce identical conflicts.
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    name: Verify tag matches pyproject.toml
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.extract.outputs.version }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+      - id: extract
+        name: Extract version from tag
+        run: |
+          # Tag format: python-sdk-vX.Y.Z[suffix] → X.Y.Z[suffix]
+          tag="${{ inputs.tag || github.ref_name }}"
+          version="${tag#python-sdk-v}"
+          if [ "$version" = "$tag" ]; then
+            echo "::error::Tag '$tag' does not match python-sdk-vX.Y.Z"
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - name: Cross-check pyproject.toml
+        # PyPI rejects an upload whose metadata version doesn't match the
+        # filename. Catching it here saves a wasted publish job + a
+        # confusing PyPI error.
+        run: |
+          cd sdks/python
+          pyproject_version=$(python -c "import tomllib; print(tomllib.loads(open('pyproject.toml','rb').read().decode())['project']['version'])")
+          if [ "$pyproject_version" != "${{ steps.extract.outputs.version }}" ]; then
+            echo "::error::pyproject.toml version ($pyproject_version) does not match tag (${{ steps.extract.outputs.version }})"
+            exit 1
+          fi
+
+  build:
+    name: Build sdist + wheel
+    needs: verify
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: sdks/python
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v6.0.0
+        with:
+          python-version: '3.12'
+      - name: Install tooling
+        run: |
+          python -m pip install --upgrade pip
+          pip install build twine
+      - name: Build
+        run: python -m build
+      - name: Twine check
+        # Validates metadata + README rendering before we burn the PyPI
+        # publish job on a broken upload.
+        run: twine check dist/*
+      - name: Upload distribution
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: croniq-runner-${{ needs.verify.outputs.version }}
+          path: sdks/python/dist/
+          if-no-files-found: error
+          retention-days: 30
+
+  publish-pypi:
+    name: Publish to PyPI (Trusted Publishing)
+    needs: [verify, build]
+    runs-on: ubuntu-latest
+    # The `pypi` environment scopes the OIDC token to this specific
+    # release path — PyPI only accepts uploads from workflows whose
+    # environment name matches the Trusted Publisher configuration.
+    environment:
+      name: pypi
+      url: https://pypi.org/project/croniq-runner/${{ needs.verify.outputs.version }}/
+    permissions:
+      id-token: write   # required for OIDC → PyPI exchange
+    steps:
+      - name: Download distribution
+        uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6.0.0
+        with:
+          name: croniq-runner-${{ needs.verify.outputs.version }}
+          path: dist/
+      - name: Publish to PyPI
+        # pypa-maintained action that handles the OIDC → PyPI token
+        # exchange. Pinned by full SHA per repo policy.
+        uses: pypa/gh-action-pypi-publish@76f52bc884231f62b9a034ebfe128415bbaabdfc # release/v1
+        with:
+          packages-dir: dist/
+          # `verbose: true` prints which files were uploaded — useful in
+          # logs when diagnosing missing-file Trusted Publishing errors.
+          verbose: true
+
+  github-release:
+    name: Attach wheel/sdist to GitHub Release
+    needs: [verify, build, publish-pypi]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write   # required to create / update the release
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+      - name: Download distribution
+        uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6.0.0
+        with:
+          name: croniq-runner-${{ needs.verify.outputs.version }}
+          path: dist/
+      - name: Extract changelog section
+        id: changelog
+        # Pulls the most recent `## [X.Y.Z]` section out of the SDK's
+        # CHANGELOG so the release notes mirror the file. Falls back to a
+        # generic message if the section isn't found (e.g. a hotfix that
+        # didn't update CHANGELOG.md — let it through, don't block the
+        # release on note formatting).
+        run: |
+          version="${{ needs.verify.outputs.version }}"
+          notes=$(awk -v v="$version" '
+            /^## \[/ {
+              if (in_section) exit
+              if ($0 ~ "\\["v"\\]") { in_section=1; next }
+            }
+            in_section { print }
+          ' sdks/python/CHANGELOG.md)
+          {
+            echo "notes<<NOTES_EOF"
+            if [ -n "$notes" ]; then
+              echo "$notes"
+            else
+              echo "Release of \`croniq-runner\` v$version. See sdks/python/CHANGELOG.md."
+            fi
+            echo ""
+            echo "Install with:"
+            echo ""
+            echo '```sh'
+            echo "pip install croniq-runner==$version"
+            echo '```'
+            echo "NOTES_EOF"
+          } >> "$GITHUB_OUTPUT"
+      - name: Create / update GitHub Release
+        uses: softprops/action-gh-release@e7a8f85e1c67a31e6ed99a94b41bd0b71bbee6b8 # v2.0.9
+        with:
+          tag_name: ${{ inputs.tag || github.ref_name }}
+          name: croniq-runner v${{ needs.verify.outputs.version }}
+          body: ${{ steps.changelog.outputs.notes }}
+          files: dist/*
+          fail_on_unmatched_files: true
