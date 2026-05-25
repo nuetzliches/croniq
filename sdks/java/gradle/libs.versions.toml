@@ -1,0 +1,76 @@
+# Centralised dependency versions. Equivalent to the .NET SDK's
+# Directory.Packages.props — every module references libraries by alias
+# and the version lives in exactly one place.
+
+[versions]
+# Language / toolchain
+java = "21"
+kotlin = "2.0.21"
+
+# Runtime libraries
+jackson = "2.18.1"
+slf4j = "2.0.16"
+snakeyaml = "2.3"
+kotlinx-coroutines = "1.9.0"
+
+# Spring Boot (starter module + AutoConfiguration). Tracking the latest
+# 3.x LTS line — JDK 21 baseline matches our toolchain pin.
+spring-boot = "3.4.0"
+
+# OpenTelemetry — pinned but not yet wired in core. The otel module ships
+# in PR-7; the version lives here so PR-2..6 can reference it without
+# editing the catalog again.
+opentelemetry = "1.43.0"
+
+# Test libraries
+junit = "5.11.3"
+assertj = "3.26.3"
+wiremock = "3.9.2"
+mockito = "5.14.2"
+awaitility = "4.2.2"
+logback = "1.5.12"
+
+# Build / tooling plugins
+spotless = "6.25.0"
+checkstyle = "10.20.1"
+nexus-publish = "2.0.0"
+
+[libraries]
+# --- Runtime ---
+jackson-databind = { module = "com.fasterxml.jackson.core:jackson-databind", version.ref = "jackson" }
+jackson-datatype-jsr310 = { module = "com.fasterxml.jackson.datatype:jackson-datatype-jsr310", version.ref = "jackson" }
+slf4j-api = { module = "org.slf4j:slf4j-api", version.ref = "slf4j" }
+snakeyaml = { module = "org.yaml:snakeyaml", version.ref = "snakeyaml" }
+
+# --- Kotlin ---
+kotlinx-coroutines-core = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-core", version.ref = "kotlinx-coroutines" }
+kotlinx-coroutines-jdk8 = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-jdk8", version.ref = "kotlinx-coroutines" }
+
+# --- Spring Boot ---
+spring-boot-starter = { module = "org.springframework.boot:spring-boot-starter", version.ref = "spring-boot" }
+spring-boot-autoconfigure = { module = "org.springframework.boot:spring-boot-autoconfigure", version.ref = "spring-boot" }
+spring-boot-configuration-processor = { module = "org.springframework.boot:spring-boot-configuration-processor", version.ref = "spring-boot" }
+spring-boot-starter-test = { module = "org.springframework.boot:spring-boot-starter-test", version.ref = "spring-boot" }
+
+# --- OpenTelemetry (placeholder for PR-7) ---
+opentelemetry-api = { module = "io.opentelemetry:opentelemetry-api", version.ref = "opentelemetry" }
+opentelemetry-sdk = { module = "io.opentelemetry:opentelemetry-sdk", version.ref = "opentelemetry" }
+
+# --- Test ---
+junit-bom = { module = "org.junit:junit-bom", version.ref = "junit" }
+junit-jupiter = { module = "org.junit.jupiter:junit-jupiter" }
+assertj-core = { module = "org.assertj:assertj-core", version.ref = "assertj" }
+wiremock = { module = "org.wiremock:wiremock-standalone", version.ref = "wiremock" }
+mockito-core = { module = "org.mockito:mockito-core", version.ref = "mockito" }
+mockito-junit-jupiter = { module = "org.mockito:mockito-junit-jupiter", version.ref = "mockito" }
+awaitility = { module = "org.awaitility:awaitility", version.ref = "awaitility" }
+logback-classic = { module = "ch.qos.logback:logback-classic", version.ref = "logback" }
+
+[bundles]
+jackson = ["jackson-databind", "jackson-datatype-jsr310"]
+junit = ["junit-jupiter", "assertj-core"]
+
+[plugins]
+kotlin-jvm = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin" }
+spotless = { id = "com.diffplug.spotless", version.ref = "spotless" }
+nexus-publish = { id = "io.github.gradle-nexus.publish-plugin", version.ref = "nexus-publish" }

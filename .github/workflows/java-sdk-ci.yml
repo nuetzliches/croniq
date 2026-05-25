@@ -1,0 +1,191 @@
+name: Java SDK CI
+
+# Branch-protection contract:
+# This workflow gates merges into main once feat/java-sdk-init lands. Add
+# the `Java SDK CI required` job (at the bottom of this file) as the single
+# required status check — it aggregates schema, build, conformance, and
+# publish-smoke into one signal, mirroring the .NET SDK CI pattern.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'sdks/java/**'
+      - 'sdks/conformance/**'
+      - 'openapi.yaml'
+      - '.github/workflows/java-sdk-ci.yml'
+  pull_request:
+    # No `paths-ignore` — once a job here becomes a required status check,
+    # path-based skipping makes the requirement unsatisfiable. See ci.yml
+    # #98 incident note and the .NET SDK CI for prior art.
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+env:
+  # Gradle daemon is unhelpful in CI (single-use containers); skip it.
+  GRADLE_OPTS: "-Dorg.gradle.daemon=false -Dorg.gradle.configuration-cache=true"
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
+
+jobs:
+  schema:
+    name: Conformance YAML schema
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Install check-jsonschema
+        # Same tool the .NET SDK CI uses; duplicated here so this workflow
+        # is self-contained and can be a required check on its own.
+        run: pip install --user check-jsonschema==0.37.2
+      - name: Validate every case against case-schema.json
+        run: |
+          check-jsonschema --verbose \
+            --schemafile sdks/conformance/schema/case-schema.json \
+            sdks/conformance/cases/*.yaml
+
+  build:
+    name: Build & test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: sdks/java
+    strategy:
+      fail-fast: false
+      matrix:
+        # OS matrix — `./gradlew check` runs spotless, checkstyle, and
+        # tests in every module. A JDK axis isn't useful: the SDK pins
+        # JDK 21 via the Gradle toolchain, so building on JDK 23 would
+        # just download the 21 toolchain and proceed identically.
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Setup JDK 21 (Temurin)
+        uses: actions/setup-java@2dfa2011c5b2a0f1489bf9e433881c92c1631f44 # v5.0.0
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Setup Gradle (with caching)
+        # gradle/actions/setup-gradle handles wrapper validation, daemon
+        # tuning, and the build-cache for us. Reads the wrapper version
+        # from gradle/wrapper/gradle-wrapper.properties.
+        uses: gradle/actions/setup-gradle@94baf225fe0a508e581a564467443d0e2379123b # v5.0.0
+        with:
+          cache-read-only: ${{ github.event_name != 'push' || github.ref != 'refs/heads/main' }}
+      - name: Spotless check (formatting)
+        # Separate from build so a formatting nit doesn't mask a compile
+        # error in the same line of output. Equivalent to `dotnet format
+        # --verify-no-changes` in the .NET CI.
+        run: ./gradlew --no-daemon spotlessCheck
+      - name: Build & unit tests (all modules)
+        # `check` triggers compile + spotless + checkstyle + test in each
+        # subproject. `--scan` is omitted; we only enable it on demand for
+        # debugging via repository_dispatch.
+        run: ./gradlew --no-daemon check
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: test-results-${{ matrix.os }}
+          path: |
+            sdks/java/**/build/reports/tests/test/
+            sdks/java/**/build/test-results/test/
+          if-no-files-found: warn
+          retention-days: 7
+
+  conformance:
+    # Wire-level suite. Linux-only — the protocol is OS-agnostic and the
+    # cross-platform compile concern is already covered by `build`.
+    # Depends on `schema` so a malformed case produces the JSON-Schema
+    # error first (more actionable than a Java deserialisation failure).
+    name: Conformance suite
+    runs-on: ubuntu-latest
+    needs: [schema]
+    defaults:
+      run:
+        working-directory: sdks/java
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Setup JDK 21 (Temurin)
+        uses: actions/setup-java@2dfa2011c5b2a0f1489bf9e433881c92c1631f44 # v5.0.0
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Setup Gradle (with caching)
+        uses: gradle/actions/setup-gradle@94baf225fe0a508e581a564467443d0e2379123b # v5.0.0
+      - name: Run conformance binding
+        run: ./gradlew --no-daemon :conformance-tests:test
+      - name: Upload conformance results
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: conformance-results
+          path: |
+            sdks/java/conformance-tests/build/reports/tests/test/
+            sdks/java/conformance-tests/build/test-results/test/
+          if-no-files-found: warn
+          retention-days: 7
+
+  publish-smoke:
+    # Equivalent of `pack-smoke` in the .NET CI — make sure the published
+    # jars assemble cleanly with the right POM, sources, and javadoc
+    # attachments. Maven Central staging itself is wired in PR-7.
+    name: Publish smoke (publishToMavenLocal)
+    runs-on: ubuntu-latest
+    needs: build
+    defaults:
+      run:
+        working-directory: sdks/java
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Setup JDK 21 (Temurin)
+        uses: actions/setup-java@2dfa2011c5b2a0f1489bf9e433881c92c1631f44 # v5.0.0
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@94baf225fe0a508e581a564467443d0e2379123b # v5.0.0
+      - name: Assemble + publish to Maven local
+        run: ./gradlew --no-daemon publishToMavenLocal
+      - name: List produced artefacts
+        # Surface what was published so a regression in the publishing
+        # config (missing sources jar, wrong POM coordinates, etc.) is
+        # easy to spot at a glance in the CI log.
+        run: |
+          find ~/.m2/repository/io/croniq -type f \( -name "*.jar" -o -name "*.pom" \) | sort
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: maven-local-smoke
+          path: |
+            sdks/java/**/build/libs/
+            sdks/java/**/build/publications/
+          if-no-files-found: warn
+          retention-days: 7
+
+  required:
+    # Aggregator job for branch protection. Add ONE check to the protected
+    # branch — `Java SDK CI required` — and the rule transitively gates
+    # schema, build, conformance, and publish-smoke. Mirrors the .NET SDK
+    # CI's `required` job exactly so the protection-rule UI only ever
+    # references one check per SDK.
+    name: Java SDK CI required
+    if: always()
+    runs-on: ubuntu-latest
+    needs: [schema, build, conformance, publish-smoke]
+    steps:
+      - name: Fail if any required job failed or was cancelled
+        if: ${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') }}
+        run: |
+          echo "::error::A required job did not succeed:"
+          echo "  schema:        ${{ needs.schema.result }}"
+          echo "  build:         ${{ needs.build.result }}"
+          echo "  conformance:   ${{ needs.conformance.result }}"
+          echo "  publish-smoke: ${{ needs.publish-smoke.result }}"
+          exit 1
+      - name: All required jobs passed
+        if: ${{ !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled') }}
+        run: echo "schema, build, conformance, publish-smoke all succeeded"
