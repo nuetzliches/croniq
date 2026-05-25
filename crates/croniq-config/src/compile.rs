@@ -75,6 +75,9 @@ pub struct RuntimeConfig {
     /// Only `client_secret` stays out of the DSL — server boot pulls
     /// it from `CRONIQ_OIDC_CLIENT_SECRET` and merges with this struct.
     pub oidc: Option<OidcDslConfig>,
+    /// UI sign-in method gates (`auth { password { enabled false } }`).
+    /// Absent block ⇒ defaults (every method enabled).
+    pub auth: AuthDslConfig,
     /// Server-wide opt-in flags. Absent block ⇒ all defaults (deny).
     pub policy: PolicyConfig,
     pub jobs: Vec<JobConfig>,
@@ -92,6 +95,23 @@ pub struct OidcDslConfig {
     pub default_role: Option<String>,
     pub provider_name: Option<String>,
     pub post_login_redirect: Option<String>,
+}
+
+/// UI sign-in method gates, parsed from the Croniqfile `auth {}` block.
+/// All sub-blocks are optional; an absent `auth {}` means every method is
+/// enabled. Today only the `password {}` sub-block is defined.
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct AuthDslConfig {
+    pub password: PasswordAuthConfig,
+}
+
+/// `auth { password { enabled bool } }`. The `enabled` flag governs the
+/// `/v1/auth/login` (and related) endpoints. `None` here means the DSL
+/// did not set it — the server merges with `CRONIQ_PASSWORD_LOGIN_ENABLED`
+/// at boot; if neither source sets the flag, password login stays on.
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct PasswordAuthConfig {
+    pub enabled: Option<bool>,
 }
 
 /// HTTP MCP-server configuration. Absent block ⇒ default (enabled).
@@ -335,6 +355,7 @@ pub fn compile(ast: &Croniqfile) -> RuntimeConfig {
     let mut observability = None;
     let mut mcp: Option<McpConfig> = None;
     let mut oidc: Option<OidcDslConfig> = None;
+    let mut auth = AuthDslConfig::default();
     let mut policy = PolicyConfig::default();
     let mut default_timezone: Option<String> = None;
     let mut default_timeout: Option<String> = None;
@@ -595,6 +616,23 @@ pub fn compile(ast: &Croniqfile) -> RuntimeConfig {
                 }
                 oidc = Some(cfg);
             }
+            Item::Auth(a) => {
+                for nb in &a.sub_blocks {
+                    if nb.name.value == "password" {
+                        for dob in &nb.directives {
+                            let DirectiveOrBlock::Directive(d) = dob else {
+                                continue;
+                            };
+                            if d.key.value == "enabled"
+                                && let Some(arg) = d.args.first()
+                            {
+                                let v = resolve_str(arg, &vars);
+                                auth.password.enabled = parse_bool(&v);
+                            }
+                        }
+                    }
+                }
+            }
             _ => {}
         }
     }
@@ -605,9 +643,21 @@ pub fn compile(ast: &Croniqfile) -> RuntimeConfig {
         observability,
         mcp,
         oidc,
+        auth,
         policy,
         jobs,
         calendars,
+    }
+}
+
+/// Parse a DSL boolean argument. Accepts the same liberal set as `policy {}`:
+/// `true|yes|on|1` ⇒ true, `false|no|off|0` ⇒ false. Unknown values produce
+/// `None` so the caller can keep its default.
+fn parse_bool(s: &str) -> Option<bool> {
+    match s.to_ascii_lowercase().as_str() {
+        "true" | "yes" | "on" | "1" => Some(true),
+        "false" | "no" | "off" | "0" => Some(false),
+        _ => None,
     }
 }
 
@@ -1302,5 +1352,64 @@ mod tests {
             "second `allowed_hosts` directive must replace the first — matches \
              the `enabled` directive behaviour in the same block"
         );
+    }
+
+    // ─── #138 auth block ─────────────────────────────────────────
+
+    #[test]
+    fn compile_auth_block_default_unset() {
+        let ast = Parser::parse("server { listen :4000 }").unwrap();
+        let cfg = compile(&ast);
+        assert_eq!(cfg.auth.password.enabled, None);
+    }
+
+    #[test]
+    fn compile_auth_password_disabled() {
+        let ast = Parser::parse(
+            r#"
+            auth {
+                password { enabled false }
+            }
+            "#,
+        )
+        .unwrap();
+        let cfg = compile(&ast);
+        assert_eq!(cfg.auth.password.enabled, Some(false));
+    }
+
+    #[test]
+    fn compile_auth_password_explicit_true() {
+        let ast = Parser::parse(
+            r#"
+            auth {
+                password { enabled true }
+            }
+            "#,
+        )
+        .unwrap();
+        let cfg = compile(&ast);
+        assert_eq!(cfg.auth.password.enabled, Some(true));
+    }
+
+    #[test]
+    fn compile_auth_password_accepts_aliases() {
+        // Mirror the policy block — accept the same loose boolean syntax.
+        for (value, want) in [
+            ("yes", true),
+            ("on", true),
+            ("1", true),
+            ("no", false),
+            ("off", false),
+            ("0", false),
+        ] {
+            let src = format!("auth {{ password {{ enabled {value} }} }}");
+            let ast = Parser::parse(&src).unwrap();
+            let cfg = compile(&ast);
+            assert_eq!(
+                cfg.auth.password.enabled,
+                Some(want),
+                "value {value:?} should map to {want}"
+            );
+        }
     }
 }

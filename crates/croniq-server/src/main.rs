@@ -83,6 +83,24 @@ async fn main() -> Result<()> {
     let active = loaded.triggers.len();
     tracing::info!(jobs = job_count, triggers = active, "configuration loaded");
 
+    // Resolve UI sign-in method gates (issue #138). DSL beats env beats default.
+    // The both-disabled check must run before we bind the HTTP listener so the
+    // operator sees a clear startup error instead of a quiet lockout.
+    let password_login_enabled = resolve_password_login_enabled(&loaded.runtime);
+    if !password_login_enabled
+        && croniq_server::oidc::config_from_dsl_and_env(loaded.runtime.oidc.as_ref()).is_err()
+    {
+        anyhow::bail!(
+            "refusing to start: password login is disabled but no working OIDC config was found.\n\
+             Either re-enable password login in the Croniqfile (auth {{ password {{ enabled true }} }})\n\
+             or configure OIDC via CRONIQ_OIDC_ISSUER / CRONIQ_OIDC_CLIENT_ID / \
+             CRONIQ_OIDC_CLIENT_SECRET / CRONIQ_OIDC_REDIRECT_URL."
+        );
+    }
+    if !password_login_enabled {
+        tracing::info!("password login disabled by configuration — only OIDC will accept logins");
+    }
+
     // Open (or create) the SQLite store
     std::fs::create_dir_all(&cli.data_dir)?;
     let db_path = cli.data_dir.join("croniq.db");
@@ -211,6 +229,7 @@ async fn main() -> Result<()> {
             std::sync::atomic::Ordering::Relaxed,
         );
         s.config_path = Some(config_path_abs.clone());
+        s.password_login_enabled = password_login_enabled;
     }
     let reload_counters = Arc::clone(&server_state.reload_counters);
 
@@ -567,6 +586,29 @@ fn write_secret_file(path: &std::path::Path, content: &str) -> std::io::Result<(
     #[cfg(not(unix))]
     {
         std::fs::write(path, content)
+    }
+}
+
+/// Resolve the effective `password_login_enabled` flag for the running server.
+///
+/// Precedence (highest first): DSL `auth { password { enabled bool } }` →
+/// env `CRONIQ_PASSWORD_LOGIN_ENABLED` → default `true`.
+///
+/// Env-var parsing is conservative: only the explicit falsy set
+/// (`false`/`no`/`off`/`0`) disables. Anything else (incl. typos, empty
+/// string, garbage) keeps password login on — silently locking everyone
+/// out because of `CRONIQ_PASSWORD_LOGIN_ENABLED=disable` would be a bad
+/// surprise.
+fn resolve_password_login_enabled(rt: &croniq_config::compile::RuntimeConfig) -> bool {
+    if let Some(v) = rt.auth.password.enabled {
+        return v;
+    }
+    match std::env::var("CRONIQ_PASSWORD_LOGIN_ENABLED").ok() {
+        Some(s) => !matches!(
+            s.trim().to_ascii_lowercase().as_str(),
+            "false" | "no" | "off" | "0"
+        ),
+        None => true,
     }
 }
 

@@ -107,6 +107,13 @@ pub struct ServerState {
     /// OIDC provider for SSO login. `None` disables the OIDC routes.
     /// Discovered once at startup (see `oidc::OidcProvider::discover`).
     pub oidc: SharedOidcProvider,
+    /// Whether password login is enabled (issue #138).
+    ///
+    /// Resolved at boot from DSL `auth { password { enabled bool } }` + env
+    /// `CRONIQ_PASSWORD_LOGIN_ENABLED`; defaults to `true`. When `false`,
+    /// the public password-login + password-reset endpoints return
+    /// `403 password login disabled` and the UI hides the password form.
+    pub password_login_enabled: bool,
 }
 
 impl ServerState {
@@ -130,6 +137,7 @@ impl ServerState {
             email_sender: crate::email::default_sender(),
             app_base_url: "http://localhost:4000".into(),
             oidc: None,
+            password_login_enabled: true,
         })
     }
 
@@ -156,6 +164,7 @@ impl ServerState {
             email_sender: crate::email::default_sender(),
             app_base_url: "http://localhost:4000".into(),
             oidc: None,
+            password_login_enabled: true,
         })
     }
 
@@ -181,6 +190,7 @@ impl ServerState {
             email_sender: crate::email::default_sender(),
             app_base_url: "http://localhost:4000".into(),
             oidc: None,
+            password_login_enabled: true,
         })
     }
 }
@@ -364,7 +374,10 @@ pub fn server_router(state: Arc<ServerState>) -> Router {
         // OIDC/SSO
         .route("/v1/auth/oidc/login", get(oidc::handle_login))
         .route("/v1/auth/oidc/callback", get(oidc::handle_callback))
-        .route("/v1/auth/oidc/config", get(oidc::handle_config));
+        .route("/v1/auth/oidc/config", get(oidc::handle_config))
+        // Combined sign-in-method probe (issue #138). Canonical replacement
+        // for the OIDC-only `/v1/auth/oidc/config`; both are kept for now.
+        .route("/v1/auth/config", get(oidc::handle_auth_config));
 
     let cors = tower_http::cors::CorsLayer::permissive();
 
@@ -1019,6 +1032,7 @@ mod tests {
             email_sender: crate::email::default_sender(),
             app_base_url: "http://localhost:4000".into(),
             oidc: None,
+            password_login_enabled: true,
         });
         (state, rx)
     }
@@ -1189,6 +1203,7 @@ mod tests {
             email_sender: crate::email::default_sender(),
             app_base_url: "http://localhost:4000".into(),
             oidc: None,
+            password_login_enabled: true,
         });
         let app = server_router(Arc::clone(&state));
 
@@ -1257,6 +1272,7 @@ mod tests {
             email_sender: crate::email::default_sender(),
             app_base_url: "http://localhost:4000".into(),
             oidc: None,
+            password_login_enabled: true,
         });
         let app = server_router(Arc::clone(&state));
 
