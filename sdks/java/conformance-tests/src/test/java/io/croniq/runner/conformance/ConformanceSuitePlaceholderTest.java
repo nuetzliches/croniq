@@ -23,10 +23,14 @@ class ConformanceSuitePlaceholderTest {
 
     @Test
     void conformanceCasesDirectoryIsDiscoverable() throws Exception {
-        assertThat(CASES_DIR).as("expected sdks/conformance/cases/ relative to module dir").exists();
+        assertThat(CASES_DIR)
+                .as("expected sdks/conformance/cases/ relative to module dir")
+                .exists();
         try (Stream<Path> yamls = Files.list(CASES_DIR)) {
             long count = yamls.filter(p -> p.toString().endsWith(".yaml")).count();
-            assertThat(count).as("at least one conformance case YAML must exist").isGreaterThan(0);
+            assertThat(count)
+                    .as("at least one conformance case YAML must exist")
+                    .isGreaterThan(0);
         }
     }
 }
