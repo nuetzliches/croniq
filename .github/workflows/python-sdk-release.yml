@@ -41,6 +41,13 @@ concurrency:
   group: ${{ github.workflow }}
   cancel-in-progress: false
 
+env:
+  # Opt into Node 24 for JavaScript actions ahead of the 2026-06-02
+  # default switch, silencing the Node 20 deprecation warnings from
+  # setup-python/checkout/upload-artifact/download-artifact/etc. Matches
+  # the env block in ci.yml, release.yml, and the other SDK pipelines.
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
+
 jobs:
   verify:
     name: Verify tag matches pyproject.toml
@@ -104,7 +111,10 @@ jobs:
           name: croniq-runner-${{ needs.verify.outputs.version }}
           path: sdks/python/dist/
           if-no-files-found: error
-          retention-days: 30
+          # Capped at the repo-wide retention max (currently 14 days).
+          # The build is reproducible from the tag, so a longer window
+          # would just be storage cost without recovery value.
+          retention-days: 14
 
   publish-pypi:
     name: Publish to PyPI (Trusted Publishing)

@@ -26,6 +26,13 @@ concurrency:
 permissions:
   contents: read
 
+env:
+  # Opt into Node 24 for JavaScript actions ahead of the 2026-06-02
+  # default switch, silencing the Node 20 deprecation warnings from
+  # setup-python/checkout/upload-artifact/etc. Matches the env block in
+  # ci.yml, dotnet-sdk-ci.yml, go-sdk-ci.yml, and release.yml.
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
+
 jobs:
   schema:
     name: Conformance YAML schema
