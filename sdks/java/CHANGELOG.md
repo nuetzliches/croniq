@@ -6,19 +6,6 @@ project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-### Added — PR-3 of [#133](https://github.com/nuetzliches/croniq/issues/133)
-
-- Lease renewal: each in-flight execution gets a virtual-thread renewer
-  that calls `POST /v1/work/renew` at `renewInterval`. Renewer is
-  interrupted when the handler returns or fails.
-- Graceful drain in `CroniqRunner.close()`: stops the poll loop, waits up
-  to `drainTimeout` for in-flight handlers to complete naturally, then
-  force-cancels any stragglers. Mirrors the .NET SDK's `StopAsync` and the
-  Rust SDK's drain semantics — host shutdown stops new work but does NOT
-  cancel running handlers.
-- Conformance cases 05 (lease renewal), 06 (drain on shutdown),
-  11 (poll 409 conflict), 12 (poll 500 backoff) pass against the Java SDK.
-
 ### Added — PR-2 of [#133](https://github.com/nuetzliches/croniq/issues/133)
 
 - Wire-protocol DTOs in `io.croniq.runner.protocol`: `PollRequest`,

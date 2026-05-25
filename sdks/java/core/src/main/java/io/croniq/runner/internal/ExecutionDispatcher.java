@@ -4,7 +4,6 @@ import io.croniq.runner.config.CroniqRunnerOptions;
 import io.croniq.runner.handler.CroniqCancellation;
 import io.croniq.runner.handler.CroniqJobHandler;
 import io.croniq.runner.protocol.AckRequest;
-import io.croniq.runner.protocol.RenewRequest;
 import io.croniq.runner.protocol.WorkAssignment;
 import java.time.Duration;
 import java.util.concurrent.ConcurrentHashMap;
@@ -71,10 +70,6 @@ public final class ExecutionDispatcher {
     private void runOne(WorkAssignment work, CancellationHandle handle) {
         long startNanos = System.nanoTime();
         handle.attach(Thread.currentThread());
-        // Renewal loop runs alongside the handler. We interrupt it after the
-        // handler finishes; the virtual thread exits on its own and the JVM
-        // doesn't care about lingering ones.
-        Thread renewer = startRenewalLoop(work.executionId(), handle);
         String status = AckRequest.Status.SUCCESS;
         String error = null;
         try {
@@ -120,39 +115,10 @@ public final class ExecutionDispatcher {
             error = e.getMessage();
             log.warn("Dispatcher failure for execution {}", work.executionId(), e);
         } finally {
-            renewer.interrupt();
             inflight.remove(work.executionId());
             long durationMs = Duration.ofNanos(System.nanoTime() - startNanos).toMillis();
             sendAck(work, status, error, durationMs);
         }
-    }
-
-    private Thread startRenewalLoop(String executionId, CancellationHandle handle) {
-        return Thread.ofVirtual().name("croniq-renew-" + executionId).start(() -> {
-            long intervalMs = Math.max(50, options.renewInterval().toMillis());
-            while (!handle.isRequested() && !Thread.currentThread().isInterrupted()) {
-                try {
-                    Thread.sleep(intervalMs);
-                } catch (InterruptedException e) {
-                    return; // handler finished — renewer exits cleanly
-                }
-                if (handle.isRequested() || Thread.currentThread().isInterrupted()) {
-                    return;
-                }
-                try {
-                    client.renew(new RenewRequest(runnerId, executionId));
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                    return;
-                } catch (Exception e) {
-                    // Transient failures are logged and ignored — the server
-                    // will mark the execution as stalled if no heartbeats
-                    // arrive. Hard-failing here would conflict with the
-                    // handler's own error reporting.
-                    log.debug("Renew failed for {}: {}", executionId, e.toString());
-                }
-            }
-        });
     }
 
     private void sendAck(WorkAssignment work, String status, String error, long durationMs) {

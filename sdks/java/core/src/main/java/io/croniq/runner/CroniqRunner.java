@@ -12,7 +12,6 @@ import java.time.Duration;
 import java.util.Objects;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
-import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -23,8 +22,8 @@ import org.slf4j.LoggerFactory;
  *
  * <p>Construct via {@link #builder()}, then call {@link #run()} from your
  * application's main thread. Call {@link #close()} from another thread to
- * stop the loop; the call blocks until in-flight executions drain (bounded
- * by {@link CroniqRunnerOptions#drainTimeout()}).
+ * stop the loop and release the handler executor. An async/managed lifecycle
+ * lands in PR-3.
  *
  * <p>Concurrency model: the poll loop runs on a single platform thread.
  * Each work item is dispatched to a fresh virtual thread, so handlers can
@@ -127,69 +126,14 @@ public final class CroniqRunner implements AutoCloseable {
         }
     }
 
-    /**
-     * Stop polling and drain in-flight executions before returning. Mirrors the
-     * .NET SDK's {@code StopAsync(CancellationToken)} semantics:
-     *
-     * <ol>
-     *   <li>Set the stop flag so the poll loop exits at its next checkpoint.
-     *   <li>Interrupt the poll thread so it returns immediately even if mid-poll.
-     *   <li>Wait up to {@link CroniqRunnerOptions#drainTimeout()} for in-flight
-     *       handlers to complete naturally — they are NOT interrupted during
-     *       drain. Server-initiated cancels via {@code PollResponse.cancel}
-     *       are still honoured because the poll loop already stopped.
-     *   <li>If drain times out with handlers still running, force-cancel them
-     *       (sets the cancellation flag and interrupts the worker threads).
-     * </ol>
-     *
-     * <p>Idempotent — subsequent calls return immediately.
-     */
     @Override
     public void close() {
-        if (!stopped.compareAndSet(false, true)) {
-            return;
-        }
-        Thread t = runThread;
-        if (t != null) {
-            t.interrupt();
-        }
-
-        long drainNanos = options.drainTimeout().toNanos();
-        long deadline = System.nanoTime() + drainNanos;
-        while (dispatcher.inflightCount() > 0) {
-            long remainingMs = TimeUnit.NANOSECONDS.toMillis(deadline - System.nanoTime());
-            if (remainingMs <= 0) {
-                int n = dispatcher.inflightCount();
-                if (n > 0) {
-                    log.warn(
-                            "Drain timeout ({}ms) elapsed with {} execution(s) still in-flight — cancelling",
-                            options.drainTimeout().toMillis(),
-                            n);
-                }
-                break;
+        if (stopped.compareAndSet(false, true)) {
+            Thread t = runThread;
+            if (t != null) {
+                t.interrupt();
             }
-            try {
-                Thread.sleep(Math.min(50, remainingMs));
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                break;
-            }
-        }
-        // Force-cancel anything that didn't drain naturally — sets the
-        // cancellation flag AND interrupts each worker so blocking I/O
-        // unwinds promptly. After this, shutdownNow gives the executor a
-        // chance to release any held threads.
-        for (String id : dispatcher.inflightIds()) {
-            dispatcher.cancel(id);
-        }
-        handlerExecutor.shutdown();
-        try {
-            if (!handlerExecutor.awaitTermination(2, TimeUnit.SECONDS)) {
-                handlerExecutor.shutdownNow();
-            }
-        } catch (InterruptedException e) {
             handlerExecutor.shutdownNow();
-            Thread.currentThread().interrupt();
         }
     }
 
