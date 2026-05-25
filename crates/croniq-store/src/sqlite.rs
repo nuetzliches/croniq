@@ -1922,6 +1922,20 @@ impl AlertStore for SqliteStore {
         .optional()
         .map_err(map_err)
     }
+
+    fn get_alert_delivery(&self, delivery_id: &str) -> Result<Option<AlertDelivery>, StoreError> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn
+            .prepare(
+                "SELECT delivery_id, rule_name, channel_name, job_key, execution_id,
+                        state, error, fired_at, delivered_at
+                 FROM alert_deliveries WHERE delivery_id = ?1",
+            )
+            .map_err(map_err)?;
+        stmt.query_row(params![delivery_id], row_to_alert_delivery)
+            .optional()
+            .map_err(map_err)
+    }
 }
 
 impl Store for SqliteStore {}
