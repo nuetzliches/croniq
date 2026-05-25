@@ -66,7 +66,7 @@ Build custom job execution runners in your language of choice. Runners poll the 
 | .NET (8, 10) | [`sdks/dotnet`](sdks/dotnet) | `Croniq.Runner.Sdk` + `Croniq.Runner.Sdk.OpenTelemetry` (NuGet — pre-release) | ✅ available |
 | Python (3.11+) | [`sdks/python`](sdks/python) | `croniq-runner` (PyPI — pre-release) | ✅ available |
 | Go (1.22+) | [`sdks/go`](sdks/go) | `github.com/nuetzliches/croniq/sdks/go` + `.../sdks/go/otel` (Go modules) | ✅ available |
-| TypeScript / Node.js | [#132](https://github.com/nuetzliches/croniq/issues/132) | npm (planned) | 🛠 planned |
+| TypeScript / Node.js | [`sdks/typescript`](sdks/typescript) | `@nuetzliches/croniq-runner` (npm — pre-release) | ✅ available |
 | Java / Kotlin | [#133](https://github.com/nuetzliches/croniq/issues/133) | Maven Central (planned) | 🛠 planned |
 
 The .NET SDK ships Generic Host (`IHostedService`) integration, options-pattern configuration, server-side cancellation, OpenTelemetry tracing + metrics, streaming structured logs via `System.Threading.Channels`, health checks, and a generic shell-exec decoder for DSL `runner shell { ... }` jobs. See [`sdks/dotnet/README.md`](sdks/dotnet/README.md) for the quickstart.
@@ -74,6 +74,8 @@ The .NET SDK ships Generic Host (`IHostedService`) integration, options-pattern 
 The Python SDK is `asyncio`-first (`httpx.AsyncClient` + Pydantic v2), supports server-side cancellation, lease renewal, self-registration via `schedule=`, streaming logs over a bounded `asyncio.Queue` with drain-before-ack, and opt-in OpenTelemetry tracing via the `[otel]` extra. See [`sdks/python/README.md`](sdks/python/README.md) for the quickstart.
 
 The Go SDK ships idiomatic `context.Context` propagation, `log/slog` structured logging, server-side cancellation, a bounded-channel streaming `LogWriter`, lease renewal, drain-on-shutdown, persistent runner identity, and an opt-in OpenTelemetry tracing adapter in a sibling module. See [`sdks/go/README.md`](sdks/go/README.md) for the quickstart.
+
+The TypeScript / Node.js SDK is ESM-first, uses native `fetch` and `AbortController`, and ships the same streaming log writer (batch + drain-before-ack) and server-side cancellation semantics as the .NET SDK. See [`sdks/typescript/README.md`](sdks/typescript/README.md) for the quickstart.
 
 ### Language-agnostic conformance suite
 
