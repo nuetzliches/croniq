@@ -250,6 +250,11 @@
 .nav-item .badge.warn  { background: var(--warn-bg);  color: var(--warn);  border-color: transparent; }
 
 /* ── collapsed state ───────────────────────────────────────── */
+/* User-toggled (data-collapsed) AND viewport-forced (<= 768px) collapse
+ * apply the same visual rules. .app's grid already shrinks the column
+ * at that breakpoint, but the sidebar's children still rendered at full
+ * width and overflowed (visible "Cr" of "Croniq", horizontal scroller
+ * under the foot). */
 .sidebar[data-collapsed] .nav-item { padding: 0 14px; justify-content: flex-start; }
 .sidebar[data-collapsed] .brand { padding: 0; height: var(--topbar-h); justify-content: center; gap: 0; }
 .sidebar[data-collapsed] .brand .gear { width: 26px; height: 26px; }
@@ -262,6 +267,24 @@
   display: none !important;
 }
 .sidebar[data-collapsed] .user-pill { padding: 6px; justify-content: center; }
+
+/* Auto-collapse at narrow viewports — replicate the rules above without
+ * the data-collapsed gate, because the React state doesn't track the
+ * media query. */
+@media (max-width: 768px) {
+  .sidebar .nav-item { padding: 0 14px; justify-content: flex-start; }
+  .sidebar .brand { padding: 0; height: var(--topbar-h); justify-content: center; gap: 0; }
+  .sidebar .brand .gear { width: 26px; height: 26px; }
+  .sidebar .brand .name,
+  .sidebar .nav-item > span,
+  .sidebar .nav-item > .badge,
+  .sidebar .nav-section,
+  .sidebar .user-pill > .col,
+  .sidebar .user-pill > .more-icon {
+    display: none !important;
+  }
+  .sidebar .user-pill { padding: 6px; justify-content: center; }
+}
 
 /* ── sidebar foot + user pill ──────────────────────────────── */
 .sidebar-foot {
@@ -393,6 +416,11 @@
   color: var(--fg);
   border-color: var(--border);
 }
+/* Below 768px the sidebar is force-collapsed (see .app rule above), so
+ * the toggle would just bounce the same state — hide it. */
+@media (max-width: 768px) {
+  .topbar-toggle { display: none; }
+}
 .crumbs {
   display: flex; align-items: center; gap: 6px;
   font-size: 13px;
@@ -423,7 +451,14 @@
   font-family: inherit;
 }
 .search-trigger:hover { border-color: var(--border-2); }
-.search-trigger > .grow { flex: 1; text-align: left; }
+.search-trigger > .grow {
+  flex: 1;
+  min-width: 0;
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 
 .topbar-right { display: flex; align-items: center; gap: 6px; margin-left: auto; }
 .topbar .live {

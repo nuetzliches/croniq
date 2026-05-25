@@ -26,6 +26,12 @@ export async function apiFetch<T>(path: string, options?: RequestInit): Promise<
     const body = await res.text()
     throw new Error(`${res.status}: ${body}`)
   }
+  // 204 No Content + 205 Reset Content carry no body — calling res.json()
+  // would throw "Unexpected end of JSON input". Caller's <T> is typically
+  // `void` for these endpoints; cast to satisfy the signature.
+  if (res.status === 204 || res.status === 205) {
+    return undefined as unknown as T
+  }
   return res.json()
 }
 
