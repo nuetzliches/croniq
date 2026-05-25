@@ -52,7 +52,7 @@ Full API documentation: [`openapi.yaml`](openapi.yaml)
 
 **MCP server** — 31 tools for AI assistant integration. Full CRUD over jobs, schedules, calendars, dead letters; queue observability; live forecast and execution log access — all from Claude, Cursor, or any MCP client. Available over stdio (`croniq-mcp`) or HTTP at `/mcp` on the running server. JWT-scoped: `mcp:read` for any tool, `mcp:write` for the 17 mutation tools; `admin` is a wildcard. Toggle via Croniqfile `mcp { enabled false }`.
 
-**Failure alerts** — declare named channels + rules in the Croniqfile `alerts { … }` block. Each permanent failure (dead-letter or drop) is matched against your rules, throttled per `(rule, job_key)`, and dispatched to the configured channels — with a persistent delivery log. `CRONIQ_ON_FAILURE_CMD` still works for one release as a back-compat shortcut.
+**Failure alerts** — declare named channels + rules in the Croniqfile `alerts { … }` block. Two triggers ship: `job_failed` (permanent failure: dead-letter or drop) and `job_sla_missed` (in-flight execution exceeded its `expected_within`). Each match is throttled per `(rule, job_key)`, dispatched to the configured channels, and recorded in a persistent delivery log. `CRONIQ_ON_FAILURE_CMD` still works for one release as a back-compat shortcut.
 
 ---
 
@@ -180,7 +180,7 @@ calendar business-days {
 }
 
 # Failure alerts (issue #140) — fire per-rule when an execution
-# permanently fails (dead-letter or drop). Throttled per (rule, job)
+# permanently fails OR overruns its SLA. Throttled per (rule, job)
 # so a job that loops failing doesn't flood the channel. Shell,
 # webhook, and email channels all ship today.
 alerts {
@@ -198,12 +198,26 @@ alerts {
     # --features smtp); otherwise NoopSender just logs the recipient.
     email "ops@example.com" "oncall@example.com"
   }
+
+  # Permanent-failure rule: fires when retries are exhausted.
   rule "billing-fail" {
     when job_failed
     job_key "billing:*"
     min_attempts 2     # fire only after retry exhaustion
     throttle 10m       # one alert per (rule, job_key) per window
     channels "ops-paging" "slack" "ops-mail"
+  }
+
+  # SLA-miss rule: fires when an in-flight execution exceeds the
+  # expected runtime. The watchdog (~30 s sweep) scans claimed
+  # executions and fires once per (rule, execution_id), so a long-
+  # running job won't re-alert every sweep.
+  rule "billing-slow" {
+    when job_sla_missed
+    job_key "billing:*"
+    expected_within 15m
+    throttle 1h
+    channels "slack"
   }
 }
 

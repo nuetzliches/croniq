@@ -718,6 +718,7 @@ mod tests {
                 min_attempts: 1,
                 dead_letter_only: false,
                 throttle: None,
+                expected_within: None,
                 channels: vec!["ops".into()],
             }],
         };
