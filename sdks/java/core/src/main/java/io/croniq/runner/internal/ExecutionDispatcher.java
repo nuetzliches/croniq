@@ -3,10 +3,12 @@ package io.croniq.runner.internal;
 import io.croniq.runner.config.CroniqRunnerOptions;
 import io.croniq.runner.handler.CroniqCancellation;
 import io.croniq.runner.handler.CroniqJobHandler;
+import io.croniq.runner.handler.CroniqRunnerObserver;
 import io.croniq.runner.protocol.AckRequest;
 import io.croniq.runner.protocol.RenewRequest;
 import io.croniq.runner.protocol.WorkAssignment;
 import java.time.Duration;
+import java.util.List;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import org.slf4j.Logger;
@@ -27,6 +29,7 @@ public final class ExecutionDispatcher {
     private final ExecutorService executor;
     private final CroniqRunnerOptions options;
     private final String runnerId;
+    private final List<CroniqRunnerObserver> observers;
     private final ConcurrentHashMap<String, CancellationHandle> inflight = new ConcurrentHashMap<>();
 
     public ExecutionDispatcher(
@@ -34,12 +37,14 @@ public final class ExecutionDispatcher {
             HandlerRegistry registry,
             ExecutorService executor,
             CroniqRunnerOptions options,
-            String runnerId) {
+            String runnerId,
+            List<CroniqRunnerObserver> observers) {
         this.client = client;
         this.registry = registry;
         this.executor = executor;
         this.options = options;
         this.runnerId = runnerId;
+        this.observers = List.copyOf(observers);
     }
 
     public int inflightCount() {
@@ -76,6 +81,7 @@ public final class ExecutionDispatcher {
         // doesn't care about lingering ones.
         Thread renewer = startRenewalLoop(work.executionId(), handle);
         BoundedLogWriter logWriter = new BoundedLogWriter(client, work.executionId(), work.jobKey(), runnerId, options);
+        notifyStart(work);
         String status = AckRequest.Status.SUCCESS;
         String error = null;
         try {
@@ -129,7 +135,44 @@ public final class ExecutionDispatcher {
             logWriter.closeAndDrain();
             inflight.remove(work.executionId());
             long durationMs = Duration.ofNanos(System.nanoTime() - startNanos).toMillis();
+            notifyEnd(work, status, error, durationMs);
             sendAck(work, status, error, durationMs);
+        }
+    }
+
+    private void notifyStart(WorkAssignment work) {
+        if (observers.isEmpty()) {
+            return;
+        }
+        var event =
+                new CroniqRunnerObserver.ExecutionStart(work.executionId(), work.jobKey(), work.attempt(), runnerId);
+        for (var obs : observers) {
+            try {
+                obs.onExecutionStart(event);
+            } catch (RuntimeException e) {
+                log.debug("Observer onExecutionStart threw — swallowing", e);
+            }
+        }
+    }
+
+    private void notifyEnd(WorkAssignment work, String status, String error, long durationMs) {
+        if (observers.isEmpty()) {
+            return;
+        }
+        var event = new CroniqRunnerObserver.ExecutionEnd(
+                work.executionId(),
+                work.jobKey(),
+                work.attempt(),
+                runnerId,
+                status,
+                error,
+                Duration.ofMillis(durationMs));
+        for (var obs : observers) {
+            try {
+                obs.onExecutionEnd(event);
+            } catch (RuntimeException e) {
+                log.debug("Observer onExecutionEnd threw — swallowing", e);
+            }
         }
     }
 

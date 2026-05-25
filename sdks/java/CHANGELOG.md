@@ -6,6 +6,32 @@ project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added — PR-7 of [#133](https://github.com/nuetzliches/croniq/issues/133)
+
+- `io.croniq.runner.handler.CroniqRunnerObserver` public interface — lifecycle
+  hook for downstream observability (tracing, metrics, audit). Register via
+  `CroniqRunner.Builder.observer(...)`. Observers receive `onExecutionStart`
+  and `onExecutionEnd` callbacks; exceptions they raise are logged and
+  swallowed so observability never blocks job dispatch.
+- New `otel/` module → `io.croniq:runner-opentelemetry`:
+  - `OpenTelemetryObserver` emits one OTel span per execution. Span name
+    `croniq.execute <job_key>`; attributes mirror the .NET SDK
+    (`croniq.job.key`, `croniq.execution.id`, `croniq.execution.attempt`,
+    `croniq.runner.id`, `croniq.execution.outcome`).
+  - Constructor takes either an `OpenTelemetry` instance or a pre-built
+    `Tracer`. Span lookup by `execution_id` via `ConcurrentHashMap` so the
+    start / end callbacks can run on different virtual threads safely.
+- Maven Central publishing wired in:
+  - `gradle-nexus-publish-plugin` configured for Sonatype OSSRH s01 staging.
+  - GPG signing in `croniq.publish-conventions` — only active when
+    `GPG_SIGNING_KEY` is in the environment, so local
+    `publishToMavenLocal` runs need no key setup.
+  - Credentials read from env vars (`OSSRH_USERNAME`, `OSSRH_PASSWORD`,
+    `GPG_SIGNING_KEY`, `GPG_SIGNING_PASSWORD`) so CI plugs them in from
+    GitHub Actions secrets.
+- README quick-starts for plain Java, Spring Boot, Kotlin coroutines, and
+  OpenTelemetry usage.
+
 ### Added — PR-6 of [#133](https://github.com/nuetzliches/croniq/issues/133)
 
 - `io.croniq:runner-kotlin-ext` is now functional:

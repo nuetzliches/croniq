@@ -1,5 +1,5 @@
 // Maven publishing config for the published modules. Applied by core,
-// spring-boot-starter, and kotlin-ext — NOT conformance-tests (test-only).
+// spring-boot-starter, kotlin-ext, and otel — NOT conformance-tests (test-only).
 //
 // Uses the Vanniktech maven-publish plugin which wraps the Sonatype Central
 // Portal API: bundle creation, GPG signing, upload, and auto-release in one
@@ -86,3 +86,8 @@ mavenPublishing {
         }
     }
 }
+
+// GPG signing is wired through the Vanniktech plugin above
+// (`signAllPublications()` + ORG_GRADLE_PROJECT_signingInMemoryKey* env
+// vars). The earlier hand-rolled `signing { ... }` block was redundant
+// once we migrated to Vanniktech on main and has been removed.

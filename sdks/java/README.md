@@ -11,12 +11,11 @@ Build job execution runners for [Croniq](https://github.com/nuetzliches/croniq) 
 
 | Coordinates                                                | Purpose                                                                       |
 | ---------------------------------------------------------- | ----------------------------------------------------------------------------- |
-| `io.github.nuetzliches:croniq-runner`                      | Core SDK. JDK 21 + Jackson + SLF4J. No Spring / Kotlin dependency.            |
+| `io.github.nuetzliches:croniq-runner`                      | Core SDK. JDK 21 + Jackson + SLF4J. No Spring / Kotlin / OTel dependency.     |
 | `io.github.nuetzliches:croniq-runner-spring-boot-starter`  | Opt-in Spring Boot 3 auto-config, `@CroniqJob`, `croniq.runner.*` properties. |
 | `io.github.nuetzliches:croniq-runner-kotlin-ext`           | Coroutine adapters + Kotlin DSL on top of the Java core.                      |
+| `io.github.nuetzliches:croniq-runner-opentelemetry`        | Opt-in OpenTelemetry observer — one span per execution.                       |
 | `conformance-tests` (not published)                        | Runs `sdks/conformance/cases/*.yaml` against the SDK.                         |
-
-The `io.github.nuetzliches:croniq-runner-opentelemetry` opt-in instrumentation module is planned for PR-7 and is not yet wired into the build.
 
 > **Java packages remain `io.croniq.runner.*`** so imports stay short and natural. Maven Central does not require the Java package to mirror the group ID — only the group ID itself must be under a verified namespace. If/when `io.croniq` gets verified as a separate Sonatype namespace, the group ID can switch over without renaming a single source file.
 
