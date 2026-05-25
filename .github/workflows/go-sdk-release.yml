@@ -1,0 +1,193 @@
+name: Go SDK Release
+
+# Go modules have no central registry — releases ARE git tags. This
+# workflow triggers on two tag schemes:
+#
+#   - `sdks/go/v*`        — the core SDK
+#   - `sdks/go/otel/v*`   — the OTel adapter sub-module
+#
+# For each tag, we re-run the tests at the tagged commit (defence in
+# depth — main CI already gated the merge), verify the module is
+# resolvable via the Go proxy after a short warm-up, and create a
+# GitHub Release with auto-generated notes. The actual "publish" is
+# done by proxy.golang.org indexing the tag on first fetch; this
+# workflow just polishes the user-facing artefact.
+
+on:
+  push:
+    tags:
+      - 'sdks/go/v*'
+      - 'sdks/go/otel/v*'
+
+concurrency:
+  group: go-sdk-release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write   # action-gh-release creates the GitHub Release
+
+env:
+  GO_VERSION: '1.22'
+
+jobs:
+  resolve:
+    name: Resolve tag
+    runs-on: ubuntu-latest
+    outputs:
+      module: ${{ steps.parse.outputs.module }}
+      module_path: ${{ steps.parse.outputs.module_path }}
+      version: ${{ steps.parse.outputs.version }}
+      tag: ${{ steps.parse.outputs.tag }}
+    steps:
+      - id: parse
+        # Tags carry the module path as their prefix per go-modules
+        # semver convention. `sdks/go/v0.1.0` → module=sdks/go,
+        # version=v0.1.0. `sdks/go/otel/v0.1.0` → module=sdks/go/otel.
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF#refs/tags/}"
+          if [[ "$TAG" =~ ^sdks/go/otel/v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            MODULE="otel"
+            MODULE_PATH="sdks/go/otel"
+            VERSION="${TAG#sdks/go/otel/}"
+          elif [[ "$TAG" =~ ^sdks/go/v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            MODULE="core"
+            MODULE_PATH="sdks/go"
+            VERSION="${TAG#sdks/go/}"
+          else
+            echo "::error::Tag '$TAG' does not match sdks/go/v* or sdks/go/otel/v*"
+            exit 1
+          fi
+          echo "module=$MODULE" >> "$GITHUB_OUTPUT"
+          echo "module_path=$MODULE_PATH" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "::notice::module=$MODULE path=$MODULE_PATH version=$VERSION"
+
+  validate:
+    name: Validate ${{ needs.resolve.outputs.module }} @ ${{ needs.resolve.outputs.version }}
+    runs-on: ubuntu-latest
+    needs: resolve
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+          cache-dependency-path: |
+            sdks/go/go.sum
+            sdks/go/otel/go.sum
+
+      - name: Forbid `replace` in otel/go.mod on release
+        # The otel sub-module ships with a local `replace` for in-repo
+        # development. Letting that ship in a release would break
+        # downstream `go get` because the replace target points at "../"
+        # which doesn't exist in the consumer's filesystem.
+        if: needs.resolve.outputs.module == 'otel'
+        run: |
+          if grep -E '^\s*replace\s' sdks/go/otel/go.mod >/dev/null; then
+            echo "::error::sdks/go/otel/go.mod still contains a `replace` directive — see sdks/go/RELEASING.md"
+            grep -nE '^\s*replace\s' sdks/go/otel/go.mod
+            exit 1
+          fi
+
+      - name: Sanity-check the require line on otel releases
+        if: needs.resolve.outputs.module == 'otel'
+        run: |
+          set -euo pipefail
+          REQ=$(grep -E '^\s*github\.com/nuetzliches/croniq/sdks/go\s' sdks/go/otel/go.mod | awk '{print $2}')
+          echo "otel requires core SDK ${REQ}"
+          if [[ ! "$REQ" =~ ^v[0-9]+\.[0-9]+\.[0-9]+ ]]; then
+            echo "::error::otel/go.mod must require a published core SDK version (got '$REQ')"
+            exit 1
+          fi
+
+      - name: Build & test (${{ needs.resolve.outputs.module_path }})
+        working-directory: ${{ needs.resolve.outputs.module_path }}
+        run: |
+          go vet ./...
+          go test -race -count=1 -timeout=120s ./...
+
+      - name: Run conformance suite (core only)
+        if: needs.resolve.outputs.module == 'core'
+        working-directory: sdks/go
+        run: go test -race -timeout=120s ./conformance/...
+
+      - name: Warm up proxy.golang.org for ${{ needs.resolve.outputs.tag }}
+        # Triggering the Go module proxy to fetch the tag is what makes
+        # `go get` work for users instantly after release. Without this
+        # the first user to request the version pays a slow GitHub-API
+        # cold-start. We retry because the tag may take a few seconds
+        # to propagate to the proxy after the push.
+        run: |
+          set -euo pipefail
+          MODULE="github.com/nuetzliches/croniq/${{ needs.resolve.outputs.module_path }}"
+          VERSION="${{ needs.resolve.outputs.version }}"
+          URL="https://proxy.golang.org/${MODULE}/@v/${VERSION}.info"
+          echo "Warming proxy: $URL"
+          for i in 1 2 3 4 5 6; do
+            if curl -fsSL "$URL" -o /tmp/proxy.json; then
+              cat /tmp/proxy.json
+              echo
+              exit 0
+            fi
+            echo "attempt $i failed; sleeping 15s"
+            sleep 15
+          done
+          echo "::warning::proxy.golang.org did not cache the tag within 90 s — users may see a slow first install."
+
+  release:
+    name: Create GitHub Release
+    runs-on: ubuntu-latest
+    needs: [resolve, validate]
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0   # release-notes generator wants tag history
+
+      - name: Compose release body
+        id: body
+        env:
+          MODULE: ${{ needs.resolve.outputs.module }}
+          MODULE_PATH: ${{ needs.resolve.outputs.module_path }}
+          VERSION: ${{ needs.resolve.outputs.version }}
+        run: |
+          # The body is a small block that points users at `go get` and
+          # links to the Go reference docs. action-gh-release's
+          # generate_release_notes appends auto-generated commit notes
+          # below.
+          MODULE_FULL="github.com/nuetzliches/croniq/${MODULE_PATH}"
+          DOC_URL="https://pkg.go.dev/${MODULE_FULL}@${VERSION}"
+          {
+            echo "## Install"
+            echo
+            echo '```sh'
+            echo "go get ${MODULE_FULL}@${VERSION}"
+            echo '```'
+            echo
+            echo "**Docs:** [${DOC_URL}](${DOC_URL})"
+            echo
+            if [[ "$MODULE" == "otel" ]]; then
+              echo "Sub-module of the Croniq Go runner SDK. The core SDK is released independently under \`sdks/go/v*\` tags."
+            else
+              echo "Core Go runner SDK. The OpenTelemetry adapter is released independently under \`sdks/go/otel/v*\` tags."
+            fi
+            echo
+            echo "---"
+          } > /tmp/body.md
+
+          # Use the GitHub-flavoured "body_path" mechanism so the file is
+          # picked up unchanged below.
+          echo "body_path=/tmp/body.md" >> "$GITHUB_OUTPUT"
+
+      - name: Create release
+        uses: softprops/action-gh-release@b4309332981a82ec1c5618f44dd2e27cc8bfbfda # v3.0.0
+        with:
+          tag_name: ${{ needs.resolve.outputs.tag }}
+          name: ${{ needs.resolve.outputs.module_path }} ${{ needs.resolve.outputs.version }}
+          generate_release_notes: true
+          body_path: ${{ steps.body.outputs.body_path }}
+          # Pre-releases carry a `-` in the version (e.g. `v0.1.0-rc1`).
+          # Marking these prevents them from showing as "Latest" in the
+          # GitHub UI.
+          prerelease: ${{ contains(needs.resolve.outputs.version, '-') }}
