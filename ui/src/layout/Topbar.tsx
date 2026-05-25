@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router'
 import { PanelLeft, Search, Bell } from 'lucide-react'
 import { useSidebarStore } from './sidebar-store'
-import { useDeadLetters, useVersion } from '@/api/hooks'
+import { useDeadLetter, useDeadLetters, useVersion } from '@/api/hooks'
 import { EnvBadge } from '@/components/primitives'
 import { CommandPalette } from './CommandPalette'
 
@@ -32,7 +32,23 @@ function useCrumbs(): Crumb[] {
       { label: jobKey || 'Job', current: true },
     ]
   }
+  if (pathname.startsWith('/dead-letters/')) {
+    const id = pathname.slice('/dead-letters/'.length)
+    return [
+      { label: 'Dead Letters', to: '/dead-letters' },
+      { label: id, current: true, _dlId: id } as Crumb & { _dlId: string },
+    ]
+  }
   return [{ label: ROUTE_TITLES[pathname] ?? pathname, current: true }]
+}
+
+// Resolve dead-letter id to its job_key so the breadcrumb reads as a name
+// instead of a UUID. Falls back to the short id while loading or if the
+// entry has already been replayed/deleted (404).
+function DLBreadcrumbLabel({ id }: { id: string }) {
+  const { data } = useDeadLetter(id)
+  const label = data?.job_key ?? `${id.slice(0, 8)}…`
+  return <>{label}</>
 }
 
 export function Topbar() {
@@ -62,16 +78,23 @@ export function Topbar() {
           Croniq
         </Link>
         {version ? <EnvBadge env={version.env} /> : null}
-        {crumbs.map((c, i) => (
+        {crumbs.map((c, i) => {
+          const dlId = (c as Crumb & { _dlId?: string })._dlId
+          return (
           <span key={`crumb-${i}`} style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
             <span className="sep">/</span>
             {c.to && !c.current ? (
               <Link to={c.to}>{c.label}</Link>
+            ) : dlId ? (
+              <span className={c.current ? 'current' : ''}>
+                <DLBreadcrumbLabel id={dlId} />
+              </span>
             ) : (
               <span className={c.current ? 'current' : ''}>{c.label}</span>
             )}
           </span>
-        ))}
+          )
+        })}
       </nav>
 
       <div className="topbar-search">

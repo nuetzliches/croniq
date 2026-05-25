@@ -12,10 +12,83 @@
   height: 100vh;
   padding: var(--card-gap);
   gap: var(--card-gap);
-  background: oklch(0.170 0.012 265);
+  background: linear-gradient(180deg, oklch(0.13 0.020 265) 0%, oklch(0.10 0.015 265) 100%);
   box-sizing: border-box;
+  position: relative;
+  overflow: hidden;
 }
 [data-theme="light"] .app { background: oklch(0.965 0.005 80); }
+
+/* background layer — sits behind sidebar/topbar/main via z-index 0 */
+.app-bg {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  overflow: hidden;
+}
+.app-bg::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background-image:
+    linear-gradient(oklch(1 0 0 / 0.03) 1px, transparent 1px),
+    linear-gradient(90deg, oklch(1 0 0 / 0.03) 1px, transparent 1px);
+  background-size: 36px 36px;
+  mask-image: radial-gradient(ellipse 100% 80% at 50% 40%, black 30%, transparent 80%);
+}
+.app-spot {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  border-radius: 50%;
+  mix-blend-mode: screen;
+}
+.app-spot-a {
+  width: 700px;
+  height: 700px;
+  margin: -350px 0 0 -350px;
+  background: radial-gradient(circle in oklch,
+    oklch(0.62 0.18 285 / 0.5) 0%,
+    oklch(0.62 0.18 285 / 0)   100%
+  );
+  filter: blur(120px);
+  animation: croniq-app-spot-a 90s linear infinite;
+}
+.app-spot-b {
+  width: 600px;
+  height: 600px;
+  margin: -300px 0 0 -300px;
+  background: radial-gradient(circle in oklch,
+    oklch(0.60 0.16 230 / 0.45) 0%,
+    oklch(0.60 0.16 230 / 0)    100%
+  );
+  filter: blur(100px);
+  animation: croniq-app-spot-b 130s linear infinite;
+}
+@keyframes croniq-app-spot-a {
+  0%   { transform: translate(-20vw, -25vh); }
+  25%  { transform: translate( 25vw, -18vh); }
+  50%  { transform: translate( 30vw,  25vh); }
+  75%  { transform: translate(-15vw,  20vh); }
+  100% { transform: translate(-20vw, -25vh); }
+}
+@keyframes croniq-app-spot-b {
+  0%   { transform: translate( 28vw,  22vh); }
+  25%  { transform: translate(-22vw,  18vh); }
+  50%  { transform: translate(-25vw, -22vh); }
+  75%  { transform: translate( 22vw, -25vh); }
+  100% { transform: translate( 28vw,  22vh); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .app-spot-a { animation: none; transform: translate(-10vw, -10vh); }
+  .app-spot-b { animation: none; transform: translate( 15vw,  15vh); }
+}
+
+/* Sidebar and topbar need z-index above the bg layer */
+.sidebar { z-index: 2; }
+.topbar  { z-index: 30; }
+.main    { z-index: 1; }
 
 .app[data-sidebar="collapsed"] { grid-template-columns: var(--sidebar-w-collapsed) 1fr; }
 
@@ -80,7 +153,6 @@
   align-items: center;
   gap: 10px;
   padding: 13px 16px 13px 17px;
-  border-bottom: 1px solid var(--divider);
   flex-shrink: 0;
   height: var(--topbar-h);
 }
@@ -161,7 +233,7 @@
 .nav-item.active .icon { color: var(--accent-3); opacity: 1; }
 [data-theme="light"] .nav-item.active .icon { color: var(--accent); }
 .nav-item .icon { width: 16px; height: 16px; flex-shrink: 0; opacity: 0.9; }
-.nav-item > span { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left; }
+.nav-item > span:not(.badge) { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left; }
 .nav-item .badge {
   margin-left: auto;
   font-family: var(--font-mono-app);
@@ -193,7 +265,6 @@
 
 /* ── sidebar foot + user pill ──────────────────────────────── */
 .sidebar-foot {
-  border-top: 1px solid var(--border);
   padding: 8px;
   display: flex;
   align-items: center;
@@ -378,16 +449,18 @@
 
 /* ── page wrapper ──────────────────────────────────────────── */
 .page {
-  padding: 20px 24px 32px;
-  max-width: 1400px;
-  margin: 0 auto;
+  padding: var(--card-gap);
+  display: flex;
+  flex-direction: column;
+  gap: var(--card-gap);
+  min-height: 100%;
 }
 .page.wide { max-width: none; }
 .page-head {
   display: flex; align-items: flex-end; justify-content: space-between;
   gap: 16px;
-  margin-bottom: 18px;
   flex-wrap: wrap;
+  padding: 8px 4px 0;
 }
 .page-title {
   font-size: 22px;
@@ -415,21 +488,45 @@
 @media (max-width: 1100px) {
   .split { grid-template-columns: minmax(240px, 280px) minmax(0, 1fr); }
 }
-.split > .master,
+.split > .master {
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  overflow: visible;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--card-gap);
+}
 .split > .detail {
-  background: var(--panel);
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  overflow-y: auto;
+  overflow-x: hidden;
+  min-width: 0;
+  padding: var(--card-gap);
+}
+.master-filter {
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  border-radius: var(--card-radius);
+  box-shadow: 0 4px 14px -6px oklch(0 0 0 / 0.35);
+  flex-shrink: 0;
+}
+.master-list {
+  background: var(--bg-2);
   border: 1px solid var(--border);
   border-radius: var(--card-radius);
   box-shadow: 0 4px 14px -6px oklch(0 0 0 / 0.35);
   overflow-y: auto;
-  overflow-x: hidden;
-  min-width: 0;
+  flex: 1;
+  min-height: 0;
 }
-[data-theme="light"] .split > .master,
-[data-theme="light"] .split > .detail {
+[data-theme="light"] .master-filter,
+[data-theme="light"] .master-list {
   box-shadow: 0 4px 14px -6px oklch(0 0 0 / 0.08);
 }
-.split > .master { background: var(--bg-2); }
 
 /* ── command palette ─────────────────────────────────────── */
 .cmd-backdrop {
@@ -456,6 +553,14 @@
 @keyframes croniq-slideDown {
   from { opacity: 0; transform: translateY(-8px) scale(0.98); }
   to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+/* Variant that preserves the modal's centered translate(-50%, -50%) so
+ * the static positioning isn't clobbered by the animation's transform.
+ * Without this the modal jumps to viewport top-left during the animation
+ * and snaps back to center when it ends. */
+@keyframes croniq-modalSlide {
+  from { opacity: 0; transform: translate(-50%, calc(-50% - 8px)) scale(0.98); }
+  to   { opacity: 1; transform: translate(-50%, -50%) scale(1); }
 }
 .cmd-input {
   width: 100%;
@@ -588,11 +693,14 @@
   background: oklch(0 0 0 / 0.55);
   backdrop-filter: blur(4px);
   z-index: 90;
-  display: grid;
-  place-items: center;
   animation: croniq-fadeIn .15s var(--easing);
 }
 .modal {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 91;
   background: var(--panel);
   border: 1px solid var(--border-2);
   border-radius: var(--r-4);
@@ -601,7 +709,7 @@
   width: 92vw;
   max-height: 80vh;
   overflow: auto;
-  animation: croniq-slideDown .2s var(--easing);
+  animation: croniq-modalSlide .2s var(--easing) forwards;
 }
 .modal-head {
   display: flex; align-items: center; justify-content: space-between;

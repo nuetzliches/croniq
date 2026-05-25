@@ -135,13 +135,9 @@ export function JobsPage() {
 
       <aside className="master" aria-label="Jobs list">
         <div
+          className="master-filter"
           style={{
-            position: 'sticky',
-            top: 0,
-            background: 'var(--bg-2)',
-            padding: '12px 14px 8px',
-            zIndex: 2,
-            borderBottom: '1px solid var(--divider)',
+            padding: '12px 14px 10px',
             display: 'flex',
             flexDirection: 'column',
             gap: 10,
@@ -201,26 +197,28 @@ export function JobsPage() {
           ) : null}
         </div>
 
-        {jobs.isLoading ? (
-          <div className="dim center" style={{ padding: 30 }}>
-            Loading…
-          </div>
-        ) : filtered.length === 0 ? (
-          <EmptyState
-            title="No jobs match"
-            desc={search || activeTags.size > 0 ? 'Adjust the search or clear tag filters.' : 'Register a job to get started.'}
-          />
-        ) : (
-          filtered.map((j) => (
-            <JobRow
-              key={j.job_key}
-              job={j}
-              active={j.job_key === selected}
-              execs={execsByJob[j.job_key] ?? []}
-              onClick={() => navigate(`/jobs/${encodeURIComponent(j.job_key)}`)}
+        <div className="master-list">
+          {jobs.isLoading ? (
+            <div className="dim center" style={{ padding: 30 }}>
+              Loading…
+            </div>
+          ) : filtered.length === 0 ? (
+            <EmptyState
+              title="No jobs match"
+              desc={search || activeTags.size > 0 ? 'Adjust the search or clear tag filters.' : 'Register a job to get started.'}
             />
-          ))
-        )}
+          ) : (
+            filtered.map((j) => (
+              <JobRow
+                key={j.job_key}
+                job={j}
+                active={j.job_key === selected}
+                execs={execsByJob[j.job_key] ?? []}
+                onClick={() => navigate(`/jobs/${encodeURIComponent(j.job_key)}`)}
+              />
+            ))
+          )}
+        </div>
       </aside>
 
       <section className="detail" aria-label="Job detail">
@@ -278,7 +276,11 @@ function JobRow({
           ))}
         </div>
         <div className="row gap-6" style={{ flexShrink: 0 }}>
-          <RunBars counts={recent.map(outcomeFor).reverse()} compact />
+          <RunBars
+            counts={recent.map(outcomeFor).reverse()}
+            durations={recent.map((e) => e.duration_ms).reverse()}
+            compact
+          />
           <span
             className="mono"
             style={{
@@ -362,16 +364,18 @@ function JobDetailContent({ jobKey, onEdit, onDelete }: JobDetailProps) {
   }
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-      <JobDetailHeader
-        job={j}
-        dslManaged={dslManaged}
-        triggerPending={triggerJob.isPending}
-        onToggle={setActive}
-        onTrigger={trigger}
-        onEdit={() => onEdit(j)}
-        onRemove={remove}
-      />
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--card-gap)' }}>
+      <div className="card" style={{ padding: 0, overflow: 'visible' }}>
+        <JobDetailHeader
+          job={j}
+          dslManaged={dslManaged}
+          triggerPending={triggerJob.isPending}
+          onToggle={setActive}
+          onTrigger={trigger}
+          onEdit={() => onEdit(j)}
+          onRemove={remove}
+        />
+      </div>
 
       <KpiRow
         runsLast24={last20}
@@ -381,34 +385,35 @@ function JobDetailContent({ jobKey, onEdit, onDelete }: JobDetailProps) {
         schedule={schedules.data?.[0] ?? null}
       />
 
-      <div className="tabs" style={{ padding: '0 24px' }}>
-        {TABS.map((t) => (
-          <button
-            key={t.id}
-            type="button"
-            className={clsx('tab', tab === t.id && 'active')}
-            onClick={() => setTab(t.id)}
-          >
-            {t.label}
-            {t.id === 'runs' && stats.data ? <span className="count">{stats.data.total}</span> : null}
-            {t.id === 'audit' && jobAudit.length > 0 ? <span className="count">{jobAudit.length}</span> : null}
-          </button>
-        ))}
-      </div>
-
-      <div style={{ overflowY: 'auto', flex: 1, padding: '18px 24px 32px' }}>
-        {tab === 'overview' ? (
-          <OverviewTab
-            job={j}
-            executions={execs}
-            schedules={schedules.data ?? []}
-          />
-        ) : null}
-        {tab === 'runs' ? <RunsTab executions={execs} loading={executions.isLoading} /> : null}
-        {tab === 'schedule' ? <ScheduleTab schedules={schedules.data ?? []} loading={schedules.isLoading} /> : null}
-        {tab === 'dsl' ? <DslTab job={j} schedules={schedules.data ?? []} /> : null}
-        {tab === 'alerts' ? <AlertsTab /> : null}
-        {tab === 'audit' ? <AuditTab events={jobAudit} loading={audit.isLoading} /> : null}
+      <div className="card" style={{ padding: 0 }}>
+        <div className="tabs" style={{ padding: '0 20px', borderBottom: '1px solid var(--border)' }}>
+          {TABS.map((t) => (
+            <button
+              key={t.id}
+              type="button"
+              className={clsx('tab', tab === t.id && 'active')}
+              onClick={() => setTab(t.id)}
+            >
+              {t.label}
+              {t.id === 'runs' && stats.data ? <span className="count">{stats.data.total}</span> : null}
+              {t.id === 'audit' && jobAudit.length > 0 ? <span className="count">{jobAudit.length}</span> : null}
+            </button>
+          ))}
+        </div>
+        <div style={{ padding: '18px 20px 24px' }}>
+          {tab === 'overview' ? (
+            <OverviewTab
+              job={j}
+              executions={execs}
+              schedules={schedules.data ?? []}
+            />
+          ) : null}
+          {tab === 'runs' ? <RunsTab executions={execs} loading={executions.isLoading} /> : null}
+          {tab === 'schedule' ? <ScheduleTab schedules={schedules.data ?? []} loading={schedules.isLoading} /> : null}
+          {tab === 'dsl' ? <DslTab job={j} schedules={schedules.data ?? []} /> : null}
+          {tab === 'alerts' ? <AlertsTab /> : null}
+          {tab === 'audit' ? <AuditTab events={jobAudit} loading={audit.isLoading} /> : null}
+        </div>
       </div>
     </div>
   )
@@ -439,7 +444,7 @@ function JobDetailHeader({
         gap: 14,
         alignItems: 'flex-start',
         justifyContent: 'space-between',
-        padding: '20px 24px 14px',
+        padding: '16px 20px',
       }}
     >
       <div className="col" style={{ gap: 6, minWidth: 0, flex: '1 1 380px' }}>
@@ -501,14 +506,6 @@ function JobDetailHeader({
         <button type="button" className="btn sm primary" onClick={onTrigger} disabled={triggerPending}>
           {triggerPending ? <BrandMark spinning size={13} /> : <Play size={13} />} Trigger
         </button>
-        <Link
-          to={`/jobs/${encodeURIComponent(job.job_key)}/edit`}
-          className="btn icon sm ghost"
-          aria-label="Advanced settings"
-          title="Advanced settings"
-        >
-          <MoreHorizontal size={13} />
-        </Link>
         <button
           type="button"
           className="btn icon sm danger-hover"
@@ -561,7 +558,7 @@ function KpiRow({
   }, [nextFire, now])
 
   return (
-    <div className="grid cols-4" style={{ padding: '0 24px' }}>
+    <div className="grid cols-4">
       <KPICard
         title="Last 24h"
         value={runsLast24.length}
@@ -569,6 +566,7 @@ function KpiRow({
         sub={
           <RunBars
             counts={runsLast24.map(outcomeFor).reverse()}
+            durations={runsLast24.map((e) => e.duration_ms).reverse()}
             compact
           />
         }
@@ -872,9 +870,6 @@ function DslTab({
         </div>
         <div className="row gap-6">
           <CopyBtn value={dsl} label="Copy" />
-          <Link to={`/jobs/${encodeURIComponent(job.job_key)}/edit`} className="btn sm ghost">
-            <Edit3 size={13} /> Edit in advanced
-          </Link>
         </div>
       </div>
       <pre

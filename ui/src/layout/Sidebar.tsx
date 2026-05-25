@@ -77,7 +77,6 @@ function NavRow({ spec, collapsed }: { spec: NavSpec; collapsed: boolean }) {
 export function Sidebar() {
   const [userMenuOpen, setUserMenuOpen] = useState(false)
   const collapsedPref = useSidebarStore((s) => s.collapsed)
-  const toggle = useSidebarStore((s) => s.toggle)
   const { data: deadLetters } = useDeadLetters()
   const { data: me } = useCurrentUser()
 
@@ -96,30 +95,11 @@ export function Sidebar() {
 
   return (
     <aside className="sidebar" data-collapsed={collapsed ? '' : undefined}>
-      <div
-        className="brand"
-        onClick={collapsed ? toggle : undefined}
-        style={collapsed ? { cursor: 'pointer' } : undefined}
-        title={collapsed ? 'Expand sidebar' : undefined}
-      >
+      <div className="brand">
         <span className="gear">
           <BrandMark size={18} />
         </span>
         <span className="name">Croniq</span>
-        {!collapsed ? (
-          <button
-            type="button"
-            className="brand-toggle"
-            onClick={(e) => {
-              e.stopPropagation()
-              toggle()
-            }}
-            aria-label="Collapse sidebar"
-            title="Collapse sidebar"
-          >
-            <MoreHorizontal size={14} />
-          </button>
-        ) : null}
       </div>
 
       <nav className="nav" aria-label="Main navigation">

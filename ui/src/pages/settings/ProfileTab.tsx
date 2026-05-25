@@ -1,6 +1,7 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
 import { Plus, Trash2, ShieldCheck, ShieldOff, X } from 'lucide-react'
+import QRCode from 'qrcode'
 import {
   useCurrentUser,
   usePersonalAccessTokens,
@@ -14,6 +15,40 @@ import { BrandMark, EmptyState, StatusPill, CopyBtn } from '@/components/primiti
 import { useConfirm } from '@/components/ui/confirm-dialog'
 import { formatRelative } from '@/lib/utils'
 import type { CreatePatResponse, TotpSetupResponse } from '@/api/types'
+
+/**
+ * Render the otpauth:// URL as a QR code. Uses the qrcode lib to produce
+ * an inline SVG string so there's no network roundtrip and the code
+ * still scans cleanly on a dark background.
+ */
+function TotpQr({ value }: { value: string }) {
+  const [svg, setSvg] = useState<string>('')
+  useEffect(() => {
+    let cancelled = false
+    QRCode.toString(value, {
+      type: 'svg',
+      errorCorrectionLevel: 'M',
+      margin: 1,
+      color: { dark: '#0b0b14', light: '#ffffff' },
+      width: 180,
+    }).then((s) => { if (!cancelled) setSvg(s) }).catch(() => {})
+    return () => { cancelled = true }
+  }, [value])
+  return (
+    <div
+      style={{
+        background: '#ffffff',
+        padding: 10,
+        borderRadius: 'var(--r-2)',
+        border: '1px solid var(--border)',
+        lineHeight: 0,
+        flexShrink: 0,
+      }}
+      aria-label="TOTP QR code"
+      dangerouslySetInnerHTML={{ __html: svg }}
+    />
+  )
+}
 
 export function ProfileTab() {
   const { data: me, isLoading } = useCurrentUser()
@@ -97,43 +132,60 @@ function TotpSection() {
       </div>
 
       {setupData ? (
-        <div className="col" style={{ gap: 10 }}>
-          <p className="dim" style={{ margin: 0, fontSize: 12.5 }}>
-            Scan this URL with your authenticator app, then confirm with a 6-digit code.
-          </p>
-          <div className="row" style={{ gap: 8 }}>
-            <code
-              className="mono"
-              style={{
-                fontSize: 11.5,
-                padding: '6px 8px',
-                background: 'var(--bg-2)',
-                border: '1px solid var(--border)',
-                borderRadius: 'var(--r-2)',
-                flex: 1,
-                minWidth: 0,
-                overflow: 'hidden',
-                textOverflow: 'ellipsis',
-                whiteSpace: 'nowrap',
-              }}
-            >
-              {setupData.otpauth_url}
-            </code>
-            <CopyBtn value={setupData.otpauth_url} />
+        <div className="col" style={{ gap: 14 }}>
+          <div className="row" style={{ gap: 18, alignItems: 'flex-start', flexWrap: 'wrap' }}>
+            <TotpQr value={setupData.otpauth_url} />
+            <div className="col" style={{ gap: 8, flex: '1 1 220px', minWidth: 0 }}>
+              <p style={{ margin: 0, fontSize: 13 }}>
+                <strong>1.</strong> Open your authenticator (1Password, Authy, Google Authenticator …)
+                and <strong>scan the QR code</strong>.
+              </p>
+              <p className="dim" style={{ margin: 0, fontSize: 12 }}>
+                Can't scan? Enter this secret manually:
+              </p>
+              <div className="row" style={{ gap: 6 }}>
+                <code
+                  className="mono"
+                  style={{
+                    fontSize: 12,
+                    padding: '6px 10px',
+                    background: 'var(--bg-2)',
+                    border: '1px solid var(--border)',
+                    borderRadius: 'var(--r-2)',
+                    flex: 1,
+                    minWidth: 0,
+                    letterSpacing: '0.1em',
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    whiteSpace: 'nowrap',
+                  }}
+                >
+                  {setupData.secret}
+                </code>
+                <CopyBtn value={setupData.secret} />
+              </div>
+            </div>
           </div>
 
           <div className="banner warn" role="status" style={{ flexDirection: 'column', alignItems: 'flex-start', gap: 6 }}>
-            <span className="grow"><strong>Save these recovery codes.</strong> They're shown once.</span>
+            <span className="grow"><strong>2. Save these recovery codes.</strong> They're shown once and let you sign in if you lose your authenticator.</span>
             <ul className="mono" style={{ margin: 0, paddingLeft: 18, columns: 2, gap: 4, fontSize: 12 }}>
               {setupData.recovery_codes.map((c, i) => (
                 <li key={i}>{c}</li>
               ))}
             </ul>
-            <label className="row" style={{ gap: 6, fontSize: 12, marginTop: 4 }}>
-              <input type="checkbox" checked={savedAck} onChange={(e) => setSavedAck(e.target.checked)} />
-              I have saved these codes
-            </label>
+            <div className="row" style={{ gap: 8, marginTop: 4, alignItems: 'center' }}>
+              <CopyBtn value={setupData.recovery_codes.join('\n')} label="Copy all" />
+              <label className="row" style={{ gap: 6, fontSize: 12 }}>
+                <input type="checkbox" checked={savedAck} onChange={(e) => setSavedAck(e.target.checked)} />
+                I have saved these codes
+              </label>
+            </div>
           </div>
+
+          <p style={{ margin: 0, fontSize: 13 }}>
+            <strong>3.</strong> Enter the 6-digit code from your authenticator to finish enabling.
+          </p>
 
           <div className="row" style={{ gap: 6 }}>
             <input

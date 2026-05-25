@@ -6,7 +6,7 @@ import {
   useJobs,
   useThroughput,
   useFailureHeatmap,
-  useAuditEvents,
+  useExecutions,
   useRunners,
   useDeadLetters,
 } from '@/api/hooks'
@@ -19,24 +19,7 @@ import {
   HeatCell,
 } from '@/components/primitives'
 import { formatRelative } from '@/lib/utils'
-import type { AuditEvent, ThroughputBucket, RunnerSummary } from '@/api/types'
-
-const AUDIT_ICON_TONES: Record<string, 'success' | 'warn' | 'error' | 'info' | 'accent'> = {
-  'auth.login_success': 'info',
-  'auth.login_failed': 'warn',
-  'job.create': 'accent',
-  'job.update': 'accent',
-  'job.delete': 'error',
-  'job.trigger': 'success',
-  'execution.complete': 'success',
-  'execution.fail': 'error',
-}
-
-function auditLabel(a: AuditEvent): string {
-  const verb = a.action.replace(/_/g, ' ')
-  if (a.target_type === 'job' && a.target_id) return `${verb} → ${a.target_id}`
-  return verb
-}
+import type { Execution, ThroughputBucket, RunnerSummary } from '@/api/types'
 
 export function DashboardPage() {
   const health = useHealth()
@@ -45,7 +28,7 @@ export function DashboardPage() {
   const deadLetters = useDeadLetters()
   const throughput = useThroughput('24h')
   const heatmap = useFailureHeatmap(7)
-  const audit = useAuditEvents({ limit: 12 })
+  const recentExecutions = useExecutions({ limit: 8 })
 
   const okSeries = useMemo(
     () => (throughput.data?.buckets ?? []).map((b) => b.ok),
@@ -169,7 +152,7 @@ export function DashboardPage() {
       </div>
 
       <div className="grid cols-2" style={{ marginTop: 14 }}>
-        <ActivityCard events={audit.data ?? []} loading={audit.isLoading} />
+        <ActivityCard executions={recentExecutions.data ?? []} loading={recentExecutions.isLoading} />
         <RunnerFleetCard runners={runners.data ?? []} loading={runners.isLoading} />
       </div>
 
@@ -280,13 +263,13 @@ function HeatmapCard({
   )
 }
 
-function ActivityCard({ events, loading }: { events: AuditEvent[]; loading: boolean }) {
+function ActivityCard({ executions, loading }: { executions: Execution[]; loading: boolean }) {
   return (
     <section className="card" style={{ padding: 0 }}>
       <div className="row between" style={{ padding: 16 }}>
-        <p className="card-title">Recent activity</p>
+        <p className="card-title">Recent executions</p>
         <Link to="/executions" className="dim" style={{ fontSize: 12, textDecoration: 'none' }}>
-          View executions →
+          View all →
         </Link>
       </div>
       <div style={{ borderTop: '1px solid var(--divider)', padding: 6 }}>
@@ -294,12 +277,12 @@ function ActivityCard({ events, loading }: { events: AuditEvent[]; loading: bool
           <div className="dim center" style={{ padding: 20 }}>
             Loading…
           </div>
-        ) : events.length === 0 ? (
-          <EmptyState icon={Activity} title="No activity yet" desc="Audit events will appear here as soon as something happens." />
+        ) : executions.length === 0 ? (
+          <EmptyState icon={Activity} title="No executions yet" desc="Trigger a job to see runs here." />
         ) : (
-          events.slice(0, 8).map((e) => (
+          executions.slice(0, 8).map((e) => (
             <div
-              key={e.event_id}
+              key={e.id}
               className="row"
               style={{
                 padding: '8px 10px',
@@ -308,15 +291,13 @@ function ActivityCard({ events, loading }: { events: AuditEvent[]; loading: bool
                 borderRadius: 'var(--r-2)',
               }}
             >
-              <span
-                className={`pill ${AUDIT_ICON_TONES[e.action] ?? 'outline'}`}
-                style={{ fontFamily: 'var(--font-mono-app)' }}
-              >
-                {e.action.split('.')[0]}
-              </span>
-              <span className="ellipsis grow">{auditLabel(e)}</span>
+              <StatusPill state={e.state} />
+              <span className="ellipsis grow mono" style={{ fontSize: 12 }}>{e.job_key}</span>
+              {e.duration_ms != null ? (
+                <span className="dim mono tnum" style={{ fontSize: 11 }}>{e.duration_ms}ms</span>
+              ) : null}
               <span className="dim mono tnum" style={{ fontSize: 11 }}>
-                {formatRelative(e.created_at)}
+                {formatRelative(e.fire_at)}
               </span>
             </div>
           ))

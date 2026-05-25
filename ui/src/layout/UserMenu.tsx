@@ -52,11 +52,11 @@ export function UserMenu({ onClose }: UserMenuProps) {
 
   return (
     <div className="user-menu" role="menu">
-      <button type="button" className="user-menu-item" onClick={() => go('/settings')}>
+      <button type="button" className="user-menu-item" onClick={() => go('/settings?tab=profile')}>
         <UserIcon size={14} />
         <span>Profile &amp; account</span>
       </button>
-      <button type="button" className="user-menu-item" onClick={() => go('/settings')}>
+      <button type="button" className="user-menu-item" onClick={() => go('/settings?tab=clients')}>
         <Key size={14} />
         <span>API keys &amp; clients</span>
       </button>
@@ -93,7 +93,7 @@ export function UserMenu({ onClose }: UserMenuProps) {
         type="button"
         className="user-menu-item"
         onClick={() => {
-          window.open('https://github.com/anthropics/croniq', '_blank', 'noopener,noreferrer')
+          window.open('https://nuetzliches.github.io/croniq/', '_blank', 'noopener,noreferrer')
         }}
       >
         <Globe size={14} />

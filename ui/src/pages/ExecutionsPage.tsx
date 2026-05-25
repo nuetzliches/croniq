@@ -1,11 +1,8 @@
 import { useState } from 'react'
 import { useExecutions } from '@/api/hooks'
-import { Sheet } from '@/components/ui/sheet'
 import { EmptyState, StatusPill } from '@/components/primitives'
 import { Activity, X } from 'lucide-react'
-import type { Execution } from '@/api/types'
 import { shortId } from '@/lib/utils'
-import { ExecutionDetail } from '@/components/ExecutionDetail'
 import { RelativeTime } from '@/components/ui/relative-time'
 
 const STATES = ['', 'queued', 'claimed', 'completed', 'failed', 'dead', 'cancelled']
@@ -15,7 +12,6 @@ export function ExecutionsPage() {
   const [stateFilter, setStateFilter] = useState('')
   const [jobFilter, setJobFilter] = useState('')
   const [limit, setLimit] = useState(PAGE_SIZE)
-  const [selected, setSelected] = useState<Execution | null>(null)
   const executions = useExecutions({
     state: stateFilter || undefined,
     job_key: jobFilter || undefined,
@@ -40,7 +36,7 @@ export function ExecutionsPage() {
       <div className="page-head">
         <div>
           <h1 className="page-title">Executions</h1>
-          <p className="page-subtitle">Filter by state or job. Click any row for stdout/stderr and the full envelope.</p>
+          <p className="page-subtitle">Filter by state or job to inspect recent executions.</p>
         </div>
         <span className="dim mono" style={{ fontSize: 12 }}>
           {rows.length} {rows.length === 1 ? 'row' : 'rows'}
@@ -48,7 +44,7 @@ export function ExecutionsPage() {
         </span>
       </div>
 
-      <section className="card" style={{ padding: 0, marginBottom: 14 }}>
+      <section className="card" style={{ padding: 0 }}>
         <div
           className="row"
           style={{
@@ -127,12 +123,7 @@ export function ExecutionsPage() {
             </thead>
             <tbody>
               {rows.map((e) => (
-                <tr
-                  key={e.id}
-                  className={selected?.id === e.id ? 'active' : ''}
-                  onClick={() => setSelected(e)}
-                  style={{ cursor: 'pointer' }}
-                >
+                <tr key={e.id}>
                   <td className="mono dim" style={{ fontSize: 11.5 }} title={e.id}>
                     {shortId(e.id)}
                   </td>
@@ -161,10 +152,6 @@ export function ExecutionsPage() {
           </button>
         </div>
       ) : null}
-
-      <Sheet open={!!selected} onOpenChange={(o) => !o && setSelected(null)} title="Execution Detail">
-        {selected ? <ExecutionDetail execution={selected} /> : null}
-      </Sheet>
     </div>
   )
 }

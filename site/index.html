@@ -10,7 +10,7 @@
   <meta property="og:description" content="Open-source distributed cron scheduler. Single Rust binary, SQLite default, production-ready retries.">
   <meta property="og:type" content="website">
   <meta property="og:url" content="https://nuetzliches.github.io/croniq">
-  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><circle cx='12' cy='12' r='8' fill='none' stroke='%23a78bfa' stroke-width='2'/><circle cx='12' cy='12' r='2' fill='%23a78bfa'/></svg>">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><defs><mask id='g'><rect width='100' height='100' fill='white'/><circle cx='76' cy='76' r='12' fill='black'/></mask></defs><circle cx='50' cy='50' r='34' fill='none' stroke='%23a78bfa' stroke-width='8' mask='url(%23g)'/><circle cx='76' cy='76' r='9' fill='%23a78bfa'/></svg>">
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
@@ -18,12 +18,15 @@
   <!-- Hero -->
   <section class="hero">
     <div class="container">
-      <svg class="hero-logo" viewBox="0 0 24 24" aria-label="Croniq">
-        <g fill="none" stroke="#a78bfa" stroke-linecap="round" stroke-linejoin="round" stroke-width="2">
-          <path d="M11 10.27L7 3.34m4 10.39l-4 6.93M12 22v-2m0-18v2m2 8h8m-5 8.66l-1-1.73m1-15.59l-1 1.73M2 12h2m16.66 5l-1.73-1m1.73-9l-1.73 1M3.34 17l1.73-1M3.34 7l1.73 1"/>
-          <circle cx="12" cy="12" r="2"/>
-          <circle cx="12" cy="12" r="8"/>
-        </g>
+      <svg class="hero-logo" viewBox="0 0 100 100" aria-label="Croniq">
+        <defs>
+          <mask id="croniq-hero-gap">
+            <rect width="100" height="100" fill="white"/>
+            <circle cx="76" cy="76" r="12" fill="black"/>
+          </mask>
+        </defs>
+        <circle cx="50" cy="50" r="34" fill="none" stroke="#a78bfa" stroke-width="8" mask="url(#croniq-hero-gap)"/>
+        <circle cx="76" cy="76" r="9" fill="#a78bfa"/>
       </svg>
       <h1>Croniq</h1>
       <p class="hero-tagline">Distributed cron that just works.</p>

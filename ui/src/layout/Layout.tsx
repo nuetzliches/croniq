@@ -26,6 +26,10 @@ export function Layout() {
 
   return (
     <div className="app" data-sidebar={collapsed ? 'collapsed' : undefined}>
+      <div className="app-bg" aria-hidden="true">
+        <div className="app-spot app-spot-a" />
+        <div className="app-spot app-spot-b" />
+      </div>
       <Sidebar />
       <Topbar />
       <main className="main">
