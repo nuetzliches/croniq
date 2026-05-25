@@ -1,0 +1,83 @@
+name: Java SDK Release
+
+# Tag-driven release: when a tag matching `java-sdk-v*` is pushed (e.g.
+# `java-sdk-v0.1.0`), build the project at that tag and stage all four
+# Maven Central artefacts at Sonatype OSSRH. The `closeAndRelease...`
+# step finalises the staging repo so artefacts appear on Maven Central
+# within ~30 minutes.
+#
+# Required GitHub Actions secrets (set under Settings → Secrets and
+# variables → Actions):
+#
+# - OSSRH_USERNAME             Sonatype OSSRH user (token-based)
+# - OSSRH_PASSWORD             Sonatype OSSRH token
+# - GPG_SIGNING_KEY            ASCII-armored private key (the whole
+#                              -----BEGIN PGP PRIVATE KEY BLOCK----- ...)
+# - GPG_SIGNING_PASSWORD       Key passphrase
+#
+# Until the secrets land the workflow is harmless — it errors on the
+# publish step but doesn't affect the regular Java SDK CI.
+
+on:
+  push:
+    tags: ["java-sdk-v*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Override version (otherwise inferred from tag)"
+        required: false
+        type: string
+
+concurrency:
+  group: java-sdk-release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  GRADLE_OPTS: "-Dorg.gradle.daemon=false -Dorg.gradle.configuration-cache=true"
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
+
+jobs:
+  publish:
+    name: Publish to Maven Central
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: sdks/java
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+      - name: Derive version from tag
+        # Tags follow `java-sdk-v<semver>`. The build's `version` property
+        # is normally `0.1.0-SNAPSHOT` from gradle.properties; for releases
+        # we override via -Pversion so the artifact coordinates match the tag.
+        id: version
+        run: |
+          tag="${GITHUB_REF#refs/tags/}"
+          if [[ -n "${{ inputs.version }}" ]]; then
+            version="${{ inputs.version }}"
+          else
+            version="${tag#java-sdk-v}"
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "Releasing version: $version"
+      - name: Setup JDK 21 (Temurin)
+        uses: actions/setup-java@be666c2fcd27ec809703dec50e508c2fdc7f6654 # v5.2.0
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@4c125117fe7c5aed11272ec4213f602f012f89f2 # v5.0.0
+      - name: Publish + close + release Sonatype staging repo
+        env:
+          OSSRH_USERNAME: ${{ secrets.OSSRH_USERNAME }}
+          OSSRH_PASSWORD: ${{ secrets.OSSRH_PASSWORD }}
+          GPG_SIGNING_KEY: ${{ secrets.GPG_SIGNING_KEY }}
+          GPG_SIGNING_PASSWORD: ${{ secrets.GPG_SIGNING_PASSWORD }}
+        run: |
+          ./gradlew --no-daemon \
+            -Pversion=${{ steps.version.outputs.version }} \
+            publishToSonatype closeAndReleaseSonatypeStagingRepository

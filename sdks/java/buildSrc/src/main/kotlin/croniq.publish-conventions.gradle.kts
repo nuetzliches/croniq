@@ -1,12 +1,15 @@
 // Maven publishing config for the published modules. Applied by core,
-// spring-boot-starter, and kotlin-ext — NOT conformance-tests (test-only).
+// spring-boot-starter, kotlin-ext, and otel — NOT conformance-tests (test-only).
 //
-// PR-1 wires the Maven coordinates, POM metadata, and source/javadoc
-// attachments so `publishToMavenLocal` produces a release-quality artefact.
-// Sonatype OSSRH / Maven Central staging credentials are added in PR-7.
+// Coordinates / POM metadata / source+javadoc attachments are set up here.
+// Signing (GPG) is enabled only when GPG_SIGNING_KEY is present in the
+// environment, so local `publishToMavenLocal` runs need no signing setup.
+// Sonatype OSSRH staging is wired in the root build via the
+// gradle-nexus-publish-plugin.
 
 plugins {
     `maven-publish`
+    signing
 }
 
 publishing {
@@ -55,4 +58,21 @@ publishing {
             }
         }
     }
+}
+
+// GPG signing — only active when the env vars are populated (CI release
+// jobs supply them from GitHub Actions secrets). Local development and
+// publishToMavenLocal don't sign, so contributors don't need their own
+// keys to verify changes.
+signing {
+    val signingKey: String? = providers.environmentVariable("GPG_SIGNING_KEY").orNull
+    val signingPassword: String? = providers.environmentVariable("GPG_SIGNING_PASSWORD").orNull
+    if (!signingKey.isNullOrBlank() && signingPassword != null) {
+        useInMemoryPgpKeys(signingKey, signingPassword)
+        sign(publishing.publications["maven"])
+    }
+}
+
+tasks.withType<Sign>().configureEach {
+    onlyIf { !providers.environmentVariable("GPG_SIGNING_KEY").orNull.isNullOrBlank() }
 }

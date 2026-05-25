@@ -2,6 +2,7 @@ package io.croniq.runner;
 
 import io.croniq.runner.config.CroniqRunnerOptions;
 import io.croniq.runner.handler.CroniqJobHandler;
+import io.croniq.runner.handler.CroniqRunnerObserver;
 import io.croniq.runner.internal.CroniqClient;
 import io.croniq.runner.internal.ExecutionDispatcher;
 import io.croniq.runner.internal.HandlerRegistry;
@@ -10,6 +11,8 @@ import io.croniq.runner.protocol.PollRequest;
 import io.croniq.runner.protocol.PollResponse;
 import io.croniq.runner.protocol.RegisterJobRequest;
 import java.time.Duration;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -50,7 +53,7 @@ public final class CroniqRunner implements AutoCloseable {
         this.client = b.clientOverride != null ? b.clientOverride : new CroniqClient(options);
         this.runnerId = new RunnerIdentityResolver(options).resolve();
         this.handlerExecutor = Executors.newVirtualThreadPerTaskExecutor();
-        this.dispatcher = new ExecutionDispatcher(client, registry, handlerExecutor, options, runnerId);
+        this.dispatcher = new ExecutionDispatcher(client, registry, handlerExecutor, options, runnerId, b.observers);
     }
 
     /** SDK version baked in by Gradle's {@code Implementation-Version} jar attribute. */
@@ -217,6 +220,7 @@ public final class CroniqRunner implements AutoCloseable {
 
         private CroniqRunnerOptions options = CroniqRunnerOptions.builder().build();
         private final HandlerRegistry.Builder registryBuilder = HandlerRegistry.builder();
+        private final List<CroniqRunnerObserver> observers = new ArrayList<>();
         private CroniqClient clientOverride;
 
         private Builder() {}
@@ -245,6 +249,18 @@ public final class CroniqRunner implements AutoCloseable {
 
         public Builder defaultHandler(CroniqJobHandler handler) {
             registryBuilder.defaultHandler(handler);
+            return this;
+        }
+
+        /**
+         * Register an observer that receives {@code onExecutionStart} /
+         * {@code onExecutionEnd} callbacks around every execution. Multiple
+         * observers can be registered; they are invoked in registration order.
+         * Exceptions thrown by observers are logged and swallowed — observability
+         * never blocks job dispatch.
+         */
+        public Builder observer(CroniqRunnerObserver observer) {
+            this.observers.add(Objects.requireNonNull(observer, "observer"));
             return this;
         }
 

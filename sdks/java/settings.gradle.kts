@@ -25,5 +25,6 @@ include(
     "core",
     "spring-boot-starter",
     "kotlin-ext",
+    "otel",
     "conformance-tests",
 )
