@@ -1,0 +1,26 @@
+{
+  "name": "@croniq/conformance-binding-typescript",
+  "version": "0.0.0",
+  "private": true,
+  "description": "TypeScript binding for the Croniq runner conformance suite. Runs every YAML case in sdks/conformance/cases against @nuetzliches/croniq-runner.",
+  "type": "module",
+  "scripts": {
+    "test": "vitest run",
+    "test:debug": "CRONIQ_CONFORMANCE_DEBUG=1 vitest run --reporter=verbose",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@nuetzliches/croniq-runner": "file:../../../typescript"
+  },
+  "devDependencies": {
+    "@types/js-yaml": "^4.0.9",
+    "@types/node": "^20.11.30",
+    "js-yaml": "^4.1.0",
+    "typescript": "^5.5.4",
+    "vitest": "^2.1.9"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "license": "(MIT OR Apache-2.0)"
+}
