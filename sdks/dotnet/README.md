@@ -126,6 +126,20 @@ When the wire protocol gains a new behaviour, the case is added to `sdks/conform
 |-------------|---------------------|----------------------------|
 | 0.1.x       | 0.14.0              | 0.14.0                     |
 
+## Releasing
+
+Publishing is automated by [`.github/workflows/dotnet-sdk-release.yml`](../../.github/workflows/dotnet-sdk-release.yml). To ship a new version:
+
+1. Update the [CHANGELOG](CHANGELOG.md) (the package version itself comes from MinVer — no `.csproj` edit needed).
+2. Merge to `main`.
+3. Tag the commit: `git tag dotnet-sdk-v0.2.0 && git push --tags`.
+
+MinVer (configured in `Directory.Build.props` with prefix `dotnet-sdk-v`) derives the package version from the tag, so both `Croniq.Runner.Sdk` and `Croniq.Runner.Sdk.OpenTelemetry` pack with the right number automatically. Pre-release suffixes pass through unchanged (e.g. `dotnet-sdk-v0.2.0-preview.1`).
+
+The workflow restores, builds, runs unit tests on `net8.0`+`net10.0`, re-runs the full conformance suite, then `dotnet nuget push` both `.nupkg` + `.snupkg` symbol packages to nuget.org.
+
+Prerequisite: a repo admin must set the `NUGET_API_KEY` secret once (generate at <https://www.nuget.org/account/apikeys>, scoped to the `Croniq.*` package glob with "Push new packages and package versions").
+
 ## Pre-release feed (GitHub Packages)
 
 Add to `nuget.config`:

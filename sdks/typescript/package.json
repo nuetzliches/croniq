@@ -1,0 +1,63 @@
+{
+  "name": "@nuetzliches/croniq-runner",
+  "version": "0.1.0",
+  "description": "Croniq runner SDK for Node.js. Polls a Croniq server for work, dispatches handlers, streams logs back.",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist/",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE-MIT",
+    "LICENSE-APACHE"
+  ],
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "clean": "rm -rf dist coverage",
+    "lint": "eslint src test",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.test.json"
+  },
+  "dependencies": {
+    "@opentelemetry/api": "^1.9.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.30",
+    "@typescript-eslint/eslint-plugin": "^7.18.0",
+    "@typescript-eslint/parser": "^7.18.0",
+    "@vitest/coverage-v8": "^2.1.9",
+    "eslint": "^8.57.1",
+    "typescript": "^5.5.4",
+    "vitest": "^2.1.9"
+  },
+  "keywords": [
+    "croniq",
+    "cron",
+    "scheduler",
+    "runner",
+    "sdk",
+    "jobs"
+  ],
+  "homepage": "https://github.com/nuetzliches/croniq/tree/main/sdks/typescript",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/nuetzliches/croniq.git",
+    "directory": "sdks/typescript"
+  },
+  "license": "(MIT OR Apache-2.0)",
+  "bugs": {
+    "url": "https://github.com/nuetzliches/croniq/issues"
+  }
+}

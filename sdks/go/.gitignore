@@ -1,0 +1,8 @@
+# Compiled example binaries — `go build ./examples/...` drops a binary
+# named after the package's directory in the current working directory.
+/quickstart
+
+# IDE / debugger artefacts
+*.test
+*.prof
+coverage.out

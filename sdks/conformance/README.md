@@ -43,8 +43,12 @@ sdks/conformance/
 ```
 
 Bindings live with their SDK (each SDK author knows its own ecosystem
-best — central bindings would force a polyglot test runner). The .NET binding
-is at [`sdks/dotnet/tests/Croniq.Runner.Sdk.Conformance.Tests`](../dotnet/tests/Croniq.Runner.Sdk.Conformance.Tests).
+best — central bindings would force a polyglot test runner). Current
+bindings:
+
+- .NET: [`sdks/dotnet/tests/Croniq.Runner.Sdk.Conformance.Tests`](../dotnet/tests/Croniq.Runner.Sdk.Conformance.Tests)
+- Python: [`sdks/python/tests/conformance`](../python/tests/conformance)
+- Go: [`sdks/go/conformance`](../go/conformance)
 
 ## Case anatomy
 
