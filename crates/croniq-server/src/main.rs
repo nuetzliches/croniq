@@ -426,6 +426,13 @@ async fn main() -> Result<()> {
             "failure-alert evaluator armed"
         );
     }
+    // Watchdog gets its own clones of the config + throttle Arc so
+    // the SLA-miss sweep dispatches through the same evaluator
+    // pipeline as `job_failed`. Sharing the throttle Arc is what
+    // makes `throttle 10m` apply across both trigger types for the
+    // same (rule, job_key).
+    let alerts_cfg_for_watchdog = alerts_cfg.clone();
+    let alert_throttle_for_watchdog = Arc::clone(&alert_throttle);
 
     let processor = Arc::new(CompletionProcessor::with_alerts(
         proc_jobs,
@@ -444,10 +451,20 @@ async fn main() -> Result<()> {
     });
 
     // ── Watchdog task ─────────────────────────────────────────────────────────
-    let watchdog = WatchdogLoop::new(
+    //
+    // Watchdog shares the alerts config + throttle map with the
+    // completion processor: the SLA-miss sweep (#140 PR-4) uses the
+    // same `evaluate_failure` pipeline as `job_failed`, so a rule
+    // with `throttle 10m` correctly suppresses both kinds of fires
+    // in the same window.
+    let watchdog = WatchdogLoop::with_alerts(
         loaded.runtime.jobs.clone(),
         Arc::clone(&store),
         Arc::clone(&runner_state),
+        alerts_cfg_for_watchdog,
+        alert_throttle_for_watchdog,
+        croniq_server::watchdog::empty_sla_fired_set(),
+        Arc::clone(&server_state.email_sender),
     );
     let watchdog_store = Arc::clone(&store);
 
@@ -463,6 +480,12 @@ async fn main() -> Result<()> {
                     dead = result.dead_runners.len(),
                     requeued = result.requeued.len(),
                     "watchdog: processed dead runners"
+                );
+            }
+            if !result.sla_missed.is_empty() {
+                tracing::warn!(
+                    count = result.sla_missed.len(),
+                    "watchdog: SLA-miss alerts fired"
                 );
             }
 

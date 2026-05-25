@@ -120,7 +120,7 @@ pub fn load_throttle_state(store: &DynStore, alerts: &AlertsConfig) -> ThrottleM
 /// Parse a throttle duration string like `"10m"`, `"30s"`, `"1h"`.
 /// Returns `None` for unparseable input or when the rule didn't
 /// specify a throttle — the caller treats `None` as "fire every time".
-fn parse_throttle_secs(s: &str) -> Option<u64> {
+pub(crate) fn parse_throttle_secs(s: &str) -> Option<u64> {
     let s = s.trim();
     if s.is_empty() {
         return None;
@@ -150,90 +150,110 @@ pub async fn evaluate_failure(
     store: &DynStore,
     email_sender: &Arc<dyn crate::email::EmailSender>,
 ) -> Vec<AlertDelivery> {
+    let mut recorded = Vec::new();
+    for rule in &alerts.rules {
+        if !rule_matches_failure(rule, ctx) {
+            continue;
+        }
+        recorded.extend(dispatch_rule(rule, alerts, ctx, throttle, store, email_sender).await);
+    }
+    recorded
+}
+
+/// Run throttle + channel dispatch for a single rule that the caller
+/// has already determined to match. Used by both [`evaluate_failure`]
+/// (after `rule_matches_failure`) and the watchdog's SLA-miss sweep
+/// (which selects rules by trigger type + `expected_within` instead).
+///
+/// Sharing this path is what makes a `throttle 10m` directive apply
+/// uniformly across `job_failed` AND `job_sla_missed` fires on the
+/// same `(rule, job_key)`.
+pub(crate) async fn dispatch_rule(
+    rule: &RuleConfig,
+    alerts: &AlertsConfig,
+    ctx: &FailureContext,
+    throttle: &ThrottleMap,
+    store: &DynStore,
+    email_sender: &Arc<dyn crate::email::EmailSender>,
+) -> Vec<AlertDelivery> {
     let now = Utc::now();
     let mut recorded = Vec::new();
 
-    for rule in &alerts.rules {
-        if !rule_matches(rule, ctx) {
-            continue;
-        }
-
-        let throttle_window = rule.throttle.as_deref().and_then(parse_throttle_secs);
-        let throttle_state =
-            check_throttle(throttle, &rule.name, &ctx.job_key, throttle_window, now);
-
-        match throttle_state {
-            ThrottleDecision::Suppress { last_at } => {
-                let delivery = AlertDelivery {
-                    delivery_id: Uuid::new_v4().to_string(),
-                    rule_name: rule.name.clone(),
-                    channel_name: rule
-                        .channels
-                        .first()
-                        .cloned()
-                        .unwrap_or_else(|| "<none>".into()),
-                    job_key: ctx.job_key.clone(),
-                    execution_id: Some(ctx.execution_id.clone()),
-                    state: AlertDeliveryState::Throttled,
-                    error: None,
-                    fired_at: now,
-                    delivered_at: None,
-                };
-                tracing::info!(
-                    target: "croniq::alerts",
-                    rule = %rule.name,
-                    job_key = %ctx.job_key,
-                    last_fire = %last_at,
-                    "alerts.fired suppressed by throttle"
-                );
-                let _ = store.record_alert_delivery(&delivery);
-                recorded.push(delivery);
-                continue;
-            }
-            ThrottleDecision::Fire => {
-                // record_throttle_fire happens inside the per-channel
-                // loop so a successful first channel still updates the
-                // throttle even if a later channel fails. (Operators
-                // care about "the rule fired", not "every channel
-                // delivered".)
-                record_throttle_fire(throttle, &rule.name, &ctx.job_key, now);
-            }
-        }
-
-        for channel_name in &rule.channels {
-            let Some(channel) = alerts.channels.get(channel_name) else {
-                tracing::warn!(
-                    target: "croniq::alerts",
-                    rule = %rule.name,
-                    channel = %channel_name,
-                    "rule references unknown channel — skipping"
-                );
-                let delivery = AlertDelivery {
-                    delivery_id: Uuid::new_v4().to_string(),
-                    rule_name: rule.name.clone(),
-                    channel_name: channel_name.clone(),
-                    job_key: ctx.job_key.clone(),
-                    execution_id: Some(ctx.execution_id.clone()),
-                    state: AlertDeliveryState::Failed,
-                    error: Some("unknown channel".into()),
-                    fired_at: now,
-                    delivered_at: None,
-                };
-                let _ = store.record_alert_delivery(&delivery);
-                recorded.push(delivery);
-                continue;
+    let throttle_window = rule.throttle.as_deref().and_then(parse_throttle_secs);
+    let throttle_state = check_throttle(throttle, &rule.name, &ctx.job_key, throttle_window, now);
+    match throttle_state {
+        ThrottleDecision::Suppress { last_at } => {
+            let delivery = AlertDelivery {
+                delivery_id: Uuid::new_v4().to_string(),
+                rule_name: rule.name.clone(),
+                channel_name: rule
+                    .channels
+                    .first()
+                    .cloned()
+                    .unwrap_or_else(|| "<none>".into()),
+                job_key: ctx.job_key.clone(),
+                execution_id: Some(ctx.execution_id.clone()),
+                state: AlertDeliveryState::Throttled,
+                error: None,
+                fired_at: now,
+                delivered_at: None,
             };
-
-            let delivery = dispatch(channel, &rule.name, ctx, now, email_sender).await;
+            tracing::info!(
+                target: "croniq::alerts",
+                rule = %rule.name,
+                job_key = %ctx.job_key,
+                last_fire = %last_at,
+                "alerts.fired suppressed by throttle"
+            );
             let _ = store.record_alert_delivery(&delivery);
             recorded.push(delivery);
+            return recorded;
         }
+        ThrottleDecision::Fire => {
+            // record_throttle_fire happens before the per-channel loop
+            // so a successful first channel still updates the throttle
+            // even if a later channel fails. Operators care about "the
+            // rule fired", not "every channel delivered".
+            record_throttle_fire(throttle, &rule.name, &ctx.job_key, now);
+        }
+    }
+
+    for channel_name in &rule.channels {
+        let Some(channel) = alerts.channels.get(channel_name) else {
+            tracing::warn!(
+                target: "croniq::alerts",
+                rule = %rule.name,
+                channel = %channel_name,
+                "rule references unknown channel — skipping"
+            );
+            let delivery = AlertDelivery {
+                delivery_id: Uuid::new_v4().to_string(),
+                rule_name: rule.name.clone(),
+                channel_name: channel_name.clone(),
+                job_key: ctx.job_key.clone(),
+                execution_id: Some(ctx.execution_id.clone()),
+                state: AlertDeliveryState::Failed,
+                error: Some("unknown channel".into()),
+                fired_at: now,
+                delivered_at: None,
+            };
+            let _ = store.record_alert_delivery(&delivery);
+            recorded.push(delivery);
+            continue;
+        };
+
+        let delivery = dispatch(channel, &rule.name, ctx, now, email_sender).await;
+        let _ = store.record_alert_delivery(&delivery);
+        recorded.push(delivery);
     }
 
     recorded
 }
 
-fn rule_matches(rule: &RuleConfig, ctx: &FailureContext) -> bool {
+/// Filter rules for the `job_failed` dispatch path. SLA-miss rules
+/// use a separate selector (`expected_within` + watchdog elapsed
+/// check) and call `dispatch_rule` directly, bypassing this filter.
+fn rule_matches_failure(rule: &RuleConfig, ctx: &FailureContext) -> bool {
     if !matches!(rule.trigger, RuleTrigger::JobFailed) {
         return false;
     }
@@ -254,7 +274,7 @@ fn rule_matches(rule: &RuleConfig, ctx: &FailureContext) -> bool {
 /// for the `"billing:*"` / `"cleanup:*"` patterns the issue gives as
 /// examples; a richer matcher would need a dedicated crate (`globset`)
 /// and the benefit is marginal at the volume we expect.
-fn glob_match(pat: &str, s: &str) -> bool {
+pub(crate) fn glob_match(pat: &str, s: &str) -> bool {
     fn inner(pat: &[u8], s: &[u8]) -> bool {
         match (pat.first(), s.first()) {
             (None, None) => true,
@@ -827,6 +847,7 @@ pub fn merge_legacy_env_hook(base: AlertsConfig) -> AlertsConfig {
         min_attempts: 1,
         dead_letter_only: false,
         throttle: None,
+        expected_within: None,
         channels: vec![LEGACY_ENV_CHANNEL_NAME.to_string()],
     });
     cfg
@@ -898,6 +919,7 @@ mod tests {
                 min_attempts: 1,
                 dead_letter_only: false,
                 throttle: None,
+                expected_within: None,
                 channels: vec!["ops".into()],
             }],
         };
@@ -937,6 +959,7 @@ mod tests {
                 min_attempts: 1,
                 dead_letter_only: false,
                 throttle: None,
+                expected_within: None,
                 channels: vec!["x".into()],
             }],
         };
@@ -974,6 +997,7 @@ mod tests {
                 min_attempts: 5,
                 dead_letter_only: false,
                 throttle: None,
+                expected_within: None,
                 channels: vec!["x".into()],
             }],
         };
@@ -1013,6 +1037,7 @@ mod tests {
                 min_attempts: 1,
                 dead_letter_only: true,
                 throttle: None,
+                expected_within: None,
                 channels: vec!["x".into()],
             }],
         };
@@ -1052,6 +1077,7 @@ mod tests {
                 min_attempts: 1,
                 dead_letter_only: false,
                 throttle: Some("1h".into()),
+                expected_within: None,
                 channels: vec!["x".into()],
             }],
         };
@@ -1097,6 +1123,7 @@ mod tests {
                 min_attempts: 1,
                 dead_letter_only: false,
                 throttle: None,
+                expected_within: None,
                 channels: vec!["future".into()],
             }],
         };
@@ -1126,6 +1153,7 @@ mod tests {
                 min_attempts: 1,
                 dead_letter_only: false,
                 throttle: None,
+                expected_within: None,
                 channels: vec!["does-not-exist".into()],
             }],
         };
@@ -1300,6 +1328,7 @@ mod tests {
                 min_attempts: 1,
                 dead_letter_only: false,
                 throttle: None,
+                expected_within: None,
                 channels: vec!["ops".into()],
             }],
         };
@@ -1376,6 +1405,7 @@ mod tests {
                 min_attempts: 1,
                 dead_letter_only: false,
                 throttle: None,
+                expected_within: None,
                 channels: vec!["open".into()],
             }],
         };
@@ -1423,6 +1453,7 @@ mod tests {
                 min_attempts: 1,
                 dead_letter_only: false,
                 throttle: None,
+                expected_within: None,
                 channels: vec!["flaky".into()],
             }],
         };
@@ -1491,6 +1522,7 @@ mod tests {
                 min_attempts: 1,
                 dead_letter_only: false,
                 throttle: None,
+                expected_within: None,
                 channels: vec!["auth-broken".into()],
             }],
         };
@@ -1619,6 +1651,7 @@ mod tests {
                 min_attempts: 1,
                 dead_letter_only: false,
                 throttle: None,
+                expected_within: None,
                 channels: vec!["ops".into()],
             }],
         };
@@ -1670,6 +1703,7 @@ mod tests {
                 min_attempts: 1,
                 dead_letter_only: false,
                 throttle: None,
+                expected_within: None,
                 channels: vec!["ops".into()],
             }],
         };

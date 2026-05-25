@@ -237,9 +237,9 @@ pub enum ChannelKind {
 
 /// A rule = trigger predicate + named channels to dispatch to.
 ///
-/// Trigger types in PR-1: `job_failed` only. `job_sla_missed` is
-/// reserved and rejected at compile time so a typo doesn't silently
-/// match nothing.
+/// Trigger types so far: `job_failed` (PR-1) and `job_sla_missed`
+/// (PR-4). Unknown values silently drop the rule at compile time so a
+/// typo doesn't accidentally match every job.
 #[derive(Debug, Clone, Serialize)]
 pub struct RuleConfig {
     pub name: String,
@@ -248,17 +248,24 @@ pub struct RuleConfig {
     /// (default).
     pub job_key_glob: String,
     /// Minimum attempt number that must have been reached before this
-    /// rule fires. Defaults to 1.
+    /// rule fires. Defaults to 1. Used by `job_failed` only — SLA-miss
+    /// triggers ignore this field (SLA breaches are about runtime, not
+    /// retry count).
     pub min_attempts: u32,
     /// When `true`, only fire on dead-letter (not on dropped-because-
     /// dead-letter-disabled). Defaults to false (fire on any permanent
-    /// failure).
+    /// failure). `job_failed` only.
     pub dead_letter_only: bool,
     /// Per-(rule, job_key) suppression window. `None` disables
     /// throttling — every matching failure fires. Stored as duration
     /// string (parsed by the server at boot, kept as a string in the
     /// DSL so the formatter can round-trip).
     pub throttle: Option<String>,
+    /// `job_sla_missed` only: max in-flight runtime before the rule
+    /// fires. Stored as a duration string (`"10m"`, `"30s"`, `"1h"`)
+    /// for DSL round-trip. Compile rejects (drops) a `job_sla_missed`
+    /// rule without this directive.
+    pub expected_within: Option<String>,
     /// Channel names this rule dispatches to. Compile validates that
     /// every name resolves; unknown names become a compile error
     /// (returned as part of the rule for downstream diagnostic display
@@ -266,12 +273,16 @@ pub struct RuleConfig {
     pub channels: Vec<String>,
 }
 
-#[derive(Debug, Clone, Copy, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RuleTrigger {
-    /// Permanent failure (dead-letter or dropped). The only trigger
-    /// shipped in PR-1.
+    /// Permanent failure (dead-letter or dropped). Shipped in PR-1.
     JobFailed,
+    /// In-flight execution exceeded its `expected_within` runtime
+    /// without completing. Shipped in PR-4. The
+    /// [`crate::WatchdogLoop`] periodically scans claimed executions
+    /// and fires for the first sweep that observes the breach.
+    JobSlaMissed,
 }
 
 #[derive(Debug, Clone, Default, Serialize)]
@@ -951,6 +962,7 @@ fn compile_rule(
     let mut min_attempts: u32 = 1;
     let mut dead_letter_only = false;
     let mut throttle: Option<String> = None;
+    let mut expected_within: Option<String> = None;
     let mut channels: Vec<String> = Vec::new();
 
     for dob in &block.directives {
@@ -963,12 +975,11 @@ fn compile_rule(
                     let v = resolve_str(arg, vars);
                     trigger = match v.as_str() {
                         "job_failed" => Some(RuleTrigger::JobFailed),
-                        // `job_sla_missed` and any other future
-                        // trigger are reserved and silently produce
-                        // `None`, which causes the rule to be dropped
+                        "job_sla_missed" => Some(RuleTrigger::JobSlaMissed),
+                        // Unknown trigger values silently drop the rule
                         // below. Operators get a runtime warning when
                         // the evaluator notices the dropped rule on
-                        // the next reload (TBD in PR-4).
+                        // the next reload (TBD).
                         _ => None,
                     };
                 }
@@ -997,6 +1008,11 @@ fn compile_rule(
                     throttle = Some(resolve_str(arg, vars));
                 }
             }
+            "expected_within" => {
+                if let Some(arg) = d.args.first() {
+                    expected_within = Some(resolve_str(arg, vars));
+                }
+            }
             "channels" => {
                 for arg in &d.args {
                     let v = resolve_str(arg, vars);
@@ -1010,6 +1026,12 @@ fn compile_rule(
     }
 
     let trigger = trigger?;
+    // SLA-miss without `expected_within` is meaningless — drop the
+    // rule so a typo doesn't silently turn into a "fire on every
+    // claimed execution" rule.
+    if trigger == RuleTrigger::JobSlaMissed && expected_within.is_none() {
+        return None;
+    }
     Some(RuleConfig {
         name: name.to_string(),
         trigger,
@@ -1017,6 +1039,7 @@ fn compile_rule(
         min_attempts,
         dead_letter_only,
         throttle,
+        expected_within,
         channels,
     })
 }
@@ -1854,16 +1877,14 @@ mod tests {
 
     #[test]
     fn compile_alerts_unknown_trigger_drops_rule() {
-        // `job_sla_missed` is reserved but not implemented in PR-1 —
-        // rules with unsupported triggers must not silently match
-        // every failure. Dropping the rule (with a future warning
-        // path) is safer than synthesising a default trigger.
+        // `when garbage_value` silently drops the rule — a typo must
+        // not turn into "fire on every job_failed" by default.
         let ast = Parser::parse(
             r#"
             alerts {
                 channel "x" { shell "/bin/true" }
                 rule "future-rule" {
-                    when job_sla_missed
+                    when typo_or_future_trigger
                     channels "x"
                 }
             }
@@ -1877,6 +1898,58 @@ mod tests {
         );
         // Channel still compiles — rule references aren't a hard error.
         assert!(cfg.alerts.channels.contains_key("x"));
+    }
+
+    // ─── #140 PR-4 SLA-miss trigger ─────────────────────────────────
+
+    #[test]
+    fn compile_alerts_sla_miss_without_expected_within_drops() {
+        // `when job_sla_missed` without `expected_within` is
+        // meaningless — must drop, not fire on every claimed
+        // execution.
+        let ast = Parser::parse(
+            r#"
+            alerts {
+                channel "x" { shell "/bin/true" }
+                rule "broken-sla" {
+                    when job_sla_missed
+                    channels "x"
+                }
+            }
+            "#,
+        )
+        .unwrap();
+        let cfg = compile(&ast);
+        assert!(
+            cfg.alerts.rules.is_empty(),
+            "SLA rule without expected_within must drop"
+        );
+    }
+
+    #[test]
+    fn compile_alerts_sla_miss_with_expected_within() {
+        let ast = Parser::parse(
+            r#"
+            alerts {
+                channel "ops" { shell "/bin/true" }
+                rule "slow-billing" {
+                    when job_sla_missed
+                    job_key "billing:*"
+                    expected_within 15m
+                    throttle 1h
+                    channels "ops"
+                }
+            }
+            "#,
+        )
+        .unwrap();
+        let cfg = compile(&ast);
+        assert_eq!(cfg.alerts.rules.len(), 1);
+        let rule = &cfg.alerts.rules[0];
+        assert!(matches!(rule.trigger, RuleTrigger::JobSlaMissed));
+        assert_eq!(rule.job_key_glob, "billing:*");
+        assert_eq!(rule.expected_within.as_deref(), Some("15m"));
+        assert_eq!(rule.throttle.as_deref(), Some("1h"));
     }
 
     // ─── #140 PR-3 email channel ───────────────────────────────────
