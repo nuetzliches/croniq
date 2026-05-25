@@ -53,8 +53,12 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           # MinVer reads tags from history to compute the package version.
-          # Shallow clone would yield 0.0.0-alpha.0.X with no recognised tag.
+          # `fetch-depth: 0` brings the full commit history; `fetch-tags: true`
+          # forces tag refs to come along even when the trigger ref is a tag
+          # itself (otherwise MinVer can fall back to its 0.0.0-alpha default).
+          # Both flags together mirror the recipe in the MinVer FAQ.
           fetch-depth: 0
+          fetch-tags: true
 
       - name: Resolve tag → version
         id: version
@@ -109,8 +113,16 @@ jobs:
             --configuration Release --no-build --framework net10.0 \
             --logger "console;verbosity=normal"
 
-      - name: Pack (Release, MinVer reads the tag)
-        run: dotnet pack Croniq.Runner.Sdk.slnx --configuration Release --no-build --output ./artifacts
+      - name: Pack (Release, version pinned from tag)
+        # Belt-and-suspenders: we set MinVerVersionOverride to the resolved
+        # tag version so the pack output is deterministic even if MinVer's
+        # tag-walking trips over a quirk in the GitHub Actions checkout
+        # (lightweight tag vs annotated, shallow-but-tagged refs, etc.).
+        # This is the supported MinVer escape hatch — see
+        # https://github.com/adamralph/minver#can-i-disable-minver
+        run: |
+          dotnet pack Croniq.Runner.Sdk.slnx --configuration Release --no-build --output ./artifacts \
+            -p:MinVerVersionOverride=${{ steps.version.outputs.version }}
 
       - name: List packed artefacts
         run: ls -la artifacts/
